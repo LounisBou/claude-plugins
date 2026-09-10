@@ -113,6 +113,14 @@ done
 bash "$AGENT" verify --tty "$TTY" >/dev/null 2>&1
 check "the session is running on that tty" "0" "$?"
 
+# The agent inherits the operator's PATH: read from the process, never assumed. The first
+# entry of a login shell's own PATH is the machine-neutral witness (the package manager's
+# directory on this one); a session born of the app's bare default does not carry it.
+pid=$(bash "$AGENT" verify --tty "$TTY" 2>/dev/null | grep -oE 'pid [0-9]+' | grep -oE '[0-9]+')
+want=$("${SHELL:-/bin/zsh}" -l -c 'printf %s "$PATH"' 2>/dev/null | cut -d: -f1)
+check "the session inherits a login shell's PATH" "1" \
+  "$(ps -E -p "$pid" -o command= 2>/dev/null | tr ' ' '\n' | grep '^PATH=' | grep -c -- "$want")"
+
 # THE assertion this whole script exists for: the tier named at dispatch is the model the
 # live process carries. Everything else can be read from a dry run; this cannot.
 got=$(ps -t "${TTY#/dev/}" -o command= 2>/dev/null | grep -oE -- '--model [^ ]+' | awk '{print $2}')

@@ -33,6 +33,11 @@ STATE_DIR = os.environ.get("ORCHESTRATOR_STATE_DIR") or os.path.join(
 PROMPTS_DIR = os.path.join(STATE_DIR, "prompts")
 CHAINS_DIR = os.path.join(STATE_DIR, "chains")
 SELF_TTY = os.environ.get("ORCHESTRATOR_SELF_TTY", "")
+# The shell the tab runs the launch through. A LOGIN shell, so the session inherits the
+# operator's environment — the package manager's binaries included — instead of the bare
+# default the app hands a program run directly (§22). Non-interactive `-l` reads the
+# profile files and not the interactive ones: the environment without the prompt.
+LOGIN_SHELL = os.environ.get("ORCHESTRATOR_LOGIN_SHELL") or os.environ.get("SHELL") or "/bin/zsh"
 MODELS_MAP = os.environ.get("ORCHESTRATOR_MODELS_MAP") or os.path.join(STATE_DIR, "models.json")
 SPAWN_TIMEOUT = int(os.environ.get("ORCHESTRATOR_SPAWN_TIMEOUT", "30"))
 DRY_RUN = bool(os.environ.get("ORCHESTRATOR_DRY_RUN"))
@@ -311,12 +316,11 @@ def build_command(dir_, title, model, mode, prompt_file):
     answer, and a name hardcoded here would be a routing decision taken for every
     operator."""
     settings = '{"enableAllProjectMcpServers":true}'
-    # The ABSOLUTE path, resolved from the environment the orchestrator has. The app runs
-    # this as the session's program, not through a login shell, so the tab inherits a bare
-    # default PATH — one that does not contain the package manager's bin directory where
-    # the CLI actually lives. The typed version never met this because it typed into a
-    # login shell that was already running. Unresolved, the script exits at once, the
-    # session dies with it, and the spawn fails as a tty that belongs to nothing.
+    # The ABSOLUTE path, resolved from the environment the orchestrator has. The tab runs
+    # the launch through a login shell now (§22), so a bare name would usually resolve —
+    # but finding the program must not depend on the operator's dotfiles: a profile that
+    # breaks PATH would kill the launch, and the session would die before its tty could be
+    # read, which is how the first spawn under the bare default died.
     import shutil
     cli_path = shutil.which(HOST_CLI) or HOST_CLI
     parts = ["cd %s" % shq(dir_),
@@ -333,7 +337,7 @@ def build_command(dir_, title, model, mode, prompt_file):
 
 
 def write_launch_script(command, title):
-    """The launch goes to a FILE and the app is asked to run `/bin/sh <file>`.
+    """The launch goes to a FILE and the app is asked to run `<login shell> -l <file>`.
 
     The app executes what it is given as the session's program, splitting it into words
     itself: a compound command handed over raw is not run by any shell, the session dies
@@ -481,10 +485,11 @@ def cmd_spawn(argv):
         print("prompt_file=%s" % prompt_file)
         print("self=%s" % own)
         print("anchor=%s" % ("self" if anchor == own else anchor))
+        print("program=%s -l <launch-file>" % LOGIN_SHELL)
         return
 
     script = write_launch_script(launch, args.title)
-    command = "/bin/sh " + script
+    command = "%s -l %s" % (LOGIN_SHELL, script)
 
     async def go(iterm2, connection):
         app = await iterm2.async_get_app(connection)
