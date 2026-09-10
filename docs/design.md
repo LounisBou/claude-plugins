@@ -713,3 +713,40 @@ spawns — so a reader finds no order to the contrary.
 
 What the suite reads: no plan under `docs/superpowers/plans/` opens with the foreign
 header; the rulebook carries the rule; the succession brief template carries it.
+
+## 29. The tracebacks a spawn leaves on stderr are the library's, and they stay
+
+**Not released.** Since 0.18.0 every spawn prints library tracebacks on stderr — « Task
+exception was never retrieved », each ending on a websocket our side had closed — and then
+a tty that is right. A corrective release was opened to remove them and shelved after one
+review round, because the removal costs more than the noise.
+
+**The mechanism, read on the artifact.** Getting the app object subscribes it to layout and
+focus notifications; creating a tab is a layout change; the library dispatches each
+notification as a task of its own. The launcher opens a connection per step — the chain,
+the anchor probe, the creation — and each `run()` builds its own event loop. When a step's
+coroutine returns, the library cancels its dispatcher and helper tasks without awaiting
+them, and the block that owns the socket closes it. The helper tasks that were mid-flight
+end on the closed socket with an exception, and that exception is reported when the
+finished task is collected — when the next `run()` closes the previous loop, or at exit —
+never while the loop that owns it is still running.
+
+**What was tried, and why it did not hold.** A settle step that awaits pending helper tasks
+before the coroutine returns: instrumented on a live spawn, it finds none on any pass — the
+only live tasks are the socket's own and the dispatcher's — because the failing tasks are
+either not yet dispatched or already finished. The suite's stub made it green by creating
+helper tasks by hand on the same loop right before the settle, a timing that never occurs
+against the app: a gate green over what it does not read. A per-loop exception handler
+installed inside the coroutine: the reports still print. Both readings were taken on a
+pinned clone with the live round, which is the only instrument that reads this at all.
+
+**The decision.** The noise is cosmetic: the spawn succeeds, the tty is right, the chain
+entry lands. A fix that holds would either reduce the launcher to one connection and one
+loop per spawn, with the teardown drained under our control, or filter the known lines in
+the shell wrapper — which hides the diagnoses the stream exists to carry. Neither is worth
+the surgery for a stream the orchestrator reads only on failure; when it does, the known
+lines are few and identical, and what follows them is the diagnosis.
+
+What the suite reads: nothing — this section records a limitation, not a mechanism. The
+live round's spawn check keeps stderr and prints its last lines on failure, which is where
+a real diagnosis surfaces above the known noise.
