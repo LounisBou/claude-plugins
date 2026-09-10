@@ -42,7 +42,7 @@ For each finding: `[severity] file:line — what is wrong — evidence (the line
 - Your orchestrator is the session **`{{ORCHESTRATOR_NAME}}`** — its exact `ListAgents` name and reference — and no other. Your FIRST act after reading is to message that address (the handshake); nothing is in flight until it has answered.
 - **Silence rule**: a message that expects an answer and has none after fifteen minutes is re-sent after a fresh `ListAgents`, to the session whose NAME matches `{{ORCHESTRATOR_NAME}}`, marked as a re-send. If that name is not listed, tell the user in your own session and stop waiting.
 - Report on start (after the state verification), once with the consolidated report, then answer the orchestrator's questions until it stands you down.
-- Every report ends with your measured context: run `${CLAUDE_PLUGIN_ROOT}/skills/context-gauge/scripts/context-gauge.sh` and paste its `context_percent=` and `source=` lines.
+- Every report ends with your measured context: run `{{GAUGE}}` and paste its `context_percent=` and `source=` lines.
 
 ## 7. Resource envelope
 

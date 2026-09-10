@@ -29,4 +29,4 @@ When this rotation is an escalation, that line names what triggered it: the find
 
 ## 6. Protocol
 
-Unchanged from the phase brief: your orchestrator is the session **`{{ORCHESTRATOR_NAME}}`** (exact `ListAgents` name and reference) and no other; message it first (the handshake), apply the silence rule (fifteen minutes without answer → fresh `ListAgents`, re-send to the matching NAME, else tell the user). Report to it on start (with your measured context from `${CLAUDE_PLUGIN_ROOT}/skills/context-gauge/scripts/context-gauge.sh`), on each push, on any blocker, and at the end. STOP-and-ask for anything outside §3.
+Unchanged from the phase brief: your orchestrator is the session **`{{ORCHESTRATOR_NAME}}`** (exact `ListAgents` name and reference) and no other; message it first (the handshake), apply the silence rule (fifteen minutes without answer → fresh `ListAgents`, re-send to the matching NAME, else tell the user). Report to it on start (with your measured context from `{{GAUGE}}`), on each push, on any blocker, and at the end. STOP-and-ask for anything outside §3.

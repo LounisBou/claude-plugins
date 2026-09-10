@@ -137,6 +137,25 @@ out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate2" bash "$ROOT/
 case "$out" in *"mutually exclusive"*) anchors="refused" ;; *) anchors="$out" ;; esac
 check "two anchors are refused at spawn" "refused" "$anchors"
 
+echo "== briefs are readable where they are read =="
+
+# A template becomes a file a FRESH session opens and acts on. That session's shell does
+# not carry the host's plugin variables: `${CLAUDE_PLUGIN_ROOT}` expands to nothing there,
+# so the gauge invocation every brief carries pointed at an absolute path that cannot
+# exist. Observed end to end — an agent reported it could not measure its context and
+# flagged it rather than inventing a figure, which is the right behaviour against an
+# instruction that was never runnable. Paths in a brief are absolute, filled by the
+# orchestrator writing it.
+hits=$(grep -rn 'CLAUDE_PLUGIN_ROOT' "$ROOT/templates" 2>/dev/null || true)
+check "no host variable in a brief the agent must run" "" "$hits"
+
+# And nothing that reads as a SECOND session address may sit beside the real one. The
+# phase brief carried `e.g. project-70 [a1b2c3]` — guidance meant for whoever fills the
+# template, delivered to the agent, inside the one rule whose point is that there is a
+# single named address and no guessing.
+hits=$(grep -rnE '\[[0-9a-f]{6}\]' "$ROOT/templates" 2>/dev/null || true)
+check "no example session reference in a brief" "" "$hits"
+
 echo "== design layout =="
 
 # The design document opens with a tree of the repository. Nothing kept it honest, so it
