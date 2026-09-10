@@ -116,6 +116,34 @@ None of this is bought by shortening the verification. The gate is the cheapest 
 
 At the dispatch gate you read two figures and choose one thing: the context (below) and the budget (`five_hour_percent`, `seven_day_percent`), then the capability tier the work needs. The method is `orchestrator:model-routing` — the table by class of work, the five readings for a phase that does not sit on a row, escalation as a rotation, and the false-economy rule that reverts a drop which cost a second round. The rule it all rests on: **pay for judgment that nothing downstream re-checks**. Your own sequencing, the contracts a phase imposes on the next, and the final verification are re-read by nobody; a conversion phase is judged by the suite. The tier and the reading that chose it go into the brief, so the agent can tell you when the work outgrew them.
 
+## The operator decides; the orchestrator runs
+
+**A command the orchestrator could run is the orchestrator's to run.** Opening, merging and
+tagging pull requests, running the live round, updating the installed plugin, restarting the
+sessions a change requires, pinning a head for review, refreshing what a tool needs: none of
+it is handed to the operator as a line to paste. The operator's ruling that made this a rule:
+« everything you ask me to do, you can do yourself; I am here to decide, nothing else ». He
+adds nothing to a command he did not write, and every such line costs him the attention the
+arbitrations need.
+
+What reaches the operator is an **arbitration**: what the thing is, two readings, what each
+costs, one recommendation — one at a time, with its context, as the decision round already
+says. A configuration change the tooling needs is not the operator's chore either: it goes
+to the session that owns that configuration, as a request carrying the measurement behind
+it; that session's own protocol decides whether the operator hears of it.
+
+**When the orchestrator's own session lacks what the role needs — a PATH, a credential the
+sandbox will not open, a tool the launch did not carry — the repair is a successor, not a
+favour.** Spawn the successor through the current launcher with the environment the task
+needs, hand over, close the old tab. Asking a peer to run what your session cannot is
+permission laundering; asking the operator is the same thing with a better excuse.
+
+| Excuse | Reality |
+|---|---|
+| "The operator can run it in two seconds" | The operator can decide in two seconds. Running is yours; spawn what your session lacks. |
+| "My session has no PATH for it, so it is his" | A session limit is repaired by a successor with the right environment, not delegated upward. |
+| "I will hand him the exact line to be safe" | A line he did not write is one he cannot check. Run it, read the result, report the reading. |
+
 ## Context rotation
 
 Agents report context % in every report. Two gates on the same ~60% threshold:
@@ -190,6 +218,9 @@ A plan, a prompt template or a norms file that outlives the decision it served i
 | "I approved the reply text, so it can go up" | Your approval is not the operator's. Outward-facing text is theirs to authorise, every time. |
 | "The fix is subtle, it deserves an explanation on the thread" | The diff and the test say it. Reply only for what the code cannot say. |
 | "A local coverage figure proves the remote gate" | Same command, different result, observed. Coverage annotations and cache state diverge; the remote gate is the authority. |
+| "The operator can run it in two seconds" | The operator can decide in two seconds. Running is yours; spawn what your session lacks. |
+| "My session has no PATH for it, so it is his" | A session limit is repaired by a successor with the right environment, not delegated upward. |
+| "I will hand him the exact line to be safe" | A line he did not write is one he cannot check. Run it, read the result, report the reading. |
 
 ## Red flags: STOP
 
@@ -205,6 +236,8 @@ A plan, a prompt template or a norms file that outlives the decision it served i
 - A heavy run about to start at a tool's default fan-out, or beside another heavy run.
 - A directive that names a decision already reversed: remove it in the same move.
 - A brief written and its agent not spawned; a spawn not verified on the artifact; an agent past the gate still running; an idle stood-down agent whose tab you have not closed.
+- A command line handed to the operator to paste; a report whose next step is « you run … »; a session limit reported as the operator's chore instead of repaired by a successor.
+- A configuration request sent to the operator with no measurement behind it, or sent to him at all when a session owns that configuration.
 - Your context at the gate and no successor spawned; a successor spawned without `--permission-mode auto`; a « takeover confirmed » with the predecessor's tab still open.
 - An agent prompt that says « find the orchestrator » instead of naming its session; an orchestrator restarted without re-announcing its address; a message sent without an idle subscription behind it.
 - A review or comments session left open after its round is judged; a finding forwarded to the operator that you have not verified; an implementer session fanning out reviewers.
