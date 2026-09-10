@@ -1,6 +1,6 @@
 # Hidden Pane, Chain Owner and Inherited Model Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For the orchestrator:** this plan is executed by implementer SESSIONS the orchestrator spawns (`orchestrator:iterm-agents`), one brief per task — never by subagents of the orchestrator's own session. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Three releases, one per task, stacked. 0.21.1: a session behind a maximized sibling pane is listed, found and closed, and `close` closes the session rather than the tab. 0.21.2: a chain entry names the session that wrote it, so a recycled tty no longer inherits a stranger's chain. 0.22.0: the succession hands the successor the orchestrator's current model instead of a tier.
 
@@ -488,3 +488,94 @@ git commit -m "feat(iterm-agents): let a spawn inherit the calling session's mod
 - [ ] **Step 8: Open the draft PR**
 
 Branch `inherited-model`, created with `git switch -c inherited-model chain-owner --no-track`, base `chain-owner`, title `Let a spawn inherit the calling session's model`. Body carries `Related PR:` with the bare link of Task 2's PR.
+
+---
+
+### Task 4: The orchestrator never implements through a subagent of its own (0.22.1)
+
+**Files:**
+- Modify: `skills/orchestrator/SKILL.md` — one standing rule, one red flag, one rationalization row.
+- Modify: `templates/orchestrator-succession-brief.md` — the first paragraph's sentence on the role.
+- Modify: every file under `docs/superpowers/plans/` — line 3, the execution header, this plan included.
+- Modify: `tests/run-tests.sh` — three checks next to the other command guards (after « the succession names no tier »).
+- Modify: `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` — `0.22.1`.
+- Commit (already in the worktree, written by the orchestrator): `docs/design.md` section 28, and this task in the plan file.
+
+**Interfaces:**
+- Consumes: nothing new; the rulebook's « Standing rules », « Rationalizations » and « Red flags: STOP » sections; the plans' line 3.
+- Produces: the rule text below, verbatim, at the three places named; the replacement header below, verbatim, on every plan's line 3.
+
+- [ ] **Step 1: Write the failing checks**
+
+In `tests/run-tests.sh`, immediately after the check « the succession names no tier », insert:
+
+```bash
+# A plan-writing skill's header ordered the orchestrator to execute in subagents of its own
+# session, and successors obeyed it (§28). No plan opens with it; the rulebook and the
+# succession template carry the rule instead.
+check "no plan opens with the foreign execution header" "0" "$(grep -l '^> \*\*For agentic workers' "$ROOT"/docs/superpowers/plans/*.md | wc -l | tr -d ' ')"
+check "the rulebook forbids implementing through a subagent of its own" "1" "$(grep -c 'never implements through a subagent of its own' "$ROOT/skills/orchestrator/SKILL.md")"
+check "the succession template forbids it too" "1" "$(grep -c 'not through a subagent of your own session either' "$ROOT/templates/orchestrator-succession-brief.md")"
+```
+
+- [ ] **Step 2: Run them to verify they fail**
+
+Run: `./tests/run-tests.sh 2>&1 | grep -E 'foreign execution header|subagent of|passed'`
+Expected: three FAIL lines; `194 passed, 3 failed`.
+
+- [ ] **Step 3: The rulebook**
+
+In `skills/orchestrator/SKILL.md`, « Standing rules », immediately after the bullet that begins `- **Implementer agents never dispatch writing or reviewing delegates.**`, insert:
+
+```markdown
+- **The orchestrator never implements through a subagent of its own either.** Not the host's agent tool, not a plan-execution skill (`superpowers:subagent-driven-development`, `superpowers:executing-plans`): a subagent's diff is the orchestrator's own diff, and its reviewer would be its writer. Implementers are sessions spawned through `orchestrator:iterm-agents`, one brief per phase. A plan written with a plan-writing skill opens with a header ordering exactly that (« For agentic workers: REQUIRED SUB-SKILL … »): it is that template's boilerplate, not a directive to an orchestrator — replace it with the orchestrator's header when you write the plan, ignore it when you read one. Observed: successors told « read the plan » executed it in subagents of their own session. Read-only search subagents stay allowed, as for implementers.
+```
+
+In « Rationalizations », immediately after the row `| "I'll just implement this small fix myself" | … |`, insert:
+
+```markdown
+| "The plan's header says REQUIRED SUB-SKILL: subagent-driven-development" | A template's boilerplate is not the operator's directive. Spawn a session; replace the header. |
+```
+
+In « Red flags: STOP », immediately after `- You are about to edit implementation code: dispatch instead.`, insert:
+
+```markdown
+- You are about to run implementation in a subagent of your own session, or a plan header told you to: spawn a session instead.
+```
+
+Before each edit, `grep -n` `tests/run-tests.sh` for the literal on the neighbouring lines; re-pin any guard that pinned one.
+
+- [ ] **Step 4: The succession template**
+
+In `templates/orchestrator-succession-brief.md`, first paragraph, replace the sentence `You orchestrate; you never implement.` with `You orchestrate; you never implement — not through a subagent of your own session either, whatever a plan's header says.` Grep `tests/run-tests.sh` for the old sentence first; re-pin any guard.
+
+- [ ] **Step 5: The plans**
+
+On every file under `docs/superpowers/plans/`, this plan included, replace line 3 — the line that opens with `> **For agentic workers:**` — with, verbatim:
+
+```markdown
+> **For the orchestrator:** this plan is executed by implementer SESSIONS the orchestrator spawns (`orchestrator:iterm-agents`), one brief per task — never by subagents of the orchestrator's own session. Steps use checkbox (`- [ ]`) syntax for tracking.
+```
+
+Assert the occurrence count before replacing: exactly one line per file, and `grep -c '^> \*\*For agentic workers' docs/superpowers/plans/*.md` reads 0 after. Archived plans under `docs/archive/` are not touched.
+
+- [ ] **Step 6: Run the suite**
+
+Run: `./tests/run-tests.sh 2>&1 | tail -1`
+Expected: `197 passed, 0 failed`.
+
+- [ ] **Step 7: Version and commits**
+
+Set `0.22.1` in `.claude-plugin/plugin.json` and both fields of `.claude-plugin/marketplace.json`. Re-run the suite → `197 passed, 0 failed`.
+
+```bash
+git add docs/design.md docs/superpowers/plans/2026-09-10-hidden-pane-chain-owner-inherited-model.md
+git commit -m "docs(design): the orchestrator never implements through a subagent of its own" -m "Running orchestrators ordered their successors to execute the plan in subagents of their own session, obeying a plan-writing skill's header that the rulebook never contradicted. Section 28 names the mechanism and the rule."
+
+git add skills/orchestrator/SKILL.md templates/orchestrator-succession-brief.md docs/superpowers/plans tests/run-tests.sh .claude-plugin/plugin.json .claude-plugin/marketplace.json
+git commit -m "fix(orchestrator): forbid implementing through a subagent of the orchestrator's own session" -m "A subagent's diff is the orchestrator's own diff and its reviewer would be its writer. The rulebook names the rule, the red flag and the rationalization; the succession template carries it; every plan opens with the orchestrator's header instead of the plan-writing skill's, which ordered the opposite."
+```
+
+- [ ] **Step 8: Open the draft PR**
+
+Branch `no-subagent-implementation`, created with `git switch -c no-subagent-implementation main --no-track`, base `main`, title `The orchestrator never implements through a subagent of its own`. No `Related PR:` section.
