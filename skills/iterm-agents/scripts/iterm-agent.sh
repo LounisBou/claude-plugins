@@ -89,7 +89,13 @@ resolve_tier() {
     eval "value=\${$var:-}"
     if [ -z "$value" ] && [ -f "$MODELS_MAP" ]; then
         command -v jq >/dev/null 2>&1 || die "resolve-tier: jq is required to read $MODELS_MAP"
-        value=$(jq -r --arg t "$tier" '.[$t] // ""' "$MODELS_MAP" 2>/dev/null || true)
+        # A map that does not parse is NOT an unbound tier. Reading the two alike sends
+        # every dispatch to the host's default while the caller reports the tier it
+        # believes it asked for: one missing comma, and the whole routing is advisory
+        # without a word. `jq -e` separates them — a valid object binding nothing exits 0
+        # with an empty value, anything unreadable exits non-zero.
+        value=$(jq -er --arg t "$tier" '.[$t] // ""' "$MODELS_MAP" 2>/dev/null) || \
+            die "resolve-tier: $MODELS_MAP does not read as a tier map (invalid JSON, empty, or not an object)"
         [ "$value" = "null" ] && value=""
     fi
     printf '%s\n' "$value"

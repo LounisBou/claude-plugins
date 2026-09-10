@@ -198,6 +198,31 @@ check_status "an unknown tier exits 1" 1 \
   env ORCHESTRATOR_MODELS_MAP="$MAP" bash "$AGENT" resolve-tier deepest
 check "the environment overrides the map" "c-model" \
   "$(env ORCHESTRATOR_MODELS_MAP="$MAP" ORCHESTRATOR_TIER_DEEP=c-model bash "$AGENT" resolve-tier deep)"
+# A map the operator wrote and jq cannot read is NOT an unbound tier. Treating the two
+# alike routes every dispatch to the host default while the orchestrator reports the tier
+# it believes it asked for — a missing comma, and the whole routing is quietly advisory.
+printf '%s' '{"deep":"a-model"' > "$WORK/broken.json"
+check_status "a map that does not parse is refused" 1 \
+  env ORCHESTRATOR_MODELS_MAP="$WORK/broken.json" bash "$AGENT" resolve-tier deep
+: > "$WORK/empty-map.json"
+check_status "an empty map file is refused" 1 \
+  env ORCHESTRATOR_MODELS_MAP="$WORK/empty-map.json" bash "$AGENT" resolve-tier deep
+printf '%s' '["deep","a-model"]' > "$WORK/array-map.json"
+check_status "a map that is not an object is refused" 1 \
+  env ORCHESTRATOR_MODELS_MAP="$WORK/array-map.json" bash "$AGENT" resolve-tier deep
+# ...while a map that parses and simply binds nothing stays the ordinary "let the host
+# choose" case, which is what the installer writes on a fresh machine.
+printf '%s' '{}' > "$WORK/nobindings.json"
+check_status "a map with no bindings is not an error" 0 \
+  env ORCHESTRATOR_MODELS_MAP="$WORK/nobindings.json" bash "$AGENT" resolve-tier deep
+check "a map with no bindings resolves to nothing" "" \
+  "$(env ORCHESTRATOR_MODELS_MAP="$WORK/nobindings.json" bash "$AGENT" resolve-tier deep)"
+# And the refusal has to stop the launch, not just print: same shape as the rotation that
+# opened a tab for a tier that did not exist.
+check_status "a broken map stops the spawn" 1 \
+  env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$WORK/broken.json" \
+  bash "$AGENT" spawn --dir "$WORK" --tier deep
+
 check "a missing map is an all-empty map" "" \
   "$(env ORCHESTRATOR_MODELS_MAP="$WORK/absent.json" bash "$AGENT" resolve-tier standard)"
 check_status "a missing map is not an error" 0 \
