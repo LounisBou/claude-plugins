@@ -3,7 +3,7 @@
 # implementation beside it, which drives iTerm2 through the app's own API.
 #
 #   iterm-agent.sh list
-#   iterm-agent.sh spawn --dir <path> [--tier deep|standard|light | --model <id>]
+#   iterm-agent.sh spawn --dir <path> [--tier deep|standard|light | --model <id> | --inherit-model]
 #                        [--permission-mode auto] [--title <t>]
 #                        [--prompt <text> | --prompt-file <path>]
 #                        [--left-of <tty> | --right-of <tty> | --right-of self] [--no-verify]

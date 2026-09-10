@@ -96,6 +96,24 @@ def resolve_tier(tier):
     return "" if value is None else str(value)
 
 
+def inherited_model():
+    """The model the CALLING session runs on now, from the context tap's record — not the
+    launch line, which the operator may have moved away from. A succession must not guess
+    a model and the operator forbids a default (§27)."""
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    path = os.path.join(STATE_DIR, "ctx", sid + ".json") if sid else "<CLAUDE_CODE_SESSION_ID unset>"
+    model = ""
+    try:
+        with open(path) as fh:
+            model = json.load(fh).get("model_id") or ""
+    except Exception:
+        pass
+    if not model:
+        die("spawn: --inherit-model: no model recorded for this session (%s) — the context "
+            "tap must be installed and rendering: /orchestrator:install, then restart" % path)
+    return model
+
+
 # --- ps, which the API does not answer -------------------------------------------
 
 def cli_pid_on_tty(tty):
@@ -437,6 +455,7 @@ def cmd_spawn(argv):
     p.add_argument("--dir")
     p.add_argument("--model", default="")
     p.add_argument("--tier", default="")
+    p.add_argument("--inherit-model", dest="inherit", action="store_true")
     p.add_argument("--permission-mode", dest="mode", default="auto")
     p.add_argument("--title", default="agent")
     p.add_argument("--prompt", default="")
@@ -458,11 +477,15 @@ def cmd_spawn(argv):
         die("spawn: --prompt and --prompt-file are exclusive")
     if args.tier and args.model:
         die("spawn: --tier and --model are mutually exclusive")
+    if args.inherit and (args.tier or args.model):
+        die("spawn: --inherit-model is exclusive with --tier and --model")
     model = args.model
     if args.tier:
         model = resolve_tier(args.tier)
         if model is None:
             die("spawn: cannot resolve tier: %s" % args.tier)
+    if args.inherit:
+        model = inherited_model()
     # The anchor first, before a prompt file is written or a trust record changed: an
     # anchor that is not there is a refusal, and a refusal must leave nothing behind.
     side = "right" if args.right_of else "left"

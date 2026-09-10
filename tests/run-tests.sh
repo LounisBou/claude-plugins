@@ -104,6 +104,8 @@ check "the succession brief closes the predecessor's tab" "1" "$(grep -c 'CLOSE 
 check "the decide command asks one question per message" "1" "$(grep -c 'one question per message' "$ROOT/commands/decide.md")"
 check "the decide command re-presents an interrupted question in full" "1" "$(grep -c 'IN FULL when you return' "$ROOT/commands/decide.md")"
 check "the decide command records before it moves on" "1" "$(grep -c 'Present the next question IN FULL (step 2). Not before.' "$ROOT/commands/decide.md")"
+check "the succession inherits the orchestrator's model" "1" "$(grep -c -- '--inherit-model' "$ROOT/commands/succeed.md")"
+check "the succession names no tier" "0" "$(grep -c -- '--tier deep' "$ROOT/commands/succeed.md")"
 
 # Review rounds run in sessions spawned for the round and closed when it is judged:
 # the rulebook names the mode, both briefs exist, and neither lets its session push.
@@ -563,6 +565,14 @@ check "an explicit model is typed as given" "1" "$(tcmd --model b-model | grep -
 check_status "--tier and --model together are refused" 1 \
   env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
   bash "$AGENT" spawn --dir "$WORK" --tier deep --model b-model
+mkdir -p "$ISTATE/ctx"
+printf '{"session_id":"s-inh","model_id":"a-model","updated_epoch":%s}\n' "$(date +%s)" > "$ISTATE/ctx/s-inh.json"
+check "inherit-model types the calling session's model" "1" \
+  "$(CLAUDE_CODE_SESSION_ID=s-inh ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --inherit-model 2>&1 | sed -n 's/^launch=//p' | grep -c -- '--model a-model')"
+check "inherit-model with no tap file refuses and names the installer" "1" \
+  "$(CLAUDE_CODE_SESSION_ID=s-none ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --inherit-model 2>&1 | grep -c 'orchestrator:install')"
+check "inherit-model is exclusive with a tier" "1" \
+  "$(CLAUDE_CODE_SESSION_ID=s-inh ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --inherit-model --tier deep 2>&1 | grep -c 'exclusive')"
 check_status "an unknown tier is refused at spawn" 1 \
   env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
   bash "$AGENT" spawn --dir "$WORK" --tier deepest
@@ -640,12 +650,17 @@ STATE="$WORK/state"
 out=$(printf '%s' "$PAYLOAD" | ORCHESTRATOR_STATE_DIR="$STATE" bash "$TAP")
 check "no wrapped command: one-line render" "ctx: 36% │ 5h: 3% │ 7d: 1%" "$out"
 check "file written with every field" \
-  '{"session_id":"s-1","context_percent":36.4,"context_used":91000,"context_total":250000,"five_hour_percent":3,"five_hour_resets_at":1788560000,"seven_day_percent":1,"seven_day_resets_at":1788900000,"transcript_path":"/t/s-1.jsonl"}' \
+  '{"session_id":"s-1","context_percent":36.4,"context_used":91000,"context_total":250000,"five_hour_percent":3,"five_hour_resets_at":1788560000,"seven_day_percent":1,"seven_day_resets_at":1788900000,"transcript_path":"/t/s-1.jsonl","model_id":null}' \
   "$(jq -c 'del(.updated_epoch)' "$STATE/ctx/s-1.json")"
 out=$(printf '{"session_id":"s-early","context_window":{"used_percentage":0}}' | ORCHESTRATOR_STATE_DIR="$STATE" bash "$TAP")
 check "early payload without usage or transcript: nulls, no crash" \
-  '{"session_id":"s-early","context_percent":0,"context_used":null,"context_total":null,"five_hour_percent":null,"five_hour_resets_at":null,"seven_day_percent":null,"seven_day_resets_at":null,"transcript_path":null}' \
+  '{"session_id":"s-early","context_percent":0,"context_used":null,"context_total":null,"five_hour_percent":null,"five_hour_resets_at":null,"seven_day_percent":null,"seven_day_resets_at":null,"transcript_path":null,"model_id":null}' \
   "$(jq -c 'del(.updated_epoch)' "$STATE/ctx/s-early.json")"
+# The model in use travels with the context figures: a succession hands it to the
+# successor, and the launch line is not it — the operator may have switched since (§27).
+printf '{"session_id":"s-m","model":{"id":"a-model","display_name":"A"},"context_window":{"used_percentage":10}}' | ORCHESTRATOR_STATE_DIR="$STATE" bash "$TAP" >/dev/null
+check "the tap records the model in use" "a-model" "$(jq -r '.model_id' "$STATE/ctx/s-m.json")"
+rm -f "$STATE/ctx/s-m.json"
 age=$(( $(date +%s) - $(jq '.updated_epoch' "$STATE/ctx/s-1.json") ))
 check "updated_epoch is now" "recent" "$([ "$age" -lt 5 ] && echo recent || echo "$age s old")"
 
