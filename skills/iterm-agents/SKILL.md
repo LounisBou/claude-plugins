@@ -7,7 +7,7 @@ description: Use when a session on macOS must manage iTerm2 tabs running agent s
 
 ## Overview
 
-`${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh` drives iTerm2 via AppleScript so an orchestrator can spawn, verify, close, move and rotate implementer sessions without the user touching the keyboard. Closing a tab KILLS its session — treat close as destructive and follow the safety order below. **Spawning is the orchestrator's act, not the user's**: the brief is written, the session is spawned in the same move, and the spawn is verified on the process, never on the script's word.
+`${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh` drives iTerm2 through the app's own API so an orchestrator can spawn, verify, close, move and rotate implementer sessions without the user touching the keyboard. The launch is HANDED to the app, never typed into a shell. Closing a tab KILLS its session — treat close as destructive and follow the safety order below. **Spawning is the orchestrator's act, not the user's**: the brief is written, the session is spawned in the same move, and the spawn is verified on the process, never on the script's word.
 
 ## Quick reference
 
@@ -19,11 +19,10 @@ $SCRIPT list
 
 $SCRIPT spawn --dir <workdir> [--tier deep|standard|light] [--permission-mode auto] \
     --title <t> --prompt "Read and execute <brief-path>. Your orchestrator is <name [ref]>." [--right-of self]
-    # writes the prompt to a file under the plugin's state directory, types a SHORT
-    # command that reads it as the host CLI's initial-prompt argument, WAITS until
-    # the host CLI is running on the new tty (30 s, ORCHESTRATOR_SPAWN_TIMEOUT), and
-    # prints the tty on its last line. Fails loudly, with the tab's last lines, when
-    # the command did not run. `--prompt-file <path>` uses a file you already wrote.
+    # writes the prompt to a file under the plugin's state directory, writes the launch
+    # to a second file, asks the app to run it in a new tab AT AN INDEX, WAITS until the
+    # host CLI is running on the new tty (30 s, ORCHESTRATOR_SPAWN_TIMEOUT), and prints
+    # the tty on its last line. `--prompt-file <path>` uses a file you already wrote.
     # --tier resolves through the operator's map (<state dir>/models.json, or
     # ORCHESTRATOR_TIER_DEEP/_STANDARD/_LIGHT). An unbound tier and no --tier at all both
     # type no model argument: the host chooses. `resolve-tier <tier>` prints the binding.
@@ -43,7 +42,7 @@ $SCRIPT rotate --dir <workdir> --old-tty <tty> [--expect-title <s>] \
     # spawns the replacement FIRST and verifies it is running, then closes the old tab
 ```
 
-`ORCHESTRATOR_DRY_RUN=1` makes `spawn` print the command it would type, its AppleScript form and the prompt file, touching no terminal — the test suite's door, and yours when a prompt looks wrong.
+`ORCHESTRATOR_DRY_RUN=1` makes `spawn`, `close` and `move` print what they would ask the app for — the launch, the prompt file, the anchor — touching no terminal. It is the test suite's door, and yours when a launch looks wrong; `rotate` walks its whole order through it.
 
 ## Tab layout convention
 
@@ -63,7 +62,7 @@ So **always name an anchor**, and name the one you actually know:
 1. The brief exists at a path the fresh session can open on this machine.
 2. `spawn` with the one-line prompt naming the brief's path and the orchestrator's exact `ListAgents` name and reference — nothing the brief already says — and with `--right-of self`, so the tab lands beside yours rather than at the end of a window you do not own.
 3. Read the result: the script has already waited for the host CLI on the new tty, but the artifact decides — `list` (the tab), `verify --tty` (the process), `ListAgents` (the peer session, a few seconds later).
-4. **No startup dialog may stand between the launch and the brief.** The typed command pre-approves the project's MCP servers (`--settings '{"enableAllProjectMcpServers":true}'`), because a fresh session parked on « enable these MCP servers? » never reads its brief and nobody sits at that keyboard. Any other startup question the launch cannot pre-answer (a trust prompt, a migration notice) is read in the tab's contents and answered by the orchestrator through the tab — a session stuck on a dialog is not launched, whatever the script printed.
+4. **No startup dialog may stand between the launch and the brief.** The launch pre-approves the project's MCP servers (`--settings '{"enableAllProjectMcpServers":true}'`), because a fresh session parked on « enable these MCP servers? » never reads its brief and nobody sits at that keyboard. Any other startup question the launch cannot pre-answer (a trust prompt, a migration notice) is read in the tab's contents and answered by the orchestrator through the tab — a session stuck on a dialog is not launched, whatever the script printed.
 5. Wait for the handshake. An agent that has not messaged within minutes is inspected, not waited for: `verify`, then the tab's contents (`osascript` … `contents of session`).
 
 ## Tab hygiene
@@ -79,30 +78,46 @@ So **always name an anchor**, and name the one you actually know:
 
 ## Caveats (all observed)
 
-- **A prompt typed by AppleScript is truncated.** The first launch this tooling made with a long inline prompt left the tab on a half-typed command line that never ran, while the script printed a tty and success. The prompt goes to a file now and the typed line stays short whatever its length; the verification is what turns « printed a tty » into « the agent is running ».
-- **A fresh tab's shell may be ASKING something when the command arrives.** oh-my-zsh's « Would you
-  like to update? [Y/n] » took the first keystroke of a typed `cd …`, the rest ran as `d …`, and the
-  CLI never started — twice, on two consecutive launches, caught both times by the verification. `spawn`
-  now reads the tab before typing (`prompt-state`: `question` / `ready` / `busy`), answers a waiting
-  yes/no with « n », types once the shell is at a prompt, and re-types ONCE if the CLI has not started
-  while the shell sits idle. `ORCHESTRATOR_SHELL_TIMEOUT` (8 s) bounds the wait.
-- **`sed` dies on a non-ASCII byte under a C locale** (« RE error: illegal byte sequence ») — an em dash in a title aborted a launch. Quoting is done with the shell's own substitutions now, and a test feeds the script « — » and « é » under `LC_ALL=C`.
 - **A tier nobody bound is not an error.** `spawn` then types no model argument and the host
   applies its default, so a half-filled map never silently routes deep work to a cheap model —
   it routes it to whatever the operator's host already runs. Read the map with `resolve-tier`
   before dispatching a wave, not after it comes back wrong.
-- **Dynamic titles override manual ones**: the shell and the session rewrite the tab title, so a `--title` set at spawn is transient. For `--expect-title`, match the title the session displays (it reflects its current task or prompt), read from `list` seconds before closing.
-- **tty numbers are recycled**: a freshly closed `/dev/ttys000` can be reassigned to the next spawned tab. Never reuse a stored tty across a close — re-`list` every time.
-- **First run needs macOS Automation approval** ("… wants to control iTerm2") — one user click, once. `move` additionally needs Accessibility access for the process running the script, because it drives the Window > Tab > Move Tab menu through System Events.
-- **`move` needs iTerm2 frontmost**: the AppleScript dictionary cannot reorder tabs, so the menu is clicked while iTerm2 is the active app. The script activates iTerm2, moves, then re-activates the previously frontmost app — expect a sub-second focus flicker per move.
-- The spawned session takes a few seconds to appear in `ListAgents`; `list` shows the tab immediately, `verify` the process as soon as the CLI has started.
-- **Verify a close with `list` + `ps`, not with the script's exit code**: the artifact, not the message, says whether the session is dead.
-- Prompt files accumulate under the state directory's `prompts/`; they are small and they are the record of what each session was launched with. Delete a wave's when its review is closed, like any other artifact you produced.
+- **The tab gets no login shell, so it gets no PATH of yours.** The app runs the launch as
+  the session's program. The first live spawn through this path died instantly and reported
+  a tty belonging to nothing, because the CLI lives in a package manager's bin directory that
+  a bare default PATH does not contain. The launch names the CLI by ABSOLUTE path, resolved
+  from the orchestrator's own environment.
+- **The app splits the command into words itself.** A compound command handed over raw is run
+  by no shell at all. The launch goes to a FILE and the app is asked to run `/bin/sh <file>`:
+  a path has no quoting, and quoting for someone else's tokenizer is the losing game the
+  typed version already played.
+- **A window's tab list is a cached copy.** Read a reorder back through the object you already
+  held and it looks like a reorder that never happened — or reports the position the tab used
+  to have. Re-fetch the app after any mutation.
+- **Dynamic titles override manual ones**: the shell and the session rewrite the tab title, so a
+  `--title` set at spawn is transient. For `--expect-title`, match the title the session displays
+  (it reflects its current task or prompt), read from `list` seconds before closing.
+- **tty numbers are recycled**: a freshly closed `/dev/ttys000` can be reassigned to the next
+  spawned tab. Never reuse a stored tty across a close — re-`list` every time.
+- **The app's API must be enabled** (Preferences > General > Magic > Enable Python API), and the
+  first connection asks macOS for permission once. `move` needs no Accessibility grant any more,
+  does not bring the app to the front, and flickers no focus: the menu-driven version did all three.
+- **The environment is the installer's, not yours.** `/orchestrator:install` builds it under the
+  state directory; recent macOS refuses to install into a package-managed interpreter, and a
+  plugin has no business writing into one it did not create. Without it the tooling refuses to
+  run and says how to build it. `ORCHESTRATOR_PYTHON` overrides the choice.
+- The spawned session takes a few seconds to appear in `ListAgents`; `list` shows the tab
+  immediately, `verify` the process as soon as the CLI has started.
+- **Verify a close with `list` + `ps`, not with the exit code**: the artifact, not the message,
+  says whether the session is dead. A killed session leaves its process visible for a second or two.
+- Prompt and launch files accumulate under the state directory's `prompts/`; they are small and
+  they are the record of what each session was launched with. Delete a wave's when its review is
+  closed, like any other artifact you produced.
 
 ## Common mistakes
 
 - Handing the user a brief path and an invocation to paste: the orchestrator spawns.
-- Trusting the printed tty: a command can fail to run; `verify`, `list`, `ListAgents`, then the handshake.
+- Trusting the printed tty: the process on it is the fact; `verify`, `list`, `ListAgents`, then the handshake.
 - Closing by title alone or by tab position: only `--tty` + `--expect-title` is unambiguous.
 - Spawning without an anchor and assuming the tab landed beside you: it lands at the end of the window. Pass `--right-of self`.
 - Rotating before the old agent acknowledged stand-down: risks killing an uncommitted write.

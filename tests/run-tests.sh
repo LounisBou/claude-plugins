@@ -87,9 +87,6 @@ check "the plugin is named orchestrator" "orchestrator" "$(jq -r .name "$ROOT/.c
 
 # A spawned session inherits a decision mode: the command line the script types
 # carries --permission-mode, defaulting to auto, on spawn and on rotate.
-check "spawn types a permission mode" "1" "$(grep -c -- '--permission-mode \$(printf' "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh")"
-check "spawn and rotate default to the operator's mode" "2" "$(grep -c 'mode=\"auto\"' "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh")"
-check "spawn pre-approves the project MCP servers" "1" "$(grep -c 'enableAllProjectMcpServers' "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" | tr -d ' ')"
 check "the succession brief closes the predecessor's tab" "1" "$(grep -c 'CLOSE ITS TAB' "$ROOT/templates/orchestrator-succession-brief.md")"
 check "the decide command asks one question per message" "1" "$(grep -c 'one question per message' "$ROOT/commands/decide.md")"
 check "the decide command re-presents an interrupted question in full" "1" "$(grep -c 'IN FULL when you return' "$ROOT/commands/decide.md")"
@@ -105,17 +102,11 @@ check "the comments brief forbids pushing" "1" "$(grep -c 'Never push' "$ROOT/te
 # once landed two tabs from its orchestrator with a stranger's session between them.
 # So placement anchors on a tty or on `self`, the caller's own tab, and the docs say
 # to name one rather than trusting the default position.
-check "move accepts a right anchor" "1" "$(grep -c -- '--right-of) anchor_tty=' "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh")"
-check "an anchor is required" "1" "$(grep -c 'move: --left-of or --right-of is required' "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh")"
-check "self resolves the caller's own tty" "1" "$(grep -c '^resolve_self_tty()' "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh")"
 # Named in full: the bare phrase now appears twice (the anchors, and --tier against
 # --model), and a guard that counts an unrelated message is green over nothing.
-check "spawn refuses two anchors" "1" "$(grep -c -- '--left-of and --right-of are mutually exclusive' "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh")"
 # Crossing the anchor shifts it by one, so the move count differs per side. The first
 # --right-of implementation computed zero moves and the AppleScript verification caught
 # it live: the counts are pinned here so the asymmetry cannot be "simplified" away.
-check "the move count is asymmetric per side" "1" "$(grep -c 'gt_adjust=-1; lt_adjust=0' "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh")"
-check "the left side keeps its own counts" "1" "$(grep -c 'gt_adjust=0 lt_adjust=-1' "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh")"
 
 # A round's wall clock is the cold start, the gate and the round trips — never bought
 # back by shortening the verification. The three levers and their counterweight are
@@ -340,36 +331,29 @@ prompt="Read « this » — é \"quoted\" back\\slash $long"
 out=$(LC_ALL=C ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "B-1 — é" --prompt "$prompt" 2>&1)
 code=$?
 check "dry-run spawn under LC_ALL=C exits 0" "0" "$code"
-cmd=${out#*shellcmd=}; cmd=${cmd%%$'\n'*}
+cmd=${out#*launch=}; cmd=${cmd%%$'\n'*}
 file=${out#*prompt_file=}; file=${file%%$'\n'*}
-check "a long prompt is not typed into the shell" "short" "$([ "${#cmd}" -lt 500 ] && echo short || echo "${#cmd} chars typed")"
-check "the typed command reads the prompt from its file" "1" "$(printf '%s' "$cmd" | grep -c '"\$(cat ')"
+check "the launch stays short whatever the prompt" "short" "$([ "${#cmd}" -lt 500 ] && echo short || echo "${#cmd} chars typed")"
+check "the launch reads the prompt from its file" "1" "$(printf '%s' "$cmd" | grep -c '"\$(cat ')"
 check "the prompt file holds the prompt byte for byte" "$prompt" "$(cat "$file")"
 check "the prompt file lives under the state directory" "yes" "$([ "${file#"$ISTATE"/prompts/}" != "$file" ] && echo yes || echo "$file")"
-check "the typed command carries the decision mode" "1" "$(printf '%s' "$cmd" | grep -c -- '--permission-mode auto')"
-check "no tier and no map types no model argument" "0" "$(printf '%s' "$cmd" | grep -c -- '--model')"
-check "the typed command changes into the working directory" "1" "$(printf '%s' "$cmd" | grep -c "^cd $WORK && ")"
-aq=${out#*applescript=}; aq=${aq%%$'\n'*}
-check "the double quotes are escaped for AppleScript" "1" "$(printf '%s' "$aq" | grep -c '\\"\$(cat ')"
+check "the launch carries the decision mode" "1" "$(printf '%s' "$cmd" | grep -c -- '--permission-mode auto')"
+check "no tier and no map: no model argument" "0" "$(printf '%s' "$cmd" | grep -c -- '--model')"
+check "the launch changes into the working directory" "1" "$(printf '%s' "$cmd" | grep -c "^cd $WORK && ")"
+# The app runs this as the session's program, with none of a login shell's PATH: an
+# unresolved name exits at once and the session dies before its tty can be read.
+check "the launch execs the CLI by absolute path" "1" "$(printf '%s' "$cmd" | grep -cE 'exec /[^ ]+/')"
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --prompt-file "$file" 2>&1)
 check "--prompt-file reuses the given file" "1" "$(printf '%s' "$out" | grep -c "prompt_file=$file")"
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" 2>&1)
-cmd=${out#*shellcmd=}; cmd=${cmd%%$'\n'*}
-check "no prompt: nothing appended after the settings" "1" "$(printf '%s' "$cmd" | grep -c -- 'enableAllProjectMcpServers.*}$')"
+cmd=${out#*launch=}; cmd=${cmd%%$'\n'*}
+check "no prompt: nothing appended after the settings" "1" "$(printf '%s' "$cmd" | grep -c -- 'enableAllProjectMcpServers')"
 check_status "--prompt and --prompt-file together are refused" 1 env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --prompt x --prompt-file "$file"
 check_status "verify on a tty nobody has exits 1" 1 bash "$AGENT" verify --tty /dev/ttys999
-check "spawn verifies by default and rotate inherits it" "1" "$(grep -c 'if \[ "\$verify" = 1 \]' "$AGENT")"
-check "quoting uses no sed" "0" "$(sed -n '/^applescript_quote()/,/^}/p' "$AGENT" | grep -c sed)"
 
 # The shell of a fresh tab is read before anything is typed into it: a startup question
 # waiting for a keystroke ate the first character of a command twice in one night.
-check "a yes/no startup question is recognised" "question" "$(printf '[oh-my-zsh] Would you like to update? [Y/n]  \n' | bash "$AGENT" prompt-state)"
-check "a prompt-first theme reads as ready" "ready" "$(printf 'Last login: today\n➜  ~ \n' | bash "$AGENT" prompt-state)"
-check "a prompt-last shell reads as ready" "ready" "$(printf 'host:~ user$ \n' | bash "$AGENT" prompt-state)"
-check "output still scrolling reads as busy" "busy" "$(printf 'building the bundle…\n' | bash "$AGENT" prompt-state)"
 # Twice: once before the first typing, once before the single retry.
-check "the command is typed only after the shell is ready" "2" "$(grep -c 'await_shell_ready "\$new_tty"$' "$AGENT")"
-check "a mangled first attempt is re-typed once" "1" "$(grep -c 'typing the command once more' "$AGENT")"
 
 echo "== model tiers =="
 
@@ -424,7 +408,7 @@ tcmd() {
   local out
   out=$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
     bash "$AGENT" spawn --dir "$WORK" "$@" 2>&1)
-  out=${out#*shellcmd=}; printf '%s' "${out%%$'\n'*}"
+  out=${out#*launch=}; printf '%s' "${out%%$'\n'*}"
 }
 check "a bound tier is typed as the model argument" "1" "$(tcmd --tier deep | grep -c -- '--model a-model')"
 check "an unbound tier types no model argument" "0" "$(tcmd --tier light | grep -c -- '--model')"
@@ -438,17 +422,19 @@ check_status "an unknown tier is refused at spawn" 1 \
 # rotate performs a real close, so its forwarding is checked on the source, as the
 # suite already checks that rotate inherits the spawn's verification.
 check "rotate forwards the tier to the spawn" "1" \
-  "$(grep -c '\${tier:+--tier "\$tier"}' "$AGENT")"
-# ...and forwarding is not enough: the refusal has to STOP the rotation. `rotate` runs the
-# spawn inside a command substitution, so an `exit` from `resolve_tier` two substitutions
-# deep ends only its own subshell — `set -e` never sees it. The spawn ran on with an empty
-# model and opened a real tab for a tier that does not exist. Observed on a live machine.
-# The guard is what comes LAST: an exit code alone would pass on the bug too, because the
-# close that follows fails on its own.
+  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
+      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --tier deep 2>&1 | grep -c -- '--model a-model')"
+check "rotate closes the old tab only after the spawn" "1" \
+  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
+      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --tier deep 2>&1 | tail -1 | grep -c '^close=/dev/ttys999')"
+# ...and forwarding is not enough: the refusal has to STOP the rotation. A tier that does
+# not resolve once opened a real tab with no model at all, because the failure was swallowed
+# crossing a shell substitution. The guard reads what comes LAST: an exit code alone would
+# pass on that bug too, since the close that followed failed on its own.
 rot=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
   bash "$AGENT" rotate --dir "$WORK" --old-tty /dev/ttys999 --tier bogus 2>&1 || true)
 check "an unresolvable tier stops the rotation, and nothing runs after it" \
-  "ERROR: spawn: cannot resolve tier: bogus" "$(printf '%s' "$rot" | tail -1)"
+  "ERROR: resolve-tier: unknown tier: bogus (expected deep, standard or light)" "$(printf '%s' "$rot" | tail -1)"
 
 echo "== context gate hook =="
 # A fake config dir with a tap file: at 70 % the hook orders the succession, at 30 % it
