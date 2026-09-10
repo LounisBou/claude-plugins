@@ -71,6 +71,11 @@ The file is `${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/ctx/<session-id
  "transcript_path": "/path/to/session.jsonl", "updated_epoch": 1788553115}
 ```
 
+The sweep takes both kinds of file the plugin leaves in `ctx/`: the context files, and the
+gate's one-shot markers. Taking only the first meant it pruned half of what it makes, and
+on the machine where this was found the markers outnumbered the files they sat beside —
+twenty-six against nineteen, the oldest four days old.
+
 `context_used` is the sum of `current_usage`'s input, cache-creation and cache-read tokens; `context_total` is `context_window_size`; `transcript_path` lets the gauge open the transcript without guessing its location. One `jq` call parses the payload; missing fields become `null`. The file is written to a temporary name then renamed, so a reader never sees a partial file. Invalid or empty stdin writes nothing and still runs the wrapped command. On the first render of a session (no file yet) the tap deletes files older than one day, so ended sessions do not accumulate.
 
 ### 3.3 The gauge
