@@ -30,6 +30,10 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light] [--permission-mode au
 $SCRIPT verify --tty /dev/ttysNNN
     # succeeds with the pid when the host CLI runs on that tty; exit 1 otherwise
 
+$SCRIPT screen --tty /dev/ttysNNN [--lines 40]
+    # what that tab is showing right now — how you inspect an agent that has not
+    # shaken hands, instead of waiting for one that is stopped on a question
+
 $SCRIPT close --tty /dev/ttysNNN --expect-title <substring>
     # tty-exact; refuses if the session's current title does not contain the substring
 
@@ -62,7 +66,7 @@ So **always name an anchor**, and name the one you actually know:
 1. The brief exists at a path the fresh session can open on this machine.
 2. `spawn` with the one-line prompt naming the brief's path and the orchestrator's exact `ListAgents` name and reference — nothing the brief already says — and with `--right-of self`, so the tab lands beside yours rather than at the end of a window you do not own.
 3. Read the result: the script has already waited for the host CLI on the new tty, but the artifact decides — `list` (the tab), `verify --tty` (the process), `ListAgents` (the peer session, a few seconds later).
-4. **No startup dialog may stand between the launch and the brief.** The launch pre-approves the project's MCP servers (`--settings '{"enableAllProjectMcpServers":true}'`), because a fresh session parked on « enable these MCP servers? » never reads its brief and nobody sits at that keyboard. Any other startup question the launch cannot pre-answer (a trust prompt, a migration notice) is read in the tab's contents and answered by the orchestrator through the tab — a session stuck on a dialog is not launched, whatever the script printed.
+4. **No startup dialog may stand between the launch and the brief.** Two are known: the workspace-trust question, refused before the tab exists unless `--trust` says the directory is one you prepared; and the MCP-server question. The launch pre-approves the project's MCP servers (`--settings '{"enableAllProjectMcpServers":true}'`), because a fresh session parked on « enable these MCP servers? » never reads its brief and nobody sits at that keyboard. Any other startup question the launch cannot pre-answer (a trust prompt, a migration notice) is read in the tab's contents and answered by the orchestrator through the tab — a session stuck on a dialog is not launched, whatever the script printed.
 5. Wait for the handshake. An agent that has not messaged within minutes is inspected, not waited for: `verify` for the process, `list` for the tab, and the tab's own screen through the app if you need to read what it is stuck on.
 
 ## Tab hygiene
@@ -80,6 +84,17 @@ So **always name an anchor**, and name the one you actually know:
 
 ## Caveats (all observed)
 
+- **A directory the host has never opened stops the session on a workspace question**, whose
+  highlighted answer is « exit ». Nobody sits at that keyboard: the session waits for ever
+  having never read its brief, or takes a stray keystroke and quits — and from outside both
+  look like a launched agent, because the process genuinely runs. `spawn` refuses such a
+  launch before making a tab, and `--trust` records the answer for ONE directory, which is
+  right for a checkout the orchestrator prepared itself and wrong for anything else. The
+  record is the host's own, `~/.claude.json`, and writing to it is why the flag is explicit
+  rather than automatic.
+- **A spawn never takes the operator's focus.** The tab is created unselected: someone is
+  working in another tab, and a launch that pulls the window across interrupts them every
+  time an agent starts.
 - **A tier nobody bound is not an error.** `spawn` then types no model argument and the host
   applies its default, so a half-filled map never silently routes deep work to a cheap model —
   it routes it to whatever the operator's host already runs. Read the map with `resolve-tier`
@@ -128,6 +143,7 @@ So **always name an anchor**, and name the one you actually know:
 - Trusting the printed tty: the process on it is the fact; `verify`, `list`, `ListAgents`, then the handshake.
 - Closing by title alone or by tab position: only `--tty` + `--expect-title` is unambiguous.
 - Spawning without an anchor and assuming the tab landed beside you: it lands at the end of the window. Pass `--right-of self`.
+- Spawning into a directory the host has never opened, and reading the running process as a launched agent: it is stopped on a question, and `screen --tty` is how you see that.
 - Rotating before the old agent acknowledged stand-down: risks killing an uncommitted write, and the acknowledgment is the rotation's only real guard.
 - Passing `--expect-title` to a rotation: the title will have moved by the time the close runs, and the rotation simply never completes.
 - Storing a tty and using it after any close happened in between (recycling).

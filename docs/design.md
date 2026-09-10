@@ -422,4 +422,34 @@ available. It keeps stderr now and prints what the spawn said. That is not a fix
 recorded as one — it is the next occurrence made able to explain itself, which is what is
 owed to a fall whose cause nobody has established.
 
+## 20. A running process is not a launched agent
+
+**0.17.0.** The operator supplied the evidence: a screenshot of an agent tab stopped on the
+host's workspace-trust question, and a note that every spawn stole the focus of whatever
+tab they were working in.
+
+**The trust question.** A directory the host has never opened stops the session on a safety
+check whose highlighted answer is « exit ». Nobody sits at that keyboard, so the session
+waits for ever having never read its brief, or takes a stray keystroke and quits. From
+outside both look like a launched agent, because the process genuinely runs — which is why
+the end-to-end round had been passing while its sessions sat on that question, and is the
+most likely mechanism behind the intermittent spawn that returned no tty. The launcher now
+refuses such a spawn before making a tab, and `--trust` records the answer for ONE
+directory. It is a flag rather than a default because it writes to the host's own record
+and bypasses a safety check: right for a checkout the orchestrator prepared itself, wrong
+for anything else.
+
+**The focus.** Tabs are created unselected. A launch that pulls the window across
+interrupts whoever is working in another tab, every time an agent starts.
+
+**Reading a stuck tab.** Migrating to the app's API dropped the scripting bridge, and with
+it the ability to see what a session is showing — the very thing the skill tells you to do
+with an agent that has not shaken hands. `screen --tty` restores it, and the round now
+asserts that a session got past its startup questions rather than merely that a process
+exists.
+
+Temporary files across the plugin are anchored to `TMPDIR`: the platform default can be a
+directory a restricted shell may not write to, and a script that fails there fails on a
+path it never chose.
+
 **decide** (0.4.2) is the decision round: the orchestrator collects every arbitration that is the user's — agents' STOPs, proposed owners, review findings without one — and puts them ONE AT A TIME, each with its context in plain words, two to four choices carrying their cost, one recommendation, then waits; the ruling is written back in one line, recorded where it lives, relayed to the agent it answers, and only then the next question comes. A question interrupted by anything else is re-presented in full, never referenced. Written after a day on which twelve arbitrations were put that way and every one was ruled in a minute, where batching them had stalled for hours.

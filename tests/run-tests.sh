@@ -7,11 +7,24 @@
 set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-WORK=$(mktemp -d)
+# Explicitly inside TMPDIR: the platform default lands in a directory a sandboxed
+# shell may not write to, and the suite then runs with an empty path where it thinks
+# it has a directory.
+WORK=$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")
+[ -d "${WORK}" ] || { echo "cannot create a working directory under ${TMPDIR:-/tmp}" >&2; exit 1; }
 trap 'rm -rf "$WORK"' EXIT
 
 pass=0
 fail=0
+
+# The launcher refuses a directory the host has never opened, in a dry run as much as in a
+# real one: "what would happen" includes being refused. The suite declares the precondition
+# once, in a file of its own, so no test ever reads or writes the operator's configuration.
+export ORCHESTRATOR_TRUST_FILE="$WORK/suite-trust.json"
+"$(command -v python3 || echo python3)" -c "
+import json,os,sys
+json.dump({'projects': {os.path.realpath(sys.argv[1]): {'hasTrustDialogAccepted': True}}},
+          open(sys.argv[2], 'w'))" "$WORK" "$ORCHESTRATOR_TRUST_FILE"
 
 # check <name> <expected> <actual>
 check() {
@@ -46,9 +59,9 @@ echo "== repository policy =="
 # clean repository for its entire life without ever reading a single file. Two files are
 # excluded because they QUOTE the pattern they are searched for.
 policy_hits() {
-  ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=plans \
+  ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=.claude --exclude-dir=plans \
       --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh \
-    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/' || true )
+    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|\.claude\.json' || true )
 }
 check "no product name in prose" "" "$(policy_hits)"
 
@@ -67,14 +80,14 @@ check "the policy guard can see a violation" "1" "$seen"
 # the host's name only, and would never have caught the identifier the launcher carried.
 # `run-tests.sh` and the plan document are excluded because they QUOTE this deny-list;
 # everything else in the repository is held to it.
-hits=$(grep -rniIE '\b(opus|sonnet|haiku)\b' "$ROOT" --exclude-dir=.git --exclude-dir=plans \
+hits=$(grep -rniIE '\b(opus|sonnet|haiku)\b' "$ROOT" --exclude-dir=.git --exclude-dir=.claude --exclude-dir=plans \
   --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh || true)
 check "no model family name in the plugin" "" "$hits"
 
 # Nothing tied to one machine or one project enters the generic plugin: no
 # absolute home path, no real session reference (the documented example is
 # the six-hex placeholder a1b2c3), no path into a downstream project's tree.
-hits=$(grep -rnIE '/Users/|/home/[a-z]|\[[0-9a-f]{6}\]|docs/reference/|BUGS\.md|IMPLEMENTATION\.md' "$ROOT" --exclude-dir=.git --exclude=plan.md --exclude=run-tests.sh \
+hits=$(grep -rnIE '/Users/|/home/[a-z]|\[[0-9a-f]{6}\]|docs/reference/|BUGS\.md|IMPLEMENTATION\.md' "$ROOT" --exclude-dir=.git --exclude-dir=.claude --exclude=plan.md --exclude=run-tests.sh \
   | grep -vE '\[a1b2c3\]' || true)
 check "nothing project- or machine-specific in the plugin" "" "$hits"
 
@@ -386,13 +399,39 @@ cmd=${out#*launch=}; cmd=${cmd%%$'\n'*}
 check "no prompt: nothing appended after the settings" "1" "$(printf '%s' "$cmd" | grep -c -- 'enableAllProjectMcpServers')"
 check_status "--prompt and --prompt-file together are refused" 1 env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --prompt x --prompt-file "$file"
 check_status "verify on a tty nobody has exits 1" 1 bash "$AGENT" verify --tty /dev/ttys999
+check "screen without a tty says which option is missing" "ERROR: screen: --tty is required" \
+  "$(bash "$AGENT" screen 2>&1 | head -1)"
+
+# A directory the host has never opened stops the session on a workspace question whose
+# highlighted answer is "exit". Nobody sits at that keyboard: the session waits for ever
+# having never read its brief, or takes a stray keystroke and quits — and from outside both
+# look like a launched agent, because the process is genuinely running. Caught before the
+# tab exists, since afterwards it is found out from an agent that never answers.
+py=$(command -v python3 || echo python3)
+TRUSTF="$WORK/trust.json"; printf '{"projects":{}}' > "$TRUSTF"
+UNTRUSTED="$WORK/untrusted"; mkdir -p "$UNTRUSTED"
+check_status "an untrusted directory is refused before a tab is made" 1 \
+  env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
+  bash "$AGENT" spawn --dir "$UNTRUSTED" --tier deep
+check "the refusal says how to proceed" "1" \
+  "$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
+     bash "$AGENT" spawn --dir "$UNTRUSTED" --tier deep 2>&1 | grep -c -- '--trust')"
+check_status "--trust records it and proceeds" 0 \
+  env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
+  bash "$AGENT" spawn --dir "$UNTRUSTED" --tier deep --trust
+check "the record now holds the directory" "true" \
+  "$("$py" -c "import json,os,sys; d=json.load(open(sys.argv[1])); print(str(d['projects'].get(os.path.realpath(sys.argv[2]),{}).get('hasTrustDialogAccepted')).lower())" "$TRUSTF" "$UNTRUSTED")"
+check_status "a directory already recorded needs no flag" 0 \
+  env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
+  bash "$AGENT" spawn --dir "$UNTRUSTED" --tier deep
+check "the record keeps owner-only permissions" "600" \
+  "$(stat -f '%OLp' "$TRUSTF" 2>/dev/null || stat -c '%a' "$TRUSTF")"
 
 # The title guard, on the part of a title that holds still. The first character is an
 # activity glyph the session flips on its own — busy, then idle — and a rotation stands the
 # old agent down before spending ten seconds on its replacement, so a title captured before
 # and compared after is guaranteed to differ. The guard meant to make a close unambiguous
 # refused every rotation instead.
-py=$(command -v python3 || echo python3)
 title_in() { "$py" -c "
 import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
 import iterm_agent as m
@@ -490,7 +529,7 @@ check "an unresolvable tier stops the rotation, and nothing runs after it" \
 echo "== context gate hook =="
 # A fake config dir with a tap file: at 70 % the hook orders the succession, at 30 % it
 # prints nothing, and with no tap file it says « unmeasured » exactly once.
-GH="$(mktemp -d)"; mkdir -p "$GH/claude-orchestrator/ctx"
+GH="$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")"; mkdir -p "$GH/claude-orchestrator/ctx"
 now=$(date +%s)
 printf '{"session_id":"g-hi","context_percent":70,"updated_epoch":%s}\n' "$now" > "$GH/claude-orchestrator/ctx/g-hi.json"
 printf '{"session_id":"g-lo","context_percent":30,"updated_epoch":%s}\n' "$now" > "$GH/claude-orchestrator/ctx/g-lo.json"

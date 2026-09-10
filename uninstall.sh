@@ -27,7 +27,7 @@ if [ -f "$SETTINGS" ]; then
       else
         mkdir -p "$BACKUP_DIR"
         cp "$SETTINGS" "$BACKUP_DIR/settings.json.before"
-        tmp=$(mktemp)
+        tmp=$(mktemp "${TMPDIR:-/tmp}/orchestrator-XXXXXX")
         if [ -f "$PREVIOUS" ] && [ "$(cat "$PREVIOUS")" != "null" ]; then
           jq --slurpfile prev "$PREVIOUS" '.statusLine = $prev[0]' "$SETTINGS" > "$tmp"
         else

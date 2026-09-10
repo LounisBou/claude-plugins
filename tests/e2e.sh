@@ -32,7 +32,11 @@ check() {
   else printf '  FAIL %s\n       expected: %s\n       actual:   %s\n' "$1" "$2" "$3"; fail=$((fail+1)); fi
 }
 
-SANDBOX=$(mktemp -d)
+# Explicitly inside TMPDIR: the platform default lands in a directory a sandboxed
+# shell may not write to, and the suite then runs with an empty path where it thinks
+# it has a directory.
+SANDBOX=$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")
+[ -d "${SANDBOX}" ] || { echo "cannot create a working directory under ${TMPDIR:-/tmp}" >&2; exit 1; }
 cleanup() {
   # The tab first: a session left running is the one failure this script must not cause,
   # and it outlives the shell that started it.
@@ -89,7 +93,11 @@ echo "== spawn =="
 self=$(bash "$AGENT" list | head -1 | awk -F' \\| ' '{print $2}')
 # stderr is KEPT: a spawn that fails says why on it, and a check that swallows the reason
 # reports an empty string where a diagnosis was available.
-spawn_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title e2e-probe \
+# --trust: the sandbox is a checkout this script made two steps ago, and without it the
+# session stops on the host's workspace question and never reads its brief — while its
+# process runs, so from outside it looks launched. That is what this round was measuring
+# before the flag existed.
+spawn_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title e2e-probe --trust \
       --prompt "Read $SANDBOX/brief.md and wait. Do not write anything." --right-of "$self" 2>&1)
 TTY=$(printf '%s' "$spawn_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
 check "spawn returns a tty" "yes" \
@@ -113,6 +121,17 @@ check "the live process carries the tier's model" "$bound" "$got"
 pos_self=$(bash "$AGENT" list | grep -n "$self" | cut -d: -f1)
 pos_new=$(bash "$AGENT" list | grep -n "$TTY" | cut -d: -f1)
 check "the tab landed immediately right of its anchor" "$((pos_self + 1))" "$pos_new"
+
+# A running process is not a launched agent. Until this check existed, every round here
+# passed with its session parked on a question nobody was there to answer.
+screen=""
+for _ in 1 2 3 4 5 6 7 8; do
+  screen=$(bash "$AGENT" screen --tty "$TTY" 2>/dev/null || true)
+  printf '%s' "$screen" | grep -qiE 'trust|safety check' || break
+  sleep 2
+done
+check "the session is past the startup questions" "0" \
+  "$(printf '%s' "$screen" | grep -ciE 'is this a project you|trust this folder')"
 
 echo "== rotation =="
 # The one operation that KILLS something, and the only one whose safety order matters: the
