@@ -62,6 +62,32 @@ else
 fi
 say "bind deep, standard and light there to the identifiers this host accepts;"
 say "an unbound tier leaves the choice to the host."
+
+# The environment the tab tooling needs. It drives the terminal through the app's own
+# API rather than by typing into a shell, which is where every expensive launch bug came
+# from. A private environment rather than the operator's interpreter: recent macOS
+# refuses `pip install` into a package-managed Python, and a plugin has no business
+# writing into one it did not create.
+step "Terminal tooling environment"
+VENV="$STATE_DIR/venv"
+if [ "$(uname -s)" != "Darwin" ]; then
+  say "not macOS: the tab tooling is skipped, the other skills work anywhere"
+elif [ "$DRY" = "1" ]; then
+  say "[dry-run] python3 -m venv $VENV && pip install iterm2"
+elif [ -x "$VENV/bin/python" ] && "$VENV/bin/python" -c 'import iterm2' 2>/dev/null; then
+  say "environment already usable: $VENV"
+elif command -v python3 >/dev/null 2>&1; then
+  python3 -m venv "$VENV" >/dev/null 2>&1 || say "could not create $VENV"
+  if [ -x "$VENV/bin/pip" ] && "$VENV/bin/pip" install -q --disable-pip-version-check iterm2 >/dev/null 2>&1; then
+    say "environment ready: $VENV"
+  else
+    say "could not install the terminal module into $VENV"
+    say "the tab tooling will refuse to run and say so; everything else works"
+  fi
+else
+  say "python3 not found: the tab tooling will refuse to run and say so"
+fi
+say "iTerm2 must have its API enabled (Preferences > General > Magic > Enable Python API)"
 if [ -f "$TAP_DEST" ] && cmp -s "$TAP_SRC" "$TAP_DEST"; then
   say "tap already up to date: $TAP_DEST"
 else

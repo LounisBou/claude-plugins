@@ -12,7 +12,7 @@ session can read without depending on a particular status bar.
 | Piece | What it does |
 |---|---|
 | skill `orchestrator` | The rulebook: phase and PR rules, the agent prompt recipe, the agents' lifecycle (the orchestrator launches, verifies, controls, terminates and replaces them), review on evidence, review rounds run in disposable sessions, what a round costs and the three ways to shorten it, context rotation, the orchestrator's own succession, shared-machine discipline. |
-| skill `iterm-agents` | `list`, `spawn`, `verify`, `close`, `move`, `rotate` iTerm2 tabs running agent sessions. Placement anchors on a tty or on `self`, the caller's own tab. The prompt goes to a file and the typed command stays short; spawn waits for the host CLI on the new tty and fails loudly otherwise; tty-exact close with a title guard; spawn-and-verify before close on rotate. |
+| skill `iterm-agents` | `list`, `spawn`, `verify`, `resolve-tier`, `close`, `move`, `rotate` iTerm2 tabs running agent sessions, through the app's own API rather than by typing into a shell. Placement anchors on a tty or on `self`, the caller's own tab. The prompt goes to a file and the typed command stays short; spawn waits for the host CLI on the new tty and fails loudly otherwise; tty-exact close with a title guard; spawn-and-verify before close on rotate. |
 | skill `context-gauge` | A session's own context fill as a measured figure, from the status line payload when fresh, from the transcript otherwise. |
 | skill `model-routing` | Which capability tier a dispatch gets: pay for judgment nothing downstream re-checks. A table by class of work, five readings for the cases off the table, escalation as a rotation, the false-economy rule, and budget pressure read from the quota figures. |
 | `templates/` | Phase brief, rotation resume brief, orchestrator succession brief, review-agent brief, comments-agent brief, with the sections the rulebook makes mandatory. |
@@ -44,9 +44,10 @@ gauge then answers from the transcript alone.
 - for `model-routing`: bind `deep`, `standard` and `light` in
   `~/.claude/claude-orchestrator/models.json` (the installer creates it empty) to the
   model identifiers your host accepts. Unbound tiers leave the choice to the host.
-- for `iterm-agents` only: macOS, iTerm2, and two one-time approvals —
-  Automation ("wants to control iTerm2") for spawn/close, Accessibility for
-  `move`, which drives the Window > Tab > Move Tab menu through System Events
+- for `iterm-agents` only: macOS, iTerm2 with its API enabled (Preferences > General >
+  Magic), and the environment `/orchestrator:install` builds under the state directory
+  (~19 MB). One macOS approval, on the first connection. Tab placement needs no
+  Accessibility grant and brings nothing to the front: the app reorders its own tabs
 
 ## How the gauge works
 

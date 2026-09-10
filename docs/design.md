@@ -15,7 +15,8 @@ Everything here was extracted from a working setup: the skills existed as loose 
 .claude-plugin/marketplace.json      single-plugin marketplace, source "./"
 skills/orchestrator/SKILL.md         the rulebook
 skills/iterm-agents/SKILL.md         tab management on macOS
-skills/iterm-agents/scripts/iterm-agent.sh
+skills/iterm-agents/scripts/iterm-agent.sh   entry point: resolves an interpreter
+skills/iterm-agents/scripts/iterm_agent.py   the implementation, over the app API
 skills/orchestrator/scripts/brief-lint.sh   refuses a brief before it is dispatched
 skills/orchestrator/scripts/dispatch-record.sh  one row per dispatch, and the routing signal
 skills/model-routing/SKILL.md        which capability tier a dispatch gets
@@ -254,5 +255,47 @@ pay, revert it for this class`.
 
 The record lives with the PROJECT being built. The default table ships here; a project's
 corrections belong to that project's state, where status lives once.
+
+## 14. The terminal tooling speaks the app's own API
+
+**0.11.0.** Every expensive launch bug this plugin carried came from one decision: the
+command was TYPED into a fresh shell. Typed, it could be truncated past a few hundred
+characters while the script reported success; typed, a startup question ate its first
+keystroke twice in one night; typed, it had to be quoted for AppleScript, which died on a
+non-ASCII byte under a C locale. And placement drove a menu through System Events, which
+needed an Accessibility grant, the app in front, and a focus flicker per move.
+
+The app has an API. `async_create_tab` takes the command and the index directly, so none
+of that exists here: the launch is handed over, the tab is born where it belongs, and
+`async_set_tabs` reorders without touching a menu. Two macOS approvals become one.
+
+The surface is unchanged — same subcommands, options, messages and exit codes — because
+skills, commands and briefs call it by those. `iterm-agent.sh` is now a launcher that
+resolves an interpreter and hands over to `iterm_agent.py`; the module the app needs is
+imported only by the subcommands that talk to it, so reading the tier map or a tty works
+on a machine with no environment and no window server.
+
+Three things the live probe found that no documentation says:
+
+- **The tab gets no login shell.** The app runs the launch as the session's program, with
+  a bare default PATH that does not contain the package manager's bin directory. The first
+  spawn died instantly and reported a tty belonging to nothing. The launch now names the
+  CLI by absolute path, resolved from the orchestrator's own environment.
+- **The app splits the command into words itself**, so a compound command handed over raw
+  is run by no shell at all. The launch goes to a file and the app is asked to run
+  `/bin/sh <file>`: a path has no quoting, and quoting for someone else's tokenizer is the
+  losing game the typed version already played.
+- **A window's tab list is a cached copy.** A reorder read back through the object already
+  held reports the position the tab used to have. Re-fetch the app after any mutation.
+
+The environment is the installer's: `python3 -m venv` under the state directory plus the
+app's module, 19 MB. Recent macOS refuses to install into a package-managed interpreter,
+and a plugin has no business writing into one it did not create. Without it the tooling
+refuses to run and says how to build it.
+
+Cost paid: seventeen guards that read the old implementation's source are gone, replaced
+by checks that read what the launch SAYS. That is a gain — a guard reading an
+implementation is green on the day the implementation changes shape and wrong the day
+after.
 
 **decide** (0.4.2) is the decision round: the orchestrator collects every arbitration that is the user's — agents' STOPs, proposed owners, review findings without one — and puts them ONE AT A TIME, each with its context in plain words, two to four choices carrying their cost, one recommendation, then waits; the ruling is written back in one line, recorded where it lives, relayed to the agent it answers, and only then the next question comes. A question interrupted by anything else is re-presented in full, never referenced. Written after a day on which twelve arbitrations were put that way and every one was ruled in a minute, where batching them had stalled for hours.
