@@ -40,7 +40,7 @@ SANDBOX=$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")
 cleanup() {
   # The tab first: a session left running is the one failure this script must not cause,
   # and it outlives the shell that started it.
-  for t in "$TTY" "${OLD_TTY:-}"; do
+  for t in "$TTY" "${OLD_TTY:-}" "${ONE:-}" "${TWO:-}"; do
     [ -n "$t" ] && bash "$AGENT" close --tty "$t" >/dev/null 2>&1
   done
   [ "$KEEP" = 1 ] || rm -rf "$SANDBOX"
@@ -121,6 +121,28 @@ check "the live process carries the tier's model" "$bound" "$got"
 pos_self=$(bash "$AGENT" list | grep -n "$self" | cut -d: -f1)
 pos_new=$(bash "$AGENT" list | grep -n "$TTY" | cut -d: -f1)
 check "the tab landed immediately right of its anchor" "$((pos_self + 1))" "$pos_new"
+
+# The second agent goes after the FIRST, not between the orchestrator and it. `self` here
+# is the tab running this script; both probes anchor on it and the chain orders them.
+me=$(ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" spawn --dir "$SANDBOX/repo" --right-of self 2>/dev/null | sed -n 's/^self=//p')
+if [ -n "$me" ]; then
+  one_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title e2e-chain-1 --trust \
+        --prompt "Do nothing." --right-of self 2>&1)
+  ONE=$(printf '%s' "$one_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
+  two_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title e2e-chain-2 --trust \
+        --prompt "Do nothing." --right-of self 2>&1)
+  TWO=$(printf '%s' "$two_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
+  pos_one=$(bash "$AGENT" list | grep -n "$ONE" | cut -d: -f1)
+  pos_two=$(bash "$AGENT" list | grep -n "$TWO" | cut -d: -f1)
+  check "the second agent lands right of the first, not of the orchestrator" "$((pos_one + 1))" "$pos_two"
+  chain="${ORCHESTRATOR_STATE_DIR:-$HOME/.claude/claude-orchestrator}/chains/$(basename "$me").jsonl"
+  check "the chain names both" "2" "$(grep -c "\"tty\": \"$ONE\"\|\"tty\": \"$TWO\"" "$chain")"
+  bash "$AGENT" close --tty "$TWO" >/dev/null 2>&1
+  bash "$AGENT" close --tty "$ONE" >/dev/null 2>&1
+  check "a closed agent leaves the chain" "0" "$(grep -c "\"tty\": \"$ONE\"\|\"tty\": \"$TWO\"" "$chain")"
+else
+  echo "  skip the chain: this shell has no tty of its own"
+fi
 
 # A running process is not a launched agent. Until this check existed, every round here
 # passed with its session parked on a question nobody was there to answer.

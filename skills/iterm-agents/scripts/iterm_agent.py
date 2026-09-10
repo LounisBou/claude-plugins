@@ -31,6 +31,8 @@ STATE_DIR = os.environ.get("ORCHESTRATOR_STATE_DIR") or os.path.join(
     "claude-orchestrator",
 )
 PROMPTS_DIR = os.path.join(STATE_DIR, "prompts")
+CHAINS_DIR = os.path.join(STATE_DIR, "chains")
+SELF_TTY = os.environ.get("ORCHESTRATOR_SELF_TTY", "")
 MODELS_MAP = os.environ.get("ORCHESTRATOR_MODELS_MAP") or os.path.join(STATE_DIR, "models.json")
 SPAWN_TIMEOUT = int(os.environ.get("ORCHESTRATOR_SPAWN_TIMEOUT", "30"))
 DRY_RUN = bool(os.environ.get("ORCHESTRATOR_DRY_RUN"))
@@ -107,7 +109,12 @@ def cli_pid_on_tty(tty):
 
 def self_tty():
     """This process's controlling tty, found by walking up the process tree: the caller
-    that wants a tab beside ITS OWN should not have to know which tab that is."""
+    that wants a tab beside ITS OWN should not have to know which tab that is.
+
+    ORCHESTRATOR_SELF_TTY overrides the walk, so the chain can be tested where there is no
+    terminal."""
+    if SELF_TTY:
+        return SELF_TTY
     pid = os.getpid()
     for _ in range(12):
         try:
@@ -123,6 +130,75 @@ def self_tty():
         pid = int(ppid)
         if pid <= 1:
             return None
+    return None
+
+
+# --- the chain: an orchestrator's agents, in launch order -------------------------
+
+def chain_path(tty):
+    return os.path.join(CHAINS_DIR, os.path.basename(tty) + ".jsonl")
+
+
+def chain_read(tty):
+    """The chain as a list of {"tab_id", "tty"}; empty when absent or unreadable. A chain
+    that cannot be read anchors on the orchestrator itself, which is where the first agent
+    went before the chain existed."""
+    try:
+        with open(chain_path(tty)) as fh:
+            lines = [l for l in fh.read().splitlines() if l.strip()]
+        entries = [json.loads(l) for l in lines]
+        return [e for e in entries if isinstance(e, dict) and e.get("tab_id") and e.get("tty")]
+    except Exception:
+        return []
+
+
+def chain_write(tty, entries):
+    os.makedirs(CHAINS_DIR, exist_ok=True)
+    path = chain_path(tty)
+    tmp = path + ".tmp"
+    with open(tmp, "w") as fh:
+        for e in entries:
+            fh.write(json.dumps({"tab_id": e["tab_id"], "tty": e["tty"]}) + "\n")
+    os.replace(tmp, path)
+
+
+def chain_append(tty, tab_id, new_tty):
+    chain_write(tty, chain_read(tty) + [{"tab_id": tab_id, "tty": new_tty}])
+
+
+def chain_drop_tab(tab_id):
+    """Every chain, every entry naming this tab. `close` does not know which orchestrator
+    the tab belonged to, and a tab id names exactly one tab."""
+    if not os.path.isdir(CHAINS_DIR):
+        return
+    for name in os.listdir(CHAINS_DIR):
+        if not name.endswith(".jsonl"):
+            continue
+        tty = "/dev/" + name[:-len(".jsonl")]
+        entries = chain_read(tty)
+        kept = [e for e in entries if e["tab_id"] != tab_id]
+        if len(kept) != len(entries):
+            chain_write(tty, kept)
+
+
+async def chain_anchor(app, own_tty):
+    """The tty of the last agent still open in the orchestrator's window, or None.
+
+    Checked on tab id, never on tty: a tty is recycled minutes after a close, and an entry
+    whose tty now belongs to a stranger's tab must not anchor a launch on it. Entries whose
+    tab is gone are dropped on this read."""
+    win, _, _ = await find_tab(app, own_tty)
+    if win is None:
+        return None
+    live = {t.tab_id: t for t in win.tabs}
+    entries = chain_read(own_tty)
+    kept = [e for e in entries if e["tab_id"] in live]
+    if len(kept) != len(entries):
+        chain_write(own_tty, kept)
+    for e in reversed(kept):
+        tty = await tty_of(live[e["tab_id"]])
+        if tty:
+            return tty
     return None
 
 
@@ -358,13 +434,22 @@ def cmd_spawn(argv):
     # anchor that is not there is a refusal, and a refusal must leave nothing behind.
     side = "right" if args.right_of else "left"
     anchor = args.right_of or args.left_of
+    own = self_tty() or ""
     if anchor == "self":
-        anchor = self_tty() or ""
-        if not anchor:
+        if not own and not DRY_RUN:
+            die("spawn: --right-of self: cannot resolve this session's own tty")
+        anchor = own or "self"
+        if side == "right" and own:
+            # After the orchestrator's LAST agent, not immediately after the orchestrator:
+            # orchestrator, agent 1, agent 2, … in launch order.
             if DRY_RUN:
-                anchor = "self"  # no terminal behind a dry run; the print still reads
+                chain = chain_read(own)
+                anchor = chain[-1]["tty"] if chain else "self"
             else:
-                die("spawn: --right-of self: cannot resolve this session's own tty")
+                async def last(iterm2, connection):
+                    app = await iterm2.async_get_app(connection)
+                    return await chain_anchor(app, own)
+                anchor = run(last) or own
     if anchor and anchor != "self" and not DRY_RUN:
         async def probe(iterm2, connection):
             app = await iterm2.async_get_app(connection)
@@ -394,7 +479,8 @@ def cmd_spawn(argv):
     if DRY_RUN:
         print("launch=%s" % launch)
         print("prompt_file=%s" % prompt_file)
-        print("anchor=%s" % (args.right_of or args.left_of or ""))
+        print("self=%s" % own)
+        print("anchor=%s" % ("self" if anchor == own else anchor))
         return
 
     script = write_launch_script(launch, args.title)
@@ -416,7 +502,10 @@ def cmd_spawn(argv):
         # select=False: the operator is working in another tab, and a spawn that pulls the
         # window to the new one interrupts them every time an agent is launched.
         tab = await win.async_create_tab(command=command, index=index, select=False)
-        return await tty_of(tab, connection)
+        new = await tty_of(tab, connection)
+        if own and new:
+            chain_append(own, tab.tab_id, new)
+        return new
 
     new_tty = run(go)
     if not new_tty:
@@ -509,6 +598,7 @@ def cmd_close(argv):
             die("close: refused: session on %s is titled '%s', which does not contain '%s'"
                 % (args.tty, name, args.expect))
         await tab.async_close(force=True)
+        chain_drop_tab(tab.tab_id)
         return name
 
     run(go)
