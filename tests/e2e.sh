@@ -209,6 +209,19 @@ bash "$AGENT" close --tty "$SIB" >/dev/null 2>&1
 check "the sibling closes with the tab" "0" "$(bash "$AGENT" list | grep -c "$SIB")"
 TTY=""
 
+# The rest of the round rotates and stands down a live probe; the one above is gone.
+spawn_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title e2e-probe-2 --trust \
+      --prompt "Read $SANDBOX/brief.md and wait. Do not write anything." --right-of "$self" 2>&1)
+TTY=$(printf '%s' "$spawn_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
+check "a fresh probe for the rest of the round" "yes" \
+  "$(printf '%s' "$TTY" | grep -qE '^/dev/tty' && echo yes || printf 'no tty; spawn said: %s' "$(printf '%s' "$spawn_out" | tail -2 | tr '\n' ' ')")"
+[ -n "$TTY" ] || exit 1
+waited=0
+while [ $waited -lt 30 ]; do
+  bash "$AGENT" verify --tty "$TTY" >/dev/null 2>&1 && break
+  sleep 1; waited=$((waited+1))
+done
+
 echo "== rotation =="
 # The one operation that KILLS something, and the only one whose safety order matters: the
 # replacement is spawned and verified BEFORE the old tab is closed, so a spawn that fails
