@@ -148,17 +148,28 @@ mv1=$(jq -r .metadata.version "$ROOT/.claude-plugin/marketplace.json")
 mv2=$(jq -r '.plugins[0].version' "$ROOT/.claude-plugin/marketplace.json")
 check "the two manifests agree on the version" "$pv|$pv" "$mv1|$mv2"
 
-# ...and it has to be ahead of everything already published. Tags are local, so a clone
-# without them simply skips this one rather than holding the suite on a fact it cannot read.
-newest=$(cd "$ROOT" && git tag --list 'orchestrator--v*' 2>/dev/null | sed 's/^.*v//' | sort -V | tail -1)
-if [ -n "$newest" ]; then
-  if [ "$pv" != "$newest" ] && [ "$(printf '%s\n%s\n' "$newest" "$pv" | sort -V | tail -1)" = "$pv" ]; then
-    ahead=yes
+# ...and it must never fall BEHIND what is already published. Equal is the state of a
+# freshly tagged release and ahead is the state of unreleased work: both are correct, and
+# a guard demanding "strictly ahead" turns the suite red the moment the repository's own
+# release procedure is followed. Only behind is the defect.
+version_not_behind() {  # <version> <newest tag, empty when none>
+  if [ -z "$2" ] || [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]; then
+    echo yes
   else
-    ahead="no ($pv against the newest tag $newest)"
+    echo "no ($1 is behind $2)"
   fi
-  check "the version is ahead of every published tag" "yes" "$ahead"
-fi
+}
+# The comparison is proved on every state, not only on today's, so the rule holds when
+# today's state changes.
+check "a version ahead of the newest tag passes" "yes" "$(version_not_behind 0.7.0 0.6.1)"
+check "a version equal to the newest tag passes" "yes" "$(version_not_behind 0.6.1 0.6.1)"
+check "a version behind the newest tag fails" "no (0.6.0 is behind 0.6.1)" "$(version_not_behind 0.6.0 0.6.1)"
+check "a double-digit version is compared as a number" "yes" "$(version_not_behind 0.10.0 0.9.0)"
+check "no tags at all passes" "yes" "$(version_not_behind 0.1.0 "")"
+# Tags are local, so a clone without them reads as "no tags" and passes, rather than
+# holding the suite on a fact it cannot read.
+newest=$(cd "$ROOT" && git tag --list 'orchestrator--v*' 2>/dev/null | sed 's/^.*v//' | sort -V | tail -1)
+check "the version is not behind any published tag" "yes" "$(version_not_behind "$pv" "$newest")"
 
 echo "== iterm-agents spawn (dry run) =="
 # The prompt is never typed into the shell: a 3 000-character prompt with non-ASCII

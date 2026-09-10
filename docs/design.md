@@ -121,13 +121,14 @@ A brief is written to a path the fresh session can open on its machine, never on
 - iterm script: argument validation paths (`--tty` required, differing ttys) fail before any automation call.
 - repository policy: the prose contains no vendor or product name outside the load-bearing identifiers, no model family name anywhere, nothing machine- or project-specific — and the guard proves it can still SEE a violation, through a probe planted and removed by the same function, because it once masked every hit behind the repository's own path.
 - model tiers: a bound tier resolves, an unbound one resolves to nothing without erring, an unknown one is refused, the environment overrides the map, a map that does not parse stops the caller instead of passing for an unbound tier, and a rotation whose tier cannot resolve stops before anything else runs.
-- version: the plugin and marketplace manifests agree, and the number is ahead of every published tag.
+- version: the plugin and marketplace manifests agree, and the number never falls behind a published tag — the comparison itself is proved on ahead, equal, behind, a double-digit component and no tags at all, so the rule holds when the repository state changes.
 
 ## 8. Release
 
 Version in `plugin.json` AND in both fields of `marketplace.json` — the same fact in
-three places, so the suite checks they agree and that the number is ahead of every
-published tag. Tag `orchestrator--v<version>` pushed with the code (the document
+three places, so the suite checks they agree and that the number never falls
+BEHIND a published tag (equal is a tagged release, ahead is unreleased work; only behind
+is the defect). Tag `orchestrator--v<version>` pushed with the code (the document
 announced a `claude-orchestrator--v` prefix that no release has ever used). Install:
 
 ```
