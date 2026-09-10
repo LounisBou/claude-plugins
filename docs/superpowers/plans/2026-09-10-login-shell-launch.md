@@ -1,6 +1,6 @@
 # Login Shell Launch Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For the orchestrator:** this plan is executed by implementer SESSIONS the orchestrator spawns (`orchestrator:iterm-agents`), one brief per task — never by subagents of the orchestrator's own session. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A spawned session inherits the operator's full environment — the package manager's binaries included — because the tab runs its launch file through a login shell instead of `/bin/sh`.
 

@@ -1,6 +1,6 @@
 # Session Name Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For the orchestrator:** this plan is executed by implementer SESSIONS the orchestrator spawns (`orchestrator:iterm-agents`), one brief per task — never by subagents of the orchestrator's own session. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A spawned session carries the spawn's `--title` as its host-level name (`--name`), so agents and orchestrators are told apart by a name that says their role and phase.
 

@@ -1,6 +1,6 @@
 # Anchor Window and Agent Chain Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For the orchestrator:** this plan is executed by implementer SESSIONS the orchestrator spawns (`orchestrator:iterm-agents`), one brief per task — never by subagents of the orchestrator's own session. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A spawned tab is born in the window that holds its anchor, an absent anchor is refused before any side effect, and each new agent lands after the orchestrator's last one rather than immediately beside the orchestrator.
 

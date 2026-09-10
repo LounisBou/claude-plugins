@@ -49,6 +49,7 @@ Its parts, in order:
 - Produced code must match the project's existing patterns over generic best practice.
 - **Every command runs synchronously, in the tool call that waits for it.** Long test suites and coverage runs must be wrapped with an explicit timeout and piped to `tail` in the SAME call. An agent that launches something long and ends its turn "waiting for the run to finish" receives no notification, and its work is simply lost. This was the single most expensive failure mode observed: five occurrences in one session, costing multiple hours and forcing the orchestrator to finish the work by hand.
 - **Implementer agents never dispatch writing or reviewing delegates.** No implementation helpers, no second opinions, and above all no reviewer: review arrives from the orchestrator (through a review session it dispatches, see « Review rounds run in disposable sessions »). An agent that forks its implementation loses track of its own result, and its fork's verdict counts for nothing. The one exception: read-only SEARCH subagents (codebase exploration — no edits, no verdicts, no long runs) are allowed; they lose nothing and keep a large codebase readable without burning the implementer's context.
+- **The orchestrator never implements through a subagent of its own either.** Not the host's agent tool, not a plan-execution skill (`superpowers:subagent-driven-development`, `superpowers:executing-plans`): a subagent's diff is the orchestrator's own diff, and its reviewer would be its writer. Implementers are sessions spawned through `orchestrator:iterm-agents`, one brief per phase. A plan written with a plan-writing skill opens with a header ordering exactly that (« For agentic workers: REQUIRED SUB-SKILL … »): it is that template's boilerplate, not a directive to an orchestrator — replace it with the orchestrator's header when you write the plan, ignore it when you read one. Observed: successors told « read the plan » executed it in subagents of their own session. Read-only search subagents stay allowed, as for implementers.
 - **Agents do not stop between steps to report one done.** The user arbitrates SCOPE, never cadence; a stop is one the plan names (an anomaly needing sign-off, a gate the agent cannot repair inside its scope).
 - TDD always; whether tests are COMMITTED follows each repo's own policy (some front-end repos deliberately keep tests out of the branch), so state the policy in the prompt, never let the agent assume.
 
@@ -193,6 +194,7 @@ A plan, a prompt template or a norms file that outlives the decision it served i
 | "The norms file says ERROR, so it is a defect" | Check the existing code first. A rule the codebase already breaks is a question, not a finding. |
 | "Coverage is a formality, I'll run the gate before opening the PR" | Run it early. Deferred minor findings accumulate into it, and the gate turns them into blockers at the worst moment. |
 | "I'll just implement this small fix myself" | You are the reviewer. Reviewer-written code ships unreviewed. Dispatch an N-bis. |
+| "The plan's header says REQUIRED SUB-SKILL: subagent-driven-development" | A template's boilerplate is not the operator's directive. Spawn a session; replace the header. |
 | "The test passed alone three times, it's flaky" | A fall under load has a mechanism. Name it or keep the finding. |
 | "The gate is green, so the invariant holds" | Ask what the gate reads. Green over nothing is the commonest false proof. |
 | "I'll read the diff this round and build it next round" | Build and walk from round one, or the rounds stop converging. |
@@ -225,6 +227,7 @@ A plan, a prompt template or a norms file that outlives the decision it served i
 ## Red flags: STOP
 
 - You are about to edit implementation code: dispatch instead.
+- You are about to run implementation in a subagent of your own session, or a plan header told you to: spawn a session instead.
 - An agent prompt without non-goals, without contracts verbatim, without the STOP-and-ask clause, without the state-verification commands, or without the resource envelope on a shared machine.
 - Approving a delivery you haven't diffed yourself.
 - Reporting to the user that something is stopped, deleted or repaired that you have not read with your own command.

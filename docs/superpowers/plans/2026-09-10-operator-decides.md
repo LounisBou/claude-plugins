@@ -1,6 +1,6 @@
 # Operator Decides Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For the orchestrator:** this plan is executed by implementer SESSIONS the orchestrator spawns (`orchestrator:iterm-agents`), one brief per task — never by subagents of the orchestrator's own session. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** The rulebook states, in one section the suite reads, that a command the orchestrator could run is the orchestrator's to run, and that a session's own limit is repaired by a successor rather than delegated to the operator.
 

@@ -106,6 +106,12 @@ check "the decide command re-presents an interrupted question in full" "1" "$(gr
 check "the decide command records before it moves on" "1" "$(grep -c 'Present the next question IN FULL (step 2). Not before.' "$ROOT/commands/decide.md")"
 check "the succession inherits the orchestrator's model" "1" "$(grep -c -- '--inherit-model' "$ROOT/commands/succeed.md")"
 check "the succession names no tier" "0" "$(grep -c -- '--tier deep' "$ROOT/commands/succeed.md")"
+# A plan-writing skill's header ordered the orchestrator to execute in subagents of its own
+# session, and successors obeyed it (§28). No plan opens with it; the rulebook and the
+# succession template carry the rule instead.
+check "no plan opens with the foreign execution header" "0" "$(grep -l '^> \*\*For agentic workers' "$ROOT"/docs/superpowers/plans/*.md | wc -l | tr -d ' ')"
+check "the rulebook forbids implementing through a subagent of its own" "1" "$(grep -c 'never implements through a subagent of its own' "$ROOT/skills/orchestrator/SKILL.md")"
+check "the succession template forbids it too" "1" "$(grep -c 'not through a subagent of your own session either' "$ROOT/templates/orchestrator-succession-brief.md")"
 
 # Review rounds run in sessions spawned for the round and closed when it is judged:
 # the rulebook names the mode, both briefs exist, and neither lets its session push.
