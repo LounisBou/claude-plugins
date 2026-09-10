@@ -119,6 +119,7 @@ So **always name an anchor**, and name the one you actually know:
   and reported success. The anchor is now searched across every window, and an anchor that is not
   there is refused before a tab exists (`spawn: no session found on <tty>`). A spawn with no anchor
   still appends to the window in front: that is one more reason to always name one.
+- **The tab runs the launch through a login shell** (`ORCHESTRATOR_LOGIN_SHELL`, else `SHELL`, else `/bin/zsh`), so the agent inherits the operator's PATH, the package manager's binaries included. Before that, no spawned session could run `gh`: the app hands a program run directly a bare default PATH. The CLI is still named absolutely inside the launch, so a profile that breaks PATH cannot kill it.
 - **The first character of a title is an activity glyph, and it flips on its own** — one shape
   while the session works, another once it idles. `--expect-title` compares titles with that
   glyph stripped from both sides, because a rotation stands the old agent down and then spends

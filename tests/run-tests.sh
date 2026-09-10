@@ -412,9 +412,18 @@ check "the prompt file lives under the state directory" "yes" "$([ "${file#"$IST
 check "the launch carries the decision mode" "1" "$(printf '%s' "$cmd" | grep -c -- '--permission-mode auto')"
 check "no tier and no map: no model argument" "0" "$(printf '%s' "$cmd" | grep -c -- '--model')"
 check "the launch changes into the working directory" "1" "$(printf '%s' "$cmd" | grep -c "^cd $WORK && ")"
-# The app runs this as the session's program, with none of a login shell's PATH: an
-# unresolved name exits at once and the session dies before its tty can be read.
+# Named absolutely even though the tab now runs a login shell: a dotfile that breaks PATH
+# must not be able to kill the launch, and the session dies before its tty can be read
+# when the name does not resolve.
 check "the launch execs the CLI by absolute path" "1" "$(printf '%s' "$cmd" | grep -cE 'exec /[^ ]+/')"
+# The tab runs the launch through a LOGIN shell, so the session inherits the operator's
+# PATH — the package manager's binaries included — rather than the app's bare default.
+# Observed: no spawned session could run `gh`, so none could open a pull request. The CLI
+# is still named absolutely inside the launch: finding the program must not depend on the
+# operator's dotfiles, only the session's environment does.
+check "the tab runs the launch through a login shell" "1" "$(printf '%s' "$out" | grep -c '^program=.* -l <launch-file>$')"
+check "the login shell is the operator's" "1" "$(env ORCHESTRATOR_LOGIN_SHELL=/bin/bash ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --prompt p 2>&1 | grep -c '^program=/bin/bash -l ')"
+check "the launch text itself is unchanged by the shell" "1" "$(env ORCHESTRATOR_LOGIN_SHELL=/bin/bash ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --prompt p 2>&1 | sed -n 's/^launch=//p' | grep -cE '^cd .* && .* && exec /[^ ]+/')"
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --prompt-file "$file" 2>&1)
 check "--prompt-file reuses the given file" "1" "$(printf '%s' "$out" | grep -c "prompt_file=$file")"
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" 2>&1)
