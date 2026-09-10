@@ -683,3 +683,33 @@ What the suite reads: the tap writes `model_id` from a payload that carries it a
 from one that does not; a dry-run spawn with `--inherit-model` and a seeded tap file types
 that model; with no tap file it refuses and names the installer; combined with `--tier` it
 is refused; the succession command spawns with `--inherit-model` and no tier.
+
+## 28. The orchestrator never implements through a subagent of its own
+
+**0.22.1.** The operator's finding, on running orchestrators: at their succession they
+ordered their successors to execute the plan in subagents of their own session. The
+rulebook's first sentence — you orchestrate, you never implement — was read as « never
+write code yourself », and a subagent was taken for someone else. It is not: a subagent's
+diff is the orchestrator's own diff, and its reviewer would be its writer. The whole method
+rests on the writer and the reviewer being different sessions.
+
+**The mechanism is a directive that outlived its decision (§18), in a foreign template.**
+Every plan written with a plan-writing skill opens with that skill's execution header —
+« For agentic workers: REQUIRED SUB-SKILL: use the subagent-driven skill or the
+plan-executing skill » — the succession brief says « read the plan », and the meta-rule
+loaded at every start says a matching skill MUST be invoked. A fresh successor obeys all
+three. The rulebook forbade IMPLEMENTERS from delegating and let the REVIEW session fan out
+readers, but never named the orchestrator's own subagent as the violation.
+
+**The rule, stated where the successor reads it.** The rulebook names it as a standing
+rule, a red flag and a rationalization: the orchestrator never implements through a
+subagent of its own — not the host's agent tool, not a plan-execution skill; implementers
+are sessions it spawns, one brief per phase; a plan-writing skill's header is that
+template's boilerplate, replaced when the plan is written and ignored when one is read;
+read-only search subagents stay allowed, as for implementers. The succession brief template
+carries the same sentence in its first paragraph. Every plan in this repository opens with
+the orchestrator's header instead — executed by implementer sessions the orchestrator
+spawns — so a reader finds no order to the contrary.
+
+What the suite reads: no plan under `docs/superpowers/plans/` opens with the foreign
+header; the rulebook carries the rule; the succession brief template carries it.
