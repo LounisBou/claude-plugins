@@ -137,6 +137,52 @@ out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate2" bash "$ROOT/
 case "$out" in *"mutually exclusive"*) anchors="refused" ;; *) anchors="$out" ;; esac
 check "two anchors are refused at spawn" "refused" "$anchors"
 
+echo "== dispatch record =="
+
+# The routing rule says a tier drop that costs a second corrective round is reverted for
+# its class. Nothing measured that, so the rule could only ever be applied from memory —
+# and an economy nobody measures is one that always looks free. One row per dispatch,
+# and a summary that names the classes where the drop did not pay.
+REC="$ROOT/skills/orchestrator/scripts/dispatch-record.sh"
+R="$WORK/dispatch.jsonl"
+
+id1=$(bash "$REC" open "$R" --class behaviour-phase --tier standard --label "phase 1")
+check "open prints the row id" "1" "$id1"
+check "the row is one line of json" "1" "$(wc -l < "$R" | tr -d ' ')"
+check "the row carries what was asked" "behaviour-phase|standard|phase 1|0|open" \
+  "$(jq -r '[.class,.tier,.label,.rounds,.state]|join("|")' "$R")"
+
+bash "$REC" round "$R" "$id1" >/dev/null
+bash "$REC" round "$R" "$id1" >/dev/null
+check "a round is counted on the row" "2" "$(jq -r 'select(.id==1)|.rounds' "$R")"
+
+bash "$REC" close "$R" "$id1" --verdict approved >/dev/null
+check "closing records the verdict and the state" "approved|closed" "$(jq -r 'select(.id==1)|[.verdict,.state]|join("|")' "$R")"
+check "closing does not add a row" "1" "$(wc -l < "$R" | tr -d ' ')"
+
+id2=$(bash "$REC" open "$R" --class conversion-phase --tier light)
+check "the second row gets the next id" "2" "$id2"
+bash "$REC" close "$R" "$id2" --verdict approved >/dev/null
+check "a dispatch closed without a round reads as one round" "1" "$(bash "$REC" summary "$R" | grep -c 'class=conversion-phase tier=light dispatches=1 closed=1 rounds_avg=0')"
+
+# The signal, which is the whole point: a class whose average sits above one corrective
+# round is a drop that did not pay, and the summary says so rather than leaving it to be
+# noticed. Two dispatches of the same class, both needing two rounds.
+for i in 1 2; do
+  n=$(bash "$REC" open "$R" --class n-bis --tier light)
+  bash "$REC" round "$R" "$n" >/dev/null; bash "$REC" round "$R" "$n" >/dev/null
+  bash "$REC" close "$R" "$n" --verdict approved >/dev/null
+done
+check "a class that costs more than one round is signalled" "1" \
+  "$(bash "$REC" summary "$R" | grep -c '^signal=n-bis at light averages 2 rounds')"
+check "a class that closes in one round raises no signal" "0" \
+  "$(bash "$REC" summary "$R" | grep -c 'signal=conversion-phase')"
+
+check_status "an unknown row id is an error" 1 bash "$REC" round "$R" 99
+check_status "an unknown tier is refused at open" 1 bash "$REC" open "$R" --class x --tier cheapest
+check_status "open without a class is an error" 1 bash "$REC" open "$R" --tier deep
+check_status "a summary of nothing is not an error" 0 bash "$REC" summary "$WORK/absent.jsonl"
+
 echo "== brief lint =="
 
 # The largest category of multi-agent failure is specification, and a brief is this
