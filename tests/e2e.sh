@@ -133,6 +133,18 @@ done
 check "the session is past the startup questions" "0" \
   "$(printf '%s' "$screen" | grep -ciE 'is this a project you|trust this folder')"
 
+echo "== an anchor that is not there =="
+# A tab that lands somewhere is worse than no tab: the script has said where it is and
+# the orchestrator believes it. Before this check, an anchor in another window — or no
+# window at all — was silently replaced by « the end of whatever window is in front ».
+tabs_before=$(bash "$AGENT" list | wc -l | tr -d ' ')
+ghost_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title e2e-ghost --trust \
+      --prompt "Do nothing." --right-of /dev/ttys999 2>&1)
+ghost_code=$?
+check "an absent anchor is refused" "1" "$ghost_code"
+check "the refusal names the anchor" "1" "$(printf '%s' "$ghost_out" | grep -c 'no session found on /dev/ttys999')"
+check "no tab was made for it" "$tabs_before" "$(bash "$AGENT" list | wc -l | tr -d ' ')"
+
 echo "== rotation =="
 # The one operation that KILLS something, and the only one whose safety order matters: the
 # replacement is spawned and verified BEFORE the old tab is closed, so a spawn that fails

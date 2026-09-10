@@ -114,6 +114,11 @@ So **always name an anchor**, and name the one you actually know:
 - **Dynamic titles override manual ones**: the shell and the session rewrite the tab title, so a
   `--title` set at spawn is transient. For `--expect-title`, match the title the session displays
   (it reflects its current task or prompt), read from `list` shortly before closing.
+- **The tab is born in the anchor's window, whichever window is in front.** With two windows open, a
+  spawn anchored on a tab of the second once landed at the end of the first — the window in front —
+  and reported success. The anchor is now searched across every window, and an anchor that is not
+  there is refused before a tab exists (`spawn: no session found on <tty>`). A spawn with no anchor
+  still appends to the window in front: that is one more reason to always name one.
 - **The first character of a title is an activity glyph, and it flips on its own** — one shape
   while the session works, another once it idles. `--expect-title` compares titles with that
   glyph stripped from both sides, because a rotation stands the old agent down and then spends

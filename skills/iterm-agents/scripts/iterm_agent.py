@@ -184,6 +184,23 @@ async def find_tab(app, tty):
     return None, None, None
 
 
+async def anchor_position(app, anchor, side):
+    """The window that holds `anchor` and the index a new tab takes to sit on `side` of it.
+
+    Every window is searched, not the one in front: the window in front is whatever the
+    operator is looking at, and a launch happens precisely when they are looking elsewhere.
+    The first implementation took `app.current_window` and searched only its tabs, so an
+    anchor in another window was not found and the tab was appended to the wrong one, with
+    the script reporting success. (None, None) when the anchor is not there."""
+    win, tab, _ = await find_tab(app, anchor)
+    if tab is None:
+        return None, None
+    idx, win = await tab_index_of(app, win, tab.tab_id)
+    if idx is None:
+        return None, None
+    return win, idx + (1 if side == "right" else 0)
+
+
 # --- subcommands -----------------------------------------------------------------
 
 def cmd_list(_argv):
@@ -337,6 +354,24 @@ def cmd_spawn(argv):
         model = resolve_tier(args.tier)
         if model is None:
             die("spawn: cannot resolve tier: %s" % args.tier)
+    # The anchor first, before a prompt file is written or a trust record changed: an
+    # anchor that is not there is a refusal, and a refusal must leave nothing behind.
+    side = "right" if args.right_of else "left"
+    anchor = args.right_of or args.left_of
+    if anchor == "self":
+        anchor = self_tty() or ""
+        if not anchor:
+            if DRY_RUN:
+                anchor = "self"  # no terminal behind a dry run; the print still reads
+            else:
+                die("spawn: --right-of self: cannot resolve this session's own tty")
+    if anchor and anchor != "self" and not DRY_RUN:
+        async def probe(iterm2, connection):
+            app = await iterm2.async_get_app(connection)
+            win, _ = await anchor_position(app, anchor, side)
+            return win is not None
+        if not run(probe):
+            die("spawn: no session found on %s" % anchor)
     prompt_file = args.prompt_file
     if prompt_file and not os.path.isfile(prompt_file):
         die("spawn: prompt file not found: %s" % prompt_file)
@@ -365,21 +400,19 @@ def cmd_spawn(argv):
     script = write_launch_script(launch, args.title)
     command = "/bin/sh " + script
 
-    anchor = args.right_of or args.left_of
-    if anchor == "self":
-        anchor = self_tty() or ""
-
     async def go(iterm2, connection):
         app = await iterm2.async_get_app(connection)
-        win = app.current_window
-        if win is None:
-            die("spawn: iTerm2 has no current window")
         index = None
         if anchor:
-            for i, t in enumerate(win.tabs):
-                if await tty_of(t) == anchor:
-                    index = i + 1 if args.right_of else i
-                    break
+            # Resolved again on a fresh app: the probe above ran on another connection,
+            # and a window object is a cached copy (§14).
+            win, index = await anchor_position(app, anchor, side)
+            if win is None:
+                die("spawn: no session found on %s" % anchor)
+        else:
+            win = app.current_window
+            if win is None:
+                die("spawn: iTerm2 has no current window")
         # select=False: the operator is working in another tab, and a spawn that pulls the
         # window to the new one interrupts them every time an agent is launched.
         tab = await win.async_create_tab(command=command, index=index, select=False)
