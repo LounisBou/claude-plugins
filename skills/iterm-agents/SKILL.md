@@ -63,7 +63,7 @@ So **always name an anchor**, and name the one you actually know:
 2. `spawn` with the one-line prompt naming the brief's path and the orchestrator's exact `ListAgents` name and reference — nothing the brief already says — and with `--right-of self`, so the tab lands beside yours rather than at the end of a window you do not own.
 3. Read the result: the script has already waited for the host CLI on the new tty, but the artifact decides — `list` (the tab), `verify --tty` (the process), `ListAgents` (the peer session, a few seconds later).
 4. **No startup dialog may stand between the launch and the brief.** The launch pre-approves the project's MCP servers (`--settings '{"enableAllProjectMcpServers":true}'`), because a fresh session parked on « enable these MCP servers? » never reads its brief and nobody sits at that keyboard. Any other startup question the launch cannot pre-answer (a trust prompt, a migration notice) is read in the tab's contents and answered by the orchestrator through the tab — a session stuck on a dialog is not launched, whatever the script printed.
-5. Wait for the handshake. An agent that has not messaged within minutes is inspected, not waited for: `verify`, then the tab's contents (`osascript` … `contents of session`).
+5. Wait for the handshake. An agent that has not messaged within minutes is inspected, not waited for: `verify` for the process, `list` for the tab, and the tab's own screen through the app if you need to read what it is stuck on.
 
 ## Tab hygiene
 

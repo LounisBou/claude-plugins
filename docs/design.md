@@ -106,7 +106,11 @@ Requirements: `jq` for the tap and the installer, `python3` for the transcript s
 
 **orchestrator** is the rulebook as it stands, with three edits: script invocations go through the plugin root, briefs are instantiated from `templates/`, and the gauge is described by pointing at the `context-gauge` skill. Every project-specific fact is removed; the skill states the rule and leaves the project's policy (where briefs live, whether tests are committed, what the durable-artifact policy forbids) to the brief the orchestrator writes.
 
-**iterm-agents** keeps `list`, `spawn`, `close`, `move`, `rotate`, with `--left-of` on `spawn` and `rotate`, and gains `verify`. Since 0.4.0 `spawn` writes the prompt to a file under the state directory and types a short command that reads it — a prompt typed by AppleScript is truncated past a few hundred characters and the command never runs — waits for the new tab's shell to be at a prompt (answering a startup yes/no question with « n », since 0.4.1) before typing, then waits for the host CLI on the new tty, re-types once if the shell is idle without it, and fails loudly if it never appears; quoting uses the shell's substitutions, never `sed`, which dies on a non-ASCII byte under a C locale. The layout convention is stated: the orchestrator's tab sits immediately left of its implementer's tab. The spawn prompt is a one-line "Read and execute <path>" naming the orchestrator's address.
+**iterm-agents** keeps `list`, `spawn`, `close`, `move`, `rotate`, gains `verify` and
+`resolve-tier`, and since 0.11.0 drives the app through its own API rather than by typing
+into a shell — §14 says what that removed and what it cost. The layout convention is
+stated: the orchestrator's tab sits immediately left of its implementer's tab. The spawn
+prompt is a one-line "Read and execute <path>" naming the orchestrator's address.
 
 **context-gauge** documents how a session reads its own fill, what each `source=` means, and the duty the orchestrator puts in every brief: report the measured figure, never an estimate.
 
@@ -357,5 +361,27 @@ records an approval a later round contradicted; `summary` then prints
 with a DIFFERENT lens, a finding surviving only when both see it. A different lens is the
 condition that matters: two readers asked the same question agree by construction, and
 agreement bought that way is a gate green over nothing.
+
+## 18. The directives that outlived their decision
+
+**0.15.0.** The plugin's own rule says a directive that outlives the decision it served is
+read as current by the next session, and that what loses its subject is removed rather than
+kept. Six versions in ten hours had left four of them, and one was worse than stale:
+
+- §4 still described the tab tooling as it worked before 0.11.0, while §14 described what
+  replaced it — a document contradicting itself, which is worse than one merely out of date.
+- A rationalization gave a reason that no longer exists (« a typed command can be truncated »)
+  for a conclusion that still holds. The conclusion was kept and the reason rewritten: a
+  launch can still be refused, exit at once on a name it cannot find, or die on its first line.
+- The handshake step told the reader to inspect a tab through a scripting bridge the tooling
+  no longer uses.
+- The install command described an installer that has since grown two more jobs.
+
+And three commands had never been wired to what the last versions built: `progress` now reads
+the dispatch record's summary and says what each `signal=` obliges rather than printing a
+number to interpret; `agents` reports the tier each agent was dispatched at, from the brief or
+the record and never from the agent, which cannot see its own; `uninstall` says which two files
+leave with the state directory that no backup holds — the operator's tier bindings and the
+record of what every session was launched with.
 
 **decide** (0.4.2) is the decision round: the orchestrator collects every arbitration that is the user's — agents' STOPs, proposed owners, review findings without one — and puts them ONE AT A TIME, each with its context in plain words, two to four choices carrying their cost, one recommendation, then waits; the ruling is written back in one line, recorded where it lives, relayed to the agent it answers, and only then the next question comes. A question interrupted by anything else is re-presented in full, never referenced. Written after a day on which twelve arbitrations were put that way and every one was ruled in a minute, where batching them had stalled for hours.
