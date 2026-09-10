@@ -566,3 +566,26 @@ needs, the fix is a successor, not a favour.** A session launched before the lau
 the login shell has no way to gain the PATH; the rulebook's succession exists for exactly
 that — spawn the successor through the current launcher, hand over, close the old tab. The
 successor is the proof that the launcher change worked, read on its process.
+
+## 24. A session is named at launch
+
+**0.21.0.** The operator's ask, after the phase-4 implementer came up in the listing as
+`project-70 [a1b2c3]` beside an orchestrator whose name was `project-70` too, the two differing only in their six-character reference:
+give agents and orchestrators clear names. The host names a session from its directory
+stem plus a suffix, so two sessions in one checkout share a name and differ by a reference
+nobody reads at a glance — the rulebook's coin toss, observed on the orchestrator's own
+dispatch.
+
+The host takes a name at launch: `--name <name>`, « shown in the prompt box, the resume
+picker and the terminal title », with a variant applied when a live session already holds
+it. The launcher now passes the spawn's `--title` as that name, so a title is no longer a
+transient tab label the shell overwrites but the session's own name, and the convention
+becomes the rule, in the operator's format: `Orchestrator : <feature>` for an orchestrator and
+its successor, `Implementer : <phase>`, `Reviewer : <round>` — never the bare `agent`.
+
+What the suite reads: the launch text carries `--name` with the title, byte for byte,
+including a title with non-ASCII bytes. What only the live round can read, and the
+orchestrator reads on the first spawn: whether the listing other sessions see shows that
+name. The host's text does not promise it; if the listing keeps its own stem, the title
+still names the tab and the resume picker, and the brief keeps citing name and reference
+together — the reference is what disambiguates in every case.
