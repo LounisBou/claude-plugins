@@ -17,7 +17,7 @@ Preconditions, verify each before acting:
 Then:
 
 1. `iterm-agent.sh list` — note your own tty and the implementer's tty.
-2. `iterm-agent.sh spawn --dir <worktree> --tier deep --permission-mode auto --title orchestrator
+2. `iterm-agent.sh spawn --dir <worktree> --tier deep --permission-mode auto --title "Orchestrator : <feature>"
    --left-of <implementer tty> --prompt "Read and execute <brief path>"` — the operator's
    decision mode, or the successor stops at its first prompt in a tab nobody watches.
    The successor runs at the `deep` tier: its output — the sequencing, the verdicts,

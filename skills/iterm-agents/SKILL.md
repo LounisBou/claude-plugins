@@ -18,7 +18,7 @@ $SCRIPT list
     # w1/t3 | /dev/ttys000 | ✳ agent-brief prompt (node)
 
 $SCRIPT spawn --dir <workdir> [--tier deep|standard|light] [--permission-mode auto] \
-    --title <role-and-phase> --prompt "Read and execute <brief-path>. Your orchestrator is <name [ref]>." [--right-of self]
+    --title "<Role> : <what>" --prompt "Read and execute <brief-path>. Your orchestrator is <name [ref]>." [--right-of self]
     # writes the prompt to a file under the plugin's state directory, writes the launch
     # to a second file, asks the app to run it in a new tab AT AN INDEX, WAITS until the
     # host CLI is running on the new tty (30 s, ORCHESTRATOR_SPAWN_TIMEOUT), and prints
@@ -111,7 +111,7 @@ So **always name an anchor**, and name the one you actually know:
 - **A window's tab list is a cached copy.** Read a reorder back through the object you already
   held and it looks like a reorder that never happened — or reports the position the tab used
   to have. Re-fetch the app after any mutation.
-- **The title is the session's name.** `--title` is passed to the host as the session's name (shown in its prompt, its resume picker, the terminal title, and applied with a variant when a live session already holds it), so name the ROLE and the PHASE: `impl-anchor-window-p1`, `review-r2`, `orchestrator-<project>` for a successor — never the bare default. The tab title still reflects the session's current task for `--expect-title`: read it from `list` seconds before closing.
+- **The title is the session's name.** `--title` is passed to the host as the session's name (shown in its prompt, its resume picker, the terminal title, and applied with a variant when a live session already holds it), so name it the operator's way — `Orchestrator : <feature>` for an orchestrator or its successor, `Implementer : <phase>`, `Reviewer : <round>` — never the bare default. The tab title still reflects the session's current task for `--expect-title`: read it from `list` seconds before closing.
 - **The tab is born in the anchor's window, whichever window is in front.** With two windows open, a
   spawn anchored on a tab of the second once landed at the end of the first — the window in front —
   and reported success. The anchor is now searched across every window, and an anchor that is not
