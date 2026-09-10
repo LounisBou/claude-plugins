@@ -16,6 +16,7 @@ Everything here was extracted from a working setup: the skills existed as loose 
 skills/orchestrator/SKILL.md         the rulebook
 skills/iterm-agents/SKILL.md         tab management on macOS
 skills/iterm-agents/scripts/iterm-agent.sh
+skills/orchestrator/scripts/brief-lint.sh   refuses a brief before it is dispatched
 skills/model-routing/SKILL.md        which capability tier a dispatch gets
 skills/context-gauge/SKILL.md        how a session reads its own context fill
 skills/context-gauge/scripts/context-gauge.sh
@@ -217,5 +218,23 @@ matching the map's `standard`), the tab landed beside the orchestrator's, the ha
 arrived in seconds against a named address while four peer sessions were listed, and the
 delivery passed review on the artifact — gate re-run, contract walked case by case, the
 agent's suite mutation-tested, and both factual claims in its report re-derived and true.
+
+## 12. Linting the brief
+
+**0.9.0.** Specification is the largest category of multi-agent failure in the published
+taxonomy — larger than coordination, and more than twice verification — and a brief is
+this plugin's whole specification act. Nothing read the file before it reached a session.
+
+`brief-lint.sh` refuses a brief carrying an unfilled placeholder, an unexpanded variable,
+a path that does not exist on this machine, more than one session reference, or — for an
+implementer brief — no address, no non-goals, no STOP-and-ask clause. Every one of those
+has reached a live agent at least once; the last round supplied two of them, and the
+script was verified against the brief that agent actually received rather than against a
+fixture: it names both and exits 1.
+
+It reads what a script can read. Whether the scope is right, whether the contracts are the
+ones the next phase consumes, whether the tier fits the work — those stay the
+orchestrator's, and the skill says so where it tells you to run it, because a guard whose
+limits are unstated is one people trust past them.
 
 **decide** (0.4.2) is the decision round: the orchestrator collects every arbitration that is the user's — agents' STOPs, proposed owners, review findings without one — and puts them ONE AT A TIME, each with its context in plain words, two to four choices carrying their cost, one recommendation, then waits; the ruling is written back in one line, recorded where it lives, relayed to the agent it answers, and only then the next question comes. A question interrupted by anything else is re-presented in full, never referenced. Written after a day on which twelve arbitrations were put that way and every one was ruled in a minute, where batching them had stalled for hours.
