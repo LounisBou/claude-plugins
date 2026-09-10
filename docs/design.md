@@ -508,3 +508,33 @@ with a chain of two, `anchor=<the second's tty>`; a dry run never writes a chain
 there is no tab to record. What only the live round can read: an anchor that is not there
 is refused before a tab exists, a second probe lands immediately right of the first rather
 than of the orchestrator, and after both are closed the chain no longer names them.
+
+## 22. The tab runs its launch through a login shell
+
+**0.19.0.** The operator's rule: every binary the package manager installs must be on an
+agent's PATH, because an agent must be able to run the commands the operator runs. The
+finding behind it: no spawned session could open a pull request. `gh` typed bare was
+`command not found`; typed by absolute path it ran sandboxed and could not read the keychain,
+so it reported a valid token as invalid. Read on the process with `ps -E`, a spawned session
+carried `PATH=/usr/bin:/bin:/usr/sbin:/sbin:` and the app's own utilities — the bare default
+§14 describes, inherited by every command the session runs.
+
+§14 solved the launch's own problem — finding the CLI — by naming it absolutely, and that
+stays: a launch must not depend on the operator's dotfiles to find the program it runs. What
+the login shell is for is the SESSION: the app is now asked to run `<login shell> -l
+<launch file>` rather than `/bin/sh <launch file>`, so the environment the CLI inherits, and
+hands to every command it runs, is the one the operator's own terminal has. The login shell
+is `ORCHESTRATOR_LOGIN_SHELL`, else `SHELL`, else `/bin/zsh`; measured on this machine, it
+puts the package manager's directory first, costs 0.03 s and writes nothing to stdout. A
+non-interactive `-l` reads the profile files and not the interactive ones, which is the
+environment without the prompt.
+
+The alternative — a fixed `PATH` in the host's settings — was refused by the operator's
+peer session with the right reason: it would replace every session's rich environment
+(version managers, language toolchains) with a frozen list. The launcher is the one place
+that knows a session is being born, so the launcher is where the shell is chosen.
+
+What the suite reads: the dry run prints `program=<shell> -l <launch-file>`; the launch text
+itself is unchanged and still `exec`s the CLI by absolute path. What only the live round can
+read: the `PATH` of the spawned process, through `ps -E`, contains the first entry of a
+login shell's own `PATH`.
