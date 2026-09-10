@@ -119,11 +119,16 @@ A brief is written to a path the fresh session can open on its machine, never on
 - tap: file written with every field; payload passed byte-for-byte to the wrapped command and its exit status returned; no wrapped command → the one-line render; invalid stdin → no file, wrapped command still run; stale files pruned on first render.
 - install: wraps an existing command, is idempotent on a second run, handles a settings file without `statusLine`, `--dry-run` changes nothing; uninstall restores the previous object exactly.
 - iterm script: argument validation paths (`--tty` required, differing ttys) fail before any automation call.
-- repository policy: the prose contains no vendor or product name outside the load-bearing identifiers.
+- repository policy: the prose contains no vendor or product name outside the load-bearing identifiers, no model family name anywhere, nothing machine- or project-specific — and the guard proves it can still SEE a violation, through a probe planted and removed by the same function, because it once masked every hit behind the repository's own path.
+- model tiers: a bound tier resolves, an unbound one resolves to nothing without erring, an unknown one is refused, the environment overrides the map, a map that does not parse stops the caller instead of passing for an unbound tier, and a rotation whose tier cannot resolve stops before anything else runs.
+- version: the plugin and marketplace manifests agree, and the number is ahead of every published tag.
 
 ## 8. Release
 
-Version in `plugin.json`, tag `claude-orchestrator--v<version>` pushed with the code. Install:
+Version in `plugin.json` AND in both fields of `marketplace.json` — the same fact in
+three places, so the suite checks they agree and that the number is ahead of every
+published tag. Tag `orchestrator--v<version>` pushed with the code (the document
+announced a `claude-orchestrator--v` prefix that no release has ever used). Install:
 
 ```
 /plugin marketplace add LounisBou/claude-orchestrator
@@ -137,7 +142,7 @@ Windows and Linux terminal automation (the iterm-agents skill is macOS only; the
 
 ## 10. Model routing
 
-**0.6.0.** Every session the orchestrator dispatched ran at whatever the launcher
+**0.7.0.** Every session the orchestrator dispatched ran at whatever the launcher
 hardcoded, which put a model identifier in a plugin whose rules forbid one and paid the
 top tier for work a test suite already judges.
 
