@@ -448,6 +448,12 @@ with an agent that has not shaken hands. `screen --tty` restores it, and the rou
 asserts that a session got past its startup questions rather than merely that a process
 exists.
 
+**The intermittent spawn is explained.** One launch in roughly six returned no tty, with no
+mechanism named — and this is it: the trust question's highlighted answer is « exit », so a
+session that takes a stray keystroke quits before its tty can be read. After the fix, five
+consecutive end-to-end rounds, twenty-three checks each, zero failures, the tab count
+identical before and after every one. It was never flaky; it had a cause.
+
 Temporary files across the plugin are anchored to `TMPDIR`: the platform default can be a
 directory a restricted shell may not write to, and a script that fails there fails on a
 path it never chose.
