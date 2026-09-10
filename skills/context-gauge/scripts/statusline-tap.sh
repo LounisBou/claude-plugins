@@ -41,8 +41,14 @@ record() {
   if [ -n "$tp" ]; then tpj="\"$tp\""; else tpj=null; fi
   mkdir -p "$CTX_DIR" 2>/dev/null || return 0
   file="$CTX_DIR/$sid.json"
-  # First render of a session: prune the files left by sessions that ended.
-  [ -f "$file" ] || find "$CTX_DIR" -name '*.json' -mtime +1 -delete 2>/dev/null
+  # First render of a session: prune what sessions that ended left behind. Both kinds —
+  # the context files, and the gate's one-shot "already said unmeasured" markers. Sweeping
+  # only the first meant the plugin pruned half of what it makes, and the markers came to
+  # outnumber the files they sit beside.
+  if [ ! -f "$file" ]; then
+    find "$CTX_DIR" -name '*.json' -mtime +1 -delete 2>/dev/null
+    find "$CTX_DIR" -name '*.gate-unmeasured' -mtime +1 -delete 2>/dev/null
+  fi
   tmp="$file.tmp.$$"
   printf '{"session_id":"%s","context_percent":%s,"context_used":%s,"context_total":%s,"five_hour_percent":%s,"five_hour_resets_at":%s,"seven_day_percent":%s,"seven_day_resets_at":%s,"transcript_path":%s,"updated_epoch":%s}\n' \
     "$sid" "$ctx" "$used" "$total" "$h5" "$h5r" "$d7" "$d7r" "$tpj" "$(date +%s)" > "$tmp" 2>/dev/null \

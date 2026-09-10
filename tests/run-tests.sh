@@ -524,8 +524,17 @@ out=$(printf '' | ORCHESTRATOR_STATE_DIR="$STATE" bash "$TAP")
 check "empty stdin renders a placeholder" "ctx: ~ │ 5h: ~ │ 7d: ~" "$out"
 
 touch -t 202001010000 "$STATE/ctx/old.json"
+# The gate writes a marker beside the context files so it says "unmeasured" once per
+# session rather than on every prompt. Nothing removed them: the sweep took `*.json` only,
+# so the plugin pruned half of what it makes, and the markers outnumbered the files they
+# sat beside — twenty-six of them on the machine this was found on, the oldest four days
+# old. Kill what you start, delete what you build.
+touch -t 202001010000 "$STATE/ctx/old.gate-unmeasured"
+touch "$STATE/ctx/today.gate-unmeasured"
 printf '%s' "$PAYLOAD" | sed 's/s-1/s-2/' | ORCHESTRATOR_STATE_DIR="$STATE" bash "$TAP" >/dev/null
 check "stale files pruned on a session's first render" "gone" "$([ -f "$STATE/ctx/old.json" ] && echo kept || echo gone)"
+check "stale gate markers pruned with them" "gone" "$([ -f "$STATE/ctx/old.gate-unmeasured" ] && echo kept || echo gone)"
+check "a marker from today is kept" "kept" "$([ -f "$STATE/ctx/today.gate-unmeasured" ] && echo kept || echo gone)"
 
 echo "== gauge =="
 
