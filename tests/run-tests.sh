@@ -141,6 +141,29 @@ out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate2" bash "$ROOT/
 case "$out" in *"mutually exclusive"*) anchors="refused" ;; *) anchors="$out" ;; esac
 check "two anchors are refused at spawn" "refused" "$anchors"
 
+echo "== agent chain (dry run) =="
+# The operator's rule: orchestrator, agent 1, agent 2, … in launch order. `--right-of self`
+# used to mean « immediately right of my tab », which put every new agent BETWEEN the
+# orchestrator and the previous one. The chain file names the last agent; `self` resolves
+# to it. A dry run reads the chain and never writes it: there is no tab to record.
+AGENT="$ROOT/skills/iterm-agents/scripts/iterm-agent.sh"
+CHAINS="$WORK/istate/chains"; mkdir -p "$CHAINS"
+chain_spawn() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate" ORCHESTRATOR_SELF_TTY=/dev/ttys900 bash "$AGENT" spawn --dir "$WORK" --prompt p "$@" 2>&1; }
+out=$(chain_spawn --right-of self)
+check "the dry run names the caller's tty" "1" "$(printf '%s' "$out" | grep -c '^self=/dev/ttys900$')"
+check "no chain: self is the anchor" "1" "$(printf '%s' "$out" | grep -c '^anchor=self$')"
+printf '{"tab_id":"t-1","tty":"/dev/ttys901"}\n{"tab_id":"t-2","tty":"/dev/ttys902"}\n' > "$CHAINS/ttys900.jsonl"
+out=$(chain_spawn --right-of self)
+check "a chain of two: the last is the anchor" "1" "$(printf '%s' "$out" | grep -c '^anchor=/dev/ttys902$')"
+check "a dry run writes no chain" "2" "$(wc -l < "$CHAINS/ttys900.jsonl" | tr -d ' ')"
+out=$(chain_spawn --right-of /dev/ttys555)
+check "an explicit anchor ignores the chain" "1" "$(printf '%s' "$out" | grep -c '^anchor=/dev/ttys555$')"
+out=$(chain_spawn --left-of self)
+check "left of self ignores the chain" "1" "$(printf '%s' "$out" | grep -c '^anchor=self$')"
+printf 'not json\n' > "$CHAINS/ttys900.jsonl"
+out=$(chain_spawn --right-of self)
+check "a corrupt chain reads as empty" "1" "$(printf '%s' "$out" | grep -c '^anchor=self$')"
+
 echo "== dispatch record =="
 
 # The routing rule says a tier drop that costs a second corrective round is reverted for

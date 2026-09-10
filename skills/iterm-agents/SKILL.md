@@ -56,7 +56,7 @@ A plain `spawn` appends at the FAR RIGHT of the window. That is beside the orche
 
 So **always name an anchor**, and name the one you actually know:
 
-- spawning an implementer: `--right-of self` — your own tab, resolved from the process tree, no need to know which tab currently follows you.
+- spawning an implementer: `--right-of self` — after your LAST still-open agent, or your own tab when you have none. The launcher keeps the chain (`chains/<your tty>.jsonl` under the state directory) and the order reads left to right as launch order: you, agent 1, agent 2, … A closed agent leaves the chain; a tty is never trusted across a close, the chain is checked on the app's tab id.
 - spawning your successor: `--right-of self` too, then the successor sits between you and your agent; it closes your tab once the takeover is confirmed, so the successor ends up immediately left of the agent.
 - `--left-of <tty>` remains for the case where the anchor you know is on the other side.
 - `move` repairs the layout after the fact, with the same three forms.
