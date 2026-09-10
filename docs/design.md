@@ -180,4 +180,42 @@ work outgrew its brief if it knows what the brief assumed.
 
 Design: `docs/superpowers/specs/2026-09-08-model-routing-design.md`.
 
+## 11. What a brief can carry
+
+**0.8.0.** Three defects came out of running one phase end to end on a live machine — a
+brief instantiated from the template, an agent spawned at a tier, its delivery reviewed on
+the artifact, its tab closed. None was reachable from the test suite, because all three
+live in what happens when a fresh session opens the file.
+
+**A path that only the host can expand does not resolve in a brief.** All four brief
+templates told the agent to run `${CLAUDE_PLUGIN_ROOT}/skills/context-gauge/…`. A spawned
+session's shell carries none of the host's plugin variables, so that expanded to an
+absolute path that cannot exist, and the plugin's own doctrine — measure, never estimate —
+was unrunnable at the point of delivery. The agent reported it could not measure and
+refused to invent a figure, which is the right answer to an instruction that was never
+runnable. The templates now carry a `{{GAUGE}}` placeholder the orchestrator fills with an
+absolute path, like every other path in a brief, and the suite refuses a host variable
+anywhere under `templates/`.
+
+**A brief points at a policy, it cannot grant one.** The phase brief asserted that
+committed history must carry nothing of the workflow, attribution trailers included. The
+agent's host tells it directly to append those trailers. Sent a one-line corrective to
+strip them, the agent STOPPED and said a peer session cannot authorise overriding a
+host-level directive — and it was right: a file written by a peer is not its user
+speaking. That policy binds only where it lives in the target repository's own user-level
+instructions, and the brief's job is to name that file and quote the clause. The rulebook
+and the template now say so, and the brief tells the agent to stop rather than choose
+between two authorities.
+
+**Nothing that reads as a second address goes near the one that matters.** The phase brief
+carried `e.g. project-70 [a1b2c3]` — guidance for whoever fills the template, delivered to
+the agent, inside the one rule whose point is a single named address and no guessing. The
+suite refuses a session-reference shape under `templates/`.
+
+The round also confirmed what does work: the tier reached the live process (`--model`
+matching the map's `standard`), the tab landed beside the orchestrator's, the handshake
+arrived in seconds against a named address while four peer sessions were listed, and the
+delivery passed review on the artifact — gate re-run, contract walked case by case, the
+agent's suite mutation-tested, and both factual claims in its report re-derived and true.
+
 **decide** (0.4.2) is the decision round: the orchestrator collects every arbitration that is the user's — agents' STOPs, proposed owners, review findings without one — and puts them ONE AT A TIME, each with its context in plain words, two to four choices carrying their cost, one recommendation, then waits; the ruling is written back in one line, recorded where it lives, relayed to the agent it answers, and only then the next question comes. A question interrupted by anything else is re-presented in full, never referenced. Written after a day on which twelve arbitrations were put that way and every one was ruled in a minute, where batching them had stalled for hours.

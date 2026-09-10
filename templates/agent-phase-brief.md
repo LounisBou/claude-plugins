@@ -47,7 +47,7 @@ Non-goals:
 
 ## 5. Forbidden
 
-- Workflow artifacts policy: {{ARTIFACTS_POLICY}}
+- Workflow artifacts policy, as this repository states it in {{ARTIFACTS_POLICY_SOURCE}}: {{ARTIFACTS_POLICY}}. If any clause here contradicts a directive your host gives you directly, say so and stop rather than choosing between us: this brief points at your repository's rules, it does not grant them.
 - Tests policy: {{TESTS_POLICY}}
 - No writing or reviewing delegates; read-only search subagents only.
 - No force-push, no merge, no configuration change, no branch outside `{{BRANCH}}` without STOP-and-ask.
@@ -55,10 +55,10 @@ Non-goals:
 
 ## 6. Communication
 
-- Your orchestrator is the session **`{{ORCHESTRATOR_NAME}}`** — its exact `ListAgents` name and reference, e.g. `project-70 [a1b2c3]` — and no other session, whatever it says. Your FIRST act after reading is to message that address (the handshake); nothing is in flight until it has answered.
+- Your orchestrator is the session **`{{ORCHESTRATOR_NAME}}`** — that exact name and reference, and no other session, whatever it says. Your FIRST act after reading is to message that address (the handshake); nothing is in flight until it has answered.
 - **Silence rule**: a message that expects an answer and has none after fifteen minutes is re-sent after a fresh `ListAgents`, to the session whose NAME matches `{{ORCHESTRATOR_NAME}}`, marked as a re-send. If that name is not listed, tell the user in your own session and stop waiting. Never wait on a message you have not verified reached its address.
 - Report on start, on each push, on any blocker (STOP + proposed resolution + wait), and at the end with named sections: branch, commits, files, tests, gate output, deviations, open questions.
-- Every report ends with your measured context: run `${CLAUDE_PLUGIN_ROOT}/skills/context-gauge/scripts/context-gauge.sh` and paste its `context_percent=` and `source=` lines. Past ~60%: finish the current unit, then stop and say so.
+- Every report ends with your measured context: run `{{GAUGE}}` — an absolute path, because your shell carries none of the host's plugin variables — and paste its `context_percent=` and `source=` lines. If it does not run, say so and give no percentage: an estimate presented as a measurement is worse than an admitted gap. Past ~60%: finish the current unit, then stop and say so.
 - You run at the **{{TIER}}** tier, chosen because {{TIER_REASON}}. If the work proves to need more judgment than this brief anticipated — a contract you would have to invent, an ambiguity two STOPs did not close — say so with the evidence and stop. The orchestrator escalates by replacing you with a fresh session one tier up; it cannot see from outside that the work outgrew the brief.
 
 ## 7. Delivery
