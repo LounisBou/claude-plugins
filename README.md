@@ -25,6 +25,13 @@ session can read without depending on a particular status bar.
 | `/orchestrator:progress` | Where the build stands: done, in flight, remaining, decisions pending, and the orchestrator's own context. |
 | `/orchestrator:decide` | Runs a decision round with the user: every open question one at a time — context, choices with their cost, one recommendation — each ruling recorded and relayed before the next; a question is re-presented in full after any interruption. |
 
+## Tests
+
+`./tests/run-tests.sh` runs everywhere: no network, no terminal automation, isolated home
+per case. `./tests/e2e.sh` plays one real round against a live terminal — a brief, a
+session at a tier, a placed tab, a verified close — and is kept out of the default suite on
+purpose, because it costs tokens and needs the app running.
+
 ## Install
 
 ```

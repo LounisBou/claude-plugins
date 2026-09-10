@@ -39,6 +39,7 @@ hooks/hooks.json                     declares the context gate on UserPromptSubm
 hooks/context-gate.sh                the gate the harness enforces, not the model
 install.sh, uninstall.sh
 tests/run-tests.sh
+tests/e2e.sh                         one real round: a tab, a session, a close
 tests/fixtures/transcript.jsonl      a transcript tail for the gauge's computed tier
 docs/design.md                       this document
 README.md, LICENSE
@@ -297,5 +298,27 @@ Cost paid: seventeen guards that read the old implementation's source are gone, 
 by checks that read what the launch SAYS. That is a gain — a guard reading an
 implementation is green on the day the implementation changes shape and wrong the day
 after.
+
+## 15. The round the suite cannot play
+
+**0.12.0.** `run-tests.sh` proves the plumbing and cannot touch the choreography: it
+forbids terminal automation, so the acts the tooling exists for — placing a tab, verifying
+a session, killing it — were held by argument checks and by reading the implementation's
+own source. Every defect the last two rounds found lived in exactly that gap.
+
+`tests/e2e.sh` plays one real round: a brief instantiated from the template and linted, a
+dispatch recorded, a session spawned at a tier, the tab placed against its anchor, the
+title guard exercised, the tab closed, the process confirmed gone, the record closed. It
+asserts the one thing no dry run can — that the tier named at dispatch is the model the
+LIVE PROCESS carries — and it exercises the brief lint, the dispatch record and the tab
+tooling together, which nothing else does.
+
+It is deliberately NOT part of the default suite. It drives the terminal, it starts a
+session that costs tokens, and it needs the app running with its API enabled: a suite that
+cannot run in a checkout with no window server is a suite people stop running. It skips
+itself off macOS and stops with a clear reason when the tooling cannot reach the app.
+
+It does not talk to the agent. Handshakes, verdicts and reviews need judgment and stay the
+orchestrator's; this holds the mechanism underneath them.
 
 **decide** (0.4.2) is the decision round: the orchestrator collects every arbitration that is the user's — agents' STOPs, proposed owners, review findings without one — and puts them ONE AT A TIME, each with its context in plain words, two to four choices carrying their cost, one recommendation, then waits; the ruling is written back in one line, recorded where it lives, relayed to the agent it answers, and only then the next question comes. A question interrupted by anything else is re-presented in full, never referenced. Written after a day on which twelve arbitrations were put that way and every one was ruled in a minute, where batching them had stalled for hours.
