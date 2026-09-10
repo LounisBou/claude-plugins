@@ -170,6 +170,17 @@ printf 'not json\n' > "$CHAINS/ttys900.jsonl"
 out=$(chain_spawn --right-of self)
 check "a corrupt chain reads as empty" "1" "$(printf '%s' "$out" | grep -c '^anchor=self$')"
 
+# A tty is recycled; the chain file named after it survives its occupant. An entry names
+# the session that wrote it, and a reader keeps only its own (§26).
+printf '{"tab_id":"7","tty":"/dev/ttys907","owner":"S-OTHER"}\n{"tab_id":"8","tty":"/dev/ttys908","owner":"S-ME"}\n' > "$CHAINS/ttys900.jsonl"
+out=$(ORCHESTRATOR_SELF_ID=S-ME chain_spawn --right-of self)
+check "an entry of another session is skipped, an own one anchors" "1" "$(printf '%s' "$out" | grep -c '^anchor=/dev/ttys908$')"
+out=$(ORCHESTRATOR_SELF_ID=S-NEW chain_spawn --right-of self)
+check "a chain written by strangers anchors on self" "1" "$(printf '%s' "$out" | grep -c '^anchor=self$')"
+printf '{"tab_id":"9","tty":"/dev/ttys909"}\n' > "$CHAINS/ttys900.jsonl"
+out=$(ORCHESTRATOR_SELF_ID=S-ME chain_spawn --right-of self)
+check "an entry with no owner is skipped once an owner is known" "1" "$(printf '%s' "$out" | grep -c '^anchor=self$')"
+
 echo "== dispatch record =="
 
 # The routing rule says a tier drop that costs a second corrective round is reverted for
