@@ -389,4 +389,37 @@ the record and never from the agent, which cannot see its own; `uninstall` says 
 leave with the state directory that no backup holds — the operator's tier bindings and the
 record of what every session was launched with.
 
+## 19. What a live rotation found
+
+**0.16.0.** The end-to-end round gained the one operation that kills something, and with it
+the property that order exists for: a rotation whose replacement cannot start must leave the
+old session alive. Checking only that a good rotation works would pass equally on a script
+that closed first and spawned second — the one outcome that loses work.
+
+Running it found two defects that no dry run could reach.
+
+**A tab can come back from creation before its session is attached to it.** `current_session`
+reads None and the attribute error that follows names nothing useful. It is a race, so it is
+intermittent: the first probes never saw it, and the fourth spawn of one run did. The tty is
+waited for now, re-fetching the app rather than trusting the copy in hand.
+
+**The title guard was unreliable in the operation it protects.** The first character of a
+session's title is an activity glyph the session flips itself — one shape while it works,
+another once it idles. A rotation stands the old agent down and then spends ten seconds
+bringing up its replacement, so a title captured before and compared after is guaranteed to
+differ, and every rotation was refused by the guard written to make its close unambiguous.
+Both sides are compared with the glyph stripped, so a caller that captured it still matches
+and a genuinely different title still does not — but the glyph was only half of it. A
+session rewrites its whole title to say what it is doing, so across a rotation's ten seconds
+the string can change entirely. `--expect-title` is therefore right for a standalone close,
+where the title is read seconds before and nothing runs in between, and wrong for a
+rotation, where the guard is the stand-down the old agent acknowledged and the tty that
+identifies it. The skill says so in both places.
+
+One spawn out of roughly six returned no tty during these runs, and its mechanism is not
+named: the check swallowed stderr, so it reported an empty string where a diagnosis was
+available. It keeps stderr now and prints what the spawn said. That is not a fix and is not
+recorded as one — it is the next occurrence made able to explain itself, which is what is
+owed to a fall whose cause nobody has established.
+
 **decide** (0.4.2) is the decision round: the orchestrator collects every arbitration that is the user's — agents' STOPs, proposed owners, review findings without one — and puts them ONE AT A TIME, each with its context in plain words, two to four choices carrying their cost, one recommendation, then waits; the ruling is written back in one line, recorded where it lives, relayed to the agent it answers, and only then the next question comes. A question interrupted by anything else is re-presented in full, never referenced. Written after a day on which twelve arbitrations were put that way and every one was ruled in a minute, where batching them had stalled for hours.

@@ -149,8 +149,30 @@ async def tab_index_of(app, window, tab_id):
     return None, window
 
 
-async def tty_of(tab):
-    return await tab.current_session.async_get_variable("tty")
+async def tty_of(tab, connection=None, tries=10):
+    """The tty of a tab's current session, waited for rather than assumed.
+
+    A tab comes back from creation before its session is necessarily attached to the object
+    handed over: `current_session` reads None, and the attribute error that follows names
+    nothing useful. It is a race, so it is intermittent — the first probes never saw it, and
+    a rotation found it on the fourth spawn of one run. Where a connection is available the
+    app is re-fetched, because the tab we hold may be the stale copy."""
+    for attempt in range(tries):
+        sess = tab.current_session
+        if sess is not None:
+            try:
+                return await sess.async_get_variable("tty")
+            except Exception:
+                pass
+        await asyncio.sleep(0.3)
+        if connection is not None:
+            import iterm2 as _i
+            fresh = await _i.async_get_app(connection)
+            for w in fresh.windows:
+                for t in w.tabs:
+                    if t.tab_id == tab.tab_id:
+                        tab = t
+    return None
 
 
 async def find_tab(app, tty):
@@ -301,7 +323,7 @@ def cmd_spawn(argv):
                     index = i + 1 if args.right_of else i
                     break
         tab = await win.async_create_tab(command=command, index=index)
-        return await tty_of(tab)
+        return await tty_of(tab, connection)
 
     new_tty = run(go)
     if not new_tty:
@@ -334,6 +356,18 @@ def cmd_verify(argv):
     print("%s running on %s (pid %s)" % (HOST_CLI, args.tty, pid))
 
 
+def stable_title(name):
+    """A session's title without its leading activity glyph.
+
+    The first character reflects whether the session is busy and flips on its own — `◑`
+    while it works, `✳` once it idles. A rotation stands the old agent down and then takes
+    ten seconds to bring up its replacement, so a title captured before it and compared
+    after it is guaranteed to differ: the guard meant to make a close unambiguous refused
+    every rotation instead. Both sides are stripped, so a caller that captured the glyph
+    still matches."""
+    return name.lstrip().lstrip("".join(c for c in name if not (c.isalnum() or c.isspace()))).strip()
+
+
 def cmd_close(argv):
     p = argparse.ArgumentParser(prog="close", add_help=False)
     p.add_argument("--tty", dest="tty")
@@ -351,7 +385,7 @@ def cmd_close(argv):
         if tab is None:
             die("close: no session found on %s" % args.tty)
         name = await sess.async_get_variable("autoName") or ""
-        if args.expect and args.expect not in name:
+        if args.expect and stable_title(args.expect) not in stable_title(name):
             die("close: refused: session on %s is titled '%s', which does not contain '%s'"
                 % (args.tty, name, args.expect))
         await tab.async_close(force=True)

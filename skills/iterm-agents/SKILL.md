@@ -71,10 +71,12 @@ So **always name an anchor**, and name the one you actually know:
 
 ## Safety order for a live rotation
 
-1. The old agent must have STOOD DOWN (message it; wait for its acknowledgment) — never close a tab whose session may still be writing.
-2. `list` to confirm the tty↔title map right before closing; titles are the guard.
-3. `rotate` — or `spawn` then `close` — so the replacement is running before the old one is gone; close with `--expect-title` matching the title the session sets itself (see caveats).
-4. Verify with `list` (tab present, title reflects the brief) AND `ListAgents` (new peer session visible, old one gone) before reporting the rotation done.
+1. The old agent must have STOOD DOWN (message it; wait for its acknowledgment) — never close a tab whose session may still be writing. **In a rotation this acknowledgment IS the guard**, not the title.
+2. `list` to confirm the tty is the one you mean.
+3. `rotate`, which spawns the replacement and verifies it is running before the old one is gone. **Do not pass `--expect-title` to a rotation.** A rotation spends ten seconds bringing up the replacement, and a working session rewrites its own title to say what it is doing: a title read before the spawn and compared after it is a string that was true a moment ago. Refusing on it turned a safeguard into a rotation that never completed. The tty is the identity; a stood-down agent that acknowledged is what makes closing it safe.
+4. Verify with `list` (the old tab gone, the new one present) AND `ListAgents` (new peer session visible, old one gone) before reporting the rotation done.
+
+`--expect-title` remains right for a STANDALONE `close`, where you read the title from `list` seconds before and nothing runs in between.
 
 ## Caveats (all observed)
 
@@ -96,7 +98,13 @@ So **always name an anchor**, and name the one you actually know:
   to have. Re-fetch the app after any mutation.
 - **Dynamic titles override manual ones**: the shell and the session rewrite the tab title, so a
   `--title` set at spawn is transient. For `--expect-title`, match the title the session displays
-  (it reflects its current task or prompt), read from `list` seconds before closing.
+  (it reflects its current task or prompt), read from `list` shortly before closing.
+- **The first character of a title is an activity glyph, and it flips on its own** — one shape
+  while the session works, another once it idles. `--expect-title` compares titles with that
+  glyph stripped from both sides, because a rotation stands the old agent down and then spends
+  ten seconds bringing up its replacement: a title captured before and compared after is
+  guaranteed to differ, and the guard written to make a close unambiguous refused every
+  rotation instead. Match on words, never on the glyph.
 - **tty numbers are recycled**: a freshly closed `/dev/ttys000` can be reassigned to the next
   spawned tab. Never reuse a stored tty across a close — re-`list` every time.
 - **The app's API must be enabled** (Preferences > General > Magic > Enable Python API), and the
@@ -120,5 +128,6 @@ So **always name an anchor**, and name the one you actually know:
 - Trusting the printed tty: the process on it is the fact; `verify`, `list`, `ListAgents`, then the handshake.
 - Closing by title alone or by tab position: only `--tty` + `--expect-title` is unambiguous.
 - Spawning without an anchor and assuming the tab landed beside you: it lands at the end of the window. Pass `--right-of self`.
-- Rotating before the old agent acknowledged stand-down: risks killing an uncommitted write.
+- Rotating before the old agent acknowledged stand-down: risks killing an uncommitted write, and the acknowledgment is the rotation's only real guard.
+- Passing `--expect-title` to a rotation: the title will have moved by the time the close runs, and the rotation simply never completes.
 - Storing a tty and using it after any close happened in between (recycling).
