@@ -145,7 +145,7 @@ if [ -n "$me" ]; then
   check "the second agent lands right of the first, not of the orchestrator" "$((pos_one + 1))" "$pos_two"
   chain="${ORCHESTRATOR_STATE_DIR:-$HOME/.claude/claude-orchestrator}/chains/$(basename "$me").jsonl"
   check "the chain names both" "2" "$(grep -c "\"tty\": \"$ONE\"\|\"tty\": \"$TWO\"" "$chain")"
-  check "the chain names its owner" "2" "$(grep -c '"owner": "[^"]' "$chain")"
+  check "the chain names its owner" "2" "$(grep -E "\"tty\": \"$ONE\"|\"tty\": \"$TWO\"" "$chain" | grep -c '"owner": "[^"]')"
   bash "$AGENT" close --tty "$TWO" >/dev/null 2>&1
   bash "$AGENT" close --tty "$ONE" >/dev/null 2>&1
   check "a closed agent leaves the chain" "0" "$(grep -c "\"tty\": \"$ONE\"\|\"tty\": \"$TWO\"" "$chain")"
