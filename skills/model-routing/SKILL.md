@@ -99,6 +99,32 @@ Before every dispatch, read `five_hour_percent` and `seven_day_percent` from `or
 
 Pressure modifies one dispatch. It never rewrites the table.
 
+## A second reader, armed by evidence and not by default
+
+The published measurements of model judges are lopsided in a way that matters here: a
+strong judge keeps false POSITIVES low — it rarely invents a defect — while its false
+negatives stay moderate to high. What a review costs you is what it MISSED, and a missed
+defect leaves no trace in the round that missed it.
+
+The recommended mitigation is a panel of differing readers with a consensus rule. Standing
+panels are expensive, and your compensating control is already stronger than a vote: you
+verify every finding on the artifact yourself, and you mutate the tests the verdict rests
+on. So the panel is not a default here. It is armed by evidence:
+
+- When a later round contradicts an approval — a defect in work already approved — record
+  it: `dispatch-record.sh escaped <record> <id>`.
+- `summary` then prints `signal=double-read <class> at <tier>`. From that point, that class
+  gets a **second reader with a DIFFERENT lens** on its next round, and a finding is kept
+  only when both readers see it.
+- Different lens, not a second opinion on the same one: two readers asked the same question
+  agree by construction, and agreement bought that way is the shape of a gate green over
+  nothing.
+
+**Do not arm this from a hunch.** A round with no escape recorded is a round that read what
+it was meant to read, as far as anything here can tell — and an unrecorded escape is a
+measurement nobody took, not an absence of the problem. Recording it when you find one is
+the whole cost of the rule.
+
 ## The record
 
 One row per dispatch in the project's build state: class, tier, rounds to close, verdict. That record is what corrects the table for this build, and your succession brief points at it. The default table ships here; a project's corrections belong to that project, where status lives once.
@@ -132,6 +158,7 @@ signal=n-bis at light averages 2 rounds: the drop did not pay, revert it for thi
 | "The quota is high, drop everything a tier" | Not the contracts and not yourself. A cheap orchestrator produces expensive waves, and a cheap contract is paid by every later phase. |
 | "The map is empty but the tiers are in the briefs" | Then nothing is routed and the host decides everything. Run `resolve-tier`, and say the routing is advisory until the operator binds it. |
 | "Cascading saved 90% in the papers, so cascade the phases too" | Those savings assume a failed attempt is cheap to throw away. A phase's failed attempt is a review round plus a rework round. Cascade what a machine judges, nothing else. |
+| "The review found nothing, so the code is clean" | It found nothing it read. Judges miss more than they invent; the only evidence of a miss is a later round contradicting an approval, and it exists only if you record it. |
 | "The cascade failed once, that proves nothing" | Right, which is why the rule waits for two and reads the paid rate. It also means one success proves nothing either. |
 | "Two tiers up, this one is clearly out of reach" | One step. Two steps means the readings were not taken, and there is no evidence to revert to. |
 
@@ -141,6 +168,8 @@ signal=n-bis at light averages 2 rounds: the drop did not pay, revert it for thi
 - A wave dispatched without reading the record's summary; a signal in it you have seen and not reverted.
 - A phase dispatched as a cascade: its failed attempt is a review round and a rework round, not a retry.
 - A cascade dispatched without `--cascade` on its row: unmarked, it cannot be told from a row that needed two rounds.
+- A defect found in approved work and not recorded as an escape: the next round then reads exactly as the one that missed it.
+- A second reader given the same lens as the first: they agree by construction, and that agreement holds nothing.
 - A tier chosen from how hard the phase feels rather than from the five readings.
 - A second corrective round on a class you dropped, and the drop still standing.
 - An escalation attempted inside a live session instead of as a rotation.
