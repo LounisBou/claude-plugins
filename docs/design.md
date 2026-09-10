@@ -538,3 +538,31 @@ What the suite reads: the dry run prints `program=<shell> -l <launch-file>`; the
 itself is unchanged and still `exec`s the CLI by absolute path. What only the live round can
 read: the `PATH` of the spawned process, through `ps -E`, contains the first entry of a
 login shell's own `PATH`.
+
+## 23. The operator decides; the orchestrator runs
+
+**0.20.0.** The operator's ruling, after an afternoon in which the orchestrator handed him
+three command lines — open this pull request, run this live round, refresh this credential:
+« everything you ask me to do, you can do yourself; I am here to decide, nothing else ». He
+was right on every count. Each line had a reason that was true of the orchestrator's SESSION
+— a reduced PATH, a keychain the sandbox would not open, a nested script no exclusion covered
+— and none was true of the orchestrator's ROLE. A session limit is repaired by the
+orchestrator: a successor spawned with the environment the task needs, a configuration
+request with its measurement, a launcher change. It is never delegated upward, because the
+operator adds nothing to a command he did not write and cannot check, and every such line
+costs him the attention the arbitrations need.
+
+So the rulebook now says it in one place, and the suite reads that it does: **a command the
+orchestrator could run is the orchestrator's to run.** Opening, merging and tagging pull
+requests, running the live round, updating the installed plugin, restarting the sessions a
+change requires, pinning a head for review — all of it. What reaches the operator is an
+arbitration: two readings, what each costs, one recommendation — and the rule already says
+those come one at a time with their context. A request for a configuration change is not an
+exception: it goes to whichever session owns that configuration, as a request with the
+reading that justifies it, and the operator hears of it as a decision if that session asks him.
+
+The corollary the day also taught: **when the orchestrator's own session lacks what the role
+needs, the fix is a successor, not a favour.** A session launched before the launcher learned
+the login shell has no way to gain the PATH; the rulebook's succession exists for exactly
+that — spawn the successor through the current launcher, hand over, close the old tab. The
+successor is the proof that the launcher change worked, read on its process.
