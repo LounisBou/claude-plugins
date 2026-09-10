@@ -260,6 +260,52 @@ def shq(s):
     return shlex.quote(s)
 
 
+TRUST_FILE = os.environ.get("ORCHESTRATOR_TRUST_FILE") or os.path.join(os.path.expanduser("~"), ".claude.json")
+
+
+def directory_is_trusted(path):
+    """Whether the host will open this directory without asking.
+
+    A directory it has never seen stops the session on a workspace-trust question whose
+    highlighted answer is "exit". Nobody sits at that keyboard: the session either waits
+    for ever, having never read its brief, or takes a stray keystroke and quits. Both look
+    like a launched agent from outside, because the process is genuinely running."""
+    try:
+        with open(TRUST_FILE) as fh:
+            data = json.load(fh)
+    except Exception:
+        return None  # unknown: the record is not readable, so do not claim either way
+    entry = (data.get("projects") or {}).get(os.path.realpath(path)) or \
+            (data.get("projects") or {}).get(path)
+    if entry is None:
+        return False
+    return bool(entry.get("hasTrustDialogAccepted"))
+
+
+def grant_directory_trust(path):
+    """Record the trust the operator would otherwise be asked for, for ONE directory.
+
+    Only ever for a checkout the orchestrator prepared itself, which is why it takes an
+    explicit flag: preparing the environment is the orchestrator's housekeeping, and
+    granting trust to a tree it did not prepare is not."""
+    real = os.path.realpath(path)
+    try:
+        with open(TRUST_FILE) as fh:
+            data = json.load(fh)
+    except FileNotFoundError:
+        data = {}
+    except Exception as exc:
+        die("spawn: cannot read %s to grant trust: %s" % (TRUST_FILE, exc))
+    projects = data.setdefault("projects", {})
+    entry = projects.setdefault(real, {})
+    entry["hasTrustDialogAccepted"] = True
+    tmp = TRUST_FILE + ".orchestrator-tmp"
+    with open(tmp, "w") as fh:
+        json.dump(data, fh, indent=2)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, TRUST_FILE)
+
+
 def cmd_spawn(argv):
     p = argparse.ArgumentParser(prog="spawn", add_help=False)
     p.add_argument("--dir")
@@ -272,6 +318,7 @@ def cmd_spawn(argv):
     p.add_argument("--left-of", dest="left_of", default="")
     p.add_argument("--right-of", dest="right_of", default="")
     p.add_argument("--no-verify", dest="verify", action="store_false", default=True)
+    p.add_argument("--trust", action="store_true", default=False)
     args, unknown = p.parse_known_args(argv)
     if unknown:
         die("spawn: unknown option %s" % unknown[0])
@@ -295,6 +342,17 @@ def cmd_spawn(argv):
         die("spawn: prompt file not found: %s" % prompt_file)
     if args.prompt:
         prompt_file = write_prompt_file(args.prompt, args.title)
+
+    # BEFORE the tab exists: a session stopped on the trust question is not launched,
+    # whatever the tty says, and finding that out afterwards means finding it out from an
+    # agent that never answers.
+    trusted = directory_is_trusted(args.dir)
+    if args.trust:
+        grant_directory_trust(args.dir)
+    elif trusted is False:
+        die("spawn: the host has not been told to trust %s, so the session would stop on "
+            "its workspace question and never read its brief. Pass --trust for a checkout "
+            "you prepared, or open the directory once yourself." % os.path.realpath(args.dir))
 
     launch = build_command(args.dir, args.title, model, args.mode, prompt_file)
 
@@ -322,7 +380,9 @@ def cmd_spawn(argv):
                 if await tty_of(t) == anchor:
                     index = i + 1 if args.right_of else i
                     break
-        tab = await win.async_create_tab(command=command, index=index)
+        # select=False: the operator is working in another tab, and a spawn that pulls the
+        # window to the new one interrupts them every time an agent is launched.
+        tab = await win.async_create_tab(command=command, index=index, select=False)
         return await tty_of(tab, connection)
 
     new_tty = run(go)
@@ -342,6 +402,33 @@ def cmd_spawn(argv):
             die("spawn: %s never started on %s after %ss" % (HOST_CLI, new_tty, SPAWN_TIMEOUT))
         print("spawn: %s running on %s (pid %s)" % (HOST_CLI, new_tty, pid), file=sys.stderr)
     print(new_tty)
+
+
+def cmd_screen(argv):
+    """What a tab is showing, right now.
+
+    An agent that has not shaken hands is inspected, not waited for — and inspecting it
+    means reading what it is stopped on. The typed-command era read this through a
+    scripting bridge; dropping that bridge dropped the reading with it, and the round that
+    followed spent its sessions parked on a question nobody could see."""
+    p = argparse.ArgumentParser(prog="screen", add_help=False)
+    p.add_argument("--tty", dest="tty")
+    p.add_argument("--lines", type=int, default=40)
+    args, _ = p.parse_known_args(argv)
+    if not args.tty:
+        die("screen: --tty is required")
+
+    async def go(iterm2, connection):
+        app = await iterm2.async_get_app(connection)
+        _, _, sess = await find_tab(app, args.tty)
+        if sess is None:
+            die("screen: no session found on %s" % args.tty)
+        contents = await sess.async_get_screen_contents()
+        n = min(args.lines, contents.number_of_lines)
+        return [contents.line(i).string.rstrip() for i in range(n)]
+
+    for line in run(go) or []:
+        print(line)
 
 
 def cmd_verify(argv):
@@ -470,12 +557,13 @@ def cmd_resolve_tier(argv):
 COMMANDS = {
     "list": cmd_list, "spawn": cmd_spawn, "verify": cmd_verify, "close": cmd_close,
     "move": cmd_move, "rotate": cmd_rotate, "resolve-tier": cmd_resolve_tier,
+    "screen": cmd_screen,
 }
 
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
-        die("usage: iterm-agent.sh {list|spawn|verify|resolve-tier|close|move|rotate} [options] (see header)")
+        die("usage: iterm-agent.sh {list|spawn|verify|screen|resolve-tier|close|move|rotate} [options] (see header)")
     COMMANDS[sys.argv[1]](sys.argv[2:])
 
 

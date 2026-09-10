@@ -40,7 +40,9 @@ require_row() {
 # round would make every read a reduction over history, and the history is not the fact.
 rewrite() {
     local filter="$1" id="$2"; shift 2
-    local tmp; tmp=$(mktemp)
+    # Where TMPDIR says: the platform default can be a directory this shell may not
+    # write to, and the record then fails on a path it never chose.
+    local tmp; tmp=$(mktemp "${TMPDIR:-/tmp}/orchestrator-XXXXXX")
     jq -c "$filter" --argjson i "$id" "$@" "$record" > "$tmp" || { rm -f "$tmp"; die "could not update $record"; }
     mv "$tmp" "$record"
 }

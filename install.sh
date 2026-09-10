@@ -124,7 +124,7 @@ case "$current" in
       mkdir -p "$BACKUP_DIR"
       cp "$SETTINGS" "$BACKUP_DIR/settings.json.before"
       jq -c '.statusLine // null' "$SETTINGS" > "$PREVIOUS"
-      tmp=$(mktemp)
+      tmp=$(mktemp "${TMPDIR:-/tmp}/orchestrator-XXXXXX")
       jq --arg cmd "$new" \
         '.statusLine = ((.statusLine // {padding: 0}) + {type: "command", command: $cmd})' \
         "$SETTINGS" > "$tmp"
