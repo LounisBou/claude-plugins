@@ -27,6 +27,8 @@ A validated spec and a phase plan containing, per phase: scope, files, **exact i
 
 Write it to a file, then SPAWN the fresh session yourself with the one-line prompt "Read and execute <path>" (see « The agents' lifecycle is yours »). Start from `${CLAUDE_PLUGIN_ROOT}/templates/agent-phase-brief.md`; a rotation resume brief starts from `agent-rotation-brief.md`, your own succession brief from `orchestrator-succession-brief.md`. **The path must be one the fresh session can open on the machine it runs on, and it must survive until the phase is reviewed** — never only in your context, never only in a container's temporary directory. Observed: an agent launched against a brief that existed nowhere it could reach, because the six previous briefs had been carried by hand and the seventh was not. Whether the file is committed follows the repository's own policy on workflow artifacts (see standing rules); state that policy in the prompt, do not let the agent pick.
 
+**Lint it before you spawn.** `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <path>` refuses a brief that carries an unfilled placeholder, an unexpanded variable, a path that does not exist on this machine, more than one session reference, or — for an implementer brief — no address, no non-goals, no STOP-and-ask clause. All of it is mechanical, and all of it has reached a live agent at least once. What it cannot read is whether the scope is right, whether the contracts are the ones the next phase consumes, or whether the tier fits the work: a green lint is not an approved brief, it is a brief with none of the faults a script can see.
+
 Its parts, in order:
 
 1. **Required reading**, ordered: spec → plan (global constraints + their phase) → project norms → named reference files for house patterns.
@@ -207,6 +209,7 @@ A plan, a prompt template or a norms file that outlives the decision it served i
 - An agent prompt that says « find the orchestrator » instead of naming its session; an orchestrator restarted without re-announcing its address; a message sent without an idle subscription behind it.
 - A review or comments session left open after its round is judged; a finding forwarded to the operator that you have not verified; an implementer session fanning out reviewers.
 - A brief written without the tier it runs at and the reading that chose it; a wave dispatched without reading the tier map.
+- A brief spawned without linting it first: every fault that script reads has reached a live agent at least once.
 - A brief asserting a policy that contradicts what the agent's host tells it directly, on the brief's own authority: point at the repository's instructions or drop the clause.
 - A path in a brief that only resolves inside a host-expanded context: the session that opens it has a plain shell and none of the host's plugin variables.
 - A brief that sequences the gate after the report; a separate session per small artifact when one round would hold them; an assessment round trip on an item you have already decided.

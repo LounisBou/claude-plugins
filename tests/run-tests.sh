@@ -137,6 +137,74 @@ out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate2" bash "$ROOT/
 case "$out" in *"mutually exclusive"*) anchors="refused" ;; *) anchors="$out" ;; esac
 check "two anchors are refused at spawn" "refused" "$anchors"
 
+echo "== brief lint =="
+
+# The largest category of multi-agent failure is specification, and a brief is this
+# plugin's whole specification act. Two defects reached a live agent before anything
+# checked the file: a path built from a host variable the agent's shell does not set, and
+# a second session reference sitting beside the real one. Both are mechanical; both are
+# caught here, before the dispatch rather than after the round.
+LINT="$ROOT/skills/orchestrator/scripts/brief-lint.sh"
+B="$WORK/briefs"; mkdir -p "$B"
+
+ok_brief() {  # a brief with nothing wrong in it
+  cat > "$1" <<BRIEF
+# scratch — Phase 1: thing
+
+You are the implementer for this phase.
+
+## 1. Required reading
+
+1. Spec: \`$WORK/briefs\`
+
+## 3. Scope
+
+Non-goals:
+
+- Nothing outside this list.
+- If you believe something outside this list is needed, STOP and ask the orchestrator first.
+
+## 6. Communication
+
+- Your orchestrator is the session **\`project-70 [a1b2c3]\`** and no other session.
+- Every report ends with your measured context: run \`$ROOT/skills/context-gauge/scripts/context-gauge.sh\`.
+BRIEF
+}
+
+ok_brief "$B/good.md"
+check_status "a complete brief passes" 0 bash "$LINT" "$B/good.md"
+check "a complete brief says so" "brief-lint: $B/good.md: 0 findings" "$(bash "$LINT" "$B/good.md" 2>&1)"
+
+ok_brief "$B/placeholder.md"; printf 'Branch: {{BRANCH}}\n' >> "$B/placeholder.md"
+check_status "an unfilled placeholder is a finding" 1 bash "$LINT" "$B/placeholder.md"
+check "the unfilled placeholder is named" "1" "$(bash "$LINT" "$B/placeholder.md" 2>&1 | grep -c 'unfilled placeholder {{BRANCH}}')"
+
+ok_brief "$B/hostvar.md"; printf 'Run `${CLAUDE_PLUGIN_ROOT}/x.sh`\n' >> "$B/hostvar.md"
+check_status "an unexpanded variable is a finding" 1 bash "$LINT" "$B/hostvar.md"
+check "the unexpanded variable is named" "1" "$(bash "$LINT" "$B/hostvar.md" 2>&1 | grep -c 'unexpanded variable')"
+
+ok_brief "$B/badpath.md"; printf 'Read `/nowhere/at/all/spec.md`\n' >> "$B/badpath.md"
+check_status "a path that does not exist is a finding" 1 bash "$LINT" "$B/badpath.md"
+check "the missing path is named" "1" "$(bash "$LINT" "$B/badpath.md" 2>&1 | grep -c '/nowhere/at/all/spec.md')"
+
+ok_brief "$B/twoaddr.md"; printf 'For example `other-12 [9f9f9f]`.\n' >> "$B/twoaddr.md"
+check_status "a second session reference is a finding" 1 bash "$LINT" "$B/twoaddr.md"
+check "the second address is named" "1" "$(bash "$LINT" "$B/twoaddr.md" 2>&1 | grep -c 'more than one session reference')"
+
+printf '# nothing\n\nYou are the implementer for this phase.\n' > "$B/noaddr.md"
+check_status "an implementer brief without an address is a finding" 1 bash "$LINT" "$B/noaddr.md"
+check "the missing address is named" "1" "$(bash "$LINT" "$B/noaddr.md" 2>&1 | grep -c 'no orchestrator address')"
+check "the missing STOP clause is named" "1" "$(bash "$LINT" "$B/noaddr.md" 2>&1 | grep -c 'no STOP-and-ask clause')"
+check "the missing non-goals are named" "1" "$(bash "$LINT" "$B/noaddr.md" 2>&1 | grep -c 'no non-goals')"
+
+# A review or rotation brief is not an implementer brief: it carries no non-goals list,
+# and holding it to one would make the check noise nobody reads.
+printf '# round 2\n\nYou are the REVIEW agent for this round.\n\nYour orchestrator is `p-1 [a1b2c3]`.\n' > "$B/review.md"
+check_status "a review brief is not held to the implementer sections" 0 bash "$LINT" "$B/review.md"
+
+check_status "a brief that does not exist is an error" 1 bash "$LINT" "$B/absent.md"
+check_status "no argument is an error" 1 bash "$LINT"
+
 echo "== briefs are readable where they are read =="
 
 # A template becomes a file a FRESH session opens and acts on. That session's shell does
