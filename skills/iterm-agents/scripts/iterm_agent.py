@@ -329,7 +329,11 @@ def build_command(dir_, title, model, mode, prompt_file):
     cli = [shq(cli_path)]
     if model:
         cli += ["--model", shq(model)]
-    cli += ["--permission-mode", shq(mode), "--settings", shq(settings)]
+    # The title is the session's name: the host shows it in its prompt, its resume picker
+    # and the terminal title, and applies a variant when a live session already holds it.
+    # Without it two sessions in one checkout share the host's stem and differ only by a
+    # reference (§24).
+    cli += ["--permission-mode", shq(mode), "--settings", shq(settings), "--name", shq(title)]
     if prompt_file:
         cli.append('"$(cat %s)"' % shq(prompt_file))
     parts[2] = "exec " + " ".join(cli)

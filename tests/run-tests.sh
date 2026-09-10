@@ -136,7 +136,7 @@ check "the comments brief carries a decided list" "1" "$(grep -c 'DECIDED_ITEMS'
 check "outward-facing text needs the operator" "1" "$(grep -c "may draft it, never authorise it" "$ROOT/skills/orchestrator/SKILL.md")"
 check "a fix answers its own thread" "1" "$(grep -c 'answered by the change' "$ROOT/skills/orchestrator/SKILL.md")"
 check "the comments brief drafts nothing on a fixed thread" "1" "$(grep -c 'draft nothing and post nothing there' "$ROOT/templates/agent-comments-brief.md")"
-check "the rulebook spawns beside the orchestrator" "1" "$(grep -c -- '--right-of self --prompt' "$ROOT/skills/orchestrator/SKILL.md")"
+check "the rulebook spawns beside the orchestrator" "1" "$(grep -c -- '--right-of self --title <role>-<phase> --prompt' "$ROOT/skills/orchestrator/SKILL.md")"
 
 # The operator's ruling after an afternoon of pasted command lines: everything the
 # orchestrator asks him to run, it can run itself; he decides, nothing else. Pinned so the
@@ -430,6 +430,14 @@ check "the launch execs the CLI by absolute path" "1" "$(printf '%s' "$cmd" | gr
 check "the tab runs the launch through a login shell" "1" "$(printf '%s' "$out" | grep -c '^program=.* -l <launch-file>$')"
 check "the login shell is the operator's" "1" "$(env ORCHESTRATOR_LOGIN_SHELL=/bin/bash ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --prompt p 2>&1 | grep -c '^program=/bin/bash -l ')"
 check "the launch text itself is unchanged by the shell" "1" "$(env ORCHESTRATOR_LOGIN_SHELL=/bin/bash ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --prompt p 2>&1 | sed -n 's/^launch=//p' | grep -cE '^cd .* && .* && exec /[^ ]+/')"
+
+# The title is the session's NAME, not a tab label the shell overwrites: two sessions in one
+# checkout otherwise share the host's stem and differ by a reference nobody reads at a
+# glance (observed: an implementer listed under its orchestrator's own name). Non-ASCII
+# bytes travel like the prompt does — quoted by the shell's own rules.
+check "the launch names the session after its title" "1" "$(printf '%s' "$cmd" | grep -c -- "--name 'B-1 — é'")"
+check "no title: the session is still named" "1" "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" 2>&1 | sed -n 's/^launch=//p' | grep -c -- '--name agent')"
+
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --prompt-file "$file" 2>&1)
 check "--prompt-file reuses the given file" "1" "$(printf '%s' "$out" | grep -c "prompt_file=$file")"
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" 2>&1)
