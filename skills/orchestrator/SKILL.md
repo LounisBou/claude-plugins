@@ -176,7 +176,7 @@ A plan, a prompt template or a norms file that outlives the decision it served i
 | "The successor will pick a permission mode" | It inherits the operator's decision mode from the spawn, or it stalls unattended. |
 | "The agent can find me with ListAgents" | A prefix shared by three sessions is a coin toss, and it cost seven hours once. Name the address, shake hands, subscribe to idle. |
 | "The operator has always launched the agents; I'll hand him the invocation" | Launching is yours. Spawn, verify, shake hands — then tell the user it happened. |
-| "The spawn printed a tty, so the agent is running" | A typed command can be truncated or die on a byte; the tty is a claim. `verify`, `list`, `ListAgents`, then the handshake. |
+| "The spawn printed a tty, so the agent is running" | The tty is a claim; the process on it is the fact. A launch can be refused, exit at once on a name it cannot find, or die on its first line. `verify`, `list`, `ListAgents`, then the handshake. |
 | "The agent is at 83 % but it has stopped, no harm leaving it" | An idle agent answers by habit and holds memory. Stand it down, close its tab, spawn the replacement. |
 | "The review agent found twelve items, I'll forward the list" | A list is not a verdict. Verify each one, keep by pertinence and severity, drop the over-corrections, then bring the operator only what is theirs to decide. |
 | "The top tier everywhere is the safe choice" | It is the choice that spends the review budget on work a test suite already judges. Route by what re-reads the output; keep the top tier for what nobody re-reads. |
