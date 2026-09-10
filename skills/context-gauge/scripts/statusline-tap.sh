@@ -16,7 +16,7 @@ CTX_DIR="$STATE_DIR/ctx"
 input=$(cat)
 
 record() {
-  local fields sid ctx used total h5 h5r d7 d7r tp tpj file tmp
+  local fields sid ctx used total h5 h5r d7 d7r tp tpj mid midj file tmp
   # Field names as the host sends them: context_window.used_percentage,
   # context_window.context_window_size, and current_usage broken down by
   # input / cache-creation / cache-read tokens (their sum is the context sent).
@@ -32,13 +32,15 @@ record() {
       (.rate_limits.five_hour.resets_at // null),
       (.rate_limits.seven_day.used_percentage // null),
       (.rate_limits.seven_day.resets_at // null),
-      (.transcript_path // "") ]
+      (.transcript_path // ""),
+      (.model.id // "") ]
     | map(tostring) | join("\u001f")' 2>/dev/null) || return 0
   # The separator is 0x1F rather than a tab: tabs are IFS whitespace, and two
   # empty fields in a row would collapse and shift every field after them.
-  IFS=$'\x1f' read -r sid ctx used total h5 h5r d7 d7r tp <<<"$fields"
+  IFS=$'\x1f' read -r sid ctx used total h5 h5r d7 d7r tp mid <<<"$fields"
   [ -n "$sid" ] || return 0
   if [ -n "$tp" ]; then tpj="\"$tp\""; else tpj=null; fi
+  if [ -n "$mid" ]; then midj="\"$mid\""; else midj=null; fi
   mkdir -p "$CTX_DIR" 2>/dev/null || return 0
   file="$CTX_DIR/$sid.json"
   # First render of a session: prune what sessions that ended left behind. Both kinds —
@@ -50,8 +52,8 @@ record() {
     find "$CTX_DIR" -name '*.gate-unmeasured' -mtime +1 -delete 2>/dev/null
   fi
   tmp="$file.tmp.$$"
-  printf '{"session_id":"%s","context_percent":%s,"context_used":%s,"context_total":%s,"five_hour_percent":%s,"five_hour_resets_at":%s,"seven_day_percent":%s,"seven_day_resets_at":%s,"transcript_path":%s,"updated_epoch":%s}\n' \
-    "$sid" "$ctx" "$used" "$total" "$h5" "$h5r" "$d7" "$d7r" "$tpj" "$(date +%s)" > "$tmp" 2>/dev/null \
+  printf '{"session_id":"%s","context_percent":%s,"context_used":%s,"context_total":%s,"five_hour_percent":%s,"five_hour_resets_at":%s,"seven_day_percent":%s,"seven_day_resets_at":%s,"transcript_path":%s,"model_id":%s,"updated_epoch":%s}\n' \
+    "$sid" "$ctx" "$used" "$total" "$h5" "$h5r" "$d7" "$d7r" "$tpj" "$midj" "$(date +%s)" > "$tmp" 2>/dev/null \
     && mv -f "$tmp" "$file" 2>/dev/null
   return 0
 }
