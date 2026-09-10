@@ -257,9 +257,10 @@ async def tty_of(tab, connection=None, tries=10):
 
 
 async def find_tab(app, tty):
+    """A session behind a maximized sibling is in all_sessions and not in sessions (§25)."""
     for w in app.windows:
         for t in w.tabs:
-            for s in t.sessions:
+            for s in t.all_sessions:
                 if await s.async_get_variable("tty") == tty:
                     return w, t, s
     return None, None, None
@@ -284,17 +285,28 @@ async def anchor_position(app, anchor, side):
 
 # --- subcommands -----------------------------------------------------------------
 
+async def list_rows(app):
+    """One row per session, hidden panes included and marked. A pane behind a maximized
+    sibling is what the host extension's review views make of an agent's tab; a listing
+    that dropped it made a live agent unfindable and unclosable (§25)."""
+    lines = []
+    for wi, w in enumerate(app.windows, 1):
+        for ti, t in enumerate(w.tabs, 1):
+            visible = {s.session_id for s in t.sessions}
+            for s in t.all_sessions:
+                tty = await s.async_get_variable("tty")
+                name = await s.async_get_variable("autoName") or ""
+                row = "w%d/t%d | %s | %s" % (wi, ti, tty, name)
+                if s.session_id not in visible:
+                    row += " | hidden"
+                lines.append(row)
+    return lines
+
+
 def cmd_list(_argv):
     async def go(iterm2, connection):
         app = await iterm2.async_get_app(connection)
-        lines = []
-        for wi, w in enumerate(app.windows, 1):
-            for ti, t in enumerate(w.tabs, 1):
-                for s in t.sessions:
-                    tty = await s.async_get_variable("tty")
-                    name = await s.async_get_variable("autoName") or ""
-                    lines.append("w%d/t%d | %s | %s" % (wi, ti, tty, name))
-        return lines
+        return await list_rows(app)
 
     for line in run(go) or []:
         print(line)
@@ -586,6 +598,22 @@ def stable_title(name):
     return name.lstrip().lstrip("".join(c for c in name if not (c.isalnum() or c.isspace()))).strip()
 
 
+async def close_session(app, tty, expect):
+    """Close the SESSION on that tty, never its tab: with the host extension in use the
+    tab also holds the review pane the operator is reading, and a session closed alone
+    leaves its siblings; when it was the last one the app removes the tab itself (§25)."""
+    _, tab, sess = await find_tab(app, tty)
+    if tab is None:
+        die("close: no session found on %s" % tty)
+    name = await sess.async_get_variable("autoName") or ""
+    if expect and stable_title(expect) not in stable_title(name):
+        die("close: refused: session on %s is titled '%s', which does not contain '%s'"
+            % (tty, name, expect))
+    await sess.async_close(force=True)
+    chain_drop_tab(tab.tab_id)
+    return name
+
+
 def cmd_close(argv):
     p = argparse.ArgumentParser(prog="close", add_help=False)
     p.add_argument("--tty", dest="tty")
@@ -599,16 +627,7 @@ def cmd_close(argv):
 
     async def go(iterm2, connection):
         app = await iterm2.async_get_app(connection)
-        _, tab, sess = await find_tab(app, args.tty)
-        if tab is None:
-            die("close: no session found on %s" % args.tty)
-        name = await sess.async_get_variable("autoName") or ""
-        if args.expect and stable_title(args.expect) not in stable_title(name):
-            die("close: refused: session on %s is titled '%s', which does not contain '%s'"
-                % (args.tty, name, args.expect))
-        await tab.async_close(force=True)
-        chain_drop_tab(tab.tab_id)
-        return name
+        return await close_session(app, args.tty, args.expect)
 
     run(go)
     print("closed 1 session on %s" % args.tty)

@@ -16,6 +16,7 @@ SCRIPT=${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh
 
 $SCRIPT list
     # w1/t3 | /dev/ttys000 | ✳ agent-brief prompt (node)
+    # w1/t1 | /dev/ttys004 | ◐ Implementer : phase 2 | hidden   ← behind a maximized sibling pane
 
 $SCRIPT spawn --dir <workdir> [--tier deep|standard|light] [--permission-mode auto] \
     --title "<Role> : <what>" --prompt "Read and execute <brief-path>. Your orchestrator is <name [ref]>." [--right-of self]
@@ -72,6 +73,8 @@ So **always name an anchor**, and name the one you actually know:
 ## Tab hygiene
 
 **A finished agent's tab is closed, not left open.** The approval that closes a phase stands the agent down and closes its tab in the same move (`list`, `close --tty --expect-title`, `ps`). There is no « standing by » tab: a later fixup goes to a fresh session with a resume brief, which costs one cold start and keeps the window readable. The only tabs open at any time are the orchestrator's and its running implementers'.
+
+**One agent = one tab, never a pane.** A pane shares a tab's title and its fate; the tooling closes sessions, but a layout the operator reads is not a place to put an agent.
 
 ## Safety order for a live rotation
 
@@ -140,6 +143,12 @@ So **always name an anchor**, and name the one you actually know:
 - Prompt and launch files accumulate under the state directory's `prompts/`; they are small and
   they are the record of what each session was launched with. Delete a wave's when its review is
   closed, like any other artifact you produced.
+- **A pane behind a maximized sibling is still a session, and it is listed as `hidden`.** The
+  host extension's « Chat / Diff / Code Review » bar opens each view as a sibling pane of the
+  agent's tab and maximizes the one shown, so an agent with a review open is hidden and its
+  tab shows the review. The tool reads hidden panes like visible ones; `close --tty` closes
+  that SESSION alone and leaves the review pane and the tab. Before this, a hidden agent was
+  unfindable and unclosable while `ListAgents` showed it alive.
 
 ## Common mistakes
 
@@ -149,5 +158,6 @@ So **always name an anchor**, and name the one you actually know:
 - Spawning without an anchor and assuming the tab landed beside you: it lands at the end of the window. Pass `--right-of self`.
 - Spawning into a directory the host has never opened, and reading the running process as a launched agent: it is stopped on a question, and `screen --tty` is how you see that.
 - Rotating before the old agent acknowledged stand-down: risks killing an uncommitted write, and the acknowledgment is the rotation's only real guard.
+- Reading « alive in ListAgents, absent from list » as a dead session: it was the hidden-pane defect, fixed in 0.21.1; if it recurs, it is a new defect to measure, not a rule.
 - Passing `--expect-title` to a rotation: the title will have moved by the time the close runs, and the rotation simply never completes.
 - Storing a tty and using it after any close happened in between (recycling).

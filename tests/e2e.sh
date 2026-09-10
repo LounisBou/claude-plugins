@@ -40,7 +40,7 @@ SANDBOX=$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")
 cleanup() {
   # The tab first: a session left running is the one failure this script must not cause,
   # and it outlives the shell that started it.
-  for t in "$TTY" "${OLD_TTY:-}" "${ONE:-}" "${TWO:-}"; do
+  for t in "$TTY" "${OLD_TTY:-}" "${ONE:-}" "${TWO:-}" "${SIB:-}"; do
     [ -n "$t" ] && bash "$AGENT" close --tty "$t" >/dev/null 2>&1
   done
   [ "$KEEP" = 1 ] || rm -rf "$SANDBOX"
@@ -174,6 +174,40 @@ ghost_code=$?
 check "an absent anchor is refused" "1" "$ghost_code"
 check "the refusal names the anchor" "1" "$(printf '%s' "$ghost_out" | grep -c 'no session found on /dev/ttys999')"
 check "no tab was made for it" "$tabs_before" "$(bash "$AGENT" list | wc -l | tr -d ' ')"
+
+echo "== a hidden pane =="
+# The host extension's review views are sibling panes of the agent's tab, one maximized at
+# a time. The probe's tab is split and the new pane maximized through the app, exactly as
+# the extension does; the agent behind it must stay listed, findable and closable alone.
+py="${ORCHESTRATOR_PYTHON:-${ORCHESTRATOR_STATE_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claude-orchestrator}/venv/bin/python}"
+SIB=$("$py" - "$TTY" <<'EOF'
+import iterm2, asyncio, sys
+tty = sys.argv[1]
+async def main(connection):
+    app = await iterm2.async_get_app(connection)
+    for w in app.windows:
+        for t in w.tabs:
+            for s in t.all_sessions:
+                if await s.async_get_variable("tty") == tty:
+                    sib = await s.async_split_pane(vertical=True)
+                    await asyncio.sleep(1)
+                    await t.async_select()
+                    await sib.async_activate()
+                    ident = iterm2.MainMenu.View.MAXIMIZE_ACTIVE_PANE.value.identifier
+                    await iterm2.MainMenu.async_select_menu_item(connection, ident)
+                    await asyncio.sleep(1)
+                    print(await sib.async_get_variable("tty"))
+                    return
+iterm2.run_until_complete(main)
+EOF
+)
+check "the agent behind a maximized pane is listed, and marked" "1" "$(bash "$AGENT" list | grep "$TTY" | grep -c '| hidden$')"
+bash "$AGENT" close --tty "$TTY" --expect-title "e2e" >/dev/null 2>&1
+check "the hidden agent closes by its tty" "0" "$?"
+check "its sibling pane survives the close" "1" "$(bash "$AGENT" list | grep -c "$SIB")"
+bash "$AGENT" close --tty "$SIB" >/dev/null 2>&1
+check "the sibling closes with the tab" "0" "$(bash "$AGENT" list | grep -c "$SIB")"
+TTY=""
 
 echo "== rotation =="
 # The one operation that KILLS something, and the only one whose safety order matters: the
