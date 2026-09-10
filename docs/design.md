@@ -22,16 +22,27 @@ skills/context-gauge/scripts/context-gauge.sh
 skills/context-gauge/scripts/statusline-tap.sh
 templates/agent-phase-brief.md       one implementer, one phase, one PR
 templates/agent-rotation-brief.md    resume brief for a fresh implementer
+templates/agent-review-brief.md      one review round, read-only, one lens per reader
+templates/agent-comments-brief.md    one pass over a pull request's open threads
 templates/orchestrator-succession-brief.md
 commands/install.md                  wires the tap, creates the state directory
 commands/uninstall.md                restores the previous status line
-commands/status.md                   live sessions and their gauges
+commands/status.md                   live sessions, their gauges, the routing pressure
 commands/succeed.md                  runs the orchestrator succession
+commands/agents.md                   each running implementer's progress
+commands/progress.md                 where the build stands
+commands/decide.md                   the decision round, one arbitration at a time
+hooks/hooks.json                     declares the context gate on UserPromptSubmit
+hooks/context-gate.sh                the gate the harness enforces, not the model
 install.sh, uninstall.sh
-tests/run-tests.sh, tests/fixtures/
+tests/run-tests.sh
+tests/fixtures/transcript.jsonl      a transcript tail for the gauge's computed tier
 docs/design.md                       this document
 README.md, LICENSE
 ```
+
+The suite checks this block against the tracked files: it had already lost the hooks,
+three commands, two briefs and the fixture while still reading as current.
 
 Skills reach their scripts through `${CLAUDE_PLUGIN_ROOT}`; a relative path does not resolve from a skill. Skills are invoked as `orchestrator:<skill>`.
 

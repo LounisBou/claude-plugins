@@ -137,6 +137,20 @@ out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate2" bash "$ROOT/
 case "$out" in *"mutually exclusive"*) anchors="refused" ;; *) anchors="$out" ;; esac
 check "two anchors are refused at spawn" "refused" "$anchors"
 
+echo "== design layout =="
+
+# The design document opens with a tree of the repository. Nothing kept it honest, so it
+# lost the hooks, three commands, two briefs and the test fixture while still reading as
+# current to whoever opens it next — the exact shape of a directive that outlives what it
+# described. Every tracked file must appear in that block; the plan and spec directories
+# are excluded because they are workflow artifacts, not shipped layout.
+layout=$(awk '/^## 2\. Layout/{f=1} f&&/^```$/{c++; if(c==2) exit} f&&c==1' "$ROOT/docs/design.md")
+undocumented=""
+for f in $(cd "$ROOT" && git ls-files | grep -vE '^docs/superpowers/|^LICENSE$|^\.gitignore$'); do
+  printf '%s' "$layout" | grep -qF "$f" || undocumented="$undocumented $f"
+done
+check "every shipped file is in the design's layout" "" "$undocumented"
+
 echo "== version =="
 
 # The same fact lives in three fields. A branch cut from a stale main set the plugin
