@@ -586,6 +586,38 @@ check "unmeasured says so once" "1" "$(gate g-none | grep -c 'unmeasured'; )"
 check "unmeasured stays silent the second time" "" "$(gate g-none)"
 rm -rf "$GH"
 
+echo "== the app, stubbed =="
+# A pane behind a maximized sibling is in the tab's all_sessions and not in its sessions.
+# The stub is the smallest app that tells the two apart; the live round reads the real one.
+STUB='
+import asyncio, sys
+sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+class S:
+    def __init__(s, sid, tty, name): s.session_id=sid; s.tty=tty; s.name=name; s.closed=False
+    async def async_get_variable(s, k): return {"tty": s.tty, "autoName": s.name}.get(k)
+    async def async_close(s, force=False): s.closed=True
+class T:
+    def __init__(s, tid, visible, hidden): s.tab_id=tid; s.sessions=visible; s.all_sessions=visible+hidden
+    async def async_close(s, force=False): raise AssertionError("tab closed")
+class W:
+    def __init__(s, tabs): s.window_id="w"; s.tabs=tabs
+class App:
+    def __init__(s, wins): s.windows=wins
+a=S("A","/dev/ttys801","visible one"); b=S("B","/dev/ttys802","hidden one")
+app=App([W([T("1",[a],[b])])])
+'
+py=$(command -v python3 || echo python3)
+check "a hidden pane is found by its tty" "B" \
+  "$("$py" -c "$STUB
+_,_,s=asyncio.run(ia.find_tab(app,'/dev/ttys802')); print(s.session_id)" "$ROOT/skills/iterm-agents/scripts")"
+check "the listing marks a hidden pane" "w1/t1 | /dev/ttys802 | hidden one | hidden" \
+  "$("$py" -c "$STUB
+print([r for r in asyncio.run(ia.list_rows(app)) if 'ttys802' in r][0])" "$ROOT/skills/iterm-agents/scripts")"
+check "close closes the session and leaves the tab" "hidden one|True" \
+  "$("$py" -c "$STUB
+t=asyncio.run(ia.close_session(app,'/dev/ttys802','hidden')); print('%s|%s' % (t, b.closed))" "$ROOT/skills/iterm-agents/scripts")"
+
 echo "== tap =="
 
 TAP="$ROOT/skills/context-gauge/scripts/statusline-tap.sh"

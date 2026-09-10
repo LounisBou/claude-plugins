@@ -589,3 +589,97 @@ orchestrator reads on the first spawn: whether the listing other sessions see sh
 name. The host's text does not promise it; if the listing keeps its own stem, the title
 still names the tab and the resume picker, and the brief keeps citing name and reference
 together — the reference is what disambiguates in every case.
+
+## 25. A hidden pane is still a session
+
+**0.21.1.** The operator reported a critical case: a successor could not close its
+predecessor, sitting in the first tab of the window, because the tooling did not list it.
+`list` printed the tab with ANOTHER session in it — a code review the terminal's host
+extension had opened — and `close --tty` answered `no session found`, while `ListAgents`
+showed the predecessor alive and answering. When the review closed, the predecessor was
+listed again and the close passed.
+
+**The mechanism, reproduced on a probe.** The extension's « Chat / Diff / Code Review »
+bar opens each view as a sibling pane in the SAME tab and maximizes the one shown. A
+maximized pane hides its siblings, and the app's own session list reports a tab's hidden
+panes apart from its visible ones: split a probe tab in two and both sessions are
+enumerated; maximize one and only it remains in the tab's session tree, the other moving
+to the tab's `minimized_sessions`; restore and both are back. The library mirrors that
+split: `Tab.sessions` is the visible tree, `Tab.all_sessions` adds the minimized ones. Every
+reader in the tool used `sessions`, so a session behind a maximized sibling was invisible
+to `list`, `find_tab`, `screen` and `close`, and nothing in the tool skips a tab index —
+that was checked on three versions before the pane was found.
+
+**Two rules.** Every reader enumerates `all_sessions`, and the listing says when a row is
+hidden — a fourth column, `hidden`, on that row alone, so a reader that greps a tty still
+finds it and an operator sees why the tab shows something else. And `close` closes the
+SESSION, never the tab: `tab.async_close` would have taken the review pane down with the
+agent, and with the extension in use that is a tab the operator is reading. A session
+closed alone leaves its siblings and, when it was the last one, the app removes the tab
+itself. `screen` reads a hidden session like any other; `verify` never looked at the
+app.
+
+**The convention, in the skill.** One agent = one tab, never a pane; and a session alive
+in `ListAgents` but absent from `list` was the symptom of this defect, not a rule to keep.
+
+What the suite reads, on a stub of the app: a session that only `all_sessions` returns is
+found by its tty; the listing marks it `hidden`; closing a session calls the session's
+close, and a tab's close is never called. What only the live round can read: a probe tab
+split in two with one pane maximized lists both, `close --tty` on the hidden one succeeds,
+its sibling is still listed, and the sibling closes with the tab.
+
+## 26. A chain belongs to a session, not to a tty
+
+**0.21.2.** Found by the verification round after 0.21.0: a `spawn --right-of self` from
+the successor orchestrator landed the probe LEFT of its own tab. The chain file for its tty
+held an entry written earlier that day by a previous occupant of the same tty — the
+orchestrator before its predecessor — naming the predecessor's tab, still open at that
+moment. The entry passed the tab-id check (§21), which only asks whether the tab exists,
+and the anchor resolved to a tab that was never this session's agent. The mirror image
+existed too: the predecessor's chain named the successor as its agent.
+
+**A tty is recycled; a session id is not.** §21 keyed the chain on the orchestrator's tty
+because that is what `self` resolves to, and guarded each entry on the agent's tab id —
+which protects against the AGENT's tty being reissued, not the ORCHESTRATOR's. Every entry
+now also carries `owner`: the app's session id of the orchestrator that wrote it. Reading
+a chain live, the tool reads the session id of whoever sits on the tty now and keeps only
+the entries that name it; the rest are dropped and the file rewritten, exactly as
+entries whose tab is gone already are. An entry without an owner — one written before this
+release — is dropped the same way once an owner is known. The file keeps its name, because
+`self` still resolves to a tty and a file per tty is what `close` sweeps.
+
+A dry run has no app and so no session id; `ORCHESTRATOR_SELF_ID` stands in for it, and
+with neither the chain is read unfiltered, which is what the existing dry-run checks seed.
+
+What the suite reads: with an owner given, a foreign entry is skipped and an own entry
+anchors; an entry with no owner is skipped when an owner is known; the anchor line of a dry
+run says which. What only the live round can read: the chain written by a live spawn
+names its owner.
+
+## 27. The successor inherits the orchestrator's model
+
+**0.22.0.** The operator's ruling, verbatim in substance: « no default model — the
+successor inherits the orchestrator's model; if I change the orchestrator's model, the
+successor inherits that one ». The succession command spawned the successor at the `deep`
+tier, so a succession re-routed through the operator's map and silently undid a model the
+operator had set by hand: the verification-round successor was running on a model the map
+did not name, kept only because its predecessor had typed `--model` explicitly.
+
+**The model to hand over is the CURRENT one, not the launch one.** A session's process
+arguments say what it was launched with, and the operator may have switched models since.
+The host's status payload carries the model in use on every render, and the context tap
+already records that payload for the session: it now keeps the model id beside the
+context figures. The launcher gains `--inherit-model`: it reads the tap file of the calling
+session (`CLAUDE_CODE_SESSION_ID`) and types that id as `--model`. It is exclusive with
+`--tier` and `--model`. Without a tap file, or with one that carries no model, the spawn
+refuses and names the installer — a succession must not guess a model, and the ruling
+forbids a default. The succession command uses it in place of the tier.
+
+The tier map keeps binding what it binds — implementers, reviewers, probes. An
+orchestrator's FIRST instantiation is the operator's launch, and the model it carries from
+then on is the operator's choice, carried across every succession.
+
+What the suite reads: the tap writes `model_id` from a payload that carries it and `null`
+from one that does not; a dry-run spawn with `--inherit-model` and a seeded tap file types
+that model; with no tap file it refuses and names the installer; combined with `--tier` it
+is refused; the succession command spawns with `--inherit-model` and no tier.
