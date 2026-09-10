@@ -194,7 +194,7 @@ check "the sibling closes with the tab" "0" "$(bash "$AGENT" list | grep -c "$SI
 TTY=""
 ```
 
-Then, because the probe is now closed before the « rotation » block, which spawns its own, nothing else moves. The `cleanup` function's list of ttys gains `"${SIB:-}"`.
+The rotation and stand-down blocks then need a live probe: the block ends by spawning a fresh one (title e2e-probe-2, same anchor) and waiting for its process, one more check — the round reads 35 passed. The `cleanup` function's list of ttys gains `"${SIB:-}"`.
 
 - [ ] **Step 6: Documentation**
 
