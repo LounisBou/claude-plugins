@@ -180,9 +180,18 @@ check "a version equal to the newest tag passes" "yes" "$(version_not_behind 0.6
 check "a version behind the newest tag fails" "no (0.6.0 is behind 0.6.1)" "$(version_not_behind 0.6.0 0.6.1)"
 check "a double-digit version is compared as a number" "yes" "$(version_not_behind 0.10.0 0.9.0)"
 check "no tags at all passes" "yes" "$(version_not_behind 0.1.0 "")"
+# Both prefixes count. The first three releases were tagged `claude-orchestrator--v`
+# before the plugin was renamed, and a pattern anchored on the short one cannot see them:
+# a guard reading two thirds of the release history is one more guard that reads less
+# than it claims.
+newest_of() { printf '%s\n' "$@" | sed 's/^.*--v//' | sort -V | tail -1; }
+check "the newest release is read across both historical prefixes" "0.7.0" \
+  "$(newest_of claude-orchestrator--v0.1.2 orchestrator--v0.6.1 orchestrator--v0.7.0)"
+check "a release under the old prefix is not invisible" "0.1.2" \
+  "$(newest_of claude-orchestrator--v0.1.0 claude-orchestrator--v0.1.2)"
 # Tags are local, so a clone without them reads as "no tags" and passes, rather than
 # holding the suite on a fact it cannot read.
-newest=$(cd "$ROOT" && git tag --list 'orchestrator--v*' 2>/dev/null | sed 's/^.*v//' | sort -V | tail -1)
+newest=$(cd "$ROOT" && git tag --list '*orchestrator--v*' 2>/dev/null | sed 's/^.*--v//' | sort -V | tail -1)
 check "the version is not behind any published tag" "yes" "$(version_not_behind "$pv" "$newest")"
 
 echo "== iterm-agents spawn (dry run) =="

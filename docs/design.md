@@ -139,8 +139,10 @@ A brief is written to a path the fresh session can open on its machine, never on
 Version in `plugin.json` AND in both fields of `marketplace.json` — the same fact in
 three places, so the suite checks they agree and that the number never falls
 BEHIND a published tag (equal is a tagged release, ahead is unreleased work; only behind
-is the defect). Tag `orchestrator--v<version>` pushed with the code (the document
-announced a `claude-orchestrator--v` prefix that no release has ever used). Install:
+is the defect). Tag `orchestrator--v<version>` pushed with the code — the prefix
+since 0.4.1; the first three releases used `claude-orchestrator--v`, before the plugin
+was renamed, and the suite reads both when it checks the version against what is
+published. Install:
 
 ```
 /plugin marketplace add LounisBou/claude-orchestrator
