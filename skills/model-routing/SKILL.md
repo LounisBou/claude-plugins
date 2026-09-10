@@ -75,7 +75,24 @@ Pressure modifies one dispatch. It never rewrites the table.
 
 ## The record
 
-One line per dispatch in the project's build state: class, tier, rounds to close, verdict. That record is what corrects the table for this build, and your succession brief points at it. The default table ships here; a project's corrections belong to that project, where status lives once.
+One row per dispatch in the project's build state: class, tier, rounds to close, verdict. That record is what corrects the table for this build, and your succession brief points at it. The default table ships here; a project's corrections belong to that project, where status lives once.
+
+Keep it with `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/dispatch-record.sh`:
+
+```
+dispatch-record.sh open <record> --class <c> --tier <t> --label <what>   # prints the row id
+dispatch-record.sh round <record> <id>                                  # a review round happened
+dispatch-record.sh close <record> <id> --verdict approved
+dispatch-record.sh summary <record>
+```
+
+`summary` prints one line per class and tier, and then the line the false-economy rule exists for:
+
+```
+signal=n-bis at light averages 2 rounds: the drop did not pay, revert it for this class
+```
+
+**Read the summary before a wave, and revert what it names.** Without it the rule is applied from memory, and a rule applied from memory always finds the drop was free: its cost lands rounds later, where nobody attributes it. A signal is a reading, and a reading is what the rule was written to require.
 
 ## Rationalizations
 
@@ -93,6 +110,7 @@ One line per dispatch in the project's build state: class, tier, rounds to close
 ## Red flags: STOP
 
 - A dispatch prepared without the tier and the reading that chose it.
+- A wave dispatched without reading the record's summary; a signal in it you have seen and not reverted.
 - A tier chosen from how hard the phase feels rather than from the five readings.
 - A second corrective round on a class you dropped, and the drop still standing.
 - An escalation attempted inside a live session instead of as a rotation.

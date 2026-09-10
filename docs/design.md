@@ -17,6 +17,7 @@ skills/orchestrator/SKILL.md         the rulebook
 skills/iterm-agents/SKILL.md         tab management on macOS
 skills/iterm-agents/scripts/iterm-agent.sh
 skills/orchestrator/scripts/brief-lint.sh   refuses a brief before it is dispatched
+skills/orchestrator/scripts/dispatch-record.sh  one row per dispatch, and the routing signal
 skills/model-routing/SKILL.md        which capability tier a dispatch gets
 skills/context-gauge/SKILL.md        how a session reads its own context fill
 skills/context-gauge/scripts/context-gauge.sh
@@ -236,5 +237,22 @@ It reads what a script can read. Whether the scope is right, whether the contrac
 ones the next phase consumes, whether the tier fits the work — those stay the
 orchestrator's, and the skill says so where it tells you to run it, because a guard whose
 limits are unstated is one people trust past them.
+
+## 13. Measuring what the routing rule assumes
+
+**0.10.0.** The routing rule says a tier drop that costs a second corrective round is
+reverted for its class. Nothing measured that, so it could only be applied from memory —
+and a rule applied from memory always finds the drop was free, because its cost lands
+rounds later where nobody attributes it.
+
+`dispatch-record.sh` keeps one row per dispatch as JSON lines — class, tier, rounds,
+verdict — with `open`, `round`, `close` and `summary`. The row is rewritten in place
+rather than appended per event: a record of events would make every read a reduction over
+history, and the history is not the fact. `summary` prints a line per class and tier, then
+the one the rule exists for: `signal=<class> at <tier> averages N rounds: the drop did not
+pay, revert it for this class`.
+
+The record lives with the PROJECT being built. The default table ships here; a project's
+corrections belong to that project's state, where status lives once.
 
 **decide** (0.4.2) is the decision round: the orchestrator collects every arbitration that is the user's — agents' STOPs, proposed owners, review findings without one — and puts them ONE AT A TIME, each with its context in plain words, two to four choices carrying their cost, one recommendation, then waits; the ruling is written back in one line, recorded where it lives, relayed to the agent it answers, and only then the next question comes. A question interrupted by anything else is re-presented in full, never referenced. Written after a day on which twelve arbitrations were put that way and every one was ruled in a minute, where batching them had stalled for hours.
