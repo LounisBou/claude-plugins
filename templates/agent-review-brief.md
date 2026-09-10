@@ -20,7 +20,7 @@ You are the REVIEW agent for this round. You read; you never implement. You fan 
 
 ## 3. Lenses
 
-Dispatch one read-only sub-agent per lens, each with the diff range `{{BASE_BRANCH}}..{{HEAD}}`, the spec section and the norms file, and the instruction to report findings only with file, line and evidence:
+Dispatch one read-only sub-agent per lens at the **{{LENS_TIER}}** tier, each with the diff range `{{BASE_BRANCH}}..{{HEAD}}`, the spec section and the norms file, and the instruction to report findings only with file, line and evidence:
 
 {{LENSES}}
 

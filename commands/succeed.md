@@ -17,9 +17,11 @@ Preconditions, verify each before acting:
 Then:
 
 1. `iterm-agent.sh list` — note your own tty and the implementer's tty.
-2. `iterm-agent.sh spawn --dir <worktree> --model <model> --permission-mode auto --title orchestrator
+2. `iterm-agent.sh spawn --dir <worktree> --tier deep --permission-mode auto --title orchestrator
    --left-of <implementer tty> --prompt "Read and execute <brief path>"` — the operator's
    decision mode, or the successor stops at its first prompt in a tab nobody watches.
+   The successor runs at the `deep` tier: its output — the sequencing, the verdicts,
+   the arbitrations it relays — is re-read by nobody. See `orchestrator:model-routing`.
 3. Answer nothing new. Wait for the successor's "takeover confirmed"; answer
    its questions about state only.
 4. Never close your own tab: the successor closes it once you are idle — its brief says so

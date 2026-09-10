@@ -16,6 +16,7 @@ Everything here was extracted from a working setup: the skills existed as loose 
 skills/orchestrator/SKILL.md         the rulebook
 skills/iterm-agents/SKILL.md         tab management on macOS
 skills/iterm-agents/scripts/iterm-agent.sh
+skills/model-routing/SKILL.md        which capability tier a dispatch gets
 skills/context-gauge/SKILL.md        how a session reads its own context fill
 skills/context-gauge/scripts/context-gauge.sh
 skills/context-gauge/scripts/statusline-tap.sh
@@ -127,5 +128,31 @@ Version in `plugin.json`, tag `claude-orchestrator--v<version>` pushed with the 
 ## 9. Out of scope
 
 Windows and Linux terminal automation (the iterm-agents skill is macOS only; the other two skills and the gauge work anywhere the host runs). A hook-based gauge: no hook event carries context usage. Editing the user's status line script: the tap wraps it, never patches it.
+
+## 10. Model routing
+
+**0.6.0.** Every session the orchestrator dispatched ran at whatever the launcher
+hardcoded, which put a model identifier in a plugin whose rules forbid one and paid the
+top tier for work a test suite already judges.
+
+The rule is « pay for judgment that nothing downstream re-checks »: a conversion phase is
+judged by the suite, a findings list by the orchestrator, so both run cheap; the
+contracts a phase imposes on the next, the final verification and the orchestrator's own
+sequencing are re-read by nobody, so they do not. Three tiers name capability — `deep`,
+`standard`, `light` — and the binding to real identifiers lives in the operator's
+`<state dir>/models.json`, overridable per run by `ORCHESTRATOR_TIER_DEEP` and its two
+siblings. `iterm-agent.sh resolve-tier <tier>` prints a binding; `spawn --tier` and
+`rotate --tier` apply one, and with nothing bound the launcher types no model argument at
+all so the host applies its own default. That is the behaviour change behind the minor
+version: an existing installation routes to the host default until the map is filled.
+
+`skills/model-routing/SKILL.md` carries the table by class of work, the five readings for
+a phase that does not sit on a row, escalation as a rotation (a model does not change
+inside a live session), the false-economy rule that reverts a drop which cost a second
+round, and budget pressure read from the gauge's quota figures rather than estimated. The
+briefs carry the tier down to each session, because an agent can only report that the
+work outgrew its brief if it knows what the brief assumed.
+
+Design: `docs/superpowers/specs/2026-09-08-model-routing-design.md`.
 
 **decide** (0.4.2) is the decision round: the orchestrator collects every arbitration that is the user's — agents' STOPs, proposed owners, review findings without one — and puts them ONE AT A TIME, each with its context in plain words, two to four choices carrying their cost, one recommendation, then waits; the ruling is written back in one line, recorded where it lives, relayed to the agent it answers, and only then the next question comes. A question interrupted by anything else is re-presented in full, never referenced. Written after a day on which twelve arbitrations were put that way and every one was ruled in a minute, where batching them had stalled for hours.

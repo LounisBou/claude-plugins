@@ -45,7 +45,7 @@ fi
 
 if [ -d "$STATE_DIR" ]; then
   if [ "$DRY" = "1" ]; then say "[dry-run] rm -rf $STATE_DIR"
-  else rm -rf "$STATE_DIR"; say "removed $STATE_DIR"; fi
+  else rm -rf "$STATE_DIR"; say "removed $STATE_DIR (tap, context files, prompts, tier map)"; fi
 fi
 
 say "Done. Restart your session."

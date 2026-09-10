@@ -59,6 +59,7 @@ Non-goals:
 - **Silence rule**: a message that expects an answer and has none after fifteen minutes is re-sent after a fresh `ListAgents`, to the session whose NAME matches `{{ORCHESTRATOR_NAME}}`, marked as a re-send. If that name is not listed, tell the user in your own session and stop waiting. Never wait on a message you have not verified reached its address.
 - Report on start, on each push, on any blocker (STOP + proposed resolution + wait), and at the end with named sections: branch, commits, files, tests, gate output, deviations, open questions.
 - Every report ends with your measured context: run `${CLAUDE_PLUGIN_ROOT}/skills/context-gauge/scripts/context-gauge.sh` and paste its `context_percent=` and `source=` lines. Past ~60%: finish the current unit, then stop and say so.
+- You run at the **{{TIER}}** tier, chosen because {{TIER_REASON}}. If the work proves to need more judgment than this brief anticipated — a contract you would have to invent, an ambiguity two STOPs did not close — say so with the evidence and stop. The orchestrator escalates by replacing you with a fresh session one tier up; it cannot see from outside that the work outgrew the brief.
 
 ## 7. Delivery
 

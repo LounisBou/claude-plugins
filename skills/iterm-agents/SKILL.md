@@ -17,13 +17,16 @@ SCRIPT=${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh
 $SCRIPT list
     # w1/t3 | /dev/ttys000 | ✳ agent-brief prompt (node)
 
-$SCRIPT spawn --dir <workdir> [--model opus] [--permission-mode auto] \
+$SCRIPT spawn --dir <workdir> [--tier deep|standard|light] [--permission-mode auto] \
     --title <t> --prompt "Read and execute <brief-path>. Your orchestrator is <name [ref]>." [--right-of self]
     # writes the prompt to a file under the plugin's state directory, types a SHORT
     # command that reads it as the host CLI's initial-prompt argument, WAITS until
     # the host CLI is running on the new tty (30 s, ORCHESTRATOR_SPAWN_TIMEOUT), and
     # prints the tty on its last line. Fails loudly, with the tab's last lines, when
     # the command did not run. `--prompt-file <path>` uses a file you already wrote.
+    # --tier resolves through the operator's map (<state dir>/models.json, or
+    # ORCHESTRATOR_TIER_DEEP/_STANDARD/_LIGHT). An unbound tier and no --tier at all both
+    # type no model argument: the host chooses. `resolve-tier <tier>` prints the binding.
 
 $SCRIPT verify --tty /dev/ttysNNN
     # succeeds with the pid when the host CLI runs on that tty; exit 1 otherwise
@@ -36,7 +39,7 @@ $SCRIPT move --tty /dev/ttysNNN (--right-of self | --right-of /dev/ttysMMM | --l
     # `self` is the calling session's own tty, found by walking up the process tree.
 
 $SCRIPT rotate --dir <workdir> --old-tty <tty> [--expect-title <s>] \
-    [--model <model>] [--title <t>] [--prompt <text> | --prompt-file <path>] [--right-of self | --left-of <tty>]
+    [--tier <tier>] [--title <t>] [--prompt <text> | --prompt-file <path>] [--right-of self | --left-of <tty>]
     # spawns the replacement FIRST and verifies it is running, then closes the old tab
 ```
 
@@ -84,6 +87,10 @@ So **always name an anchor**, and name the one you actually know:
   yes/no with « n », types once the shell is at a prompt, and re-types ONCE if the CLI has not started
   while the shell sits idle. `ORCHESTRATOR_SHELL_TIMEOUT` (8 s) bounds the wait.
 - **`sed` dies on a non-ASCII byte under a C locale** (« RE error: illegal byte sequence ») — an em dash in a title aborted a launch. Quoting is done with the shell's own substitutions now, and a test feeds the script « — » and « é » under `LC_ALL=C`.
+- **A tier nobody bound is not an error.** `spawn` then types no model argument and the host
+  applies its default, so a half-filled map never silently routes deep work to a cheap model —
+  it routes it to whatever the operator's host already runs. Read the map with `resolve-tier`
+  before dispatching a wave, not after it comes back wrong.
 - **Dynamic titles override manual ones**: the shell and the session rewrite the tab title, so a `--title` set at spawn is transient. For `--expect-title`, match the title the session displays (it reflects its current task or prompt), read from `list` seconds before closing.
 - **tty numbers are recycled**: a freshly closed `/dev/ttys000` can be reassigned to the next spawned tab. Never reuse a stored tty across a close — re-`list` every time.
 - **First run needs macOS Automation approval** ("… wants to control iTerm2") — one user click, once. `move` additionally needs Accessibility access for the process running the script, because it drives the Window > Tab > Move Tab menu through System Events.

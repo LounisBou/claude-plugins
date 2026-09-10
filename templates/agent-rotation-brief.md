@@ -21,6 +21,12 @@ The phase brief `{{PHASE_BRIEF}}` stays binding in full — reading list, enviro
 
 {{DECISIONS}}
 
-## 5. Protocol
+## 5. Tier
+
+You run at the **{{TIER}}** tier. {{TIER_ESCALATION}}
+
+When this rotation is an escalation, that line names what triggered it: the finding that survived the previous round, the ambiguity two STOPs did not close, or the gate crossed without a push. Read it as scope, not as a verdict on the session you replace — and do not repeat the round it failed.
+
+## 6. Protocol
 
 Unchanged from the phase brief: your orchestrator is the session **`{{ORCHESTRATOR_NAME}}`** (exact `ListAgents` name and reference) and no other; message it first (the handshake), apply the silence rule (fifteen minutes without answer → fresh `ListAgents`, re-send to the matching NAME, else tell the user). Report to it on start (with your measured context from `${CLAUDE_PLUGIN_ROOT}/skills/context-gauge/scripts/context-gauge.sh`), on each push, on any blocker, and at the end. STOP-and-ask for anything outside §3.

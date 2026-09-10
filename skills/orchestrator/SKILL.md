@@ -109,6 +109,10 @@ None of this is bought by shortening the verification. The gate is the cheapest 
 4. **Terminate — in the same move as the approval.** The verdict that closes a phase closes its agent: stand it down, wait for its acknowledgment, `list`, `close --tty --expect-title`, verify with `ps`. There is no « standing by for merge-time fixups » tab (observed: an approved agent left open a whole day, then a second agent spawned beside it — the owner's ruling is that no finished tab is ever left around). A later fixup goes to a fresh session with a resume brief. An idle agent left running answers messages addressed to it by habit and holds the memory a replacement needs.
 5. **Replace.** At the gate you write the resume brief and rotate — `rotate` spawns the replacement FIRST and verifies it is running before the old tab is closed. Your own replacement is the succession below; your successor closes your tab, and you close nothing of your own.
 
+## Every dispatch names its tier
+
+At the dispatch gate you read two figures and choose one thing: the context (below) and the budget (`five_hour_percent`, `seven_day_percent`), then the capability tier the work needs. The method is `orchestrator:model-routing` — the table by class of work, the five readings for a phase that does not sit on a row, escalation as a rotation, and the false-economy rule that reverts a drop which cost a second round. The rule it all rests on: **pay for judgment that nothing downstream re-checks**. Your own sequencing, the contracts a phase imposes on the next, and the final verification are re-read by nobody; a conversion phase is judged by the suite. The tier and the reading that chose it go into the brief, so the agent can tell you when the work outgrew them.
+
 ## Context rotation
 
 Agents report context % in every report. Two gates on the same ~60% threshold:
@@ -172,6 +176,7 @@ A plan, a prompt template or a norms file that outlives the decision it served i
 | "The spawn printed a tty, so the agent is running" | A typed command can be truncated or die on a byte; the tty is a claim. `verify`, `list`, `ListAgents`, then the handshake. |
 | "The agent is at 83 % but it has stopped, no harm leaving it" | An idle agent answers by habit and holds memory. Stand it down, close its tab, spawn the replacement. |
 | "The review agent found twelve items, I'll forward the list" | A list is not a verdict. Verify each one, keep by pertinence and severity, drop the over-corrections, then bring the operator only what is theirs to decide. |
+| "The top tier everywhere is the safe choice" | It is the choice that spends the review budget on work a test suite already judges. Route by what re-reads the output; keep the top tier for what nobody re-reads. |
 | "The comments agent agreed with the reviewer, so it can fix and resolve" | Its agreement is a claim. Re-verify the evidence; agree yourself, then say the option number. |
 | "These fixes are trivial, a scoped run is enough" | A signature, constructor or service change breaks callers no scoped path runs. The gate is what finds them. |
 | "One disposable session per pull request" | The unit is the round, not the artifact. Batch the small ones that share a working directory: one cold start, one gate. |
@@ -198,5 +203,6 @@ A plan, a prompt template or a norms file that outlives the decision it served i
 - Your context at the gate and no successor spawned; a successor spawned without `--permission-mode auto`; a « takeover confirmed » with the predecessor's tab still open.
 - An agent prompt that says « find the orchestrator » instead of naming its session; an orchestrator restarted without re-announcing its address; a message sent without an idle subscription behind it.
 - A review or comments session left open after its round is judged; a finding forwarded to the operator that you have not verified; an implementer session fanning out reviewers.
+- A brief written without the tier it runs at and the reading that chose it; a wave dispatched without reading the tier map.
 - A brief that sequences the gate after the report; a separate session per small artifact when one round would hold them; an assessment round trip on an item you have already decided.
 - Any text about to be published under the operator's name that the operator has not approved; a reply drafted for a thread a fix already answers.

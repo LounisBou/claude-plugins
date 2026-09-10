@@ -10,9 +10,16 @@ Show the orchestrator who is near the rotation gate.
    younger than ten minutes, print one row: session id, `context_percent`,
    age in seconds (`date +%s` minus `updated_epoch`).
 3. Run `${CLAUDE_PLUGIN_ROOT}/skills/context-gauge/scripts/context-gauge.sh`
-   for this session and keep its `context_percent=` and `source=` lines.
+   for this session and keep its `context_percent=`, `five_hour_percent=`,
+   `seven_day_percent=` and `source=` lines.
 4. Present one table: session, context %, age, source. Mark sessions past 60%
    with ⚠: that is the pre-dispatch and mid-work gate of the orchestrator skill.
+5. Print the routing pressure under the table, from the two quota figures:
+   none below 70 % on both; « one tier down, except the orchestrator, the
+   contract-defining phases and the final verification » at or above 70 % on
+   either; « no new dispatch, finish what is in flight » at or above 90 %.
+   Say « unmeasured » when neither figure can be read — a pressure nobody
+   measured never holds a dispatch. The rule is `orchestrator:model-routing`.
 
 Session ids are not agent names. If the user needs the mapping, ask each live
 agent for its `CLAUDE_CODE_SESSION_ID` through `SendMessage`.

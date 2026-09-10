@@ -5,3 +5,7 @@
 # .gitignore takes precedence over global excludes, so this negation restores
 # docs/ for this project, where the design document is versioned.
 !docs/
+
+# editor swap files
+*.swp
+*.swo

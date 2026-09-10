@@ -47,6 +47,21 @@ fi
 step "State directory"
 
 run "mkdir -p '$STATE_DIR/ctx'"
+
+# The tier map: three capability tiers, bound by the operator to identifiers this
+# plugin must not name. An empty binding means "let the host choose", so a fresh
+# install routes exactly as it did before anything is written here.
+MODELS_MAP="$STATE_DIR/models.json"
+if [ "$DRY" = "1" ]; then
+  say "[dry-run] tier map created: $MODELS_MAP"
+elif [ -f "$MODELS_MAP" ]; then
+  say "tier map already present: $MODELS_MAP"
+else
+  printf '{"deep": "", "standard": "", "light": ""}\n' > "$MODELS_MAP"
+  say "tier map created: $MODELS_MAP"
+fi
+say "bind deep, standard and light there to the identifiers this host accepts;"
+say "an unbound tier leaves the choice to the host."
 if [ -f "$TAP_DEST" ] && cmp -s "$TAP_SRC" "$TAP_DEST"; then
   say "tap already up to date: $TAP_DEST"
 else
