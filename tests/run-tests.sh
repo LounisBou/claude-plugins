@@ -333,7 +333,24 @@ check "stale tap file: transcript found through its recorded path" "context_perc
 context_tokens=90000
 context_window=250000
 context_window_source=tap-file
+five_hour_percent=unavailable
+seven_day_percent=unavailable
 source=transcript" "$(gauge g-2)"
+
+# A fresh tap whose payload carried no quota figures says so in the same word as the
+# transcript tier. `commands/status.md` and the routing skill both tell a reader to keep
+# the `five_hour_percent=` line; a line that is absent, or that reads `null`, is one a
+# careless reader takes for zero — and zero means "no budget pressure, dispatch at full
+# tier" exactly when the opposite is true.
+printf '{"session_id":"g-3","context_percent":36.4,"context_used":91000,"context_total":250000,"five_hour_percent":null,"seven_day_percent":null,"transcript_path":null,"updated_epoch":%s}\n' \
+  "$(date +%s)" > "$GSTATE/ctx/g-3.json"
+check "a fresh tap without quota figures says unavailable" "context_percent=36.4
+context_tokens=91000
+context_window=250000
+five_hour_percent=unavailable
+seven_day_percent=unavailable
+source=tap" "$(gauge g-3)"
+rm -f "$GSTATE/ctx/g-3.json"
 
 check "fresh tap file wins" "context_percent=36.4
 context_tokens=91000
@@ -346,6 +363,8 @@ check "stale tap file: transcript with the file's window" "context_percent=36.0
 context_tokens=90000
 context_window=250000
 context_window_source=tap-file
+five_hour_percent=unavailable
+seven_day_percent=unavailable
 source=transcript" "$(gauge g-1 --max-age 0)"
 
 rm "$GSTATE/ctx/g-1.json"
@@ -353,6 +372,8 @@ check "no tap file: --window" "context_percent=45.0
 context_tokens=90000
 context_window=200000
 context_window_source=flag
+five_hour_percent=unavailable
+seven_day_percent=unavailable
 source=transcript" "$(gauge g-1 --window 200000)"
 
 check "session id from the environment, default window" "context_window_source=default" \

@@ -18,8 +18,10 @@ Show the orchestrator who is near the rotation gate.
    none below 70 % on both; « one tier down, except the orchestrator, the
    contract-defining phases and the final verification » at or above 70 % on
    either; « no new dispatch, finish what is in flight » at or above 90 %.
-   Say « unmeasured » when neither figure can be read — a pressure nobody
-   measured never holds a dispatch. The rule is `orchestrator:model-routing`.
+   Both figures read `unavailable` when they cannot be measured (the answer
+   came from the transcript, or the payload never carried them); say the
+   pressure is unavailable rather than assuming none — a pressure nobody
+   measured never holds a dispatch, and never clears one either. The rule is `orchestrator:model-routing`.
 
 Session ids are not agent names. If the user needs the mapping, ask each live
 agent for its `CLAUDE_CODE_SESSION_ID` through `SendMessage`.

@@ -47,6 +47,11 @@ if [ -f "$tap_file" ]; then
     echo "context_percent=$pct"
     echo "context_tokens=$used"
     echo "context_window=$total"
+    # One word for "the figure is not there", in both tiers. A line that is absent, or
+    # that reads `null`, is one a reader takes for zero — and zero means "no budget
+    # pressure" exactly when the pressure cannot be measured.
+    [ "${h5:-null}" = "null" ] && h5=unavailable
+    [ "${d7:-null}" = "null" ] && d7=unavailable
     echo "five_hour_percent=$h5"
     echo "seven_day_percent=$d7"
     echo "source=tap"
@@ -83,6 +88,11 @@ for line in reversed(data.strip().split("\n")):
         print(f"context_tokens={ctx}")
         print(f"context_window={window}")
         print(f"context_window_source={source}")
+        # The quota figures live in the status line payload alone: the transcript has no
+        # trace of them. They are still printed, because the callers that read this output
+        # are told to keep those lines, and a missing line reads as zero.
+        print("five_hour_percent=unavailable")
+        print("seven_day_percent=unavailable")
         print("source=transcript")
         if source == "default":
             print("warning=window assumed; pass --window or wire the tap (/orchestrator:install) for the real size")

@@ -24,8 +24,8 @@ Output:
 context_percent=36.4
 context_tokens=91000
 context_window=250000
-five_hour_percent=3
-seven_day_percent=1
+five_hour_percent=3          # or `unavailable`
+seven_day_percent=1          # or `unavailable`
 source=tap
 ```
 

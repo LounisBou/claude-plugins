@@ -69,7 +69,7 @@ Before every dispatch, read `five_hour_percent` and `seven_day_percent` from `or
 
 - **At or above ~70 % on either**: every class drops one tier EXCEPT the rows the principle protects — you and your successor, contract-defining phases, the final verification. Tell the operator in one line: a degraded wave is a fact they own.
 - **At or above ~90 %**: dispatch nothing new. Finish what is in flight, queue the rest. A wave that dies mid-phase is redone from a cold session that remembers none of what it had decided, which is the most expensive outcome available.
-- **Unreadable figures**: say so and route on the table alone. A gate that cannot measure does not hold a run.
+- **Unreadable figures**: both read `unavailable` when the answer came from the transcript or the payload never carried them. Say so and route on the table alone — a gate that cannot measure does not hold a run, and an absent figure is never read as zero.
 
 Pressure modifies one dispatch. It never rewrites the table.
 

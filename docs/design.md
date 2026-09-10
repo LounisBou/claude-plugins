@@ -71,6 +71,12 @@ seven_day_percent=1
 source=tap            # or transcript
 ```
 
+The two quota figures are printed in BOTH tiers, and read `unavailable` when the payload
+never carried them or when the answer comes from the transcript, which has no trace of
+them. They are never omitted: the callers that read this output are told to keep those
+lines, and a missing line is one a reader takes for zero — "no budget pressure" exactly
+when the pressure cannot be measured.
+
 The session id defaults to `CLAUDE_CODE_SESSION_ID`, which the host sets in every session's environment. The tap file is used when younger than `--max-age` (default 120 s). Otherwise the transcript — the path recorded in the tap file when there is one, else `<config>/projects/*/<session-id>.jsonl` — is scanned backwards for the last `usage` block. The window for that computation comes, in order, from the stale tap file's `context_total`, `--window`, or the default 200000, and `context_window_source=` names which. No tap file and no transcript is an error with exit 1.
 
 ### 3.4 Install and uninstall
