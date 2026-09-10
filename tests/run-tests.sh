@@ -193,6 +193,18 @@ check "a cascade paying less than half says to stop" "1" \
 check "a class with no cascade row gets no cascade line" "0" \
   "$(bash "$REC" summary "$R" | grep -c '^cascade=conversion-phase')"
 
+# What a review MISSED is the number the published work says to watch: strong judges keep
+# false positives low and false negatives moderate to high — they let defects through. An
+# approval that a later round contradicts is the only evidence of that available here.
+e1=$(bash "$REC" open "$R" --class behaviour-phase --tier standard)
+bash "$REC" close "$R" "$e1" --verdict approved >/dev/null
+check "no escape, no line" "0" "$(bash "$REC" summary "$R" | grep -c '^escapes=behaviour-phase')"
+bash "$REC" escaped "$R" "$e1" >/dev/null
+check "an escape is recorded on the row" "true" "$(jq -r --argjson i "$e1" 'select(.id==$i)|.escaped' "$R")"
+check "the escape is counted" "1" "$(bash "$REC" summary "$R" | grep -c '^escapes=behaviour-phase at standard: 1 of 1')"
+check "one escape arms the second reader" "1" "$(bash "$REC" summary "$R" | grep -c 'signal=double-read behaviour-phase at standard')"
+check_status "an escape on an unknown row is an error" 1 bash "$REC" escaped "$R" 99
+
 check_status "an unknown row id is an error" 1 bash "$REC" round "$R" 99
 check_status "an unknown tier is refused at open" 1 bash "$REC" open "$R" --class x --tier cheapest
 check_status "open without a class is an error" 1 bash "$REC" open "$R" --tier deep

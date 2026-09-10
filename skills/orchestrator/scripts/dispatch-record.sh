@@ -4,6 +4,7 @@
 #   dispatch-record.sh open    <record> --class <c> --tier <deep|standard|light> [--label <text>] [--cascade]
 #   dispatch-record.sh round   <record> <id>
 #   dispatch-record.sh close   <record> <id> --verdict <text>
+#   dispatch-record.sh escaped <record> <id>      (a defect got past this row's review)
 #   dispatch-record.sh summary <record>
 #
 # `open` prints the row id. The record is JSON lines: appendable, greppable, and read back
@@ -88,6 +89,15 @@ close)
     rewrite 'if .id==$i then .state="closed" | .verdict=$v | .closed=$c else . end' "$id" \
         --arg v "$verdict" --arg c "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     ;;
+escaped)
+    # An approval a later round contradicts. It is the only evidence available here of the
+    # failure mode the published work warns about: a strong judge keeps false positives low
+    # and false negatives moderate to high, so what it MISSES is what costs, and nothing
+    # else in this record can see a miss.
+    id="${3:-}"; [ -n "$id" ] || die "escaped: a row id is required"
+    require_row escaped "$id"
+    rewrite 'if .id==$i then .escaped=true else . end' "$id"
+    ;;
 summary)
     [ -f "$record" ] || { echo "dispatch-record: no record at $record"; exit 0; }
     jq -sr '
@@ -98,6 +108,14 @@ summary)
       | sort_by(.class, .tier)
       | (.[] | "class=\(.class) tier=\(.tier) dispatches=\(.n) closed=\(.closed) rounds_avg=\(.avg*10|round/10)"),
         (.[] | select(.avg > 1) | "signal=\(.class) at \(.tier) averages \(.avg*10|round/10) rounds: the drop did not pay, revert it for this class")
+    ' "$record"
+    jq -sr '
+      map(select(.escaped == true))
+      | group_by(.class + " " + .tier)
+      | map({class: .[0].class, tier: .[0].tier, n: length})
+      | sort_by(.class, .tier)
+      | (.[] | "escapes=\(.class) at \(.tier): \(.n) of \(.n) approved rows had a defect found later"),
+        (.[] | "signal=double-read \(.class) at \(.tier): an approval missed a defect. Give the next round a SECOND reader with a different lens, and keep a finding only when both see it")
     ' "$record"
     # A cascade pays when it closes in one round: the attempt cost nothing beyond itself.
     # Below half, the retries cost more than the tier they saved, which is the whole test.
@@ -112,5 +130,14 @@ summary)
              | "signal=stop cascading \(.class) at \(.tier): \(.paid) of \(.n) paid, the retries cost more than the tier saved")
     ' "$record"
     ;;
-*) die "unknown subcommand: $cmd (expected open, round, close or summary)" ;;
+*) die "unknown subcommand: $cmd (expected open, round, close or escaped)
+    # An approval a later round contradicts. It is the only evidence available here of the
+    # failure mode the published work warns about: a strong judge keeps false positives low
+    # and false negatives moderate to high, so what it MISSES is what costs, and nothing
+    # else in this record can see a miss.
+    id="${3:-}"; [ -n "$id" ] || die "escaped: a row id is required"
+    require_row escaped "$id"
+    rewrite 'if .id==$i then .escaped=true else . end' "$id"
+    ;;
+summary)" ;;
 esac

@@ -339,4 +339,23 @@ the row `--cascade`. `summary` reports `cascade=<class> at <tier>: N of M paid` 
 a cascade that failed is indistinguishable from a row that needed two rounds, and nobody
 can tell an economy from a cost — which is the same failure the record was built to end.
 
+## 17. A second reader, armed by evidence
+
+**0.14.0.** The published measurements of model judges are lopsided in a way that decides
+the design: a strong judge rarely invents a defect and regularly misses one. What a review
+costs is what it did not see, and a missed defect leaves no trace in the round that missed
+it. The recommended mitigation is a panel of differing readers with a consensus rule.
+
+A standing panel is not shipped here, and the reason is stated in the skill rather than
+left as an omission: the compensating control is already stronger than a vote, since the
+orchestrator verifies every finding on the artifact and mutates the tests a verdict rests
+on. Paying for a panel on every round would buy less than that costs.
+
+So the panel is armed by evidence instead. `dispatch-record.sh escaped <record> <id>`
+records an approval a later round contradicted; `summary` then prints
+`signal=double-read <class> at <tier>`, and from that point the class gets a second reader
+with a DIFFERENT lens, a finding surviving only when both see it. A different lens is the
+condition that matters: two readers asked the same question agree by construction, and
+agreement bought that way is a gate green over nothing.
+
 **decide** (0.4.2) is the decision round: the orchestrator collects every arbitration that is the user's — agents' STOPs, proposed owners, review findings without one — and puts them ONE AT A TIME, each with its context in plain words, two to four choices carrying their cost, one recommendation, then waits; the ruling is written back in one line, recorded where it lives, relayed to the agent it answers, and only then the next question comes. A question interrupted by anything else is re-presented in full, never referenced. Written after a day on which twelve arbitrations were put that way and every one was ruled in a minute, where batching them had stalled for hours.
