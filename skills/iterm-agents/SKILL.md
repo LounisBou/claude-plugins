@@ -18,12 +18,13 @@ $SCRIPT list
     # w1/t3 | /dev/ttys000 | ✳ agent-brief prompt (node)
     # w1/t1 | /dev/ttys004 | ◐ Implementer : phase 2 | hidden   ← behind a maximized sibling pane
 
-$SCRIPT spawn --dir <workdir> [--tier deep|standard|light] [--permission-mode auto] \
+$SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --inherit-model] [--permission-mode auto] \
     --title "<Role> : <what>" --prompt "Read and execute <brief-path>. Your orchestrator is <name [ref]>." [--right-of self]
     # writes the prompt to a file under the plugin's state directory, writes the launch
     # to a second file, asks the app to run it in a new tab AT AN INDEX, WAITS until the
     # host CLI is running on the new tty (30 s, ORCHESTRATOR_SPAWN_TIMEOUT), and prints
     # the tty on its last line. `--prompt-file <path>` uses a file you already wrote.
+    # --inherit-model types the calling session's current model (from the context tap); for a successor.
     # --tier resolves through the operator's map (<state dir>/models.json, or
     # ORCHESTRATOR_TIER_DEEP/_STANDARD/_LIGHT). An unbound tier and no --tier at all both
     # type no model argument: the host chooses. `resolve-tier <tier>` prints the binding.
