@@ -137,6 +137,29 @@ out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate2" bash "$ROOT/
 case "$out" in *"mutually exclusive"*) anchors="refused" ;; *) anchors="$out" ;; esac
 check "two anchors are refused at spawn" "refused" "$anchors"
 
+echo "== version =="
+
+# The same fact lives in three fields. A branch cut from a stale main set the plugin
+# manifest BACKWARDS over a release that was already tagged and already advertised by the
+# marketplace file, and nothing said a word: one file offered 0.6.1 while the other
+# claimed 0.6.0.
+pv=$(jq -r .version "$ROOT/.claude-plugin/plugin.json")
+mv1=$(jq -r .metadata.version "$ROOT/.claude-plugin/marketplace.json")
+mv2=$(jq -r '.plugins[0].version' "$ROOT/.claude-plugin/marketplace.json")
+check "the two manifests agree on the version" "$pv|$pv" "$mv1|$mv2"
+
+# ...and it has to be ahead of everything already published. Tags are local, so a clone
+# without them simply skips this one rather than holding the suite on a fact it cannot read.
+newest=$(cd "$ROOT" && git tag --list 'orchestrator--v*' 2>/dev/null | sed 's/^.*v//' | sort -V | tail -1)
+if [ -n "$newest" ]; then
+  if [ "$pv" != "$newest" ] && [ "$(printf '%s\n%s\n' "$newest" "$pv" | sort -V | tail -1)" = "$pv" ]; then
+    ahead=yes
+  else
+    ahead="no ($pv against the newest tag $newest)"
+  fi
+  check "the version is ahead of every published tag" "yes" "$ahead"
+fi
+
 echo "== iterm-agents spawn (dry run) =="
 # The prompt is never typed into the shell: a 3 000-character prompt with non-ASCII
 # bytes, quotes and a backslash goes to a file byte for byte, the typed command stays
