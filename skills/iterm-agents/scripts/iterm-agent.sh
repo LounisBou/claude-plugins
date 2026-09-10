@@ -282,7 +282,14 @@ cmd_spawn() {
     [ -d "$dir" ] || die "spawn: directory not found: $dir"
     [ -z "$prompt" ] || [ -z "$prompt_file" ] || die "spawn: --prompt and --prompt-file are exclusive"
     [ -z "$tier" ] || [ -z "$model" ] || die "spawn: --tier and --model are mutually exclusive"
-    [ -z "$tier" ] || model=$(resolve_tier "$tier")
+    if [ -n "$tier" ]; then
+        # The status is read HERE, where it is still readable. `resolve_tier` reports
+        # failure by exiting, and an exit inside a command substitution ends only that
+        # substitution: `rotate` runs this whole function inside another one, so `set -e`
+        # never sees the failure. Without this `||`, an unknown tier printed its refusal
+        # and the spawn went on to open a real tab with no model at all.
+        model=$(resolve_tier "$tier") || die "spawn: cannot resolve tier: $tier"
+    fi
     if [ -n "$prompt_file" ]; then
         [ -f "$prompt_file" ] || die "spawn: prompt file not found: $prompt_file"
     elif [ -n "$prompt" ]; then

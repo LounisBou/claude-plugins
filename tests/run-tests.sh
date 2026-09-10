@@ -204,6 +204,16 @@ check_status "an unknown tier is refused at spawn" 1 \
 # suite already checks that rotate inherits the spawn's verification.
 check "rotate forwards the tier to the spawn" "1" \
   "$(grep -c '\${tier:+--tier "\$tier"}' "$AGENT")"
+# ...and forwarding is not enough: the refusal has to STOP the rotation. `rotate` runs the
+# spawn inside a command substitution, so an `exit` from `resolve_tier` two substitutions
+# deep ends only its own subshell — `set -e` never sees it. The spawn ran on with an empty
+# model and opened a real tab for a tier that does not exist. Observed on a live machine.
+# The guard is what comes LAST: an exit code alone would pass on the bug too, because the
+# close that follows fails on its own.
+rot=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
+  bash "$AGENT" rotate --dir "$WORK" --old-tty /dev/ttys999 --tier bogus 2>&1 || true)
+check "an unresolvable tier stops the rotation, and nothing runs after it" \
+  "ERROR: spawn: cannot resolve tier: bogus" "$(printf '%s' "$rot" | tail -1)"
 
 echo "== context gate hook =="
 # A fake config dir with a tap file: at 70 % the hook orders the succession, at 30 % it
