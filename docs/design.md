@@ -459,3 +459,52 @@ directory a restricted shell may not write to, and a script that fails there fai
 path it never chose.
 
 **decide** (0.4.2) is the decision round: the orchestrator collects every arbitration that is the user's — agents' STOPs, proposed owners, review findings without one — and puts them ONE AT A TIME, each with its context in plain words, two to four choices carrying their cost, one recommendation, then waits; the ruling is written back in one line, recorded where it lives, relayed to the agent it answers, and only then the next question comes. A question interrupted by anything else is re-presented in full, never referenced. Written after a day on which twelve arbitrations were put that way and every one was ruled in a minute, where batching them had stalled for hours.
+
+## 21. The tab is born in the anchor's window, after the last agent
+
+**0.17.1 / 0.18.0.** The operator supplied the evidence again: two windows open, an
+orchestrator in the second, and its agent's tab appearing at the end of the first. The
+round that reproduced it on the current head is short: `spawn --right-of /dev/ttys002`,
+with that tty in window 2, made the tab at w1/t5 and printed success.
+
+**The window was chosen by focus.** `cmd_spawn` took `app.current_window` — whichever
+window was in front — and searched the anchor only among that window's tabs. An anchor in
+another window was simply not found, `index` stayed `None`, and the tab was appended at the
+end of a window that had nothing to do with it. The convention (§ Tab layout in the skill)
+says the orchestrator's tab sits immediately left of its agent's; the code could not honour
+it whenever the operator was looking at another window, which is exactly when a launch
+happens unattended.
+
+Two rules replace it, one per release, because one is a repair and the other a behaviour.
+
+**The window is the anchor's** (0.17.1). An anchor is resolved with `find_tab`, across every
+window, before anything else has a side effect — before the trust record is written, before
+a prompt file is made. The tab is created in the window that holds the anchor, at the
+anchor's index plus one for `--right-of` and at its index for `--left-of`. An anchor that is
+given and not found is a refusal — `spawn: no session found on <tty>` — never an append: a
+tab that lands somewhere is worse than no tab, because the script has said where it is and
+the orchestrator believes it. A spawn with no anchor keeps today's behaviour, the end of the
+current window, and the skill keeps saying not to use it.
+
+**Each new agent goes after the orchestrator's last one** (0.18.0). `--right-of self` used
+to mean « immediately right of my tab », so a second agent slid in between the orchestrator
+and the first, and a window read right to left told the launch order backwards. The
+operator's rule is the natural one: orchestrator, agent 1, agent 2, … in the order they
+were launched. The launcher keeps a **chain file** per orchestrator tty under the state
+directory — `chains/<tty>.jsonl`, one line per spawn: the new tab's `tab_id` (the app's own
+identifier, never recycled the way a tty is) and its tty. Resolving `self` reads the chain
+from its tail and takes the first entry whose tab still exists in the orchestrator's window;
+entries whose tab is gone are dropped on that read; an empty or exhausted chain anchors on
+the orchestrator itself. `close` drops the entry for the tty it closed. A tty is recycled
+minutes after a close, so the chain is checked on `tab_id`, not on tty: an entry whose tty
+now belongs to a stranger's tab does not match and is pruned.
+
+`ORCHESTRATOR_SELF_TTY` overrides the process-tree walk that finds the caller's own tab, so
+the chain's resolution can be tested where there is no terminal: a dry run seeded with a
+chain file prints the anchor it would use.
+
+What the suite reads: a dry run with `--right-of self` and no chain prints `anchor=self`;
+with a chain of two, `anchor=<the second's tty>`; a dry run never writes a chain, because
+there is no tab to record. What only the live round can read: an anchor that is not there
+is refused before a tab exists, a second probe lands immediately right of the first rather
+than of the orchestrator, and after both are closed the chain no longer names them.
