@@ -33,6 +33,8 @@ STATE_DIR = os.environ.get("ORCHESTRATOR_STATE_DIR") or os.path.join(
 PROMPTS_DIR = os.path.join(STATE_DIR, "prompts")
 CHAINS_DIR = os.path.join(STATE_DIR, "chains")
 SELF_TTY = os.environ.get("ORCHESTRATOR_SELF_TTY", "")
+# The app's session id of the caller, for a dry run that has no app to ask (§26).
+SELF_ID = os.environ.get("ORCHESTRATOR_SELF_ID", "")
 # The shell the tab runs the launch through. A LOGIN shell, so the session inherits the
 # operator's environment — the package manager's binaries included — instead of the bare
 # default the app hands a program run directly (§22). Non-interactive `-l` reads the
@@ -163,12 +165,23 @@ def chain_write(tty, entries):
     tmp = path + ".tmp"
     with open(tmp, "w") as fh:
         for e in entries:
-            fh.write(json.dumps({"tab_id": e["tab_id"], "tty": e["tty"]}) + "\n")
+            fh.write(json.dumps({"tab_id": e["tab_id"], "tty": e["tty"],
+                                 "owner": e.get("owner", "")}) + "\n")
     os.replace(tmp, path)
 
 
-def chain_append(tty, tab_id, new_tty):
-    chain_write(tty, chain_read(tty) + [{"tab_id": tab_id, "tty": new_tty}])
+def chain_append(tty, tab_id, new_tty, owner):
+    chain_write(tty, chain_read(tty) + [{"tab_id": tab_id, "tty": new_tty, "owner": owner}])
+
+
+def chain_owned(entries, owner):
+    """The entries this session wrote. A tty is recycled minutes after a close and the
+    chain file named after it outlives its occupant: a successor on the same tty once
+    inherited an entry naming its predecessor's tab, still open, and anchored on it. With
+    no owner known (a dry run without ORCHESTRATOR_SELF_ID) nothing is filtered."""
+    if not owner:
+        return entries
+    return [e for e in entries if e.get("owner") == owner]
 
 
 def chain_drop_tab(tab_id):
@@ -192,12 +205,12 @@ async def chain_anchor(app, own_tty):
     Checked on tab id, never on tty: a tty is recycled minutes after a close, and an entry
     whose tty now belongs to a stranger's tab must not anchor a launch on it. Entries whose
     tab is gone are dropped on this read."""
-    win, _, _ = await find_tab(app, own_tty)
+    win, _, own_sess = await find_tab(app, own_tty)
     if win is None:
         return None
     live = {t.tab_id: t for t in win.tabs}
     entries = chain_read(own_tty)
-    kept = [e for e in entries if e["tab_id"] in live]
+    kept = [e for e in chain_owned(entries, own_sess.session_id) if e["tab_id"] in live]
     if len(kept) != len(entries):
         chain_write(own_tty, kept)
     for e in reversed(kept):
@@ -463,7 +476,7 @@ def cmd_spawn(argv):
             # After the orchestrator's LAST agent, not immediately after the orchestrator:
             # orchestrator, agent 1, agent 2, … in launch order.
             if DRY_RUN:
-                chain = chain_read(own)
+                chain = chain_owned(chain_read(own), SELF_ID)
                 anchor = chain[-1]["tty"] if chain else "self"
             else:
                 async def last(iterm2, connection):
@@ -520,12 +533,13 @@ def cmd_spawn(argv):
             win = app.current_window
             if win is None:
                 die("spawn: iTerm2 has no current window")
+        own_sess_id = (await find_tab(app, own))[2].session_id if own else ""
         # select=False: the operator is working in another tab, and a spawn that pulls the
         # window to the new one interrupts them every time an agent is launched.
         tab = await win.async_create_tab(command=command, index=index, select=False)
         new = await tty_of(tab, connection)
         if own and new:
-            chain_append(own, tab.tab_id, new)
+            chain_append(own, tab.tab_id, new, own_sess_id)
         return new
 
     new_tty = run(go)

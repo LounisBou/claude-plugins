@@ -271,7 +271,7 @@ check "an entry with no owner is skipped once an owner is known" "1" "$(printf '
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `./tests/run-tests.sh 2>&1 | grep -E 'owner|strangers|passed'`
-Expected: the first and third FAIL (the second passes by accident today, which is fine: a check may pass before its code exists when the behaviour it pins is the fallback); `186 passed, 2 failed`.
+Expected: the second and third FAIL (the first passes by accident today: an unfiltered chain anchors on its last entry, which is the own one); `186 passed, 2 failed`.
 
 - [ ] **Step 3: The owner**
 
