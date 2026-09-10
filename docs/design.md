@@ -321,4 +321,22 @@ itself off macOS and stops with a clear reason when the tooling cannot reach the
 It does not talk to the agent. Handshakes, verdicts and reviews need judgment and stay the
 orchestrator's; this holds the mechanism underneath them.
 
+## 16. Cascading where a retry is cheap
+
+**0.13.0.** Routing by rule, before the work, is what the table does. The cheaper strategy
+in the published work is a cascade — try the cheap model, escalate when the result does not
+hold — and it reports very large savings on one assumption: that a failed attempt is cheap
+to detect and cheap to discard.
+
+For an implementation phase that assumption is false and expensively so, because a failed
+attempt is a review round plus a rework round. For a review lens, a read-only search
+subagent, and an N-bis narrow enough for the project's gate to judge, it holds: a machine
+says whether the attempt stood, and throwing it away costs one short session.
+
+So the skill cascades exactly there, one tier below the table's row, and the record marks
+the row `--cascade`. `summary` reports `cascade=<class> at <tier>: N of M paid` and says
+`stop cascading` below half over at least two attempts. The marking is the point: unmarked,
+a cascade that failed is indistinguishable from a row that needed two rounds, and nobody
+can tell an economy from a cost — which is the same failure the record was built to end.
+
 **decide** (0.4.2) is the decision round: the orchestrator collects every arbitration that is the user's — agents' STOPs, proposed owners, review findings without one — and puts them ONE AT A TIME, each with its context in plain words, two to four choices carrying their cost, one recommendation, then waits; the ruling is written back in one line, recorded where it lives, relayed to the agent it answers, and only then the next question comes. A question interrupted by anything else is re-presented in full, never referenced. Written after a day on which twelve arbitrations were put that way and every one was ruled in a minute, where batching them had stalled for hours.

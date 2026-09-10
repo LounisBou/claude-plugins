@@ -169,6 +169,30 @@ check "a class that costs more than one round is signalled" "1" \
 check "a class that closes in one round raises no signal" "0" \
   "$(bash "$REC" summary "$R" | grep -c 'signal=conversion-phase')"
 
+# A cascade starts one tier BELOW the table's row, on classes where a failed attempt is
+# cheap to detect and cheap to throw away. Marking the row is what makes the bet payable:
+# without it, a cascade that failed looks exactly like a row that needed two rounds.
+c1=$(bash "$REC" open "$R" --class review-lens --tier light --cascade)
+check "a cascade row is marked" "true" "$(jq -r --argjson i "$c1" 'select(.id==$i)|.cascade' "$R")"
+bash "$REC" close "$R" "$c1" --verdict approved >/dev/null
+check "a cascade that closed in one round is reported as paid" "1" \
+  "$(bash "$REC" summary "$R" | grep -c '^cascade=review-lens at light: 1 of 1 paid')"
+
+c2=$(bash "$REC" open "$R" --class review-lens --tier light --cascade)
+bash "$REC" round "$R" "$c2" >/dev/null
+bash "$REC" close "$R" "$c2" --verdict escalated >/dev/null
+check "a cascade that cost a round is not counted as paid" "1" \
+  "$(bash "$REC" summary "$R" | grep -c '^cascade=review-lens at light: 1 of 2 paid')"
+check "a cascade below half raises the stop signal" "0" \
+  "$(bash "$REC" summary "$R" | grep -c 'stop cascading')"
+c3=$(bash "$REC" open "$R" --class review-lens --tier light --cascade)
+bash "$REC" round "$R" "$c3" >/dev/null
+bash "$REC" close "$R" "$c3" --verdict escalated >/dev/null
+check "a cascade paying less than half says to stop" "1" \
+  "$(bash "$REC" summary "$R" | grep -c 'stop cascading review-lens at light')"
+check "a class with no cascade row gets no cascade line" "0" \
+  "$(bash "$REC" summary "$R" | grep -c '^cascade=conversion-phase')"
+
 check_status "an unknown row id is an error" 1 bash "$REC" round "$R" 99
 check_status "an unknown tier is refused at open" 1 bash "$REC" open "$R" --class x --tier cheapest
 check_status "open without a class is an error" 1 bash "$REC" open "$R" --tier deep

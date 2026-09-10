@@ -1,7 +1,7 @@
 #!/bin/bash
 # dispatch-record.sh - one row per dispatch, and the signal the routing rule needs.
 #
-#   dispatch-record.sh open    <record> --class <c> --tier <deep|standard|light> [--label <text>]
+#   dispatch-record.sh open    <record> --class <c> --tier <deep|standard|light> [--label <text>] [--cascade]
 #   dispatch-record.sh round   <record> <id>
 #   dispatch-record.sh close   <record> <id> --verdict <text>
 #   dispatch-record.sh summary <record>
@@ -46,12 +46,16 @@ rewrite() {
 
 case "$cmd" in
 open)
-    shift 2; class=""; tier=""; label=""
+    shift 2; class=""; tier=""; label=""; cascade=false
     while [ $# -gt 0 ]; do
         case "$1" in
             --class) class="$2"; shift 2 ;;
             --tier) tier="$2"; shift 2 ;;
             --label) label="$2"; shift 2 ;;
+            # A deliberate bet one tier below the table's row. Marking it is what makes the
+            # bet payable: unmarked, a cascade that failed is indistinguishable from a row
+            # that simply needed two rounds, and nobody can tell an economy from a cost.
+            --cascade) cascade=true; shift ;;
             *) die "open: unknown option $1" ;;
         esac
     done
@@ -61,7 +65,8 @@ open)
     mkdir -p "$(dirname "$record")"
     jq -nc --argjson id "$id" --arg c "$class" --arg t "$tier" --arg l "$label" \
         --arg o "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        '{id:$id,opened:$o,class:$c,tier:$t,label:$l,rounds:0,state:"open",verdict:""}' >> "$record"
+        --argjson k "$cascade" \
+        '{id:$id,opened:$o,class:$c,tier:$t,label:$l,rounds:0,state:"open",verdict:"",cascade:$k}' >> "$record"
     echo "$id"
     ;;
 round)
@@ -93,6 +98,18 @@ summary)
       | sort_by(.class, .tier)
       | (.[] | "class=\(.class) tier=\(.tier) dispatches=\(.n) closed=\(.closed) rounds_avg=\(.avg*10|round/10)"),
         (.[] | select(.avg > 1) | "signal=\(.class) at \(.tier) averages \(.avg*10|round/10) rounds: the drop did not pay, revert it for this class")
+    ' "$record"
+    # A cascade pays when it closes in one round: the attempt cost nothing beyond itself.
+    # Below half, the retries cost more than the tier they saved, which is the whole test.
+    jq -sr '
+      map(select(.cascade == true))
+      | group_by(.class + " " + .tier)
+      | map({class: .[0].class, tier: .[0].tier,
+             n: length, paid: (map(select(.rounds == 0))|length)})
+      | sort_by(.class, .tier)
+      | (.[] | "cascade=\(.class) at \(.tier): \(.paid) of \(.n) paid"),
+        (.[] | select(.n >= 2 and .paid * 2 < .n)
+             | "signal=stop cascading \(.class) at \(.tier): \(.paid) of \(.n) paid, the retries cost more than the tier saved")
     ' "$record"
     ;;
 *) die "unknown subcommand: $cmd (expected open, round, close or summary)" ;;

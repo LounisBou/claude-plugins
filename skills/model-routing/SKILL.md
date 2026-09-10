@@ -57,6 +57,32 @@ An escalation IS a rotation: a model does not change inside a live session. Fres
 
 **Never de-escalate inside a phase.** A drop applies to the next dispatch of that class.
 
+## Cascade where a retry is cheap — and only there
+
+Routing by rule, before the work, is what the table does. The cheaper strategy in the
+literature is a **cascade**: try the cheap model, escalate when the result does not hold.
+It reports very large savings, and it rests on one assumption — that a failed attempt is
+cheap to detect and cheap to throw away.
+
+For an implementation phase that assumption is false, and expensively so: a failed attempt
+is a whole review round plus a rework round, which is exactly what the false-economy rule
+below exists to punish. **Never cascade a phase.**
+
+For three classes it is true, because a machine says whether the attempt held and throwing
+it away costs one short session:
+
+| Class | What detects the failure | What a retry costs |
+|---|---|---|
+| A review lens | its report is empty, vague, or dies on the first verification you run | one reader, re-run |
+| A read-only search subagent | it returns nothing where you know something is | one search |
+| An N-bis narrow enough that the gate judges it | the project's own quality gate | one short session |
+
+**How to cascade.** Dispatch one tier BELOW the table's row and mark it — `dispatch-record.sh open … --cascade`. If the attempt holds in one round, the bet paid. If it costs a round, re-dispatch at the table's row and close the marked row `--verdict escalated`.
+
+**When to stop.** `summary` reports `cascade=<class> at <tier>: N of M paid`, and says `stop cascading` when fewer than half pay over at least two attempts — at that point the retries cost more than the tier they saved. Marking is what makes this readable at all: unmarked, a cascade that failed is indistinguishable from a row that simply needed two rounds, and nobody can tell an economy from a cost.
+
+**One step, as everywhere else.** A cascade is one tier below the row, never two. Two steps means the readings were not taken.
+
 ## The false economy
 
 **A tier drop that produces a second corrective round is reverted for that class, and the reversion is recorded.** A rework round plus its review round costs more than the phase would have cost one tier up.
@@ -105,12 +131,16 @@ signal=n-bis at light averages 2 rounds: the drop did not pay, revert it for thi
 | "Escalate now, the agent is struggling" | Mid-session there is nothing to escalate: the model is fixed. Rotate, or wait for the boundary. |
 | "The quota is high, drop everything a tier" | Not the contracts and not yourself. A cheap orchestrator produces expensive waves, and a cheap contract is paid by every later phase. |
 | "The map is empty but the tiers are in the briefs" | Then nothing is routed and the host decides everything. Run `resolve-tier`, and say the routing is advisory until the operator binds it. |
+| "Cascading saved 90% in the papers, so cascade the phases too" | Those savings assume a failed attempt is cheap to throw away. A phase's failed attempt is a review round plus a rework round. Cascade what a machine judges, nothing else. |
+| "The cascade failed once, that proves nothing" | Right, which is why the rule waits for two and reads the paid rate. It also means one success proves nothing either. |
 | "Two tiers up, this one is clearly out of reach" | One step. Two steps means the readings were not taken, and there is no evidence to revert to. |
 
 ## Red flags: STOP
 
 - A dispatch prepared without the tier and the reading that chose it.
 - A wave dispatched without reading the record's summary; a signal in it you have seen and not reverted.
+- A phase dispatched as a cascade: its failed attempt is a review round and a rework round, not a retry.
+- A cascade dispatched without `--cascade` on its row: unmarked, it cannot be told from a row that needed two rounds.
 - A tier chosen from how hard the phase feels rather than from the five readings.
 - A second corrective round on a class you dropped, and the drop still standing.
 - An escalation attempted inside a live session instead of as a rotation.
