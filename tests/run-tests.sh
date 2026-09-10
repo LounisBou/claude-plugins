@@ -387,6 +387,21 @@ check "no prompt: nothing appended after the settings" "1" "$(printf '%s' "$cmd"
 check_status "--prompt and --prompt-file together are refused" 1 env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --prompt x --prompt-file "$file"
 check_status "verify on a tty nobody has exits 1" 1 bash "$AGENT" verify --tty /dev/ttys999
 
+# The title guard, on the part of a title that holds still. The first character is an
+# activity glyph the session flips on its own — busy, then idle — and a rotation stands the
+# old agent down before spending ten seconds on its replacement, so a title captured before
+# and compared after is guaranteed to differ. The guard meant to make a close unambiguous
+# refused every rotation instead.
+py=$(command -v python3 || echo python3)
+title_in() { "$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+print('yes' if m.stable_title(sys.argv[1]) in m.stable_title(sys.argv[2]) else 'no')" "$1" "$2"; }
+check "a title matches across an activity change" "yes" "$(title_in '◑ Lire et attendre' '✳ Lire et attendre')"
+check "a captured prefix still matches" "yes" "$(title_in '◑ Lire' '✳ Lire et attendre')"
+check "a plain title matches itself" "yes" "$(title_in 'Chat' 'Chat')"
+check "a different title still does not match" "no" "$(title_in 'autre' '✳ Lire et attendre')"
+
 # The shell of a fresh tab is read before anything is typed into it: a startup question
 # waiting for a keystroke ate the first character of a command twice in one night.
 # Twice: once before the first typing, once before the single retry.

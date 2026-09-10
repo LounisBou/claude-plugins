@@ -36,7 +36,9 @@ SANDBOX=$(mktemp -d)
 cleanup() {
   # The tab first: a session left running is the one failure this script must not cause,
   # and it outlives the shell that started it.
-  if [ -n "$TTY" ]; then bash "$AGENT" close --tty "$TTY" >/dev/null 2>&1 || true; fi
+  for t in "$TTY" "${OLD_TTY:-}"; do
+    [ -n "$t" ] && bash "$AGENT" close --tty "$t" >/dev/null 2>&1
+  done
   [ "$KEEP" = 1 ] || rm -rf "$SANDBOX"
   [ "$KEEP" = 1 ] && echo "sandbox kept: $SANDBOX"
   return 0
@@ -85,9 +87,13 @@ check "the dispatch is recorded before it happens" "1" "$id"
 
 echo "== spawn =="
 self=$(bash "$AGENT" list | head -1 | awk -F' \\| ' '{print $2}')
-TTY=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title e2e-probe \
-      --prompt "Read $SANDBOX/brief.md and wait. Do not write anything." --right-of "$self" 2>/dev/null | tail -1)
-check "spawn returns a tty" "yes" "$(printf '%s' "$TTY" | grep -qE '^/dev/tty' && echo yes || echo "$TTY")"
+# stderr is KEPT: a spawn that fails says why on it, and a check that swallows the reason
+# reports an empty string where a diagnosis was available.
+spawn_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title e2e-probe \
+      --prompt "Read $SANDBOX/brief.md and wait. Do not write anything." --right-of "$self" 2>&1)
+TTY=$(printf '%s' "$spawn_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
+check "spawn returns a tty" "yes" \
+  "$(printf '%s' "$TTY" | grep -qE '^/dev/tty' && echo yes || printf 'no tty; spawn said: %s' "$(printf '%s' "$spawn_out" | tail -2 | tr '\n' ' ')")"
 [ -n "$TTY" ] || exit 1
 
 waited=0
@@ -107,6 +113,44 @@ check "the live process carries the tier's model" "$bound" "$got"
 pos_self=$(bash "$AGENT" list | grep -n "$self" | cut -d: -f1)
 pos_new=$(bash "$AGENT" list | grep -n "$TTY" | cut -d: -f1)
 check "the tab landed immediately right of its anchor" "$((pos_self + 1))" "$pos_new"
+
+echo "== rotation =="
+# The one operation that KILLS something, and the only one whose safety order matters: the
+# replacement is spawned and verified BEFORE the old tab is closed, so a spawn that fails
+# never leaves zero agents. Dry runs cannot show that order holding — both halves have to
+# really happen, in sequence, against a real window.
+old_tty="$TTY"; OLD_TTY="$TTY"
+
+# FIRST, the property the order exists for: a rotation whose replacement cannot start must
+# leave the old session alive. Checking only that a good rotation works would pass just as
+# well on a script that closed first and spawned second — which is the one outcome this
+# order is written to prevent, and the only one that loses work.
+bash "$AGENT" rotate --old-tty "$old_tty" \
+     --dir "$SANDBOX/nowhere" --tier "$tier" >/dev/null 2>&1
+check "a rotation refused it a replacement leaves the old one alive" "0" \
+  "$(bash "$AGENT" verify --tty "$old_tty" >/dev/null 2>&1; echo $?)"
+check "and its tab is still there" "1" "$(bash "$AGENT" list | grep -c "$old_tty")"
+
+# No --expect-title here, and that is the finding rather than a shortcut: a rotation takes
+# ten seconds between reading a title and closing on it, and a working session rewrites its
+# title to say what it is doing. The tty is the identity; what makes the close safe is the
+# stand-down that preceded it, not a string that was true a moment ago.
+out=$(bash "$AGENT" rotate --old-tty "$old_tty" \
+      --dir "$SANDBOX/repo" --tier "$tier" --title e2e-rotated 2>&1)
+TTY=$(printf '%s' "$out" | grep -oE '/dev/ttys[0-9]+' | head -1)
+check "the rotation returned a new tty" "yes" "$(printf '%s' "$TTY" | grep -qE '^/dev/tty' && echo yes || echo "$out")"
+check "the replacement is not the session it replaced" "different" \
+  "$([ "$TTY" != "$old_tty" ] && echo different || echo "same: $TTY")"
+bash "$AGENT" verify --tty "$TTY" >/dev/null 2>&1
+check "the replacement is running" "0" "$?"
+gone=0
+for _ in 1 2 3 4 5 6; do
+  ps -t "${old_tty#/dev/}" -o command= 2>/dev/null | grep -q . || { gone=1; break; }
+  sleep 2
+done
+check "the session it replaced is gone" "1" "$gone"
+check "and its tab with it" "0" "$(bash "$AGENT" list | grep -c "$old_tty")"
+OLD_TTY=""
 
 echo "== stand down =="
 title=$(bash "$AGENT" list | grep "$TTY" | sed 's/.*| //' | cut -c1-6)
