@@ -39,9 +39,29 @@ echo "== repository policy =="
 
 # The product name appears only in load-bearing identifiers: host paths, host
 # environment variables, the plugin name and the manifest directory.
-hits=$(grep -rniI 'claude' "$ROOT" --exclude-dir=.git --exclude=plan.md --exclude=CLAUDE.md \
-  | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI:-claude|claude-orchestrator|\.claude-plugin|/\.claude/' || true)
-check "no product name in prose" "" "$hits"
+#
+# The grep runs from INSIDE the repository, on a relative path. With an absolute one,
+# every result line carried `/…/claude-orchestrator/…` in its own path and the exemption
+# for the plugin's name deleted the whole line whatever it said: this check reported a
+# clean repository for its entire life without ever reading a single file. Two files are
+# excluded because they QUOTE the pattern they are searched for.
+policy_hits() {
+  ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=plans \
+      --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh \
+    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/' || true )
+}
+check "no product name in prose" "" "$(policy_hits)"
+
+# And the guard proves it can still SEE one. A file planted with a violation must show up
+# in the very same function: "no hits" means nothing until "hits would have shown" is
+# established. This is the check that would have caught the hole above on the day it
+# appeared, instead of years later by hand.
+PROBE="$ROOT/.policy-probe-$$.md"
+trap 'rm -rf "$WORK"; rm -f "$PROBE"' EXIT
+printf 'PRODUCT NAME IN PROSE\n' | sed 's/PRODUCT NAME/Claude/' > "$PROBE"
+seen=$(policy_hits | grep -c 'policy-probe' || true)
+rm -f "$PROBE"
+check "the policy guard can see a violation" "1" "$seen"
 
 # The tiers exist so no model family name has to appear here. The grep above looks for
 # the host's name only, and would never have caught the identifier the launcher carried.

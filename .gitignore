@@ -9,3 +9,6 @@
 # editor swap files
 *.swp
 *.swo
+
+# transient probe planted by the policy self-check
+.policy-probe-*
