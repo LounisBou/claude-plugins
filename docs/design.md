@@ -1019,3 +1019,53 @@ nothing to hand; and the three texts carry the new form and not the old. What on
 live round can read: a probe spawned `--successor` lands immediately right of the caller
 and left of its two agents, its chain names both, the caller's no longer does, and a
 closed agent leaves the successor's chain.
+
+## 35. The settings directory travels through the exclude file, and a base may be the remote's
+
+**0.23.5.** Two findings from the sibling build that runs the same script on a larger
+repository, both verified on the code. First, `create` copied the local settings directory
+WHOLE (a bare recursive copy of `<repository>/.claude/`), while the loop that copies what
+the exclude file designates skipped every entry under that directory. The host now writes a
+runtime block into every repository's exclude file — `**/.claude/worktrees/`,
+`**/.claude/checkpoints/`, a mailbox, a registry — naming what it keeps under the settings
+directory for itself: worktrees the size of the repository, each with a `.git` pointing at
+the source. On that repository the copy would have carried 4.2 GB of two full worktrees
+into a checkout meant to hold a phase. Second, `--base` accepted only `refs/heads/`, so a
+source whose local `main` lagged its remote handed the phase a stale base, with no way to
+name the fresh one; the sibling cloned by hand.
+
+**Inside the settings directory, the exclude file's patterns say what does not travel.** A
+pattern that reaches INSIDE the directory (`**/.claude/worktrees/`) names something the
+host generates and the checkout must not carry. A pattern that names the directory as a
+whole (`/.claude/`, `.claude/`, `**/.claude/`) says only that the directory stays out of
+history, which every copied file already does (§30) — so it is set aside, and the matcher
+runs on the exclude file minus those lines, on the settings directory alone, through git
+itself: `git ls-files --others --exclude-from=<the reduced file>` restricted to the settings
+directory lists what travels, its `--ignored --directory` twin counts what does not. The files are copied one
+by one at their relative paths, never the directory whole, so what is skipped is never
+read. `create` says both counts on stderr: copied, and skipped by the exclude file. The
+patterns of `.gitignore` and of the operator's global ignore file are not consulted here,
+as they are not for the excluded files: the exclude file is the repository's own statement
+of what is local, and the host writes its block there.
+
+**A base is a local branch of the source, or one of its `origin/` remote-tracking refs.**
+`--base origin/main` resolves against `refs/remotes/`; any other remote is refused, because
+the checkout's `origin` is pointed at the source's `origin` and nothing else. A clone
+carries only what the source's local branches reach, so the remote's head is FETCHED into
+the checkout from the real origin — after `origin` is re-pointed, before anything is
+checked out — and the branch is created from it, tracking `origin/<branch>`; the source is
+never touched. A fetch that fails removes the clone and names the URL. A base that is
+neither a local branch nor an `origin/` ref is refused as before, with both readings named.
+
+**Out of scope, on purpose.** A base given as a bare commit id or a tag: a phase branch
+stacks on a branch. Reading `.gitignore` for the settings directory: a project that
+ignores `<repository>/.claude/` whole in `.gitignore` says nothing about what inside it is local
+material. Any change to `delete` or `list`.
+
+What the suite reads, on the existing fixture extended with a `worktrees` tree under the
+settings directory and the host's pattern in the exclude file: the directory's own files
+travel, the named tree does not, and the copy says `3 files, 1 skipped`. On a second source
+whose `origin` is a bare repository advanced from elsewhere so that `origin/main` is one
+commit ahead of `main`: `create --base origin/main` checks out `main` at the remote's head,
+tracking `origin/main` on the real URL; `list` shows it clean and pushed; a base the source
+does not know is refused and makes no checkout.
