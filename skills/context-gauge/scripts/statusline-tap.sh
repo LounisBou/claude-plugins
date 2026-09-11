@@ -50,6 +50,7 @@ record() {
   if [ ! -f "$file" ]; then
     find "$CTX_DIR" -name '*.json' -mtime +1 -delete 2>/dev/null
     find "$CTX_DIR" -name '*.gate-unmeasured' -mtime +1 -delete 2>/dev/null
+    find "$CTX_DIR" -name '*.model' -mtime +1 -delete 2>/dev/null
   fi
   tmp="$file.tmp.$$"
   printf '{"session_id":"%s","context_percent":%s,"context_used":%s,"context_total":%s,"five_hour_percent":%s,"five_hour_resets_at":%s,"seven_day_percent":%s,"seven_day_resets_at":%s,"transcript_path":%s,"model_id":%s,"updated_epoch":%s}\n' \

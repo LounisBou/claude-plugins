@@ -20,6 +20,37 @@ TRANSCRIPTS_DIR="${ORCHESTRATOR_TRANSCRIPTS_DIR:-$CONFIG_DIR/projects}"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 
+# The model that answered last. The transcript is the one certain trace: the host can
+# switch a session's model under it (its own fallback after a refusal or an outage) and
+# neither the launch line nor the status line shows it — only each answer's own entry
+# does (§32). The tap's declared model is the fallback reading; unavailable otherwise,
+# in the same word as the quota figures and for the same reason.
+read_model() {
+  model="" model_source="unavailable"
+  [ -n "$transcript" ] || transcript=$(ls "$TRANSCRIPTS_DIR"/*/"$session_id".jsonl 2>/dev/null | head -1)
+  if [ -n "$transcript" ] && [ -f "$transcript" ]; then
+    model=$(tail -c 300000 "$transcript" | python3 -c '
+import sys, json
+data = sys.stdin.buffer.read().decode("utf-8", errors="ignore")
+for line in reversed(data.strip().split("\n")):
+    try:
+        entry = json.loads(line)
+    except Exception:
+        continue
+    if entry.get("type") == "assistant":
+        m = (entry.get("message") or {}).get("model")
+        if m:
+            print(m)
+            break
+')
+    [ -n "$model" ] && model_source="transcript"
+  fi
+  if [ -z "$model" ] && [ -n "${mid:-}" ] && [ "$mid" != "null" ]; then
+    model="$mid"; model_source="tap"
+  fi
+  [ -n "$model" ] || model="unavailable"
+}
+
 session_id="" window="" max_age=120
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -36,10 +67,10 @@ tap_file="$STATE_DIR/ctx/$session_id.json"
 window_source=""
 transcript=""
 if [ -f "$tap_file" ]; then
-  IFS=$'\x1f' read -r updated pct used total h5 d7 tp <<<"$(jq -r '
+  IFS=$'\x1f' read -r updated pct used total h5 d7 tp mid <<<"$(jq -r '
     [ (.updated_epoch // 0), (.context_percent // null), (.context_used // null),
       (.context_total // null), (.five_hour_percent // null), (.seven_day_percent // null),
-      (.transcript_path // "") ]
+      (.transcript_path // ""), (.model_id // "") ]
     | map(tostring) | join("\u001f")' "$tap_file" 2>/dev/null)"
   [ -f "${tp:-}" ] && transcript="$tp"
   age=$(( $(date +%s) - ${updated:-0} ))
@@ -54,6 +85,9 @@ if [ -f "$tap_file" ]; then
     [ "${d7:-null}" = "null" ] && d7=unavailable
     echo "five_hour_percent=$h5"
     echo "seven_day_percent=$d7"
+    read_model
+    echo "model=$model"
+    echo "model_source=$model_source"
     echo "source=tap"
     exit 0
   fi
@@ -71,10 +105,12 @@ fi
 [ -n "$transcript" ] || transcript=$(ls "$TRANSCRIPTS_DIR"/*/"$session_id".jsonl 2>/dev/null | head -1)
 [ -n "$transcript" ] || die "no tap file and no transcript for session $session_id"
 
+read_model
 tail -c 300000 "$transcript" | python3 -c '
 import sys, json
 window = int(sys.argv[1])
 source = sys.argv[2]
+model, model_source = sys.argv[3], sys.argv[4]
 data = sys.stdin.buffer.read().decode("utf-8", errors="ignore")
 for line in reversed(data.strip().split("\n")):
     try:
@@ -93,10 +129,12 @@ for line in reversed(data.strip().split("\n")):
         # are told to keep those lines, and a missing line reads as zero.
         print("five_hour_percent=unavailable")
         print("seven_day_percent=unavailable")
+        print(f"model={model}")
+        print(f"model_source={model_source}")
         print("source=transcript")
         if source == "default":
             print("warning=window assumed; pass --window or wire the tap (/orchestrator:install) for the real size")
         sys.exit(0)
 print("ERROR: no usage block found in the transcript tail", file=sys.stderr)
 sys.exit(1)
-' "$window" "$window_source"
+' "$window" "$window_source" "$model" "$model_source"

@@ -685,6 +685,17 @@ check "past the gate the hook orders the succession" "1" "$(gate g-hi | grep -c 
 check "under the gate the hook is silent" "" "$(gate g-lo)"
 check "unmeasured says so once" "1" "$(gate g-none | grep -c 'unmeasured'; )"
 check "unmeasured stays silent the second time" "" "$(gate g-none)"
+
+# The model that answers can be switched under a session by the host's own fallback, and
+# nothing showed it (§32). The gate keeps the last model it read and says a change once —
+# a line the session cannot miss, where the status line showed nothing.
+mkdir -p "$GH/projects/p"
+printf '{"type":"assistant","message":{"model":"a-model","usage":{"input_tokens":1,"cache_creation_input_tokens":1,"cache_read_input_tokens":1}}}\n' > "$GH/projects/p/g-drift.jsonl"
+printf '{"session_id":"g-drift","context_percent":30,"updated_epoch":%s}\n' "$now" > "$GH/claude-orchestrator/ctx/g-drift.json"
+check "the first reading of the model is silent" "" "$(gate g-drift)"
+printf '{"type":"assistant","message":{"model":"b-model","usage":{"input_tokens":1,"cache_creation_input_tokens":1,"cache_read_input_tokens":1}}}\n' >> "$GH/projects/p/g-drift.jsonl"
+check "a changed model is said once, naming both" "1" "$(gate g-drift | grep -c 'MODEL DRIFT: this session now answers as b-model; it answered as a-model until now')"
+check "and not again while it holds" "" "$(gate g-drift)"
 rm -rf "$GH"
 
 echo "== the app, stubbed =="
@@ -769,10 +780,12 @@ touch -t 202001010000 "$STATE/ctx/old.json"
 # old. Kill what you start, delete what you build.
 touch -t 202001010000 "$STATE/ctx/old.gate-unmeasured"
 touch "$STATE/ctx/today.gate-unmeasured"
+touch -t 202001010000 "$STATE/ctx/old.model"
 printf '%s' "$PAYLOAD" | sed 's/s-1/s-2/' | ORCHESTRATOR_STATE_DIR="$STATE" bash "$TAP" >/dev/null
 check "stale files pruned on a session's first render" "gone" "$([ -f "$STATE/ctx/old.json" ] && echo kept || echo gone)"
 check "stale gate markers pruned with them" "gone" "$([ -f "$STATE/ctx/old.gate-unmeasured" ] && echo kept || echo gone)"
 check "a marker from today is kept" "kept" "$([ -f "$STATE/ctx/today.gate-unmeasured" ] && echo kept || echo gone)"
+check "stale model markers pruned with them" "gone" "$([ -f "$STATE/ctx/old.model" ] && echo kept || echo gone)"
 
 echo "== gauge =="
 
@@ -794,6 +807,8 @@ context_window=250000
 context_window_source=tap-file
 five_hour_percent=unavailable
 seven_day_percent=unavailable
+model=a-model
+model_source=transcript
 source=transcript" "$(gauge g-2)"
 
 # A fresh tap whose payload carried no quota figures says so in the same word as the
@@ -808,14 +823,25 @@ context_tokens=91000
 context_window=250000
 five_hour_percent=unavailable
 seven_day_percent=unavailable
+model=unavailable
+model_source=unavailable
 source=tap" "$(gauge g-3)"
 rm -f "$GSTATE/ctx/g-3.json"
+
+# No transcript reachable: the tap's declared model is the reading, said as the tap's.
+printf '{"session_id":"g-4","context_percent":36.4,"context_used":91000,"context_total":250000,"five_hour_percent":3,"five_hour_resets_at":null,"seven_day_percent":1,"seven_day_resets_at":null,"transcript_path":null,"model_id":"t-model","updated_epoch":%s}\n' \
+  "$(date +%s)" > "$GSTATE/ctx/g-4.json"
+check "no transcript: the model comes from the tap, and says so" "model=t-model
+model_source=tap" "$(gauge g-4 | grep '^model')"
+rm -f "$GSTATE/ctx/g-4.json"
 
 check "fresh tap file wins" "context_percent=36.4
 context_tokens=91000
 context_window=250000
 five_hour_percent=3
 seven_day_percent=1
+model=a-model
+model_source=transcript
 source=tap" "$(gauge g-1)"
 
 check "stale tap file: transcript with the file's window" "context_percent=36.0
@@ -824,6 +850,8 @@ context_window=250000
 context_window_source=tap-file
 five_hour_percent=unavailable
 seven_day_percent=unavailable
+model=a-model
+model_source=transcript
 source=transcript" "$(gauge g-1 --max-age 0)"
 
 rm "$GSTATE/ctx/g-1.json"
@@ -833,6 +861,8 @@ context_window=200000
 context_window_source=flag
 five_hour_percent=unavailable
 seven_day_percent=unavailable
+model=a-model
+model_source=transcript
 source=transcript" "$(gauge g-1 --window 200000)"
 
 check "session id from the environment, default window" "context_window_source=default" \

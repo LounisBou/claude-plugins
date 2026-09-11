@@ -1,7 +1,7 @@
 {
   "name": "orchestrator",
   "description": "Orchestrate implementer sessions from one supervising session: briefs, evidence-based reviews, agent rotation, succession, terminal tab tooling and a context gauge any session can read.",
-  "version": "0.23.1",
+  "version": "0.23.2",
   "author": {
     "name": "Lounis Bou",
     "email": "lounis.bou@gmail.com"

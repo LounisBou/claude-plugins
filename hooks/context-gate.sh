@@ -29,6 +29,24 @@ reading="$(CLAUDE_CODE_SESSION_ID="$session_id" bash "$GAUGE" "$session_id" 2>/d
 percent="$(printf '%s\n' "$reading" | sed -n 's/^context_percent=\([0-9]*\).*/\1/p' | head -1)"
 source="$(printf '%s\n' "$reading" | sed -n 's/^source=\(.*\)/\1/p' | head -1)"
 
+# The model that answers can be switched under this session by the host's own fallback,
+# and no other surface shows it (§32). Kept per session; said once per change, the
+# switch back included.
+model="$(printf '%s\n' "$reading" | sed -n 's/^model=\(.*\)/\1/p' | head -1)"
+if [ -n "$model" ] && [ "$model" != "unavailable" ]; then
+    model_marker="$STATE_DIR/ctx/$session_id.model"
+    mkdir -p "$STATE_DIR/ctx" 2>/dev/null
+    if [ -f "$model_marker" ]; then
+        previous="$(cat "$model_marker")"
+        if [ "$previous" != "$model" ]; then
+            echo "MODEL DRIFT: this session now answers as ${model}; it answered as ${previous} until now. The host switched on its own (a refusal, an outage): say it to the operator in your next message; a succession does not repair it."
+            printf '%s' "$model" > "$model_marker"
+        fi
+    else
+        printf '%s' "$model" > "$model_marker"
+    fi
+fi
+
 if [ "$source" != "tap" ] || [ -z "$percent" ]; then
     marker="$STATE_DIR/ctx/$session_id.gate-unmeasured"
     if [ ! -f "$marker" ]; then
