@@ -44,6 +44,11 @@ MODELS_MAP = os.environ.get("ORCHESTRATOR_MODELS_MAP") or os.path.join(STATE_DIR
 SPAWN_TIMEOUT = int(os.environ.get("ORCHESTRATOR_SPAWN_TIMEOUT", "30"))
 DRY_RUN = bool(os.environ.get("ORCHESTRATOR_DRY_RUN"))
 TIERS = ("deep", "standard", "light")
+# A title reads `<Role> : <what>`: a capital, anything without a colon, a spaced colon,
+# then something. It is the session's NAME (§24), so it is the operator's format or it is
+# nothing an orchestrator can recognise in a listing — a successor once came up as
+# `steward-successor` because the launcher took whatever was typed (§39).
+TITLE_SHAPE = re.compile(r"^[A-Z][^:]* : \S")
 
 
 def die(msg):
@@ -427,7 +432,7 @@ def write_prompt_file(prompt, title):
     return path
 
 
-def build_command(dir_, title, model, mode, prompt_file):
+def build_command(dir_, title, model, mode, prompt_file, remote_control=""):
     """The command iTerm2 runs in the new tab. It is HANDED to the app, never typed, so
     its length and its bytes stop being a hazard. No model argument at all when neither a
     tier nor an explicit identifier says which: the host's own default is the right
@@ -452,6 +457,11 @@ def build_command(dir_, title, model, mode, prompt_file):
     # Without it two sessions in one checkout share the host's stem and differ only by a
     # reference (§24).
     cli += ["--permission-mode", shq(mode), "--settings", shq(settings), "--name", shq(title)]
+    # Only a successor gets it: the operator drives his orchestrators from the host's
+    # remote client as well as from the tab, and an agent is driven by its orchestrator
+    # alone (§39). A first instantiation is the operator's own hand, and his launch line.
+    if remote_control:
+        cli += ["--remote-control", shq(remote_control)]
     if prompt_file:
         cli.append('"$(cat %s)"' % shq(prompt_file))
     parts[2] = "exec " + " ".join(cli)
@@ -532,7 +542,9 @@ def cmd_spawn(argv):
     p.add_argument("--tier", default="")
     p.add_argument("--inherit-model", dest="inherit", action="store_true")
     p.add_argument("--permission-mode", dest="mode", default="auto")
-    p.add_argument("--title", default="agent")
+    p.add_argument("--title", default="")
+    p.add_argument("--title-free", dest="title_free", action="store_true", default=False)
+    p.add_argument("--no-remote-control", dest="remote_control", action="store_false", default=True)
     p.add_argument("--prompt", default="")
     p.add_argument("--prompt-file", dest="prompt_file", default="")
     p.add_argument("--left-of", dest="left_of", default="")
@@ -550,6 +562,12 @@ def cmd_spawn(argv):
     if args.successor and (args.left_of or args.right_of):
         die("spawn: --successor names its own anchor, immediately right of this session; "
             "drop --left-of and --right-of")
+    if args.title.startswith("Orchestrator :") and (args.left_of or args.right_of):
+        # A plain anchor lands AFTER the chain (§21), so a successor spawned there is the
+        # far-right tab the operator found, inheriting nothing. --successor places it and
+        # hands the chain over; the title says which of the two this is.
+        die("spawn: refused: an orchestrator's title is a successor's; spawn it with "
+            "--successor, which places it and hands it the chain")
     if not os.path.isdir(args.dir):
         die("spawn: directory not found: %s" % args.dir)
     if args.prompt and args.prompt_file:
@@ -570,6 +588,26 @@ def cmd_spawn(argv):
     side = "right" if args.right_of else "left"
     anchor = args.right_of or args.left_of
     own = self_tty() or ""
+    # The title, before a prompt file is written or a trust record changed: it is the
+    # session's name, and a refusal on it must leave nothing behind either.
+    title = args.title
+    if args.title_free:
+        # The escape, for a probe or a test that names its tab otherwise. `agent` was the
+        # old default and it stays one HERE, where the caller has said the shape is not
+        # wanted, and nowhere else.
+        title = title or "agent"
+    elif args.successor and not title:
+        # A successor carries the predecessor's own name, so every brief that cites an
+        # orchestrator by name still cites this one; the host applies its variant when a
+        # live session already holds it, which is where the reference comes from (§39).
+        title = session_name_on(own) or ""
+        if not title:
+            die("spawn: refused: --successor without --title needs the caller's session "
+                "name, and this session was launched without one; pass "
+                '--title "Orchestrator : <feature>"')
+    elif not TITLE_SHAPE.match(title):
+        die('spawn: refused: a title reads "<Role> : <what>", got %r '
+            "(pass --title-free for a tab named otherwise)" % title)
     if args.successor:
         # A successor is not an agent: immediately right of this session, the chain
         # ignored, and it takes the chain with it once its session can be read (§34).
@@ -600,7 +638,7 @@ def cmd_spawn(argv):
     if prompt_file and not os.path.isfile(prompt_file):
         die("spawn: prompt file not found: %s" % prompt_file)
     if args.prompt:
-        prompt_file = write_prompt_file(args.prompt, args.title)
+        prompt_file = write_prompt_file(args.prompt, title)
 
     # BEFORE the tab exists: a session stopped on the trust question is not launched,
     # whatever the tty says, and finding that out afterwards means finding it out from an
@@ -625,7 +663,8 @@ def cmd_spawn(argv):
             "its workspace question and never read its brief. Pass --trust for a checkout "
             "you prepared, or open the directory once yourself." % os.path.realpath(args.dir))
 
-    launch = build_command(args.dir, args.title, model, args.mode, prompt_file)
+    remote_control = title if (args.successor and args.remote_control) else ""
+    launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control)
 
     if DRY_RUN:
         print("launch=%s" % launch)
@@ -634,10 +673,12 @@ def cmd_spawn(argv):
         print("anchor=%s" % ("self" if anchor == own else anchor))
         print("trust=%s" % trust_state)
         print("successor=%s" % ("yes" if args.successor else "no"))
+        print("name=%s" % title)
+        print("title_free=%s" % ("yes" if args.title_free else "no"))
         print("program=%s -l <launch-file>" % LOGIN_SHELL)
         return
 
-    script = write_launch_script(launch, args.title)
+    script = write_launch_script(launch, title)
     command = "%s -l %s" % (LOGIN_SHELL, script)
 
     async def go(iterm2, connection):

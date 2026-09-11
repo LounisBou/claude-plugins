@@ -17,9 +17,13 @@ Preconditions, verify each before acting:
 Then:
 
 1. `iterm-agent.sh list` — note your own tty.
-2. `iterm-agent.sh spawn --dir <worktree> --inherit-model --permission-mode auto --title "Orchestrator : <feature>"
+2. `iterm-agent.sh spawn --dir <worktree> --inherit-model --permission-mode auto
    --successor --prompt "Read and execute <brief path>"` — the operator's
    decision mode, or the successor stops at its first prompt in a tab nobody watches.
+   No title: `--successor` takes THIS session's own name, so the successor is the same
+   `Orchestrator : <feature>` with a reference of its own, which is what every brief
+   cites; it also comes up under remote control under that name (spec §39). A session
+   launched by hand carries no name, and the launcher then says to type one.
    The successor runs on the model this session runs on NOW — the operator's choice, carried
    across every succession; the map binds agents, never the orchestrator (spec §27).
    `--successor` places it immediately right of this tab, between it and the first agent,
