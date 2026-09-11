@@ -879,6 +879,16 @@ check "--no-remote-control drops the flag and keeps the name" "0|1" \
   "$(succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -c -- '--remote-control')|$(succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch : f'")"
 check "a plain spawn never carries remote control" "0" \
   "$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- '--remote-control')"
+# The host starts remote control for every new session by default (a server-side rollout
+# decides when nothing is set). An agent is driven by its orchestrator alone, so it comes
+# up with the setting that turns that default off; only a successor carries the flag
+# instead, never both.
+check "a plain spawn carries the setting off, and no --remote-control" "1|0" \
+  "$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- '--settings '\''{\"remoteControlAtStartup\":false}'\''')|$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- '--remote-control')"
+check "a successor carries the flag, and not the setting" "1|0" \
+  "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- "--remote-control 'Orch : f'")|$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- '--settings')"
+check "--successor --no-remote-control carries the setting" "1" \
+  "$(succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -c -- '--settings '\''{\"remoteControlAtStartup\":false}'\''')"
 check "a caller launched without a name cannot derive one" "1|1" \
   "$(succ "$PSNONAME" --successor >/dev/null 2>&1; echo $?)|$(succ "$PSNONAME" --successor | grep -c "needs the caller's session name")"
 # The derived name is held to the SAME shape as a typed one (§42), which retires the

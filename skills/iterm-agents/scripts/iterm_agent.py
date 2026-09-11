@@ -675,6 +675,12 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
     if mcp_file:
         cli += ["--mcp-config", shq(mcp_file)]
     cli += ["--permission-mode", shq(mode)]
+    # An agent is driven by its orchestrator alone (§39): remote control comes up OFF for
+    # everyone but a successor, which the operator also drives from the host's remote
+    # client. The setting and the flag below are mutually exclusive — only a successor
+    # carries the flag, and it carries no such setting.
+    if not remote_control:
+        cli += ["--settings", shq('{"remoteControlAtStartup":false}')]
     # The prompt goes BEFORE the options that follow it, and --name is the LAST of them or
     # next to last. `ps` shows a command line with the shell's quoting gone, so whatever
     # follows --name runs into the name: with the prompt there, every spawned session's
@@ -932,6 +938,7 @@ def cmd_spawn(argv):
         print("title_free=%s" % ("yes" if args.title_free else "no"))
         print("mcp=%s" % (",".join(servers) or "none"))
         print("mcp_file=%s" % (mcp_file or "none"))
+        print("remote_control=%s" % ("yes" if remote_control else "no"))
         print("mode_check=skipped")
         print("program=%s -l <launch-file>" % LOGIN_SHELL)
         return
