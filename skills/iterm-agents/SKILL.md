@@ -38,6 +38,7 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --inherit-model] [--
     # catalogue does not hold is refused before a tab exists, naming the ones it holds;
     # with no catalogue at all a plain spawn launches with nothing and says so on stderr.
     # Say in the agent's brief which servers it was given: it cannot see the file.
+    # An agent comes up with remote control off; only a successor comes up under it (§39).
     # The spawn then reads the mode the session came up in, on its own transcript, and
     # refuses a session that came up in another one — closing the tab it just made and
     # naming both modes, the model, and the two repairs: rebind the tier, or pass

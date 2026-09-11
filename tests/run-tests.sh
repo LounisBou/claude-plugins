@@ -243,6 +243,12 @@ check "the tab skill's reference carries the option and what none does" "yes|yes
   "$(spells "$ROOT/skills/iterm-agents/SKILL.md" '[--mcp <name>]')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'mcp.json')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" '--mcp none')"
 check "the catalogue is named where the tier map is" "yes|yes|yes" \
   "$(spells "$ROOT/commands/install.md" 'mcp.json')|$(spells "$ROOT/commands/uninstall.md" 'mcp.json')|$(spells "$ROOT/README.md" 'mcp.json')"
+# The uninstall command names three files as the operator's own: the tier map, the
+# catalogue, and the prompts directory.
+check "uninstall says three files are the operator's own" "yes" \
+  "$(spells "$ROOT/commands/uninstall.md" 'three of those files')"
+check "the tab skill says an agent comes up with remote control off" "yes" \
+  "$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'remote control off')"
 
 # The mode a session came up in (§43), one literal per document. The routing skill carries
 # the rule the measurement produced — a tier bound to a model the host does not run in the
