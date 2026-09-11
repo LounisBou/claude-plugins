@@ -977,3 +977,45 @@ What the suite reads: on a home whose settings file was wired by the installer a
 rewritten with the home spelled `$HOME`, and again spelled `~`, a second install says
 « already wired » and leaves the file byte for byte; the uninstaller then restores the
 object saved at install time. The absolute spelling keeps its existing checks.
+
+## 34. A successor takes the predecessor's place, chain included
+
+**0.23.4.** Two readings of the same succession, one by the orchestrator that ran it and one
+by a sibling build the same afternoon. The skill's layout convention promised that a
+successor spawned `--right-of self` « sits between you and your agent ». It does when the
+predecessor has no agent, which is how the day's own succession looked right. With agents
+open, `--right-of self` means what §21 made it mean — after the LAST agent — so the
+successor lands past every agent, and it is appended to the predecessor's chain as if it
+were one (the sibling's chain read: its agent, then its own successor). Its own chain file
+holds nothing, or a dead session's leftovers on a recycled tty (§26), so its first
+`--right-of self` after the takeover lands immediately right of itself: LEFT of the agents
+it just inherited. Two texts said the false thing (the tab skill's line and the rulebook's
+succession step); the succession command typed a third form, `--left-of <implementer
+tty>`, which places right and hands nothing over.
+
+**A successor is not an agent.** `spawn --successor` names its own anchor — immediately
+right of the calling session's tab, the chain ignored — and refuses `--left-of` and
+`--right-of` beside it. Once the tab exists and its tty is read, the launcher reads the
+new session's id and HANDS THE CHAIN OVER: the predecessor's own entries (§26's owner
+filter) are written under the successor's tty with the successor as owner, replacing
+whatever a recycled tty's file held; the predecessor's file keeps only what was never its
+own; the successor is written into no chain. From then on the successor's `--right-of
+self` resolves to the predecessor's last agent, as if it had launched them, and the
+predecessor's tab — closed by the successor after « takeover confirmed » — leaves the
+successor immediately left of the first agent. If the new session cannot be read in the
+seconds after creation, the launch stands and one stderr line says the chain stayed
+behind and how to place the next agent by hand: a gate that cannot measure says so.
+
+The three texts now say the one form: the tab skill's convention, the rulebook's
+succession step, the succession command. The template's takeover step gains nothing —
+the hand-over is the launcher's, so a successor that forgets a step cannot lose it.
+
+What the suite reads: a dry `--successor` with a chain present prints `anchor=self` and
+`successor=yes` and leaves the chain file byte for byte; `--successor` with either anchor
+option is refused; the transfer, called on the module against a fixture, moves exactly
+the predecessor's own entries under the new tty and owner, replaces a stale file there,
+leaves the predecessor its foreign entries, and hands an empty chain over when there is
+nothing to hand; and the three texts carry the new form and not the old. What only the
+live round can read: a probe spawned `--successor` lands immediately right of the caller
+and left of its two agents, its chain names both, the caller's no longer does, and a
+closed agent leaves the successor's chain.
