@@ -1,7 +1,7 @@
 #!/bin/bash
 # workspace.sh — a checkout per phase, with the project's local material.
 #
-#   workspace.sh create <source-repo> <name> [--base <ref>]   prints the checkout's path
+#   workspace.sh create <source-repo> <name> [--base <branch|origin/branch>]   prints the checkout's path
 #   workspace.sh delete <path> [--discard]                     refuses unpushed work unless told
 #   workspace.sh list                                          one line per checkout under the root
 #
@@ -53,11 +53,27 @@ cmd_create() {
     src=$(git -C "$src" rev-parse --show-toplevel)
     printf '%s' "$name" | grep -qE '^[A-Za-z0-9._-]+$' || die "create: name must match [A-Za-z0-9._-]+: $name"
     [ -n "$base" ] || base=$(git -C "$src" rev-parse --abbrev-ref HEAD)
-    git -C "$src" rev-parse --verify --quiet "refs/heads/$base" >/dev/null || die "create: the source has no branch $base"
+    # A base is a local branch of the source, or an origin/ remote-tracking ref of it: a
+    # source whose local branch lags its remote would otherwise hand the phase a stale base
+    # with no way to name the fresh one (§35). Only origin/, because the checkout's origin
+    # is pointed at the source's origin and nothing else; the remote's head is fetched into
+    # the checkout below, since a clone carries only what the source's local branches reach.
+    local remote_branch=""
+    if git -C "$src" rev-parse --verify --quiet "refs/heads/$base" >/dev/null; then
+        :
+    elif [ "${base#origin/}" != "$base" ] && git -C "$src" rev-parse --verify --quiet "refs/remotes/$base" >/dev/null; then
+        remote_branch="${base#origin/}"
+    else
+        die "create: the source has no branch or origin/ remote-tracking ref $base"
+    fi
     local target="$ROOT_DIR/$(basename "$src")/$name"
     [ ! -e "$target" ] || die "create: already exists, delete it first: $target"
     mkdir -p "$(dirname "$target")" || die "create: cannot create $(dirname "$target")"
-    git clone --quiet --branch "$base" "$src" "$target" 2>/dev/null || { rm -rf "$target"; die "create: clone failed from $src"; }
+    if [ -n "$remote_branch" ]; then
+        git clone --quiet --no-checkout "$src" "$target" 2>/dev/null || { rm -rf "$target"; die "create: clone failed from $src"; }
+    else
+        git clone --quiet --branch "$base" "$src" "$target" 2>/dev/null || { rm -rf "$target"; die "create: clone failed from $src"; }
+    fi
 
     # origin is the real remote, so the implementer's push reaches it; a source without
     # one yields a checkout without one, and says so.
@@ -70,15 +86,47 @@ cmd_create() {
         say "the source has no origin; the checkout has none either"
     fi
 
-    # 1. The project's local settings directory, whole.
+    if [ -n "$remote_branch" ]; then
+        [ -n "$url" ] || { rm -rf "$target"; die "create: --base $base needs the source to have an origin"; }
+        git -C "$target" fetch --quiet origin "$remote_branch" 2>/dev/null || { rm -rf "$target"; die "create: cannot fetch $remote_branch from $url"; }
+        # -B, not -b: a --no-checkout clone already made the local branch the source's HEAD
+        # names, and -b would refuse it.
+        git -C "$target" checkout --quiet -B "$remote_branch" "origin/$remote_branch" 2>/dev/null || { rm -rf "$target"; die "create: cannot check out $remote_branch from origin/$remote_branch"; }
+    fi
+
+    # 1. The project's local settings directory — minus what the source's exclude file
+    #    names INSIDE it. The host writes a runtime block into every repository's exclude
+    #    file (worktrees, checkpoints, a mailbox), and a copy of the directory whole once
+    #    carried two full worktrees, 4 GB, each with a `.git` pointing at the source (§35).
+    #    A pattern naming the directory whole is set aside: it says the directory stays out
+    #    of history, which every copied file already does. Git reads the reduced file, so
+    #    the patterns mean what they mean to git; the files are copied one by one, so what
+    #    is skipped is never read.
     if [ -d "$src/.claude/" ]; then
-        copy_tree "$src" "$target" "/.claude/" || { rm -rf "$target"; die "create: copying the local settings directory failed"; }
-        say "copied the local settings directory ($(find "$target/.claude/" -type f | wc -l | tr -d ' ') files)"
+        local rules="$target/.git/workspace-rules" copied=0 skipped=0 f line l
+        : > "$rules"
+        if [ -f "$src/.git/info/exclude" ]; then
+            while IFS= read -r line; do
+                l="${line%/}"
+                case "/${l#/}/" in "/.claude/"|"/**/.claude/") continue ;; esac
+                printf '%s\n' "$line"
+            done < "$src/.git/info/exclude" > "$rules"
+        fi
+        while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            copy_tree "$src" "$target" "$f" || { rm -rf "$target"; die "create: copying the local settings directory failed at $f"; }
+            copied=$((copied + 1))
+        done <<EOF
+$(git -C "$src" ls-files --others --exclude-from="$rules" -- "$src/.claude/")
+EOF
+        skipped=$(git -C "$src" ls-files --others --ignored --directory --exclude-from="$rules" -- "$src/.claude/" | grep -c .)
+        rm -f "$rules"
+        say "copied the local settings directory ($copied files, $skipped skipped by the exclude file)"
     fi
 
     # 2. What the exclude file keeps out of history, listed by git itself so the patterns
     #    are read the way git reads them and only present files are copied.
-    local n=0 f
+    local n=0
     if [ -f "$src/.git/info/exclude" ]; then
         while IFS= read -r f; do
             [ -n "$f" ] || continue

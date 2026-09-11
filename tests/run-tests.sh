@@ -319,9 +319,10 @@ SRC="$WORK/wsrc/proj"
 mkdir -p "$SRC" && ( cd "$SRC" && git init -q -b main && git config user.email t@local && git config user.name t \
   && echo tracked > README.md && git add -A && git commit -q -m "Set up" \
   && git remote add origin git@example.invalid:owner/proj.git \
-  && mkdir -p ./.claude/ node_modules/dep && echo '{}' > ./.claude/settings.local.json \
+  && mkdir -p ./.claude/agents ./.claude/worktrees/w1 node_modules/dep && echo '{}' > ./.claude/settings.local.json \
+  && echo a > ./.claude/agents/a.md && echo w > ./.claude/worktrees/w1/f \
   && printf '.env\nabsent.txt\n# a comment\n' > ./.claude/workspace-manifest \
-  && echo local > LOCAL.md && printf 'LOCAL.md\n/.claude/\n' > .git/info/exclude \
+  && echo local > LOCAL.md && printf 'LOCAL.md\n/.claude/\n**/.claude/worktrees/\n' > .git/info/exclude \
   && echo secret > .env && echo '.env' > .gitignore && echo dep > node_modules/dep/index.js \
   && git add .gitignore && git commit -q -m "Ignore the environment file" )
 export ORCHESTRATOR_WORKSPACES="$WORK/wsroot"
@@ -333,6 +334,16 @@ check "the checkout is on the base branch at the source's head" "main|$(git -C "
 check "origin is the source's origin, not the source" "git@example.invalid:owner/proj.git" \
   "$(git -C "$C" remote get-url origin 2>/dev/null)"
 check "the local settings directory is copied" "{}" "$(cat "$C/.claude/settings.local.json" 2>/dev/null)"
+
+# Inside the settings directory, what the exclude file names does not travel — the host
+# writes its runtime block there (worktrees, checkpoints) and a whole-directory copy once
+# carried 4 GB of worktrees into a checkout meant to hold a phase (§35). A pattern naming
+# the directory whole is set aside: it says the directory stays out of history, which every
+# copied file already does.
+check "the settings directory's own files travel" "a" "$(cat "$C/.claude/agents/a.md" 2>/dev/null)"
+check "what the exclude file names inside it does not" "0" "$([ -e "$C/.claude/worktrees" ] && echo 1 || echo 0)"
+check "and the copy says what it skipped" "1" "$(grep -c 'settings directory (3 files, 1 skipped by the exclude file)' "$WORK/ws.err")"
+
 check "the exclude file's file is copied" "local" "$(cat "$C/LOCAL.md" 2>/dev/null)"
 check "the manifest's present file is copied and the absent one is said" "secret|1" \
   "$(cat "$C/.env" 2>/dev/null)|$(grep -c 'missing: absent.txt' "$WORK/ws.err")"
@@ -345,6 +356,31 @@ check_status "delete refuses an unpushed commit" 1 bash "$WS" delete "$C"
 check_status "delete refuses a path outside the root" 1 bash "$WS" delete "$SRC"
 check "delete with --discard removes the checkout" "deleted|0" \
   "$(bash "$WS" delete "$C" --discard 2>/dev/null | cut -d' ' -f1)|$([ -e "$C" ] && echo 1 || echo 0)"
+
+# A source whose local branch lags its remote hands the phase a stale base unless the base
+# can name the remote's head (§35). The origin here is a bare repository the source pushed
+# to, then advanced from elsewhere, so origin/main is one commit ahead of main on the source.
+BARE="$WORK/wsrc/origin.git"; git init -q --bare "$BARE"
+SRC2="$WORK/wsrc/proj2"
+mkdir -p "$SRC2" && ( cd "$SRC2" && git init -q -b main && git config user.email t@local && git config user.name t \
+  && git remote add origin "$BARE" && echo one > README.md && git add -A && git commit -q -m "One" \
+  && git push -q -u origin main 2>/dev/null )
+ELSE="$WORK/wsrc/elsewhere"
+git clone -q -b main "$BARE" "$ELSE" 2>/dev/null && ( cd "$ELSE" && git config user.email t@local && git config user.name t \
+  && echo two >> README.md && git commit -q -am "Two" && git push -q origin main 2>/dev/null )
+( cd "$SRC2" && git fetch -q origin 2>/dev/null )
+ahead=$(git -C "$SRC2" rev-parse origin/main)
+out=$(bash "$WS" create "$SRC2" phase-2 --base origin/main 2>"$WORK/ws2.err")
+C2="$WORK/wsroot/proj2/phase-2"
+check "a remote-tracking base checks out that branch at the remote's head" "main|$ahead|1" \
+  "$(git -C "$C2" rev-parse --abbrev-ref HEAD 2>/dev/null)|$(git -C "$C2" rev-parse HEAD 2>/dev/null)|$([ "$ahead" != "$(git -C "$SRC2" rev-parse main)" ] && echo 1 || echo 0)"
+check "and tracks it on the real origin" "origin/main|$BARE" \
+  "$(git -C "$C2" rev-parse --abbrev-ref 'main@{upstream}' 2>/dev/null)|$(git -C "$C2" remote get-url origin 2>/dev/null)"
+check "list shows it clean and pushed" "1" "$(bash "$WS" list 2>/dev/null | grep -c "/proj2/phase-2 | main | [0-9a-f]* | clean | pushed$")"
+check_status "a base the source does not know is refused" 1 bash "$WS" create "$SRC2" phase-3 --base nope
+check "and makes no checkout" "0|0" \
+  "$([ -e "$WORK/wsroot/proj2/phase-3" ] && echo 1 || echo 0)|$(bash "$WS" create "$SRC2" phase-3 --base upstream/main >/dev/null 2>&1; [ -e "$WORK/wsroot/proj2/phase-3" ] && echo 1 || echo 0)"
+bash "$WS" delete "$C2" >/dev/null 2>&1
 unset ORCHESTRATOR_WORKSPACES
 
 echo "== brief lint =="
