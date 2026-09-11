@@ -76,19 +76,39 @@ def die(msg):
     sys.exit(1)
 
 
+def created_at(path):
+    """When a transcript was CREATED, where the platform records it.
+
+    The host writes to a session's transcript for as long as that session lives, so « last
+    modified » answers a different question: an older session in the same checkout is
+    modified constantly, and so is the caller's own. Measured live: two spawns into one
+    checkout seconds apart, and the second read the mode of the first — refused a moment
+    earlier, its closing write landing after the second launch began; and a spawn into a
+    checkout where a session was already running read that session's mode. Creation is the
+    reading that answers « is this the session I just made ». A filesystem that does not
+    record it leaves modification as the best available answer."""
+    st = os.stat(path)
+    return getattr(st, "st_birthtime", st.st_mtime)
+
+
 def find_transcript(dir_, since):
     """The transcript of the session just launched into `dir_`, or None.
 
     Found by READING the entries, never by computing the host's directory slug: the slug is
     the host's own encoding of a path, and a plugin that reproduced it would be wrong the
-    day the encoding changes. The file is the newest one touched since the launch whose
+    day the encoding changes. The file is the newest one CREATED since the launch whose
     first entry carrying `cwd` names this checkout — an older session in the same checkout
-    is not the one this spawn made."""
+    is not the one this spawn made.
+
+    The first entries carry no `cwd`: it arrives several entries in, after the one that
+    carries the mode. So the caller polls on this function rather than on the mode — a
+    transcript that exists but does not yet name its checkout is not yet an answer."""
     want = os.path.realpath(dir_)
     found = []
     for path in glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")):
         try:
-            if os.path.getmtime(path) < since:
+            born = created_at(path)
+            if born < since:
                 continue
             with open(path) as fh:
                 for line in fh:
@@ -98,7 +118,7 @@ def find_transcript(dir_, since):
                         continue
                     if isinstance(entry, dict) and "cwd" in entry:
                         if entry["cwd"] == want:
-                            found.append((os.path.getmtime(path), path))
+                            found.append((born, path))
                         break
         except Exception:
             # A file being written while it is read is not a reason to refuse a launch.

@@ -1427,25 +1427,30 @@ echo "== the mode a session came up in (§43) =="
 # reads is the pure functions it is built from, over fixture transcripts written here.
 # Its own directory: the gauge's cases already keep fixtures under $WORK/projects, and two
 # suites sharing a fixture tree is a check that passes on someone else's file.
+# Its own directory: the gauge's cases already keep fixtures under $WORK/projects, and two
+# suites sharing a fixture tree is a check that passes on someone else's file.
 PROJ="$WORK/mode-projects"
 TGT="$WORK/mode-target"; mkdir -p "$TGT"
 "$py" -c "
-import json, os, sys
+import json, os, sys, time
 proj, tgt = sys.argv[1], os.path.realpath(sys.argv[2])
-def write(path, cwd, modes, mtime):
+def write(path, cwd, modes):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'w') as fh:
         # The shape the host writes: entries of several types, the mode on its own and the
-        # working directory on another, neither of them first.
+        # working directory on another, and neither of them first — the mode arrives well
+        # before the cwd, which is why the launcher polls for the cwd rather than the mode.
         fh.write(json.dumps({'type': 'last-prompt'}) + '\n')
         for m in modes:
             fh.write(json.dumps({'type': 'permission-mode', 'permissionMode': m}) + '\n')
         fh.write(json.dumps({'type': 'attachment', 'cwd': cwd}) + '\n')
-    os.utime(path, (mtime, mtime))
-write(os.path.join(proj, 'p1', 'older.jsonl'), tgt, ['auto'], 1000)
-write(os.path.join(proj, 'p1', 'newer.jsonl'), tgt, ['acceptEdits', 'default'], 2000)
-write(os.path.join(proj, 'p2', 'stranger.jsonl'), '/somewhere/else', ['default'], 3000)
-write(os.path.join(proj, 'p2', 'modeless.jsonl'), tgt, [], 500)
+    time.sleep(0.05)
+# Written in this order, and the order is the fixture: a transcript is chosen by when it
+# was CREATED, so creation order is what these checks read.
+write(os.path.join(proj, 'p2', 'modeless.jsonl'), tgt, [])
+write(os.path.join(proj, 'p1', 'older.jsonl'), tgt, ['auto'])
+write(os.path.join(proj, 'p1', 'newer.jsonl'), tgt, ['acceptEdits', 'default'])
+write(os.path.join(proj, 'p2', 'stranger.jsonl'), '/somewhere/else', ['default'])
 " "$PROJ" "$TGT"
 
 find_tr() { ORCHESTRATOR_PROJECTS_DIR="$PROJ" "$py" -c "
@@ -1473,20 +1478,56 @@ check "the mode read is the first the transcript carries" "acceptEdits|auto|none
   "$(mode_of "$PROJ/p1/newer.jsonl")|$(mode_of "$PROJ/p1/older.jsonl")|$(mode_of "$PROJ/p2/modeless.jsonl")"
 # Found by READING the entries, never by computing the host's directory slug: the slug is
 # the host's own encoding of a path and this plugin has no business reproducing it.
-# The newest file in the directory is the stranger's, and it is not the answer: the
+# The newest transcript in the directory is the stranger's, and it is not the answer: the
 # comparison is on the checkout the entries name, not on the clock alone.
 check "the newest transcript naming THIS checkout wins, not the newest file" "newer.jsonl|stranger.jsonl" \
   "$(find_tr "$TGT" 0)|$("$py" -c "
 import glob, os, sys
-print(os.path.basename(max(glob.glob(sys.argv[1] + '/*/*.jsonl'), key=os.path.getmtime)))" "$PROJ")"
+def born(p):
+    st = os.stat(p)
+    return getattr(st, 'st_birthtime', st.st_mtime)
+print(os.path.basename(max(glob.glob(sys.argv[1] + '/*/*.jsonl'), key=born)))" "$PROJ")"
 check "a checkout no transcript names has none" "none" \
   "$(find_tr "$WORK/mode-nobody" 0)"
-# Only files touched since the launch: an older session in the same checkout is not the
-# one this spawn just made.
-check "a transcript older than the launch is not this session's" "none" \
-  "$(find_tr "$TGT" 2600)"
+check "nothing created since the launch is nothing to read" "none" \
+  "$(find_tr "$TGT" 9999999999)"
 check "the target's own directory is realpathed before the comparison" "newer.jsonl" \
   "$(find_tr "$TGT/." 0)"
+# A transcript is chosen by when it was CREATED, never by when it was last written to: the
+# host keeps writing to a session's transcript for as long as that session lives, so a file
+# MODIFIED since the launch is very often an older session's — the caller's own, or the
+# probe refused seconds earlier whose closing write landed after the next launch began.
+# Measured live: two spawns into one checkout seconds apart, and the second read the first's
+# mode; and a spawn into a checkout holding a live session read that session's.
+PROJ2="$WORK/mode-projects-born"
+TGT2="$WORK/mode-target-born"; mkdir -p "$TGT2"
+SINCE=$("$py" -c "
+import json, os, sys, time
+proj, tgt = sys.argv[1], os.path.realpath(sys.argv[2])
+def write(path, modes, mode_open='w'):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, mode_open) as fh:
+        for m in modes:
+            fh.write(json.dumps({'type': 'permission-mode', 'permissionMode': m}) + '\n')
+        fh.write(json.dumps({'type': 'attachment', 'cwd': tgt}) + '\n')
+stale = os.path.join(proj, 'p1', 'stale.jsonl')
+fresh = os.path.join(proj, 'p1', 'fresh.jsonl')
+write(stale, ['default'])
+time.sleep(1.1)
+since = time.time()
+time.sleep(0.05)
+write(fresh, ['acceptEdits'])
+# The older session goes on writing: its modification time is now the newest of the two.
+write(stale, ['default'], 'a')
+print(since)" "$PROJ2" "$TGT2")
+check "a transcript created before the launch is not this session's, however recently written" "fresh.jsonl|stale.jsonl" \
+  "$(ORCHESTRATOR_PROJECTS_DIR="$PROJ2" "$py" -c "
+import os, sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+p = m.find_transcript(sys.argv[1], float(sys.argv[2]))
+print(os.path.basename(p) if p else 'none')" "$TGT2" "$SINCE")|$("$py" -c "
+import glob, os, sys
+print(os.path.basename(max(glob.glob(sys.argv[1] + '/*/*.jsonl'), key=os.path.getmtime)))" "$PROJ2")"
 
 # The refusal names both modes and the model, because the repair depends on all three:
 # the operator rebinds the tier, or spawns that agent in a mode the host does honour.
