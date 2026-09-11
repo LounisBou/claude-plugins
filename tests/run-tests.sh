@@ -161,7 +161,7 @@ check "the comments brief carries a decided list" "1" "$(grep -c 'DECIDED_ITEMS'
 check "outward-facing text needs the operator" "1" "$(grep -c "may draft it, never authorise it" "$ROOT/skills/orchestrator/SKILL.md")"
 check "a fix answers its own thread" "1" "$(grep -c 'answered by the change' "$ROOT/skills/orchestrator/SKILL.md")"
 check "the comments brief drafts nothing on a fixed thread" "1" "$(grep -c 'draft nothing and post nothing there' "$ROOT/templates/agent-comments-brief.md")"
-check "the rulebook spawns beside the orchestrator" "1" "$(grep -c -- '--right-of self --title "Implementer : <phase>" --prompt' "$ROOT/skills/orchestrator/SKILL.md")"
+check "the rulebook spawns beside the orchestrator" "1" "$(grep -c -- '--right-of self --title "Agent : <subject>" --prompt' "$ROOT/skills/orchestrator/SKILL.md")"
 
 # The operator's ruling after an afternoon of pasted command lines: everything the
 # orchestrator asks him to run, it can run itself; he decides, nothing else. Pinned so the
@@ -187,8 +187,42 @@ check "the phase brief's gauge names the installed copy" "1" "$(grep -c "the plu
 check "the review brief's gauge names the installed copy" "1" "$(grep -c "the plugin's installed copy" "$ROOT/templates/agent-review-brief.md")"
 check "the comments brief's gauge names the installed copy" "1" "$(grep -c "the plugin's installed copy" "$ROOT/templates/agent-comments-brief.md")"
 check "the rotation brief's gauge names the installed copy" "1" "$(grep -c "the plugin's installed copy" "$ROOT/templates/agent-rotation-brief.md")"
-check "the rulebook's first instantiation carries remote control" "1" "$(grep -c -- '--remote-control "Orchestrator : <feature>"' "$ROOT/skills/orchestrator/SKILL.md")"
+check "the rulebook's first instantiation carries remote control" "1" "$(grep -c -- '--remote-control "Orch : <subject>"' "$ROOT/skills/orchestrator/SKILL.md")"
 check "the tab skill already reads the Chat caveat" "1" "$(grep -c 'before the session names itself' "$ROOT/skills/iterm-agents/SKILL.md")"
+
+# The name is short and it has two roles (§42): the operator read his window and could not
+# tell one agent from another, nor an agent from an orchestrator, at a glance. Every
+# document the plugin ships spells the short roles and the cap on the subject; the older
+# spellings survive only in the design's own record of the decision.
+# Read as presence, not as a count: a document may spell a role on one line or on five,
+# and a guard that pins the number breaks on a sentence that was merely rewritten.
+spells() { grep -qF -- "$2" "$1" && echo yes || echo no; }
+check "the rulebook spells the short roles and the cap" "yes|yes|yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Agent : <subject>')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Orch : <subject>')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'at most 25 characters')"
+check "the tab skill spells them and the cap too" "yes|yes|yes" \
+  "$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'Agent : <subject>')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'Orch : <subject>')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'at most 25 characters')"
+check "the succession command spells the short role" "yes" \
+  "$(spells "$ROOT/commands/succeed.md" 'Orch : <subject>')"
+# The pattern is assembled from its two halves so this guard does not count itself. The
+# directories that do not ship are dropped from the RESULT rather than from the walk: the
+# platform's grep honours only one --exclude-dir, and the one that must hold is the
+# repository's history. `docs/` keeps the record of the decision; `.claude/` is the
+# operator's own material, briefs and command logs included, and a guard that read it
+# would answer differently on every machine; a bytecode cache is a copy of a source file
+# as it stood when some interpreter last read it, and one of them held this literal for
+# hours after the source stopped spelling it.
+older_role() { grep -rl --exclude-dir=.git -- "$1 : <$2>" "$ROOT" 2>/dev/null | grep -Evc "^$ROOT/(docs|\.claude)/|/__pycache__/"; }
+check "no older role survives outside the design" "0|0|0" \
+  "$(older_role Implementer phase)|$(older_role Reviewer round)|$(older_role Orchestrator feature)"
+# The host names a session from its directory stem and gives the MODEL no rename, so a
+# session the operator starts by hand reads as an orchestrator to no listing. The rulebook
+# hands him the one line to type, once, before anything is dispatched (§42).
+check "the rulebook hands the operator the rename line" "yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" '/rename "Orch : <subject>"')"
+# A brief that does not say which servers its session was given lets an agent reach for a
+# browser tool it never had: the phase brief says it where it names the tier (§42).
+check "the phase brief names the server flag beside the tier" "yes" \
+  "$(spells "$ROOT/templates/agent-phase-brief.md" '--mcp')"
 
 check "the rulebook pins a reader's copy through the script" "1" "$(grep -c 'workspace.sh pin <source> <round> <head>' "$ROOT/skills/orchestrator/SKILL.md")"
 
