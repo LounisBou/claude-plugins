@@ -1579,8 +1579,19 @@ import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
 import iterm_agent as m
 m.run = lambda coro_fn: True
 print(m.close_made({'session_id': 'x'}))"; }
-check "a close that raises is said, not thrown, and returns False; one that works returns True" "False|1|True" \
-  "$(closemade_raise | tail -1)|$(closemade_raise | grep -c -- 'spawn: the refused session could not be closed: kaboom')|$(closemade_ok)"
+# An exception with no message (`RuntimeError()`) has an empty str(), so splitlines() is an
+# empty list: the branch written to say a failure must not throw an IndexError of its own
+# reaching for [0].
+closemade_raise_empty() { "$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+def boom(coro_fn):
+    raise RuntimeError()
+m.run = boom
+print(m.close_made({'session_id': 'x'}))" 2>&1; }
+check "a close that raises is said, not thrown, and returns False; one that works returns True" \
+  "False|1|True|False|1" \
+  "$(closemade_raise | tail -1)|$(closemade_raise | grep -c -- 'spawn: the refused session could not be closed: kaboom')|$(closemade_ok)|$(closemade_raise_empty | tail -1)|$(closemade_raise_empty | grep -c -- 'spawn: the refused session could not be closed: unknown error')"
 
 # `screen --lines N` returned the FIRST N lines of the tab, which on a tall terminal are
 # blank: the blocked agent's prompt sat at the bottom and three reads out of four came back

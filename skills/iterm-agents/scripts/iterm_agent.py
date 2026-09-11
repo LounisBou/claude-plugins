@@ -1115,7 +1115,7 @@ def close_made(made):
         return bool(run(go))
     except Exception as exc:
         print("spawn: the refused session could not be closed: %s"
-              % str(exc).splitlines()[0], file=sys.stderr)
+              % (str(exc).splitlines() or ["unknown error"])[0], file=sys.stderr)
         return False
 
 
