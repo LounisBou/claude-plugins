@@ -1308,3 +1308,45 @@ command, each item a reading a live round produced.
   says so, so a `list` read at once is not taken for a launch without a name.
 
 What the suite reads: one literal per item, in the file that carries it.
+
+## 42. Short names, no project server unless asked, and a hand-launched orchestrator named on the spot
+
+**0.26.0.** Three rulings by the operator on the evening 0.25.2 shipped, after reading his
+window: names too long to read, a memory cost he had asked about, and an orchestrator he
+had started by hand that no listing could recognise.
+
+**The name is short, and it has two roles.** `Orch : <subject>` for an orchestrator and its
+successor, `Agent : <subject>` for anything an orchestrator spawns — an implementer, a
+reviewer, a comments agent, a probe — the subject saying which (`Agent : review task 1`),
+and the subject at most twenty-five characters. The shape the launcher holds a title to
+becomes `^(Orch|Agent) : .{1,25}$`; the refusal names the shape and the cap. A successor's
+derived name is held to the same shape, which retires the length guard of §39: a caller
+named under the older convention (`Orchestrator : plugin-family`, or that name followed by
+a launch line) does not derive, and the refusal says to type `--title "Orch : <subject>"`.
+Every document, template, command and end-to-end title that spelled the older roles spells
+the new ones.
+
+**No project server unless asked.** Every launch carried the setting that enables all of the
+project's servers, so that a fresh session never parked on the host's question about them;
+measured on the operator's machine, that loaded a browser driver and a devtools bridge into
+every agent, about 70 MB each, used by none. The launch now carries `--strict-mcp-config`
+and no server configuration, so the host loads no project server and asks no question;
+`--mcp` on `spawn` (and through `rotate`) puts the enabling setting back for the agent that
+drives a browser, and the brief that dispatches such an agent says so where it names the
+tier. A successor gets what its predecessor's spawn line says, nothing implied.
+
+**A hand-launched orchestrator is named when it declares itself.** A session the operator
+starts by hand carries the host's stem as its name and the host's summary as its tab title,
+and neither reads as an orchestrator to any listing. The host lets the operator rename a
+session (`/rename`) and gives the model no such tool. So the rulebook's first paragraph says:
+on loading, derive the subject from the project (twenty-five characters at most), and hand
+the operator the one line `/rename "Orch : <subject>"` — once, before anything is
+dispatched — or relaunch with `--name`. The tab title is the host's and is left to it.
+
+What the suite reads, in the dry run: `Agent : x` and `Orch : x` accepted and named,
+`Implementer : x` refused with the shape in the sentence, a twenty-five-character subject
+accepted and a twenty-six-character one refused; a successor derived from a caller named
+`Orch : f` launches under it, from a caller named `Orchestrator : f` refused with the new
+sentence; the launch carries `--strict-mcp-config` and no enabling setting without `--mcp`,
+the enabling setting and no strict flag with it, and `rotate --mcp` reaches the spawn; one
+literal per document for the roles, and the rulebook's rename line.
