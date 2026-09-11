@@ -244,6 +244,23 @@ check "the tab skill's reference carries the option and what none does" "yes|yes
 check "the catalogue is named where the tier map is" "yes|yes|yes" \
   "$(spells "$ROOT/commands/install.md" 'mcp.json')|$(spells "$ROOT/commands/uninstall.md" 'mcp.json')|$(spells "$ROOT/README.md" 'mcp.json')"
 
+# The mode a session came up in (§43), one literal per document. The routing skill carries
+# the rule the measurement produced — a tier bound to a model the host does not run in the
+# operator's decision mode is a tier no unattended agent runs at — and the repair for an
+# agent that is there for a few edits; the rulebook says the launcher reads the mode; the
+# tab skill says it too, says the screen is read from the bottom, and its rotation synopsis
+# agrees with the sentence under it, which it did not.
+check "the routing skill carries the unattended rule and the repair" "yes|yes" \
+  "$(spells "$ROOT/skills/model-routing/SKILL.md" 'a session nobody watches runs in the operator'"'"'s decision mode')|$(spells "$ROOT/skills/model-routing/SKILL.md" '--permission-mode acceptEdits` for a few edits and allow-listed commands only')"
+check "the rulebook says the launcher reads the mode" "yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" "reads the session's mode on its transcript")"
+check "the tab skill says the mode is read and the screen read from the bottom" "yes|yes" \
+  "$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'the mode the session came up in')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'the last N lines')"
+# A synopsis and the sentence under it drifted apart once already: the rotation's still
+# read `[--mcp]` after the option took a value.
+check "every synopsis spells the server option the way its sentence does" "0|2" \
+  "$(grep -c -- '\[--mcp\]' "$ROOT/skills/iterm-agents/SKILL.md")|$(grep -c -- '\[--mcp <name>\]' "$ROOT/skills/iterm-agents/SKILL.md")"
+
 # A brief that does not say which servers its session was given lets an agent reach for a
 # tool it never had: the phase brief carries the list itself, beside the tier, as a
 # placeholder the orchestrator fills with the names it chose (§42).

@@ -38,6 +38,12 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --inherit-model] [--
     # catalogue does not hold is refused before a tab exists, naming the ones it holds;
     # with no catalogue at all a plain spawn launches with nothing and says so on stderr.
     # Say in the agent's brief which servers it was given: it cannot see the file.
+    # The spawn then reads the mode the session came up in, on its own transcript, and
+    # refuses a session that came up in another one — closing the tab it just made and
+    # naming both modes, the model, and the two repairs: rebind the tier, or pass
+    # --permission-mode acceptEdits for an agent that only edits. A transcript that has
+    # not appeared within ORCHESTRATOR_MODE_TIMEOUT (20s) lets the launch through and says
+    # the mode is unread. --no-verify skips it, with the CLI check.
     # writes the prompt to a file under the plugin's state directory, writes the launch
     # to a second file, asks the app to run it in a new tab AT AN INDEX, WAITS until the
     # host CLI is running on the new tty (30 s, ORCHESTRATOR_SPAWN_TIMEOUT), and prints
@@ -60,7 +66,9 @@ $SCRIPT verify --tty /dev/ttysNNN
 
 $SCRIPT screen --tty /dev/ttysNNN [--lines 40]
     # what that tab is showing right now — how you inspect an agent that has not
-    # shaken hands, instead of waiting for one that is stopped on a question
+    # shaken hands, instead of waiting for one that is stopped on a question.
+    # the last N lines, trailing blanks dropped: a tall terminal is blank at the top and
+    # the prompt an agent is stopped on sits at the bottom.
 
 $SCRIPT close --tty /dev/ttysNNN --expect-title <substring>
     # tty-exact; refuses if the session's current title does not contain the substring
@@ -72,7 +80,7 @@ $SCRIPT move --tty /dev/ttysNNN (--right-of self | --right-of /dev/ttysMMM | --l
     # not launch is not yours to place. --force moves it anyway and says so on stderr.
 
 $SCRIPT rotate --dir <workdir> --old-tty <tty> [--trust] [--tier <tier>] [--expect-title <s>] \
-    [--title <t>] [--prompt <text> | --prompt-file <path>] [--right-of self | --left-of <tty>] [--mcp]
+    [--title <t>] [--prompt <text> | --prompt-file <path>] [--right-of self | --left-of <tty>] [--mcp <name>]
     # spawns the replacement FIRST and verifies it is running, then closes the old tab
     # every argument it does not consume reaches the spawn, `--trust` and `--mcp <name>`
     # included: an agent that needed a server is replaced by one that still has it.
