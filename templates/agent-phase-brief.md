@@ -12,6 +12,7 @@ You are the implementer for this phase. You implement; the orchestrator reviews.
 ## 2. Environment
 
 - Working directory: `{{WORKTREE}}` — never leave it.
+- This checkout is a clone the orchestrator made for this phase: `origin` is the real remote, the base branch is checked out, the project's local material is copied in. Nothing outside it is yours to write.
 - Verify, do not rebuild: {{ENV_CHECKS}}
 - Branch: create `{{BRANCH}}` from the head of `{{BASE_BRANCH}}`.
 - State verification before acting (run it, do not believe it):

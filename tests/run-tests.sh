@@ -271,6 +271,46 @@ check_status "an unknown tier is refused at open" 1 bash "$REC" open "$R" --clas
 check_status "open without a class is an error" 1 bash "$REC" open "$R" --tier deep
 check_status "a summary of nothing is not an error" 0 bash "$REC" summary "$WORK/absent.jsonl"
 
+echo "== workspace =="
+
+# A clone carries what git tracks and nothing else; the checkout is made WITH the
+# project's local material or a session in it behaves like a stranger's (§30). The source
+# is a repository this section makes: a fake origin, a local settings directory, an
+# exclude file naming one file, a manifest naming a present and an absent file, and a
+# build tree that must never travel.
+WS="$ROOT/skills/orchestrator/scripts/workspace.sh"
+SRC="$WORK/wsrc/proj"
+mkdir -p "$SRC" && ( cd "$SRC" && git init -q -b main && git config user.email t@local && git config user.name t \
+  && echo tracked > README.md && git add -A && git commit -q -m "Set up" \
+  && git remote add origin git@example.invalid:owner/proj.git \
+  && mkdir -p ./.claude/ node_modules/dep && echo '{}' > ./.claude/settings.local.json \
+  && printf '.env\nabsent.txt\n# a comment\n' > ./.claude/workspace-manifest \
+  && echo local > LOCAL.md && printf 'LOCAL.md\n/.claude/\n' > .git/info/exclude \
+  && echo secret > .env && echo '.env' > .gitignore && echo dep > node_modules/dep/index.js \
+  && git add .gitignore && git commit -q -m "Ignore the environment file" )
+export ORCHESTRATOR_WORKSPACES="$WORK/wsroot"
+out=$(bash "$WS" create "$SRC" phase-1 --base main 2>"$WORK/ws.err")
+check "create prints the checkout path under the root" "$WORK/wsroot/proj/phase-1" "$out"
+C="$WORK/wsroot/proj/phase-1"
+check "the checkout is on the base branch at the source's head" "main|$(git -C "$SRC" rev-parse HEAD)" \
+  "$(git -C "$C" rev-parse --abbrev-ref HEAD 2>/dev/null)|$(git -C "$C" rev-parse HEAD 2>/dev/null)"
+check "origin is the source's origin, not the source" "git@example.invalid:owner/proj.git" \
+  "$(git -C "$C" remote get-url origin 2>/dev/null)"
+check "the local settings directory is copied" "{}" "$(cat "$C/.claude/settings.local.json" 2>/dev/null)"
+check "the exclude file's file is copied" "local" "$(cat "$C/LOCAL.md" 2>/dev/null)"
+check "the manifest's present file is copied and the absent one is said" "secret|1" \
+  "$(cat "$C/.env" 2>/dev/null)|$(grep -c 'missing: absent.txt' "$WORK/ws.err")"
+check "the build tree does not travel" "ok" "$([ -d "$C/.git" ] && [ ! -e "$C/node_modules" ] && echo ok || echo bad)"
+check_status "create on an existing target refuses" 1 bash "$WS" create "$SRC" phase-1
+check "and leaves it intact" "local" "$(cat "$C/LOCAL.md" 2>/dev/null)"
+( cd "$C" && git config user.email t@local && git config user.name t && echo more >> README.md && git commit -q -am "Local work" )
+check "list shows the checkout, clean and unpushed" "1" "$(bash "$WS" list 2>/dev/null | grep -c "/proj/phase-1 | main | [0-9a-f]* | clean | unpushed$")"
+check_status "delete refuses an unpushed commit" 1 bash "$WS" delete "$C"
+check_status "delete refuses a path outside the root" 1 bash "$WS" delete "$SRC"
+check "delete with --discard removes the checkout" "deleted|0" \
+  "$(bash "$WS" delete "$C" --discard 2>/dev/null | cut -d' ' -f1)|$([ -e "$C" ] && echo 1 || echo 0)"
+unset ORCHESTRATOR_WORKSPACES
+
 echo "== brief lint =="
 
 # The largest category of multi-agent failure is specification, and a brief is this
