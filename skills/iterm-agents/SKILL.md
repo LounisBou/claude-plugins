@@ -15,8 +15,11 @@ description: Use when a session on macOS must manage iTerm2 tabs running agent s
 SCRIPT=${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh
 
 $SCRIPT list
-    # w1/t3 | /dev/ttys000 | ✳ agent-brief prompt (node)
-    # w1/t1 | /dev/ttys004 | ◐ Implementer : phase 2 | hidden   ← behind a maximized sibling pane
+    # w1/t3 | /dev/ttys000 | ✳ chaining the PRs | Orchestrator : plugin family | self
+    # w1/t4 | /dev/ttys004 | ◐ reading the brief | Implementer : phase 2
+    # w1/t5 | /dev/ttys007 | ◐ Chat | (host default) | hidden   ← behind a maximized sibling pane
+    # tab title, then the session's NAME (its --name, `(host default)` when it was launched
+    # without one), then `self` on YOUR OWN tab. Read self before you anchor, move or close.
 
 $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --inherit-model] [--permission-mode auto] \
     --title "<Role> : <what>" --prompt "Read and execute <brief-path>. Your orchestrator is <name [ref]>." [--right-of self | --successor]
@@ -40,9 +43,11 @@ $SCRIPT screen --tty /dev/ttysNNN [--lines 40]
 $SCRIPT close --tty /dev/ttysNNN --expect-title <substring>
     # tty-exact; refuses if the session's current title does not contain the substring
 
-$SCRIPT move --tty /dev/ttysNNN (--right-of self | --right-of /dev/ttysMMM | --left-of /dev/ttysMMM)
+$SCRIPT move --tty /dev/ttysNNN (--right-of self | --right-of /dev/ttysMMM | --left-of /dev/ttysMMM) [--force]
     # places a tab immediately beside another (same window); idempotent, verified after the move.
     # `self` is the calling session's own tty, found by walking up the process tree.
+    # Refuses a --tty that is neither your own tab nor one of your chain: a session you did
+    # not launch is not yours to place. --force moves it anyway and says so on stderr.
 
 $SCRIPT rotate --dir <workdir> --old-tty <tty> [--expect-title <s>] \
     [--tier <tier>] [--title <t>] [--prompt <text> | --prompt-file <path>] [--right-of self | --left-of <tty>]
@@ -121,6 +126,8 @@ So **always name an anchor**, and name the one you actually know:
   held and it looks like a reorder that never happened — or reports the position the tab used
   to have. Re-fetch the app after any mutation.
 - **The title is the session's name.** `--title` is passed to the host as the session's name (shown in its prompt, its resume picker, the terminal title, and applied with a variant when a live session already holds it), so name it the operator's way — `Orchestrator : <feature>` for an orchestrator or its successor, `Implementer : <phase>`, `Reviewer : <round>` — never the bare default. The tab title still reflects the session's current task for `--expect-title`: read it from `list` seconds before closing.
+- **A fresh tab is titled « Chat » before the session names itself.** The host's own first title stands for a few seconds, so a `list` taken immediately after a spawn shows it in the title column while the name column is already right — which is the column to read when you are looking for a session rather than for what it is doing.
+- **`move` places what is yours, and `list` says which tab that is.** An orchestrator launched by hand had never measured its own tty, read the listing, took the last tab for its own and moved a stranger's session out from between itself and its agents; the script obeyed, because `move` moved anything it was told to. It now refuses a tty that is neither your own tab nor one of your chain, and `list` marks your row `self`. `--force` is the operator's hand and the layout repair, and it says on stderr what it moved.
 - **The tab is born in the anchor's window, whichever window is in front.** With two windows open, a
   spawn anchored on a tab of the second once landed at the end of the first — the window in front —
   and reported success. The anchor is now searched across every window, and an anchor that is not

@@ -600,6 +600,50 @@ check "the launch text itself is unchanged by the shell" "1" "$(env ORCHESTRATOR
 check "the launch names the session after its title" "1" "$(printf '%s' "$cmd" | grep -c -- "--name 'B-1 — é'")"
 check "no title: the session is still named" "1" "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" 2>&1 | sed -n 's/^launch=//p' | grep -c -- '--name agent')"
 
+# The process table is read through ONE function, and the suite replaces `ps` with a file.
+PSTAB="$WORK/ps-table.txt"
+printf '/dev/ttys900 /opt/x/host --name Orchestrator : f --permission-mode auto\n' > "$PSTAB"
+PSNONAME="$WORK/ps-noname.txt"
+printf '/dev/ttys900 /opt/x/host --permission-mode auto\n' > "$PSNONAME"
+name_on() { ORCHESTRATOR_PS_TABLE="$1" "$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+print(m.session_name_on(sys.argv[1]))" "$2"; }
+check "the table gives the name the host process was launched with" "Orchestrator : f" "$(name_on "$PSTAB" /dev/ttys900)"
+check "a process launched without a name reads as none" "None" "$(name_on "$PSNONAME" /dev/ttys900)"
+check "a tty the table does not name reads as none" "None" "$(name_on "$PSTAB" /dev/ttys555)"
+
+# The listing's row is formatted by a pure function, so its shape is read without an app.
+# The tab title is the host's summary of the conversation and it moves; the name is fixed
+# at launch, and it is what an orchestrator recognises its own agents by (§38).
+row() { "$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+print(m.row_for(1, 2, '/dev/ttys900', sys.argv[1], None if sys.argv[2] == '-' else sys.argv[2],
+                sys.argv[3] == 'self', sys.argv[4] == 'hidden'))" "$1" "$2" "$3" "$4"; }
+check "the row carries the tab title, the session name and the caller's own mark" \
+  'w1/t2 | /dev/ttys900 | ✳ T | Implementer : x | self' "$(row '✳ T' 'Implementer : x' self visible)"
+check "a session launched without a name says so, and a hidden pane still says hidden" \
+  'w1/t2 | /dev/ttys900 | ✳ T | (host default) | hidden' "$(row '✳ T' - other hidden)"
+
+# `move` moves what is the caller's: its own tab, or a tab of its chain. An orchestrator
+# that had never measured its own tty read the listing, took the last tab for its own and
+# moved a stranger's session out of the way; the script obeyed (§38). --force is the
+# operator's hand and the layout repair, and it says on stderr what it moved.
+mv_() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
+  ORCHESTRATOR_SELF_ID=S-ME bash "$AGENT" move "$@" 2>&1; }
+mkdir -p "$ISTATE/chains"
+printf '{"tab_id":"1","tty":"/dev/ttys901","owner":"S-ME"}\n' > "$ISTATE/chains/ttys900.jsonl"
+check "a tab of the caller's chain moves" "1" \
+  "$(mv_ --tty /dev/ttys901 --left-of self | grep -c '^move=/dev/ttys901 left_of=/dev/ttys900$')"
+check "the caller's own tab moves" "1" \
+  "$(mv_ --tty /dev/ttys900 --left-of /dev/ttys555 | grep -c '^move=/dev/ttys900 left_of=/dev/ttys555$')"
+printf '{"tab_id":"2","tty":"/dev/ttys902","owner":"S-ME"}\n' > "$ISTATE/chains/ttys900.jsonl"
+check "a tab that is neither is refused, and the refusal names it" "1|1" \
+  "$(mv_ --tty /dev/ttys901 --left-of self >/dev/null 2>&1; echo $?)|$(mv_ --tty /dev/ttys901 --left-of self | grep -c "move: refused: /dev/ttys901 is neither this session's tab nor in its chain (pass --force to move it anyway)")"
+check "--force moves it and says what it moved" "0|1" \
+  "$(mv_ --tty /dev/ttys901 --left-of self --force >/dev/null 2>&1; echo $?)|$(mv_ --tty /dev/ttys901 --left-of self --force | grep -c "^move: forced: /dev/ttys901 is not in this session's chain$")"
+
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --prompt-file "$file" 2>&1)
 check "--prompt-file reuses the given file" "1" "$(printf '%s' "$out" | grep -c "prompt_file=$file")"
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" 2>&1)
@@ -826,9 +870,18 @@ py=$(command -v python3 || echo python3)
 check "a hidden pane is found by its tty" "B" \
   "$("$py" -c "$STUB
 _,_,s=asyncio.run(ia.find_tab(app,'/dev/ttys802')); print(s.session_id)" "$ROOT/skills/iterm-agents/scripts")"
-check "the listing marks a hidden pane" "w1/t1 | /dev/ttys802 | hidden one | hidden" \
+check "the listing marks a hidden pane" "w1/t1 | /dev/ttys802 | hidden one | (host default) | hidden" \
   "$("$py" -c "$STUB
 print([r for r in asyncio.run(ia.list_rows(app)) if 'ttys802' in r][0])" "$ROOT/skills/iterm-agents/scripts")"
+# ...and the caller's own row, and no other, so an orchestrator reads which tab is its own
+# before it anchors, moves or closes anything (§38). The name beside the title is the one
+# the host process was launched with; the stub's other pane was launched with none.
+printf '/dev/ttys801 /opt/x/host --name Orchestrator : f --permission-mode auto\n' > "$WORK/ps-stub.txt"
+check "the listing marks the caller's own row, names it, and marks no other" \
+  "w1/t1 | /dev/ttys801 | visible one | Orchestrator : f | self|0" \
+  "$(ORCHESTRATOR_SELF_TTY=/dev/ttys801 ORCHESTRATOR_PS_TABLE="$WORK/ps-stub.txt" "$py" -c "$STUB
+rows=asyncio.run(ia.list_rows(app))
+print('%s|%d' % ([r for r in rows if 'ttys801' in r][0], len([r for r in rows if 'ttys802' in r and '| self' in r])))" "$ROOT/skills/iterm-agents/scripts")"
 check "close closes the session and leaves the tab" "hidden one|True" \
   "$("$py" -c "$STUB
 t=asyncio.run(ia.close_session(app,'/dev/ttys802','hidden')); print('%s|%s' % (t, b.closed))" "$ROOT/skills/iterm-agents/scripts")"

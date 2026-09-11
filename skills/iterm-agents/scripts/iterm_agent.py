@@ -132,6 +132,45 @@ def cli_pid_on_tty(tty):
     return None
 
 
+def session_name_on(tty):
+    """The name the host session on a tty was launched with (`--name`), or None.
+
+    The tab title is the host's summary of the conversation and it is rewritten as the
+    session works: a listing showing one of those named nothing an orchestrator could
+    recognise, which is how a stranger's tab was taken for one's own (§38). The name is
+    fixed at launch, and the API does not carry it, so it is read from the process table.
+
+    ORCHESTRATOR_PS_TABLE names a file that stands in for `ps`, one line per process,
+    `<tty> <command>`. The suite sets it; a live run never does.
+
+    `ps` hands back a flat command line, so a name with spaces is read up to the next
+    option — which is what the host was given and what it shows."""
+    short = tty.replace("/dev/", "")
+    table = os.environ.get("ORCHESTRATOR_PS_TABLE", "")
+    try:
+        if table:
+            with open(table) as fh:
+                rows = [l.strip().split(None, 1) for l in fh if l.strip()]
+            commands = [r[1] for r in rows if len(r) == 2 and r[0].replace("/dev/", "") == short]
+        else:
+            commands = subprocess.run(["ps", "-t", short, "-o", "command="],
+                                      capture_output=True, text=True, timeout=10).stdout.splitlines()
+    except Exception:
+        return None
+    for command in commands:
+        words = command.split()
+        if "--name" not in words:
+            continue
+        name = []
+        for word in words[words.index("--name") + 1:]:
+            if word.startswith("--"):
+                break
+            name.append(word)
+        if name:
+            return " ".join(name)
+    return None
+
+
 def self_tty():
     """This process's controlling tty, found by walking up the process tree: the caller
     that wants a tab beside ITS OWN should not have to know which tab that is.
@@ -334,21 +373,39 @@ async def anchor_position(app, anchor, side):
 
 # --- subcommands -----------------------------------------------------------------
 
+def row_for(w, t, tty, title, name, is_self, hidden):
+    """One listing row, formatted and nothing else, so its shape is read without an app.
+
+    The session name sits beside the tab title because they answer different questions:
+    the title says what the session is doing right now, the name says who it is. A caller
+    launched by hand carries no name, and `(host default)` says that rather than leaving
+    a column an orchestrator would read as a name."""
+    row = "w%d/t%d | %s | %s | %s" % (w, t, tty, title, name or "(host default)")
+    if is_self:
+        row += " | self"
+    if hidden:
+        row += " | hidden"
+    return row
+
+
 async def list_rows(app):
     """One row per session, hidden panes included and marked. A pane behind a maximized
     sibling is what the host extension's review views make of an agent's tab; a listing
-    that dropped it made a live agent unfindable and unclosable (§25)."""
+    that dropped it made a live agent unfindable and unclosable (§25).
+
+    The caller's own row is marked `self`, read the way `--right-of self` reads it, so an
+    orchestrator knows which tab is its own BEFORE it anchors, moves or closes anything —
+    the reading a layout repair once went without (§38)."""
+    own = self_tty() or ""
     lines = []
     for wi, w in enumerate(app.windows, 1):
         for ti, t in enumerate(w.tabs, 1):
             visible = {s.session_id for s in t.sessions}
             for s in t.all_sessions:
                 tty = await s.async_get_variable("tty")
-                name = await s.async_get_variable("autoName") or ""
-                row = "w%d/t%d | %s | %s" % (wi, ti, tty, name)
-                if s.session_id not in visible:
-                    row += " | hidden"
-                lines.append(row)
+                title = await s.async_get_variable("autoName") or ""
+                lines.append(row_for(wi, ti, tty, title, session_name_on(tty),
+                                     bool(own) and tty == own, s.session_id not in visible))
     return lines
 
 
@@ -732,6 +789,7 @@ def cmd_move(argv):
     p.add_argument("--tty", dest="tty")
     p.add_argument("--left-of", dest="left_of", default="")
     p.add_argument("--right-of", dest="right_of", default="")
+    p.add_argument("--force", action="store_true", default=False)
     args, _ = p.parse_known_args(argv)
     if not args.tty:
         die("move: --tty is required")
@@ -739,11 +797,23 @@ def cmd_move(argv):
         die("move: --left-of or --right-of is required")
     if args.left_of and args.right_of:
         die("move: --left-of and --right-of are mutually exclusive")
+    own = self_tty() or ""
     anchor = args.right_of or args.left_of
     if anchor == "self":
-        anchor = self_tty() or ""
+        anchor = own
     if anchor == args.tty:
         die("move: --tty and its anchor are the same session")
+    # A session the caller did not launch is not its to place. An orchestrator that had
+    # never measured its own tty read the listing, took the last tab for its own and moved
+    # a stranger's session out from between itself and its agents; the script obeyed,
+    # because `move` moved anything it was told to (§38).
+    if args.tty != own and args.tty not in [e["tty"] for e in chain_owned(chain_read(own), SELF_ID)]:
+        if not args.force:
+            die("move: refused: %s is neither this session's tab nor in its chain "
+                "(pass --force to move it anyway)" % args.tty)
+        # --force is the operator's hand and the layout repair, and it says what it moved:
+        # a forced move is the one an orchestrator has to be able to find afterwards.
+        print("move: forced: %s is not in this session's chain" % args.tty, file=sys.stderr)
     if DRY_RUN:
         print("move=%s %s=%s" % (args.tty, "right_of" if args.right_of else "left_of", anchor))
         return
