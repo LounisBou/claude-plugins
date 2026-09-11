@@ -12,8 +12,9 @@ The script is idempotent and does three things:
    in `~/.claude/settings.json` so the tap runs first and hands the payload to the
    previous command untouched. Nothing is deleted: `settings.json` is backed up
    under `~/.claude/backups/`.
-2. **The tier map**, `models.json`, with three empty bindings — and never touches
-   one that already exists, because the bindings are the operator's.
+2. **The tier map**, `models.json`, with three empty bindings, and **the server
+   catalogue**, `mcp.json`, empty (`{"servers": {}, "default": []}`) — and never
+   touches one that already exists, because both are the operator's.
 3. **The terminal tooling's environment**, a private interpreter under the state
    directory with the module the app's API needs. macOS only; elsewhere it is
    skipped and every other skill still works.

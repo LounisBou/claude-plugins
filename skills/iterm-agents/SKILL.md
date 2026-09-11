@@ -22,17 +22,22 @@ $SCRIPT list
     # without one), then `self` on YOUR OWN tab. Read self before you anchor, move or close.
 
 $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --inherit-model] [--permission-mode auto] \
-    --title "Agent : <subject>" --prompt "Read and execute <brief-path>. Your orchestrator is <name [ref]>." [--right-of self | --successor] [--mcp]
+    --title "Agent : <subject>" --prompt "Read and execute <brief-path>. Your orchestrator is <name [ref]>." [--right-of self | --successor] [--mcp <name>]
     # --title has a SHAPE — `Orch : <subject>` for an orchestrator and its successor,
     # `Agent : <subject>` for anything you spawn, the subject at most 25 characters —
     # because it is the session's name in every listing and the operator reads that listing.
     # Anything else is refused; `--title-free` is the escape for a probe that names its tab
     # otherwise, and only under `--title-free` does no title mean `agent` — without it, a
     # spawn with no title is refused.
-    # --mcp loads the project's own servers in the new session. WITHOUT it the launch is
-    # strict and the session gets none — that is the default, because they cost about
-    # seventy megabytes of an agent's machine each and almost every agent uses none. Pass
-    # it for the agent that drives a browser, and say so in that agent's brief.
+    # The session's servers are CHOSEN. The launch is always strict, and carries a file
+    # the launcher writes for that session from the operator's catalogue,
+    # <state dir>/mcp.json (ORCHESTRATOR_MCP_CATALOGUE overrides the path): named
+    # definitions in the host's own shape, and a `default` list every agent gets.
+    # --mcp <name> adds a catalogued server for the agent that needs it — repeatable,
+    # or comma-separated — and --mcp none gives the session no server at all. A name the
+    # catalogue does not hold is refused before a tab exists, naming the ones it holds;
+    # with no catalogue at all a plain spawn launches with nothing and says so on stderr.
+    # Say in the agent's brief which servers it was given: it cannot see the file.
     # writes the prompt to a file under the plugin's state directory, writes the launch
     # to a second file, asks the app to run it in a new tab AT AN INDEX, WAITS until the
     # host CLI is running on the new tty (30 s, ORCHESTRATOR_SPAWN_TIMEOUT), and prints
@@ -69,8 +74,8 @@ $SCRIPT move --tty /dev/ttysNNN (--right-of self | --right-of /dev/ttysMMM | --l
 $SCRIPT rotate --dir <workdir> --old-tty <tty> [--trust] [--tier <tier>] [--expect-title <s>] \
     [--title <t>] [--prompt <text> | --prompt-file <path>] [--right-of self | --left-of <tty>] [--mcp]
     # spawns the replacement FIRST and verifies it is running, then closes the old tab
-    # every argument it does not consume reaches the spawn, `--trust` and `--mcp` included:
-    # an agent that drove a browser is replaced by one that still can.
+    # every argument it does not consume reaches the spawn, `--trust` and `--mcp <name>`
+    # included: an agent that needed a server is replaced by one that still has it.
 
 $SCRIPT trust prune [--apply]      # entries of the trust record whose directory is gone; --apply removes them
 ```
@@ -95,7 +100,7 @@ So **always name an anchor**, and name the one you actually know:
 1. The brief exists at a path the fresh session can open on this machine.
 2. `spawn` with the one-line prompt naming the brief's path and the orchestrator's exact `ListAgents` name and reference — nothing the brief already says — and with `--right-of self`, so the tab lands beside yours rather than at the end of a window you do not own.
 3. Read the result: the script has already waited for the host CLI on the new tty, but the artifact decides — `list` (the tab), `verify --tty` (the process), `ListAgents` (the peer session, a few seconds later).
-4. **No startup dialog may stand between the launch and the brief.** Two are known: the workspace-trust question, refused before the tab exists unless `--trust` says the directory is one you prepared; and the question about the project's servers. The launch carries no server configuration at all, so the host loads none and asks nothing about them; `--mcp` carries the setting that enables them for the agent that drives a browser, and that spawn is the one to watch, because a fresh session parked on « enable these MCP servers? » never reads its brief and nobody sits at that keyboard. Any other startup question the launch cannot pre-answer (a trust prompt, a migration notice) is read in the tab's contents and answered by the orchestrator through the tab — a session stuck on a dialog is not launched, whatever the script printed.
+4. **No startup dialog may stand between the launch and the brief.** Two are known: the workspace-trust question, refused before the tab exists unless `--trust` says the directory is one you prepared; and the question about servers. The launch is strict and carries a configuration file written for that session, so the host asks nothing and loads exactly what the file names — the catalogue's default set, plus whatever `--mcp` added; a fresh session parked on « enable these MCP servers? » never reads its brief and nobody sits at that keyboard. Any other startup question the launch cannot pre-answer (a trust prompt, a migration notice) is read in the tab's contents and answered by the orchestrator through the tab — a session stuck on a dialog is not launched, whatever the script printed.
 5. Wait for the handshake. An agent that has not messaged within minutes is inspected, not waited for: `verify` for the process, `list` for the tab, and the tab's own screen through the app if you need to read what it is stuck on.
 
 ## Tab hygiene

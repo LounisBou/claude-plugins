@@ -11,9 +11,10 @@ state files included. Tell the user to restart their session.
 
 Say clearly what leaves with it, because two of those files are the operator's own
 and no backup holds them: the tier map `models.json` — the bindings from `deep`,
-`standard` and `light` to real model identifiers — and the prompts directory, which
-is the record of what every session was launched with. Offer to copy the map aside
-before running the script. The tap copy, the context files and the terminal
+`standard` and `light` to real model identifiers — the server catalogue `mcp.json`,
+which names the servers this machine offers and the default set every agent gets,
+and the prompts directory, which is the record of what every session was launched
+with. Offer to copy the map and the catalogue aside before running the script. The tap copy, the context files and the terminal
 tooling's environment are all rebuilt by `/orchestrator:install`; the bindings are
 not.
 

@@ -224,14 +224,31 @@ check "the rulebook hands the operator the rename line" "yes" \
 # what it does now, and the observation that made that rule — an agent sat on the host's
 # question about them until the owner clicked — is kept as the reason no such question may
 # be left standing either way. Halves again, so the guard does not read itself.
-stale_wording() { grep -rl --exclude-dir=.git -- "$1 $2" "$ROOT" 2>/dev/null | grep -Evc "^$ROOT/(docs|\.claude)/|/__pycache__/"; }
-check "both documents say the launch loads no project server, and the older directive is gone" "yes|yes|0" \
-  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'loads none and asks nothing about them')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'loads none and asks nothing about them')|$(stale_wording pre-approves "the project's")"
+# Read over the documents the plugin ships, and nowhere else: the suite must spell the
+# retired setting to assert it is in no launch, and the halves are joined here so this
+# guard does not read its own line either.
+SHIPPED_DOCS="$ROOT/skills $ROOT/commands $ROOT/templates $ROOT/README.md"
+stale_wording() { grep -rl --exclude-dir=__pycache__ -- "$1$2" $SHIPPED_DOCS 2>/dev/null | wc -l | tr -d ' '; }
+check "the older directives are gone from every document" "0|0|0" \
+  "$(stale_wording "pre-approves " "the project's")|$(stale_wording "loads the project's " "own servers")|$(stale_wording enableAllProject McpServers)"
+# What each document says about an agent's servers now. The launcher is strict and hands
+# the session a file of its own; the catalogue the definitions come from is the operator's,
+# and it is named wherever the tier map is — the two live side by side and are installed,
+# listed and removed together (§42).
+check "both documents say the launch is strict with the session's own file" "yes|yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'a configuration file written for that session')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'a configuration file written for that session')"
+check "the rulebook says the default set is loaded and --mcp adds to it" "yes|yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" "the catalogue's default set")|$(spells "$ROOT/skills/orchestrator/SKILL.md" '--mcp <name>')"
+check "the tab skill's reference carries the option and what none does" "yes|yes|yes" \
+  "$(spells "$ROOT/skills/iterm-agents/SKILL.md" '[--mcp <name>]')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'mcp.json')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" '--mcp none')"
+check "the catalogue is named where the tier map is" "yes|yes|yes" \
+  "$(spells "$ROOT/commands/install.md" 'mcp.json')|$(spells "$ROOT/commands/uninstall.md" 'mcp.json')|$(spells "$ROOT/README.md" 'mcp.json')"
 
 # A brief that does not say which servers its session was given lets an agent reach for a
-# browser tool it never had: the phase brief says it where it names the tier (§42).
-check "the phase brief names the server flag beside the tier" "yes" \
-  "$(spells "$ROOT/templates/agent-phase-brief.md" '--mcp')"
+# tool it never had: the phase brief carries the list itself, beside the tier, as a
+# placeholder the orchestrator fills with the names it chose (§42).
+check "the phase brief carries the servers placeholder beside the tier" "yes|yes" \
+  "$(spells "$ROOT/templates/agent-phase-brief.md" 'spawned with these servers and no other:')|$(spells "$ROOT/templates/agent-phase-brief.md" 'MCP_SERVERS')"
 
 check "the rulebook pins a reader's copy through the script" "1" "$(grep -c 'workspace.sh pin <source> <round> <head>' "$ROOT/skills/orchestrator/SKILL.md")"
 
