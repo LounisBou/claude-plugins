@@ -52,8 +52,10 @@ TIERS = ("deep", "standard", "light")
 # not tell one agent from another at a glance (§42); a derived name is held to the same
 # shape, which is also what stops a successor coming up under a whole launch line — a
 # session the older launcher named carries the prompt in its own process line, measured
-# live at 366 characters.
-TITLE_SHAPE = re.compile(r"^(Orch|Agent) : .{1,25}$")
+# live at 366 characters. It ends on `\Z` and not on `$`, which in this language matches
+# before a trailing newline as well: a name is one line, and the title travels through a
+# launch file and back out of the process table, where a second line is not part of a name.
+TITLE_SHAPE = re.compile(r"^(Orch|Agent) : .{1,25}\Z")
 
 
 def die(msg):

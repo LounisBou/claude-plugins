@@ -715,6 +715,15 @@ D42SUB25=$(printf 'x%.0s' $(seq 1 25))
 D42SUB26=$(printf 'x%.0s' $(seq 1 26))
 check "a subject of 25 characters is accepted, of 26 refused" "1|1" \
   "$(shaped --title "Agent : $D42SUB25" | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : $D42SUB25'")|$(shaped --title "Agent : $D42SUB26" >/dev/null 2>&1; echo $?)"
+# A name is one line. The shape's end anchor also matches BEFORE a trailing newline in this
+# language, so `Agent : x` followed by one passed it — and the guard the older code spent on
+# a newline in a derived name was retired with that code, leaving nothing behind it. The
+# title is written into the launch and read back out of the process table: a second line
+# there is not a name, it is whatever follows one.
+D42NL="Agent : x
+"
+check "a title carrying a trailing newline is refused" "1|1" \
+  "$(shaped --title "$D42NL" >/dev/null 2>&1; echo $?)|$(shaped --title "$D42NL" | grep -c 'a title reads')"
 check "the old default title is refused too" "1|1" \
   "$(shaped --title agent >/dev/null 2>&1; echo $?)|$(shaped --title agent | grep -c 'a title reads')"
 check "no title: refused unless --title-free" "1|1" \
