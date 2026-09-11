@@ -40,7 +40,7 @@ SANDBOX=$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")
 cleanup() {
   # The tab first: a session left running is the one failure this script must not cause,
   # and it outlives the shell that started it.
-  for t in "$TTY" "${OLD_TTY:-}" "${ONE:-}" "${TWO:-}" "${SIB:-}"; do
+  for t in "$TTY" "${OLD_TTY:-}" "${ONE:-}" "${TWO:-}" "${SUCC:-}" "${SIB:-}"; do
     [ -n "$t" ] && bash "$AGENT" close --tty "$t" >/dev/null 2>&1
   done
   [ "$KEEP" = 1 ] || rm -rf "$SANDBOX"
