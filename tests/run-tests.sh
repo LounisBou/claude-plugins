@@ -159,6 +159,16 @@ check "the rulebook spawns beside the orchestrator" "1" "$(grep -c -- '--right-o
 # rule cannot drift back into « hand the operator the exact line ».
 check "the rulebook keeps running to the orchestrator" "1" "$(grep -c '^## The operator decides; the orchestrator runs' "$ROOT/skills/orchestrator/SKILL.md")"
 check "a runnable command is the orchestrator's" "1" "$(grep -c "A command the orchestrator could run is the orchestrator's to run" "$ROOT/skills/orchestrator/SKILL.md")"
+
+# Two readings the rulebook left open (§36): an implementer stays through the review round
+# of ITS delivery and is stood down at the verdict; a reader's pinned copy is a worktree.
+check "the rulebook keeps the implementer through its own review round" "1|1" \
+  "$(grep -c 'stays through the review round of ITS delivery' "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c 'a tab kept in case is not reuse' "$ROOT/skills/orchestrator/SKILL.md")"
+check "the tab skill says the same" "1" "$(grep -c 'stood down at the verdict' "$ROOT/skills/iterm-agents/SKILL.md")"
+check "the rulebook pins a reader's copy as a worktree" "1|1" \
+  "$(grep -c 'never a clone: a clone is for a WRITER' "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "a reader's pinned copy is a detached worktree" "$ROOT/skills/orchestrator/SKILL.md")"
+check "the review brief template pins a worktree" "1" "$(grep -c 'a detached worktree pinned at the head under review' "$ROOT/templates/agent-review-brief.md")"
+
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate2" bash "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" spawn --dir "$WORK" --prompt p --left-of /dev/ttys001 --right-of self 2>&1 || true)
 case "$out" in *"mutually exclusive"*) anchors="refused" ;; *) anchors="$out" ;; esac
 check "two anchors are refused at spawn" "refused" "$anchors"
