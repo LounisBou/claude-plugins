@@ -1167,3 +1167,135 @@ unknown ref and an existing target are refused; `delete` refuses a dirty pin, re
 under `--discard`, and the source no longer lists the worktree; a pin by commit id deletes
 clean without `--discard`; the rulebook names the script. What the review reads: the suite
 itself, run inside a pin, green.
+
+## 38. A session knows its own tab, and moves only what is its own
+
+**0.25.0.** The operator's report, after a layout he had seen wrong more than once: agents
+not placed right of their orchestrator. Measured on the day: four spawns anchored
+`--right-of self` placed four agents where the chain says, and a probe anchored the same
+way from a tab with an empty chain landed immediately right of it. What put a stranger's
+session between an orchestrator and its agents was a `move --tty` typed from an
+assumption: the orchestrator, launched by hand and named by the host, had never measured
+its own tty, read the listing, took the last tab for its own, and moved it left of its
+first agent. The script obeyed, because `move` moves any session it is told to. The
+orchestrator found its tty in `ps` an hour later and moved the stranger back.
+
+Two guards, and no new subcommand. **`list` marks the caller's own row** with `self`
+after the tty, read the way `--right-of self` reads it (the process tree up to a tty), so
+an orchestrator reads which tab is its own before it anchors, moves or closes anything.
+The same row now carries the session's NAME beside the tab title — the `--name` argument
+of the host process on that tty, or `(host default)` when the session was launched by hand
+without one — because the tab title is the host's summary of the conversation, rewritten
+as it goes, and the listing that showed « Chaîner les PRs par complexité » on a tab was
+naming nothing an orchestrator could recognise. **`move` refuses a target that is neither
+the caller's own tab nor a tab of the caller's chain** (`chains/<caller tty>.jsonl`, the
+caller's own entries): a session the caller did not launch is not its to place. `--force`
+overrides, for the operator's hand and for the layout repair the next section describes,
+and says on stderr what it moved.
+
+What the suite reads, in the dry run: `list` writes `self` on the row whose tty is the
+caller's (`ORCHESTRATOR_SELF_TTY`) and on no other; a row's name column reads the process's
+`--name` from a fixture of the process table and `(host default)` when there is none;
+`move` on a tty outside the caller's chain and not self is refused with the tty named,
+accepted with `--force`, and accepted without it for a chain entry. What the live round
+reads: `list` from the orchestrator's own tab shows `self` on its row.
+
+## 39. A successor carries the orchestrator's name, and a title has a shape
+
+**0.25.0.** Two reports, one machine each. On the second machine a predecessor spawned
+its successor with `--title steward-successor`: the launcher took it, the successor came
+up under that name in every listing, and the house format the rulebook prescribes
+(`Orchestrator : <feature>`) was nowhere. On the first machine a predecessor spawned its
+successor with `--right-of self` instead of `--successor`: the tab landed after the
+predecessor's chain, at the far right of the window, and inherited no chain — exactly what
+§34 says the plain anchor does, and exactly what a successor must not be.
+
+Three rules in `spawn`. **A title has the shape `<Role> : <what>`**: one or more
+capitalised words, a spaced colon, then something. `agent`, the old default, is refused,
+and so is any title without the colon; `--title-free` keeps the old acceptance for a
+probe or a test that names its tab otherwise, and says so in the launch's dry run. **A
+successor takes the caller's name.** `--successor` without `--title` reads the `--name`
+of the host process on the caller's own tty and passes it as the new session's name — the
+host applies its variant when a live session already holds it, so the successor is
+`Orchestrator : <feature>` with its own reference, which is what every brief cites. A
+caller launched by hand carries no `--name`; then `--successor` without `--title` is
+refused with the sentence that says why, and the title is typed in the house format.
+**An orchestrator's title implies `--successor`.** A title that starts with
+`Orchestrator :` and an anchor of `--right-of self` or `--left-of` is refused: the plain
+anchor lands after the chain, and a successor spawned there is the far-right tab the
+operator saw. `commands/succeed.md` stops asking for a typed title where the derivation
+exists.
+
+**`rotate` forwards `--trust`.** The rotation's spawn already receives every argument the
+rotation does not consume, `--trust` included, but the tab skill's reference line never
+said so and a live rotation into a fresh checkout was refused on the trust question and
+redone by hand. The line names the flag, and the dry run proves the forwarding.
+
+The end-to-end script's own titles (`e2e-probe`, `e2e-chain-1`, `e2e-successor`, …) take
+the shape: `Probe : e2e`, `Implementer : e2e chain 1`, and the successor case passes no
+title at all and reads the derived one back.
+
+What the suite reads, in the dry run: a title without the shape is refused and the
+reason names the shape; `agent` is refused; `--title-free` lets an unshaped title through
+and the launch carries it; `--successor` with a process-table fixture carrying `--name
+'Orchestrator : x'` on the caller's tty launches with that name, and without one is
+refused; `Orchestrator : x` with `--right-of self` is refused; `rotate --trust` reaches the
+spawn's trust record write. What the live round reads: a successor spawned with
+`--successor` and no title comes up in the listing under the predecessor's name with a
+reference of its own.
+
+## 40. The operator's global excludes are local material too
+
+**0.25.1.** §30 and §35 made a phase's checkout carry the project's local material: the
+settings directory, what the repository's exclude file keeps out of history, the manifest's
+paths. One file travelled by hand on every live run of this family: the project's
+instruction file at its root, the one the host reads first, kept out of history not by
+the repository's exclude file but by the operator's global one (`core.excludesFile`, `~/.gitignore` here, which also hides `docs/`
+everywhere). `git ls-files --others --ignored --exclude-from=<the repository's exclude
+file>` never lists it, so `create` skipped it, and the implementer in that checkout read a
+project with no instructions.
+
+`create` reads the global excludes file the source's git configuration names (`git -C
+<source> config --get core.excludesFile`, then the host's default location when unset),
+lists what it keeps out of the source with the same `ls-files --others --ignored` read,
+minus the settings directory that step 1 already handles, copies those files, and adds
+the global file's patterns to the checkout's own exclude file so the copy stays out of the
+checkout's history. A source whose configuration names no such file changes nothing. The
+stderr line says how many files the global excludes contributed, separately from the
+repository's own.
+
+What the suite reads, on the workspace fixture: a file ignored only by a global excludes
+file (set through `GIT_CONFIG_GLOBAL` in the case, never the operator's) is copied into
+the checkout and read clean there; a file ignored by neither is not copied and the tracked
+files are cloned as before; a source without a global excludes file copies as in §35.
+
+## 41. What the rounds of the plugin family paid for
+
+**0.25.2.** Text only, in the rulebook, the tab skill, the templates and the succession
+command, each item a reading a live round produced.
+
+- **A stand-down with staged or prepared work is refused.** An agent stood down while a
+  fix it had prepared was still staged in its working tree: the orchestrator read « exactly
+  the two staged files » in the acknowledgment, accepted it, closed the tab, and the work
+  survived in a worktree and a temporary file until a decision round found it — the
+  operator's MAJOR. The lifecycle's step 4 says: a stand-down acknowledgment that reports
+  anything uncommitted is an unfinished delivery; the orchestrator asks for the word in the
+  agent's tab (commit or drop) before any close, and never rotates over it.
+- **A reader writes no git configuration.** A review worktree shares its source's
+  `.git/config`; a reader that ran `git config core.excludesFile /dev/null` after a `cd`
+  that had failed between two tool calls switched the global excludes off for the
+  implementer. The review brief template's forbidden list says « no git configuration
+  write of any kind, `-c` on the command line only », and its environment line says «
+  carry every sandbox path inside each tool call: a variable does not survive between
+  them ».
+- **The gauge line names the installed copy.** Two spawned sessions reported the gauge
+  script as absent because the brief named it under the orchestrator's development
+  checkout, outside the directories a spawned session may read. The templates' gauge
+  line says the path is the plugin's installed copy (`${CLAUDE_PLUGIN_ROOT}` expanded by
+  the orchestrator when it writes the brief), never a checkout of this repository.
+- **The succession command derives the title** (§39): its spawn line drops `--title`.
+- **The traceback stays** (§29) and the tab's first title is the host's: a spawn reads
+  « Chat » on the new tab for a few seconds before the session names itself; the tab skill
+  says so, so a `list` read at once is not taken for a launch without a name.
+
+What the suite reads: one literal per item, in the file that carries it.
