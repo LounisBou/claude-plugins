@@ -19,7 +19,7 @@ skills/iterm-agents/scripts/iterm-agent.sh   entry point: resolves an interprete
 skills/iterm-agents/scripts/iterm_agent.py   the implementation, over the app API
 skills/orchestrator/scripts/brief-lint.sh   refuses a brief before it is dispatched
 skills/orchestrator/scripts/dispatch-record.sh  one row per dispatch, and the routing signal
-skills/orchestrator/scripts/workspace.sh    a clone per phase, with the project's local material
+skills/orchestrator/scripts/workspace.sh    a clone per phase with the project's local material; a pinned worktree per review round
 skills/model-routing/SKILL.md        which capability tier a dispatch gets
 skills/context-gauge/SKILL.md        how a session reads its own context fill
 skills/context-gauge/scripts/context-gauge.sh
@@ -1109,3 +1109,61 @@ What changes: the rulebook's lifecycle step 4, its rotation sentence on reuse, i
 sentence on the pinned copy and its housekeeping boundary; the tab skill's hygiene
 paragraph; the review brief template's environment line. What the suite reads: each of
 the four sentences present once, in the file that carries it.
+
+## 37. A pinned copy for a reader, made and removed by the script
+
+**0.24.0.** §36 said what a reader's copy is — a detached worktree of the orchestrator's
+own checkout — and left making it to a git line typed by hand, `git worktree add
+--detach <path> <head>`, with `git worktree remove` at the end of the round. The first
+review run under that rule showed the two things a by-hand step always shows. The copy
+landed under the same root as the phase checkouts but `list` did not know it (its `.git`
+is a file, and `list` skipped anything whose `.git` was not a directory) and `delete`
+would have `rm -rf`'d it and left the source's `.git/worktrees/<name>` behind for `git
+worktree prune` to find later. And the suite, run in that copy, fell on its own
+machine-specific guard: it greps the tree for absolute home paths, excludes the `.git`
+DIRECTORY a clone has, and read the worktree's `.git` FILE — `gitdir: /…/.git/worktrees/…`
+— as a machine path in the plugin.
+
+**`pin <source> <name> <ref>`.** The same root and the same naming as `create`: the copy
+lives at `<root>/<repository name>/<name>` and prints its path on stdout. The ref is
+anything the source resolves to a commit — a branch, an `origin/` ref, a tag, a commit
+id — refused when the source does not know it, since a pin names a head and a head is a
+fact. The target must not exist. Then `git worktree add --detach` on the source, at the
+commit, and nothing else: no local material, because a reader reads the delivery and the
+orchestrator's briefs and state file are not part of it; no `origin` change, because a
+worktree shares the source's remotes. One stderr line says the short id pinned and the ref
+it came from.
+
+**`list` and `delete` know a pin.** `list` reads any entry that has a `.git`, file or
+directory; a pin's line carries `HEAD` as its branch (git's own word for a detached head)
+and `pinned` in the last column in place of `pushed`/`unpushed`, which would have read the
+SOURCE's branches through the shared refs and meant nothing about the pin. `delete` on a
+pin refuses a dirty tree without `--discard`, as for a checkout; its second guard is not
+« commits on no remote branch » but « a head on no branch of the source » — a reader that
+committed in its copy is the only way to lose work there, since the pinned commit itself
+lives in the source. Then `git worktree remove` (with `--force` under `--discard`), run
+through the pin's own directory so the script never has to find the source, and the
+source forgets the worktree in the same move.
+
+**The suite's guard learns what a gitfile is.** The machine-specific grep excludes a file
+named `.git` as it excludes the directory: a worktree's gitfile is git's pointer, not the
+plugin's text. The suite then reads the same in a pin as in a clone, which is what a
+review round needs from it.
+
+**The rulebook names the script.** Its review sentence and its housekeeping boundary say
+`workspace.sh pin <source> <round> <head>` where they said the git line, and
+`workspace.sh delete` where they said `git worktree remove`; the layout block names the
+pin beside the clone.
+
+**Out of scope, on purpose.** Pinning a directory outside the root; a pin that carries
+local material (a reader that needs a project's environment file is running an instrument,
+and an instrument's copy is the orchestrator's to prepare — the manifest exists for the
+writer's checkout); any change to `create`.
+
+What the suite reads, on the workspace fixture: `pin` prints the path under the root and
+the copy is a worktree (a `.git` file), detached, at the ref's commit; nothing local
+travels into it and the tracked file does; `list` shows it `HEAD … clean | pinned`; an
+unknown ref and an existing target are refused; `delete` refuses a dirty pin, removes it
+under `--discard`, and the source no longer lists the worktree; a pin by commit id deletes
+clean without `--discard`; the rulebook names the script. What the review reads: the suite
+itself, run inside a pin, green.

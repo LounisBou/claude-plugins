@@ -87,7 +87,7 @@ check "no model family name in the plugin" "" "$hits"
 # Nothing tied to one machine or one project enters the generic plugin: no
 # absolute home path, no real session reference (the documented example is
 # the six-hex placeholder a1b2c3), no path into a downstream project's tree.
-hits=$(grep -rnIE '/Users/|/home/[a-z]|\[[0-9a-f]{6}\]|docs/reference/|BUGS\.md|IMPLEMENTATION\.md' "$ROOT" --exclude-dir=.git --exclude-dir=.claude --exclude=plan.md --exclude=run-tests.sh \
+hits=$(grep -rnIE '/Users/|/home/[a-z]|\[[0-9a-f]{6}\]|docs/reference/|BUGS\.md|IMPLEMENTATION\.md' "$ROOT" --exclude-dir=.git --exclude=.git --exclude-dir=.claude --exclude=plan.md --exclude=run-tests.sh \
   | grep -vE '\[a1b2c3\]' || true)
 check "nothing project- or machine-specific in the plugin" "" "$hits"
 
@@ -168,6 +168,7 @@ check "the tab skill says the same" "1" "$(grep -c 'stood down at the verdict' "
 check "the rulebook pins a reader's copy as a worktree" "1|1" \
   "$(grep -c 'never a clone: a clone is for a WRITER' "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "a reader's pinned copy is a detached worktree" "$ROOT/skills/orchestrator/SKILL.md")"
 check "the review brief template pins a worktree" "1" "$(grep -c 'a detached worktree pinned at the head under review' "$ROOT/templates/agent-review-brief.md")"
+check "the rulebook pins a reader's copy through the script" "1" "$(grep -c 'workspace.sh pin <source> <round> <head>' "$ROOT/skills/orchestrator/SKILL.md")"
 
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate2" bash "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" spawn --dir "$WORK" --prompt p --left-of /dev/ttys001 --right-of self 2>&1 || true)
 case "$out" in *"mutually exclusive"*) anchors="refused" ;; *) anchors="$out" ;; esac
@@ -391,6 +392,26 @@ check_status "a base the source does not know is refused" 1 bash "$WS" create "$
 check "and makes no checkout" "0|0" \
   "$([ -e "$WORK/wsroot/proj2/phase-3" ] && echo 1 || echo 0)|$(bash "$WS" create "$SRC2" phase-3 --base upstream/main >/dev/null 2>&1; [ -e "$WORK/wsroot/proj2/phase-3" ] && echo 1 || echo 0)"
 bash "$WS" delete "$C2" >/dev/null 2>&1
+
+# A reader's copy is a detached worktree under the root (§37): the code at the head and
+# nothing local, made and removed through git so the source forgets it.
+P="$WORK/wsroot/proj/round-1"
+out=$(bash "$WS" pin "$SRC" round-1 main 2>"$WORK/ws3.err")
+check "pin prints the path under the root and makes a detached worktree at the ref" "$P|file|HEAD|$(git -C "$SRC" rev-parse main)" \
+  "$out|$([ -f "$P/.git" ] && echo file || echo other)|$(git -C "$P" rev-parse --abbrev-ref HEAD 2>/dev/null)|$(git -C "$P" rev-parse HEAD 2>/dev/null)"
+check "nothing local travels into a pin, the tracked file does" "ok" \
+  "$([ ! -e "$P/.claude" ] && [ ! -e "$P/LOCAL.md" ] && [ -f "$P/README.md" ] && echo ok || echo bad)"
+check "list shows the pin as pinned" "1" "$(bash "$WS" list 2>/dev/null | grep -c "/proj/round-1 | HEAD | [0-9a-f]* | clean | pinned$")"
+check "pin refuses an unknown ref and an existing target" "1|1" \
+  "$(bash "$WS" pin "$SRC" round-9 nope >/dev/null 2>&1; echo $?)|$(bash "$WS" pin "$SRC" round-1 main >/dev/null 2>&1; echo $?)"
+echo dirty >> "$P/README.md"
+check "delete refuses a dirty pin, --discard removes it and the source forgets it" "1|deleted|0|0" \
+  "$(bash "$WS" delete "$P" >/dev/null 2>&1; echo $?)|$(bash "$WS" delete "$P" --discard 2>/dev/null | cut -d' ' -f1)|$([ -e "$P" ] && echo 1 || echo 0)|$(git -C "$SRC" worktree list | grep -c round-1)"
+P2="$WORK/wsroot/proj/round-2"
+bash "$WS" pin "$SRC" round-2 "$(git -C "$SRC" rev-parse main)" >/dev/null 2>&1
+check "a pin by commit id deletes clean without --discard" "deleted|0" \
+  "$(bash "$WS" delete "$P2" 2>/dev/null | cut -d' ' -f1)|$(git -C "$SRC" worktree list | grep -c round-2)"
+
 unset ORCHESTRATOR_WORKSPACES
 
 echo "== brief lint =="
