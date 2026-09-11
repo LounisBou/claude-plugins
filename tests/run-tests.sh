@@ -106,6 +106,14 @@ check "the decide command re-presents an interrupted question in full" "1" "$(gr
 check "the decide command records before it moves on" "1" "$(grep -c 'Present the next question IN FULL (step 2). Not before.' "$ROOT/commands/decide.md")"
 check "the succession inherits the orchestrator's model" "1" "$(grep -c -- '--inherit-model' "$ROOT/commands/succeed.md")"
 check "the succession names no tier" "0" "$(grep -c -- '--tier deep' "$ROOT/commands/succeed.md")"
+# The successor is spawned with --successor, everywhere the succession is described (§34);
+# the two sentences that promised a placement the launcher did not make are gone.
+check "the succession spawns with --successor" "yes|0" \
+  "$(grep -q -- '--successor' "$ROOT/commands/succeed.md" && echo yes || echo no)|$(grep -c -- '--left-of <implementer tty>' "$ROOT/commands/succeed.md")"
+check "the tab skill spawns the successor the same way" "1|0" \
+  "$(grep -c 'spawning your successor: `--successor`' "$ROOT/skills/iterm-agents/SKILL.md")|$(grep -c 'sits between you and your agent' "$ROOT/skills/iterm-agents/SKILL.md")"
+check "and so does the rulebook" "1|0" \
+  "$(grep -c 'passing `--successor`' "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c 'lands between you and your agent' "$ROOT/skills/orchestrator/SKILL.md")"
 # A plan-writing skill's header ordered the orchestrator to execute in subagents of its own
 # session, and successors obeyed it (§28). No plan opens with it; the rulebook and the
 # succession template carry the rule instead.
@@ -188,6 +196,34 @@ check "a chain written by strangers anchors on self" "1" "$(printf '%s' "$out" |
 printf '{"tab_id":"9","tty":"/dev/ttys909"}\n' > "$CHAINS/ttys900.jsonl"
 out=$(ORCHESTRATOR_SELF_ID=S-ME chain_spawn --right-of self)
 check "an entry with no owner is skipped once an owner is known" "1" "$(printf '%s' "$out" | grep -c '^anchor=self$')"
+
+# A successor is not an agent: it takes the predecessor's place, immediately right of it,
+# chain ignored, and takes the chain with it (§34). Dry: the anchor, and the file untouched.
+printf '{"tab_id":"7","tty":"/dev/ttys907","owner":"S-OTHER"}\n{"tab_id":"8","tty":"/dev/ttys908","owner":"S-ME"}\n' > "$CHAINS/ttys900.jsonl"
+before=$(cat "$CHAINS/ttys900.jsonl")
+out=$(ORCHESTRATOR_SELF_ID=S-ME chain_spawn --successor)
+check "a successor anchors on self, whatever the chain says" "1|1" \
+  "$(printf '%s' "$out" | grep -c '^anchor=self$')|$(printf '%s' "$out" | grep -c '^successor=yes$')"
+check "a dry successor spawn leaves the chain as it was" "$before" "$(cat "$CHAINS/ttys900.jsonl")"
+check "a successor names its own anchor" "1|1" \
+  "$(chain_spawn --successor --right-of self >/dev/null 2>&1; echo $?)|$(chain_spawn --successor --left-of /dev/ttys555 >/dev/null 2>&1; echo $?)"
+# The hand-over itself, on the module: the predecessor's own entries move under the
+# successor's tty and owner, its foreign entries stay, and a stale file on the successor's
+# recycled tty is replaced, not appended to. Nothing to hand over hands over an empty chain.
+py=$(command -v python3 || echo python3)
+transfer() { ORCHESTRATOR_STATE_DIR="$WORK/istate" "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+print(m.chain_transfer('/dev/ttys900', 'S-ME', '/dev/ttys950', 'S-NEW'))" 2>&1; }
+printf '{"tab_id":"7","tty":"/dev/ttys907","owner":"S-OTHER"}\n{"tab_id":"8","tty":"/dev/ttys908","owner":"S-ME"}\n{"tab_id":"9","tty":"/dev/ttys909","owner":"S-ME"}\n' > "$CHAINS/ttys900.jsonl"
+printf '{"tab_id":"1","tty":"/dev/ttys901","owner":"S-DEAD"}\n' > "$CHAINS/ttys950.jsonl"
+check "the hand-over moves the predecessor's own entries" "2" "$(transfer)"
+check "under the successor's tty and owner, the stale file replaced" \
+  '{"tab_id": "8", "tty": "/dev/ttys908", "owner": "S-NEW"}|{"tab_id": "9", "tty": "/dev/ttys909", "owner": "S-NEW"}' \
+  "$(paste -sd'|' "$CHAINS/ttys950.jsonl")"
+check "and leaves the predecessor only what was never its own" '{"tab_id": "7", "tty": "/dev/ttys907", "owner": "S-OTHER"}' \
+  "$(cat "$CHAINS/ttys900.jsonl")"
+check "a predecessor with no agents hands over an empty chain" "0|0" "$(transfer)|$(wc -l < "$CHAINS/ttys950.jsonl" | tr -d ' ')"
 
 echo "== dispatch record =="
 

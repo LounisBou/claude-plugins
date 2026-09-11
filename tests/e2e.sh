@@ -160,9 +160,21 @@ if [ -n "$me" ]; then
   chain="${ORCHESTRATOR_STATE_DIR:-$HOME/.claude/claude-orchestrator}/chains/$(basename "$me").jsonl"
   check "the chain names both" "2" "$(grep -c "\"tty\": \"$ONE\"\|\"tty\": \"$TWO\"" "$chain")"
   check "the chain names its owner" "2" "$(grep -E "\"tty\": \"$ONE\"|\"tty\": \"$TWO\"" "$chain" | grep -c '"owner": "[^"]')"
+  # A successor takes the predecessor's place and its chain (§34): immediately right of the
+  # caller, left of the agents, and the agents' entries move under its tty.
+  succ_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title e2e-successor --trust \
+        --prompt "Do nothing." --successor 2>&1)
+  SUCC=$(printf '%s' "$succ_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
+  pos_me=$(bash "$AGENT" list | grep -n "$me" | cut -d: -f1)
+  pos_succ=$(bash "$AGENT" list | grep -n "$SUCC" | cut -d: -f1)
+  check "the successor lands immediately right of the caller, left of the agents" "$((pos_me + 1))" "$pos_succ"
+  succ_chain="${ORCHESTRATOR_STATE_DIR:-$HOME/.claude/claude-orchestrator}/chains/$(basename "$SUCC").jsonl"
+  check "the successor's chain names both agents" "2" "$(grep -c "\"tty\": \"$ONE\"\|\"tty\": \"$TWO\"" "$succ_chain")"
+  check "and the caller's chain no longer does" "0" "$(grep -c "\"tty\": \"$ONE\"\|\"tty\": \"$TWO\"" "$chain")"
+  bash "$AGENT" close --tty "$SUCC" >/dev/null 2>&1
   bash "$AGENT" close --tty "$TWO" >/dev/null 2>&1
   bash "$AGENT" close --tty "$ONE" >/dev/null 2>&1
-  check "a closed agent leaves the chain" "0" "$(grep -c "\"tty\": \"$ONE\"\|\"tty\": \"$TWO\"" "$chain")"
+  check "a closed agent leaves the chain" "0" "$(grep -c "\"tty\": \"$ONE\"\|\"tty\": \"$TWO\"" "$succ_chain")"
 else
   echo "  skip the chain: this shell has no tty of its own"
 fi

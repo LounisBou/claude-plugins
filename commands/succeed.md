@@ -16,12 +16,14 @@ Preconditions, verify each before acting:
 
 Then:
 
-1. `iterm-agent.sh list` — note your own tty and the implementer's tty.
+1. `iterm-agent.sh list` — note your own tty.
 2. `iterm-agent.sh spawn --dir <worktree> --inherit-model --permission-mode auto --title "Orchestrator : <feature>"
-   --left-of <implementer tty> --prompt "Read and execute <brief path>"` — the operator's
+   --successor --prompt "Read and execute <brief path>"` — the operator's
    decision mode, or the successor stops at its first prompt in a tab nobody watches.
    The successor runs on the model this session runs on NOW — the operator's choice, carried
    across every succession; the map binds agents, never the orchestrator (spec §27).
+   `--successor` places it immediately right of this tab, between it and the first agent,
+   and hands it the chain (spec §34).
 3. Answer nothing new. Wait for the successor's "takeover confirmed"; answer
    its questions about state only.
 4. Never close your own tab: the successor closes it once you are idle — its brief says so

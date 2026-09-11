@@ -192,6 +192,24 @@ def chain_append(tty, tab_id, new_tty, owner):
     chain_write(tty, chain_read(tty) + [{"tab_id": tab_id, "tty": new_tty, "owner": owner}])
 
 
+def chain_transfer(old_tty, old_owner, new_tty, new_owner):
+    """The predecessor's agents become the successor's (§34).
+
+    A successor spawned after the last agent, and appended to the predecessor's chain as
+    if it were one, inherited nothing: its own file was empty or a dead session's, so its
+    first `--right-of self` landed left of the agents it had just taken over. The entries
+    the predecessor wrote move under the successor's tty and session id; what the
+    predecessor's file held from other occupants of its tty stays there; whatever a
+    recycled tty's file held on the successor's side is replaced, never appended to."""
+    entries = chain_read(old_tty)
+    moved = chain_owned(entries, old_owner)
+    kept = [e for e in entries if e not in moved]
+    chain_write(new_tty, [{"tab_id": e["tab_id"], "tty": e["tty"], "owner": new_owner}
+                          for e in moved])
+    chain_write(old_tty, kept)
+    return len(moved)
+
+
 def chain_owned(entries, owner):
     """The entries this session wrote. A tty is recycled minutes after a close and the
     chain file named after it outlives its occupant: a successor on the same tty once
@@ -464,6 +482,7 @@ def cmd_spawn(argv):
     p.add_argument("--right-of", dest="right_of", default="")
     p.add_argument("--no-verify", dest="verify", action="store_false", default=True)
     p.add_argument("--trust", action="store_true", default=False)
+    p.add_argument("--successor", action="store_true", default=False)
     args, unknown = p.parse_known_args(argv)
     if unknown:
         die("spawn: unknown option %s" % unknown[0])
@@ -471,6 +490,9 @@ def cmd_spawn(argv):
         die("spawn: --dir is required")
     if args.left_of and args.right_of:
         die("spawn: --left-of and --right-of are mutually exclusive")
+    if args.successor and (args.left_of or args.right_of):
+        die("spawn: --successor names its own anchor, immediately right of this session; "
+            "drop --left-of and --right-of")
     if not os.path.isdir(args.dir):
         die("spawn: directory not found: %s" % args.dir)
     if args.prompt and args.prompt_file:
@@ -491,11 +513,15 @@ def cmd_spawn(argv):
     side = "right" if args.right_of else "left"
     anchor = args.right_of or args.left_of
     own = self_tty() or ""
+    if args.successor:
+        # A successor is not an agent: immediately right of this session, the chain
+        # ignored, and it takes the chain with it once its session can be read (§34).
+        side, anchor = "right", "self"
     if anchor == "self":
         if not own and not DRY_RUN:
             die("spawn: --right-of self: cannot resolve this session's own tty")
         anchor = own or "self"
-        if side == "right" and own:
+        if side == "right" and own and not args.successor:
             # After the orchestrator's LAST agent, not immediately after the orchestrator:
             # orchestrator, agent 1, agent 2, … in launch order.
             if DRY_RUN:
@@ -550,6 +576,7 @@ def cmd_spawn(argv):
         print("self=%s" % own)
         print("anchor=%s" % ("self" if anchor == own else anchor))
         print("trust=%s" % trust_state)
+        print("successor=%s" % ("yes" if args.successor else "no"))
         print("program=%s -l <launch-file>" % LOGIN_SHELL)
         return
 
@@ -574,7 +601,24 @@ def cmd_spawn(argv):
         # window to the new one interrupts them every time an agent is launched.
         tab = await win.async_create_tab(command=command, index=index, select=False)
         new = await tty_of(tab, connection)
-        if own and new:
+        if own and new and args.successor:
+            new_sess = None
+            for _ in range(10):
+                fresh = await iterm2.async_get_app(connection)
+                _, _, new_sess = await find_tab(fresh, new)
+                if new_sess is not None:
+                    break
+                await asyncio.sleep(0.3)
+            if new_sess is None:
+                # A gate that cannot measure lets the launch through and says so.
+                print("spawn: the successor's session on %s could not be read, so the chain "
+                      "stays with %s; place its next agent with --right-of <last agent tty>."
+                      % (new, own), file=sys.stderr)
+            else:
+                n = chain_transfer(own, own_sess_id, new, new_sess.session_id)
+                print("spawn: chain of %d agent(s) handed to the successor on %s" % (n, new),
+                      file=sys.stderr)
+        elif own and new:
             chain_append(own, tab.tab_id, new, own_sess_id)
         return new
 

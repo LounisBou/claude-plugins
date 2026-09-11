@@ -6,7 +6,7 @@
 #   iterm-agent.sh spawn --dir <path> [--tier deep|standard|light | --model <id> | --inherit-model]
 #                        [--permission-mode auto] [--title <t>]
 #                        [--prompt <text> | --prompt-file <path>]
-#                        [--left-of <tty> | --right-of <tty> | --right-of self] [--no-verify]
+#                        [--left-of <tty> | --right-of <tty> | --right-of self | --successor] [--no-verify]
 #   iterm-agent.sh verify --tty /dev/ttysNNN
 #   iterm-agent.sh resolve-tier <deep|standard|light>
 #   iterm-agent.sh close --tty /dev/ttysNNN [--expect-title <substring>]

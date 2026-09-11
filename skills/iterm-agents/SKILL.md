@@ -19,7 +19,7 @@ $SCRIPT list
     # w1/t1 | /dev/ttys004 | ◐ Implementer : phase 2 | hidden   ← behind a maximized sibling pane
 
 $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --inherit-model] [--permission-mode auto] \
-    --title "<Role> : <what>" --prompt "Read and execute <brief-path>. Your orchestrator is <name [ref]>." [--right-of self]
+    --title "<Role> : <what>" --prompt "Read and execute <brief-path>. Your orchestrator is <name [ref]>." [--right-of self | --successor]
     # writes the prompt to a file under the plugin's state directory, writes the launch
     # to a second file, asks the app to run it in a new tab AT AN INDEX, WAITS until the
     # host CLI is running on the new tty (30 s, ORCHESTRATOR_SPAWN_TIMEOUT), and prints
@@ -28,6 +28,7 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --inherit-model] [--
     # --tier resolves through the operator's map (<state dir>/models.json, or
     # ORCHESTRATOR_TIER_DEEP/_STANDARD/_LIGHT). An unbound tier and no --tier at all both
     # type no model argument: the host chooses. `resolve-tier <tier>` prints the binding.
+    # --successor: the new session takes yours — immediately right of you, chain ignored, your chain handed to it (§34).
 
 $SCRIPT verify --tty /dev/ttysNNN
     # succeeds with the pid when the host CLI runs on that tty; exit 1 otherwise
@@ -61,7 +62,7 @@ A plain `spawn` appends at the FAR RIGHT of the window. That is beside the orche
 So **always name an anchor**, and name the one you actually know:
 
 - spawning an implementer: `--right-of self` — after your LAST still-open agent, or your own tab when you have none. The launcher keeps the chain (`chains/<your tty>.jsonl` under the state directory) and the order reads left to right as launch order: you, agent 1, agent 2, … A closed agent leaves the chain; a tty is never trusted across a close, the chain is checked on the app's tab id, and on the session that wrote the entry — a tty is recycled and its chain file outlives its occupant, so a new session on an old tty reads only its own entries.
-- spawning your successor: `--right-of self` too, then the successor sits between you and your agent; it closes your tab once the takeover is confirmed, so the successor ends up immediately left of the agent.
+- spawning your successor: `--successor` — immediately right of your own tab, the chain ignored, so it lands between you and your first agent; the launcher hands it your chain (your agents' entries move under its tty and session) and writes it into no chain, because a successor is not an agent. It closes your tab once the takeover is confirmed and ends up immediately left of your first agent, and its `--right-of self` resolves to your last agent from then on.
 - `--left-of <tty>` remains for the case where the anchor you know is on the other side.
 - `move` repairs the layout after the fact, with the same three forms.
 
