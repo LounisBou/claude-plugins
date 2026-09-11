@@ -219,6 +219,15 @@ check "no older role survives outside the design" "0|0|0" \
 # hands him the one line to type, once, before anything is dispatched (§42).
 check "the rulebook hands the operator the rename line" "yes" \
   "$(spells "$ROOT/skills/orchestrator/SKILL.md" '/rename "Orch : <subject>"')"
+# A directive that outlived its decision is worse than none: both documents told the reader
+# the launch pre-approved the project's servers on the command line, which is the reverse of
+# what it does now, and the observation that made that rule — an agent sat on the host's
+# question about them until the owner clicked — is kept as the reason no such question may
+# be left standing either way. Halves again, so the guard does not read itself.
+stale_wording() { grep -rl --exclude-dir=.git -- "$1 $2" "$ROOT" 2>/dev/null | grep -Evc "^$ROOT/(docs|\.claude)/|/__pycache__/"; }
+check "both documents say the launch loads no project server, and the older directive is gone" "yes|yes|0" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'loads none and asks nothing about them')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'loads none and asks nothing about them')|$(stale_wording pre-approves "the project's")"
+
 # A brief that does not say which servers its session was given lets an agent reach for a
 # browser tool it never had: the phase brief says it where it names the tier (§42).
 check "the phase brief names the server flag beside the tier" "yes" \
