@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "Orchestration tooling for supervising implementer sessions",
-    "version": "0.25.1"
+    "version": "0.25.2"
   },
   "plugins": [
     {
       "name": "orchestrator",
       "source": "./",
       "description": "Orchestrate implementer sessions: briefs, evidence-based reviews, rotation, succession, tab tooling, context gauge.",
-      "version": "0.25.1",
+      "version": "0.25.2",
       "author": {
         "name": "Lounis Bou"
       }
