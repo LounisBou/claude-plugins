@@ -146,7 +146,10 @@ check "the tab landed immediately right of its anchor" "$((pos_self + 1))" "$pos
 
 # The second agent goes after the FIRST, not between the orchestrator and it. `self` here
 # is the tab running this script; both probes anchor on it and the chain orders them.
-me=$(ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" spawn --dir "$SANDBOX/repo" --right-of self 2>/dev/null | sed -n 's/^self=//p')
+# The dry run carries --trust because the trust gate runs before the dry-run print (§31)
+# and the sandbox is not yet recorded here: without it the launcher refuses, `me` is
+# empty and the chain block is skipped in silence.
+me=$(ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" spawn --dir "$SANDBOX/repo" --trust --right-of self 2>/dev/null | sed -n 's/^self=//p')
 if [ -n "$me" ]; then
   one_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title e2e-chain-1 --trust \
         --prompt "Do nothing." --right-of self 2>&1)
