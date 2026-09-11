@@ -46,6 +46,8 @@ $SCRIPT move --tty /dev/ttysNNN (--right-of self | --right-of /dev/ttysMMM | --l
 $SCRIPT rotate --dir <workdir> --old-tty <tty> [--expect-title <s>] \
     [--tier <tier>] [--title <t>] [--prompt <text> | --prompt-file <path>] [--right-of self | --left-of <tty>]
     # spawns the replacement FIRST and verifies it is running, then closes the old tab
+
+$SCRIPT trust prune [--apply]      # entries of the trust record whose directory is gone; --apply removes them
 ```
 
 `ORCHESTRATOR_DRY_RUN=1` makes `spawn`, `close` and `move` print what they would ask the app for — the launch, the prompt file, the anchor — touching no terminal. It is the test suite's door, and yours when a launch looks wrong; `rotate` walks its whole order through it.
@@ -95,7 +97,9 @@ So **always name an anchor**, and name the one you actually know:
   launch before making a tab, and `--trust` records the answer for ONE directory, which is
   right for a checkout the orchestrator prepared itself and wrong for anything else. The
   record is the host's own, `~/.claude.json`, and writing to it is why the flag is explicit
-  rather than automatic.
+  rather than automatic. It never rewrites an entry that already says yes, and a record it
+  cannot read is said on stderr rather than launched past in silence; entries outlive their
+  directories — `trust prune` lists them, `--apply` removes them.
 - **A spawn never takes the operator's focus.** The tab is created unselected: someone is
   working in another tab, and a launch that pulls the window across interrupts them every
   time an agent starts.

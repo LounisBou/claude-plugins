@@ -532,6 +532,40 @@ check_status "a directory already recorded needs no flag" 0 \
 check "the record keeps owner-only permissions" "600" \
   "$(stat -f '%OLp' "$TRUSTF" 2>/dev/null || stat -c '%a' "$TRUSTF")"
 
+# A record that already says yes is not rewritten: the host writes this file too, and a
+# rewrite for nothing is a window in which one of the two loses. The fixture is written
+# compact on purpose — the launcher's own writer indents, so any rewrite changes the bytes.
+compact="{\"projects\":{\"$(cd "$UNTRUSTED" && pwd -P)\":{\"hasTrustDialogAccepted\":true}}}"
+printf '%s' "$compact" > "$TRUSTF"
+out=$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
+      bash "$AGENT" spawn --dir "$UNTRUSTED" --tier deep --trust 2>&1)
+check "--trust on a recorded directory does not rewrite the record" "$compact" "$(cat "$TRUSTF")"
+check "and the dry run says the record already held it" "1" "$(printf '%s' "$out" | grep -c '^trust=already$')"
+check "--trust on an unrecorded directory says it recorded it" "1" \
+  "$(printf '{"projects":{}}' > "$TRUSTF"; env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
+     bash "$AGENT" spawn --dir "$UNTRUSTED" --tier deep --trust 2>&1 | grep -c '^trust=recorded$')"
+# A record the launcher cannot read is a gate that cannot measure: it lets the launch
+# through AND says so, instead of launching past a question nobody will see.
+printf '{not json' > "$WORK/trust-garbage.json"
+out=$(env ORCHESTRATOR_TRUST_FILE="$WORK/trust-garbage.json" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
+      bash "$AGENT" spawn --dir "$UNTRUSTED" --tier deep 2>&1); code=$?
+check "an unreadable record lets the launch through" "0" "$code"
+check "and says so, naming the flag" "1|1" \
+  "$(printf '%s' "$out" | grep -c 'cannot be read')|$(printf '%s' "$out" | grep -c '^trust=unread$')"
+# Entries outlive their directories — a checkout per phase adds one per dispatch — and
+# nothing removed them. prune lists; only --apply writes; the kept entry keeps its shape.
+GONE="$WORK/gone-checkout"
+"$py" -c "import json,sys; json.dump({'projects':{sys.argv[1]:{'hasTrustDialogAccepted':True,'allowedTools':['x']},sys.argv[2]:{'hasTrustDialogAccepted':True}}}, open(sys.argv[3],'w'))" \
+  "$(cd "$UNTRUSTED" && pwd -P)" "$GONE" "$TRUSTF"
+before=$(cat "$TRUSTF")
+check "trust prune lists the gone entry, only it, and writes nothing" "$GONE|unchanged" \
+  "$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" bash "$AGENT" trust prune 2>/dev/null)|$([ "$(cat "$TRUSTF")" = "$before" ] && echo unchanged || echo rewritten)"
+check "trust prune --apply removes it and keeps the rest, owner-only" "1|0|600" \
+  "$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" bash "$AGENT" trust prune --apply >/dev/null 2>&1; \
+     "$py" -c "import json,sys; d=json.load(open(sys.argv[1]))['projects']; print('%d|%d' % (sys.argv[2] in d and d[sys.argv[2]].get('allowedTools')==['x'], sys.argv[3] in d))" "$TRUSTF" "$(cd "$UNTRUSTED" && pwd -P)" "$GONE")|$(stat -f '%OLp' "$TRUSTF" 2>/dev/null || stat -c '%a' "$TRUSTF")"
+check "trust accepts prune and refuses another action" "0|1" \
+  "$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" bash "$AGENT" trust prune >/dev/null 2>&1; echo $?)|$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" bash "$AGENT" trust wipe >/dev/null 2>&1; echo $?)"
+
 # The title guard, on the part of a title that holds still. The first character is an
 # activity glyph the session flips on its own — busy, then idle — and a rotation stands the
 # old agent down before spending ten seconds on its replacement, so a title captured before
