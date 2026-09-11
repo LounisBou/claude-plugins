@@ -1431,3 +1431,27 @@ model, the screen's last-lines function on a fixture with trailing blanks; one l
 document. What only the live round reads: a spawn on the light tier's former model with
 `--permission-mode auto` refused with the sentence and no tab left, the same with
 `acceptEdits` launched.
+
+## 44. An agent comes up with remote control off
+
+**0.26.0, after the review.** The operator read his remote client and found an agent in it:
+a session an orchestrator had spawned, with no `--remote-control` on its launch line, under
+remote control all the same. Measured on two sessions spawned through the launcher with a
+debug log: with nothing said, the session's log carries « Created session » from the bridge
+and its credentials — the host starts remote control for every new interactive session
+when nothing is set, on a rollout decided server-side that this account is in; with
+`--settings '{"remoteControlAtStartup":false}'` on the launch, the log carries no bridge
+line at all. Read in the host: the flag `--remote-control` wins over the setting, a project
+or local settings file can turn the setting off but not on, and the flag scope is among
+the sources read. The operator ruled: an agent has it stopped explicitly, a successor keeps it.
+
+So the launch carries the setting whenever it carries no `--remote-control`: every spawn
+that is not a successor, and a successor spawned with `--no-remote-control`. A successor
+spawned plainly carries `--remote-control '<its name>'` and no such setting, as §39 wrote.
+The dry run prints `remote_control=yes|no`, and the tab skill's `spawn` reference says an
+agent comes up with remote control off and only a successor under it.
+
+What the suite reads: a plain launch line carrying the setting and no `--remote-control`, a
+`--successor` line carrying the flag and not the setting, `--successor --no-remote-control`
+carrying the setting; the tab skill's literal. What only the operator's remote client and a
+debug log read: the bridge absent from an agent's log, present in a successor's.
