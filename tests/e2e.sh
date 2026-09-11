@@ -49,6 +49,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# Every checkout the round makes lands under the sandbox, so cleanup's rm -rf takes them.
+export ORCHESTRATOR_WORKSPACES="$SANDBOX/ws"
+WS="$ROOT/skills/orchestrator/scripts/workspace.sh"
+
 echo "== preflight =="
 [ "$(uname -s)" = "Darwin" ] || { echo "  not macOS: nothing to drive, skipping"; exit 0; }
 bash "$AGENT" list >/dev/null 2>&1
@@ -97,7 +101,13 @@ self=$(bash "$AGENT" list | head -1 | awk -F' \\| ' '{print $2}')
 # session stops on the host's workspace question and never reads its brief — while its
 # process runs, so from outside it looks launched. That is what this round was measuring
 # before the flag existed.
-spawn_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title e2e-probe --trust \
+# The probe runs in a checkout the script made from the round's repository, not in the
+# repository itself: that is the flow the method uses from 0.23.0, and the proof that
+# trust and the sandbox let a fresh root through (§30).
+WSDIR=$(bash "$WS" create "$SANDBOX/repo" e2e-probe --base main 2>/dev/null)
+check "a checkout was made for the probe" "$SANDBOX/ws/repo/e2e-probe" "$WSDIR"
+[ -n "$WSDIR" ] || exit 1
+spawn_out=$(bash "$AGENT" spawn --dir "$WSDIR" --tier "$tier" --title e2e-probe --trust \
       --prompt "Read $SANDBOX/brief.md and wait. Do not write anything." --right-of "$self" 2>&1)
 TTY=$(printf '%s' "$spawn_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
 check "spawn returns a tty" "yes" \
@@ -125,6 +135,10 @@ check "the session inherits a login shell's PATH" "1" \
 # live process carries. Everything else can be read from a dry run; this cannot.
 got=$(ps -t "${TTY#/dev/}" -o command= 2>/dev/null | grep -oE -- '--model [^ ]+' | awk '{print $2}')
 check "the live process carries the tier's model" "$bound" "$got"
+
+# The session's working directory is the checkout, read from the process, not assumed.
+check "the session runs in its checkout" "1" \
+  "$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | grep -c "^n$(cd "$WSDIR" && pwd -P)\$")"
 
 pos_self=$(bash "$AGENT" list | grep -n "$self" | cut -d: -f1)
 pos_new=$(bash "$AGENT" list | grep -n "$TTY" | cut -d: -f1)
@@ -209,6 +223,8 @@ check "its sibling pane survives the close" "1" "$(bash "$AGENT" list | grep -c 
 bash "$AGENT" close --tty "$SIB" >/dev/null 2>&1
 check "the sibling closes with the tab" "0" "$(bash "$AGENT" list | grep -c "$SIB")"
 TTY=""
+check "the probe's checkout is deleted after its close" "0" \
+  "$(bash "$WS" delete "$WSDIR" --discard >/dev/null 2>&1; [ -e "$WSDIR" ] && echo 1 || echo 0)"
 
 # The rest of the round rotates and stands down a live probe; the one above is gone.
 spawn_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title e2e-probe-2 --trust \
