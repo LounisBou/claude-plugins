@@ -648,6 +648,18 @@ check "a plain spawn never carries remote control" "0" \
   "$(shaped --title 'Implementer : x' | sed -n 's/^launch=//p' | grep -c -- '--remote-control')"
 check "a caller launched without a name cannot derive one" "1|1" \
   "$(succ "$PSNONAME" --successor >/dev/null 2>&1; echo $?)|$(succ "$PSNONAME" --successor | grep -c "needs the caller's session name")"
+# A caller that the OLDER launcher named carries the prompt in its own process line, so
+# the derivation copies a launch line instead of a name: measured live at 366 characters
+# on a session launched before the reorder. New sessions are clean; the transition is not,
+# and a name is refused when it stops reading as one.
+PSLONG="$WORK/ps-long.txt"
+printf '/dev/ttys900 /opt/x/host --name Orchestrator : %s --permission-mode auto\n' "$(printf 'x%.0s' $(seq 1 185))" > "$PSLONG"
+PSSHORT="$WORK/ps-short.txt"
+printf '/dev/ttys900 /opt/x/host --name Orchestrator : %s --permission-mode auto\n' "$(printf 'x%.0s' $(seq 1 25))" > "$PSSHORT"
+check "a derived name that is a launch line is refused, and the refusal counts it" "1|1" \
+  "$(succ "$PSLONG" --successor >/dev/null 2>&1; echo $?)|$(succ "$PSLONG" --successor | grep -c 'reads like a launch line of an older launcher (200 characters)')"
+check "a name of ordinary length still derives" "1" \
+  "$(succ "$PSSHORT" --successor | sed -n 's/^launch=//p' | grep -c -- "--name 'Orchestrator : $(printf 'x%.0s' $(seq 1 25))'")"
 # An orchestrator's title is a successor's, and a plain anchor lands after the chain: the
 # tab the operator found at the far right of his window, inheriting nothing (§39).
 check "an orchestrator's title on a plain anchor is refused" "1|1" \

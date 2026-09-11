@@ -49,6 +49,12 @@ TIERS = ("deep", "standard", "light")
 # nothing an orchestrator can recognise in a listing — a successor once came up as
 # `steward-successor` because the launcher took whatever was typed (§39).
 TITLE_SHAPE = re.compile(r"^[A-Z][^:]* : \S")
+# A DERIVED name longer than this, or holding a newline, is not a name. A session the
+# older launcher named carries the prompt in its own process line — the prompt sat after
+# `--name` until the reorder — so deriving from it copies a launch line: measured live at
+# 366 characters. New sessions are clean; the transition is not, and a successor must not
+# come up under a brief.
+DERIVED_NAME_MAX = 100
 
 
 def die(msg):
@@ -633,6 +639,12 @@ def cmd_spawn(argv):
             die("spawn: refused: --successor without --title needs the caller's session "
                 "name, and this session was launched without one; pass "
                 '--title "Orchestrator : <feature>"')
+        if len(title) > DERIVED_NAME_MAX or "\n" in title:
+            # Only the derivation is guarded: a title the caller TYPED is judged by the
+            # shape, which is the caller's own word for what it wants.
+            die("spawn: refused: the caller's session name reads like a launch line of an "
+                'older launcher (%d characters); pass --title "Orchestrator : <feature>"'
+                % len(title))
     elif not TITLE_SHAPE.match(title):
         die('spawn: refused: a title reads "<Role> : <what>", got %r '
             "(pass --title-free for a tab named otherwise)" % title)
