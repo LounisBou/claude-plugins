@@ -857,3 +857,40 @@ shows the checkout as `clean | unpushed` after a local commit. The live round la
 probe in a checkout the script made from the round's repository, with `spawn --trust`,
 reads that the session runs in it, and deletes it after the close: the proof that trust and
 the sandbox let a fresh root through.
+
+## 31. The trust record is the host's file too
+
+**0.23.1.** Three readings of the trust gate (§20), taken by the operator on a machine
+with twenty-seven entries, once a checkout per phase (§30) made the gate run at every
+dispatch.
+
+**A record that already says yes was rewritten anyway.** `spawn --trust` wrote the record
+without looking at what the gate had just read, so every dispatch into a trusted checkout
+rewrote a file the host rewrites itself — a window, for nothing, in which one of the two
+loses an entry. The rule now: when the reading is « trusted », nothing is written, whatever
+the flag says; the flag records an answer, it does not repeat one.
+
+**A record the launcher cannot read launched past the question in silence.** The gate
+returns « unknown » when the file is unreadable, and the launcher treated unknown as yes:
+the pre-0.4.2 failure — a session parked on the trust question, looking launched from
+outside — back through a side door. The gate cannot measure there, so it lets the launch
+through and says so on stderr, naming the flag and the alternative; `--trust` on an
+unreadable record still refuses to write blind, as before. The dry run prints the reading
+(`trust=already|recorded|unread`) so the suite reads all three without a live app.
+
+**Entries outlive their directories.** Nothing removed a trust entry when its checkout
+went, and a checkout per phase adds one per dispatch. `trust prune` lists the entries whose
+directory no longer exists; `--apply` removes them, with the writer's own temporary file,
+replace and owner-only mode, and keeps every other entry byte for byte — an entry for a
+directory that is gone holds nothing the host can use, and the rest is the host's. Listing
+is the default because the file is shared: a write is a decision, and the orchestrator
+takes it by typing the flag. The script that makes checkouts (§30) still never touches
+this file; pruning is the launcher's, beside the writer.
+
+What the suite reads, on the fixture record it already makes: `--trust` on a recorded
+directory leaves the file byte for byte and the dry run says `already`; on an unrecorded
+one it says `recorded`; an unreadable record lets the dry run through with exit 0 and a
+stderr line that says it cannot be read; `trust prune` prints exactly the entry whose
+directory is gone and writes nothing; `--apply` removes it, keeps the other entry with its
+own fields, and leaves the file owner-only; `trust prune` is accepted and any other action
+refused.
