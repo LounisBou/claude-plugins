@@ -25,6 +25,18 @@ say()  { printf '  %s\n' "$*"; }
 step() { printf '\n%s\n' "$*"; }
 run()  { if [ "$DRY" = "1" ]; then printf '  [dry-run] %s\n' "$*"; else eval "$@"; fi; }
 
+# A stored command may spell the home as `$HOME`, `${HOME}` or `~` — a settings file kept
+# in a repository and meant for more than one machine does — while TAP_DEST is expanded.
+# The comparison is made on the expanded spelling; what is stored is never rewritten (§33).
+normalise_home() {
+  case "$1" in
+    '$HOME/'*)   printf '%s' "$HOME/${1#\$HOME/}" ;;
+    '${HOME}/'*) printf '%s' "$HOME/${1#\$\{HOME\}/}" ;;
+    '~/'*)       printf '%s' "$HOME/${1#\~/}" ;;
+    *)           printf '%s' "$1" ;;
+  esac
+}
+
 # --- prerequisites ----------------------------------------------------------
 
 step "Prerequisites"
@@ -112,12 +124,14 @@ else
   current=""
 fi
 
+stored="$current"
+current=$(normalise_home "$stored")
 case "$current" in
   "$TAP_DEST"|"$TAP_DEST "*)
-    say "already wired: $current"
+    say "already wired: $stored"
     ;;
   *)
-    if [ -n "$current" ]; then new="$TAP_DEST $current"; else new="$TAP_DEST"; fi
+    if [ -n "$stored" ]; then new="$TAP_DEST $stored"; else new="$TAP_DEST"; fi
     if [ "$DRY" = "1" ]; then
       say "[dry-run] statusLine.command → $new"
     else

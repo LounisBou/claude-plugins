@@ -18,8 +18,21 @@ DRY=0
 
 say() { printf '  %s\n' "$*"; }
 
+# A stored command may spell the home as `$HOME`, `${HOME}` or `~` — a settings file kept
+# in a repository and meant for more than one machine does — while TAP_DEST is expanded.
+# The comparison is made on the expanded spelling; what is stored is never rewritten (§33).
+normalise_home() {
+  case "$1" in
+    '$HOME/'*)   printf '%s' "$HOME/${1#\$HOME/}" ;;
+    '${HOME}/'*) printf '%s' "$HOME/${1#\$\{HOME\}/}" ;;
+    '~/'*)       printf '%s' "$HOME/${1#\~/}" ;;
+    *)           printf '%s' "$1" ;;
+  esac
+}
+
 if [ -f "$SETTINGS" ]; then
   current=$(jq -r '.statusLine.command // ""' "$SETTINGS" 2>/dev/null || echo "")
+  current=$(normalise_home "$current")
   case "$current" in
     "$TAP_DEST"|"$TAP_DEST "*)
       if [ "$DRY" = "1" ]; then

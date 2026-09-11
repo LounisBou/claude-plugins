@@ -917,6 +917,27 @@ check "dry-run creates no state directory" "none" "$([ -d "$H3/.claude/claude-or
 check "dry-run writes no tier map" "none" \
   "$([ -f "$H3/.claude/claude-orchestrator/models.json" ] && echo written || echo none)"
 
+# A portable settings file spells the home as `$HOME` or `~`, and the host expands it when
+# it runs the line; the installer compared the stored command to its expanded path and read
+# such a file as unwired (live on the operator's machine, 11 September): a second run would
+# wrap the tap twice, and uninstall would leave it. The fixture is wired by the installer
+# itself, then rewritten the portable way, as the operator's configuration commit did.
+for spelling in '$HOME' '~'; do
+  H4="$WORK/home4"; rm -rf "$H4"; mkdir -p "$H4/.claude"
+  printf '{"statusLine":{"type":"command","command":"/x/bar.sh","padding":0}}\n' > "$H4/.claude/settings.json"
+  env HOME="$H4" bash "$ROOT/install.sh" >/dev/null 2>&1
+  portable="$spelling/.claude/claude-orchestrator/statusline-tap.sh $spelling/.claude/statusbar/statusline.sh"
+  jq --arg cmd "$portable" '.statusLine.command = $cmd' "$H4/.claude/settings.json" > "$H4/settings.tmp" \
+    && mv "$H4/settings.tmp" "$H4/.claude/settings.json"
+  before=$(cat "$H4/.claude/settings.json")
+  out=$(env HOME="$H4" bash "$ROOT/install.sh" 2>&1)
+  check "a command spelled with $spelling is read as already wired" "1" "$(printf '%s' "$out" | grep -c 'already wired')"
+  check "and the settings file keeps its bytes ($spelling)" "$before" "$(cat "$H4/.claude/settings.json")"
+  env HOME="$H4" bash "$ROOT/uninstall.sh" >/dev/null 2>&1
+  check "uninstall restores through the $spelling spelling" '{"type":"command","command":"/x/bar.sh","padding":0}' \
+    "$(jq -c '.statusLine' "$H4/.claude/settings.json")"
+done
+
 echo "== iterm script (argument validation, no automation) =="
 
 ITERM="$ROOT/skills/iterm-agents/scripts/iterm-agent.sh"
