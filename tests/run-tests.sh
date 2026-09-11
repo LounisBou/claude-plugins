@@ -748,16 +748,71 @@ D5TITLE="it's not shaped"
 check "the shape refusal always quotes with single quotes" "1" \
   "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "$D5TITLE" --prompt p 2>&1 | grep -c "got '$D5TITLE'")"
 
-# Every launch used to carry the setting that enables all of the project's servers, so a
-# fresh session never parked on the host's question about them. Measured on the operator's
-# machine, that loaded a browser driver and a devtools bridge into every agent — about
-# seventy megabytes each, used by none (§42). The launch carries --strict-mcp-config
-# instead, so the host loads no project server and asks nothing; --mcp puts the setting
-# back for the agent that drives a browser, and for nothing else.
-check "a launch loads no project server, and the dry run says so" "1|0|1" \
-  "$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- '--strict-mcp-config')|$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- 'enableAllProjectMcpServers')|$(shaped --title 'Agent : x' | grep -c '^mcp=no$')"
-check "--mcp puts the project's servers back and drops the strict flag" "1|0|1" \
-  "$(shaped --title 'Agent : x' --mcp | sed -n 's/^launch=//p' | grep -c -- '--settings .{"enableAllProjectMcpServers":true}.')|$(shaped --title 'Agent : x' --mcp | sed -n 's/^launch=//p' | grep -c -- '--strict-mcp-config')|$(shaped --title 'Agent : x' --mcp | grep -c '^mcp=yes$')"
+# An agent's servers are CHOSEN, from a catalogue the operator owns (§42). Every launch
+# used to carry the setting that enables all of the project's servers, so a fresh session
+# never parked on the host's question about them; measured, that loaded a browser driver
+# and a devtools bridge into every agent, about seventy megabytes each, used by none. The
+# first answer — the strict flag on every launch, an all-or-nothing flag to put the setting
+# back — was measured before it shipped and did not hold either: the setting never governed
+# those two processes, and the strict flag drops every server of EVERY scope, so an agent
+# under it had neither a documentation server nor a connector whatever its brief needed.
+# So the launch is strict AND carries a configuration file written for that session, from
+# named definitions the operator keeps in the catalogue with a default set.
+CAT="$WORK/mcp-catalogue.json"
+printf '{"servers":{"a":{"command":"a-cmd"},"b":{"command":"b-cmd"}},"default":["a"]}\n' > "$CAT"
+NOCAT="$WORK/mcp-absent.json"; rm -f "$NOCAT"
+mcpd() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$CAT" \
+  bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' "$@" 2>&1; }
+nocat() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$NOCAT" \
+  bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' "$@" 2>&1; }
+# The file the launch names is read back, not assumed: the launch line says a path, the
+# content says which servers the session will actually load.
+mcp_keys() { "$py" -c "
+import json, sys
+print(','.join(json.load(open(sys.argv[1]))['mcpServers'].keys()))" "$1"; }
+mcp_file_of() { printf '%s' "$1" | sed -n 's/^mcp_file=//p'; }
+
+check "the default set is loaded, from a file the launch names" "1|1|a|a" \
+  "$(mcpd | sed -n 's/^launch=//p' | grep -c -- '--strict-mcp-config')|$(mcpd | sed -n 's/^launch=//p' | grep -c -- '--mcp-config ')|$(mcpd | sed -n 's/^mcp=//p')|$(mcp_keys "$(mcp_file_of "$(mcpd)")")"
+check "--mcp adds a catalogued server for the agent that needs it" "a,b|a,b" \
+  "$(mcpd --mcp b | sed -n 's/^mcp=//p')|$(mcp_keys "$(mcp_file_of "$(mcpd --mcp b)")")"
+check "several names travel comma-separated or as repeated options, each once" "a,b|a,b|a,b|a,b" \
+  "$(mcpd --mcp a,b | sed -n 's/^mcp=//p')|$(mcp_keys "$(mcp_file_of "$(mcpd --mcp a,b)")")|$(mcpd --mcp a --mcp b | sed -n 's/^mcp=//p')|$(mcp_keys "$(mcp_file_of "$(mcpd --mcp a --mcp b)")")"
+check "--mcp none loads nothing, and writes no file" "none|none|0" \
+  "$(mcpd --mcp none | sed -n 's/^mcp=//p')|$(mcpd --mcp none | sed -n 's/^mcp_file=//p')|$(mcpd --mcp none | sed -n 's/^launch=//p' | grep -c -- '--mcp-config')"
+check "--mcp none among others still loads nothing" "none" \
+  "$(mcpd --mcp b --mcp none | sed -n 's/^mcp=//p')"
+# Asked for nothing, so nothing is needed to give it: `none` needs no catalogue, and says
+# nothing on stderr either — that line is for a caller who said nothing at all.
+check "--mcp none needs no catalogue, and says nothing" "0|0|none|" \
+  "$(nocat --mcp none >/dev/null 2>&1; echo $?)|$(nocat --mcp none | sed -n 's/^launch=//p' | grep -c -- '--mcp-config')|$(nocat --mcp none | sed -n 's/^mcp=//p')|$(nocat --mcp none | grep 'no server catalogue' || true)"
+# A name the catalogue does not hold is a typo or a server the operator has not written
+# yet; either way the agent would come up without it and nobody would know until it
+# reached for a tool. Refused before a tab exists, with the names there are.
+check "a name the catalogue does not hold is refused, with the names it does" "1|1" \
+  "$(mcpd --mcp c >/dev/null 2>&1; echo $?)|$(mcpd --mcp c | grep -c -- "--mcp 'c' is not in the catalogue $CAT (names: a, b)")"
+check "--mcp with no catalogue is refused, and names the installer" "1|1" \
+  "$(nocat --mcp b >/dev/null 2>&1; echo $?)|$(nocat --mcp b | grep -c -- "--mcp needs a server catalogue at $NOCAT; the installer creates one")"
+# No catalogue and nothing asked is not a refusal: the launch is strict and loads nothing,
+# which is what a machine without a catalogue can honestly give. It says so on stderr.
+check "no catalogue and no --mcp: strict, no file, and a line on stderr" "1|0|none|1" \
+  "$(nocat | sed -n 's/^launch=//p' | grep -c -- '--strict-mcp-config')|$(nocat | sed -n 's/^launch=//p' | grep -c -- '--mcp-config')|$(nocat | sed -n 's/^mcp=//p')|$(nocat | grep -c "^spawn: no server catalogue at $NOCAT: the session loads no server$")"
+# A catalogue that does not read as one is not an empty catalogue: reading the two alike
+# would send every agent out with no server while the caller believes it named some — the
+# same reasoning the tier map's own refusal was written on.
+BADCAT="$WORK/mcp-bad.json"; printf '["a","b"]\n' > "$BADCAT"
+check "a catalogue that is not one is refused, and the refusal names the shape" "1|1" \
+  "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADCAT" bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' >/dev/null 2>&1; echo $?)|$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADCAT" bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' 2>&1 | grep -c -- "$BADCAT does not read as a server catalogue (a \"servers\" object and a \"default\" list)")"
+# The host's --mcp-config takes SEVERAL values, so whatever follows it is read as another
+# file: the prompt placed there was read as one (« MCP config file not found: <the
+# prompt> »). The pair is closed by --permission-mode, which takes exactly one.
+check "the server file is followed by the decision mode, never by the prompt" "1|0" \
+  "$(mcpd --prompt p | sed -n 's/^launch=//p' | grep -cE -- '--mcp-config [^ ]+ --permission-mode ')|$(mcpd --prompt p | sed -n 's/^launch=//p' | grep -c -- 'enableAllProjectMcpServers')"
+check "the setting that enabled every project server is in no launch" "0|0|0" \
+  "$(mcpd | sed -n 's/^launch=//p' | grep -c -- 'enableAllProjectMcpServers')|$(mcpd --mcp b | sed -n 's/^launch=//p' | grep -c -- 'enableAllProjectMcpServers')|$(nocat | sed -n 's/^launch=//p' | grep -c -- 'enableAllProjectMcpServers')"
+# The file is written under the state directory, beside the prompt file and named like it.
+check "the server file lives beside the prompt file, named like it" "yes|yes" \
+  "$(f=$(mcp_file_of "$(mcpd)"); [ "${f#"$ISTATE"/prompts/mcp-}" != "$f" ] && echo yes || echo "$f")|$(f=$(mcp_file_of "$(mcpd)"); [ "${f%.json}" != "$f" ] && echo yes || echo "$f")"
 
 # A successor carries the PREDECESSOR's name, read from the process table, and comes up
 # under remote control: the operator drives his orchestrators from the host's remote
@@ -1060,12 +1115,12 @@ check "rotate forwards --trust to the spawn, which records it" "true" \
   "$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
       bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$ROTDIR" --title "Agent : rotated" --tier deep --trust >/dev/null 2>&1; \
      "$py" -c "import json,os,sys; d=json.load(open(sys.argv[1])); print(str(d['projects'].get(os.path.realpath(sys.argv[2]),{}).get('hasTrustDialogAccepted')).lower())" "$TRUSTF" "$ROTDIR")"
-# The rotation forwards --mcp too: an agent that drives a browser is replaced by one that
-# still can. It is not in the refused list below, and the dry run is where the forwarding
-# is read (§42).
-check "rotate forwards --mcp to the spawn" "1" \
-  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
-      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" --mcp 2>&1 | grep -c '^mcp=yes$')"
+# The rotation forwards --mcp too: an agent that needed a server is replaced by one that
+# still has it. It is not in the refused list below, and the dry run is where the
+# forwarding is read (§42) — with the name, since the flag carries one now.
+check "rotate forwards --mcp to the spawn, with its name" "a,b" \
+  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" ORCHESTRATOR_MCP_CATALOGUE="$CAT" \
+      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" --mcp b 2>&1 | sed -n 's/^mcp=//p')"
 # A rotation replaces an agent with a titled agent; a successor, an escape from the title
 # shape, or a plain agent stripped of remote control are none of that — each is refused
 # before the replacement is spawned.
@@ -1342,10 +1397,21 @@ check "previous statusLine saved" '{"type":"command","command":"/x/bar.sh","padd
 check "tap copied and executable" "yes" "$([ -x "$TAPDEST" ] && echo yes || echo no)"
 check "tier map created with three empty bindings" '{"deep":"","standard":"","light":""}' \
   "$(jq -c . "$H/.claude/claude-orchestrator/models.json")"
+# The catalogue sits beside the tier map and is empty on a fresh install: the operator owns
+# what his machine offers, and a plugin that guessed server definitions would hand every
+# agent something nobody asked for (§42).
+check "server catalogue created empty" '{"servers":{},"default":[]}' \
+  "$(jq -c . "$H/.claude/claude-orchestrator/mcp.json")"
 printf '{"deep":"a-model","standard":"","light":""}\n' > "$H/.claude/claude-orchestrator/models.json"
+printf '{"servers":{"a":{"command":"a-cmd"}},"default":["a"]}\n' > "$H/.claude/claude-orchestrator/mcp.json"
+catbefore=$(cat "$H/.claude/claude-orchestrator/mcp.json")
 env HOME="$H" bash "$ROOT/install.sh" >/dev/null 2>&1
 check "an existing tier map is never overwritten" "a-model" \
   "$(jq -r .deep "$H/.claude/claude-orchestrator/models.json")"
+check "an existing catalogue is left byte for byte" "$catbefore" \
+  "$(cat "$H/.claude/claude-orchestrator/mcp.json")"
+check "the installer says which of the two it found" "1|1" \
+  "$(env HOME="$H" bash "$ROOT/install.sh" 2>&1 | grep -c "server catalogue already present: $H/.claude/claude-orchestrator/mcp.json$")|$(env HOME="$H" bash "$ROOT/install.sh" 2>&1 | grep -c 'tier map already present')"
 before=$(cat "$H/.claude/settings.json")
 env HOME="$H" bash "$ROOT/install.sh" >/dev/null 2>&1
 check "second run is a no-op" "$before" "$(cat "$H/.claude/settings.json")"
@@ -1371,6 +1437,8 @@ check "dry-run changes nothing" "/x/bar.sh" "$(jq -r '.statusLine.command' "$H3/
 check "dry-run creates no state directory" "none" "$([ -d "$H3/.claude/claude-orchestrator" ] && echo created || echo none)"
 check "dry-run writes no tier map" "none" \
   "$([ -f "$H3/.claude/claude-orchestrator/models.json" ] && echo written || echo none)"
+check "dry-run writes no catalogue, and says it would create one" "none|1" \
+  "$([ -f "$H3/.claude/claude-orchestrator/mcp.json" ] && echo written || echo none)|$(env HOME="$H3" bash "$ROOT/install.sh" --dry-run 2>&1 | grep -c "\[dry-run\] server catalogue created: $H3/.claude/claude-orchestrator/mcp.json$")"
 
 # A portable settings file spells the home as `$HOME` or `~`, and the host expands it when
 # it runs the line; the installer compared the stored command to its expanded path and read

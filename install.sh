@@ -75,6 +75,22 @@ fi
 say "bind deep, standard and light there to the identifiers this host accepts;"
 say "an unbound tier leaves the choice to the host."
 
+# The server catalogue, beside the tier map and owned the same way: the named server
+# definitions this machine offers, and the default set every agent gets. Empty on a fresh
+# install — what a machine offers is the operator's to say, and a plugin that guessed a
+# definition would hand every agent something nobody asked for.
+MCP_CATALOGUE="$STATE_DIR/mcp.json"
+if [ "$DRY" = "1" ]; then
+  say "[dry-run] server catalogue created: $MCP_CATALOGUE"
+elif [ -f "$MCP_CATALOGUE" ]; then
+  say "server catalogue already present: $MCP_CATALOGUE"
+else
+  printf '{"servers": {}, "default": []}\n' > "$MCP_CATALOGUE"
+  say "server catalogue created: $MCP_CATALOGUE"
+fi
+say "name there the servers this machine offers, in the host's own shape, and list the"
+say "elementary ones in default; an agent gets that set, plus what its spawn line adds."
+
 # The environment the tab tooling needs. It drives the terminal through the app's own
 # API rather than by typing into a shell, which is where every expensive launch bug came
 # from. A private environment rather than the operator's interpreter: recent macOS

@@ -41,6 +41,11 @@ SELF_ID = os.environ.get("ORCHESTRATOR_SELF_ID", "")
 # profile files and not the interactive ones: the environment without the prompt.
 LOGIN_SHELL = os.environ.get("ORCHESTRATOR_LOGIN_SHELL") or os.environ.get("SHELL") or "/bin/zsh"
 MODELS_MAP = os.environ.get("ORCHESTRATOR_MODELS_MAP") or os.path.join(STATE_DIR, "models.json")
+# The operator's server catalogue, beside the tier map and owned the same way: named
+# definitions in the host's own shape, and a `default` list of the elementary ones every
+# agent gets. The plugin writes an empty one at install and never guesses a definition —
+# what a machine offers is the operator's to say (§42).
+MCP_CATALOGUE = os.environ.get("ORCHESTRATOR_MCP_CATALOGUE") or os.path.join(STATE_DIR, "mcp.json")
 SPAWN_TIMEOUT = int(os.environ.get("ORCHESTRATOR_SPAWN_TIMEOUT", "30"))
 DRY_RUN = bool(os.environ.get("ORCHESTRATOR_DRY_RUN"))
 TIERS = ("deep", "standard", "light")
@@ -61,6 +66,75 @@ TITLE_SHAPE = re.compile(r"^(Orch|Agent) : .{1,25}\Z")
 def die(msg):
     print("ERROR: " + msg, file=sys.stderr)
     sys.exit(1)
+
+
+def read_catalogue():
+    """The catalogue, or None when there is no file.
+
+    A file that does not read as one is NOT an empty catalogue: reading the two alike would
+    send every agent out with no server while the caller believes it named some — the same
+    reasoning `resolve_tier` refuses an unreadable tier map on."""
+    if not os.path.isfile(MCP_CATALOGUE):
+        return None
+    try:
+        with open(MCP_CATALOGUE) as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict) or not isinstance(data.get("servers"), dict) \
+                or not isinstance(data.get("default"), list):
+            raise ValueError("shape")
+    except Exception:
+        die('spawn: refused: %s does not read as a server catalogue (a "servers" object '
+            'and a "default" list)' % MCP_CATALOGUE)
+    return data
+
+
+def select_servers(asked, catalogue):
+    """The names this session gets: the catalogue's default set plus every name asked for,
+    in catalogue order and each once. `none` anywhere selects nothing — an agent that needs
+    no server should not carry the default set to get none of it wrong.
+
+    A refusal here happens before any file is written and before any tab exists: a name the
+    catalogue does not hold is a typo or a server the operator has not written yet, and
+    either way the agent would come up without it and nobody would know until it reached
+    for a tool."""
+    names = []
+    for value in asked:
+        names += [n.strip() for n in value.split(",") if n.strip()]
+    if "none" in names:
+        # Asked for nothing, so nothing is needed to give it: no catalogue is required and
+        # no line is printed — the caller said what it wants.
+        return []
+    if catalogue is None:
+        if names:
+            die("spawn: refused: --mcp needs a server catalogue at %s; the installer "
+                "creates one" % MCP_CATALOGUE)
+        # A caller that said nothing, on a machine that offers nothing: the launch goes
+        # through and says so, rather than deciding in silence (§31).
+        print("spawn: no server catalogue at %s: the session loads no server"
+              % MCP_CATALOGUE, file=sys.stderr)
+        return []
+    servers = catalogue["servers"]
+    for name in names:
+        if name not in servers:
+            die("spawn: refused: --mcp '%s' is not in the catalogue %s (names: %s)"
+                % (name, MCP_CATALOGUE, ", ".join(servers) or "none"))
+    wanted = set(catalogue["default"]) | set(names)
+    return [name for name in servers if name in wanted]
+
+
+def write_mcp_file(names, catalogue, title):
+    """The selected definitions, in a file of this session's own, beside its prompt file.
+
+    Inline JSON would do the same job and cost the process line its length: the host's
+    `--mcp-config` takes SEVERAL values, so whatever follows it is read as another file —
+    the prompt placed there was read as one — and the line `ps` shows is where a successor
+    reads its predecessor's name from (§24)."""
+    os.makedirs(PROMPTS_DIR, exist_ok=True)
+    safe = re.sub(r"[^A-Za-z0-9._-]", "-", title)[:40] or "agent"
+    path = os.path.join(PROMPTS_DIR, "mcp-%s-%d.json" % (safe, int(time.time() * 1000)))
+    with open(path, "w") as fh:
+        json.dump({"mcpServers": {n: catalogue["servers"][n] for n in names}}, fh, indent=2)
+    return path
 
 
 def need_iterm2():
@@ -461,7 +535,7 @@ def write_prompt_file(prompt, title):
     return path
 
 
-def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp=False):
+def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_file=""):
     """The command iTerm2 runs in the new tab. It is HANDED to the app, never typed, so
     its length and its bytes stop being a hazard. No model argument at all when neither a
     tier nor an explicit identifier says which: the host's own default is the right
@@ -480,18 +554,17 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp=
     cli = [shq(cli_path)]
     if model:
         cli += ["--model", shq(model)]
+    # The launch is strict ALWAYS, and hands the session a configuration file of its own
+    # when it has servers to load (§42). Strict alone would leave an agent with no server
+    # of any scope — not the project's, but not the operator's or the account's either,
+    # which is what the first answer to this section got wrong; the file puts back exactly
+    # the ones the orchestrator chose. The pair goes BEFORE --permission-mode: the host's
+    # --mcp-config takes several values, so whatever follows it is read as another file,
+    # and the prompt placed there was read as one.
+    cli += ["--strict-mcp-config"]
+    if mcp_file:
+        cli += ["--mcp-config", shq(mcp_file)]
     cli += ["--permission-mode", shq(mode)]
-    # The host asks a fresh session whether to load the project's servers, and a session
-    # parked on that question never reads its brief — so every launch carried the setting
-    # that enables them all. Measured on the operator's machine, that loaded a browser
-    # driver and a devtools bridge into every agent, about seventy megabytes each, used by
-    # none (§42). The strict flag answers the question the other way: no project server, no
-    # question. `--mcp` puts the setting back for the agent that drives a browser, and for
-    # nothing else.
-    if mcp:
-        cli += ["--settings", shq('{"enableAllProjectMcpServers":true}')]
-    else:
-        cli += ["--strict-mcp-config"]
     # The prompt goes BEFORE the options that follow it, and --name is the LAST of them or
     # next to last. `ps` shows a command line with the shell's quoting gone, so whatever
     # follows --name runs into the name: with the prompt there, every spawned session's
@@ -604,7 +677,7 @@ def cmd_spawn(argv):
     p.add_argument("--no-verify", dest="verify", action="store_false", default=True)
     p.add_argument("--trust", action="store_true", default=False)
     p.add_argument("--successor", action="store_true", default=False)
-    p.add_argument("--mcp", action="store_true", default=False)
+    p.add_argument("--mcp", action="append", default=[])
     args, unknown = p.parse_known_args(argv)
     if unknown:
         die("spawn: unknown option %s" % unknown[0])
@@ -722,6 +795,12 @@ def cmd_spawn(argv):
             "its workspace question and never read its brief. Pass --trust for a checkout "
             "you prepared, or open the directory once yourself." % os.path.realpath(args.dir))
 
+    # After the trust check and before the prompt file, in the order a refusal wants: the
+    # catalogue and the names are read first, so a refusal on either leaves no file behind.
+    catalogue = read_catalogue()
+    servers = select_servers(args.mcp, catalogue)
+    mcp_file = write_mcp_file(servers, catalogue, title) if servers else ""
+
     prompt_file = args.prompt_file
     if prompt_file and not os.path.isfile(prompt_file):
         die("spawn: prompt file not found: %s" % prompt_file)
@@ -730,7 +809,7 @@ def cmd_spawn(argv):
 
     remote_control = title if (args.successor and args.remote_control) else ""
     launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control,
-                           args.mcp)
+                           mcp_file)
 
     if DRY_RUN:
         print("launch=%s" % launch)
@@ -741,7 +820,8 @@ def cmd_spawn(argv):
         print("successor=%s" % ("yes" if args.successor else "no"))
         print("name=%s" % title)
         print("title_free=%s" % ("yes" if args.title_free else "no"))
-        print("mcp=%s" % ("yes" if args.mcp else "no"))
+        print("mcp=%s" % (",".join(servers) or "none"))
+        print("mcp_file=%s" % (mcp_file or "none"))
         print("program=%s -l <launch-file>" % LOGIN_SHELL)
         return
 
