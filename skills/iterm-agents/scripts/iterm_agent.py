@@ -44,6 +44,17 @@ MODELS_MAP = os.environ.get("ORCHESTRATOR_MODELS_MAP") or os.path.join(STATE_DIR
 SPAWN_TIMEOUT = int(os.environ.get("ORCHESTRATOR_SPAWN_TIMEOUT", "30"))
 DRY_RUN = bool(os.environ.get("ORCHESTRATOR_DRY_RUN"))
 TIERS = ("deep", "standard", "light")
+# A title reads `<Role> : <what>`: a capital, anything without a colon, a spaced colon,
+# then something. It is the session's NAME (§24), so it is the operator's format or it is
+# nothing an orchestrator can recognise in a listing — a successor once came up as
+# `steward-successor` because the launcher took whatever was typed (§39).
+TITLE_SHAPE = re.compile(r"^[A-Z][^:]* : \S")
+# A DERIVED name longer than this, or holding a newline, is not a name. A session the
+# older launcher named carries the prompt in its own process line — the prompt sat after
+# `--name` until the reorder — so deriving from it copies a launch line: measured live at
+# 366 characters. New sessions are clean; the transition is not, and a successor must not
+# come up under a brief.
+DERIVED_NAME_MAX = 100
 
 
 def die(msg):
@@ -129,6 +140,45 @@ def cli_pid_on_tty(tty):
         parts = line.strip().split(None, 1)
         if len(parts) == 2 and re.match(r"^(\S*/)?" + re.escape(HOST_CLI) + r"(\s|$)", parts[1]):
             return parts[0]
+    return None
+
+
+def session_name_on(tty):
+    """The name the host session on a tty was launched with (`--name`), or None.
+
+    The tab title is the host's summary of the conversation and it is rewritten as the
+    session works: a listing showing one of those named nothing an orchestrator could
+    recognise, which is how a stranger's tab was taken for one's own (§38). The name is
+    fixed at launch, and the API does not carry it, so it is read from the process table.
+
+    ORCHESTRATOR_PS_TABLE names a file that stands in for `ps`, one line per process,
+    `<tty> <command>`. The suite sets it; a live run never does.
+
+    `ps` hands back a flat command line, so a name with spaces is read up to the next
+    option — which is what the host was given and what it shows."""
+    short = tty.replace("/dev/", "")
+    table = os.environ.get("ORCHESTRATOR_PS_TABLE", "")
+    try:
+        if table:
+            with open(table) as fh:
+                rows = [l.strip().split(None, 1) for l in fh if l.strip()]
+            commands = [r[1] for r in rows if len(r) == 2 and r[0].replace("/dev/", "") == short]
+        else:
+            commands = subprocess.run(["ps", "-t", short, "-o", "command="],
+                                      capture_output=True, text=True, timeout=10).stdout.splitlines()
+    except Exception:
+        return None
+    for command in commands:
+        words = command.split()
+        if "--name" not in words:
+            continue
+        name = []
+        for word in words[words.index("--name") + 1:]:
+            if word.startswith("--"):
+                break
+            name.append(word)
+        if name:
+            return " ".join(name)
     return None
 
 
@@ -235,6 +285,28 @@ def chain_drop_tab(tab_id):
             chain_write(tty, kept)
 
 
+async def move_is_owned(app, tty, own):
+    """Whether the tab on `tty` is the caller's own tab or one its session launched.
+
+    Matched on the TAB id, never on the tty: a tty is recycled minutes after a close and
+    the chain file named after it outlives its occupant, so an entry whose tty now belongs
+    to a stranger's tab must not make that tab movable — the reading §26 already gave the
+    anchor. The owner is the session sitting on the caller's tty right now, read from the
+    app, which is the only thing that says who is there. A caller whose own tab cannot be
+    read owns nothing here: moving a stranger's tab is the harm this guard exists for, and
+    `--force` is how the operator overrides it."""
+    if not own:
+        return False
+    if tty == own:
+        return True
+    _, tab, _ = await find_tab(app, tty)
+    _, _, own_sess = await find_tab(app, own)
+    if tab is None or own_sess is None:
+        return False
+    mine = {e["tab_id"] for e in chain_owned(chain_read(own), own_sess.session_id)}
+    return tab.tab_id in mine
+
+
 async def chain_anchor(app, own_tty):
     """The tty of the last agent still open in the orchestrator's window, or None.
 
@@ -334,21 +406,39 @@ async def anchor_position(app, anchor, side):
 
 # --- subcommands -----------------------------------------------------------------
 
+def row_for(w, t, tty, title, name, is_self, hidden):
+    """One listing row, formatted and nothing else, so its shape is read without an app.
+
+    The session name sits beside the tab title because they answer different questions:
+    the title says what the session is doing right now, the name says who it is. A caller
+    launched by hand carries no name, and `(host default)` says that rather than leaving
+    a column an orchestrator would read as a name."""
+    row = "w%d/t%d | %s | %s | %s" % (w, t, tty, title, name or "(host default)")
+    if is_self:
+        row += " | self"
+    if hidden:
+        row += " | hidden"
+    return row
+
+
 async def list_rows(app):
     """One row per session, hidden panes included and marked. A pane behind a maximized
     sibling is what the host extension's review views make of an agent's tab; a listing
-    that dropped it made a live agent unfindable and unclosable (§25)."""
+    that dropped it made a live agent unfindable and unclosable (§25).
+
+    The caller's own row is marked `self`, read the way `--right-of self` reads it, so an
+    orchestrator knows which tab is its own BEFORE it anchors, moves or closes anything —
+    the reading a layout repair once went without (§38)."""
+    own = self_tty() or ""
     lines = []
     for wi, w in enumerate(app.windows, 1):
         for ti, t in enumerate(w.tabs, 1):
             visible = {s.session_id for s in t.sessions}
             for s in t.all_sessions:
                 tty = await s.async_get_variable("tty")
-                name = await s.async_get_variable("autoName") or ""
-                row = "w%d/t%d | %s | %s" % (wi, ti, tty, name)
-                if s.session_id not in visible:
-                    row += " | hidden"
-                lines.append(row)
+                title = await s.async_get_variable("autoName") or ""
+                lines.append(row_for(wi, ti, tty, title, session_name_on(tty),
+                                     bool(own) and tty == own, s.session_id not in visible))
     return lines
 
 
@@ -370,7 +460,7 @@ def write_prompt_file(prompt, title):
     return path
 
 
-def build_command(dir_, title, model, mode, prompt_file):
+def build_command(dir_, title, model, mode, prompt_file, remote_control=""):
     """The command iTerm2 runs in the new tab. It is HANDED to the app, never typed, so
     its length and its bytes stop being a hazard. No model argument at all when neither a
     tier nor an explicit identifier says which: the host's own default is the right
@@ -390,13 +480,24 @@ def build_command(dir_, title, model, mode, prompt_file):
     cli = [shq(cli_path)]
     if model:
         cli += ["--model", shq(model)]
+    cli += ["--permission-mode", shq(mode), "--settings", shq(settings)]
+    # The prompt goes BEFORE the options that follow it, and --name is the LAST of them or
+    # next to last. `ps` shows a command line with the shell's quoting gone, so whatever
+    # follows --name runs into the name: with the prompt there, every spawned session's
+    # name read the title followed by the whole brief, and the listing that was meant to
+    # say who a session is said that instead. The host takes the prompt before its options.
+    if prompt_file:
+        cli.append('"$(cat %s)"' % shq(prompt_file))
     # The title is the session's name: the host shows it in its prompt, its resume picker
     # and the terminal title, and applies a variant when a live session already holds it.
     # Without it two sessions in one checkout share the host's stem and differ only by a
     # reference (§24).
-    cli += ["--permission-mode", shq(mode), "--settings", shq(settings), "--name", shq(title)]
-    if prompt_file:
-        cli.append('"$(cat %s)"' % shq(prompt_file))
+    cli += ["--name", shq(title)]
+    # Only a successor gets it: the operator drives his orchestrators from the host's
+    # remote client as well as from the tab, and an agent is driven by its orchestrator
+    # alone (§39). A first instantiation is the operator's own hand, and his launch line.
+    if remote_control:
+        cli += ["--remote-control", shq(remote_control)]
     parts[2] = "exec " + " ".join(cli)
     return " && ".join(parts)
 
@@ -418,8 +519,15 @@ def write_launch_script(command, title):
 
 
 def shq(s):
+    """`shlex.quote` treats `-` as a safe character and leaves a value starting with it
+    bare — `--title-free --title=--evil` then emitted `--name --evil`, which the host read
+    as its own option instead of the name's value. Force the quotes whenever the first
+    character is a dash, whatever `shlex.quote` would otherwise decide."""
     import shlex
-    return shlex.quote(s)
+    q = shlex.quote(s)
+    if s.startswith("-") and q == s:
+        q = "'" + s.replace("'", "'\\''") + "'"
+    return q
 
 
 TRUST_FILE = os.environ.get("ORCHESTRATOR_TRUST_FILE") or os.path.join(os.path.expanduser("~"), ".claude.json")
@@ -475,7 +583,9 @@ def cmd_spawn(argv):
     p.add_argument("--tier", default="")
     p.add_argument("--inherit-model", dest="inherit", action="store_true")
     p.add_argument("--permission-mode", dest="mode", default="auto")
-    p.add_argument("--title", default="agent")
+    p.add_argument("--title", default="")
+    p.add_argument("--title-free", dest="title_free", action="store_true", default=False)
+    p.add_argument("--no-remote-control", dest="remote_control", action="store_false", default=True)
     p.add_argument("--prompt", default="")
     p.add_argument("--prompt-file", dest="prompt_file", default="")
     p.add_argument("--left-of", dest="left_of", default="")
@@ -493,6 +603,15 @@ def cmd_spawn(argv):
     if args.successor and (args.left_of or args.right_of):
         die("spawn: --successor names its own anchor, immediately right of this session; "
             "drop --left-of and --right-of")
+    if args.successor and args.title_free:
+        die("spawn: refused: a successor is named after its caller, --title-free does not "
+            "apply")
+    if args.title.startswith("Orchestrator :") and (args.left_of or args.right_of):
+        # A plain anchor lands AFTER the chain (§21), so a successor spawned there is the
+        # far-right tab the operator found, inheriting nothing. --successor places it and
+        # hands the chain over; the title says which of the two this is.
+        die("spawn: refused: an orchestrator's title is a successor's; spawn it with "
+            "--successor, which places it and hands it the chain")
     if not os.path.isdir(args.dir):
         die("spawn: directory not found: %s" % args.dir)
     if args.prompt and args.prompt_file:
@@ -513,6 +632,32 @@ def cmd_spawn(argv):
     side = "right" if args.right_of else "left"
     anchor = args.right_of or args.left_of
     own = self_tty() or ""
+    # The title, before a prompt file is written or a trust record changed: it is the
+    # session's name, and a refusal on it must leave nothing behind either.
+    title = args.title
+    if args.title_free:
+        # The escape, for a probe or a test that names its tab otherwise. `agent` was the
+        # old default and it stays one HERE, where the caller has said the shape is not
+        # wanted, and nowhere else.
+        title = title or "agent"
+    elif args.successor and not title:
+        # A successor carries the predecessor's own name, so every brief that cites an
+        # orchestrator by name still cites this one; the host applies its variant when a
+        # live session already holds it, which is where the reference comes from (§39).
+        title = session_name_on(own) or ""
+        if not title:
+            die("spawn: refused: --successor without --title needs the caller's session "
+                "name, and this session was launched without one; pass "
+                '--title "Orchestrator : <feature>"')
+        if len(title) > DERIVED_NAME_MAX or "\n" in title:
+            # Only the derivation is guarded: a title the caller TYPED is judged by the
+            # shape, which is the caller's own word for what it wants.
+            die("spawn: refused: the caller's session name reads like a launch line of an "
+                'older launcher (%d characters); pass --title "Orchestrator : <feature>"'
+                % len(title))
+    elif not TITLE_SHAPE.match(title):
+        die("spawn: refused: a title reads \"<Role> : <what>\", got '%s' "
+            "(pass --title-free for a tab named otherwise)" % title)
     if args.successor:
         # A successor is not an agent: immediately right of this session, the chain
         # ignored, and it takes the chain with it once its session can be read (§34).
@@ -539,15 +684,10 @@ def cmd_spawn(argv):
             return win is not None
         if not run(probe):
             die("spawn: no session found on %s" % anchor)
-    prompt_file = args.prompt_file
-    if prompt_file and not os.path.isfile(prompt_file):
-        die("spawn: prompt file not found: %s" % prompt_file)
-    if args.prompt:
-        prompt_file = write_prompt_file(args.prompt, args.title)
-
-    # BEFORE the tab exists: a session stopped on the trust question is not launched,
-    # whatever the tty says, and finding that out afterwards means finding it out from an
-    # agent that never answers.
+    # BEFORE the tab exists, and BEFORE the prompt file is written: a refusal on the trust
+    # question must leave nothing behind — a prompt file written ahead of it survived every
+    # refusal and piled up under the state directory's prompts/ for a directory that was
+    # never launched into.
     trusted = directory_is_trusted(args.dir)
     if trusted is True:
         # Never rewrite a record that already says yes: the host writes this file too, and
@@ -568,7 +708,14 @@ def cmd_spawn(argv):
             "its workspace question and never read its brief. Pass --trust for a checkout "
             "you prepared, or open the directory once yourself." % os.path.realpath(args.dir))
 
-    launch = build_command(args.dir, args.title, model, args.mode, prompt_file)
+    prompt_file = args.prompt_file
+    if prompt_file and not os.path.isfile(prompt_file):
+        die("spawn: prompt file not found: %s" % prompt_file)
+    if args.prompt:
+        prompt_file = write_prompt_file(args.prompt, title)
+
+    remote_control = title if (args.successor and args.remote_control) else ""
+    launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control)
 
     if DRY_RUN:
         print("launch=%s" % launch)
@@ -577,10 +724,12 @@ def cmd_spawn(argv):
         print("anchor=%s" % ("self" if anchor == own else anchor))
         print("trust=%s" % trust_state)
         print("successor=%s" % ("yes" if args.successor else "no"))
+        print("name=%s" % title)
+        print("title_free=%s" % ("yes" if args.title_free else "no"))
         print("program=%s -l <launch-file>" % LOGIN_SHELL)
         return
 
-    script = write_launch_script(launch, args.title)
+    script = write_launch_script(launch, title)
     command = "%s -l %s" % (LOGIN_SHELL, script)
 
     async def go(iterm2, connection):
@@ -732,6 +881,7 @@ def cmd_move(argv):
     p.add_argument("--tty", dest="tty")
     p.add_argument("--left-of", dest="left_of", default="")
     p.add_argument("--right-of", dest="right_of", default="")
+    p.add_argument("--force", action="store_true", default=False)
     args, _ = p.parse_known_args(argv)
     if not args.tty:
         die("move: --tty is required")
@@ -739,12 +889,31 @@ def cmd_move(argv):
         die("move: --left-of or --right-of is required")
     if args.left_of and args.right_of:
         die("move: --left-of and --right-of are mutually exclusive")
+    own = self_tty() or ""
     anchor = args.right_of or args.left_of
     if anchor == "self":
-        anchor = self_tty() or ""
+        anchor = own
     if anchor == args.tty:
         die("move: --tty and its anchor are the same session")
+    def guard(is_ours):
+        """A session the caller did not launch is not its to place. An orchestrator that
+        had never measured its own tty read the listing, took the last tab for its own and
+        moved a stranger's session out from between itself and its agents; the script
+        obeyed, because `move` moved anything it was told to (§38)."""
+        if is_ours:
+            return
+        if not args.force:
+            die("move: refused: %s is neither this session's tab nor in its chain "
+                "(pass --force to move it anyway)" % args.tty)
+        # --force is the operator's hand and the layout repair, and it says what it moved:
+        # a forced move is the one an orchestrator has to be able to find afterwards.
+        print("move: forced: %s is not in this session's chain" % args.tty, file=sys.stderr)
+
     if DRY_RUN:
+        # No app, so no session id and no tab id: the dry run reads the chain the way the
+        # rest of the dry run does, on ORCHESTRATOR_SELF_ID and the tty.
+        guard(args.tty == own
+              or args.tty in [e["tty"] for e in chain_owned(chain_read(own), SELF_ID)])
         print("move=%s %s=%s" % (args.tty, "right_of" if args.right_of else "left_of", anchor))
         return
 
@@ -753,6 +922,7 @@ def cmd_move(argv):
         win, tab, _ = await find_tab(app, args.tty)
         if tab is None:
             die("move: no session found on %s" % args.tty)
+        guard(await move_is_owned(app, args.tty, own))
         tabs = list(win.tabs)
         target = None
         for i, t in enumerate(tabs):
@@ -783,6 +953,13 @@ def cmd_rotate(argv):
     args, rest = p.parse_known_args(argv)
     if not args.old_tty:
         die("rotate: --old-tty is required")
+    # A rotation replaces an agent with a titled agent; none of these are that. A successor
+    # is spawned with `spawn --successor`, not smuggled through the replacement a rotation
+    # makes.
+    for flag in ("--successor", "--title-free", "--no-remote-control"):
+        if flag in rest:
+            die("rotate: refused: %s is not a rotation's (a rotation replaces an agent with "
+                "a titled agent; a successor is spawned with spawn --successor)" % flag)
     # The spawn verifies the replacement is RUNNING before anything is closed: a rotation
     # that killed the old agent on a spawn that never started would leave zero agents,
     # which is the one outcome this order exists to prevent.
