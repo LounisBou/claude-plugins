@@ -1069,3 +1069,43 @@ whose `origin` is a bare repository advanced from elsewhere so that `origin/main
 commit ahead of `main`: `create --base origin/main` checks out `main` at the remote's head,
 tracking `origin/main` on the real URL; `list` shows it clean and pushed; a base the source
 does not know is refused and makes no checkout.
+
+## 36. Two readings the rulebook left open: the agent under review, the reader's copy
+
+**0.23.6.** Both were reported the same afternoon by the sibling build, and both had been
+answered in practice by every orchestrator differently, because the rulebook could be read
+two ways.
+
+**An implementer stays through the review round of its own delivery, and not beyond.** The
+rulebook said « prefer REUSING the same agent session across phases » and « agents may
+pipeline » beside « there is no standing-by tab » and « the only tabs open are the
+orchestrator's and its running implementers' ». Read one way, an implementer whose delivery
+is under review is stood down at once and every N-bis costs a fresh session's cold start;
+read the other, a tab is kept « for a possible N-bis » through a merge nobody has scheduled
+(observed: eighteen percent of context, idle for ten minutes under memory pressure, until
+the operator asked why). The operator's ruling is the middle the practice had found: the
+session that wrote the code is the cheapest one to fix it, so it stays for the review round
+of ITS delivery and the N-bis that round produces — a one-line fix is minutes for it and a
+cold start for anyone else — and it is stood down at the verdict, approved or shelved,
+never kept in case. « Reuse » names an agent with a NEXT phase to start now; a tab kept in
+case is the standing-by tab the lifecycle forbids, under another name.
+
+**A reader's pinned copy is a detached worktree; a clone is for a writer.** §30 made the
+clone per phase for two reasons that concern a WRITER only: a worktree writes into its
+source repository, so no single allowed path contains it, and a clone per checkout makes
+« one writer » structural. A review reader, or an instrument the orchestrator runs itself,
+writes nothing, is confined to no root, and needs none of the project's local material —
+least of all the orchestrator's own briefs and state file, which a clone of this repository
+would carry into a reviewer's copy. Another project read the plugin as prescribing the
+clone for its readers too and priced it (a second dependency install, hooks, an overlay);
+the rulebook had said « a copy pinned at the head under review » and nothing about how.
+Now it says: a detached worktree of the orchestrator's own checkout, `git worktree add
+--detach <path> <head>`, offline and instant, at exactly the head under review, removed
+with `git worktree remove` when the round is judged. The worktree's metadata lands in the
+orchestrator's checkout, which is its own. A `workspace.sh` subcommand that makes and
+removes such copies under the root is the next release's feature, not this one's text.
+
+What changes: the rulebook's lifecycle step 4, its rotation sentence on reuse, its review
+sentence on the pinned copy and its housekeeping boundary; the tab skill's hygiene
+paragraph; the review brief template's environment line. What the suite reads: each of
+the four sentences present once, in the file that carries it.
