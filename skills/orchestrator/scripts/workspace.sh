@@ -150,6 +150,37 @@ EOF
         [ -d "$src/.claude/" ] && echo "/.claude/"
     } >> "$target/.git/info/exclude"
 
+    # 2b. What the OPERATOR's global excludes file keeps out of the source. The project's
+    #    own instruction file travelled by hand on every live run of this family: it is
+    #    kept out of history by core.excludesFile, not by the repository's own exclude
+    #    file, so step 2 above never lists it (§40). A `~` in the configured path is
+    #    expanded the way git expands it; a path already copied by step 1 or 2 is skipped
+    #    here so it is copied once and counted once.
+    local global_excludes
+    global_excludes=$(git -C "$src" config --get core.excludesFile 2>/dev/null || true)
+    [ -n "$global_excludes" ] || global_excludes="${XDG_CONFIG_HOME:-$HOME/.config}/git/ignore"
+    case "$global_excludes" in
+        "~") global_excludes="$HOME" ;;
+        "~/"*) global_excludes="$HOME/${global_excludes#\~/}" ;;
+    esac
+    local gn=0
+    if [ -s "$global_excludes" ]; then
+        while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            case "/$f" in /.claude/*) continue ;; esac
+            [ -e "$target/$f" ] && continue
+            copy_tree "$src" "$target" "$f" || { rm -rf "$target"; die "create: copying $f (global excludes) failed"; }
+            gn=$((gn + 1))
+        done <<EOF
+$(git -C "$src" ls-files --others --ignored --exclude-from="$global_excludes")
+EOF
+        {
+            echo "# workspace.sh: the operator's global excludes"
+            cat "$global_excludes"
+        } >> "$target/.git/info/exclude"
+    fi
+    say "copied $gn files kept out by the global excludes"
+
     # 3. The optional manifest: one relative path per line, a file or a directory. Absent
     #    is said and skipped (a manifest serves more than one machine); leaving the
     #    repository is refused; build trees never travel.
