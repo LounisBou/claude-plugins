@@ -203,7 +203,7 @@ echo "== agent chain (dry run) =="
 # to it. A dry run reads the chain and never writes it: there is no tab to record.
 AGENT="$ROOT/skills/iterm-agents/scripts/iterm-agent.sh"
 CHAINS="$WORK/istate/chains"; mkdir -p "$CHAINS"
-chain_spawn() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate" ORCHESTRATOR_SELF_TTY=/dev/ttys900 bash "$AGENT" spawn --dir "$WORK" --title "Implementer : chain" --prompt p "$@" 2>&1; }
+chain_spawn() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate" ORCHESTRATOR_SELF_TTY=/dev/ttys900 bash "$AGENT" spawn --dir "$WORK" --title "Agent : chain" --prompt p "$@" 2>&1; }
 out=$(chain_spawn --right-of self)
 check "the dry run names the caller's tty" "1" "$(printf '%s' "$out" | grep -c '^self=/dev/ttys900$')"
 check "no chain: self is the anchor" "1" "$(printf '%s' "$out" | grep -c '^anchor=self$')"
@@ -614,7 +614,7 @@ AGENT="$ROOT/skills/iterm-agents/scripts/iterm-agent.sh"
 ISTATE="$WORK/istate"
 long=$(printf 'x%.0s' $(seq 1 3000))
 prompt="Read « this » — é \"quoted\" back\\slash $long"
-out=$(LC_ALL=C ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Probe : B-1 — é" --prompt "$prompt" 2>&1)
+out=$(LC_ALL=C ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : B-1 — é" --prompt "$prompt" 2>&1)
 code=$?
 check "dry-run spawn under LC_ALL=C exits 0" "0" "$code"
 cmd=${out#*launch=}; cmd=${cmd%%$'\n'*}
@@ -636,27 +636,42 @@ check "the launch execs the CLI by absolute path" "1" "$(printf '%s' "$cmd" | gr
 # is still named absolutely inside the launch: finding the program must not depend on the
 # operator's dotfiles, only the session's environment does.
 check "the tab runs the launch through a login shell" "1" "$(printf '%s' "$out" | grep -c '^program=.* -l <launch-file>$')"
-check "the login shell is the operator's" "1" "$(env ORCHESTRATOR_LOGIN_SHELL=/bin/bash ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Probe : shell" --prompt p 2>&1 | grep -c '^program=/bin/bash -l ')"
-check "the launch text itself is unchanged by the shell" "1" "$(env ORCHESTRATOR_LOGIN_SHELL=/bin/bash ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Probe : shell" --prompt p 2>&1 | sed -n 's/^launch=//p' | grep -cE '^cd .* && .* && exec /[^ ]+/')"
+check "the login shell is the operator's" "1" "$(env ORCHESTRATOR_LOGIN_SHELL=/bin/bash ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : shell" --prompt p 2>&1 | grep -c '^program=/bin/bash -l ')"
+check "the launch text itself is unchanged by the shell" "1" "$(env ORCHESTRATOR_LOGIN_SHELL=/bin/bash ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : shell" --prompt p 2>&1 | sed -n 's/^launch=//p' | grep -cE '^cd .* && .* && exec /[^ ]+/')"
 
 # The title is the session's NAME, not a tab label the shell overwrites: two sessions in one
 # checkout otherwise share the host's stem and differ by a reference nobody reads at a
 # glance (observed: an implementer listed under its orchestrator's own name). Non-ASCII
 # bytes travel like the prompt does — quoted by the shell's own rules.
-check "the launch names the session after its title" "1" "$(printf '%s' "$cmd" | grep -c -- "--name 'Probe : B-1 — é'")"
+check "the launch names the session after its title" "1" "$(printf '%s' "$cmd" | grep -c -- "--name 'Agent : B-1 — é'")"
 # The title is the operator's format and the launcher holds every spawn to it: a successor
 # once came up as `steward-successor` in every listing, because the launcher took whatever
-# was typed and the house format was nowhere (§39). The shape is `<Role> : <what>`;
+# was typed and the house format was nowhere (§39). The name is SHORT and it has two roles
+# (§42): `Orch : <subject>` for an orchestrator and its successor, `Agent : <subject>` for
+# anything an orchestrator spawns, the subject at most twenty-five characters — the
+# operator read his window and could not tell one agent from another at a glance.
 # `--title-free` is the escape for a probe that names its tab otherwise, and the dry run
 # says when it is on.
 shaped() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" "$@" 2>&1; }
 check "a shaped title names the session" "1" \
-  "$(shaped --title 'Implementer : x' | sed -n 's/^launch=//p' | grep -c -- "--name 'Implementer : x'")"
+  "$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : x'")"
+check "and so does an orchestrator's" "1" \
+  "$(shaped --title 'Orch : x' | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch : x'")"
 check "and so does a probe's" "1" \
-  "$(shaped --title 'Probe : anchor' | sed -n 's/^launch=//p' | grep -c -- "--name 'Probe : anchor'")"
-check "the dry run says which name it passes" "1" "$(shaped --title 'Probe : anchor' | grep -c '^name=Probe : anchor$')"
-check "a title without the shape is refused, and the reason names the shape" "1|1" \
-  "$(shaped --title foo >/dev/null 2>&1; echo $?)|$(shaped --title foo | grep -c 'a title reads "<Role> : <what>", got .foo.')"
+  "$(shaped --title 'Agent : anchor' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : anchor'")"
+check "the dry run says which name it passes" "1" "$(shaped --title 'Agent : anchor' | grep -c '^name=Agent : anchor$')"
+check "a title without the shape is refused, and the reason names the shape and the cap" "1|1" \
+  "$(shaped --title foo >/dev/null 2>&1; echo $?)|$(shaped --title foo | grep -c 'a title reads "Orch : <subject>" or "Agent : <subject>", the subject at most 25 characters, got .foo.')"
+# The older roles are the ones the operator could not read, so they are refused like any
+# other unshaped title: the spelled-out role words are gone from the launcher, not merely
+# from the documents.
+check "an older role is refused too" "1|1" \
+  "$(shaped --title 'Implementer : x' >/dev/null 2>&1; echo $?)|$(shaped --title 'Reviewer : 1' >/dev/null 2>&1; echo $?)"
+# The cap is on the SUBJECT, which is what a listing shows beside every other name.
+D42SUB25=$(printf 'x%.0s' $(seq 1 25))
+D42SUB26=$(printf 'x%.0s' $(seq 1 26))
+check "a subject of 25 characters is accepted, of 26 refused" "1|1" \
+  "$(shaped --title "Agent : $D42SUB25" | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : $D42SUB25'")|$(shaped --title "Agent : $D42SUB26" >/dev/null 2>&1; echo $?)"
 check "the old default title is refused too" "1|1" \
   "$(shaped --title agent >/dev/null 2>&1; echo $?)|$(shaped --title agent | grep -c 'a title reads')"
 check "no title: refused unless --title-free" "1|1" \
@@ -672,7 +687,7 @@ check "--title-free with no title keeps the old default" "1" \
 check "a dashed value is quoted, not read as an option" "1" \
   "$(shaped --title-free --title=--evil | sed -n 's/^launch=//p' | grep -c -- "--name '--evil'")"
 check "a shaped title still reads as today" "1" \
-  "$(shaped --title 'Implementer : x' | sed -n 's/^launch=//p' | grep -c -- "--name 'Implementer : x'")"
+  "$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : x'")"
 
 # `%r` renders a title with an apostrophe wrapped in double quotes instead of single ones,
 # so the refusal's own literal quoting shifted with what the operator typed. `got '<title>'`
@@ -681,42 +696,61 @@ D5TITLE="it's not shaped"
 check "the shape refusal always quotes with single quotes" "1" \
   "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "$D5TITLE" --prompt p 2>&1 | grep -c "got '$D5TITLE'")"
 
+# Every launch used to carry the setting that enables all of the project's servers, so a
+# fresh session never parked on the host's question about them. Measured on the operator's
+# machine, that loaded a browser driver and a devtools bridge into every agent — about
+# seventy megabytes each, used by none (§42). The launch carries --strict-mcp-config
+# instead, so the host loads no project server and asks nothing; --mcp puts the setting
+# back for the agent that drives a browser, and for nothing else.
+check "a launch loads no project server, and the dry run says so" "1|0|1" \
+  "$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- '--strict-mcp-config')|$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- 'enableAllProjectMcpServers')|$(shaped --title 'Agent : x' | grep -c '^mcp=no$')"
+check "--mcp puts the project's servers back and drops the strict flag" "1|0|1" \
+  "$(shaped --title 'Agent : x' --mcp | sed -n 's/^launch=//p' | grep -c -- '--settings .{"enableAllProjectMcpServers":true}.')|$(shaped --title 'Agent : x' --mcp | sed -n 's/^launch=//p' | grep -c -- '--strict-mcp-config')|$(shaped --title 'Agent : x' --mcp | grep -c '^mcp=yes$')"
+
 # A successor carries the PREDECESSOR's name, read from the process table, and comes up
 # under remote control: the operator drives his orchestrators from the host's remote
 # client as well as from the tab, and an agent is driven by its orchestrator alone (§39).
 # The table is a file here; a live run reads `ps`.
 PSTAB="$WORK/ps-table.txt"
-printf '/dev/ttys900 /opt/x/host --name Orchestrator : f --permission-mode auto\n' > "$PSTAB"
+printf '/dev/ttys900 /opt/x/host --name Orch : f --permission-mode auto\n' > "$PSTAB"
 PSNONAME="$WORK/ps-noname.txt"
 printf '/dev/ttys900 /opt/x/host --permission-mode auto\n' > "$PSNONAME"
 succ() { local t="$1"; shift; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
   ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$t" bash "$AGENT" spawn --dir "$WORK" "$@" 2>&1; }
 check "a successor with no title takes the caller's session name" "1" \
-  "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- "--name 'Orchestrator : f'")"
+  "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch : f'")"
 check "and comes up under remote control, under that name" "1" \
-  "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- "--remote-control 'Orchestrator : f'")"
+  "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- "--remote-control 'Orch : f'")"
 check "--no-remote-control drops the flag and keeps the name" "0|1" \
-  "$(succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -c -- '--remote-control')|$(succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -c -- "--name 'Orchestrator : f'")"
+  "$(succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -c -- '--remote-control')|$(succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch : f'")"
 check "a plain spawn never carries remote control" "0" \
-  "$(shaped --title 'Implementer : x' | sed -n 's/^launch=//p' | grep -c -- '--remote-control')"
+  "$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- '--remote-control')"
 check "a caller launched without a name cannot derive one" "1|1" \
   "$(succ "$PSNONAME" --successor >/dev/null 2>&1; echo $?)|$(succ "$PSNONAME" --successor | grep -c "needs the caller's session name")"
-# A caller that the OLDER launcher named carries the prompt in its own process line, so
-# the derivation copies a launch line instead of a name: measured live at 366 characters
-# on a session launched before the reorder. New sessions are clean; the transition is not,
-# and a name is refused when it stops reading as one.
+# The derived name is held to the SAME shape as a typed one (§42), which retires the
+# length guard that stood here: a caller that the OLDER launcher named carries the prompt
+# in its own process line, so the derivation copied a launch line instead of a name —
+# measured live at 366 characters — and a caller named under the older convention
+# (a role word spelled out in full) derives nothing either. Both are refused by the shape,
+# and the refusal quotes the first forty characters: a launch line must not fill a terminal.
 PSLONG="$WORK/ps-long.txt"
 printf '/dev/ttys900 /opt/x/host --name Orchestrator : %s --permission-mode auto\n' "$(printf 'x%.0s' $(seq 1 185))" > "$PSLONG"
+PSOLD="$WORK/ps-old.txt"
+printf '/dev/ttys900 /opt/x/host --name Orchestrator : f --permission-mode auto\n' > "$PSOLD"
 PSSHORT="$WORK/ps-short.txt"
-printf '/dev/ttys900 /opt/x/host --name Orchestrator : %s --permission-mode auto\n' "$(printf 'x%.0s' $(seq 1 25))" > "$PSSHORT"
-check "a derived name that is a launch line is refused, and the refusal counts it" "1|1" \
-  "$(succ "$PSLONG" --successor >/dev/null 2>&1; echo $?)|$(succ "$PSLONG" --successor | grep -c 'reads like a launch line of an older launcher (200 characters)')"
-check "a name of ordinary length still derives" "1" \
-  "$(succ "$PSSHORT" --successor | sed -n 's/^launch=//p' | grep -c -- "--name 'Orchestrator : $(printf 'x%.0s' $(seq 1 25))'")"
+printf '/dev/ttys900 /opt/x/host --name Orch : %s --permission-mode auto\n' "$(printf 'x%.0s' $(seq 1 25))" > "$PSSHORT"
+PSLONGSUB="$WORK/ps-long-subject.txt"
+printf '/dev/ttys900 /opt/x/host --name Orch : %s --permission-mode auto\n' "$(printf 'x%.0s' $(seq 1 26))" > "$PSLONGSUB"
+check "a derived name that is a launch line is refused, and the refusal quotes 40 characters" "1|1" \
+  "$(succ "$PSLONG" --successor >/dev/null 2>&1; echo $?)|$(succ "$PSLONG" --successor | grep -c "the caller's session name 'Orchestrator : $(printf 'x%.0s' $(seq 1 25))' does not read")"
+check "a caller named under the older convention derives nothing" "1|1" \
+  "$(succ "$PSOLD" --successor >/dev/null 2>&1; echo $?)|$(succ "$PSOLD" --successor | grep -c "the caller's session name 'Orchestrator : f' does not read .Orch : <subject>.; pass --title .Orch : <subject>.")"
+check "a derived subject of 25 characters still derives, of 26 is refused" "1|1" \
+  "$(succ "$PSSHORT" --successor | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch : $(printf 'x%.0s' $(seq 1 25))'")|$(succ "$PSLONGSUB" --successor >/dev/null 2>&1; echo $?)"
 # An orchestrator's title is a successor's, and a plain anchor lands after the chain: the
 # tab the operator found at the far right of his window, inheriting nothing (§39).
 check "an orchestrator's title on a plain anchor is refused" "1|1" \
-  "$(shaped --title 'Orchestrator : f' --right-of self | grep -c "an orchestrator's title is a successor's")|$(shaped --title 'Orchestrator : f' --left-of /dev/ttys555 | grep -c 'spawn it with --successor')"
+  "$(shaped --title 'Orch : f' --right-of self | grep -c "an orchestrator's title is a successor's")|$(shaped --title 'Orch : f' --left-of /dev/ttys555 | grep -c 'spawn it with --successor')"
 # A successor is named after its caller by definition; --title-free asks for the ESCAPE
 # from that shape, which does not apply to a name the launcher derives itself.
 check "--successor with --title-free is refused" "1|1" \
@@ -727,7 +761,7 @@ name_on() { ORCHESTRATOR_PS_TABLE="$1" "$py" -c "
 import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
 import iterm_agent as m
 print(m.session_name_on(sys.argv[1]))" "$2"; }
-check "the table gives the name the host process was launched with" "Orchestrator : f" "$(name_on "$PSTAB" /dev/ttys900)"
+check "the table gives the name the host process was launched with" "Orch : f" "$(name_on "$PSTAB" /dev/ttys900)"
 check "a process launched without a name reads as none" "None" "$(name_on "$PSNONAME" /dev/ttys900)"
 check "a tty the table does not name reads as none" "None" "$(name_on "$PSTAB" /dev/ttys555)"
 
@@ -744,14 +778,14 @@ argv = shlex.split(launch.split(' && ')[-1])[1:]
 argv = [open(prompt_file).read().strip() if a.startswith('\$(cat ') else a for a in argv]
 print('%s %s' % (tty, ' '.join(argv)))" "$1" "$2" "$3"; }
 PROMPT_COLON="$WORK/prompt-colon.txt"
-printf 'Read and execute /tmp/brief.md. Your orchestrator is Orchestrator : plugin family [abc123].\n' > "$PROMPT_COLON"
-d1launch=$(shaped --title 'Implementer : x' --prompt-file "$PROMPT_COLON" | sed -n 's/^launch=//p')
+printf 'Read and execute /tmp/brief.md. Your orchestrator is Orch : plugin family [abc123].\n' > "$PROMPT_COLON"
+d1launch=$(shaped --title 'Agent : x' --prompt-file "$PROMPT_COLON" | sed -n 's/^launch=//p')
 ps_line "$d1launch" "$PROMPT_COLON" /dev/ttys900 > "$WORK/ps-launched.txt"
-check "the name a spawn leaves in the process table is the title, and stops there" "Implementer : x" \
+check "the name a spawn leaves in the process table is the title, and stops there" "Agent : x" \
   "$(name_on "$WORK/ps-launched.txt" /dev/ttys900)"
 d1succ=$(succ "$PSTAB" --successor --prompt-file "$PROMPT_COLON" | sed -n 's/^launch=//p')
 ps_line "$d1succ" "$PROMPT_COLON" /dev/ttys901 > "$WORK/ps-succ.txt"
-check "and a successor's, with the remote-control flag behind it" "Orchestrator : f" \
+check "and a successor's, with the remote-control flag behind it" "Orch : f" \
   "$(name_on "$WORK/ps-succ.txt" /dev/ttys901)"
 check "the launch puts the prompt before the name" "1" \
   "$(printf '%s' "$d1launch" | grep -cE '"\$\(cat [^"]+\)" --name ')"
@@ -765,7 +799,7 @@ import iterm_agent as m
 print(m.row_for(1, 2, '/dev/ttys900', sys.argv[1], None if sys.argv[2] == '-' else sys.argv[2],
                 sys.argv[3] == 'self', sys.argv[4] == 'hidden'))" "$1" "$2" "$3" "$4"; }
 check "the row carries the tab title, the session name and the caller's own mark" \
-  'w1/t2 | /dev/ttys900 | ✳ T | Implementer : x | self' "$(row '✳ T' 'Implementer : x' self visible)"
+  'w1/t2 | /dev/ttys900 | ✳ T | Agent : x | self' "$(row '✳ T' 'Agent : x' self visible)"
 check "a session launched without a name says so, and a hidden pane still says hidden" \
   'w1/t2 | /dev/ttys900 | ✳ T | (host default) | hidden' "$(row '✳ T' - other hidden)"
 
@@ -787,11 +821,11 @@ check "a tab that is neither is refused, and the refusal names it" "1|1" \
 check "--force moves it and says what it moved" "0|1" \
   "$(mv_ --tty /dev/ttys901 --left-of self --force >/dev/null 2>&1; echo $?)|$(mv_ --tty /dev/ttys901 --left-of self --force | grep -c "^move: forced: /dev/ttys901 is not in this session's chain$")"
 
-out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Probe : prompt" --prompt-file "$file" 2>&1)
+out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt" --prompt-file "$file" 2>&1)
 check "--prompt-file reuses the given file" "1" "$(printf '%s' "$out" | grep -c "prompt_file=$file")"
-out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Probe : prompt" 2>&1)
+out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt" 2>&1)
 cmd=${out#*launch=}; cmd=${cmd%%$'\n'*}
-check "no prompt: nothing appended after the settings" "1" "$(printf '%s' "$cmd" | grep -c -- 'enableAllProjectMcpServers')"
+check "no prompt: nothing appended after the server flag" "1" "$(printf '%s' "$cmd" | grep -c -- '--strict-mcp-config')"
 check_status "--prompt and --prompt-file together are refused" 1 env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --prompt x --prompt-file "$file"
 check_status "verify on a tty nobody has exits 1" 1 bash "$AGENT" verify --tty /dev/ttys999
 check "screen without a tty says which option is missing" "ERROR: screen: --tty is required" \
@@ -807,18 +841,18 @@ TRUSTF="$WORK/trust.json"; printf '{"projects":{}}' > "$TRUSTF"
 UNTRUSTED="$WORK/untrusted"; mkdir -p "$UNTRUSTED"
 check_status "an untrusted directory is refused before a tab is made" 1 \
   env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-  bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Probe : trust" --tier deep
+  bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep
 check "the refusal says how to proceed" "1" \
   "$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-     bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Probe : trust" --tier deep 2>&1 | grep -c -- '--trust')"
+     bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep 2>&1 | grep -c -- '--trust')"
 check_status "--trust records it and proceeds" 0 \
   env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-  bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Probe : trust" --tier deep --trust
+  bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --trust
 check "the record now holds the directory" "true" \
   "$("$py" -c "import json,os,sys; d=json.load(open(sys.argv[1])); print(str(d['projects'].get(os.path.realpath(sys.argv[2]),{}).get('hasTrustDialogAccepted')).lower())" "$TRUSTF" "$UNTRUSTED")"
 check_status "a directory already recorded needs no flag" 0 \
   env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-  bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Probe : trust" --tier deep
+  bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep
 check "the record keeps owner-only permissions" "600" \
   "$(stat -f '%OLp' "$TRUSTF" 2>/dev/null || stat -c '%a' "$TRUSTF")"
 
@@ -828,17 +862,17 @@ check "the record keeps owner-only permissions" "600" \
 compact="{\"projects\":{\"$(cd "$UNTRUSTED" && pwd -P)\":{\"hasTrustDialogAccepted\":true}}}"
 printf '%s' "$compact" > "$TRUSTF"
 out=$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-      bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Probe : trust" --tier deep --trust 2>&1)
+      bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --trust 2>&1)
 check "--trust on a recorded directory does not rewrite the record" "$compact" "$(cat "$TRUSTF")"
 check "and the dry run says the record already held it" "1" "$(printf '%s' "$out" | grep -c '^trust=already$')"
 check "--trust on an unrecorded directory says it recorded it" "1" \
   "$(printf '{"projects":{}}' > "$TRUSTF"; env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-     bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Probe : trust" --tier deep --trust 2>&1 | grep -c '^trust=recorded$')"
+     bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --trust 2>&1 | grep -c '^trust=recorded$')"
 # A record the launcher cannot read is a gate that cannot measure: it lets the launch
 # through AND says so, instead of launching past a question nobody will see.
 printf '{not json' > "$WORK/trust-garbage.json"
 out=$(env ORCHESTRATOR_TRUST_FILE="$WORK/trust-garbage.json" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-      bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Probe : trust" --tier deep 2>&1); code=$?
+      bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep 2>&1); code=$?
 check "an unreadable record lets the launch through" "0" "$code"
 check "and says so, naming the flag" "1|1" \
   "$(printf '%s' "$out" | grep -c 'cannot be read')|$(printf '%s' "$out" | grep -c '^trust=unread$')"
@@ -848,7 +882,7 @@ D8STATE=$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")
 D8TRUST="$WORK/trust-d8.json"; printf '{"projects":{}}' > "$D8TRUST"
 D8DIR="$WORK/untrusted-d8"; mkdir -p "$D8DIR"
 env ORCHESTRATOR_TRUST_FILE="$D8TRUST" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$D8STATE" \
-  bash "$AGENT" spawn --dir "$D8DIR" --title "Probe : trust" --prompt "hello" >/dev/null 2>&1
+  bash "$AGENT" spawn --dir "$D8DIR" --title "Agent : trust" --prompt "hello" >/dev/null 2>&1
 check "the trust refusal leaves no prompt file" "0" \
   "$(find "$D8STATE/prompts" -type f 2>/dev/null | wc -l | tr -d ' ')"
 rm -rf "$D8STATE"
@@ -936,7 +970,7 @@ check "resolve-tier wants exactly one tier" "ERROR: resolve-tier: exactly one ti
 tcmd() {
   local out
   out=$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
-    bash "$AGENT" spawn --dir "$WORK" --title "Probe : tier" "$@" 2>&1)
+    bash "$AGENT" spawn --dir "$WORK" --title "Agent : tier" "$@" 2>&1)
   out=${out#*launch=}; printf '%s' "${out%%$'\n'*}"
 }
 check "a bound tier is typed as the model argument" "1" "$(tcmd --tier deep | grep -c -- '--model a-model')"
@@ -948,7 +982,7 @@ check_status "--tier and --model together are refused" 1 \
 mkdir -p "$ISTATE/ctx"
 printf '{"session_id":"s-inh","model_id":"a-model","updated_epoch":%s}\n' "$(date +%s)" > "$ISTATE/ctx/s-inh.json"
 check "inherit-model types the calling session's model" "1" \
-  "$(CLAUDE_CODE_SESSION_ID=s-inh ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Orchestrator : heir" --inherit-model 2>&1 | sed -n 's/^launch=//p' | grep -c -- '--model a-model')"
+  "$(CLAUDE_CODE_SESSION_ID=s-inh ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Orch : heir" --inherit-model 2>&1 | sed -n 's/^launch=//p' | grep -c -- '--model a-model')"
 check "inherit-model with no tap file refuses and names the installer" "1" \
   "$(CLAUDE_CODE_SESSION_ID=s-none ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --inherit-model 2>&1 | grep -c 'orchestrator:install')"
 check "inherit-model is exclusive with a tier" "1" \
@@ -960,10 +994,10 @@ check_status "an unknown tier is refused at spawn" 1 \
 # suite already checks that rotate inherits the spawn's verification.
 check "rotate forwards the tier to the spawn" "1" \
   "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
-      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Implementer : rotated" --tier deep 2>&1 | grep -c -- '--model a-model')"
+      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" --tier deep 2>&1 | grep -c -- '--model a-model')"
 check "rotate closes the old tab only after the spawn" "1" \
   "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
-      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Implementer : rotated" --tier deep 2>&1 | tail -1 | grep -c '^close=/dev/ttys999')"
+      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" --tier deep 2>&1 | tail -1 | grep -c '^close=/dev/ttys999')"
 # The rotation's spawn receives every argument the rotation does not consume, --trust
 # included — but the tab skill's line never said so, and a live rotation into a fresh
 # checkout was refused on the trust question and redone by hand (§39). Read on the record
@@ -972,13 +1006,19 @@ ROTDIR="$WORK/rot-untrusted"; mkdir -p "$ROTDIR"
 printf '{"projects":{}}' > "$TRUSTF"
 check "rotate forwards --trust to the spawn, which records it" "true" \
   "$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
-      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$ROTDIR" --title "Implementer : rotated" --tier deep --trust >/dev/null 2>&1; \
+      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$ROTDIR" --title "Agent : rotated" --tier deep --trust >/dev/null 2>&1; \
      "$py" -c "import json,os,sys; d=json.load(open(sys.argv[1])); print(str(d['projects'].get(os.path.realpath(sys.argv[2]),{}).get('hasTrustDialogAccepted')).lower())" "$TRUSTF" "$ROTDIR")"
+# The rotation forwards --mcp too: an agent that drives a browser is replaced by one that
+# still can. It is not in the refused list below, and the dry run is where the forwarding
+# is read (§42).
+check "rotate forwards --mcp to the spawn" "1" \
+  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
+      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" --mcp 2>&1 | grep -c '^mcp=yes$')"
 # A rotation replaces an agent with a titled agent; a successor, an escape from the title
 # shape, or a plain agent stripped of remote control are none of that — each is refused
 # before the replacement is spawned.
 rot_refuse() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" \
-  rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Implementer : rotated" "$@" 2>&1; }
+  rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" "$@" 2>&1; }
 check "rotate refuses --successor" "1" \
   "$(rot_refuse --successor | grep -c -- '--successor is not a rotation')"
 check "rotate refuses --title-free" "1" \
@@ -1050,9 +1090,9 @@ print([r for r in asyncio.run(ia.list_rows(app)) if 'ttys802' in r][0])" "$ROOT/
 # ...and the caller's own row, and no other, so an orchestrator reads which tab is its own
 # before it anchors, moves or closes anything (§38). The name beside the title is the one
 # the host process was launched with; the stub's other pane was launched with none.
-printf '/dev/ttys801 /opt/x/host --name Orchestrator : f --permission-mode auto\n' > "$WORK/ps-stub.txt"
+printf '/dev/ttys801 /opt/x/host --name Orch : f --permission-mode auto\n' > "$WORK/ps-stub.txt"
 check "the listing marks the caller's own row, names it, and marks no other" \
-  "w1/t1 | /dev/ttys801 | visible one | Orchestrator : f | self|0" \
+  "w1/t1 | /dev/ttys801 | visible one | Orch : f | self|0" \
   "$(ORCHESTRATOR_SELF_TTY=/dev/ttys801 ORCHESTRATOR_PS_TABLE="$WORK/ps-stub.txt" "$py" -c "$STUB
 rows=asyncio.run(ia.list_rows(app))
 print('%s|%d' % ([r for r in rows if 'ttys801' in r][0], len([r for r in rows if 'ttys802' in r and '| self' in r])))" "$ROOT/skills/iterm-agents/scripts")"

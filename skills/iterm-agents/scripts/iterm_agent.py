@@ -44,17 +44,16 @@ MODELS_MAP = os.environ.get("ORCHESTRATOR_MODELS_MAP") or os.path.join(STATE_DIR
 SPAWN_TIMEOUT = int(os.environ.get("ORCHESTRATOR_SPAWN_TIMEOUT", "30"))
 DRY_RUN = bool(os.environ.get("ORCHESTRATOR_DRY_RUN"))
 TIERS = ("deep", "standard", "light")
-# A title reads `<Role> : <what>`: a capital, anything without a colon, a spaced colon,
-# then something. It is the session's NAME (§24), so it is the operator's format or it is
-# nothing an orchestrator can recognise in a listing — a successor once came up as
-# `steward-successor` because the launcher took whatever was typed (§39).
-TITLE_SHAPE = re.compile(r"^[A-Z][^:]* : \S")
-# A DERIVED name longer than this, or holding a newline, is not a name. A session the
-# older launcher named carries the prompt in its own process line — the prompt sat after
-# `--name` until the reorder — so deriving from it copies a launch line: measured live at
-# 366 characters. New sessions are clean; the transition is not, and a successor must not
-# come up under a brief.
-DERIVED_NAME_MAX = 100
+# A title reads `Orch : <subject>` or `Agent : <subject>`: two roles, and a subject of at
+# most twenty-five characters. It is the session's NAME (§24), so it is the operator's
+# format or it is nothing an orchestrator can recognise in a listing — a successor once
+# came up as `steward-successor` because the launcher took whatever was typed (§39). The
+# roles are SHORT and the subject is capped because the operator read his window and could
+# not tell one agent from another at a glance (§42); a derived name is held to the same
+# shape, which is also what stops a successor coming up under a whole launch line — a
+# session the older launcher named carries the prompt in its own process line, measured
+# live at 366 characters.
+TITLE_SHAPE = re.compile(r"^(Orch|Agent) : .{1,25}$")
 
 
 def die(msg):
@@ -460,13 +459,12 @@ def write_prompt_file(prompt, title):
     return path
 
 
-def build_command(dir_, title, model, mode, prompt_file, remote_control=""):
+def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp=False):
     """The command iTerm2 runs in the new tab. It is HANDED to the app, never typed, so
     its length and its bytes stop being a hazard. No model argument at all when neither a
     tier nor an explicit identifier says which: the host's own default is the right
     answer, and a name hardcoded here would be a routing decision taken for every
     operator."""
-    settings = '{"enableAllProjectMcpServers":true}'
     # The ABSOLUTE path, resolved from the environment the orchestrator has. The tab runs
     # the launch through a login shell now (§22), so a bare name would usually resolve —
     # but finding the program must not depend on the operator's dotfiles: a profile that
@@ -480,7 +478,18 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control=""):
     cli = [shq(cli_path)]
     if model:
         cli += ["--model", shq(model)]
-    cli += ["--permission-mode", shq(mode), "--settings", shq(settings)]
+    cli += ["--permission-mode", shq(mode)]
+    # The host asks a fresh session whether to load the project's servers, and a session
+    # parked on that question never reads its brief — so every launch carried the setting
+    # that enables them all. Measured on the operator's machine, that loaded a browser
+    # driver and a devtools bridge into every agent, about seventy megabytes each, used by
+    # none (§42). The strict flag answers the question the other way: no project server, no
+    # question. `--mcp` puts the setting back for the agent that drives a browser, and for
+    # nothing else.
+    if mcp:
+        cli += ["--settings", shq('{"enableAllProjectMcpServers":true}')]
+    else:
+        cli += ["--strict-mcp-config"]
     # The prompt goes BEFORE the options that follow it, and --name is the LAST of them or
     # next to last. `ps` shows a command line with the shell's quoting gone, so whatever
     # follows --name runs into the name: with the prompt there, every spawned session's
@@ -593,6 +602,7 @@ def cmd_spawn(argv):
     p.add_argument("--no-verify", dest="verify", action="store_false", default=True)
     p.add_argument("--trust", action="store_true", default=False)
     p.add_argument("--successor", action="store_true", default=False)
+    p.add_argument("--mcp", action="store_true", default=False)
     args, unknown = p.parse_known_args(argv)
     if unknown:
         die("spawn: unknown option %s" % unknown[0])
@@ -606,7 +616,7 @@ def cmd_spawn(argv):
     if args.successor and args.title_free:
         die("spawn: refused: a successor is named after its caller, --title-free does not "
             "apply")
-    if args.title.startswith("Orchestrator :") and (args.left_of or args.right_of):
+    if args.title.startswith("Orch :") and (args.left_of or args.right_of):
         # A plain anchor lands AFTER the chain (§21), so a successor spawned there is the
         # far-right tab the operator found, inheriting nothing. --successor places it and
         # hands the chain over; the title says which of the two this is.
@@ -648,15 +658,17 @@ def cmd_spawn(argv):
         if not title:
             die("spawn: refused: --successor without --title needs the caller's session "
                 "name, and this session was launched without one; pass "
-                '--title "Orchestrator : <feature>"')
-        if len(title) > DERIVED_NAME_MAX or "\n" in title:
-            # Only the derivation is guarded: a title the caller TYPED is judged by the
-            # shape, which is the caller's own word for what it wants.
-            die("spawn: refused: the caller's session name reads like a launch line of an "
-                'older launcher (%d characters); pass --title "Orchestrator : <feature>"'
-                % len(title))
+                '--title "Orch : <subject>"')
+        if not TITLE_SHAPE.match(title):
+            # The derived name answers to the same shape as a typed one: a caller named
+            # under an older convention derives nothing, and neither does one whose name
+            # is a whole launch line. Only the first forty characters are quoted back —
+            # the rest of a launch line has no business filling a terminal.
+            die("spawn: refused: the caller's session name '%s' does not read "
+                '"Orch : <subject>"; pass --title "Orch : <subject>"' % title[:40])
     elif not TITLE_SHAPE.match(title):
-        die("spawn: refused: a title reads \"<Role> : <what>\", got '%s' "
+        die("spawn: refused: a title reads \"Orch : <subject>\" or \"Agent : <subject>\", "
+            "the subject at most 25 characters, got '%s' "
             "(pass --title-free for a tab named otherwise)" % title)
     if args.successor:
         # A successor is not an agent: immediately right of this session, the chain
@@ -715,7 +727,8 @@ def cmd_spawn(argv):
         prompt_file = write_prompt_file(args.prompt, title)
 
     remote_control = title if (args.successor and args.remote_control) else ""
-    launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control)
+    launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control,
+                           args.mcp)
 
     if DRY_RUN:
         print("launch=%s" % launch)
@@ -726,6 +739,7 @@ def cmd_spawn(argv):
         print("successor=%s" % ("yes" if args.successor else "no"))
         print("name=%s" % title)
         print("title_free=%s" % ("yes" if args.title_free else "no"))
+        print("mcp=%s" % ("yes" if args.mcp else "no"))
         print("program=%s -l <launch-file>" % LOGIN_SHELL)
         return
 
