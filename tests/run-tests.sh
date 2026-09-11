@@ -662,6 +662,31 @@ check "the table gives the name the host process was launched with" "Orchestrato
 check "a process launched without a name reads as none" "None" "$(name_on "$PSNONAME" /dev/ttys900)"
 check "a tty the table does not name reads as none" "None" "$(name_on "$PSTAB" /dev/ttys555)"
 
+# What the dry run could not see and the live round did: `ps` shows a command line with
+# the shell's quoting gone, so whatever FOLLOWS --name runs into the name. The prompt sat
+# there, and every spawned session's name column read the title followed by the whole
+# brief. The prompt goes BEFORE the options now, so --name is followed by --remote-control
+# or by nothing. Read end to end: the launch this dry run prints, turned into the line
+# `ps` would show, fed back through the reader.
+ps_line() { "$py" -c "
+import shlex, sys
+launch, prompt_file, tty = sys.argv[1], sys.argv[2], sys.argv[3]
+argv = shlex.split(launch.split(' && ')[-1])[1:]
+argv = [open(prompt_file).read().strip() if a.startswith('\$(cat ') else a for a in argv]
+print('%s %s' % (tty, ' '.join(argv)))" "$1" "$2" "$3"; }
+PROMPT_COLON="$WORK/prompt-colon.txt"
+printf 'Read and execute /tmp/brief.md. Your orchestrator is Orchestrator : plugin family [abc123].\n' > "$PROMPT_COLON"
+d1launch=$(shaped --title 'Implementer : x' --prompt-file "$PROMPT_COLON" | sed -n 's/^launch=//p')
+ps_line "$d1launch" "$PROMPT_COLON" /dev/ttys900 > "$WORK/ps-launched.txt"
+check "the name a spawn leaves in the process table is the title, and stops there" "Implementer : x" \
+  "$(name_on "$WORK/ps-launched.txt" /dev/ttys900)"
+d1succ=$(succ "$PSTAB" --successor --prompt-file "$PROMPT_COLON" | sed -n 's/^launch=//p')
+ps_line "$d1succ" "$PROMPT_COLON" /dev/ttys901 > "$WORK/ps-succ.txt"
+check "and a successor's, with the remote-control flag behind it" "Orchestrator : f" \
+  "$(name_on "$WORK/ps-succ.txt" /dev/ttys901)"
+check "the launch puts the prompt before the name" "1" \
+  "$(printf '%s' "$d1launch" | grep -cE '"\$\(cat [^"]+\)" --name ')"
+
 # The listing's row is formatted by a pure function, so its shape is read without an app.
 # The tab title is the host's summary of the conversation and it moves; the name is fixed
 # at launch, and it is what an orchestrator recognises its own agents by (§38).
@@ -944,6 +969,39 @@ print('%s|%d' % ([r for r in rows if 'ttys801' in r][0], len([r for r in rows if
 check "close closes the session and leaves the tab" "hidden one|True" \
   "$("$py" -c "$STUB
 t=asyncio.run(ia.close_session(app,'/dev/ttys802','hidden')); print('%s|%s' % (t, b.closed))" "$ROOT/skills/iterm-agents/scripts")"
+
+# `move`'s guard, live, is the §26 reading: a tty is recycled minutes after a close and
+# the chain file named after it outlives its occupant, so an entry whose tty now belongs
+# to a stranger's tab must not make that tab movable. The owner is the session sitting on
+# the caller's tty RIGHT NOW, read from the app; the match is on the TAB id. The dry run
+# has no app and keeps ORCHESTRATOR_SELF_ID and the tty, which is what its checks seed.
+MSTUB='
+import asyncio, sys
+sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+class S:
+    def __init__(s, sid, tty): s.session_id=sid; s.tty=tty
+    async def async_get_variable(s, k): return {"tty": s.tty}.get(k)
+class T:
+    def __init__(s, tid, sess): s.tab_id=tid; s.sessions=[sess]; s.all_sessions=[sess]
+class W:
+    def __init__(s, tabs): s.window_id="w"; s.tabs=tabs
+class App:
+    def __init__(s, wins): s.windows=wins
+app=App([W([T("1",S("S-LIVE","/dev/ttys801")), T("2",S("S-AGENT","/dev/ttys802"))])])
+'
+owned() { ORCHESTRATOR_STATE_DIR="$ISTATE" "$py" -c "$MSTUB
+print(asyncio.run(ia.move_is_owned(app, sys.argv[2], sys.argv[3])))" "$ROOT/skills/iterm-agents/scripts" "$1" "$2"; }
+mkdir -p "$ISTATE/chains"
+printf '{"tab_id":"2","tty":"/dev/ttys802","owner":"S-LIVE"}\n' > "$ISTATE/chains/ttys801.jsonl"
+check "a tab the caller's session launched is its own to move" "True" "$(owned /dev/ttys802 /dev/ttys801)"
+check "and so is its own tab" "True" "$(owned /dev/ttys801 /dev/ttys801)"
+# The entry names the right tty and the WRONG tab: a recycled tty with a stranger on it.
+printf '{"tab_id":"9","tty":"/dev/ttys802","owner":"S-LIVE"}\n' > "$ISTATE/chains/ttys801.jsonl"
+check "a recycled tty in the chain does not make a stranger's tab movable" "False" "$(owned /dev/ttys802 /dev/ttys801)"
+# The entry names the right tab and another session: a chain file that outlived its owner.
+printf '{"tab_id":"2","tty":"/dev/ttys802","owner":"S-GONE"}\n' > "$ISTATE/chains/ttys801.jsonl"
+check "an entry another session wrote is not the caller's to move" "False" "$(owned /dev/ttys802 /dev/ttys801)"
 
 echo "== tap =="
 

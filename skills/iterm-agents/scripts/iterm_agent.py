@@ -279,6 +279,28 @@ def chain_drop_tab(tab_id):
             chain_write(tty, kept)
 
 
+async def move_is_owned(app, tty, own):
+    """Whether the tab on `tty` is the caller's own tab or one its session launched.
+
+    Matched on the TAB id, never on the tty: a tty is recycled minutes after a close and
+    the chain file named after it outlives its occupant, so an entry whose tty now belongs
+    to a stranger's tab must not make that tab movable — the reading §26 already gave the
+    anchor. The owner is the session sitting on the caller's tty right now, read from the
+    app, which is the only thing that says who is there. A caller whose own tab cannot be
+    read owns nothing here: moving a stranger's tab is the harm this guard exists for, and
+    `--force` is how the operator overrides it."""
+    if not own:
+        return False
+    if tty == own:
+        return True
+    _, tab, _ = await find_tab(app, tty)
+    _, _, own_sess = await find_tab(app, own)
+    if tab is None or own_sess is None:
+        return False
+    mine = {e["tab_id"] for e in chain_owned(chain_read(own), own_sess.session_id)}
+    return tab.tab_id in mine
+
+
 async def chain_anchor(app, own_tty):
     """The tty of the last agent still open in the orchestrator's window, or None.
 
@@ -452,18 +474,24 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control=""):
     cli = [shq(cli_path)]
     if model:
         cli += ["--model", shq(model)]
+    cli += ["--permission-mode", shq(mode), "--settings", shq(settings)]
+    # The prompt goes BEFORE the options that follow it, and --name is the LAST of them or
+    # next to last. `ps` shows a command line with the shell's quoting gone, so whatever
+    # follows --name runs into the name: with the prompt there, every spawned session's
+    # name read the title followed by the whole brief, and the listing that was meant to
+    # say who a session is said that instead. The host takes the prompt before its options.
+    if prompt_file:
+        cli.append('"$(cat %s)"' % shq(prompt_file))
     # The title is the session's name: the host shows it in its prompt, its resume picker
     # and the terminal title, and applies a variant when a live session already holds it.
     # Without it two sessions in one checkout share the host's stem and differ only by a
     # reference (§24).
-    cli += ["--permission-mode", shq(mode), "--settings", shq(settings), "--name", shq(title)]
+    cli += ["--name", shq(title)]
     # Only a successor gets it: the operator drives his orchestrators from the host's
     # remote client as well as from the tab, and an agent is driven by its orchestrator
     # alone (§39). A first instantiation is the operator's own hand, and his launch line.
     if remote_control:
         cli += ["--remote-control", shq(remote_control)]
-    if prompt_file:
-        cli.append('"$(cat %s)"' % shq(prompt_file))
     parts[2] = "exec " + " ".join(cli)
     return " && ".join(parts)
 
@@ -844,18 +872,25 @@ def cmd_move(argv):
         anchor = own
     if anchor == args.tty:
         die("move: --tty and its anchor are the same session")
-    # A session the caller did not launch is not its to place. An orchestrator that had
-    # never measured its own tty read the listing, took the last tab for its own and moved
-    # a stranger's session out from between itself and its agents; the script obeyed,
-    # because `move` moved anything it was told to (§38).
-    if args.tty != own and args.tty not in [e["tty"] for e in chain_owned(chain_read(own), SELF_ID)]:
+    def guard(is_ours):
+        """A session the caller did not launch is not its to place. An orchestrator that
+        had never measured its own tty read the listing, took the last tab for its own and
+        moved a stranger's session out from between itself and its agents; the script
+        obeyed, because `move` moved anything it was told to (§38)."""
+        if is_ours:
+            return
         if not args.force:
             die("move: refused: %s is neither this session's tab nor in its chain "
                 "(pass --force to move it anyway)" % args.tty)
         # --force is the operator's hand and the layout repair, and it says what it moved:
         # a forced move is the one an orchestrator has to be able to find afterwards.
         print("move: forced: %s is not in this session's chain" % args.tty, file=sys.stderr)
+
     if DRY_RUN:
+        # No app, so no session id and no tab id: the dry run reads the chain the way the
+        # rest of the dry run does, on ORCHESTRATOR_SELF_ID and the tty.
+        guard(args.tty == own
+              or args.tty in [e["tty"] for e in chain_owned(chain_read(own), SELF_ID)])
         print("move=%s %s=%s" % (args.tty, "right_of" if args.right_of else "left_of", anchor))
         return
 
@@ -864,6 +899,7 @@ def cmd_move(argv):
         win, tab, _ = await find_tab(app, args.tty)
         if tab is None:
             die("move: no session found on %s" % args.tty)
+        guard(await move_is_owned(app, args.tty, own))
         tabs = list(win.tabs)
         target = None
         for i, t in enumerate(tabs):
