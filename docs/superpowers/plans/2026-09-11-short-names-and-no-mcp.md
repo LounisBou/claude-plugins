@@ -81,3 +81,33 @@ Opened after the operator's ruling of 2026-09-11 (evening) on the measurement re
 - [ ] **Step 4: Mutations on the committed tree**: the catalogue lookup skipped (an unknown name accepted) → its check falls; the file not written (the launch names a path that does not exist) → the content checks fall; `--strict-mcp-config` dropped → its check falls; the default list ignored → the `a` alone check falls.
 - [ ] **Step 5: The gate**, then `0.26.0`, then the suite again.
 - [ ] **Step 6: Commits** — `git reset --hard 300f5e5` first (drops the release); then `feat(iterm-agents): choose an agent's servers from the operator's catalogue`; `docs(orchestrator): the server catalogue, and what a brief says about an agent's servers`; `chore(release): 0.26.0`.
+
+---
+
+### Task 3: The mode a session came up in is read, and the screen is read from the bottom (0.26.0, redone)
+
+Opened on the operator's ruling of 2026-09-11 (evening) after two agents stood on a permission prompt: design §43 carries the measurements. The release commit is dropped and redone last again.
+
+**Files:**
+- Modify: `skills/iterm-agents/scripts/iterm_agent.py` — `PROJECTS_DIR`, `MODE_TIMEOUT`, `find_transcript(dir_, since)`, `mode_of_transcript(path)`, `mode_refusal(asked, got, model)`, the wait in `cmd_spawn` after the CLI check, `last_lines(lines, n)` used by `cmd_screen`.
+- Modify: `skills/model-routing/SKILL.md`, `skills/orchestrator/SKILL.md` (lifecycle step 2), `skills/iterm-agents/SKILL.md` (the `spawn` reference: the mode check; the `screen` line: the last lines; the `rotate` synopsis nit `[--mcp <name>]`).
+- Modify: `tests/run-tests.sh` — the checks below.
+- Modify: `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` — `0.26.0` (release redone last).
+- Untouched: `tests/e2e.sh`, `docs/`, the catalogue, the installer.
+
+**Interfaces (verbatim, the contract the checks read):**
+
+- `PROJECTS_DIR = os.environ.get("ORCHESTRATOR_PROJECTS_DIR") or os.path.expanduser("~/.claude/projects")`; `MODE_TIMEOUT = int(os.environ.get("ORCHESTRATOR_MODE_TIMEOUT", "20"))`.
+- `find_transcript(dir_, since)`: among `<PROJECTS_DIR>/*/*.jsonl` with mtime >= `since`, the newest file whose first entry carrying `cwd` has `cwd == os.path.realpath(dir_)`; `None` when there is none. No directory slug is computed.
+- `mode_of_transcript(path)`: the value of the first entry carrying `permissionMode`, else `""`.
+- `mode_refusal(asked, got, model)`: `spawn: refused: the session came up in mode '<got>' and not '<asked>' (model <model or 'the host default'>): the host ignores the mode asked for this model; bind the tier to another model, or pass --permission-mode acceptEdits for an agent that only edits`.
+- `cmd_spawn`, after the CLI check and only with `--verify` (the default): poll every second up to `MODE_TIMEOUT` for `find_transcript(args.dir, launch_epoch)` with a non-empty mode; a mode equal to `args.mode` prints `spawn: mode <mode> read on the transcript` on stderr; a different one closes the session it made (the tab, by its session id) and dies with `mode_refusal(...)`, exit 1; no mode by the timeout prints `spawn: no transcript for <dir> after <n>s: the session's mode is unread` on stderr and the launch goes through. The dry run reads nothing and prints `mode_check=skipped`.
+- `last_lines(lines, n)`: the list with trailing empty strings dropped, then its last `n` items. `cmd_screen` prints `last_lines(<every line of the screen>, args.lines)`.
+- Documents: `skills/model-routing/SKILL.md` carries « a session nobody watches runs in the operator's decision mode » and « `--permission-mode acceptEdits` for a few edits and allow-listed commands only »; the rulebook's step 2 carries « reads the session's mode on its transcript »; the tab skill's `spawn` reference says the mode is read and what the refusal offers, its `screen` line says « the last N lines », its `rotate` synopsis reads `[--mcp <name>]`.
+
+- [ ] **Step 1: The failing checks** — with `ORCHESTRATOR_PROJECTS_DIR` pointed at a `mktemp -d` holding fixture transcripts written by the check (one-line JSON entries with `cwd` and `permissionMode`): `mode_of_transcript` reads the first mode; `find_transcript` ignores a fixture with another `cwd`, picks the newest of two with the right one, returns none when the directory is empty (all through `python3 -c` importing the module with `sys.path`); `mode_refusal` renders the sentence for (`auto`, `default`, a model id) and for an empty model; `last_lines` on `["a","b","","c","",""]` with `n=2` gives `["b","c"]`... (write the fixture so the expected value is unambiguous); the dry run prints `mode_check=skipped`; one literal guard per document. Every existing check stays.
+- [ ] **Step 2: Run, watch them fail, report** the count and the first failing value.
+- [ ] **Step 3: The code**, in the module's style, then the documents.
+- [ ] **Step 4: Mutations on the committed tree**: `find_transcript` matching any `cwd` → its check falls; `mode_of_transcript` returning the last mode instead of the first → its check falls (the fixture carries two); `last_lines` reading the first lines → its check falls.
+- [ ] **Step 5: The gate**, then `0.26.0`, then the suite again.
+- [ ] **Step 6: Commits** — `git reset --hard aa91804` first (drops the release); then `feat(iterm-agents): read the mode a session came up in, and refuse another`; `fix(iterm-agents): the screen is read from the bottom`; `docs(orchestrator): a tier's model runs in the operator's decision mode, or its agent is not unattended`; `chore(release): 0.26.0`.

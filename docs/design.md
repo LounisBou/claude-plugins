@@ -1382,3 +1382,52 @@ strict with no file and a stderr line, `--mcp-config` is followed by `--permissi
 the dry run prints `mcp=` and `mcp_file=`, and `rotate --mcp b` reaches the spawn; the
 installer creates the empty catalogue and leaves an existing one alone; one literal per
 document for the roles, and the rulebook's rename line.
+
+## 43. The mode a session came up in is read, not believed, and the screen is read from the bottom
+
+**0.26.0, third task.** Two agents stood on a permission prompt the same evening, in tabs
+nobody watched. The operator answered one by hand and called it critical; the other was read
+through the tab tooling: its status line said « plan mode on », its transcript carried
+`permissionMode` `default` in every entry, and its process line carried
+`--permission-mode auto`. Measured across every session spawned that evening: the host
+applied the mode asked to every session on the deep and standard tiers' models and to none
+on the light tier's, which came up in default mode with the flag accepted and ignored.
+A probe on that same model spawned with `--permission-mode acceptEdits` carried
+`acceptEdits`, and ran a Write-tool file creation, a `printf >>` append, a heredoc append
+and a `git status` without a prompt. The operator ruled: no such agent unattended, and
+`acceptEdits` for a light agent that is there for a few edits.
+
+**The launcher reads the mode.** The spawn's verification does not stop at « the host CLI
+runs on the tty »: a session that runs and waits for a click is not launched. So after the
+CLI is seen, `spawn` waits (`ORCHESTRATOR_MODE_TIMEOUT`, twenty seconds) for the session's
+transcript — the newest `.jsonl` under the host's projects directory
+(`ORCHESTRATOR_PROJECTS_DIR`, else `~/.claude/projects`) modified since the launch whose
+entries carry `cwd` equal to the checkout's real path, found without computing the host's
+directory slug — and reads the first `permissionMode` it carries. The mode read is the
+mode asked, or the launch is refused: the tab it made is closed, and the sentence names
+both modes and the model, says the host ignores the mode asked for that model, and offers
+the two repairs (bind the tier to another model, or `--permission-mode acceptEdits` for an
+agent that only edits). A transcript that has not appeared by the timeout lets the launch
+through with a line on stderr saying the mode is unread: a gate that cannot measure holds
+nothing (§29's rule). `rotate` inherits the reading through the spawn. `--no-verify` skips
+it with the CLI check, as before.
+
+**The screen is read from the bottom.** `screen --lines N` returned the FIRST N lines of
+the tab, which on a tall terminal are blank: the blocked agent's prompt sat at the bottom,
+and three reads out of four came back empty while the tooling reported success. It returns
+the last N non-blank-trailing lines now, through a pure function the suite reads.
+
+**The routing rule says it.** The model-routing skill: a session nobody watches runs in the
+operator's decision mode, so a tier bound to a model the host does not run in that mode is
+a tier no unattended agent runs at; the operator either rebinds it or spawns such an agent
+in `acceptEdits` for a few edits and allow-listed commands only, and the brief names the
+mode where it names the tier. The rulebook's lifecycle step 2 says the launcher reads the
+mode and what a refusal means.
+
+What the suite reads: the mode of a fixture transcript (first entry carrying it), a fixture
+whose entries carry another `cwd` ignored, the newest of two candidates chosen, no
+candidate → the unread sentence, the refusal sentence built from the two modes and the
+model, the screen's last-lines function on a fixture with trailing blanks; one literal per
+document. What only the live round reads: a spawn on the light tier's former model with
+`--permission-mode auto` refused with the sentence and no tab left, the same with
+`acceptEdits` launched.
