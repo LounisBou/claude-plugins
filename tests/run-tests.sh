@@ -1444,6 +1444,11 @@ refusal() { "$py" -c "
 import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
 import iterm_agent as m
 print(m.mode_refusal(sys.argv[1], sys.argv[2], sys.argv[3]))" "$1" "$2" "$3"; }
+last_n() { "$py" -c "
+import json, sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+print(json.dumps(m.last_lines(json.loads(sys.argv[1]), int(sys.argv[2])), separators=(',', ':')))" "$1" "$2"; }
+
 # The mode is the FIRST one the transcript carries: the session announces what it came up
 # in, and a later entry is the operator changing it by hand, which is not what the launch
 # is being judged on. The newest fixture carries two, in that order.
@@ -1474,6 +1479,19 @@ check "the refusal names both modes, the model, and the two repairs" \
 check "with no model argument the refusal says so" \
   "spawn: refused: the session came up in mode 'default' and not 'auto' (model the host default): the host ignores the mode asked for this model; bind the tier to another model, or pass --permission-mode acceptEdits for an agent that only edits" \
   "$(refusal auto default "")"
+
+# `screen --lines N` returned the FIRST N lines of the tab, which on a tall terminal are
+# blank: the blocked agent's prompt sat at the bottom and three reads out of four came back
+# empty while the tooling reported success. Trailing blanks go, interior ones stay — a
+# blank line between two of an agent's messages is part of what it is showing.
+check "the screen is read from the bottom, trailing blanks dropped" '["b","c"]' \
+  "$(last_n '["a","b","c","",""]' 2)"
+check "a blank line inside the reading is kept" '["a","","b"]' \
+  "$(last_n '["a","","b","",""]' 3)"
+check "fewer lines than asked is the whole reading" '["a"]' \
+  "$(last_n '["a",""]' 5)"
+check "nothing but blanks reads as nothing" '[]' \
+  "$(last_n '["","",""]' 3)"
 
 # A dry run reads no transcript: there is no session to have come up in any mode, and the
 # line says the check was skipped rather than passed.

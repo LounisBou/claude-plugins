@@ -135,6 +135,19 @@ def mode_refusal(asked, got, model):
             % (got, asked, model or "the host default"))
 
 
+def last_lines(lines, n):
+    """The last `n` lines of a reading, its trailing blanks dropped.
+
+    `screen --lines N` returned the FIRST N lines of the tab, which on a tall terminal are
+    blank: a blocked agent's prompt sits at the bottom, and three reads out of four came
+    back empty while the tooling reported success. An interior blank stays — a blank line
+    between two of an agent's messages is part of what it is showing."""
+    trimmed = list(lines)
+    while trimmed and trimmed[-1] == "":
+        trimmed.pop()
+    return trimmed[-n:] if n > 0 else []
+
+
 def read_catalogue():
     """The catalogue, or None when there is no file.
 
@@ -1004,8 +1017,9 @@ def cmd_screen(argv):
         if sess is None:
             die("screen: no session found on %s" % args.tty)
         contents = await sess.async_get_screen_contents()
-        n = min(args.lines, contents.number_of_lines)
-        return [contents.line(i).string.rstrip() for i in range(n)]
+        every = [contents.line(i).string.rstrip()
+                 for i in range(contents.number_of_lines)]
+        return last_lines(every, args.lines)
 
     for line in run(go) or []:
         print(line)
