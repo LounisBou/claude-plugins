@@ -1549,6 +1549,23 @@ check "with no model argument the refusal says so" \
   "spawn: refused: the session came up in mode 'default' and not 'auto' (model the host default): the host ignores the mode asked for this model; bind the tier to another model, or pass --permission-mode acceptEdits for an agent that only edits" \
   "$(refusal auto default "")"
 
+# A refusal path that ends on a traceback is never an answer: `run()` catches nothing, so a
+# close that raises while the caller is already dying on a refusal must not throw one on top.
+closemade_raise() { "$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+def boom(coro_fn):
+    raise RuntimeError('kaboom')
+m.run = boom
+print(m.close_made({'session_id': 'x'}))" 2>&1; }
+closemade_ok() { "$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+m.run = lambda coro_fn: True
+print(m.close_made({'session_id': 'x'}))"; }
+check "a close that raises is said, not thrown, and returns False; one that works returns True" "False|1|True" \
+  "$(closemade_raise | tail -1)|$(closemade_raise | grep -c -- 'spawn: the refused session could not be closed: kaboom')|$(closemade_ok)"
+
 # `screen --lines N` returned the FIRST N lines of the tab, which on a tall terminal are
 # blank: the blocked agent's prompt sat at the bottom and three reads out of four came back
 # empty while the tooling reported success. Trailing blanks go, interior ones stay — a

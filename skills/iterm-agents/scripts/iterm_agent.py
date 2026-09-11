@@ -1084,7 +1084,11 @@ def close_made(made):
 
     A refusal after the tab exists must leave no tab: an agent nobody can use, in a window
     the operator reads, is worse than a spawn that failed. The id and not the tty, because
-    a tty is a claim about a moment and the session is the thing that was created."""
+    a tty is a claim about a moment and the session is the thing that was created.
+
+    The call is wrapped: `run()` catches nothing, and a refusal path that ends on a
+    traceback is never an answer — the caller dies with `mode_refusal(...)` either way, so
+    a close that fails must be SAID, not thrown."""
     session_id = made.get("session_id") or ""
     if not session_id:
         return False
@@ -1100,7 +1104,12 @@ def close_made(made):
                         return True
         return False
 
-    return bool(run(go))
+    try:
+        return bool(run(go))
+    except Exception as exc:
+        print("spawn: the refused session could not be closed: %s"
+              % str(exc).splitlines()[0], file=sys.stderr)
+        return False
 
 
 async def close_session(app, tty, expect):
