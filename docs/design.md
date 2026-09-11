@@ -1226,6 +1226,14 @@ anchor lands after the chain, and a successor spawned there is the far-right tab
 operator saw. `commands/succeed.md` stops asking for a typed title where the derivation
 exists.
 
+**A successor comes up under remote control, an agent never does.** The operator drives
+his orchestrators from the host's remote client as well as from the tab, and an agent is
+driven by its orchestrator alone. The host takes `--remote-control [name]` at launch, so
+`--successor` adds it, with the successor's name, unless `--no-remote-control` says
+otherwise; a plain spawn never adds it. A first instantiation is the operator's hand, and
+the rulebook's sentence on it names the flag: `--remote-control "Orchestrator :
+<feature>"` beside `--name`, so a session he starts himself is reachable the same way.
+
 **`rotate` forwards `--trust`.** The rotation's spawn already receives every argument the
 rotation does not consume, `--trust` included, but the tab skill's reference line never
 said so and a live rotation into a fresh checkout was refused on the trust question and
@@ -1238,8 +1246,9 @@ title at all and reads the derived one back.
 What the suite reads, in the dry run: a title without the shape is refused and the
 reason names the shape; `agent` is refused; `--title-free` lets an unshaped title through
 and the launch carries it; `--successor` with a process-table fixture carrying `--name
-'Orchestrator : x'` on the caller's tty launches with that name, and without one is
-refused; `Orchestrator : x` with `--right-of self` is refused; `rotate --trust` reaches the
+'Orchestrator : x'` on the caller's tty launches with that name and with
+`--remote-control 'Orchestrator : x'`, `--no-remote-control` drops the flag, a plain spawn
+never carries it, and without a name in the table the successor is refused; `Orchestrator : x` with `--right-of self` is refused; `rotate --trust` reaches the
 spawn's trust record write. What the live round reads: a successor spawned with
 `--successor` and no title comes up in the listing under the predecessor's name with a
 reference of its own.
