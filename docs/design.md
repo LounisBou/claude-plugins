@@ -938,3 +938,42 @@ the tap's, said as such; no model anywhere yields `unavailable`. On the gate's f
 first reading is silent, an appended answer from another model is said exactly once,
 naming both, and the next reading is silent again; a stale model marker is swept with the
 others.
+
+## 33. The installer reads the stored command through its home spelling
+
+**0.23.3.** The installer wires the tap by prepending its copy's path to whatever
+`statusLine.command` already says, and it is idempotent by comparing that stored command
+with the path it would write: equal, or equal up to the first space, means « already
+wired ». The path it compares with is expanded — the state directory under the
+configuration directory, itself under the home. The stored command need not be. An
+operator who keeps the configuration directory in a repository and wants it to work on
+more than one machine writes the home as `$HOME` or `~`, and the host expands it when it
+runs the line, so the tap keeps running. But the comparison is textual: `$HOME/.claude/…`
+is not `/…/home/.claude/…`, the installer reads a wired file as unwired, and the next run
+prepends the tap a second time — two taps, one payload, one file written twice. The
+uninstaller compares the same way, says the status line does not point at the tap, and
+leaves both in place. Reported by a sibling build on the code on 11 September; live on
+this machine the same afternoon, when the configuration repository's portable commit
+landed after the day's install.
+
+**The comparison is made on the expanded spelling; the stored line is never rewritten.**
+Before either `case`, the installer and the uninstaller normalise the command they read:
+a leading `$HOME/`, `${HOME}/` or `~/` becomes the expanded home, and nothing else in
+the line changes. « Already wired » then prints the line as stored, and the settings file
+keeps its bytes; « restored » puts back the object saved at install time exactly as
+before. A command that names the home some other way — a different variable, a symlink,
+a path that is not the configuration directory's — is still unwired, which is right: the
+tap the installer would write is not there.
+
+**Out of scope, on purpose.** Rewriting the stored command to the portable spelling, or
+to the absolute one: which spelling a settings file uses is the operator's choice, made
+in a repository the plugin does not own. Detecting a doubled tap already written by an
+earlier run and repairing it: that file is the operator's to fix by hand, once, and a
+repair step that edits a status line it did not write is the kind of machinery §18 says
+to leave out. Normalising anything but the prefix: the tap's path is the first word, and
+only the first word decides.
+
+What the suite reads: on a home whose settings file was wired by the installer and then
+rewritten with the home spelled `$HOME`, and again spelled `~`, a second install says
+« already wired » and leaves the file byte for byte; the uninstaller then restores the
+object saved at install time. The absolute spelling keeps its existing checks.
