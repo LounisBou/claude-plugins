@@ -19,6 +19,7 @@ skills/iterm-agents/scripts/iterm-agent.sh   entry point: resolves an interprete
 skills/iterm-agents/scripts/iterm_agent.py   the implementation, over the app API
 skills/orchestrator/scripts/brief-lint.sh   refuses a brief before it is dispatched
 skills/orchestrator/scripts/dispatch-record.sh  one row per dispatch, and the routing signal
+skills/orchestrator/scripts/workspace.sh    a clone per phase, with the project's local material
 skills/model-routing/SKILL.md        which capability tier a dispatch gets
 skills/context-gauge/SKILL.md        how a session reads its own context fill
 skills/context-gauge/scripts/context-gauge.sh
@@ -750,3 +751,109 @@ lines are few and identical, and what follows them is the diagnosis.
 What the suite reads: nothing — this section records a limitation, not a mechanism. The
 live round's spawn check keeps stderr and prints its last lines on failure, which is where
 a real diagnosis surfaces above the known noise.
+
+## 30. A checkout per phase, with the project's local material
+
+**0.23.0.** Two rules of the method were held by discipline alone. « One writer per
+repository » meant the orchestrator queued every dispatch behind the checkout it shares with
+its implementer, and lent that checkout away for the length of a phase. And a sandbox that
+should let an implementer write under one root could not: a git worktree writes into its
+source repository's `.git`, so no single allowed path contains it. A clone contains
+everything it touches, and a clone per phase turns the one-writer rule from a queue into a
+fact.
+
+**The gap a clone opens, and the reason nothing did this by hand.** A clone carries what
+git tracks and nothing else. A project's `<repository>/.claude/` directory is ignored, so a session in
+the clone reads a bare project — no local settings, no agents, no briefs — and behaves like
+a stranger's. What a repository keeps out of history on purpose (`.git/info/exclude`: the
+instruction file that must never be committed, a local plan) is absent too, and so are the
+files a project needs and never tracks (an environment file, a decrypt key). The rulebook
+already named the copy as the orchestrator's housekeeping; done by hand it was done
+sometimes, and a clone makes the omission systematic rather than occasional. So the copy is
+part of making the checkout, not a step after it.
+
+**The script.** `skills/orchestrator/scripts/workspace.sh`, bash 3.2 like its neighbours.
+The root is `ORCHESTRATOR_WORKSPACES`, else `~/dev/workspaces`; a checkout lives at
+`<root>/<repository name>/<name>`, the repository name being the source directory's
+basename.
+
+- `create <source> <name> [--base <ref>]` prints the checkout's path on stdout and nothing
+  else there. It refuses a source that is not a git repository, a name outside
+  `[A-Za-z0-9._-]`, a target that already exists (a stale checkout is deleted on purpose,
+  never overwritten), and a base ref the source does not know. It clones from the local
+  repository — fast, offline — on the base branch (default: the source's current branch),
+  then points the clone's `origin` at the URL of the source's `origin`, so the
+  implementer's `git push -u` reaches the real remote; a source without `origin` yields a
+  clone without one, said on stderr. Then the copy below. The implementer creates its phase
+  branch itself from the base, as today. Nothing is left half-made: a copy that fails
+  removes the clone and names the error.
+- `delete <path> [--discard]` refuses a path outside the root, always. It refuses a dirty
+  tree or a commit on no remote branch unless `--discard` is given — the guard that keeps a
+  shelved phase's work from vanishing before anyone said so, since its branch is deleted on
+  the remote before the checkout is. It removes the directory and prints `deleted <path>`.
+- `list` prints one line per checkout under the root: path, branch, short head, `clean` or
+  `dirty`, `pushed` or `unpushed`. It is what a successor reads to know what is lying
+  around.
+- Every refusal is one line `workspace: <reason>` on stderr and exit 1, the launcher's
+  contract. The script never writes the trust record (that is `spawn --trust`), never
+  launches anything, never touches the source.
+
+**The copy**, from the source to the clone at the same relative path, in this order:
+
+1. The project's `<repository>/.claude/` directory, whole, when it exists.
+2. The files `.git/info/exclude` designates — listed by git itself, `git ls-files --others
+   --ignored --exclude-from=.git/info/exclude`, so the patterns are read the way git reads
+   them and only present files are copied.
+3. The optional manifest `<repository>/.claude/workspace-manifest`: one path per line relative to the
+   repository root, `#` for a comment, a file or a directory (copied recursively). A path
+   that is absent is said on stderr and skipped, not an error — a manifest serves more than
+   one machine. A path that leaves the repository (`..`, absolute) is refused.
+
+Never copied, even when listed: `.git`, `node_modules`, `vendor`, and anything `.gitignore`
+covers that the manifest does not name. Build trees and caches rebuild; copying them makes
+a huge checkout and copies secrets by accident. `create` says what it copied, one stderr
+line per category with a count, so the orchestrator reads once what the checkout carries.
+When the source is this repository, the copy carries the orchestrator's briefs and state
+file too: intended, the implementer reads its brief at the same path, and none of it is
+committed since `<repository>/.claude/` is excluded. What was copied is kept out of the
+checkout's own history the way the source keeps it out of its own — the source's exclude
+file is appended to the checkout's, and the settings directory and each manifest path are
+excluded by name — otherwise every checkout reads dirty from birth and `delete` refuses it
+for work that is not work.
+
+**The method, three touches.** The dispatch is `workspace.sh create <source> <phase>
+--base main` then `spawn --dir <path> --trust --right-of self …`, and the brief cites the
+path as its working directory. Closing a phase — merged or shelved — is stand-down, tab
+closed, `workspace.sh delete <path>`, `list` as the proof. The orchestrator's own checkout
+is never lent to an implementer again; it writes its specs and plans there and nothing else
+happens in it. In the rulebook, « One writer per repository at a time » becomes « One
+writer per checkout, and a checkout per phase »: the rule stays, the clone makes it
+structural. Two implementers on two phases of one repository become possible when their
+files are disjoint and their pull requests stack; this release does not promise it and the
+text does not either. « Environment preparation is orchestrator housekeeping » names the
+script in place of « worktree setup » and the copy by hand; « Launch » cites create then
+spawn; « Terminate » adds delete. The phase brief template's environment section gains
+the sentence that the checkout is a clone made for this phase, that `origin` is the real
+remote, and that the base branch is checked out. The succession brief's first task reads
+`workspace.sh list`.
+
+**A prerequisite, not a deliverable.** The root must be writable under the sandbox for
+implementer sessions and readable for the orchestrator's clone. That is a request to the
+session in charge of the host's configuration, carrying the path and the commands, per the
+operator's rule; the live round needs it, the suite does not.
+
+**Out of scope, on purpose**: several implementers on one repository, a `--workspace` flag
+on `spawn`, migrating the sibling builds' sessions, any cleanup by age.
+
+What the suite reads, on a temporary repository it makes with a fake `origin`, a
+`<repository>/.claude/` directory, an exclude file naming one file, a manifest naming one present and one absent
+file, and a `node_modules` tree: `create` prints the expected path under the root; the
+clone is on the base branch at the source's head; its `origin` is the source's `origin`
+URL; `<repository>/.claude/` is copied; the excluded file is copied; the manifest's present file is
+copied and its absent one is said on stderr; `node_modules` is not copied; `create` on an
+existing target refuses and leaves it intact; `delete` refuses an unpushed commit, accepts
+with `--discard`, and the path is gone; `delete` refuses a path outside the root; `list`
+shows the checkout as `clean | unpushed` after a local commit. The live round launches its
+probe in a checkout the script made from the round's repository, with `spawn --trust`,
+reads that the session runs in it, and deletes it after the close: the proof that trust and
+the sandbox let a fresh root through.
