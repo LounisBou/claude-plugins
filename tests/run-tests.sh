@@ -620,13 +620,29 @@ check "and so does a probe's" "1" \
 check "the dry run says which name it passes" "1" "$(shaped --title 'Probe : anchor' | grep -c '^name=Probe : anchor$')"
 check "a title without the shape is refused, and the reason names the shape" "1|1" \
   "$(shaped --title foo >/dev/null 2>&1; echo $?)|$(shaped --title foo | grep -c 'a title reads "<Role> : <what>", got .foo.')"
-check "the old default title is refused too" "1" "$(shaped --title agent | grep -c 'a title reads')"
+check "the old default title is refused too" "1|1" \
+  "$(shaped --title agent >/dev/null 2>&1; echo $?)|$(shaped --title agent | grep -c 'a title reads')"
 check "no title: refused unless --title-free" "1|1" \
   "$(shaped >/dev/null 2>&1; echo $?)|$(shaped | grep -c "got ''")"
 check "--title-free lets an unshaped title through, and says so" "1|1" \
   "$(shaped --title-free --title foo | sed -n 's/^launch=//p' | grep -c -- '--name foo')|$(shaped --title-free --title foo | grep -c '^title_free=yes$')"
 check "--title-free with no title keeps the old default" "1" \
   "$(shaped --title-free | sed -n 's/^launch=//p' | grep -c -- '--name agent')"
+
+# A value that starts with a dash reads as an option once past shq's "safe characters"
+# gate — `--title-free --title=--evil` emitted `--name --evil` bare, and the host read
+# `--evil` as its own option instead of the name's value. The value is force-quoted.
+check "a dashed value is quoted, not read as an option" "1" \
+  "$(shaped --title-free --title=--evil | sed -n 's/^launch=//p' | grep -c -- "--name '--evil'")"
+check "a shaped title still reads as today" "1" \
+  "$(shaped --title 'Implementer : x' | sed -n 's/^launch=//p' | grep -c -- "--name 'Implementer : x'")"
+
+# `%r` renders a title with an apostrophe wrapped in double quotes instead of single ones,
+# so the refusal's own literal quoting shifted with what the operator typed. `got '<title>'`
+# is now the sentence whatever the title holds.
+D5TITLE="it's not shaped"
+check "the shape refusal always quotes with single quotes" "1" \
+  "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "$D5TITLE" --prompt p 2>&1 | grep -c "got '$D5TITLE'")"
 
 # A successor carries the PREDECESSOR's name, read from the process table, and comes up
 # under remote control: the operator drives his orchestrators from the host's remote
@@ -664,6 +680,10 @@ check "a name of ordinary length still derives" "1" \
 # tab the operator found at the far right of his window, inheriting nothing (§39).
 check "an orchestrator's title on a plain anchor is refused" "1|1" \
   "$(shaped --title 'Orchestrator : f' --right-of self | grep -c "an orchestrator's title is a successor's")|$(shaped --title 'Orchestrator : f' --left-of /dev/ttys555 | grep -c 'spawn it with --successor')"
+# A successor is named after its caller by definition; --title-free asks for the ESCAPE
+# from that shape, which does not apply to a name the launcher derives itself.
+check "--successor with --title-free is refused" "1|1" \
+  "$(succ "$PSTAB" --successor --title-free >/dev/null 2>&1; echo $?)|$(succ "$PSTAB" --successor --title-free | grep -c 'a successor is named after its caller, --title-free does not apply')"
 
 # The process table is read through ONE function, and the suite replaces `ps` with a file.
 name_on() { ORCHESTRATOR_PS_TABLE="$1" "$py" -c "
@@ -785,6 +805,16 @@ out=$(env ORCHESTRATOR_TRUST_FILE="$WORK/trust-garbage.json" ORCHESTRATOR_DRY_RU
 check "an unreadable record lets the launch through" "0" "$code"
 check "and says so, naming the flag" "1|1" \
   "$(printf '%s' "$out" | grep -c 'cannot be read')|$(printf '%s' "$out" | grep -c '^trust=unread$')"
+# The trust check runs BEFORE the prompt file is written: a refusal that already wrote one
+# is a refusal that leaves a stray file under the state directory's prompts/.
+D8STATE=$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")
+D8TRUST="$WORK/trust-d8.json"; printf '{"projects":{}}' > "$D8TRUST"
+D8DIR="$WORK/untrusted-d8"; mkdir -p "$D8DIR"
+env ORCHESTRATOR_TRUST_FILE="$D8TRUST" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$D8STATE" \
+  bash "$AGENT" spawn --dir "$D8DIR" --title "Probe : trust" --prompt "hello" >/dev/null 2>&1
+check "the trust refusal leaves no prompt file" "0" \
+  "$(find "$D8STATE/prompts" -type f 2>/dev/null | wc -l | tr -d ' ')"
+rm -rf "$D8STATE"
 # Entries outlive their directories — a checkout per phase adds one per dispatch — and
 # nothing removed them. prune lists; only --apply writes; the kept entry keeps its shape.
 GONE="$WORK/gone-checkout"
@@ -907,6 +937,17 @@ check "rotate forwards --trust to the spawn, which records it" "true" \
   "$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
       bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$ROTDIR" --title "Implementer : rotated" --tier deep --trust >/dev/null 2>&1; \
      "$py" -c "import json,os,sys; d=json.load(open(sys.argv[1])); print(str(d['projects'].get(os.path.realpath(sys.argv[2]),{}).get('hasTrustDialogAccepted')).lower())" "$TRUSTF" "$ROTDIR")"
+# A rotation replaces an agent with a titled agent; a successor, an escape from the title
+# shape, or a plain agent stripped of remote control are none of that — each is refused
+# before the replacement is spawned.
+rot_refuse() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" \
+  rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Implementer : rotated" "$@" 2>&1; }
+check "rotate refuses --successor" "1" \
+  "$(rot_refuse --successor | grep -c -- '--successor is not a rotation')"
+check "rotate refuses --title-free" "1" \
+  "$(rot_refuse --title-free | grep -c -- '--title-free is not a rotation')"
+check "rotate refuses --no-remote-control" "1" \
+  "$(rot_refuse --no-remote-control | grep -c -- '--no-remote-control is not a rotation')"
 # ...and forwarding is not enough: the refusal has to STOP the rotation. A tier that does
 # not resolve once opened a real tab with no model at all, because the failure was swallowed
 # crossing a shell substitution. The guard reads what comes LAST: an exit code alone would

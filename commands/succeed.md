@@ -23,7 +23,10 @@ Then:
    No title: `--successor` takes THIS session's own name, so the successor is the same
    `Orchestrator : <feature>` with a reference of its own, which is what every brief
    cites; it also comes up under remote control under that name (spec §39). A session
-   launched by hand carries no name, and the launcher then says to type one.
+   launched by hand carries no name, and the launcher then says to type one. A session the
+   older launcher named carries its prompt in its own process line, so the derivation
+   refuses it and the title is typed by hand, in the house format — this is the case of
+   every orchestrator alive across the upgrade.
    The successor runs on the model this session runs on NOW — the operator's choice, carried
    across every succession; the map binds agents, never the orchestrator (spec §27).
    `--successor` places it immediately right of this tab, between it and the first agent,

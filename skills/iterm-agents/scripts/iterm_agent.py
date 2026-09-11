@@ -519,8 +519,15 @@ def write_launch_script(command, title):
 
 
 def shq(s):
+    """`shlex.quote` treats `-` as a safe character and leaves a value starting with it
+    bare — `--title-free --title=--evil` then emitted `--name --evil`, which the host read
+    as its own option instead of the name's value. Force the quotes whenever the first
+    character is a dash, whatever `shlex.quote` would otherwise decide."""
     import shlex
-    return shlex.quote(s)
+    q = shlex.quote(s)
+    if s.startswith("-") and q == s:
+        q = "'" + s.replace("'", "'\\''") + "'"
+    return q
 
 
 TRUST_FILE = os.environ.get("ORCHESTRATOR_TRUST_FILE") or os.path.join(os.path.expanduser("~"), ".claude.json")
@@ -596,6 +603,9 @@ def cmd_spawn(argv):
     if args.successor and (args.left_of or args.right_of):
         die("spawn: --successor names its own anchor, immediately right of this session; "
             "drop --left-of and --right-of")
+    if args.successor and args.title_free:
+        die("spawn: refused: a successor is named after its caller, --title-free does not "
+            "apply")
     if args.title.startswith("Orchestrator :") and (args.left_of or args.right_of):
         # A plain anchor lands AFTER the chain (§21), so a successor spawned there is the
         # far-right tab the operator found, inheriting nothing. --successor places it and
@@ -646,7 +656,7 @@ def cmd_spawn(argv):
                 'older launcher (%d characters); pass --title "Orchestrator : <feature>"'
                 % len(title))
     elif not TITLE_SHAPE.match(title):
-        die('spawn: refused: a title reads "<Role> : <what>", got %r '
+        die("spawn: refused: a title reads \"<Role> : <what>\", got '%s' "
             "(pass --title-free for a tab named otherwise)" % title)
     if args.successor:
         # A successor is not an agent: immediately right of this session, the chain
@@ -674,15 +684,10 @@ def cmd_spawn(argv):
             return win is not None
         if not run(probe):
             die("spawn: no session found on %s" % anchor)
-    prompt_file = args.prompt_file
-    if prompt_file and not os.path.isfile(prompt_file):
-        die("spawn: prompt file not found: %s" % prompt_file)
-    if args.prompt:
-        prompt_file = write_prompt_file(args.prompt, title)
-
-    # BEFORE the tab exists: a session stopped on the trust question is not launched,
-    # whatever the tty says, and finding that out afterwards means finding it out from an
-    # agent that never answers.
+    # BEFORE the tab exists, and BEFORE the prompt file is written: a refusal on the trust
+    # question must leave nothing behind — a prompt file written ahead of it survived every
+    # refusal and piled up under the state directory's prompts/ for a directory that was
+    # never launched into.
     trusted = directory_is_trusted(args.dir)
     if trusted is True:
         # Never rewrite a record that already says yes: the host writes this file too, and
@@ -702,6 +707,12 @@ def cmd_spawn(argv):
         die("spawn: the host has not been told to trust %s, so the session would stop on "
             "its workspace question and never read its brief. Pass --trust for a checkout "
             "you prepared, or open the directory once yourself." % os.path.realpath(args.dir))
+
+    prompt_file = args.prompt_file
+    if prompt_file and not os.path.isfile(prompt_file):
+        die("spawn: prompt file not found: %s" % prompt_file)
+    if args.prompt:
+        prompt_file = write_prompt_file(args.prompt, title)
 
     remote_control = title if (args.successor and args.remote_control) else ""
     launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control)
@@ -942,6 +953,13 @@ def cmd_rotate(argv):
     args, rest = p.parse_known_args(argv)
     if not args.old_tty:
         die("rotate: --old-tty is required")
+    # A rotation replaces an agent with a titled agent; none of these are that. A successor
+    # is spawned with `spawn --successor`, not smuggled through the replacement a rotation
+    # makes.
+    for flag in ("--successor", "--title-free", "--no-remote-control"):
+        if flag in rest:
+            die("rotate: refused: %s is not a rotation's (a rotation replaces an agent with "
+                "a titled agent; a successor is spawned with spawn --successor)" % flag)
     # The spawn verifies the replacement is RUNNING before anything is closed: a rotation
     # that killed the old agent on a spawn that never started would leave zero agents,
     # which is the one outcome this order exists to prevent.

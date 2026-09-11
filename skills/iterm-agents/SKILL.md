@@ -25,7 +25,8 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --inherit-model] [--
     --title "<Role> : <what>" --prompt "Read and execute <brief-path>. Your orchestrator is <name [ref]>." [--right-of self | --successor]
     # --title has a SHAPE — a capitalised role, a spaced colon, then what it is — because it
     # is the session's name in every listing. Anything else is refused; `--title-free` is the
-    # escape for a probe that names its tab otherwise, and no title then means `agent`.
+    # escape for a probe that names its tab otherwise, and only under `--title-free` does no
+    # title mean `agent` — without it, a spawn with no title is refused.
     # writes the prompt to a file under the plugin's state directory, writes the launch
     # to a second file, asks the app to run it in a new tab AT AN INDEX, WAITS until the
     # host CLI is running on the new tty (30 s, ORCHESTRATOR_SPAWN_TIMEOUT), and prints
@@ -37,7 +38,9 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --inherit-model] [--
     # --successor: the new session takes yours — immediately right of you, chain ignored, your chain handed to it (§34).
     #   With no --title it takes YOUR OWN name, read from the process table, so every brief
     #   that cites you still cites it; and it comes up under remote control under that name
-    #   (--no-remote-control drops that). An `Orchestrator :` title with --right-of/--left-of
+    #   (--no-remote-control drops that). A session the older launcher named carries its
+    #   prompt in its own process line, so the derivation refuses it and the title is typed
+    #   by hand instead. An `Orchestrator :` title with --right-of/--left-of
     #   is refused: a plain anchor lands after your chain, which is not a successor's place.
 
 $SCRIPT verify --tty /dev/ttysNNN
