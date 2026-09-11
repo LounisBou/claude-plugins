@@ -12,6 +12,8 @@
 #   iterm-agent.sh close --tty /dev/ttysNNN [--expect-title <substring>]
 #   iterm-agent.sh move --tty /dev/ttysNNN (--left-of <tty> | --right-of <tty> | --right-of self)
 #   iterm-agent.sh rotate --old-tty /dev/ttysNNN [--expect-title <s>] <spawn options...>
+#   iterm-agent.sh trust prune [--apply]
+#     list, then remove with --apply, the trust entries whose directory is gone
 #
 # Interpreter: the environment the installer builds, when it is there; otherwise any
 # python3. The module iTerm2 needs is imported only by the subcommands that talk to the

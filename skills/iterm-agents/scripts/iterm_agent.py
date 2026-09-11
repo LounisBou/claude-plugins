@@ -523,9 +523,21 @@ def cmd_spawn(argv):
     # whatever the tty says, and finding that out afterwards means finding it out from an
     # agent that never answers.
     trusted = directory_is_trusted(args.dir)
-    if args.trust:
+    if trusted is True:
+        # Never rewrite a record that already says yes: the host writes this file too, and
+        # a rewrite for nothing is a window in which one of the two loses an entry.
+        trust_state = "already"
+    elif args.trust:
         grant_directory_trust(args.dir)
-    elif trusted is False:
+        trust_state = "recorded"
+    elif trusted is None:
+        # A gate that cannot measure lets the launch through AND says so (§31).
+        trust_state = "unread"
+        print("spawn: the trust record %s cannot be read, so whether the host trusts %s is "
+              "unknown; launching anyway. Pass --trust for a checkout you prepared, or open "
+              "the directory once yourself." % (TRUST_FILE, os.path.realpath(args.dir)),
+              file=sys.stderr)
+    else:
         die("spawn: the host has not been told to trust %s, so the session would stop on "
             "its workspace question and never read its brief. Pass --trust for a checkout "
             "you prepared, or open the directory once yourself." % os.path.realpath(args.dir))
@@ -537,6 +549,7 @@ def cmd_spawn(argv):
         print("prompt_file=%s" % prompt_file)
         print("self=%s" % own)
         print("anchor=%s" % ("self" if anchor == own else anchor))
+        print("trust=%s" % trust_state)
         print("program=%s -l <launch-file>" % LOGIN_SHELL)
         return
 
@@ -742,16 +755,52 @@ def cmd_resolve_tier(argv):
     print(resolve_tier(argv[0]))
 
 
+def cmd_trust(argv):
+    """`trust prune [--apply]`: the record's entries whose directory no longer exists.
+
+    A trust entry outlives its directory, and a checkout per phase adds one per dispatch,
+    so the record only grows. An entry for a directory that is gone holds nothing the host
+    can use. Listing is the default; only --apply writes, with the same temporary file,
+    replace and owner-only mode as the writer that made the entries."""
+    p = argparse.ArgumentParser(prog="trust", add_help=False)
+    p.add_argument("action", nargs="?", default="")
+    p.add_argument("--apply", action="store_true", default=False)
+    args, unknown = p.parse_known_args(argv)
+    if unknown or args.action != "prune":
+        die("trust: usage: trust prune [--apply]")
+    try:
+        with open(TRUST_FILE) as fh:
+            data = json.load(fh)
+    except Exception as exc:
+        die("trust: cannot read %s: %s" % (TRUST_FILE, exc))
+    projects = data.get("projects") or {}
+    gone = sorted(path for path in projects if not os.path.isdir(path))
+    for path in gone:
+        print(path)
+    if not args.apply:
+        print("trust: %d of %d entries name a directory that no longer exists; pass --apply "
+              "to remove them" % (len(gone), len(projects)), file=sys.stderr)
+        return
+    for path in gone:
+        del projects[path]
+    tmp = TRUST_FILE + ".orchestrator-tmp"
+    with open(tmp, "w") as fh:
+        json.dump(data, fh, indent=2)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, TRUST_FILE)
+    print("trust: removed %d entries, %d kept" % (len(gone), len(projects)), file=sys.stderr)
+
+
 COMMANDS = {
     "list": cmd_list, "spawn": cmd_spawn, "verify": cmd_verify, "close": cmd_close,
     "move": cmd_move, "rotate": cmd_rotate, "resolve-tier": cmd_resolve_tier,
-    "screen": cmd_screen,
+    "screen": cmd_screen, "trust": cmd_trust,
 }
 
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
-        die("usage: iterm-agent.sh {list|spawn|verify|screen|resolve-tier|close|move|rotate} [options] (see header)")
+        die("usage: iterm-agent.sh {list|spawn|verify|screen|resolve-tier|close|move|rotate|trust} [options] (see header)")
     COMMANDS[sys.argv[1]](sys.argv[2:])
 
 
