@@ -837,6 +837,19 @@ check "no catalogue and no --mcp: strict, no file, and a line on stderr" "1|0|no
 BADCAT="$WORK/mcp-bad.json"; printf '["a","b"]\n' > "$BADCAT"
 check "a catalogue that is not one is refused, and the refusal names the shape" "1|1" \
   "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADCAT" bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' >/dev/null 2>&1; echo $?)|$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADCAT" bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' 2>&1 | grep -c -- "$BADCAT does not read as a server catalogue (a \"servers\" object and a \"default\" list)")"
+# A default naming a server the catalogue does not hold is not caught by the shape check
+# above (both fields still read as an object and a list): the launch would silently drop
+# the unknown name and give the agent a set the operator never wrote. Refused instead, and
+# a catalogue whose default names only held servers is unaffected.
+BADDEF="$WORK/mcp-bad-default.json"
+printf '{"servers":{"a":{"command":"a-cmd"}},"default":["a","zzz"]}\n' > "$BADDEF"
+check "a default name absent from servers is refused; one fully held still launches" "1|1|1" \
+  "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADDEF" bash "$AGENT" spawn --dir "$WORK" --mcp a --title 'Agent : x' >/dev/null 2>&1; echo $?)|$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADDEF" bash "$AGENT" spawn --dir "$WORK" --mcp a --title 'Agent : x' 2>&1 | grep -c -- "the catalogue $BADDEF lists 'zzz' in default but not in servers")|$(mcpd | sed -n 's/^launch=//p' | grep -c -- '--mcp-config ')"
+# Every asked name is checked against the catalogue BEFORE `none` short-circuits the
+# selection: a typo beside `none` used to select nothing and say nothing, which is how a
+# caller who mistyped one name among several would never learn it.
+check "typo,none is refused naming typo; a,none still selects nothing" "1|1|none" \
+  "$(mcpd --mcp typo,none >/dev/null 2>&1; echo $?)|$(mcpd --mcp typo,none | grep -c -- "--mcp 'typo' is not in the catalogue $CAT (names: a, b)")|$(mcpd --mcp a,none | sed -n 's/^mcp=//p')"
 # The host's --mcp-config takes SEVERAL values, so whatever follows it is read as another
 # file: the prompt placed there was read as one (« MCP config file not found: <the
 # prompt> »). The pair is closed by --permission-mode, which takes exactly one.
@@ -1425,8 +1438,6 @@ echo "== the mode a session came up in (§43) =="
 # waits for a click is not — so the spawn reads the mode the session actually came up in.
 # The reading itself needs a spawned session and belongs to the live round; what the suite
 # reads is the pure functions it is built from, over fixture transcripts written here.
-# Its own directory: the gauge's cases already keep fixtures under $WORK/projects, and two
-# suites sharing a fixture tree is a check that passes on someone else's file.
 # Its own directory: the gauge's cases already keep fixtures under $WORK/projects, and two
 # suites sharing a fixture tree is a check that passes on someone else's file.
 PROJ="$WORK/mode-projects"

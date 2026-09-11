@@ -185,6 +185,10 @@ def read_catalogue():
     except Exception:
         die('spawn: refused: %s does not read as a server catalogue (a "servers" object '
             'and a "default" list)' % MCP_CATALOGUE)
+    for name in data["default"]:
+        if name not in data["servers"]:
+            die("spawn: refused: the catalogue %s lists '%s' in default but not in servers"
+                % (MCP_CATALOGUE, name))
     return data
 
 
@@ -200,24 +204,30 @@ def select_servers(asked, catalogue):
     names = []
     for value in asked:
         names += [n.strip() for n in value.split(",") if n.strip()]
-    if "none" in names:
-        # Asked for nothing, so nothing is needed to give it: no catalogue is required and
-        # no line is printed — the caller said what it wants.
-        return []
+    asked_servers = [n for n in names if n != "none"]
     if catalogue is None:
-        if names:
+        if asked_servers:
             die("spawn: refused: --mcp needs a server catalogue at %s; the installer "
                 "creates one" % MCP_CATALOGUE)
+        if "none" in names:
+            # Asked for nothing, so nothing is needed to give it: no catalogue is required
+            # and no line is printed — the caller said what it wants.
+            return []
         # A caller that said nothing, on a machine that offers nothing: the launch goes
         # through and says so, rather than deciding in silence (§31).
         print("spawn: no server catalogue at %s: the session loads no server"
               % MCP_CATALOGUE, file=sys.stderr)
         return []
     servers = catalogue["servers"]
-    for name in names:
+    # Every asked name is checked BEFORE `none` short-circuits the selection: a typo beside
+    # `none` is still a typo, and a caller who mistyped one name among several should learn
+    # it rather than get silently sent out with nothing.
+    for name in asked_servers:
         if name not in servers:
             die("spawn: refused: --mcp '%s' is not in the catalogue %s (names: %s)"
                 % (name, MCP_CATALOGUE, ", ".join(servers) or "none"))
+    if "none" in names:
+        return []
     wanted = set(catalogue["default"]) | set(names)
     return [name for name in servers if name in wanted]
 
