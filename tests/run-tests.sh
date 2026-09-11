@@ -1400,6 +1400,86 @@ check "known window carries no warning" "0" "$(gauge g-1 --window 200000 | grep 
 check_status "nothing readable exits 1" 1 gauge nope
 check_status "no session id exits 1" 1 env -u CLAUDE_CODE_SESSION_ID ORCHESTRATOR_STATE_DIR="$GSTATE" bash "$GAUGE"
 
+echo "== the mode a session came up in (§43) =="
+# Two agents stood on a permission prompt in tabs nobody watched. One carried
+# `--permission-mode auto` on its process line and `default` in every entry of its
+# transcript: the host accepted the flag and ignored it for that model. « The host CLI
+# runs on the tty » is therefore not « the session is launched » — a session that runs and
+# waits for a click is not — so the spawn reads the mode the session actually came up in.
+# The reading itself needs a spawned session and belongs to the live round; what the suite
+# reads is the pure functions it is built from, over fixture transcripts written here.
+# Its own directory: the gauge's cases already keep fixtures under $WORK/projects, and two
+# suites sharing a fixture tree is a check that passes on someone else's file.
+PROJ="$WORK/mode-projects"
+TGT="$WORK/mode-target"; mkdir -p "$TGT"
+"$py" -c "
+import json, os, sys
+proj, tgt = sys.argv[1], os.path.realpath(sys.argv[2])
+def write(path, cwd, modes, mtime):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w') as fh:
+        # The shape the host writes: entries of several types, the mode on its own and the
+        # working directory on another, neither of them first.
+        fh.write(json.dumps({'type': 'last-prompt'}) + '\n')
+        for m in modes:
+            fh.write(json.dumps({'type': 'permission-mode', 'permissionMode': m}) + '\n')
+        fh.write(json.dumps({'type': 'attachment', 'cwd': cwd}) + '\n')
+    os.utime(path, (mtime, mtime))
+write(os.path.join(proj, 'p1', 'older.jsonl'), tgt, ['auto'], 1000)
+write(os.path.join(proj, 'p1', 'newer.jsonl'), tgt, ['acceptEdits', 'default'], 2000)
+write(os.path.join(proj, 'p2', 'stranger.jsonl'), '/somewhere/else', ['default'], 3000)
+write(os.path.join(proj, 'p2', 'modeless.jsonl'), tgt, [], 500)
+" "$PROJ" "$TGT"
+
+find_tr() { ORCHESTRATOR_PROJECTS_DIR="$PROJ" "$py" -c "
+import os, sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+p = m.find_transcript(sys.argv[1], float(sys.argv[2]))
+print(os.path.basename(p) if p else 'none')" "$1" "$2"; }
+mode_of() { "$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+print(m.mode_of_transcript(sys.argv[1]) or 'none')" "$1"; }
+refusal() { "$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+print(m.mode_refusal(sys.argv[1], sys.argv[2], sys.argv[3]))" "$1" "$2" "$3"; }
+# The mode is the FIRST one the transcript carries: the session announces what it came up
+# in, and a later entry is the operator changing it by hand, which is not what the launch
+# is being judged on. The newest fixture carries two, in that order.
+check "the mode read is the first the transcript carries" "acceptEdits|auto|none" \
+  "$(mode_of "$PROJ/p1/newer.jsonl")|$(mode_of "$PROJ/p1/older.jsonl")|$(mode_of "$PROJ/p2/modeless.jsonl")"
+# Found by READING the entries, never by computing the host's directory slug: the slug is
+# the host's own encoding of a path and this plugin has no business reproducing it.
+# The newest file in the directory is the stranger's, and it is not the answer: the
+# comparison is on the checkout the entries name, not on the clock alone.
+check "the newest transcript naming THIS checkout wins, not the newest file" "newer.jsonl|stranger.jsonl" \
+  "$(find_tr "$TGT" 0)|$("$py" -c "
+import glob, os, sys
+print(os.path.basename(max(glob.glob(sys.argv[1] + '/*/*.jsonl'), key=os.path.getmtime)))" "$PROJ")"
+check "a checkout no transcript names has none" "none" \
+  "$(find_tr "$WORK/mode-nobody" 0)"
+# Only files touched since the launch: an older session in the same checkout is not the
+# one this spawn just made.
+check "a transcript older than the launch is not this session's" "none" \
+  "$(find_tr "$TGT" 2600)"
+check "the target's own directory is realpathed before the comparison" "newer.jsonl" \
+  "$(find_tr "$TGT/." 0)"
+
+# The refusal names both modes and the model, because the repair depends on all three:
+# the operator rebinds the tier, or spawns that agent in a mode the host does honour.
+check "the refusal names both modes, the model, and the two repairs" \
+  "spawn: refused: the session came up in mode 'default' and not 'auto' (model a-model): the host ignores the mode asked for this model; bind the tier to another model, or pass --permission-mode acceptEdits for an agent that only edits" \
+  "$(refusal auto default a-model)"
+check "with no model argument the refusal says so" \
+  "spawn: refused: the session came up in mode 'default' and not 'auto' (model the host default): the host ignores the mode asked for this model; bind the tier to another model, or pass --permission-mode acceptEdits for an agent that only edits" \
+  "$(refusal auto default "")"
+
+# A dry run reads no transcript: there is no session to have come up in any mode, and the
+# line says the check was skipped rather than passed.
+check "the dry run skips the reading and says so" "1" \
+  "$(shaped --title 'Agent : x' | grep -c '^mode_check=skipped$')"
+
 echo "== install =="
 
 H="$WORK/home"

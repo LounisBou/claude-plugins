@@ -18,6 +18,7 @@ A spawn is not done until the host CLI is seen in `ps`.
 
 import argparse
 import asyncio
+import glob
 import json
 import os
 import re
@@ -47,6 +48,13 @@ MODELS_MAP = os.environ.get("ORCHESTRATOR_MODELS_MAP") or os.path.join(STATE_DIR
 # what a machine offers is the operator's to say (§42).
 MCP_CATALOGUE = os.environ.get("ORCHESTRATOR_MCP_CATALOGUE") or os.path.join(STATE_DIR, "mcp.json")
 SPAWN_TIMEOUT = int(os.environ.get("ORCHESTRATOR_SPAWN_TIMEOUT", "30"))
+# Where the host keeps one directory per checkout and one transcript per session. The mode
+# a session actually came up in is read there: the process line says what was ASKED for,
+# and the two are not the same thing for every model (§43).
+PROJECTS_DIR = os.environ.get("ORCHESTRATOR_PROJECTS_DIR") or os.path.expanduser("~/.claude/projects")
+# A transcript appears about two seconds after the process starts; twenty is room for a
+# slow machine, and a reading that never comes is not a refusal (§29).
+MODE_TIMEOUT = int(os.environ.get("ORCHESTRATOR_MODE_TIMEOUT", "20"))
 DRY_RUN = bool(os.environ.get("ORCHESTRATOR_DRY_RUN"))
 TIERS = ("deep", "standard", "light")
 # A title reads `Orch : <subject>` or `Agent : <subject>`: two roles, and a subject of at
@@ -66,6 +74,65 @@ TITLE_SHAPE = re.compile(r"^(Orch|Agent) : .{1,25}\Z")
 def die(msg):
     print("ERROR: " + msg, file=sys.stderr)
     sys.exit(1)
+
+
+def find_transcript(dir_, since):
+    """The transcript of the session just launched into `dir_`, or None.
+
+    Found by READING the entries, never by computing the host's directory slug: the slug is
+    the host's own encoding of a path, and a plugin that reproduced it would be wrong the
+    day the encoding changes. The file is the newest one touched since the launch whose
+    first entry carrying `cwd` names this checkout — an older session in the same checkout
+    is not the one this spawn made."""
+    want = os.path.realpath(dir_)
+    found = []
+    for path in glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")):
+        try:
+            if os.path.getmtime(path) < since:
+                continue
+            with open(path) as fh:
+                for line in fh:
+                    try:
+                        entry = json.loads(line)
+                    except Exception:
+                        continue
+                    if isinstance(entry, dict) and "cwd" in entry:
+                        if entry["cwd"] == want:
+                            found.append((os.path.getmtime(path), path))
+                        break
+        except Exception:
+            # A file being written while it is read is not a reason to refuse a launch.
+            continue
+    return max(found)[1] if found else None
+
+
+def mode_of_transcript(path):
+    """The mode the session announced when it came up: the FIRST `permissionMode` the
+    transcript carries. A later one is the operator changing it by hand, which is not what
+    the launch is being judged on."""
+    try:
+        with open(path) as fh:
+            for line in fh:
+                try:
+                    entry = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(entry, dict) and "permissionMode" in entry:
+                    return entry["permissionMode"] or ""
+    except Exception:
+        return ""
+    return ""
+
+
+def mode_refusal(asked, got, model):
+    """Both modes, the model, and the two repairs: which one applies depends on all three.
+    The operator rebinds the tier, or spawns that agent in a mode the host does honour for
+    that model — `acceptEdits` carried, and ran edits and allow-listed commands without a
+    prompt, on the very model that ignored the decision mode (§43)."""
+    return ("spawn: refused: the session came up in mode '%s' and not '%s' (model %s): the "
+            "host ignores the mode asked for this model; bind the tier to another model, or "
+            "pass --permission-mode acceptEdits for an agent that only edits"
+            % (got, asked, model or "the host default"))
 
 
 def read_catalogue():
@@ -822,11 +889,14 @@ def cmd_spawn(argv):
         print("title_free=%s" % ("yes" if args.title_free else "no"))
         print("mcp=%s" % (",".join(servers) or "none"))
         print("mcp_file=%s" % (mcp_file or "none"))
+        print("mode_check=skipped")
         print("program=%s -l <launch-file>" % LOGIN_SHELL)
         return
 
     script = write_launch_script(launch, title)
     command = "%s -l %s" % (LOGIN_SHELL, script)
+
+    made = {}
 
     async def go(iterm2, connection):
         app = await iterm2.async_get_app(connection)
@@ -846,6 +916,10 @@ def cmd_spawn(argv):
         # window to the new one interrupts them every time an agent is launched.
         tab = await win.async_create_tab(command=command, index=index, select=False)
         new = await tty_of(tab, connection)
+        # Kept for the mode reading below: a refusal closes the session THIS spawn made,
+        # by its own id, never by a tty another session could hold by then.
+        made["tab_id"] = tab.tab_id
+        made["session_id"] = tab.current_session.session_id if tab.current_session else ""
         if own and new and args.successor:
             new_sess = None
             for _ in range(10):
@@ -867,6 +941,8 @@ def cmd_spawn(argv):
             chain_append(own, tab.tab_id, new, own_sess_id)
         return new
 
+    # Before the tab exists, so no transcript older than this launch can be taken for its.
+    launch_epoch = time.time()
     new_tty = run(go)
     if not new_tty:
         die("spawn: iTerm2 returned no tty for the new tab")
@@ -883,6 +959,28 @@ def cmd_spawn(argv):
         if not pid:
             die("spawn: %s never started on %s after %ss" % (HOST_CLI, new_tty, SPAWN_TIMEOUT))
         print("spawn: %s running on %s (pid %s)" % (HOST_CLI, new_tty, pid), file=sys.stderr)
+        # « The host CLI runs on the tty » is not « the session is launched »: a session
+        # that runs and waits for a click is not. The mode asked for is carried on the
+        # process line and honoured for some models and not others, so the mode the session
+        # actually came up in is read on its own transcript (§43).
+        waited, mode = 0, ""
+        while waited < MODE_TIMEOUT:
+            path = find_transcript(args.dir, launch_epoch)
+            if path:
+                mode = mode_of_transcript(path)
+                if mode:
+                    break
+            time.sleep(1)
+            waited += 1
+        if not mode:
+            # A gate that cannot measure holds nothing, and says so (§29).
+            print("spawn: no transcript for %s after %ss: the session's mode is unread"
+                  % (args.dir, MODE_TIMEOUT), file=sys.stderr)
+        elif mode != args.mode:
+            close_made(made)
+            die(mode_refusal(args.mode, mode, model))
+        else:
+            print("spawn: mode %s read on the transcript" % mode, file=sys.stderr)
     print(new_tty)
 
 
@@ -935,6 +1033,30 @@ def stable_title(name):
     every rotation instead. Both sides are stripped, so a caller that captured the glyph
     still matches."""
     return name.lstrip().lstrip("".join(c for c in name if not (c.isalnum() or c.isspace()))).strip()
+
+
+def close_made(made):
+    """Close the session a spawn just made, by its own id.
+
+    A refusal after the tab exists must leave no tab: an agent nobody can use, in a window
+    the operator reads, is worse than a spawn that failed. The id and not the tty, because
+    a tty is a claim about a moment and the session is the thing that was created."""
+    session_id = made.get("session_id") or ""
+    if not session_id:
+        return False
+
+    async def go(iterm2, connection):
+        app = await iterm2.async_get_app(connection)
+        for window in app.windows:
+            for tab in window.tabs:
+                for sess in tab.sessions:
+                    if sess.session_id == session_id:
+                        await sess.async_close(force=True)
+                        chain_drop_tab(tab.tab_id)
+                        return True
+        return False
+
+    return bool(run(go))
 
 
 async def close_session(app, tty, expect):
