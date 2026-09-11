@@ -72,8 +72,8 @@ The file is `${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/ctx/<session-id
  "transcript_path": "/path/to/session.jsonl", "updated_epoch": 1788553115}
 ```
 
-The sweep takes both kinds of file the plugin leaves in `ctx/`: the context files, and the
-gate's one-shot markers. Taking only the first meant it pruned half of what it makes, and
+The sweep takes the three kinds of file the plugin leaves in `ctx/`: the context files, the
+gate's one-shot markers, and the gate's model markers (§32). Taking only the first meant it pruned half of what it makes, and
 on the machine where this was found the markers outnumbered the files they sat beside —
 twenty-six against nineteen, the oldest four days old.
 
@@ -89,6 +89,8 @@ context_tokens=91000
 context_window=250000
 five_hour_percent=3
 seven_day_percent=1
+model=a-model         # the model that answered last (§32)
+model_source=transcript   # or tap, or unavailable
 source=tap            # or transcript
 ```
 
@@ -894,3 +896,45 @@ stderr line that says it cannot be read; `trust prune` prints exactly the entry 
 directory is gone and writes nothing; `--apply` removes it, keeps the other entry with its
 own fields, and leaves the file owner-only; `trust prune` is accepted and any other action
 refused.
+
+## 32. The model that answers is read, not assumed
+
+**0.23.2.** On 10 September at 22:37 the host switched a running orchestrator from the
+operator's chosen model to an older fallback: its own safety classifier refused one
+message — an infrastructure diagnosis read as something else — retracted it, and every
+answer after it came from the fallback. The launch line still said the chosen model, the
+process line too, the status line showed nothing, and the session itself was told nothing
+it could act on. The operator saw it half an hour later and switched it back by hand. The
+one place the switch was written was the transcript: every assistant entry carries the
+model that produced it.
+
+**The gauge reads it.** Two lines join its output, in both tiers, right before `source=`:
+`model=<id>` and `model_source=transcript|tap|unavailable`. The transcript is read first —
+its last assistant entry's `model` is the one certain trace of what answered, and the
+gauge already opens the transcript for the computed tier; the tap's `model_id` (what the
+status line declared, since 0.22.0) is the fallback when no transcript is reachable;
+`unavailable` otherwise, in the same word as the quota figures and for the same reason: an
+absent line is one a reader takes for « fine ».
+
+**The gate says it once per change.** The context gate already runs on every prompt and
+already puts in front of the session what the session must not be left to remember. It
+keeps, per session, a marker `ctx/<session-id>.model` with the last model it read; the
+first reading writes it in silence; a reading that differs prints one line — which model
+answers now, which one answered until now, that the host switched on its own, that the
+operator must hear of it in the next message, and that a succession does not repair it —
+and updates the marker, so a switch back is said too, and a drift that holds is said once.
+The tap's sweep takes these markers with the other two kinds, so they do not accumulate.
+
+**Out of scope, on purpose.** Comparing to the launch line's `--model`: the gate does not
+have it, and the marker is enough — what matters is a change, not a distance from an
+intention. Any automatic action on a drift: the operator decides what a session on the
+wrong model does next. Reading the refusal's category: it is in the transcript too, and a
+line that names it would be read as a verdict on the message; the drift is the fact.
+
+What the suite reads: on the fixture transcript, whose two assistant entries now carry
+different models, the gauge prints the LAST one, in every tier, and the five outputs the
+gauge section pins carry the two lines; a tap with a `model_id` and no transcript yields
+the tap's, said as such; no model anywhere yields `unavailable`. On the gate's fixture, the
+first reading is silent, an appended answer from another model is said exactly once,
+naming both, and the next reading is silent again; a stale model marker is swept with the
+others.
