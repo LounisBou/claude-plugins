@@ -177,6 +177,19 @@ check "the tab skill says the same" "1" "$(grep -c 'stood down at the verdict' "
 check "the rulebook pins a reader's copy as a worktree" "1|1" \
   "$(grep -c 'never a clone: a clone is for a WRITER' "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "a reader's pinned copy is a detached worktree" "$ROOT/skills/orchestrator/SKILL.md")"
 check "the review brief template pins a worktree" "1" "$(grep -c 'a detached worktree pinned at the head under review' "$ROOT/templates/agent-review-brief.md")"
+
+# Four more readings the live rounds produced (§41): one literal guard per file.
+check "the rulebook refuses a stand-down over uncommitted work" "1" \
+  "$(grep -c 'a stand-down acknowledgment that reports anything uncommitted is an unfinished delivery' "$ROOT/skills/orchestrator/SKILL.md")"
+check "the review brief forbids git configuration writes" "1" "$(grep -c 'no git configuration write of any kind' "$ROOT/templates/agent-review-brief.md")"
+check "the review brief carries every sandbox path per call" "1" "$(grep -c 'carry every sandbox path inside each tool call' "$ROOT/templates/agent-review-brief.md")"
+check "the phase brief's gauge names the installed copy" "1" "$(grep -c "the plugin's installed copy" "$ROOT/templates/agent-phase-brief.md")"
+check "the review brief's gauge names the installed copy" "1" "$(grep -c "the plugin's installed copy" "$ROOT/templates/agent-review-brief.md")"
+check "the comments brief's gauge names the installed copy" "1" "$(grep -c "the plugin's installed copy" "$ROOT/templates/agent-comments-brief.md")"
+check "the rotation brief's gauge names the installed copy" "1" "$(grep -c "the plugin's installed copy" "$ROOT/templates/agent-rotation-brief.md")"
+check "the rulebook's first instantiation carries remote control" "1" "$(grep -c -- '--remote-control "Orchestrator : <feature>"' "$ROOT/skills/orchestrator/SKILL.md")"
+check "the tab skill already reads the Chat caveat" "1" "$(grep -c 'before the session names itself' "$ROOT/skills/iterm-agents/SKILL.md")"
+
 check "the rulebook pins a reader's copy through the script" "1" "$(grep -c 'workspace.sh pin <source> <round> <head>' "$ROOT/skills/orchestrator/SKILL.md")"
 
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate2" bash "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" spawn --dir "$WORK" --prompt p --left-of /dev/ttys001 --right-of self 2>&1 || true)
