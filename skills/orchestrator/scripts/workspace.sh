@@ -2,8 +2,9 @@
 # workspace.sh — a checkout per phase, with the project's local material.
 #
 #   workspace.sh create <source-repo> <name> [--base <branch|origin/branch>]   prints the checkout's path
+#   workspace.sh pin <source-repo> <name> <ref>                a detached worktree at that commit, nothing local; prints its path
 #   workspace.sh delete <path> [--discard]                     refuses unpushed work unless told
-#   workspace.sh list                                          one line per checkout under the root
+#   workspace.sh list                                          one line per checkout under the root (a pin reads HEAD … pinned)
 #
 # Root: ORCHESTRATOR_WORKSPACES, else ~/dev/workspaces. A checkout lives at
 # <root>/<basename of the source>/<name>.
@@ -16,7 +17,8 @@
 # making the checkout, not a step after it (design §30).
 #
 # The script never writes the host's trust record (that is `spawn --trust`), never
-# launches anything, and never touches the source.
+# launches anything, and never touches the source. A pin writes nothing into the source
+# but its worktree metadata.
 
 set -uo pipefail
 
@@ -26,7 +28,7 @@ say() { echo "workspace: $*" >&2; }
 ROOT_DIR="${ORCHESTRATOR_WORKSPACES:-$HOME/dev/workspaces}"
 
 cmd="${1:-}"
-[ -n "$cmd" ] || die "usage: workspace.sh {create|delete|list} ... (see header)"
+[ -n "$cmd" ] || die "usage: workspace.sh {create|pin|delete|list} ... (see header)"
 shift
 
 # copy_tree <source-root> <checkout-root> <relative-path>: 1 when absent, 2 when the copy fails.
@@ -166,6 +168,32 @@ EOF
     echo "$target"
 }
 
+cmd_pin() {
+    local src="" name="" ref=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --*) die "pin: unknown option $1" ;;
+            *) if [ -z "$src" ]; then src="$1"; elif [ -z "$name" ]; then name="$1"; elif [ -z "$ref" ]; then ref="$1"; else die "pin: unexpected argument $1"; fi; shift ;;
+        esac
+    done
+    [ -n "$src" ] && [ -n "$name" ] && [ -n "$ref" ] || die "pin: usage: pin <source-repo> <name> <ref>"
+    git -C "$src" rev-parse --show-toplevel >/dev/null 2>&1 || die "pin: not a git repository: $src"
+    src=$(git -C "$src" rev-parse --show-toplevel)
+    printf '%s' "$name" | grep -qE '^[A-Za-z0-9._-]+$' || die "pin: name must match [A-Za-z0-9._-]+: $name"
+    local sha
+    sha=$(git -C "$src" rev-parse --verify --quiet "$ref^{commit}") || die "pin: the source does not know $ref"
+    local target="$ROOT_DIR/$(basename "$src")/$name"
+    [ ! -e "$target" ] || die "pin: already exists, delete it first: $target"
+    mkdir -p "$(dirname "$target")" || die "pin: cannot create $(dirname "$target")"
+    # A detached worktree, and nothing else: a reader's copy carries the code at the head
+    # and none of the local material — least of all the orchestrator's briefs and state
+    # file — and writes nothing but its metadata into the source, which is the
+    # orchestrator's own checkout (§37). A worktree shares the source's remotes.
+    git -C "$src" worktree add --quiet --detach "$target" "$sha" 2>/dev/null || { rm -rf "$target"; die "pin: worktree add failed at $sha"; }
+    say "pinned $(git -C "$src" rev-parse --short "$sha") from $ref"
+    echo "$target"
+}
+
 cmd_delete() {
     local path="" discard=0
     while [ $# -gt 0 ]; do
@@ -182,6 +210,21 @@ cmd_delete() {
     mkdir -p "$ROOT_DIR" || die "delete: cannot read the root $ROOT_DIR"
     root=$(cd "$ROOT_DIR" && pwd -P)
     case "$real/" in "$root"/*/*/) ;; *) die "delete: refusing a path outside $root: $path" ;; esac
+    if [ -f "$real/.git" ]; then
+        # A pinned copy (§37): removed through git so the source forgets it. The second
+        # guard is not « commits on no remote branch » — the shared refs would read the
+        # source's — but « a head on no branch of the source »: a reader that committed in
+        # its copy is the one way to lose work here, the pinned commit itself living in the source.
+        if [ "$discard" = 0 ]; then
+            [ -z "$(git -C "$real" status --porcelain 2>/dev/null)" ] || die "delete: the tree is dirty; pass --discard: $path"
+            [ -n "$(git -C "$real" branch -a --contains HEAD 2>/dev/null)" ] || die "delete: the pin's head is on no branch of the source; pass --discard: $path"
+            git -C "$real" worktree remove "$real" || die "delete: worktree remove failed: $real"
+        else
+            git -C "$real" worktree remove --force "$real" || die "delete: worktree remove failed: $real"
+        fi
+        echo "deleted $real"
+        return 0
+    fi
     if [ "$discard" = 0 ]; then
         [ -z "$(git -C "$real" status --porcelain 2>/dev/null)" ] || die "delete: the tree is dirty; commit and push, or pass --discard: $path"
         [ -z "$(git -C "$real" log --branches --not --remotes --oneline 2>/dev/null)" ] || die "delete: commits on no remote branch; push, or pass --discard: $path"
@@ -194,18 +237,20 @@ cmd_list() {
     [ -d "$ROOT_DIR" ] || return 0
     local d br head state pushed
     for d in "$ROOT_DIR"/*/*/; do
-        [ -d "$d/.git" ] || continue
+        [ -e "$d/.git" ] || continue
         d="${d%/}"
         br=$(git -C "$d" rev-parse --abbrev-ref HEAD 2>/dev/null)
         head=$(git -C "$d" rev-parse --short HEAD 2>/dev/null)
         if [ -z "$(git -C "$d" status --porcelain 2>/dev/null)" ]; then state=clean; else state=dirty; fi
-        if [ -z "$(git -C "$d" log --branches --not --remotes --oneline 2>/dev/null)" ]; then pushed=pushed; else pushed=unpushed; fi
+        if [ -f "$d/.git" ]; then pushed=pinned
+        elif [ -z "$(git -C "$d" log --branches --not --remotes --oneline 2>/dev/null)" ]; then pushed=pushed; else pushed=unpushed; fi
         echo "$d | $br | $head | $state | $pushed"
     done
 }
 
 case "$cmd" in
     create) cmd_create "$@" ;;
+    pin) cmd_pin "$@" ;;
     delete) cmd_delete "$@" ;;
     list) cmd_list "$@" ;;
     *) die "unknown command: $cmd" ;;
