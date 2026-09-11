@@ -2,7 +2,7 @@
 
 > **For the orchestrator:** this plan is executed by implementer SESSIONS the orchestrator spawns (`orchestrator:iterm-agents`), one brief per task — never by subagents of the orchestrator's own session. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** one release, 0.26.0: every session name reads `Orch : <subject>` or `Agent : <subject>` with the subject at most twenty-five characters, a spawn loads no project server unless `--mcp` says so, and the rulebook tells a hand-launched orchestrator how it gets its name.
+**Goal:** one release, 0.26.0: every session name reads `Orch : <subject>` or `Agent : <subject>` with the subject at most twenty-five characters, a spawn loads the servers the orchestrator chose for it from the operator's catalogue (Task 2, which supersedes Task 1's all-or-nothing `--mcp`), and the rulebook tells a hand-launched orchestrator how it gets its name.
 
 **Architecture:** `skills/iterm-agents/scripts/iterm_agent.py` (the shape, the derived name, the launch's server flags, `--mcp` on spawn and rotate), every document that spells a role (`skills/orchestrator/SKILL.md`, `skills/iterm-agents/SKILL.md`, `commands/succeed.md`, the five templates, `README.md` where it names one), `tests/e2e.sh` titles, the suite.
 
@@ -49,3 +49,35 @@ Copied from `CLAUDE.md`; the task's requirements include them.
 - [ ] **Step 4: Mutations on the committed tree**: the shape widened to anything → the shape checks fall; the derived-name shape check dropped → the `Orchestrator : f` check falls; `--strict-mcp-config` dropped from the default launch → its check falls.
 - [ ] **Step 5: The gate**, then `0.26.0`, then the suite again.
 - [ ] **Step 6: Commits** — `feat(iterm-agents): short names, and no project server unless asked`; `docs(orchestrator): spell the short roles everywhere and name a hand-launched orchestrator`; `chore(release): 0.26.0`.
+
+---
+
+### Task 2: An agent's servers are chosen from the operator's catalogue (0.26.0, redone)
+
+Opened after the operator's ruling of 2026-09-11 (evening) on the measurement recorded in §42: the strict flag drops every server of every scope, and the orchestrator must choose per agent, with a default set. Task 1's `--mcp` flag (all-or-nothing, the enabling setting) is superseded by this task; its documents and checks move with it, never deleted.
+
+**Files:**
+- Modify: `skills/iterm-agents/scripts/iterm_agent.py` — the catalogue (`MCP_CATALOGUE`, `read_catalogue`), the selection (`select_servers`), the file (`write_mcp_file`), `build_command`, `cmd_spawn` (`--mcp <name>`), `cmd_rotate` (forwards `--mcp`, unchanged).
+- Modify: `install.sh` — the empty catalogue beside the tier map; `commands/install.md`, `commands/uninstall.md`, `README.md` — the catalogue named where the tier map is.
+- Modify: `skills/iterm-agents/SKILL.md` (the `spawn` and `rotate` references, safety item 4), `skills/orchestrator/SKILL.md` (lifecycle steps 1 and 2), `templates/agent-phase-brief.md` (the servers placeholder on the tier line).
+- Modify: `tests/run-tests.sh` — the checks below; the Task 1 checks on `--mcp` move to the new contract.
+- Modify: `.claude-plugin/plugin.json`, `.claude-plugin/marketplace.json` — `0.26.0` (the release commit is dropped and redone last).
+- Untouched: `tests/e2e.sh` (the sandbox has no catalogue: every e2e spawn launches strict with no file, which the round tolerates).
+
+**Interfaces (verbatim, the contract the checks read):**
+
+- Catalogue path: `MCP_CATALOGUE = os.environ.get("ORCHESTRATOR_MCP_CATALOGUE") or os.path.join(STATE_DIR, "mcp.json")`. Shape: `{"servers": {"<name>": <definition as the host's own configuration writes it>}, "default": ["<name>", ...]}`. A file that is not an object with a `servers` object and a `default` list refuses: `spawn: refused: <path> does not read as a server catalogue (a "servers" object and a "default" list)`.
+- `install.sh`: creates `<state dir>/mcp.json` holding `{"servers": {}, "default": []}` when absent, says `server catalogue created: <path>`; says `server catalogue already present: <path>` and writes nothing when present; the dry run says `[dry-run] server catalogue created: <path>`.
+- `spawn --mcp <name>`: repeatable; a value may hold several names separated by commas; the selected set is the catalogue's `default` plus every named server, in catalogue order, each once; `--mcp none` (alone or among others) selects nothing. Refusals, exit 1, before any file is written and before any tab exists: `spawn: refused: --mcp '<name>' is not in the catalogue <path> (names: <comma-separated names, or none>)`; `spawn: refused: --mcp needs a server catalogue at <path>; the installer creates one`. No catalogue and no `--mcp`: the launch proceeds strict with no file, and stderr carries `spawn: no server catalogue at <path>: the session loads no server`.
+- The file: `<state dir>/prompts/mcp-<title slug>-<ms>.json` (the slug and stamp as the prompt file's), content `{"mcpServers": {<the selected definitions>}}`; not written when the set is empty; written after the trust check and before the prompt file (the refusal order of Task 1 D8 holds: a refusal leaves no file).
+- The launch: `--strict-mcp-config` always; `--mcp-config <file>` immediately after it when the set is not empty; `--permission-mode` immediately after the pair; `enableAllProjectMcpServers` nowhere. The dry run prints `mcp=<names, comma-separated, in selection order, or none>` and `mcp_file=<path or none>`.
+- `rotate` forwards `--mcp` as before. `--successor` follows the same rule as any spawn.
+- Documents: the tab skill's `spawn` reference reads `[--mcp <name>]` and says where the catalogue lives and what `none` does; the rulebook's step 1 says the session loads the catalogue's default set, that `--mcp <name>` adds one for the agent that needs it, and that the brief names the servers where it names the tier; step 2 says the launch is strict with the session's own file; `templates/agent-phase-brief.md`'s tier line carries `Your session was spawned with these servers and no other: {{MCP_SERVERS}}`; `commands/install.md` step 2 names the catalogue beside the tier map; `commands/uninstall.md` lists it with the tier map; `README.md` names it where it names the tier map.
+- Task 1's sentence « --mcp loads the project's own servers » and the `enableAllProjectMcpServers` literal leave every document outside `docs/`.
+
+- [ ] **Step 1: The failing checks** — with `ORCHESTRATOR_MCP_CATALOGUE` pointed at a file the check writes under `mktemp -d` (servers `a`, `b`, default `[a]`): the launch carries `--strict-mcp-config` and `--mcp-config <file>` and the file holds `a` alone; `--mcp b` → `a` and `b`; `--mcp a,b` and `--mcp a --mcp b` → the same, once each; `--mcp none` → no `--mcp-config`, `mcp=none`, `mcp_file=none`; `--mcp c` refused naming `a, b`; the catalogue absent and `--mcp b` refused naming the installer; absent and no `--mcp` → strict, no file, the stderr line; a catalogue that is a list refused; `--mcp-config <file>` followed by `--permission-mode` in the launch line; `enableAllProjectMcpServers` absent from the launch in every case; `rotate --mcp b` → `mcp=a,b`; `install.sh` in a temporary state directory creates the catalogue with the exact content, leaves a pre-filled one byte-identical, dry run says the line; one literal guard per document (the placeholder in the template, the catalogue in install, uninstall and README, the rulebook's two sentences, the tab skill's reference), and the absence of the Task 1 wording outside `docs/`. Task 1's checks `a launch loads no project server`, `--mcp puts the project's servers back`, `rotate forwards --mcp`, `no prompt: nothing appended after the server flag`, `the phase brief names the server flag beside the tier`, `both documents say the launch loads no project server` move to the new contract, never deleted.
+- [ ] **Step 2: Run, watch them fail, report** the count and the first failing value.
+- [ ] **Step 3: The code**, in the module's style, then `install.sh`, then the documents.
+- [ ] **Step 4: Mutations on the committed tree**: the catalogue lookup skipped (an unknown name accepted) → its check falls; the file not written (the launch names a path that does not exist) → the content checks fall; `--strict-mcp-config` dropped → its check falls; the default list ignored → the `a` alone check falls.
+- [ ] **Step 5: The gate**, then `0.26.0`, then the suite again.
+- [ ] **Step 6: Commits** — `git reset --hard 300f5e5` first (drops the release); then `feat(iterm-agents): choose an agent's servers from the operator's catalogue`; `docs(orchestrator): the server catalogue, and what a brief says about an agent's servers`; `chore(release): 0.26.0`.

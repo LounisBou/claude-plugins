@@ -1326,14 +1326,41 @@ a launch line) does not derive, and the refusal says to type `--title "Orch : <s
 Every document, template, command and end-to-end title that spelled the older roles spells
 the new ones.
 
-**No project server unless asked.** Every launch carried the setting that enables all of the
-project's servers, so that a fresh session never parked on the host's question about them;
-measured on the operator's machine, that loaded a browser driver and a devtools bridge into
-every agent, about 70 MB each, used by none. The launch now carries `--strict-mcp-config`
-and no server configuration, so the host loads no project server and asks no question;
-`--mcp` on `spawn` (and through `rotate`) puts the enabling setting back for the agent that
-drives a browser, and the brief that dispatches such an agent says so where it names the
-tier. A successor gets what its predecessor's spawn line says, nothing implied.
+**An agent's servers are chosen, from the operator's catalogue.** Every launch carried the
+setting that enables all of the project's servers, so that a fresh session never parked on
+the host's question about them; measured on the operator's machine, every agent loaded a
+browser driver and a devtools bridge, about 70 MB each, used by none. The first delivery of
+this section answered with `--strict-mcp-config` on every launch and an all-or-nothing
+`--mcp` that put the setting back. Measured before it shipped, with `-p` sessions asked to
+name the servers whose tools they saw: the setting had never governed those two processes
+(the driver comes from a plugin, the bridge from the operator's user-scope configuration,
+and this repository has no project server at all), and the strict flag drops every server
+of every scope — the user's, the plugins', the account's connectors — so an agent under it
+had neither a documentation server nor a connector, whatever its brief needed. The operator
+ruled: the orchestrator chooses, per agent, with a default set of the elementary ones.
+
+So the launch is strict, and it carries a configuration file the launcher writes for that
+session. The definitions come from a catalogue the operator owns, `<state dir>/mcp.json`
+beside the tier map (`ORCHESTRATOR_MCP_CATALOGUE` overrides the path): named server
+definitions in the host's own shape, and a `default` list of names. The installer creates
+it empty (`{"servers": {}, "default": []}`) and never touches one that exists. `spawn`
+loads the default set; `--mcp <name>` (repeatable, or comma-separated) adds a catalogued
+server for the agent that needs it; `--mcp none` loads nothing. A name the catalogue does
+not hold is refused before a tab exists, with the names it does hold; `--mcp` with no
+catalogue is refused and says the installer creates one; no catalogue and no `--mcp`
+launches with nothing and says so on stderr. The selected definitions are written to a file
+beside the prompt file, under the state directory's `prompts/`, and the launch reads
+`--strict-mcp-config --mcp-config <file>`, or the strict flag alone when the set is empty.
+The host's `--mcp-config` takes several values, so the prompt never directly follows it:
+the pair goes before `--permission-mode`. Measured: strict plus a file naming `context7` by
+its plugin definition loads `context7` alone, adding `playwright` loads both, and the same
+JSON inline loads the same; the `disabledMcpjsonServers` setting removes nothing from the
+user scope, and an `enabledPlugins` override removes a plugin's server but reaches no user
+server — which is why the catalogue copies definitions rather than switching scopes off.
+`rotate` forwards `--mcp`; a successor gets the default set unless its spawn line says
+otherwise, nothing implied. The brief that dispatches an agent names its servers where it
+names the tier, and the phase template carries the list as a placeholder. The setting
+`enableAllProjectMcpServers` appears in no launch any more.
 
 **A hand-launched orchestrator is named when it declares itself.** A session the operator
 starts by hand carries the host's stem as its name and the host's summary as its tab title,
@@ -1347,6 +1374,11 @@ What the suite reads, in the dry run: `Agent : x` and `Orch : x` accepted and na
 `Implementer : x` refused with the shape in the sentence, a twenty-five-character subject
 accepted and a twenty-six-character one refused; a successor derived from a caller named
 `Orch : f` launches under it, from a caller named `Orchestrator : f` refused with the new
-sentence; the launch carries `--strict-mcp-config` and no enabling setting without `--mcp`,
-the enabling setting and no strict flag with it, and `rotate --mcp` reaches the spawn; one
-literal per document for the roles, and the rulebook's rename line.
+sentence; the launch carries `--strict-mcp-config` always and `enableAllProjectMcpServers` never; with a
+catalogue whose default names `a`, the launch carries `--mcp-config <file>` and the file holds
+`a`'s definition alone, `--mcp b` adds `b`'s, `--mcp none` drops the file, `--mcp c` with no
+`c` in the catalogue is refused naming `a` and `b`, no catalogue and no `--mcp` launches
+strict with no file and a stderr line, `--mcp-config` is followed by `--permission-mode`,
+the dry run prints `mcp=` and `mcp_file=`, and `rotate --mcp b` reaches the spawn; the
+installer creates the empty catalogue and leaves an existing one alone; one literal per
+document for the roles, and the rulebook's rename line.
