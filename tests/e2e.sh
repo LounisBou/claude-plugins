@@ -107,7 +107,7 @@ self=$(bash "$AGENT" list | head -1 | awk -F' \\| ' '{print $2}')
 WSDIR=$(bash "$WS" create "$SANDBOX/repo" e2e-probe --base main 2>/dev/null)
 check "a checkout was made for the probe" "$SANDBOX/ws/repo/e2e-probe" "$WSDIR"
 [ -n "$WSDIR" ] || exit 1
-spawn_out=$(bash "$AGENT" spawn --dir "$WSDIR" --tier "$tier" --title e2e-probe --trust \
+spawn_out=$(bash "$AGENT" spawn --dir "$WSDIR" --tier "$tier" --title "Probe : e2e" --trust \
       --prompt "Read $SANDBOX/brief.md and wait. Do not write anything." --right-of "$self" 2>&1)
 TTY=$(printf '%s' "$spawn_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
 check "spawn returns a tty" "yes" \
@@ -149,12 +149,16 @@ check "the tab landed immediately right of its anchor" "$((pos_self + 1))" "$pos
 # The dry run carries --trust because the trust gate runs before the dry-run print (§31)
 # and the sandbox is not yet recorded here: without it the launcher refuses, `me` is
 # empty and the chain block is skipped in silence.
-me=$(ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" spawn --dir "$SANDBOX/repo" --trust --right-of self 2>/dev/null | sed -n 's/^self=//p')
+me=$(ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" spawn --dir "$SANDBOX/repo" --title "Probe : e2e self" --trust --right-of self 2>/dev/null | sed -n 's/^self=//p')
 if [ -n "$me" ]; then
-  one_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title e2e-chain-1 --trust \
+  # The caller's own row, marked: the reading an orchestrator goes without when it takes the
+  # last tab in the listing for its own, and moves a stranger's session (§38).
+  check "the listing marks the caller's own row, and only it" "1|1" \
+    "$(bash "$AGENT" list | grep "$me" | grep -c ' | self$')|$(bash "$AGENT" list | grep -c ' | self$')"
+  one_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title "Implementer : e2e chain 1" --trust \
         --prompt "Do nothing." --right-of self 2>&1)
   ONE=$(printf '%s' "$one_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
-  two_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title e2e-chain-2 --trust \
+  two_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title "Implementer : e2e chain 2" --trust \
         --prompt "Do nothing." --right-of self 2>&1)
   TWO=$(printf '%s' "$two_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
   pos_one=$(bash "$AGENT" list | grep -n "$ONE" | cut -d: -f1)
@@ -164,12 +168,16 @@ if [ -n "$me" ]; then
   check "the chain names both" "2" "$(grep -c "\"tty\": \"$ONE\"\|\"tty\": \"$TWO\"" "$chain")"
   check "the chain names its owner" "2" "$(grep -E "\"tty\": \"$ONE\"|\"tty\": \"$TWO\"" "$chain" | grep -c '"owner": "[^"]')"
   # A successor takes the predecessor's place and its chain (§34): immediately right of the
-  # caller, left of the agents, and the agents' entries move under its tty.
-  succ_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title e2e-successor --trust \
+  # caller, left of the agents, and the agents' entries move under its tty. It is spawned
+  # with NO title, because a successor carries the caller's own name (§39): the name column
+  # of the listing is where that is read back, and it is the only instrument that reads it.
+  succ_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --trust \
         --prompt "Do nothing." --successor 2>&1)
   SUCC=$(printf '%s' "$succ_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
   pos_me=$(bash "$AGENT" list | grep -n "$me" | cut -d: -f1)
   pos_succ=$(bash "$AGENT" list | grep -n "$SUCC" | cut -d: -f1)
+  name_col() { bash "$AGENT" list | grep "$1" | cut -d'|' -f4 | sed 's/^ *//;s/ *$//'; }
+  check "the successor comes up under the caller's own name" "$(name_col "$me")" "$(name_col "$SUCC")"
   check "the successor lands immediately right of the caller, left of the agents" "$((pos_me + 1))" "$pos_succ"
   succ_chain="${ORCHESTRATOR_STATE_DIR:-$HOME/.claude/claude-orchestrator}/chains/$(basename "$SUCC").jsonl"
   check "the successor's chain names both agents" "2" "$(grep -c "\"tty\": \"$ONE\"\|\"tty\": \"$TWO\"" "$succ_chain")"
@@ -198,7 +206,7 @@ echo "== an anchor that is not there =="
 # the orchestrator believes it. Before this check, an anchor in another window — or no
 # window at all — was silently replaced by « the end of whatever window is in front ».
 tabs_before=$(bash "$AGENT" list | wc -l | tr -d ' ')
-ghost_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title e2e-ghost --trust \
+ghost_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title "Probe : e2e ghost" --trust \
       --prompt "Do nothing." --right-of /dev/ttys999 2>&1)
 ghost_code=$?
 check "an absent anchor is refused" "1" "$ghost_code"
@@ -242,7 +250,7 @@ check "the probe's checkout is deleted after its close" "0" \
   "$(bash "$WS" delete "$WSDIR" --discard >/dev/null 2>&1; [ -e "$WSDIR" ] && echo 1 || echo 0)"
 
 # The rest of the round rotates and stands down a live probe; the one above is gone.
-spawn_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title e2e-probe-2 --trust \
+spawn_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title "Probe : e2e 2" --trust \
       --prompt "Read $SANDBOX/brief.md and wait. Do not write anything." --right-of "$self" 2>&1)
 TTY=$(printf '%s' "$spawn_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
 check "a fresh probe for the rest of the round" "yes" \
@@ -276,7 +284,7 @@ check "and its tab is still there" "1" "$(bash "$AGENT" list | grep -c "$old_tty
 # title to say what it is doing. The tty is the identity; what makes the close safe is the
 # stand-down that preceded it, not a string that was true a moment ago.
 out=$(bash "$AGENT" rotate --old-tty "$old_tty" \
-      --dir "$SANDBOX/repo" --tier "$tier" --title e2e-rotated 2>&1)
+      --dir "$SANDBOX/repo" --tier "$tier" --title "Implementer : e2e rotated" 2>&1)
 TTY=$(printf '%s' "$out" | grep -oE '/dev/ttys[0-9]+' | head -1)
 check "the rotation returned a new tty" "yes" "$(printf '%s' "$TTY" | grep -qE '^/dev/tty' && echo yes || echo "$out")"
 check "the replacement is not the session it replaced" "different" \
@@ -293,7 +301,7 @@ check "and its tab with it" "0" "$(bash "$AGENT" list | grep -c "$old_tty")"
 OLD_TTY=""
 
 echo "== stand down =="
-title=$(bash "$AGENT" list | grep "$TTY" | sed 's/.*| //' | cut -c1-6)
+title=$(bash "$AGENT" list | grep "$TTY" | cut -d'|' -f3 | sed 's/^ *//;s/ *$//' | cut -c1-6)
 bash "$AGENT" close --tty "$TTY" --expect-title "nope" >/dev/null 2>&1
 check "the title guard refuses a mismatch" "1" "$?"
 bash "$AGENT" close --tty "$TTY" --expect-title "$title" >/dev/null 2>&1
