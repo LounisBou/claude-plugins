@@ -346,6 +346,11 @@ mkdir -p "$SRC" && ( cd "$SRC" && git init -q -b main && git config user.email t
   && echo secret > .env && echo '.env' > .gitignore && echo dep > node_modules/dep/index.js \
   && git add .gitignore && git commit -q -m "Ignore the environment file" )
 export ORCHESTRATOR_WORKSPACES="$WORK/wsroot"
+# Isolated from the operator's own global git config: a real machine may have
+# core.excludesFile set (§40), and every case below must control exactly what `create`
+# sees there, never the operator's actual settings. A path that does not exist is an
+# empty "global" scope to git.
+export GIT_CONFIG_GLOBAL="$WORK/no-global-gitconfig"
 out=$(bash "$WS" create "$SRC" phase-1 --base main 2>"$WORK/ws.err")
 check "create prints the checkout path under the root" "$WORK/wsroot/proj/phase-1" "$out"
 C="$WORK/wsroot/proj/phase-1"
@@ -368,6 +373,8 @@ check "the exclude file's file is copied" "local" "$(cat "$C/LOCAL.md" 2>/dev/nu
 check "the manifest's present file is copied and the absent one is said" "secret|1" \
   "$(cat "$C/.env" 2>/dev/null)|$(grep -c 'missing: absent.txt' "$WORK/ws.err")"
 check "the build tree does not travel" "ok" "$([ -d "$C/.git" ] && [ ! -e "$C/node_modules" ] && echo ok || echo bad)"
+check "no global excludes configured: the stderr line reads 0" "1" \
+  "$(grep -c 'copied 0 files kept out by the global excludes' "$WORK/ws.err")"
 check_status "create on an existing target refuses" 1 bash "$WS" create "$SRC" phase-1
 check "and leaves it intact" "local" "$(cat "$C/LOCAL.md" 2>/dev/null)"
 ( cd "$C" && git config user.email t@local && git config user.name t && echo more >> README.md && git commit -q -am "Local work" )
@@ -421,7 +428,24 @@ bash "$WS" pin "$SRC" round-2 "$(git -C "$SRC" rev-parse main)" >/dev/null 2>&1
 check "a pin by commit id deletes clean without --discard" "deleted|0" \
   "$(bash "$WS" delete "$P2" 2>/dev/null | cut -d' ' -f1)|$(git -C "$SRC" worktree list | grep -c round-2)"
 
-unset ORCHESTRATOR_WORKSPACES
+# The operator's global excludes file (core.excludesFile) is local material too (§40): the
+# project's own instruction file travelled by hand on every live round because it is kept
+# out of history by the OPERATOR's global excludes, never the repository's own. The case
+# points core.excludesFile at a global excludes file of ITS OWN, through GIT_CONFIG_GLOBAL
+# scoped to this one invocation — the operator's real ~/.gitconfig is never read.
+echo notes > "$SRC/NOTES.local.md"
+echo plain > "$SRC/plain.txt"
+printf 'NOTES.local.md\nLOCAL.md\n' > "$WORK/global-excludes-file"
+printf '[core]\n\texcludesFile = %s\n' "$WORK/global-excludes-file" > "$WORK/global-gitconfig"
+out=$(GIT_CONFIG_GLOBAL="$WORK/global-gitconfig" bash "$WS" create "$SRC" phase-ge --base main 2>"$WORK/wsge.err")
+GE="$WORK/wsroot/proj/phase-ge"
+check "a file ignored only by the global excludes is copied and reads clean" "notes|" \
+  "$(cat "$GE/NOTES.local.md" 2>/dev/null)|$(git -C "$GE" status --porcelain 2>/dev/null)"
+check "a file ignored by nothing is absent from the checkout" "0" "$([ -e "$GE/plain.txt" ] && echo 1 || echo 0)"
+check "a path both the repository's and the global excludes ignore is copied once" "local|1" \
+  "$(cat "$GE/LOCAL.md" 2>/dev/null)|$(grep -c 'copied 1 files kept out by the global excludes' "$WORK/wsge.err")"
+
+unset ORCHESTRATOR_WORKSPACES GIT_CONFIG_GLOBAL
 
 echo "== brief lint =="
 
