@@ -1506,6 +1506,21 @@ pinned copy at the delivered head, stderr captured, and counts the known lines. 
 still print, the filter is removed by the corrective round and this paragraph records the
 measurement, §29's decision standing.
 
+**The predecessor's last message is the successor's signal to close its tab.** Measured on
+the succession that opened this round: the successor sent « takeover confirmed » with a
+subscription to the predecessor's idle notice, the predecessor finished its own turn four
+minutes later with a screen saying the successor closes this tab, and the notice fired
+neither then nor when the tab was closed ten minutes after that on a reading of its screen.
+The protocol had said « close it once it is idle » and nothing about how idle is read, so
+the successor waited on a signal the host did not send, and the operator read a predecessor
+that said it was done beside a successor that said it was waiting. Idle is now said by the
+one who knows: on the confirmation, the predecessor sends « handed over » as its LAST
+message, with nothing of its own left to write, and ends the turn; the successor closes the
+tab on that message. Five minutes without it, the successor reads the tab's screen and
+closes on a prompt with nothing in flight — the host's idle notice is not the reading. The
+rulebook's succession steps 3 and 4, the succession brief template's step 4 and the succeed
+command's step 3 say it; the suite reads the literal in each of the three.
+
 **Closed without a change, with the reason.** The 25-character cap counts code points, not
 graphemes: the subject is typed by an orchestrator in the house format, no listing of this
 build has shown a combining sequence in one, and the standard library carries no grapheme
@@ -1524,7 +1539,8 @@ not answer: the bound is on `ps`, a tty that does not exist answers at once with
 and the wait has not been observed.
 
 What the suite reads: the rulebook and the tab skill each carry the new lifecycle sentence
-once and the old one nowhere; ` ` and `x ` as subjects refused with the sentence naming the
+once and the old one nowhere; « handed over » in the rulebook, the succession template and
+the succeed command; ` ` and `x ` as subjects refused with the sentence naming the
 spaces, `x y` accepted, twenty-five characters still accepted and twenty-six refused; the
 dry run's `prompt_file=` line naming a `prompt-` file; a record of the known shape dropped
 by the filter and a record of another shape passed. What the live round reads: a spawn's
