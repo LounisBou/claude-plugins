@@ -68,7 +68,7 @@ TIERS = ("deep", "standard", "light")
 # live at 366 characters. It ends on `\Z` and not on `$`, which in this language matches
 # before a trailing newline as well: a name is one line, and the title travels through a
 # launch file and back out of the process table, where a second line is not part of a name.
-TITLE_SHAPE = re.compile(r"^(Orch|Agent) : .{1,25}\Z")
+TITLE_SHAPE = re.compile(r"^(Orch|Agent) : \S(.{0,23}\S)?\Z")
 
 
 def die(msg):
@@ -859,8 +859,8 @@ def cmd_spawn(argv):
                 '"Orch : <subject>"; pass --title "Orch : <subject>"' % title[:40])
     elif not TITLE_SHAPE.match(title):
         die("spawn: refused: a title reads \"Orch : <subject>\" or \"Agent : <subject>\", "
-            "the subject at most 25 characters, got '%s' "
-            "(pass --title-free for a tab named otherwise)" % title)
+            "the subject at most 25 characters and neither starting nor ending with a "
+            "space, got '%s' (pass --title-free for a tab named otherwise)" % title)
     if args.successor:
         # A successor is not an agent: immediately right of this session, the chain
         # ignored, and it takes the chain with it once its session can be read (§34).

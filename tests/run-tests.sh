@@ -744,7 +744,7 @@ check "and so does a probe's" "1" \
   "$(shaped --title 'Agent : anchor' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : anchor'")"
 check "the dry run says which name it passes" "1" "$(shaped --title 'Agent : anchor' | grep -c '^name=Agent : anchor$')"
 check "a title without the shape is refused, and the reason names the shape and the cap" "1|1" \
-  "$(shaped --title foo >/dev/null 2>&1; echo $?)|$(shaped --title foo | grep -c 'a title reads "Orch : <subject>" or "Agent : <subject>", the subject at most 25 characters, got .foo.')"
+  "$(shaped --title foo >/dev/null 2>&1; echo $?)|$(shaped --title foo | grep -c 'a title reads "Orch : <subject>" or "Agent : <subject>", the subject at most 25 characters and neither starting nor ending with a space, got .foo.')"
 # The older roles are the ones the operator could not read, so they are refused like any
 # other unshaped title: the spelled-out role words are gone from the launcher, not merely
 # from the documents.
@@ -755,6 +755,17 @@ D42SUB25=$(printf 'x%.0s' $(seq 1 25))
 D42SUB26=$(printf 'x%.0s' $(seq 1 26))
 check "a subject of 25 characters is accepted, of 26 refused" "1|1" \
   "$(shaped --title "Agent : $D42SUB25" | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : $D42SUB25'")|$(shaped --title "Agent : $D42SUB26" >/dev/null 2>&1; echo $?)"
+# §45: a subject neither starts nor ends on a space — a listing then shows a name that
+# reads as empty, or one the operator cannot tell from its trimmed twin. Spaces inside the
+# subject stay allowed, and the cap is unchanged.
+check "a subject that is a single space is refused, and the reason names the space rule" "1|1" \
+  "$(shaped --title 'Agent :  ' >/dev/null 2>&1; echo $?)|$(shaped --title 'Agent :  ' | grep -c 'neither starting nor ending with a space')"
+check "a subject ending on a space is refused" "1|1" \
+  "$(shaped --title 'Agent : x ' >/dev/null 2>&1; echo $?)|$(shaped --title 'Agent : x ' | grep -c 'neither starting nor ending with a space')"
+check "a subject starting on a space is refused" "1" \
+  "$(shaped --title 'Agent :  x' >/dev/null 2>&1; echo $?)"
+check "a space inside the subject stays allowed" "1" \
+  "$(shaped --title 'Agent : x y' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : x y'")"
 # A name is one line. The shape's end anchor also matches BEFORE a trailing newline in this
 # language, so `Agent : x` followed by one passed it — and the guard the older code spent on
 # a newline in a derived name was retired with that code, leaving nothing behind it. The
