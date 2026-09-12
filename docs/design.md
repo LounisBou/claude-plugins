@@ -1574,3 +1574,96 @@ spaces, `x y` accepted, twenty-five characters still accepted and twenty-six ref
 dry run's `prompt_file=` line naming a `prompt-` file; a record of the known shape dropped
 by the filter and a record of another shape passed. What the live round reads: a spawn's
 stderr without the known lines.
+
+## 46. An app that stops answering is named, not waited on
+
+**0.27.0.** The fault, measured. One right-click left a context menu open in iTerm2. A
+menu, a sheet or a modal dialog runs a NESTED event loop; while one runs the app's main
+thread never returns to its default run loop mode, and **AppleEvents are not dispatched at
+all** — they queue and expire on their own two-minute timeout, silently, with nothing
+written to any log. For four hours every launcher call hung. Nothing looked wrong from
+outside: the terminals kept scrolling, because a session's I/O runs on other threads
+entirely, and a check for open sheets returned zero — a context menu is not a sheet. The
+reading that found it is `sample <pid>`: 100% of the main thread's samples, twice over,
+inside `-[NSMenuTrackingSession startRunningMenuEventLoop:]`. The repair was one Escape,
+sent through System Events, which answers about the app because it is another process
+asking the window server rather than the app's own event handler.
+
+**Why the launcher could not survive it.** The API library authenticates by asking the app
+for a cookie THROUGH AppleScript, and its runner calls `communicate()` with no timeout at
+all. Once the app stops dispatching, that call never returns, and no timeout this plugin
+could set inside `run()` would reach it: it is a blocking read in the connection's own
+setup, on the thread the event loop runs on. So the bound has to be taken from OUTSIDE the
+library, before it is entered. `app_responsive` asks the app for its version through an
+`osascript` whose child this process owns and kills on the deadline; an app that cannot
+answer in eight seconds is never asked for a cookie. That is what makes the hang impossible
+rather than merely shorter. The same rule holds for every AppleScript in the file: there is
+no unbounded `osascript` anywhere in it.
+
+**One rung is not enough.** AppleScript dies WITH the API here — both need the same run
+loop. So the ladder is three rungs and every command says on stderr which one served it and
+why the ones above did not: `api` (the normal case, and the only one that places a tab and
+keeps the chain), `applescript` (the module missing, the environment unbuilt, the API
+server off, a cookie refused), `tmux` (**everything**, including an app dispatching
+nothing). The last rung is what makes « the orchestrator can reach a terminal in any
+circumstance » true rather than aspirational; it places nothing and keeps no chain, and it
+says so instead of pretending. `ORCHESTRATOR_BACKEND` pins one rung for a caller who wants
+the API's failure rather than a fallback that hides it, and an unknown value is refused
+rather than read as the default.
+
+**The cause travels with its remedy.** When no rung can reach the app, the launcher samples
+its main thread once — once per run, not once per rung — and says what holds it. The modal
+case names the remedy in the same sentence, because the remedy is a keystroke and the
+alternative an operator reaches for is a restart that takes every running session with it.
+
+**A close is proved on the process table.** The API acknowledging a close says the request
+was TAKEN. `close` printed « closed 1 session on /dev/ttys001 » over a session whose
+process was still running; it was ended by hand minutes later, and the launcher had already
+reported success and moved on. It now waits for the host CLI to leave the tty and fails
+loudly naming what survived. The tty is a claim and the process is the fact — the rule §0
+states for a spawn, applied to the other end of a session's life.
+
+**And the suite pins `ORCHESTRATOR_HOST_CLI`.** It is read from the environment at import,
+and the operator's own shell carries it as an absolute path: the same tests were matching
+two different names depending on whose machine ran them.
+
+## 47. The operator's word comes first, and it is answered
+
+**0.27.0.** An afternoon in which an operator said three times, in three different ways,
+that he was not being listened to. Its shape, exactly: he asked for « an orchestrator, with
+Remote Control, in an iTerm2 tab » and received an agent, in tmux, without Remote Control,
+reported as a success; his questions went unanswered while the session ran probes; an
+answer arrived minutes after the question; and « you broke this » was met with « that is
+not my scope » before anything of the session's own doing had been checked. His summary:
+« Il respecte 1 instruction sur 5 ».
+
+The rulebook had « The operator decides; the orchestrator runs » — what is his to rule on —
+and nothing at all about what is owed him while he rules. Four duties now sit above every
+other section, because they outrank every other section:
+
+1. **Every question gets an answer, in order, before any tool call.** Size is not the test.
+   A question asked twice is already a failure; asked a third time, the session has stopped
+   being useful and should say so rather than try harder in silence.
+2. **An answer does not take minutes.** Write first, measure after. An operator watching a
+   session work for four minutes before a one-line reply cannot tell it from a session that
+   has stopped, and he is right to read it as one.
+3. **His words are executed term by term.** Three terms named is three terms delivered; a
+   better A′ without B is the failure, not a partial success. A term that cannot be honoured
+   is named BEFORE acting, never in the report afterwards. His terms are the specification,
+   not a description of a goal to be re-derived.
+4. **When he says you erred, verify your own doing FIRST**, with a command, before reading
+   anything else.
+
+**A ruling of his outranks a rule in the skill**, said in one line and carried out, never
+argued. The one thing silence does not override is what would end a session or change the
+machine: that stays a STOP-and-ask, asked as one question carrying its cost and a
+recommendation.
+
+**It travels in the succession brief too.** A successor reads its brief first and can act
+on it before it loads the rulebook, so a duty living only in the skill is lost at the first
+succession — which is how a rule written after an incident survives exactly one session.
+The suite checks both files carry it.
+
+What the suite reads: the four duties and the primacy sentence in the rulebook; the duties
+in the succession brief. What a live round reads: nothing — this one is read by the
+operator, in how he is answered.

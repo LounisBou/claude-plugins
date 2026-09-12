@@ -91,6 +91,49 @@ $SCRIPT trust prune [--apply]      # entries of the trust record whose directory
 
 `ORCHESTRATOR_DRY_RUN=1` makes `spawn`, `close` and `move` print what they would ask the app for — the launch, the prompt file, the anchor — touching no terminal. It is the test suite's door, and yours when a launch looks wrong; `rotate` walks its whole order through it.
 
+## When iTerm2 does not answer
+
+The launcher drives iTerm2, and iTerm2 can stop answering. When it does, the launcher
+**names the cause and keeps working** — it never hangs and it never reports a thing it did
+not verify. Both halves were paid for: one right-click left a context menu open in the app,
+and for four hours every call hung with nothing in any log.
+
+**Why a menu stops an API.** A menu, a sheet or a modal dialog runs a NESTED event loop.
+While one runs, the app's main thread never returns to its default run loop mode and
+**AppleEvents are not dispatched** — they queue and expire on their own two-minute timeout,
+silently. The terminals keep scrolling the whole time, because a session's I/O runs on other
+threads, so nothing looks wrong from the outside. A sheet check does not find a context menu.
+
+**The ladder.** Every command tries the rungs in order and says on stderr which one served
+it and why the ones above did not:
+
+| Rung | Survives | Does not survive |
+|---|---|---|
+| `api` | the normal case; it alone places tabs and keeps the chain | anything that stops the app answering |
+| `applescript` | the module missing, the environment unbuilt, the API server off, a cookie refused | a wedged main thread — it needs the same run loop |
+| `tmux` | **everything**, including an app that dispatches nothing | it places nothing and keeps no chain, and says so |
+
+`ORCHESTRATOR_BACKEND` names one rung and only that one, for a caller who wants the API's
+failure rather than a fallback that hides it. The last rung is why an orchestrator can reach
+a terminal in any circumstance; a session it spawns there is a real session, simply not one
+iTerm2 owns.
+
+**No AppleScript here is ever unbounded**, including the library's own cookie request: the
+app is asked the cheapest question there is — its version, under a deadline this process
+holds — BEFORE the API library is entered, because the library's authentication is a
+blocking read no timeout inside the call could reach. An app that cannot answer in eight
+seconds is never asked for a cookie.
+
+**The cause is named, with its remedy.** When the app does not answer, the launcher samples
+its main thread and says what holds it. A modal loop reads:
+
+> iTerm2's main thread is inside a MODAL event loop: a context menu, a menu or a dialog is
+> open in the app. […] Dismiss it — press Escape in the iTerm2 window, or click elsewhere.
+> No restart and no change of settings is needed, and no session is lost.
+
+That is the whole repair for that fault: one keystroke. It needs no restart, which matters
+because a restart takes every running session with it.
+
 ## Tab layout convention
 
 **The orchestrator's tab sits immediately LEFT of its implementer agent's tab.**
@@ -139,6 +182,11 @@ So **always name an anchor**, and name the one you actually know:
   rather than automatic. It never rewrites an entry that already says yes, and a record it
   cannot read is said on stderr rather than launched past in silence; entries outlive their
   directories — `trust prune` lists them, `--apply` removes them.
+- **A close is proved on the process table, never on the app's acknowledgement.** The API
+  answering a close request says the request was TAKEN, not that the session is gone:
+  `close` once printed « closed 1 session » over a session that kept running for minutes and
+  had to be ended by hand. It now waits for the host CLI to leave the tty and fails loudly,
+  naming what survived, if it does not.
 - **A spawn never takes the operator's focus.** The tab is created unselected: someone is
   working in another tab, and a launch that pulls the window across interrupts them every
   time an agent starts.

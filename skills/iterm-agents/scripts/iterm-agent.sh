@@ -47,6 +47,23 @@
 #   ORCHESTRATOR_TIER_STANDARD   idem
 #   ORCHESTRATOR_TIER_LIGHT      idem
 #   ORCHESTRATOR_DRY_RUN         `spawn` prints what it would ask for and touches nothing
+#   ORCHESTRATOR_BACKEND         auto (default: api, then applescript, then tmux) or one
+#                                of api|applescript|tmux, to pin a single rung
+#   ORCHESTRATOR_PROBE_TIMEOUT   seconds the app has to answer before a rung gives up (8)
+#   ORCHESTRATOR_CLOSE_TIMEOUT   seconds a close waits for the process to leave the tty (10)
+#   ORCHESTRATOR_TMUX_SESSION    the tmux session the last rung owns (orchestrator)
+#
+# When iTerm2 does not answer:
+#   - no AppleScript here is ever unbounded, the library's own cookie request included: the
+#     app is asked for its version under a deadline THIS process holds before the API
+#     library is entered, because the library's authentication is a blocking read no
+#     timeout inside the call could reach;
+#   - the cause is NAMED from a main-thread sample. The one that cost four hours — a
+#     context menu left open, which runs a nested event loop in which AppleEvents are not
+#     dispatched at all — is cleared by pressing Escape, with no restart and no settings
+#     change and no session lost;
+#   - the command falls to the next rung and SAYS which one served it. tmux is last because
+#     it is the only one that survives an app dispatching nothing.
 
 set -euo pipefail
 

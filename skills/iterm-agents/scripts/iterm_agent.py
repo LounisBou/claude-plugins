@@ -289,6 +289,495 @@ def need_iterm2():
     return sys.modules["iterm2"]
 
 
+# --- iTerm2 answers, or it is said why (§46) ---------------------------------------
+#
+# The fault this section exists for: one right-click left a context menu open in the app,
+# and for four hours every AppleScript to it timed out while its terminals kept scrolling.
+# A menu runs a NESTED, modal event loop; while one runs the main thread never returns to
+# its default run loop mode and AppleEvents are NOT dispatched — they queue and expire on
+# their own two-minute timeout, one after another, with nothing written to any log. The
+# API library authenticates by asking the app for a cookie THROUGH AppleScript, in a
+# subprocess it never bounds, so the launcher inherited an unkillable wait: `list`, `close`
+# and `spawn` all hung, and a `close` printed « closed 1 session » over a session whose
+# process was still running.
+#
+# Three answers, and each of them is a rule the rest of this file keeps:
+#   - no AppleScript is ever run unbounded, here or anywhere else in this file;
+#   - the app is asked the cheapest question there is BEFORE the library is entered, so a
+#     wedged app is never asked for a cookie at all;
+#   - when it does not answer, the cause is NAMED from a main-thread sample instead of the
+#     caller being left to guess — the fault above is cleared by one keystroke, and saying
+#     so is the difference between a minute and an afternoon.
+
+# Where the AppleScripts go, what samples the app, and which app. All three are overridable
+# so the suite can stand a wedged app and a healthy one side by side with no window server.
+OSASCRIPT = os.environ.get("ORCHESTRATOR_OSASCRIPT") or "/usr/bin/osascript"
+SAMPLE = os.environ.get("ORCHESTRATOR_SAMPLE") or "/usr/bin/sample"
+APP_PID = os.environ.get("ORCHESTRATOR_APP_PID", "")
+# The preflight's deadline: long for an app that answers in milliseconds, short against the
+# two MINUTES an unanswered AppleEvent costs.
+PROBE_TIMEOUT = int(os.environ.get("ORCHESTRATOR_PROBE_TIMEOUT", "8"))
+# How long a close waits for the process to leave the table before it calls the close a
+# failure. A host CLI takes a moment to unwind; ten seconds is room for that and nothing
+# like room for a session that is not going.
+CLOSE_TIMEOUT = int(os.environ.get("ORCHESTRATOR_CLOSE_TIMEOUT", "10"))
+BACKENDS = ("api", "applescript", "tmux")
+# The rungs, in order. AppleScript sits between the API and tmux because it survives what
+# the API alone does not — the module missing, the environment unbuilt, the API server
+# switched off — and tmux sits last because it is the only one that survives a wedged app:
+# the other two both need the main run loop the fault takes away. That last rung is why an
+# orchestrator can reach a terminal in ANY circumstance, which is the whole point.
+DEFAULT_CHAIN = ("api", "applescript", "tmux")
+# The tmux server the fallback owns. Named, so it is never confused with a session the
+# operator keeps for himself.
+TMUX_SERVER = os.environ.get("ORCHESTRATOR_TMUX_SESSION") or "orchestrator"
+
+# Frames that mean the main thread is inside a nested modal loop: a context menu, the menu
+# bar, a sheet, a modal dialog. Read from the live fault (a context menu) plus the shapes
+# next to it in AppKit, because they all block the same way. A sheet check does NOT find a
+# context menu — the previous diagnosis asked for sheets, got zero, and looked elsewhere
+# for four hours.
+MODAL_FRAMES = (
+    "NSMenuTrackingSession",
+    "_NSPopUpMenu",
+    "_popUpContextMenu",
+    "NSCarbonMenuImpl",
+    "runModalSession",
+    "runModalForWindow",
+    "_NSModalSession",
+    "NSMenuTrackingRunLoopMode",
+)
+
+
+class Unreachable(Exception):
+    """A rung cannot serve, with the reason already worded for a human.
+
+    `advice` is the half that is about the MACHINE rather than about the rung — the
+    main-thread diagnosis and its remedy — and it travels apart so that three rungs failing
+    over one wedged app say it once instead of three times."""
+
+    def __init__(self, reason, advice=""):
+        super().__init__(reason)
+        self.advice = advice
+
+
+def osascript_run(script, timeout=None):
+    """One AppleScript under a deadline THIS process holds.
+
+    Returns `("ok", text)`, `("timeout", "")` or `("error", message)`.
+
+    The library's own runner calls `communicate()` with no timeout at all, which is how a
+    single unanswered AppleEvent became an unkillable launcher. Here the child is ours: on
+    the deadline it is killed and reaped, and the caller is told it timed out rather than
+    waiting behind it. Every AppleScript in this file goes through here."""
+    timeout = PROBE_TIMEOUT if timeout is None else timeout
+    try:
+        proc = subprocess.Popen([OSASCRIPT, "-"], stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    except OSError as exc:
+        return "error", str(exc)
+    try:
+        out, err = proc.communicate(script, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            proc.communicate(timeout=5)
+        except Exception:
+            pass
+        return "timeout", ""
+    if proc.returncode != 0:
+        lines = [l for l in (err or "").strip().splitlines() if l.strip()]
+        return "error", lines[-1] if lines else "osascript exited %d" % proc.returncode
+    return "ok", (out or "").strip()
+
+
+def app_pid():
+    """The running app's pid as a string, or "". ORCHESTRATOR_APP_PID stands in for the
+    lookup where there is no app to find."""
+    if APP_PID:
+        return APP_PID
+    try:
+        out = subprocess.run(["pgrep", "-x", "iTerm2"], capture_output=True,
+                             text=True, timeout=10).stdout.split()
+    except Exception:
+        return ""
+    return out[0] if out else ""
+
+
+def app_responsive(timeout=None):
+    """Is the app dispatching AppleEvents right now? `(True, version)` or `(False, reason)`.
+
+    The cheapest question that proves the main thread is alive, asked BEFORE the API
+    library is entered. It has to be asked from outside: the library's cookie request is a
+    blocking read inside the connection's own setup, and no timeout this file could set
+    would reach it. An app that cannot answer `version` in eight seconds is never asked for
+    a cookie, and that is what makes the hang impossible rather than merely shorter."""
+    status, text = osascript_run('tell application "iTerm2" to return version', timeout)
+    if status == "ok" and text:
+        return True, text
+    return False, status
+
+
+def cause_from_sample(text):
+    """What a main-thread sample says about an app that will not answer, in one sentence.
+
+    A sample is the only reading that tells « busy » from « wedged in a modal loop », and
+    the modal loop is the one an operator clears with a single keystroke without restarting
+    anything or opening any settings pane. The remedy travels with the cause because that
+    is the part that was missing: the fault took four hours to find and one Escape to fix."""
+    if not text.strip():
+        return ("iTerm2 does not answer AppleEvents and its main thread could not be "
+                "sampled. Check the app is still running.")
+    if any(frame in text for frame in MODAL_FRAMES):
+        return ("iTerm2's main thread is inside a MODAL event loop: a context menu, a menu "
+                "or a dialog is open in the app. AppleEvents are not dispatched while one "
+                "runs, so neither the API nor AppleScript can reach it. Dismiss it — press "
+                "Escape in the iTerm2 window, or click elsewhere. No restart and no change "
+                "of settings is needed, and no session is lost.")
+    return ("iTerm2 is running but its main thread is not dispatching AppleEvents. Sample "
+            "it to see what holds it: `sample %s 3`." % (app_pid() or "<iTerm2 pid>"))
+
+
+_diagnosis = {}
+
+
+def diagnose_app():
+    """The sentence to print when the app will not answer. Never raises, never hangs.
+
+    Read ONCE per run: an app does not change state between two rungs of the same ladder,
+    and a sample costs a second and a half that would otherwise be spent per rung."""
+    if "text" in _diagnosis:
+        return _diagnosis["text"]
+    _diagnosis["text"] = _diagnose_app()
+    return _diagnosis["text"]
+
+
+def _diagnose_app():
+    pid = app_pid()
+    if not pid:
+        return "iTerm2 is not running."
+    try:
+        text = subprocess.run([SAMPLE, pid, "1"], capture_output=True,
+                              text=True, timeout=30).stdout
+    except Exception:
+        text = ""
+    return cause_from_sample(text)
+
+
+def backend_chain():
+    """The rungs to try, in order, for this run.
+
+    ORCHESTRATOR_BACKEND names one and only that one — a caller debugging the API wants its
+    failure, not a fallback that hides it. Anything else is refused rather than quietly
+    read as the default: a misspelt backend that silently became `auto` would be a fallback
+    nobody asked for, discovered the day it mattered."""
+    asked = (os.environ.get("ORCHESTRATOR_BACKEND") or "auto").strip().lower()
+    if asked in ("", "auto"):
+        return DEFAULT_CHAIN
+    if asked not in BACKENDS:
+        die("unknown backend: %s (expected auto, %s)" % (asked, ", ".join(BACKENDS)))
+    return (asked,)
+
+
+def tmux_rows(text):
+    """The tmux listing, in the shape the app's own listing has, so a caller that reads rows
+    never has to know which rung served it.
+
+    The input is what `tmux list-panes -a` prints under this file's format: one pane per
+    line, `<pane-id> <tty> <session> <window-index> <title>`."""
+    rows = []
+    windows = {}
+    for line in text.splitlines():
+        parts = line.split(None, 4)
+        if len(parts) < 4:
+            continue
+        _, tty, session, index = parts[:4]
+        title = parts[4] if len(parts) > 4 else ""
+        wi = windows.setdefault(session, len(windows) + 1)
+        rows.append(row_for(wi, int(index), tty, title, session_name_on(tty), False, False))
+    return rows
+
+
+def ps_rows(tty):
+    """`(pid, command)` for every process on a tty, from `ps` or from the suite's stand-in.
+
+    ORCHESTRATOR_PS_TABLE names a file that replaces `ps`, one `<tty> <command>` line per
+    process; a table written to check a name carries no pid, so the pid is empty there. Both
+    readers below are built on this, and so is the close's proof, because they were asking
+    the process table the same question in three different ways."""
+    short = tty.replace("/dev/", "")
+    table = os.environ.get("ORCHESTRATOR_PS_TABLE", "")
+    try:
+        if table:
+            with open(table) as fh:
+                lines = [l.strip().split(None, 1) for l in fh if l.strip()]
+            return [("", r[1]) for r in lines
+                    if len(r) == 2 and r[0].replace("/dev/", "") == short]
+        out = subprocess.run(["ps", "-t", short, "-o", "pid=,command="],
+                             capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return []
+    rows = []
+    for line in out.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) == 2:
+            rows.append((parts[0], parts[1]))
+    return rows
+
+
+def host_cli_on(tty):
+    """What the host CLI on a tty is — its pid, or its command line where the suite's table
+    carries no pid — or None when it is not there. Truthy means « still running »."""
+    pattern = re.compile(r"^(\S*/)?" + re.escape(HOST_CLI) + r"(\s|$)")
+    for pid, command in ps_rows(tty):
+        if pattern.match(command):
+            return pid or command
+    return None
+
+
+def wait_gone(tty, timeout=None):
+    """Wait for the host CLI to leave a tty. None when it is gone, otherwise what survived.
+
+    `close` used to print « closed 1 session » as soon as the API acknowledged the request,
+    and the operator read that line as a fact. It is not one: the acknowledgement says the
+    request was TAKEN. The session whose close first exposed this kept running for minutes
+    afterwards and had to be ended by hand, while the launcher had already reported success
+    and moved on. The process table is the only thing that answers « is it gone »."""
+    timeout = CLOSE_TIMEOUT if timeout is None else timeout
+    deadline = time.time() + timeout
+    while True:
+        alive = host_cli_on(tty)
+        if alive is None:
+            return None
+        if time.time() >= deadline:
+            return alive
+        time.sleep(0.3)
+
+
+# --- the ladder: the rung that can serve, and it says which one did (§46) -----------
+
+_api_probe = {}
+
+
+def as_quote(s):
+    """One AppleScript string literal. A path or a title with a quote in it is not a
+    syntax error to be discovered on a live spawn."""
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+
+def api_ready():
+    """The library, or `Unreachable` saying why this rung cannot be used.
+
+    Two gates, in the order that costs least: the module has to be installed, and the app
+    has to be ANSWERING. The second is the one that matters, and it is asked from outside
+    the library on purpose — see `app_responsive`. A successful probe is remembered for the
+    life of this process, because a single run asks several times and an app that answered
+    a moment ago is answering; a failure is never cached, so a menu dismissed between two
+    calls is seen immediately."""
+    try:
+        import iterm2  # noqa: F401
+    except ImportError:
+        raise Unreachable(
+            "the iterm2 module is not installed for %s; run /orchestrator:install"
+            % sys.executable)
+    if not _api_probe.get("ok"):
+        ok, reason = app_responsive()
+        if not ok:
+            raise Unreachable(
+                "iTerm2 did not answer a version request within %ds (%s)"
+                % (PROBE_TIMEOUT, reason), diagnose_app())
+        _api_probe["ok"] = True
+    return sys.modules["iterm2"]
+
+
+def served_by(what, rungs):
+    """Run `what` on the first rung that can serve it, and SAY which one did.
+
+    `rungs` maps a backend name to a callable; a name absent from it does not serve this
+    command and is skipped with a word. Every fall is reported on stderr with the reason
+    the rung above refused, because a fallback nobody is told about is a tool that behaves
+    differently on two machines for reasons nobody can see."""
+    chain = backend_chain()
+    troubles = []
+    advice = []
+    for name in chain:
+        fn = rungs.get(name)
+        if fn is None:
+            troubles.append("%s does not serve %s" % (name, what))
+            continue
+        try:
+            value = fn()
+        except Unreachable as exc:
+            troubles.append("%s: %s" % (name, exc))
+            if exc.advice and exc.advice not in advice:
+                advice.append(exc.advice)
+            continue
+        if troubles:
+            print("%s: served by the %s rung. %s"
+                  % (what, name, said(troubles, advice)), file=sys.stderr)
+        return value
+    die("%s: no terminal backend could serve this. %s" % (what, said(troubles, advice)))
+
+
+def said(troubles, advice):
+    return "; ".join(troubles) + ("." if troubles else "") + \
+        ("".join(" " + a for a in advice))
+
+
+# --- the AppleScript rung ----------------------------------------------------------
+#
+# It survives what the API alone does not: the module missing, the environment unbuilt,
+# the API server switched off, a cookie refused. It does NOT survive a wedged main thread
+# — it needs the same run loop — which is exactly why there is a rung below it.
+
+def as_run(script, what):
+    status, text = osascript_run(script, PROBE_TIMEOUT)
+    if status == "timeout":
+        raise Unreachable("iTerm2 did not answer %s within %ds" % (what, PROBE_TIMEOUT),
+                          diagnose_app())
+    if status == "error":
+        raise Unreachable("iTerm2 refused %s: %s" % (what, text))
+    return text
+
+
+def as_list():
+    rows = as_run('''
+        set out to ""
+        tell application "iTerm2"
+          set wi to 0
+          repeat with w in windows
+            set wi to wi + 1
+            set ti to 0
+            repeat with t in tabs of w
+              set ti to ti + 1
+              repeat with s in sessions of t
+                set out to out & wi & " " & ti & " " & (tty of s) & " " & (name of s) & linefeed
+              end repeat
+            end repeat
+          end repeat
+        end tell
+        return out''', "a listing")
+    lines = []
+    for line in rows.splitlines():
+        parts = line.split(None, 3)
+        if len(parts) < 3:
+            continue
+        wi, ti, tty = parts[:3]
+        title = parts[3] if len(parts) > 3 else ""
+        lines.append(row_for(int(wi), int(ti), tty, title, session_name_on(tty), False, False))
+    return lines
+
+
+def as_close(tty, expect):
+    name = as_run('''
+        tell application "iTerm2"
+          repeat with w in windows
+            repeat with t in tabs of w
+              repeat with s in sessions of t
+                if (tty of s) is %s then
+                  set n to name of s
+                  close s
+                  return n
+                end if
+              end repeat
+            end repeat
+          end repeat
+        end tell
+        return ""''' % as_quote(tty), "a close")
+    if not name:
+        die("close: no session found on %s" % tty)
+    # The guard is the API rung's own, applied here too: a rung that closed what the rung
+    # above would have refused is a fallback that is not the same tool.
+    if expect and stable_title(expect) not in stable_title(name):
+        die("close: refused: session on %s is titled '%s', which does not contain '%s'"
+            % (tty, name, expect))
+    return name
+
+
+def as_spawn(command):
+    return as_run('''
+        tell application "iTerm2"
+          if (count of windows) is 0 then
+            set w to (create window with default profile command %s)
+            return tty of current session of current tab of w
+          end if
+          tell current window
+            set t to (create tab with default profile command %s)
+            return tty of current session of t
+          end tell
+        end tell''' % (as_quote(command), as_quote(command)), "a new tab")
+
+
+# --- the tmux rung -----------------------------------------------------------------
+#
+# The last one, and the only one that survives an app that has stopped dispatching events
+# entirely: it owns a terminal the app does not. It places nothing and keeps no chain —
+# placement is the app's — and it says so rather than pretending to.
+
+def tmux_run(args, what):
+    try:
+        proc = subprocess.run(["tmux"] + args, capture_output=True, text=True, timeout=20)
+    except FileNotFoundError:
+        raise Unreachable("tmux is not installed, so there is no terminal left to fall back on")
+    except subprocess.TimeoutExpired:
+        raise Unreachable("tmux did not answer %s within 20s" % what)
+    if proc.returncode != 0:
+        raise Unreachable("tmux refused %s: %s"
+                          % (what, (proc.stderr or "").strip().splitlines()[:1] or ""))
+    return proc.stdout
+
+
+def tmux_list():
+    return tmux_rows(tmux_run(
+        ["list-panes", "-a", "-F", "#{pane_id} #{pane_tty} #{session_name} "
+         "#{window_index} #{window_name}"], "a listing"))
+
+
+def tmux_pane_on(tty):
+    for line in tmux_run(["list-panes", "-a", "-F", "#{pane_id} #{pane_tty}"],
+                         "a listing").splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[1] == tty:
+            return parts[0]
+    return None
+
+
+def tmux_close(tty, expect):
+    pane = tmux_pane_on(tty)
+    if pane is None:
+        die("close: no session found on %s" % tty)
+    name = session_name_on(tty) or ""
+    if expect and stable_title(expect) not in stable_title(name):
+        die("close: refused: session on %s is named '%s', which does not contain '%s'"
+            % (tty, name, expect))
+    tmux_run(["kill-pane", "-t", pane], "a close")
+    return name
+
+
+def tmux_has_server():
+    """Whether the fallback's own session exists. `has-session` answers by its exit code
+    and says so on stderr when it does not, which is an answer and not a failure — so it is
+    the one tmux call here that does not go through `tmux_run`."""
+    try:
+        proc = subprocess.run(["tmux", "has-session", "-t", TMUX_SERVER],
+                              capture_output=True, text=True, timeout=20)
+    except FileNotFoundError:
+        raise Unreachable("tmux is not installed, so there is no terminal left to fall back on")
+    except subprocess.TimeoutExpired:
+        raise Unreachable("tmux did not answer a session check within 20s")
+    return proc.returncode == 0
+
+
+def tmux_spawn(command, title):
+    if not tmux_has_server():
+        tmux_run(["new-session", "-d", "-s", TMUX_SERVER, "-n", title, command],
+                 "a new session")
+        return (tmux_run(["list-panes", "-t", TMUX_SERVER, "-F", "#{pane_tty}"],
+                         "the new tty").split() or [""])[0]
+    return tmux_run(["new-window", "-t", TMUX_SERVER, "-n", title, "-P", "-F",
+                     "#{pane_tty}", command], "a new window").strip()
+
+
 # --- the tier map ----------------------------------------------------------------
 
 def resolve_tier(tier):
@@ -339,17 +828,7 @@ def inherited_model():
 def cli_pid_on_tty(tty):
     """The pid of the host CLI on a tty, or None. The API knows tabs; only the process
     table knows whether the thing we launched is actually running."""
-    short = tty.replace("/dev/", "")
-    try:
-        out = subprocess.run(["ps", "-t", short, "-o", "pid=,command="],
-                             capture_output=True, text=True, timeout=10).stdout
-    except Exception:
-        return None
-    for line in out.splitlines():
-        parts = line.strip().split(None, 1)
-        if len(parts) == 2 and re.match(r"^(\S*/)?" + re.escape(HOST_CLI) + r"(\s|$)", parts[1]):
-            return parts[0]
-    return None
+    return host_cli_on(tty)
 
 
 def session_name_on(tty):
@@ -365,19 +844,7 @@ def session_name_on(tty):
 
     `ps` hands back a flat command line, so a name with spaces is read up to the next
     option — which is what the host was given and what it shows."""
-    short = tty.replace("/dev/", "")
-    table = os.environ.get("ORCHESTRATOR_PS_TABLE", "")
-    try:
-        if table:
-            with open(table) as fh:
-                rows = [l.strip().split(None, 1) for l in fh if l.strip()]
-            commands = [r[1] for r in rows if len(r) == 2 and r[0].replace("/dev/", "") == short]
-        else:
-            commands = subprocess.run(["ps", "-t", short, "-o", "command="],
-                                      capture_output=True, text=True, timeout=10).stdout.splitlines()
-    except Exception:
-        return None
-    for command in commands:
+    for _, command in ps_rows(tty):
         words = command.split()
         if "--name" not in words:
             continue
@@ -540,7 +1007,14 @@ async def chain_anchor(app, own_tty):
 # --- the API ---------------------------------------------------------------------
 
 def run(coro_fn):
-    iterm2 = need_iterm2()
+    """Drive the API, having first PROVED the app answers.
+
+    The preflight is the whole repair: the library authenticates by asking the app for a
+    cookie through an `osascript` it never bounds, so once the app stops dispatching
+    AppleEvents nothing inside this call can ever return, and no timeout set here could
+    reach it. Asking `version` from outside, under our own deadline, is what turns an
+    unkillable wait into a sentence (§46)."""
+    iterm2 = api_ready()
     result = {}
 
     async def main(connection):
@@ -656,7 +1130,10 @@ def cmd_list(_argv):
         app = await iterm2.async_get_app(connection)
         return await list_rows(app)
 
-    for line in run(go) or []:
+    rows = served_by("list", {"api": lambda: run(go),
+                              "applescript": as_list,
+                              "tmux": tmux_list})
+    for line in rows or []:
         print(line)
 
 
@@ -1015,11 +1492,24 @@ def cmd_spawn(argv):
             chain_append(own, tab.tab_id, new, own_sess_id)
         return new
 
+    def fallback_tab(make):
+        """A tab from a rung that is not the API. It places nothing and keeps no chain —
+        placement and the chain are the app's, and a fallback that pretended to hold them
+        would hand back a layout nobody could trust. Said out loud rather than assumed."""
+        if anchor:
+            print("spawn: this rung cannot place a tab; the new session lands where the "
+                  "terminal puts it, not beside %s." % anchor, file=sys.stderr)
+        return make()
+
     # Before the tab exists, so no transcript older than this launch can be taken for its.
     launch_epoch = time.time()
-    new_tty = run(go)
+    new_tty = served_by("spawn", {
+        "api": lambda: run(go),
+        "applescript": lambda: fallback_tab(lambda: as_spawn(command)),
+        "tmux": lambda: fallback_tab(lambda: tmux_spawn(command, title)),
+    })
     if not new_tty:
-        die("spawn: iTerm2 returned no tty for the new tab")
+        die("spawn: the terminal returned no tty for the new tab")
 
     if args.verify:
         waited = 0
@@ -1159,6 +1649,20 @@ async def close_session(app, tty, expect):
     return name
 
 
+def close_note(tty, was_running):
+    """What the close's proof is worth, or "" when it is worth what it says.
+
+    `wait_gone` watches the HOST CLI and nothing else, which is the process the fault was
+    about. A tab holding only a shell has none, so the wait returns at once and the close
+    is reported on the app's word alone — true of the close, and no evidence whatever about
+    an agent. Saying which of the two happened costs one line and stops the stronger claim
+    being read into the weaker case."""
+    if was_running is None:
+        return ("close: no %s was running on %s, so this close is the app's word, not a "
+                "reading of the process table." % (HOST_CLI, tty))
+    return ""
+
+
 def cmd_close(argv):
     p = argparse.ArgumentParser(prog="close", add_help=False)
     p.add_argument("--tty", dest="tty")
@@ -1170,11 +1674,28 @@ def cmd_close(argv):
         print("close=%s expect_title=%s" % (args.tty, args.expect))
         return
 
+    # Read BEFORE the close: what the proof below is a proof ABOUT.
+    was_running = host_cli_on(args.tty)
+
     async def go(iterm2, connection):
         app = await iterm2.async_get_app(connection)
         return await close_session(app, args.tty, args.expect)
 
-    run(go)
+    served_by("close", {"api": lambda: run(go),
+                        "applescript": lambda: as_close(args.tty, args.expect),
+                        "tmux": lambda: tmux_close(args.tty, args.expect)})
+    # The close is not what was asked for, it is what the process table shows. The line
+    # below used to print the moment the request was acknowledged, over a session that
+    # kept running for minutes and had to be ended by hand (§46).
+    survivor = wait_gone(args.tty)
+    if survivor is not None:
+        die("close: the request was accepted but %s is still running on %s after %ds. "
+            "The session was NOT closed." % (survivor, args.tty, CLOSE_TIMEOUT))
+    note = close_note(args.tty, was_running)
+    if note:
+        print(note, file=sys.stderr)
+    # The first line is the contract every skill, command and brief parses; the reading
+    # that qualifies it goes to stderr rather than changing it.
     print("closed 1 session on %s" % args.tty)
 
 
