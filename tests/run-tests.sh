@@ -1220,6 +1220,32 @@ check "the command's spawn line is one the launcher runs as an auditor" "1|1|1|1
 check "and it carries neither a tier, nor a successor's flag, nor an anchor" "0" \
   "$(printf '%s' "$AUDSPAWN" | grep -cE -- '--tier|--successor|--right-of|--left-of')"
 
+# The audit brief (§52): read-only everywhere, reporting to the operator, ordering the
+# orchestrator with the measurement behind each change, and a report of a FIXED shape so
+# that two audits compare. Filled, it lints clean: a template whose own text trips the lint
+# would reach every auditor with a finding its orchestrator learned to ignore.
+AUDBRIEF="$ROOT/templates/agent-audit-brief.md"
+check "the auditor is read-only on every repository and every worktree" "yes|yes" \
+  "$(spells "$AUDBRIEF" 'READ-ONLY on every repository and every worktree')|$(spells "$AUDBRIEF" 'no edit, no commit, no push, no merge, no label, no comment, no kill, no session ended')"
+check "it never messages the orchestrator's agents, and runs nothing heavy unasked" "yes|yes" \
+  "$(spells "$AUDBRIEF" "never message the orchestrator's agents")|$(spells "$AUDBRIEF" "heavy run only on the operator's word")"
+check "it reports to the operator in the operator's language and orders the orchestrator" "yes|yes|yes" \
+  "$(spells "$AUDBRIEF" "to the OPERATOR, in your own tab, in the operator's language")|$(spells "$AUDBRIEF" 'TIGHTEN or LOOSEN')|$(spells "$AUDBRIEF" "unless it contradicts the operator's word")"
+check "it reads three axes" "yes|yes|yes" \
+  "$(spells "$AUDBRIEF" 'The DELIVERIES')|$(spells "$AUDBRIEF" "The orchestrator's CONDUCT")|$(spells "$AUDBRIEF" 'What is DUE and not done')"
+check "its report has the fixed shape, section by section" "7" \
+  "$(grep -cE '^### (1\. State verified|2\. Findings, most severe first|3\. Verified conform|4\. Rhythm|5\. Methodology changes since the last audit: applied\? applicable\? bearing fruit\?|6\. The line for the operator: tighten / loosen / nothing|7\. Method and limits)$' "$AUDBRIEF" 2>/dev/null)"
+check "it says what git cannot measure instead of pretending" "yes" \
+  "$(spells "$AUDBRIEF" 'not measurable from git')"
+check "every claim carries its command, and the auditor never closes its own tab" "yes|yes" \
+  "$(spells "$AUDBRIEF" 'Every claim carries the command that produces it')|$(spells "$AUDBRIEF" 'never close your own tab')"
+AUDFILLED="$WORK/audit-brief-filled.md"
+if [ -f "$AUDBRIEF" ]; then
+  sed -E -e 's#\{\{ORCHESTRATOR_NAME\}\}#Orch : f [a1b2c3]#g' -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$AUDBRIEF" > "$AUDFILLED"
+fi
+check "the audit brief, every placeholder filled, lints clean" "yes|0" \
+  "$([ -s "$AUDFILLED" ] && echo yes || echo no)|$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$AUDFILLED" >/dev/null 2>&1; echo $?)"
+
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt" --prompt-file "$file" 2>&1)
 check "--prompt-file reuses the given file" "1" "$(printf '%s' "$out" | grep -c "prompt_file=$file")"
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt" 2>&1)

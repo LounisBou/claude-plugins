@@ -29,6 +29,7 @@ templates/agent-rotation-brief.md    resume brief for a fresh implementer
 templates/agent-review-brief.md      one review round, read-only, one lens per reader
 templates/agent-comments-brief.md    one pass over a pull request's open threads
 templates/orchestrator-succession-brief.md
+templates/agent-audit-brief.md       one audit of an orchestration: read-only, a report of fixed shape
 commands/install.md                  wires the tap, creates the state directory
 commands/uninstall.md                restores the previous status line
 commands/status.md                   live sessions, their gauges, the routing pressure
@@ -36,6 +37,7 @@ commands/succeed.md                  runs the orchestrator succession
 commands/agents.md                   each running implementer's progress
 commands/progress.md                 where the build stands
 commands/decide.md                   the decision round, one arbitration at a time
+commands/audit.md                    launches the orchestrator's auditor
 hooks/hooks.json                     declares the context gate on UserPromptSubmit
 hooks/context-gate.sh                the gate the harness enforces, not the model
 install.sh, uninstall.sh
