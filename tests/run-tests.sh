@@ -1703,6 +1703,49 @@ for spelling in '$HOME' '~'; do
     "$(jq -c '.statusLine' "$H4/.claude/settings.json")"
 done
 
+echo "== iterm-agents: the asyncio stderr filter (§29) =="
+
+# The filter drops the library's own "Task exception was never retrieved" tracebacks —
+# helper tasks ending on a socket our side closed, reported by the loop's default handler
+# through this logger regardless of which loop owned the task — and passes every other
+# record: a diagnosis the stream exists to carry is not of that shape. Read straight off
+# the instance the module installed at import, never a stand-in built by the suite.
+filter_probe() {
+  "$py" -c "
+import sys, logging
+sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+
+
+class ConnectionClosedError(Exception):
+    pass
+
+
+class OtherError(Exception):
+    pass
+
+
+def rec(msg, exc_cls):
+    return logging.LogRecord('asyncio', logging.ERROR, 'probe.py', 1, msg, None,
+                              (exc_cls, exc_cls(), None))
+
+
+logger = logging.getLogger('asyncio')
+filt = logger.filters[0]
+print(filt.filter(rec('Task exception was never retrieved: boom', ConnectionClosedError)))
+print(filt.filter(rec('Task exception was never retrieved: boom', OtherError)))
+print(filt.filter(rec('some other diagnosis', ConnectionClosedError)))
+print(len(logger.filters))
+"
+}
+FILTOUT=$(filter_probe)
+check "the filter drops the library's known noise" "False" "$(printf '%s\n' "$FILTOUT" | sed -n '1p')"
+check "the filter passes the same message with another exception class" "True" \
+  "$(printf '%s\n' "$FILTOUT" | sed -n '2p')"
+check "the filter passes another message" "True" "$(printf '%s\n' "$FILTOUT" | sed -n '3p')"
+check "exactly one filter instance is installed on the asyncio logger" "1" \
+  "$(printf '%s\n' "$FILTOUT" | sed -n '4p')"
+
 echo "== iterm script (argument validation, no automation) =="
 
 ITERM="$ROOT/skills/iterm-agents/scripts/iterm-agent.sh"
