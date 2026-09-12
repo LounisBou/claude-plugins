@@ -1389,6 +1389,21 @@ check "the listing marks the caller's own row, names it, and marks no other" \
   "$(ORCHESTRATOR_SELF_TTY=/dev/ttys801 ORCHESTRATOR_PS_TABLE="$WORK/ps-stub.txt" "$py" -c "$STUB
 rows=asyncio.run(ia.list_rows(app))
 print('%s|%d' % ([r for r in rows if 'ttys801' in r][0], len([r for r in rows if 'ttys802' in r and '| self' in r])))" "$ROOT/skills/iterm-agents/scripts")"
+# The caller is not always IN the app. A session running in another terminal — a multiplexer,
+# a plain shell, a remote one — still has a tty, `self_tty` still resolves it, and the app has
+# no session on it. The chain is the app's and cannot be kept for a caller the app does not
+# know; that is a fact to state, not a reason to fail. Observed: a spawn from such a session
+# died on `AttributeError: 'NoneType' object has no attribute 'session_id'`, a traceback where
+# the answer was « your tab is not one of mine, so I kept no chain » (§49).
+check "a caller the app does not know has no session id, and does not raise" "" \
+  "$("$py" -c "$STUB
+print(asyncio.run(ia.own_session_id(app, '/dev/ttys999')))" "$ROOT/skills/iterm-agents/scripts")"
+check "a caller with no tty at all is the same answer" "" \
+  "$("$py" -c "$STUB
+print(asyncio.run(ia.own_session_id(app, '')))" "$ROOT/skills/iterm-agents/scripts")"
+check "a caller the app does know hands back its session id" "A" \
+  "$("$py" -c "$STUB
+print(asyncio.run(ia.own_session_id(app, '/dev/ttys801')))" "$ROOT/skills/iterm-agents/scripts")"
 check "close closes the session and leaves the tab" "hidden one|True" \
   "$("$py" -c "$STUB
 t=asyncio.run(ia.close_session(app,'/dev/ttys802','hidden')); print('%s|%s' % (t, b.closed))" "$ROOT/skills/iterm-agents/scripts")"

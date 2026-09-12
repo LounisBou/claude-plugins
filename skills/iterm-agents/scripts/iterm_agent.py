@@ -1002,6 +1002,22 @@ async def tty_of(tab, connection=None, tries=10):
     return None
 
 
+async def own_session_id(app, tty):
+    """The app's id for the session on the caller's own tty, or "" when it has none.
+
+    The caller is not always IN the app. A session running in another terminal — a
+    multiplexer, a plain shell, a remote one — still has a tty, `self_tty` still resolves
+    it, and the app simply has no session on it. The chain is the app's and cannot be kept
+    for a tab the app does not know: that is a fact to state once, not a reason to fail.
+    Before this, the lookup indexed straight into the result and a spawn from such a session
+    died on `AttributeError: 'NoneType' object has no attribute 'session_id'` — a traceback
+    where the answer was « your terminal is not one of mine, so I kept no chain » (§49)."""
+    if not tty:
+        return ""
+    _, _, sess = await find_tab(app, tty)
+    return sess.session_id if sess is not None else ""
+
+
 async def find_tab(app, tty):
     """A session behind a maximized sibling is in all_sessions and not in sessions (§25)."""
     for w in app.windows:
@@ -1410,7 +1426,7 @@ def cmd_spawn(argv):
             win = app.current_window
             if win is None:
                 die("spawn: iTerm2 has no current window")
-        own_sess_id = (await find_tab(app, own))[2].session_id if own else ""
+        own_sess_id = await own_session_id(app, own)
         # select=False: the operator is working in another tab, and a spawn that pulls the
         # window to the new one interrupts them every time an agent is launched.
         tab = await win.async_create_tab(command=command, index=index, select=False)
