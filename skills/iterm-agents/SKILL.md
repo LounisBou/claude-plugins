@@ -94,9 +94,10 @@ $SCRIPT trust prune [--apply]      # entries of the trust record whose directory
 ## When iTerm2 does not answer
 
 The launcher drives iTerm2, and iTerm2 can stop answering. When it does, the launcher
-**names the cause and keeps working** — it never hangs and it never reports a thing it did
-not verify. Both halves were paid for: one right-click left a context menu open in the app,
-and for four hours every call hung with nothing in any log.
+**names the cause** — it never hangs, it never reports a thing it did not verify, and it
+never quietly hands you a terminal you did not ask for. All three were paid for: one
+right-click left a context menu open in the app, and for four hours every call hung with
+nothing in any log.
 
 **Why a menu stops an API.** A menu, a sheet or a modal dialog runs a NESTED event loop.
 While one runs, the app's main thread never returns to its default run loop mode and
@@ -104,19 +105,24 @@ While one runs, the app's main thread never returns to its default run loop mode
 silently. The terminals keep scrolling the whole time, because a session's I/O runs on other
 threads, so nothing looks wrong from the outside. A sheet check does not find a context menu.
 
-**The ladder.** Every command tries the rungs in order and says on stderr which one served
-it and why the ones above did not:
+**Two rungs, and no third.** Every command tries them in order and says on stderr which one
+served it and why the one above did not:
 
-| Rung | Survives | Does not survive |
+| Rung | Serves | Does not survive |
 |---|---|---|
 | `api` | the normal case; it alone places tabs and keeps the chain | anything that stops the app answering |
-| `applescript` | the module missing, the environment unbuilt, the API server off, a cookie refused | a wedged main thread — it needs the same run loop |
-| `tmux` | **everything**, including an app that dispatches nothing | it places nothing and keeps no chain, and says so |
+| `applescript` | the module missing, the environment unbuilt, the API server off, a cookie refused — it drove this plugin before the API existed | a wedged main thread: it needs the same run loop |
 
 `ORCHESTRATOR_BACKEND` names one rung and only that one, for a caller who wants the API's
-failure rather than a fallback that hides it. The last rung is why an orchestrator can reach
-a terminal in any circumstance; a session it spawns there is a real session, simply not one
-iTerm2 owns.
+failure rather than a fallback that hides it.
+
+**An agent is an iTerm2 tab, always.** A third rung was built, in another terminal, and
+struck out by the operator's ruling: a session that is not a tab in the window he reads is
+not an agent he can see, place or close, and a launcher that hands him one has hidden the
+fault rather than repaired it. **Never spawn an agent outside iTerm2** — not through tmux,
+not through `screen`, not by hand. When both rungs are down, the app itself is wedged, and
+that has a one-keystroke remedy: the launcher names it and stops. Stopping loudly on a fault
+whose remedy is known IS the repair.
 
 **No AppleScript here is ever unbounded**, including the library's own cookie request: the
 app is asked the cheapest question there is — its version, under a deadline this process
@@ -133,6 +139,13 @@ its main thread and says what holds it. A modal loop reads:
 
 That is the whole repair for that fault: one keystroke. It needs no restart, which matters
 because a restart takes every running session with it.
+
+**What the fallback cannot do is placement.** The app's AppleScript dictionary declares a
+tab `index` but does not implement it (`-1728` on every form, measured on 3.7.0), and the
+only placement left there drives the menu bar through the accessibility layer — a grant, the
+app brought to the front, a focus flicker per move — which is exactly what the API replaced.
+A fallback spawn lands where the app puts it and says so. A tab in the wrong place is an
+agent that runs; `move` it once the API answers again.
 
 ## Tab layout convention
 
