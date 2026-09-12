@@ -1308,3 +1308,150 @@ command, each item a reading a live round produced.
   says so, so a `list` read at once is not taken for a launch without a name.
 
 What the suite reads: one literal per item, in the file that carries it.
+
+## 42. Short names, no project server unless asked, and a hand-launched orchestrator named on the spot
+
+**0.26.0.** Three rulings by the operator on the evening 0.25.2 shipped, after reading his
+window: names too long to read, a memory cost he had asked about, and an orchestrator he
+had started by hand that no listing could recognise.
+
+**The name is short, and it has two roles.** `Orch : <subject>` for an orchestrator and its
+successor, `Agent : <subject>` for anything an orchestrator spawns — an implementer, a
+reviewer, a comments agent, a probe — the subject saying which (`Agent : review task 1`),
+and the subject at most twenty-five characters. The shape the launcher holds a title to
+becomes `^(Orch|Agent) : .{1,25}$`; the refusal names the shape and the cap. A successor's
+derived name is held to the same shape, which retires the length guard of §39: a caller
+named under the older convention (`Orchestrator : plugin-family`, or that name followed by
+a launch line) does not derive, and the refusal says to type `--title "Orch : <subject>"`.
+Every document, template, command and end-to-end title that spelled the older roles spells
+the new ones.
+
+**An agent's servers are chosen, from the operator's catalogue.** Every launch carried the
+setting that enables all of the project's servers, so that a fresh session never parked on
+the host's question about them; measured on the operator's machine, every agent loaded a
+browser driver and a devtools bridge, about 70 MB each, used by none. The first delivery of
+this section answered with `--strict-mcp-config` on every launch and an all-or-nothing
+`--mcp` that put the setting back. Measured before it shipped, with `-p` sessions asked to
+name the servers whose tools they saw: the setting had never governed those two processes
+(the driver comes from a plugin, the bridge from the operator's user-scope configuration,
+and this repository has no project server at all), and the strict flag drops every server
+of every scope — the user's, the plugins', the account's connectors — so an agent under it
+had neither a documentation server nor a connector, whatever its brief needed. The operator
+ruled: the orchestrator chooses, per agent, with a default set of the elementary ones.
+
+So the launch is strict, and it carries a configuration file the launcher writes for that
+session. The definitions come from a catalogue the operator owns, `<state dir>/mcp.json`
+beside the tier map (`ORCHESTRATOR_MCP_CATALOGUE` overrides the path): named server
+definitions in the host's own shape, and a `default` list of names. The installer creates
+it empty (`{"servers": {}, "default": []}`) and never touches one that exists. `spawn`
+loads the default set; `--mcp <name>` (repeatable, or comma-separated) adds a catalogued
+server for the agent that needs it; `--mcp none` loads nothing. A name the catalogue does
+not hold is refused before a tab exists, with the names it does hold; `--mcp` with no
+catalogue is refused and says the installer creates one; no catalogue and no `--mcp`
+launches with nothing and says so on stderr. The selected definitions are written to a file
+beside the prompt file, under the state directory's `prompts/`, and the launch reads
+`--strict-mcp-config --mcp-config <file>`, or the strict flag alone when the set is empty.
+The host's `--mcp-config` takes several values, so the prompt never directly follows it:
+the pair goes before `--permission-mode`. Measured: strict plus a file naming `context7` by
+its plugin definition loads `context7` alone, adding `playwright` loads both, and the same
+JSON inline loads the same; the `disabledMcpjsonServers` setting removes nothing from the
+user scope, and an `enabledPlugins` override removes a plugin's server but reaches no user
+server — which is why the catalogue copies definitions rather than switching scopes off.
+`rotate` forwards `--mcp`; a successor gets the default set unless its spawn line says
+otherwise, nothing implied. The brief that dispatches an agent names its servers where it
+names the tier, and the phase template carries the list as a placeholder. The setting
+`enableAllProjectMcpServers` appears in no launch any more.
+
+**A hand-launched orchestrator is named when it declares itself.** A session the operator
+starts by hand carries the host's stem as its name and the host's summary as its tab title,
+and neither reads as an orchestrator to any listing. The host lets the operator rename a
+session (`/rename`) and gives the model no such tool. So the rulebook's first paragraph says:
+on loading, derive the subject from the project (twenty-five characters at most), and hand
+the operator the one line `/rename "Orch : <subject>"` — once, before anything is
+dispatched — or relaunch with `--name`. The tab title is the host's and is left to it.
+
+What the suite reads, in the dry run: `Agent : x` and `Orch : x` accepted and named,
+`Implementer : x` refused with the shape in the sentence, a twenty-five-character subject
+accepted and a twenty-six-character one refused; a successor derived from a caller named
+`Orch : f` launches under it, from a caller named `Orchestrator : f` refused with the new
+sentence; the launch carries `--strict-mcp-config` always and `enableAllProjectMcpServers` never; with a
+catalogue whose default names `a`, the launch carries `--mcp-config <file>` and the file holds
+`a`'s definition alone, `--mcp b` adds `b`'s, `--mcp none` drops the file, `--mcp c` with no
+`c` in the catalogue is refused naming `a` and `b`, no catalogue and no `--mcp` launches
+strict with no file and a stderr line, `--mcp-config` is followed by `--permission-mode`,
+the dry run prints `mcp=` and `mcp_file=`, and `rotate --mcp b` reaches the spawn; the
+installer creates the empty catalogue and leaves an existing one alone; one literal per
+document for the roles, and the rulebook's rename line.
+
+## 43. The mode a session came up in is read, not believed, and the screen is read from the bottom
+
+**0.26.0, third task.** Two agents stood on a permission prompt the same evening, in tabs
+nobody watched. The operator answered one by hand and called it critical; the other was read
+through the tab tooling: its status line said « plan mode on », its transcript carried
+`permissionMode` `default` in every entry, and its process line carried
+`--permission-mode auto`. Measured across every session spawned that evening: the host
+applied the mode asked to every session on the deep and standard tiers' models and to none
+on the light tier's, which came up in default mode with the flag accepted and ignored.
+A probe on that same model spawned with `--permission-mode acceptEdits` carried
+`acceptEdits`, and ran a Write-tool file creation, a `printf >>` append, a heredoc append
+and a `git status` without a prompt. The operator ruled: no such agent unattended, and
+`acceptEdits` for a light agent that is there for a few edits.
+
+**The launcher reads the mode.** The spawn's verification does not stop at « the host CLI
+runs on the tty »: a session that runs and waits for a click is not launched. So after the
+CLI is seen, `spawn` waits (`ORCHESTRATOR_MODE_TIMEOUT`, twenty seconds) for the session's
+transcript — the newest `.jsonl` under the host's projects directory
+(`ORCHESTRATOR_PROJECTS_DIR`, else `~/.claude/projects`) modified since the launch whose
+entries carry `cwd` equal to the checkout's real path, found without computing the host's
+directory slug — and reads the first `permissionMode` it carries. The mode read is the
+mode asked, or the launch is refused: the tab it made is closed, and the sentence names
+both modes and the model, says the host ignores the mode asked for that model, and offers
+the two repairs (bind the tier to another model, or `--permission-mode acceptEdits` for an
+agent that only edits). A transcript that has not appeared by the timeout lets the launch
+through with a line on stderr saying the mode is unread: a gate that cannot measure holds
+nothing (§29's rule). `rotate` inherits the reading through the spawn. `--no-verify` skips
+it with the CLI check, as before.
+
+**The screen is read from the bottom.** `screen --lines N` returned the FIRST N lines of
+the tab, which on a tall terminal are blank: the blocked agent's prompt sat at the bottom,
+and three reads out of four came back empty while the tooling reported success. It returns
+the last N non-blank-trailing lines now, through a pure function the suite reads.
+
+**The routing rule says it.** The model-routing skill: a session nobody watches runs in the
+operator's decision mode, so a tier bound to a model the host does not run in that mode is
+a tier no unattended agent runs at; the operator either rebinds it or spawns such an agent
+in `acceptEdits` for a few edits and allow-listed commands only, and the brief names the
+mode where it names the tier. The rulebook's lifecycle step 2 says the launcher reads the
+mode and what a refusal means.
+
+What the suite reads: the mode of a fixture transcript (first entry carrying it), a fixture
+whose entries carry another `cwd` ignored, the newest of two candidates chosen, no
+candidate → the unread sentence, the refusal sentence built from the two modes and the
+model, the screen's last-lines function on a fixture with trailing blanks; one literal per
+document. What only the live round reads: a spawn on the light tier's former model with
+`--permission-mode auto` refused with the sentence and no tab left, the same with
+`acceptEdits` launched.
+
+## 44. An agent comes up with remote control off
+
+**0.26.0, after the review.** The operator read his remote client and found an agent in it:
+a session an orchestrator had spawned, with no `--remote-control` on its launch line, under
+remote control all the same. Measured on two sessions spawned through the launcher with a
+debug log: with nothing said, the session's log carries « Created session » from the bridge
+and its credentials — the host starts remote control for every new interactive session
+when nothing is set, on a rollout decided server-side that this account is in; with
+`--settings '{"remoteControlAtStartup":false}'` on the launch, the log carries no bridge
+line at all. Read in the host: the flag `--remote-control` wins over the setting, a project
+or local settings file can turn the setting off but not on, and the flag scope is among
+the sources read. The operator ruled: an agent has it stopped explicitly, a successor keeps it.
+
+So the launch carries the setting whenever it carries no `--remote-control`: every spawn
+that is not a successor, and a successor spawned with `--no-remote-control`. A successor
+spawned plainly carries `--remote-control '<its name>'` and no such setting, as §39 wrote.
+The dry run prints `remote_control=yes|no`, and the tab skill's `spawn` reference says an
+agent comes up with remote control off and only a successor under it.
+
+What the suite reads: a plain launch line carrying the setting and no `--remote-control`, a
+`--successor` line carrying the flag and not the setting, `--successor --no-remote-control`
+carrying the setting; the tab skill's literal. What only the operator's remote client and a
+debug log read: the bridge absent from an agent's log, present in a successor's.

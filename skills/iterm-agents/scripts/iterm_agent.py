@@ -18,6 +18,7 @@ A spawn is not done until the host CLI is seen in `ps`.
 
 import argparse
 import asyncio
+import glob
 import json
 import os
 import re
@@ -41,25 +42,209 @@ SELF_ID = os.environ.get("ORCHESTRATOR_SELF_ID", "")
 # profile files and not the interactive ones: the environment without the prompt.
 LOGIN_SHELL = os.environ.get("ORCHESTRATOR_LOGIN_SHELL") or os.environ.get("SHELL") or "/bin/zsh"
 MODELS_MAP = os.environ.get("ORCHESTRATOR_MODELS_MAP") or os.path.join(STATE_DIR, "models.json")
+# The operator's server catalogue, beside the tier map and owned the same way: named
+# definitions in the host's own shape, and a `default` list of the elementary ones every
+# agent gets. The plugin writes an empty one at install and never guesses a definition —
+# what a machine offers is the operator's to say (§42).
+MCP_CATALOGUE = os.environ.get("ORCHESTRATOR_MCP_CATALOGUE") or os.path.join(STATE_DIR, "mcp.json")
 SPAWN_TIMEOUT = int(os.environ.get("ORCHESTRATOR_SPAWN_TIMEOUT", "30"))
+# Where the host keeps one directory per checkout and one transcript per session. The mode
+# a session actually came up in is read there: the process line says what was ASKED for,
+# and the two are not the same thing for every model (§43).
+PROJECTS_DIR = os.environ.get("ORCHESTRATOR_PROJECTS_DIR") or os.path.expanduser("~/.claude/projects")
+# A transcript appears about two seconds after the process starts; twenty is room for a
+# slow machine, and a reading that never comes is not a refusal (§29).
+MODE_TIMEOUT = int(os.environ.get("ORCHESTRATOR_MODE_TIMEOUT", "20"))
 DRY_RUN = bool(os.environ.get("ORCHESTRATOR_DRY_RUN"))
 TIERS = ("deep", "standard", "light")
-# A title reads `<Role> : <what>`: a capital, anything without a colon, a spaced colon,
-# then something. It is the session's NAME (§24), so it is the operator's format or it is
-# nothing an orchestrator can recognise in a listing — a successor once came up as
-# `steward-successor` because the launcher took whatever was typed (§39).
-TITLE_SHAPE = re.compile(r"^[A-Z][^:]* : \S")
-# A DERIVED name longer than this, or holding a newline, is not a name. A session the
-# older launcher named carries the prompt in its own process line — the prompt sat after
-# `--name` until the reorder — so deriving from it copies a launch line: measured live at
-# 366 characters. New sessions are clean; the transition is not, and a successor must not
-# come up under a brief.
-DERIVED_NAME_MAX = 100
+# A title reads `Orch : <subject>` or `Agent : <subject>`: two roles, and a subject of at
+# most twenty-five characters. It is the session's NAME (§24), so it is the operator's
+# format or it is nothing an orchestrator can recognise in a listing — a successor once
+# came up as `steward-successor` because the launcher took whatever was typed (§39). The
+# roles are SHORT and the subject is capped because the operator read his window and could
+# not tell one agent from another at a glance (§42); a derived name is held to the same
+# shape, which is also what stops a successor coming up under a whole launch line — a
+# session the older launcher named carries the prompt in its own process line, measured
+# live at 366 characters. It ends on `\Z` and not on `$`, which in this language matches
+# before a trailing newline as well: a name is one line, and the title travels through a
+# launch file and back out of the process table, where a second line is not part of a name.
+TITLE_SHAPE = re.compile(r"^(Orch|Agent) : .{1,25}\Z")
 
 
 def die(msg):
     print("ERROR: " + msg, file=sys.stderr)
     sys.exit(1)
+
+
+def created_at(path):
+    """When a transcript was CREATED, where the platform records it.
+
+    The host writes to a session's transcript for as long as that session lives, so « last
+    modified » answers a different question: an older session in the same checkout is
+    modified constantly, and so is the caller's own. Measured live: two spawns into one
+    checkout seconds apart, and the second read the mode of the first — refused a moment
+    earlier, its closing write landing after the second launch began; and a spawn into a
+    checkout where a session was already running read that session's mode. Creation is the
+    reading that answers « is this the session I just made ». A filesystem that does not
+    record it leaves modification as the best available answer."""
+    st = os.stat(path)
+    return getattr(st, "st_birthtime", st.st_mtime)
+
+
+def find_transcript(dir_, since):
+    """The transcript of the session just launched into `dir_`, or None.
+
+    Found by READING the entries, never by computing the host's directory slug: the slug is
+    the host's own encoding of a path, and a plugin that reproduced it would be wrong the
+    day the encoding changes. The file is the newest one CREATED since the launch whose
+    first entry carrying `cwd` names this checkout — an older session in the same checkout
+    is not the one this spawn made.
+
+    The first entries carry no `cwd`: it arrives several entries in, after the one that
+    carries the mode. So the caller polls on this function rather than on the mode — a
+    transcript that exists but does not yet name its checkout is not yet an answer."""
+    want = os.path.realpath(dir_)
+    found = []
+    for path in glob.glob(os.path.join(PROJECTS_DIR, "*", "*.jsonl")):
+        try:
+            born = created_at(path)
+            if born < since:
+                continue
+            with open(path) as fh:
+                for line in fh:
+                    try:
+                        entry = json.loads(line)
+                    except Exception:
+                        continue
+                    if isinstance(entry, dict) and "cwd" in entry:
+                        if entry["cwd"] == want:
+                            found.append((born, path))
+                        break
+        except Exception:
+            # A file being written while it is read is not a reason to refuse a launch.
+            continue
+    return max(found)[1] if found else None
+
+
+def mode_of_transcript(path):
+    """The mode the session announced when it came up: the FIRST `permissionMode` the
+    transcript carries. A later one is the operator changing it by hand, which is not what
+    the launch is being judged on."""
+    try:
+        with open(path) as fh:
+            for line in fh:
+                try:
+                    entry = json.loads(line)
+                except Exception:
+                    continue
+                if isinstance(entry, dict) and "permissionMode" in entry:
+                    return entry["permissionMode"] or ""
+    except Exception:
+        return ""
+    return ""
+
+
+def mode_refusal(asked, got, model):
+    """Both modes, the model, and the two repairs: which one applies depends on all three.
+    The operator rebinds the tier, or spawns that agent in a mode the host does honour for
+    that model — `acceptEdits` carried, and ran edits and allow-listed commands without a
+    prompt, on the very model that ignored the decision mode (§43)."""
+    return ("spawn: refused: the session came up in mode '%s' and not '%s' (model %s): the "
+            "host ignores the mode asked for this model; bind the tier to another model, or "
+            "pass --permission-mode acceptEdits for an agent that only edits"
+            % (got, asked, model or "the host default"))
+
+
+def last_lines(lines, n):
+    """The last `n` lines of a reading, its trailing blanks dropped.
+
+    `screen --lines N` returned the FIRST N lines of the tab, which on a tall terminal are
+    blank: a blocked agent's prompt sits at the bottom, and three reads out of four came
+    back empty while the tooling reported success. An interior blank stays — a blank line
+    between two of an agent's messages is part of what it is showing."""
+    trimmed = list(lines)
+    while trimmed and trimmed[-1] == "":
+        trimmed.pop()
+    return trimmed[-n:] if n > 0 else []
+
+
+def read_catalogue():
+    """The catalogue, or None when there is no file.
+
+    A file that does not read as one is NOT an empty catalogue: reading the two alike would
+    send every agent out with no server while the caller believes it named some — the same
+    reasoning `resolve_tier` refuses an unreadable tier map on."""
+    if not os.path.isfile(MCP_CATALOGUE):
+        return None
+    try:
+        with open(MCP_CATALOGUE) as fh:
+            data = json.load(fh)
+        if not isinstance(data, dict) or not isinstance(data.get("servers"), dict) \
+                or not isinstance(data.get("default"), list):
+            raise ValueError("shape")
+    except Exception:
+        die('spawn: refused: %s does not read as a server catalogue (a "servers" object '
+            'and a "default" list)' % MCP_CATALOGUE)
+    for name in data["default"]:
+        if name not in data["servers"]:
+            die("spawn: refused: the catalogue %s lists '%s' in default but not in servers"
+                % (MCP_CATALOGUE, name))
+    return data
+
+
+def select_servers(asked, catalogue):
+    """The names this session gets: the catalogue's default set plus every name asked for,
+    in catalogue order and each once. `none` anywhere selects nothing — an agent that needs
+    no server should not carry the default set to get none of it wrong.
+
+    A refusal here happens before any file is written and before any tab exists: a name the
+    catalogue does not hold is a typo or a server the operator has not written yet, and
+    either way the agent would come up without it and nobody would know until it reached
+    for a tool."""
+    names = []
+    for value in asked:
+        names += [n.strip() for n in value.split(",") if n.strip()]
+    asked_servers = [n for n in names if n != "none"]
+    if catalogue is None:
+        if asked_servers:
+            die("spawn: refused: --mcp needs a server catalogue at %s; the installer "
+                "creates one" % MCP_CATALOGUE)
+        if "none" in names:
+            # Asked for nothing, so nothing is needed to give it: no catalogue is required
+            # and no line is printed — the caller said what it wants.
+            return []
+        # A caller that said nothing, on a machine that offers nothing: the launch goes
+        # through and says so, rather than deciding in silence (§31).
+        print("spawn: no server catalogue at %s: the session loads no server"
+              % MCP_CATALOGUE, file=sys.stderr)
+        return []
+    servers = catalogue["servers"]
+    # Every asked name is checked BEFORE `none` short-circuits the selection: a typo beside
+    # `none` is still a typo, and a caller who mistyped one name among several should learn
+    # it rather than get silently sent out with nothing.
+    for name in asked_servers:
+        if name not in servers:
+            die("spawn: refused: --mcp '%s' is not in the catalogue %s (names: %s)"
+                % (name, MCP_CATALOGUE, ", ".join(servers) or "none"))
+    if "none" in names:
+        return []
+    wanted = set(catalogue["default"]) | set(names)
+    return [name for name in servers if name in wanted]
+
+
+def write_mcp_file(names, catalogue, title):
+    """The selected definitions, in a file of this session's own, beside its prompt file.
+
+    Inline JSON would do the same job and cost the process line its length: the host's
+    `--mcp-config` takes SEVERAL values, so whatever follows it is read as another file —
+    the prompt placed there was read as one — and the line `ps` shows is where a successor
+    reads its predecessor's name from (§24)."""
+    os.makedirs(PROMPTS_DIR, exist_ok=True)
+    safe = re.sub(r"[^A-Za-z0-9._-]", "-", title)[:40] or "agent"
+    path = os.path.join(PROMPTS_DIR, "mcp-%s-%d.json" % (safe, int(time.time() * 1000)))
+    with open(path, "w") as fh:
+        json.dump({"mcpServers": {n: catalogue["servers"][n] for n in names}}, fh, indent=2)
+    return path
 
 
 def need_iterm2():
@@ -460,13 +645,12 @@ def write_prompt_file(prompt, title):
     return path
 
 
-def build_command(dir_, title, model, mode, prompt_file, remote_control=""):
+def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_file=""):
     """The command iTerm2 runs in the new tab. It is HANDED to the app, never typed, so
     its length and its bytes stop being a hazard. No model argument at all when neither a
     tier nor an explicit identifier says which: the host's own default is the right
     answer, and a name hardcoded here would be a routing decision taken for every
     operator."""
-    settings = '{"enableAllProjectMcpServers":true}'
     # The ABSOLUTE path, resolved from the environment the orchestrator has. The tab runs
     # the launch through a login shell now (§22), so a bare name would usually resolve —
     # but finding the program must not depend on the operator's dotfiles: a profile that
@@ -480,7 +664,23 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control=""):
     cli = [shq(cli_path)]
     if model:
         cli += ["--model", shq(model)]
-    cli += ["--permission-mode", shq(mode), "--settings", shq(settings)]
+    # The launch is strict ALWAYS, and hands the session a configuration file of its own
+    # when it has servers to load (§42). Strict alone would leave an agent with no server
+    # of any scope — not the project's, but not the operator's or the account's either,
+    # which is what the first answer to this section got wrong; the file puts back exactly
+    # the ones the orchestrator chose. The pair goes BEFORE --permission-mode: the host's
+    # --mcp-config takes several values, so whatever follows it is read as another file,
+    # and the prompt placed there was read as one.
+    cli += ["--strict-mcp-config"]
+    if mcp_file:
+        cli += ["--mcp-config", shq(mcp_file)]
+    cli += ["--permission-mode", shq(mode)]
+    # An agent is driven by its orchestrator alone (§39): remote control comes up OFF for
+    # everyone but a successor, which the operator also drives from the host's remote
+    # client. The setting and the flag below are mutually exclusive — only a successor
+    # carries the flag, and it carries no such setting.
+    if not remote_control:
+        cli += ["--settings", shq('{"remoteControlAtStartup":false}')]
     # The prompt goes BEFORE the options that follow it, and --name is the LAST of them or
     # next to last. `ps` shows a command line with the shell's quoting gone, so whatever
     # follows --name runs into the name: with the prompt there, every spawned session's
@@ -593,6 +793,7 @@ def cmd_spawn(argv):
     p.add_argument("--no-verify", dest="verify", action="store_false", default=True)
     p.add_argument("--trust", action="store_true", default=False)
     p.add_argument("--successor", action="store_true", default=False)
+    p.add_argument("--mcp", action="append", default=[])
     args, unknown = p.parse_known_args(argv)
     if unknown:
         die("spawn: unknown option %s" % unknown[0])
@@ -606,7 +807,7 @@ def cmd_spawn(argv):
     if args.successor and args.title_free:
         die("spawn: refused: a successor is named after its caller, --title-free does not "
             "apply")
-    if args.title.startswith("Orchestrator :") and (args.left_of or args.right_of):
+    if args.title.startswith("Orch :") and (args.left_of or args.right_of):
         # A plain anchor lands AFTER the chain (§21), so a successor spawned there is the
         # far-right tab the operator found, inheriting nothing. --successor places it and
         # hands the chain over; the title says which of the two this is.
@@ -648,15 +849,17 @@ def cmd_spawn(argv):
         if not title:
             die("spawn: refused: --successor without --title needs the caller's session "
                 "name, and this session was launched without one; pass "
-                '--title "Orchestrator : <feature>"')
-        if len(title) > DERIVED_NAME_MAX or "\n" in title:
-            # Only the derivation is guarded: a title the caller TYPED is judged by the
-            # shape, which is the caller's own word for what it wants.
-            die("spawn: refused: the caller's session name reads like a launch line of an "
-                'older launcher (%d characters); pass --title "Orchestrator : <feature>"'
-                % len(title))
+                '--title "Orch : <subject>"')
+        if not TITLE_SHAPE.match(title):
+            # The derived name answers to the same shape as a typed one: a caller named
+            # under an older convention derives nothing, and neither does one whose name
+            # is a whole launch line. Only the first forty characters are quoted back —
+            # the rest of a launch line has no business filling a terminal.
+            die("spawn: refused: the caller's session name '%s' does not read "
+                '"Orch : <subject>"; pass --title "Orch : <subject>"' % title[:40])
     elif not TITLE_SHAPE.match(title):
-        die("spawn: refused: a title reads \"<Role> : <what>\", got '%s' "
+        die("spawn: refused: a title reads \"Orch : <subject>\" or \"Agent : <subject>\", "
+            "the subject at most 25 characters, got '%s' "
             "(pass --title-free for a tab named otherwise)" % title)
     if args.successor:
         # A successor is not an agent: immediately right of this session, the chain
@@ -708,6 +911,12 @@ def cmd_spawn(argv):
             "its workspace question and never read its brief. Pass --trust for a checkout "
             "you prepared, or open the directory once yourself." % os.path.realpath(args.dir))
 
+    # After the trust check and before the prompt file, in the order a refusal wants: the
+    # catalogue and the names are read first, so a refusal on either leaves no file behind.
+    catalogue = read_catalogue()
+    servers = select_servers(args.mcp, catalogue)
+    mcp_file = write_mcp_file(servers, catalogue, title) if servers else ""
+
     prompt_file = args.prompt_file
     if prompt_file and not os.path.isfile(prompt_file):
         die("spawn: prompt file not found: %s" % prompt_file)
@@ -715,7 +924,8 @@ def cmd_spawn(argv):
         prompt_file = write_prompt_file(args.prompt, title)
 
     remote_control = title if (args.successor and args.remote_control) else ""
-    launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control)
+    launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control,
+                           mcp_file)
 
     if DRY_RUN:
         print("launch=%s" % launch)
@@ -726,11 +936,17 @@ def cmd_spawn(argv):
         print("successor=%s" % ("yes" if args.successor else "no"))
         print("name=%s" % title)
         print("title_free=%s" % ("yes" if args.title_free else "no"))
+        print("mcp=%s" % (",".join(servers) or "none"))
+        print("mcp_file=%s" % (mcp_file or "none"))
+        print("remote_control=%s" % ("yes" if remote_control else "no"))
+        print("mode_check=skipped")
         print("program=%s -l <launch-file>" % LOGIN_SHELL)
         return
 
     script = write_launch_script(launch, title)
     command = "%s -l %s" % (LOGIN_SHELL, script)
+
+    made = {}
 
     async def go(iterm2, connection):
         app = await iterm2.async_get_app(connection)
@@ -750,6 +966,10 @@ def cmd_spawn(argv):
         # window to the new one interrupts them every time an agent is launched.
         tab = await win.async_create_tab(command=command, index=index, select=False)
         new = await tty_of(tab, connection)
+        # Kept for the mode reading below: a refusal closes the session THIS spawn made,
+        # by its own id, never by a tty another session could hold by then.
+        made["tab_id"] = tab.tab_id
+        made["session_id"] = tab.current_session.session_id if tab.current_session else ""
         if own and new and args.successor:
             new_sess = None
             for _ in range(10):
@@ -771,6 +991,8 @@ def cmd_spawn(argv):
             chain_append(own, tab.tab_id, new, own_sess_id)
         return new
 
+    # Before the tab exists, so no transcript older than this launch can be taken for its.
+    launch_epoch = time.time()
     new_tty = run(go)
     if not new_tty:
         die("spawn: iTerm2 returned no tty for the new tab")
@@ -787,6 +1009,28 @@ def cmd_spawn(argv):
         if not pid:
             die("spawn: %s never started on %s after %ss" % (HOST_CLI, new_tty, SPAWN_TIMEOUT))
         print("spawn: %s running on %s (pid %s)" % (HOST_CLI, new_tty, pid), file=sys.stderr)
+        # « The host CLI runs on the tty » is not « the session is launched »: a session
+        # that runs and waits for a click is not. The mode asked for is carried on the
+        # process line and honoured for some models and not others, so the mode the session
+        # actually came up in is read on its own transcript (§43).
+        waited, mode = 0, ""
+        while waited < MODE_TIMEOUT:
+            path = find_transcript(args.dir, launch_epoch)
+            if path:
+                mode = mode_of_transcript(path)
+                if mode:
+                    break
+            time.sleep(1)
+            waited += 1
+        if not mode:
+            # A gate that cannot measure holds nothing, and says so (§29).
+            print("spawn: no transcript for %s after %ss: the session's mode is unread"
+                  % (args.dir, MODE_TIMEOUT), file=sys.stderr)
+        elif mode != args.mode:
+            close_made(made)
+            die(mode_refusal(args.mode, mode, model))
+        else:
+            print("spawn: mode %s read on the transcript" % mode, file=sys.stderr)
     print(new_tty)
 
 
@@ -810,8 +1054,9 @@ def cmd_screen(argv):
         if sess is None:
             die("screen: no session found on %s" % args.tty)
         contents = await sess.async_get_screen_contents()
-        n = min(args.lines, contents.number_of_lines)
-        return [contents.line(i).string.rstrip() for i in range(n)]
+        every = [contents.line(i).string.rstrip()
+                 for i in range(contents.number_of_lines)]
+        return last_lines(every, args.lines)
 
     for line in run(go) or []:
         print(line)
@@ -839,6 +1084,39 @@ def stable_title(name):
     every rotation instead. Both sides are stripped, so a caller that captured the glyph
     still matches."""
     return name.lstrip().lstrip("".join(c for c in name if not (c.isalnum() or c.isspace()))).strip()
+
+
+def close_made(made):
+    """Close the session a spawn just made, by its own id.
+
+    A refusal after the tab exists must leave no tab: an agent nobody can use, in a window
+    the operator reads, is worse than a spawn that failed. The id and not the tty, because
+    a tty is a claim about a moment and the session is the thing that was created.
+
+    The call is wrapped: `run()` catches nothing, and a refusal path that ends on a
+    traceback is never an answer — the caller dies with `mode_refusal(...)` either way, so
+    a close that fails must be SAID, not thrown."""
+    session_id = made.get("session_id") or ""
+    if not session_id:
+        return False
+
+    async def go(iterm2, connection):
+        app = await iterm2.async_get_app(connection)
+        for window in app.windows:
+            for tab in window.tabs:
+                for sess in tab.sessions:
+                    if sess.session_id == session_id:
+                        await sess.async_close(force=True)
+                        chain_drop_tab(tab.tab_id)
+                        return True
+        return False
+
+    try:
+        return bool(run(go))
+    except Exception as exc:
+        print("spawn: the refused session could not be closed: %s"
+              % (str(exc).splitlines() or ["unknown error"])[0], file=sys.stderr)
+        return False
 
 
 async def close_session(app, tty, expect):

@@ -161,7 +161,7 @@ check "the comments brief carries a decided list" "1" "$(grep -c 'DECIDED_ITEMS'
 check "outward-facing text needs the operator" "1" "$(grep -c "may draft it, never authorise it" "$ROOT/skills/orchestrator/SKILL.md")"
 check "a fix answers its own thread" "1" "$(grep -c 'answered by the change' "$ROOT/skills/orchestrator/SKILL.md")"
 check "the comments brief drafts nothing on a fixed thread" "1" "$(grep -c 'draft nothing and post nothing there' "$ROOT/templates/agent-comments-brief.md")"
-check "the rulebook spawns beside the orchestrator" "1" "$(grep -c -- '--right-of self --title "Implementer : <phase>" --prompt' "$ROOT/skills/orchestrator/SKILL.md")"
+check "the rulebook spawns beside the orchestrator" "1" "$(grep -c -- '--right-of self --title "Agent : <subject>" --prompt' "$ROOT/skills/orchestrator/SKILL.md")"
 
 # The operator's ruling after an afternoon of pasted command lines: everything the
 # orchestrator asks him to run, it can run itself; he decides, nothing else. Pinned so the
@@ -187,8 +187,91 @@ check "the phase brief's gauge names the installed copy" "1" "$(grep -c "the plu
 check "the review brief's gauge names the installed copy" "1" "$(grep -c "the plugin's installed copy" "$ROOT/templates/agent-review-brief.md")"
 check "the comments brief's gauge names the installed copy" "1" "$(grep -c "the plugin's installed copy" "$ROOT/templates/agent-comments-brief.md")"
 check "the rotation brief's gauge names the installed copy" "1" "$(grep -c "the plugin's installed copy" "$ROOT/templates/agent-rotation-brief.md")"
-check "the rulebook's first instantiation carries remote control" "1" "$(grep -c -- '--remote-control "Orchestrator : <feature>"' "$ROOT/skills/orchestrator/SKILL.md")"
+check "the rulebook's first instantiation carries remote control" "1" "$(grep -c -- '--remote-control "Orch : <subject>"' "$ROOT/skills/orchestrator/SKILL.md")"
 check "the tab skill already reads the Chat caveat" "1" "$(grep -c 'before the session names itself' "$ROOT/skills/iterm-agents/SKILL.md")"
+
+# The name is short and it has two roles (§42): the operator read his window and could not
+# tell one agent from another, nor an agent from an orchestrator, at a glance. Every
+# document the plugin ships spells the short roles and the cap on the subject; the older
+# spellings survive only in the design's own record of the decision.
+# Read as presence, not as a count: a document may spell a role on one line or on five,
+# and a guard that pins the number breaks on a sentence that was merely rewritten.
+spells() { grep -qF -- "$2" "$1" && echo yes || echo no; }
+check "the rulebook spells the short roles and the cap" "yes|yes|yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Agent : <subject>')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Orch : <subject>')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'at most 25 characters')"
+check "the tab skill spells them and the cap too" "yes|yes|yes" \
+  "$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'Agent : <subject>')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'Orch : <subject>')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'at most 25 characters')"
+check "the succession command spells the short role" "yes" \
+  "$(spells "$ROOT/commands/succeed.md" 'Orch : <subject>')"
+# The pattern is assembled from its two halves so this guard does not count itself. The
+# directories that do not ship are dropped from the RESULT rather than from the walk: the
+# platform's grep honours only one --exclude-dir, and the one that must hold is the
+# repository's history. `docs/` keeps the record of the decision; `.claude/` is the
+# operator's own material, briefs and command logs included, and a guard that read it
+# would answer differently on every machine; a bytecode cache is a copy of a source file
+# as it stood when some interpreter last read it, and one of them held this literal for
+# hours after the source stopped spelling it.
+older_role() { grep -rl --exclude-dir=.git -- "$1 : <$2>" "$ROOT" 2>/dev/null | grep -Evc "^$ROOT/(docs|\.claude)/|/__pycache__/"; }
+check "no older role survives outside the design" "0|0|0" \
+  "$(older_role Implementer phase)|$(older_role Reviewer round)|$(older_role Orchestrator feature)"
+# The host names a session from its directory stem and gives the MODEL no rename, so a
+# session the operator starts by hand reads as an orchestrator to no listing. The rulebook
+# hands him the one line to type, once, before anything is dispatched (§42).
+check "the rulebook hands the operator the rename line" "yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" '/rename "Orch : <subject>"')"
+# A directive that outlived its decision is worse than none: both documents told the reader
+# the launch pre-approved the project's servers on the command line, which is the reverse of
+# what it does now, and the observation that made that rule — an agent sat on the host's
+# question about them until the owner clicked — is kept as the reason no such question may
+# be left standing either way. Halves again, so the guard does not read itself.
+# Read over the documents the plugin ships, and nowhere else: the suite must spell the
+# retired setting to assert it is in no launch, and the halves are joined here so this
+# guard does not read its own line either.
+SHIPPED_DOCS="$ROOT/skills $ROOT/commands $ROOT/templates $ROOT/README.md"
+stale_wording() { grep -rl --exclude-dir=__pycache__ -- "$1$2" $SHIPPED_DOCS 2>/dev/null | wc -l | tr -d ' '; }
+check "the older directives are gone from every document" "0|0|0" \
+  "$(stale_wording "pre-approves " "the project's")|$(stale_wording "loads the project's " "own servers")|$(stale_wording enableAllProject McpServers)"
+# What each document says about an agent's servers now. The launcher is strict and hands
+# the session a file of its own; the catalogue the definitions come from is the operator's,
+# and it is named wherever the tier map is — the two live side by side and are installed,
+# listed and removed together (§42).
+check "both documents say the launch is strict with the session's own file" "yes|yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'a configuration file written for that session')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'a configuration file written for that session')"
+check "the rulebook says the default set is loaded and --mcp adds to it" "yes|yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" "the catalogue's default set")|$(spells "$ROOT/skills/orchestrator/SKILL.md" '--mcp <name>')"
+check "the tab skill's reference carries the option and what none does" "yes|yes|yes" \
+  "$(spells "$ROOT/skills/iterm-agents/SKILL.md" '[--mcp <name>]')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'mcp.json')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" '--mcp none')"
+check "the catalogue is named where the tier map is" "yes|yes|yes" \
+  "$(spells "$ROOT/commands/install.md" 'mcp.json')|$(spells "$ROOT/commands/uninstall.md" 'mcp.json')|$(spells "$ROOT/README.md" 'mcp.json')"
+# The uninstall command names three files as the operator's own: the tier map, the
+# catalogue, and the prompts directory.
+check "uninstall says three files are the operator's own" "yes" \
+  "$(spells "$ROOT/commands/uninstall.md" 'three of those files')"
+check "the tab skill says an agent comes up with remote control off" "yes" \
+  "$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'remote control off')"
+
+# The mode a session came up in (§43), one literal per document. The routing skill carries
+# the rule the measurement produced — a tier bound to a model the host does not run in the
+# operator's decision mode is a tier no unattended agent runs at — and the repair for an
+# agent that is there for a few edits; the rulebook says the launcher reads the mode; the
+# tab skill says it too, says the screen is read from the bottom, and its rotation synopsis
+# agrees with the sentence under it, which it did not.
+check "the routing skill carries the unattended rule and the repair" "yes|yes" \
+  "$(spells "$ROOT/skills/model-routing/SKILL.md" 'a session nobody watches runs in the operator'"'"'s decision mode')|$(spells "$ROOT/skills/model-routing/SKILL.md" '--permission-mode acceptEdits` for a few edits and allow-listed commands only')"
+check "the rulebook says the launcher reads the mode" "yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" "reads the session's mode on its transcript")"
+check "the tab skill says the mode is read and the screen read from the bottom" "yes|yes" \
+  "$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'the mode the session came up in')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'the last N lines')"
+# A synopsis and the sentence under it drifted apart once already: the rotation's still
+# read `[--mcp]` after the option took a value.
+check "every synopsis spells the server option the way its sentence does" "0|2" \
+  "$(grep -c -- '\[--mcp\]' "$ROOT/skills/iterm-agents/SKILL.md")|$(grep -c -- '\[--mcp <name>\]' "$ROOT/skills/iterm-agents/SKILL.md")"
+
+# A brief that does not say which servers its session was given lets an agent reach for a
+# tool it never had: the phase brief carries the list itself, beside the tier, as a
+# placeholder the orchestrator fills with the names it chose (§42).
+check "the phase brief carries the servers placeholder beside the tier" "yes|yes" \
+  "$(spells "$ROOT/templates/agent-phase-brief.md" 'spawned with these servers and no other:')|$(spells "$ROOT/templates/agent-phase-brief.md" 'MCP_SERVERS')"
 
 check "the rulebook pins a reader's copy through the script" "1" "$(grep -c 'workspace.sh pin <source> <round> <head>' "$ROOT/skills/orchestrator/SKILL.md")"
 
@@ -203,7 +286,7 @@ echo "== agent chain (dry run) =="
 # to it. A dry run reads the chain and never writes it: there is no tab to record.
 AGENT="$ROOT/skills/iterm-agents/scripts/iterm-agent.sh"
 CHAINS="$WORK/istate/chains"; mkdir -p "$CHAINS"
-chain_spawn() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate" ORCHESTRATOR_SELF_TTY=/dev/ttys900 bash "$AGENT" spawn --dir "$WORK" --title "Implementer : chain" --prompt p "$@" 2>&1; }
+chain_spawn() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate" ORCHESTRATOR_SELF_TTY=/dev/ttys900 bash "$AGENT" spawn --dir "$WORK" --title "Agent : chain" --prompt p "$@" 2>&1; }
 out=$(chain_spawn --right-of self)
 check "the dry run names the caller's tty" "1" "$(printf '%s' "$out" | grep -c '^self=/dev/ttys900$')"
 check "no chain: self is the anchor" "1" "$(printf '%s' "$out" | grep -c '^anchor=self$')"
@@ -614,7 +697,7 @@ AGENT="$ROOT/skills/iterm-agents/scripts/iterm-agent.sh"
 ISTATE="$WORK/istate"
 long=$(printf 'x%.0s' $(seq 1 3000))
 prompt="Read « this » — é \"quoted\" back\\slash $long"
-out=$(LC_ALL=C ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Probe : B-1 — é" --prompt "$prompt" 2>&1)
+out=$(LC_ALL=C ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : B-1 — é" --prompt "$prompt" 2>&1)
 code=$?
 check "dry-run spawn under LC_ALL=C exits 0" "0" "$code"
 cmd=${out#*launch=}; cmd=${cmd%%$'\n'*}
@@ -636,27 +719,51 @@ check "the launch execs the CLI by absolute path" "1" "$(printf '%s' "$cmd" | gr
 # is still named absolutely inside the launch: finding the program must not depend on the
 # operator's dotfiles, only the session's environment does.
 check "the tab runs the launch through a login shell" "1" "$(printf '%s' "$out" | grep -c '^program=.* -l <launch-file>$')"
-check "the login shell is the operator's" "1" "$(env ORCHESTRATOR_LOGIN_SHELL=/bin/bash ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Probe : shell" --prompt p 2>&1 | grep -c '^program=/bin/bash -l ')"
-check "the launch text itself is unchanged by the shell" "1" "$(env ORCHESTRATOR_LOGIN_SHELL=/bin/bash ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Probe : shell" --prompt p 2>&1 | sed -n 's/^launch=//p' | grep -cE '^cd .* && .* && exec /[^ ]+/')"
+check "the login shell is the operator's" "1" "$(env ORCHESTRATOR_LOGIN_SHELL=/bin/bash ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : shell" --prompt p 2>&1 | grep -c '^program=/bin/bash -l ')"
+check "the launch text itself is unchanged by the shell" "1" "$(env ORCHESTRATOR_LOGIN_SHELL=/bin/bash ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : shell" --prompt p 2>&1 | sed -n 's/^launch=//p' | grep -cE '^cd .* && .* && exec /[^ ]+/')"
 
 # The title is the session's NAME, not a tab label the shell overwrites: two sessions in one
 # checkout otherwise share the host's stem and differ by a reference nobody reads at a
 # glance (observed: an implementer listed under its orchestrator's own name). Non-ASCII
 # bytes travel like the prompt does — quoted by the shell's own rules.
-check "the launch names the session after its title" "1" "$(printf '%s' "$cmd" | grep -c -- "--name 'Probe : B-1 — é'")"
+check "the launch names the session after its title" "1" "$(printf '%s' "$cmd" | grep -c -- "--name 'Agent : B-1 — é'")"
 # The title is the operator's format and the launcher holds every spawn to it: a successor
 # once came up as `steward-successor` in every listing, because the launcher took whatever
-# was typed and the house format was nowhere (§39). The shape is `<Role> : <what>`;
+# was typed and the house format was nowhere (§39). The name is SHORT and it has two roles
+# (§42): `Orch : <subject>` for an orchestrator and its successor, `Agent : <subject>` for
+# anything an orchestrator spawns, the subject at most twenty-five characters — the
+# operator read his window and could not tell one agent from another at a glance.
 # `--title-free` is the escape for a probe that names its tab otherwise, and the dry run
 # says when it is on.
 shaped() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" "$@" 2>&1; }
 check "a shaped title names the session" "1" \
-  "$(shaped --title 'Implementer : x' | sed -n 's/^launch=//p' | grep -c -- "--name 'Implementer : x'")"
+  "$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : x'")"
+check "and so does an orchestrator's" "1" \
+  "$(shaped --title 'Orch : x' | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch : x'")"
 check "and so does a probe's" "1" \
-  "$(shaped --title 'Probe : anchor' | sed -n 's/^launch=//p' | grep -c -- "--name 'Probe : anchor'")"
-check "the dry run says which name it passes" "1" "$(shaped --title 'Probe : anchor' | grep -c '^name=Probe : anchor$')"
-check "a title without the shape is refused, and the reason names the shape" "1|1" \
-  "$(shaped --title foo >/dev/null 2>&1; echo $?)|$(shaped --title foo | grep -c 'a title reads "<Role> : <what>", got .foo.')"
+  "$(shaped --title 'Agent : anchor' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : anchor'")"
+check "the dry run says which name it passes" "1" "$(shaped --title 'Agent : anchor' | grep -c '^name=Agent : anchor$')"
+check "a title without the shape is refused, and the reason names the shape and the cap" "1|1" \
+  "$(shaped --title foo >/dev/null 2>&1; echo $?)|$(shaped --title foo | grep -c 'a title reads "Orch : <subject>" or "Agent : <subject>", the subject at most 25 characters, got .foo.')"
+# The older roles are the ones the operator could not read, so they are refused like any
+# other unshaped title: the spelled-out role words are gone from the launcher, not merely
+# from the documents.
+check "an older role is refused too" "1|1" \
+  "$(shaped --title 'Implementer : x' >/dev/null 2>&1; echo $?)|$(shaped --title 'Reviewer : 1' >/dev/null 2>&1; echo $?)"
+# The cap is on the SUBJECT, which is what a listing shows beside every other name.
+D42SUB25=$(printf 'x%.0s' $(seq 1 25))
+D42SUB26=$(printf 'x%.0s' $(seq 1 26))
+check "a subject of 25 characters is accepted, of 26 refused" "1|1" \
+  "$(shaped --title "Agent : $D42SUB25" | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : $D42SUB25'")|$(shaped --title "Agent : $D42SUB26" >/dev/null 2>&1; echo $?)"
+# A name is one line. The shape's end anchor also matches BEFORE a trailing newline in this
+# language, so `Agent : x` followed by one passed it — and the guard the older code spent on
+# a newline in a derived name was retired with that code, leaving nothing behind it. The
+# title is written into the launch and read back out of the process table: a second line
+# there is not a name, it is whatever follows one.
+D42NL="Agent : x
+"
+check "a title carrying a trailing newline is refused" "1|1" \
+  "$(shaped --title "$D42NL" >/dev/null 2>&1; echo $?)|$(shaped --title "$D42NL" | grep -c 'a title reads')"
 check "the old default title is refused too" "1|1" \
   "$(shaped --title agent >/dev/null 2>&1; echo $?)|$(shaped --title agent | grep -c 'a title reads')"
 check "no title: refused unless --title-free" "1|1" \
@@ -672,7 +779,7 @@ check "--title-free with no title keeps the old default" "1" \
 check "a dashed value is quoted, not read as an option" "1" \
   "$(shaped --title-free --title=--evil | sed -n 's/^launch=//p' | grep -c -- "--name '--evil'")"
 check "a shaped title still reads as today" "1" \
-  "$(shaped --title 'Implementer : x' | sed -n 's/^launch=//p' | grep -c -- "--name 'Implementer : x'")"
+  "$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : x'")"
 
 # `%r` renders a title with an apostrophe wrapped in double quotes instead of single ones,
 # so the refusal's own literal quoting shifted with what the operator typed. `got '<title>'`
@@ -681,42 +788,139 @@ D5TITLE="it's not shaped"
 check "the shape refusal always quotes with single quotes" "1" \
   "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "$D5TITLE" --prompt p 2>&1 | grep -c "got '$D5TITLE'")"
 
+# An agent's servers are CHOSEN, from a catalogue the operator owns (§42). Every launch
+# used to carry the setting that enables all of the project's servers, so a fresh session
+# never parked on the host's question about them; measured, that loaded a browser driver
+# and a devtools bridge into every agent, about seventy megabytes each, used by none. The
+# first answer — the strict flag on every launch, an all-or-nothing flag to put the setting
+# back — was measured before it shipped and did not hold either: the setting never governed
+# those two processes, and the strict flag drops every server of EVERY scope, so an agent
+# under it had neither a documentation server nor a connector whatever its brief needed.
+# So the launch is strict AND carries a configuration file written for that session, from
+# named definitions the operator keeps in the catalogue with a default set.
+CAT="$WORK/mcp-catalogue.json"
+printf '{"servers":{"a":{"command":"a-cmd"},"b":{"command":"b-cmd"}},"default":["a"]}\n' > "$CAT"
+NOCAT="$WORK/mcp-absent.json"; rm -f "$NOCAT"
+mcpd() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$CAT" \
+  bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' "$@" 2>&1; }
+nocat() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$NOCAT" \
+  bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' "$@" 2>&1; }
+# The file the launch names is read back, not assumed: the launch line says a path, the
+# content says which servers the session will actually load.
+mcp_keys() { "$py" -c "
+import json, sys
+print(','.join(json.load(open(sys.argv[1]))['mcpServers'].keys()))" "$1"; }
+mcp_file_of() { printf '%s' "$1" | sed -n 's/^mcp_file=//p'; }
+
+check "the default set is loaded, from a file the launch names" "1|1|a|a" \
+  "$(mcpd | sed -n 's/^launch=//p' | grep -c -- '--strict-mcp-config')|$(mcpd | sed -n 's/^launch=//p' | grep -c -- '--mcp-config ')|$(mcpd | sed -n 's/^mcp=//p')|$(mcp_keys "$(mcp_file_of "$(mcpd)")")"
+check "--mcp adds a catalogued server for the agent that needs it" "a,b|a,b" \
+  "$(mcpd --mcp b | sed -n 's/^mcp=//p')|$(mcp_keys "$(mcp_file_of "$(mcpd --mcp b)")")"
+check "several names travel comma-separated or as repeated options, each once" "a,b|a,b|a,b|a,b" \
+  "$(mcpd --mcp a,b | sed -n 's/^mcp=//p')|$(mcp_keys "$(mcp_file_of "$(mcpd --mcp a,b)")")|$(mcpd --mcp a --mcp b | sed -n 's/^mcp=//p')|$(mcp_keys "$(mcp_file_of "$(mcpd --mcp a --mcp b)")")"
+check "--mcp none loads nothing, and writes no file" "none|none|0" \
+  "$(mcpd --mcp none | sed -n 's/^mcp=//p')|$(mcpd --mcp none | sed -n 's/^mcp_file=//p')|$(mcpd --mcp none | sed -n 's/^launch=//p' | grep -c -- '--mcp-config')"
+check "--mcp none among others still loads nothing" "none" \
+  "$(mcpd --mcp b --mcp none | sed -n 's/^mcp=//p')"
+# Asked for nothing, so nothing is needed to give it: `none` needs no catalogue, and says
+# nothing on stderr either — that line is for a caller who said nothing at all.
+check "--mcp none needs no catalogue, and says nothing" "0|0|none|" \
+  "$(nocat --mcp none >/dev/null 2>&1; echo $?)|$(nocat --mcp none | sed -n 's/^launch=//p' | grep -c -- '--mcp-config')|$(nocat --mcp none | sed -n 's/^mcp=//p')|$(nocat --mcp none | grep 'no server catalogue' || true)"
+# A name the catalogue does not hold is a typo or a server the operator has not written
+# yet; either way the agent would come up without it and nobody would know until it
+# reached for a tool. Refused before a tab exists, with the names there are.
+check "a name the catalogue does not hold is refused, with the names it does" "1|1" \
+  "$(mcpd --mcp c >/dev/null 2>&1; echo $?)|$(mcpd --mcp c | grep -c -- "--mcp 'c' is not in the catalogue $CAT (names: a, b)")"
+check "--mcp with no catalogue is refused, and names the installer" "1|1" \
+  "$(nocat --mcp b >/dev/null 2>&1; echo $?)|$(nocat --mcp b | grep -c -- "--mcp needs a server catalogue at $NOCAT; the installer creates one")"
+# No catalogue and nothing asked is not a refusal: the launch is strict and loads nothing,
+# which is what a machine without a catalogue can honestly give. It says so on stderr.
+check "no catalogue and no --mcp: strict, no file, and a line on stderr" "1|0|none|1" \
+  "$(nocat | sed -n 's/^launch=//p' | grep -c -- '--strict-mcp-config')|$(nocat | sed -n 's/^launch=//p' | grep -c -- '--mcp-config')|$(nocat | sed -n 's/^mcp=//p')|$(nocat | grep -c "^spawn: no server catalogue at $NOCAT: the session loads no server$")"
+# A catalogue that does not read as one is not an empty catalogue: reading the two alike
+# would send every agent out with no server while the caller believes it named some — the
+# same reasoning the tier map's own refusal was written on.
+BADCAT="$WORK/mcp-bad.json"; printf '["a","b"]\n' > "$BADCAT"
+check "a catalogue that is not one is refused, and the refusal names the shape" "1|1" \
+  "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADCAT" bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' >/dev/null 2>&1; echo $?)|$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADCAT" bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' 2>&1 | grep -c -- "$BADCAT does not read as a server catalogue (a \"servers\" object and a \"default\" list)")"
+# A default naming a server the catalogue does not hold is not caught by the shape check
+# above (both fields still read as an object and a list): the launch would silently drop
+# the unknown name and give the agent a set the operator never wrote. Refused instead, and
+# a catalogue whose default names only held servers is unaffected.
+BADDEF="$WORK/mcp-bad-default.json"
+printf '{"servers":{"a":{"command":"a-cmd"}},"default":["a","zzz"]}\n' > "$BADDEF"
+check "a default name absent from servers is refused; one fully held still launches" "1|1|1" \
+  "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADDEF" bash "$AGENT" spawn --dir "$WORK" --mcp a --title 'Agent : x' >/dev/null 2>&1; echo $?)|$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADDEF" bash "$AGENT" spawn --dir "$WORK" --mcp a --title 'Agent : x' 2>&1 | grep -c -- "the catalogue $BADDEF lists 'zzz' in default but not in servers")|$(mcpd | sed -n 's/^launch=//p' | grep -c -- '--mcp-config ')"
+# Every asked name is checked against the catalogue BEFORE `none` short-circuits the
+# selection: a typo beside `none` used to select nothing and say nothing, which is how a
+# caller who mistyped one name among several would never learn it.
+check "typo,none is refused naming typo; a,none still selects nothing" "1|1|none" \
+  "$(mcpd --mcp typo,none >/dev/null 2>&1; echo $?)|$(mcpd --mcp typo,none | grep -c -- "--mcp 'typo' is not in the catalogue $CAT (names: a, b)")|$(mcpd --mcp a,none | sed -n 's/^mcp=//p')"
+# The host's --mcp-config takes SEVERAL values, so whatever follows it is read as another
+# file: the prompt placed there was read as one (« MCP config file not found: <the
+# prompt> »). The pair is closed by --permission-mode, which takes exactly one.
+check "the server file is followed by the decision mode, never by the prompt" "1|0" \
+  "$(mcpd --prompt p | sed -n 's/^launch=//p' | grep -cE -- '--mcp-config [^ ]+ --permission-mode ')|$(mcpd --prompt p | sed -n 's/^launch=//p' | grep -c -- 'enableAllProjectMcpServers')"
+check "the setting that enabled every project server is in no launch" "0|0|0" \
+  "$(mcpd | sed -n 's/^launch=//p' | grep -c -- 'enableAllProjectMcpServers')|$(mcpd --mcp b | sed -n 's/^launch=//p' | grep -c -- 'enableAllProjectMcpServers')|$(nocat | sed -n 's/^launch=//p' | grep -c -- 'enableAllProjectMcpServers')"
+# The file is written under the state directory, beside the prompt file and named like it.
+check "the server file lives beside the prompt file, named like it" "yes|yes" \
+  "$(f=$(mcp_file_of "$(mcpd)"); [ "${f#"$ISTATE"/prompts/mcp-}" != "$f" ] && echo yes || echo "$f")|$(f=$(mcp_file_of "$(mcpd)"); [ "${f%.json}" != "$f" ] && echo yes || echo "$f")"
+
 # A successor carries the PREDECESSOR's name, read from the process table, and comes up
 # under remote control: the operator drives his orchestrators from the host's remote
 # client as well as from the tab, and an agent is driven by its orchestrator alone (§39).
 # The table is a file here; a live run reads `ps`.
 PSTAB="$WORK/ps-table.txt"
-printf '/dev/ttys900 /opt/x/host --name Orchestrator : f --permission-mode auto\n' > "$PSTAB"
+printf '/dev/ttys900 /opt/x/host --name Orch : f --permission-mode auto\n' > "$PSTAB"
 PSNONAME="$WORK/ps-noname.txt"
 printf '/dev/ttys900 /opt/x/host --permission-mode auto\n' > "$PSNONAME"
 succ() { local t="$1"; shift; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
   ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$t" bash "$AGENT" spawn --dir "$WORK" "$@" 2>&1; }
 check "a successor with no title takes the caller's session name" "1" \
-  "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- "--name 'Orchestrator : f'")"
+  "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch : f'")"
 check "and comes up under remote control, under that name" "1" \
-  "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- "--remote-control 'Orchestrator : f'")"
+  "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- "--remote-control 'Orch : f'")"
 check "--no-remote-control drops the flag and keeps the name" "0|1" \
-  "$(succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -c -- '--remote-control')|$(succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -c -- "--name 'Orchestrator : f'")"
+  "$(succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -c -- '--remote-control')|$(succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch : f'")"
 check "a plain spawn never carries remote control" "0" \
-  "$(shaped --title 'Implementer : x' | sed -n 's/^launch=//p' | grep -c -- '--remote-control')"
+  "$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- '--remote-control')"
+# The host starts remote control for every new session by default (a server-side rollout
+# decides when nothing is set). An agent is driven by its orchestrator alone, so it comes
+# up with the setting that turns that default off; only a successor carries the flag
+# instead, never both.
+check "a plain spawn carries the setting off, and no --remote-control" "1|0" \
+  "$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- '--settings '\''{\"remoteControlAtStartup\":false}'\''')|$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- '--remote-control')"
+check "a successor carries the flag, and not the setting" "1|0" \
+  "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- "--remote-control 'Orch : f'")|$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- '--settings')"
+check "--successor --no-remote-control carries the setting" "1" \
+  "$(succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -c -- '--settings '\''{\"remoteControlAtStartup\":false}'\''')"
 check "a caller launched without a name cannot derive one" "1|1" \
   "$(succ "$PSNONAME" --successor >/dev/null 2>&1; echo $?)|$(succ "$PSNONAME" --successor | grep -c "needs the caller's session name")"
-# A caller that the OLDER launcher named carries the prompt in its own process line, so
-# the derivation copies a launch line instead of a name: measured live at 366 characters
-# on a session launched before the reorder. New sessions are clean; the transition is not,
-# and a name is refused when it stops reading as one.
+# The derived name is held to the SAME shape as a typed one (§42), which retires the
+# length guard that stood here: a caller that the OLDER launcher named carries the prompt
+# in its own process line, so the derivation copied a launch line instead of a name —
+# measured live at 366 characters — and a caller named under the older convention
+# (a role word spelled out in full) derives nothing either. Both are refused by the shape,
+# and the refusal quotes the first forty characters: a launch line must not fill a terminal.
 PSLONG="$WORK/ps-long.txt"
 printf '/dev/ttys900 /opt/x/host --name Orchestrator : %s --permission-mode auto\n' "$(printf 'x%.0s' $(seq 1 185))" > "$PSLONG"
+PSOLD="$WORK/ps-old.txt"
+printf '/dev/ttys900 /opt/x/host --name Orchestrator : f --permission-mode auto\n' > "$PSOLD"
 PSSHORT="$WORK/ps-short.txt"
-printf '/dev/ttys900 /opt/x/host --name Orchestrator : %s --permission-mode auto\n' "$(printf 'x%.0s' $(seq 1 25))" > "$PSSHORT"
-check "a derived name that is a launch line is refused, and the refusal counts it" "1|1" \
-  "$(succ "$PSLONG" --successor >/dev/null 2>&1; echo $?)|$(succ "$PSLONG" --successor | grep -c 'reads like a launch line of an older launcher (200 characters)')"
-check "a name of ordinary length still derives" "1" \
-  "$(succ "$PSSHORT" --successor | sed -n 's/^launch=//p' | grep -c -- "--name 'Orchestrator : $(printf 'x%.0s' $(seq 1 25))'")"
+printf '/dev/ttys900 /opt/x/host --name Orch : %s --permission-mode auto\n' "$(printf 'x%.0s' $(seq 1 25))" > "$PSSHORT"
+PSLONGSUB="$WORK/ps-long-subject.txt"
+printf '/dev/ttys900 /opt/x/host --name Orch : %s --permission-mode auto\n' "$(printf 'x%.0s' $(seq 1 26))" > "$PSLONGSUB"
+check "a derived name that is a launch line is refused, and the refusal quotes 40 characters" "1|1" \
+  "$(succ "$PSLONG" --successor >/dev/null 2>&1; echo $?)|$(succ "$PSLONG" --successor | grep -c "the caller's session name 'Orchestrator : $(printf 'x%.0s' $(seq 1 25))' does not read")"
+check "a caller named under the older convention derives nothing" "1|1" \
+  "$(succ "$PSOLD" --successor >/dev/null 2>&1; echo $?)|$(succ "$PSOLD" --successor | grep -c "the caller's session name 'Orchestrator : f' does not read .Orch : <subject>.; pass --title .Orch : <subject>.")"
+check "a derived subject of 25 characters still derives, of 26 is refused" "1|1" \
+  "$(succ "$PSSHORT" --successor | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch : $(printf 'x%.0s' $(seq 1 25))'")|$(succ "$PSLONGSUB" --successor >/dev/null 2>&1; echo $?)"
 # An orchestrator's title is a successor's, and a plain anchor lands after the chain: the
 # tab the operator found at the far right of his window, inheriting nothing (§39).
 check "an orchestrator's title on a plain anchor is refused" "1|1" \
-  "$(shaped --title 'Orchestrator : f' --right-of self | grep -c "an orchestrator's title is a successor's")|$(shaped --title 'Orchestrator : f' --left-of /dev/ttys555 | grep -c 'spawn it with --successor')"
+  "$(shaped --title 'Orch : f' --right-of self | grep -c "an orchestrator's title is a successor's")|$(shaped --title 'Orch : f' --left-of /dev/ttys555 | grep -c 'spawn it with --successor')"
 # A successor is named after its caller by definition; --title-free asks for the ESCAPE
 # from that shape, which does not apply to a name the launcher derives itself.
 check "--successor with --title-free is refused" "1|1" \
@@ -727,7 +931,7 @@ name_on() { ORCHESTRATOR_PS_TABLE="$1" "$py" -c "
 import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
 import iterm_agent as m
 print(m.session_name_on(sys.argv[1]))" "$2"; }
-check "the table gives the name the host process was launched with" "Orchestrator : f" "$(name_on "$PSTAB" /dev/ttys900)"
+check "the table gives the name the host process was launched with" "Orch : f" "$(name_on "$PSTAB" /dev/ttys900)"
 check "a process launched without a name reads as none" "None" "$(name_on "$PSNONAME" /dev/ttys900)"
 check "a tty the table does not name reads as none" "None" "$(name_on "$PSTAB" /dev/ttys555)"
 
@@ -744,14 +948,14 @@ argv = shlex.split(launch.split(' && ')[-1])[1:]
 argv = [open(prompt_file).read().strip() if a.startswith('\$(cat ') else a for a in argv]
 print('%s %s' % (tty, ' '.join(argv)))" "$1" "$2" "$3"; }
 PROMPT_COLON="$WORK/prompt-colon.txt"
-printf 'Read and execute /tmp/brief.md. Your orchestrator is Orchestrator : plugin family [abc123].\n' > "$PROMPT_COLON"
-d1launch=$(shaped --title 'Implementer : x' --prompt-file "$PROMPT_COLON" | sed -n 's/^launch=//p')
+printf 'Read and execute /tmp/brief.md. Your orchestrator is Orch : plugin family [abc123].\n' > "$PROMPT_COLON"
+d1launch=$(shaped --title 'Agent : x' --prompt-file "$PROMPT_COLON" | sed -n 's/^launch=//p')
 ps_line "$d1launch" "$PROMPT_COLON" /dev/ttys900 > "$WORK/ps-launched.txt"
-check "the name a spawn leaves in the process table is the title, and stops there" "Implementer : x" \
+check "the name a spawn leaves in the process table is the title, and stops there" "Agent : x" \
   "$(name_on "$WORK/ps-launched.txt" /dev/ttys900)"
 d1succ=$(succ "$PSTAB" --successor --prompt-file "$PROMPT_COLON" | sed -n 's/^launch=//p')
 ps_line "$d1succ" "$PROMPT_COLON" /dev/ttys901 > "$WORK/ps-succ.txt"
-check "and a successor's, with the remote-control flag behind it" "Orchestrator : f" \
+check "and a successor's, with the remote-control flag behind it" "Orch : f" \
   "$(name_on "$WORK/ps-succ.txt" /dev/ttys901)"
 check "the launch puts the prompt before the name" "1" \
   "$(printf '%s' "$d1launch" | grep -cE '"\$\(cat [^"]+\)" --name ')"
@@ -765,7 +969,7 @@ import iterm_agent as m
 print(m.row_for(1, 2, '/dev/ttys900', sys.argv[1], None if sys.argv[2] == '-' else sys.argv[2],
                 sys.argv[3] == 'self', sys.argv[4] == 'hidden'))" "$1" "$2" "$3" "$4"; }
 check "the row carries the tab title, the session name and the caller's own mark" \
-  'w1/t2 | /dev/ttys900 | ✳ T | Implementer : x | self' "$(row '✳ T' 'Implementer : x' self visible)"
+  'w1/t2 | /dev/ttys900 | ✳ T | Agent : x | self' "$(row '✳ T' 'Agent : x' self visible)"
 check "a session launched without a name says so, and a hidden pane still says hidden" \
   'w1/t2 | /dev/ttys900 | ✳ T | (host default) | hidden' "$(row '✳ T' - other hidden)"
 
@@ -787,11 +991,11 @@ check "a tab that is neither is refused, and the refusal names it" "1|1" \
 check "--force moves it and says what it moved" "0|1" \
   "$(mv_ --tty /dev/ttys901 --left-of self --force >/dev/null 2>&1; echo $?)|$(mv_ --tty /dev/ttys901 --left-of self --force | grep -c "^move: forced: /dev/ttys901 is not in this session's chain$")"
 
-out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Probe : prompt" --prompt-file "$file" 2>&1)
+out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt" --prompt-file "$file" 2>&1)
 check "--prompt-file reuses the given file" "1" "$(printf '%s' "$out" | grep -c "prompt_file=$file")"
-out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Probe : prompt" 2>&1)
+out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt" 2>&1)
 cmd=${out#*launch=}; cmd=${cmd%%$'\n'*}
-check "no prompt: nothing appended after the settings" "1" "$(printf '%s' "$cmd" | grep -c -- 'enableAllProjectMcpServers')"
+check "no prompt: nothing appended after the server flag" "1" "$(printf '%s' "$cmd" | grep -c -- '--strict-mcp-config')"
 check_status "--prompt and --prompt-file together are refused" 1 env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --prompt x --prompt-file "$file"
 check_status "verify on a tty nobody has exits 1" 1 bash "$AGENT" verify --tty /dev/ttys999
 check "screen without a tty says which option is missing" "ERROR: screen: --tty is required" \
@@ -807,18 +1011,18 @@ TRUSTF="$WORK/trust.json"; printf '{"projects":{}}' > "$TRUSTF"
 UNTRUSTED="$WORK/untrusted"; mkdir -p "$UNTRUSTED"
 check_status "an untrusted directory is refused before a tab is made" 1 \
   env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-  bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Probe : trust" --tier deep
+  bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep
 check "the refusal says how to proceed" "1" \
   "$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-     bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Probe : trust" --tier deep 2>&1 | grep -c -- '--trust')"
+     bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep 2>&1 | grep -c -- '--trust')"
 check_status "--trust records it and proceeds" 0 \
   env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-  bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Probe : trust" --tier deep --trust
+  bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --trust
 check "the record now holds the directory" "true" \
   "$("$py" -c "import json,os,sys; d=json.load(open(sys.argv[1])); print(str(d['projects'].get(os.path.realpath(sys.argv[2]),{}).get('hasTrustDialogAccepted')).lower())" "$TRUSTF" "$UNTRUSTED")"
 check_status "a directory already recorded needs no flag" 0 \
   env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-  bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Probe : trust" --tier deep
+  bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep
 check "the record keeps owner-only permissions" "600" \
   "$(stat -f '%OLp' "$TRUSTF" 2>/dev/null || stat -c '%a' "$TRUSTF")"
 
@@ -828,17 +1032,17 @@ check "the record keeps owner-only permissions" "600" \
 compact="{\"projects\":{\"$(cd "$UNTRUSTED" && pwd -P)\":{\"hasTrustDialogAccepted\":true}}}"
 printf '%s' "$compact" > "$TRUSTF"
 out=$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-      bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Probe : trust" --tier deep --trust 2>&1)
+      bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --trust 2>&1)
 check "--trust on a recorded directory does not rewrite the record" "$compact" "$(cat "$TRUSTF")"
 check "and the dry run says the record already held it" "1" "$(printf '%s' "$out" | grep -c '^trust=already$')"
 check "--trust on an unrecorded directory says it recorded it" "1" \
   "$(printf '{"projects":{}}' > "$TRUSTF"; env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-     bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Probe : trust" --tier deep --trust 2>&1 | grep -c '^trust=recorded$')"
+     bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --trust 2>&1 | grep -c '^trust=recorded$')"
 # A record the launcher cannot read is a gate that cannot measure: it lets the launch
 # through AND says so, instead of launching past a question nobody will see.
 printf '{not json' > "$WORK/trust-garbage.json"
 out=$(env ORCHESTRATOR_TRUST_FILE="$WORK/trust-garbage.json" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-      bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Probe : trust" --tier deep 2>&1); code=$?
+      bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep 2>&1); code=$?
 check "an unreadable record lets the launch through" "0" "$code"
 check "and says so, naming the flag" "1|1" \
   "$(printf '%s' "$out" | grep -c 'cannot be read')|$(printf '%s' "$out" | grep -c '^trust=unread$')"
@@ -848,7 +1052,7 @@ D8STATE=$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")
 D8TRUST="$WORK/trust-d8.json"; printf '{"projects":{}}' > "$D8TRUST"
 D8DIR="$WORK/untrusted-d8"; mkdir -p "$D8DIR"
 env ORCHESTRATOR_TRUST_FILE="$D8TRUST" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$D8STATE" \
-  bash "$AGENT" spawn --dir "$D8DIR" --title "Probe : trust" --prompt "hello" >/dev/null 2>&1
+  bash "$AGENT" spawn --dir "$D8DIR" --title "Agent : trust" --prompt "hello" >/dev/null 2>&1
 check "the trust refusal leaves no prompt file" "0" \
   "$(find "$D8STATE/prompts" -type f 2>/dev/null | wc -l | tr -d ' ')"
 rm -rf "$D8STATE"
@@ -936,7 +1140,7 @@ check "resolve-tier wants exactly one tier" "ERROR: resolve-tier: exactly one ti
 tcmd() {
   local out
   out=$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
-    bash "$AGENT" spawn --dir "$WORK" --title "Probe : tier" "$@" 2>&1)
+    bash "$AGENT" spawn --dir "$WORK" --title "Agent : tier" "$@" 2>&1)
   out=${out#*launch=}; printf '%s' "${out%%$'\n'*}"
 }
 check "a bound tier is typed as the model argument" "1" "$(tcmd --tier deep | grep -c -- '--model a-model')"
@@ -948,7 +1152,7 @@ check_status "--tier and --model together are refused" 1 \
 mkdir -p "$ISTATE/ctx"
 printf '{"session_id":"s-inh","model_id":"a-model","updated_epoch":%s}\n' "$(date +%s)" > "$ISTATE/ctx/s-inh.json"
 check "inherit-model types the calling session's model" "1" \
-  "$(CLAUDE_CODE_SESSION_ID=s-inh ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Orchestrator : heir" --inherit-model 2>&1 | sed -n 's/^launch=//p' | grep -c -- '--model a-model')"
+  "$(CLAUDE_CODE_SESSION_ID=s-inh ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Orch : heir" --inherit-model 2>&1 | sed -n 's/^launch=//p' | grep -c -- '--model a-model')"
 check "inherit-model with no tap file refuses and names the installer" "1" \
   "$(CLAUDE_CODE_SESSION_ID=s-none ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --inherit-model 2>&1 | grep -c 'orchestrator:install')"
 check "inherit-model is exclusive with a tier" "1" \
@@ -960,10 +1164,10 @@ check_status "an unknown tier is refused at spawn" 1 \
 # suite already checks that rotate inherits the spawn's verification.
 check "rotate forwards the tier to the spawn" "1" \
   "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
-      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Implementer : rotated" --tier deep 2>&1 | grep -c -- '--model a-model')"
+      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" --tier deep 2>&1 | grep -c -- '--model a-model')"
 check "rotate closes the old tab only after the spawn" "1" \
   "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
-      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Implementer : rotated" --tier deep 2>&1 | tail -1 | grep -c '^close=/dev/ttys999')"
+      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" --tier deep 2>&1 | tail -1 | grep -c '^close=/dev/ttys999')"
 # The rotation's spawn receives every argument the rotation does not consume, --trust
 # included — but the tab skill's line never said so, and a live rotation into a fresh
 # checkout was refused on the trust question and redone by hand (§39). Read on the record
@@ -972,13 +1176,19 @@ ROTDIR="$WORK/rot-untrusted"; mkdir -p "$ROTDIR"
 printf '{"projects":{}}' > "$TRUSTF"
 check "rotate forwards --trust to the spawn, which records it" "true" \
   "$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
-      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$ROTDIR" --title "Implementer : rotated" --tier deep --trust >/dev/null 2>&1; \
+      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$ROTDIR" --title "Agent : rotated" --tier deep --trust >/dev/null 2>&1; \
      "$py" -c "import json,os,sys; d=json.load(open(sys.argv[1])); print(str(d['projects'].get(os.path.realpath(sys.argv[2]),{}).get('hasTrustDialogAccepted')).lower())" "$TRUSTF" "$ROTDIR")"
+# The rotation forwards --mcp too: an agent that needed a server is replaced by one that
+# still has it. It is not in the refused list below, and the dry run is where the
+# forwarding is read (§42) — with the name, since the flag carries one now.
+check "rotate forwards --mcp to the spawn, with its name" "a,b" \
+  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" ORCHESTRATOR_MCP_CATALOGUE="$CAT" \
+      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" --mcp b 2>&1 | sed -n 's/^mcp=//p')"
 # A rotation replaces an agent with a titled agent; a successor, an escape from the title
 # shape, or a plain agent stripped of remote control are none of that — each is refused
 # before the replacement is spawned.
 rot_refuse() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" \
-  rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Implementer : rotated" "$@" 2>&1; }
+  rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" "$@" 2>&1; }
 check "rotate refuses --successor" "1" \
   "$(rot_refuse --successor | grep -c -- '--successor is not a rotation')"
 check "rotate refuses --title-free" "1" \
@@ -1050,9 +1260,9 @@ print([r for r in asyncio.run(ia.list_rows(app)) if 'ttys802' in r][0])" "$ROOT/
 # ...and the caller's own row, and no other, so an orchestrator reads which tab is its own
 # before it anchors, moves or closes anything (§38). The name beside the title is the one
 # the host process was launched with; the stub's other pane was launched with none.
-printf '/dev/ttys801 /opt/x/host --name Orchestrator : f --permission-mode auto\n' > "$WORK/ps-stub.txt"
+printf '/dev/ttys801 /opt/x/host --name Orch : f --permission-mode auto\n' > "$WORK/ps-stub.txt"
 check "the listing marks the caller's own row, names it, and marks no other" \
-  "w1/t1 | /dev/ttys801 | visible one | Orchestrator : f | self|0" \
+  "w1/t1 | /dev/ttys801 | visible one | Orch : f | self|0" \
   "$(ORCHESTRATOR_SELF_TTY=/dev/ttys801 ORCHESTRATOR_PS_TABLE="$WORK/ps-stub.txt" "$py" -c "$STUB
 rows=asyncio.run(ia.list_rows(app))
 print('%s|%d' % ([r for r in rows if 'ttys801' in r][0], len([r for r in rows if 'ttys802' in r and '| self' in r])))" "$ROOT/skills/iterm-agents/scripts")"
@@ -1236,6 +1446,171 @@ check "known window carries no warning" "0" "$(gauge g-1 --window 200000 | grep 
 check_status "nothing readable exits 1" 1 gauge nope
 check_status "no session id exits 1" 1 env -u CLAUDE_CODE_SESSION_ID ORCHESTRATOR_STATE_DIR="$GSTATE" bash "$GAUGE"
 
+echo "== the mode a session came up in (§43) =="
+# Two agents stood on a permission prompt in tabs nobody watched. One carried
+# `--permission-mode auto` on its process line and `default` in every entry of its
+# transcript: the host accepted the flag and ignored it for that model. « The host CLI
+# runs on the tty » is therefore not « the session is launched » — a session that runs and
+# waits for a click is not — so the spawn reads the mode the session actually came up in.
+# The reading itself needs a spawned session and belongs to the live round; what the suite
+# reads is the pure functions it is built from, over fixture transcripts written here.
+# Its own directory: the gauge's cases already keep fixtures under $WORK/projects, and two
+# suites sharing a fixture tree is a check that passes on someone else's file.
+PROJ="$WORK/mode-projects"
+TGT="$WORK/mode-target"; mkdir -p "$TGT"
+"$py" -c "
+import json, os, sys, time
+proj, tgt = sys.argv[1], os.path.realpath(sys.argv[2])
+def write(path, cwd, modes):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w') as fh:
+        # The shape the host writes: entries of several types, the mode on its own and the
+        # working directory on another, and neither of them first — the mode arrives well
+        # before the cwd, which is why the launcher polls for the cwd rather than the mode.
+        fh.write(json.dumps({'type': 'last-prompt'}) + '\n')
+        for m in modes:
+            fh.write(json.dumps({'type': 'permission-mode', 'permissionMode': m}) + '\n')
+        fh.write(json.dumps({'type': 'attachment', 'cwd': cwd}) + '\n')
+    time.sleep(0.05)
+# Written in this order, and the order is the fixture: a transcript is chosen by when it
+# was CREATED, so creation order is what these checks read.
+write(os.path.join(proj, 'p2', 'modeless.jsonl'), tgt, [])
+write(os.path.join(proj, 'p1', 'older.jsonl'), tgt, ['auto'])
+write(os.path.join(proj, 'p1', 'newer.jsonl'), tgt, ['acceptEdits', 'default'])
+write(os.path.join(proj, 'p2', 'stranger.jsonl'), '/somewhere/else', ['default'])
+" "$PROJ" "$TGT"
+
+find_tr() { ORCHESTRATOR_PROJECTS_DIR="$PROJ" "$py" -c "
+import os, sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+p = m.find_transcript(sys.argv[1], float(sys.argv[2]))
+print(os.path.basename(p) if p else 'none')" "$1" "$2"; }
+mode_of() { "$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+print(m.mode_of_transcript(sys.argv[1]) or 'none')" "$1"; }
+refusal() { "$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+print(m.mode_refusal(sys.argv[1], sys.argv[2], sys.argv[3]))" "$1" "$2" "$3"; }
+last_n() { "$py" -c "
+import json, sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+print(json.dumps(m.last_lines(json.loads(sys.argv[1]), int(sys.argv[2])), separators=(',', ':')))" "$1" "$2"; }
+
+# The mode is the FIRST one the transcript carries: the session announces what it came up
+# in, and a later entry is the operator changing it by hand, which is not what the launch
+# is being judged on. The newest fixture carries two, in that order.
+check "the mode read is the first the transcript carries" "acceptEdits|auto|none" \
+  "$(mode_of "$PROJ/p1/newer.jsonl")|$(mode_of "$PROJ/p1/older.jsonl")|$(mode_of "$PROJ/p2/modeless.jsonl")"
+# Found by READING the entries, never by computing the host's directory slug: the slug is
+# the host's own encoding of a path and this plugin has no business reproducing it.
+# The newest transcript in the directory is the stranger's, and it is not the answer: the
+# comparison is on the checkout the entries name, not on the clock alone.
+check "the newest transcript naming THIS checkout wins, not the newest file" "newer.jsonl|stranger.jsonl" \
+  "$(find_tr "$TGT" 0)|$("$py" -c "
+import glob, os, sys
+def born(p):
+    st = os.stat(p)
+    return getattr(st, 'st_birthtime', st.st_mtime)
+print(os.path.basename(max(glob.glob(sys.argv[1] + '/*/*.jsonl'), key=born)))" "$PROJ")"
+check "a checkout no transcript names has none" "none" \
+  "$(find_tr "$WORK/mode-nobody" 0)"
+check "nothing created since the launch is nothing to read" "none" \
+  "$(find_tr "$TGT" 9999999999)"
+check "the target's own directory is realpathed before the comparison" "newer.jsonl" \
+  "$(find_tr "$TGT/." 0)"
+# A transcript is chosen by when it was CREATED, never by when it was last written to: the
+# host keeps writing to a session's transcript for as long as that session lives, so a file
+# MODIFIED since the launch is very often an older session's — the caller's own, or the
+# probe refused seconds earlier whose closing write landed after the next launch began.
+# Measured live: two spawns into one checkout seconds apart, and the second read the first's
+# mode; and a spawn into a checkout holding a live session read that session's.
+PROJ2="$WORK/mode-projects-born"
+TGT2="$WORK/mode-target-born"; mkdir -p "$TGT2"
+SINCE=$("$py" -c "
+import json, os, sys, time
+proj, tgt = sys.argv[1], os.path.realpath(sys.argv[2])
+def write(path, modes, mode_open='w'):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, mode_open) as fh:
+        for m in modes:
+            fh.write(json.dumps({'type': 'permission-mode', 'permissionMode': m}) + '\n')
+        fh.write(json.dumps({'type': 'attachment', 'cwd': tgt}) + '\n')
+stale = os.path.join(proj, 'p1', 'stale.jsonl')
+fresh = os.path.join(proj, 'p1', 'fresh.jsonl')
+write(stale, ['default'])
+time.sleep(1.1)
+since = time.time()
+time.sleep(0.05)
+write(fresh, ['acceptEdits'])
+# The older session goes on writing: its modification time is now the newest of the two.
+write(stale, ['default'], 'a')
+print(since)" "$PROJ2" "$TGT2")
+check "a transcript created before the launch is not this session's, however recently written" "fresh.jsonl|stale.jsonl" \
+  "$(ORCHESTRATOR_PROJECTS_DIR="$PROJ2" "$py" -c "
+import os, sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+p = m.find_transcript(sys.argv[1], float(sys.argv[2]))
+print(os.path.basename(p) if p else 'none')" "$TGT2" "$SINCE")|$("$py" -c "
+import glob, os, sys
+print(os.path.basename(max(glob.glob(sys.argv[1] + '/*/*.jsonl'), key=os.path.getmtime)))" "$PROJ2")"
+
+# The refusal names both modes and the model, because the repair depends on all three:
+# the operator rebinds the tier, or spawns that agent in a mode the host does honour.
+check "the refusal names both modes, the model, and the two repairs" \
+  "spawn: refused: the session came up in mode 'default' and not 'auto' (model a-model): the host ignores the mode asked for this model; bind the tier to another model, or pass --permission-mode acceptEdits for an agent that only edits" \
+  "$(refusal auto default a-model)"
+check "with no model argument the refusal says so" \
+  "spawn: refused: the session came up in mode 'default' and not 'auto' (model the host default): the host ignores the mode asked for this model; bind the tier to another model, or pass --permission-mode acceptEdits for an agent that only edits" \
+  "$(refusal auto default "")"
+
+# A refusal path that ends on a traceback is never an answer: `run()` catches nothing, so a
+# close that raises while the caller is already dying on a refusal must not throw one on top.
+closemade_raise() { "$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+def boom(coro_fn):
+    raise RuntimeError('kaboom')
+m.run = boom
+print(m.close_made({'session_id': 'x'}))" 2>&1; }
+closemade_ok() { "$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+m.run = lambda coro_fn: True
+print(m.close_made({'session_id': 'x'}))"; }
+# An exception with no message (`RuntimeError()`) has an empty str(), so splitlines() is an
+# empty list: the branch written to say a failure must not throw an IndexError of its own
+# reaching for [0].
+closemade_raise_empty() { "$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+def boom(coro_fn):
+    raise RuntimeError()
+m.run = boom
+print(m.close_made({'session_id': 'x'}))" 2>&1; }
+check "a close that raises is said, not thrown, and returns False; one that works returns True" \
+  "False|1|True|False|1" \
+  "$(closemade_raise | tail -1)|$(closemade_raise | grep -c -- 'spawn: the refused session could not be closed: kaboom')|$(closemade_ok)|$(closemade_raise_empty | tail -1)|$(closemade_raise_empty | grep -c -- 'spawn: the refused session could not be closed: unknown error')"
+
+# `screen --lines N` returned the FIRST N lines of the tab, which on a tall terminal are
+# blank: the blocked agent's prompt sat at the bottom and three reads out of four came back
+# empty while the tooling reported success. Trailing blanks go, interior ones stay — a
+# blank line between two of an agent's messages is part of what it is showing.
+check "the screen is read from the bottom, trailing blanks dropped" '["b","c"]' \
+  "$(last_n '["a","b","c","",""]' 2)"
+check "a blank line inside the reading is kept" '["a","","b"]' \
+  "$(last_n '["a","","b","",""]' 3)"
+check "fewer lines than asked is the whole reading" '["a"]' \
+  "$(last_n '["a",""]' 5)"
+check "nothing but blanks reads as nothing" '[]' \
+  "$(last_n '["","",""]' 3)"
+
+# A dry run reads no transcript: there is no session to have come up in any mode, and the
+# line says the check was skipped rather than passed.
+check "the dry run skips the reading and says so" "1" \
+  "$(shaped --title 'Agent : x' | grep -c '^mode_check=skipped$')"
+
 echo "== install =="
 
 H="$WORK/home"
@@ -1250,10 +1625,21 @@ check "previous statusLine saved" '{"type":"command","command":"/x/bar.sh","padd
 check "tap copied and executable" "yes" "$([ -x "$TAPDEST" ] && echo yes || echo no)"
 check "tier map created with three empty bindings" '{"deep":"","standard":"","light":""}' \
   "$(jq -c . "$H/.claude/claude-orchestrator/models.json")"
+# The catalogue sits beside the tier map and is empty on a fresh install: the operator owns
+# what his machine offers, and a plugin that guessed server definitions would hand every
+# agent something nobody asked for (§42).
+check "server catalogue created empty" '{"servers":{},"default":[]}' \
+  "$(jq -c . "$H/.claude/claude-orchestrator/mcp.json")"
 printf '{"deep":"a-model","standard":"","light":""}\n' > "$H/.claude/claude-orchestrator/models.json"
+printf '{"servers":{"a":{"command":"a-cmd"}},"default":["a"]}\n' > "$H/.claude/claude-orchestrator/mcp.json"
+catbefore=$(cat "$H/.claude/claude-orchestrator/mcp.json")
 env HOME="$H" bash "$ROOT/install.sh" >/dev/null 2>&1
 check "an existing tier map is never overwritten" "a-model" \
   "$(jq -r .deep "$H/.claude/claude-orchestrator/models.json")"
+check "an existing catalogue is left byte for byte" "$catbefore" \
+  "$(cat "$H/.claude/claude-orchestrator/mcp.json")"
+check "the installer says which of the two it found" "1|1" \
+  "$(env HOME="$H" bash "$ROOT/install.sh" 2>&1 | grep -c "server catalogue already present: $H/.claude/claude-orchestrator/mcp.json$")|$(env HOME="$H" bash "$ROOT/install.sh" 2>&1 | grep -c 'tier map already present')"
 before=$(cat "$H/.claude/settings.json")
 env HOME="$H" bash "$ROOT/install.sh" >/dev/null 2>&1
 check "second run is a no-op" "$before" "$(cat "$H/.claude/settings.json")"
@@ -1279,6 +1665,8 @@ check "dry-run changes nothing" "/x/bar.sh" "$(jq -r '.statusLine.command' "$H3/
 check "dry-run creates no state directory" "none" "$([ -d "$H3/.claude/claude-orchestrator" ] && echo created || echo none)"
 check "dry-run writes no tier map" "none" \
   "$([ -f "$H3/.claude/claude-orchestrator/models.json" ] && echo written || echo none)"
+check "dry-run writes no catalogue, and says it would create one" "none|1" \
+  "$([ -f "$H3/.claude/claude-orchestrator/mcp.json" ] && echo written || echo none)|$(env HOME="$H3" bash "$ROOT/install.sh" --dry-run 2>&1 | grep -c "\[dry-run\] server catalogue created: $H3/.claude/claude-orchestrator/mcp.json$")"
 
 # A portable settings file spells the home as `$HOME` or `~`, and the host expands it when
 # it runs the line; the installer compared the stored command to its expanded path and read

@@ -17,6 +17,8 @@ Two corollaries govern every rule below. **The cheapest tier is not the target**
 
 Three tiers name capability: `deep`, `standard`, `light`. What each one runs on is the operator's, not this plugin's: the binding lives in `<state dir>/models.json`, and `iterm-agent.sh resolve-tier <tier>` prints it. **Read your map before dispatching a wave.** An unbound tier is not an error — the launcher then types no model argument and the host applies its default — but it means the table below is advisory rather than applied, and you say so rather than assume it took.
 
+**A tier is bound to a model the host runs in the operator's decision mode, or no unattended agent runs at it.** Measured across one evening's spawns: the host applied the mode asked on every launch at two of the three tiers and on none at the third, where sessions came up in the default mode with the flag accepted and ignored — and stood on their first permission prompt, in tabs nobody was watching. So **a session nobody watches runs in the operator's decision mode**, and a binding that does not give that is a binding to fix: rebind the tier, or spawn that agent with `--permission-mode acceptEdits` for a few edits and allow-listed commands only, which the same model did honour. The launcher reads the mode on the session's own transcript and refuses the spawn when it differs, so a wrong binding costs a refusal rather than an agent asleep in a tab. Name the mode in the brief where you name the tier.
+
 ## The table
 
 | Class of work | Tier | What re-reads its output |

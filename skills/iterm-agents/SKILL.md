@@ -15,18 +15,36 @@ description: Use when a session on macOS must manage iTerm2 tabs running agent s
 SCRIPT=${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh
 
 $SCRIPT list
-    # w1/t3 | /dev/ttys000 | ✳ chaining the PRs | Orchestrator : plugin family | self
-    # w1/t4 | /dev/ttys004 | ◐ reading the brief | Implementer : phase 2
+    # w1/t3 | /dev/ttys000 | ✳ chaining the PRs | Orch : plugin family | self
+    # w1/t4 | /dev/ttys004 | ◐ reading the brief | Agent : phase 2
     # w1/t5 | /dev/ttys007 | ◐ Chat | (host default) | hidden   ← behind a maximized sibling pane
     # tab title, then the session's NAME (its --name, `(host default)` when it was launched
     # without one), then `self` on YOUR OWN tab. Read self before you anchor, move or close.
 
 $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --inherit-model] [--permission-mode auto] \
-    --title "<Role> : <what>" --prompt "Read and execute <brief-path>. Your orchestrator is <name [ref]>." [--right-of self | --successor]
-    # --title has a SHAPE — a capitalised role, a spaced colon, then what it is — because it
-    # is the session's name in every listing. Anything else is refused; `--title-free` is the
-    # escape for a probe that names its tab otherwise, and only under `--title-free` does no
-    # title mean `agent` — without it, a spawn with no title is refused.
+    --title "Agent : <subject>" --prompt "Read and execute <brief-path>. Your orchestrator is <name [ref]>." [--right-of self | --successor] [--mcp <name>]
+    # --title has a SHAPE — `Orch : <subject>` for an orchestrator and its successor,
+    # `Agent : <subject>` for anything you spawn, the subject at most 25 characters —
+    # because it is the session's name in every listing and the operator reads that listing.
+    # Anything else is refused; `--title-free` is the escape for a probe that names its tab
+    # otherwise, and only under `--title-free` does no title mean `agent` — without it, a
+    # spawn with no title is refused.
+    # The session's servers are CHOSEN. The launch is always strict, and carries a file
+    # the launcher writes for that session from the operator's catalogue,
+    # <state dir>/mcp.json (ORCHESTRATOR_MCP_CATALOGUE overrides the path): named
+    # definitions in the host's own shape, and a `default` list every agent gets.
+    # --mcp <name> adds a catalogued server for the agent that needs it — repeatable,
+    # or comma-separated — and --mcp none gives the session no server at all. A name the
+    # catalogue does not hold is refused before a tab exists, naming the ones it holds;
+    # with no catalogue at all a plain spawn launches with nothing and says so on stderr.
+    # Say in the agent's brief which servers it was given: it cannot see the file.
+    # An agent comes up with remote control off; only a successor comes up under it (§39).
+    # The spawn then reads the mode the session came up in, on its own transcript, and
+    # refuses a session that came up in another one — closing the tab it just made and
+    # naming both modes, the model, and the two repairs: rebind the tier, or pass
+    # --permission-mode acceptEdits for an agent that only edits. A transcript that has
+    # not appeared within ORCHESTRATOR_MODE_TIMEOUT (20s) lets the launch through and says
+    # the mode is unread. --no-verify skips it, with the CLI check.
     # writes the prompt to a file under the plugin's state directory, writes the launch
     # to a second file, asks the app to run it in a new tab AT AN INDEX, WAITS until the
     # host CLI is running on the new tty (30 s, ORCHESTRATOR_SPAWN_TIMEOUT), and prints
@@ -40,7 +58,8 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --inherit-model] [--
     #   that cites you still cites it; and it comes up under remote control under that name
     #   (--no-remote-control drops that). A session the older launcher named carries its
     #   prompt in its own process line, so the derivation refuses it and the title is typed
-    #   by hand instead. An `Orchestrator :` title with --right-of/--left-of
+    #   by hand instead, and so is a name under an older convention, which no longer
+    #   derives. An `Orch :` title with --right-of/--left-of
     #   is refused: a plain anchor lands after your chain, which is not a successor's place.
 
 $SCRIPT verify --tty /dev/ttysNNN
@@ -48,7 +67,9 @@ $SCRIPT verify --tty /dev/ttysNNN
 
 $SCRIPT screen --tty /dev/ttysNNN [--lines 40]
     # what that tab is showing right now — how you inspect an agent that has not
-    # shaken hands, instead of waiting for one that is stopped on a question
+    # shaken hands, instead of waiting for one that is stopped on a question.
+    # the last N lines, trailing blanks dropped: a tall terminal is blank at the top and
+    # the prompt an agent is stopped on sits at the bottom.
 
 $SCRIPT close --tty /dev/ttysNNN --expect-title <substring>
     # tty-exact; refuses if the session's current title does not contain the substring
@@ -60,8 +81,10 @@ $SCRIPT move --tty /dev/ttysNNN (--right-of self | --right-of /dev/ttysMMM | --l
     # not launch is not yours to place. --force moves it anyway and says so on stderr.
 
 $SCRIPT rotate --dir <workdir> --old-tty <tty> [--trust] [--tier <tier>] [--expect-title <s>] \
-    [--title <t>] [--prompt <text> | --prompt-file <path>] [--right-of self | --left-of <tty>]
+    [--title <t>] [--prompt <text> | --prompt-file <path>] [--right-of self | --left-of <tty>] [--mcp <name>]
     # spawns the replacement FIRST and verifies it is running, then closes the old tab
+    # every argument it does not consume reaches the spawn, `--trust` and `--mcp <name>`
+    # included: an agent that needed a server is replaced by one that still has it.
 
 $SCRIPT trust prune [--apply]      # entries of the trust record whose directory is gone; --apply removes them
 ```
@@ -86,7 +109,7 @@ So **always name an anchor**, and name the one you actually know:
 1. The brief exists at a path the fresh session can open on this machine.
 2. `spawn` with the one-line prompt naming the brief's path and the orchestrator's exact `ListAgents` name and reference — nothing the brief already says — and with `--right-of self`, so the tab lands beside yours rather than at the end of a window you do not own.
 3. Read the result: the script has already waited for the host CLI on the new tty, but the artifact decides — `list` (the tab), `verify --tty` (the process), `ListAgents` (the peer session, a few seconds later).
-4. **No startup dialog may stand between the launch and the brief.** Two are known: the workspace-trust question, refused before the tab exists unless `--trust` says the directory is one you prepared; and the MCP-server question. The launch pre-approves the project's MCP servers (`--settings '{"enableAllProjectMcpServers":true}'`), because a fresh session parked on « enable these MCP servers? » never reads its brief and nobody sits at that keyboard. Any other startup question the launch cannot pre-answer (a trust prompt, a migration notice) is read in the tab's contents and answered by the orchestrator through the tab — a session stuck on a dialog is not launched, whatever the script printed.
+4. **No startup dialog may stand between the launch and the brief.** Two are known: the workspace-trust question, refused before the tab exists unless `--trust` says the directory is one you prepared; and the question about servers. The launch is strict and carries a configuration file written for that session, so the host asks nothing and loads exactly what the file names — the catalogue's default set, plus whatever `--mcp` added; a fresh session parked on « enable these MCP servers? » never reads its brief and nobody sits at that keyboard. Any other startup question the launch cannot pre-answer (a trust prompt, a migration notice) is read in the tab's contents and answered by the orchestrator through the tab — a session stuck on a dialog is not launched, whatever the script printed.
 5. Wait for the handshake. An agent that has not messaged within minutes is inspected, not waited for: `verify` for the process, `list` for the tab, and the tab's own screen through the app if you need to read what it is stuck on.
 
 ## Tab hygiene
@@ -135,7 +158,7 @@ So **always name an anchor**, and name the one you actually know:
 - **A window's tab list is a cached copy.** Read a reorder back through the object you already
   held and it looks like a reorder that never happened — or reports the position the tab used
   to have. Re-fetch the app after any mutation.
-- **The title is the session's name, and the launcher holds it to the shape.** `--title` is passed to the host as the session's name (shown in its prompt, its resume picker, the terminal title, and applied with a variant when a live session already holds it), so it reads `<Role> : <what>` — `Orchestrator : <feature>`, `Implementer : <phase>`, `Reviewer : <round>` — and anything else, the old bare `agent` included, is refused before a tab exists. A successor spawned with a typed name once came up as that name in every listing while the house format was nowhere. `--title-free` is the escape and the dry run says when it is on. The tab title still reflects the session's current task for `--expect-title`: read it from `list` seconds before closing.
+- **The title is the session's name, and the launcher holds it to the shape.** `--title` is passed to the host as the session's name (shown in its prompt, its resume picker, the terminal title, and applied with a variant when a live session already holds it), so it reads `Orch : <subject>` for an orchestrator and its successor or `Agent : <subject>` for anything an orchestrator spawns — an implementer, a review session, a comments agent, a probe, the subject saying which and at most 25 characters — and anything else, the spelled-out roles of the older convention and the old bare `agent` included, is refused before a tab exists. A successor spawned with a typed name once came up as that name in every listing while the house format was nowhere. `--title-free` is the escape and the dry run says when it is on. The tab title still reflects the session's current task for `--expect-title`: read it from `list` seconds before closing.
 - **A fresh tab is titled « Chat » before the session names itself.** The host's own first title stands for a few seconds, so a `list` taken immediately after a spawn shows it in the title column while the name column is already right — which is the column to read when you are looking for a session rather than for what it is doing.
 - **`move` places what is yours, and `list` says which tab that is.** An orchestrator launched by hand had never measured its own tty, read the listing, took the last tab for its own and moved a stranger's session out from between itself and its agents; the script obeyed, because `move` moved anything it was told to. It now refuses a tty that is neither your own tab nor one of your chain, and `list` marks your row `self`. `--force` is the operator's hand and the layout repair, and it says on stderr what it moved.
 - **The tab is born in the anchor's window, whichever window is in front.** With two windows open, a

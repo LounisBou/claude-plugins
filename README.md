@@ -51,6 +51,10 @@ gauge then answers from the transcript alone.
 - for `model-routing`: bind `deep`, `standard` and `light` in
   `~/.claude/claude-orchestrator/models.json` (the installer creates it empty) to the
   model identifiers your host accepts. Unbound tiers leave the choice to the host.
+- for `iterm-agents`: name in `~/.claude/claude-orchestrator/mcp.json` (the installer
+  creates it empty) the servers this machine offers, in the host's own shape, and list
+  the elementary ones under `default`. An agent gets that set plus what its spawn line
+  adds; an empty catalogue means every session launches with no server at all.
 - for `iterm-agents` only: macOS, iTerm2 with its API enabled (Preferences > General >
   Magic), and the environment `/orchestrator:install` builds under the state directory
   (~19 MB). One macOS approval, on the first connection. Tab placement needs no
