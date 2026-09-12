@@ -748,6 +748,33 @@ check "the succession brief: term by term" "yes" \
 check "the succession brief: your own doing is verified first" "yes" \
   "$(carries "$SUCCESSION" "verify your own doing")"
 
+echo "== rhythm =="
+
+# `rhythm.sh` (§52): the figures an audit reads its rhythm from, generic and derived from git
+# alone. The fixture repository is built by a script with fixed dates and line counts, and
+# every expected figure below is written in that script's header.
+RREPO="$WORK/rhythm-repo"
+bash "$ROOT/tests/fixtures/rhythm-repo.sh" "$RREPO" >/dev/null 2>&1
+RHYTHM="$ROOT/skills/orchestrator/scripts/rhythm.sh"
+rhythm() { bash "$RHYTHM" "$@" 2>&1; }
+ROUT=$(rhythm "$RREPO" --since 2026-08-10 --product 'design/src/**' --instrument 'scripts/**' --instrument 'tests/**' --register register.md)
+check "merges per week, typed by the pull request's title" \
+  "week feat fix chore docs ci build test refactor other total|2026-W33 1 1 0 1 0 0 0 0 0 3|2026-W34 1 0 0 0 1 0 1 0 1 4" \
+  "$(printf '%s\n' "$ROUT" | grep -E '^(week feat |2026-W[0-9]+ [0-9])' | paste -sd'|' -)"
+check "nothing before --since is counted" "0" "$(printf '%s\n' "$ROUT" | grep -c 'W32')"
+check "feat commits per week count the merged branch's own" "feat 2026-W33 2|feat 2026-W34 1" \
+  "$(printf '%s\n' "$ROUT" | grep -E '^feat 2026-W' | paste -sd'|' -)"
+check "lines under the product's globs against the instruments'" "product +16 -1|instrument +27 -0" \
+  "$(printf '%s\n' "$ROUT" | grep -E '^(product|instrument) \+' | sed 's/  *(.*$//' | paste -sd'|' -)"
+check "open register entries are read in the Status column, exactly" "register register.md: 2 open (B-1, B-3)" \
+  "$(printf '%s\n' "$ROUT" | grep '^register ')"
+check "and the latency git cannot measure is said, not pretended" "1" \
+  "$(printf '%s\n' "$ROUT" | grep -c '^operator question latency: not measurable from git$')"
+check "without globs or a register, those readings say so" "1|1|0" \
+  "$(rhythm "$RREPO" --since 2026-08-10 | grep -c '^product: no --product glob given$')|$(rhythm "$RREPO" --since 2026-08-10 | grep -c '^instrument: no --instrument glob given$')|$(rhythm "$RREPO" --since 2026-08-10 | grep -c '^register ')"
+check "no --since, or no repository, is refused" "1|1" \
+  "$(rhythm "$RREPO" >/dev/null 2>&1; echo $?)|$(rhythm "$WORK/not-a-repo-at-all" --since 2026-08-10 >/dev/null 2>&1; echo $?)"
+
 echo "== design layout =="
 
 # The design document opens with a tree of the repository. Nothing kept it honest, so it

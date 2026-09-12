@@ -20,6 +20,7 @@ skills/iterm-agents/scripts/iterm_agent.py   the implementation, over the app AP
 skills/orchestrator/scripts/brief-lint.sh   refuses a brief before it is dispatched
 skills/orchestrator/scripts/dispatch-record.sh  one row per dispatch, and the routing signal
 skills/orchestrator/scripts/workspace.sh    a clone per phase with the project's local material; a pinned worktree per review round
+skills/orchestrator/scripts/rhythm.sh       an audit's rhythm figures, from git alone
 skills/model-routing/SKILL.md        which capability tier a dispatch gets
 skills/context-gauge/SKILL.md        how a session reads its own context fill
 skills/context-gauge/scripts/context-gauge.sh
@@ -45,6 +46,7 @@ install.sh, uninstall.sh
 tests/run-tests.sh
 tests/e2e.sh                         one real round: a tab, a session, a close
 tests/fixtures/transcript.jsonl      a transcript tail for the gauge's computed tier
+tests/fixtures/rhythm-repo.sh        builds the dated repository rhythm.sh is tested on
 docs/design.md                       this document
 README.md, LICENSE
 ```
