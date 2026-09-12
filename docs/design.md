@@ -1508,7 +1508,10 @@ builds itself, with a stand-in exception class of that name, so it needs no libr
 only a live spawn reads is whether the lines are gone: the orchestrator runs one from the
 pinned copy at the delivered head, stderr captured, and counts the known lines. If they
 still print, the filter is removed by the corrective round and this paragraph records the
-measurement, §29's decision standing.
+measurement, §29's decision standing. Measured on the delivered head, from the pinned copy,
+against a control spawned by the installed 0.26.0 launcher: the control's stderr carried a
+hundred and two lines, six of them the known ones; the delivered launcher's carried two,
+the running line and the mode line, and none of the known ones. The filter holds.
 
 **The predecessor's last message is the successor's signal to close its tab.** Measured on
 the succession that opened this round: the successor sent « takeover confirmed » with a
@@ -1527,7 +1530,12 @@ tab on that message. Five minutes without it, the successor reads the tab's scre
 closes on a prompt with nothing in flight — the host's idle notice is not the reading,
 since it reaches a working session only when that session stops. The
 rulebook's succession steps 3 and 4, the succession brief template's step 4 and the succeed
-command's step 3 say it; the suite reads the literal in each of the three.
+command's step 3 say it; the suite reads the literal in each of the three. The review of
+this round read the rest: the succeed command's sixth step, the predecessor closing its
+own tab ten minutes after the confirmation, is removed — a session that ended its turn on
+« handed over » runs no timer, a session that kills itself mid-turn loses the turn, and the
+successor's five-minute reading is the one fallback — and the three sentences beside the
+new message that still said « once idle » say the message.
 
 **One marketplace, the family's.** The plugin was listed in the operator's family
 marketplace `lounisbou` from its first week, the entry went stale three releases later
