@@ -1076,7 +1076,9 @@ does not know is refused and makes no checkout.
 answered in practice by every orchestrator differently, because the rulebook could be read
 two ways.
 
-**An implementer stays through the review round of its own delivery, and not beyond.** The
+**An implementer stays through the review round of its own delivery, and not beyond.**
+*(This reading is reversed by §45: a delivered implementer is stood down at the
+verification of its delivery.)* The
 rulebook said « prefer REUSING the same agent session across phases » and « agents may
 pipeline » beside « there is no standing-by tab » and « the only tabs open are the
 orchestrator's and its running implementers' ». Read one way, an implementer whose delivery
@@ -1455,3 +1457,75 @@ What the suite reads: a plain launch line carrying the setting and no `--remote-
 `--successor` line carrying the flag and not the setting, `--successor --no-remote-control`
 carrying the setting; the tab skill's literal. What only the operator's remote client and a
 debug log read: the bridge absent from an agent's log, present in a successor's.
+
+## 45. The closing round: what the deferred list held, fixed or closed
+
+**0.26.1.** The operator's word once 0.26.0 shipped: the successor prepares one round that
+closes everything still open, each item either fixed or closed in the design with its
+reason. The list is what the rounds of §41 to §44 had deferred to the final report, and
+one ruling the rulebook had not yet absorbed.
+
+**A delivered implementer is stood down at the verification of its delivery.** §36 read the
+operator's earlier ruling as « the session that wrote the code stays for the review round
+of its delivery and the N-bis that round produces ». On the evening 0.25.2 shipped he read
+his window, found an implementer whose delivery was under review still open, and asked why
+it was still there: an implementer is stood down at the verification of its delivery,
+never kept through a review round. A review finding goes to a fresh session with a resume
+brief, and the cold start is the accepted price — a tab kept for a fix that may not come
+is the standing-by tab the lifecycle forbids, whatever it is called. « Reuse » keeps its
+one meaning: an agent with a NEXT phase dispatched to it at the verification stays for
+that phase; one with nothing to start is stood down there. §36's first reading is
+reversed; the rulebook's lifecycle step 4 and the tab skill's hygiene paragraph say the
+new rule, the two sentences that said the old one are gone.
+
+**A subject neither starts nor ends on a space.** The shape of §42 held a subject to one
+to twenty-five characters and let ` ` or `x ` through (reproduced by the 0.26.0 review):
+a listing then shows a name that reads as empty, or one the operator cannot tell from its
+trimmed twin. The shape becomes `^(Orch|Agent) : \S(.{0,23}\S)?\Z` — the first and the
+last character of the subject are not spaces, spaces inside stay allowed, the cap is
+unchanged — and the refusal says so beside the cap.
+
+**The prompt file carries its kind in its name.** A launch leaves three files under
+`prompts/`: `launch-<title>-<ms>.sh`, `mcp-<title>-<ms>.json` and the prompt, named after
+the title alone. The prompt file becomes `prompt-<title>-<ms>.txt`, so the three sort by
+kind like the two already did and a directory listing says what each file is.
+
+**The library's stderr noise is filtered at its source, if the measurement holds.** §29
+recorded the mechanism — helper tasks ending on a socket our side closed, reported when
+the finished task is collected — and closed the item because both attempted fixes read the
+loop, which is not where the report is made. The report is made by the event loop's
+default exception handler, which writes through the standard logging module under the
+`asyncio` name; that path does not depend on which loop owned the task nor on when the
+task is collected. So the module installs, at import, a filter on that logger that drops a
+record whose message starts with « Task exception was never retrieved » and whose
+exception class is named `ConnectionClosed…`, and passes every other record — a diagnosis
+the stream exists to carry is not of that shape. The suite reads the filter on records it
+builds itself, with a stand-in exception class of that name, so it needs no library. What
+only a live spawn reads is whether the lines are gone: the orchestrator runs one from the
+pinned copy at the delivered head, stderr captured, and counts the known lines. If they
+still print, the filter is removed by the corrective round and this paragraph records the
+measurement, §29's decision standing.
+
+**Closed without a change, with the reason.** The 25-character cap counts code points, not
+graphemes: the subject is typed by an orchestrator in the house format, no listing of this
+build has shown a combining sequence in one, and the standard library carries no grapheme
+segmentation to count with. Two transcripts born in the same instant tie on their path: the
+launcher launches one session at a time and waits seconds for the host on its tty, so two
+births inside the filesystem's timestamp resolution are not a case it makes. An empty
+`permissionMode` string is read as absent: the host writes a mode name, and a value that
+says nothing is judged as unread, which lets the launch through with the word said. The
+dry run's stdout does not tell « no catalogue » from « empty default »: the stderr line is
+that reading, the dry run's stdout describes the launch and the suite reads both streams.
+`ORCHESTRATOR_PS_TABLE` is honoured on a live run: every `ORCHESTRATOR_*` override is read
+the same way (the state directory, the host CLI, the projects directory, the trust file)
+and is the suite's door and the operator's alike; a guard on one of them would be a false
+comfort about the rest. `list` spends up to ten seconds on a tty whose process table does
+not answer: the bound is on `ps`, a tty that does not exist answers at once with nothing,
+and the wait has not been observed.
+
+What the suite reads: the rulebook and the tab skill each carry the new lifecycle sentence
+once and the old one nowhere; ` ` and `x ` as subjects refused with the sentence naming the
+spaces, `x y` accepted, twenty-five characters still accepted and twenty-six refused; the
+dry run's `prompt_file=` line naming a `prompt-` file; a record of the known shape dropped
+by the filter and a record of another shape passed. What the live round reads: a spawn's
+stderr without the known lines.
