@@ -1321,6 +1321,14 @@ check "it names both commands and the launcher's flag" "yes|yes|yes" \
 check "a running audit survives a succession" "yes" "$(carries "$AUDRULEF" 're-announces its address to the auditor')"
 check "the red flags carry the audit" "yes|yes" \
   "$(carries "$ROOT/skills/orchestrator/SKILL.md" "An auditor's ordered change neither applied nor refused with the ruling it crosses")|$(carries "$ROOT/skills/orchestrator/SKILL.md" "an auditor's tab still open after its « ended »")"
+# The code cites §52 in a dozen places: the section it cites exists, and the README a reader
+# meets first lists what the audit adds.
+check "the design document has the audit's numbered section" "1" \
+  "$(grep -c '^## 52\. The audit of an orchestrator$' "$ROOT/docs/design.md")"
+check "the README lists the audit's two commands" "yes|yes" \
+  "$(spells "$ROOT/README.md" '| `/orchestrator:audit` |')|$(spells "$ROOT/README.md" '| `/orchestrator:audit-end` |')"
+check "the README names the audit brief and the rhythm script" "yes|yes" \
+  "$(spells "$ROOT/README.md" 'audit brief')|$(spells "$ROOT/README.md" 'rhythm.sh')"
 
 AUDCLOSE=$(grep -m1 -o 'iterm-agent.sh close .*' "$AUDEND" 2>/dev/null | sed -e 's/^iterm-agent.sh close //' -e 's/`.*$//' -e 's#<auditor tty>#/dev/ttys950#')
 audclose() { eval "set -- $AUDCLOSE"; ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" close "$@" 2>&1; }
