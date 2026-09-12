@@ -1193,6 +1193,33 @@ check "an agent of the chain still moves" "1" "$(audmv --tty /dev/ttys901 --righ
 check "an auditor places its own tab" "1" \
   "$(AUDSELF=/dev/ttys950 audmv --tty /dev/ttys950 --right-of /dev/ttys900 | grep -c '^move=/dev/ttys950 right_of=/dev/ttys900$')"
 
+# `/orchestrator:audit` (§52): the brief instantiated and linted, the auditor spawned with
+# the launcher's own flag, verified on the artifact, recorded where `audit-end` finds it.
+# The spawn line is not only spelled: it is taken out of the command and run dry through
+# the launcher, so a command that drifts from the launcher's flags falls here.
+AUDCMD="$ROOT/commands/audit.md"
+check "the audit command loads the rulebook first" "yes|yes" \
+  "$(spells "$AUDCMD" 'Load that skill first')|$(spells "$AUDCMD" '`orchestrator:orchestrator`')"
+check "it instantiates the audit brief template and lints it" "yes|yes" \
+  "$(spells "$AUDCMD" 'templates/agent-audit-brief.md')|$(spells "$AUDCMD" 'skills/orchestrator/scripts/brief-lint.sh')"
+check "it reads its subject, --scope and --method" "yes|yes|yes" \
+  "$(spells "$AUDCMD" '<subject> [--scope <what>] [--method <path>]')|$(spells "$AUDCMD" 'since the last audit')|$(spells "$AUDCMD" 'ONLY through the operator')"
+check "it puts the report under the briefs directory's audits" "yes" \
+  "$(spells "$AUDCMD" '<briefs dir>/audits/<date>-<subject>/REPORT.md')"
+check "it verifies the spawn on the artifact and waits for the handshake" "yes|yes|yes" \
+  "$(spells "$AUDCMD" 'verify --tty')|$(spells "$AUDCMD" 'ListAgents')|$(spells "$AUDCMD" 'handshake')"
+check "it records the auditor in the state directory for audit-end" "yes|yes" \
+  "$(spells "$AUDCMD" 'claude-orchestrator/audits/')|$(spells "$AUDCMD" '"auditor_tty"')"
+AUDSPAWN=$(grep -m1 -o 'iterm-agent.sh spawn .*' "$AUDCMD" 2>/dev/null | sed -e 's/^iterm-agent.sh spawn //' -e 's/`.*$//' \
+  -e "s#<repository>#$WORK#" -e 's#<subject>#tm#' -e 's#<brief path>#/tmp/audit-brief.md#')
+audspawn() { eval "set -- $AUDSPAWN"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
+  ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-aud bash "$AGENT" spawn "$@" 2>&1; }
+AUDSPAWNOUT=$(if [ -n "$AUDSPAWN" ]; then audspawn; else echo "no spawn line"; fi)
+check "the command's spawn line is one the launcher runs as an auditor" "1|1|1|1" \
+  "$(printf '%s' "$AUDSPAWNOUT" | grep -c '^auditor=yes$')|$(printf '%s' "$AUDSPAWNOUT" | grep -c '^name=Audit : tm$')|$(printf '%s' "$AUDSPAWNOUT" | grep -c '^chain=none$')|$(printf '%s' "$AUDSPAWNOUT" | sed -n 's/^launch=//p' | grep -c -- "--permission-mode auto")"
+check "and it carries neither a tier, nor a successor's flag, nor an anchor" "0" \
+  "$(printf '%s' "$AUDSPAWN" | grep -cE -- '--tier|--successor|--right-of|--left-of')"
+
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt" --prompt-file "$file" 2>&1)
 check "--prompt-file reuses the given file" "1" "$(printf '%s' "$out" | grep -c "prompt_file=$file")"
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt" 2>&1)
