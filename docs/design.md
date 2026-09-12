@@ -161,10 +161,14 @@ was renamed, and the suite reads both when it checks the version against what is
 published. Install:
 
 ```
-/plugin marketplace add LounisBou/claude-orchestrator
-/plugin install claude-orchestrator@claude-orchestrator
+/plugin marketplace add LounisBou/claude-statusbar
+/plugin install orchestrator@lounisbou
 /orchestrator:install
 ```
+
+The marketplace is the operator's family one, `lounisbou`, since 0.26.1 (§45); this
+repository's own `marketplace.json` stays the single-plugin manifest the suite reads for
+the version, as every plugin of the family carries one.
 
 ## 9. Out of scope
 
@@ -1525,6 +1529,16 @@ since it reaches a working session only when that session stops. The
 rulebook's succession steps 3 and 4, the succession brief template's step 4 and the succeed
 command's step 3 say it; the suite reads the literal in each of the three.
 
+**One marketplace, the family's.** The plugin was listed in the operator's family
+marketplace `lounisbou` from its first week, the entry went stale three releases later
+while the repository published through a single-plugin marketplace of its own, and the
+stale entry was dropped when the family's next plugin was added. Four plugins were then
+installed from one marketplace and this one from another, with a third, unused one still
+registered on the machine. The operator ruled for one: the install lines in the README
+and §8 read `lounisbou`, and the publication of 0.26.1 adds the entry there, reinstalls
+the plugin from it and forgets the other two registrations. The repository keeps its
+`marketplace.json` as the manifest the suite reads the version from, like the four others.
+
 **Closed without a change, with the reason.** The 25-character cap counts code points, not
 graphemes: the subject is typed by an orchestrator in the house format, no listing of this
 build has shown a combining sequence in one, and the standard library carries no grapheme
@@ -1544,7 +1558,8 @@ and the wait has not been observed.
 
 What the suite reads: the rulebook and the tab skill each carry the new lifecycle sentence
 once and the old one nowhere; « handed over » in the rulebook, the succession template and
-the succeed command; ` ` and `x ` as subjects refused with the sentence naming the
+the succeed command; `orchestrator@lounisbou` in the README and `orchestrator@claude-orchestrator`
+nowhere outside `docs/`; ` ` and `x ` as subjects refused with the sentence naming the
 spaces, `x y` accepted, twenty-five characters still accepted and twenty-six refused; the
 dry run's `prompt_file=` line naming a `prompt-` file; a record of the known shape dropped
 by the filter and a record of another shape passed. What the live round reads: a spawn's
