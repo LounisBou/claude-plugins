@@ -727,6 +727,18 @@ check "the rulebook: your own doing is verified first" "yes" \
   "$(carries "$RULEBOOK" "verify your own doing")"
 check "the rulebook: his word outranks the rules written in it" "yes" \
   "$(carries "$RULEBOOK" "outranks a rule")"
+# A repair is justified by what is broken. The round that measured §49's fix also wrote, in
+# the same breath, that the operator's ruling of an hour earlier « made the case the one that
+# has to behave » — which reads that ruling backwards: a ruling that forbids MAKING something
+# makes it rarer, not commoner. He caught it on reading. The fix was right and the reason
+# shipped with it was false, which is the shape worth keeping a guard on (§50).
+check "the rulebook refuses a repair justified by a ruling instead of a defect" "yes" \
+  "$(carries "$RULEBOOK" "never by a rule it sounds adjacent to")"
+check "the rulebook says to check a justification's direction" "yes" \
+  "$(carries "$RULEBOOK" "makes it RARER")"
+check "and the red flag names a ruling given in the same round" "yes" \
+  "$(carries "$RULEBOOK" "rather than by the thing that is broken")"
+
 # A successor reads its brief FIRST and can act on it before it loads the rulebook, so a
 # duty living only in the skill is lost at the first succession.
 check "the succession brief: answered before the next tool call" "yes" \

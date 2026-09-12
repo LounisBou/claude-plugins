@@ -249,6 +249,8 @@ A plan, a prompt template or a norms file that outlives the decision it served i
 | "His question is small, it can wait for the next report" | Every question, in order, before the next tool call. Size is not the test. |
 | "He says I broke it, but that is the tooling's fault" | Verify your own doing first, with a command. It has been yours every time so far. |
 | "The skill says to do it this way" | The skill is what you do when he has not said. He has said. |
+| "The fix is right, so the reason I gave for it will do" | A false reason ships with the fix and outlives it. Justify a repair by what is broken, never by a rule it sounds adjacent to. |
+| "His ruling makes this case common, which is why I fixed it" | Check the direction. A ruling that forbids making something makes it RARER. A justification that flatters his latest word is the one to re-read. |
 | "The norms file says ERROR, so it is a defect" | Check the existing code first. A rule the codebase already breaks is a question, not a finding. |
 | "Coverage is a formality, I'll run the gate before opening the PR" | Run it early. Deferred minor findings accumulate into it, and the gate turns them into blockers at the worst moment. |
 | "I'll just implement this small fix myself" | You are the reviewer. Reviewer-written code ships unreviewed. Dispatch an N-bis. |
@@ -311,4 +313,5 @@ A plan, a prompt template or a norms file that outlives the decision it served i
 - A question of the operator's still unanswered while you run a tool; an answer he has had to ask for twice; a long command running between his question and your reply.
 - A deliverable that drops or substitutes one of the terms he named, reported as a success; a term you could not honour reported after the fact instead of before.
 - « Not my scope » offered before you have checked your own doing with a command.
+- A repair justified by a ruling of his rather than by the thing that is broken — above all a ruling given in the same round: read the direction before you write it, a rule that forbids making something makes it rarer, not commoner.
 - An agent about to be spawned anywhere but in an iTerm2 tab; a launcher failure routed around instead of reported; a session in your listing you cannot point to in the operator's window.
