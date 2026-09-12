@@ -61,6 +61,13 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --inherit-model] [--
     #   by hand instead, and so is a name under an older convention, which no longer
     #   derives. An `Orch :` title with --right-of/--left-of
     #   is refused: a plain anchor lands after your chain, which is not a successor's place.
+    # --auditor --title "Audit : <subject>": the session that audits yours (§52) — placed like a
+    #   successor, immediately right of you with the chain ignored, on your model (implied) and
+    #   under remote control under its title; but it takes no chain and joins none, because it
+    #   is neither your successor nor your agent. The title is required, and `Audit :` is
+    #   refused on any spawn without --auditor. --successor, an anchor, --title-free, --tier,
+    #   --model and --no-remote-control are refused beside it. `rotate` and `move` refuse a tab
+    #   whose session is named `Audit :` unless --force.
 
 $SCRIPT verify --tty /dev/ttysNNN
     # succeeds with the pid when the host CLI runs on that tty; exit 1 otherwise
@@ -157,6 +164,7 @@ So **always name an anchor**, and name the one you actually know:
 
 - spawning an implementer: `--right-of self` — after your LAST still-open agent, or your own tab when you have none. The launcher keeps the chain (`chains/<your tty>.jsonl` under the state directory) and the order reads left to right as launch order: you, agent 1, agent 2, … A closed agent leaves the chain; a tty is never trusted across a close, the chain is checked on the app's tab id, and on the session that wrote the entry — a tty is recycled and its chain file outlives its occupant, so a new session on an old tty reads only its own entries.
 - spawning your successor: `--successor` — immediately right of your own tab, the chain ignored, so it lands between you and your first agent; the launcher hands it your chain (your agents' entries move under its tty and session) and writes it into no chain, because a successor is not an agent. It closes your tab once the takeover is confirmed and ends up immediately left of your first agent, and its `--right-of self` resolves to your last agent from then on.
+- spawning your auditor: `--auditor --title "Audit : <subject>"` — immediately right of your own tab like a successor, and it touches no chain: your agents stay yours, your next `--right-of self` still lands after your last agent, and the auditor is not something `rotate` or `move` will take for one of yours without `--force`. It never closes your tab; you close its tab when the audit ends (`/orchestrator:audit-end`).
 - `--left-of <tty>` remains for the case where the anchor you know is on the other side.
 - `move` repairs the layout after the fact, with the same three forms.
 

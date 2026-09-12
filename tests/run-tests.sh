@@ -1126,6 +1126,73 @@ check "a tab that is neither is refused, and the refusal names it" "1|1" \
 check "--force moves it and says what it moved" "0|1" \
   "$(mv_ --tty /dev/ttys901 --left-of self --force >/dev/null 2>&1; echo $?)|$(mv_ --tty /dev/ttys901 --left-of self --force | grep -c "^move: forced: /dev/ttys901 is not in this session's chain$")"
 
+# An AUDITOR is neither a successor nor an agent (§52). It is placed like a successor —
+# immediately right of its caller, the chain ignored — on the caller's model and under
+# remote control under its own title; but it takes no chain and joins none: the
+# orchestrator it audits keeps its agents, and the auditor is nobody's agent. Its title is
+# REQUIRED and reads `Audit : <subject>`, a shape refused everywhere but under --auditor.
+AUDSTATE="$WORK/audstate"; mkdir -p "$AUDSTATE/ctx" "$AUDSTATE/chains"
+printf '{"session_id":"s-aud","model_id":"aud-model","updated_epoch":%s}\n' "$(date +%s)" > "$AUDSTATE/ctx/s-aud.json"
+printf '{"tab_id":"7","tty":"/dev/ttys901","owner":"S-ME"}\n' > "$AUDSTATE/chains/ttys900.jsonl"
+aud() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
+  ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-aud bash "$AGENT" spawn --dir "$WORK" --prompt p "$@" 2>&1; }
+audl() { aud "$@" | sed -n 's/^launch=//p'; }
+AUDOUT=$(aud --auditor --title 'Audit : tm')
+AUDLAUNCH=$(printf '%s' "$AUDOUT" | sed -n 's/^launch=//p')
+check "an auditor is named by its title and comes up under remote control under it" "1|1" \
+  "$(printf '%s' "$AUDLAUNCH" | grep -c -- "--name 'Audit : tm'")|$(printf '%s' "$AUDLAUNCH" | grep -c -- "--remote-control 'Audit : tm'")"
+check "and without the setting that turns remote control off" "0" "$(printf '%s' "$AUDLAUNCH" | grep -c -- '--settings')"
+check "an auditor runs on the caller's model with no flag to ask for it" "1" "$(printf '%s' "$AUDLAUNCH" | grep -c -- '--model aud-model')"
+check "an auditor anchors on self, past no agent, and the dry run says what it is" "1|1|1" \
+  "$(printf '%s' "$AUDOUT" | grep -c '^anchor=self$')|$(printf '%s' "$AUDOUT" | grep -c '^auditor=yes$')|$(printf '%s' "$AUDOUT" | grep -c '^successor=no$')"
+check "where a plain spawn from the same caller anchors after its last agent" "1" \
+  "$(aud --title 'Agent : x' --right-of self | grep -c '^anchor=/dev/ttys901$')"
+check "a chain is appended to by an agent, handed over by a successor, left alone by an auditor" "append|transfer|none" \
+  "$(aud --title 'Agent : x' --right-of self | sed -n 's/^chain=//p')|$(aud --title 'Orch : f' --successor | sed -n 's/^chain=//p')|$(printf '%s' "$AUDOUT" | sed -n 's/^chain=//p')"
+check "an auditor without a title is refused, and the reason names the shape" "1|1" \
+  "$(aud --auditor >/dev/null 2>&1; echo $?)|$(aud --auditor | grep -c -- '--auditor needs --title "Audit : <subject>"')"
+AUD25=$(printf 'x%.0s' $(seq 1 25)); AUD26=$(printf 'x%.0s' $(seq 1 26))
+check "an auditor's subject of 25 characters is accepted, of 26 refused" "1|1" \
+  "$(audl --auditor --title "Audit : $AUD25" | grep -c -- "--name 'Audit : $AUD25'")|$(aud --auditor --title "Audit : $AUD26" >/dev/null 2>&1; echo $?)"
+check "an auditor under an agent's or an orchestrator's title is refused" "1|1|1" \
+  "$(aud --auditor --title 'Agent : x' >/dev/null 2>&1; echo $?)|$(aud --auditor --title 'Orch : x' >/dev/null 2>&1; echo $?)|$(aud --auditor --title 'Agent : x' | grep -c "an auditor's title reads \"Audit : <subject>\"")"
+check "an audit title is refused without --auditor: plain, anchored, free, successor" "1|1|1|1" \
+  "$(aud --title 'Audit : x' | grep -c "an audit title is an auditor's")|$(aud --title 'Audit : x' --right-of self | grep -c "an audit title is an auditor's")|$(aud --title-free --title 'Audit : x' | grep -c "an audit title is an auditor's")|$(aud --successor --title 'Audit : x' | grep -c "an audit title is an auditor's")"
+check "and that refusal exits 1" "1" "$(aud --title 'Audit : x' >/dev/null 2>&1; echo $?)"
+for AUDFLAG in --successor '--right-of self' '--left-of /dev/ttys555' --title-free '--tier deep' '--model m' --no-remote-control; do
+  # shellcheck disable=SC2086 # the flag and its value are two words on purpose
+  check "an auditor refuses $AUDFLAG" "1|1" \
+    "$(aud --auditor --title 'Audit : x' $AUDFLAG >/dev/null 2>&1; echo $?)|$(aud --auditor --title 'Audit : x' $AUDFLAG | grep -c "is not an auditor's")"
+done
+check "an auditor with no model on record is refused, naming the installer" "1" \
+  "$(CLAUDE_CODE_SESSION_ID=s-aud-none ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" bash "$AGENT" spawn --dir "$WORK" --auditor --title 'Audit : x' 2>&1 | grep -c 'orchestrator:install')"
+check "--inherit-model beside --auditor asks for what is already implied" "1" \
+  "$(audl --auditor --inherit-model --title 'Audit : x' | grep -c -- '--model aud-model')"
+
+# `rotate` and `move` treat an auditor's tab as not the caller's to replace or place: it is
+# read by its NAME in the process table, so a stale chain entry naming it moves nothing.
+PSAUD="$WORK/ps-audit.txt"
+printf '/dev/ttys950 /opt/x/claude --name Audit : tm\n/dev/ttys901 /opt/x/claude --name Agent : x\n' > "$PSAUD"
+audrot() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" ORCHESTRATOR_PS_TABLE="$PSAUD" \
+  bash "$AGENT" rotate --dir "$WORK" --title "Agent : rotated" "$@" 2>&1; }
+check "rotate refuses --auditor" "1" "$(audrot --old-tty /dev/ttys901 --auditor | grep -c -- '--auditor is not a rotation')"
+AUDROT=$(audrot --old-tty /dev/ttys950)
+check "rotate refuses an auditor's tab before it spawns anything" "0|1|1" \
+  "$(printf '%s' "$AUDROT" | grep -c '^launch=')|$(printf '%s' "$AUDROT" | grep -c "rotate: refused: /dev/ttys950 is an auditor's tab ('Audit : tm')")|$(audrot --old-tty /dev/ttys950 >/dev/null 2>&1; echo $?)"
+check "--force rotates it, and says so" "1|1" \
+  "$(audrot --old-tty /dev/ttys950 --force | tail -1 | grep -c '^close=/dev/ttys950')|$(audrot --old-tty /dev/ttys950 --force | grep -c "^rotate: forced: /dev/ttys950 is an auditor's tab")"
+check "an agent's tab still rotates without --force" "1" "$(audrot --old-tty /dev/ttys901 | tail -1 | grep -c '^close=/dev/ttys901')"
+printf '{"tab_id":"8","tty":"/dev/ttys950","owner":"S-ME"}\n' >> "$AUDSTATE/chains/ttys900.jsonl"
+audmv() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" ORCHESTRATOR_SELF_TTY="${AUDSELF:-/dev/ttys900}" \
+  ORCHESTRATOR_SELF_ID=S-ME ORCHESTRATOR_PS_TABLE="$PSAUD" bash "$AGENT" move "$@" 2>&1; }
+check "an auditor's tab is not moved, even with a stale chain entry naming it" "1|1" \
+  "$(audmv --tty /dev/ttys950 --right-of self >/dev/null 2>&1; echo $?)|$(audmv --tty /dev/ttys950 --right-of self | grep -c "move: refused: /dev/ttys950 is an auditor's tab ('Audit : tm'), not this session's to place (pass --force to move it anyway)")"
+check "--force moves it, and says so" "0|1" \
+  "$(audmv --tty /dev/ttys950 --right-of self --force >/dev/null 2>&1; echo $?)|$(audmv --tty /dev/ttys950 --right-of self --force | grep -c "^move: forced: /dev/ttys950 is an auditor's tab")"
+check "an agent of the chain still moves" "1" "$(audmv --tty /dev/ttys901 --right-of self | grep -c '^move=/dev/ttys901 right_of=/dev/ttys900$')"
+check "an auditor places its own tab" "1" \
+  "$(AUDSELF=/dev/ttys950 audmv --tty /dev/ttys950 --right-of /dev/ttys900 | grep -c '^move=/dev/ttys950 right_of=/dev/ttys900$')"
+
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt" --prompt-file "$file" 2>&1)
 check "--prompt-file reuses the given file" "1" "$(printf '%s' "$out" | grep -c "prompt_file=$file")"
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt" 2>&1)

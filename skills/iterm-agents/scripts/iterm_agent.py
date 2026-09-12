@@ -93,6 +93,13 @@ TIERS = ("deep", "standard", "light")
 # The subject's first and last characters are not spaces either: a name that reads as
 # empty, or as its trimmed twin, never reaches a listing (§45).
 TITLE_SHAPE = re.compile(r"^(Orch|Agent) : \S(.{0,23}\S)?\Z")
+# An auditor's title, and ONLY an auditor's (§52). An auditor reads an orchestrator's method
+# and results; it is neither that orchestrator's successor nor one of its agents, and the
+# operator tells the three apart in his window by the role word. So `Audit :` is accepted
+# under --auditor alone and refused everywhere else, the way `Orch :` is refused on a plain
+# anchor: a title is a claim about what a session is, and the launcher holds it to that.
+AUDIT_TITLE_SHAPE = re.compile(r"^Audit : \S(.{0,23}\S)?\Z")
+AUDIT_ROLE = "Audit :"
 
 
 def die(msg):
@@ -888,6 +895,33 @@ def chain_owned(entries, owner):
     return [e for e in entries if e.get("owner") == owner]
 
 
+def chain_effect(successor, auditor):
+    """What a spawn does to its caller's chain: `append`, `transfer` or `none`.
+
+    An agent joins the chain, so the next agent lands after it. A successor takes the
+    chain, because it takes the predecessor's place (§34). An auditor does neither (§52):
+    the orchestrator it audits keeps its agents, and the auditor is nobody's agent — written
+    into the chain, it would become the anchor the orchestrator's next agent lands after,
+    and the operator's window would read the audit as part of the build."""
+    if successor:
+        return "transfer"
+    if auditor:
+        return "none"
+    return "append"
+
+
+def audit_name_on(tty):
+    """The name of the session on a tty when it is an auditor's, None otherwise.
+
+    Read by NAME in the process table, never by the chain: an auditor is written into no
+    chain, so « not in the chain » cannot tell it from a stranger's tab, and a stale entry
+    on a recycled tty could make it look like an agent (§52)."""
+    name = session_name_on(tty)
+    if name and name != UNREADABLE_NAME and name.startswith(AUDIT_ROLE):
+        return name
+    return None
+
+
 def chain_drop_tab(tab_id):
     """Every chain, every entry naming this tab. `close` does not know which orchestrator
     the tab belonged to, and a tab id names exactly one tab."""
@@ -1137,9 +1171,9 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
         cli += ["--mcp-config", shq(mcp_file)]
     cli += ["--permission-mode", shq(mode)]
     # An agent is driven by its orchestrator alone (§39): remote control comes up OFF for
-    # everyone but a successor, which the operator also drives from the host's remote
-    # client. The setting and the flag below are mutually exclusive — only a successor
-    # carries the flag, and it carries no such setting.
+    # everyone but a successor and an auditor, which the operator also drives from the
+    # host's remote client (§52). The setting and the flag below are mutually exclusive —
+    # only those two carry the flag, and they carry no such setting.
     if not remote_control:
         cli += ["--settings", shq('{"remoteControlAtStartup":false}')]
     # The prompt goes BEFORE the options that follow it, and --name is the LAST of them or
@@ -1154,9 +1188,10 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
     # Without it two sessions in one checkout share the host's stem and differ only by a
     # reference (§24).
     cli += ["--name", shq(title)]
-    # Only a successor gets it: the operator drives his orchestrators from the host's
-    # remote client as well as from the tab, and an agent is driven by its orchestrator
-    # alone (§39). A first instantiation is the operator's own hand, and his launch line.
+    # Only a successor and an auditor get it: the operator drives his orchestrators and
+    # their auditors from the host's remote client as well as from the tab, and an agent is
+    # driven by its orchestrator alone (§39, §52). A first instantiation is the operator's
+    # own hand, and his launch line.
     if remote_control:
         cli += ["--remote-control", shq(remote_control)]
     parts[2] = "exec " + " ".join(cli)
@@ -1277,6 +1312,7 @@ def cmd_spawn(argv):
     p.add_argument("--no-verify", dest="verify", action="store_false", default=True)
     p.add_argument("--trust", action="store_true", default=False)
     p.add_argument("--successor", action="store_true", default=False)
+    p.add_argument("--auditor", action="store_true", default=False)
     p.add_argument("--mcp", action="append", default=[])
     args, unknown = p.parse_known_args(argv)
     if unknown:
@@ -1285,6 +1321,29 @@ def cmd_spawn(argv):
         die("spawn: --dir is required")
     if args.left_of and args.right_of:
         die("spawn: --left-of and --right-of are mutually exclusive")
+    if args.auditor:
+        # An auditor is placed, named, modelled and reached ONE way (§52): immediately right
+        # of its caller, `Audit : <subject>`, the caller's model, remote control on. Each of
+        # these would quietly replace one of those terms with the launcher's default, so
+        # each is refused rather than obeyed.
+        for flag, given in (("--successor", args.successor), ("--right-of", args.right_of),
+                            ("--left-of", args.left_of), ("--title-free", args.title_free),
+                            ("--tier", args.tier), ("--model", args.model),
+                            ("--no-remote-control", not args.remote_control)):
+            if given:
+                die("spawn: refused: %s is not an auditor's: an auditor lands immediately "
+                    "right of its caller, reads \"Audit : <subject>\", runs on the caller's "
+                    "model and comes up under remote control" % flag)
+        if not args.title:
+            die('spawn: refused: --auditor needs --title "Audit : <subject>"')
+        if not AUDIT_TITLE_SHAPE.match(args.title):
+            die("spawn: refused: an auditor's title reads \"Audit : <subject>\", the subject "
+                "at most 25 characters and neither starting nor ending with a space, got '%s'"
+                % args.title)
+    elif args.title.startswith(AUDIT_ROLE):
+        die("spawn: refused: an audit title is an auditor's; spawn it with --auditor, which "
+            "places it beside you, keeps it out of every chain and brings it up under remote "
+            "control on your model")
     if args.successor and (args.left_of or args.right_of):
         die("spawn: --successor names its own anchor, immediately right of this session; "
             "drop --left-of and --right-of")
@@ -1310,7 +1369,9 @@ def cmd_spawn(argv):
         model = resolve_tier(args.tier)
         if model is None:
             die("spawn: cannot resolve tier: %s" % args.tier)
-    if args.inherit:
+    if args.inherit or args.auditor:
+        # An auditor reads with the judgment of the session it audits: the caller's model,
+        # like a successor's, whether or not the flag was typed (§52).
         model = inherited_model()
     # The anchor first, before a prompt file is written or a trust record changed: an
     # anchor that is not there is a refusal, and a refusal must leave nothing behind.
@@ -1345,19 +1406,21 @@ def cmd_spawn(argv):
             # the rest of a launch line has no business filling a terminal.
             die("spawn: refused: the caller's session name '%s' does not read "
                 '"Orch : <subject>"; pass --title "Orch : <subject>"' % title[:40])
-    elif not TITLE_SHAPE.match(title):
+    elif not args.auditor and not TITLE_SHAPE.match(title):
         die("spawn: refused: a title reads \"Orch : <subject>\" or \"Agent : <subject>\", "
             "the subject at most 25 characters and neither starting nor ending with a "
             "space, got '%s' (pass --title-free for a tab named otherwise)" % title)
-    if args.successor:
+    if args.successor or args.auditor:
         # A successor is not an agent: immediately right of this session, the chain
-        # ignored, and it takes the chain with it once its session can be read (§34).
+        # ignored, and it takes the chain with it once its session can be read (§34). An
+        # auditor is placed the same way and takes nothing with it (§52).
         side, anchor = "right", "self"
+    effect = chain_effect(args.successor, args.auditor)
     if anchor == "self":
         if not own and not DRY_RUN:
             die("spawn: --right-of self: cannot resolve this session's own tty")
         anchor = own or "self"
-        if side == "right" and own and not args.successor:
+        if side == "right" and own and effect == "append":
             # After the orchestrator's LAST agent, not immediately after the orchestrator:
             # orchestrator, agent 1, agent 2, … in launch order.
             if DRY_RUN:
@@ -1410,7 +1473,7 @@ def cmd_spawn(argv):
     if args.prompt:
         prompt_file = write_prompt_file(args.prompt, title)
 
-    remote_control = title if (args.successor and args.remote_control) else ""
+    remote_control = title if ((args.successor and args.remote_control) or args.auditor) else ""
     launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control,
                            mcp_file)
 
@@ -1421,6 +1484,8 @@ def cmd_spawn(argv):
         print("anchor=%s" % ("self" if anchor == own else anchor))
         print("trust=%s" % trust_state)
         print("successor=%s" % ("yes" if args.successor else "no"))
+        print("auditor=%s" % ("yes" if args.auditor else "no"))
+        print("chain=%s" % effect)
         print("name=%s" % title)
         print("title_free=%s" % ("yes" if args.title_free else "no"))
         print("mcp=%s" % (",".join(servers) or "none"))
@@ -1457,7 +1522,7 @@ def cmd_spawn(argv):
         # by its own id, never by a tty another session could hold by then.
         made["tab_id"] = tab.tab_id
         made["session_id"] = tab.current_session.session_id if tab.current_session else ""
-        if own and new and args.successor:
+        if own and new and effect == "transfer":
             new_sess = None
             for _ in range(10):
                 fresh = await iterm2.async_get_app(connection)
@@ -1474,7 +1539,7 @@ def cmd_spawn(argv):
                 n = chain_transfer(own, own_sess_id, new, new_sess.session_id)
                 print("spawn: chain of %d agent(s) handed to the successor on %s" % (n, new),
                       file=sys.stderr)
-        elif own and new:
+        elif own and new and effect == "append":
             chain_append(own, tab.tab_id, new, own_sess_id)
         return new
 
@@ -1710,7 +1775,18 @@ def cmd_move(argv):
         """A session the caller did not launch is not its to place. An orchestrator that
         had never measured its own tty read the listing, took the last tab for its own and
         moved a stranger's session out from between itself and its agents; the script
-        obeyed, because `move` moved anything it was told to (§38)."""
+        obeyed, because `move` moved anything it was told to (§38).
+
+        An auditor's tab is read first, by its name: it is in no chain, so it is nobody's
+        to place but its own session's, whatever a stale chain entry on its tty says (§52)."""
+        audit = audit_name_on(args.tty) if args.tty != own else None
+        if audit:
+            if not args.force:
+                die("move: refused: %s is an auditor's tab ('%s'), not this session's to "
+                    "place (pass --force to move it anyway)" % (args.tty, audit))
+            print("move: forced: %s is an auditor's tab ('%s')" % (args.tty, audit),
+                  file=sys.stderr)
+            return
         if is_ours:
             return
         if not args.force:
@@ -1761,16 +1837,27 @@ def cmd_rotate(argv):
     p = argparse.ArgumentParser(prog="rotate", add_help=False)
     p.add_argument("--old-tty", dest="old_tty")
     p.add_argument("--expect-title", dest="expect", default="")
+    p.add_argument("--force", action="store_true", default=False)
     args, rest = p.parse_known_args(argv)
     if not args.old_tty:
         die("rotate: --old-tty is required")
     # A rotation replaces an agent with a titled agent; none of these are that. A successor
     # is spawned with `spawn --successor`, not smuggled through the replacement a rotation
-    # makes.
-    for flag in ("--successor", "--title-free", "--no-remote-control"):
+    # makes, and neither is an auditor.
+    for flag in ("--successor", "--auditor", "--title-free", "--no-remote-control"):
         if flag in rest:
             die("rotate: refused: %s is not a rotation's (a rotation replaces an agent with "
                 "a titled agent; a successor is spawned with spawn --successor)" % flag)
+    # Nor is the tab it closes an auditor's: an auditor is not an agent of the caller's, and
+    # a rotation that closed one would end an audit nobody ended (§52). Read before the
+    # spawn, so a refusal leaves no replacement behind.
+    audit = audit_name_on(args.old_tty)
+    if audit:
+        if not args.force:
+            die("rotate: refused: %s is an auditor's tab ('%s'): an auditor is not an agent "
+                "and is not rotated (pass --force to rotate it anyway)" % (args.old_tty, audit))
+        print("rotate: forced: %s is an auditor's tab ('%s')" % (args.old_tty, audit),
+              file=sys.stderr)
     # The spawn verifies the replacement is RUNNING before anything is closed: a rotation
     # that killed the old agent on a spawn that never started would leave zero agents,
     # which is the one outcome this order exists to prevent.
