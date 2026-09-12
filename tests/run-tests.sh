@@ -61,7 +61,7 @@ echo "== repository policy =="
 policy_hits() {
   ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=.claude --exclude-dir=plans \
       --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh \
-    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|\.claude\.json' || true )
+    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|\.claude\.json|LounisBou/claude-statusbar' || true )
 }
 check "no product name in prose" "" "$(policy_hits)"
 
@@ -169,11 +169,12 @@ check "the rulebook spawns beside the orchestrator" "1" "$(grep -c -- '--right-o
 check "the rulebook keeps running to the orchestrator" "1" "$(grep -c '^## The operator decides; the orchestrator runs' "$ROOT/skills/orchestrator/SKILL.md")"
 check "a runnable command is the orchestrator's" "1" "$(grep -c "A command the orchestrator could run is the orchestrator's to run" "$ROOT/skills/orchestrator/SKILL.md")"
 
-# Two readings the rulebook left open (§36): an implementer stays through the review round
-# of ITS delivery and is stood down at the verdict; a reader's pinned copy is a worktree.
-check "the rulebook keeps the implementer through its own review round" "1|1" \
-  "$(grep -c 'stays through the review round of ITS delivery' "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c 'a tab kept in case is not reuse' "$ROOT/skills/orchestrator/SKILL.md")"
-check "the tab skill says the same" "1" "$(grep -c 'stood down at the verdict' "$ROOT/skills/iterm-agents/SKILL.md")"
+# Two readings the rulebook left open (§36): an implementer's own delivery reading is
+# reversed by §45 (a delivered implementer is stood down at the verification, never kept
+# through the review round of it); a reader's pinned copy is a worktree.
+check "the rulebook's §45 reversal of the §36 reading holds" "1|1" \
+  "$(grep -c 'An implementer is stood down at the verification of its delivery' "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c 'a tab kept in case is not reuse' "$ROOT/skills/orchestrator/SKILL.md")"
+check "the tab skill says the same" "1" "$(grep -c 'never kept through its review round' "$ROOT/skills/iterm-agents/SKILL.md")"
 check "the rulebook pins a reader's copy as a worktree" "1|1" \
   "$(grep -c 'never a clone: a clone is for a WRITER' "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "a reader's pinned copy is a detached worktree" "$ROOT/skills/orchestrator/SKILL.md")"
 check "the review brief template pins a worktree" "1" "$(grep -c 'a detached worktree pinned at the head under review' "$ROOT/templates/agent-review-brief.md")"
@@ -190,13 +191,44 @@ check "the rotation brief's gauge names the installed copy" "1" "$(grep -c "the 
 check "the rulebook's first instantiation carries remote control" "1" "$(grep -c -- '--remote-control "Orch : <subject>"' "$ROOT/skills/orchestrator/SKILL.md")"
 check "the tab skill already reads the Chat caveat" "1" "$(grep -c 'before the session names itself' "$ROOT/skills/iterm-agents/SKILL.md")"
 
+# Read as presence, not as a count: a document may spell a literal on one line or on five,
+# and a guard that pins the number breaks on a sentence that was merely rewritten.
+spells() { grep -qF -- "$2" "$1" && echo yes || echo no; }
+
+# §45: a delivered implementer is stood down at the verification of its delivery, never
+# kept through the review round of it. The new lifecycle sentence present once, the old
+# one gone, in the rulebook and the tab skill each.
+RULEBOOK="$ROOT/skills/orchestrator/SKILL.md"
+TABSKILL="$ROOT/skills/iterm-agents/SKILL.md"
+check "the rulebook carries the new lifecycle sentence once, and the old one nowhere" "1|0" \
+  "$(grep -cF 'An implementer is stood down at the verification of its delivery, never kept through the review round of it: a review finding goes to a fresh session with a resume brief, and the cold start is the accepted price' "$RULEBOOK")|$(grep -cF 'stays through the review round' "$RULEBOOK")"
+check "the tab skill carries the new lifecycle sentence once, and the old one nowhere" "1|0" \
+  "$(grep -cF 'An implementer is stood down at the verification of its delivery, never kept through its review round; a review finding goes to a fresh session with a resume brief, which costs one cold start and keeps the window readable.' "$TABSKILL")|$(grep -cF 'stays through the review round' "$TABSKILL")"
+
+# §45: the predecessor's last message is the successor's signal to close its tab — the
+# host's idle notice does not read as idle for a working successor.
+check "the succeed command carries the handover message" "yes" \
+  "$(spells "$ROOT/commands/succeed.md" 'handed over')"
+check "the succession brief template carries the handover message and the wait for it" "yes|yes" \
+  "$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'handed over')|$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'wait for its « handed over »')"
+check "the rulebook carries the handover message and the wait for it" "yes|yes" \
+  "$(spells "$RULEBOOK" 'handed over')|$(spells "$RULEBOOK" 'wait for its « handed over »')"
+
+# §45: one marketplace, the family's — the install lines read the operator's own,
+# `lounisbou`, and this repository's single-plugin one is gone from every file that ships.
+check "the README installs from the family's marketplace" "yes" \
+  "$(spells "$ROOT/README.md" 'orchestrator@lounisbou')"
+
+# tests/run-tests.sh is excluded because it QUOTES the pattern it searches for (like
+# policy_hits above); .claude/ is the operator's own session material, not shipped content.
+check "the repository's own marketplace install line survives nowhere outside docs/ and .git" "0" \
+  "$(grep -rl --exclude-dir=.git --exclude-dir=.claude --exclude=run-tests.sh -- \
+     'orchestrator@claude-orchestrator' "$ROOT" 2>/dev/null | grep -Evc "^$ROOT/docs/")"
+
 # The name is short and it has two roles (§42): the operator read his window and could not
 # tell one agent from another, nor an agent from an orchestrator, at a glance. Every
 # document the plugin ships spells the short roles and the cap on the subject; the older
 # spellings survive only in the design's own record of the decision.
-# Read as presence, not as a count: a document may spell a role on one line or on five,
-# and a guard that pins the number breaks on a sentence that was merely rewritten.
-spells() { grep -qF -- "$2" "$1" && echo yes || echo no; }
 check "the rulebook spells the short roles and the cap" "yes|yes|yes" \
   "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Agent : <subject>')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Orch : <subject>')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'at most 25 characters')"
 check "the tab skill spells them and the cap too" "yes|yes|yes" \
@@ -706,6 +738,9 @@ check "the launch stays short whatever the prompt" "short" "$([ "${#cmd}" -lt 50
 check "the launch reads the prompt from its file" "1" "$(printf '%s' "$cmd" | grep -c '"\$(cat ')"
 check "the prompt file holds the prompt byte for byte" "$prompt" "$(cat "$file")"
 check "the prompt file lives under the state directory" "yes" "$([ "${file#"$ISTATE"/prompts/}" != "$file" ] && echo yes || echo "$file")"
+# §45: the prompt file carries its kind in its name, so the three files a launch leaves
+# under prompts/ sort by kind like the two already did.
+check "the prompt file's name carries its kind" "1" "$(basename "$file" | grep -c '^prompt-')"
 check "the launch carries the decision mode" "1" "$(printf '%s' "$cmd" | grep -c -- '--permission-mode auto')"
 check "no tier and no map: no model argument" "0" "$(printf '%s' "$cmd" | grep -c -- '--model')"
 check "the launch changes into the working directory" "1" "$(printf '%s' "$cmd" | grep -c "^cd $WORK && ")"
@@ -744,7 +779,7 @@ check "and so does a probe's" "1" \
   "$(shaped --title 'Agent : anchor' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : anchor'")"
 check "the dry run says which name it passes" "1" "$(shaped --title 'Agent : anchor' | grep -c '^name=Agent : anchor$')"
 check "a title without the shape is refused, and the reason names the shape and the cap" "1|1" \
-  "$(shaped --title foo >/dev/null 2>&1; echo $?)|$(shaped --title foo | grep -c 'a title reads "Orch : <subject>" or "Agent : <subject>", the subject at most 25 characters, got .foo.')"
+  "$(shaped --title foo >/dev/null 2>&1; echo $?)|$(shaped --title foo | grep -c 'a title reads "Orch : <subject>" or "Agent : <subject>", the subject at most 25 characters and neither starting nor ending with a space, got .foo.')"
 # The older roles are the ones the operator could not read, so they are refused like any
 # other unshaped title: the spelled-out role words are gone from the launcher, not merely
 # from the documents.
@@ -755,6 +790,17 @@ D42SUB25=$(printf 'x%.0s' $(seq 1 25))
 D42SUB26=$(printf 'x%.0s' $(seq 1 26))
 check "a subject of 25 characters is accepted, of 26 refused" "1|1" \
   "$(shaped --title "Agent : $D42SUB25" | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : $D42SUB25'")|$(shaped --title "Agent : $D42SUB26" >/dev/null 2>&1; echo $?)"
+# §45: a subject neither starts nor ends on a space — a listing then shows a name that
+# reads as empty, or one the operator cannot tell from its trimmed twin. Spaces inside the
+# subject stay allowed, and the cap is unchanged.
+check "a subject that is a single space is refused, and the reason names the space rule" "1|1" \
+  "$(shaped --title 'Agent :  ' >/dev/null 2>&1; echo $?)|$(shaped --title 'Agent :  ' | grep -c 'neither starting nor ending with a space')"
+check "a subject ending on a space is refused" "1|1" \
+  "$(shaped --title 'Agent : x ' >/dev/null 2>&1; echo $?)|$(shaped --title 'Agent : x ' | grep -c 'neither starting nor ending with a space')"
+check "a subject starting on a space is refused" "1|1" \
+  "$(shaped --title 'Agent :  x' >/dev/null 2>&1; echo $?)|$(shaped --title 'Agent :  x' | grep -c 'neither starting nor ending with a space')"
+check "a space inside the subject stays allowed" "1" \
+  "$(shaped --title 'Agent : x y' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : x y'")"
 # A name is one line. The shape's end anchor also matches BEFORE a trailing newline in this
 # language, so `Agent : x` followed by one passed it — and the guard the older code spent on
 # a newline in a derived name was retired with that code, leaving nothing behind it. The
@@ -1688,6 +1734,49 @@ for spelling in '$HOME' '~'; do
   check "uninstall restores through the $spelling spelling" '{"type":"command","command":"/x/bar.sh","padding":0}' \
     "$(jq -c '.statusLine' "$H4/.claude/settings.json")"
 done
+
+echo "== iterm-agents: the asyncio stderr filter (§29) =="
+
+# The filter drops the library's own "Task exception was never retrieved" tracebacks —
+# helper tasks ending on a socket our side closed, reported by the loop's default handler
+# through this logger regardless of which loop owned the task — and passes every other
+# record: a diagnosis the stream exists to carry is not of that shape. Read straight off
+# the instance the module installed at import, never a stand-in built by the suite.
+filter_probe() {
+  "$py" -c "
+import sys, logging
+sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+
+
+class ConnectionClosedError(Exception):
+    pass
+
+
+class OtherError(Exception):
+    pass
+
+
+def rec(msg, exc_cls):
+    return logging.LogRecord('asyncio', logging.ERROR, 'probe.py', 1, msg, None,
+                              (exc_cls, exc_cls(), None))
+
+
+logger = logging.getLogger('asyncio')
+filt = logger.filters[0]
+print(filt.filter(rec('Task exception was never retrieved: boom', ConnectionClosedError)))
+print(filt.filter(rec('Task exception was never retrieved: boom', OtherError)))
+print(filt.filter(rec('some other diagnosis', ConnectionClosedError)))
+print(len(logger.filters))
+"
+}
+FILTOUT=$(filter_probe)
+check "the filter drops the library's known noise" "False" "$(printf '%s\n' "$FILTOUT" | sed -n '1p')"
+check "the filter passes the same message with another exception class" "True" \
+  "$(printf '%s\n' "$FILTOUT" | sed -n '2p')"
+check "the filter passes another message" "True" "$(printf '%s\n' "$FILTOUT" | sed -n '3p')"
+check "exactly one filter instance is installed on the asyncio logger" "1" \
+  "$(printf '%s\n' "$FILTOUT" | sed -n '4p')"
 
 echo "== iterm script (argument validation, no automation) =="
 

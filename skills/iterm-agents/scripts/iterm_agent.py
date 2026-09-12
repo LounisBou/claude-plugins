@@ -20,11 +20,33 @@ import argparse
 import asyncio
 import glob
 import json
+import logging
 import os
 import re
 import subprocess
 import sys
 import time
+
+
+class _AsyncioSocketNoise(logging.Filter):
+    """Drops the library's own "Task exception was never retrieved" tracebacks (§29):
+    getting the app object subscribes it to layout and focus notifications dispatched as
+    tasks of their own, and the ones mid-flight when a step's connection closes end on that
+    socket and are reported — by the loop's default exception handler, through this logger,
+    regardless of which loop owned the task or when it is collected — as noise on every
+    spawn. Every other record passes: a diagnosis the stream exists to carry is not of this
+    shape."""
+
+    def filter(self, record):
+        if not record.getMessage().startswith("Task exception was never retrieved"):
+            return True
+        exc_info = record.exc_info
+        if not exc_info or not exc_info[0]:
+            return True
+        return not exc_info[0].__name__.startswith("ConnectionClosed")
+
+
+logging.getLogger("asyncio").addFilter(_AsyncioSocketNoise())
 
 HOST_CLI = os.environ.get("ORCHESTRATOR_HOST_CLI", "claude")
 STATE_DIR = os.environ.get("ORCHESTRATOR_STATE_DIR") or os.path.join(
@@ -68,7 +90,9 @@ TIERS = ("deep", "standard", "light")
 # live at 366 characters. It ends on `\Z` and not on `$`, which in this language matches
 # before a trailing newline as well: a name is one line, and the title travels through a
 # launch file and back out of the process table, where a second line is not part of a name.
-TITLE_SHAPE = re.compile(r"^(Orch|Agent) : .{1,25}\Z")
+# The subject's first and last characters are not spaces either: a name that reads as
+# empty, or as its trimmed twin, never reaches a listing (§45).
+TITLE_SHAPE = re.compile(r"^(Orch|Agent) : \S(.{0,23}\S)?\Z")
 
 
 def die(msg):
@@ -639,7 +663,7 @@ def cmd_list(_argv):
 def write_prompt_file(prompt, title):
     os.makedirs(PROMPTS_DIR, exist_ok=True)
     safe = re.sub(r"[^A-Za-z0-9._-]", "-", title)[:40] or "agent"
-    path = os.path.join(PROMPTS_DIR, "%s-%d.txt" % (safe, int(time.time() * 1000)))
+    path = os.path.join(PROMPTS_DIR, "prompt-%s-%d.txt" % (safe, int(time.time() * 1000)))
     with open(path, "w") as fh:
         fh.write(prompt)
     return path
@@ -859,8 +883,8 @@ def cmd_spawn(argv):
                 '"Orch : <subject>"; pass --title "Orch : <subject>"' % title[:40])
     elif not TITLE_SHAPE.match(title):
         die("spawn: refused: a title reads \"Orch : <subject>\" or \"Agent : <subject>\", "
-            "the subject at most 25 characters, got '%s' "
-            "(pass --title-free for a tab named otherwise)" % title)
+            "the subject at most 25 characters and neither starting nor ending with a "
+            "space, got '%s' (pass --title-free for a tab named otherwise)" % title)
     if args.successor:
         # A successor is not an agent: immediately right of this session, the chain
         # ignored, and it takes the chain with it once its session can be read (§34).

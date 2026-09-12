@@ -35,8 +35,8 @@ purpose, because it costs tokens and needs the app running.
 ## Install
 
 ```
-/plugin marketplace add LounisBou/claude-orchestrator
-/plugin install orchestrator@claude-orchestrator
+/plugin marketplace add LounisBou/claude-statusbar
+/plugin install orchestrator@lounisbou
 /orchestrator:install
 ```
 
