@@ -1246,6 +1246,32 @@ fi
 check "the audit brief, every placeholder filled, lints clean" "yes|0" \
   "$([ -s "$AUDFILLED" ] && echo yes || echo no)|$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$AUDFILLED" >/dev/null 2>&1; echo $?)"
 
+# `/orchestrator:audit-end` (§52), from either side. The auditor sends its report path and
+# ends its turn, never its session; the orchestrator acknowledges, waits for « ended », and
+# closes the auditor's tab under the audit title, proved on the process table. The close
+# line is taken out of the command and run dry, like the audit's spawn line.
+AUDEND="$ROOT/commands/audit-end.md"
+check "audit-end loads the rulebook first" "yes|yes" \
+  "$(spells "$AUDEND" 'Load that skill first')|$(spells "$AUDEND" '`orchestrator:orchestrator`')"
+check "it is run from the auditor and from the orchestrator" "yes|yes" \
+  "$(spells "$AUDEND" '## From the auditor')|$(spells "$AUDEND" '## From the orchestrator')"
+check "the auditor sends its report path and never closes its own tab" "yes|yes|yes" \
+  "$(spells "$AUDEND" '« audit-end: <report path> »')|$(spells "$AUDEND" 'Never close your own tab')|$(spells "$AUDEND" '« ended »')"
+check "the orchestrator acknowledges once and reads the screen after five minutes" "yes|yes" \
+  "$(spells "$AUDEND" 'in ONE message')|$(spells "$AUDEND" 'screen --tty <auditor tty>')"
+check "the close is proved on ps and ListAgents, and the record is cleared" "yes|yes|yes" \
+  "$(spells "$AUDEND" 'ps -t')|$(spells "$AUDEND" 'ListAgents')|$(spells "$AUDEND" 'claude-orchestrator/audits/')"
+check "the report stays on disk" "yes" "$(spells "$AUDEND" 'The report stays on disk')"
+# An auditor at its context gate spawns nothing — --auditor is the orchestrator's flag and the
+# auditor sits in no chain: it names the section reached, and the ORCHESTRATOR relaunches the
+# audit to continue from the report.
+check "an auditor at its gate hands the continuation to the orchestrator" "yes|yes|yes|0" \
+  "$(spells "$AUDBRIEF" 'You spawn nothing')|$(spells "$AUDEND" '--scope "continue from <report path>"')|$(spells "$AUDCMD" 'continue from <report')|$(grep -c 'successor auditor' "$AUDBRIEF" "$AUDEND" | awk -F: '{s+=$2} END {print s+0}')"
+AUDCLOSE=$(grep -m1 -o 'iterm-agent.sh close .*' "$AUDEND" 2>/dev/null | sed -e 's/^iterm-agent.sh close //' -e 's/`.*$//' -e 's#<auditor tty>#/dev/ttys950#')
+audclose() { eval "set -- $AUDCLOSE"; ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" close "$@" 2>&1; }
+check "its close line is one the launcher runs, guarded on the audit title" "close=/dev/ttys950 expect_title=Audit :" \
+  "$(if [ -n "$AUDCLOSE" ]; then audclose; else echo 'no close line'; fi)"
+
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt" --prompt-file "$file" 2>&1)
 check "--prompt-file reuses the given file" "1" "$(printf '%s' "$out" | grep -c "prompt_file=$file")"
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt" 2>&1)

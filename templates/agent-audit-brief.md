@@ -135,8 +135,10 @@ changes you order, and ends your turn. Then answer the orchestrator's acknowledg
   If that name is not listed, tell the operator in your own tab and stop waiting.
 - Every message to the orchestrator ends with your measured context: run `{{GAUGE}}` and
   paste its `context_percent=` and `source=` lines. At 60 %, finish the section in progress,
-  write the report's state into it, and hand over like an orchestrator: a successor auditor
-  spawned with the same command and a brief pointing at the report.
+  write the report's state into the report, and run orchestrator:audit-end with the section
+  reached named in your message and the words « continue from {{REPORT_PATH}} ».
+  You spawn nothing: an auditor launches no session. The ORCHESTRATOR relaunches the audit
+  with that scope, and the new brief's previous report is this one.
 
 ## 9. Resource envelope
 

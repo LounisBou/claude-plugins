@@ -38,6 +38,7 @@ commands/agents.md                   each running implementer's progress
 commands/progress.md                 where the build stands
 commands/decide.md                   the decision round, one arbitration at a time
 commands/audit.md                    launches the orchestrator's auditor
+commands/audit-end.md                ends the audit, from either side; the orchestrator closes the tab
 hooks/hooks.json                     declares the context gate on UserPromptSubmit
 hooks/context-gate.sh                the gate the harness enforces, not the model
 install.sh, uninstall.sh

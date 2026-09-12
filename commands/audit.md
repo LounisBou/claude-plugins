@@ -32,7 +32,9 @@ Then:
    - the repository (the checkout the auditor opens, read-only) and the state file;
    - the scope: what `--scope` says, else everything since the last audit — the newest
      `REPORT.md` under `<briefs dir>/audits/`, named with its date — else everything since
-     this orchestration started, with that date;
+     this orchestration started, with that date; a scope reading « continue from <report
+     path> » — the auditor ended at its context gate — names that report as the previous
+     one, and the new audit starts at the section it reached;
    - the methodology file: the project file `--method` names, which the auditor reads and
      may amend ONLY through the operator's word; without `--method`, say that the operator
      has named none;
