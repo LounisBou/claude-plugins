@@ -1649,6 +1649,20 @@ async def close_session(app, tty, expect):
     return name
 
 
+def close_note(tty, was_running):
+    """What the close's proof is worth, or "" when it is worth what it says.
+
+    `wait_gone` watches the HOST CLI and nothing else, which is the process the fault was
+    about. A tab holding only a shell has none, so the wait returns at once and the close
+    is reported on the app's word alone — true of the close, and no evidence whatever about
+    an agent. Saying which of the two happened costs one line and stops the stronger claim
+    being read into the weaker case."""
+    if was_running is None:
+        return ("close: no %s was running on %s, so this close is the app's word, not a "
+                "reading of the process table." % (HOST_CLI, tty))
+    return ""
+
+
 def cmd_close(argv):
     p = argparse.ArgumentParser(prog="close", add_help=False)
     p.add_argument("--tty", dest="tty")
@@ -1659,6 +1673,9 @@ def cmd_close(argv):
     if DRY_RUN:
         print("close=%s expect_title=%s" % (args.tty, args.expect))
         return
+
+    # Read BEFORE the close: what the proof below is a proof ABOUT.
+    was_running = host_cli_on(args.tty)
 
     async def go(iterm2, connection):
         app = await iterm2.async_get_app(connection)
@@ -1674,6 +1691,11 @@ def cmd_close(argv):
     if survivor is not None:
         die("close: the request was accepted but %s is still running on %s after %ds. "
             "The session was NOT closed." % (survivor, args.tty, CLOSE_TIMEOUT))
+    note = close_note(args.tty, was_running)
+    if note:
+        print(note, file=sys.stderr)
+    # The first line is the contract every skill, command and brief parses; the reading
+    # that qualifies it goes to stderr rather than changing it.
     print("closed 1 session on %s" % args.tty)
 
 

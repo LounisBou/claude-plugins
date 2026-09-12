@@ -1478,6 +1478,13 @@ check "a session still in the process table is not reported closed" "still there
 check "a session gone from the process table is reported closed" "gone" \
   "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-empty.txt" ipy \
      "print('gone' if ia.wait_gone('/dev/ttys901', 1) is None else 'still there')")"
+# The proof is about the host CLI and about nothing else. A tab holding only a shell has
+# none to watch, the wait returns at once, and the close then rests on the app's word — true
+# of the close and no evidence at all about an agent. Which of the two it was, is said.
+check "a close with no agent to watch says its proof is the app's word" "said" \
+  "$(ipy "print('said' if 'app' in ia.close_note('/dev/ttys901', None) else 'silent')")"
+check "a close that watched an agent leave adds nothing" "" \
+  "$(ipy "print(ia.close_note('/dev/ttys901', '4242'))")"
 check "and what survived is named, so the operator reads which process held on" "claude" \
   "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-alive.txt" ipy \
      "print('claude' if 'claude' in (ia.wait_gone('/dev/ttys901', 1) or '') else 'unnamed')")"
