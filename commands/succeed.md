@@ -33,7 +33,9 @@ Then:
    `--successor` places it immediately right of this tab, between it and the first agent,
    and hands it the chain (spec §34).
 3. Answer nothing new. Wait for the successor's "takeover confirmed"; answer
-   its questions about state only.
+   its questions about state only. On the confirmation, send it « handed over » as your
+   LAST message — nothing of yours is left to write — and end the turn: that message is
+   what it closes your tab on.
 4. Never close your own tab: the successor closes it once you are idle — its brief says so
    (template step 4), and you do not run this command without that step in the brief.
 5. Do not ask the user whether to succeed. At the gate you succeed, then you tell them.

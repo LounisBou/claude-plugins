@@ -205,6 +205,15 @@ check "the rulebook carries the new lifecycle sentence once, and the old one now
 check "the tab skill carries the new lifecycle sentence once, and the old one nowhere" "1|0" \
   "$(grep -cF 'An implementer is stood down at the verification of its delivery, never kept through its review round; a review finding goes to a fresh session with a resume brief, which costs one cold start and keeps the window readable.' "$TABSKILL")|$(grep -cF 'stays through the review round' "$TABSKILL")"
 
+# §45: the predecessor's last message is the successor's signal to close its tab — the
+# host's idle notice does not read as idle for a working successor.
+check "the succeed command carries the handover message" "yes" \
+  "$(spells "$ROOT/commands/succeed.md" 'handed over')"
+check "the succession brief template carries the handover message and the wait for it" "yes|yes" \
+  "$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'handed over')|$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'wait for its « handed over »')"
+check "the rulebook carries the handover message and the wait for it" "yes|yes" \
+  "$(spells "$RULEBOOK" 'handed over')|$(spells "$RULEBOOK" 'wait for its « handed over »')"
+
 # The name is short and it has two roles (§42): the operator read his window and could not
 # tell one agent from another, nor an agent from an orchestrator, at a glance. Every
 # document the plugin ships spells the short roles and the cap on the subject; the older
