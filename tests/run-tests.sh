@@ -797,8 +797,8 @@ check "a subject that is a single space is refused, and the reason names the spa
   "$(shaped --title 'Agent :  ' >/dev/null 2>&1; echo $?)|$(shaped --title 'Agent :  ' | grep -c 'neither starting nor ending with a space')"
 check "a subject ending on a space is refused" "1|1" \
   "$(shaped --title 'Agent : x ' >/dev/null 2>&1; echo $?)|$(shaped --title 'Agent : x ' | grep -c 'neither starting nor ending with a space')"
-check "a subject starting on a space is refused" "1" \
-  "$(shaped --title 'Agent :  x' >/dev/null 2>&1; echo $?)"
+check "a subject starting on a space is refused" "1|1" \
+  "$(shaped --title 'Agent :  x' >/dev/null 2>&1; echo $?)|$(shaped --title 'Agent :  x' | grep -c 'neither starting nor ending with a space')"
 check "a space inside the subject stays allowed" "1" \
   "$(shaped --title 'Agent : x y' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : x y'")"
 # A name is one line. The shape's end anchor also matches BEFORE a trailing newline in this

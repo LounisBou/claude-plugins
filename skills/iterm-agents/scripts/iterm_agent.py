@@ -90,6 +90,8 @@ TIERS = ("deep", "standard", "light")
 # live at 366 characters. It ends on `\Z` and not on `$`, which in this language matches
 # before a trailing newline as well: a name is one line, and the title travels through a
 # launch file and back out of the process table, where a second line is not part of a name.
+# The subject's first and last characters are not spaces either: a name that reads as
+# empty, or as its trimmed twin, never reaches a listing (§45).
 TITLE_SHAPE = re.compile(r"^(Orch|Agent) : \S(.{0,23}\S)?\Z")
 
 
