@@ -1717,3 +1717,22 @@ What the suite reads: the ladder with two rungs and `tmux` refused by name; `--n
 read back whole, another convention read back whole, a prompt run into the name reported
 unreadable, and the row that marks it. What a live round reads: both rungs listing the same
 sessions, and a spawn on the fallback landing and saying it could not place itself.
+
+## 49. The caller is not always in the app
+
+**0.28.1.** Found by the live round of §48, on the machine itself. A session running in
+another terminal — a multiplexer, a plain shell, a remote one — still has a tty and
+`self_tty` still resolves it; the app simply has no session on it. The spawn path indexed
+straight into the lookup's result, and a spawn from such a session died on
+`AttributeError: 'NoneType' object has no attribute 'session_id'`: a traceback where the
+answer was « your terminal is not one of mine, so I kept no chain ».
+
+The chain is the app's and cannot be kept for a tab the app does not know. That is a fact to
+state, not a reason to fail, and the same reading already governs `--right-of self`, which
+refuses with a sentence when the caller's tty holds no session of the app's. The defect
+predates §46 and stayed invisible while every orchestrator ran inside the app; §48's ruling —
+an agent is an iTerm2 tab — makes the case of a caller OUTSIDE it the one that has to behave,
+because that is the session that must be able to spawn its way back in.
+
+What the suite reads: a caller the app does not know, and a caller with no tty at all, both
+hand back an empty session id without raising; a caller it does know hands back its own.
