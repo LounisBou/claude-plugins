@@ -1730,9 +1730,42 @@ answer was « your terminal is not one of mine, so I kept no chain ».
 The chain is the app's and cannot be kept for a tab the app does not know. That is a fact to
 state, not a reason to fail, and the same reading already governs `--right-of self`, which
 refuses with a sentence when the caller's tty holds no session of the app's. The defect
-predates §46 and stayed invisible while every orchestrator ran inside the app; §48's ruling —
-an agent is an iTerm2 tab — makes the case of a caller OUTSIDE it the one that has to behave,
-because that is the session that must be able to spawn its way back in.
+predates §46 and stayed invisible while every orchestrator ran inside the app.
+
+**A claim this section first made, and the operator struck out on reading it.** It said §48's
+ruling made a caller outside the app « the case that has to behave ». That reads the ruling
+BACKWARDS. The ruling forbids the orchestrator from CREATING a session outside the app — and
+the launcher now stops rather than making one — so it makes such a caller rarer, not
+commoner; the one measured here existed only because it was made before the ruling, by a
+launcher that had stopped answering. What the ruling does not govern is where a session finds
+itself without the orchestrator deciding it: one the operator starts in another terminal, over
+a remote connection, in an editor's pane. Those are rare, and rare is the honest word.
+
+A traceback is not an acceptable answer at any frequency, and that is the whole reason this is
+fixed. The frequency argument was written in the same round that measured the fix, it flattered
+a ruling made an hour earlier, and it was false. A repair is justified by what is broken.
 
 What the suite reads: a caller the app does not know, and a caller with no tty at all, both
 hand back an empty session id without raising; a caller it does know hands back its own.
+
+## 50. A repair is justified by what is broken
+
+**0.28.2.** §49's fix was right and the reason printed beside it was false. It said the
+operator's ruling of an hour earlier — an agent is an iTerm2 tab — made a caller outside the
+app « the case that has to behave ». He read it and asked the obvious question: if the thing
+is strictly forbidden, how does forbidding it make the case common? It does not. A ruling
+that forbids MAKING something makes it rarer. The sentence read the ruling backwards, and it
+read that way because it was reaching for his latest word to bless a change instead of
+pointing at the defect: a traceback where a sentence belonged.
+
+The shape is worth a guard because it is invisible from inside. The fix was correct, the
+tests were green, the reasoning flattered a rule the operator had just laid down, and nothing
+in a suite reads prose. It shipped. What catches it is the habit of reading a justification's
+DIRECTION before writing it — a rule that forbids, reduces — and the plainer habit of
+justifying a repair by the thing that is broken and by nothing else.
+
+The rulebook carries both as a rationalization and a red flag, and the suite holds them
+there, which is all a suite can do about a sentence.
+
+What the suite reads: the two rationalization rows and the red flag, in the rulebook.
+What a live round reads: nothing. This one was read by the operator, which is how it was found.
