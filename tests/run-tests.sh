@@ -61,7 +61,7 @@ echo "== repository policy =="
 policy_hits() {
   ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=.claude --exclude-dir=plans \
       --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh \
-    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|\.claude\.json' || true )
+    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|\.claude\.json|LounisBou/claude-statusbar' || true )
 }
 check "no product name in prose" "" "$(policy_hits)"
 
@@ -213,6 +213,17 @@ check "the succession brief template carries the handover message and the wait f
   "$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'handed over')|$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'wait for its « handed over »')"
 check "the rulebook carries the handover message and the wait for it" "yes|yes" \
   "$(spells "$RULEBOOK" 'handed over')|$(spells "$RULEBOOK" 'wait for its « handed over »')"
+
+# §45: one marketplace, the family's — the install lines read the operator's own,
+# `lounisbou`, and this repository's single-plugin one is gone from every file that ships.
+check "the README installs from the family's marketplace" "yes" \
+  "$(spells "$ROOT/README.md" 'orchestrator@lounisbou')"
+
+# tests/run-tests.sh is excluded because it QUOTES the pattern it searches for (like
+# policy_hits above); .claude/ is the operator's own session material, not shipped content.
+check "the repository's own marketplace install line survives nowhere outside docs/ and .git" "0" \
+  "$(grep -rl --exclude-dir=.git --exclude-dir=.claude --exclude=run-tests.sh -- \
+     'orchestrator@claude-orchestrator' "$ROOT" 2>/dev/null | grep -Evc "^$ROOT/docs/")"
 
 # The name is short and it has two roles (§42): the operator read his window and could not
 # tell one agent from another, nor an agent from an orchestrator, at a glance. Every
