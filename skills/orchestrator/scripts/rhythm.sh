@@ -118,16 +118,30 @@ if [ -n "$register" ]; then
     # is not an open entry; the match is exact, so `reopened` is not one either. A cell
     # written as code is read without its backticks: a register formatting its statuses that
     # way read as zero open entries while it held a hundred.
+    #
+    # The header is read at EVERY table — the row a separator row follows — and a table with
+    # no Status column counts nothing. Read once, on the first table carrying the word, the
+    # column stayed on a leading vocabulary table and the index was compared on its
+    # identifiers: « 1 open (open) » on a register holding 102. And an entry is identified by
+    # a cell BEFORE its status: a table whose first column is Status is the vocabulary that
+    # defines the statuses, and its `open` row is a definition, not an entry.
     awk -v name="$register" '
     function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); gsub(/^`+|`+$/, "", s); return s }
     /^[ \t]*\|/ {
         n = split($0, c, "|")
-        if (col == 0) { for (i = 2; i < n; i++) if (tolower(trim(c[i])) == "status") { col = i; break }; next }
-        if (trim(c[2]) ~ /^:?-+:?$/) next
-        if (trim(c[col]) == "open") { open++; ids = ids (open > 1 ? ", " : "") trim(c[2]) }
+        if (trim(c[2]) ~ /^:?-+:?$/) {
+            col = 0
+            for (i = 3; i < hn; i++) if (tolower(trim(h[i])) == "status") { col = i; found = 1; break }
+            intable = 1
+            next
+        }
+        if (intable && col && trim(c[col]) == "open") { open++; ids = ids (open > 1 ? ", " : "") trim(c[2]) }
+        hn = split($0, h, "|")
+        next
     }
+    { intable = 0; col = 0; hn = 0 }
     END {
-        if (col == 0) { print "register " name ": no Status column"; exit }
+        if (!found) { print "register " name ": no Status column"; exit }
         printf "register %s: %d open%s\n", name, open, (open ? " (" ids ")" : "")
     }' "$file"
 fi

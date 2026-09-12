@@ -20,8 +20,10 @@
 #
 # and a register whose Status column holds three open rows — two bare, one written in
 # backticks the way a register that formats its statuses as code does — one `reopened`, one
-# backticked `fixed #12`, and a Title cell reading `open` that is not a status. The nested
-# file is what tells a pathspec whose `*` crosses directories from one whose `*` does not.
+# backticked `fixed #12`, and a Title cell reading `open` that is not a status. Before the
+# index sits a vocabulary table whose FIRST column is headed Status, and after it a table with
+# no Status column whose cell reads `open`: a header is read at every table, not once. The
+# nested file is what tells a pathspec whose `*` crosses directories from one whose does not.
 
 set -euo pipefail
 
@@ -48,6 +50,15 @@ grow README.md 1
 cat > register.md <<'EOF'
 # Register
 
+## Status vocabulary
+
+| Status | Means |
+|---|---|
+| `open` | reproduced, not fixed |
+| `fixed #N` | fixed by a pull request |
+
+## Index
+
 | Id | Title | Status |
 |---|---|---|
 | B-1 | one | open |
@@ -56,6 +67,12 @@ cat > register.md <<'EOF'
 | B-4 | four | reopened |
 | B-5 | five | `open` |
 | B-6 | six | `fixed #12` |
+
+## Notes
+
+| Id | Note |
+|---|---|
+| B-9 | open |
 EOF
 commit "chore: set up"
 
