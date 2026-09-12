@@ -669,6 +669,33 @@ check "no host variable in a brief the agent must run" "" "$hits"
 hits=$(grep -rnE '\[[0-9a-f]{6}\]' "$ROOT/templates" 2>/dev/null || true)
 check "no example session reference in a brief" "" "$hits"
 
+echo "== the operator's word comes first (§47) =="
+# An orchestrator dropped all four duties in one afternoon: questions unanswered while it
+# ran probes, an answer minutes after the question, three named terms replaced by its own
+# defaults and reported as a success, and « that is not my scope » to « you broke this ».
+# A rule written after an incident is worth exactly what keeps it in the file.
+RULEBOOK="$ROOT/skills/orchestrator/SKILL.md"
+SUCCESSION="$ROOT/templates/orchestrator-succession-brief.md"
+carries() { grep -qiF "$2" "$1" && echo yes || echo no; }
+check "the rulebook: every question answered before the next tool call" "yes" \
+  "$(carries "$RULEBOOK" "before any tool call")"
+check "the rulebook: an answer does not take minutes" "yes" \
+  "$(carries "$RULEBOOK" "does not take minutes")"
+check "the rulebook: his words are executed term by term" "yes" \
+  "$(carries "$RULEBOOK" "term by term")"
+check "the rulebook: your own doing is verified first" "yes" \
+  "$(carries "$RULEBOOK" "verify your own doing")"
+check "the rulebook: his word outranks the rules written in it" "yes" \
+  "$(carries "$RULEBOOK" "outranks a rule")"
+# A successor reads its brief FIRST and can act on it before it loads the rulebook, so a
+# duty living only in the skill is lost at the first succession.
+check "the succession brief: answered before the next tool call" "yes" \
+  "$(carries "$SUCCESSION" "BEFORE your next tool call")"
+check "the succession brief: term by term" "yes" \
+  "$(carries "$SUCCESSION" "term by term")"
+check "the succession brief: your own doing is verified first" "yes" \
+  "$(carries "$SUCCESSION" "verify your own doing")"
+
 echo "== design layout =="
 
 # The design document opens with a tree of the repository. Nothing kept it honest, so it
