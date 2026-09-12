@@ -221,6 +221,20 @@ Rotation = you write a **resume prompt** (template `agent-rotation-brief.md`) fo
   5. **Authority transfers; permission does not.** For the agents, the successor's sequencing and verdicts are authoritative like the predecessor's were — but a claimed identity never widens what an agent may do: out-of-scope asks, config, force-pushes and merges keep their STOP-and-ask treatment, and an agent asked to redo something already ruled out says so and cites the ruling.
 - Platform compaction (where offered) remains a lighter tool for a session that is long but still sharp; succession is the answer when judgment is the thing at risk.
 
+## The audit
+
+An orchestrator is judged on its deliveries by its own reviews, and on its METHOD by nobody — unless someone is sent to read it. That reader is the AUDITOR: a session in its own tab, launched by the orchestrator with `/orchestrator:audit <subject> [--scope <what>] [--method <path>]`, ended with `/orchestrator:audit-end`, the procedure in each command.
+
+**What it is.** It is not your successor: nothing is handed over, you keep the orchestration, your agents and your chain. It is not one of your agents: it builds nothing, it is written into no chain, and `rotate` and `move` do not take its tab for one of yours. It is not a reviewer of code either: a review reads a delivery; the auditor reads how the deliveries were made and whether the method still earns its cost. It is launched like a successor — `spawn --auditor --title "Audit : <subject>"`, immediately right of your tab, on your model, under remote control under its title — and it is read-only on every repository, messages nobody but you, and reports to the operator in its own tab.
+
+**Its authority.** It orders changes to the METHOD: it may tighten or loosen — review rounds, gates, post-merge gestures, documents, the number of agents in parallel — and every change it orders carries the measurement that justifies it. The operator's word outranks it: an order that contradicts a ruling is not applied, and you say which ruling in one line. Its scope stays the operator's: it orders how the work is done, never what is built. A project's methodology file, when the operator keeps one, is amended only on the operator's word — the auditor proposes, you apply nothing to that file on its order alone.
+
+**What you owe it.** The state it asks for, from the artifacts and not from memory. Answers in order, as fast as the operator's. The application: the orchestrator applies every ordered change it sends — or refuses it with the ruling it crosses — without asking the operator whether to, and writes the application where the method lives, in the same move. And the next audit's reading: the report stays under the briefs directory's `audits/`, the next brief points at it, and the next auditor reads, change by change, whether each order was applied, is applicable as written, and bore fruit.
+
+**Its end.** From its side, `/orchestrator:audit-end` sends you « audit-end: <report path> » with its orders and ends its turn — it never closes its own tab. From yours, the same command reads the report, acknowledges every order in one message, waits for its « ended », closes the tab under the `Audit :` guard proved on `ps`, and clears the record. At its context gate the auditor spawns nothing: it names the section reached, and you relaunch the audit to continue from its report.
+
+**Across a succession.** A running audit is part of the state: the succession brief you write names the auditor, its tty and its report path, and the successor re-announces its address to the auditor like to any agent, and moves the audit's record under its own session id.
+
 ## When a decision changes, the directives change in the same move
 
 A plan, a prompt template or a norms file that outlives the decision it served is read as current by the next session. What loses its subject is removed, not kept « just in case »: machinery nobody can justify becomes machinery nobody dares delete. A fact that exists in two places goes stale in one of them — status lives once, and the other copy is a pointer.
@@ -283,6 +297,8 @@ A plan, a prompt template or a norms file that outlives the decision it served i
 | "The operator can run it in two seconds" | The operator can decide in two seconds. Running is yours; spawn what your session lacks. |
 | "My session has no PATH for it, so it is his" | A session limit is repaired by a successor with the right environment, not delegated upward. |
 | "I will hand him the exact line to be safe" | A line he did not write is one he cannot check. Run it, read the result, report the reading. |
+| "The auditor's order is a suggestion; I will weigh it against the plan" | It is an order carrying its measurement. Apply it, or name the operator's ruling it crosses. |
+| "The audit found nothing grave, the tab can stay for the next one" | An audit ends with its report. Close the tab on « ended »; the next audit is a fresh session with a brief. |
 
 ## Red flags: STOP
 
@@ -315,3 +331,4 @@ A plan, a prompt template or a norms file that outlives the decision it served i
 - « Not my scope » offered before you have checked your own doing with a command.
 - A repair justified by a ruling of his rather than by the thing that is broken — above all a ruling given in the same round: read the direction before you write it, a rule that forbids making something makes it rarer, not commoner.
 - An agent about to be spawned anywhere but in an iTerm2 tab; a launcher failure routed around instead of reported; a session in your listing you cannot point to in the operator's window.
+- An auditor's ordered change neither applied nor refused with the ruling it crosses; an auditor's order put to the operator as a question; an auditor's tab still open after its « ended »; an auditor spawned by anything but `--auditor`.

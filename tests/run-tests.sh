@@ -1304,6 +1304,24 @@ check "the report stays on disk" "yes" "$(spells "$AUDEND" 'The report stays on 
 # audit to continue from the report.
 check "an auditor at its gate hands the continuation to the orchestrator" "yes|yes|yes|0" \
   "$(spells "$AUDBRIEF" 'You spawn nothing')|$(spells "$AUDEND" '--scope "continue from <report path>"')|$(spells "$AUDCMD" 'continue from <report')|$(grep -c 'successor auditor' "$AUDBRIEF" "$AUDEND" | awk -F: '{s+=$2} END {print s+0}')"
+# The rulebook carries the audit (§52): what an auditor is, what it may order, what the
+# orchestrator owes it, and the two commands — the commands load the rulebook first, so a duty
+# written only in a command is one an orchestrator reading the rulebook never meets.
+AUDRULE=$(awk '/^## The audit$/{f=1; next} f&&/^## /{exit} f' "$ROOT/skills/orchestrator/SKILL.md")
+AUDRULEF="$WORK/rulebook-audit-section.md"; printf '%s\n' "$AUDRULE" > "$AUDRULEF"
+check "the rulebook has a section « The audit »" "yes" "$([ -n "$AUDRULE" ] && echo yes || echo no)"
+check "it says what an auditor is not" "yes|yes|yes" \
+  "$(carries "$AUDRULEF" 'not your successor')|$(carries "$AUDRULEF" 'not one of your agents')|$(carries "$AUDRULEF" 'not a reviewer of code')"
+check "it gives the auditor its authority, under the operator's word" "yes|yes|yes" \
+  "$(carries "$AUDRULEF" 'tighten or loosen')|$(carries "$AUDRULEF" "the operator's word outranks it")|$(carries "$AUDRULEF" "scope stays the operator's")"
+check "it says what the orchestrator owes the auditor" "yes|yes|yes" \
+  "$(carries "$AUDRULEF" 'the state it asks for')|$(carries "$AUDRULEF" 'applies every ordered change')|$(carries "$AUDRULEF" "the next audit's reading")"
+check "it names both commands and the launcher's flag" "yes|yes|yes" \
+  "$(carries "$AUDRULEF" '/orchestrator:audit <subject>')|$(carries "$AUDRULEF" '/orchestrator:audit-end')|$(spells "$AUDRULEF" '--auditor')"
+check "a running audit survives a succession" "yes" "$(carries "$AUDRULEF" 're-announces its address to the auditor')"
+check "the red flags carry the audit" "yes|yes" \
+  "$(carries "$ROOT/skills/orchestrator/SKILL.md" "An auditor's ordered change neither applied nor refused with the ruling it crosses")|$(carries "$ROOT/skills/orchestrator/SKILL.md" "an auditor's tab still open after its « ended »")"
+
 AUDCLOSE=$(grep -m1 -o 'iterm-agent.sh close .*' "$AUDEND" 2>/dev/null | sed -e 's/^iterm-agent.sh close //' -e 's/`.*$//' -e 's#<auditor tty>#/dev/ttys950#')
 audclose() { eval "set -- $AUDCLOSE"; ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" close "$@" 2>&1; }
 check "its close line is one the launcher runs, guarded on the audit title" "close=/dev/ttys950 expect_title=Audit :" \
