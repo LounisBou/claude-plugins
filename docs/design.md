@@ -1600,16 +1600,20 @@ answer in eight seconds is never asked for a cookie. That is what makes the hang
 rather than merely shorter. The same rule holds for every AppleScript in the file: there is
 no unbounded `osascript` anywhere in it.
 
-**One rung is not enough.** AppleScript dies WITH the API here — both need the same run
-loop. So the ladder is three rungs and every command says on stderr which one served it and
-why the ones above did not: `api` (the normal case, and the only one that places a tab and
-keeps the chain), `applescript` (the module missing, the environment unbuilt, the API
-server off, a cookie refused), `tmux` (**everything**, including an app dispatching
-nothing). The last rung is what makes « the orchestrator can reach a terminal in any
-circumstance » true rather than aspirational; it places nothing and keeps no chain, and it
-says so instead of pretending. `ORCHESTRATOR_BACKEND` pins one rung for a caller who wants
-the API's failure rather than a fallback that hides it, and an unknown value is refused
-rather than read as the default.
+**One rung is not enough — but the second one is the last.** AppleScript is the fallback,
+and it is the only one: it drove this plugin before the API existed and it covers what the
+API alone does not — the module missing, the environment unbuilt, the API server off, a
+cookie refused. Every command tries `api`, then `applescript`, and says on stderr which one
+served it and why the one above did not. `ORCHESTRATOR_BACKEND` pins one rung for a caller
+who wants the API's failure rather than a fallback that hides it; an unknown value is
+refused rather than read as the default.
+
+The fallback cannot place a tab. The app's dictionary declares a tab `index` and does not
+implement it — `-1728` on every form, measured on 3.7.0 — and the only placement left in
+AppleScript drives the menu bar through the accessibility layer, which is the grant, the
+activation and the focus flicker per move that §0's commit replaced. So a fallback spawn
+lands where the app puts it and says so: a tab in the wrong place is an agent that runs, and
+placement is bought back with `move` once the API answers again.
 
 **The cause travels with its remedy.** When no rung can reach the app, the launcher samples
 its main thread once — once per run, not once per rung — and says what holds it. The modal
@@ -1667,3 +1671,49 @@ The suite checks both files carry it.
 What the suite reads: the four duties and the primacy sentence in the rulebook; the duties
 in the succession brief. What a live round reads: nothing — this one is read by the
 operator, in how he is answered.
+
+## 48. An agent is an iTerm2 tab, and a name that cannot be read is not invented
+
+**0.28.0.** Two rulings of the operator's, hours after §46 shipped.
+
+**The third rung is struck out.** §46 ended its ladder on tmux and called it the guarantee
+that an orchestrator can reach a terminal in any circumstance. The operator's answer: « tmux
+n'est pas une solution […] Plus jamais d'agent tmux ». He is right, and the reason is the one
+§47 is about. A session that is not a tab in the window he reads is not an agent he can see,
+place, close or account for; a launcher that quietly hands him one has hidden the fault
+rather than repaired it. And the fault it was hiding — the app wedged in a modal loop — has a
+ONE-KEYSTROKE remedy. Naming it and stopping is the repair. Routing around it is a terminal
+he never asked for, three of which were already running, invisible to every listing he had.
+
+So the ladder is `api` then `applescript`, and nothing else. AppleScript is the right
+fallback and always was: it drove this plugin before the API existed. What it cannot do is
+placement — the dictionary declares a tab `index` and does not implement it (`-1728` on every
+form, 3.7.0), and the menu-bar route is the accessibility grant the API was adopted to be rid
+of — so a fallback spawn lands where the app puts it and says so. The rulebook carries the
+rule where it binds: an agent is an iTerm2 tab, always, and a launcher failure is reported,
+never routed around.
+
+**A name is read to a bound, or it is not read.** `ps` hands back a flat command line: the
+quoting that made `--name` one argument is gone, and the words after it run on to the next
+option or the end of the line. §42 put `--name` LAST for exactly that reason, so the end of
+the line is the end of the name — and a launch that does otherwise, a prompt placed after it,
+leaves a boundary nothing can recover. Three sessions a hand-rolled launch had made listed
+as « Agent : mock layer Read and execute <a brief path>. Your orchestrator is … »: a whole
+brief in the column that says who a session is.
+
+The bound is LENGTH and not shape. A name under another convention is still a name and still
+what the operator sees, so `Orchestrator : f` reads back whole and the shape check stays
+where it belongs, on the successor that derives from it (§39); past forty characters — the
+number this file already refuses to let a launch line fill a terminal with — a reconstruction
+is not a name and is reported as unreadable. The listing says `(name unreadable)`, which is a
+different fact from `(host default)` and an orchestrator acts differently on the two. A name
+invented by wherever the words happened to stop would be worse than saying it cannot be read:
+it is a name an orchestrator would then address. §39's refusal on a launch line keeps its
+verdict and changes its words — « cannot be read from the process table » is what is true of
+a string nobody could read, where « does not read Orch : <subject> » was answering a question
+that was never asked.
+
+What the suite reads: the ladder with two rungs and `tmux` refused by name; `--name` last
+read back whole, another convention read back whole, a prompt run into the name reported
+unreadable, and the row that marks it. What a live round reads: both rungs listing the same
+sessions, and a spawn on the fallback landing and saying it could not place itself.

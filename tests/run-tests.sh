@@ -669,6 +669,46 @@ check "no host variable in a brief the agent must run" "" "$hits"
 hits=$(grep -rnE '\[[0-9a-f]{6}\]' "$ROOT/templates" 2>/dev/null || true)
 check "no example session reference in a brief" "" "$hits"
 
+echo "== iterm-agents: a name read from the process table is held to the shape (§48) =="
+# `ps` hands back a flat command line: the quoting that made a name one argument is gone,
+# and a launch that puts its prompt AFTER --name leaves a boundary nothing can recover.
+# The launcher puts --name LAST for exactly that reason; a session launched otherwise is
+# read as unreadable rather than given a name invented by where the words happened to stop.
+# Observed: three sessions listed as « Agent : mock layer Read and execute /Users/…/BRIEF.md.
+# Your orchestrator is … » — a whole brief in the column that says who a session is.
+namefile="$WORK/ps-names.txt"
+name_of() { printf '%s\n' "$2" > "$namefile"
+  ORCHESTRATOR_PS_TABLE="$namefile" "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia
+n = ia.session_name_on('$1')
+print('(unreadable)' if n == ia.UNREADABLE_NAME else (n or '(none)'))"; }
+
+check "the launcher's own shape, --name last, reads back whole" "Agent : phase 2" \
+  "$(name_of /dev/ttys901 '/dev/ttys901 /opt/x/claude --permission-mode auto --name Agent : phase 2')"
+check "a name followed by another option stops at it" "Orch : plugin family" \
+  "$(name_of /dev/ttys901 '/dev/ttys901 /opt/x/claude --name Orch : plugin family --permission-mode auto')"
+check "a prompt run into the name is not reported as a name" "(unreadable)" \
+  "$(name_of /dev/ttys901 '/dev/ttys901 /opt/x/claude --name Agent : mock layer Read and execute /Users/izno/BRIEF.md. Your orchestrator is Orch : TM frontend')"
+check "a name under another convention is still read back whole" "steward-successor" \
+  "$(name_of /dev/ttys901 '/dev/ttys901 /opt/x/claude --name steward-successor')"
+check "and the older role word too, so the successor's refusal can quote it" "Orchestrator : f" \
+  "$(name_of /dev/ttys901 '/dev/ttys901 /opt/x/claude --name Orchestrator : f --permission-mode auto')"
+check "no --name at all stays no name" "(none)" \
+  "$(name_of /dev/ttys901 '/dev/ttys901 /opt/x/claude --permission-mode auto')"
+# The listing says WHICH of the two it is: a session launched without a name and a session
+# whose name cannot be read are different facts, and an orchestrator acts differently on them.
+check "the row marks a name it could not read, and does not call it a default" "(name unreadable)" \
+  "$("$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia
+print(ia.row_for(1, 1, '/dev/ttys901', 'x', ia.UNREADABLE_NAME, False, False).split(' | ')[3])")"
+check "and a row with no name at all still says host default" "(host default)" \
+  "$("$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia
+print(ia.row_for(1, 1, '/dev/ttys901', 'x', None, False, False).split(' | ')[3])")"
+
 echo "== the operator's word comes first (§47) =="
 # An orchestrator dropped all four duties in one afternoon: questions unanswered while it
 # ran probes, an answer minutes after the question, three named terms replaced by its own
@@ -991,8 +1031,11 @@ PSSHORT="$WORK/ps-short.txt"
 printf '/dev/ttys900 /opt/x/host --name Orch : %s --permission-mode auto\n' "$(printf 'x%.0s' $(seq 1 25))" > "$PSSHORT"
 PSLONGSUB="$WORK/ps-long-subject.txt"
 printf '/dev/ttys900 /opt/x/host --name Orch : %s --permission-mode auto\n' "$(printf 'x%.0s' $(seq 1 26))" > "$PSLONGSUB"
-check "a derived name that is a launch line is refused, and the refusal quotes 40 characters" "1|1" \
-  "$(succ "$PSLONG" --successor >/dev/null 2>&1; echo $?)|$(succ "$PSLONG" --successor | grep -c "the caller's session name 'Orchestrator : $(printf 'x%.0s' $(seq 1 25))' does not read")"
+# §48 changed this refusal's WORDS and not its verdict: a launch line is past anything a
+# name can be, so it is not read back as one at all, and « does not read Orch : <subject> »
+# was saying the wrong thing about a string nobody could read in the first place.
+check "a derived name that is a launch line is refused as unreadable" "1|1" \
+  "$(succ "$PSLONG" --successor >/dev/null 2>&1; echo $?)|$(succ "$PSLONG" --successor | grep -c "session name cannot be read from the process table")"
 check "a caller named under the older convention derives nothing" "1|1" \
   "$(succ "$PSOLD" --successor >/dev/null 2>&1; echo $?)|$(succ "$PSOLD" --successor | grep -c "the caller's session name 'Orchestrator : f' does not read .Orch : <subject>.; pass --title .Orch : <subject>.")"
 check "a derived subject of 25 characters still derives, of 26 is refused" "1|1" \
@@ -1441,31 +1484,29 @@ check "an unrecognised stack is not called a modal loop" "other" \
 check "no sample at all says so instead of guessing" "sampled" \
   "$(ipy "print('sampled' if 'sampled' in ia.cause_from_sample('') else 'no')")"
 
-echo "== iterm-agents: the fallback ladder (§46) =="
-# The fault proves one rung is not enough: when the app's main thread is wedged, AppleScript
-# dies WITH the API — both need the same run loop. Only a terminal the app does not own
-# survives that, so the ladder ends on tmux and the orchestrator can always reach a terminal.
-check "the default ladder is api, then applescript, then tmux" "api applescript tmux" \
+echo "== iterm-agents: the fallback ladder (§46, §48) =="
+# AppleScript is the fallback and the ONLY one: it drove this plugin before the API existed.
+# A third rung in another terminal was built, in tmux, and struck out by the operator — a
+# session that is not an iTerm2 tab is not an agent he can see, place or close in the window
+# he reads. When BOTH rungs are down the app is wedged, which has a one-keystroke remedy, so
+# the launcher names it and STOPS. Stopping loudly on a fault with a known remedy is the
+# repair; routing around it into a terminal he never asked for is not.
+check "the ladder is the api, then applescript, and nothing else" "api applescript" \
   "$(ipy "print(' '.join(ia.backend_chain()))")"
-check "a named backend is the only rung tried" "tmux" \
-  "$(ORCHESTRATOR_BACKEND=tmux ipy "print(' '.join(ia.backend_chain()))")"
+check "no terminal outside the app is offered as a rung" "api applescript" \
+  "$(ipy "print(' '.join(ia.BACKENDS))")"
+check "a named backend is the only rung tried" "applescript" \
+  "$(ORCHESTRATOR_BACKEND=applescript ipy "print(' '.join(ia.backend_chain()))")"
 check "the api can be named alone, for a caller that wants the failure" "api" \
   "$(ORCHESTRATOR_BACKEND=api ipy "print(' '.join(ia.backend_chain()))")"
 check_status "an unknown backend is refused, not silently ignored" 1 \
   env ORCHESTRATOR_BACKEND=carrier-pigeon "$py" -c "
 import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
 import iterm_agent as ia; ia.backend_chain()"
-
-# tmux answers the same listing shape as the app, so a caller reading rows does not branch.
-TMUXOUT='%12 /dev/ttys041 orch-a 1 agent-one
-%13 /dev/ttys042 orch-a 2 agent-two'
-check "the tmux rows carry the listing's own shape" "w1/t1 | /dev/ttys041 | agent-one | (host default)" \
-  "$(ipy "print(ia.tmux_rows('''$TMUXOUT''')[0])")"
-check "the tmux listing counts every pane" "2" \
-  "$(ipy "print(len(ia.tmux_rows('''$TMUXOUT''')))")"
-check "an empty tmux server lists nothing rather than failing" "0" \
-  "$(ipy "print(len(ia.tmux_rows('')))")"
-
+check_status "and the rung that was struck out is refused by name" 1 \
+  env ORCHESTRATOR_BACKEND=tmux "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia; ia.backend_chain()"
 echo "== iterm-agents: a close is proved on the process table (§46) =="
 # `close` printed « closed 1 session » on a session whose process was still running, and the
 # operator read that line as a fact. The API's acknowledgement is that the request was taken,

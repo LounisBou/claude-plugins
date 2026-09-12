@@ -321,16 +321,18 @@ PROBE_TIMEOUT = int(os.environ.get("ORCHESTRATOR_PROBE_TIMEOUT", "8"))
 # failure. A host CLI takes a moment to unwind; ten seconds is room for that and nothing
 # like room for a session that is not going.
 CLOSE_TIMEOUT = int(os.environ.get("ORCHESTRATOR_CLOSE_TIMEOUT", "10"))
-BACKENDS = ("api", "applescript", "tmux")
-# The rungs, in order. AppleScript sits between the API and tmux because it survives what
-# the API alone does not — the module missing, the environment unbuilt, the API server
-# switched off — and tmux sits last because it is the only one that survives a wedged app:
-# the other two both need the main run loop the fault takes away. That last rung is why an
-# orchestrator can reach a terminal in ANY circumstance, which is the whole point.
-DEFAULT_CHAIN = ("api", "applescript", "tmux")
-# The tmux server the fallback owns. Named, so it is never confused with a session the
-# operator keeps for himself.
-TMUX_SERVER = os.environ.get("ORCHESTRATOR_TMUX_SESSION") or "orchestrator"
+BACKENDS = ("api", "applescript")
+# The rungs, in order. AppleScript is the fallback and the ONLY one: it drove this plugin
+# before the API existed and it covers what the API alone does not — the module missing, the
+# environment unbuilt, the API server switched off, a cookie refused.
+#
+# There is deliberately no third rung in another terminal (§48). One was built, in tmux, and
+# the operator struck it out: a session that is not an iTerm2 tab is not an agent he can see,
+# place or close in the window he reads, and a launcher that quietly hands him one has hidden
+# the fault instead of repairing it. When BOTH rungs are down the app itself is wedged, and
+# that has a one-keystroke remedy — so the launcher NAMES it and stops. Stopping loudly on a
+# fault with a known remedy is the repair; routing around it is not.
+DEFAULT_CHAIN = ("api", "applescript")
 
 # Frames that mean the main thread is inside a nested modal loop: a context menu, the menu
 # bar, a sheet, a modal dialog. Read from the live fault (a context menu) plus the shapes
@@ -477,25 +479,6 @@ def backend_chain():
     if asked not in BACKENDS:
         die("unknown backend: %s (expected auto, %s)" % (asked, ", ".join(BACKENDS)))
     return (asked,)
-
-
-def tmux_rows(text):
-    """The tmux listing, in the shape the app's own listing has, so a caller that reads rows
-    never has to know which rung served it.
-
-    The input is what `tmux list-panes -a` prints under this file's format: one pane per
-    line, `<pane-id> <tty> <session> <window-index> <title>`."""
-    rows = []
-    windows = {}
-    for line in text.splitlines():
-        parts = line.split(None, 4)
-        if len(parts) < 4:
-            continue
-        _, tty, session, index = parts[:4]
-        title = parts[4] if len(parts) > 4 else ""
-        wi = windows.setdefault(session, len(windows) + 1)
-        rows.append(row_for(wi, int(index), tty, title, session_name_on(tty), False, False))
-    return rows
 
 
 def ps_rows(tty):
@@ -708,75 +691,6 @@ def as_spawn(command):
         end tell''' % (as_quote(command), as_quote(command)), "a new tab")
 
 
-# --- the tmux rung -----------------------------------------------------------------
-#
-# The last one, and the only one that survives an app that has stopped dispatching events
-# entirely: it owns a terminal the app does not. It places nothing and keeps no chain —
-# placement is the app's — and it says so rather than pretending to.
-
-def tmux_run(args, what):
-    try:
-        proc = subprocess.run(["tmux"] + args, capture_output=True, text=True, timeout=20)
-    except FileNotFoundError:
-        raise Unreachable("tmux is not installed, so there is no terminal left to fall back on")
-    except subprocess.TimeoutExpired:
-        raise Unreachable("tmux did not answer %s within 20s" % what)
-    if proc.returncode != 0:
-        raise Unreachable("tmux refused %s: %s"
-                          % (what, (proc.stderr or "").strip().splitlines()[:1] or ""))
-    return proc.stdout
-
-
-def tmux_list():
-    return tmux_rows(tmux_run(
-        ["list-panes", "-a", "-F", "#{pane_id} #{pane_tty} #{session_name} "
-         "#{window_index} #{window_name}"], "a listing"))
-
-
-def tmux_pane_on(tty):
-    for line in tmux_run(["list-panes", "-a", "-F", "#{pane_id} #{pane_tty}"],
-                         "a listing").splitlines():
-        parts = line.split()
-        if len(parts) == 2 and parts[1] == tty:
-            return parts[0]
-    return None
-
-
-def tmux_close(tty, expect):
-    pane = tmux_pane_on(tty)
-    if pane is None:
-        die("close: no session found on %s" % tty)
-    name = session_name_on(tty) or ""
-    if expect and stable_title(expect) not in stable_title(name):
-        die("close: refused: session on %s is named '%s', which does not contain '%s'"
-            % (tty, name, expect))
-    tmux_run(["kill-pane", "-t", pane], "a close")
-    return name
-
-
-def tmux_has_server():
-    """Whether the fallback's own session exists. `has-session` answers by its exit code
-    and says so on stderr when it does not, which is an answer and not a failure — so it is
-    the one tmux call here that does not go through `tmux_run`."""
-    try:
-        proc = subprocess.run(["tmux", "has-session", "-t", TMUX_SERVER],
-                              capture_output=True, text=True, timeout=20)
-    except FileNotFoundError:
-        raise Unreachable("tmux is not installed, so there is no terminal left to fall back on")
-    except subprocess.TimeoutExpired:
-        raise Unreachable("tmux did not answer a session check within 20s")
-    return proc.returncode == 0
-
-
-def tmux_spawn(command, title):
-    if not tmux_has_server():
-        tmux_run(["new-session", "-d", "-s", TMUX_SERVER, "-n", title, command],
-                 "a new session")
-        return (tmux_run(["list-panes", "-t", TMUX_SERVER, "-F", "#{pane_tty}"],
-                         "the new tty").split() or [""])[0]
-    return tmux_run(["new-window", "-t", TMUX_SERVER, "-n", title, "-P", "-F",
-                     "#{pane_tty}", command], "a new window").strip()
-
 
 # --- the tier map ----------------------------------------------------------------
 
@@ -831,8 +745,21 @@ def cli_pid_on_tty(tty):
     return host_cli_on(tty)
 
 
+# What a row shows for a session that WAS launched with a name the process table cannot
+# give back. Distinct from None, which means no name was given at all: an orchestrator acts
+# differently on the two, and a listing that merged them would be lying about one of them.
+UNREADABLE_NAME = "\x00unreadable"
+# Past this, a reconstruction is not a name but the launch line behind it. The same forty
+# characters the successor's refusal already quotes, for the same reason: measured live at
+# 366 characters, and a launch line must not fill a terminal.
+NAME_READABLE_MAX = 40
+
+
 def session_name_on(tty):
-    """The name the host session on a tty was launched with (`--name`), or None.
+    """The name the host session on a tty was launched with (`--name`).
+
+    None when none was given, `UNREADABLE_NAME` when one was and the table cannot give it
+    back, the name itself otherwise.
 
     The tab title is the host's summary of the conversation and it is rewritten as the
     session works: a listing showing one of those named nothing an orchestrator could
@@ -842,8 +769,21 @@ def session_name_on(tty):
     ORCHESTRATOR_PS_TABLE names a file that stands in for `ps`, one line per process,
     `<tty> <command>`. The suite sets it; a live run never does.
 
-    `ps` hands back a flat command line, so a name with spaces is read up to the next
-    option — which is what the host was given and what it shows."""
+    **`ps` hands back a FLAT command line**: the quoting that made the name one argument is
+    gone, and the words after `--name` run on until the next option or the end of the line.
+    The launcher puts `--name` last precisely so that the end of the line is the end of the
+    name (§42). A launch that does otherwise — a prompt placed after it — leaves a boundary
+    nothing here can recover.
+
+    The bound is LENGTH, not shape. A name under another convention is still a name and is
+    still what the operator sees, so `Orchestrator : f` reads back whole and the shape check
+    stays where it belongs, on the successor that derives from it (§39); what cannot be a
+    name at all is a reconstruction longer than any name — the forty characters this file
+    already refuses to let a launch line fill a terminal with. Observed on three sessions a
+    hand-rolled launch had made: the listing's « who is this session » column carried a
+    whole brief path and the sentence naming another orchestrator (§48). A name invented by
+    wherever the words happened to stop would be worse than saying it cannot be read: it is
+    a name an orchestrator would then address."""
     for _, command in ps_rows(tty):
         words = command.split()
         if "--name" not in words:
@@ -853,8 +793,10 @@ def session_name_on(tty):
             if word.startswith("--"):
                 break
             name.append(word)
-        if name:
-            return " ".join(name)
+        if not name:
+            continue
+        joined = " ".join(name)
+        return joined if len(joined) <= NAME_READABLE_MAX else UNREADABLE_NAME
     return None
 
 
@@ -1096,7 +1038,11 @@ def row_for(w, t, tty, title, name, is_self, hidden):
     the title says what the session is doing right now, the name says who it is. A caller
     launched by hand carries no name, and `(host default)` says that rather than leaving
     a column an orchestrator would read as a name."""
-    row = "w%d/t%d | %s | %s | %s" % (w, t, tty, title, name or "(host default)")
+    if name == UNREADABLE_NAME:
+        shown = "(name unreadable)"
+    else:
+        shown = name or "(host default)"
+    row = "w%d/t%d | %s | %s | %s" % (w, t, tty, title, shown)
     if is_self:
         row += " | self"
     if hidden:
@@ -1130,9 +1076,7 @@ def cmd_list(_argv):
         app = await iterm2.async_get_app(connection)
         return await list_rows(app)
 
-    rows = served_by("list", {"api": lambda: run(go),
-                              "applescript": as_list,
-                              "tmux": tmux_list})
+    rows = served_by("list", {"api": lambda: run(go), "applescript": as_list})
     for line in rows or []:
         print(line)
 
@@ -1351,6 +1295,10 @@ def cmd_spawn(argv):
             die("spawn: refused: --successor without --title needs the caller's session "
                 "name, and this session was launched without one; pass "
                 '--title "Orch : <subject>"')
+        if title == UNREADABLE_NAME:
+            die("spawn: refused: the caller's session name cannot be read from the process "
+                "table — a launch that places its prompt after --name loses the boundary "
+                'between the two; pass --title "Orch : <subject>"')
         if not TITLE_SHAPE.match(title):
             # The derived name answers to the same shape as a typed one: a caller named
             # under an older convention derives nothing, and neither does one whose name
@@ -1493,9 +1441,13 @@ def cmd_spawn(argv):
         return new
 
     def fallback_tab(make):
-        """A tab from a rung that is not the API. It places nothing and keeps no chain —
-        placement and the chain are the app's, and a fallback that pretended to hold them
-        would hand back a layout nobody could trust. Said out loud rather than assumed."""
+        """A real iTerm2 tab, made without the API. It places nothing and keeps no chain:
+        the app's AppleScript exposes `index` in its dictionary but does not implement it
+        (`-1728` on every form, measured on 3.7.0), and the only placement left there drives
+        the menu bar through the accessibility layer — a grant, the app brought to the front
+        and a focus flicker per move, which is what the API replaced. A tab that lands in the
+        wrong place is an agent that runs; a placement bought at that price is not. Said out
+        loud rather than assumed."""
         if anchor:
             print("spawn: this rung cannot place a tab; the new session lands where the "
                   "terminal puts it, not beside %s." % anchor, file=sys.stderr)
@@ -1506,7 +1458,6 @@ def cmd_spawn(argv):
     new_tty = served_by("spawn", {
         "api": lambda: run(go),
         "applescript": lambda: fallback_tab(lambda: as_spawn(command)),
-        "tmux": lambda: fallback_tab(lambda: tmux_spawn(command, title)),
     })
     if not new_tty:
         die("spawn: the terminal returned no tty for the new tab")
@@ -1682,8 +1633,7 @@ def cmd_close(argv):
         return await close_session(app, args.tty, args.expect)
 
     served_by("close", {"api": lambda: run(go),
-                        "applescript": lambda: as_close(args.tty, args.expect),
-                        "tmux": lambda: tmux_close(args.tty, args.expect)})
+                        "applescript": lambda: as_close(args.tty, args.expect)})
     # The close is not what was asked for, it is what the process table shows. The line
     # below used to print the moment the request was acknowledged, over a session that
     # kept running for minutes and had to be ended by hand (§46).
