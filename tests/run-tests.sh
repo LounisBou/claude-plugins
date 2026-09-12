@@ -20,6 +20,13 @@ fail=0
 # The launcher refuses a directory the host has never opened, in a dry run as much as in a
 # real one: "what would happen" includes being refused. The suite declares the precondition
 # once, in a file of its own, so no test ever reads or writes the operator's configuration.
+# The host CLI the suite reads the process table for, PINNED. It is read from the
+# environment, and an operator's own shell carries it as an absolute path: the same suite
+# was matching two different names on his machine and on a clean one, and only one of them
+# matched the tables the suite itself writes. A test must not read differently depending on
+# who runs it.
+export ORCHESTRATOR_HOST_CLI=claude
+
 export ORCHESTRATOR_TRUST_FILE="$WORK/suite-trust.json"
 "$(command -v python3 || echo python3)" -c "
 import json,os,sys
@@ -1348,6 +1355,105 @@ check "a recycled tty in the chain does not make a stranger's tab movable" "Fals
 # The entry names the right tab and another session: a chain file that outlived its owner.
 printf '{"tab_id":"2","tty":"/dev/ttys802","owner":"S-GONE"}\n' > "$ISTATE/chains/ttys801.jsonl"
 check "an entry another session wrote is not the caller's to move" "False" "$(owned /dev/ttys802 /dev/ttys801)"
+
+echo "== iterm-agents: iTerm2 answers, or it is said why (§46) =="
+# Every reading here is about the fault that made the launcher unkillable: the app stopped
+# dispatching AppleEvents, the library asked it for a cookie through an UNBOUNDED
+# `osascript`, and the call never returned. The suite stands both halves up with stubs, so
+# none of it needs a window server.
+IBIN="$WORK/ibin"
+mkdir -p "$IBIN"
+# An `osascript` that never answers, the way the app behaves when its main thread is wedged.
+printf '#!/bin/bash\ncat >/dev/null\nsleep 60\n' > "$IBIN/osascript-deaf"
+# One that answers the way a healthy app does.
+printf '#!/bin/bash\ncat >/dev/null\necho 3.7.0\n' > "$IBIN/osascript-live"
+# One that fails the way a missing app does.
+printf '#!/bin/bash\ncat >/dev/null\necho "execution error: iTerm2 got an error" >&2\nexit 1\n' > "$IBIN/osascript-broken"
+chmod +x "$IBIN"/osascript-*
+
+ipy() { "$py" -c "
+import sys
+sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia
+$1
+"; }
+
+check "a bounded osascript that never answers is killed and reported as a timeout" "timeout" \
+  "$(ORCHESTRATOR_OSASCRIPT="$IBIN/osascript-deaf" ORCHESTRATOR_PROBE_TIMEOUT=2 \
+     ipy "print(ia.osascript_run('x')[0])")"
+check "the deaf probe leaves no osascript behind" "0" \
+  "$(ORCHESTRATOR_OSASCRIPT="$IBIN/osascript-deaf" ORCHESTRATOR_PROBE_TIMEOUT=2 \
+     ipy "
+import subprocess
+ia.osascript_run('x')
+print(subprocess.run(['pgrep','-f','osascript-deaf'],capture_output=True,text=True).stdout.count('\n'))")"
+check "a live app answers the preflight with its version" "True 3.7.0" \
+  "$(ORCHESTRATOR_OSASCRIPT="$IBIN/osascript-live" ipy \
+     "print('%s %s' % ia.app_responsive())")"
+check "a wedged app fails the preflight as a timeout, not as an error" "False timeout" \
+  "$(ORCHESTRATOR_OSASCRIPT="$IBIN/osascript-deaf" ORCHESTRATOR_PROBE_TIMEOUT=2 ipy \
+     "print('%s %s' % ia.app_responsive())")"
+check "a refusing app fails the preflight as an error" "False error" \
+  "$(ORCHESTRATOR_OSASCRIPT="$IBIN/osascript-broken" ipy \
+     "print('%s %s' % ia.app_responsive())")"
+
+# The sample is the only reading that tells « busy » from « wedged in a modal loop », and the
+# modal loop is the one an operator clears with one keystroke. The stack below is the real
+# one, trimmed: a context menu left open by a single right-click.
+check "a modal menu in the sample is named as the cause, with its remedy" "modal|Escape" \
+  "$(ipy "
+c = ia.cause_from_sample('''
+ 1931 -[NSView _showMenuForEvent:]  (in AppKit)
+ 1931 -[NSMenuTrackingSession startRunningMenuEventLoop:]  (in AppKit)
+''')
+print('%s|%s' % ('modal' if 'MODAL' in c else 'no', 'Escape' if 'Escape' in c else 'no'))")"
+check "a sheet is named the same way" "modal" \
+  "$(ipy "print('modal' if 'MODAL' in ia.cause_from_sample('1 -[NSApplication runModalForWindow:]') else 'no')")"
+check "an unrecognised stack is not called a modal loop" "other" \
+  "$(ipy "print('modal' if 'MODAL' in ia.cause_from_sample('1 mach_msg_trap (in libsystem_kernel.dylib)') else 'other')")"
+check "no sample at all says so instead of guessing" "sampled" \
+  "$(ipy "print('sampled' if 'sampled' in ia.cause_from_sample('') else 'no')")"
+
+echo "== iterm-agents: the fallback ladder (§46) =="
+# The fault proves one rung is not enough: when the app's main thread is wedged, AppleScript
+# dies WITH the API — both need the same run loop. Only a terminal the app does not own
+# survives that, so the ladder ends on tmux and the orchestrator can always reach a terminal.
+check "the default ladder is api, then applescript, then tmux" "api applescript tmux" \
+  "$(ipy "print(' '.join(ia.backend_chain()))")"
+check "a named backend is the only rung tried" "tmux" \
+  "$(ORCHESTRATOR_BACKEND=tmux ipy "print(' '.join(ia.backend_chain()))")"
+check "the api can be named alone, for a caller that wants the failure" "api" \
+  "$(ORCHESTRATOR_BACKEND=api ipy "print(' '.join(ia.backend_chain()))")"
+check_status "an unknown backend is refused, not silently ignored" 1 \
+  env ORCHESTRATOR_BACKEND=carrier-pigeon "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia; ia.backend_chain()"
+
+# tmux answers the same listing shape as the app, so a caller reading rows does not branch.
+TMUXOUT='%12 /dev/ttys041 orch-a 1 agent-one
+%13 /dev/ttys042 orch-a 2 agent-two'
+check "the tmux rows carry the listing's own shape" "w1/t1 | /dev/ttys041 | agent-one | (host default)" \
+  "$(ipy "print(ia.tmux_rows('''$TMUXOUT''')[0])")"
+check "the tmux listing counts every pane" "2" \
+  "$(ipy "print(len(ia.tmux_rows('''$TMUXOUT''')))")"
+check "an empty tmux server lists nothing rather than failing" "0" \
+  "$(ipy "print(len(ia.tmux_rows('')))")"
+
+echo "== iterm-agents: a close is proved on the process table (§46) =="
+# `close` printed « closed 1 session » on a session whose process was still running, and the
+# operator read that line as a fact. The API's acknowledgement is that the request was taken,
+# not that the session is gone; only the process table answers that.
+printf '/dev/ttys901 /opt/x/claude --name Agent : survivor\n' > "$WORK/ps-alive.txt"
+: > "$WORK/ps-empty.txt"
+check "a session still in the process table is not reported closed" "still there" \
+  "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-alive.txt" ipy \
+     "print('gone' if ia.wait_gone('/dev/ttys901', 1) is None else 'still there')")"
+check "a session gone from the process table is reported closed" "gone" \
+  "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-empty.txt" ipy \
+     "print('gone' if ia.wait_gone('/dev/ttys901', 1) is None else 'still there')")"
+check "and what survived is named, so the operator reads which process held on" "claude" \
+  "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-alive.txt" ipy \
+     "print('claude' if 'claude' in (ia.wait_gone('/dev/ttys901', 1) or '') else 'unnamed')")"
 
 echo "== tap =="
 
