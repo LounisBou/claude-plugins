@@ -1509,15 +1509,19 @@ measurement, §29's decision standing.
 **The predecessor's last message is the successor's signal to close its tab.** Measured on
 the succession that opened this round: the successor sent « takeover confirmed » with a
 subscription to the predecessor's idle notice, the predecessor finished its own turn four
-minutes later with a screen saying the successor closes this tab, and the notice fired
-neither then nor when the tab was closed ten minutes after that on a reading of its screen.
-The protocol had said « close it once it is idle » and nothing about how idle is read, so
-the successor waited on a signal the host did not send, and the operator read a predecessor
-that said it was done beside a successor that said it was waiting. Idle is now said by the
+minutes later with a screen saying the successor closes this tab, and the notice reached
+the successor a quarter of an hour after that — when the successor's own turn ended, the
+tab already closed on a reading of its screen. The host delivers a notice at the
+receiver's turn boundary, and a successor verifying a handover works through one long
+turn. The protocol had said « close it once it is idle » and nothing about how idle is
+read, so the successor waited on a signal that could not arrive while it worked, and the
+operator read a predecessor that said it was done beside a successor that said it was
+waiting. Idle is now said by the
 one who knows: on the confirmation, the predecessor sends « handed over » as its LAST
 message, with nothing of its own left to write, and ends the turn; the successor closes the
 tab on that message. Five minutes without it, the successor reads the tab's screen and
-closes on a prompt with nothing in flight — the host's idle notice is not the reading. The
+closes on a prompt with nothing in flight — the host's idle notice is not the reading,
+since it reaches a working session only when that session stops. The
 rulebook's succession steps 3 and 4, the succession brief template's step 4 and the succeed
 command's step 3 say it; the suite reads the literal in each of the three.
 
