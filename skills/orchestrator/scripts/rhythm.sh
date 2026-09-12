@@ -10,6 +10,7 @@
 #   - feat commits per week: every commit reachable on the branch, merged branches included;
 #   - lines added and removed under the --product globs and under the --instrument globs, over
 #     the branch's non-merge commits (a merge commit would count its branch a second time);
+#     the globs are git's plain pathspecs, where `*` crosses directories;
 #   - the open entries of a Markdown register: the rows whose Status cell reads `open`;
 #   - and the one reading an audit wants that git does not hold — the latency between the
 #     operator's questions and their answers — said, never estimated.
@@ -98,13 +99,14 @@ lines() {
         echo "$label: no --$label glob given"
         return
     fi
-    local specs=() glob
-    for glob in "$@"; do specs+=(":(glob)$glob"); done
-    git -C "$repo" log "$branch" --since="$since" --no-merges --numstat --format= -- "${specs[@]}" |
+    # Plain pathspecs, not the `:(glob)` magic: under it `*` stops at a slash, and a product
+    # written `src/*.ts` counted its directory's top-level files alone — +738 lines on a real
+    # repository where git's own reading of the same tree was +40936.
+    git -C "$repo" log "$branch" --since="$since" --no-merges --numstat --format= -- "$@" |
         awk -v label="$label" -v globs="$*" \
             '$1 ~ /^[0-9]+$/ { a += $1; d += $2 } END { printf "%s +%d -%d  (%s)\n", label, a, d, globs }'
 }
-echo "lines since $since (non-merge commits on $branch):"
+echo "lines since $since (non-merge commits on $branch; globs are git pathspecs, where * crosses directories):"
 lines product ${product[@]+"${product[@]}"}
 lines instrument ${instrument[@]+"${instrument[@]}"}
 
@@ -113,9 +115,11 @@ if [ -n "$register" ]; then
     [ -f "$file" ] || file="$repo/$register"
     [ -f "$file" ] || die "register not found: $register"
     # The Status column is found by its header, so a Title cell that happens to read `open`
-    # is not an open entry; the match is exact, so `reopened` is not one either.
+    # is not an open entry; the match is exact, so `reopened` is not one either. A cell
+    # written as code is read without its backticks: a register formatting its statuses that
+    # way read as zero open entries while it held a hundred.
     awk -v name="$register" '
-    function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); return s }
+    function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); gsub(/^`+|`+$/, "", s); return s }
     /^[ \t]*\|/ {
         n = split($0, c, "|")
         if (col == 0) { for (i = 2; i < n; i++) if (tolower(trim(c[i])) == "status") { col = i; break }; next }

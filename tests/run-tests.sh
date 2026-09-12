@@ -764,9 +764,16 @@ check "merges per week, typed by the pull request's title" \
 check "nothing before --since is counted" "0" "$(printf '%s\n' "$ROUT" | grep -c 'W32')"
 check "feat commits per week count the merged branch's own" "feat 2026-W33 2|feat 2026-W34 1" \
   "$(printf '%s\n' "$ROUT" | grep -E '^feat 2026-W' | paste -sd'|' -)"
-check "lines under the product's globs against the instruments'" "product +16 -1|instrument +27 -0" \
+check "lines under the product's globs against the instruments'" "product +21 -1|instrument +27 -0" \
   "$(printf '%s\n' "$ROUT" | grep -E '^(product|instrument) \+' | sed 's/  *(.*$//' | paste -sd'|' -)"
-check "open register entries are read in the Status column, exactly" "register register.md: 2 open (B-1, B-3)" \
+# A glob's `*` crosses directories, as in git's own pathspecs: under the `:(glob)` magic it
+# did not, and a product written `src/*.ts` counted the directory's top-level files only —
+# measured on a real repository at +738 where git read +40936. The nested file decides it.
+check "a glob's * crosses directories, and the output says so" "product +21 -1|1" \
+  "$(rhythm "$RREPO" --since 2026-08-10 --product 'design/src/*.ts' | grep '^product +' | sed 's/  *(.*$//')|$(printf '%s\n' "$ROUT" | grep -c 'git pathspecs, where \* crosses directories')"
+# A register that writes its statuses as code (`open` in backticks) read as zero open entries
+# on a real one holding a hundred. The backticks are stripped; the match stays exact.
+check "open register entries are read in the Status column, exactly, backticks or not" "register register.md: 3 open (B-1, B-3, B-5)" \
   "$(printf '%s\n' "$ROUT" | grep '^register ')"
 check "and the latency git cannot measure is said, not pretended" "1" \
   "$(printf '%s\n' "$ROUT" | grep -c '^operator question latency: not measurable from git$')"

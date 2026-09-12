@@ -15,10 +15,13 @@
 #   week 2026-W34  ci: pipeline                        .github/ci.yml   +3
 #                  test(rules): guard                  tests/rules/r.py +7
 #                  feat: plain                         design/src/b.ts  +4
+#                                                      design/src/deep/c.ts +5
 #                  a subject with no type              README.md        +1
 #
-# and a register whose Status column holds two `open` rows, one `reopened`, and a Title cell
-# reading `open` that is not a status.
+# and a register whose Status column holds three open rows — two bare, one written in
+# backticks the way a register that formats its statuses as code does — one `reopened`, one
+# backticked `fixed #12`, and a Title cell reading `open` that is not a status. The nested
+# file is what tells a pathspec whose `*` crosses directories from one whose `*` does not.
 
 set -euo pipefail
 
@@ -51,6 +54,8 @@ cat > register.md <<'EOF'
 | B-2 | open | fixed |
 | B-3 | three | open |
 | B-4 | four | reopened |
+| B-5 | five | `open` |
+| B-6 | six | `fixed #12` |
 EOF
 commit "chore: set up"
 
@@ -76,6 +81,7 @@ commit "ci: pipeline"
 grow tests/rules/r.py 7
 commit "test(rules): guard"
 grow design/src/b.ts 4
+grow design/src/deep/c.ts 5
 commit "feat: plain"
 grow README.md 1
 commit "a subject with no type"
