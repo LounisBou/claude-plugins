@@ -169,11 +169,12 @@ check "the rulebook spawns beside the orchestrator" "1" "$(grep -c -- '--right-o
 check "the rulebook keeps running to the orchestrator" "1" "$(grep -c '^## The operator decides; the orchestrator runs' "$ROOT/skills/orchestrator/SKILL.md")"
 check "a runnable command is the orchestrator's" "1" "$(grep -c "A command the orchestrator could run is the orchestrator's to run" "$ROOT/skills/orchestrator/SKILL.md")"
 
-# Two readings the rulebook left open (§36): an implementer stays through the review round
-# of ITS delivery and is stood down at the verdict; a reader's pinned copy is a worktree.
-check "the rulebook keeps the implementer through its own review round" "1|1" \
-  "$(grep -c 'stays through the review round of ITS delivery' "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c 'a tab kept in case is not reuse' "$ROOT/skills/orchestrator/SKILL.md")"
-check "the tab skill says the same" "1" "$(grep -c 'stood down at the verdict' "$ROOT/skills/iterm-agents/SKILL.md")"
+# Two readings the rulebook left open (§36): an implementer's own delivery reading is
+# reversed by §45 (a delivered implementer is stood down at the verification, never kept
+# through the review round of it); a reader's pinned copy is a worktree.
+check "the rulebook's §45 reversal of the §36 reading holds" "1|1" \
+  "$(grep -c 'An implementer is stood down at the verification of its delivery' "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c 'a tab kept in case is not reuse' "$ROOT/skills/orchestrator/SKILL.md")"
+check "the tab skill says the same" "1" "$(grep -c 'never kept through its review round' "$ROOT/skills/iterm-agents/SKILL.md")"
 check "the rulebook pins a reader's copy as a worktree" "1|1" \
   "$(grep -c 'never a clone: a clone is for a WRITER' "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "a reader's pinned copy is a detached worktree" "$ROOT/skills/orchestrator/SKILL.md")"
 check "the review brief template pins a worktree" "1" "$(grep -c 'a detached worktree pinned at the head under review' "$ROOT/templates/agent-review-brief.md")"
@@ -190,13 +191,24 @@ check "the rotation brief's gauge names the installed copy" "1" "$(grep -c "the 
 check "the rulebook's first instantiation carries remote control" "1" "$(grep -c -- '--remote-control "Orch : <subject>"' "$ROOT/skills/orchestrator/SKILL.md")"
 check "the tab skill already reads the Chat caveat" "1" "$(grep -c 'before the session names itself' "$ROOT/skills/iterm-agents/SKILL.md")"
 
+# Read as presence, not as a count: a document may spell a literal on one line or on five,
+# and a guard that pins the number breaks on a sentence that was merely rewritten.
+spells() { grep -qF -- "$2" "$1" && echo yes || echo no; }
+
+# §45: a delivered implementer is stood down at the verification of its delivery, never
+# kept through the review round of it. The new lifecycle sentence present once, the old
+# one gone, in the rulebook and the tab skill each.
+RULEBOOK="$ROOT/skills/orchestrator/SKILL.md"
+TABSKILL="$ROOT/skills/iterm-agents/SKILL.md"
+check "the rulebook carries the new lifecycle sentence once, and the old one nowhere" "1|0" \
+  "$(grep -cF 'An implementer is stood down at the verification of its delivery, never kept through the review round of it: a review finding goes to a fresh session with a resume brief, and the cold start is the accepted price' "$RULEBOOK")|$(grep -cF 'stays through the review round' "$RULEBOOK")"
+check "the tab skill carries the new lifecycle sentence once, and the old one nowhere" "1|0" \
+  "$(grep -cF 'An implementer is stood down at the verification of its delivery, never kept through its review round; a review finding goes to a fresh session with a resume brief, which costs one cold start and keeps the window readable.' "$TABSKILL")|$(grep -cF 'stays through the review round' "$TABSKILL")"
+
 # The name is short and it has two roles (§42): the operator read his window and could not
 # tell one agent from another, nor an agent from an orchestrator, at a glance. Every
 # document the plugin ships spells the short roles and the cap on the subject; the older
 # spellings survive only in the design's own record of the decision.
-# Read as presence, not as a count: a document may spell a role on one line or on five,
-# and a guard that pins the number breaks on a sentence that was merely rewritten.
-spells() { grep -qF -- "$2" "$1" && echo yes || echo no; }
 check "the rulebook spells the short roles and the cap" "yes|yes|yes" \
   "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Agent : <subject>')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Orch : <subject>')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'at most 25 characters')"
 check "the tab skill spells them and the cap too" "yes|yes|yes" \
