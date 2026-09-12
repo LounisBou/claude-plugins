@@ -1769,3 +1769,29 @@ there, which is all a suite can do about a sentence.
 
 What the suite reads: the two rationalization rows and the red flag, in the rulebook.
 What a live round reads: nothing. This one was read by the operator, which is how it was found.
+
+## 51. A self-anchor the app cannot resolve is lost, not fatal
+
+**0.28.3.** Two refusals that look alike and are not. A NAMED anchor the app does not know is
+a tab the caller got wrong: refusing it is right, and it stays a refusal. The caller's OWN
+tty is a different reading — when the app has no session on it the caller is running in
+another terminal, and « place the new tab beside me » has no meaning there. Nobody named a
+wrong tab; there is simply no tab.
+
+Refusing that case blocked the one spawn that exists to end it. `--successor` anchors on
+self, so a session outside the app could not spawn its own successor AT ALL: the succession
+ordered precisely to bring such a session back into the app was the one thing it could not
+do. Found the moment the operator ordered exactly that. The anchor is dropped, the new tab
+lands where the app puts it, and the reason is said — which is also what keeps the successor
+carrying the name derivation and the remote-control flag that `--successor` alone provides,
+rather than being spawned by hand without them and the operator's terms quietly replaced by
+the launcher's defaults (§47).
+
+This is what §49 was reaching for and stated backwards (§50): not that the ruling makes a
+caller outside the app common — it makes it rarer — but that when one exists, the path back
+in must work, and here it did not.
+
+What the suite reads: an anchor the app knows is kept; the caller's own tty, unknown to the
+app, is dropped and the drop is said with its tty; a named anchor the app does not know is
+still a refusal. What a live round reads: a spawn from a session in another terminal,
+printing the dropped anchor and landing a real tab.

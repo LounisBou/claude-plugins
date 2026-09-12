@@ -1237,6 +1237,29 @@ def grant_directory_trust(path):
     os.replace(tmp, TRUST_FILE)
 
 
+def anchor_after_probe(found, anchor, own):
+    """The anchor to use once the app has been asked whether it knows it.
+
+    Two refusals that look alike and are not. A NAMED anchor the app does not know is a tab
+    the caller got wrong, and refusing it is right. The caller's OWN tty is a different
+    reading: when the app has no session on it, the caller is running in ANOTHER TERMINAL —
+    a multiplexer, a plain shell, a remote one — and « place the new tab beside me » has no
+    meaning there. Nobody named a wrong tab; there is simply no tab.
+
+    Refusing that case blocked the one spawn that exists to end it. A session outside the app
+    could not spawn its own successor at all — `--successor` anchors on self — so the
+    succession ordered precisely to bring such a session back into the app was the one thing
+    it could not do (§51). The anchor is dropped, the new tab lands where the app puts it,
+    and the reason is said."""
+    if found:
+        return anchor
+    if anchor and anchor == own:
+        print("spawn: this session is not a tab of the app's (%s), so the new tab cannot be "
+              "placed beside it; it lands where the app puts it." % own, file=sys.stderr)
+        return ""
+    die("spawn: no session found on %s" % anchor)
+
+
 def cmd_spawn(argv):
     p = argparse.ArgumentParser(prog="spawn", add_help=False)
     p.add_argument("--dir")
@@ -1350,8 +1373,7 @@ def cmd_spawn(argv):
             app = await iterm2.async_get_app(connection)
             win, _ = await anchor_position(app, anchor, side)
             return win is not None
-        if not run(probe):
-            die("spawn: no session found on %s" % anchor)
+        anchor = anchor_after_probe(run(probe), anchor, own)
     # BEFORE the tab exists, and BEFORE the prompt file is written: a refusal on the trust
     # question must leave nothing behind — a prompt file written ahead of it survived every
     # refusal and piled up under the state directory's prompts/ for a directory that was

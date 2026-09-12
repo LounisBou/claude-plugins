@@ -1511,6 +1511,33 @@ check "an unrecognised stack is not called a modal loop" "other" \
 check "no sample at all says so instead of guessing" "sampled" \
   "$(ipy "print('sampled' if 'sampled' in ia.cause_from_sample('') else 'no')")"
 
+echo "== iterm-agents: a self-anchor the app cannot resolve is lost, not fatal (§51) =="
+# Two refusals that look alike and are not. A NAMED anchor the app does not know is a tab
+# the caller got wrong: refuse it. The caller's OWN tty, when the app has no session on it,
+# means the caller is running in another terminal — « beside itself » has no meaning there,
+# and refusing it blocks the one spawn that exists to bring that session back into the app.
+# Measured: a session outside the app could not spawn its own successor at all, which is the
+# succession the operator ordered precisely to end that state.
+anchored() { "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia
+print('[%s]' % ia.anchor_after_probe($1, sys.argv[1], sys.argv[2]))" "$2" "$3" 2>/dev/null; }
+
+check "an anchor the app knows is kept" "[/dev/ttys802]" \
+  "$(anchored True /dev/ttys802 /dev/ttys801)"
+check "the caller's own tty, unknown to the app, is dropped" "[]" \
+  "$(anchored False /dev/ttys006 /dev/ttys006)"
+check "and the drop is said, naming the tty" "said" \
+  "$("$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia
+ia.anchor_after_probe(False, '/dev/ttys006', '/dev/ttys006')" 2>&1 | grep -c ttys006 | sed 's/^1$/said/')"
+check_status "a NAMED anchor the app does not know is still a refusal" 1 \
+  "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia
+ia.anchor_after_probe(False, '/dev/ttys802', '/dev/ttys801')"
+
 echo "== iterm-agents: the fallback ladder (§46, §48) =="
 # AppleScript is the fallback and the ONLY one: it drove this plugin before the API existed.
 # A third rung in another terminal was built, in tmux, and struck out by the operator — a
