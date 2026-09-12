@@ -639,7 +639,7 @@ def cmd_list(_argv):
 def write_prompt_file(prompt, title):
     os.makedirs(PROMPTS_DIR, exist_ok=True)
     safe = re.sub(r"[^A-Za-z0-9._-]", "-", title)[:40] or "agent"
-    path = os.path.join(PROMPTS_DIR, "%s-%d.txt" % (safe, int(time.time() * 1000)))
+    path = os.path.join(PROMPTS_DIR, "prompt-%s-%d.txt" % (safe, int(time.time() * 1000)))
     with open(path, "w") as fh:
         fh.write(prompt)
     return path

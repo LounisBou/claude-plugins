@@ -706,6 +706,9 @@ check "the launch stays short whatever the prompt" "short" "$([ "${#cmd}" -lt 50
 check "the launch reads the prompt from its file" "1" "$(printf '%s' "$cmd" | grep -c '"\$(cat ')"
 check "the prompt file holds the prompt byte for byte" "$prompt" "$(cat "$file")"
 check "the prompt file lives under the state directory" "yes" "$([ "${file#"$ISTATE"/prompts/}" != "$file" ] && echo yes || echo "$file")"
+# §45: the prompt file carries its kind in its name, so the three files a launch leaves
+# under prompts/ sort by kind like the two already did.
+check "the prompt file's name carries its kind" "1" "$(basename "$file" | grep -c '^prompt-')"
 check "the launch carries the decision mode" "1" "$(printf '%s' "$cmd" | grep -c -- '--permission-mode auto')"
 check "no tier and no map: no model argument" "0" "$(printf '%s' "$cmd" | grep -c -- '--model')"
 check "the launch changes into the working directory" "1" "$(printf '%s' "$cmd" | grep -c "^cd $WORK && ")"
