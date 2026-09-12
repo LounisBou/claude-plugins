@@ -1537,7 +1537,9 @@ installed from one marketplace and this one from another, with a third, unused o
 registered on the machine. The operator ruled for one: the install lines in the README
 and §8 read `lounisbou`, and the publication of 0.26.1 adds the entry there, reinstalls
 the plugin from it and forgets the other two registrations. The repository keeps its
-`marketplace.json` as the manifest the suite reads the version from, like the four others.
+`marketplace.json` as the manifest the suite reads the version from, like the four others. The install line cites the family marketplace's repository by name, and the brand guard
+exempts that name as it exempts the plugin's own: a marketplace source is a load-bearing
+identifier, removing it breaks the install rather than debranding the prose.
 
 **Closed without a change, with the reason.** The 25-character cap counts code points, not
 graphemes: the subject is typed by an orchestrator in the house format, no listing of this
