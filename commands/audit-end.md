@@ -28,8 +28,14 @@ the operator gave the word in the orchestrator's tab.
    the whole file against the fixed shape of your brief: seven sections, in order, every
    claim with its command. A section you could not reach is written as reached-so-far and
    named as such.
-2. **Message the orchestrator**, at the exact `ListAgents` name and reference your brief
+2. **Bring the method-and-decisions file up to date** — the one file you write beside your
+   report, named in your brief: this audit's ordered changes, the fate of the earlier ones,
+   the waits you named and the decisions you recommended, the operator's rulings received,
+   each dated. A line carries the operator's words or a measurement, never your opinion.
+   You write it and never commit it: the orchestrator lands it.
+3. **Message the orchestrator**, at the exact `ListAgents` name and reference your brief
    names, in one message whose first line is « audit-end: <report path> », followed by:
+   - the method-and-decisions file's path, brought up to date;
    - the changes you ORDER, numbered, each with the measurement that justifies it;
    - the one line for the operator: tighten / loosen / nothing, and its reason;
    - when the operator ends the audit at your context gate, after your « audit at 60 % »
@@ -38,7 +44,7 @@ the operator gave the word in the orchestrator's tab.
      is the next brief's previous report. You do not spawn anything: an auditor launches no
      session.
    - your measured context, from the gauge your brief names.
-3. **End your turn.** Answer the orchestrator's acknowledgment with « ended » as your last
+4. **End your turn.** Answer the orchestrator's acknowledgment with « ended » as your last
    message. Never close your own tab: the orchestrator closes it, and a session that kills
    itself mid-turn loses the turn.
 
@@ -57,7 +63,9 @@ starts it.
 2. **Read the report** at that path, all of it. Every ordered change is applied unless it
    contradicts the operator's word; the ones that do are named with the ruling they cross.
 3. **Acknowledge in ONE message** to the auditor: each ordered change with « applied »,
-   « scheduled: <when> » or « not applied: <the operator's ruling> ». When the operator gave
+   « scheduled: <when> » or « not applied: <the operator's ruling> », and one line for the
+   method-and-decisions file the auditor brought up to date: « method file: lands in <the
+   project's docs pull request, or where the repository's rule puts it>, <when> ». When the operator gave
    the word in your tab and no « audit-end » message has come, that message says so — the
    operator ended the audit — and asks the auditor to finish its report and send « ended ».
 4. **Wait for « ended ».** Five minutes without it: read the tab with
@@ -76,8 +84,9 @@ starts it.
    an absent `audits/` directory is « no record », not an error: say so, and read the
    auditor's name, tty and report path from `iterm-agent.sh list` and the report itself.
 7. **Carry the orders.** The applied changes go where the method lives — the project's
-   state file, its methodology file on the operator's word only, the briefs — in the same
-   move, and the next audit reads them there. When the operator ended the audit at the
+   state file, the briefs — in the same move, and the next audit reads them there. The
+   method-and-decisions file the auditor brought up to date lands where the project keeps
+   it — its docs pull request, or the repository's rule — when your acknowledgment said. When the operator ended the audit at the
    auditor's context gate, the relaunch is yours on the operator's word:
    `/orchestrator:audit <subject> --scope "continue from <report path>"`.
 8. **Tell the operator** in one line: the audit ended, the report path, the line for the

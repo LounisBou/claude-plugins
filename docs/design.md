@@ -1926,3 +1926,26 @@ that was not asked for. The auditor stays read-only: it names and recommends, th
 acts. The report's findings gain the species « a wait that needed no word », with its measured
 cost, and the line for the operator keeps its three words. The suite reads the paragraph in the
 brief's authority section and in the rulebook's section, and the species in the findings.
+
+**0.29.2 — the project's method-and-decisions file is the auditor's.** In 0.29.1 `--method`
+named a file the auditor read and could only propose to amend, through the operator. The watch
+that guided the first audits kept such a file by hand instead — the operator's method in the
+operator's words, the dated rulings, the orders and their fate — and guided the orchestrator's
+decisions from it; the operator wants that file kept by the auditor. It is one file per
+project. `--method` names it on the first audit, and the audit command records it under the
+state directory's `methods/`, beside the `audits/` records: one JSON per project, keyed by the
+repository's absolute path with every `/` written `-`, so that every later audit finds it
+without the flag. A project with none gets it created by the auditor at
+`<briefs dir>/method-and-decisions.md`, a path the brief lint is told to expect. A record keyed
+by the repository was chosen over one keyed by the orchestrator's session, as the audit record
+is: a successor, or an orchestration begun again, audits the same project under a new session
+id. The file is the one the auditor writes beside its report, named in the brief as the
+exception to its read-only clause, and it holds four things only — the operator's methodology
+in the operator's words, the operator's dated decisions, the method changes each audit orders
+and their fate, the waits named and the decisions recommended — each line the operator's words
+or a measurement, never the auditor's opinion. The auditor writes it and never commits it: the
+orchestrator lands it where the project keeps it, its docs pull request or the repository's
+rule, and the audit-end acknowledgment says when. It is the next audit's third reading and the
+first source of its report's section 5. The suite reads each term in the brief, the two
+commands, the rulebook, this section and the README, and refuses a brief that still reads the
+method-and-decisions file without maintaining it.
