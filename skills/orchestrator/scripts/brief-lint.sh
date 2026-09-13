@@ -1,7 +1,10 @@
 #!/bin/bash
 # brief-lint.sh — refuse a brief before it is dispatched, not after the round.
 #
-#   brief-lint.sh <brief-path>
+#   brief-lint.sh <brief-path> [--expect-created <path>]...
+#
+# --expect-created names a path the brief tells its session to create, so it cannot exist
+# yet (an audit's report); the path check accepts exactly that path as absent. Repeatable.
 #
 # Prints one line per finding and exits 1 when there is any; exits 0 and says so
 # otherwise. Every check is mechanical: this reads the file, it does not judge the work.
@@ -18,8 +21,23 @@
 
 set -uo pipefail
 
-brief="${1:-}"
-[ -n "$brief" ] || { echo "usage: brief-lint.sh <brief-path>" >&2; exit 1; }
+usage="usage: brief-lint.sh <brief-path> [--expect-created <path>]..."
+brief=""; expected=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --expect-created)
+            [ -n "${2:-}" ] || { echo "brief-lint: --expect-created needs a path ($usage)" >&2; exit 1; }
+            expected+=("$2")
+            shift 2
+            ;;
+        *)
+            [ -z "$brief" ] || { echo "brief-lint: one brief at a time ($usage)" >&2; exit 1; }
+            brief="$1"
+            shift
+            ;;
+    esac
+done
+[ -n "$brief" ] || { echo "$usage" >&2; exit 1; }
 [ -f "$brief" ] || { echo "brief-lint: not a file: $brief" >&2; exit 1; }
 
 findings=0
@@ -42,11 +60,18 @@ while IFS=: read -r n text; do
 done < <(grep -noE '\$\{[A-Z][A-Z0-9_]*[:-]*[^}]*\}|\$[A-Z][A-Z0-9_]{2,}' "$brief" 2>/dev/null || true)
 
 # 3. Every absolute path the brief names must exist on the machine the agent runs on.
-#    A prompt the next session cannot open by path does not exist.
+#    A prompt the next session cannot open by path does not exist. The one exception is a
+#    path the brief tells its session to create — an audit's report — named with
+#    --expect-created by the writer, exactly: every other absent path is still a finding.
+is_expected() {
+    local e
+    for e in ${expected[@]+"${expected[@]}"}; do [ "$e" = "$1" ] && return 0; done
+    return 1
+}
 while IFS= read -r line; do
     n=${line%%:*}; p=${line#*:}
     [ -n "${p:-}" ] || continue
-    [ -e "$p" ] || say "$n" "path does not exist: $p"
+    [ -e "$p" ] || is_expected "$p" || say "$n" "path does not exist: $p"
 done < <(grep -noE '`/[^`]+`' "$brief" 2>/dev/null | sed 's/`//g' || true)
 
 # 4. Exactly one session reference. Zero leaves the agent to discover its orchestrator,

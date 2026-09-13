@@ -1282,6 +1282,24 @@ if [ -f "$AUDBRIEF" ]; then
 fi
 check "the audit brief, every placeholder filled, lints clean" "yes|0" \
   "$([ -s "$AUDFILLED" ] && echo yes || echo no)|$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$AUDFILLED" >/dev/null 2>&1; echo $?)"
+# The report path is one the auditor creates, so it cannot exist when the brief is linted:
+# the first live audit brief read two findings by construction (issue #52). The command names
+# that one path to the lint as created later, and the lint exempts exactly it — a second
+# absent path in the same brief is still a finding.
+AUDREPORT="$WORK/audits/2026-09-13-tm/REPORT.md"
+AUDREAL="$WORK/audit-brief-real.md"
+if [ -f "$AUDBRIEF" ]; then
+  sed -E -e 's#\{\{ORCHESTRATOR_NAME\}\}#Orch : f [a1b2c3]#g' -e "s#\{\{REPORT_PATH\}\}#$AUDREPORT#g" -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$AUDBRIEF" > "$AUDREAL"
+fi
+check "an instantiated audit brief lints to zero with its report path expected, two findings without" "0|brief-lint: $AUDREAL: 0 findings|2" \
+  "$(bash "$LINT" "$AUDREAL" --expect-created "$AUDREPORT" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$AUDREAL" --expect-created "$AUDREPORT" 2>&1)|$(bash "$LINT" "$AUDREAL" 2>/dev/null | grep -c "path does not exist: $AUDREPORT")"
+cp "$AUDREAL" "$WORK/audit-brief-other.md" 2>/dev/null; printf 'Spec: `%s/nowhere.md`\n' "$WORK" >> "$WORK/audit-brief-other.md"
+check "--expect-created exempts the path it names and no other" "1|0" \
+  "$(bash "$LINT" "$WORK/audit-brief-other.md" --expect-created "$AUDREPORT" 2>/dev/null | grep -c "path does not exist: $WORK/nowhere.md")|$(bash "$LINT" "$WORK/audit-brief-other.md" --expect-created "$AUDREPORT" 2>/dev/null | grep -c "path does not exist: $AUDREPORT")"
+check "--expect-created without a path is refused, and says so" "1|1" \
+  "$(bash "$LINT" "$AUDREAL" --expect-created >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$AUDREAL" --expect-created 2>&1 | grep -c -- '--expect-created needs a path')"
+check "the audit command lints its brief with the report path expected" "yes" \
+  "$(spells "$AUDCMD" 'brief-lint.sh <brief path> --expect-created <report path>')"
 
 # `/orchestrator:audit-end` (§52), from either side. The auditor sends its report path and
 # ends its turn, never its session; the orchestrator acknowledges, waits for « ended », and

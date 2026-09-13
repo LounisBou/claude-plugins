@@ -47,8 +47,9 @@ Then:
      `skills/context-gauge/scripts/context-gauge.sh`, resolved now — the auditor's shell
      carries none of your variables; the same for `skills/orchestrator/scripts/rhythm.sh`;
    - the resource envelope the machine runs under today.
-2. **Lint it.** `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <brief path>`;
-   a finding is repaired before the spawn, a known false positive is named.
+2. **Lint it.** `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <brief path> --expect-created <report path>`;
+   the report path is the one path the lint accepts as absent — the auditor creates the
+   file. Any other finding is repaired before the spawn, a known false positive is named.
 3. **Spawn.** `iterm-agent.sh list` — note your own tty. Then:
 
    ```

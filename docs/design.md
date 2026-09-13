@@ -1888,3 +1888,13 @@ brief template's terms and fixed shape, and the template, every placeholder fill
 clean; `rhythm.sh` on the fixture repository; the rulebook's section. What a live round reads:
 an audit launched from an orchestrator, its tab beside the caller under remote control, the
 caller's chain unchanged, and its tab closed by `audit-end` with no host CLI left on its tty.
+
+**0.29.1 — what the first live run showed.** The run went end to end, and it was the auditor,
+not the operator, that ended it: the brief told it to run `audit-end` when its report was
+complete.
+The operator's ruling is now the section's first rule, written above and held by the suite on
+every audit text. Beside it, three defects of the command. `brief-lint.sh` read two findings
+on every audit brief, because the report path it dictates is a file the auditor creates; the
+lint takes `--expect-created <path>`, repeatable, and exempts exactly the paths it names —
+chosen over accepting any path whose parent directory exists, which would have exempted every
+misspelt file in an existing directory.
