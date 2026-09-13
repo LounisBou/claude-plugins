@@ -311,6 +311,15 @@ check "every synopsis spells the server option the way its sentence does" "0|2" 
 # placeholder the orchestrator fills with the names it chose (§42).
 check "the phase brief carries the servers placeholder beside the tier" "yes|yes" \
   "$(spells "$ROOT/templates/agent-phase-brief.md" 'spawned with these servers and no other:')|$(spells "$ROOT/templates/agent-phase-brief.md" 'MCP_SERVERS')"
+# The live round (tests/e2e.sh) instantiates the phase brief with one sed, then checks that every
+# placeholder is filled and that the brief lints. A placeholder added to the template and not to
+# that sed turns both red on the live round only, which this suite never runs — {{MCP_SERVERS}}
+# did (issue #54). Every placeholder the template spells is one the e2e sed fills.
+E2EUNFILLED=""
+for p in $(grep -o '{{[A-Z_]*}}' "$ROOT/templates/agent-phase-brief.md" | sort -u); do
+  grep -qF -- "-e \"s|$p|" "$ROOT/tests/e2e.sh" || E2EUNFILLED="$E2EUNFILLED $p"
+done
+check "the live round's sed fills every placeholder of the phase brief" "" "$E2EUNFILLED"
 
 check "the rulebook pins a reader's copy through the script" "1" "$(grep -c 'workspace.sh pin <source> <round> <head>' "$ROOT/skills/orchestrator/SKILL.md")"
 
@@ -1251,7 +1260,7 @@ check "the audit command loads the rulebook first" "yes|yes" \
 check "it instantiates the audit brief template and lints it" "yes|yes" \
   "$(spells "$AUDCMD" 'templates/agent-audit-brief.md')|$(spells "$AUDCMD" 'skills/orchestrator/scripts/brief-lint.sh')"
 check "it reads its subject, --scope and --method" "yes|yes|yes" \
-  "$(spells "$AUDCMD" '<subject> [--scope <what>] [--method <path>]')|$(spells "$AUDCMD" 'since the last audit')|$(spells "$AUDCMD" 'ONLY through the operator')"
+  "$(spells "$AUDCMD" '<subject> [--scope <what>] [--method <path>]')|$(spells "$AUDCMD" 'since the last audit')|$(spells "$AUDCMD" 'the file `--method` names')"
 check "it puts the report under the briefs directory's audits" "yes" \
   "$(spells "$AUDCMD" '<briefs dir>/audits/<date>-<subject>/REPORT.md')"
 check "it verifies the spawn on the artifact and waits for the handshake" "yes|yes|yes" \
@@ -1340,7 +1349,7 @@ check "audit-end and the audit's precondition read an absent audits/ as no recor
 # reading, the method files the orchestrator's own office names; only when it knows none does
 # the brief say so.
 check "without --method, the brief names the project's method files the orchestrator knows" "no|yes|yes|yes" \
-  "$(spells "$AUDCMD" 'has named none')|$(spells "$AUDCMD" "the project's method files you know")|$(spells "$AUDCMD" 'only when you know none')|$(spells "$AUDBRIEF" 'The project method files: {{METHOD_FILE}}')"
+  "$(spells "$AUDCMD" 'has named none')|$(spells "$AUDCMD" "the project's method files you know")|$(spells "$AUDCMD" 'only when you know none')|$(spells "$AUDBRIEF" "The project's other method files: {{METHOD_READING}}")"
 # An auditor at its context gate spawns nothing — --auditor is the orchestrator's flag and the
 # auditor sits in no chain: it names the section reached, and the ORCHESTRATOR relaunches the
 # audit to continue from the report.
@@ -1363,6 +1372,57 @@ check "it names both commands and the launcher's flag" "yes|yes|yes" \
 check "a running audit survives a succession" "yes" "$(carries "$AUDRULEF" 're-announces its address to the auditor')"
 check "the red flags carry the audit" "yes|yes" \
   "$(carries "$ROOT/skills/orchestrator/SKILL.md" "An auditor's ordered change neither applied nor refused with the ruling it crosses")|$(carries "$ROOT/skills/orchestrator/SKILL.md" "an auditor's tab still open after its « ended »")"
+# The auditor's mission includes the orchestration's PROGRESS (issue #54). The first audits
+# read the method and ordered changes, and said nothing of an orchestrator waiting for a word
+# nobody had to give. The brief's authority section and the rulebook's section each carry the
+# paragraph — a wait named, the orchestrator's decisions answered with one recommendation and
+# its cost, the operator's pre-digested, « decide and move » binding the auditor too — and the
+# report's findings carry the species with its measured cost.
+AUDAUTH4F="$WORK/audit-brief-authority.md"
+awk '/^## 4\. /{f=1; next} f&&/^## /{exit} f' "$AUDBRIEF" > "$AUDAUTH4F" 2>/dev/null
+AUDFIND2F="$WORK/audit-brief-findings.md"
+awk '/^### 2\. /{f=1; next} f&&/^###? /{exit} f' "$AUDBRIEF" > "$AUDFIND2F" 2>/dev/null
+for AUDPROGF in "$AUDAUTH4F" "$AUDRULEF"; do
+  check "the auditor makes the orchestration advance (${AUDPROGF##*/})" "yes|yes|yes|yes" \
+    "$(carries "$AUDPROGF" 'makes the orchestration ADVANCE')|$(carries "$AUDPROGF" 'a wait that needs no word')|$(carries "$AUDPROGF" 'ONE recommendation and its cost')|$(carries "$AUDPROGF" 'decides in one word')"
+  check "« decide and move » binds the auditor as it binds the orchestrator (${AUDPROGF##*/})" "yes|yes|yes" \
+    "$(carries "$AUDPROGF" '« decide and move » binds')|$(carries "$AUDPROGF" 'neither scope, nor frame, nor a STOP-and-ask of a brief')|$(carries "$AUDPROGF" 'never held for a word that was not asked for')"
+done
+check "the report's findings carry « a wait that needed no word », with its measured cost" "yes|yes" \
+  "$(carries "$AUDFIND2F" '« a wait that needed no word »')|$(carries "$AUDFIND2F" 'its measured cost')"
+# The project's method-and-decisions file is the auditor's to MAINTAIN (issue #54). In 0.29.1
+# the auditor read it and could only propose, through the operator, an amendment nobody wrote;
+# the watch that guided the first audits kept such a file by hand — the operator's method in
+# the operator's words, dated rulings, the orders and their fate — and decided from it. Now:
+# one file per project, recorded in the state directory keyed by the repository so the next
+# audit finds it without --method, created under the briefs directory when the project has
+# none; the one file the auditor writes beside its report, named as the exception to its
+# read-only clause; landed by the orchestrator where the project keeps it; the next audit's
+# third reading and the first source of its report's section 5.
+AUDREAD1F="$WORK/audit-brief-reading.md"
+awk '/^## 1\. /{f=1; next} f&&/^## /{exit} f' "$AUDBRIEF" > "$AUDREAD1F" 2>/dev/null
+AUDRO3F="$WORK/audit-brief-readonly.md"
+awk '/^## 3\. /{f=1; next} f&&/^## /{exit} f' "$AUDBRIEF" > "$AUDRO3F" 2>/dev/null
+AUDMETH5F="$WORK/audit-brief-method-changes.md"
+awk '/^### 5\. /{f=1; next} f&&/^###? /{exit} f' "$AUDBRIEF" > "$AUDMETH5F" 2>/dev/null
+check "the brief no longer reads the method file without amending it" "0" \
+  "$(grep -ciE 'never amend|you read them|propose an amendment' "$AUDBRIEF" 2>/dev/null)"
+check "the method-and-decisions file is the brief's third reading and the first source of section 5" "1|yes" \
+  "$(grep -c "^3\. The project's method-and-decisions file: \`{{METHOD_FILE}}\`" "$AUDREAD1F")|$(carries "$AUDMETH5F" 'first source')"
+check "it is the one file the auditor writes, the named exception to its read-only clause" "yes|yes|yes" \
+  "$(carries "$AUDRO3F" 'The one exception to this read-only clause')|$(spells "$AUDRO3F" '{{METHOD_FILE}}')|$(spells "$AUDBRIEF" 'the one file you write beside your report')"
+check "it holds the operator's words and measurements, never the auditor's opinion" "yes|yes|yes|yes" \
+  "$(carries "$AUDBRIEF" "the operator's DATED decisions")|$(carries "$AUDBRIEF" 'the method changes each audit orders and their fate')|$(carries "$AUDBRIEF" 'the waits named and the decisions recommended')|$(carries "$AUDBRIEF" "a line carries the operator's words or a measurement")"
+check "the audit command records the file per project, keyed by the repository, beside the audit record" "yes|yes|yes|yes" \
+  "$(spells "$AUDCMD" 'mkdir -p ${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/methods')|$(spells "$AUDCMD" 'claude-orchestrator/methods/<repository key>.json')|$(spells "$AUDCMD" '"method": "<method file>"')|$(spells "$AUDCMD" 'without `--method`, the record')"
+check "with no file for the project, the command says where it is created, and lints it as expected" "yes|yes|no" \
+  "$(spells "$AUDCMD" '<briefs dir>/method-and-decisions.md')|$(spells "$AUDCMD" '--expect-created <report path> [--expect-created <method file>]')|$(spells "$AUDCMD" 'ONLY through the operator')"
+check "audit-end brings the file up to date, and the acknowledgment says when it lands" "yes|yes|no" \
+  "$(spells "$AUDEND" 'Bring the method-and-decisions file up to date')|$(spells "$AUDEND" '« method file: lands in')|$(spells "$AUDEND" "methodology file on the operator's word only")"
+check "the rulebook hands the file to the auditor and its landing to the orchestrator" "no|yes|yes|yes" \
+  "$(carries "$AUDRULEF" 'you apply nothing to that file on its order alone')|$(carries "$AUDRULEF" 'the one file the auditor writes')|$(carries "$AUDRULEF" 'lands it where the project keeps it')|$(carries "$AUDRULEF" 'third reading of every next audit')"
+check "the design and the README name the method-and-decisions file" "yes|yes" \
+  "$(awk '/^## 52\. /{f=1; next} f&&/^## /{exit} f' "$ROOT/docs/design.md" | grep -qiF 'method-and-decisions file' && echo yes || echo no)|$(grep -F '| `/orchestrator:audit` |' "$ROOT/README.md" | grep -qF 'method-and-decisions file' && echo yes || echo no)"
 # The code cites §52 in a dozen places: the section it cites exists, and the README a reader
 # meets first lists what the audit adds.
 check "the design document has the audit's numbered section" "1" \

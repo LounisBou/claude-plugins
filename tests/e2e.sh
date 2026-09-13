@@ -82,6 +82,7 @@ sed -e "s|{{PROJECT}}|scratch|g" -e "s|{{PHASE_NUMBER}}|1|g" -e "s|{{PHASE_TITLE
     -e "s|{{EXTRA_FORBIDDEN}}|- none|g" -e "s|{{ORCHESTRATOR_NAME}}|$me|g" \
     -e "s|{{GAUGE}}|$ROOT/skills/context-gauge/scripts/context-gauge.sh|g" \
     -e "s|{{PR_TITLE}}|none|g" -e "s|{{PR_DESCRIPTION_SHAPE}}|none|g" -e "s|{{RESOURCE_ENVELOPE}}|none|g" \
+    -e "s|{{MCP_SERVERS}}|none|g" \
     -e "s|{{TIER}}|$tier|g" -e "s|{{TIER_REASON}}|it is a probe, not a phase|g" \
     "$ROOT/templates/agent-phase-brief.md" > "$SANDBOX/brief.md"
 check "every placeholder is filled" "0" "$(grep -c '{{' "$SANDBOX/brief.md")"

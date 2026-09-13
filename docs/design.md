@@ -1909,3 +1909,43 @@ with `mkdir -p` before it writes the record, and both commands read an absent di
 methodology file, as if the project had no method, while the orchestrator knew two: the
 command now has it write, as reading, the project's method files its own office names, and
 say that there are none only when it knows none.
+
+**0.29.2 — the auditor makes the orchestration advance.** The first two live audits read the
+method and ordered changes to it, and had no rule for what they also watched: an orchestration
+stopped on waits nobody had asked for. The operator's word after them: the auditor's mission is
+also to make things advance by taking decisions, and to help the orchestrator take its own.
+The brief's authority section and the rulebook's section carry it in one paragraph each. The
+auditor names a wait that needs no word — an orchestrator waiting for the operator on something
+delegated, or stopped on a decision it may take itself — with what it costs; it answers the
+orchestrator's decisions with one recommendation and its cost; it pre-digests the operator's —
+what the thing is, two readings, what each costs, one recommendation — so that the operator
+decides in one word; and « decide and move » binds it as it binds the orchestrator: what is
+neither scope, nor frame, nor a STOP-and-ask of a brief is taken on green evidence and reported
+after — merges, deploys, spawns, stand-downs, the orchestrator's to take, never held for a word
+that was not asked for. The auditor stays read-only: it names and recommends, the orchestrator
+acts. The report's findings gain the species « a wait that needed no word », with its measured
+cost, and the line for the operator keeps its three words. The suite reads the paragraph in the
+brief's authority section and in the rulebook's section, and the species in the findings.
+
+**0.29.2 — the project's method-and-decisions file is the auditor's.** In 0.29.1 `--method`
+named a file the auditor read and could only propose to amend, through the operator. The watch
+that guided the first audits kept such a file by hand instead — the operator's method in the
+operator's words, the dated rulings, the orders and their fate — and guided the orchestrator's
+decisions from it; the operator wants that file kept by the auditor. It is one file per
+project. `--method` names it on the first audit, and the audit command records it under the
+state directory's `methods/`, beside the `audits/` records: one JSON per project, keyed by the
+repository's absolute path with every `/` written `-`, so that every later audit finds it
+without the flag. A project with none gets it created by the auditor at
+`<briefs dir>/method-and-decisions.md`, a path the brief lint is told to expect. A record keyed
+by the repository was chosen over one keyed by the orchestrator's session, as the audit record
+is: a successor, or an orchestration begun again, audits the same project under a new session
+id. The file is the one the auditor writes beside its report, named in the brief as the
+exception to its read-only clause, and it holds four things only — the operator's methodology
+in the operator's words, the operator's dated decisions, the method changes each audit orders
+and their fate, the waits named and the decisions recommended — each line the operator's words
+or a measurement, never the auditor's opinion. The auditor writes it and never commits it: the
+orchestrator lands it where the project keeps it, its docs pull request or the repository's
+rule, and the audit-end acknowledgment says when. It is the next audit's third reading and the
+first source of its report's section 5. The suite reads each term in the brief, the two
+commands, the rulebook, this section and the README, and refuses a brief that still reads the
+method-and-decisions file without maintaining it.

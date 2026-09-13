@@ -38,10 +38,16 @@ Then:
      this orchestration started, with that date; a scope reading « continue from <report
      path> » — the auditor ended at its context gate — names that report as the previous
      one, and the new audit starts at the section it reached;
-   - the method files: the project file `--method` names, which the auditor reads and
-     may amend ONLY through the operator's word; without `--method`, the project's method files you know —
+   - the method-and-decisions file, by its absolute path — one per project, the one file
+     the auditor writes and you land (the rulebook's section « The audit »): the file `--method` names;
+     without `--method`, the record for this repository in the state directory (step 5),
+     so that every audit after the first finds it without the flag; with neither, the
+     project has none yet, and the brief names where the auditor creates it:
+     `<briefs dir>/method-and-decisions.md`. A `--method` naming another file than the
+     record replaces the record at step 5;
+   - the project's other method files, as reading: the project's method files you know —
      the ones your own office names (the state file's rules, a methodology or conventions
-     document) — written into the brief as reading, each by its absolute path; say that the
+     document) — each by its absolute path; say that the
      project has none only when you know none;
    - the report path `<briefs dir>/audits/<date>-<subject>/REPORT.md` (create its
      directory), and the previous report's path, or « none »;
@@ -49,9 +55,10 @@ Then:
      `skills/context-gauge/scripts/context-gauge.sh`, resolved now — the auditor's shell
      carries none of your variables; the same for `skills/orchestrator/scripts/rhythm.sh`;
    - the resource envelope the machine runs under today.
-2. **Lint it.** `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <brief path> --expect-created <report path>`;
-   the report path is the one path the lint accepts as absent — the auditor creates the
-   file. Any other finding is repaired before the spawn, a known false positive is named.
+2. **Lint it.** `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <brief path> --expect-created <report path> [--expect-created <method file>]`;
+   the report path, and the method-and-decisions file while the project has none yet, are
+   the paths the lint accepts as absent — the auditor creates them. Any other finding is
+   repaired before the spawn, a known false positive is named.
 3. **Spawn.** `iterm-agent.sh list` — note your own tty. Then:
 
    ```
@@ -81,13 +88,27 @@ Then:
 
    The name and reference are the auditor's as `ListAgents` prints them; the tty is the one
    `verify` read.
+
+   Then record the project's method-and-decisions file, so that the next audit finds it
+   without `--method`. One file per project, beside the audit records, keyed by the
+   repository: its absolute path (`git -C <repository> rev-parse --show-toplevel`) with
+   every `/` written `-`. Create the directory first,
+   `mkdir -p ${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/methods`, then write
+   `${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/methods/<repository key>.json`:
+
+   ```json
+   {"repository": "<repository>", "method": "<method file>", "recorded": "<date -u +%FT%TZ>"}
+   ```
+
+   A record that already names the same file is left as it is.
 6. **Tell the operator, after the fact**, in one line: the auditor is running, its tab,
-   its report path.
+   its report path, and the method-and-decisions file it maintains.
 
 While the audit runs, you owe the auditor what the rulebook's section says: the state it
-asks for, answers in order, and the application of every change it orders unless that
-change contradicts the operator's word — which you say, in one line, with the ruling it
-contradicts. You do not ask the operator whether to apply an ordered change: the auditor
+asks for, answers in order, every ruling of the operator's relayed as it comes — dated, in
+the operator's words — for the method-and-decisions file, and the application of every
+change it orders unless that change contradicts the operator's word — which you say, in one
+line, with the ruling it contradicts. You do not ask the operator whether to apply an ordered change: the auditor
 has that authority, and the operator's word outranks it.
 
 The audit ends on the operator's word, never on yours. The auditor's « audit ready: <report
