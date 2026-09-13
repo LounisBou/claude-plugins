@@ -15,7 +15,8 @@ session can read without depending on a particular status bar.
 | skill `iterm-agents` | `list`, `spawn`, `verify`, `resolve-tier`, `close`, `move`, `rotate` iTerm2 tabs running agent sessions, through the app's own API rather than by typing into a shell. Placement anchors on a tty or on `self` — after the caller's last open agent, so a window reads as launch order. The prompt goes to a file and the typed command stays short; the tab runs the launch through the operator's login shell, so the agent inherits the full PATH; spawn waits for the host CLI on the new tty and fails loudly otherwise; tty-exact close with a title guard; spawn-and-verify before close on rotate. |
 | skill `context-gauge` | A session's own context fill as a measured figure, from the status line payload when fresh, from the transcript otherwise. |
 | skill `model-routing` | Which capability tier a dispatch gets: pay for judgment nothing downstream re-checks. A table by class of work, five readings for the cases off the table, escalation as a rotation, the false-economy rule, and budget pressure read from the quota figures. |
-| `templates/` | Phase brief, rotation resume brief, orchestrator succession brief, review-agent brief, comments-agent brief, with the sections the rulebook makes mandatory. |
+| `templates/` | Phase brief, rotation resume brief, orchestrator succession brief, review-agent brief, comments-agent brief, audit brief, with the sections the rulebook makes mandatory. |
+| script `rhythm.sh` | An audit's rhythm figures read from git alone: merges per week by conventional-commit type, `feat` commits per week, lines under product globs against instrument globs, open entries of a Markdown register — and the one reading git does not hold, said rather than estimated. |
 | `/orchestrator:install` | Wires the gauge's tap in front of your status line. Idempotent, reversible. |
 | `/orchestrator:uninstall` | Restores the previous status line. |
 | `/orchestrator:status` | Live sessions and their context fill, the ones past the 60% gate flagged. |
@@ -24,6 +25,8 @@ session can read without depending on a particular status bar.
 | `/orchestrator:agents` | Each running implementer agent's progress with its measured context — asked, then verified on the artifact. |
 | `/orchestrator:progress` | Where the build stands: done, in flight, remaining, decisions pending, and the orchestrator's own context. |
 | `/orchestrator:decide` | Runs a decision round with the user: every open question one at a time — context, choices with their cost, one recommendation — each ruling recorded and relayed before the next; a question is re-presented in full after any interruption. |
+| `/orchestrator:audit` | Launches an auditor of the orchestration: a read-only session in a tab titled `Audit : <subject>`, beside the orchestrator, on its model and under remote control, in no chain. It reads the deliveries, the orchestrator's conduct and what is due, reports to the operator in a report of fixed shape, and orders the orchestrator to tighten or loosen the method, each change with its measurement. |
+| `/orchestrator:audit-end` | Ends the audit from either side: the auditor sends its report path and its orders and ends its turn; the orchestrator acknowledges them, closes the auditor's tab and clears the record. The report stays on disk for the next audit. |
 
 ## Tests
 

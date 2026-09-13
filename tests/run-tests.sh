@@ -748,6 +748,43 @@ check "the succession brief: term by term" "yes" \
 check "the succession brief: your own doing is verified first" "yes" \
   "$(carries "$SUCCESSION" "verify your own doing")"
 
+echo "== rhythm =="
+
+# `rhythm.sh` (§52): the figures an audit reads its rhythm from, generic and derived from git
+# alone. The fixture repository is built by a script with fixed dates and line counts, and
+# every expected figure below is written in that script's header.
+RREPO="$WORK/rhythm-repo"
+bash "$ROOT/tests/fixtures/rhythm-repo.sh" "$RREPO" >/dev/null 2>&1
+RHYTHM="$ROOT/skills/orchestrator/scripts/rhythm.sh"
+rhythm() { bash "$RHYTHM" "$@" 2>&1; }
+ROUT=$(rhythm "$RREPO" --since 2026-08-10 --product 'design/src/**' --instrument 'scripts/**' --instrument 'tests/**' --register register.md)
+check "merges per week, typed by the pull request's title" \
+  "week feat fix chore docs ci build test refactor other total|2026-W33 1 1 0 1 0 0 0 0 0 3|2026-W34 1 0 0 0 1 0 1 0 1 4" \
+  "$(printf '%s\n' "$ROUT" | grep -E '^(week feat |2026-W[0-9]+ [0-9])' | paste -sd'|' -)"
+check "nothing before --since is counted" "0" "$(printf '%s\n' "$ROUT" | grep -c 'W32')"
+check "feat commits per week count the merged branch's own" "feat 2026-W33 2|feat 2026-W34 1" \
+  "$(printf '%s\n' "$ROUT" | grep -E '^feat 2026-W' | paste -sd'|' -)"
+check "lines under the product's globs against the instruments'" "product +21 -1|instrument +27 -0" \
+  "$(printf '%s\n' "$ROUT" | grep -E '^(product|instrument) \+' | sed 's/  *(.*$//' | paste -sd'|' -)"
+# A glob's `*` crosses directories, as in git's own pathspecs: under the `:(glob)` magic it
+# did not, and a product written `src/*.ts` counted the directory's top-level files only —
+# measured on a real repository at +738 where git read +40936. The nested file decides it.
+check "a glob's * crosses directories, and the output says so" "product +21 -1|1" \
+  "$(rhythm "$RREPO" --since 2026-08-10 --product 'design/src/*.ts' | grep '^product +' | sed 's/  *(.*$//')|$(printf '%s\n' "$ROUT" | grep -c 'git pathspecs, where \* crosses directories')"
+# A register that writes its statuses as code (`open` in backticks) read as zero open entries
+# on a real one holding a hundred. The backticks are stripped; the match stays exact. And the
+# header is read at EVERY table: fixed on a leading vocabulary table headed Status, the column
+# stayed there and the index was compared on its identifiers — « 1 open (open) » for 102.
+# A table whose FIRST column is Status is that vocabulary: its `open` row defines a status.
+check "open register entries are read in the Status column, exactly, backticks or not" "register register.md: 3 open (B-1, B-3, B-5)" \
+  "$(printf '%s\n' "$ROUT" | grep '^register ')"
+check "and the latency git cannot measure is said, not pretended" "1" \
+  "$(printf '%s\n' "$ROUT" | grep -c '^operator question latency: not measurable from git$')"
+check "without globs or a register, those readings say so" "1|1|0" \
+  "$(rhythm "$RREPO" --since 2026-08-10 | grep -c '^product: no --product glob given$')|$(rhythm "$RREPO" --since 2026-08-10 | grep -c '^instrument: no --instrument glob given$')|$(rhythm "$RREPO" --since 2026-08-10 | grep -c '^register ')"
+check "no --since, or no repository, is refused" "1|1" \
+  "$(rhythm "$RREPO" >/dev/null 2>&1; echo $?)|$(rhythm "$WORK/not-a-repo-at-all" --since 2026-08-10 >/dev/null 2>&1; echo $?)"
+
 echo "== design layout =="
 
 # The design document opens with a tree of the repository. Nothing kept it honest, so it
@@ -1125,6 +1162,178 @@ check "a tab that is neither is refused, and the refusal names it" "1|1" \
   "$(mv_ --tty /dev/ttys901 --left-of self >/dev/null 2>&1; echo $?)|$(mv_ --tty /dev/ttys901 --left-of self | grep -c "move: refused: /dev/ttys901 is neither this session's tab nor in its chain (pass --force to move it anyway)")"
 check "--force moves it and says what it moved" "0|1" \
   "$(mv_ --tty /dev/ttys901 --left-of self --force >/dev/null 2>&1; echo $?)|$(mv_ --tty /dev/ttys901 --left-of self --force | grep -c "^move: forced: /dev/ttys901 is not in this session's chain$")"
+
+# An AUDITOR is neither a successor nor an agent (§52). It is placed like a successor —
+# immediately right of its caller, the chain ignored — on the caller's model and under
+# remote control under its own title; but it takes no chain and joins none: the
+# orchestrator it audits keeps its agents, and the auditor is nobody's agent. Its title is
+# REQUIRED and reads `Audit : <subject>`, a shape refused everywhere but under --auditor.
+AUDSTATE="$WORK/audstate"; mkdir -p "$AUDSTATE/ctx" "$AUDSTATE/chains"
+printf '{"session_id":"s-aud","model_id":"aud-model","updated_epoch":%s}\n' "$(date +%s)" > "$AUDSTATE/ctx/s-aud.json"
+printf '{"tab_id":"7","tty":"/dev/ttys901","owner":"S-ME"}\n' > "$AUDSTATE/chains/ttys900.jsonl"
+aud() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
+  ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-aud bash "$AGENT" spawn --dir "$WORK" --prompt p "$@" 2>&1; }
+audl() { aud "$@" | sed -n 's/^launch=//p'; }
+AUDOUT=$(aud --auditor --title 'Audit : tm')
+AUDLAUNCH=$(printf '%s' "$AUDOUT" | sed -n 's/^launch=//p')
+check "an auditor is named by its title and comes up under remote control under it" "1|1" \
+  "$(printf '%s' "$AUDLAUNCH" | grep -c -- "--name 'Audit : tm'")|$(printf '%s' "$AUDLAUNCH" | grep -c -- "--remote-control 'Audit : tm'")"
+check "and without the setting that turns remote control off" "0" "$(printf '%s' "$AUDLAUNCH" | grep -c -- '--settings')"
+check "an auditor runs on the caller's model with no flag to ask for it" "1" "$(printf '%s' "$AUDLAUNCH" | grep -c -- '--model aud-model')"
+check "an auditor anchors on self, past no agent, and the dry run says what it is" "1|1|1" \
+  "$(printf '%s' "$AUDOUT" | grep -c '^anchor=self$')|$(printf '%s' "$AUDOUT" | grep -c '^auditor=yes$')|$(printf '%s' "$AUDOUT" | grep -c '^successor=no$')"
+check "where a plain spawn from the same caller anchors after its last agent" "1" \
+  "$(aud --title 'Agent : x' --right-of self | grep -c '^anchor=/dev/ttys901$')"
+check "a chain is appended to by an agent, handed over by a successor, left alone by an auditor" "append|transfer|none" \
+  "$(aud --title 'Agent : x' --right-of self | sed -n 's/^chain=//p')|$(aud --title 'Orch : f' --successor | sed -n 's/^chain=//p')|$(printf '%s' "$AUDOUT" | sed -n 's/^chain=//p')"
+check "an auditor without a title is refused, and the reason names the shape" "1|1" \
+  "$(aud --auditor >/dev/null 2>&1; echo $?)|$(aud --auditor | grep -c -- '--auditor needs --title "Audit : <subject>"')"
+AUD25=$(printf 'x%.0s' $(seq 1 25)); AUD26=$(printf 'x%.0s' $(seq 1 26))
+check "an auditor's subject of 25 characters is accepted, of 26 refused" "1|1" \
+  "$(audl --auditor --title "Audit : $AUD25" | grep -c -- "--name 'Audit : $AUD25'")|$(aud --auditor --title "Audit : $AUD26" >/dev/null 2>&1; echo $?)"
+check "an auditor under an agent's or an orchestrator's title is refused" "1|1|1" \
+  "$(aud --auditor --title 'Agent : x' >/dev/null 2>&1; echo $?)|$(aud --auditor --title 'Orch : x' >/dev/null 2>&1; echo $?)|$(aud --auditor --title 'Agent : x' | grep -c "an auditor's title reads \"Audit : <subject>\"")"
+check "an audit title is refused without --auditor: plain, anchored, free, successor" "1|1|1|1" \
+  "$(aud --title 'Audit : x' | grep -c "an audit title is an auditor's")|$(aud --title 'Audit : x' --right-of self | grep -c "an audit title is an auditor's")|$(aud --title-free --title 'Audit : x' | grep -c "an audit title is an auditor's")|$(aud --successor --title 'Audit : x' | grep -c "an audit title is an auditor's")"
+check "and that refusal exits 1" "1" "$(aud --title 'Audit : x' >/dev/null 2>&1; echo $?)"
+for AUDFLAG in --successor '--right-of self' '--left-of /dev/ttys555' --title-free '--tier deep' '--model m' --no-remote-control; do
+  # shellcheck disable=SC2086 # the flag and its value are two words on purpose
+  check "an auditor refuses $AUDFLAG" "1|1" \
+    "$(aud --auditor --title 'Audit : x' $AUDFLAG >/dev/null 2>&1; echo $?)|$(aud --auditor --title 'Audit : x' $AUDFLAG | grep -c "is not an auditor's")"
+done
+check "an auditor with no model on record is refused, naming the installer" "1" \
+  "$(CLAUDE_CODE_SESSION_ID=s-aud-none ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" bash "$AGENT" spawn --dir "$WORK" --auditor --title 'Audit : x' 2>&1 | grep -c 'orchestrator:install')"
+check "--inherit-model beside --auditor asks for what is already implied" "1" \
+  "$(audl --auditor --inherit-model --title 'Audit : x' | grep -c -- '--model aud-model')"
+
+# `rotate` and `move` treat an auditor's tab as not the caller's to replace or place: it is
+# read by its NAME in the process table, so a stale chain entry naming it moves nothing.
+PSAUD="$WORK/ps-audit.txt"
+printf '/dev/ttys950 /opt/x/claude --name Audit : tm\n/dev/ttys901 /opt/x/claude --name Agent : x\n' > "$PSAUD"
+audrot() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" ORCHESTRATOR_PS_TABLE="$PSAUD" \
+  bash "$AGENT" rotate --dir "$WORK" --title "Agent : rotated" "$@" 2>&1; }
+check "rotate refuses --auditor" "1" "$(audrot --old-tty /dev/ttys901 --auditor | grep -c -- '--auditor is not a rotation')"
+AUDROT=$(audrot --old-tty /dev/ttys950)
+check "rotate refuses an auditor's tab before it spawns anything" "0|1|1" \
+  "$(printf '%s' "$AUDROT" | grep -c '^launch=')|$(printf '%s' "$AUDROT" | grep -c "rotate: refused: /dev/ttys950 is an auditor's tab ('Audit : tm')")|$(audrot --old-tty /dev/ttys950 >/dev/null 2>&1; echo $?)"
+check "--force rotates it, and says so" "1|1" \
+  "$(audrot --old-tty /dev/ttys950 --force | tail -1 | grep -c '^close=/dev/ttys950')|$(audrot --old-tty /dev/ttys950 --force | grep -c "^rotate: forced: /dev/ttys950 is an auditor's tab")"
+check "an agent's tab still rotates without --force" "1" "$(audrot --old-tty /dev/ttys901 | tail -1 | grep -c '^close=/dev/ttys901')"
+printf '{"tab_id":"8","tty":"/dev/ttys950","owner":"S-ME"}\n' >> "$AUDSTATE/chains/ttys900.jsonl"
+audmv() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" ORCHESTRATOR_SELF_TTY="${AUDSELF:-/dev/ttys900}" \
+  ORCHESTRATOR_SELF_ID=S-ME ORCHESTRATOR_PS_TABLE="$PSAUD" bash "$AGENT" move "$@" 2>&1; }
+check "an auditor's tab is not moved, even with a stale chain entry naming it" "1|1" \
+  "$(audmv --tty /dev/ttys950 --right-of self >/dev/null 2>&1; echo $?)|$(audmv --tty /dev/ttys950 --right-of self | grep -c "move: refused: /dev/ttys950 is an auditor's tab ('Audit : tm'), not this session's to place (pass --force to move it anyway)")"
+check "--force moves it, and says so" "0|1" \
+  "$(audmv --tty /dev/ttys950 --right-of self --force >/dev/null 2>&1; echo $?)|$(audmv --tty /dev/ttys950 --right-of self --force | grep -c "^move: forced: /dev/ttys950 is an auditor's tab")"
+check "an agent of the chain still moves" "1" "$(audmv --tty /dev/ttys901 --right-of self | grep -c '^move=/dev/ttys901 right_of=/dev/ttys900$')"
+check "an auditor places its own tab" "1" \
+  "$(AUDSELF=/dev/ttys950 audmv --tty /dev/ttys950 --right-of /dev/ttys900 | grep -c '^move=/dev/ttys950 right_of=/dev/ttys900$')"
+
+# `/orchestrator:audit` (§52): the brief instantiated and linted, the auditor spawned with
+# the launcher's own flag, verified on the artifact, recorded where `audit-end` finds it.
+# The spawn line is not only spelled: it is taken out of the command and run dry through
+# the launcher, so a command that drifts from the launcher's flags falls here.
+AUDCMD="$ROOT/commands/audit.md"
+check "the audit command loads the rulebook first" "yes|yes" \
+  "$(spells "$AUDCMD" 'Load that skill first')|$(spells "$AUDCMD" '`orchestrator:orchestrator`')"
+check "it instantiates the audit brief template and lints it" "yes|yes" \
+  "$(spells "$AUDCMD" 'templates/agent-audit-brief.md')|$(spells "$AUDCMD" 'skills/orchestrator/scripts/brief-lint.sh')"
+check "it reads its subject, --scope and --method" "yes|yes|yes" \
+  "$(spells "$AUDCMD" '<subject> [--scope <what>] [--method <path>]')|$(spells "$AUDCMD" 'since the last audit')|$(spells "$AUDCMD" 'ONLY through the operator')"
+check "it puts the report under the briefs directory's audits" "yes" \
+  "$(spells "$AUDCMD" '<briefs dir>/audits/<date>-<subject>/REPORT.md')"
+check "it verifies the spawn on the artifact and waits for the handshake" "yes|yes|yes" \
+  "$(spells "$AUDCMD" 'verify --tty')|$(spells "$AUDCMD" 'ListAgents')|$(spells "$AUDCMD" 'handshake')"
+check "it records the auditor in the state directory for audit-end" "yes|yes" \
+  "$(spells "$AUDCMD" 'claude-orchestrator/audits/')|$(spells "$AUDCMD" '"auditor_tty"')"
+AUDSPAWN=$(grep -m1 -o 'iterm-agent.sh spawn .*' "$AUDCMD" 2>/dev/null | sed -e 's/^iterm-agent.sh spawn //' -e 's/`.*$//' \
+  -e "s#<repository>#$WORK#" -e 's#<subject>#tm#' -e 's#<brief path>#/tmp/audit-brief.md#')
+audspawn() { eval "set -- $AUDSPAWN"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
+  ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-aud bash "$AGENT" spawn "$@" 2>&1; }
+AUDSPAWNOUT=$(if [ -n "$AUDSPAWN" ]; then audspawn; else echo "no spawn line"; fi)
+check "the command's spawn line is one the launcher runs as an auditor" "1|1|1|1" \
+  "$(printf '%s' "$AUDSPAWNOUT" | grep -c '^auditor=yes$')|$(printf '%s' "$AUDSPAWNOUT" | grep -c '^name=Audit : tm$')|$(printf '%s' "$AUDSPAWNOUT" | grep -c '^chain=none$')|$(printf '%s' "$AUDSPAWNOUT" | sed -n 's/^launch=//p' | grep -c -- "--permission-mode auto")"
+check "and it carries neither a tier, nor a successor's flag, nor an anchor" "0" \
+  "$(printf '%s' "$AUDSPAWN" | grep -cE -- '--tier|--successor|--right-of|--left-of')"
+
+# The audit brief (§52): read-only everywhere, reporting to the operator, ordering the
+# orchestrator with the measurement behind each change, and a report of a FIXED shape so
+# that two audits compare. Filled, it lints clean: a template whose own text trips the lint
+# would reach every auditor with a finding its orchestrator learned to ignore.
+AUDBRIEF="$ROOT/templates/agent-audit-brief.md"
+check "the auditor is read-only on every repository and every worktree" "yes|yes" \
+  "$(spells "$AUDBRIEF" 'READ-ONLY on every repository and every worktree')|$(spells "$AUDBRIEF" 'no edit, no commit, no push, no merge, no label, no comment, no kill, no session ended')"
+check "it never messages the orchestrator's agents, and runs nothing heavy unasked" "yes|yes" \
+  "$(spells "$AUDBRIEF" "never message the orchestrator's agents")|$(spells "$AUDBRIEF" "heavy run only on the operator's word")"
+check "it reports to the operator in the operator's language and orders the orchestrator" "yes|yes|yes" \
+  "$(spells "$AUDBRIEF" "to the OPERATOR, in your own tab, in the operator's language")|$(spells "$AUDBRIEF" 'TIGHTEN or LOOSEN')|$(spells "$AUDBRIEF" "unless it contradicts the operator's word")"
+check "it reads three axes" "yes|yes|yes" \
+  "$(spells "$AUDBRIEF" 'The DELIVERIES')|$(spells "$AUDBRIEF" "The orchestrator's CONDUCT")|$(spells "$AUDBRIEF" 'What is DUE and not done')"
+check "its report has the fixed shape, section by section" "7" \
+  "$(grep -cE '^### (1\. State verified|2\. Findings, most severe first|3\. Verified conform|4\. Rhythm|5\. Methodology changes since the last audit: applied\? applicable\? bearing fruit\?|6\. The line for the operator: tighten / loosen / nothing|7\. Method and limits)$' "$AUDBRIEF" 2>/dev/null)"
+check "it says what git cannot measure instead of pretending" "yes" \
+  "$(spells "$AUDBRIEF" 'not measurable from git')"
+check "every claim carries its command, and the auditor never closes its own tab" "yes|yes" \
+  "$(spells "$AUDBRIEF" 'Every claim carries the command that produces it')|$(spells "$AUDBRIEF" 'never close your own tab')"
+AUDFILLED="$WORK/audit-brief-filled.md"
+if [ -f "$AUDBRIEF" ]; then
+  sed -E -e 's#\{\{ORCHESTRATOR_NAME\}\}#Orch : f [a1b2c3]#g' -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$AUDBRIEF" > "$AUDFILLED"
+fi
+check "the audit brief, every placeholder filled, lints clean" "yes|0" \
+  "$([ -s "$AUDFILLED" ] && echo yes || echo no)|$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$AUDFILLED" >/dev/null 2>&1; echo $?)"
+
+# `/orchestrator:audit-end` (§52), from either side. The auditor sends its report path and
+# ends its turn, never its session; the orchestrator acknowledges, waits for « ended », and
+# closes the auditor's tab under the audit title, proved on the process table. The close
+# line is taken out of the command and run dry, like the audit's spawn line.
+AUDEND="$ROOT/commands/audit-end.md"
+check "audit-end loads the rulebook first" "yes|yes" \
+  "$(spells "$AUDEND" 'Load that skill first')|$(spells "$AUDEND" '`orchestrator:orchestrator`')"
+check "it is run from the auditor and from the orchestrator" "yes|yes" \
+  "$(spells "$AUDEND" '## From the auditor')|$(spells "$AUDEND" '## From the orchestrator')"
+check "the auditor sends its report path and never closes its own tab" "yes|yes|yes" \
+  "$(spells "$AUDEND" '« audit-end: <report path> »')|$(spells "$AUDEND" 'Never close your own tab')|$(spells "$AUDEND" '« ended »')"
+check "the orchestrator acknowledges once and reads the screen after five minutes" "yes|yes" \
+  "$(spells "$AUDEND" 'in ONE message')|$(spells "$AUDEND" 'screen --tty <auditor tty>')"
+check "the close is proved on ps and ListAgents, and the record is cleared" "yes|yes|yes" \
+  "$(spells "$AUDEND" 'ps -t')|$(spells "$AUDEND" 'ListAgents')|$(spells "$AUDEND" 'claude-orchestrator/audits/')"
+check "the report stays on disk" "yes" "$(spells "$AUDEND" 'The report stays on disk')"
+# An auditor at its context gate spawns nothing — --auditor is the orchestrator's flag and the
+# auditor sits in no chain: it names the section reached, and the ORCHESTRATOR relaunches the
+# audit to continue from the report.
+check "an auditor at its gate hands the continuation to the orchestrator" "yes|yes|yes|0" \
+  "$(spells "$AUDBRIEF" 'You spawn nothing')|$(spells "$AUDEND" '--scope "continue from <report path>"')|$(spells "$AUDCMD" 'continue from <report')|$(grep -c 'successor auditor' "$AUDBRIEF" "$AUDEND" | awk -F: '{s+=$2} END {print s+0}')"
+# The rulebook carries the audit (§52): what an auditor is, what it may order, what the
+# orchestrator owes it, and the two commands — the commands load the rulebook first, so a duty
+# written only in a command is one an orchestrator reading the rulebook never meets.
+AUDRULE=$(awk '/^## The audit$/{f=1; next} f&&/^## /{exit} f' "$ROOT/skills/orchestrator/SKILL.md")
+AUDRULEF="$WORK/rulebook-audit-section.md"; printf '%s\n' "$AUDRULE" > "$AUDRULEF"
+check "the rulebook has a section « The audit »" "yes" "$([ -n "$AUDRULE" ] && echo yes || echo no)"
+check "it says what an auditor is not" "yes|yes|yes" \
+  "$(carries "$AUDRULEF" 'not your successor')|$(carries "$AUDRULEF" 'not one of your agents')|$(carries "$AUDRULEF" 'not a reviewer of code')"
+check "it gives the auditor its authority, under the operator's word" "yes|yes|yes" \
+  "$(carries "$AUDRULEF" 'tighten or loosen')|$(carries "$AUDRULEF" "the operator's word outranks it")|$(carries "$AUDRULEF" "scope stays the operator's")"
+check "it says what the orchestrator owes the auditor" "yes|yes|yes" \
+  "$(carries "$AUDRULEF" 'the state it asks for')|$(carries "$AUDRULEF" 'applies every ordered change')|$(carries "$AUDRULEF" "the next audit's reading")"
+check "it names both commands and the launcher's flag" "yes|yes|yes" \
+  "$(carries "$AUDRULEF" '/orchestrator:audit <subject>')|$(carries "$AUDRULEF" '/orchestrator:audit-end')|$(spells "$AUDRULEF" '--auditor')"
+check "a running audit survives a succession" "yes" "$(carries "$AUDRULEF" 're-announces its address to the auditor')"
+check "the red flags carry the audit" "yes|yes" \
+  "$(carries "$ROOT/skills/orchestrator/SKILL.md" "An auditor's ordered change neither applied nor refused with the ruling it crosses")|$(carries "$ROOT/skills/orchestrator/SKILL.md" "an auditor's tab still open after its « ended »")"
+# The code cites §52 in a dozen places: the section it cites exists, and the README a reader
+# meets first lists what the audit adds.
+check "the design document has the audit's numbered section" "1" \
+  "$(grep -c '^## 52\. The audit of an orchestrator$' "$ROOT/docs/design.md")"
+check "the README lists the audit's two commands" "yes|yes" \
+  "$(spells "$ROOT/README.md" '| `/orchestrator:audit` |')|$(spells "$ROOT/README.md" '| `/orchestrator:audit-end` |')"
+check "the README names the audit brief and the rhythm script" "yes|yes" \
+  "$(spells "$ROOT/README.md" 'audit brief')|$(spells "$ROOT/README.md" 'rhythm.sh')"
+
+AUDCLOSE=$(grep -m1 -o 'iterm-agent.sh close .*' "$AUDEND" 2>/dev/null | sed -e 's/^iterm-agent.sh close //' -e 's/`.*$//' -e 's#<auditor tty>#/dev/ttys950#')
+audclose() { eval "set -- $AUDCLOSE"; ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" close "$@" 2>&1; }
+check "its close line is one the launcher runs, guarded on the audit title" "close=/dev/ttys950 expect_title=Audit :" \
+  "$(if [ -n "$AUDCLOSE" ]; then audclose; else echo 'no close line'; fi)"
 
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt" --prompt-file "$file" 2>&1)
 check "--prompt-file reuses the given file" "1" "$(printf '%s' "$out" | grep -c "prompt_file=$file")"

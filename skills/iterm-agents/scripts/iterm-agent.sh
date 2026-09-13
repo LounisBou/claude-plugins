@@ -7,6 +7,8 @@
 #                        [--permission-mode auto] [--title <t>]
 #                        [--prompt <text> | --prompt-file <path>]
 #                        [--left-of <tty> | --right-of <tty> | --right-of self | --successor] [--no-verify]
+#   iterm-agent.sh spawn --dir <path> --auditor --title "Audit : <subject>" [--prompt <text>]
+#     the caller's auditor: right of the caller, its model, remote control on, no chain
 #   iterm-agent.sh verify --tty /dev/ttysNNN
 #   iterm-agent.sh resolve-tier <deep|standard|light>
 #   iterm-agent.sh close --tty /dev/ttysNNN [--expect-title <substring>]

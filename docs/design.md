@@ -20,6 +20,7 @@ skills/iterm-agents/scripts/iterm_agent.py   the implementation, over the app AP
 skills/orchestrator/scripts/brief-lint.sh   refuses a brief before it is dispatched
 skills/orchestrator/scripts/dispatch-record.sh  one row per dispatch, and the routing signal
 skills/orchestrator/scripts/workspace.sh    a clone per phase with the project's local material; a pinned worktree per review round
+skills/orchestrator/scripts/rhythm.sh       an audit's rhythm figures, from git alone
 skills/model-routing/SKILL.md        which capability tier a dispatch gets
 skills/context-gauge/SKILL.md        how a session reads its own context fill
 skills/context-gauge/scripts/context-gauge.sh
@@ -29,6 +30,7 @@ templates/agent-rotation-brief.md    resume brief for a fresh implementer
 templates/agent-review-brief.md      one review round, read-only, one lens per reader
 templates/agent-comments-brief.md    one pass over a pull request's open threads
 templates/orchestrator-succession-brief.md
+templates/agent-audit-brief.md       one audit of an orchestration: read-only, a report of fixed shape
 commands/install.md                  wires the tap, creates the state directory
 commands/uninstall.md                restores the previous status line
 commands/status.md                   live sessions, their gauges, the routing pressure
@@ -36,12 +38,15 @@ commands/succeed.md                  runs the orchestrator succession
 commands/agents.md                   each running implementer's progress
 commands/progress.md                 where the build stands
 commands/decide.md                   the decision round, one arbitration at a time
+commands/audit.md                    launches the orchestrator's auditor
+commands/audit-end.md                ends the audit, from either side; the orchestrator closes the tab
 hooks/hooks.json                     declares the context gate on UserPromptSubmit
 hooks/context-gate.sh                the gate the harness enforces, not the model
 install.sh, uninstall.sh
 tests/run-tests.sh
 tests/e2e.sh                         one real round: a tab, a session, a close
 tests/fixtures/transcript.jsonl      a transcript tail for the gauge's computed tier
+tests/fixtures/rhythm-repo.sh        builds the dated repository rhythm.sh is tested on
 docs/design.md                       this document
 README.md, LICENSE
 ```
@@ -1795,3 +1800,86 @@ What the suite reads: an anchor the app knows is kept; the caller's own tty, unk
 app, is dropped and the drop is said with its tty; a named anchor the app does not know is
 still a refusal. What a live round reads: a spawn from a session in another terminal,
 printing the dropped anchor and landing a real tab.
+
+## 52. The audit of an orchestrator
+
+**0.29.0.** An orchestrator's deliveries are read by its reviews; its METHOD was read by
+nobody. The first audit of a live build was run by hand, by a second orchestrator session
+the operator pointed at the first, and what it found was of the method's kind: an
+independent review round a standing instruction required and the plan no longer carried, two
+waves in flight sharing one block of identifiers, a post-merge gesture neither done nor
+scheduled, directives on the main branch that a ruling had already reversed — and, measured
+from the merge history, a method whose instruments had outgrown the product they served. The
+operator ruled on that reading, and then asked for the instrument: a command that launches an
+auditor « a little as if the orchestrator launched a successor, but without succession »,
+with remote control and the orchestrator's own model, and a command that ends the audit, the
+orchestrator killing the auditor's session. The auditor tells the orchestrator what to change,
+may tighten or loosen the method, and checks that its changes are applied, applicable and
+bearing fruit.
+
+**An auditor is a third kind of session.** Not a successor: nothing is handed over. Not an
+agent: it builds nothing. Not a reviewer of code: a review reads a delivery, an audit reads how
+deliveries are made. Three things follow in the launcher. `spawn --auditor` places the tab the
+way `--successor` does — immediately right of the caller, the chain ignored — runs it on the
+caller's model (`--inherit-model` implied) and brings it up under remote control under its
+title; but `chain_effect` answers `none` for it, where an agent `append`s and a successor
+`transfer`s, because an auditor written into the chain would become the anchor the
+orchestrator's next agent lands after. The title is REQUIRED and reads `Audit : <subject>`,
+the subject held to the same twenty-five characters and space rule as every title (§45);
+`Audit :` is refused on any spawn without `--auditor`, under `--title-free` and `--successor`
+included, the way `Orch :` is refused on a plain anchor (§39). Every flag that would replace
+one of those terms with the launcher's default — an anchor, a tier, a model, `--title-free`,
+`--no-remote-control`, `--successor` — is refused beside `--auditor` rather than obeyed. And
+`rotate` and `move` read the process table for a session NAMED `Audit :` and refuse its tab
+unless `--force`: an auditor is in no chain, so « not in the chain » cannot tell it from a
+stranger's tab, and a stale chain entry on a recycled tty must not make it look like an agent
+(§26, §38).
+
+**Two commands, and the rulebook's section they load.** `/orchestrator:audit <subject>
+[--scope <what>] [--method <path>]` instantiates `templates/agent-audit-brief.md` into the
+briefs directory, lints it, spawns the auditor, verifies it on the artifact, and records its
+name, tty and report path under the state directory's `audits/`, keyed by the orchestrator's
+session id. `/orchestrator:audit-end` runs in either session: the auditor's half finishes the
+report and sends « audit-end: <report path> » with its orders, then ends its turn — it never
+closes its own tab; the orchestrator's half acknowledges every order in one message, waits for
+« ended », closes the tab under the `Audit :` guard proved on `ps`, and clears the record. The
+report stays on disk and nothing else of the audit survives. An auditor at its context gate
+spawns nothing: it names the section reached, and the orchestrator relaunches the audit with a
+scope reading « continue from <report path> ». A skill of the same name as a command was
+considered and not made: a plugin's commands and skills share one namespace, and
+`orchestrator:audit` would have shadowed one or the other. The rulebook's section « The
+audit » is what both commands load.
+
+**The brief fixes the report's shape**, so that two audits compare: state verified; findings
+most severe first, each with its evidence and the change it orders; verified conform; rhythm;
+methodology changes since the last audit — applied? applicable? bearing fruit?; the one line
+for the operator, tighten / loosen / nothing; method and limits. The auditor is read-only on
+every repository and worktree, messages nobody but its orchestrator, runs nothing heavy
+without the operator's word, and reports to the operator in the operator's language. Its
+orders carry their measurement, and the orchestrator applies them unless they cross a ruling
+of the operator's, which it names.
+
+**`rhythm.sh` is the rhythm section's instrument**, generic and read from git alone: merges
+per week by conventional-commit type (a merge commit typed by the pull request title its body
+carries), `feat` commits per week, lines under product globs against instrument globs, and the
+open entries of a Markdown register. The latency between the operator's questions and the
+answers is not in git, and the script says so rather than estimating it. Three readings of its
+first version were wrong on a real repository, each found by the orchestrator re-running it
+there and each repaired with a fixture case seen red first: the `:(glob)` pathspec magic
+stopped `*` at a slash, so `src/*.ts` counted top-level files only (+738 lines where git read
++40 936); a register writing its statuses as code (`` `open` ``) read as zero open entries;
+and a register opening with a vocabulary table headed Status had its index compared on the
+identifier column. Plain pathspecs now, backticks stripped before an exact compare, and a
+header read at every table, a Status column counting only when a cell identifies the entry
+before it. The fixture is a script that builds a dated repository, because a repository cannot
+be committed inside another.
+
+What the suite reads: `--auditor` in the dry run — its name, remote control under it, the
+caller's model, the anchor on self past the chain, `chain=none` beside `append` and
+`transfer`, every refusal both ways; `rotate` and `move` on an `Audit :` tab with and without
+`--force`; the spawn line of `/orchestrator:audit` and the close line of
+`/orchestrator:audit-end` taken out of the commands and run dry through the launcher; the
+brief template's terms and fixed shape, and the template, every placeholder filled, linting
+clean; `rhythm.sh` on the fixture repository; the rulebook's section. What a live round reads:
+an audit launched from an orchestrator, its tab beside the caller under remote control, the
+caller's chain unchanged, and its tab closed by `audit-end` with no host CLI left on its tty.
