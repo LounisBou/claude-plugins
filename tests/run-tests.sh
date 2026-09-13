@@ -1335,6 +1335,12 @@ check "the audit command creates the state directory's audits/ before it writes 
   "$(spells "$AUDCMD" 'mkdir -p ${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/audits')|$(awk '/mkdir -p .*claude-orchestrator\/audits/{m=NR} /with the Write tool/{w=NR} END{print (m && w && m < w) ? "yes" : "no"}' "$AUDCMD")"
 check "audit-end and the audit's precondition read an absent audits/ as no record" "yes|yes" \
   "$(spells "$AUDEND" 'an absent `audits/` directory is « no record », not an error')|$(spells "$AUDCMD" 'an absent `audits/` directory is « no record »')"
+# Without --method, the brief read « the operator has named none » as if the project had no
+# method, while its orchestrator knew two method files (issue #52). The command names, as
+# reading, the method files the orchestrator's own office names; only when it knows none does
+# the brief say so.
+check "without --method, the brief names the project's method files the orchestrator knows" "no|yes|yes|yes" \
+  "$(spells "$AUDCMD" 'has named none')|$(spells "$AUDCMD" "the project's method files you know")|$(spells "$AUDCMD" 'only when you know none')|$(spells "$AUDBRIEF" 'The project method files: {{METHOD_FILE}}')"
 # An auditor at its context gate spawns nothing — --auditor is the orchestrator's flag and the
 # auditor sits in no chain: it names the section reached, and the ORCHESTRATOR relaunches the
 # audit to continue from the report.

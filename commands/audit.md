@@ -38,9 +38,11 @@ Then:
      this orchestration started, with that date; a scope reading « continue from <report
      path> » — the auditor ended at its context gate — names that report as the previous
      one, and the new audit starts at the section it reached;
-   - the methodology file: the project file `--method` names, which the auditor reads and
-     may amend ONLY through the operator's word; without `--method`, say that the operator
-     has named none;
+   - the method files: the project file `--method` names, which the auditor reads and
+     may amend ONLY through the operator's word; without `--method`, the project's method files you know —
+     the ones your own office names (the state file's rules, a methodology or conventions
+     document) — written into the brief as reading, each by its absolute path; say that the
+     project has none only when you know none;
    - the report path `<briefs dir>/audits/<date>-<subject>/REPORT.md` (create its
      directory), and the previous report's path, or « none »;
    - the gauge: the absolute path of the plugin's installed

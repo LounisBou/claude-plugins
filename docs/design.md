@@ -1905,4 +1905,7 @@ merge day, so that the suite reads the same at any hour. And the state directory
 did not exist before the first record, so the command's precondition and its record step both
 assumed a directory the first orchestrator had to create by hand: the command now creates it
 with `mkdir -p` before it writes the record, and both commands read an absent directory as
-« no record ».
+« no record ». Last, without `--method` the brief said that the operator had named no
+methodology file, as if the project had no method, while the orchestrator knew two: the
+command now has it write, as reading, the project's method files its own office names, and
+say that there are none only when it knows none.

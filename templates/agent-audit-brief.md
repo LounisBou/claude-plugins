@@ -18,9 +18,9 @@ brief, the rulebook and your own orders to the orchestrator.
 1. The rulebook: `orchestrator:orchestrator`.
 2. The project state file: `{{STATE_FILE}}` — status lives there; you verify it, you do not
    rebuild it.
-3. The methodology file, when the operator has named one: {{METHOD_FILE}}. It is the
-   operator's: you read it, and you may propose an amendment to it, which lands ONLY through
-   the operator's word — never through the orchestrator's, never through yours.
+3. The project method files: {{METHOD_FILE}}. They are the operator's: you read them, and
+   you may propose an amendment to one, which lands ONLY through the operator's word — never
+   through the orchestrator's, never through yours.
 4. The previous audit's report: {{PREVIOUS_REPORT}} — its orders are what section 5 of your
    report reads.
 
