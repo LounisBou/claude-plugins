@@ -1363,6 +1363,24 @@ check "it names both commands and the launcher's flag" "yes|yes|yes" \
 check "a running audit survives a succession" "yes" "$(carries "$AUDRULEF" 're-announces its address to the auditor')"
 check "the red flags carry the audit" "yes|yes" \
   "$(carries "$ROOT/skills/orchestrator/SKILL.md" "An auditor's ordered change neither applied nor refused with the ruling it crosses")|$(carries "$ROOT/skills/orchestrator/SKILL.md" "an auditor's tab still open after its « ended »")"
+# The auditor's mission includes the orchestration's PROGRESS (issue #54). The first audits
+# read the method and ordered changes, and said nothing of an orchestrator waiting for a word
+# nobody had to give. The brief's authority section and the rulebook's section each carry the
+# paragraph — a wait named, the orchestrator's decisions answered with one recommendation and
+# its cost, the operator's pre-digested, « decide and move » binding the auditor too — and the
+# report's findings carry the species with its measured cost.
+AUDAUTH4F="$WORK/audit-brief-authority.md"
+awk '/^## 4\. /{f=1; next} f&&/^## /{exit} f' "$AUDBRIEF" > "$AUDAUTH4F" 2>/dev/null
+AUDFIND2F="$WORK/audit-brief-findings.md"
+awk '/^### 2\. /{f=1; next} f&&/^###? /{exit} f' "$AUDBRIEF" > "$AUDFIND2F" 2>/dev/null
+for AUDPROGF in "$AUDAUTH4F" "$AUDRULEF"; do
+  check "the auditor makes the orchestration advance (${AUDPROGF##*/})" "yes|yes|yes|yes" \
+    "$(carries "$AUDPROGF" 'makes the orchestration ADVANCE')|$(carries "$AUDPROGF" 'a wait that needs no word')|$(carries "$AUDPROGF" 'ONE recommendation and its cost')|$(carries "$AUDPROGF" 'decides in one word')"
+  check "« decide and move » binds the auditor as it binds the orchestrator (${AUDPROGF##*/})" "yes|yes|yes" \
+    "$(carries "$AUDPROGF" '« decide and move » binds')|$(carries "$AUDPROGF" 'neither scope, nor frame, nor a STOP-and-ask of a brief')|$(carries "$AUDPROGF" 'never held for a word that was not asked for')"
+done
+check "the report's findings carry « a wait that needed no word », with its measured cost" "yes|yes" \
+  "$(carries "$AUDFIND2F" '« a wait that needed no word »')|$(carries "$AUDFIND2F" 'its measured cost')"
 # The code cites §52 in a dozen places: the section it cites exists, and the README a reader
 # meets first lists what the audit adds.
 check "the design document has the audit's numbered section" "1" \

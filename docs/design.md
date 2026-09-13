@@ -1909,3 +1909,20 @@ with `mkdir -p` before it writes the record, and both commands read an absent di
 methodology file, as if the project had no method, while the orchestrator knew two: the
 command now has it write, as reading, the project's method files its own office names, and
 say that there are none only when it knows none.
+
+**0.29.2 — the auditor makes the orchestration advance.** The first two live audits read the
+method and ordered changes to it, and had no rule for what they also watched: an orchestration
+stopped on waits nobody had asked for. The operator's word after them: the auditor's mission is
+also to make things advance by taking decisions, and to help the orchestrator take its own.
+The brief's authority section and the rulebook's section carry it in one paragraph each. The
+auditor names a wait that needs no word — an orchestrator waiting for the operator on something
+delegated, or stopped on a decision it may take itself — with what it costs; it answers the
+orchestrator's decisions with one recommendation and its cost; it pre-digests the operator's —
+what the thing is, two readings, what each costs, one recommendation — so that the operator
+decides in one word; and « decide and move » binds it as it binds the orchestrator: what is
+neither scope, nor frame, nor a STOP-and-ask of a brief is taken on green evidence and reported
+after — merges, deploys, spawns, stand-downs, the orchestrator's to take, never held for a word
+that was not asked for. The auditor stays read-only: it names and recommends, the orchestrator
+acts. The report's findings gain the species « a wait that needed no word », with its measured
+cost, and the line for the operator keeps its three words. The suite reads the paragraph in the
+brief's authority section and in the rulebook's section, and the species in the findings.
