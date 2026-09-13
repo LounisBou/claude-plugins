@@ -1,8 +1,11 @@
 ---
-description: Launch an auditor of this orchestration — a session in its own tab that reads the method and the results, reports to the operator and orders methodology changes
+description: Launch an auditor of this orchestration, on the operator's word — a session in its own tab that reads the method and the results, reports to the operator and orders methodology changes
 argument-hint: <subject> [--scope <what>] [--method <path>]
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/context-gauge/scripts/context-gauge.sh:*), Bash(git:*), Bash(ls:*), Bash(mkdir:*), Bash(date:*), Read, Write, Edit, ListAgents, SendMessage
 ---
+
+Run on the operator's word only: the operator launches the audit and the operator ends it,
+with `/orchestrator:audit-end` typed by the operator. No session launches an audit by itself.
 
 Launch the AUDITOR of this orchestration, described in `orchestrator:orchestrator`,
 section « The audit ». Load that skill first.
@@ -19,7 +22,7 @@ Preconditions, verify each before acting:
 - this session is an orchestrator (`Orch : <subject>` in `ListAgents`), not an agent;
 - no auditor of yours is running: no record under the state directory's `audits/` for
   this session, or its auditor is absent from `ListAgents` (then clear the stale record);
-  one auditor at a time;
+  an absent `audits/` directory is « no record »; one auditor at a time;
 - the subject is at most 25 characters: it becomes the title `Audit : <subject>`;
 - the project state file is current — the auditor verifies it, it does not rebuild it.
 
@@ -35,17 +38,20 @@ Then:
      this orchestration started, with that date; a scope reading « continue from <report
      path> » — the auditor ended at its context gate — names that report as the previous
      one, and the new audit starts at the section it reached;
-   - the methodology file: the project file `--method` names, which the auditor reads and
-     may amend ONLY through the operator's word; without `--method`, say that the operator
-     has named none;
+   - the method files: the project file `--method` names, which the auditor reads and
+     may amend ONLY through the operator's word; without `--method`, the project's method files you know —
+     the ones your own office names (the state file's rules, a methodology or conventions
+     document) — written into the brief as reading, each by its absolute path; say that the
+     project has none only when you know none;
    - the report path `<briefs dir>/audits/<date>-<subject>/REPORT.md` (create its
      directory), and the previous report's path, or « none »;
    - the gauge: the absolute path of the plugin's installed
      `skills/context-gauge/scripts/context-gauge.sh`, resolved now — the auditor's shell
      carries none of your variables; the same for `skills/orchestrator/scripts/rhythm.sh`;
    - the resource envelope the machine runs under today.
-2. **Lint it.** `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <brief path>`;
-   a finding is repaired before the spawn, a known false positive is named.
+2. **Lint it.** `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <brief path> --expect-created <report path>`;
+   the report path is the one path the lint accepts as absent — the auditor creates the
+   file. Any other finding is repaired before the spawn, a known false positive is named.
 3. **Spawn.** `iterm-agent.sh list` — note your own tty. Then:
 
    ```
@@ -61,7 +67,9 @@ Then:
    auditor's idle notice (`SendMessage` with `notify_when_idle: true`). An auditor that has
    not shaken hands within minutes is inspected with `iterm-agent.sh screen --tty`, not
    waited for.
-5. **Record it** so `/orchestrator:audit-end` finds it: write
+5. **Record it** so `/orchestrator:audit-end` finds it. The directory does not exist before
+   the first audit: create it first,
+   `mkdir -p ${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/audits`, then write
    `${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/audits/<CLAUDE_CODE_SESSION_ID>.json`
    (your own session id) with the Write tool:
 
@@ -81,5 +89,11 @@ asks for, answers in order, and the application of every change it orders unless
 change contradicts the operator's word — which you say, in one line, with the ruling it
 contradicts. You do not ask the operator whether to apply an ordered change: the auditor
 has that authority, and the operator's word outranks it.
+
+The audit ends on the operator's word, never on yours. The auditor's « audit ready: <report
+path> » message and its « audit at 60 %: <report path>, continue from <section> » message are
+not that word: you tell the operator in one line and wait. The end is `/orchestrator:audit-end`,
+typed by the operator in your tab or in the auditor's; at the gate, the relaunch with `--scope
+"continue from <report path>"` is yours on the operator's word.
 
 $ARGUMENTS

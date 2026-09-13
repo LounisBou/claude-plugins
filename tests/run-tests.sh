@@ -784,6 +784,17 @@ check "without globs or a register, those readings say so" "1|1|0" \
   "$(rhythm "$RREPO" --since 2026-08-10 | grep -c '^product: no --product glob given$')|$(rhythm "$RREPO" --since 2026-08-10 | grep -c '^instrument: no --instrument glob given$')|$(rhythm "$RREPO" --since 2026-08-10 | grep -c '^register ')"
 check "no --since, or no repository, is refused" "1|1" \
   "$(rhythm "$RREPO" >/dev/null 2>&1; echo $?)|$(rhythm "$WORK/not-a-repo-at-all" --since 2026-08-10 >/dev/null 2>&1; echo $?)"
+# A bare date means its midnight (issue #52). git completes `--since=2026-08-12` with the
+# current time of day, so an audit run on the day of its scope read zero merges where there
+# were five. git's clock is pinned (GIT_TEST_DATE_NOW, 23:00 UTC on the fixture's merge day)
+# so that the reading does not depend on the hour the suite runs at.
+rhythm_late() { TZ=UTC GIT_TEST_DATE_NOW=1786575600 bash "$RHYTHM" "$@" 2>&1; }
+check "a bare --since on the day of the last merge counts that merge" "2026-W33 0 0 0 1 0 0 0 0 0 1|feat 2026-W33 1" \
+  "$(rhythm_late "$RREPO" --since 2026-08-12 | grep -E '^(2026-W33 [0-9]|feat 2026-W33 )' | paste -sd'|' -)"
+check "a date with a time is passed as given, and the header says what was read" "0|1|1" \
+  "$(rhythm_late "$RREPO" --since 2026-08-12T13:00:00 | grep -c '^2026-W33 ')|$(rhythm_late "$RREPO" --since 2026-08-12 | grep -c 'since 2026-08-12T00:00:00$')|$(rhythm_late "$RREPO" --since 2026-08-12T13:00:00 | grep -c 'since 2026-08-12T13:00:00$')"
+check "the usage says that a bare date is read from its midnight" "1" \
+  "$(rhythm "$RREPO" --bogus x | grep -c 'a bare YYYY-MM-DD means its midnight')"
 
 echo "== design layout =="
 
@@ -1282,6 +1293,24 @@ if [ -f "$AUDBRIEF" ]; then
 fi
 check "the audit brief, every placeholder filled, lints clean" "yes|0" \
   "$([ -s "$AUDFILLED" ] && echo yes || echo no)|$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$AUDFILLED" >/dev/null 2>&1; echo $?)"
+# The report path is one the auditor creates, so it cannot exist when the brief is linted:
+# the first live audit brief read two findings by construction (issue #52). The command names
+# that one path to the lint as created later, and the lint exempts exactly it — a second
+# absent path in the same brief is still a finding.
+AUDREPORT="$WORK/audits/2026-09-13-tm/REPORT.md"
+AUDREAL="$WORK/audit-brief-real.md"
+if [ -f "$AUDBRIEF" ]; then
+  sed -E -e 's#\{\{ORCHESTRATOR_NAME\}\}#Orch : f [a1b2c3]#g' -e "s#\{\{REPORT_PATH\}\}#$AUDREPORT#g" -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$AUDBRIEF" > "$AUDREAL"
+fi
+check "an instantiated audit brief lints to zero with its report path expected, two findings without" "0|brief-lint: $AUDREAL: 0 findings|2" \
+  "$(bash "$LINT" "$AUDREAL" --expect-created "$AUDREPORT" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$AUDREAL" --expect-created "$AUDREPORT" 2>&1)|$(bash "$LINT" "$AUDREAL" 2>/dev/null | grep -c "path does not exist: $AUDREPORT")"
+cp "$AUDREAL" "$WORK/audit-brief-other.md" 2>/dev/null; printf 'Spec: `%s/nowhere.md`\n' "$WORK" >> "$WORK/audit-brief-other.md"
+check "--expect-created exempts the path it names and no other" "1|0" \
+  "$(bash "$LINT" "$WORK/audit-brief-other.md" --expect-created "$AUDREPORT" 2>/dev/null | grep -c "path does not exist: $WORK/nowhere.md")|$(bash "$LINT" "$WORK/audit-brief-other.md" --expect-created "$AUDREPORT" 2>/dev/null | grep -c "path does not exist: $AUDREPORT")"
+check "--expect-created without a path is refused, and says so" "1|1" \
+  "$(bash "$LINT" "$AUDREAL" --expect-created >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$AUDREAL" --expect-created 2>&1 | grep -c -- '--expect-created needs a path')"
+check "the audit command lints its brief with the report path expected" "yes" \
+  "$(spells "$AUDCMD" 'brief-lint.sh <brief path> --expect-created <report path>')"
 
 # `/orchestrator:audit-end` (§52), from either side. The auditor sends its report path and
 # ends its turn, never its session; the orchestrator acknowledges, waits for « ended », and
@@ -1299,6 +1328,19 @@ check "the orchestrator acknowledges once and reads the screen after five minute
 check "the close is proved on ps and ListAgents, and the record is cleared" "yes|yes|yes" \
   "$(spells "$AUDEND" 'ps -t')|$(spells "$AUDEND" 'ListAgents')|$(spells "$AUDEND" 'claude-orchestrator/audits/')"
 check "the report stays on disk" "yes" "$(spells "$AUDEND" 'The report stays on disk')"
+# The state directory's audits/ did not exist before the first record (issue #52): the first
+# run's orchestrator created it by hand. The command creates it before it writes the record,
+# and both commands read an absent directory as no record, not as an error.
+check "the audit command creates the state directory's audits/ before it writes the record" "yes|yes" \
+  "$(spells "$AUDCMD" 'mkdir -p ${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/audits')|$(awk '/mkdir -p .*claude-orchestrator\/audits/{m=NR} /with the Write tool/{w=NR} END{print (m && w && m < w) ? "yes" : "no"}' "$AUDCMD")"
+check "audit-end and the audit's precondition read an absent audits/ as no record" "yes|yes" \
+  "$(spells "$AUDEND" 'an absent `audits/` directory is « no record », not an error')|$(spells "$AUDCMD" 'an absent `audits/` directory is « no record »')"
+# Without --method, the brief read « the operator has named none » as if the project had no
+# method, while its orchestrator knew two method files (issue #52). The command names, as
+# reading, the method files the orchestrator's own office names; only when it knows none does
+# the brief say so.
+check "without --method, the brief names the project's method files the orchestrator knows" "no|yes|yes|yes" \
+  "$(spells "$AUDCMD" 'has named none')|$(spells "$AUDCMD" "the project's method files you know")|$(spells "$AUDCMD" 'only when you know none')|$(spells "$AUDBRIEF" 'The project method files: {{METHOD_FILE}}')"
 # An auditor at its context gate spawns nothing — --auditor is the orchestrator's flag and the
 # auditor sits in no chain: it names the section reached, and the ORCHESTRATOR relaunches the
 # audit to continue from the report.
@@ -1329,6 +1371,49 @@ check "the README lists the audit's two commands" "yes|yes" \
   "$(spells "$ROOT/README.md" '| `/orchestrator:audit` |')|$(spells "$ROOT/README.md" '| `/orchestrator:audit-end` |')"
 check "the README names the audit brief and the rhythm script" "yes|yes" \
   "$(spells "$ROOT/README.md" 'audit brief')|$(spells "$ROOT/README.md" 'rhythm.sh')"
+
+# The operator launches an audit and the operator ends it (issue #52). The first live run
+# ended on the auditor's own decision: the brief told it to run audit-end « when the report
+# is complete », and audit-end let the orchestrator run it « on your own decision ». The rule
+# lives in the plugin's own texts — the two commands, the brief, the rulebook's section, the
+# design's section and the README's entries — and nowhere else, so it is held here, on all of
+# them: no phrase that hands the end to a session, and no sentence that launches, runs or
+# ends an audit by its command without naming the operator.
+AUDDESIGNF="$WORK/design-audit-section.md"
+awk '/^## 52\. /{f=1; next} f&&/^## /{exit} f' "$ROOT/docs/design.md" > "$AUDDESIGNF"
+AUDREADMEF="$WORK/readme-audit-rows.md"
+grep -F '| `/orchestrator:audit' "$ROOT/README.md" > "$AUDREADMEF"
+AUDWORD=("$AUDCMD" "$AUDEND" "$AUDBRIEF" "$AUDRULEF" "$AUDDESIGNF" "$AUDREADMEF")
+check "no audit text hands the end of an audit to a session's own decision" "" \
+  "$(grep -hniE 'own decision|own initiative|own accord|when the report is complete, run|in your own session|run (the command )?/?orchestrator:audit-end' "${AUDWORD[@]}" 2>/dev/null)"
+audit_unowned() {  # prints every sentence that launches, runs or ends an audit by its command without the operator
+  local f
+  for f in "$@"; do
+    tr '\n' ' ' < "$f" | awk -v f="${f##*/}" '{
+      gsub(/dry run|run dry/, "")
+      n = split($0, s, "[.;] |: ")
+      for (i = 1; i <= n; i++) {
+        t = tolower(s[i]); gsub(/audit-end/, "", t)
+        if (s[i] ~ /orchestrator:audit/ && t ~ /(^|[^a-z])(runs?|launch(es|ed)?|relaunch(es)?|ends?|ended|types?|typed)([^a-z]|$)/ && s[i] !~ /operator/)
+          print f ": " s[i]
+      }
+    }'
+  done
+}
+check "every sentence that launches or ends an audit by its command names the operator" "" \
+  "$(audit_unowned "${AUDWORD[@]}")"
+check "the audit command says at its top that it runs on the operator's word" "1" \
+  "$(awk 'NR>1 && /^---$/{f=1; next} f && NF {print; exit}' "$AUDCMD" | grep -c "on the operator's word")"
+check "audit-end runs only when the operator types it, and « audit ready » is not that word" "yes|yes|yes" \
+  "$(spells "$AUDEND" 'ONLY when the operator types it')|$(spells "$AUDEND" '« audit ready: <report path> »')|$(spells "$AUDEND" '« audit ready » message is not the word')"
+check "the auditor invites the operator to end the audit, and waits" "yes|yes|yes" \
+  "$(spells "$AUDBRIEF" '« audit ready: {{REPORT_PATH}} »')|$(spells "$AUDBRIEF" 'the audit can be ended')|$(spells "$AUDBRIEF" 'you run no command and close nothing')"
+check "at 60 % the auditor reports, tells the operator, and waits for the operator's word" "yes|yes|0" \
+  "$(spells "$AUDBRIEF" '« audit at 60 %: {{REPORT_PATH}}, continue from <section> »')|$(spells "$AUDBRIEF" 'WAIT for the operator')|$(grep -cE '(^|[^/])orchestrator:audit-end' "$AUDBRIEF")"
+check "the rulebook and the design say who launches and who ends, and name the defect" "yes|yes|yes|yes" \
+  "$(carries "$AUDRULEF" 'the operator launches the audit and the operator ends it')|$(carries "$AUDRULEF" 'a session that ends an audit by itself is the defect')|$(carries "$AUDDESIGNF" 'the operator launches the audit and the operator ends it')|$(carries "$AUDDESIGNF" 'a session that ends an audit by itself is the defect')"
+check "the README's two entries say whose word launches and ends the audit" "2" \
+  "$(grep -c "the operator's word" "$AUDREADMEF")"
 
 AUDCLOSE=$(grep -m1 -o 'iterm-agent.sh close .*' "$AUDEND" 2>/dev/null | sed -e 's/^iterm-agent.sh close //' -e 's/`.*$//' -e 's#<auditor tty>#/dev/ttys950#')
 audclose() { eval "set -- $AUDCLOSE"; ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" close "$@" 2>&1; }

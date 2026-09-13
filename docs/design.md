@@ -39,7 +39,7 @@ commands/agents.md                   each running implementer's progress
 commands/progress.md                 where the build stands
 commands/decide.md                   the decision round, one arbitration at a time
 commands/audit.md                    launches the orchestrator's auditor
-commands/audit-end.md                ends the audit, from either side; the orchestrator closes the tab
+commands/audit-end.md                ends the audit on the operator's word; the orchestrator closes the tab
 hooks/hooks.json                     declares the context gate on UserPromptSubmit
 hooks/context-gate.sh                the gate the harness enforces, not the model
 install.sh, uninstall.sh
@@ -1839,13 +1839,18 @@ stranger's tab, and a stale chain entry on a recycled tty must not make it look 
 [--scope <what>] [--method <path>]` instantiates `templates/agent-audit-brief.md` into the
 briefs directory, lints it, spawns the auditor, verifies it on the artifact, and records its
 name, tty and report path under the state directory's `audits/`, keyed by the orchestrator's
-session id. `/orchestrator:audit-end` runs in either session: the auditor's half finishes the
-report and sends « audit-end: <report path> » with its orders, then ends its turn — it never
-closes its own tab; the orchestrator's half acknowledges every order in one message, waits for
-« ended », closes the tab under the `Audit :` guard proved on `ps`, and clears the record. The
-report stays on disk and nothing else of the audit survives. An auditor at its context gate
-spawns nothing: it names the section reached, and the orchestrator relaunches the audit with a
-scope reading « continue from <report path> ». A skill of the same name as a command was
+session id. The operator launches the audit and the operator ends it;
+a session that ends an audit by itself is the defect. `/orchestrator:audit-end` runs when the
+operator types it, in either session: the auditor's half finishes the report and sends « audit-end: <report path> »
+with its orders, then ends its turn — it never closes its own tab; the orchestrator's half
+acknowledges every order in one message, waits for « ended », closes the tab under the
+`Audit :` guard proved on `ps`, and clears the record. Before that word the auditor only
+invites the operator to end the audit — « audit ready: <report path> » to the orchestrator, one
+paragraph in its tab — and waits. The report stays on disk and nothing else of the audit
+survives. An auditor at its context gate spawns nothing and ends nothing: it sends « audit at
+60 %: <report path>, continue from <section> », tells the operator and waits, and on the
+operator's word the orchestrator relaunches the audit with a scope reading « continue from
+<report path> ». A skill of the same name as a command was
 considered and not made: a plugin's commands and skills share one namespace, and
 `orchestrator:audit` would have shadowed one or the other. The rulebook's section « The
 audit » is what both commands load.
@@ -1883,3 +1888,24 @@ brief template's terms and fixed shape, and the template, every placeholder fill
 clean; `rhythm.sh` on the fixture repository; the rulebook's section. What a live round reads:
 an audit launched from an orchestrator, its tab beside the caller under remote control, the
 caller's chain unchanged, and its tab closed by `audit-end` with no host CLI left on its tty.
+
+**0.29.1 — what the first live run showed.** The run went end to end, and it was the auditor,
+not the operator, that ended it: the brief told it to run `audit-end` when its report was
+complete.
+The operator's ruling is now the section's first rule, written above and held by the suite on
+every audit text. Beside it, three defects of the command. `brief-lint.sh` read two findings
+on every audit brief, because the report path it dictates is a file the auditor creates; the
+lint takes `--expect-created <path>`, repeatable, and exempts exactly the paths it names —
+chosen over accepting any path whose parent directory exists, which would have exempted every
+misspelt file in an existing directory. `rhythm.sh --since 2026-09-13` read zero merges on the
+day of its scope where there were five: git completes a bare date with the current time of
+day. A bare `YYYY-MM-DD` is now written `YYYY-MM-DDT00:00:00` before it reaches git, a date
+with a time is passed as given, and the fixture case pins git's clock to the evening of the
+merge day, so that the suite reads the same at any hour. And the state directory's `audits/`
+did not exist before the first record, so the command's precondition and its record step both
+assumed a directory the first orchestrator had to create by hand: the command now creates it
+with `mkdir -p` before it writes the record, and both commands read an absent directory as
+« no record ». Last, without `--method` the brief said that the operator had named no
+methodology file, as if the project had no method, while the orchestrator knew two: the
+command now has it write, as reading, the project's method files its own office names, and
+say that there are none only when it knows none.
