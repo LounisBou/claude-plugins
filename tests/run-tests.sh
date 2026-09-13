@@ -311,6 +311,15 @@ check "every synopsis spells the server option the way its sentence does" "0|2" 
 # placeholder the orchestrator fills with the names it chose (§42).
 check "the phase brief carries the servers placeholder beside the tier" "yes|yes" \
   "$(spells "$ROOT/templates/agent-phase-brief.md" 'spawned with these servers and no other:')|$(spells "$ROOT/templates/agent-phase-brief.md" 'MCP_SERVERS')"
+# The live round (tests/e2e.sh) instantiates the phase brief with one sed, then checks that every
+# placeholder is filled and that the brief lints. A placeholder added to the template and not to
+# that sed turns both red on the live round only, which this suite never runs — {{MCP_SERVERS}}
+# did (issue #54). Every placeholder the template spells is one the e2e sed fills.
+E2EUNFILLED=""
+for p in $(grep -o '{{[A-Z_]*}}' "$ROOT/templates/agent-phase-brief.md" | sort -u); do
+  grep -qF -- "-e \"s|$p|" "$ROOT/tests/e2e.sh" || E2EUNFILLED="$E2EUNFILLED $p"
+done
+check "the live round's sed fills every placeholder of the phase brief" "" "$E2EUNFILLED"
 
 check "the rulebook pins a reader's copy through the script" "1" "$(grep -c 'workspace.sh pin <source> <round> <head>' "$ROOT/skills/orchestrator/SKILL.md")"
 
