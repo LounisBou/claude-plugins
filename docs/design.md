@@ -39,7 +39,7 @@ commands/agents.md                   each running implementer's progress
 commands/progress.md                 where the build stands
 commands/decide.md                   the decision round, one arbitration at a time
 commands/audit.md                    launches the orchestrator's auditor
-commands/audit-end.md                ends the audit, from either side; the orchestrator closes the tab
+commands/audit-end.md                ends the audit on the operator's word; the orchestrator closes the tab
 hooks/hooks.json                     declares the context gate on UserPromptSubmit
 hooks/context-gate.sh                the gate the harness enforces, not the model
 install.sh, uninstall.sh
@@ -1839,13 +1839,18 @@ stranger's tab, and a stale chain entry on a recycled tty must not make it look 
 [--scope <what>] [--method <path>]` instantiates `templates/agent-audit-brief.md` into the
 briefs directory, lints it, spawns the auditor, verifies it on the artifact, and records its
 name, tty and report path under the state directory's `audits/`, keyed by the orchestrator's
-session id. `/orchestrator:audit-end` runs in either session: the auditor's half finishes the
-report and sends « audit-end: <report path> » with its orders, then ends its turn — it never
-closes its own tab; the orchestrator's half acknowledges every order in one message, waits for
-« ended », closes the tab under the `Audit :` guard proved on `ps`, and clears the record. The
-report stays on disk and nothing else of the audit survives. An auditor at its context gate
-spawns nothing: it names the section reached, and the orchestrator relaunches the audit with a
-scope reading « continue from <report path> ». A skill of the same name as a command was
+session id. The operator launches the audit and the operator ends it;
+a session that ends an audit by itself is the defect. `/orchestrator:audit-end` runs when the
+operator types it, in either session: the auditor's half finishes the report and sends « audit-end: <report path> »
+with its orders, then ends its turn — it never closes its own tab; the orchestrator's half
+acknowledges every order in one message, waits for « ended », closes the tab under the
+`Audit :` guard proved on `ps`, and clears the record. Before that word the auditor only
+invites the operator to end the audit — « audit ready: <report path> » to the orchestrator, one
+paragraph in its tab — and waits. The report stays on disk and nothing else of the audit
+survives. An auditor at its context gate spawns nothing and ends nothing: it sends « audit at
+60 %: <report path>, continue from <section> », tells the operator and waits, and on the
+operator's word the orchestrator relaunches the audit with a scope reading « continue from
+<report path> ». A skill of the same name as a command was
 considered and not made: a plugin's commands and skills share one namespace, and
 `orchestrator:audit` would have shadowed one or the other. The rulebook's section « The
 audit » is what both commands load.

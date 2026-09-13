@@ -1,8 +1,11 @@
 ---
-description: Launch an auditor of this orchestration — a session in its own tab that reads the method and the results, reports to the operator and orders methodology changes
+description: Launch an auditor of this orchestration, on the operator's word — a session in its own tab that reads the method and the results, reports to the operator and orders methodology changes
 argument-hint: <subject> [--scope <what>] [--method <path>]
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/context-gauge/scripts/context-gauge.sh:*), Bash(git:*), Bash(ls:*), Bash(mkdir:*), Bash(date:*), Read, Write, Edit, ListAgents, SendMessage
 ---
+
+Run on the operator's word only: the operator launches the audit and the operator ends it,
+with `/orchestrator:audit-end` typed by the operator. No session launches an audit by itself.
 
 Launch the AUDITOR of this orchestration, described in `orchestrator:orchestrator`,
 section « The audit ». Load that skill first.
@@ -81,5 +84,11 @@ asks for, answers in order, and the application of every change it orders unless
 change contradicts the operator's word — which you say, in one line, with the ruling it
 contradicts. You do not ask the operator whether to apply an ordered change: the auditor
 has that authority, and the operator's word outranks it.
+
+The audit ends on the operator's word, never on yours. The auditor's « audit ready: <report
+path> » message and its « audit at 60 %: <report path>, continue from <section> » message are
+not that word: you tell the operator in one line and wait. The end is `/orchestrator:audit-end`,
+typed by the operator in your tab or in the auditor's; at the gate, the relaunch with `--scope
+"continue from <report path>"` is yours on the operator's word.
 
 $ARGUMENTS

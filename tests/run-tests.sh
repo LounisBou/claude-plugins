@@ -1330,6 +1330,49 @@ check "the README lists the audit's two commands" "yes|yes" \
 check "the README names the audit brief and the rhythm script" "yes|yes" \
   "$(spells "$ROOT/README.md" 'audit brief')|$(spells "$ROOT/README.md" 'rhythm.sh')"
 
+# The operator launches an audit and the operator ends it (issue #52). The first live run
+# ended on the auditor's own decision: the brief told it to run audit-end « when the report
+# is complete », and audit-end let the orchestrator run it « on your own decision ». The rule
+# lives in the plugin's own texts — the two commands, the brief, the rulebook's section, the
+# design's section and the README's entries — and nowhere else, so it is held here, on all of
+# them: no phrase that hands the end to a session, and no sentence that launches, runs or
+# ends an audit by its command without naming the operator.
+AUDDESIGNF="$WORK/design-audit-section.md"
+awk '/^## 52\. /{f=1; next} f&&/^## /{exit} f' "$ROOT/docs/design.md" > "$AUDDESIGNF"
+AUDREADMEF="$WORK/readme-audit-rows.md"
+grep -F '| `/orchestrator:audit' "$ROOT/README.md" > "$AUDREADMEF"
+AUDWORD=("$AUDCMD" "$AUDEND" "$AUDBRIEF" "$AUDRULEF" "$AUDDESIGNF" "$AUDREADMEF")
+check "no audit text hands the end of an audit to a session's own decision" "" \
+  "$(grep -hniE 'own decision|own initiative|own accord|when the report is complete, run|in your own session|run (the command )?/?orchestrator:audit-end' "${AUDWORD[@]}" 2>/dev/null)"
+audit_unowned() {  # prints every sentence that launches, runs or ends an audit by its command without the operator
+  local f
+  for f in "$@"; do
+    tr '\n' ' ' < "$f" | awk -v f="${f##*/}" '{
+      gsub(/dry run|run dry/, "")
+      n = split($0, s, "[.;] |: ")
+      for (i = 1; i <= n; i++) {
+        t = tolower(s[i]); gsub(/audit-end/, "", t)
+        if (s[i] ~ /orchestrator:audit/ && t ~ /(^|[^a-z])(runs?|launch(es|ed)?|relaunch(es)?|ends?|ended|types?|typed)([^a-z]|$)/ && s[i] !~ /operator/)
+          print f ": " s[i]
+      }
+    }'
+  done
+}
+check "every sentence that launches or ends an audit by its command names the operator" "" \
+  "$(audit_unowned "${AUDWORD[@]}")"
+check "the audit command says at its top that it runs on the operator's word" "1" \
+  "$(awk 'NR>1 && /^---$/{f=1; next} f && NF {print; exit}' "$AUDCMD" | grep -c "on the operator's word")"
+check "audit-end runs only when the operator types it, and « audit ready » is not that word" "yes|yes|yes" \
+  "$(spells "$AUDEND" 'ONLY when the operator types it')|$(spells "$AUDEND" '« audit ready: <report path> »')|$(spells "$AUDEND" '« audit ready » message is not the word')"
+check "the auditor invites the operator to end the audit, and waits" "yes|yes|yes" \
+  "$(spells "$AUDBRIEF" '« audit ready: {{REPORT_PATH}} »')|$(spells "$AUDBRIEF" 'the audit can be ended')|$(spells "$AUDBRIEF" 'you run no command and close nothing')"
+check "at 60 % the auditor reports, tells the operator, and waits for the operator's word" "yes|yes|0" \
+  "$(spells "$AUDBRIEF" '« audit at 60 %: {{REPORT_PATH}}, continue from <section> »')|$(spells "$AUDBRIEF" 'WAIT for the operator')|$(grep -cE '(^|[^/])orchestrator:audit-end' "$AUDBRIEF")"
+check "the rulebook and the design say who launches and who ends, and name the defect" "yes|yes|yes|yes" \
+  "$(carries "$AUDRULEF" 'the operator launches the audit and the operator ends it')|$(carries "$AUDRULEF" 'a session that ends an audit by itself is the defect')|$(carries "$AUDDESIGNF" 'the operator launches the audit and the operator ends it')|$(carries "$AUDDESIGNF" 'a session that ends an audit by itself is the defect')"
+check "the README's two entries say whose word launches and ends the audit" "2" \
+  "$(grep -c "the operator's word" "$AUDREADMEF")"
+
 AUDCLOSE=$(grep -m1 -o 'iterm-agent.sh close .*' "$AUDEND" 2>/dev/null | sed -e 's/^iterm-agent.sh close //' -e 's/`.*$//' -e 's#<auditor tty>#/dev/ttys950#')
 audclose() { eval "set -- $AUDCLOSE"; ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" close "$@" 2>&1; }
 check "its close line is one the launcher runs, guarded on the audit title" "close=/dev/ttys950 expect_title=Audit :" \

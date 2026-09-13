@@ -119,8 +119,19 @@ What you read, what you could not, what a heavier reading would show and what it
 
 ## 7. Ending the audit
 
-When the report is complete, run the command orchestrator:audit-end in your own session (a
-slash command, not a path): it writes the
+The operator launched this audit and the operator ends it. When the report is complete —
+its seven sections written, section 7 as far as it goes:
+
+1. message the orchestrator ONCE, the first line « audit ready: {{REPORT_PATH}} », followed
+   by the changes you ORDER, numbered, each with its measurement, and the line for the
+   operator;
+2. tell the operator, in your own tab, in one short paragraph, that the audit can be ended —
+   by the slash command /orchestrator:audit-end, typed by the operator;
+3. WAIT. Until the operator's word, you run no command and close nothing; a question of the
+   operator's or of the orchestrator's is answered as ever.
+
+When the operator types /orchestrator:audit-end in your tab — or the orchestrator's
+acknowledgment relays that the operator gave the word in its tab — that command writes the
 report's final section, messages the orchestrator « audit-end: {{REPORT_PATH}} » with the
 changes you order, and ends your turn. Then answer the orchestrator's acknowledgment with
 « ended » as your last message. You never close your own tab.
@@ -135,10 +146,11 @@ changes you order, and ends your turn. Then answer the orchestrator's acknowledg
   If that name is not listed, tell the operator in your own tab and stop waiting.
 - Every message to the orchestrator ends with your measured context: run `{{GAUGE}}` and
   paste its `context_percent=` and `source=` lines. At 60 %, finish the section in progress,
-  write the report's state into the report, and run orchestrator:audit-end with the section
-  reached named in your message and the words « continue from {{REPORT_PATH}} ».
-  You spawn nothing: an auditor launches no session. The ORCHESTRATOR relaunches the audit
-  with that scope, and the new brief's previous report is this one.
+  write the report's state into the report, message the orchestrator
+  « audit at 60 %: {{REPORT_PATH}}, continue from <section> », tell the operator in your own
+  tab, and WAIT for the operator's word. You spawn nothing and end nothing: an auditor launches no session. On
+  the operator's word the ORCHESTRATOR relaunches the audit with the scope « continue from
+  {{REPORT_PATH}} », and the new brief's previous report is this one.
 
 ## 9. Resource envelope
 
