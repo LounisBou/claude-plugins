@@ -1901,4 +1901,8 @@ misspelt file in an existing directory. `rhythm.sh --since 2026-09-13` read zero
 day of its scope where there were five: git completes a bare date with the current time of
 day. A bare `YYYY-MM-DD` is now written `YYYY-MM-DDT00:00:00` before it reaches git, a date
 with a time is passed as given, and the fixture case pins git's clock to the evening of the
-merge day, so that the suite reads the same at any hour.
+merge day, so that the suite reads the same at any hour. And the state directory's `audits/`
+did not exist before the first record, so the command's precondition and its record step both
+assumed a directory the first orchestrator had to create by hand: the command now creates it
+with `mkdir -p` before it writes the record, and both commands read an absent directory as
+« no record ».

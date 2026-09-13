@@ -1328,6 +1328,13 @@ check "the orchestrator acknowledges once and reads the screen after five minute
 check "the close is proved on ps and ListAgents, and the record is cleared" "yes|yes|yes" \
   "$(spells "$AUDEND" 'ps -t')|$(spells "$AUDEND" 'ListAgents')|$(spells "$AUDEND" 'claude-orchestrator/audits/')"
 check "the report stays on disk" "yes" "$(spells "$AUDEND" 'The report stays on disk')"
+# The state directory's audits/ did not exist before the first record (issue #52): the first
+# run's orchestrator created it by hand. The command creates it before it writes the record,
+# and both commands read an absent directory as no record, not as an error.
+check "the audit command creates the state directory's audits/ before it writes the record" "yes|yes" \
+  "$(spells "$AUDCMD" 'mkdir -p ${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/audits')|$(awk '/mkdir -p .*claude-orchestrator\/audits/{m=NR} /with the Write tool/{w=NR} END{print (m && w && m < w) ? "yes" : "no"}' "$AUDCMD")"
+check "audit-end and the audit's precondition read an absent audits/ as no record" "yes|yes" \
+  "$(spells "$AUDEND" 'an absent `audits/` directory is « no record », not an error')|$(spells "$AUDCMD" 'an absent `audits/` directory is « no record »')"
 # An auditor at its context gate spawns nothing — --auditor is the orchestrator's flag and the
 # auditor sits in no chain: it names the section reached, and the ORCHESTRATOR relaunches the
 # audit to continue from the report.

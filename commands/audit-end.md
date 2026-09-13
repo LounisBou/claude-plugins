@@ -72,7 +72,9 @@ starts it.
    Then prove it: `ps -t <tty without /dev/>` shows no host CLI, and `ListAgents` no longer
    lists the auditor.
 6. **Clear the record**: delete the `audits/<CLAUDE_CODE_SESSION_ID>.json` file, then `ls`
-   the directory as the proof.
+   the directory as the proof. Here and at step 1,
+   an absent `audits/` directory is « no record », not an error: say so, and read the
+   auditor's name, tty and report path from `iterm-agent.sh list` and the report itself.
 7. **Carry the orders.** The applied changes go where the method lives — the project's
    state file, its methodology file on the operator's word only, the briefs — in the same
    move, and the next audit reads them there. When the operator ended the audit at the

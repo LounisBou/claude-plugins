@@ -22,7 +22,7 @@ Preconditions, verify each before acting:
 - this session is an orchestrator (`Orch : <subject>` in `ListAgents`), not an agent;
 - no auditor of yours is running: no record under the state directory's `audits/` for
   this session, or its auditor is absent from `ListAgents` (then clear the stale record);
-  one auditor at a time;
+  an absent `audits/` directory is « no record »; one auditor at a time;
 - the subject is at most 25 characters: it becomes the title `Audit : <subject>`;
 - the project state file is current — the auditor verifies it, it does not rebuild it.
 
@@ -65,7 +65,9 @@ Then:
    auditor's idle notice (`SendMessage` with `notify_when_idle: true`). An auditor that has
    not shaken hands within minutes is inspected with `iterm-agent.sh screen --tty`, not
    waited for.
-5. **Record it** so `/orchestrator:audit-end` finds it: write
+5. **Record it** so `/orchestrator:audit-end` finds it. The directory does not exist before
+   the first audit: create it first,
+   `mkdir -p ${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/audits`, then write
    `${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/audits/<CLAUDE_CODE_SESSION_ID>.json`
    (your own session id) with the Write tool:
 
