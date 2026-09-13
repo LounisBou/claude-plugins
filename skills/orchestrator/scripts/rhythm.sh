@@ -16,7 +16,8 @@
 #     operator's questions and their answers — said, never estimated.
 #
 # The default branch is the remote's HEAD when the clone knows it, else `main`, else
-# `master`, else the branch checked out. Weeks are ISO weeks of the committer date.
+# `master`, else the branch checked out. Weeks are ISO weeks of the committer date. A bare
+# `--since YYYY-MM-DD` means that day's midnight; a date with a time is passed to git as given.
 #
 # Why it exists: an audit compares itself with the previous one, and a comparison needs the
 # same figures computed the same way twice. A count typed from a pull request list is a
@@ -25,7 +26,7 @@
 set -uo pipefail
 
 die() { echo "rhythm: $*" >&2; exit 1; }
-usage="usage: rhythm.sh <repo> --since <date> [--product <glob>...] [--instrument <glob>...] [--register <path>]"
+usage="usage: rhythm.sh <repo> --since <date> [--product <glob>...] [--instrument <glob>...] [--register <path>] (a bare YYYY-MM-DD means its midnight; a date with a time is passed to git as given)"
 
 repo="${1:-}"
 [ -n "$repo" ] || die "$usage"
@@ -43,6 +44,11 @@ while [ $# -gt 0 ]; do
     shift 2
 done
 [ -n "$since" ] || die "--since <date> is required"
+# A bare date means its midnight. git completes `--since=2026-09-13` with the current time of
+# day, and an audit run on the day of its scope read zero merges where there were five.
+if [[ "$since" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+    since="${since}T00:00:00"
+fi
 git -C "$repo" rev-parse --git-dir >/dev/null 2>&1 || die "not a git repository: $repo"
 
 branch=$(git -C "$repo" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)

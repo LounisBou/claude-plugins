@@ -1897,4 +1897,8 @@ every audit text. Beside it, three defects of the command. `brief-lint.sh` read 
 on every audit brief, because the report path it dictates is a file the auditor creates; the
 lint takes `--expect-created <path>`, repeatable, and exempts exactly the paths it names —
 chosen over accepting any path whose parent directory exists, which would have exempted every
-misspelt file in an existing directory.
+misspelt file in an existing directory. `rhythm.sh --since 2026-09-13` read zero merges on the
+day of its scope where there were five: git completes a bare date with the current time of
+day. A bare `YYYY-MM-DD` is now written `YYYY-MM-DDT00:00:00` before it reaches git, a date
+with a time is passed as given, and the fixture case pins git's clock to the evening of the
+merge day, so that the suite reads the same at any hour.

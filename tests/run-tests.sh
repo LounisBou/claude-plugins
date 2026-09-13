@@ -784,6 +784,17 @@ check "without globs or a register, those readings say so" "1|1|0" \
   "$(rhythm "$RREPO" --since 2026-08-10 | grep -c '^product: no --product glob given$')|$(rhythm "$RREPO" --since 2026-08-10 | grep -c '^instrument: no --instrument glob given$')|$(rhythm "$RREPO" --since 2026-08-10 | grep -c '^register ')"
 check "no --since, or no repository, is refused" "1|1" \
   "$(rhythm "$RREPO" >/dev/null 2>&1; echo $?)|$(rhythm "$WORK/not-a-repo-at-all" --since 2026-08-10 >/dev/null 2>&1; echo $?)"
+# A bare date means its midnight (issue #52). git completes `--since=2026-08-12` with the
+# current time of day, so an audit run on the day of its scope read zero merges where there
+# were five. git's clock is pinned (GIT_TEST_DATE_NOW, 23:00 UTC on the fixture's merge day)
+# so that the reading does not depend on the hour the suite runs at.
+rhythm_late() { TZ=UTC GIT_TEST_DATE_NOW=1786575600 bash "$RHYTHM" "$@" 2>&1; }
+check "a bare --since on the day of the last merge counts that merge" "2026-W33 0 0 0 1 0 0 0 0 0 1|feat 2026-W33 1" \
+  "$(rhythm_late "$RREPO" --since 2026-08-12 | grep -E '^(2026-W33 [0-9]|feat 2026-W33 )' | paste -sd'|' -)"
+check "a date with a time is passed as given, and the header says what was read" "0|1|1" \
+  "$(rhythm_late "$RREPO" --since 2026-08-12T13:00:00 | grep -c '^2026-W33 ')|$(rhythm_late "$RREPO" --since 2026-08-12 | grep -c 'since 2026-08-12T00:00:00$')|$(rhythm_late "$RREPO" --since 2026-08-12T13:00:00 | grep -c 'since 2026-08-12T13:00:00$')"
+check "the usage says that a bare date is read from its midnight" "1" \
+  "$(rhythm "$RREPO" --bogus x | grep -c 'a bare YYYY-MM-DD means its midnight')"
 
 echo "== design layout =="
 
