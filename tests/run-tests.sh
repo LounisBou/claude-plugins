@@ -747,6 +747,18 @@ check "the rulebook says to check a justification's direction" "yes" \
   "$(carries "$RULEBOOK" "makes it RARER")"
 check "and the red flag names a ruling given in the same round" "yes" \
   "$(carries "$RULEBOOK" "rather than by the thing that is broken")"
+# A round of review comments reached the operator as one summary across pull requests,
+# with no comment, no assessment and no change shown, though he had named the workflow whose
+# template presents one item at a time. The same round called a reviewer by a first name no
+# command had printed (§53).
+check "the rulebook: a method he names is a format read before presenting" "yes" \
+  "$(carries "$RULEBOOK" "A method he names is a format")"
+check "the rulebook: a fact not read is not stated" "yes" \
+  "$(carries "$RULEBOOK" "A fact you did not read is a fact you do not state")"
+check "the comments round is presented in the format he named" "yes" \
+  "$(carries "$RULEBOOK" "every assessment reaches him in that format, one item at a time")"
+check "and the red flag names a presentation written without opening the skill" "yes" \
+  "$(carries "$RULEBOOK" "written without having opened that skill")"
 
 # A successor reads its brief FIRST and can act on it before it loads the rulebook, so a
 # duty living only in the skill is lost at the first succession.
@@ -756,6 +768,10 @@ check "the succession brief: term by term" "yes" \
   "$(carries "$SUCCESSION" "term by term")"
 check "the succession brief: your own doing is verified first" "yes" \
   "$(carries "$SUCCESSION" "verify your own doing")"
+check "the succession brief: the named skill is opened before presenting" "yes" \
+  "$(carries "$SUCCESSION" "open that skill before the first presentation")"
+check "the succession brief: a fact not read is not stated" "yes" \
+  "$(carries "$SUCCESSION" "fact you did not read is a fact you do not state")"
 
 echo "== rhythm =="
 
