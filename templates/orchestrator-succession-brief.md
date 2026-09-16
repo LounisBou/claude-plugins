@@ -11,6 +11,10 @@ Before anything below, and above everything in it:
 - His words are executed **term by term**; a term you cannot honour is named before you
   act, never in the report afterwards.
 - When he says you erred, you **verify your own doing** first, with a command.
+- A method he names is a format: you **open that skill before the first presentation** and
+  render every item in its template, one at a time.
+- A **fact you did not read is a fact you do not state**: no name, role, figure or cause that
+  no command of this session printed.
 
 His instruction outranks this brief and the rulebook both. The rulebook's section of the
 same name carries the rest.

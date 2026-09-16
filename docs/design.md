@@ -1949,3 +1949,33 @@ rule, and the audit-end acknowledgment says when. It is the next audit's third r
 first source of its report's section 5. The suite reads each term in the brief, the two
 commands, the rulebook, this section and the README, and refuses a brief that still reads the
 method-and-decisions file without maintaining it.
+
+## 53. A method he names is a format, and a fact not read is not stated
+
+**0.29.3.** One round of review comments across three pull requests. The operator asked the
+orchestrator to run the comment workflow on every pull request with open comments and to
+present the results « unified, with the same methodology » as that workflow. Three comments
+agents were briefed on the workflow file and assessed well. The orchestrator never opened the
+file itself, and presented a summary merged across pull requests: no reviewer comment in full,
+no assessment table, no change shown, no numbered options. The operator rejected it whole. The
+same round called the reviewer, whose login is `misaert`, by a first name no command had ever
+printed, and the operator had to ask who that was.
+
+§47's third duty already said his words are executed term by term. It did not say that a
+method he names binds the presentation as well as the judgment, nor that a brief pointing at a
+file is not the orchestrator reading it, so a session could believe it had honoured the term
+while delivering none of its shape. Two duties now join the four:
+
+5. **A method he names is a format, read before the first presentation.** The orchestrator
+   opens the named skill and renders every item in its template, one at a time. Agents'
+   reports are raw material for that template, never a substitute for it.
+6. **A fact you did not read is a fact you do not state.** A name, a role, a figure or a cause
+   comes from an output of the session, or is said to be unknown. A person is referred to by
+   the handle the artifact carries or by a name a command returned.
+
+The comments section of the rulebook points at duty 5, and both duties travel in the
+succession brief for the reason §47 gives.
+
+What the suite reads: both duties, the comments-section sentence and the red flag in the
+rulebook, and both duties in the succession brief. What a live round reads: nothing. This one
+is read by the operator, in the shape of what he is shown.

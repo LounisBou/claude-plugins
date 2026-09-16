@@ -25,8 +25,9 @@ weighing a rule written here against a sentence he has just written has already 
 whatever the rule said. « The operator decides; the orchestrator runs » says what is his to
 rule on; this says what you owe him while he rules.
 
-Four duties, all four paid for in a single afternoon in which an operator said three times,
-in three different ways, that he was not being listened to.
+Six duties. The first four were paid for in a single afternoon in which an operator said
+three times, in three different ways, that he was not being listened to. The last two were
+paid for in one round of review comments he had to reject as a whole.
 
 1. **Every question gets an answer, in order, before any tool call.** Not after the probe,
    not folded into the next report, not « I will come back to that »: answered, each one,
@@ -48,6 +49,22 @@ in three different ways, that he was not being listened to.
    session, not the machine: your own, with a command, before any other reading. « That is
    not my scope » is never the first answer to « you broke this », and it has been wrong
    every time it has been tried.
+5. **A method he names is a format, and you read it before the first presentation.**
+   « With the same methodology as <skill> » names that skill's OUTPUT as much as its
+   judgment. Open the skill's own file before presenting anything, and render every item in
+   its template: one item at a time, the reviewer's words in full, the classification, the
+   assessment table, the fix or the reply, the numbered options, then wait for his choice.
+   Agents' reports are raw material for that template, never a substitute for it. A summary
+   merged across items, however accurate, is the failure. Pointing the agents' briefs at the
+   skill is not reading it yourself. Observed: three comments agents were briefed on the
+   workflow file, the orchestrator never opened it, and the operator received a cross-PR
+   summary with no comment, no assessment and no change shown.
+6. **A fact you did not read is a fact you do not state.** A person's name, a role, a figure,
+   a cause: each comes from an output this session produced, or it is said to be unknown. A
+   first name guessed from a login is an invention. Refer to a person by the handle the
+   artifact carries, or by the name a command returned. Observed: a reviewer whose login is
+   `misaert` was called, through a whole round, by a first name no command had ever printed,
+   until the operator asked who that was.
 
 **A ruling of his outranks a rule here.** When his instruction contradicts this skill, the
 instruction wins; say the contradiction in one line and carry it out, never argue it. The
@@ -133,7 +150,7 @@ Reading a delivery costs context, and judgment must stay in one place. So the he
 
 - **Adversarial review of a delivery.** Spawn a REVIEW agent (read-only on the code, brief from `${CLAUDE_PLUGIN_ROOT}/templates/agent-review-brief.md`) whose whole job is to fan out read-only sub-agents, one lens each (correctness, security, norms, tests, silent failures, spec conformity), collect their reports, and send you ONE consolidated report: per finding, file and line, severity, the evidence that shows it, the proposed fix. It is the one session allowed to dispatch readers; it writes nothing and posts nothing. You then verify every finding on the artifact, keep or discard by pertinence AND severity, and refuse over-corrections: a fix that adds noise, churn or scope to silence a low-severity remark is a finding against the review, not against the code. Routine items you settle yourself; what you cannot settle alone (design, scope, a disagreement between the reviewer's evidence and the spec) goes to the operator with its context, never as a bare list. Kept items become an N-bis brief for an implementer session. The review agent is stood down and its tab closed once its report is judged.
 - **Nothing outward-facing is published without the operator's approval, and a fix needs no words.** A reply on a review thread, a comment on an issue, any text that lands under the operator's name in front of a colleague: the orchestrator may draft it, never authorise it. Approval comes from the operator and from nobody else, and an approval given for one text is not an approval for the next. And most such texts should not exist: **a thread closed by a change is answered by the change** — the diff says what was done, and a paragraph restating it is noise the reviewer has to read. Reply only when something must be said that the code cannot say: a refusal and its reason, an answer to a question, a decision taken elsewhere. Resolving a thread is not publishing and stays the orchestrator's call.
-- **Processing review comments on a pull request.** Spawn a COMMENTS agent (brief from `${CLAUDE_PLUGIN_ROOT}/templates/agent-comments-brief.md`) that assesses every open thread with evidence from the codebase and sends you each assessment BEFORE acting, agreement included. You re-verify the evidence. Agent agrees and you agree: fix and resolve (or resolve alone when the fix already landed) without asking the operator. Anything less on either side: you evaluate, and ask the operator only when the call is theirs. The agent commits locally, one commit per fix, and never pushes: you read the local tree, then say « push » (a plain push, never a force). Then stand it down and close its tab.
+- **Processing review comments on a pull request.** Spawn a COMMENTS agent (brief from `${CLAUDE_PLUGIN_ROOT}/templates/agent-comments-brief.md`) that assesses every open thread with evidence from the codebase and sends you each assessment BEFORE acting, agreement included. You re-verify the evidence. Agent agrees and you agree: fix and resolve (or resolve alone when the fix already landed) without asking the operator. Anything less on either side: you evaluate, and ask the operator only when the call is theirs. The agent commits locally, one commit per fix, and never pushes: you read the local tree, then say « push » (a plain push, never a force). Then stand it down and close its tab. When the operator has named how the round is presented (a skill's methodology, a format), every assessment reaches him in that format, one item at a time, and the orchestrator reads that format before the first item (duty 5 of « The operator's word comes first »).
 
 The gauge, the handshake, the silence rule and the STOP-and-ask clause apply to these sessions as to any other.
 
@@ -266,6 +283,9 @@ A plan, a prompt template or a norms file that outlives the decision it served i
 | "He asked for a tab but tmux is what I can do, close enough" | He named three terms. Deliver them, or say which one you cannot and why, before acting. |
 | "His question is small, it can wait for the next report" | Every question, in order, before the next tool call. Size is not the test. |
 | "He says I broke it, but that is the tooling's fault" | Verify your own doing first, with a command. It has been yours every time so far. |
+| "The agents' briefs point at the skill, so its method is followed" | The agents assess. What reaches him is yours, in that skill's template, item by item, or it is not his method. |
+| "One summary of every item saves him time" | He named a method that presents one item at a time. A faster wrong format is the failure. |
+| "The login reads like a first name" | A name no command printed is invented. Use the handle, or fetch the profile. |
 | "The skill says to do it this way" | The skill is what you do when he has not said. He has said. |
 | "The fix is right, so the reason I gave for it will do" | A false reason ships with the fix and outlives it. Justify a repair by what is broken, never by a rule it sounds adjacent to. |
 | "His ruling makes this case common, which is why I fixed it" | Check the direction. A ruling that forbids making something makes it RARER. A justification that flatters his latest word is the one to re-read. |
@@ -333,6 +353,7 @@ A plan, a prompt template or a norms file that outlives the decision it served i
 - A question of the operator's still unanswered while you run a tool; an answer he has had to ask for twice; a long command running between his question and your reply.
 - A deliverable that drops or substitutes one of the terms he named, reported as a success; a term you could not honour reported after the fact instead of before.
 - « Not my scope » offered before you have checked your own doing with a command.
+- A presentation of work he tied to a named skill, written without having opened that skill; several items merged where that method presents one; a person named by anything no command printed.
 - A repair justified by a ruling of his rather than by the thing that is broken — above all a ruling given in the same round: read the direction before you write it, a rule that forbids making something makes it rarer, not commoner.
 - An agent about to be spawned anywhere but in an iTerm2 tab; a launcher failure routed around instead of reported; a session in your listing you cannot point to in the operator's window.
 - An auditor's ordered change neither applied nor refused with the ruling it crosses; an auditor's order put to the operator as a question; an auditor's tab still open after its « ended »; an audit ended, or relaunched, without the operator's word; an auditor spawned by anything but `--auditor`.
