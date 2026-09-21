@@ -1,7 +1,7 @@
 {
   "name": "pr-review",
   "description": "Interactive PR review workflow: a pending-review walkthrough item by item, GitHub comment processing, and an autonomous review-fix loop.",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "dependencies": ["github@lounisbou"],
   "author": {
     "name": "Lounis Bou",

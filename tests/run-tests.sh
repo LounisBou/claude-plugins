@@ -57,7 +57,7 @@ check "github-curl is gone" "absent" \
 check "manifest declares the dependency" "github@lounisbou" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dependencies"][0])' "$ROOT/.claude-plugin/plugin.json")"
 
-check "manifest version" "0.3.4" \
+check "manifest version" "0.3.5" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$ROOT/.claude-plugin/plugin.json")"
 
 # The marketplace entry is a second copy of the same facts, read by the host that
@@ -308,6 +308,48 @@ check "filter_reviews.py null review has no traceback" "0" \
   "$(printf '%s' "$out" | grep -cE 'Traceback|AttributeError')"
 check "filter_reviews.py keeps only the real review" "Open review body comments: 1" "$out"
 
+# filter_reviews.py: a review already minimized on GitHub (per the
+# comments-resolved-batch fixture SKILL.md Phase 3 writes before calling
+# this script) must be dropped; a visible review with the same shape must
+# survive. This is the regression test for the review-body read side --
+# reverting the isMinimized check makes both reviews come back.
+PCTMP="$WORK/pc-minimized-review"; mkdir -p "$PCTMP"
+printf '%s' '[{"node_id":"PRR_hidden","body":"hide me","user":{"login":"alice"}},{"node_id":"PRR_visible","body":"keep me","user":{"login":"alice"}}]' \
+  > "$PCTMP/reviews.json"
+printf '%s' '{"PRR_hidden":{"node":{"isMinimized":true}},"PRR_visible":{"node":{"isMinimized":false}}}' \
+  > "$PCTMP/reviews-resolved-batch.json"
+out=$(env PR_REVIEW_TMP="$PCTMP" python3 "$PCSCRIPTS/filter_reviews.py" bob 2>&1)
+check "filter_reviews.py drops a minimized review and keeps the visible one" \
+  "Open review body comments: 1" "$out"
+check "filter_reviews.py's survivor is the visible node_id, not the hidden one" \
+  "PRR_visible" \
+  "$(python3 -c "import json; print(json.load(open('$PCTMP/open-reviews.json'))[0]['node_id'])")"
+
+# filter_reviews.py: a resolved-batch entry whose "node" is null -- the id the
+# batch could not resolve, the same payload comments-resolved-batch can send
+# for an issue comment -- must be treated as "not minimized", not crash.
+# ".get('node', {})" would substitute its default only for an ABSENT key, not
+# this present null.
+PCTMP="$WORK/pc-review-null-node"; mkdir -p "$PCTMP"
+printf '%s' '[{"node_id":"PRR_x","body":"hi","user":{"login":"alice"}}]' > "$PCTMP/reviews.json"
+printf '%s' '{"PRR_x":{"node":null}}' > "$PCTMP/reviews-resolved-batch.json"
+out=$(env PR_REVIEW_TMP="$PCTMP" python3 "$PCSCRIPTS/filter_reviews.py" bob 2>&1)
+check "filter_reviews.py survives a null node in the resolved batch" "0" \
+  "$(env PR_REVIEW_TMP="$PCTMP" python3 "$PCSCRIPTS/filter_reviews.py" bob >/dev/null 2>&1; echo $?)"
+check "filter_reviews.py null node has no traceback" "0" \
+  "$(printf '%s' "$out" | grep -cE 'Traceback|AttributeError')"
+check "filter_reviews.py null node still counts the review as visible" \
+  "Open review body comments: 1" "$out"
+
+# filter_reviews.py: no resolved-batch file at all (a caller that never runs
+# the batch step) must behave exactly as before this change -- the minimized
+# check is additive, never mandatory.
+PCTMP="$WORK/pc-review-no-batch-file"; mkdir -p "$PCTMP"
+printf '%s' '[{"node_id":"PRR_y","body":"hi","user":{"login":"alice"}}]' > "$PCTMP/reviews.json"
+out=$(env PR_REVIEW_TMP="$PCTMP" python3 "$PCSCRIPTS/filter_reviews.py" bob 2>&1)
+check "filter_reviews.py with no resolved-batch file keeps the review" \
+  "Open review body comments: 1" "$out"
+
 # extract_user_login.py: an empty PR list (no PR on this branch) is the
 # ordinary "not found" response from pr-get, fetched before the skill's own
 # "is PR_NUM empty" check runs -- pr_data[0] must not raise IndexError here.
@@ -330,6 +372,25 @@ check "extract_paths.py survives a missing open-threads.json" "0" \
 check "extract_paths.py missing file has no traceback" "0" \
   "$(printf '%s' "$out" | grep -cE 'Traceback|Error')"
 check "extract_paths.py prints nothing for a missing file" "" "$out"
+
+echo "== process-comments: review body resolution =="
+
+PC_DOC="$ROOT/skills/process-comments/SKILL.md"
+
+# The two paragraphs asserting a review body cannot be resolved via the API
+# are gone. A pull request review implements the same Minimizable interface
+# as an issue comment, so the claim was simply false.
+check "process-comments no longer claims a review body cannot be individually resolved" "" \
+  "$(grep -n 'cannot be individually resolved' "$PC_DOC" 2>/dev/null || true)"
+check "process-comments no longer claims a review body cannot be resolved via API" "" \
+  "$(grep -n 'cannot be resolved via API' "$PC_DOC" 2>/dev/null || true)"
+
+# Step 4 resolves a review body the same way it resolves an issue comment --
+# comment-resolve on the node id -- so the exact call appears twice: once
+# under "For issue comments", once under "For review body comments". Reverting
+# the review-body block drops this back to one.
+check "comment-resolve is called for both issue comments and review bodies" "2" \
+  "$(grep -c 'python3 "\$GH" comment-resolve "\$NODE_ID" --format error-check' "$PC_DOC")"
 
 
 echo "== install =="

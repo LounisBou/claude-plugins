@@ -6,14 +6,14 @@
   },
   "metadata": {
     "description": "PR review tooling",
-    "version": "0.3.4"
+    "version": "0.3.5"
   },
   "plugins": [
     {
       "name": "pr-review",
       "source": "./",
       "description": "Interactive PR review workflow: a pending-review walkthrough item by item, GitHub comment processing, and an autonomous review-fix loop.",
-      "version": "0.3.4",
+      "version": "0.3.5",
       "author": {
         "name": "Lounis Bou"
       }

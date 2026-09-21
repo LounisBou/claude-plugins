@@ -279,7 +279,22 @@ export PR_REVIEW_TMP="/tmp/claude-pr-review-$PR_NUM"
 USER_LOGIN=$(python3 "$SKILL_DIR/extract_user_login.py") || exit 1
 [ -n "$USER_LOGIN" ] || exit 1
 
-# Reviews: filter to those with non-empty body, excluding PR author's own reviews
+# Reviews: like issue comments above, resolving a review body means checking
+# GraphQL isMinimized per node id (comments-resolved-batch) before filtering
+# -- extract every review's node_id up front so filter_reviews.py can drop a
+# review already minimized on GitHub in the same pass as the body/author
+# filter below. (No `!=` below, so this is safe to run inline.)
+python3 -c "
+import json
+reviews = json.load(open('$PR_REVIEW_TMP/reviews.json'))
+ids = [r['node_id'] for r in reviews if r.get('node_id')]
+json.dump(ids, open('$PR_REVIEW_TMP/review-ids.json', 'w'))
+"
+python3 "$GH" comments-resolved-batch "$PR_REVIEW_TMP/review-ids.json" > "$PR_REVIEW_TMP/reviews-resolved-batch.json"
+
+# Reviews: filter to those with non-empty body, excluding PR author's own
+# reviews and any already minimized on GitHub (per reviews-resolved-batch.json
+# above).
 python3 "$SKILL_DIR/filter_reviews.py" "$USER_LOGIN"
 ```
 
@@ -580,8 +595,6 @@ Display the full comment with context:
 
 > <full comment text>
 ```
-
-**Note on review body comments:** These are the body text submitted with a review action. Unlike review threads, they **cannot be individually resolved** via the GitHub API — they are part of the review object itself. Options 1 and 4 (resolve variants) will note that the comment was addressed but no API resolution is possible. The user may want to reply to the review on GitHub directly.
 
 #### 3.1b Classify Comment Intent (BEFORE assessment)
 
@@ -885,7 +898,14 @@ python3 "$GH" comment-resolve "$NODE_ID" --format error-check
 
 **For review body comments** (type = `review-body`):
 
-Review body comments cannot be individually resolved via the GitHub API — they are part of the review object. When the user picks option 1 or 4, inform them: "Review body comments cannot be resolved via API. The comment has been addressed — you may want to reply to the review on GitHub directly." Mark the TODO as completed.
+```bash
+# Each bash block is its own shell; resolve rather than inherit.
+GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
+GH="$GH_ROOT/skills/github-curl/gh.py"
+
+# Resolve by minimizing the review (uses the review's node_id, e.g. PRR_...)
+python3 "$GH" comment-resolve "$NODE_ID" --format error-check
+```
 
 **If resolution fails** (permissions, invalid ID): Inform the user and suggest they resolve it manually in the GitHub UI.
 
