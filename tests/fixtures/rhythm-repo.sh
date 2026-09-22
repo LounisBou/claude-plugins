@@ -33,6 +33,10 @@ mkdir -p "$dir"
 cd "$dir"
 
 git init -q
+# This fixture commits a file under docs/, a path an operator's global excludes file may
+# well ignore. Ambient excludes are neutralised on the repository built here, so its
+# history is the one written below and not whatever the machine happens to hide.
+git config core.excludesFile /dev/null
 git checkout -q -b main
 git config user.email t@local
 git config user.name t
