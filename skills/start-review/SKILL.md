@@ -251,6 +251,8 @@ Omit this block if there is nothing to carve out.>
 
 The chat blocks 3–7 are where the reasoning lives. Block 8 is **not** a summary of them — it is the short message the author actually reads. Keep it that way.
 
+**Verify, then ask.** Before block 8 is drafted, confirm the defect three independent ways — a grep of the callers, running the real code path or its test, a second reader's confirmation. Once verified, the comment never tells the author that something does not work. Start from the assumption that it works, say what you cannot see or reproduce, ask the author to walk you through how it gets there, and invite the test that would prove the expected behaviour.
+
 **Hard limits:**
 
 - **4 to 6 lines. Never more.** If it does not fit, the item is too big — split it.
@@ -267,6 +269,14 @@ The chat blocks 3–7 are where the reasoning lives. Block 8 is **not** a summar
 - Propose, don't dictate — the author owns the branch and may have context the reviewer lacks.
 - **No non-business references.** Never mention agents, phases, plans, workflows, Claude, or the review tooling. It reads as one developer writing to another.
 - Keep both language versions equivalent in content **and** in length.
+- **Two developers talking.** Informal, conversational, first person.
+- No colon and no semicolon anywhere in the comment.
+- No frame dump, no code excerpt, no line-by-line walkthrough unless understanding is impossible without it.
+- One backticked identifier where it helps.
+
+This is the shape to aim for:
+
+> I have a doubt on the way back. When the device answers the `Read`, I cannot see what brings the frame to `EnableControl`, the factory does not know it and on my side a config frame with key `0F` comes out as `UnknownKeyBody`. I am surely missing something, can you walk me through how it gets there? And if you can add a test that parses a real frame and expects an `EnableControl`, that will settle it for good.
 
 **Self-check before showing block 8:** read it aloud. If it sounds like an audit report rather than a colleague leaving a note, cut it in half.
 
@@ -603,6 +613,7 @@ Say `commit` to create the <N> prepared commits, or `drop <n>` / `drop all` to d
 | Moving on after a question | A question is not a decision on the item | Answer, then wait |
 | Waiting for `next` after `post`, `post now` or a green `fix` | The decision was the order to move on | Render the next item at once |
 | Mentioning agents or tooling in a comment | Non-business reference in a durable artifact | Write as one developer to another |
+| Telling the author that something does not work | Puts the author on the defensive before they've read the code | Verify three ways, then ask how it works and invite the proving test |
 | Ending a session, a handoff or a rotation with a prepared commit uncreated | Unfinished work survives the session in a staged tree and a `/tmp` file nobody reads | `STOP: <N> prepared commits not created, say commit`, then wait |
 
 ---

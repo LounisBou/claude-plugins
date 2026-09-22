@@ -57,7 +57,7 @@ check "github-curl is gone" "absent" \
 check "manifest declares the dependency" "github@lounisbou" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dependencies"][0])' "$ROOT/.claude-plugin/plugin.json")"
 
-check "manifest version" "0.3.5" \
+check "manifest version" "0.3.6" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$ROOT/.claude-plugin/plugin.json")"
 
 # The marketplace entry is a second copy of the same facts, read by the host that
@@ -549,6 +549,48 @@ for sub in review-pending review-pending-create review-pending-add; do
   check "start-review invokes $sub" "1" \
     "$(grep -cE 'python3[[:space:]]+("\$GH"|\$GH|"\$\{GH\}"|\$\{GH\})[[:space:]]+'"$sub"'( |$)' "$START_DOC" 2>/dev/null | awk '{print ($1>=1)?1:0}')"
 done
+
+echo "== start-review comment voice =="
+
+# The comment asks how something works instead of asserting it is broken. These
+# four strings are the ones the owner ruled DECIDED after rejecting a comment
+# that asserted "X is never reached"; each is proven load-bearing below by
+# removing it, rerunning, and restoring.
+check "start-review says the comment never asserts a failure" "1" \
+  "$(grep -ci "never tells the author" "$START_DOC")"
+check "start-review bans colons in the comment" "1" \
+  "$(grep -ci "no colon" "$START_DOC")"
+check "start-review bans semicolons in the comment" "1" \
+  "$(grep -ci "no semicolon" "$START_DOC")"
+check "start-review quotes the reference example" "1" \
+  "$(grep -c "I have a doubt on the way back" "$START_DOC")"
+
+# Each of the four assertions above passes on the unmodified document; that alone
+# does not prove the check discriminates. Remove the sentence it names, rerun the
+# single check, confirm it fails, then restore — the loop this file's own CLAUDE.md
+# demands for a regression test.
+voice_regression() {
+  local label="$1" needle="$2" grepflag="$3"
+  local after
+  cp "$START_DOC" "$WORK/voice-backup.md"
+  if [ "$grepflag" = "-i" ]; then
+    grep -vi "$needle" "$START_DOC" > "$WORK/voice-stripped.md"
+  else
+    grep -v "$needle" "$START_DOC" > "$WORK/voice-stripped.md"
+  fi
+  mv "$WORK/voice-stripped.md" "$START_DOC"
+  if [ "$grepflag" = "-i" ]; then
+    after=$(grep -ci "$needle" "$START_DOC")
+  else
+    after=$(grep -c "$needle" "$START_DOC")
+  fi
+  mv "$WORK/voice-backup.md" "$START_DOC"
+  check "start-review voice check for '$label' fails when the sentence is removed" "0" "$after"
+}
+voice_regression "never tells the author" "never tells the author" "-i"
+voice_regression "no colon" "no colon" "-i"
+voice_regression "no semicolon" "no semicolon" "-i"
+voice_regression "reference example" "I have a doubt on the way back" ""
 
 # Each bash block is its own shell: a variable used in a block that does not
 # assign it expands to nothing, silently.
