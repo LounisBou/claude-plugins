@@ -143,6 +143,17 @@ check "the rulebook runs review rounds in disposable sessions" "1" "$(grep -c '^
 check "the review brief forbids writing" "1" "$(grep -c 'You write nothing and post nothing' "$ROOT/templates/agent-review-brief.md")"
 check "the comments brief forbids pushing" "1" "$(grep -c 'Never push' "$ROOT/templates/agent-comments-brief.md")"
 
+# Two deliveries were verified on the artifact and approved with the project's norms tooling
+# never having run on them, and the operator had to ask for the check himself. The rule, the
+# lens that carries it, its excuse and its red flag are pinned here so a later edit cannot
+# leave the review round holding only the readings the orchestrator does by hand.
+check "the rulebook requires a norms check on every delivery" "1" "$(grep -c "AND the project.s norms check" "$ROOT/skills/orchestrator/SKILL.md")"
+check "no size and no green gate waive it" "1" "$(grep -c "nor a green gate waives it" "$ROOT/skills/orchestrator/SKILL.md")"
+check "the norms lens runs the project.s own tool" "1" "$(grep -c "The norms lens is the project.s own tool wherever the project ships one" "$ROOT/skills/orchestrator/SKILL.md")"
+check "a project shipping none reads the norms file by hand" "1" "$(grep -c "the lens reads the norms file by hand" "$ROOT/skills/orchestrator/SKILL.md")"
+check "the skipped norms check has its excuse" "1" "$(grep -c "size and a green gate are not the test" "$ROOT/skills/orchestrator/SKILL.md")"
+check "the skipped norms check has its red flag" "1" "$(grep -c "without its norms check having run" "$ROOT/skills/orchestrator/SKILL.md")"
+
 # A plain spawn appends at the END of the window, not beside the caller — an agent
 # once landed two tabs from its orchestrator with a stranger's session between them.
 # So placement anchors on a tty or on `self`, the caller's own tab, and the docs say
