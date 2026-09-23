@@ -153,6 +153,9 @@ check "the norms lens runs the project.s own tool" "1" "$(grep -c "The norms len
 check "a project shipping none reads the norms file by hand" "1" "$(grep -c "the lens reads the norms file by hand" "$ROOT/skills/orchestrator/SKILL.md")"
 check "the skipped norms check has its excuse" "1" "$(grep -c "size and a green gate are not the test" "$ROOT/skills/orchestrator/SKILL.md")"
 check "the skipped norms check has its red flag" "1" "$(grep -c "without its norms check having run" "$ROOT/skills/orchestrator/SKILL.md")"
+check "the review brief carries the norms check placeholder" "1" "$(grep -c "{{NORMS_CHECK}}" "$ROOT/templates/agent-review-brief.md")"
+check "the norms check placeholder is documented on its line" "1" "$(grep -c "the project.s norms check invocation, or the word" "$ROOT/templates/agent-review-brief.md")"
+check "the review brief takes the report, not the fix path" "1" "$(grep -c "its fix path is not yours to take" "$ROOT/templates/agent-review-brief.md")"
 
 # A plain spawn appends at the END of the window, not beside the caller — an agent
 # once landed two tabs from its orchestrator with a stranger's session between them.

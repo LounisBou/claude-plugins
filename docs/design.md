@@ -1979,3 +1979,30 @@ succession brief for the reason §47 gives.
 What the suite reads: both duties, the comments-section sentence and the red flag in the
 rulebook, and both duties in the succession brief. What a live round reads: nothing. This one
 is read by the operator, in the shape of what he is shown.
+
+## 54. A delivery is read twice: by the round, and by the project's own norms tool
+
+**0.30.0.** Two deliveries were approved on evidence the orchestrator had gathered by hand —
+the diff, the test output, a grep for the vocabulary the repository forbids — while the
+project shipped a command whose whole purpose is to read a diff against its own conventions,
+and that command never ran. The operator asked for it after the approval, both times. The gap
+was not a missing lens: the review round already named one for norms. It was that the lens
+could be satisfied by a reader's opinion of the norms file while a tool encoding the same
+norms, and citing the precedent behind each finding, sat unused in the repository. A reader's
+reading and a tool's report are not the same evidence, and the cheaper of the two was the one
+being skipped.
+
+So the rule becomes mandatory rather than available, and the lens is bound to the tool. Where
+the project ships a norms check, the review session runs it over the diff under review and its
+report is the lens's findings; where it ships none, the lens reads the norms file by hand and
+the report says which of the two happened, so an absent tool cannot be read as a clean one.
+Report-only in both shapes: the round reads, the orchestrator judges, and the tool's own fix
+path is never taken by the session that ran it. The findings then travel the ordinary route —
+verified on the artifact, kept or dropped by pertinence and severity, with the rulebook's
+aspirational-norms reading governing those that existing code already contradicts. The review
+template carries the invocation as a placeholder the orchestrator fills with the command or
+with the word `none`, because the question left implicit is the one that produced the gap.
+
+What the suite reads: the rule and its two shapes in the rulebook, the excuse, the red flag,
+and the placeholder in the template. What a live round reads: whether the consolidated report
+says which of the two readings its norms lens did.
