@@ -129,7 +129,7 @@ prompt is a one-line "Read and execute <path>" naming the orchestrator's address
 
 ## 5. Templates
 
-Three Markdown briefs with `{{PLACEHOLDER}}` markers, each carrying the sections the orchestrator skill makes mandatory:
+Six Markdown briefs with `{{PLACEHOLDER}}` markers (the three below, plus `agent-review-brief`, `agent-comments-brief` and `agent-audit-brief`), each carrying the sections the orchestrator skill makes mandatory:
 
 - **agent-phase-brief**: required reading, environment with state-verification commands, scope with contracts verbatim and a non-goals list ending in the STOP-and-ask clause, method, forbidden list, communication protocol with the gauge invocation, delivery, resource envelope.
 - **agent-rotation-brief**: phase state, branch state, remaining scope, decisions marked non-reopenable, same protocol.
