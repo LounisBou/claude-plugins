@@ -2180,3 +2180,52 @@ and rebase sentences, their excuses and red flags, and the absence of every sent
 ordered a second review. What a live round reads: whether a pull request dispatched by the
 orchestrator ever gets a second review round, and whether « ready » ever reaches the operator
 on a branch that is not rebased.
+
+## 59. A frontend surface is proved by a browser run and screenshots on the pull request
+
+**0.35.0.** The operator's ruling, on 2026-09-25, is his request and nothing more: for a pull
+request that touches design (frontend), when it creates or substantially modifies a design
+surface (a significant change, not a minor one) or creates the graphic interface of a new
+feature (a new surface), that surface must be tested with Playwright and screenshots of it put
+on the pull request. The rule carries it in his terms: a pull request that creates or
+substantially modifies a frontend surface, or creates the interface of a new feature, is tested
+in a real browser with Playwright and carries screenshots of the surface on the pull request; a
+minor change is not held to it.
+
+A green suite and a read diff say what the code does, not what a surface shows: a layout that
+collapses or a screen that does not match the spec passes both. The proof is the surface itself,
+tested in a real browser, and the screenshots are that proof left where the review and the
+operator read the pull request.
+
+What the plugin adds to apply the ruling, and what is therefore its own choice and not the
+operator's:
+
+- The minor-change decision. The implementer is the one who knows what it changed, so it judges,
+  and says so and why in its report; the orchestrator decides on that claim, so that « minor » is
+  not a way around the rule.
+- The review check. Before a verdict on such a pull request the orchestrator checks that the
+  screenshots are on it, that they show the surface the diff changes, and that the
+  implementer's report names the Playwright run; a missing or unrelated screenshot is a finding
+  that keeps the pull request from ready. The review brief has its round make the same check, and
+  images the review session cannot read are reported under « what the readers could not show »,
+  never as a pass.
+- The placement. The rulebook carries it as a standing rule, so it goes into every brief, and as
+  a review item; the phase brief carries the clause for the implementer, who does not read the
+  rulebook.
+- The handling of the screenshots. They go in the pull request's description, written by the
+  implementer, never committed to the branch, and taken on fixtures or seeded data with no
+  secret, token, personal data, internal host or local path visible. An implementer with no
+  browser or no Playwright stops and says so, rather than skip the proof.
+
+What is left out on purpose: no script, no hook and no tooling for screenshots, and no named
+upload mechanism.
+
+What the suite reads: in the rulebook, the phase brief and the review brief, the trigger phrase
+verbatim; in the rulebook and the phase brief, the minor exemption with the words that make it
+one and the sentence on where the screenshots go; in the phase brief, the stop without a
+browser; in the rulebook and the review brief, the review check; in the rulebook, the excuse and
+the red flag. Each check falls when the sentence it reads is removed or reversed. Not pinned: the sentence on
+images the review session cannot read, and the wording around the pinned sentences. What a live
+round reads: whether a pull request that reworks a surface ever reaches a verdict without
+screenshots of it, and whether « minor » is claimed on a change the orchestrator would have
+decided otherwise.

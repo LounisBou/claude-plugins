@@ -29,6 +29,8 @@ One lens is fixed and is not one of the above to choose from: **norms**. `{{NORM
 
 Where `{{NORMS_CHECK}}` names a command, you RUN it. Neither the resource envelope of §7 nor the fan-out that command makes is a reason to put a hand reading of `{{NORMS}}` in its place: if this machine cannot afford the run, say so in your report and stop there, do not substitute. The hand reading belongs to `none` and to nothing else, because a tool that never ran and a project that ships none are not the same evidence, and only one of them is a fact about the project.
 
+When the delivery creates or substantially modifies a frontend surface, or creates the interface of a new feature, one more check is fixed: the screenshots on the pull request against the diff. They must show the surface the diff changes, and the implementer's report must name the Playwright run; a missing or unrelated screenshot is a finding. A change the implementer's report calls minor is reported as such, with its reason, and the orchestrator rules. Screenshots you cannot read are reported under « what the readers could not show », never as a pass.
+
 Every sub-agent is read-only: no edits, no commits, no long runs, no verdicts on the whole. It reports to you; you consolidate.
 
 ## 4. Report shape — one message to the orchestrator
