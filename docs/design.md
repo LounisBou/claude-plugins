@@ -2094,3 +2094,32 @@ the refresh bullet and its stop on a merged pull request, the excuse and the red
 rulebook; the duty in the succession brief; the two verifications and the settled item in the decide command; the correction and
 the `Edit` tool in the progress command. What a live round reads: whether a question ever
 reaches the operator about an item the artifact, read in that turn, shows settled.
+
+## 57. A tier is bound to a family, and the launcher says when it is not
+
+**0.33.0.** The operator's map bound `deep` to a versioned identifier. A newer model of that
+family shipped, and every deep agent of the day ran on the older one while the orchestrator
+dispatching them ran on the newer. Nothing failed and nothing said so: the identifier still
+resolved, still launched, and still named exactly the model it named the day it was written.
+The operator saw it by comparing two sessions.
+
+The plugin carries no model, and §10's reason still holds: the bindings are the operator's.
+What it lacked was a word on the shape of a good binding. A family alias is the unversioned
+name the host resolves to that family's latest model; a versioned identifier is a pin, and a
+pin nobody chose to keep is a pin that goes stale without a sign. So the routing skill, the
+install command and the README now say a tier is bound to a family alias, never to a versioned
+identifier.
+
+Guidance is read once. The launcher reads the binding on every dispatch, so it is where the
+drift can be seen: when a tier resolves to an identifier whose trailing dash segments are
+numeric — a version, or a date — `resolve_tier` prints one warning line on stderr naming the
+tier, the identifier and the alias to bind instead, the alias being the segment before the
+numbers. It warns and launches. It never refuses and never rewrites the map: a pinned model
+may be exactly what the operator wants for a while, and the file is his. The detection names
+no family, so the plugin still carries no model name; an identifier the shape misreads costs
+one line on stderr.
+
+What the suite reads: the warning on a versioned and on a dated binding, once, naming the
+tier, the identifier and the alias; its absence on an alias; the resolution unchanged; and the
+spawn warning and still launching the pinned model. What a live round reads: whether a deep
+agent ever runs on an older model than the orchestrator that dispatched it.

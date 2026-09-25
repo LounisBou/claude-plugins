@@ -53,7 +53,9 @@ gauge then answers from the transcript alone.
 - `python3` for the gauge's transcript tier
 - for `model-routing`: bind `deep`, `standard` and `light` in
   `~/.claude/claude-orchestrator/models.json` (the installer creates it empty) to the
-  model identifiers your host accepts. Unbound tiers leave the choice to the host.
+  host's family aliases, which it resolves to each family's latest model — never to a
+  versioned identifier, which goes stale silently (the launcher warns when it finds one).
+  Unbound tiers leave the choice to the host.
 - for `iterm-agents`: name in `~/.claude/claude-orchestrator/mcp.json` (the installer
   creates it empty) the servers this machine offers, in the host's own shape, and list
   the elementary ones under `default`. An agent gets that set plus what its spawn line

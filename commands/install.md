@@ -21,9 +21,11 @@ The script is idempotent and does three things:
 
 Report its output, then tell the user two things: to restart their session for the
 tap to take effect, and to bind `deep`, `standard` and `light` in `models.json` to
-the model identifiers this host accepts. An unbound tier is not an error — the host
-then chooses — but until the file is filled the routing table is advisory, and the
-orchestrator should say so rather than report a wave as routed.
+the host's family aliases — the unversioned names it resolves to each family's latest
+model, never a versioned identifier, which goes stale when a newer model ships. An
+unbound tier is not an error — the host then chooses — but until the file is filled
+the routing table is advisory, and the orchestrator should say so rather than report
+a wave as routed.
 
 If the environment step reported a failure, say so plainly: the tab tooling will
 refuse to run and print how to build it, and the other skills are unaffected.

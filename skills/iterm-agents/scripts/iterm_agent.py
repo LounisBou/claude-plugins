@@ -709,6 +709,7 @@ def resolve_tier(tier):
         die("resolve-tier: unknown tier: %s (expected deep, standard or light)" % tier)
     override = os.environ.get("ORCHESTRATOR_TIER_" + tier.upper())
     if override:
+        warn_versioned(tier, override)
         return override
     if not os.path.isfile(MODELS_MAP):
         return ""
@@ -723,7 +724,27 @@ def resolve_tier(tier):
         # believes it asked for: one missing comma, and the routing is advisory in silence.
         die("resolve-tier: %s does not read as a tier map (invalid JSON, empty, or not an object)" % MODELS_MAP)
     value = data.get(tier) or ""
-    return "" if value is None else str(value)
+    value = "" if value is None else str(value)
+    warn_versioned(tier, value)
+    return value
+
+
+def warn_versioned(tier, value):
+    """A versioned identifier goes stale without a sign: the family ships a newer model and
+    the tier keeps launching the old one, while a family alias is resolved by the host to its
+    latest. The map is the operator's, so this warns and launches; it never refuses or
+    rewrites. Versioned reads as trailing numeric dash segments, a version or a date, and the
+    alias is the last segment before them. A bracketed variant suffix is set aside before
+    reading the version and carried over to the alias."""
+    base, suffix = re.fullmatch(r"(.*?)(\[[^\]]*\])?", value).groups()
+    parts = base.split("-")
+    n = len(parts)
+    while n > 0 and re.fullmatch(r"\d+(\.\d+)*", parts[n - 1]):
+        n -= 1
+    if 0 < n < len(parts):
+        print("WARNING: tier %s is bound to the versioned identifier %s, which goes stale when "
+              "a newer model ships; bind it to the family alias %s instead"
+              % (tier, value, parts[n - 1] + (suffix or "")), file=sys.stderr)
 
 
 def inherited_model():
