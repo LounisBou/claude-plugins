@@ -153,9 +153,26 @@ check "the norms lens runs the project.s own tool" "1" "$(grep -c "The norms len
 check "a project shipping none reads the norms file by hand" "1" "$(grep -c "the lens reads the norms file by hand" "$ROOT/skills/orchestrator/SKILL.md")"
 check "the skipped norms check has its excuse" "1" "$(grep -c "size and a green gate are not the test" "$ROOT/skills/orchestrator/SKILL.md")"
 check "the skipped norms check has its red flag" "1" "$(grep -c "without its norms check having run" "$ROOT/skills/orchestrator/SKILL.md")"
-check "the review brief carries the norms check placeholder" "1" "$(grep -c "{{NORMS_CHECK}}" "$ROOT/templates/agent-review-brief.md")"
+# Presence, not a count: the placeholder now appears wherever the brief has something to
+# say about it, and a count would fall on prose that adds nothing to read.
+check "the review brief carries the norms check placeholder" "yes" "$(grep -qF -- "{{NORMS_CHECK}}" "$ROOT/templates/agent-review-brief.md" && echo yes || echo no)"
 check "the norms check placeholder is documented on its line" "1" "$(grep -c "the project.s norms check invocation, or the word" "$ROOT/templates/agent-review-brief.md")"
 check "the review brief takes the report, not the fix path" "1" "$(grep -c "its fix path is not yours to take" "$ROOT/templates/agent-review-brief.md")"
+
+# The same rule, written in prose on both sides, was still broken three times in one day:
+# twice a reader.s opinion of the norms file stood in for the project.s tool, and once a
+# corrective round was verified by the orchestrator alone. Prose is applied from memory, so
+# the rule now ends on a record a script can refuse. These pin the sentences that say so.
+check "the rulebook gates readiness on the record" "1" "$(grep -c "exits 0 at its CURRENT head" "$ROOT/skills/orchestrator/SKILL.md")"
+check "a corrective round is reviewed like any delivery" "1" "$(grep -c "the round that reads a corrective round is a review round like any other" "$ROOT/skills/orchestrator/SKILL.md")"
+check "a hand reading standing in for the tool has its excuse" "1" "$(grep -c "the tool IS the check" "$ROOT/skills/orchestrator/SKILL.md")"
+check "a self-verified repair has its excuse" "1" "$(grep -c "refuses a head no review has read" "$ROOT/skills/orchestrator/SKILL.md")"
+check "the ungated pull request has its red flag" "1" "$(grep -c "taken out of draft, declared ready or given its verdict without" "$ROOT/skills/orchestrator/SKILL.md")"
+check "the routing skill lists both new subcommands" "1|1" \
+  "$(grep -c "dispatch-record.sh review <record> <id> --head" "$ROOT/skills/model-routing/SKILL.md")|$(grep -c "dispatch-record.sh ready <record> <id> --head" "$ROOT/skills/model-routing/SKILL.md")"
+check "the review brief refuses the envelope as a reason to substitute" "1" "$(grep -c "do not substitute" "$ROOT/templates/agent-review-brief.md")"
+check "the review brief ends its report on a machine line" "1|1" \
+  "$(grep -c "norms-check: tool" "$ROOT/templates/agent-review-brief.md")|$(grep -c "norms-check: none" "$ROOT/templates/agent-review-brief.md")"
 
 # A plain spawn appends at the END of the window, not beside the caller — an agent
 # once landed two tabs from its orchestrator with a stranger's session between them.
@@ -485,6 +502,68 @@ check_status "an unknown tier is refused at open" 1 bash "$REC" open "$R" --clas
 check_status "open without a class is an error" 1 bash "$REC" open "$R" --tier deep
 check_status "a summary of nothing is not an error" 0 bash "$REC" summary "$WORK/absent.jsonl"
 
+# The gate. « Every agent-produced pull request gets its review and its norms check before
+# its verdict » was written in the rulebook and in the review template, and was still broken
+# three times in one day: two rounds replaced the project's norms tool by a hand reading of
+# its norms file, and two corrective rounds were verified by the orchestrator alone, on the
+# point of taking two pull requests out of draft. A rule only prose carries is applied from
+# memory. `review` records what a round actually read; `ready` refuses everything else.
+G="$WORK/gate.jsonl"
+g1=$(bash "$REC" open "$G" --class behaviour-phase --tier standard --label "gate")
+check_status "ready refuses a row no review has touched" 1 bash "$REC" ready "$G" "$g1" --head aaa1111
+check "and says which condition failed" "1" \
+  "$(bash "$REC" ready "$G" "$g1" --head aaa1111 2>&1 | grep -c 'no review recorded')"
+
+bash "$REC" review "$G" "$g1" --head aaa1111 --norms tool >/dev/null
+check "a review records the head it read and its norms check" "aaa1111|tool" \
+  "$(jq -r --argjson i "$g1" 'select(.id==$i)|[.review.head,.review.norms]|join("|")' "$G")"
+check "a review counts as a round" "1" "$(jq -r --argjson i "$g1" 'select(.id==$i)|.rounds' "$G")"
+check_status "ready passes at the head that review read" 0 bash "$REC" ready "$G" "$g1" --head aaa1111
+
+# The head moves on every corrective round, and the review that read the previous one says
+# nothing about this one. This is the case the orchestrator talked itself past.
+check_status "ready refuses a head no review has read" 1 bash "$REC" ready "$G" "$g1" --head bbb2222
+check "and names both heads" "1" \
+  "$(bash "$REC" ready "$G" "$g1" --head bbb2222 2>&1 | grep -c 'last review read aaa1111, head is bbb2222')"
+
+bash "$REC" review "$G" "$g1" --head bbb2222 --norms none >/dev/null
+check "the row keeps the LAST review, and the round is counted" "bbb2222|none|2" \
+  "$(jq -r --argjson i "$g1" 'select(.id==$i)|[.review.head,.review.norms,.rounds]|join("|")' "$G")"
+check "a review adds no row" "1" "$(wc -l < "$G" | tr -d ' ')"
+check_status "a project shipping no norms tool still passes the gate" 0 bash "$REC" ready "$G" "$g1" --head bbb2222
+
+# `workspace.sh` prints short SHAs where a host API gives all forty: the same commit must not
+# be refused for how it was spelled. Either side may abbreviate the other, from seven
+# characters up; anything shorter identifies nothing, and no git call is made to check.
+full=0123456789abcdef0123456789abcdef01234567
+g2=$(bash "$REC" open "$G" --class behaviour-phase --tier standard --label "abbreviated")
+bash "$REC" review "$G" "$g2" --head 0123456 --norms tool >/dev/null
+check_status "a short recorded head accepts the full head of the same commit" 0 bash "$REC" ready "$G" "$g2" --head "$full"
+bash "$REC" review "$G" "$g2" --head "$full" --norms tool >/dev/null
+check_status "a full recorded head accepts the short head of the same commit" 0 bash "$REC" ready "$G" "$g2" --head 0123456
+check_status "two heads sharing no prefix are refused" 1 bash "$REC" ready "$G" "$g2" --head fedcba9876543210fedcba9876543210fedcba98
+check "and are named" "1" \
+  "$(bash "$REC" ready "$G" "$g2" --head fedcba9 2>&1 | grep -c "last review read $full, head is fedcba9")"
+check_status "a six-character head identifies nothing" 1 bash "$REC" ready "$G" "$g2" --head 012345
+check "and says so" "1" "$(bash "$REC" ready "$G" "$g2" --head 012345 2>&1 | grep -c 'ready: head 012345 is too short')"
+
+# `none` is a fact about the PROJECT, not a verdict a round may reach for: any third value
+# is refused rather than recorded, because an unreadable record gates nothing.
+check_status "a norms value that is neither tool nor none is refused" 1 bash "$REC" review "$G" "$g1" --head ccc333 --norms manual
+check "a refused review leaves the row as it was" "bbb2222|none|2" \
+  "$(jq -r --argjson i "$g1" 'select(.id==$i)|[.review.head,.review.norms,.rounds]|join("|")' "$G")"
+check_status "review without --head is an error" 1 bash "$REC" review "$G" "$g1" --norms tool
+check_status "review without --norms is an error" 1 bash "$REC" review "$G" "$g1" --head ccc333
+check_status "ready without --head is an error" 1 bash "$REC" ready "$G" "$g1"
+check "and says the head is required" "1" "$(bash "$REC" ready "$G" "$g1" 2>&1 | grep -c 'ready: --head is required')"
+check_status "review on an unknown row is an error" 1 bash "$REC" review "$G" 99 --head aaa1111 --norms tool
+check_status "ready on an unknown row is an error" 1 bash "$REC" ready "$G" 99 --head aaa1111
+check "and names the row it did not find" "1" "$(bash "$REC" ready "$G" 99 --head aaa1111 2>&1 | grep -c 'ready: no row with id 99')"
+check_status "review on an unknown option is an error" 1 bash "$REC" review "$G" "$g1" --head ccc333 --norms tool --force
+check_status "an unknown subcommand is an error" 1 bash "$REC" bogus "$G"
+check "and names the subcommands it expects" "1" \
+  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, ready, close, escaped or summary)')"
+
 echo "== workspace =="
 
 # A clone carries what git tracks and nothing else; the checkout is made WITH the
@@ -666,9 +745,23 @@ check "the missing STOP clause is named" "1" "$(bash "$LINT" "$B/noaddr.md" 2>&1
 check "the missing non-goals are named" "1" "$(bash "$LINT" "$B/noaddr.md" 2>&1 | grep -c 'no non-goals')"
 
 # A review or rotation brief is not an implementer brief: it carries no non-goals list,
-# and holding it to one would make the check noise nobody reads.
-printf '# round 2\n\nYou are the REVIEW agent for this round.\n\nYour orchestrator is `p-1 [a1b2c3]`.\n' > "$B/review.md"
+# and holding it to one would make the check noise nobody reads. What it IS held to is the
+# line its report must end on: a round that never reports its norms check leaves the
+# orchestrator nothing to record, and the readiness gate then refuses a head whose round did
+# read it. The rule lived in prose on both sides of the round and was skipped three times in
+# one day, so the brief is read for it before the dispatch rather than after.
+review_brief() { printf '# round 2\n\nYou are the REVIEW agent for this round.\n\nYour orchestrator is `p-1 [a1b2c3]`.\n' > "$1"; }
+
+review_brief "$B/review.md"
+printf 'End the report with `norms-check: tool <head>` or `norms-check: none <head>`.\n' >> "$B/review.md"
 check_status "a review brief is not held to the implementer sections" 0 bash "$LINT" "$B/review.md"
+
+review_brief "$B/review-nogate.md"
+check_status "a review brief with no norms-check line is a finding" 1 bash "$LINT" "$B/review-nogate.md"
+check "the missing report line is named" "1" "$(bash "$LINT" "$B/review-nogate.md" 2>&1 | grep -c 'norms-check:')"
+check "an implementer brief is not held to it" "0" "$(bash "$LINT" "$B/good.md" 2>&1 | grep -c 'norms-check')"
+check "the shipped review template raises no norms-check finding" "0" \
+  "$(bash "$LINT" "$ROOT/templates/agent-review-brief.md" 2>&1 | grep -c 'norms-check')"
 
 check_status "a brief that does not exist is an error" 1 bash "$LINT" "$B/absent.md"
 check_status "no argument is an error" 1 bash "$LINT"

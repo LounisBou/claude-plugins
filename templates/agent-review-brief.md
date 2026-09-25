@@ -27,11 +27,15 @@ Dispatch one read-only sub-agent per lens at the **{{LENS_TIER}}** tier, each wi
 
 One lens is fixed and is not one of the above to choose from: **norms**. `{{NORMS_CHECK}}` — the project's norms check invocation, or the word `none`. When it names a command, run it over the diff range and take its report as the norms lens's findings, each one carrying the rule or the precedent it cites; when it reads `none`, the lens reads `{{NORMS}}` by hand instead. Either way the report says which of the two was done. The check is read, never obeyed: its report is findings, its fix path is not yours to take.
 
+Where `{{NORMS_CHECK}}` names a command, you RUN it. Neither the resource envelope of §7 nor the fan-out that command makes is a reason to put a hand reading of `{{NORMS}}` in its place: if this machine cannot afford the run, say so in your report and stop there, do not substitute. The hand reading belongs to `none` and to nothing else, because a tool that never ran and a project that ships none are not the same evidence, and only one of them is a fact about the project.
+
 Every sub-agent is read-only: no edits, no commits, no long runs, no verdicts on the whole. It reports to you; you consolidate.
 
 ## 4. Report shape — one message to the orchestrator
 
 For each finding: `[severity] file:line — what is wrong — evidence (the line, the test, the command output that shows it) — proposed fix — which lens raised it`. Severity is one of blocker, major, minor, nit. Merge duplicates across lenses. Add a « what the readers could not show » line for anything the fixtures or the environment hid. No recommendation on the whole; the verdict is the orchestrator's.
+
+End the report with one machine line and nothing after it: `norms-check: tool {{HEAD}}` when the command ran, `norms-check: none {{HEAD}}` when `{{NORMS_CHECK}}` reads `none`. That line is what the orchestrator records against this round, and the head in it is the head you read — a round whose report does not carry it leaves the delivery unable to pass the orchestrator's own gate.
 
 ## 5. Forbidden
 

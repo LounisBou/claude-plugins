@@ -136,9 +136,13 @@ Keep it with `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/dispatch-record.
 ```
 dispatch-record.sh open <record> --class <c> --tier <t> --label <what>   # prints the row id
 dispatch-record.sh round <record> <id>                                  # a review round happened
+dispatch-record.sh review <record> <id> --head <sha> --norms tool|none  # and what it read
+dispatch-record.sh ready <record> <id> --head <sha>                     # 0 only if reviewed there
 dispatch-record.sh close <record> <id> --verdict approved
 dispatch-record.sh summary <record>
 ```
+
+`review` is what a review round records instead of `round`: the head it read, and whether the project's own norms tool ran (`tool`) or the project ships none (`none`). `ready` is the gate in front of a pull request leaving draft — it exits 0 only when the last review read exactly that head.
 
 `summary` prints one line per class and tier, and then the line the false-economy rule exists for:
 

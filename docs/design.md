@@ -269,7 +269,8 @@ and a rule applied from memory always finds the drop was free, because its cost 
 rounds later where nobody attributes it.
 
 `dispatch-record.sh` keeps one row per dispatch as JSON lines — class, tier, rounds,
-verdict — with `open`, `round`, `close` and `summary`. The row is rewritten in place
+verdict — with `open`, `round`, `close` and `summary`, and, since §55, the review a
+readiness gate reads: `review` and `ready`. The row is rewritten in place
 rather than appended per event: a record of events would make every read a reduction over
 history, and the history is not the fact. `summary` prints a line per class and tier, then
 the one the rule exists for: `signal=<class> at <tier> averages N rounds: the drop did not
@@ -2006,3 +2007,49 @@ with the word `none`, because the question left implicit is the one that produce
 What the suite reads: the rule and its two shapes in the rulebook, the excuse, the red flag,
 and the placeholder in the template. What a live round reads: whether the consolidated report
 says which of the two readings its norms lens did.
+
+## 55. A pull request is ready only when the record says a round read its head
+
+**0.31.0.** §54 made both readings mandatory. They were skipped three times in the day that
+followed. Twice a review round took the escape the review template itself offers — the norms
+placeholder accepts the word `none` — and put a reading of the project's norms file where its
+norms tool belonged, with the machine's resource envelope and the tool's own fan-out given as
+the reason. Once a corrective round was verified by the orchestrator alone, no review session
+having read the repair. Two pull requests were one command from leaving draft on that
+evidence, and what stopped them was the operator asking, not anything in the method.
+
+Nothing was wrong with what the rule said. What was wrong is where it lived: in prose, on
+both sides of the round, and prose is applied from memory. A rule applied from memory is
+applied when it is remembered, and on a day with three rounds in flight it is remembered by
+the session that has the most context to spare, which is never the one at the gate. It needed
+a refusal a script can make.
+
+So the round's reading lands on the record, and the record answers one question. `review
+<record> <id> --head <sha> --norms tool|none` writes on the dispatch row the head that round
+read and whether the project's own tool ran or the project ships none; it replaces `round`
+for review rounds, because a round that leaves no head behind is the round this gate exists
+to refuse. `ready <record> <id> --head <sha>` exits 0 only when the last review read
+that head (either side may abbreviate the other, from seven characters), and names the
+condition that failed otherwise. Only the
+last review is kept: the question is about the head in front of the orchestrator now, and a
+history of heads answers a different one.
+
+`none` is a fact about the PROJECT — it ships no norms check — never a round's judgement that
+reading the file by hand was enough this time. So the review template now runs the tool
+wherever the placeholder names one, reports a machine that cannot afford the run instead of
+substituting for it, and ends its consolidated report on `norms-check: tool <head>` or
+`norms-check: none <head>`, which is what the orchestrator records. `brief-lint.sh` reads a
+review brief for that instruction before the dispatch: a brief that never asks for the line
+is a delivery that cannot leave draft, and discovering that at the gate costs the round.
+
+The gate is blind past those two facts, on purpose. Whether the findings were verified,
+whether the over-corrections were dropped, whether the operator approved: none of it is
+readable by a script, all of it stays the orchestrator's, and a green `ready` is not an
+approved pull request. A gate that claimed more would be trusted past what it reads, which is
+the false proof the rulebook's own tenth item names.
+
+What the suite reads: `review` and `ready` on a record — the head kept, the round counted,
+the third norms value refused, each refusal naming its condition — the lint finding on a
+review brief without the line and its absence on the shipped template, and the sentences
+carrying the rule in the rulebook, the routing skill and the review brief. What a live round
+reads: whether a pull request ever leaves draft without `ready` having exited 0 at its head.
