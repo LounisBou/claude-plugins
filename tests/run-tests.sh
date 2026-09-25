@@ -169,17 +169,36 @@ check "the review brief carries the norms check placeholder" "yes" "$(grep -qF -
 check "the norms check placeholder is documented on its line" "1" "$(grep -c "the project.s norms check invocation, or the word" "$ROOT/templates/agent-review-brief.md")"
 check "the review brief takes the report, not the fix path" "1" "$(grep -c "its fix path is not yours to take" "$ROOT/templates/agent-review-brief.md")"
 
-# The same rule, written in prose on both sides, was still broken three times in one day:
-# twice a reader.s opinion of the norms file stood in for the project.s tool, and once a
-# corrective round was verified by the orchestrator alone. Prose is applied from memory, so
-# the rule now ends on a record a script can refuse. These pin the sentences that say so.
-check "the rulebook gates readiness on the record" "1" "$(grep -c "exits 0 at its CURRENT head" "$ROOT/skills/orchestrator/SKILL.md")"
-check "a corrective round is reviewed like any delivery" "1" "$(grep -c "the round that reads a corrective round is a review round like any other" "$ROOT/skills/orchestrator/SKILL.md")"
+# The same rule, written in prose on both sides, was still broken twice in one day: a
+# reader.s opinion of the norms file stood in for the project.s tool. Prose is applied from
+# memory, so the rule now ends on a record a script can refuse. These pin the sentences that
+# say so.
+check "the rulebook gates readiness on the record" "1" "$(grep -c "exits 0 at the head in front of you" "$ROOT/skills/orchestrator/SKILL.md")"
+# The operator's ruling of 2026-09-25: one review round, the orchestrator's triage, one
+# correction round the orchestrator verifies itself, done. The sentences that prescribed a
+# review of every repair are gone in the same move, or the rulebook orders both.
+check "the rulebook states one review round and one correction round" "1|1" \
+  "$(grep -c "One review round, one correction round, and you close it" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "no review of the correction round, no further round, no over-correction" "$ROOT/skills/orchestrator/SKILL.md")"
+check "the triage names every dropped item" "2" "$(grep -c "dropped item named in one line with its reason\|name each dropped item with its reason" "$ROOT/skills/orchestrator/SKILL.md")"
+check "no sentence still orders a review of the repair" "0|0|0" \
+  "$(grep -c "the round that reads a corrective round" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "the round after a repair reads the repair" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "No head is reviewed until" "$ROOT/skills/orchestrator/SKILL.md")"
+check "the rulebook records the correction round on the record" "1" "$(grep -c "dispatch-record.sh fixed <record> <id> --head <sha>" "$ROOT/skills/orchestrator/SKILL.md")"
+# Ready is the operator's turn: the pull request stays in draft, rebased, and the squash-merge
+# of a lower branch is replayed around, never through.
+check "ready leaves the pull request in draft" "1" "$(grep -c "Ready is the operator's turn, and the pull request stays in draft" "$ROOT/skills/orchestrator/SKILL.md")"
+check "ready includes the rebase and names the squash-merge trap" "1|1|1" \
+  "$(grep -c "each pull request of a stack on the one below it" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "git rebase --onto <main> <old head of the lower branch> <branch>" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "the one force this rule allows" "$ROOT/skills/orchestrator/SKILL.md")"
+check "the new excuses have their rows" "1|1|1" \
+  "$(grep -c "The reviewer found it, so it goes in the correction round" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "is green, I can take it out of draft" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "a plain rebase on main will do" "$ROOT/skills/orchestrator/SKILL.md")"
+check "the new red flags are listed" "1|1" \
+  "$(grep -c "A second review round scheduled on a pull request you dispatched" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "a force push other than a rebase" "$ROOT/skills/orchestrator/SKILL.md")"
 check "a hand reading standing in for the tool has its excuse" "1" "$(grep -c "the tool IS the check" "$ROOT/skills/orchestrator/SKILL.md")"
-check "a self-verified repair has its excuse" "1" "$(grep -c "refuses a head no review has read" "$ROOT/skills/orchestrator/SKILL.md")"
-check "the ungated pull request has its red flag" "1" "$(grep -c "taken out of draft, declared ready or given its verdict without" "$ROOT/skills/orchestrator/SKILL.md")"
-check "the routing skill lists both new subcommands" "1|1" \
-  "$(grep -c "dispatch-record.sh review <record> <id> --head" "$ROOT/skills/model-routing/SKILL.md")|$(grep -c "dispatch-record.sh ready <record> <id> --head" "$ROOT/skills/model-routing/SKILL.md")"
+check "a review of the correction round has its excuse" "1" "$(grep -c "The correction round deserves a review round of its own" "$ROOT/skills/orchestrator/SKILL.md")"
+check "the ungated pull request has its red flag" "1" "$(grep -c "A pull request you took out of draft; « ready » told to the operator before" "$ROOT/skills/orchestrator/SKILL.md")"
+check "the routing skill lists the gate's subcommands" "1|1|1" \
+  "$(grep -c "dispatch-record.sh review <record> <id> --head" "$ROOT/skills/model-routing/SKILL.md")|$(grep -c "dispatch-record.sh fixed <record> <id> --head" "$ROOT/skills/model-routing/SKILL.md")|$(grep -c "dispatch-record.sh ready <record> <id> --head" "$ROOT/skills/model-routing/SKILL.md")"
+check "the routing table verifies the correction round on the artifact" "0|1" \
+  "$(grep -c "the round that re-reads the repair" "$ROOT/skills/model-routing/SKILL.md")|$(grep -c "you, on the artifact: the diff, the decisive tests, a mutation" "$ROOT/skills/model-routing/SKILL.md")"
 check "the review brief refuses the envelope as a reason to substitute" "1" "$(grep -c "do not substitute" "$ROOT/templates/agent-review-brief.md")"
 check "the review brief ends its report on a machine line" "1|1" \
   "$(grep -c "norms-check: tool" "$ROOT/templates/agent-review-brief.md")|$(grep -c "norms-check: none" "$ROOT/templates/agent-review-brief.md")"
@@ -514,10 +533,9 @@ check_status "a summary of nothing is not an error" 0 bash "$REC" summary "$WORK
 
 # The gate. « Every agent-produced pull request gets its review and its norms check before
 # its verdict » was written in the rulebook and in the review template, and was still broken
-# three times in one day: two rounds replaced the project's norms tool by a hand reading of
-# its norms file, and two corrective rounds were verified by the orchestrator alone, on the
-# point of taking two pull requests out of draft. A rule only prose carries is applied from
-# memory. `review` records what a round actually read; `ready` refuses everything else.
+# twice in one day: two rounds replaced the project's norms tool by a hand reading of its
+# norms file. A rule only prose carries is applied from memory. `review` records what a round
+# actually read; `ready` refuses everything else.
 G="$WORK/gate.jsonl"
 g1=$(bash "$REC" open "$G" --class behaviour-phase --tier standard --label "gate")
 check_status "ready refuses a row no review has touched" 1 bash "$REC" ready "$G" "$g1" --head aaa1111
@@ -557,6 +575,37 @@ check "and are named" "1" \
 check_status "a six-character head identifies nothing" 1 bash "$REC" ready "$G" "$g2" --head 012345
 check "and says so" "1" "$(bash "$REC" ready "$G" "$g2" --head 012345 2>&1 | grep -c 'ready: head 012345 is too short')"
 
+# The operator's process: ONE review round, the orchestrator's triage, ONE correction round
+# the orchestrator verifies on the artifact, done. The correction moves the head, and the
+# review that read the previous one must still let the pull request through at the head the
+# orchestrator verified - once, and only after a review, or the gate stops meaning anything.
+g3=$(bash "$REC" open "$G" --class behaviour-phase --tier standard --label "one fix")
+check_status "fixed refuses a row no review has touched" 1 bash "$REC" fixed "$G" "$g3" --head ddd4444
+check "and says a review comes first" "1" \
+  "$(bash "$REC" fixed "$G" "$g3" --head ddd4444 2>&1 | grep -c 'fixed: no review recorded on row')"
+check "a refused fix leaves no fixed head" "" "$(jq -r --argjson i "$g3" 'select(.id==$i)|.review.fixed.head // ""' "$G")"
+bash "$REC" review "$G" "$g3" --head ccc3333 --norms tool >/dev/null
+bash "$REC" fixed "$G" "$g3" --head ddd4444 >/dev/null
+check "fixed records the head the orchestrator verified, and counts the round" "ccc3333|ddd4444|2" \
+  "$(jq -r --argjson i "$g3" 'select(.id==$i)|[.review.head,.review.fixed.head,.rounds]|join("|")' "$G")"
+check_status "ready passes at the fixed head" 0 bash "$REC" ready "$G" "$g3" --head ddd4444
+check "and says which reading it rests on" "1" \
+  "$(bash "$REC" ready "$G" "$g3" --head ddd4444 2>&1 | grep -c 'ready: row 3 reviewed at ccc3333, corrected and verified at ddd4444')"
+check_status "the fixed head accepts its full spelling" 0 bash "$REC" ready "$G" "$g3" --head ddd4444abcdef
+check_status "ready still passes at the reviewed head" 0 bash "$REC" ready "$G" "$g3" --head ccc3333
+check_status "ready refuses a head neither reviewed nor fixed" 1 bash "$REC" ready "$G" "$g3" --head eee5555
+check "and names all three heads" "1" \
+  "$(bash "$REC" ready "$G" "$g3" --head eee5555 2>&1 | grep -c 'last review read ccc3333, its correction ddd4444, head is eee5555')"
+check_status "a second correction round is refused" 1 bash "$REC" fixed "$G" "$g3" --head eee5555
+check "and says there is one" "1" \
+  "$(bash "$REC" fixed "$G" "$g3" --head eee5555 2>&1 | grep -c 'fixed: row 3 already has its correction round at ddd4444')"
+check "a refused second fix leaves the first" "ddd4444|2" \
+  "$(jq -r --argjson i "$g3" 'select(.id==$i)|[.review.fixed.head,.rounds]|join("|")' "$G")"
+check_status "fixed without --head is an error" 1 bash "$REC" fixed "$G" "$g2"
+check "and says the head is required" "1" "$(bash "$REC" fixed "$G" "$g2" 2>&1 | grep -c 'fixed: --head is required')"
+check_status "fixed on an unknown row is an error" 1 bash "$REC" fixed "$G" 99 --head aaa1111
+check_status "fixed on an unknown option is an error" 1 bash "$REC" fixed "$G" "$g2" --head aaa1111 --force
+
 # `none` is a fact about the PROJECT, not a verdict a round may reach for: any third value
 # is refused rather than recorded, because an unreadable record gates nothing.
 check_status "a norms value that is neither tool nor none is refused" 1 bash "$REC" review "$G" "$g1" --head ccc333 --norms manual
@@ -572,7 +621,7 @@ check "and names the row it did not find" "1" "$(bash "$REC" ready "$G" 99 --hea
 check_status "review on an unknown option is an error" 1 bash "$REC" review "$G" "$g1" --head ccc333 --norms tool --force
 check_status "an unknown subcommand is an error" 1 bash "$REC" bogus "$G"
 check "and names the subcommands it expects" "1" \
-  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, ready, close, escaped or summary)')"
+  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, fixed, ready, close, escaped or summary)')"
 
 echo "== workspace =="
 
@@ -758,8 +807,8 @@ check "the missing non-goals are named" "1" "$(bash "$LINT" "$B/noaddr.md" 2>&1 
 # and holding it to one would make the check noise nobody reads. What it IS held to is the
 # line its report must end on: a round that never reports its norms check leaves the
 # orchestrator nothing to record, and the readiness gate then refuses a head whose round did
-# read it. The rule lived in prose on both sides of the round and was skipped three times in
-# one day, so the brief is read for it before the dispatch rather than after.
+# read it. The rule lived in prose on both sides of the round and was skipped twice in one
+# day, so the brief is read for it before the dispatch rather than after.
 review_brief() { printf '# round 2\n\nYou are the REVIEW agent for this round.\n\nYour orchestrator is `p-1 [a1b2c3]`.\n' > "$1"; }
 
 review_brief "$B/review.md"

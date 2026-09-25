@@ -4,6 +4,7 @@
 #   dispatch-record.sh open    <record> --class <c> --tier <deep|standard|light> [--label <text>] [--cascade]
 #   dispatch-record.sh round   <record> <id>
 #   dispatch-record.sh review  <record> <id> --head <sha> --norms tool|none
+#   dispatch-record.sh fixed   <record> <id> --head <sha>   (the one correction round, verified)
 #   dispatch-record.sh ready   <record> <id> --head <sha>
 #   dispatch-record.sh close   <record> <id> --verdict <text>
 #   dispatch-record.sh escaped <record> <id>      (a defect got past this row's review)
@@ -20,11 +21,12 @@
 #
 # `review` and `ready` carry the second rule the record is asked to hold: a pull request is
 # ready only when a review session read ITS head (either side may abbreviate the other, from
-# 7 characters) and the project's own norms check ran there.
-# That rule was written in the rulebook and in the review brief, and was still broken three
-# times in one day - twice by a reader's opinion of the norms file standing in for the tool,
-# once by a corrective round the orchestrator verified alone. A rule only prose carries is
-# applied from memory, and memory forgets it; `ready` is the refusal prose cannot make.
+# 7 characters) and the project's own norms check ran there - or when the head is the one
+# correction round that review produced, which the orchestrator verified on the artifact.
+# That rule was written in the rulebook and in the review brief, and was still broken twice
+# in one day by a reader's opinion of the norms file standing in for the tool. A rule only
+# prose carries is applied from memory, and memory forgets it; `ready` is the refusal prose
+# cannot make.
 #
 # The record belongs to the PROJECT being built, not to this plugin: the default table
 # ships here, a project's corrections belong with that project's state.
@@ -35,7 +37,7 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 command -v jq >/dev/null 2>&1 || die "jq is required"
 
 cmd="${1:-}"; record="${2:-}"
-[ -n "$cmd" ] || die "usage: dispatch-record.sh {open|round|review|ready|close|escaped|summary} <record> [...] (see header)"
+[ -n "$cmd" ] || die "usage: dispatch-record.sh {open|round|review|fixed|ready|close|escaped|summary} <record> [...] (see header)"
 [ -n "$record" ] || die "$cmd: a record path is required"
 
 next_id() { if [ -f "$record" ]; then jq -s 'if length==0 then 1 else ([.[].id]|max)+1 end' "$record"; else echo 1; fi; }
@@ -44,6 +46,28 @@ require_row() {
     [ -f "$record" ] || die "$1: no such record: $record"
     [ "$(jq -s --argjson i "$2" '[.[]|select(.id==$i)]|length' "$record")" = 1 ] \
         || die "$1: no row with id $2 in $record"
+}
+
+# head_option <cmd> <args...>: the value of the one `--head` option these subcommands take.
+head_option() {
+    local sub="$1" head=""; shift
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --head) head="$2"; shift 2 ;;
+            *) die "$sub: unknown option $1" ;;
+        esac
+    done
+    [ -n "$head" ] || die "$sub: --head is required"
+    echo "$head"
+}
+
+# same_commit <recorded> <head>: either side may abbreviate the other; the shorter one must
+# still identify a commit.
+same_commit() {
+    local short=$1 long=$2
+    [ "${#short}" -le "${#long}" ] || { short=$2; long=$1; }
+    [ "${#short}" -ge 7 ] || die "ready: head $short is too short to identify a commit (7 characters at least)"
+    case "$long" in "$short"*) return 0 ;; *) return 1 ;; esac
 }
 
 # Rewriting the whole file keeps ONE row per dispatch: a record appending an event per
@@ -114,32 +138,47 @@ review)
     rewrite 'if .id==$i then .rounds += 1 | .review={head:$h,norms:$n,at:$a} else . end' "$id" \
         --arg h "$head" --arg n "$norms" --arg a "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     ;;
+fixed)
+    # The ONE correction round a review produced, verified by the orchestrator on the artifact
+    # (the diff, the decisive tests, a mutation). It lives inside the review it answers: a
+    # correction belongs to the findings that ordered it. It counts as a round - the routing
+    # signal reads what a dispatch cost - and it is accepted once, because a second correction
+    # round is the over-correction the operator's process forbids, not a record to keep.
+    id="${3:-}"; [ -n "$id" ] || die "fixed: a row id is required"
+    require_row fixed "$id"
+    shift 3; head=$(head_option fixed "$@") || exit 1
+    reviewed=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].review.head // ""' "$record")
+    [ -n "$reviewed" ] || die "fixed: no review recorded on row $id: the correction round answers a review round, record it with \`review\` first"
+    previous=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].review.fixed.head // ""' "$record")
+    [ -z "$previous" ] || die "fixed: row $id already has its correction round at $previous: one review round, one correction round, and a second one is the over-correction"
+    rewrite 'if .id==$i then .rounds += 1 | .review.fixed={head:$h,at:$a} else . end' "$id" \
+        --arg h "$head" --arg a "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    ;;
 ready)
     # The gate, and the whole of it: this row's last review read exactly this head (`review`
-    # records no review without its norms value). No other condition, no policy: what it
-    # cannot see - whether the findings were verified, whether the operator approved - stays
-    # the orchestrator's, and a green `ready` is not an approved pull request.
+    # records no review without its norms value), or this head is the one correction round
+    # that review produced (`fixed`). No other condition, no policy: what it cannot see -
+    # whether the findings were triaged, whether the correction was verified, whether the
+    # operator approved - stays the orchestrator's, and a green `ready` is not an approved
+    # pull request.
     id="${3:-}"; [ -n "$id" ] || die "ready: a row id is required"
     require_row ready "$id"
-    shift 3; head=""
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --head) head="$2"; shift 2 ;;
-            *) die "ready: unknown option $1" ;;
-        esac
-    done
-    [ -n "$head" ] || die "ready: --head is required"
+    shift 3; head=$(head_option ready "$@") || exit 1
     reviewed=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].review.head // ""' "$record")
     norms=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].review.norms // ""' "$record")
+    fixed=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].review.fixed.head // ""' "$record")
     [ -n "$reviewed" ] || die "ready: no review recorded on row $id: dispatch a review round and record it with \`review\`"
-    # Either side may abbreviate the other; the shorter one must still identify a commit.
-    short=$reviewed; long=$head; [ "${#short}" -le "${#long}" ] || { short=$head; long=$reviewed; }
-    [ "${#short}" -ge 7 ] || die "ready: head $short is too short to identify a commit (7 characters at least)"
-    case "$long" in
-        "$short"*) ;;
-        *) die "ready: last review read $reviewed, head is $head: the head in front of you has not been read" ;;
-    esac
-    echo "ready: row $id reviewed at $head, norms check $norms"
+    # In this shell, not in a substitution: `same_commit` dies on a head too short to
+    # identify anything, and that refusal must stop the gate, not read as a mismatch.
+    if same_commit "$reviewed" "$head"; then
+        echo "ready: row $id reviewed at $head, norms check $norms"
+    elif [ -n "$fixed" ] && same_commit "$fixed" "$head"; then
+        echo "ready: row $id reviewed at $reviewed, corrected and verified at $head, norms check $norms"
+    elif [ -n "$fixed" ]; then
+        die "ready: last review read $reviewed, its correction $fixed, head is $head: the head in front of you has been neither read nor verified"
+    else
+        die "ready: last review read $reviewed, head is $head: the head in front of you has not been read"
+    fi
     ;;
 close)
     id="${3:-}"; [ -n "$id" ] || die "close: a row id is required"
@@ -196,5 +235,5 @@ summary)
              | "signal=stop cascading \(.class) at \(.tier): \(.paid) of \(.n) paid, the retries cost more than the tier saved")
     ' "$record"
     ;;
-*) die "unknown subcommand: $cmd (expected open, round, review, ready, close, escaped or summary)" ;;
+*) die "unknown subcommand: $cmd (expected open, round, review, fixed, ready, close, escaped or summary)" ;;
 esac

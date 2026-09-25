@@ -270,7 +270,7 @@ rounds later where nobody attributes it.
 
 `dispatch-record.sh` keeps one row per dispatch as JSON lines — class, tier, rounds,
 verdict — with `open`, `round`, `close` and `summary`, and, since §55, the review a
-readiness gate reads: `review` and `ready`. The row is rewritten in place
+readiness gate reads: `review` and `ready`, joined in §58 by `fixed`. The row is rewritten in place
 rather than appended per event: a record of events would make every read a reduction over
 history, and the history is not the fact. `summary` prints a line per class and tier, then
 the one the rule exists for: `signal=<class> at <tier> averages N rounds: the drop did not
@@ -2123,3 +2123,55 @@ What the suite reads: the warning on a versioned and on a dated binding, once, n
 tier, the identifier and the alias; its absence on an alias; the resolution unchanged; and the
 spawn warning and still launching the pinned model. What a live round reads: whether a deep
 agent ever runs on an older model than the orchestrator that dispatched it.
+
+## 58. One review round, one correction round, and ready is the operator's turn
+
+**0.34.0.** The orchestrator described to the operator a fifth review round on a pull request
+whose fourth was still running, then planned a review round on a four-line comment fix. The
+rulebook told it to: §55 counted a corrective round verified by the orchestrator alone as a
+failure, and the review section said the round after a repair reads the repair. The operator
+ruled that this is his own process, the one he runs when he launches reviews by hand, and not
+the orchestrator's. The orchestrator's is ONE review round, every lens and the norms tool in
+it; its own triage, which keeps what must necessarily be fixed and names every dropped item
+with its reason; ONE correction round carrying the kept items and nothing else, which the
+orchestrator verifies itself on the artifact — the diff, the decisive tests, a mutation; done.
+
+Rounds that repeat until nothing is left converge on nothing: each one reads the previous
+fix, finds something in it, and orders a fix of its own, and a finding nobody had to fix
+ships as churn. The review round is where the independent reading happens; the verification
+of the correction is narrower — did the kept items land, and does the test that proves each
+one fall without it — and the session that triaged the findings is the one that knows what to
+check. §55's reason for the gate stands: a rule prose alone carries is applied from memory.
+
+The gate therefore follows the rule instead of contradicting it. `fixed <record> <id> --head
+<sha>` records the correction round inside the review it answers, at the head the
+orchestrator verified; it is refused without a review and refused a second time, because a
+second correction round is the over-correction the rule forbids. It counts as a round, so the
+routing signal still reads what a dispatch cost: review then fix is two rounds, as review then
+re-review was. `ready` passes when the head is the reviewed one or the fixed one, with the
+same prefix rule, and names all three heads when it refuses. The rulebook's sentences that
+ordered a review of the repair were removed in the same move, and the routing table's row for
+an N-bis now names the orchestrator's verification as what re-reads it.
+
+The same day the operator defined ready. From the orchestrator's side a pull request is ready
+when it is implemented, nothing is pending and no decision waits, it is open in draft, its
+review round, norms check and correction round are done, and it is rebased — on the main
+branch, and each pull request of a stack on the one below, conflicts resolved. Then, and not
+before, the orchestrator tells him « ready »: his review, taking it out of draft and approving
+the squash-merge are his, and the rulebook no longer speaks of the orchestrator lifting a
+draft. `ready` is read at the verified head, before the rebase; a rebase whose conflicts the
+orchestrator resolved is verified like the correction round, the range-diff against that head
+showing the resolution and nothing else. A squash-merge leaves the lower branch's commits on
+the main branch under no name a rebase recognises, so the next branch replays only its own
+commits, `rebase --onto` from the lower branch's old head, and never the lower branch's
+originals. The rebase is pushed with `--force-with-lease=<branch>:<sha read>`, the one force
+the rule allows: a bare `--force-with-lease` checks the remote-tracking ref, not the head read.
+
+What the suite reads: `fixed` refused without a review and a second time, each refusal leaving
+the row as it was; the fixed head recorded and counted; `ready` passing at the fixed head in
+either spelling and at the reviewed one, refusing a head that is neither and naming the three;
+each of those falling when its behaviour is removed. In prose: the rule, the triage, the draft
+and rebase sentences, their excuses and red flags, and the absence of every sentence that
+ordered a second review. What a live round reads: whether a pull request dispatched by the
+orchestrator ever gets a second review round, and whether « ready » ever reaches the operator
+on a branch that is not rebased.
