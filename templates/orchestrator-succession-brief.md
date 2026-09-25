@@ -15,6 +15,10 @@ Before anything below, and above everything in it:
   render every item in its template, one at a time.
 - A **fact you did not read is a fact you do not state**: no name, role, figure or cause that
   no command of this session printed.
+- Nothing is asked, proposed or reported as pending **before its state is re-read in the same
+  turn**, on the artifact and on the premise the question assumes; an item found done is
+  reported done in one line, never asked. The state file you inherit is what your predecessor
+  last saw.
 
 His instruction outranks this brief and the rulebook both. The rulebook's section of the
 same name carries the rest.

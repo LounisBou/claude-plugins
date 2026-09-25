@@ -1,16 +1,22 @@
 ---
 description: Where the build stands — done, in flight, remaining, decisions pending — and the orchestrator's own context
-allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/context-gauge/scripts/context-gauge.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/dispatch-record.sh:*), Bash(git:*), Bash(gh:*), Bash(ls:*), Bash(jq:*), Bash(date:*), ListAgents, Read
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/context-gauge/scripts/context-gauge.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/dispatch-record.sh:*), Bash(git:*), Bash(gh:*), Bash(ls:*), Bash(jq:*), Bash(date:*), ListAgents, Read, Edit
 ---
 
-Report the state of the whole build to the user, from the artifacts and the
-state file — never from memory of what was said.
+Report the state of the whole build to the user, from the artifacts — never
+from the state file alone, never from memory of what was said.
 
 1. Read the project's state file (the one the `orchestrator:orchestrator` skill
    says status lives in), the plan's phase list, and the briefs directory.
 2. Verify on the artifacts: for every phase the plan names, its branch and PR
    (`gh pr list --state all`), CI state, whether it is merged, reviewed, in
-   fix-up, or not started; the head of `main`; live agents (`ListAgents`).
+   fix-up, or not started; the head of `main`; live agents (`ListAgents`); and
+   each pending decision, still open on its own artifact.
+   The state file is what was last seen, the artifacts are what is: where they
+   disagree, the artifacts win and the state file is CORRECTED in this same
+   turn, before anything is presented. A PR found merged or closed is reported
+   as done or closed, never as pending, and FLAGGED: the orchestrator then
+   stands down the work in flight on it.
 3. Read the dispatch record's summary:
    `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/dispatch-record.sh summary <record>`
    — the path the project's state file names. Keep every `signal=` line: they are

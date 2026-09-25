@@ -2053,3 +2053,44 @@ the third norms value refused, each refusal naming its condition — the lint fi
 review brief without the line and its absence on the shipped template, and the sentences
 carrying the rule in the rulebook, the routing skill and the review brief. What a live round
 reads: whether a pull request ever leaves draft without `ready` having exited 0 at its head.
+
+## 56. A state is re-read in the turn that asks about it
+
+**0.32.0.** The operator merged a pull request at 06:55. At 08:54 a review round was
+dispatched on it, and at 09:40 he was asked whether to merge it — twice, once in a progress
+report and once in a decision round. Its draft flag had been read where its state and its
+merge were the facts, and nothing had been re-read between the report and the question. In
+the same round he was asked whether to deploy the main branch to production: a premise copied
+from an inherited state file, in a project that ships through a staging branch by a recurring
+deployment pull request, one of which had carried that very change an hour earlier.
+
+Nothing was misread. Each reading was correct when it was taken, and then it was kept. A state
+file, a register and a report written an hour ago all describe a moment that has passed, and
+the operator's own hand between two turns — a merge, a close, an undraft, announced nowhere —
+is what moves a state first. A question resting on a state he has already changed cannot be
+answered, only corrected, and correcting it is his work rather than the session's.
+
+So the rulebook gains a seventh duty: nothing is asked, proposed or reported as pending before
+its state is re-read on the artifact in the same turn, and the re-reading covers the premise
+the question assumes — how the project ships, which branch or environment is the target, what
+that target already holds — as well as the item. An item found already done is reported done
+in one line, with its evidence, and never asked. The orchestrator's own context gains its
+counterpart: the state file is refreshed from the artifacts at every quiet boundary and before
+every report, and a pull request found merged or closed stops the work in flight on it at
+once. The duty travels in the succession brief, for the reason §47 gives, and a successor
+needs it most: the state file it inherits is the one its predecessor last saw.
+`/orchestrator:decide` verifies each item still open when it collects the round and
+again in the turn it presents it, writing a settled one back as « already done: <evidence> »
+and dropping it from the count; `/orchestrator:progress` lets the artifacts win where they
+disagree with the state file, and corrects the file before presenting, which is why it now
+holds `Edit`.
+
+No script and no polling: the re-reading is the command the question already needs, run in
+the turn that asks it, and a watcher that refreshed the file on a schedule would only move the
+stale reading from the file to the watcher's last pass.
+
+What the suite reads: the duty, its premise clause and its « reported, never asked » clause,
+the refresh bullet and its stop on a merged pull request, the excuse and the red flag in the
+rulebook; the duty in the succession brief; the two verifications and the settled item in the decide command; the correction and
+the `Edit` tool in the progress command. What a live round reads: whether a question ever
+reaches the operator about an item the artifact, read in that turn, shows settled.

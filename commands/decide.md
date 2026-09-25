@@ -14,13 +14,25 @@ theirs, and you never ask two things in one message.
 Read every pending arbitration before asking the first question: the agents' STOPs
 (their messages — never answered from your own judgment), the entries marked proposed
 or to ratify in the project's state file, register and plan, the findings of the last
-review that need an owner. Write the list to `decision-round.md` in the session's scratch
+review that need an owner. Then verify each item STILL OPEN on its own artifact — the pull
+request's state and merge, the branch head, the file, the agent's last message — and the
+premise its question assumes: how the project ships, which branch or environment is the
+target, what that target already holds. A state file or a register describes what was true
+when it was written, and the user's own merge or close is what most often settles a
+question behind it. Write the list to `decision-round.md` in the session's scratch
 directory — number, title, where it comes from, status — so the round survives a
-compaction. Announce it in one line: « N questions, one at a time. » A question that
-arises mid-round is appended as N + 1, announced in one line, and taken in order; the
-count in the header moves with it.
+compaction. An item found settled is written there as « already done: <evidence> »,
+dropped from the count, and not asked. Announce it in one line: « N questions, one at a
+time. » A question that arises mid-round is appended as N + 1, announced in one line, and
+taken in order; the count in the header moves with it.
 
 ## 2. Present ONE question, in the user's language, in this exact shape
+
+Re-verify the item and its premise on the artifact in the same turn, immediately before
+presenting it: the collection may be an hour old. Found settled, it is written back as
+« already done: <evidence> », dropped from the count (N in the header drops with it),
+reported in one line, and the next question is presented instead —
+a settled item is never asked.
 
 - **Question i of N — the question as a sentence, naming the thing on the screen or in
   the data**, never a bare identifier.

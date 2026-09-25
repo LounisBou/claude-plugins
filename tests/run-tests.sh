@@ -111,6 +111,16 @@ check "the succession brief closes the predecessor's tab" "1" "$(grep -c 'CLOSE 
 check "the decide command asks one question per message" "1" "$(grep -c 'one question per message' "$ROOT/commands/decide.md")"
 check "the decide command re-presents an interrupted question in full" "1" "$(grep -c 'IN FULL when you return' "$ROOT/commands/decide.md")"
 check "the decide command records before it moves on" "1" "$(grep -c 'Present the next question IN FULL (step 2). Not before.' "$ROOT/commands/decide.md")"
+# A decision round once asked the operator to merge a pull request he had merged hours
+# before: it collected from the state file and asked from the collection (§56).
+check "the decide command verifies each item still open when collecting" "1" "$(grep -c 'Then verify each item STILL OPEN on its own artifact' "$ROOT/commands/decide.md")"
+check "the decide command re-verifies an item before presenting it" "1" "$(grep -c 'Re-verify the item and its premise on the artifact in the same turn' "$ROOT/commands/decide.md")"
+check "the decide command never asks a settled item" "1" "$(grep -c 'a settled item is never asked' "$ROOT/commands/decide.md")"
+check "the decide command re-reads the premise its question assumes" "1" "$(grep -c 'premise its question assumes' "$ROOT/commands/decide.md")"
+check "the decide command writes a settled item back with its evidence" "2" "$(grep -c 'already done: <evidence>' "$ROOT/commands/decide.md")"
+check "the progress report corrects the state file from the artifacts" "1" "$(grep -c 'the artifacts win and the state file is CORRECTED' "$ROOT/commands/progress.md")"
+check "the progress report never shows a merged or closed PR as pending" "1" "$(grep -c 'never as pending' "$ROOT/commands/progress.md")"
+check "the progress command may edit the state file" "1" "$(grep -c '^allowed-tools: .*, Edit$' "$ROOT/commands/progress.md")"
 check "the succession inherits the orchestrator's model" "1" "$(grep -c -- '--inherit-model' "$ROOT/commands/succeed.md")"
 check "the succession names no tier" "0" "$(grep -c -- '--tier deep' "$ROOT/commands/succeed.md")"
 # The successor is spawned with --successor, everywhere the succession is described (§34);
@@ -866,6 +876,26 @@ check "the comments round is presented in the format he named" "yes" \
   "$(carries "$RULEBOOK" "every assessment reaches him in that format, one item at a time")"
 check "and the red flag names a presentation written without opening the skill" "yes" \
   "$(carries "$RULEBOOK" "written without having opened that skill")"
+# A pull request the operator had merged at 06:55 got a review round at 08:54 and was put to
+# him as a merge question twice at 09:40, and in the same round he was asked to deploy a
+# branch his project ships by another road. Each reading was right when it was taken and was
+# then kept. The seventh duty re-reads the item and its premise in the turn (§56).
+check "the rulebook: nothing asked before its state is re-read in the same turn" "yes" \
+  "$(carries "$RULEBOOK" "before its state is re-read on the")"
+check "the rulebook: the re-reading covers the question's premise" "yes" \
+  "$(carries "$RULEBOOK" "The re-reading covers the question's PREMISE")"
+check "the rulebook: an item found done is reported, never asked" "yes" \
+  "$(carries "$RULEBOOK" "An item found already done is reported as done in one line")"
+check "the rulebook: the premise read is how the project ships" "yes" \
+  "$(carries "$RULEBOOK" "how the project ships")"
+check "the rulebook refreshes the state file from the artifacts" "yes" \
+  "$(carries "$RULEBOOK" "Refresh the state from the artifacts, never from your own file")"
+check "a merged or closed pull request stops the work in flight on it" "yes" \
+  "$(carries "$RULEBOOK" "A pull request found merged or closed stops the work in flight on it at once")"
+check "the stale reading has its excuse" "yes" \
+  "$(carries "$RULEBOOK" "I read that an hour ago, it cannot have changed")"
+check "and its red flag" "yes" \
+  "$(carries "$RULEBOOK" "about an artifact you have not re-read in this same turn")"
 
 # A successor reads its brief FIRST and can act on it before it loads the rulebook, so a
 # duty living only in the skill is lost at the first succession.
@@ -879,6 +909,8 @@ check "the succession brief: the named skill is opened before presenting" "yes" 
   "$(carries "$SUCCESSION" "open that skill before the first presentation")"
 check "the succession brief: a fact not read is not stated" "yes" \
   "$(carries "$SUCCESSION" "fact you did not read is a fact you do not state")"
+check "the succession brief: a state is re-read before it is asked about" "yes" \
+  "$(carries "$SUCCESSION" "before its state is re-read in the same")"
 
 echo "== rhythm =="
 
