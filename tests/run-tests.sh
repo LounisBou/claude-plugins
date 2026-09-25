@@ -2599,6 +2599,248 @@ check_status "spawn without --dir fails" 1 bash "$ITERM" spawn --title x
 check_status "unknown subcommand fails" 1 bash "$ITERM" bogus
 check "close error names the option" "ERROR: close: --tty is required" "$(bash "$ITERM" close 2>&1)"
 
+echo "== rules trace =="
+
+# The trace is the mechanical proof that no rule of the inventory vanished while the
+# directives were rewritten. It runs on a throwaway repository holding the fixtures, so
+# `sources` has commits to read and `targets` a working tree to mutate; every mutation is
+# undone by checking the fixture out again.
+TRACE="$ROOT/tests/rules-trace.sh"
+TR="$WORK/rules-trace"
+mkdir -p "$TR"
+cp "$ROOT"/tests/fixtures/rules-inventory/* "$TR/"
+mkdir -p "$TR/sub" && echo "inner" > "$TR/sub/inner.md"
+# A file whose last line carries no newline: built here, since an editor tends to add one.
+printf '# No newline\n\nThe last line of this file has no trailing newline' > "$TR/nonl.md"
+( cd "$TR" && git init -q && git add . \
+    && git -c user.name=suite -c user.email=suite@localhost commit -qm fixtures )
+trace() { ( cd "$TR" && bash "$TRACE" "$@" 2>&1 ); }
+trace_status() { ( cd "$TR" && bash "$TRACE" "$@" >/dev/null 2>&1 ); echo "exit $?"; }
+restore() { ( cd "$TR" && git checkout -q -- . ); }
+
+check "trace: no argument is a usage error" "exit 2" "$(trace_status)"
+check "trace: an unknown mode is a usage error" "exit 2" "$(trace_status bogus inventory.md)"
+check "trace: an unreadable inventory exits 2" "exit 2" "$(trace_status targets absent.md)"
+check "trace: an unknown ref exits 2" "exit 2" "$(trace_status sources inventory.md --ref no-such-ref)"
+
+check "trace: every fixture target holds its signature" "exit 0" "$(trace_status targets inventory.md)"
+check "trace: the last line counts ok, missing and skipped" "ok=4 missing=0 skipped=1" \
+  "$(trace targets inventory.md | tail -1)"
+check "trace: a drop? row whose signature is absent is skipped, not named" "0" \
+  "$(trace targets inventory.md | grep -c 'FIX-005')"
+
+# An escaped pipe in `rule` must not shift fate, target and signature one column right:
+# the row would then read its fate from `enforced-by` and fail, or worse, pass on garbage.
+grep -E '^\| (id|---|FIX-001|FIX-003) ' "$TR/inventory.md" > "$TR/escaped.md"
+check "trace: an escaped pipe in rule does not shift the columns" "ok=2 missing=0 skipped=0" \
+  "$(trace targets escaped.md | tail -1)"
+
+# The mutation the trace exists for: a rule deleted from its target is named by its row.
+sed -i.bak '/reports its measured context/d' "$TR/alpha.md" && rm -f "$TR/alpha.md.bak"
+check "trace: a removed signature exits 1" "exit 1" "$(trace_status targets inventory.md)"
+check "trace: a removed signature names its row" "FIX-001 absent alpha.md" \
+  "$(trace targets inventory.md | grep '^FIX-001 ')"
+restore
+
+# A signature found twice no longer proves its rule: the copy that survives may be the
+# other one.
+echo "A session never waits on a message it has not verified reached its address." >> "$TR/alpha.md"
+check "trace: a signature present twice exits 1" "exit 1" "$(trace_status targets inventory.md)"
+check "trace: a signature present twice is named not unique" "FIX-002 not-unique:2 alpha.md" \
+  "$(trace targets inventory.md | grep '^FIX-002 ')"
+restore
+
+# Twice on ONE line is still twice: counting matching lines would call it unique. The
+# duplicate lands on the line that already holds FIX-004's signature (beta.md line 3).
+sed -i.bak "3s/\$/ Again, and no other part overrides it./" "$TR/beta.md" && rm -f "$TR/beta.md.bak"
+check "trace: the one-line duplicate sits on the signature's own line" "1" \
+  "$(grep -c 'and no other part overrides it.*and no other part overrides it' "$TR/beta.md")"
+check "trace: two occurrences on one line are not unique" "FIX-004 not-unique:2 beta.md" \
+  "$(trace targets inventory.md | grep '^FIX-004 ')"
+restore
+
+# Twice on TWO lines: the other way a line-based count and an occurrence count could differ.
+echo "The operator's word comes first, and no other part overrides it." >> "$TR/beta.md"
+check "trace: two occurrences on two lines are not unique" "FIX-004 not-unique:2 beta.md" \
+  "$(trace targets inventory.md | grep '^FIX-004 ')"
+restore
+
+sed 's/| alpha.md | reports its measured context at the end |/| alpha.md | reports its measured context |/' \
+  "$TR/inventory.md" > "$TR/short.md"
+check "trace: a signature under six words is refused" "FIX-001 short-signature alpha.md" \
+  "$(trace targets short.md | grep '^FIX-001 ')"
+sed 's/| alpha.md | reports its measured context at the end |/| gone.md | reports its measured context at the end |/' \
+  "$TR/inventory.md" > "$TR/notarget.md"
+check "trace: a target file that does not exist is named" "FIX-001 no-target gone.md" \
+  "$(trace targets notarget.md | grep '^FIX-001 ')"
+
+# variant <out> <sed-expression>: the fixture inventory with one edit, in a file of its own.
+variant() { sed "$2" "$TR/inventory.md" > "$TR/$1"; }
+# row <id> <mode> <file>: the line the trace prints for that row.
+row() { trace "$2" "$3" | grep "^$1 "; }
+
+# An inventory that holds no row proves nothing: it is a usage error, never a pass.
+printf 'Prose only, no table at all.\n' > "$TR/prose.md"
+grep -E '^\| (id|---) ' "$TR/inventory.md" > "$TR/headeronly.md"
+check "trace: prose without a row exits 2 in targets" "exit 2" "$(trace_status targets prose.md)"
+check "trace: prose without a row exits 2 in sources" "exit 2" "$(trace_status sources prose.md)"
+check "trace: a header without a row exits 2" "exit 2" "$(trace_status targets headeronly.md)"
+
+# A table line that is not a row of the inventory is reported, never skipped: a skipped row
+# is a rule nobody traces. Only the tables that open with the `id` header are inventory
+# tables; the legend and prefix tables of the real file are not.
+variant lower.md 's/^| FIX-002 /| fix-002 /'
+check "trace: a lower-case id is malformed" "fix-002 malformed-id alpha.md" "$(row fix-002 targets lower.md)"
+check "trace: a malformed id counts as missing" "ok=3 missing=1 skipped=1" "$(trace targets lower.md | tail -1)"
+check "trace: a malformed id exits 1" "exit 1" "$(trace_status targets lower.md)"
+variant twodigit.md 's/^| FIX-002 /| FIX-02 /'
+check "trace: a two-digit id is malformed" "FIX-02 malformed-id alpha.md" "$(row FIX-02 targets twodigit.md)"
+variant indented.md 's/^| FIX-002 /  | FIX-002 /'
+check "trace: an indented row is malformed" "FIX-002 malformed-id alpha.md" "$(row FIX-002 targets indented.md)"
+check "trace: a malformed id is reported in sources too" "FIX-002 malformed-id alpha.md" \
+  "$(row FIX-002 sources indented.md)"
+{ printf '| Prefix | Source |\n|---|---|\n| `FIX` | fixtures |\n\n'; cat "$TR/inventory.md"; } > "$TR/legend.md"
+check "trace: a table that is not an inventory table is ignored" "ok=4 missing=0 skipped=1" \
+  "$(trace targets legend.md | tail -1)"
+
+# Fates: six shapes are valid, everything else is unknown, in both modes.
+variant bogus.md 's/| keep | alpha.md | reports/| bogus | alpha.md | reports/'
+check "trace: an unknown fate is named" "FIX-001 unknown-fate:bogus alpha.md" "$(row FIX-001 targets bogus.md)"
+check "trace: an unknown fate is named in sources too" "FIX-001 unknown-fate:bogus alpha.md" \
+  "$(row FIX-001 sources bogus.md)"
+variant keepq.md 's/| keep | alpha.md | reports/| keep? | alpha.md | reports/'
+check "trace: keep? is not a fate" "FIX-001 unknown-fate:keep? alpha.md" "$(row FIX-001 targets keepq.md)"
+variant mergeq.md 's/| merge->FIX-001 |/| merge->FIX-001? |/'
+check "trace: merge->id? is not a fate" "FIX-003 unknown-fate:merge->FIX-001? alpha.md" \
+  "$(row FIX-003 targets mergeq.md)"
+variant mergebare.md 's/| merge->FIX-001 |/| merge->? |/'
+check "trace: merge->? is not a fate" "FIX-003 unknown-fate:merge->? alpha.md" \
+  "$(row FIX-003 targets mergebare.md)"
+variant mergenoid.md 's/| merge->FIX-001 |/| merge->somewhere |/'
+check "trace: a merge target that is no id is not a fate" "FIX-003 unknown-fate:merge->somewhere alpha.md" \
+  "$(row FIX-003 targets mergenoid.md)"
+variant movebare.md 's/| move->beta.md |/| move-> |/'
+check "trace: move-> without a path is not a fate" "FIX-004 unknown-fate:move-> beta.md" \
+  "$(row FIX-004 targets movebare.md)"
+variant moveq.md 's/| move->beta.md |/| move->beta.md? |/'
+check "trace: move->path? is not a fate" "FIX-004 unknown-fate:move->beta.md? beta.md" "$(row FIX-004 targets moveq.md)"
+variant contra.md 's/| drop? |/| contradiction? |/'
+check "trace: contradiction? is a proposal, skipped" "ok=4 missing=0 skipped=1" "$(trace targets contra.md | tail -1)"
+variant scriptc.md 's/| drop? |/| script-candidate? |/'
+check "trace: script-candidate? is a proposal, skipped" "ok=4 missing=0 skipped=1" "$(trace targets scriptc.md | tail -1)"
+
+# Merges: a merge names one existing row other than itself, and that row is the anchor.
+variant nomerge.md 's/| merge->FIX-001 |/| merge->FIX-999 |/'
+check "trace: a merge onto no row is named" "FIX-003 unknown-merge:FIX-999 alpha.md" \
+  "$(row FIX-003 targets nomerge.md)"
+variant selfmerge.md 's/| merge->FIX-001 |/| merge->FIX-003 |/'
+check "trace: a merge onto itself is named" "FIX-003 self-merge alpha.md" "$(row FIX-003 targets selfmerge.md)"
+variant chain.md 's/^| FIX-001 \(.*\)| keep | alpha.md |/| FIX-001 \1| merge->FIX-004 | alpha.md |/'
+check "trace: a merge onto a merge row is a chain" "FIX-003 merge-chain:FIX-001 alpha.md" \
+  "$(row FIX-003 targets chain.md)"
+check "trace: a merge onto a kept row is no chain" "0" "$(trace targets chain.md | grep -c '^FIX-001 ')"
+{ cat "$TR/inventory.md"; grep '^| FIX-002 ' "$TR/inventory.md"; } > "$TR/dup.md"
+check "trace: a repeated id is named" "FIX-002 duplicate-id alpha.md" "$(row FIX-002 targets dup.md)"
+check "trace: the repeat, not the first row, is what is named" "1" \
+  "$(trace targets dup.md | grep -c '^FIX-002 ')"
+check "trace: a duplicate id exits 1" "exit 1" "$(trace_status targets dup.md)"
+
+# Signatures: six words that carry a letter or a digit, and a signature that quotes a whole
+# bold lead-in or a heading proves nothing, since the target keeps both after a rewrite.
+variant five.md 's/| reports its measured context at the end |/| its measured context at the |/'
+check "trace: a five-word signature is refused" "FIX-001 short-signature alpha.md" "$(row FIX-001 targets five.md)"
+variant six.md 's/| reports its measured context at the end |/| its measured context at the end |/'
+check "trace: a six-word signature is accepted" "ok=4 missing=0 skipped=1" "$(trace targets six.md | tail -1)"
+variant dash.md 's/| reports its measured context at the end |/| reports its measured context - at |/'
+check "trace: a lone dash is not a word" "FIX-001 short-signature alpha.md" "$(row FIX-001 targets dash.md)"
+printf '**Every agent reports its measured context at the end**\n' > "$TR/bold.md"
+variant weakbold.md 's/| alpha.md | reports its measured context at the end |/| bold.md | **Every agent reports its measured context at the end** |/'
+check "trace: a whole bold lead-in is a weak signature" "FIX-001 weak-signature bold.md" \
+  "$(row FIX-001 targets weakbold.md)"
+printf '**Every agent** reports its measured context at the end\n' > "$TR/bold.md"
+variant partbold.md 's/| alpha.md | reports its measured context at the end |/| bold.md | **Every agent** reports its measured context at the end |/'
+check "trace: a bold lead-in followed by text is a signature" "ok=4 missing=0 skipped=1" \
+  "$(trace targets partbold.md | tail -1)"
+printf '**Every agent** reports its **measured context** at the end\n' > "$TR/bold.md"
+variant twobold.md 's/| alpha.md | reports its measured context at the end |/| bold.md | **Every agent** reports its **measured context** |/'
+check "trace: two bold spans are not one whole lead-in" "ok=4 missing=0 skipped=1" \
+  "$(trace targets twobold.md | tail -1)"
+printf '## Every agent reports its measured context at the end\n' > "$TR/heading.md"
+variant weakhead.md 's/| alpha.md | reports its measured context at the end |/| heading.md | ## Every agent reports its measured context at the end |/'
+check "trace: a heading line is a weak signature" "FIX-001 weak-signature heading.md" \
+  "$(row FIX-001 targets weakhead.md)"
+variant bodyhead.md 's/| alpha.md | reports its measured context at the end |/| heading.md | Every agent reports its measured context at the end |/'
+check "trace: the text of a heading is a signature" "ok=4 missing=0 skipped=1" \
+  "$(trace targets bodyhead.md | tail -1)"
+
+printf '#include lines are read by the compiler first\n' > "$TR/hash.md"
+variant hashtag.md 's/| alpha.md | reports its measured context at the end |/| hash.md | #include lines are read by the compiler |/'
+check "trace: a hash without a space after it is no heading" "ok=4 missing=0 skipped=1" \
+  "$(trace targets hashtag.md | tail -1)"
+
+# Cells: a row that does not split into nine is named with its count, whichever way it is off.
+variant tencells.md '/^| FIX-001 /s/$/ extra |/'
+check "trace: a ten-cell row is malformed" "FIX-001 malformed-row:10-cells alpha.md" "$(row FIX-001 targets tencells.md)"
+variant eightcells.md '/^| FIX-001 /s/ | reports its measured context at the end |$/ |/'
+check "trace: an eight-cell row is malformed" "FIX-001 malformed-row:8-cells alpha.md" \
+  "$(row FIX-001 targets eightcells.md)"
+variant notarget2.md 's/| keep | alpha.md | reports/| keep |  | reports/'
+check "trace: an empty target is named, the cells stay in place" "FIX-001 no-target -" \
+  "$(row FIX-001 targets notarget2.md)"
+
+variant dirtarget.md 's/| alpha.md | reports its measured context at the end |/| sub | reports its measured context at the end |/'
+check "trace: a directory is not a target file" "FIX-001 no-target sub" "$(row FIX-001 targets dirtarget.md)"
+
+# A file whose last line has no newline still holds its signature once.
+variant nonlvar.md 's/| alpha.md | reports its measured context at the end |/| nonl.md | last line of this file has no trailing newline |/'
+check "trace: a signature on an unterminated last line is found" "ok=4 missing=0 skipped=1" \
+  "$(trace targets nonlvar.md | tail -1)"
+
+check "trace: every fixture source exists at HEAD" "exit 0" "$(trace_status sources inventory.md)"
+check "trace: sources counts every row" "ok=5 missing=0 skipped=0" "$(trace sources inventory.md | tail -1)"
+sed 's/| alpha.md:3 |/| alpha.md:99 |/' "$TR/inventory.md" > "$TR/pastend.md"
+check "trace: a source past the end of its file exits 1" "exit 1" "$(trace_status sources pastend.md)"
+check "trace: a source past the end is named with its row" "FIX-001 past-end:alpha.md:99 alpha.md" \
+  "$(trace sources pastend.md | grep '^FIX-001 ')"
+sed 's/| alpha.md:5, beta.md:3 |/| alpha.md:5, gone.md:3 |/' "$TR/inventory.md" > "$TR/nofile.md"
+check "trace: a source in a file absent at the ref is named" "FIX-002 no-file:gone.md:3 alpha.md" \
+  "$(trace sources nofile.md | grep '^FIX-002 ')"
+
+# A source cites one line of one file: a directory is no file, a range is no line, line 0
+# does not exist, the last line is in and the one after it is out.
+variant srcdir.md 's/| alpha.md:5, beta.md:3 |/| alpha.md:5, sub:1 |/'
+check "trace: a directory is not a source file" "FIX-002 no-file:sub:1 alpha.md" "$(row FIX-002 sources srcdir.md)"
+variant srcrange.md 's/| alpha.md:3 |/| alpha.md:3-5 |/'
+check "trace: a range is not a source" "FIX-001 bad-source:alpha.md:3-5 alpha.md" "$(row FIX-001 sources srcrange.md)"
+variant srczero.md 's/| alpha.md:3 |/| alpha.md:0 |/'
+check "trace: line 0 is not a source" "FIX-001 bad-source:alpha.md:0 alpha.md" "$(row FIX-001 sources srczero.md)"
+variant srclast.md 's/| alpha.md:3 |/| alpha.md:7 |/'
+check "trace: the last line of a file is a source" "ok=5 missing=0 skipped=0" "$(trace sources srclast.md | tail -1)"
+variant srcafter.md 's/| alpha.md:3 |/| alpha.md:8 |/'
+check "trace: the line after the last is past the end" "FIX-001 past-end:alpha.md:8 alpha.md" \
+  "$(row FIX-001 sources srcafter.md)"
+variant srcnonl.md 's/| alpha.md:3 |/| nonl.md:3 |/'
+check "trace: an unterminated last line counts as a line" "ok=5 missing=0 skipped=0" \
+  "$(trace sources srcnonl.md | tail -1)"
+variant srcnonl4.md 's/| alpha.md:3 |/| nonl.md:4 |/'
+check "trace: the line after an unterminated last line is past the end" "FIX-001 past-end:nonl.md:4 alpha.md" \
+  "$(row FIX-001 sources srcnonl4.md)"
+variant nosrc.md 's/| alpha.md:3 |/|  |/'
+check "trace: a row without a source is named" "FIX-001 no-sources alpha.md" "$(row FIX-001 sources nosrc.md)"
+check "trace: sources counts a ten-cell row as missing" "FIX-001 malformed-row:10-cells alpha.md" \
+  "$(row FIX-001 sources tencells.md)"
+
+# --ref reads the file as it was at that commit, not as it is in the working tree.
+printf '# Beta\n' > "$TR/beta.md"
+( cd "$TR" && git -c user.name=suite -c user.email=suite@localhost commit -qam shorten )
+check "trace: sources at HEAD sees the shortened file" "exit 1" "$(trace_status sources inventory.md)"
+check "trace: sources --ref reads the older commit" "exit 0" "$(trace_status sources inventory.md --ref HEAD~1)"
+
+check "trace: the real inventory holds every signature" "exit 0" \
+  "$( ( cd "$ROOT" && bash "$TRACE" targets docs/rules-inventory.md >/dev/null 2>&1 ); echo "exit $?")"
+check "trace: every source of the real inventory exists at HEAD" "exit 0" \
+  "$( ( cd "$ROOT" && bash "$TRACE" sources docs/rules-inventory.md --ref HEAD >/dev/null 2>&1 ); echo "exit $?")"
+
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

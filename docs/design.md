@@ -47,7 +47,12 @@ tests/run-tests.sh
 tests/e2e.sh                         one real round: a tab, a session, a close
 tests/fixtures/transcript.jsonl      a transcript tail for the gauge's computed tier
 tests/fixtures/rhythm-repo.sh        builds the dated repository rhythm.sh is tested on
+tests/rules-trace.sh                 every inventoried rule found at its sources and its target
+tests/fixtures/rules-inventory/inventory.md   a small inventory the trace is tested on
+tests/fixtures/rules-inventory/alpha.md       a target file of that inventory
+tests/fixtures/rules-inventory/beta.md        a target file of that inventory
 docs/design.md                       this document
+docs/rules-inventory.md              working file: every directive rule, deleted once the rewrite is done
 README.md, LICENSE
 ```
 
