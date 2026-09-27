@@ -15,3 +15,6 @@
 
 # host state in a checkout: logs and local settings, never repository content
 /.claude/
+
+# Eval run output
+evals/results/

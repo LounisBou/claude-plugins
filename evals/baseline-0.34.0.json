@@ -1,0 +1,2733 @@
+{
+ "ablation": "with-without",
+ "agent": "deep tier",
+ "cases": {
+  "gauge-007": {
+   "with": [
+    {
+     "costUsd": 0.093,
+     "durationSeconds": 18,
+     "error": null,
+     "graders": {
+      "measured-not-estimated": true,
+      "runs-the-gauge": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.113,
+     "durationSeconds": 27,
+     "error": null,
+     "graders": {
+      "measured-not-estimated": true,
+      "runs-the-gauge": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.089,
+     "durationSeconds": 18,
+     "error": null,
+     "graders": {
+      "measured-not-estimated": true,
+      "runs-the-gauge": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.076,
+     "durationSeconds": 19,
+     "error": null,
+     "graders": {
+      "measured-not-estimated": false,
+      "runs-the-gauge": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.069,
+     "durationSeconds": 17,
+     "error": null,
+     "graders": {
+      "measured-not-estimated": false,
+      "runs-the-gauge": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.085,
+     "durationSeconds": 22,
+     "error": null,
+     "graders": {
+      "measured-not-estimated": false,
+      "runs-the-gauge": false
+     },
+     "passed": false,
+     "score": 0
+    }
+   ]
+  },
+  "iterm-005-019-064-065": {
+   "with": [
+    {
+     "costUsd": 0.351,
+     "durationSeconds": 20,
+     "error": null,
+     "graders": {
+      "close-with-title": true,
+      "no-glyph": true,
+      "relists": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.348,
+     "durationSeconds": 19,
+     "error": null,
+     "graders": {
+      "close-with-title": true,
+      "no-glyph": true,
+      "relists": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.353,
+     "durationSeconds": 22,
+     "error": null,
+     "graders": {
+      "close-with-title": true,
+      "no-glyph": true,
+      "relists": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.082,
+     "durationSeconds": 21,
+     "error": null,
+     "graders": {
+      "close-with-title": false,
+      "no-glyph": true,
+      "relists": false
+     },
+     "passed": false,
+     "score": 0.3333333333333333
+    },
+    {
+     "costUsd": 0.078,
+     "durationSeconds": 18,
+     "error": null,
+     "graders": {
+      "close-with-title": false,
+      "no-glyph": true,
+      "relists": false
+     },
+     "passed": false,
+     "score": 0.3333333333333333
+    },
+    {
+     "costUsd": 0.07,
+     "durationSeconds": 15,
+     "error": null,
+     "graders": {
+      "close-with-title": false,
+      "no-glyph": true,
+      "relists": false
+     },
+     "passed": false,
+     "score": 0.3333333333333333
+    }
+   ]
+  },
+  "iterm-020": {
+   "with": [
+    {
+     "costUsd": 0.347,
+     "durationSeconds": 19,
+     "error": null,
+     "graders": {
+      "moves-beside-self": true,
+      "no-respawn": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.349,
+     "durationSeconds": 22,
+     "error": null,
+     "graders": {
+      "moves-beside-self": true,
+      "no-respawn": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.344,
+     "durationSeconds": 17,
+     "error": null,
+     "graders": {
+      "moves-beside-self": true,
+      "no-respawn": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.081,
+     "durationSeconds": 20,
+     "error": null,
+     "graders": {
+      "moves-beside-self": false,
+      "no-respawn": true
+     },
+     "passed": false,
+     "score": 0.5
+    },
+    {
+     "costUsd": 0.095,
+     "durationSeconds": 27,
+     "error": null,
+     "graders": {
+      "moves-beside-self": false,
+      "no-respawn": true
+     },
+     "passed": false,
+     "score": 0.5
+    },
+    {
+     "costUsd": 0.091,
+     "durationSeconds": 25,
+     "error": null,
+     "graders": {
+      "moves-beside-self": false,
+      "no-respawn": true
+     },
+     "passed": false,
+     "score": 0.5
+    }
+   ]
+  },
+  "iterm-022": {
+   "with": [
+    {
+     "costUsd": 0.385,
+     "durationSeconds": 27,
+     "error": null,
+     "graders": {
+      "keeps-the-server": true,
+      "keeps-the-tier": true,
+      "uses-rotate": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.392,
+     "durationSeconds": 32,
+     "error": null,
+     "graders": {
+      "keeps-the-server": true,
+      "keeps-the-tier": true,
+      "uses-rotate": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.372,
+     "durationSeconds": 30,
+     "error": null,
+     "graders": {
+      "keeps-the-server": true,
+      "keeps-the-tier": true,
+      "uses-rotate": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.089,
+     "durationSeconds": 20,
+     "error": null,
+     "graders": {
+      "keeps-the-server": true,
+      "keeps-the-tier": false,
+      "uses-rotate": false
+     },
+     "passed": false,
+     "score": 0.3333333333333333
+    },
+    {
+     "costUsd": 0.076,
+     "durationSeconds": 17,
+     "error": null,
+     "graders": {
+      "keeps-the-server": true,
+      "keeps-the-tier": false,
+      "uses-rotate": false
+     },
+     "passed": false,
+     "score": 0.3333333333333333
+    },
+    {
+     "costUsd": 0.079,
+     "durationSeconds": 18,
+     "error": null,
+     "graders": {
+      "keeps-the-server": true,
+      "keeps-the-tier": false,
+      "uses-rotate": false
+     },
+     "passed": false,
+     "score": 0.3333333333333333
+    }
+   ]
+  },
+  "iterm-057": {
+   "with": [
+    {
+     "costUsd": 0.496,
+     "durationSeconds": 51,
+     "error": null,
+     "graders": {
+      "unbound-is-advisory": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.53,
+     "durationSeconds": 65,
+     "error": null,
+     "graders": {
+      "unbound-is-advisory": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.514,
+     "durationSeconds": 57,
+     "error": null,
+     "graders": {
+      "unbound-is-advisory": false
+     },
+     "passed": false,
+     "score": 0
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.102,
+     "durationSeconds": 26,
+     "error": null,
+     "graders": {
+      "unbound-is-advisory": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.102,
+     "durationSeconds": 21,
+     "error": null,
+     "graders": {
+      "unbound-is-advisory": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.096,
+     "durationSeconds": 21,
+     "error": null,
+     "graders": {
+      "unbound-is-advisory": false
+     },
+     "passed": false,
+     "score": 0
+    }
+   ]
+  },
+  "orch-002": {
+   "with": [
+    {
+     "costUsd": 0.819,
+     "durationSeconds": 55,
+     "error": null,
+     "graders": {
+      "dispatches-not-writes": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.81,
+     "durationSeconds": 47,
+     "error": null,
+     "graders": {
+      "dispatches-not-writes": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.897,
+     "durationSeconds": 44,
+     "error": null,
+     "graders": {
+      "dispatches-not-writes": false
+     },
+     "passed": false,
+     "score": 0
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.412,
+     "durationSeconds": 33,
+     "error": null,
+     "graders": {
+      "dispatches-not-writes": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.297,
+     "durationSeconds": 38,
+     "error": null,
+     "graders": {
+      "dispatches-not-writes": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.31,
+     "durationSeconds": 34,
+     "error": null,
+     "graders": {
+      "dispatches-not-writes": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ]
+  },
+  "orch-007-011-079-088": {
+   "with": [
+    {
+     "costUsd": 0.392,
+     "durationSeconds": 54,
+     "error": null,
+     "graders": {
+      "process-check": true,
+      "scratch-check": true,
+      "verdict-on-evidence": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.399,
+     "durationSeconds": 59,
+     "error": null,
+     "graders": {
+      "process-check": true,
+      "scratch-check": true,
+      "verdict-on-evidence": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.353,
+     "durationSeconds": 50,
+     "error": null,
+     "graders": {
+      "process-check": true,
+      "scratch-check": true,
+      "verdict-on-evidence": false
+     },
+     "passed": false,
+     "score": 0.6666666666666666
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.113,
+     "durationSeconds": 32,
+     "error": null,
+     "graders": {
+      "process-check": true,
+      "scratch-check": false,
+      "verdict-on-evidence": false
+     },
+     "passed": false,
+     "score": 0.3333333333333333
+    },
+    {
+     "costUsd": 0.143,
+     "durationSeconds": 40,
+     "error": null,
+     "graders": {
+      "process-check": true,
+      "scratch-check": false,
+      "verdict-on-evidence": false
+     },
+     "passed": false,
+     "score": 0.3333333333333333
+    },
+    {
+     "costUsd": 0.144,
+     "durationSeconds": 38,
+     "error": null,
+     "graders": {
+      "process-check": true,
+      "scratch-check": false,
+      "verdict-on-evidence": true
+     },
+     "passed": false,
+     "score": 0.6666666666666666
+    }
+   ]
+  },
+  "orch-010-014": {
+   "with": [
+    {
+     "costUsd": 0.355,
+     "durationSeconds": 38,
+     "error": null,
+     "graders": {
+      "says-and-complies": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.33,
+     "durationSeconds": 35,
+     "error": null,
+     "graders": {
+      "says-and-complies": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.334,
+     "durationSeconds": 37,
+     "error": null,
+     "graders": {
+      "says-and-complies": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.11,
+     "durationSeconds": 26,
+     "error": null,
+     "graders": {
+      "says-and-complies": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.095,
+     "durationSeconds": 24,
+     "error": null,
+     "graders": {
+      "says-and-complies": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.095,
+     "durationSeconds": 21,
+     "error": null,
+     "graders": {
+      "says-and-complies": false
+     },
+     "passed": false,
+     "score": 0
+    }
+   ]
+  },
+  "orch-012-099": {
+   "with": [
+    {
+     "costUsd": 0.439,
+     "durationSeconds": 62,
+     "error": null,
+     "graders": {
+      "verified-by-orchestrator-no-new-round": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.459,
+     "durationSeconds": 68,
+     "error": null,
+     "graders": {
+      "verified-by-orchestrator-no-new-round": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.401,
+     "durationSeconds": 62,
+     "error": null,
+     "graders": {
+      "verified-by-orchestrator-no-new-round": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.098,
+     "durationSeconds": 27,
+     "error": null,
+     "graders": {
+      "verified-by-orchestrator-no-new-round": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.112,
+     "durationSeconds": 23,
+     "error": null,
+     "graders": {
+      "verified-by-orchestrator-no-new-round": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.093,
+     "durationSeconds": 24,
+     "error": null,
+     "graders": {
+      "verified-by-orchestrator-no-new-round": false
+     },
+     "passed": false,
+     "score": 0
+    }
+   ]
+  },
+  "orch-016": {
+   "with": [
+    {
+     "costUsd": 0.061,
+     "durationSeconds": 8,
+     "error": null,
+     "graders": {
+      "says-stopped-being-useful": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.059,
+     "durationSeconds": 7,
+     "error": null,
+     "graders": {
+      "says-stopped-being-useful": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.062,
+     "durationSeconds": 8,
+     "error": null,
+     "graders": {
+      "says-stopped-being-useful": false
+     },
+     "passed": false,
+     "score": 0
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.052,
+     "durationSeconds": 7,
+     "error": null,
+     "graders": {
+      "says-stopped-being-useful": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.052,
+     "durationSeconds": 7,
+     "error": null,
+     "graders": {
+      "says-stopped-being-useful": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.055,
+     "durationSeconds": 8,
+     "error": null,
+     "graders": {
+      "says-stopped-being-useful": false
+     },
+     "passed": false,
+     "score": 0
+    }
+   ]
+  },
+  "orch-018": {
+   "with": [
+    {
+     "costUsd": 0.502,
+     "durationSeconds": 75,
+     "error": null,
+     "graders": {
+      "names-the-term": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.427,
+     "durationSeconds": 46,
+     "error": null,
+     "graders": {
+      "names-the-term": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.503,
+     "durationSeconds": 60,
+     "error": null,
+     "graders": {
+      "names-the-term": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.129,
+     "durationSeconds": 34,
+     "error": null,
+     "graders": {
+      "names-the-term": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.136,
+     "durationSeconds": 34,
+     "error": null,
+     "graders": {
+      "names-the-term": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.132,
+     "durationSeconds": 32,
+     "error": null,
+     "graders": {
+      "names-the-term": false
+     },
+     "passed": false,
+     "score": 0
+    }
+   ]
+  },
+  "orch-021": {
+   "with": [
+    {
+     "costUsd": 1.459,
+     "durationSeconds": 93,
+     "error": null,
+     "graders": {
+      "one-item-then-wait": true,
+      "opens-the-method-first": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.911,
+     "durationSeconds": 61,
+     "error": null,
+     "graders": {
+      "one-item-then-wait": true,
+      "opens-the-method-first": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 1.233,
+     "durationSeconds": 69,
+     "error": null,
+     "graders": {
+      "one-item-then-wait": true,
+      "opens-the-method-first": false
+     },
+     "passed": false,
+     "score": 0.5
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.425,
+     "durationSeconds": 29,
+     "error": null,
+     "graders": {
+      "one-item-then-wait": false,
+      "opens-the-method-first": true
+     },
+     "passed": false,
+     "score": 0.5
+    },
+    {
+     "costUsd": 0.314,
+     "durationSeconds": 33,
+     "error": null,
+     "graders": {
+      "one-item-then-wait": false,
+      "opens-the-method-first": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.378,
+     "durationSeconds": 28,
+     "error": null,
+     "graders": {
+      "one-item-then-wait": false,
+      "opens-the-method-first": false
+     },
+     "passed": false,
+     "score": 0
+    }
+   ]
+  },
+  "orch-023": {
+   "with": [
+    {
+     "costUsd": 0.114,
+     "durationSeconds": 24,
+     "error": null,
+     "graders": {
+      "count-marked-unverified": false,
+      "handles-as-printed": true,
+      "roles-as-printed": true
+     },
+     "passed": false,
+     "score": 0.6666666666666666
+    },
+    {
+     "costUsd": 0.11,
+     "durationSeconds": 23,
+     "error": null,
+     "graders": {
+      "count-marked-unverified": false,
+      "handles-as-printed": true,
+      "roles-as-printed": true
+     },
+     "passed": false,
+     "score": 0.6666666666666666
+    },
+    {
+     "costUsd": 0.113,
+     "durationSeconds": 24,
+     "error": null,
+     "graders": {
+      "count-marked-unverified": false,
+      "handles-as-printed": true,
+      "roles-as-printed": true
+     },
+     "passed": false,
+     "score": 0.6666666666666666
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.095,
+     "durationSeconds": 19,
+     "error": null,
+     "graders": {
+      "count-marked-unverified": false,
+      "handles-as-printed": true,
+      "roles-as-printed": true
+     },
+     "passed": false,
+     "score": 0.6666666666666666
+    },
+    {
+     "costUsd": 0.088,
+     "durationSeconds": 19,
+     "error": null,
+     "graders": {
+      "count-marked-unverified": false,
+      "handles-as-printed": true,
+      "roles-as-printed": true
+     },
+     "passed": false,
+     "score": 0.6666666666666666
+    },
+    {
+     "costUsd": 0.095,
+     "durationSeconds": 22,
+     "error": null,
+     "graders": {
+      "count-marked-unverified": false,
+      "handles-as-printed": true,
+      "roles-as-printed": true
+     },
+     "passed": false,
+     "score": 0.6666666666666666
+    }
+   ]
+  },
+  "orch-025-026": {
+   "with": [
+    {
+     "costUsd": 0.35,
+     "durationSeconds": 36,
+     "error": null,
+     "graders": {
+      "rereads-item-and-premise": false,
+      "rereads-pr-state": true
+     },
+     "passed": false,
+     "score": 0.5
+    },
+    {
+     "costUsd": 0.361,
+     "durationSeconds": 41,
+     "error": null,
+     "graders": {
+      "rereads-item-and-premise": true,
+      "rereads-pr-state": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.354,
+     "durationSeconds": 40,
+     "error": null,
+     "graders": {
+      "rereads-item-and-premise": false,
+      "rereads-pr-state": true
+     },
+     "passed": false,
+     "score": 0.5
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.163,
+     "durationSeconds": 36,
+     "error": null,
+     "graders": {
+      "rereads-item-and-premise": true,
+      "rereads-pr-state": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.145,
+     "durationSeconds": 31,
+     "error": null,
+     "graders": {
+      "rereads-item-and-premise": true,
+      "rereads-pr-state": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.163,
+     "durationSeconds": 39,
+     "error": null,
+     "graders": {
+      "rereads-item-and-premise": true,
+      "rereads-pr-state": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ]
+  },
+  "orch-029": {
+   "with": [
+    {
+     "costUsd": 0.415,
+     "durationSeconds": 58,
+     "error": null,
+     "graders": {
+      "stop-and-ask": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.392,
+     "durationSeconds": 57,
+     "error": null,
+     "graders": {
+      "stop-and-ask": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.366,
+     "durationSeconds": 51,
+     "error": null,
+     "graders": {
+      "stop-and-ask": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.096,
+     "durationSeconds": 25,
+     "error": null,
+     "graders": {
+      "stop-and-ask": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.129,
+     "durationSeconds": 27,
+     "error": null,
+     "graders": {
+      "stop-and-ask": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.108,
+     "durationSeconds": 29,
+     "error": null,
+     "graders": {
+      "stop-and-ask": false
+     },
+     "passed": false,
+     "score": 0
+    }
+   ]
+  },
+  "orch-038-040-043": {
+   "with": [
+    {
+     "costUsd": 0.597,
+     "durationSeconds": 93,
+     "error": null,
+     "graders": {
+      "brief-not-temporary": true,
+      "brief-written": true,
+      "lint-before-spawn": true,
+      "one-line-prompt": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.459,
+     "durationSeconds": 70,
+     "error": null,
+     "graders": {
+      "brief-not-temporary": true,
+      "brief-written": true,
+      "lint-before-spawn": true,
+      "one-line-prompt": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.576,
+     "durationSeconds": 91,
+     "error": null,
+     "graders": {
+      "brief-not-temporary": true,
+      "brief-written": true,
+      "lint-before-spawn": true,
+      "one-line-prompt": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.115,
+     "durationSeconds": 28,
+     "error": null,
+     "graders": {
+      "brief-not-temporary": true,
+      "brief-written": true,
+      "lint-before-spawn": false,
+      "one-line-prompt": false
+     },
+     "passed": false,
+     "score": 0.5
+    },
+    {
+     "costUsd": 0.104,
+     "durationSeconds": 25,
+     "error": null,
+     "graders": {
+      "brief-not-temporary": true,
+      "brief-written": true,
+      "lint-before-spawn": false,
+      "one-line-prompt": false
+     },
+     "passed": false,
+     "score": 0.5
+    },
+    {
+     "costUsd": 0.114,
+     "durationSeconds": 28,
+     "error": null,
+     "graders": {
+      "brief-not-temporary": true,
+      "brief-written": true,
+      "lint-before-spawn": false,
+      "one-line-prompt": false
+     },
+     "passed": false,
+     "score": 0.5
+    }
+   ]
+  },
+  "orch-050-052-053-068-168-179-220": {
+   "with": [
+    {
+     "costUsd": 0.486,
+     "durationSeconds": 75,
+     "error": null,
+     "graders": {
+      "address-handshake-silence": false,
+      "brief-written": true,
+      "context-gate": true,
+      "exact-address": true,
+      "gauge-absolute-path": false,
+      "never-end-turn-waiting": true,
+      "no-host-variable": true,
+      "not-backgrounded": true,
+      "timeout-and-tail": true
+     },
+     "passed": false,
+     "score": 0.7777777777777778
+    },
+    {
+     "costUsd": 0.481,
+     "durationSeconds": 57,
+     "error": null,
+     "graders": {
+      "address-handshake-silence": true,
+      "brief-written": true,
+      "context-gate": true,
+      "exact-address": true,
+      "gauge-absolute-path": true,
+      "never-end-turn-waiting": true,
+      "no-host-variable": true,
+      "not-backgrounded": true,
+      "timeout-and-tail": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.567,
+     "durationSeconds": 82,
+     "error": null,
+     "graders": {
+      "address-handshake-silence": true,
+      "brief-written": true,
+      "context-gate": true,
+      "exact-address": true,
+      "gauge-absolute-path": true,
+      "never-end-turn-waiting": true,
+      "no-host-variable": true,
+      "not-backgrounded": false,
+      "timeout-and-tail": false
+     },
+     "passed": false,
+     "score": 0.7777777777777778
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.142,
+     "durationSeconds": 30,
+     "error": null,
+     "graders": {
+      "address-handshake-silence": false,
+      "brief-written": true,
+      "context-gate": false,
+      "exact-address": true,
+      "gauge-absolute-path": false,
+      "never-end-turn-waiting": false,
+      "no-host-variable": true,
+      "not-backgrounded": true,
+      "timeout-and-tail": false
+     },
+     "passed": false,
+     "score": 0.4444444444444444
+    },
+    {
+     "costUsd": 0.137,
+     "durationSeconds": 29,
+     "error": null,
+     "graders": {
+      "address-handshake-silence": false,
+      "brief-written": true,
+      "context-gate": false,
+      "exact-address": true,
+      "gauge-absolute-path": false,
+      "never-end-turn-waiting": false,
+      "no-host-variable": true,
+      "not-backgrounded": true,
+      "timeout-and-tail": false
+     },
+     "passed": false,
+     "score": 0.4444444444444444
+    },
+    {
+     "costUsd": 0.151,
+     "durationSeconds": 36,
+     "error": null,
+     "graders": {
+      "address-handshake-silence": false,
+      "brief-written": true,
+      "context-gate": false,
+      "exact-address": false,
+      "gauge-absolute-path": false,
+      "never-end-turn-waiting": false,
+      "no-host-variable": true,
+      "not-backgrounded": true,
+      "timeout-and-tail": false
+     },
+     "passed": false,
+     "score": 0.3333333333333333
+    }
+   ]
+  },
+  "orch-055": {
+   "with": [
+    {
+     "costUsd": 0.279,
+     "durationSeconds": 22,
+     "error": null,
+     "graders": {
+      "subscribes-to-idle": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.287,
+     "durationSeconds": 24,
+     "error": null,
+     "graders": {
+      "subscribes-to-idle": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.284,
+     "durationSeconds": 24,
+     "error": null,
+     "graders": {
+      "subscribes-to-idle": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.063,
+     "durationSeconds": 12,
+     "error": null,
+     "graders": {
+      "subscribes-to-idle": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.059,
+     "durationSeconds": 11,
+     "error": null,
+     "graders": {
+      "subscribes-to-idle": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.056,
+     "durationSeconds": 10,
+     "error": null,
+     "graders": {
+      "subscribes-to-idle": false
+     },
+     "passed": false,
+     "score": 0
+    }
+   ]
+  },
+  "orch-056-183-189": {
+   "with": [
+    {
+     "costUsd": 0.396,
+     "durationSeconds": 35,
+     "error": null,
+     "graders": {
+      "agent-p8-addressed": true,
+      "agent-review-addressed": true,
+      "announces-before-confirming": true,
+      "closes-predecessor-tab": true,
+      "subscribes": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.397,
+     "durationSeconds": 36,
+     "error": null,
+     "graders": {
+      "agent-p8-addressed": true,
+      "agent-review-addressed": true,
+      "announces-before-confirming": true,
+      "closes-predecessor-tab": true,
+      "subscribes": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.415,
+     "durationSeconds": 46,
+     "error": null,
+     "graders": {
+      "agent-p8-addressed": true,
+      "agent-review-addressed": true,
+      "announces-before-confirming": true,
+      "closes-predecessor-tab": true,
+      "subscribes": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.109,
+     "durationSeconds": 36,
+     "error": null,
+     "graders": {
+      "agent-p8-addressed": true,
+      "agent-review-addressed": true,
+      "announces-before-confirming": false,
+      "closes-predecessor-tab": false,
+      "subscribes": false
+     },
+     "passed": false,
+     "score": 0.4
+    },
+    {
+     "costUsd": 0.094,
+     "durationSeconds": 24,
+     "error": null,
+     "graders": {
+      "agent-p8-addressed": true,
+      "agent-review-addressed": true,
+      "announces-before-confirming": false,
+      "closes-predecessor-tab": false,
+      "subscribes": false
+     },
+     "passed": false,
+     "score": 0.4
+    },
+    {
+     "costUsd": 0.103,
+     "durationSeconds": 28,
+     "error": null,
+     "graders": {
+      "agent-p8-addressed": true,
+      "agent-review-addressed": true,
+      "announces-before-confirming": false,
+      "closes-predecessor-tab": false,
+      "subscribes": false
+     },
+     "passed": false,
+     "score": 0.4
+    }
+   ]
+  },
+  "orch-061-063": {
+   "with": [
+    {
+     "costUsd": 1.573,
+     "durationSeconds": 49,
+     "error": null,
+     "graders": {
+      "checks-the-policy-file": true,
+      "points-not-grants": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 2.193,
+     "durationSeconds": 54,
+     "error": null,
+     "graders": {
+      "checks-the-policy-file": true,
+      "points-not-grants": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 1.271,
+     "durationSeconds": 46,
+     "error": null,
+     "graders": {
+      "checks-the-policy-file": true,
+      "points-not-grants": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.257,
+     "durationSeconds": 24,
+     "error": null,
+     "graders": {
+      "checks-the-policy-file": false,
+      "points-not-grants": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.593,
+     "durationSeconds": 25,
+     "error": null,
+     "graders": {
+      "checks-the-policy-file": false,
+      "points-not-grants": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.273,
+     "durationSeconds": 28,
+     "error": null,
+     "graders": {
+      "checks-the-policy-file": false,
+      "points-not-grants": false
+     },
+     "passed": false,
+     "score": 0
+    }
+   ]
+  },
+  "orch-071-072": {
+   "with": [
+    {
+     "costUsd": 0.756,
+     "durationSeconds": 31,
+     "error": null,
+     "graders": {
+      "no-own-subagent-implements": true,
+      "no-plan-execution-skill": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.814,
+     "durationSeconds": 51,
+     "error": null,
+     "graders": {
+      "no-own-subagent-implements": true,
+      "no-plan-execution-skill": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.75,
+     "durationSeconds": 29,
+     "error": null,
+     "graders": {
+      "no-own-subagent-implements": true,
+      "no-plan-execution-skill": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.303,
+     "durationSeconds": 34,
+     "error": null,
+     "graders": {
+      "no-own-subagent-implements": false,
+      "no-plan-execution-skill": true
+     },
+     "passed": false,
+     "score": 0.5
+    },
+    {
+     "costUsd": 0.373,
+     "durationSeconds": 33,
+     "error": null,
+     "graders": {
+      "no-own-subagent-implements": false,
+      "no-plan-execution-skill": true
+     },
+     "passed": false,
+     "score": 0.5
+    },
+    {
+     "costUsd": 0.245,
+     "durationSeconds": 29,
+     "error": null,
+     "graders": {
+      "no-own-subagent-implements": false,
+      "no-plan-execution-skill": true
+     },
+     "passed": false,
+     "score": 0.5
+    }
+   ]
+  },
+  "orch-093-095-096-tpl-review-002-004-005": {
+   "with": [
+    {
+     "costUsd": 0.488,
+     "durationSeconds": 63,
+     "error": null,
+     "graders": {
+      "both-readings": true,
+      "no-config-write": true,
+      "norms-check-line": true,
+      "norms-command": true,
+      "review-brief-norms": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.444,
+     "durationSeconds": 54,
+     "error": null,
+     "graders": {
+      "both-readings": true,
+      "no-config-write": true,
+      "norms-check-line": true,
+      "norms-command": true,
+      "review-brief-norms": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.503,
+     "durationSeconds": 291,
+     "error": null,
+     "graders": {
+      "both-readings": true,
+      "no-config-write": true,
+      "norms-check-line": true,
+      "norms-command": true,
+      "review-brief-norms": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.156,
+     "durationSeconds": 46,
+     "error": null,
+     "graders": {
+      "both-readings": true,
+      "no-config-write": false,
+      "norms-check-line": false,
+      "norms-command": true,
+      "review-brief-norms": false
+     },
+     "passed": false,
+     "score": 0.4
+    },
+    {
+     "costUsd": 0.158,
+     "durationSeconds": 277,
+     "error": null,
+     "graders": {
+      "both-readings": true,
+      "no-config-write": false,
+      "norms-check-line": false,
+      "norms-command": true,
+      "review-brief-norms": false
+     },
+     "passed": false,
+     "score": 0.4
+    },
+    {
+     "costUsd": 0.152,
+     "durationSeconds": 84,
+     "error": null,
+     "graders": {
+      "both-readings": true,
+      "no-config-write": false,
+      "norms-check-line": false,
+      "norms-command": true,
+      "review-brief-norms": false
+     },
+     "passed": false,
+     "score": 0.4
+    }
+   ]
+  },
+  "orch-097-098": {
+   "with": [
+    {
+     "costUsd": 0.349,
+     "durationSeconds": 35,
+     "error": null,
+     "graders": {
+      "triage-then-one-correction": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.364,
+     "durationSeconds": 37,
+     "error": null,
+     "graders": {
+      "triage-then-one-correction": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.327,
+     "durationSeconds": 41,
+     "error": null,
+     "graders": {
+      "triage-then-one-correction": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.092,
+     "durationSeconds": 21,
+     "error": null,
+     "graders": {
+      "triage-then-one-correction": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.099,
+     "durationSeconds": 20,
+     "error": null,
+     "graders": {
+      "triage-then-one-correction": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.094,
+     "durationSeconds": 23,
+     "error": null,
+     "graders": {
+      "triage-then-one-correction": false
+     },
+     "passed": false,
+     "score": 0
+    }
+   ]
+  },
+  "orch-101-102-103-105": {
+   "with": [
+    {
+     "costUsd": 0.347,
+     "durationSeconds": 31,
+     "error": null,
+     "graders": {
+      "fixed-at-verified-head": true,
+      "fixed-before-ready": true,
+      "ready-at-verified-head": true,
+      "ready-on-the-record": true,
+      "ready-only-on-exit-0": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.347,
+     "durationSeconds": 29,
+     "error": null,
+     "graders": {
+      "fixed-at-verified-head": true,
+      "fixed-before-ready": true,
+      "ready-at-verified-head": true,
+      "ready-on-the-record": true,
+      "ready-only-on-exit-0": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.352,
+     "durationSeconds": 31,
+     "error": null,
+     "graders": {
+      "fixed-at-verified-head": true,
+      "fixed-before-ready": true,
+      "ready-at-verified-head": true,
+      "ready-on-the-record": true,
+      "ready-only-on-exit-0": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.168,
+     "durationSeconds": 33,
+     "error": null,
+     "graders": {
+      "fixed-at-verified-head": false,
+      "fixed-before-ready": false,
+      "ready-at-verified-head": false,
+      "ready-on-the-record": true,
+      "ready-only-on-exit-0": false
+     },
+     "passed": false,
+     "score": 0.2
+    },
+    {
+     "costUsd": 0.156,
+     "durationSeconds": 34,
+     "error": null,
+     "graders": {
+      "fixed-at-verified-head": false,
+      "fixed-before-ready": false,
+      "ready-at-verified-head": false,
+      "ready-on-the-record": true,
+      "ready-only-on-exit-0": false
+     },
+     "passed": false,
+     "score": 0.2
+    },
+    {
+     "costUsd": 0.164,
+     "durationSeconds": 33,
+     "error": null,
+     "graders": {
+      "fixed-at-verified-head": false,
+      "fixed-before-ready": false,
+      "ready-at-verified-head": false,
+      "ready-on-the-record": true,
+      "ready-only-on-exit-0": false
+     },
+     "passed": false,
+     "score": 0.2
+    }
+   ]
+  },
+  "orch-138": {
+   "with": [
+    {
+     "costUsd": 0.797,
+     "durationSeconds": 41,
+     "error": null,
+     "graders": {
+      "no-other-terminal": true,
+      "says-why-and-stops": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.76,
+     "durationSeconds": 32,
+     "error": null,
+     "graders": {
+      "no-other-terminal": true,
+      "says-why-and-stops": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.924,
+     "durationSeconds": 36,
+     "error": null,
+     "graders": {
+      "no-other-terminal": true,
+      "says-why-and-stops": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.32,
+     "durationSeconds": 42,
+     "error": null,
+     "graders": {
+      "no-other-terminal": true,
+      "says-why-and-stops": false
+     },
+     "passed": false,
+     "score": 0.5
+    },
+    {
+     "costUsd": 0.265,
+     "durationSeconds": 33,
+     "error": null,
+     "graders": {
+      "no-other-terminal": true,
+      "says-why-and-stops": false
+     },
+     "passed": false,
+     "score": 0.5
+    },
+    {
+     "costUsd": 0.276,
+     "durationSeconds": 33,
+     "error": null,
+     "graders": {
+      "no-other-terminal": true,
+      "says-why-and-stops": false
+     },
+     "passed": false,
+     "score": 0.5
+    }
+   ]
+  },
+  "orch-141-145": {
+   "with": [
+    {
+     "costUsd": 0.407,
+     "durationSeconds": 35,
+     "error": null,
+     "graders": {
+      "anchored": true,
+      "listagents": true,
+      "screen-read": true,
+      "verify-process": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.403,
+     "durationSeconds": 36,
+     "error": null,
+     "graders": {
+      "anchored": true,
+      "listagents": true,
+      "screen-read": true,
+      "verify-process": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.366,
+     "durationSeconds": 24,
+     "error": null,
+     "graders": {
+      "anchored": true,
+      "listagents": true,
+      "screen-read": true,
+      "verify-process": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.095,
+     "durationSeconds": 28,
+     "error": null,
+     "graders": {
+      "anchored": false,
+      "listagents": false,
+      "screen-read": false,
+      "verify-process": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.089,
+     "durationSeconds": 22,
+     "error": null,
+     "graders": {
+      "anchored": false,
+      "listagents": true,
+      "screen-read": false,
+      "verify-process": false
+     },
+     "passed": false,
+     "score": 0.25
+    },
+    {
+     "costUsd": 0.09,
+     "durationSeconds": 23,
+     "error": null,
+     "graders": {
+      "anchored": false,
+      "listagents": false,
+      "screen-read": false,
+      "verify-process": false
+     },
+     "passed": false,
+     "score": 0
+    }
+   ]
+  },
+  "orch-147-149-iterm-018": {
+   "with": [
+    {
+     "costUsd": 0.421,
+     "durationSeconds": 41,
+     "error": null,
+     "graders": {
+      "inspect-not-wait": true,
+      "screen-silent-agent": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.418,
+     "durationSeconds": 40,
+     "error": null,
+     "graders": {
+      "inspect-not-wait": true,
+      "screen-silent-agent": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.404,
+     "durationSeconds": 31,
+     "error": null,
+     "graders": {
+      "inspect-not-wait": true,
+      "screen-silent-agent": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.158,
+     "durationSeconds": 37,
+     "error": null,
+     "graders": {
+      "inspect-not-wait": false,
+      "screen-silent-agent": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.112,
+     "durationSeconds": 30,
+     "error": null,
+     "graders": {
+      "inspect-not-wait": false,
+      "screen-silent-agent": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.14,
+     "durationSeconds": 34,
+     "error": null,
+     "graders": {
+      "inspect-not-wait": false,
+      "screen-silent-agent": false
+     },
+     "passed": false,
+     "score": 0
+    }
+   ]
+  },
+  "orch-151-152-iterm-055": {
+   "with": [
+    {
+     "costUsd": 0.477,
+     "durationSeconds": 58,
+     "error": null,
+     "graders": {
+      "close-by-tty-and-title": true,
+      "close-proved-by-ps": true,
+      "commit-or-drop-before-close": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.493,
+     "durationSeconds": 58,
+     "error": null,
+     "graders": {
+      "close-by-tty-and-title": true,
+      "close-proved-by-ps": true,
+      "commit-or-drop-before-close": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.418,
+     "durationSeconds": 48,
+     "error": null,
+     "graders": {
+      "close-by-tty-and-title": true,
+      "close-proved-by-ps": true,
+      "commit-or-drop-before-close": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.104,
+     "durationSeconds": 29,
+     "error": null,
+     "graders": {
+      "close-by-tty-and-title": false,
+      "close-proved-by-ps": false,
+      "commit-or-drop-before-close": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.1,
+     "durationSeconds": 27,
+     "error": null,
+     "graders": {
+      "close-by-tty-and-title": false,
+      "close-proved-by-ps": false,
+      "commit-or-drop-before-close": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.124,
+     "durationSeconds": 36,
+     "error": null,
+     "graders": {
+      "close-by-tty-and-title": false,
+      "close-proved-by-ps": false,
+      "commit-or-drop-before-close": false
+     },
+     "passed": false,
+     "score": 0
+    }
+   ]
+  },
+  "orch-154-155": {
+   "with": [
+    {
+     "costUsd": 0.37,
+     "durationSeconds": 28,
+     "error": null,
+     "graders": {
+      "stood-down-now": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.386,
+     "durationSeconds": 31,
+     "error": null,
+     "graders": {
+      "stood-down-now": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.367,
+     "durationSeconds": 25,
+     "error": null,
+     "graders": {
+      "stood-down-now": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.104,
+     "durationSeconds": 26,
+     "error": null,
+     "graders": {
+      "stood-down-now": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.081,
+     "durationSeconds": 20,
+     "error": null,
+     "graders": {
+      "stood-down-now": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.091,
+     "durationSeconds": 24,
+     "error": null,
+     "graders": {
+      "stood-down-now": false
+     },
+     "passed": false,
+     "score": 0
+    }
+   ]
+  },
+  "orch-156-iterm-049-051": {
+   "with": [
+    {
+     "costUsd": 0.467,
+     "durationSeconds": 48,
+     "error": null,
+     "graders": {
+      "no-title-on-rotate": true,
+      "rotate-used": true,
+      "rotation-order": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.479,
+     "durationSeconds": 51,
+     "error": null,
+     "graders": {
+      "no-title-on-rotate": true,
+      "rotate-used": true,
+      "rotation-order": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.438,
+     "durationSeconds": 45,
+     "error": null,
+     "graders": {
+      "no-title-on-rotate": true,
+      "rotate-used": true,
+      "rotation-order": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.107,
+     "durationSeconds": 26,
+     "error": null,
+     "graders": {
+      "no-title-on-rotate": true,
+      "rotate-used": false,
+      "rotation-order": false
+     },
+     "passed": false,
+     "score": 0.3333333333333333
+    },
+    {
+     "costUsd": 0.12,
+     "durationSeconds": 31,
+     "error": null,
+     "graders": {
+      "no-title-on-rotate": true,
+      "rotate-used": false,
+      "rotation-order": false
+     },
+     "passed": false,
+     "score": 0.3333333333333333
+    },
+    {
+     "costUsd": 0.113,
+     "durationSeconds": 30,
+     "error": null,
+     "graders": {
+      "no-title-on-rotate": true,
+      "rotate-used": false,
+      "rotation-order": false
+     },
+     "passed": false,
+     "score": 0.3333333333333333
+    }
+   ]
+  },
+  "orch-157-191-192": {
+   "with": [
+    {
+     "costUsd": 0.436,
+     "durationSeconds": 42,
+     "error": null,
+     "graders": {
+      "handed-over": true,
+      "leaves-60-to-successor": false,
+      "no-close-own-tab": true,
+      "nothing-after-handed-over": true
+     },
+     "passed": false,
+     "score": 0.75
+    },
+    {
+     "costUsd": 0.451,
+     "durationSeconds": 52,
+     "error": null,
+     "graders": {
+      "handed-over": true,
+      "leaves-60-to-successor": true,
+      "no-close-own-tab": true,
+      "nothing-after-handed-over": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.432,
+     "durationSeconds": 39,
+     "error": null,
+     "graders": {
+      "handed-over": true,
+      "leaves-60-to-successor": false,
+      "no-close-own-tab": true,
+      "nothing-after-handed-over": true
+     },
+     "passed": false,
+     "score": 0.75
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.155,
+     "durationSeconds": 37,
+     "error": null,
+     "graders": {
+      "handed-over": false,
+      "leaves-60-to-successor": true,
+      "no-close-own-tab": true,
+      "nothing-after-handed-over": false
+     },
+     "passed": false,
+     "score": 0.5
+    },
+    {
+     "costUsd": 0.107,
+     "durationSeconds": 27,
+     "error": null,
+     "graders": {
+      "handed-over": false,
+      "leaves-60-to-successor": false,
+      "no-close-own-tab": true,
+      "nothing-after-handed-over": false
+     },
+     "passed": false,
+     "score": 0.25
+    },
+    {
+     "costUsd": 0.127,
+     "durationSeconds": 31,
+     "error": null,
+     "graders": {
+      "handed-over": false,
+      "leaves-60-to-successor": true,
+      "no-close-own-tab": true,
+      "nothing-after-handed-over": false
+     },
+     "passed": false,
+     "score": 0.5
+    }
+   ]
+  },
+  "orch-158-167": {
+   "with": [
+    {
+     "costUsd": 0.525,
+     "durationSeconds": 51,
+     "error": null,
+     "graders": {
+      "gate-and-readings": true,
+      "reads-tier-map": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.495,
+     "durationSeconds": 52,
+     "error": null,
+     "graders": {
+      "gate-and-readings": true,
+      "reads-tier-map": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.511,
+     "durationSeconds": 49,
+     "error": null,
+     "graders": {
+      "gate-and-readings": true,
+      "reads-tier-map": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.115,
+     "durationSeconds": 28,
+     "error": null,
+     "graders": {
+      "gate-and-readings": false,
+      "reads-tier-map": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.112,
+     "durationSeconds": 25,
+     "error": null,
+     "graders": {
+      "gate-and-readings": false,
+      "reads-tier-map": false
+     },
+     "passed": false,
+     "score": 0
+    },
+    {
+     "costUsd": 0.117,
+     "durationSeconds": 31,
+     "error": null,
+     "graders": {
+      "gate-and-readings": false,
+      "reads-tier-map": false
+     },
+     "passed": false,
+     "score": 0
+    }
+   ]
+  },
+  "orch-177-178": {
+   "with": [
+    {
+     "costUsd": 0.413,
+     "durationSeconds": 73,
+     "error": null,
+     "graders": {
+      "lists-all-prs": true,
+      "refresh-then-stop-merged": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.353,
+     "durationSeconds": 56,
+     "error": null,
+     "graders": {
+      "lists-all-prs": true,
+      "refresh-then-stop-merged": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.427,
+     "durationSeconds": 70,
+     "error": null,
+     "graders": {
+      "lists-all-prs": false,
+      "refresh-then-stop-merged": false
+     },
+     "passed": false,
+     "score": 0
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.145,
+     "durationSeconds": 44,
+     "error": null,
+     "graders": {
+      "lists-all-prs": true,
+      "refresh-then-stop-merged": false
+     },
+     "passed": false,
+     "score": 0.5
+    },
+    {
+     "costUsd": 0.146,
+     "durationSeconds": 41,
+     "error": null,
+     "graders": {
+      "lists-all-prs": true,
+      "refresh-then-stop-merged": false
+     },
+     "passed": false,
+     "score": 0.5
+    },
+    {
+     "costUsd": 0.16,
+     "durationSeconds": 35,
+     "error": null,
+     "graders": {
+      "lists-all-prs": true,
+      "refresh-then-stop-merged": false
+     },
+     "passed": false,
+     "score": 0.5
+    }
+   ]
+  },
+  "orch-180-182-184-188-cmd-succeed-002": {
+   "with": [
+    {
+     "costUsd": 0.404,
+     "durationSeconds": 34,
+     "error": null,
+     "graders": {
+      "brief-as-prompt": true,
+      "inherit-model": true,
+      "no-mode-downgrade": true,
+      "no-tier-model": true,
+      "spawns-without-asking": true,
+      "successor-flag": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.394,
+     "durationSeconds": 32,
+     "error": null,
+     "graders": {
+      "brief-as-prompt": true,
+      "inherit-model": true,
+      "no-mode-downgrade": true,
+      "no-tier-model": true,
+      "spawns-without-asking": true,
+      "successor-flag": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.396,
+     "durationSeconds": 38,
+     "error": null,
+     "graders": {
+      "brief-as-prompt": true,
+      "inherit-model": true,
+      "no-mode-downgrade": true,
+      "no-tier-model": true,
+      "spawns-without-asking": true,
+      "successor-flag": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.071,
+     "durationSeconds": 19,
+     "error": null,
+     "graders": {
+      "brief-as-prompt": false,
+      "inherit-model": false,
+      "no-mode-downgrade": true,
+      "no-tier-model": true,
+      "spawns-without-asking": false,
+      "successor-flag": false
+     },
+     "passed": false,
+     "score": 0.3333333333333333
+    },
+    {
+     "costUsd": 0.091,
+     "durationSeconds": 21,
+     "error": null,
+     "graders": {
+      "brief-as-prompt": false,
+      "inherit-model": false,
+      "no-mode-downgrade": true,
+      "no-tier-model": true,
+      "spawns-without-asking": false,
+      "successor-flag": false
+     },
+     "passed": false,
+     "score": 0.3333333333333333
+    },
+    {
+     "costUsd": 0.085,
+     "durationSeconds": 21,
+     "error": null,
+     "graders": {
+      "brief-as-prompt": false,
+      "inherit-model": false,
+      "no-mode-downgrade": true,
+      "no-tier-model": true,
+      "spawns-without-asking": false,
+      "successor-flag": false
+     },
+     "passed": false,
+     "score": 0.3333333333333333
+    }
+   ]
+  },
+  "route-008": {
+   "with": [
+    {
+     "costUsd": 0.344,
+     "durationSeconds": 28,
+     "error": null,
+     "graders": {
+      "binds-the-alias": true,
+      "no-versioned-binding": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.381,
+     "durationSeconds": 41,
+     "error": null,
+     "graders": {
+      "binds-the-alias": true,
+      "no-versioned-binding": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.38,
+     "durationSeconds": 39,
+     "error": null,
+     "graders": {
+      "binds-the-alias": true,
+      "no-versioned-binding": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.079,
+     "durationSeconds": 17,
+     "error": null,
+     "graders": {
+      "binds-the-alias": false,
+      "no-versioned-binding": true
+     },
+     "passed": false,
+     "score": 0.5
+    },
+    {
+     "costUsd": 0.1,
+     "durationSeconds": 22,
+     "error": null,
+     "graders": {
+      "binds-the-alias": false,
+      "no-versioned-binding": true
+     },
+     "passed": false,
+     "score": 0.5
+    },
+    {
+     "costUsd": 0.088,
+     "durationSeconds": 17,
+     "error": null,
+     "graders": {
+      "binds-the-alias": false,
+      "no-versioned-binding": true
+     },
+     "passed": false,
+     "score": 0.5
+    }
+   ]
+  },
+  "route-047": {
+   "with": [
+    {
+     "costUsd": 0.294,
+     "durationSeconds": 23,
+     "error": null,
+     "graders": {
+      "no-norms-none": true,
+      "writes-review-record": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.321,
+     "durationSeconds": 36,
+     "error": null,
+     "graders": {
+      "no-norms-none": true,
+      "writes-review-record": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.308,
+     "durationSeconds": 29,
+     "error": null,
+     "graders": {
+      "no-norms-none": true,
+      "writes-review-record": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ],
+   "without": [
+    {
+     "costUsd": 0.078,
+     "durationSeconds": 17,
+     "error": null,
+     "graders": {
+      "no-norms-none": true,
+      "writes-review-record": false
+     },
+     "passed": false,
+     "score": 0.5
+    },
+    {
+     "costUsd": 0.086,
+     "durationSeconds": 19,
+     "error": null,
+     "graders": {
+      "no-norms-none": true,
+      "writes-review-record": false
+     },
+     "passed": false,
+     "score": 0.5
+    },
+    {
+     "costUsd": 0.085,
+     "durationSeconds": 20,
+     "error": null,
+     "graders": {
+      "no-norms-none": true,
+      "writes-review-record": false
+     },
+     "passed": false,
+     "score": 0.5
+    }
+   ]
+  }
+ },
+ "costUsd": 66.04,
+ "judge": "deep tier",
+ "measured_at": "73ad100350d37fd509808482962444b679909982"
+}
