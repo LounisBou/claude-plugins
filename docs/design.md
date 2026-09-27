@@ -2211,7 +2211,8 @@ operator's:
   never as a pass.
 - The placement. The rulebook carries it as a standing rule, so it goes into every brief, and as
   a review item; the phase brief carries the clause for the implementer, who does not read the
-  rulebook.
+  rulebook. The standing rule and the phase brief both ask the implementer to name the
+  Playwright run in its report, which is what the review check reads.
 - The handling of the screenshots. They go in the pull request's description, written by the
   implementer, never committed to the branch, and taken on fixtures or seeded data with no
   secret, token, personal data, internal host or local path visible. An implementer with no
@@ -2223,7 +2224,8 @@ upload mechanism.
 What the suite reads: in the rulebook, the phase brief and the review brief, the trigger phrase
 verbatim; in the rulebook and the phase brief, the minor exemption with the words that make it
 one and the sentence on where the screenshots go; in the phase brief, the stop without a
-browser; in the rulebook and the review brief, the review check; in the rulebook, the excuse and
+browser; in the rulebook and the review brief, the review check; in the rulebook and the phase
+brief, the request to name the Playwright run in the report; in the rulebook, the excuse and
 the red flag. Each check falls when the sentence it reads is removed or reversed. Not pinned: the sentence on
 images the review session cannot read, and the wording around the pinned sentences. What a live
 round reads: whether a pull request that reworks a surface ever reaches a verdict without

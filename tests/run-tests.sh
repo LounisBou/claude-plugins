@@ -233,6 +233,8 @@ check "the phase brief says where the screenshots go and what they may show" "1"
   "$(grep -cF "The screenshots go in the pull request's description, written by you; they are never committed to the branch; they are taken on fixtures or seeded data, with no secret, token, personal data, internal host or local path visible." "$PHASE")"
 check "the phase brief stops the implementer that has no browser" "1" \
   "$(grep -cF "If no browser or Playwright is available to you, STOP and say so." "$PHASE")"
+check "the rulebook and the phase brief ask for the Playwright run the review checks" "1|1" \
+  "$(grep -cF "on the pull request, and the report names the Playwright run" "$SKILL")|$(grep -cF "and name the Playwright run in your report" "$PHASE")"
 check "the review brief checks the screenshots against the diff and rules on a minor claim" "1|1|1" \
   "$(grep -cF "the screenshots on the pull request against the diff" "$REVIEW")|$(grep -cF "They must show the surface the diff changes, and the implementer's report must name the Playwright run; a missing or unrelated screenshot is a finding." "$REVIEW")|$(grep -cF "A change the implementer's report calls minor is reported as such, with its reason, and the orchestrator rules." "$REVIEW")"
 
