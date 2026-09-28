@@ -24,6 +24,8 @@ Output:
 context_percent=36.4
 context_tokens=91000
 context_window=250000
+model=a-model
+model_source=transcript
 source=tap
 ```
 

@@ -12,7 +12,7 @@ An orchestrator launched by hand had never measured its own tty, read the listin
 
 ## ITERM-026 — rationale of ITERM-025: the launcher names the cause
 
-Never hanging, never reporting what it did not verify, never handing over another terminal: all three were paid for. One right-click left a context menu open in the app, and for four hours every call hung with nothing in any log.
+Never hanging, never reporting what it did not verify, never handing over another terminal: all three were paid for. One right-click left a context menu open in the app, and for four hours every call hung with nothing in any log, found only by sampling the app's main thread.
 
 ## ITERM-031 — rationale of ITERM-030: no third rung
 

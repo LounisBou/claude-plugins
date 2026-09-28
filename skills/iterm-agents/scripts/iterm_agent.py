@@ -806,7 +806,7 @@ def session_name_on(tty):
     **`ps` hands back a FLAT command line**: the quoting that made the name one argument is
     gone, and the words after `--name` run on until the next option or the end of the line.
     The launcher puts `--name` last precisely so that the end of the line is the end of the
-    name (§42). A launch that does otherwise — a prompt placed after it — leaves a boundary
+    name (§48). A launch that does otherwise — a prompt placed after it — leaves a boundary
     nothing here can recover.
 
     The bound is LENGTH, not shape. A name under another convention is still a name and is

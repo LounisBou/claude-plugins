@@ -84,4 +84,4 @@ An agent once reported « exactly the two staged files » in its acknowledgment,
 
 ## ORCH-222 — No finished tab is left around
 
-Observed: an approved agent left open a whole day, then a second agent spawned beside it; and an agent kept « for a possible N-bis » through a merge nobody had scheduled, idle under memory pressure until the operator asked why.
+Observed: an approved agent left open a whole day, then a second agent spawned beside it; and an agent kept « for a possible N-bis » through a merge nobody had scheduled, idle at eighteen percent context for ten minutes under memory pressure, until the operator asked why.

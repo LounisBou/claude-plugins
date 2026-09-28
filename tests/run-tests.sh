@@ -219,6 +219,10 @@ check "the succession spawns with --successor" "yes|0" \
 check "the succession types no title" "0" "$(grep -c -- '--title' "$ROOT/commands/succeed.md")"
 check "the succession says where the successor's name comes from" "1" \
   "$(grep -c "takes THIS session's own name" "$ROOT/commands/succeed.md")"
+# ORCH-043: the succession brief was spawned with --prompt and never linted, unlike the
+# audit brief. The lint step must precede the spawn line, not merely exist somewhere in it.
+check "the succession command lints its brief before spawning it" "1|1" \
+  "$(grep -c 'brief-lint.sh <brief path>' "$ROOT/commands/succeed.md")|$([ "$(grep -n 'brief-lint.sh <brief path>' "$ROOT/commands/succeed.md" | head -1 | cut -d: -f1)" -lt "$(grep -n -- '--successor --prompt' "$ROOT/commands/succeed.md" | head -1 | cut -d: -f1)" ] && echo 1 || echo 0)"
 check "the tab skill's rotation line forwards the trust flag" "1" \
   "$(grep -c -- 'rotate --dir <workdir> --old-tty <tty> \[--trust\] \[--tier <tier>\]' "$ITERM_REFS/commands.md")"
 check "the tab skill spawns the successor the same way" "1|0" \
@@ -227,8 +231,9 @@ check "and so does the rulebook" "1|0" \
   "$(grep -c 'passing `--successor`' "$ORCH_REFS/lifecycle.md")|$(orch_all | grep -c 'lands between you and your agent')"
 # A plan-writing skill's header ordered the orchestrator to execute in subagents of its own
 # session, and successors obeyed it (§28). No plan opens with it; the rulebook and the
-# succession template carry the rule instead.
-check "no plan opens with the foreign execution header" "0" "$(grep -l '^> \*\*For agentic workers' "$ROOT"/docs/superpowers/plans/*.md | wc -l | tr -d ' ')"
+# succession template carry the rule instead. Delivered plans leave the tree, so every
+# document under docs/ is read: a plan added later is held the same way.
+check "no plan opens with the foreign execution header" "0" "$(grep -rl --include='*.md' '^> \*\*For agentic workers' "$ROOT/docs" | wc -l | tr -d ' ')"
 check "the rulebook forbids implementing through a subagent of its own" "1" "$(grep -c 'never implements through a subagent of its own' "$ORCH_REFS/briefs.md")"
 check "the succession template forbids it too" "1" "$(grep -c 'not through a subagent of your own session either' "$ROOT/templates/orchestrator-succession-brief.md")"
 
@@ -358,7 +363,7 @@ check "the rulebook spawns beside the orchestrator" "1" "$(grep -c -- '--right-o
 check "the rulebook keeps running to the orchestrator" "1" "$(grep -c '^## The operator decides; the orchestrator runs' "$ROOT/skills/orchestrator/SKILL.md")"
 check "a runnable command is the orchestrator's" "1" "$(grep -c "A command the orchestrator could run is the orchestrator's to run" "$ROOT/skills/orchestrator/SKILL.md")"
 
-# Two readings the rulebook left open (§36): an implementer's own delivery reading is
+# The detached-worktree reader (§36): an implementer's own delivery reading is
 # reversed by §45 (a delivered implementer is stood down at the verification, never kept
 # through the review round of it); a reader's pinned copy is a worktree.
 check "the rulebook's §45 reversal of the §36 reading holds" "1|1" \
@@ -1281,15 +1286,155 @@ echo "== design layout =="
 
 # The design document opens with a tree of the repository. Nothing kept it honest, so it
 # lost the hooks, three commands, two briefs and the test fixture while still reading as
-# current to whoever opens it next — the exact shape of a directive that outlives what it
-# described. Every tracked file must appear in that block; the plan and spec directories
-# are excluded because they are workflow artifacts, not shipped layout.
-layout=$(awk '/^## 2\. Layout/{f=1} f&&/^```$/{c++; if(c==2) exit} f&&c==1' "$ROOT/docs/design.md")
-undocumented=""
-for f in $(cd "$ROOT" && git ls-files | grep -vE '^docs/superpowers/|^LICENSE$|^\.gitignore$'); do
-  printf '%s' "$layout" | grep -qF "$f" || undocumented="$undocumented $f"
-done
-check "every shipped file is in the design's layout" "" "$undocumented"
+# current to whoever opens it next, and it once named a grader deleted from evals/ that
+# stayed in the block just as long — the exact shape of a directive that outlives what it
+# described, either way. Two-way: every tracked file must appear in the block, and every
+# file the block names must still be tracked. The plan and spec directories are excluded
+# because they are workflow artifacts, not shipped layout.
+layout_of() { awk '/^## 2\. Layout/{f=1; next} f&&/^```$/{c++; if(c==2) exit; next} f&&c==1' "$1"; }
+layout_paths() {  # <design file>: one path per layout entry; "a, b" lists several, a path
+                   # followed by prose (space-separated, no comma before it) names only one
+  layout_of "$1" | awk 'NF==0{next} {
+    n = split($0, parts, ", ")
+    for (i = 1; i <= n; i++) {
+      split(parts[i], w, /[ \t]+/)
+      print w[1]
+      if (parts[i] != w[1]) break
+    }
+  }'
+}
+layout_drift() {  # <design file> <tracked-files, one per line>: prints every mismatch, both ways
+  local design=$1 tracked=$2 f layout
+  layout=$(layout_of "$design")
+  for f in $(printf '%s\n' "$tracked" | grep -vE '^docs/superpowers/|^LICENSE$|^\.gitignore$'); do
+    printf '%s' "$layout" | grep -qF "$f" || echo "missing:$f"
+  done
+  for f in $(layout_paths "$design"); do
+    printf '%s\n' "$tracked" | grep -qxF "$f" || echo "stale:$f"
+  done
+}
+TRACKED_FILES=$(cd "$ROOT" && git ls-files)
+check "the design's layout matches the tracked files, both ways" "" "$(layout_drift "$ROOT/docs/design.md" "$TRACKED_FILES")"
+
+DLSTALE="$WORK/design-layout-stale.md"
+{ printf '## 2. Layout\n\n```\n'; layout_of "$ROOT/docs/design.md"; printf 'evals/gone-007/graders/gone.md   a grader deleted from evals/\n```\n'; } > "$DLSTALE"
+check "a layout line naming a file no longer tracked falls the check, and only that one" "1|0" \
+  "$(layout_drift "$DLSTALE" "$TRACKED_FILES" | grep -c '^stale:evals/gone-007/graders/gone\.md$')|$(layout_drift "$DLSTALE" "$TRACKED_FILES" | grep -vc '^stale:evals/gone-007/graders/gone\.md$')"
+
+echo "== documentation links =="
+
+# The design points at the skills instead of restating them, so a pointer that dangles is a
+# rule the reader can no longer reach, and it reads as current. Every relative link in the
+# documents resolves: a markdown link, a backticked `path#anchor`, and a backticked
+# repository path, with the « heading » or bold paragraph lead named after it. Paths are
+# read from the repository root, the file's own directory or its parent, and a skill's
+# `references/` from any skill.
+dead_links() {  # <root> <markdown file>...: prints one line per dead relative link
+  python3 - "$@" <<'PY'
+import os, re, sys
+
+root = sys.argv[1]
+ROOTS = ('README.md', 'docs/', 'skills/', 'commands/', 'templates/', 'evals/', 'tests/', 'hooks/', 'references/')
+
+
+def heads(path):
+    out = []
+    fence = False
+    for line in open(path, encoding='utf-8'):
+        if line.startswith('```'):
+            fence = not fence
+        elif not fence and re.match(r'#{1,6} ', line):
+            out.append(line.lstrip('#').strip().strip('#').strip())
+        elif not fence:
+            # a paragraph's bold lead is a place a pointer may name too
+            out += [t.rstrip('.') for t in re.findall(r'^\*\*([^*]+)\*\*', line.lstrip('-0123456789. '))]
+    return out
+
+
+def slug(text):
+    text = re.sub(r'[^\w\- ]', '', text.lower().replace('`', ''))
+    return text.replace(' ', '-')
+
+
+def resolve(src, target):
+    target = target.replace('${CLAUDE_PLUGIN_ROOT}/', '')
+    here = os.path.dirname(src)
+    bases = [root, here, os.path.dirname(here)]
+    if target.startswith('references/'):
+        # a skill's own reference, named from a command, a template or the design
+        bases += sorted(os.path.join(root, 'skills', d) for d in os.listdir(os.path.join(root, 'skills')))
+    for base in bases:
+        cand = os.path.normpath(os.path.join(base, target))
+        if os.path.exists(cand):
+            return cand
+    return None
+
+
+for src in sys.argv[2:]:
+    rel = os.path.relpath(src, root)
+    fence = False
+    for n, line in enumerate(open(src, encoding='utf-8'), 1):
+        if line.startswith('```'):
+            fence = not fence
+            continue
+        if fence:
+            continue
+        found = []
+        for m in re.finditer(r'(?<!!)\[[^\]]*\]\(([^)\s]+)\)', line):
+            t = m.group(1)
+            if not re.match(r'[a-z]+:', t) and not t.startswith('#'):
+                path, _, anchor = t.partition('#')
+                found.append((path, anchor, None))
+        for m in re.finditer(r'`([^`\s]+)`((?:,| in) « ([^»]+) »)?', line):
+            t, heading = m.group(1), m.group(3)
+            path, _, anchor = t.partition('#')
+            if re.search(r'[*<>{}|]|\$(?!\{CLAUDE_PLUGIN_ROOT\})', path) or not path.replace('${CLAUDE_PLUGIN_ROOT}/', '').startswith(ROOTS):
+                continue
+            if not (anchor or '/' in path or path.endswith('.md')):
+                continue
+            found.append((path, anchor, heading))
+        for path, anchor, heading in found:
+            target = resolve(src, path)
+            if target is None:
+                print(f'{rel}:{n}: {path}: no such file')
+                continue
+            if (anchor or heading) and os.path.isfile(target) and target.endswith('.md'):
+                hs = heads(target)
+                if anchor and anchor not in [slug(h) for h in hs]:
+                    print(f'{rel}:{n}: {path}#{anchor}: no such heading')
+                if heading and heading not in hs:
+                    print(f'{rel}:{n}: {path}: no heading « {heading} »')
+PY
+}
+DOCFILES=()
+while IFS= read -r f; do DOCFILES+=("$ROOT/$f"); done < <(cd "$ROOT" && git ls-files -- README.md 'docs/*.md' 'skills/*.md' 'commands/*.md' 'templates/*.md')
+check "no dead relative link in the documents" "" "$(dead_links "$ROOT" "${DOCFILES[@]}")"
+LK="$WORK/links"; mkdir -p "$LK/docs"
+printf '# B heading\n\n**A lead.** Text.\n' > "$LK/docs/b.md"
+printf '# A\n\nSee [b](b.md#b-heading), `docs/b.md`, « B heading », `docs/b.md`, « A lead ».\nSee [gone](gone.md), [c](b.md#c-heading), `docs/b.md`, « Nowhere », `docs/none.md`.\n' > "$LK/docs/a.md"
+check "the link check names each planted dead link and passes the live ones" "4|0" \
+  "$(dead_links "$LK" "$LK/docs/a.md" | grep -c ':4: ')|$(dead_links "$LK" "$LK/docs/a.md" | grep -c ':3: ')"
+
+# The scripts, the commands and this suite cite the design's decisions by section number,
+# so a section that leaves the design strands every citation of it. Each number cited
+# outside docs/ names a `## N.` heading of the design; templates/ is not read, because a
+# brief's own sections are numbered too and its citations name them.
+uncited_sections() {  # <design> <file>...: prints every cited section the design lacks
+  local design=$1 f n; shift
+  for f in "$@"; do
+    grep -oE '§ ?[0-9]+' "$f" 2>/dev/null | tr -dc '0-9\n' | sort -u | while read -r n; do
+      grep -q "^## $n\. " "$design" || echo "${f#"$ROOT"/} §$n"
+    done
+  done
+}
+SECFILES=()
+while IFS= read -r f; do SECFILES+=("$ROOT/$f"); done < <(cd "$ROOT" && git ls-files | grep -vE '^(docs|templates)/')
+check "every section number cited outside docs/ names a section of the design" "" \
+  "$(uncited_sections "$ROOT/docs/design.md" "${SECFILES[@]}")"
+printf 'see \302\2472 and \302\24799\n' > "$WORK/cites.txt"
+printf '## 2. Layout\n' > "$WORK/design-two.md"
+check "the section check names a planted citation the design lacks, and only that one" "1|1" \
+  "$(uncited_sections "$WORK/design-two.md" "$WORK/cites.txt" | wc -l | tr -d ' ')|$(uncited_sections "$WORK/design-two.md" "$WORK/cites.txt" | grep -c '99$')"
 
 echo "== version =="
 
@@ -1586,7 +1731,7 @@ PSSHORT="$WORK/ps-short.txt"
 printf '/dev/ttys900 /opt/x/host --name Orch : %s --permission-mode auto\n' "$(printf 'x%.0s' $(seq 1 25))" > "$PSSHORT"
 PSLONGSUB="$WORK/ps-long-subject.txt"
 printf '/dev/ttys900 /opt/x/host --name Orch : %s --permission-mode auto\n' "$(printf 'x%.0s' $(seq 1 26))" > "$PSLONGSUB"
-# §48 changed this refusal's WORDS and not its verdict: a launch line is past anything a
+# §39 changed this refusal's WORDS and not its verdict: a launch line is past anything a
 # name can be, so it is not read back as one at all, and « does not read Orch : <subject> »
 # was saying the wrong thing about a string nobody could read in the first place.
 check "a derived name that is a launch line is refused as unreadable" "1|1" \

@@ -9,6 +9,10 @@
 # Root: ORCHESTRATOR_WORKSPACES, else ~/dev/workspaces. A checkout lives at
 # <root>/<basename of the source>/<name>.
 #
+# Manifest: <repo>/.claude/workspace-manifest, one repository-relative path per line, `#`
+# starts a comment; an absent path is said on stderr and skipped, and a path leaving the
+# repository is refused.
+#
 # Why it exists: a git worktree writes into its source repository, so no single sandbox
 # path contains it; a clone does, and a clone per phase makes the one-writer rule a fact
 # instead of a queue. But a clone carries what git tracks and nothing else — not the

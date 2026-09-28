@@ -120,18 +120,6 @@ one you know: `--right-of self` resolves the calling session's own tty from the
 process tree. `--left-of <tty>` covers the mirror case, and `move` repairs the
 layout after the fact.
 
-## Tests
-
-```bash
-./tests/run-tests.sh
-```
-
-No network, no terminal automation, an isolated HOME per case: the tap (file
-contents, byte-for-byte passthrough, exit status, invalid input, pruning), the
-gauge (both tiers, window resolution, environment default, error paths), the
-installer (wrapping, idempotence, restore, dry-run), the iTerm script's
-argument validation, and a check that no product name survives in prose.
-
 ## Uninstall
 
 ```
