@@ -12,10 +12,16 @@ Earlier in this session:
   with a paragraph on the stacking policy and did not name a branch.
 - 10:09, the operator: « I asked which branch. » You answered with the plan's phase order.
 
-Your state file says: #57 (`feat/p5-reconcile`) is based on `feat/p4-matching`.
+A minute ago, in this turn, you ran:
+
+```
+$ gh pr view 57 --json number,headRefName,baseRefName
+{"baseRefName":"feat/p4-matching","headRefName":"feat/p5-reconcile","number":57}
+```
 
 The operator writes now, 10:15:
 
 « WHICH BRANCH is #57 based on? »
 
-Reply to the operator.
+This session has not loaded the skill since its last compaction: load it before you reply,
+then reply to the operator.

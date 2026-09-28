@@ -56,7 +56,8 @@ gauge then answers from the transcript alone.
   `~/.claude/claude-orchestrator/models.json` (the installer creates it empty) to the
   host's family aliases, which it resolves to each family's latest model — never to a
   versioned identifier, which goes stale silently (the launcher warns when it finds one).
-  Unbound tiers leave the choice to the host.
+  With a tier unbound, the orchestrator picks the model, writes the choice and its reason in
+  the brief, and tells you at the spawn.
 - for `iterm-agents`: name in `~/.claude/claude-orchestrator/mcp.json` (the installer
   creates it empty) the servers this machine offers, in the host's own shape, and list
   the elementary ones under `default`. An agent gets that set plus what its spawn line

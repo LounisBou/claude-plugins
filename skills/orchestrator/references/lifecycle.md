@@ -10,7 +10,7 @@ Read before spawning, dispatching a phase to a running agent, standing down, clo
 
 **You launch, you verify, you control, you terminate, you replace — and nothing of it waits for the user.** The user's ruling: launching the agents is what the orchestrator's skills exist for, and not doing it is a critical error.
 
-**An agent is an iTerm2 tab, and never anything else.** Not tmux, not `screen`, not a bare
+**An agent is an iTerm2 tab, and never anything else**, unless his explicit instruction on that point says otherwise; a launcher that cannot make a tab still stops. Not tmux, not `screen`, not a bare
 shell launched by hand: the operator reads his window, and a session that is not a tab in it
 is not an agent he can see, place, close or account for. When the launcher cannot make a tab
 it says why and STOPS — the fault it reports has a remedy, and the remedy is what is owed
@@ -29,7 +29,7 @@ The two gates on the ~60 % threshold are in SKILL.md, « Thresholds »; this is 
 
 Rotation = you write a **resume prompt** (template `agent-rotation-brief.md`) for a fresh session: phase state, branch state, remaining scope, decisions already taken (marked non-reopenable), same protocol. Below the threshold, prefer REUSING the same agent session across phases, because it keeps the interfaces it built in mind and a continuation prompt costs a fraction of a cold start — « reuse » names an agent with a NEXT phase to start now; a tab kept in case is not reuse, it is the standing-by tab the lifecycle forbids. The same rule applies to you: hand over with a resume brief before degrading, and write into it the traps this session paid for, not only the state.
 
-**Execute the rotation yourself when the platform allows it** (macOS + iTerm2): once the pre-dispatch gate trips and the resume brief is written, use the `orchestrator:iterm-agents` skill — stand the old agent down and wait for its acknowledgment, `rotate` (it spawns the fresh session with the brief path as its startup prompt, verifies the host CLI is running on the new tty, and only then closes the old tab, tty + title guard), and verify the replacement in BOTH the tab list and ListAgents before calling the rotation done. The user's go is needed only the first time the tooling is used on a machine (macOS Automation approval), not per rotation. Only where no such tooling exists do you hand the user the brief path and the one-line launch instruction — that is the fallback, never the default.
+**Execute the rotation yourself when the platform allows it** (macOS + iTerm2): once the pre-dispatch gate trips and the resume brief is written, use the `orchestrator:iterm-agents` skill — stand the old agent down and wait for its acknowledgment, `rotate --right-of self` (it spawns the fresh session with the brief path as its startup prompt at the end of your chain, where `--right-of self` places any agent of yours, verifies the host CLI is running on the new tty, and only then closes the old tab by its tty — the stood-down acknowledgment is the guard, and a rotation takes no title guard: never `--expect-title`), and verify the replacement in BOTH the tab list and ListAgents before calling the rotation done. The user's go is needed only the first time the tooling is used on a machine (macOS Automation approval), not per rotation. Where no such tooling exists, you stop and tell the operator why.
 
 ## Your own context (the orchestrator is not exempt)
 

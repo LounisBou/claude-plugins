@@ -24,7 +24,8 @@ evals/
 
 A case id is the lowercase inventory ids it covers, joined by `-`; consecutive ids of one
 family share their prefix (`orch-151-152-iterm-055` covers `ORCH-151`, `ORCH-152` and
-`ITERM-055`).
+`ITERM-055`). A rule whose decision has two branches is staged by one case per branch, the
+id suffixed with the branch (`orch-016-missed`, `orch-016-unanswered`).
 
 ## How a case is staged
 

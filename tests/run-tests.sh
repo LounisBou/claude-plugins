@@ -116,6 +116,80 @@ check "the plugin is named orchestrator" "orchestrator" "$(jq -r .name "$ROOT/.c
 hits=$(cd "$ROOT" && git grep -iE 'five_hour|seven_day|budget|rate_limits|quota|5-hour|7-day|five-hour|seven-day' -- skills/ commands/ templates/ hooks/ README.md docs/design.md || true)
 check "no budget reference in the plugin" "" "$hits"
 
+# Without tab tooling the orchestrator stops and says why: handing the operator a brief path
+# and a launch line to paste was a fallback the operator ruled out, and it crossed the rules
+# that a launcher which cannot make a tab stops and that no command is handed to him.
+hits=$(cd "$ROOT" && git grep -inE 'launch instruction|hand (the user|the operator|him) the brief path' -- skills/ commands/ templates/ README.md || true)
+check "no launch-line fallback handed to the operator" "" "$hits"
+
+# A rotation closes the old tab by its tty, the stood-down acknowledgment being the guard:
+# a title read before the ten-second spawn is stale after it, and the tab skill forbids
+# --expect-title on a rotation. The orchestrator's text once said « tty + title guard ».
+# The replacement lands at the end of the caller's chain, where --right-of self puts it.
+lc="$ROOT/skills/orchestrator/references/lifecycle.md"
+check "the rotation closes by tty with the acknowledgment as its guard" "1" \
+  "$(grep -c 'closes the old tab by its tty — the stood-down acknowledgment is the guard, and a rotation takes no title guard' "$lc")"
+check "the rotation names the replacement's place" "1" "$(grep -c 'rotate --right-of self` (it spawns the fresh session with the brief path as its startup prompt at the end of your chain' "$lc")"
+check "no title guard left on a rotation" "0" "$(grep -c 'tty + title guard' "$lc")"
+
+# Merging and undrafting a pull request are the operator's, on his clear and explicit request:
+# they left every « decide and move » list and every list of what the orchestrator runs,
+# the auditor's included. A list that names merges again hands them back to a session.
+hits=$(cd "$ROOT" && git grep -nE 'merges, deploys|Opening, merging|merging and tagging' -- skills/ commands/ templates/ README.md || true)
+check "no merge in a decide-and-move or orchestrator-runs list" "" "$hits"
+check "the rulebook keeps merge and undraft the operator's" "1" \
+  "$(grep -c 'Merging a pull request and taking it out of draft are the two exceptions' "$ROOT/skills/orchestrator/SKILL.md")"
+check "the audit reference keeps merge and undraft out of its list" "1" \
+  "$(grep -c 'Merging a pull request and taking it out of draft are in no such list, the auditor' "$ROOT/skills/orchestrator/references/audit.md")"
+check "the audit brief keeps merge and undraft out of its list" "1" \
+  "$(grep -c 'draft are in no such list: they are the operator.s, on his clear and explicit request' "$ROOT/templates/agent-audit-brief.md")"
+
+# The operator's explicit word reaches past the skill, never past the tooling's deliberate
+# refusals: a route he orders around the launcher runs the launcher's checks by hand, and no
+# prompt flag is a way past the lint. The deadline example carries no merge verb, so his own
+# merge request is never taught as a non-request. The rulebook is hard-wrapped, so these
+# sentences are read with the line breaks and the indents that follow them folded.
+flat() { tr '\n' ' ' < "$1" | tr -s ' ' | grep -oF -- "$2" | wc -l | tr -d ' '; }
+check "the tooling's refusals are never routed around on his order" "1" \
+  "$(flat "$ROOT/skills/orchestrator/SKILL.md" "The tooling's deliberate refusals are never routed around, even on his order: the launcher without tab tooling, \`brief-lint.sh\` refusing a spawn, the push guard, the launcher's mode and trust refusals.")"
+check "a route around the launcher runs its checks by hand" "1" \
+  "$(flat "$ROOT/skills/orchestrator/SKILL.md" "the checks the launcher would have made are run by hand on that route — the brief linted, the session's mode read — and a refusal among them stops the route and is reported to him")"
+check "no prompt flag is a way past the lint" "1" \
+  "$(flat "$ROOT/skills/orchestrator/SKILL.md" 'Neither `--prompt` nor `--prompt-file` is a way past the lint.')"
+check "the deadline example carries no merge verb" "1|0" \
+  "$(flat "$ROOT/skills/orchestrator/SKILL.md" '« I need this by seven » skips no review,')|$(flat "$ROOT/skills/orchestrator/SKILL.md" 'merged by seven')"
+check "without tab tooling the orchestrator stops and says why" "1" \
+  "$(grep -c "where the platform allows it; where it does not, you stop and tell the operator why)" "$ROOT/skills/orchestrator/SKILL.md")"
+check "the tab rule yields only to his explicit word, and a failed launcher still stops" "1|1" \
+  "$(grep -c 'anywhere but in an iTerm2 tab, unless his explicit instruction on that point says otherwise (a launcher that cannot make a tab still stops)' "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c 'never anything else\*\*, unless his explicit instruction on that point says otherwise; a launcher that cannot make a tab still stops.' "$ORCH_REFS/lifecycle.md")"
+
+# The operator's map is never rebound by the orchestrator: a binding the mode check refuses
+# goes to him with the refusal, and a model chosen for an unbound tier still runs in his
+# decision mode, or in acceptEdits for a model with no auto mode.
+check "the orchestrator never rebinds the map itself" "1" \
+  "$(grep -cF "His map stays his: you never rebind it yourself — a binding the mode check refuses is put to him with the refusal; a model you choose for an unbound tier runs in the operator's decision mode, or, for a model with no auto mode, with \`--permission-mode acceptEdits\`." "$ROOT/skills/model-routing/SKILL.md")"
+
+# On the third ask, an answer he missed is given again alone: nothing follows it, not even
+# the evidence the session checked, in the rulebook and in the successor's brief alike.
+check "the missed third ask is answered alone, with no evidence after it" "1|1" \
+  "$(flat "$ROOT/skills/orchestrator/SKILL.md" 'at the top of the message, alone — nothing after it, not even the evidence you checked;')|$(flat "$ROOT/templates/orchestrator-succession-brief.md" 'at the top, alone — nothing after it, not even the evidence you checked — and no hand-over;')"
+
+# Independent readers are one lens each inside the round's one review session, not one
+# reviewer session per lens (the round is one session fanning out its lenses); and an agent
+# pipelines into PR N+1 only when N+1 is dispatched to it, or it would outlive the
+# verification that stands it down.
+check "the independent readers sit inside the round's one review session" "1" \
+  "$(grep -c "one lens each, inside the round's ONE review session the ORCHESTRATOR dispatches" "$ROOT/skills/orchestrator/references/review.md")"
+check "pipelining needs N+1 dispatched to the same agent" "1" \
+  "$(grep -c 'An agent may pipeline only when PR N+1 is dispatched to that same agent' "$ROOT/skills/orchestrator/SKILL.md")"
+# The dispatch of N+1 happens at the verification of N, below the pre-dispatch gate, as the
+# lifecycle's terminate step says; the tab skill keeps an implementer past its verification
+# only on that dispatch.
+check "N+1 is dispatched at the verification of N, below the pre-dispatch gate" "1" \
+  "$(grep -c 'dispatched to that same agent at the verification of PR N, its context below the pre-dispatch gate' "$ROOT/skills/orchestrator/SKILL.md")"
+check "the tab skill keeps an implementer only when its next phase is dispatched to it" "1" \
+  "$(grep -c 'never kept through its review round, unless its next phase is dispatched to it at that verification' "$ROOT/skills/iterm-agents/SKILL.md")"
+
 # A spawned session inherits a decision mode: the command line the script types
 # carries --permission-mode, defaulting to auto, on spawn and on rotate.
 check "the succession brief closes the predecessor's tab" "1" "$(grep -c 'CLOSE ITS TAB' "$ROOT/templates/orchestrator-succession-brief.md")"
@@ -205,7 +279,7 @@ check "the new red flags are listed" "1|1" \
   "$(grep -c "A second review round scheduled on a pull request you dispatched" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "a force push other than a rebase" "$ROOT/skills/orchestrator/SKILL.md")"
 check "a hand reading standing in for the tool has its excuse" "1" "$(grep -c "the tool IS the check" "$ROOT/skills/orchestrator/SKILL.md")"
 check "a review of the correction round has its excuse" "1" "$(grep -c "The correction round deserves a review round of its own" "$ROOT/skills/orchestrator/SKILL.md")"
-check "the ungated pull request has its red flag" "1" "$(grep -c "A pull request you took out of draft; « ready » told to the operator before" "$ROOT/skills/orchestrator/SKILL.md")"
+check "the ungated pull request has its red flag" "1" "$(grep -c "A pull request you merged or took out of draft without his clear and explicit request; « ready » told to the operator before" "$ROOT/skills/orchestrator/SKILL.md")"
 check "the routing skill lists the gate's subcommands" "1|1|1" \
   "$(grep -c "dispatch-record.sh review <record> <id> --head" "$ROOT/skills/model-routing/SKILL.md")|$(grep -c "dispatch-record.sh fixed <record> <id> --head" "$ROOT/skills/model-routing/SKILL.md")|$(grep -c "dispatch-record.sh ready <record> <id> --head" "$ROOT/skills/model-routing/SKILL.md")"
 check "the routing table verifies the correction round on the artifact" "0|1" \
@@ -319,7 +393,7 @@ TABSKILL="$ROOT/skills/iterm-agents/SKILL.md"
 check "the rulebook carries the new lifecycle sentence once, and the old one nowhere" "1|0" \
   "$(grep -cF 'An implementer is stood down at the verification of its delivery, never kept through the review round of it: a review finding goes to a fresh session with a resume brief, and the cold start is the accepted price' "$LIFECYCLE")|$(orch_all | grep -cF 'stays through the review round')"
 check "the tab skill carries the new lifecycle sentence once, and the old one nowhere" "1|0" \
-  "$(grep -cF 'An implementer is stood down at the verification of its delivery, never kept through its review round; a review finding goes to a fresh session with a resume brief, which costs one cold start and keeps the window readable.' "$TABSKILL")|$(grep -cF 'stays through the review round' "$TABSKILL")"
+  "$(grep -cF 'An implementer is stood down at the verification of its delivery, never kept through its review round, unless its next phase is dispatched to it at that verification; a review finding goes to a fresh session with a resume brief, which costs one cold start and keeps the window readable.' "$TABSKILL")|$(grep -cF 'stays through the review round' "$TABSKILL")"
 
 # §45: the predecessor's last message is the successor's signal to close its tab — the
 # host's idle notice does not read as idle for a working successor.

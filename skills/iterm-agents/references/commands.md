@@ -18,7 +18,7 @@ $SCRIPT list
     # tab title, then the session's NAME (its --name, `(host default)` when it was launched
     # without one), then `self` on YOUR OWN tab.
 
-$SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --inherit-model] [--permission-mode auto] \
+$SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --inherit-model] [--permission-mode auto] \
     --title "Agent : <subject>" --brief <brief-path> --orchestrator "<name [ref]>" [--right-of self | --successor] [--mcp <name>]
     # --brief lints the brief (skills/orchestrator/scripts/brief-lint.sh) before any tab
     # exists and refuses the spawn on any finding; on a clean brief it builds the startup
@@ -53,6 +53,8 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --inherit-model] [--
     # host CLI is running on the new tty (30 s, ORCHESTRATOR_SPAWN_TIMEOUT), and prints
     # the tty on its last line. `--prompt-file <path>` uses a file you already wrote.
     # --inherit-model types the calling session's current model (from the context tap); for a successor.
+    # --model <name> types that model for this one spawn, exclusive with --tier: the model the
+    # orchestrator chose where the tier the work needs is unbound.
     # --tier resolves through the operator's map (<state dir>/models.json, or
     # ORCHESTRATOR_TIER_DEEP/_STANDARD/_LIGHT). An unbound tier and no --tier at all both
     # type no model argument: the host chooses. `resolve-tier <tier>` prints the binding.

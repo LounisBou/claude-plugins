@@ -23,7 +23,7 @@ The phase brief `{{PHASE_BRIEF}}` stays binding in full — reading list, enviro
 
 ## 5. Tier
 
-You run at the **{{TIER}}** tier. {{TIER_ESCALATION}}
+You run at the **{{TIER}}** tier, chosen because {{TIER_REASON}}. Your model: {{TIER_MODEL}}, because {{TIER_MODEL_REASON}} (the operator's binding of the tier, or, where the tier is unbound, the model the orchestrator chose and its reason). {{TIER_ESCALATION}}
 
 When this rotation is an escalation, that line names what triggered it: the finding that survived the previous round, the ambiguity two STOPs did not close, or the gate crossed without a push. Read it as scope, not as a verdict on the session you replace — and do not repeat the round it failed.
 

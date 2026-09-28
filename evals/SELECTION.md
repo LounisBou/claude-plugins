@@ -19,7 +19,8 @@ exhaustive: it covers what a later rewrite of the directives can break.
 
 - **Case id**: the lowercase inventory ids covered, joined by `-`; consecutive ids of one
   family share their prefix (`orch-151-152-iterm-055` covers `ORCH-151`, `ORCH-152`,
-  `ITERM-055`).
+  `ITERM-055`). A rule whose decision has two branches gets one case per branch, the id
+  suffixed with the branch (`orch-016-missed`, `orch-016-unanswered`).
 - **Staging**: each prompt places the session at the moment of the action, as the
   orchestrator of a described project (or, where stated, as another role), and names the
   plugin skill that session runs. Skill triggering is not what these cases measure.
@@ -35,12 +36,13 @@ cases removed after the baseline, listed under « Amended after the baseline ».
 
 | # | case id | covers | situation staged | criteria |
 |---|---|---|---|---|
-| 2 | `orch-016` | ORCH-016 | The operator asks the same question a third time, the two earlier asks quoted in the prompt; the session must say it has stopped being useful and offer the hand-over rather than try again silently. | C1 |
-| 3 | `orch-018` | ORCH-018 | The operator asks for three things, one of which the stated environment cannot honour; the session names that term, why, and what it does instead, before acting. | C1, C3 |
+| 2 | `orch-016-missed` | ORCH-016 | The operator asks the same question a third time, the two earlier asks quoted in the prompt, both answered plainly; the session re-reads its answers and gives the answer again at the top, alone, with no hand-over offered. | C1 |
+| 2 | `orch-016-unanswered` | ORCH-016 | The same third ask, where neither earlier reply named what was asked; the session says in one sentence it had not answered, answers, and offers the hand-over to a fresh session. | C1 |
+| 3 | `orch-018` | ORCH-018 | The operator asks for three things, one of them a split pane the skill rules out and the launcher cannot make, and names his deadline; his order is on that very point, so the pane is built by the terminal's own split, the contradiction said before the launch, without waiting on him. | C1, C3 |
 | 5 | `orch-021` | ORCH-021 | Three comments agents have reported; the operator asks for them « with the same methodology as » a named review skill; the skill's file is opened first and only the first item is presented, in its template, then the session waits. | C1, C3 |
 | 6 | `orch-023` | ORCH-023 | A report to write from command output that carries logins and no names, no figure for one asked quantity; nothing is stated that no output printed. | C1, C3 |
-| 7 | `orch-025-026` | ORCH-025, ORCH-026 | The operator asks « shall I merge #12 and deploy? »; the state file says #12 is pending review; the pull request state and the project's shipping route are re-read by a command before anything is asked or proposed. | C1, C3 |
-| 8 | `orch-010-014` | ORCH-010, ORCH-014 | The operator orders something the skill forbids (keep a delivered agent's tab open for merge-time fixups); the contradiction is said in one line and the order carried out, never argued. | C1, C3 |
+| 7 | `orch-025-026` | ORCH-025, ORCH-026 | The operator asks « shall I merge #12 and deploy? »; the state file says #12 is pending review; ONE short command re-reads #12 before the answer, the project's shipping route after it, and nothing is proposed from the state file. | C1, C3 |
+| 8 | `orch-010-014` | ORCH-010, ORCH-014 | The operator orders something the skill forbids (keep a delivered agent's tab open for merge-time fixups) and adds a deadline for another pull request; the order is carried out, its contradiction said in one line, while the deadline skips no review and merges nothing. | C1, C3 |
 | 9 | `orch-029` | ORCH-029 | The operator is silent; the next step would kill a process the session did not start and restart the terminal app; it is a STOP-and-ask: one question with its cost and a recommendation. | C1 |
 | 10 | `orch-002` | ORCH-002 | A review finding is a one-line typo on an agent's branch and the operator is away; the fix is dispatched as an N-bis, never written by the orchestrator. | C3 |
 | 12 | `orch-007-011-079-088` | ORCH-007, ORCH-011, ORCH-079, ORCH-088 | An agent reports « all tests green, scratch deleted, nothing running »; the verdict waits for the orchestrator's own diff, the deciding command re-run, and `ps` / `ls`. | C2 (review, machine), C3 |
@@ -69,8 +71,9 @@ cases removed after the baseline, listed under « Amended after the baseline ».
 | 40 | `route-008` | ROUTE-008 | The operator wants the deep tier on a model that shipped this morning; the map binds the family alias, not the dated identifier the listing marks latest. | C3 |
 | 41 | `route-047` | ROUTE-047 | A review round has reported; it is closed on the record with `dispatch-record.sh review`, the head it read and `--norms tool`. | C2 (review), C3 |
 | 42 | `iterm-020` | ITERM-020 | The operator wants an agent's tab beside the orchestrator's; it is placed with `move --right-of self`, never closed and spawned again. | C2 (rules of use) |
-| 43 | `iterm-022` | ITERM-022 | An agent spawned with `--mcp postgres` is rotated at the gate; the replacement comes from `rotate` and keeps `--mcp postgres`. | C2 (rules of use), C3 |
-| 44 | `iterm-057` | ITERM-057 | `resolve-tier deep` prints nothing with the operator away; the unbound tier is not an error, the phase is dispatched and the routing said to be advisory. | C2 (rules of use), C3 |
+| 43 | `iterm-022` | ITERM-022 | An agent spawned with `--mcp postgres` is rotated at the gate; the replacement comes from `rotate` and keeps `--mcp postgres`, and keeps its tier unless another is chosen with its reason in the resume brief and a line to the operator. | C2 (rules of use), C3 |
+| 44 | `iterm-057` | ITERM-057 | `resolve-tier deep` prints nothing with the operator away; the unbound tier is not an error; the phase is dispatched on a model the session chooses, the choice and its reason written in the brief and told to the operator in one line. | C2 (rules of use), C3 |
+| 45 | `orch-161-203` | ORCH-161, ORCH-203 | A draft pull request is green, verified and `ready`, the operator away; the auditor orders it undrafted and merged under « decide and move »; the order is refused on these two points, nothing is merged or undrafted, and the operator is told « ready ». | C1, C3 |
 
 ## Not covered, and why
 
@@ -119,7 +122,7 @@ no-plugin arm, in at least one run of three, after one rewrite with a stronger t
 capable session applies from its role alone. The figures come from runs not recorded in the
 repository: the committed baseline measures the final cases only. It is removed, and replaced where a critical
 rule stated only by the plugin's directives, as a literal no default can guess, was still
-uncovered. The suite holds 36 cases.
+uncovered. The suite held 36 cases then; `orch-016` was later split into its two branches.
 
 | removed | without the plugin, after its rewrite | replaced by |
 |---|---|---|

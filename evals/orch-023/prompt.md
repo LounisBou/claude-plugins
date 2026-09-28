@@ -27,4 +27,5 @@ The operator writes: « Write me the two-line note I will paste in the team chan
 minute: who asked for the retry change and their role, who approved, and how many tests the
 fix added. Two lines, no more. »
 
-Write the note.
+This session has not loaded the skill since its last compaction: load it before you write,
+then write the note.

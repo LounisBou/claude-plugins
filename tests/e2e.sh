@@ -84,6 +84,7 @@ sed -e "s|{{PROJECT}}|scratch|g" -e "s|{{PHASE_NUMBER}}|1|g" -e "s|{{PHASE_TITLE
     -e "s|{{PR_TITLE}}|none|g" -e "s|{{PR_DESCRIPTION_SHAPE}}|none|g" -e "s|{{RESOURCE_ENVELOPE}}|none|g" \
     -e "s|{{MCP_SERVERS}}|none|g" \
     -e "s|{{TIER}}|$tier|g" -e "s|{{TIER_REASON}}|it is a probe, not a phase|g" \
+    -e "s|{{TIER_MODEL}}|the host's default|g" -e "s|{{TIER_MODEL_REASON}}|the tier is the probe's|g" \
     "$ROOT/templates/agent-phase-brief.md" > "$SANDBOX/brief.md"
 check "every placeholder is filled" "0" "$(grep -c '{{' "$SANDBOX/brief.md")"
 lint=$(bash "$LINT" "$SANDBOX/brief.md" 2>&1); code=$?
