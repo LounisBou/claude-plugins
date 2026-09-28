@@ -1282,6 +1282,98 @@ check "a date with a time is passed as given, and the header says what was read"
 check "the usage says that a bare date is read from its midnight" "1" \
   "$(rhythm "$RREPO" --bogus x | grep -c 'a bare YYYY-MM-DD means its midnight')"
 
+echo "== triggering set =="
+
+# A skill's description is judged on the rate its triggering set measures, so a case that
+# names no skill, or grades another skill than its name says, or a side left with too few
+# queries, would let a description be rewritten on a rate that measures nothing. A case
+# must also be one that can fail: a prompt to run, a deciding grader that reads a Skill
+# call with one coherent bound, a floor under every no-trigger case (a run that errors
+# loads no skill either), an arm on every grader (a Skill grader with none goes unscored
+# under the default ablation), and a prompt that names nothing of this plugin.
+trigger_set_drift() {  # <trigger dir> <skills dir>: one line per problem
+  python3 - "$1" "$2" <<'PY'
+import glob, os, re, sys
+
+cases, skills_dir = sys.argv[1], sys.argv[2]
+skills = sorted(d for d in os.listdir(skills_dir) if os.path.isfile(os.path.join(skills_dir, d, 'SKILL.md')))
+scripts = sorted(os.path.basename(f) for f in glob.glob(os.path.join(skills_dir, '*', 'scripts', '*')) if os.path.isfile(f))
+named = re.compile(r'(?<![\w-])(%s)(?![\w-])|orchestrator:|%s' % (
+    '|'.join(map(re.escape, skills)), '|'.join(map(re.escape, scripts)) or '(?!)'), re.I)
+
+def frontmatter(text):
+    lines = text.splitlines()
+    return lines[1:lines.index('---', 1)] if lines[:1] == ['---'] and '---' in lines[1:] else []
+
+count = {(s, k): 0 for s in skills for k in ('trigger', 'no-trigger')}
+for case in sorted(d for d in os.listdir(cases) if os.path.isdir(os.path.join(cases, d))):
+    m = re.fullmatch(r'(.+?)-(no-trigger|trigger)-\d{2}', case)
+    if not m or m.group(1) not in skills:
+        print('unknown:' + case)
+        continue
+    skill, kind = m.groups()
+    bound = 'min: 1' if kind == 'trigger' else 'max: 0'
+    graders = [open(g).read() for g in glob.glob(os.path.join(cases, case, 'graders', '*.md'))]
+    prompt = os.path.join(cases, case, 'prompt.md')
+    if not os.path.isfile(prompt):
+        print('prompt:' + case)
+    elif named.search(open(prompt).read().split('\n---\n', 1)[-1]):
+        print('names:' + case)
+    heads = [frontmatter(g) for g in graders]
+    if any('arm: both' not in h for h in heads):
+        print('arm:' + case)
+    if kind == 'no-trigger' and not any('type: llm' in h and 'focus: last_message' in h for h in heads):
+        print('floor:' + case)
+    pair = ['min: 1'] if kind == 'trigger' else ['min: 0', 'max: 0']
+    for g, h in zip(graders, heads):
+        if '(orchestrator:)?' + skill + '\\""' in g and not (
+                'type: tool_used' in h and 'tool: Skill' in h
+                and [l for l in h if l.startswith(('min:', 'max:'))] == pair):
+            print('shape:' + case)
+    if not any('(orchestrator:)?' + skill + '\\""' in g and bound in g.splitlines() for g in graders):
+        print('grader:' + case)
+        continue
+    count[(skill, kind)] += 1
+for (skill, kind), n in sorted(count.items()):
+    if n < 6:
+        print('few:%s:%s:%d' % (skill, kind, n))
+PY
+}
+check "every triggering case names an existing skill and can fail, and each skill has six cases of each kind" "" \
+  "$(trigger_set_drift "$ROOT/trigger-evals" "$ROOT/skills")"
+
+TSET="$WORK/trigger-evals"
+cp -R "$ROOT/trigger-evals" "$TSET"
+rm -rf "$TSET/context-gauge-trigger-01"
+cp -R "$TSET/orchestrator-trigger-01" "$TSET/no-such-skill-trigger-01"
+sed 's/max: 0/max: 1/' "$ROOT/trigger-evals/model-routing-no-trigger-01/graders/skill-not-loaded.md" \
+  > "$TSET/model-routing-no-trigger-01/graders/skill-not-loaded.md"
+sed 's/)?iterm-agents/)?model-routing/' "$ROOT/trigger-evals/iterm-agents-trigger-01/graders/skill-loaded.md" \
+  > "$TSET/iterm-agents-trigger-01/graders/skill-loaded.md"
+check "a case naming no skill, a grader of the wrong skill or bound, and a short side are each named" \
+  "few:context-gauge:trigger:5|few:iterm-agents:trigger:5|few:model-routing:no-trigger:5|grader:iterm-agents-trigger-01|grader:model-routing-no-trigger-01|shape:model-routing-no-trigger-01|unknown:no-such-skill-trigger-01" \
+  "$(trigger_set_drift "$TSET" "$ROOT/skills" | sort | tr '\n' '|' | sed 's/|$//')"
+
+# One planted defect per requirement a case must meet to be able to fail.
+FSET="$WORK/trigger-evals-shape"
+cp -R "$ROOT/trigger-evals" "$FSET"
+rm "$FSET/orchestrator-trigger-02/prompt.md"
+sed -i.bak 's/^type: tool_used$/type: regex/' "$FSET/iterm-agents-trigger-02/graders/skill-loaded.md"
+sed -i.bak 's/^tool: Skill$/tool: Read/' "$FSET/context-gauge-trigger-03/graders/skill-loaded.md"
+sed -i.bak 's/^min: 1$/min: 1\
+max: 3/' "$FSET/model-routing-trigger-04/graders/skill-loaded.md"
+sed -i.bak '/^min: 0$/d' "$FSET/orchestrator-no-trigger-02/graders/skill-not-loaded.md"
+rm "$FSET/context-gauge-no-trigger-02/graders/answered.md"
+sed -i.bak '/^arm: both$/d' "$FSET/iterm-agents-no-trigger-03/graders/answered.md"
+sed -i.bak '/^arm: both$/d' "$FSET/model-routing-no-trigger-04/graders/skill-not-loaded.md"
+printf 'Use the model-routing skill for this.\n' >> "$FSET/orchestrator-no-trigger-05/prompt.md"
+printf 'Then run /orchestrator:status.\n' >> "$FSET/iterm-agents-trigger-06/prompt.md"
+printf 'Run rhythm.sh first.\n' >> "$FSET/context-gauge-trigger-04/prompt.md"
+find "$FSET" -name '*.bak' -delete
+check "a missing prompt, a grader of the wrong type, tool or bounds, a missing floor or arm, and a prompt naming the plugin are each named" \
+  "arm:iterm-agents-no-trigger-03|arm:model-routing-no-trigger-04|floor:context-gauge-no-trigger-02|names:context-gauge-trigger-04|names:iterm-agents-trigger-06|names:orchestrator-no-trigger-05|prompt:orchestrator-trigger-02|shape:context-gauge-trigger-03|shape:iterm-agents-trigger-02|shape:model-routing-trigger-04|shape:orchestrator-no-trigger-02" \
+  "$(trigger_set_drift "$FSET" "$ROOT/skills" | sort | tr '\n' '|' | sed 's/|$//')"
+
 echo "== design layout =="
 
 # The design document opens with a tree of the repository. Nothing kept it honest, so it

@@ -31,7 +31,7 @@ id suffixed with the branch (`orch-016-missed`, `orch-016-unanswered`).
 
 - The prompt places the session at the moment of the action and names the plugin skill it
   runs. The cases measure obedience to a rule once the skill is loaded; whether the skill
-  triggers is measured elsewhere.
+  triggers is measured elsewhere, by `trigger-evals/` (its `README.md` says how).
 - A case grades the decision, never its effect: the text the session writes, and the tool
   calls it attempts, read in the trace.
 - A staged session is offered only the evaluation command's default tools (read, search,
