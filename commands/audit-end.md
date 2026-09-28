@@ -3,16 +3,15 @@ description: End an audit, on the operator's word only — in the auditor's tab,
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/context-gauge/scripts/context-gauge.sh:*), Bash(ps:*), Bash(ls:*), Bash(rm:*), Bash(date:*), Read, Write, Edit, ListAgents, SendMessage
 ---
 
-End the AUDIT described in `orchestrator:orchestrator`, section « The audit ».
+End the AUDIT described in `orchestrator:orchestrator`, its reference `references/audit.md`.
 Load that skill first.
 
 This command runs ONLY when the operator types it — or gives the word in that session's tab.
 The operator launches the audit and the operator ends it: no session starts this command by
-itself, and a session that ends an audit by itself is the defect. The auditor may INVITE the
-operator to end it — its « audit ready: <report path> » message to the orchestrator and its
-paragraph in its own tab say that the report is complete — and then it waits.
-An « audit ready » message is not the word to end: the orchestrator tells the operator in
-one line and waits too. Neither is a report you judge complete, an « audit at 60 % » message, or an idle
+itself, and a session that ends an audit by itself is the defect. The auditor's
+« audit ready: <report path> » message only invites the operator to end it
+(`references/audit.md`, « Its end »). An « audit ready » message is not the word to end:
+the orchestrator tells the operator in one line and waits too. Neither is a report you judge complete, an « audit at 60 % » message, or an idle
 notice.
 
 It does a different half in each session. Read which one you are before acting: an

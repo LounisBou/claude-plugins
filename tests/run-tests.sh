@@ -7,6 +7,12 @@
 set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+# The orchestrator skill is its SKILL.md and the references it loads: a sentence is read in
+# the file that carries it, and a sentence that must be nowhere is read in all of them.
+ORCH_REFS="$ROOT/skills/orchestrator/references"
+orch_all() { cat "$ROOT/skills/orchestrator/SKILL.md" "$ORCH_REFS"/*.md; }
+# The tab skill's command reference: the synopses and what the launcher does are read there.
+ITERM_REFS="$ROOT/skills/iterm-agents/references"
 # Explicitly inside TMPDIR: the platform default lands in a directory a sandboxed
 # shell may not write to, and the suite then runs with an empty path where it thinks
 # it has a directory.
@@ -105,6 +111,11 @@ hits=$(grep -rnI 'claude-orchestrator:' "$ROOT" --exclude-dir=.git --exclude=run
 check "the old command namespace is gone" "" "$hits"
 check "the plugin is named orchestrator" "orchestrator" "$(jq -r .name "$ROOT/.claude-plugin/plugin.json")"
 
+# The operator manages the usage budget; the plugin does not read it, report it or route
+# on it (phase 3 ruling 4). No replacement sentence either — the plugin says nothing of it.
+hits=$(cd "$ROOT" && git grep -iE 'five_hour|seven_day|budget|rate_limits|quota|5-hour|7-day|five-hour|seven-day' -- skills/ commands/ templates/ hooks/ README.md docs/design.md || true)
+check "no budget reference in the plugin" "" "$hits"
+
 # A spawned session inherits a decision mode: the command line the script types
 # carries --permission-mode, defaulting to auto, on spawn and on rotate.
 check "the succession brief closes the predecessor's tab" "1" "$(grep -c 'CLOSE ITS TAB' "$ROOT/templates/orchestrator-succession-brief.md")"
@@ -135,21 +146,21 @@ check "the succession types no title" "0" "$(grep -c -- '--title' "$ROOT/command
 check "the succession says where the successor's name comes from" "1" \
   "$(grep -c "takes THIS session's own name" "$ROOT/commands/succeed.md")"
 check "the tab skill's rotation line forwards the trust flag" "1" \
-  "$(grep -c -- 'rotate --dir <workdir> --old-tty <tty> \[--trust\] \[--tier <tier>\]' "$ROOT/skills/iterm-agents/SKILL.md")"
+  "$(grep -c -- 'rotate --dir <workdir> --old-tty <tty> \[--trust\] \[--tier <tier>\]' "$ITERM_REFS/commands.md")"
 check "the tab skill spawns the successor the same way" "1|0" \
   "$(grep -c 'spawning your successor: `--successor`' "$ROOT/skills/iterm-agents/SKILL.md")|$(grep -c 'sits between you and your agent' "$ROOT/skills/iterm-agents/SKILL.md")"
 check "and so does the rulebook" "1|0" \
-  "$(grep -c 'passing `--successor`' "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c 'lands between you and your agent' "$ROOT/skills/orchestrator/SKILL.md")"
+  "$(grep -c 'passing `--successor`' "$ORCH_REFS/lifecycle.md")|$(orch_all | grep -c 'lands between you and your agent')"
 # A plan-writing skill's header ordered the orchestrator to execute in subagents of its own
 # session, and successors obeyed it (§28). No plan opens with it; the rulebook and the
 # succession template carry the rule instead.
 check "no plan opens with the foreign execution header" "0" "$(grep -l '^> \*\*For agentic workers' "$ROOT"/docs/superpowers/plans/*.md | wc -l | tr -d ' ')"
-check "the rulebook forbids implementing through a subagent of its own" "1" "$(grep -c 'never implements through a subagent of its own' "$ROOT/skills/orchestrator/SKILL.md")"
+check "the rulebook forbids implementing through a subagent of its own" "1" "$(grep -c 'never implements through a subagent of its own' "$ORCH_REFS/briefs.md")"
 check "the succession template forbids it too" "1" "$(grep -c 'not through a subagent of your own session either' "$ROOT/templates/orchestrator-succession-brief.md")"
 
 # Review rounds run in sessions spawned for the round and closed when it is judged:
 # the rulebook names the mode, both briefs exist, and neither lets its session push.
-check "the rulebook runs review rounds in disposable sessions" "1" "$(grep -c '^## Review rounds run in disposable sessions' "$ROOT/skills/orchestrator/SKILL.md")"
+check "the rulebook runs review rounds in disposable sessions" "1" "$(grep -c '^## Review rounds run in disposable sessions' "$ORCH_REFS/review.md")"
 check "the review brief forbids writing" "1" "$(grep -c 'You write nothing and post nothing' "$ROOT/templates/agent-review-brief.md")"
 check "the comments brief forbids pushing" "1" "$(grep -c 'Never push' "$ROOT/templates/agent-comments-brief.md")"
 
@@ -159,8 +170,8 @@ check "the comments brief forbids pushing" "1" "$(grep -c 'Never push' "$ROOT/te
 # leave the review round holding only the readings the orchestrator does by hand.
 check "the rulebook requires a norms check on every delivery" "1" "$(grep -c "AND the project.s norms check" "$ROOT/skills/orchestrator/SKILL.md")"
 check "no size and no green gate waive it" "1" "$(grep -c "nor a green gate waives it" "$ROOT/skills/orchestrator/SKILL.md")"
-check "the norms lens runs the project.s own tool" "1" "$(grep -c "The norms lens is the project.s own tool wherever the project ships one" "$ROOT/skills/orchestrator/SKILL.md")"
-check "a project shipping none reads the norms file by hand" "1" "$(grep -c "the lens reads the norms file by hand" "$ROOT/skills/orchestrator/SKILL.md")"
+check "the norms lens runs the project.s own tool" "1" "$(grep -c "The norms lens is the project.s own tool wherever the project ships one" "$ORCH_REFS/review.md")"
+check "a project shipping none reads the norms file by hand" "1" "$(grep -c "the lens reads the norms file by hand" "$ORCH_REFS/review.md")"
 check "the skipped norms check has its excuse" "1" "$(grep -c "size and a green gate are not the test" "$ROOT/skills/orchestrator/SKILL.md")"
 check "the skipped norms check has its red flag" "1" "$(grep -c "without its norms check having run" "$ROOT/skills/orchestrator/SKILL.md")"
 # Presence, not a count: the placeholder now appears wherever the brief has something to
@@ -173,21 +184,21 @@ check "the review brief takes the report, not the fix path" "1" "$(grep -c "its 
 # reader.s opinion of the norms file stood in for the project.s tool. Prose is applied from
 # memory, so the rule now ends on a record a script can refuse. These pin the sentences that
 # say so.
-check "the rulebook gates readiness on the record" "1" "$(grep -c "exits 0 at the head in front of you" "$ROOT/skills/orchestrator/SKILL.md")"
+check "the rulebook gates readiness on the record" "1" "$(grep -c "exits 0 at the head in front of you" "$ORCH_REFS/review.md")"
 # The operator's ruling of 2026-09-25: one review round, the orchestrator's triage, one
 # correction round the orchestrator verifies itself, done. The sentences that prescribed a
 # review of every repair are gone in the same move, or the rulebook orders both.
 check "the rulebook states one review round and one correction round" "1|1" \
   "$(grep -c "One review round, one correction round, and you close it" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "no review of the correction round, no further round, no over-correction" "$ROOT/skills/orchestrator/SKILL.md")"
-check "the triage names every dropped item" "2" "$(grep -c "dropped item named in one line with its reason\|name each dropped item with its reason" "$ROOT/skills/orchestrator/SKILL.md")"
+check "the triage names every dropped item" "2" "$(cat "$ROOT/skills/orchestrator/SKILL.md" "$ORCH_REFS/review.md" | grep -c "dropped item named in one line with its reason\|name each dropped item with its reason")"
 check "no sentence still orders a review of the repair" "0|0|0" \
-  "$(grep -c "the round that reads a corrective round" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "the round after a repair reads the repair" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "No head is reviewed until" "$ROOT/skills/orchestrator/SKILL.md")"
-check "the rulebook records the correction round on the record" "1" "$(grep -c "dispatch-record.sh fixed <record> <id> --head <sha>" "$ROOT/skills/orchestrator/SKILL.md")"
+  "$(orch_all | grep -c "the round that reads a corrective round")|$(orch_all | grep -c "the round after a repair reads the repair")|$(orch_all | grep -c "No head is reviewed until")"
+check "the rulebook records the correction round on the record" "1" "$(grep -c "dispatch-record.sh fixed <record> <id> --head <sha>" "$ORCH_REFS/review.md")"
 # Ready is the operator's turn: the pull request stays in draft, rebased, and the squash-merge
 # of a lower branch is replayed around, never through.
 check "ready leaves the pull request in draft" "1" "$(grep -c "Ready is the operator's turn, and the pull request stays in draft" "$ROOT/skills/orchestrator/SKILL.md")"
 check "ready includes the rebase and names the squash-merge trap" "1|1|1" \
-  "$(grep -c "each pull request of a stack on the one below it" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "git rebase --onto <main> <old head of the lower branch> <branch>" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "the one force this rule allows" "$ROOT/skills/orchestrator/SKILL.md")"
+  "$(grep -c "each pull request of a stack on the one below it" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "git rebase --onto <main> <old head of the lower branch> <branch>" "$ORCH_REFS/review.md")|$(grep -c "the one force this rule allows" "$ORCH_REFS/review.md")"
 check "the new excuses have their rows" "1|1|1" \
   "$(grep -c "The reviewer found it, so it goes in the correction round" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "is green, I can take it out of draft" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "a plain rebase on main will do" "$ROOT/skills/orchestrator/SKILL.md")"
 check "the new red flags are listed" "1|1" \
@@ -209,6 +220,8 @@ check "the review brief ends its report on a machine line" "1|1" \
 # surface shows, so the rule lives where each reader acts on it: the rulebook for the
 # orchestrator, the phase brief for the implementer, the review brief for the round.
 SKILL="$ROOT/skills/orchestrator/SKILL.md"
+BRIEFS="$ORCH_REFS/briefs.md"
+REVIEWREF="$ORCH_REFS/review.md"
 PHASE="$ROOT/templates/agent-phase-brief.md"
 REVIEW="$ROOT/templates/agent-review-brief.md"
 SURFACE="creates or substantially modifies a frontend surface, or creates the interface of a new feature"
@@ -216,15 +229,15 @@ SURFACE_HEAD="A frontend surface is proved by a browser run and by screenshots o
 # The operator's words are the trigger, verbatim, in every place the rule appears: the standing
 # rule, review item 12, the excuse row and the red flag in the rulebook, then each brief.
 check "the trigger phrase is the operator's, verbatim, in the rulebook, the phase brief and the review brief" "4|1|1" \
-  "$(grep -cF "$SURFACE" "$SKILL")|$(grep -cF "$SURFACE" "$PHASE")|$(grep -cF "$SURFACE" "$REVIEW")"
+  "$(cat "$SKILL" "$BRIEFS" "$REVIEWREF" | grep -cF "$SURFACE")|$(grep -cF "$SURFACE" "$PHASE")|$(grep -cF "$SURFACE" "$REVIEW")"
 check "the rulebook states the frontend surface rule among the standing rules" "1|1" \
-  "$(grep -F "$SURFACE_HEAD" "$SKILL" | grep -cF "$SURFACE")|$(grep -cF "testing that surface in a real browser with Playwright" "$SKILL")"
+  "$(grep -F "$SURFACE_HEAD" "$BRIEFS" | grep -cF "$SURFACE")|$(grep -cF "testing that surface in a real browser with Playwright" "$BRIEFS")"
 check "a minor change is not held to it, and the orchestrator rules on the claim" "1" \
-  "$(grep -cF "A minor change — a colour, a spacing, a label, a fix invisible at a glance — is not held to it: when the implementer judges a change minor, the report says so and why, and the orchestrator rules" "$SKILL")"
+  "$(grep -cF "A minor change — a colour, a spacing, a label, a fix invisible at a glance — is not held to it: when the implementer judges a change minor, the report says so and why, and the orchestrator rules" "$BRIEFS")"
 check "the rulebook says where the screenshots go and what they may show" "1" \
-  "$(grep -cF "The screenshots go in the pull request's description, written by the implementer; they are never committed to the branch; they are taken on fixtures or seeded data, with no secret, token, personal data, internal host or local path visible." "$SKILL")"
+  "$(grep -cF "The screenshots go in the pull request's description, written by the implementer; they are never committed to the branch; they are taken on fixtures or seeded data, with no secret, token, personal data, internal host or local path visible." "$BRIEFS")"
 check "the review on evidence checks the screenshots, the surface and the Playwright run" "1|1" \
-  "$(grep -cF "check that the screenshots are on the pull request, that they show the surface the diff changes, and that the implementer's report names the Playwright run" "$SKILL")|$(grep -cF "a missing or unrelated screenshot is a finding, and the pull request is not ready" "$SKILL")"
+  "$(grep -cF "check that the screenshots are on the pull request, that they show the surface the diff changes, and that the implementer's report names the Playwright run" "$REVIEWREF")|$(grep -cF "a missing or unrelated screenshot is a finding, and the pull request is not ready" "$REVIEWREF")"
 check "the frontend surface rule has its excuse and its red flag" "1|1" \
   "$(grep -cF "The tests are green, so the screenshots are optional" "$SKILL")|$(grep -cF "given its verdict or declared ready with no screenshots of the surface it changes" "$SKILL")"
 check "the phase brief tells the implementer to test the surface in a browser and show it" "1|1" \
@@ -234,7 +247,7 @@ check "the phase brief says where the screenshots go and what they may show" "1"
 check "the phase brief stops the implementer that has no browser" "1" \
   "$(grep -cF "If no browser or Playwright is available to you, STOP and say so." "$PHASE")"
 check "the rulebook and the phase brief ask for the Playwright run the review checks" "1|1" \
-  "$(grep -cF "on the pull request, and the report names the Playwright run" "$SKILL")|$(grep -cF "and name the Playwright run in your report" "$PHASE")"
+  "$(grep -cF "on the pull request, and the report names the Playwright run" "$ORCH_REFS/briefs.md")|$(grep -cF "and name the Playwright run in your report" "$PHASE")"
 check "the review brief checks the screenshots against the diff and rules on a minor claim" "1|1|1" \
   "$(grep -cF "the screenshots on the pull request against the diff" "$REVIEW")|$(grep -cF "They must show the surface the diff changes, and the implementer's report must name the Playwright run; a missing or unrelated screenshot is a finding." "$REVIEW")|$(grep -cF "A change the implementer's report calls minor is reported as such, with its reason, and the orchestrator rules." "$REVIEW")"
 
@@ -251,10 +264,10 @@ check "the review brief checks the screenshots against the diff and rules on a m
 # A round's wall clock is the cold start, the gate and the round trips — never bought
 # back by shortening the verification. The three levers and their counterweight are
 # pinned so a later edit cannot quietly drop the gate rule while keeping the speed one.
-check "the rulebook prices a round" "1" "$(grep -c '^### The cost of a round' "$ROOT/skills/orchestrator/SKILL.md")"
-check "the gate overlaps the writing" "1" "$(grep -c 'starts the moment that commit lands' "$ROOT/skills/orchestrator/SKILL.md")"
-check "decided items skip the assessment" "1" "$(grep -c 'DECIDED findings list' "$ROOT/skills/orchestrator/SKILL.md")"
-check "speed is not bought from the gate" "1" "$(grep -c 'never gated by a scoped run' "$ROOT/skills/orchestrator/SKILL.md")"
+check "the rulebook prices a round" "1" "$(grep -c '^### The cost of a round' "$ORCH_REFS/review.md")"
+check "the gate overlaps the writing" "1" "$(grep -c 'starts the moment that commit lands' "$ORCH_REFS/review.md")"
+check "decided items skip the assessment" "1" "$(grep -c 'DECIDED findings list' "$ORCH_REFS/review.md")"
+check "speed is not bought from the gate" "1" "$(grep -c 'never gated by a scoped run' "$ORCH_REFS/review.md")"
 check "the comments brief carries a decided list" "1" "$(grep -c 'DECIDED_ITEMS' "$ROOT/templates/agent-comments-brief.md")"
 
 # Text published under the operator's name is theirs to authorise, and a thread closed
@@ -263,7 +276,7 @@ check "the comments brief carries a decided list" "1" "$(grep -c 'DECIDED_ITEMS'
 check "outward-facing text needs the operator" "1" "$(grep -c "may draft it, never authorise it" "$ROOT/skills/orchestrator/SKILL.md")"
 check "a fix answers its own thread" "1" "$(grep -c 'answered by the change' "$ROOT/skills/orchestrator/SKILL.md")"
 check "the comments brief drafts nothing on a fixed thread" "1" "$(grep -c 'draft nothing and post nothing there' "$ROOT/templates/agent-comments-brief.md")"
-check "the rulebook spawns beside the orchestrator" "1" "$(grep -c -- '--right-of self --title "Agent : <subject>" --prompt' "$ROOT/skills/orchestrator/SKILL.md")"
+check "the rulebook spawns beside the orchestrator" "1" "$(grep -c -- '--right-of self --title "Agent : <subject>" --brief' "$ORCH_REFS/lifecycle.md")"
 
 # The operator's ruling after an afternoon of pasted command lines: everything the
 # orchestrator asks him to run, it can run itself; he decides, nothing else. Pinned so the
@@ -275,22 +288,22 @@ check "a runnable command is the orchestrator's" "1" "$(grep -c "A command the o
 # reversed by §45 (a delivered implementer is stood down at the verification, never kept
 # through the review round of it); a reader's pinned copy is a worktree.
 check "the rulebook's §45 reversal of the §36 reading holds" "1|1" \
-  "$(grep -c 'An implementer is stood down at the verification of its delivery' "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c 'a tab kept in case is not reuse' "$ROOT/skills/orchestrator/SKILL.md")"
+  "$(grep -c 'An implementer is stood down at the verification of its delivery' "$ORCH_REFS/lifecycle.md")|$(grep -c 'a tab kept in case is not reuse' "$ORCH_REFS/lifecycle.md")"
 check "the tab skill says the same" "1" "$(grep -c 'never kept through its review round' "$ROOT/skills/iterm-agents/SKILL.md")"
 check "the rulebook pins a reader's copy as a worktree" "1|1" \
-  "$(grep -c 'never a clone: a clone is for a WRITER' "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "a reader's pinned copy is a detached worktree" "$ROOT/skills/orchestrator/SKILL.md")"
+  "$(grep -c 'never a clone: a clone is for a WRITER' "$ORCH_REFS/review.md")|$(grep -c "a reader's pinned copy is a detached worktree" "$ROOT/skills/orchestrator/SKILL.md")"
 check "the review brief template pins a worktree" "1" "$(grep -c 'a detached worktree pinned at the head under review' "$ROOT/templates/agent-review-brief.md")"
 
 # Four more readings the live rounds produced (§41): one literal guard per file.
 check "the rulebook refuses a stand-down over uncommitted work" "1" \
-  "$(grep -c 'a stand-down acknowledgment that reports anything uncommitted is an unfinished delivery' "$ROOT/skills/orchestrator/SKILL.md")"
+  "$(grep -c 'a stand-down acknowledgment that reports anything uncommitted is an unfinished delivery' "$ORCH_REFS/lifecycle.md")"
 check "the review brief forbids git configuration writes" "1" "$(grep -c 'no git configuration write of any kind' "$ROOT/templates/agent-review-brief.md")"
 check "the review brief carries every sandbox path per call" "1" "$(grep -c 'carry every sandbox path inside each tool call' "$ROOT/templates/agent-review-brief.md")"
 check "the phase brief's gauge names the installed copy" "1" "$(grep -c "the plugin's installed copy" "$ROOT/templates/agent-phase-brief.md")"
 check "the review brief's gauge names the installed copy" "1" "$(grep -c "the plugin's installed copy" "$ROOT/templates/agent-review-brief.md")"
 check "the comments brief's gauge names the installed copy" "1" "$(grep -c "the plugin's installed copy" "$ROOT/templates/agent-comments-brief.md")"
 check "the rotation brief's gauge names the installed copy" "1" "$(grep -c "the plugin's installed copy" "$ROOT/templates/agent-rotation-brief.md")"
-check "the rulebook's first instantiation carries remote control" "1" "$(grep -c -- '--remote-control "Orch : <subject>"' "$ROOT/skills/orchestrator/SKILL.md")"
+check "the rulebook's first instantiation carries remote control" "1" "$(grep -c -- '--remote-control "Orch : <subject>"' "$ORCH_REFS/lifecycle.md")"
 check "the tab skill already reads the Chat caveat" "1" "$(grep -c 'before the session names itself' "$ROOT/skills/iterm-agents/SKILL.md")"
 
 # Read as presence, not as a count: a document may spell a literal on one line or on five,
@@ -301,9 +314,10 @@ spells() { grep -qF -- "$2" "$1" && echo yes || echo no; }
 # kept through the review round of it. The new lifecycle sentence present once, the old
 # one gone, in the rulebook and the tab skill each.
 RULEBOOK="$ROOT/skills/orchestrator/SKILL.md"
+LIFECYCLE="$ORCH_REFS/lifecycle.md"
 TABSKILL="$ROOT/skills/iterm-agents/SKILL.md"
 check "the rulebook carries the new lifecycle sentence once, and the old one nowhere" "1|0" \
-  "$(grep -cF 'An implementer is stood down at the verification of its delivery, never kept through the review round of it: a review finding goes to a fresh session with a resume brief, and the cold start is the accepted price' "$RULEBOOK")|$(grep -cF 'stays through the review round' "$RULEBOOK")"
+  "$(grep -cF 'An implementer is stood down at the verification of its delivery, never kept through the review round of it: a review finding goes to a fresh session with a resume brief, and the cold start is the accepted price' "$LIFECYCLE")|$(orch_all | grep -cF 'stays through the review round')"
 check "the tab skill carries the new lifecycle sentence once, and the old one nowhere" "1|0" \
   "$(grep -cF 'An implementer is stood down at the verification of its delivery, never kept through its review round; a review finding goes to a fresh session with a resume brief, which costs one cold start and keeps the window readable.' "$TABSKILL")|$(grep -cF 'stays through the review round' "$TABSKILL")"
 
@@ -314,7 +328,7 @@ check "the succeed command carries the handover message" "yes" \
 check "the succession brief template carries the handover message and the wait for it" "yes|yes" \
   "$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'handed over')|$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'wait for its « handed over »')"
 check "the rulebook carries the handover message and the wait for it" "yes|yes" \
-  "$(spells "$RULEBOOK" 'handed over')|$(spells "$RULEBOOK" 'wait for its « handed over »')"
+  "$(spells "$LIFECYCLE" 'handed over')|$(spells "$LIFECYCLE" 'wait for its « handed over »')"
 
 # §45: one marketplace, the family's — the install lines read the operator's own,
 # `lounisbou`, and this repository's single-plugin one is gone from every file that ships.
@@ -332,9 +346,9 @@ check "the repository's own marketplace install line survives nowhere outside do
 # document the plugin ships spells the short roles and the cap on the subject; the older
 # spellings survive only in the design's own record of the decision.
 check "the rulebook spells the short roles and the cap" "yes|yes|yes" \
-  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Agent : <subject>')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Orch : <subject>')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'at most 25 characters')"
+  "$(spells "$ORCH_REFS/lifecycle.md" 'Agent : <subject>')|$(spells "$ORCH_REFS/lifecycle.md" 'Orch : <subject>')|$(spells "$ORCH_REFS/lifecycle.md" 'at most 25 characters')"
 check "the tab skill spells them and the cap too" "yes|yes|yes" \
-  "$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'Agent : <subject>')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'Orch : <subject>')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'at most 25 characters')"
+  "$(spells "$ITERM_REFS/commands.md" 'Agent : <subject>')|$(spells "$ITERM_REFS/commands.md" 'Orch : <subject>')|$(spells "$ITERM_REFS/commands.md" 'at most 25 characters')"
 check "the succession command spells the short role" "yes" \
   "$(spells "$ROOT/commands/succeed.md" 'Orch : <subject>')"
 # The pattern is assembled from its two halves so this guard does not count itself. The
@@ -370,11 +384,11 @@ check "the older directives are gone from every document" "0|0|0" \
 # and it is named wherever the tier map is — the two live side by side and are installed,
 # listed and removed together (§42).
 check "both documents say the launch is strict with the session's own file" "yes|yes" \
-  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'a configuration file written for that session')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'a configuration file written for that session')"
+  "$(spells "$ORCH_REFS/lifecycle.md" 'a configuration file written for that session')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'a configuration file written for that session')"
 check "the rulebook says the default set is loaded and --mcp adds to it" "yes|yes" \
-  "$(spells "$ROOT/skills/orchestrator/SKILL.md" "the catalogue's default set")|$(spells "$ROOT/skills/orchestrator/SKILL.md" '--mcp <name>')"
+  "$(spells "$ORCH_REFS/lifecycle.md" "the catalogue's default set")|$(spells "$ORCH_REFS/lifecycle.md" '--mcp <name>')"
 check "the tab skill's reference carries the option and what none does" "yes|yes|yes" \
-  "$(spells "$ROOT/skills/iterm-agents/SKILL.md" '[--mcp <name>]')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'mcp.json')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" '--mcp none')"
+  "$(spells "$ITERM_REFS/commands.md" '[--mcp <name>]')|$(spells "$ITERM_REFS/commands.md" 'mcp.json')|$(spells "$ITERM_REFS/commands.md" '--mcp none')"
 check "the catalogue is named where the tier map is" "yes|yes|yes" \
   "$(spells "$ROOT/commands/install.md" 'mcp.json')|$(spells "$ROOT/commands/uninstall.md" 'mcp.json')|$(spells "$ROOT/README.md" 'mcp.json')"
 # The uninstall command names three files as the operator's own: the tier map, the
@@ -382,7 +396,7 @@ check "the catalogue is named where the tier map is" "yes|yes|yes" \
 check "uninstall says three files are the operator's own" "yes" \
   "$(spells "$ROOT/commands/uninstall.md" 'three of those files')"
 check "the tab skill says an agent comes up with remote control off" "yes" \
-  "$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'remote control off')"
+  "$(spells "$ITERM_REFS/commands.md" 'remote control off')"
 
 # The mode a session came up in (§43), one literal per document. The routing skill carries
 # the rule the measurement produced — a tier bound to a model the host does not run in the
@@ -393,13 +407,13 @@ check "the tab skill says an agent comes up with remote control off" "yes" \
 check "the routing skill carries the unattended rule and the repair" "yes|yes" \
   "$(spells "$ROOT/skills/model-routing/SKILL.md" 'a session nobody watches runs in the operator'"'"'s decision mode')|$(spells "$ROOT/skills/model-routing/SKILL.md" '--permission-mode acceptEdits` for a few edits and allow-listed commands only')"
 check "the rulebook says the launcher reads the mode" "yes" \
-  "$(spells "$ROOT/skills/orchestrator/SKILL.md" "reads the session's mode on its transcript")"
+  "$(spells "$ORCH_REFS/lifecycle.md" "reads the session's mode on its transcript")"
 check "the tab skill says the mode is read and the screen read from the bottom" "yes|yes" \
-  "$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'the mode the session came up in')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'the last N lines')"
+  "$(spells "$ITERM_REFS/commands.md" 'the mode the session came up in')|$(spells "$ITERM_REFS/commands.md" 'the last N lines')"
 # A synopsis and the sentence under it drifted apart once already: the rotation's still
 # read `[--mcp]` after the option took a value.
 check "every synopsis spells the server option the way its sentence does" "0|2" \
-  "$(grep -c -- '\[--mcp\]' "$ROOT/skills/iterm-agents/SKILL.md")|$(grep -c -- '\[--mcp <name>\]' "$ROOT/skills/iterm-agents/SKILL.md")"
+  "$(grep -c -- '\[--mcp\]' "$ITERM_REFS/commands.md")|$(grep -c -- '\[--mcp <name>\]' "$ITERM_REFS/commands.md")"
 
 # A brief that does not say which servers its session was given lets an agent reach for a
 # tool it never had: the phase brief carries the list itself, beside the tier, as a
@@ -416,7 +430,7 @@ for p in $(grep -o '{{[A-Z_]*}}' "$ROOT/templates/agent-phase-brief.md" | sort -
 done
 check "the live round's sed fills every placeholder of the phase brief" "" "$E2EUNFILLED"
 
-check "the rulebook pins a reader's copy through the script" "1" "$(grep -c 'workspace.sh pin <source> <round> <head>' "$ROOT/skills/orchestrator/SKILL.md")"
+check "the rulebook pins a reader's copy through the script" "1" "$(grep -c 'workspace.sh pin <source> <round> <head>' "$ORCH_REFS/review.md")"
 
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate2" bash "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" spawn --dir "$WORK" --prompt p --left-of /dev/ttys001 --right-of self 2>&1 || true)
 case "$out" in *"mutually exclusive"*) anchors="refused" ;; *) anchors="$out" ;; esac
@@ -844,7 +858,7 @@ check "the missing non-goals are named" "1" "$(bash "$LINT" "$B/noaddr.md" 2>&1 
 # orchestrator nothing to record, and the readiness gate then refuses a head whose round did
 # read it. The rule lived in prose on both sides of the round and was skipped twice in one
 # day, so the brief is read for it before the dispatch rather than after.
-review_brief() { printf '# round 2\n\nYou are the REVIEW agent for this round.\n\nYour orchestrator is `p-1 [a1b2c3]`.\n' > "$1"; }
+review_brief() { printf '# round 2\n\nYou are the REVIEW agent for this round.\n\nYour orchestrator is `p-1 [a1b2c3]`.\n\nGauge: run `%s`.\n' "$ROOT/skills/context-gauge/scripts/context-gauge.sh" > "$1"; }
 
 review_brief "$B/review.md"
 printf 'End the report with `norms-check: tool <head>` or `norms-check: none <head>`.\n' >> "$B/review.md"
@@ -859,6 +873,151 @@ check "the shipped review template raises no norms-check finding" "0" \
 
 check_status "a brief that does not exist is an error" 1 bash "$LINT" "$B/absent.md"
 check_status "no argument is an error" 1 bash "$LINT"
+
+# An instruction to run something in the background, `run_in_background`, or a command
+# ending in ` &` costs an agent its turn: the host never wakes it back up, and the work is
+# picked up hours later by hand. A clause that FORBIDS it reads the opposite way and must
+# raise nothing, including when the forbidding word sits on the very same line.
+ok_brief "$B/bg-phrase.md"; printf 'Run the coverage suite in the background while you continue.\n' >> "$B/bg-phrase.md"
+check_status "an instruction to run in the background is a finding" 1 bash "$LINT" "$B/bg-phrase.md"
+check "the background instruction is named" "1" "$(bash "$LINT" "$B/bg-phrase.md" 2>&1 | grep -c 'background')"
+
+ok_brief "$B/bg-token.md"; printf 'Pass run_in_background: true to the tool call.\n' >> "$B/bg-token.md"
+check_status "the run_in_background token is a finding" 1 bash "$LINT" "$B/bg-token.md"
+check "the token is named" "1" "$(bash "$LINT" "$B/bg-token.md" 2>&1 | grep -c 'run_in_background')"
+
+ok_brief "$B/bg-amp.md"; printf 'Start it with `long-task.sh &` and move on.\n' >> "$B/bg-amp.md"
+check_status "a command ending in an ampersand is a finding" 1 bash "$LINT" "$B/bg-amp.md"
+check "the trailing ampersand is named" "1" "$(bash "$LINT" "$B/bg-amp.md" 2>&1 | grep -c 'ending in')"
+
+ok_brief "$B/bg-fence.md"; printf '```\nlong-task.sh &\n```\n' >> "$B/bg-fence.md"
+check_status "a fenced command ending in an ampersand is a finding" 1 bash "$LINT" "$B/bg-fence.md"
+
+ok_brief "$B/bg-neg1.md"; printf 'Never run anything in the background.\n' >> "$B/bg-neg1.md"
+check_status "a clause forbidding the background is not a finding" 0 bash "$LINT" "$B/bg-neg1.md"
+
+ok_brief "$B/bg-neg2.md"; printf 'There is no background run allowed here.\n' >> "$B/bg-neg2.md"
+check_status "a clause naming no background run is not a finding" 0 bash "$LINT" "$B/bg-neg2.md"
+
+ok_brief "$B/bg-neg3.md"; printf 'Never end a command with `&`.\n' >> "$B/bg-neg3.md"
+check_status "a clause naming a forbidden ampersand is not a finding" 0 bash "$LINT" "$B/bg-neg3.md"
+
+ok_brief "$B/bg-neg4.md"; printf 'Never run `sleep 5 &` under any circumstance.\n' >> "$B/bg-neg4.md"
+check_status "a forbidding word on the same line as the ampersand raises nothing" 0 bash "$LINT" "$B/bg-neg4.md"
+
+# The forbidding word counts only inside the trigger's own clause, before it: a line that
+# forbids one thing and then orders a background run is an order. And a tool parameter set
+# to false is the very opposite of one.
+ok_brief "$B/bg-clause.md"; printf 'Never skip tests; run the suite in the background.\n' >> "$B/bg-clause.md"
+check_status "a negation in an earlier clause does not cancel the trigger" 1 bash "$LINT" "$B/bg-clause.md"
+ok_brief "$B/bg-dont.md"; printf -- "- Don't run the suite in the background.\n" >> "$B/bg-dont.md"
+check_status "don't forbids the background" 0 bash "$LINT" "$B/bg-dont.md"
+ok_brief "$B/bg-donot.md"; printf -- '- Do not start the coverage run in the background, ever.\n' >> "$B/bg-donot.md"
+check_status "do not forbids the background" 0 bash "$LINT" "$B/bg-donot.md"
+ok_brief "$B/bg-false.md"; printf -- '- Every call carries `run_in_background: false`.\n- Or `run_in_background = false`.\n' >> "$B/bg-false.md"
+check_status "run_in_background set to false is not a finding" 0 bash "$LINT" "$B/bg-false.md"
+ok_brief "$B/bg-second.md"; printf 'Never run the lint in the background, and run the suite in the background.\n' >> "$B/bg-second.md"
+check_status "a second trigger on a line is read in its own clause" 1 bash "$LINT" "$B/bg-second.md"
+
+check "the shipped templates raise no background finding" "0" \
+  "$(for t in "$ROOT"/templates/*.md; do bash "$LINT" "$t" 2>&1; done | grep -cE 'background|run_in_background|ending in')"
+
+# An agent brief (implementer or review — the two classes the lint already tells apart;
+# comments and rotation briefs carry no marker of their own and are left out) without an
+# absolute, existing path to context-gauge.sh cannot measure context: self-estimates ran 13
+# points high in observed runs. A host-expanded variable in its place is ALREADY a finding
+# (check 2) — this must not double it.
+nogauge_brief() {
+  cat > "$1" <<BRIEF
+# scratch — Phase 1: thing
+
+You are the implementer for this phase.
+
+## 1. Required reading
+
+1. Spec: \`$WORK/briefs\`
+
+## 3. Scope
+
+Non-goals:
+
+- Nothing outside this list.
+- If you believe something outside this list is needed, STOP and ask the orchestrator first.
+
+## 6. Communication
+
+- Your orchestrator is the session **\`project-70 [a1b2c3]\`** and no other session.
+BRIEF
+}
+nogauge_brief "$B/nogauge.md"
+check_status "an agent brief without a gauge path is a finding" 1 bash "$LINT" "$B/nogauge.md"
+check "the missing gauge path is named" "1" "$(bash "$LINT" "$B/nogauge.md" 2>&1 | grep -c 'context-gauge.sh')"
+
+gaugevar_brief() {
+  cat > "$1" <<BRIEF
+# scratch — Phase 1: thing
+
+You are the implementer for this phase.
+
+## 1. Required reading
+
+1. Spec: \`$WORK/briefs\`
+
+## 3. Scope
+
+Non-goals:
+
+- Nothing outside this list.
+- If you believe something outside this list is needed, STOP and ask the orchestrator first.
+
+## 6. Communication
+
+- Your orchestrator is the session **\`project-70 [a1b2c3]\`** and no other session.
+- Every report ends with your measured context: run \`\${CLAUDE_PLUGIN_ROOT}/skills/context-gauge/scripts/context-gauge.sh\`.
+BRIEF
+}
+gaugevar_brief "$B/gaugevar.md"
+check_status "a variable in place of the gauge path is a finding" 1 bash "$LINT" "$B/gaugevar.md"
+check "exactly one finding fires for the variable gauge path, not two" "1" \
+  "$(bash "$LINT" "$B/gaugevar.md" 2>&1 | grep -c "^$B/gaugevar.md:")"
+
+check "a review brief without a gauge path is also a finding" "1" \
+  "$(printf '# round 2\n\nYou are the REVIEW agent for this round.\n\nYour orchestrator is \`p-1 [a1b2c3]\`.\n' > "$B/review-nogauge.md"; bash "$LINT" "$B/review-nogauge.md" 2>&1 | grep -c 'context-gauge.sh')"
+
+# The gauge rule holds for every class the lint can tell apart, comments and rotation
+# included: both sessions report their own context like any other (suite ruling 2).
+check "a comments brief without a gauge path is also a finding" "1" \
+  "$(printf '# round\n\nYou are the COMMENTS agent for this round.\n\nYour orchestrator is \`p-1 [a1b2c3]\`.\n' > "$B/comments-nogauge.md"; bash "$LINT" "$B/comments-nogauge.md" 2>&1 | grep -c 'context-gauge.sh')"
+
+check "a rotation brief without a gauge path is also a finding" "1" \
+  "$(printf '# resume\n\nYou are the ROTATION agent, replacing a previous implementer.\n\nYour orchestrator is \`p-1 [a1b2c3]\`.\n' > "$B/rotation-nogauge.md"; bash "$LINT" "$B/rotation-nogauge.md" 2>&1 | grep -c 'context-gauge.sh')"
+
+# Any line may carry the path: prose naming the tool before or after the line that cites it
+# is no finding, in either order, and a path cited inside a non-goal clause is cited.
+GAUGEABS="$ROOT/skills/context-gauge/scripts/context-gauge.sh"
+nogauge_brief "$B/gauge-prose-first.md"
+printf -- '- Measure with context-gauge.sh, never an estimate.\n- Run `%s`.\n' "$GAUGEABS" >> "$B/gauge-prose-first.md"
+check_status "a prose mention before the cited path is no finding" 0 bash "$LINT" "$B/gauge-prose-first.md"
+nogauge_brief "$B/gauge-prose-after.md"
+printf -- '- Run `%s`.\n- context-gauge.sh is the only source of the figure.\n' "$GAUGEABS" >> "$B/gauge-prose-after.md"
+check_status "a prose mention after the cited path is no finding" 0 bash "$LINT" "$B/gauge-prose-after.md"
+nogauge_brief "$B/gauge-nongoal.md"
+printf -- '- Non-goal: never estimate the context instead of running `%s`.\n' "$GAUGEABS" >> "$B/gauge-nongoal.md"
+check_status "a path cited inside a non-goal clause counts as cited" 0 bash "$LINT" "$B/gauge-nongoal.md"
+nogauge_brief "$B/gauge-prose-only.md"; printf -- '- Measure with context-gauge.sh.\n' >> "$B/gauge-prose-only.md"
+check "prose alone still leaves the path uncited, named at its line" "1" \
+  "$(bash "$LINT" "$B/gauge-prose-only.md" 2>&1 | grep -c 'is not cited by an absolute path')"
+
+# The class is the role declared at the start of a line, not the phrase anywhere: a review
+# brief or a memo that quotes an implementer brief is not one.
+review_brief "$B/review-quotes.md"
+printf 'End the report with `norms-check: tool <head>`.\nThe phase brief opens with "You are the implementer for this phase." and the agent obeyed it.\n' >> "$B/review-quotes.md"
+check_status "a review brief quoting the implementer line gets no implementer finding" 0 bash "$LINT" "$B/review-quotes.md"
+printf '# memo\nThe brief said "You are the implementer for this phase." inline, and You are the REVIEW agent too.\n' > "$B/memo.md"
+check_status "a memo quoting role lines inline is no agent brief" 0 bash "$LINT" "$B/memo.md"
+
+check "the shipped templates raise no new gauge-path finding" "0" \
+  "$(for t in "$ROOT"/templates/*.md; do bash "$LINT" "$t" 2>&1; done | grep -cE 'no absolute, existing path to context-gauge\.sh|is not cited by an absolute path')"
 
 echo "== briefs are readable where they are read =="
 
@@ -957,7 +1116,7 @@ check "the rulebook: a method he names is a format read before presenting" "yes"
 check "the rulebook: a fact not read is not stated" "yes" \
   "$(carries "$RULEBOOK" "A fact you did not read is a fact you do not state")"
 check "the comments round is presented in the format he named" "yes" \
-  "$(carries "$RULEBOOK" "every assessment reaches him in that format, one item at a time")"
+  "$(carries "$ORCH_REFS/review.md" "every assessment reaches him in that format, one item at a time")"
 check "and the red flag names a presentation written without opening the skill" "yes" \
   "$(carries "$RULEBOOK" "written without having opened that skill")"
 # A pull request the operator had merged at 06:55 got a review round at 08:54 and was put to
@@ -1118,7 +1277,12 @@ cmd=${out#*launch=}; cmd=${cmd%%$'\n'*}
 file=${out#*prompt_file=}; file=${file%%$'\n'*}
 check "the launch stays short whatever the prompt" "short" "$([ "${#cmd}" -lt 500 ] && echo short || echo "${#cmd} chars typed")"
 check "the launch reads the prompt from its file" "1" "$(printf '%s' "$cmd" | grep -c '"\$(cat ')"
-check "the prompt file holds the prompt byte for byte" "$prompt" "$(cat "$file")"
+# The dry run names the file and writes none; the writer is driven directly for the bytes.
+check "the prompt file holds the prompt byte for byte" "$prompt" \
+  "$(LC_ALL=C ORCHESTRATOR_STATE_DIR="$ISTATE" "$(command -v python3)" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia
+print(open(ia.write_prompt_file(sys.argv[1], sys.argv[2]), encoding='utf-8').read(), end='')" "$prompt" "Agent : B-1 — é")"
 check "the prompt file lives under the state directory" "yes" "$([ "${file#"$ISTATE"/prompts/}" != "$file" ] && echo yes || echo "$file")"
 # §45: the prompt file carries its kind in its name, so the three files a launch leaves
 # under prompts/ sort by kind like the two already did.
@@ -1126,6 +1290,9 @@ check "the prompt file's name carries its kind" "1" "$(basename "$file" | grep -
 check "the launch carries the decision mode" "1" "$(printf '%s' "$cmd" | grep -c -- '--permission-mode auto')"
 check "no tier and no map: no model argument" "0" "$(printf '%s' "$cmd" | grep -c -- '--model')"
 check "the launch changes into the working directory" "1" "$(printf '%s' "$cmd" | grep -c "^cd $WORK && ")"
+# Every spawn marks the session as launcher-spawned: the push-guard hook is active only
+# where this is set, and the operator's own sessions never carry it (phase 3 ruling 5).
+check "the launch marks the session launcher-spawned" "1" "$(printf '%s' "$out" | grep -c 'export ORCHESTRATOR_SPAWNED=1')"
 # Named absolutely even though the tab now runs a login shell: a dotfile that breaks PATH
 # must not be able to kill the launch, and the session dies before its tty can be read
 # when the name does not resolve.
@@ -1235,17 +1402,23 @@ nocat() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_M
   bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' "$@" 2>&1; }
 # The file the launch names is read back, not assumed: the launch line says a path, the
 # content says which servers the session will actually load.
-mcp_keys() { "$py" -c "
+# A dry run writes no file, so the definitions a real launch would write are produced by
+# the same writer, driven directly with the same catalogue and the same names.
+mcp_keys() { ORCHESTRATOR_STATE_DIR="$WORK/mcp-written" ORCHESTRATOR_MCP_CATALOGUE="$CAT" "$py" -c "
 import json, sys
-print(','.join(json.load(open(sys.argv[1]))['mcpServers'].keys()))" "$1"; }
+sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia
+cat = ia.read_catalogue()
+path = ia.write_mcp_file(ia.select_servers(sys.argv[1:], cat), cat, 'x')
+print(','.join(json.load(open(path))['mcpServers'].keys()))" "$@"; }
 mcp_file_of() { printf '%s' "$1" | sed -n 's/^mcp_file=//p'; }
 
 check "the default set is loaded, from a file the launch names" "1|1|a|a" \
-  "$(mcpd | sed -n 's/^launch=//p' | grep -c -- '--strict-mcp-config')|$(mcpd | sed -n 's/^launch=//p' | grep -c -- '--mcp-config ')|$(mcpd | sed -n 's/^mcp=//p')|$(mcp_keys "$(mcp_file_of "$(mcpd)")")"
+  "$(mcpd | sed -n 's/^launch=//p' | grep -c -- '--strict-mcp-config')|$(mcpd | sed -n 's/^launch=//p' | grep -c -- '--mcp-config ')|$(mcpd | sed -n 's/^mcp=//p')|$(mcp_keys)"
 check "--mcp adds a catalogued server for the agent that needs it" "a,b|a,b" \
-  "$(mcpd --mcp b | sed -n 's/^mcp=//p')|$(mcp_keys "$(mcp_file_of "$(mcpd --mcp b)")")"
+  "$(mcpd --mcp b | sed -n 's/^mcp=//p')|$(mcp_keys b)"
 check "several names travel comma-separated or as repeated options, each once" "a,b|a,b|a,b|a,b" \
-  "$(mcpd --mcp a,b | sed -n 's/^mcp=//p')|$(mcp_keys "$(mcp_file_of "$(mcpd --mcp a,b)")")|$(mcpd --mcp a --mcp b | sed -n 's/^mcp=//p')|$(mcp_keys "$(mcp_file_of "$(mcpd --mcp a --mcp b)")")"
+  "$(mcpd --mcp a,b | sed -n 's/^mcp=//p')|$(mcp_keys a,b)|$(mcpd --mcp a --mcp b | sed -n 's/^mcp=//p')|$(mcp_keys a b)"
 check "--mcp none loads nothing, and writes no file" "none|none|0" \
   "$(mcpd --mcp none | sed -n 's/^mcp=//p')|$(mcpd --mcp none | sed -n 's/^mcp_file=//p')|$(mcpd --mcp none | sed -n 's/^launch=//p' | grep -c -- '--mcp-config')"
 check "--mcp none among others still loads nothing" "none" \
@@ -1597,7 +1770,9 @@ check "an auditor at its gate hands the continuation to the orchestrator" "yes|y
 # The rulebook carries the audit (§52): what an auditor is, what it may order, what the
 # orchestrator owes it, and the two commands — the commands load the rulebook first, so a duty
 # written only in a command is one an orchestrator reading the rulebook never meets.
-AUDRULE=$(awk '/^## The audit$/{f=1; next} f&&/^## /{exit} f' "$ROOT/skills/orchestrator/SKILL.md")
+# The audit's rules: its reference's section, and what the orchestrator owes an auditor at
+# every message, which the rulebook carries itself.
+AUDRULE=$(awk '/^## The audit$/{f=1; next} f&&/^## /{exit} f' "$ORCH_REFS/audit.md"; awk '/^## Carried at every step$/{f=1; next} f&&/^## /{exit} f' "$ROOT/skills/orchestrator/SKILL.md")
 AUDRULEF="$WORK/rulebook-audit-section.md"; printf '%s\n' "$AUDRULE" > "$AUDRULEF"
 check "the rulebook has a section « The audit »" "yes" "$([ -n "$AUDRULE" ] && echo yes || echo no)"
 check "it says what an auditor is not" "yes|yes|yes" \
@@ -1719,6 +1894,7 @@ audclose() { eval "set -- $AUDCLOSE"; ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" close
 check "its close line is one the launcher runs, guarded on the audit title" "close=/dev/ttys950 expect_title=Audit :" \
   "$(if [ -n "$AUDCLOSE" ]; then audclose; else echo 'no close line'; fi)"
 
+printf 'a prompt\n' > "$file"
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt" --prompt-file "$file" 2>&1)
 check "--prompt-file reuses the given file" "1" "$(printf '%s' "$out" | grep -c "prompt_file=$file")"
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt" 2>&1)
@@ -1815,6 +1991,67 @@ check "a different title still does not match" "no" "$(title_in 'autre' '✳ Lir
 # The shell of a fresh tab is read before anything is typed into it: a startup question
 # waiting for a keystroke ate the first character of a command twice in one night.
 # Twice: once before the first typing, once before the single retry.
+
+echo "== iterm-agents spawn --brief (dry run) =="
+
+# `spawn --brief` builds the startup prompt itself and lints the brief BEFORE any tab
+# exists, so a specification defect is caught before the dispatch rather than after the
+# round. `--brief` reuses the clean and the defective fixtures from the brief-lint section.
+ORCHREF='project-70 [a1b2c3]'
+# The brief's own directory, normalised the way `os.path.abspath` normalises it: the
+# double slash the test's own $TMPDIR can carry is collapsed, but no symlink is resolved
+# (unlike `pwd -P`, which would turn `/tmp` into `/private/tmp` and never match).
+BABS=$(cd "$B" && pwd)
+out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : brief" --brief "$B/good.md" --orchestrator "$ORCHREF" 2>&1)
+check_status "a lint-clean brief spawns" 0 env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : brief" --brief "$B/good.md" --orchestrator "$ORCHREF"
+check "the built prompt reads exactly" "1" \
+  "$(printf '%s\n' "$out" | grep -Fc "prompt=Read and execute $BABS/good.md. Your orchestrator is $ORCHREF; handshake first, silence rule 15 min.")"
+check "the lint verdict is shown" "1" "$(printf '%s\n' "$out" | grep -c '^lint=brief-lint: .*0 findings$')"
+
+# A relative brief path still resolves to the absolute one the fresh session can open.
+# A relative path goes through `os.getcwd()`, which the OS resolves PHYSICALLY (symlinks
+# followed) — `pwd -P`, not the `pwd` used above for an already-absolute path, which
+# `os.path.abspath` only normalises lexically and never touches a symlink in.
+BPHYS=$(cd "$B" && pwd -P)
+out=$(cd "$B" && ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : brief" --brief good.md --orchestrator "$ORCHREF" 2>&1)
+check "a relative brief path resolves absolute in the prompt" "1" \
+  "$(printf '%s\n' "$out" | grep -Fc "prompt=Read and execute $BPHYS/good.md.")"
+
+check_status "--brief with --prompt is mutually exclusive" 1 \
+  env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : brief" --brief "$B/good.md" --orchestrator "$ORCHREF" --prompt x
+check_status "--brief with --prompt-file is mutually exclusive" 1 \
+  env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : brief" --brief "$B/good.md" --orchestrator "$ORCHREF" --prompt-file "$B/good.md"
+check_status "--brief without --orchestrator is refused" 1 \
+  env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : brief" --brief "$B/good.md"
+check_status "a brief that does not exist refuses the spawn" 1 \
+  env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : brief" --brief "$B/absent.md" --orchestrator "$ORCHREF"
+
+# A brief with a lint finding refuses the spawn and prints the finding — before any tab
+# exists, and before a prompt file is written for a spawn that will never happen.
+out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : brief" --brief "$B/placeholder.md" --orchestrator "$ORCHREF" 2>&1); code=$?
+check "a brief with a lint finding refuses the spawn" "1" "$code"
+check "the finding is printed" "1" "$(printf '%s\n' "$out" | grep -c 'unfilled placeholder')"
+
+D9STATE=$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")
+ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$D9STATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : brief" --brief "$B/placeholder.md" --orchestrator "$ORCHREF" >/dev/null 2>&1
+check "the lint refusal leaves no prompt file" "0" \
+  "$(find "$D9STATE/prompts" -type f 2>/dev/null | wc -l | tr -d ' ')"
+rm -rf "$D9STATE"
+
+# A dry run touches nothing: a passing `spawn --brief`, a `--prompt` and a spawn with
+# servers each name the files a real launch would write, and none is written.
+D11STATE=$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")
+d11out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$D11STATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : brief" --brief "$B/good.md" --orchestrator "$ORCHREF" 2>&1)
+check "a passing brief dry run writes nothing under the state directory" "0|1" \
+  "$(find "$D11STATE" -type f | wc -l | tr -d ' ')|$(printf '%s\n' "$d11out" | grep -c "^prompt_file=$D11STATE/prompts/prompt-")"
+ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$D11STATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt" --prompt p >/dev/null 2>&1
+check "a --prompt dry run writes nothing either" "0" "$(find "$D11STATE" -type f | wc -l | tr -d ' ')"
+D11CAT="$D11STATE-cat.json"
+printf '{"servers":{"a":{"command":"a-cmd"}},"default":["a"]}\n' > "$D11CAT"
+d11out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$D11STATE" ORCHESTRATOR_MCP_CATALOGUE="$D11CAT" bash "$AGENT" spawn --dir "$WORK" --title "Agent : mcp" --prompt p 2>&1)
+check "nor a dry run with servers, which still names its file" "0|1" \
+  "$(find "$D11STATE" -type f | wc -l | tr -d ' ')|$(printf '%s\n' "$d11out" | grep -c "^mcp_file=$D11STATE/prompts/mcp-")"
+rm -rf "$D11STATE" "$D11CAT"
 
 echo "== model tiers =="
 
@@ -1975,6 +2212,103 @@ printf '{"type":"assistant","message":{"model":"b-model","usage":{"input_tokens"
 check "a changed model is said once, naming both" "1" "$(gate g-drift | grep -c 'MODEL DRIFT: this session now answers as b-model; it answered as a-model until now')"
 check "and not again while it holds" "" "$(gate g-drift)"
 rm -rf "$GH"
+
+echo "== push guard hook =="
+# Active only in a session the launcher spawned (ORCHESTRATOR_SPAWNED, set by build_command
+# in the launch script): the operator's own sessions carry no such marker and are never
+# touched. Refuses `git push` carrying `--force`, `-f`, a `+<refspec>`, or
+# `--force-with-lease` without the `<branch>:<sha>` form (phase 3 ruling 5).
+GUARD="$ROOT/hooks/push-guard.sh"
+guard_payload() {  # tool_name command
+  "$py" -c "import json,sys; json.dump({'tool_name': sys.argv[1], 'tool_input': {'command': sys.argv[2]}}, sys.stdout)" "$1" "$2"
+}
+guard() { guard_payload "$1" "$2" | env ORCHESTRATOR_SPAWNED="${3-}" bash "$GUARD"; }
+
+check_status "a marked session refuses a forced push" 2 guard Bash "git push --force origin main" 1
+check "the refusal names the flag it will accept" "1" \
+  "$(guard Bash 'git push --force origin main' 1 2>&1 | grep -c -- '--force-with-lease=<branch>:<sha>')"
+check_status "a marked session refuses -f" 2 guard Bash "git push -f origin main" 1
+check_status "a marked session refuses a +refspec" 2 guard Bash "git push origin +feature:main" 1
+check_status "a marked session refuses a bare --force-with-lease" 2 guard Bash "git push --force-with-lease origin main" 1
+check_status "a marked session refuses --force-with-lease without a colon" 2 guard Bash "git push --force-with-lease=main origin main" 1
+check_status "a marked session accepts --force-with-lease=<branch>:<sha>" 0 guard Bash "git push --force-with-lease=main:$(printf 'a%.0s' $(seq 1 40)) origin main" 1
+check_status "a marked session accepts a plain push" 0 guard Bash "git push origin main" 1
+check_status "a marked session accepts an unrelated command" 0 guard Bash "git status" 1
+check_status "a forced push earlier in the line, unrelated to the push, is not read as forcing it" 0 \
+  guard Bash "git fetch -f && git push origin main" 1
+
+check_status "an unmarked session is untouched by a forced push" 0 guard Bash "git push --force origin main" ""
+check_status "a non-Bash tool is untouched" 0 guard Write "git push --force origin main" 1
+
+# A push is git in command position — bare or by an absolute path, behind git's own global
+# options, assignments or a wrapper that runs it — then `push`. The first matching read
+# `git push` as two adjacent words and let every one of these through.
+SHA40=$(printf 'a%.0s' $(seq 1 40))
+for c in "git -C /tmp/r push --force" "git -C . push --force-with-lease" "git -c x=y push -f" \
+         "git --no-pager push -f" "/usr/bin/git push -f origin main" \
+         "git --git-dir=/tmp/r/.git --work-tree /tmp/r push -f" "FOO=1 git push -f" \
+         "timeout 60 git push --force origin main" "env -u X git push -f"; do
+  check_status "refused: $c" 2 guard Bash "$c" 1
+done
+# `-f` inside a cluster of short flags is a force; `-o` takes a value, so what follows it
+# is not a cluster member nor a refspec.
+for c in "git push -uf origin main" "git push -fu origin main" "git push -vf" "git push -nf"; do
+  check_status "refused: $c" 2 guard Bash "$c" 1
+done
+check_status "a push option's value is not a flag or a refspec" 0 guard Bash "git push -o +foo origin main" 1
+check_status "nor when it is glued to -o" 0 guard Bash "git push -o+foo -v origin main" 1
+# Quotes and shell punctuation are the shell's, not the flag's: unquoted, split on the
+# operators, the words git receives are the ones read.
+for c in "(cd x && git push -f)" "git push -f)" 'git push "-f"' 'git push origin "+main"' \
+         "git push origin 'a:b' '+x'" 'git push -f`true`' "git push -f>out" "{ git push -f; }" \
+         "git push origin main 2>/dev/null --force"; do
+  check_status "refused: $c" 2 guard Bash "$c" 1
+done
+check_status "refused: a force behind a line continuation" 2 guard Bash 'git push \
+  --force origin main' 1
+# Every lease is read, not the first one: one unpinned lease beside a pinned one is a force.
+check_status "refused: a pinned lease beside a bare one" 2 guard Bash "git push --force-with-lease=main:$SHA40 --force-with-lease origin main" 1
+check_status "refused: a pinned lease beside one with no sha" 2 guard Bash "git push --force-with-lease=main:$SHA40 --force-with-lease=other origin main" 1
+check_status "two pinned leases pass" 0 guard Bash "git push --force-with-lease=main:$SHA40 --force-with-lease=dev:$SHA40 origin main dev" 1
+check_status "a pinned lease with its output redirected passes" 0 guard Bash "git push --force-with-lease=main:$SHA40 origin main 2>&1 | tail -3" 1
+# The other forms that overwrite a remote: --mirror, and the abbreviations of --force git
+# accepts.
+for c in "git push --mirror origin" "git push --fo origin main" "git push --for origin main" "git push --forc origin main"; do
+  check_status "refused: $c" 2 guard Bash "$c" 1
+done
+# Text about a push is not a push. The first matching refused a commit message that
+# mentioned one: a quoted argument of another command, a heredoc body and a comment are
+# the shell's data, never a command.
+check_status "a commit message quoting a forced push passes" 0 guard Bash 'git commit -m "fix; git push -f later"' 1
+check_status "a pull request body quoting a forced push passes" 0 guard Bash 'gh pr create --body "rebase && git push --force is refused"' 1
+check_status "a heredoc body naming a forced push passes" 0 guard Bash "git commit -F - <<'EOF'
+subject
+
+git push --force
+EOF" 1
+check_status "a heredoc inside a quoted substitution, with a stray quote in it, passes" 0 guard Bash "git commit -m \"\$(cat <<'EOF'
+say \"why; git push -f is refused
+EOF
+)\"" 1
+check_status "a comment after a plain push passes" 0 guard Bash "git push origin main # --force" 1
+check_status "and a forced push after a heredoc is still read" 2 guard Bash "cat <<EOF
+text
+EOF
+git push -f" 1
+check_status "a forced push inside a command substitution is read" 2 guard Bash 'echo "$(git push -f)"' 1
+# The refusal is the host's documented denial: a plain reason on stderr, exit 2, ending on
+# the way out for a command that only mentions a push.
+refusal=$(guard Bash "git push -f" 1 2>&1 >/dev/null)
+check "the refusal is plain text, not a JSON object" "0" "$(printf '%s' "$refusal" | grep -c '^{')"
+check "the refusal ends on the way out" "1" \
+  "$(printf '%s' "$refusal" | grep -c 'put text that mentions a push in a file (`git commit -F`, `gh … --body-file`)\.$')"
+# The guard that cannot read its input says so and lets the call through: it never blocks
+# every command of a session because a tool is missing.
+NOJQ="$WORK/nojq-bin"; mkdir -p "$NOJQ"
+guard_payload Bash "git push -f" > "$WORK/nojq-payload.json"
+nojq_out=$(env PATH="$NOJQ" ORCHESTRATOR_SPAWNED=1 "$(command -v bash)" "$GUARD" < "$WORK/nojq-payload.json" 2>&1); nojq_code=$?
+check "without jq a marked session is let through, with one warning line" "0|1|1" \
+  "$nojq_code|$(printf '%s\n' "$nojq_out" | grep -c .)|$(printf '%s' "$nojq_out" | grep -c 'jq')"
 
 echo "== the app, stubbed =="
 # A pane behind a maximized sibling is in the tab's all_sessions and not in its sessions.
@@ -2205,13 +2539,13 @@ PAYLOAD='{"session_id":"s-1","transcript_path":"/t/s-1.jsonl","context_window":{
 STATE="$WORK/state"
 
 out=$(printf '%s' "$PAYLOAD" | ORCHESTRATOR_STATE_DIR="$STATE" bash "$TAP")
-check "no wrapped command: one-line render" "ctx: 36% │ 5h: 3% │ 7d: 1%" "$out"
-check "file written with every field" \
-  '{"session_id":"s-1","context_percent":36.4,"context_used":91000,"context_total":250000,"five_hour_percent":3,"five_hour_resets_at":1788560000,"seven_day_percent":1,"seven_day_resets_at":1788900000,"transcript_path":"/t/s-1.jsonl","model_id":null}' \
+check "no wrapped command: one-line render, context only" "ctx: 36%" "$out"
+check "file written with every field, no rate-limit field even though the payload carries one" \
+  '{"session_id":"s-1","context_percent":36.4,"context_used":91000,"context_total":250000,"transcript_path":"/t/s-1.jsonl","model_id":null}' \
   "$(jq -c 'del(.updated_epoch)' "$STATE/ctx/s-1.json")"
 out=$(printf '{"session_id":"s-early","context_window":{"used_percentage":0}}' | ORCHESTRATOR_STATE_DIR="$STATE" bash "$TAP")
 check "early payload without usage or transcript: nulls, no crash" \
-  '{"session_id":"s-early","context_percent":0,"context_used":null,"context_total":null,"five_hour_percent":null,"five_hour_resets_at":null,"seven_day_percent":null,"seven_day_resets_at":null,"transcript_path":null,"model_id":null}' \
+  '{"session_id":"s-early","context_percent":0,"context_used":null,"context_total":null,"transcript_path":null,"model_id":null}' \
   "$(jq -c 'del(.updated_epoch)' "$STATE/ctx/s-early.json")"
 # The model in use travels with the context figures: a succession hands it to the
 # successor, and the launch line is not it — the operator may have switched since (§27).
@@ -2236,7 +2570,7 @@ out=$(printf 'not json' | ORCHESTRATOR_STATE_DIR="$STATE" bash "$TAP" "$WORK/ech
 check "invalid stdin still reaches the wrapped command" "not json" "$out"
 check "invalid stdin writes no file" "2" "$(ls "$STATE/ctx" | wc -l | tr -d ' ')"
 out=$(printf '' | ORCHESTRATOR_STATE_DIR="$STATE" bash "$TAP")
-check "empty stdin renders a placeholder" "ctx: ~ │ 5h: ~ │ 7d: ~" "$out"
+check "empty stdin renders a placeholder" "ctx: ~" "$out"
 
 touch -t 202001010000 "$STATE/ctx/old.json"
 # The gate writes a marker beside the context files so it says "unmeasured" once per
@@ -2259,43 +2593,33 @@ GAUGE="$ROOT/skills/context-gauge/scripts/context-gauge.sh"
 GSTATE="$WORK/gstate"
 mkdir -p "$GSTATE/ctx" "$WORK/projects/p1"
 cp "$ROOT/tests/fixtures/transcript.jsonl" "$WORK/projects/p1/g-1.jsonl"
-printf '{"session_id":"g-1","context_percent":36.4,"context_used":91000,"context_total":250000,"five_hour_percent":3,"five_hour_resets_at":null,"seven_day_percent":1,"seven_day_resets_at":null,"transcript_path":null,"updated_epoch":%s}\n' \
+printf '{"session_id":"g-1","context_percent":36.4,"context_used":91000,"context_total":250000,"transcript_path":null,"updated_epoch":%s}\n' \
   "$(date +%s)" > "$GSTATE/ctx/g-1.json"
 gauge() { ORCHESTRATOR_STATE_DIR="$GSTATE" ORCHESTRATOR_TRANSCRIPTS_DIR="$WORK/projects" bash "$GAUGE" "$@"; }
 
 # g-2 has no transcript under the projects directory: only the path recorded in
 # its stale tap file can lead to it.
-printf '{"session_id":"g-2","context_percent":36.4,"context_used":91000,"context_total":250000,"five_hour_percent":null,"five_hour_resets_at":null,"seven_day_percent":null,"seven_day_resets_at":null,"transcript_path":"%s","updated_epoch":0}\n' \
+printf '{"session_id":"g-2","context_percent":36.4,"context_used":91000,"context_total":250000,"transcript_path":"%s","updated_epoch":0}\n' \
   "$WORK/projects/p1/g-1.jsonl" > "$GSTATE/ctx/g-2.json"
 check "stale tap file: transcript found through its recorded path" "context_percent=36.0
 context_tokens=90000
 context_window=250000
 context_window_source=tap-file
-five_hour_percent=unavailable
-seven_day_percent=unavailable
 model=a-model
 model_source=transcript
 source=transcript" "$(gauge g-2)"
 
-# A fresh tap whose payload carried no quota figures says so in the same word as the
-# transcript tier. `commands/status.md` and the routing skill both tell a reader to keep
-# the `five_hour_percent=` line; a line that is absent, or that reads `null`, is one a
-# careless reader takes for zero — and zero means "no budget pressure, dispatch at full
-# tier" exactly when the opposite is true.
-printf '{"session_id":"g-3","context_percent":36.4,"context_used":91000,"context_total":250000,"five_hour_percent":null,"seven_day_percent":null,"transcript_path":null,"updated_epoch":%s}\n' \
+# A tap file carrying a rate-limit field (a payload from before this build, or a host
+# that still sends one) is read for context and model alone — no five_hour_percent, no
+# seven_day_percent, in either tier's output.
+printf '{"session_id":"g-3","context_percent":36.4,"context_used":91000,"context_total":250000,"five_hour_percent":3,"seven_day_percent":1,"transcript_path":null,"updated_epoch":%s}\n' \
   "$(date +%s)" > "$GSTATE/ctx/g-3.json"
-check "a fresh tap without quota figures says unavailable" "context_percent=36.4
-context_tokens=91000
-context_window=250000
-five_hour_percent=unavailable
-seven_day_percent=unavailable
-model=unavailable
-model_source=unavailable
-source=tap" "$(gauge g-3)"
+check "a tap file carrying a rate-limit field: no budget line in the output" "0" \
+  "$(gauge g-3 | grep -cE '^(five_hour|seven_day)_percent=')"
 rm -f "$GSTATE/ctx/g-3.json"
 
 # No transcript reachable: the tap's declared model is the reading, said as the tap's.
-printf '{"session_id":"g-4","context_percent":36.4,"context_used":91000,"context_total":250000,"five_hour_percent":3,"five_hour_resets_at":null,"seven_day_percent":1,"seven_day_resets_at":null,"transcript_path":null,"model_id":"t-model","updated_epoch":%s}\n' \
+printf '{"session_id":"g-4","context_percent":36.4,"context_used":91000,"context_total":250000,"transcript_path":null,"model_id":"t-model","updated_epoch":%s}\n' \
   "$(date +%s)" > "$GSTATE/ctx/g-4.json"
 check "no transcript: the model comes from the tap, and says so" "model=t-model
 model_source=tap" "$(gauge g-4 | grep '^model')"
@@ -2304,8 +2628,6 @@ rm -f "$GSTATE/ctx/g-4.json"
 check "fresh tap file wins" "context_percent=36.4
 context_tokens=91000
 context_window=250000
-five_hour_percent=3
-seven_day_percent=1
 model=a-model
 model_source=transcript
 source=tap" "$(gauge g-1)"
@@ -2314,8 +2636,6 @@ check "stale tap file: transcript with the file's window" "context_percent=36.0
 context_tokens=90000
 context_window=250000
 context_window_source=tap-file
-five_hour_percent=unavailable
-seven_day_percent=unavailable
 model=a-model
 model_source=transcript
 source=transcript" "$(gauge g-1 --max-age 0)"
@@ -2325,8 +2645,6 @@ check "no tap file: --window" "context_percent=45.0
 context_tokens=90000
 context_window=200000
 context_window_source=flag
-five_hour_percent=unavailable
-seven_day_percent=unavailable
 model=a-model
 model_source=transcript
 source=transcript" "$(gauge g-1 --window 200000)"
@@ -2763,6 +3081,10 @@ variant contra.md 's/| drop? |/| contradiction? |/'
 check "trace: contradiction? is a proposal, skipped" "ok=4 missing=0 skipped=1" "$(trace targets contra.md | tail -1)"
 variant scriptc.md 's/| drop? |/| script-candidate? |/'
 check "trace: script-candidate? is a proposal, skipped" "ok=4 missing=0 skipped=1" "$(trace targets scriptc.md | tail -1)"
+variant ruleddrop.md 's/| drop? |/| drop |/'
+check "trace: a ruled drop is skipped" "ok=4 missing=0 skipped=1" "$(trace targets ruleddrop.md | tail -1)"
+check "trace: a ruled drop whose signature is absent is not named" "0" \
+  "$(trace targets ruleddrop.md | grep -c 'FIX-005')"
 
 # Merges: a merge names one existing row other than itself, and that row is the anchor.
 variant nomerge.md 's/| merge->FIX-001 |/| merge->FIX-999 |/'
@@ -2873,8 +3195,10 @@ check "trace: sources --ref reads the older commit" "exit 0" "$(trace_status sou
 
 check "trace: the real inventory holds every signature" "exit 0" \
   "$( ( cd "$ROOT" && bash "$TRACE" targets docs/rules-inventory.md >/dev/null 2>&1 ); echo "exit $?")"
-check "trace: every source of the real inventory exists at HEAD" "exit 0" \
-  "$( ( cd "$ROOT" && bash "$TRACE" sources docs/rules-inventory.md --ref HEAD >/dev/null 2>&1 ); echo "exit $?")"
+# The inventory cites its sources as they stood before the directives were rewritten; a
+# rewrite moves text away from those lines, so they are read at the commit they describe.
+check "trace: every source of the real inventory exists at the commit it cites" "exit 0" \
+  "$( ( cd "$ROOT" && bash "$TRACE" sources docs/rules-inventory.md --ref 2f2e22b >/dev/null 2>&1 ); echo "exit $?")"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"

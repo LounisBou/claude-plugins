@@ -5,6 +5,8 @@ description: Use when this session is about to dispatch another one — an imple
 
 # Model routing
 
+**This skill is a decision aid for the orchestrator.** Its table, its readings, its escalation and its record are inputs to your own judgment: you decide the tier or the model, and you write the choice and its reason in the brief. They inform the choice of a tier and do not replace it. What is not a choice of tier — how the map is bound, the mode an unattended session runs in, how a round is recorded, never de-escalating inside a phase, never cascading a phase, one tier below the row and never two, the false-economy reversion, and reading the record's summary before a wave and reverting what it names — holds as written. `references/incidents.md` tells, by rule id, the incident behind a rule — read it when a rule's reason is in question.
+
 ## The principle
 
 **Pay for judgment that nothing downstream re-checks.**
@@ -17,11 +19,13 @@ Two corollaries govern every rule below. **The cheapest tier is not the target**
 
 Three tiers name capability: `deep`, `standard`, `light`. What each one runs on is the operator's, not this plugin's: the binding lives in `<state dir>/models.json`, and `iterm-agent.sh resolve-tier <tier>` prints it. **Read your map before dispatching a wave.** An unbound tier is not an error — the launcher then types no model argument and the host applies its default — but it means the table below is advisory rather than applied, and you say so rather than assume it took.
 
-**A tier is bound to a family alias, never to a versioned identifier.** The alias is the unversioned name the host resolves to that family's latest model; a versioned identifier keeps naming the model it named the day it was written, and goes stale without a sign. Observed: the map bound `deep` to a versioned identifier, a newer model of that family shipped, and every deep agent of the day ran on the older one while the orchestrator ran on the newer. The launcher now warns in one line when a tier resolves to a versioned identifier, names the alias to bind instead, and launches anyway: the map is the operator's to rebind.
+**A tier is bound to a family alias, never to a versioned identifier.** The alias is the unversioned name the host resolves to that family's latest model; a versioned identifier keeps naming the model it named the day it was written, and goes stale without a sign. The launcher now warns in one line when a tier resolves to a versioned identifier, names the alias to bind instead, and launches anyway: the map is the operator's to rebind.
 
-**A tier is bound to a model the host runs in the operator's decision mode, or no unattended agent runs at it.** Measured across one evening's spawns: the host applied the mode asked on every launch at two of the three tiers and on none at the third, where sessions came up in the default mode with the flag accepted and ignored — and stood on their first permission prompt, in tabs nobody was watching. So **a session nobody watches runs in the operator's decision mode**, and a binding that does not give that is a binding to fix: rebind the tier, or spawn that agent with `--permission-mode acceptEdits` for a few edits and allow-listed commands only, which the same model did honour. The launcher reads the mode on the session's own transcript and refuses the spawn when it differs, so a wrong binding costs a refusal rather than an agent asleep in a tab. Name the mode in the brief where you name the tier.
+**A tier is bound to a model the host runs in the operator's decision mode, or no unattended agent runs at it**: the host once ignored the mode at one tier of three, and its sessions stood on their first permission prompt. So **a session nobody watches runs in the operator's decision mode**, and a binding that does not give that is a binding to fix: rebind the tier, or spawn that agent with `--permission-mode acceptEdits` for a few edits and allow-listed commands only, which the same model did honour. The launcher reads the mode on the session's own transcript and refuses the spawn when it differs, so a wrong binding costs a refusal rather than an agent asleep in a tab. Name the mode in the brief where you name the tier.
 
 ## The table
+
+Each row is the tier this skill reads for a class of work: the input you start from, weighed with the readings below and the record. You decide the tier, and the brief carries it with its reason.
 
 | Class of work | Tier | What re-reads its output |
 |---|---|---|
@@ -35,7 +39,7 @@ Three tiers name capability: `deep`, `standard`, `light`. What each one runs on 
 | The review lenses | `standard` | the collector, then you |
 | Read-only search subagents | `light` | they locate; they never judge |
 
-**Both dispatch channels use this one table**: the tabs you launch, and the subagents launched inside a session — the collector's lenses, an implementer's search readers. Say the lenses' tier in the review brief, or half this table applies nowhere.
+**Both dispatch channels read this one table**: the tabs you launch, and the subagents launched inside a session — the collector's lenses, an implementer's search readers. Say the lenses' tier in the review brief, or half this table applies nowhere.
 
 ## The five readings
 
@@ -93,16 +97,6 @@ it away costs one short session:
 
 This is the rule that keeps the table from drifting downward. Without it every drop looks free at the moment it is taken, and its cost lands two rounds later where nobody attributes it — the same shape as « it passed alone three times, it's flaky ».
 
-## Budget pressure, measured
-
-Before every dispatch, read `five_hour_percent` and `seven_day_percent` from `orchestrator:context-gauge`. Measure, never estimate — the same rule as context.
-
-- **At or above ~70 % on either**: every class drops one tier EXCEPT the rows the principle protects — you and your successor, contract-defining phases, the final verification. Tell the operator in one line: a degraded wave is a fact they own.
-- **At or above ~90 %**: dispatch nothing new. Finish what is in flight, queue the rest. A wave that dies mid-phase is redone from a cold session that remembers none of what it had decided, which is the most expensive outcome available.
-- **Unreadable figures**: both read `unavailable` when the answer came from the transcript or the payload never carried them. Say so and route on the table alone — a gate that cannot measure does not hold a run, and an absent figure is never read as zero.
-
-Pressure modifies one dispatch. It never rewrites the table.
-
 ## A second reader, armed by evidence and not by default
 
 The published measurements of model judges are lopsided in a way that matters here: a
@@ -159,28 +153,24 @@ signal=n-bis at light averages 2 rounds: the drop did not pay, revert it for thi
 
 | Excuse | Reality |
 |---|---|
-| "It is only a rename, the cheapest tier will do" | The row already says `standard`, and it says it because the suite judges the rename. The tier follows what re-reads the output, not how easy the diff looks. |
-| "This phase is hard, give it the top tier" | Hard is not the reading. Contract novelty, proof shape, blast radius, ambiguity, repair history — two of them high, one step up. |
-| "The last drop went fine, drop the next class too" | One round is not a measurement of a class. The record says which classes closed in one round; drop from that, not from a mood. |
-| "The round failed, but the tier was not the reason" | Maybe. Name the mechanism the way you would for a fall under load, or revert the drop. An unattributed cost is how a false economy survives. |
-| "Escalate now, the agent is struggling" | Mid-session there is nothing to escalate: the model is fixed. Rotate, or wait for the boundary. |
-| "The quota is high, drop everything a tier" | Not the contracts and not yourself. A cheap orchestrator produces expensive waves, and a cheap contract is paid by every later phase. |
+| "It is only a rename, the cheapest tier will do" | The row reads `standard` because the suite judges the rename: the tier follows what re-reads the output (« The principle »). |
+| "This phase is hard, give it the top tier" | Hard is not a reading: « The five readings ». |
+| "The last drop went fine, drop the next class too" | One round is not a measurement of a class. Drop from the record (« The record »), not from a mood. |
+| "The round failed, but the tier was not the reason" | Name the mechanism, or revert the drop: « The false economy ». |
+| "Escalate now, the agent is struggling" | An escalation is a rotation: « Escalate on evidence ». |
 | "The map is empty but the tiers are in the briefs" | Then nothing is routed and the host decides everything. Run `resolve-tier`, and say the routing is advisory until the operator binds it. |
-| "Cascading saved 90% in the papers, so cascade the phases too" | Those savings assume a failed attempt is cheap to throw away. A phase's failed attempt is a review round plus a rework round. Cascade what a machine judges, nothing else. |
-| "The review found nothing, so the code is clean" | It found nothing it read. Judges miss more than they invent; the only evidence of a miss is a later round contradicting an approval, and it exists only if you record it. |
-| "The cascade failed once, that proves nothing" | Right, which is why the rule waits for two and reads the paid rate. It also means one success proves nothing either. |
-| "Two tiers up, this one is clearly out of reach" | One step. Two steps means the readings were not taken, and there is no evidence to revert to. |
+| "Cascading saved 90% in the papers, so cascade the phases too" | Never cascade a phase: « Cascade where a retry is cheap ». |
+| "The review found nothing, so the code is clean" | It found nothing it read; a miss exists only once recorded: « A second reader ». |
+| "The cascade failed once, that proves nothing" | Right, and one success proves nothing either: the rule reads the paid rate over two attempts. |
+| "Two tiers up, this one is clearly out of reach" | One step: « The five readings ». |
 
 ## Red flags: STOP
 
 - A dispatch prepared without the tier and the reading that chose it.
-- A wave dispatched without reading the record's summary; a signal in it you have seen and not reverted.
-- A phase dispatched as a cascade: its failed attempt is a review round and a rework round, not a retry.
-- A cascade dispatched without `--cascade` on its row: unmarked, it cannot be told from a row that needed two rounds.
-- A defect found in approved work and not recorded as an escape: the next round then reads exactly as the one that missed it.
-- A second reader given the same lens as the first: they agree by construction, and that agreement holds nothing.
+- A wave dispatched without reading the record's summary, or a signal in it not reverted (« The record »).
+- A phase dispatched as a cascade, or a cascade without `--cascade` on its row (« Cascade where a retry is cheap »).
+- A defect found in approved work not recorded as an escape; a second reader given the same lens (« A second reader »).
 - A tier chosen from how hard the phase feels rather than from the five readings.
-- A second corrective round on a class you dropped, and the drop still standing.
+- A second corrective round on a class you dropped, and the drop still standing (« The false economy »).
 - An escalation attempted inside a live session instead of as a rotation.
-- Budget pressure applied to yourself, to a contract-defining phase or to the final verification.
 - A wave dispatched without reading the map, then reported as routed.

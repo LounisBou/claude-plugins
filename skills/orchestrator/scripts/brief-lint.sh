@@ -79,9 +79,14 @@ done < <(grep -noE '`/[^`]+`' "$brief" 2>/dev/null | sed 's/`//g' || true)
 refs=$(grep -oE '\[[0-9a-f]{6}\]' "$brief" 2>/dev/null | sort -u | tr '\n' ' ')
 nrefs=$(printf '%s' "$refs" | wc -w | tr -d ' ')
 
+# The class of a brief is the role it declares at the start of a line. A review brief or a
+# memo that QUOTES an implementer brief is not one, and read by the phrase anywhere it was
+# held to sections it never carries.
+is_class() { grep -q "^You are the $1" "$brief" 2>/dev/null; }
+
 # 5. The implementer-only sections. A review or rotation brief carries neither, and
 #    holding it to them would make this check noise nobody reads.
-if grep -q 'You are the implementer' "$brief" 2>/dev/null; then
+if is_class implementer; then
     [ "$nrefs" != 0 ] || say 1 "no orchestrator address: name the exact ListAgents name and reference"
     grep -q 'STOP and ask' "$brief" 2>/dev/null || say 1 "no STOP-and-ask clause closing the non-goals"
     grep -qi 'non-goals' "$brief" 2>/dev/null || say 1 "no non-goals list"
@@ -93,9 +98,82 @@ fi
 #    round did read it. The rule lived in prose on both sides of the round and was skipped
 #    twice in one day; the line the report must end on is mechanical, so it is read
 #    here rather than discovered when the pull request cannot be declared ready.
-if grep -q 'You are the REVIEW agent' "$brief" 2>/dev/null; then
+if is_class 'REVIEW agent'; then
     grep -q 'norms-check:' "$brief" 2>/dev/null \
         || say 1 "no norms-check: report line: the round's report must end on 'norms-check: tool <head>' or 'norms-check: none <head>', which is what the orchestrator records"
+fi
+
+# 7. An agent that ends its turn waiting for a run loses the work: the single most
+#    expensive failure mode observed. A clause that FORBIDS the background reads the
+#    opposite way and must raise nothing — "don't", "do not", "never", "no", "not" and
+#    "forbid(den)" name it — but only inside the trigger's own clause, before it: "never
+#    skip tests; run the suite in the background" is an order. Clauses end on `;`, `.`,
+#    `,` or `:` followed by a space, so a file name or a path is not cut in two. A tool
+#    parameter set to false (`run_in_background: false`) is the opposite of an order. One
+#    awk pass over the file, not a shell loop that forks a handful of processes per line:
+#    the per-line version measurably slowed the suite, which lints the same templates
+#    dozens of times over.
+while IFS=$'\t' read -r bg_n bg_msg; do
+    [ -n "${bg_n:-}" ] || continue
+    say "$bg_n" "$bg_msg"
+done < <(awk '
+    # Is the text before position p, from the start of its clause, forbidding?
+    function negated(text, p,   head, q, start) {
+        head = substr(text, 1, p - 1)
+        start = 0
+        for (q = 1; q < length(head); q++)
+            if (substr(head, q, 1) ~ /[;.,:]/ && substr(head, q + 1, 1) ~ /[ \t]/) start = q
+        head = substr(head, start + 1)
+        return head ~ /(^|[^a-z])(never|no|not|forbidden|forbid|don.t|dont)([^a-z]|$)/
+    }
+    # Any occurrence of re in text not forbidden in its clause?
+    function ordered(text, re,   off, rest) {
+        off = 0; rest = text
+        while (match(rest, re)) {
+            if (!negated(text, off + RSTART)) return 1
+            off += RSTART + RLENGTH - 1; rest = substr(rest, RSTART + RLENGTH)
+        }
+        return 0
+    }
+    BEGIN { infence = 0 }
+    {
+        line = $0
+        lower = tolower(line)
+        if (lower ~ /^[[:space:]]*```/) { infence = !infence; next }
+        plain = lower
+        gsub(/run_in_background`?[ \t]*[:=][ \t]*`?false/, "", plain)
+        trigger = ""
+        if (ordered(plain, "in the background")) trigger = "in the background"
+        else if (ordered(plain, "run_in_background")) trigger = "run_in_background"
+        if (trigger != "") {
+            printf "%d\tinstructs a background run (%s): never end a turn waiting for one\n", NR, trigger
+        }
+        bg = 0
+        if (infence && line ~ /[[:space:]]&[[:space:]]*$/ && !negated(lower, length(lower))) bg = 1
+        if (ordered(lower, "`[^`]*[[:space:]]&[[:space:]]*`")) bg = 1
+        if (bg) {
+            printf "%d\ta command line ending in an ampersand: never end a turn waiting for a run\n", NR
+        }
+    }
+' "$brief" 2>/dev/null || true)
+
+# 8. Every session measures its own context from the gauge script, never an estimate;
+#    self-estimates ran 13 points high in observed runs. An implementer, review, comments
+#    or rotation brief — every class this lint tells apart by its own role line — must
+#    cite it by an absolute path on ANY line: prose naming the tool before or after the
+#    line that cites it is no finding. Whether that path exists is check 3's, and a
+#    host-expanded variable or an unfilled `{{GAUGE}}` placeholder in its place is ALREADY
+#    a finding above; this does not double either.
+if is_class implementer || is_class 'REVIEW agent' || is_class 'COMMENTS agent' \
+    || is_class 'ROTATION agent'; then
+    gauge_line=$(grep -n 'context-gauge\.sh\|{{GAUGE}}' "$brief" 2>/dev/null | head -1)
+    if [ -z "$gauge_line" ]; then
+        say 1 "no absolute, existing path to context-gauge.sh: an agent brief must cite the plugin's installed copy, which is how context is measured rather than estimated"
+    elif ! grep -qE '`/[^`]*context-gauge\.sh`' "$brief" 2>/dev/null \
+        && ! grep -E 'context-gauge\.sh|\{\{GAUGE\}\}' "$brief" 2>/dev/null \
+            | grep -qE '\{\{GAUGE\}\}|\$\{[A-Z]|\$[A-Z][A-Z0-9_]{2,}'; then
+        say "${gauge_line%%:*}" "context-gauge.sh is not cited by an absolute path this machine can open"
+    fi
 fi
 
 if [ "$findings" = 0 ]; then

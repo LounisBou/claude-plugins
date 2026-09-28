@@ -263,6 +263,13 @@ def select_servers(asked, catalogue):
     return [name for name in servers if name in wanted]
 
 
+def state_file_path(kind, title, ext):
+    """Where a launch keeps a file of its own: under the state directory's prompts/, the
+    kind first so the files sort by kind, then the title and the time."""
+    safe = re.sub(r"[^A-Za-z0-9._-]", "-", title)[:40] or "agent"
+    return os.path.join(PROMPTS_DIR, "%s-%s-%d.%s" % (kind, safe, int(time.time() * 1000), ext))
+
+
 def write_mcp_file(names, catalogue, title):
     """The selected definitions, in a file of this session's own, beside its prompt file.
 
@@ -271,8 +278,7 @@ def write_mcp_file(names, catalogue, title):
     the prompt placed there was read as one — and the line `ps` shows is where a successor
     reads its predecessor's name from (§24)."""
     os.makedirs(PROMPTS_DIR, exist_ok=True)
-    safe = re.sub(r"[^A-Za-z0-9._-]", "-", title)[:40] or "agent"
-    path = os.path.join(PROMPTS_DIR, "mcp-%s-%d.json" % (safe, int(time.time() * 1000)))
+    path = state_file_path("mcp", title, "json")
     with open(path, "w") as fh:
         json.dump({"mcpServers": {n: catalogue["servers"][n] for n in names}}, fh, indent=2)
     return path
@@ -1154,8 +1160,7 @@ def cmd_list(_argv):
 
 def write_prompt_file(prompt, title):
     os.makedirs(PROMPTS_DIR, exist_ok=True)
-    safe = re.sub(r"[^A-Za-z0-9._-]", "-", title)[:40] or "agent"
-    path = os.path.join(PROMPTS_DIR, "prompt-%s-%d.txt" % (safe, int(time.time() * 1000)))
+    path = state_file_path("prompt", title, "txt")
     with open(path, "w") as fh:
         fh.write(prompt)
     return path
@@ -1175,6 +1180,9 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
     import shutil
     cli_path = shutil.which(HOST_CLI) or HOST_CLI
     parts = ["cd %s" % shq(dir_),
+             # Marks this session as launcher-spawned: the push-guard hook (hooks/push-guard.sh)
+             # is active only where this is set, and the operator's own sessions never carry it.
+             "export ORCHESTRATOR_SPAWNED=1",
              "printf '\\033]0;%%s\\007' %s" % shq(title),
              None]
     cli = [shq(cli_path)]
@@ -1215,7 +1223,7 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
     # own hand, and his launch line.
     if remote_control:
         cli += ["--remote-control", shq(remote_control)]
-    parts[2] = "exec " + " ".join(cli)
+    parts[3] = "exec " + " ".join(cli)
     return " && ".join(parts)
 
 
@@ -1228,8 +1236,7 @@ def write_launch_script(command, title):
     as SESSION_NOT_FOUND on the first live spawn. Quoting the whole thing for that
     tokenizer is the same losing game the typed version played. A path has no quoting."""
     os.makedirs(PROMPTS_DIR, exist_ok=True)
-    safe = re.sub(r"[^A-Za-z0-9._-]", "-", title)[:40] or "agent"
-    path = os.path.join(PROMPTS_DIR, "launch-%s-%d.sh" % (safe, int(time.time() * 1000)))
+    path = state_file_path("launch", title, "sh")
     with open(path, "w") as fh:
         fh.write("#!/bin/sh\n" + command + "\n")
     return path
@@ -1328,6 +1335,8 @@ def cmd_spawn(argv):
     p.add_argument("--no-remote-control", dest="remote_control", action="store_false", default=True)
     p.add_argument("--prompt", default="")
     p.add_argument("--prompt-file", dest="prompt_file", default="")
+    p.add_argument("--brief", default="")
+    p.add_argument("--orchestrator", default="")
     p.add_argument("--left-of", dest="left_of", default="")
     p.add_argument("--right-of", dest="right_of", default="")
     p.add_argument("--no-verify", dest="verify", action="store_false", default=True)
@@ -1381,6 +1390,31 @@ def cmd_spawn(argv):
         die("spawn: directory not found: %s" % args.dir)
     if args.prompt and args.prompt_file:
         die("spawn: --prompt and --prompt-file are exclusive")
+    if args.brief and (args.prompt or args.prompt_file):
+        die("spawn: --brief and --prompt/--prompt-file are mutually exclusive")
+    if args.brief and not args.orchestrator:
+        die('spawn: --brief without --orchestrator is refused: pass --orchestrator '
+            '"<name [ref]>"')
+    brief_prompt = ""
+    lint_verdict = ""
+    if args.brief:
+        # Before any tab exists: a brief is this plugin's whole specification act, and the
+        # two defects that reached a live agent before anything read the file are exactly
+        # what the lint catches. A refusal here leaves nothing behind — no trust record
+        # touched, no prompt file written.
+        if not os.path.isfile(args.brief):
+            die("spawn: brief not found: %s" % args.brief)
+        brief_abs = os.path.abspath(args.brief)
+        lint_sh = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..",
+                                "orchestrator", "scripts", "brief-lint.sh")
+        lint = subprocess.run(["bash", lint_sh, brief_abs], stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT)
+        lint_verdict = lint.stdout.decode("utf-8", "replace").strip()
+        if lint.returncode != 0:
+            sys.stderr.write(lint_verdict + "\n")
+            die("spawn: refused: brief-lint found findings in %s" % brief_abs)
+        brief_prompt = ("Read and execute %s. Your orchestrator is %s; handshake first, "
+                         "silence rule 15 min." % (brief_abs, args.orchestrator))
     if args.tier and args.model:
         die("spawn: --tier and --model are mutually exclusive")
     if args.inherit and (args.tier or args.model):
@@ -1486,13 +1520,19 @@ def cmd_spawn(argv):
     # catalogue and the names are read first, so a refusal on either leaves no file behind.
     catalogue = read_catalogue()
     servers = select_servers(args.mcp, catalogue)
-    mcp_file = write_mcp_file(servers, catalogue, title) if servers else ""
+    # A dry run touches nothing: it names the file a real spawn would write, and writes none.
+    mcp_file = ""
+    if servers:
+        mcp_file = (state_file_path("mcp", title, "json") if DRY_RUN
+                    else write_mcp_file(servers, catalogue, title))
 
     prompt_file = args.prompt_file
     if prompt_file and not os.path.isfile(prompt_file):
         die("spawn: prompt file not found: %s" % prompt_file)
-    if args.prompt:
-        prompt_file = write_prompt_file(args.prompt, title)
+    prompt = brief_prompt or args.prompt
+    if prompt:
+        prompt_file = (state_file_path("prompt", title, "txt") if DRY_RUN
+                       else write_prompt_file(prompt, title))
 
     remote_control = title if ((args.successor and args.remote_control) or args.auditor) else ""
     launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control,
@@ -1501,6 +1541,9 @@ def cmd_spawn(argv):
     if DRY_RUN:
         print("launch=%s" % launch)
         print("prompt_file=%s" % prompt_file)
+        if args.brief:
+            print("prompt=%s" % brief_prompt)
+            print("lint=%s" % lint_verdict)
         print("self=%s" % own)
         print("anchor=%s" % ("self" if anchor == own else anchor))
         print("trust=%s" % trust_state)

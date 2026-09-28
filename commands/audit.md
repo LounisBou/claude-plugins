@@ -8,14 +8,9 @@ Run on the operator's word only: the operator launches the audit and the operato
 with `/orchestrator:audit-end` typed by the operator. No session launches an audit by itself.
 
 Launch the AUDITOR of this orchestration, described in `orchestrator:orchestrator`,
-section « The audit ». Load that skill first.
+its reference `references/audit.md`. Load that skill first.
 
 Usage: `/orchestrator:audit <subject> [--scope <what>] [--method <path>]`.
-
-An auditor is not your successor and not your agent. It is a session in its own tab, on
-your model and under remote control, that reads what you delivered and how you worked,
-reports to the operator, and tells YOU what to change in the method — tighter or looser.
-Nothing is handed over: you keep the orchestration, your agents and your chain.
 
 Preconditions, verify each before acting:
 
@@ -39,7 +34,7 @@ Then:
      path> » — the auditor ended at its context gate — names that report as the previous
      one, and the new audit starts at the section it reached;
    - the method-and-decisions file, by its absolute path — one per project, the one file
-     the auditor writes and you land (the rulebook's section « The audit »): the file `--method` names;
+     the auditor writes and you land (the rulebook's `references/audit.md`): the file `--method` names;
      without `--method`, the record for this repository in the state directory (step 5),
      so that every audit after the first finds it without the flag; with neither, the
      project has none yet, and the brief names where the auditor creates it:
@@ -104,17 +99,8 @@ Then:
 6. **Tell the operator, after the fact**, in one line: the auditor is running, its tab,
    its report path, and the method-and-decisions file it maintains.
 
-While the audit runs, you owe the auditor what the rulebook's section says: the state it
-asks for, answers in order, every ruling of the operator's relayed as it comes — dated, in
-the operator's words — for the method-and-decisions file, and the application of every
-change it orders unless that change contradicts the operator's word — which you say, in one
-line, with the ruling it contradicts. You do not ask the operator whether to apply an ordered change: the auditor
-has that authority, and the operator's word outranks it.
-
-The audit ends on the operator's word, never on yours. The auditor's « audit ready: <report
-path> » message and its « audit at 60 %: <report path>, continue from <section> » message are
-not that word: you tell the operator in one line and wait. The end is `/orchestrator:audit-end`,
-typed by the operator in your tab or in the auditor's; at the gate, the relaunch with `--scope
-"continue from <report path>"` is yours on the operator's word.
+While the audit runs, what you owe the auditor is the rulebook's « Carried at every step »,
+« What you owe it ». Its end is the operator's word, never yours: `references/audit.md`,
+« Its end ».
 
 $ARGUMENTS

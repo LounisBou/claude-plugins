@@ -14,7 +14,7 @@ session can read without depending on a particular status bar.
 | skill `orchestrator` | The rulebook: phase and PR rules, the agent prompt recipe, the agents' lifecycle (the orchestrator launches, verifies, controls, terminates and replaces them), review on evidence, review rounds run in disposable sessions, what a round costs and the three ways to shorten it, context rotation, the orchestrator's own succession, shared-machine discipline. |
 | skill `iterm-agents` | `list`, `spawn`, `verify`, `resolve-tier`, `close`, `move`, `rotate` iTerm2 tabs running agent sessions, through the app's own API rather than by typing into a shell. Placement anchors on a tty or on `self` — after the caller's last open agent, so a window reads as launch order. The prompt goes to a file and the typed command stays short; the tab runs the launch through the operator's login shell, so the agent inherits the full PATH; spawn waits for the host CLI on the new tty and fails loudly otherwise; tty-exact close with a title guard; spawn-and-verify before close on rotate. |
 | skill `context-gauge` | A session's own context fill as a measured figure, from the status line payload when fresh, from the transcript otherwise. |
-| skill `model-routing` | Which capability tier a dispatch gets: pay for judgment nothing downstream re-checks. A table by class of work, five readings for the cases off the table, escalation as a rotation, the false-economy rule, and budget pressure read from the quota figures. |
+| skill `model-routing` | Which capability tier a dispatch gets: pay for judgment nothing downstream re-checks. A table by class of work, five readings for the cases off the table, escalation as a rotation, and the false-economy rule. |
 | `templates/` | Phase brief, rotation resume brief, orchestrator succession brief, review-agent brief, comments-agent brief, audit brief, with the sections the rulebook makes mandatory. |
 | script `rhythm.sh` | An audit's rhythm figures read from git alone: merges per week by conventional-commit type, `feat` commits per week, lines under product globs against instrument globs, open entries of a Markdown register — and the one reading git does not hold, said rather than estimated. |
 | `/orchestrator:install` | Wires the gauge's tap in front of your status line. Idempotent, reversible. |
@@ -22,6 +22,7 @@ session can read without depending on a particular status bar.
 | `/orchestrator:status` | Live sessions and their context fill, the ones past the 60% gate flagged. |
 | `/orchestrator:succeed` | Runs the orchestrator succession. |
 | hook `UserPromptSubmit` | The context gate enforced by the harness: at or past 60 % (`ORCHESTRATOR_CONTEXT_GATE`), every prompt carries the line that orders the succession or the stop; unmeasured, it says so once. |
+| hook `PreToolUse` | The push guard enforced by the harness, in sessions the launcher spawned only: a `git push` that forces is refused unless its lease is pinned (`--force-with-lease=<branch>:<sha>`); the operator's own sessions are untouched. |
 | `/orchestrator:agents` | Each running implementer agent's progress with its measured context — asked, then verified on the artifact. |
 | `/orchestrator:progress` | Where the build stands: done, in flight, remaining, decisions pending, and the orchestrator's own context. |
 | `/orchestrator:decide` | Runs a decision round with the user: every open question one at a time — context, choices with their cost, one recommendation — each ruling recorded and relayed before the next; a question is re-presented in full after any interruption. |
@@ -68,8 +69,8 @@ gauge then answers from the transcript alone.
 ## How the gauge works
 
 The host exposes the exact context fill in one place: the JSON it sends to the
-status line command on stdin (`context_window.used_percentage`, the 5-hour and
-7-day quotas, and `session_id`). Hooks do not carry it, and a plugin cannot
+status line command on stdin (`context_window.used_percentage` and
+`session_id`). Hooks do not carry it, and a plugin cannot
 declare a status line. So the installer prepends a tap to whatever status line
 you already run:
 
@@ -79,7 +80,7 @@ statusLine.command = "~/.claude/claude-orchestrator/statusline-tap.sh <your prev
 
 The tap records the payload to `~/.claude/claude-orchestrator/ctx/<session-id>.json`
 and hands it on untouched. It wraps, it never patches. Without a previous
-command it prints a one-line `ctx: N% │ 5h: N% │ 7d: N%`.
+command it prints a one-line `ctx: N%`.
 
 The gauge reads that file when it is younger than two minutes and answers
 `source=tap`. An idle session stops rendering its status line, so the file
@@ -94,8 +95,6 @@ ${CLAUDE_PLUGIN_ROOT}/skills/context-gauge/scripts/context-gauge.sh
 # context_percent=36.4
 # context_tokens=91000
 # context_window=250000
-# five_hour_percent=3
-# seven_day_percent=1
 # source=tap
 ```
 

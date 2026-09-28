@@ -23,8 +23,7 @@ die() { echo "ERROR: $*" >&2; exit 1; }
 # The model that answered last. The transcript is the one certain trace: the host can
 # switch a session's model under it (its own fallback after a refusal or an outage) and
 # neither the launch line nor the status line shows it — only each answer's own entry
-# does (§32). The tap's declared model is the fallback reading; unavailable otherwise,
-# in the same word as the quota figures and for the same reason.
+# does (§32). The tap's declared model is the fallback reading; unavailable otherwise.
 read_model() {
   model="" model_source="unavailable"
   [ -n "$transcript" ] || transcript=$(ls "$TRANSCRIPTS_DIR"/*/"$session_id".jsonl 2>/dev/null | head -1)
@@ -67,10 +66,9 @@ tap_file="$STATE_DIR/ctx/$session_id.json"
 window_source=""
 transcript=""
 if [ -f "$tap_file" ]; then
-  IFS=$'\x1f' read -r updated pct used total h5 d7 tp mid <<<"$(jq -r '
+  IFS=$'\x1f' read -r updated pct used total tp mid <<<"$(jq -r '
     [ (.updated_epoch // 0), (.context_percent // null), (.context_used // null),
-      (.context_total // null), (.five_hour_percent // null), (.seven_day_percent // null),
-      (.transcript_path // ""), (.model_id // "") ]
+      (.context_total // null), (.transcript_path // ""), (.model_id // "") ]
     | map(tostring) | join("\u001f")' "$tap_file" 2>/dev/null)"
   [ -f "${tp:-}" ] && transcript="$tp"
   age=$(( $(date +%s) - ${updated:-0} ))
@@ -78,13 +76,6 @@ if [ -f "$tap_file" ]; then
     echo "context_percent=$pct"
     echo "context_tokens=$used"
     echo "context_window=$total"
-    # One word for "the figure is not there", in both tiers. A line that is absent, or
-    # that reads `null`, is one a reader takes for zero — and zero means "no budget
-    # pressure" exactly when the pressure cannot be measured.
-    [ "${h5:-null}" = "null" ] && h5=unavailable
-    [ "${d7:-null}" = "null" ] && d7=unavailable
-    echo "five_hour_percent=$h5"
-    echo "seven_day_percent=$d7"
     read_model
     echo "model=$model"
     echo "model_source=$model_source"
@@ -124,11 +115,6 @@ for line in reversed(data.strip().split("\n")):
         print(f"context_tokens={ctx}")
         print(f"context_window={window}")
         print(f"context_window_source={source}")
-        # The quota figures live in the status line payload alone: the transcript has no
-        # trace of them. They are still printed, because the callers that read this output
-        # are told to keep those lines, and a missing line reads as zero.
-        print("five_hour_percent=unavailable")
-        print("seven_day_percent=unavailable")
         print(f"model={model}")
         print(f"model_source={model_source}")
         print("source=transcript")

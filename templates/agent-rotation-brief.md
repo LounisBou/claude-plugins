@@ -1,6 +1,6 @@
 # {{PROJECT}} — resume brief for Phase {{PHASE_NUMBER}}: {{PHASE_TITLE}}
 
-You replace a previous implementer whose context grew too large. Its work is on the branch; nothing you need lives in its memory. Read §1, verify §2, then continue from §3.
+You are the ROTATION agent, replacing a previous implementer whose context grew too large. Its work is on the branch; nothing you need lives in its memory. Read §1, verify §2, then continue from §3.
 
 ## 1. Required reading
 

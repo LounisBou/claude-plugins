@@ -8,13 +8,14 @@
 #          that commit, a single line number (no range) within its length.
 # targets: every row whose fate is keep, merge-> or move-> has its signature found by a
 #          fixed-string search in its target, in the working tree, exactly once. Rows
-#          awaiting a ruling (drop?, contradiction?, script-candidate?) are skipped. Each
+#          awaiting a ruling (drop?, contradiction?, script-candidate?) and rows whose drop
+#          was ruled (drop) are skipped. Each
 #          merge-> names an existing row other than itself, and that row is not a merge
 #          itself: a merged rule points at its final anchor.
 #
 # Both modes read the same rows and refuse the same malformed ones: a table line of an
 # inventory table (one whose header cell is 'id') that is not an id-shaped row at the start
-# of its line, a row that does not split into nine cells, a fate outside the six shapes.
+# of its line, a row that does not split into nine cells, a fate outside the seven shapes.
 #
 # Paths are relative to the root of the repository the command runs in. Prints one line
 # per failing row, '<id> <reason> <target>', then 'ok=<n> missing=<n> skipped=<n>'.
@@ -153,13 +154,14 @@ is_weak() {
 data=$(rows | annotate)
 [ -n "$data" ] || { echo "rules-trace: no row in inventory: $inventory" >&2; exit 2; }
 
-# The fate is one of six shapes: 'merge->' takes a row id, 'move->' a path, a trailing '?'
-# marks a proposal, and only three of those exist. Anything else, a stray '?' included, is
-# a typo that would silently skip or silently pass its row.
+# The fate is one of seven shapes: 'merge->' takes a row id, 'move->' a path, a trailing '?'
+# marks a proposal, and only three of those exist; 'drop' is a removal the operator ruled,
+# skipped like a proposal since its text is gone or about to go. Anything else, a stray '?'
+# included, is a typo that would silently skip or silently pass its row.
 fate_kind() {
     case "$1" in
         keep) echo keep ;;
-        drop\?|contradiction\?|script-candidate\?) echo proposal ;;
+        drop|drop\?|contradiction\?|script-candidate\?) echo proposal ;;
         merge-\>*) [[ "$1" =~ ^merge-\>[A-Z][A-Z0-9-]*-[0-9][0-9][0-9]$ ]] && echo merge ;;
         move-\>*\?) ;;
         move-\>?*) echo move ;;
