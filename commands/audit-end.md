@@ -11,7 +11,7 @@ The operator launches the audit and the operator ends it: no session starts this
 itself, and a session that ends an audit by itself is the defect. The auditor's
 « audit ready: <report path> » message only invites the operator to end it
 (`references/audit.md`, « Its end »). An « audit ready » message is not the word to end:
-the orchestrator tells the operator in one line and waits too. Neither is a report you judge complete, an « audit at 60 % » message, or an idle
+the orchestrator tells the operator in one line and waits too. Neither is a report you judge complete, an « audit at 80 % » message, or an idle
 notice.
 
 It does a different half in each session. Read which one you are before acting: an
@@ -37,7 +37,7 @@ the operator gave the word in the orchestrator's tab.
    - the method-and-decisions file's path, brought up to date;
    - the changes you ORDER, numbered, each with the measurement that justifies it;
    - the one line for the operator: tighten / loosen / nothing, and its reason;
-   - when the operator ends the audit at your context gate, after your « audit at 60 % »
+   - when the operator ends the audit at your context gate, after your « audit at 80 % »
      message: the section reached, and the sentence « continue from <report path> » — on the
      operator's word the orchestrator relaunches the audit with that scope, and the report
      is the next brief's previous report. You do not spawn anything: an auditor launches no

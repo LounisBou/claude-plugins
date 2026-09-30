@@ -9,7 +9,7 @@ You are the orchestrator session of the project `shop-front` (you work with the 
 You just ran your own context gauge:
 
 ```
-context_percent=61
+context_percent=83
 source=tap
 model=a-model-large
 ```

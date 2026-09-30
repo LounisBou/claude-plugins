@@ -11,7 +11,7 @@ Phase 6 is verified and closed. Phase 7 is ready to dispatch: its brief is writt
 to v2; phases 8 to 10 consume the message contracts it defines ». Its clone is ready at
 `/work/phases/field-app-p7`. Your ListAgents name and reference: `Orch : field-app [5b6w7d]`. The agent that just finished
 phase 6 (« Agent : field p6b », tty `ttys029`) writes: « I have phase 6's interfaces in mind
-— give me phase 7, it saves a cold start. My gauge, just now: `context_percent=63`,
+— give me phase 7, it saves a cold start. My gauge, just now: `context_percent=83`,
 `source=tap`. »
 
 Dispatch phase 7, then write your final message.

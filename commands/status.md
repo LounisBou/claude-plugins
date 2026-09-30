@@ -11,7 +11,7 @@ Show the orchestrator who is near the rotation gate.
    age in seconds (`date +%s` minus `updated_epoch`).
 3. Run `${CLAUDE_PLUGIN_ROOT}/skills/context-gauge/scripts/context-gauge.sh`
    for this session and keep its `context_percent=` and `source=` lines.
-4. Present one table: session, context %, age, source. Mark sessions past 60%
+4. Present one table: session, context %, age, source. Mark sessions past 80%
    with ⚠: that is the pre-dispatch and mid-work gate of the orchestrator skill.
 
 Session ids are not agent names. If the user needs the mapping, ask each live

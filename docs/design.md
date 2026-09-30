@@ -64,6 +64,8 @@ skills/orchestrator/scripts/brief-lint.sh   refuses a brief before it is dispatc
 skills/orchestrator/scripts/dispatch-record.sh  one row per dispatch, and the routing signal
 skills/orchestrator/scripts/workspace.sh    a clone per phase with the project's local material; a pinned worktree per review round
 skills/orchestrator/scripts/rhythm.sh       an audit's rhythm figures, from git alone
+skills/coordination/SKILL.md         the coordinator: one question at a time, relays, logistics rulings, its succession
+skills/coordinator/scripts/coordinator.sh  the coordinator's address and the claims ledger: register, clear, lookup, declare, release, conflicts
 skills/model-routing/SKILL.md        which capability tier a dispatch gets
 skills/model-routing/references/incidents.md the observed incidents behind the routing rules, by rule id
 skills/context-gauge/SKILL.md        how a session reads its own context fill
@@ -75,6 +77,7 @@ templates/agent-review-brief.md      one review round, read-only, one lens per r
 templates/agent-comments-brief.md    one pass over a pull request's open threads
 templates/orchestrator-succession-brief.md
 templates/agent-audit-brief.md       one audit of an orchestration: read-only, a report of fixed shape
+templates/coordinator-succession-brief.md  the coordinator's successor: close the predecessor, then register
 commands/install.md                  wires the tap, creates the state directory
 commands/uninstall.md                restores the previous status line
 commands/status.md                   live sessions and their measured context fill
@@ -84,6 +87,8 @@ commands/progress.md                 where the build stands
 commands/decide.md                   the decision round, one arbitration at a time
 commands/audit.md                    launches the orchestrator's auditor
 commands/audit-end.md                ends the audit on the operator's word; the orchestrator closes the tab
+commands/coordinator.md              starts the machine's coordinator on the operator's word
+commands/coordinator-end.md          ends the coordinator on the operator's word; the record cleared
 hooks/hooks.json                     declares the context gate and the push guard
 hooks/context-gate.sh                the gate the harness enforces, not the model
 hooks/push-guard.sh                  refuses a force push other than a rebase's lease, in a launcher-spawned session
@@ -103,6 +108,23 @@ evals/README.md                      how the behaviour suite is staged, run and 
 evals/SELECTION.md                   the cases chosen, and the criteria that chose them
 evals/baseline-0.34.0.json           the first baseline run, with and without the plugin
 evals/baseline-0.36.0.json           the current baseline the suite is compared against
+evals/coord-027-028-032/prompt.md
+evals/coord-027-028-032/graders/arrival-order.md
+evals/coord-027-028-032/graders/blocking-first.md
+evals/coord-027-028-032/graders/one-question-with-prefix.md
+evals/coord-037-044/prompt.md
+evals/coord-037-044/graders/ruled-then-told.md
+evals/coord-041-042/prompt.md
+evals/coord-041-042/graders/no-merge-no-undraft.md
+evals/coord-041-042/graders/relayed-unjudged.md
+evals/coord-043-046/prompt.md
+evals/coord-043-046/graders/orchestrators-not-agents.md
+evals/coord-043-046/graders/verbatim-dated-to-each.md
+evals/coord-048-050-051-053/prompt.md
+evals/coord-048-050-051-053/graders/brief-closes-then-registers.md
+evals/coord-048-050-051-053/graders/coordinator-successor-spawn.md
+evals/coord-048-050-051-053/graders/no-orchestrator-successor.md
+evals/coord-048-050-051-053/graders/succeeds-without-asking.md
 evals/gauge-007/prompt.md
 evals/gauge-007/graders/measured-not-estimated.md
 evals/gauge-007/graders/runs-the-gauge.md
@@ -270,6 +292,39 @@ trigger-evals/context-gauge-trigger-05/prompt.md
 trigger-evals/context-gauge-trigger-05/graders/skill-loaded.md
 trigger-evals/context-gauge-trigger-06/prompt.md
 trigger-evals/context-gauge-trigger-06/graders/skill-loaded.md
+trigger-evals/coordination-no-trigger-01/prompt.md
+trigger-evals/coordination-no-trigger-01/graders/answered.md
+trigger-evals/coordination-no-trigger-01/graders/skill-not-loaded.md
+trigger-evals/coordination-no-trigger-02/prompt.md
+trigger-evals/coordination-no-trigger-02/graders/answered.md
+trigger-evals/coordination-no-trigger-02/graders/skill-not-loaded.md
+trigger-evals/coordination-no-trigger-03/prompt.md
+trigger-evals/coordination-no-trigger-03/graders/answered.md
+trigger-evals/coordination-no-trigger-03/graders/skill-not-loaded.md
+trigger-evals/coordination-no-trigger-04/prompt.md
+trigger-evals/coordination-no-trigger-04/graders/answered.md
+trigger-evals/coordination-no-trigger-04/graders/skill-not-loaded.md
+trigger-evals/coordination-no-trigger-05/prompt.md
+trigger-evals/coordination-no-trigger-05/graders/answered.md
+trigger-evals/coordination-no-trigger-05/graders/skill-not-loaded.md
+trigger-evals/coordination-no-trigger-06/prompt.md
+trigger-evals/coordination-no-trigger-06/graders/answered.md
+trigger-evals/coordination-no-trigger-06/graders/skill-not-loaded.md
+trigger-evals/coordination-no-trigger-07/prompt.md
+trigger-evals/coordination-no-trigger-07/graders/answered.md
+trigger-evals/coordination-no-trigger-07/graders/skill-not-loaded.md
+trigger-evals/coordination-trigger-01/prompt.md
+trigger-evals/coordination-trigger-01/graders/skill-loaded.md
+trigger-evals/coordination-trigger-02/prompt.md
+trigger-evals/coordination-trigger-02/graders/skill-loaded.md
+trigger-evals/coordination-trigger-03/prompt.md
+trigger-evals/coordination-trigger-03/graders/skill-loaded.md
+trigger-evals/coordination-trigger-04/prompt.md
+trigger-evals/coordination-trigger-04/graders/skill-loaded.md
+trigger-evals/coordination-trigger-05/prompt.md
+trigger-evals/coordination-trigger-05/graders/skill-loaded.md
+trigger-evals/coordination-trigger-06/prompt.md
+trigger-evals/coordination-trigger-06/graders/skill-loaded.md
 trigger-evals/iterm-agents-no-trigger-01/prompt.md
 trigger-evals/iterm-agents-no-trigger-01/graders/answered.md
 trigger-evals/iterm-agents-no-trigger-01/graders/skill-not-loaded.md
@@ -393,7 +448,7 @@ Requirements: `jq` for the tap and the installer, `python3` for the transcript s
 
 ### 3.5 The context gate
 
-`hooks/context-gate.sh` runs on every prompt. At or past the gate (60 %, `ORCHESTRATOR_CONTEXT_GATE`) it puts one line in front of the session: an orchestrator succeeds at the next quiet boundary, an implementer finishes its unit and stops. Below it, it prints nothing; unable to measure, it says so once per session instead of staying silent as if the fill were low. It exists because the rule « succession is yours to trigger » lived in the skill and was not applied: a sentence the model must remember can be rationalised away, a line the harness puts in front of every prompt cannot. It also says, once per change, when the model answering the session has changed under it (section 32). The thresholds it enforces are the rulebook's: `skills/orchestrator/SKILL.md`, « Thresholds ».
+`hooks/context-gate.sh` runs on every prompt. At or past the gate (80 %, `ORCHESTRATOR_CONTEXT_GATE`) it puts one line in front of the session: an orchestrator succeeds at the next quiet boundary, an implementer finishes its unit and stops. Below it, it prints nothing; unable to measure, it says so once per session instead of staying silent as if the fill were low. It exists because the rule « succession is yours to trigger » lived in the skill and was not applied: a sentence the model must remember can be rationalised away, a line the harness puts in front of every prompt cannot. It also says, once per change, when the model answering the session has changed under it (section 32). The thresholds it enforces are the rulebook's: `skills/orchestrator/SKILL.md`, « Thresholds ».
 
 ## 4. The parts
 
@@ -573,7 +628,9 @@ A subagent's diff is the orchestrator's own diff, and its reviewer would be its 
 
 Getting the app object subscribes it to layout and focus notifications, and the API library dispatches each notification as a task of its own. When a step's coroutine returns, the library cancels its helper tasks without awaiting them and the socket is closed; a helper task mid-flight ends on the closed socket, and its exception is reported when the finished task is collected — by the event loop's default exception handler, which writes through the standard logging module under the `asyncio` name. Two earlier attempts read the loop and did not hold: a settle step found no pending helper task, because the failing tasks are either not yet dispatched or already finished. The suite's stub made it green by creating helper tasks by hand, a timing that never occurs against the app. So the module installs, at import, a filter on that logger that drops a record whose message starts with « Task exception was never retrieved » and whose exception class is named `ConnectionClosed…`, and passes every other record: a diagnosis the stream exists to carry is not of that shape. Measured on a live spawn against a control: the known lines gone, every other line kept.
 
-The launcher's other readings follow the rule this section's history taught: a gate that cannot measure holds nothing, and says so. A reading that never comes — a transcript not yet written, a record that cannot be read — lets the launch through with a line on stderr, never a silent pass and never a refusal (`skills/orchestrator/references/machine.md`).
+The launcher's other readings follow the rule this section's history taught: a gate that cannot measure holds nothing, and says so. A reading that never comes — a transcript not yet written, a record that cannot be read — lets the launch through with a line on stderr, never a silent pass and never a refusal (`skills/orchestrator/references/machine.md`). One of those readings is now a named exception: a permission mode that never gets read is refused rather than let through, the tab closed the way a mismatch closes it, because a session nobody can read may be parked on a dialog or hung at start, which the plugin already calls not launched (§43).
+
+A launch carrying neither `--prompt` nor `--prompt-file` (nor `--brief`, which builds one) could only ever fail this timeout, since the host writes no transcript before a first prompt — so it is refused up front, before any tab is made, rather than waiting it out.
 
 ## 30. A checkout per phase, with the project's local material
 
@@ -638,7 +695,7 @@ Three rulings by the operator on the evening 0.25.2 shipped, after reading his w
 
 ## 43. The mode a session came up in is read, not believed, and the screen is read from the bottom
 
-The host applied the permission mode asked to every session on two tiers' models and to none on the third's, which came up in default mode with the flag accepted and ignored; two agents stood on a permission prompt in tabs nobody watched (`skills/model-routing/references/incidents.md`, ROUTE-011). So the spawn reads the mode on the session's own transcript and refuses a launch whose mode differs, closing the tab it made and naming the repairs, and a session nobody watches runs in the operator's decision mode (`skills/model-routing/SKILL.md`, « Tiers and the map »). A transcript that has not appeared by the timeout lets the launch through and says the mode is unread (section 29). `screen --lines N` returns the last lines, because a blocked prompt sits at the bottom of a tall terminal.
+The host applied the permission mode asked to every session on two tiers' models and to none on the third's, which came up in default mode with the flag accepted and ignored; two agents stood on a permission prompt in tabs nobody watched (`skills/model-routing/references/incidents.md`, ROUTE-011). So the spawn reads the mode on the session's own transcript and refuses a launch whose mode differs, closing the tab it made and naming the repairs, and a session nobody watches runs in the operator's decision mode (`skills/model-routing/SKILL.md`, « Tiers and the map »). A transcript that has not appeared by the timeout refuses the launch too and closes the tab the same way — the named exception section 29 states. A launch with no startup prompt at all is refused before that timeout is even started, for the same reason (§29): no transcript, ever, without a first prompt. `screen --lines N` returns the last lines, because a blocked prompt sits at the bottom of a tall terminal.
 
 ## 44. An agent comes up with remote control off
 
@@ -659,7 +716,7 @@ Closed without a change, with the reason:
 
 - The 25-character cap counts code points, not graphemes: the subject is typed by an orchestrator in the house format, no listing has shown a combining sequence in one, and the standard library carries no grapheme segmentation to count with.
 - Two transcripts born in the same instant tie on their path: the launcher launches one session at a time and waits seconds for the host on its tty, so two births inside the filesystem's timestamp resolution are not a case it makes.
-- An empty `permissionMode` string is read as absent: the host writes a mode name, and a value that says nothing is judged as unread, which lets the launch through with the word said.
+- An empty `permissionMode` string is read as absent: the host writes a mode name, and a value that says nothing is judged as unread, which now refuses the launch and closes the tab the same way, said with the word (section 29).
 - The dry run's stdout does not tell « no catalogue » from « empty default »: the stderr line is that reading, the stdout describes the launch, and the suite reads both streams.
 - `ORCHESTRATOR_PS_TABLE` is honoured on a live run: every `ORCHESTRATOR_*` override is read the same way and is the suite's door and the operator's alike, and a guard on one of them would be a false comfort about the rest.
 - `list` spends up to ten seconds on a tty whose process table does not answer: the bound is on `ps`, a tty that does not exist answers at once with nothing, and the wait has not been observed.

@@ -83,7 +83,7 @@ Changed:
 - It relays the operator's answer verbatim and dated to the session that asked.
 - It rules the cross-orchestration logistics itself and tells the operator in one line after.
 - It never touches scope, merging, undrafting or method; it writes in no repository.
-- Its context gate is the orchestrator's (60 %), and it succeeds itself like one.
+- Its context gate is the orchestrator's (80 %), and it succeeds itself like one.
 
 ### The script
 
@@ -138,7 +138,7 @@ Changed:
 **An order to all** — relayed verbatim and dated to every orchestrator it concerns; the
 coordinator tells the operator who acknowledged.
 
-**Succession**, at 60 % and at a quiet boundary:
+**Succession**, at 80 % and at a quiet boundary:
 
 1. `spawn --coordinator-successor` opens the successor leftmost.
 2. The successor re-registers its address and announces itself to everyone.

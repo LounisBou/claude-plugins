@@ -5,7 +5,10 @@
 #   rules-trace.sh targets <inventory>
 #
 # sources: every 'path:line' of every row exists at <ref> (default HEAD): a regular file at
-#          that commit, a single line number (no range) within its length.
+#          that commit, a single line number (no range) within its length. A citation
+#          written 'path:line@HEAD' is read at the literal current head instead of <ref> —
+#          the only suffix accepted; anything else (a commit sha, a symbolic ref) is refused,
+#          since a commit hash does not survive a rebase or a squash-merge.
 # targets: every row whose fate is keep, merge-> or move-> has its signature found by a
 #          fixed-string search in its target, in the working tree, exactly once. Rows
 #          awaiting a ruling (drop?, contradiction?, script-candidate?) and rows whose drop
@@ -120,11 +123,13 @@ annotate() {
 ok=0; missing=0; skipped=0
 report() { printf '%s %s %s\n' "$1" "$2" "$3"; missing=$((missing + 1)); }
 
-# Line count of <path> at <ref>, or nothing when it is not a regular file there (absent, or
-# a directory). awk counts a last line that carries no newline, which 'wc -l' would not.
+# Line count of <path> at <at> (default <ref>), or nothing when it is not a regular file
+# there (absent, or a directory). awk counts a last line that carries no newline, which
+# 'wc -l' would not.
 lines_at() {
-    [ "$(git -C "$root" cat-file -t "$ref:$1" 2>/dev/null)" = blob ] || return 1
-    git -C "$root" show "$ref:$1" | awk 'END { print NR }'
+    local at="${2:-$ref}"
+    [ "$(git -C "$root" cat-file -t "$at:$1" 2>/dev/null)" = blob ] || return 1
+    git -C "$root" show "$at:$1" | awk 'END { print NR }'
 }
 
 # Number of words of a signature: the whitespace-separated tokens that carry a letter or a
@@ -191,10 +196,20 @@ while IFS="$SEP" read -r id sources fate target signature cells shape why; do
         for s in ${refs[@]+"${refs[@]}"}; do
             s="${s#"${s%%[![:space:]]*}"}"; s="${s%"${s##*[![:space:]]}"}"
             [ -n "$s" ] || continue
-            path="${s%:*}"; line="${s##*:}"
+            path="${s%:*}"; line="${s##*:}"; at="$ref"; suffix=""
+            # A rule added after <ref> cites a file <ref> never had: its citation reads
+            # 'path:line@HEAD', the literal current head, rather than failing as absent. No
+            # other suffix survives a rebase, so none but HEAD is accepted.
+            if [ "$path" != "$s" ] && [ "${line#*@}" != "$line" ]; then
+                suffix="${line#*@}"; line="${line%%@*}"; at="HEAD"
+            fi
             if [ "$path" = "$s" ] || ! [[ "$line" =~ ^[1-9][0-9]*$ ]]; then
                 bad="${bad:+$bad,}bad-source:$s"
-            elif ! len=$(lines_at "$path"); then
+            elif [ -n "$suffix" ] && [ "$suffix" != HEAD ]; then
+                bad="${bad:+$bad,}bad-suffix:$s"
+            elif ! git -C "$root" rev-parse --verify -q "$at^{commit}" >/dev/null; then
+                bad="${bad:+$bad,}bad-ref:$s"
+            elif ! len=$(lines_at "$path" "$at"); then
                 bad="${bad:+$bad,}no-file:$s"
             elif [ "$line" -gt "$len" ]; then
                 bad="${bad:+$bad,}past-end:$s"

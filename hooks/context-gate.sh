@@ -14,7 +14,7 @@
 # A gate that cannot measure lets the prompt through and SAYS SO — once per
 # session, not on every prompt — instead of staying silent as if the fill were low.
 set -u
-GATE="${ORCHESTRATOR_CONTEXT_GATE:-60}"
+GATE="${ORCHESTRATOR_CONTEXT_GATE:-80}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 GAUGE="$HERE/../skills/context-gauge/scripts/context-gauge.sh"
 CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"

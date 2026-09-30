@@ -1636,7 +1636,13 @@ check "the launch names the session after its title" "1" "$(printf '%s' "$cmd" |
 # operator read his window and could not tell one agent from another at a glance.
 # `--title-free` is the escape for a probe that names its tab otherwise, and the dry run
 # says when it is on.
-shaped() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" "$@" 2>&1; }
+shaped() {
+  case " $* " in
+    *" --prompt "*|*" --prompt-file "*) set -- "$@" ;;
+    *) set -- --prompt p "$@" ;;
+  esac
+  ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" "$@" 2>&1
+}
 check "a shaped title names the session" "1" \
   "$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : x'")"
 check "and so does an orchestrator's" "1" \
@@ -1713,10 +1719,22 @@ check "the shape refusal always quotes with single quotes" "1" \
 CAT="$WORK/mcp-catalogue.json"
 printf '{"servers":{"a":{"command":"a-cmd"},"b":{"command":"b-cmd"}},"default":["a"]}\n' > "$CAT"
 NOCAT="$WORK/mcp-absent.json"; rm -f "$NOCAT"
-mcpd() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$CAT" \
-  bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' "$@" 2>&1; }
-nocat() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$NOCAT" \
-  bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' "$@" 2>&1; }
+mcpd() {
+  case " $* " in
+    *" --prompt "*|*" --prompt-file "*) set -- "$@" ;;
+    *) set -- --prompt p "$@" ;;
+  esac
+  ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$CAT" \
+  bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' "$@" 2>&1
+}
+nocat() {
+  case " $* " in
+    *" --prompt "*|*" --prompt-file "*) set -- "$@" ;;
+    *) set -- --prompt p "$@" ;;
+  esac
+  ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$NOCAT" \
+  bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' "$@" 2>&1
+}
 # The file the launch names is read back, not assumed: the launch line says a path, the
 # content says which servers the session will actually load.
 # A dry run writes no file, so the definitions a real launch would write are produced by
@@ -1760,7 +1778,7 @@ check "no catalogue and no --mcp: strict, no file, and a line on stderr" "1|0|no
 # same reasoning the tier map's own refusal was written on.
 BADCAT="$WORK/mcp-bad.json"; printf '["a","b"]\n' > "$BADCAT"
 check "a catalogue that is not one is refused, and the refusal names the shape" "1|1" \
-  "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADCAT" bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' >/dev/null 2>&1; echo $?)|$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADCAT" bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' 2>&1 | grep -c -- "$BADCAT does not read as a server catalogue (a \"servers\" object and a \"default\" list)")"
+  "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADCAT" bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' --prompt p >/dev/null 2>&1; echo $?)|$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADCAT" bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' --prompt p 2>&1 | grep -c -- "$BADCAT does not read as a server catalogue (a \"servers\" object and a \"default\" list)")"
 # A default naming a server the catalogue does not hold is not caught by the shape check
 # above (both fields still read as an object and a list): the launch would silently drop
 # the unknown name and give the agent a set the operator never wrote. Refused instead, and
@@ -1768,7 +1786,7 @@ check "a catalogue that is not one is refused, and the refusal names the shape" 
 BADDEF="$WORK/mcp-bad-default.json"
 printf '{"servers":{"a":{"command":"a-cmd"}},"default":["a","zzz"]}\n' > "$BADDEF"
 check "a default name absent from servers is refused; one fully held still launches" "1|1|1" \
-  "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADDEF" bash "$AGENT" spawn --dir "$WORK" --mcp a --title 'Agent : x' >/dev/null 2>&1; echo $?)|$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADDEF" bash "$AGENT" spawn --dir "$WORK" --mcp a --title 'Agent : x' 2>&1 | grep -c -- "the catalogue $BADDEF lists 'zzz' in default but not in servers")|$(mcpd | sed -n 's/^launch=//p' | grep -c -- '--mcp-config ')"
+  "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADDEF" bash "$AGENT" spawn --dir "$WORK" --mcp a --title 'Agent : x' --prompt p >/dev/null 2>&1; echo $?)|$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADDEF" bash "$AGENT" spawn --dir "$WORK" --mcp a --title 'Agent : x' --prompt p 2>&1 | grep -c -- "the catalogue $BADDEF lists 'zzz' in default but not in servers")|$(mcpd | sed -n 's/^launch=//p' | grep -c -- '--mcp-config ')"
 # Every asked name is checked against the catalogue BEFORE `none` short-circuits the
 # selection: a typo beside `none` used to select nothing and say nothing, which is how a
 # caller who mistyped one name among several would never learn it.
@@ -1793,8 +1811,15 @@ PSTAB="$WORK/ps-table.txt"
 printf '/dev/ttys900 /opt/x/host --name Orch : f --permission-mode auto\n' > "$PSTAB"
 PSNONAME="$WORK/ps-noname.txt"
 printf '/dev/ttys900 /opt/x/host --permission-mode auto\n' > "$PSNONAME"
-succ() { local t="$1"; shift; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-  ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$t" bash "$AGENT" spawn --dir "$WORK" "$@" 2>&1; }
+succ() {
+  local t="$1"; shift
+  case " $* " in
+    *" --prompt "*|*" --prompt-file "*) set -- "$@" ;;
+    *) set -- --prompt p "$@" ;;
+  esac
+  ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
+  ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$t" bash "$AGENT" spawn --dir "$WORK" "$@" 2>&1
+}
 check "a successor with no title takes the caller's session name" "1" \
   "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch : f'")"
 check "and comes up under remote control, under that name" "1" \
@@ -1912,6 +1937,22 @@ check "a tab that is neither is refused, and the refusal names it" "1|1" \
 check "--force moves it and says what it moved" "0|1" \
   "$(mv_ --tty /dev/ttys901 --left-of self --force >/dev/null 2>&1; echo $?)|$(mv_ --tty /dev/ttys901 --left-of self --force | grep -c "^move: forced: /dev/ttys901 is not in this session's chain$")"
 
+# `--leftmost` places a tab at the first place of its window, no neighbour tab named: a
+# third form beside `--left-of` and `--right-of`, exclusive with both.
+check "--leftmost moves the caller's own tab to the first place of its window" "1" \
+  "$(mv_ --tty /dev/ttys900 --leftmost | grep -c '^move=/dev/ttys900 left_of=leftmost$')"
+check "--leftmost is exclusive with --left-of and --right-of" "1|1" \
+  "$(mv_ --tty /dev/ttys900 --leftmost --right-of self >/dev/null 2>&1; echo $?)|$(mv_ --tty /dev/ttys900 --leftmost --right-of self | grep -c -- '--leftmost is exclusive with --left-of and --right-of')"
+check "no anchor at all is refused, naming all three forms" "1|1" \
+  "$(mv_ --tty /dev/ttys900 >/dev/null 2>&1; echo $?)|$(mv_ --tty /dev/ttys900 | grep -c -- '--left-of, --right-of or --leftmost is required')"
+
+# The guard that refuses a stranger's tab applies to `--leftmost` exactly as it does to
+# `--left-of` and `--right-of`: the anchor form changes, not whose tab this is.
+check "--leftmost refuses a tab out of the caller's chain, and the refusal names it" "1|1" \
+  "$(mv_ --tty /dev/ttys901 --leftmost >/dev/null 2>&1; echo $?)|$(mv_ --tty /dev/ttys901 --leftmost | grep -c "move: refused: /dev/ttys901 is neither this session's tab nor in its chain (pass --force to move it anyway)")"
+check "--force moves it leftmost too, and says what it moved" "0|1" \
+  "$(mv_ --tty /dev/ttys901 --leftmost --force >/dev/null 2>&1; echo $?)|$(mv_ --tty /dev/ttys901 --leftmost --force | grep -c "^move: forced: /dev/ttys901 is not in this session's chain$")"
+
 # An AUDITOR is neither a successor nor an agent (§52). It is placed immediately LEFT of
 # its caller, the chain ignored — on the caller's model and under remote control under its
 # own title; but it takes no chain and joins none: the orchestrator it audits keeps its
@@ -1953,7 +1994,7 @@ for AUDFLAG in --successor '--right-of self' '--left-of /dev/ttys555' --title-fr
     "$(aud --auditor --title 'Audit : x' $AUDFLAG >/dev/null 2>&1; echo $?)|$(aud --auditor --title 'Audit : x' $AUDFLAG | grep -c "is not an auditor's")"
 done
 check "an auditor with no model on record is refused, naming the installer" "1" \
-  "$(CLAUDE_CODE_SESSION_ID=s-aud-none ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" bash "$AGENT" spawn --dir "$WORK" --auditor --title 'Audit : x' 2>&1 | grep -c 'orchestrator:install')"
+  "$(CLAUDE_CODE_SESSION_ID=s-aud-none ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" bash "$AGENT" spawn --dir "$WORK" --auditor --title 'Audit : x' --prompt p 2>&1 | grep -c 'orchestrator:install')"
 check "--inherit-model beside --auditor asks for what is already implied" "1" \
   "$(audl --auditor --inherit-model --title 'Audit : x' | grep -c -- '--model aud-model')"
 
@@ -1962,7 +2003,7 @@ check "--inherit-model beside --auditor asks for what is already implied" "1" \
 PSAUD="$WORK/ps-audit.txt"
 printf '/dev/ttys950 /opt/x/claude --name Audit : tm\n/dev/ttys901 /opt/x/claude --name Agent : x\n' > "$PSAUD"
 audrot() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" ORCHESTRATOR_PS_TABLE="$PSAUD" \
-  bash "$AGENT" rotate --dir "$WORK" --title "Agent : rotated" "$@" 2>&1; }
+  bash "$AGENT" rotate --dir "$WORK" --title "Agent : rotated" --prompt p "$@" 2>&1; }
 check "rotate refuses --auditor" "1" "$(audrot --old-tty /dev/ttys901 --auditor | grep -c -- '--auditor is not a rotation')"
 AUDROT=$(audrot --old-tty /dev/ttys950)
 check "rotate refuses an auditor's tab before it spawns anything" "0|1|1" \
@@ -1977,9 +2018,233 @@ check "an auditor's tab is not moved, even with a stale chain entry naming it" "
   "$(audmv --tty /dev/ttys950 --right-of self >/dev/null 2>&1; echo $?)|$(audmv --tty /dev/ttys950 --right-of self | grep -c "move: refused: /dev/ttys950 is an auditor's tab ('Audit : tm'), not this session's to place (pass --force to move it anyway)")"
 check "--force moves it, and says so" "0|1" \
   "$(audmv --tty /dev/ttys950 --right-of self --force >/dev/null 2>&1; echo $?)|$(audmv --tty /dev/ttys950 --right-of self --force | grep -c "^move: forced: /dev/ttys950 is an auditor's tab")"
+check "an auditor's tab is not moved leftmost either" "1|1" \
+  "$(audmv --tty /dev/ttys950 --leftmost >/dev/null 2>&1; echo $?)|$(audmv --tty /dev/ttys950 --leftmost | grep -c "move: refused: /dev/ttys950 is an auditor's tab ('Audit : tm'), not this session's to place (pass --force to move it anyway)")"
+check "--force moves it leftmost too, and says so" "0|1" \
+  "$(audmv --tty /dev/ttys950 --leftmost --force >/dev/null 2>&1; echo $?)|$(audmv --tty /dev/ttys950 --leftmost --force | grep -c "^move: forced: /dev/ttys950 is an auditor's tab")"
 check "an agent of the chain still moves" "1" "$(audmv --tty /dev/ttys901 --right-of self | grep -c '^move=/dev/ttys901 right_of=/dev/ttys900$')"
 check "an auditor places its own tab" "1" \
   "$(AUDSELF=/dev/ttys950 audmv --tty /dev/ttys950 --right-of /dev/ttys900 | grep -c '^move=/dev/ttys950 right_of=/dev/ttys900$')"
+
+# The COORDINATOR sits above every orchestrator on the machine. Its own successor is
+# neither an auditor nor an agent: it lands at the FIRST place of the caller's window (not
+# merely beside it), the chain ignored — on the caller's model and under remote control
+# under its own title; it takes no chain and joins none. Its title is REQUIRED and reads
+# `Coord : <subject>`, a shape refused everywhere but under --coordinator-successor.
+CRDSTATE="$WORK/crdstate"; mkdir -p "$CRDSTATE/ctx" "$CRDSTATE/chains"
+printf '{"session_id":"s-crd","model_id":"crd-model","updated_epoch":%s}\n' "$(date +%s)" > "$CRDSTATE/ctx/s-crd.json"
+printf '{"tab_id":"7","tty":"/dev/ttys901","owner":"S-ME"}\n' > "$CRDSTATE/chains/ttys900.jsonl"
+crd() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
+  ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-crd bash "$AGENT" spawn --dir "$WORK" --prompt p "$@" 2>&1; }
+crdl() { crd "$@" | sed -n 's/^launch=//p'; }
+CRDOUT=$(crd --coordinator-successor --title 'Coord : ops')
+CRDLAUNCH=$(printf '%s' "$CRDOUT" | sed -n 's/^launch=//p')
+check "the coordinator's successor is named by its title and comes up under remote control under it" "1|1" \
+  "$(printf '%s' "$CRDLAUNCH" | grep -c -- "--name 'Coord : ops'")|$(printf '%s' "$CRDLAUNCH" | grep -c -- "--remote-control 'Coord : ops'")"
+check "and without the setting that turns remote control off" "0" "$(printf '%s' "$CRDLAUNCH" | grep -c -- '--settings')"
+check "the coordinator's successor runs on the caller's model with no flag to ask for it" "1" "$(printf '%s' "$CRDLAUNCH" | grep -c -- '--model crd-model')"
+check "it lands at the first place of the caller's window, joins no chain, and the dry run says what it is" "1|1|1|1" \
+  "$(printf '%s' "$CRDOUT" | grep -c '^anchor=leftmost$')|$(printf '%s' "$CRDOUT" | grep -c '^side=left$')|$(printf '%s' "$CRDOUT" | grep -c '^coordinator_successor=yes$')|$(printf '%s' "$CRDOUT" | grep -c '^chain=none$')"
+check "a coordinator-successor without a title is refused, and the reason names the shape" "1|1" \
+  "$(crd --coordinator-successor >/dev/null 2>&1; echo $?)|$(crd --coordinator-successor | grep -c -- '--coordinator-successor needs --title "Coord : <subject>"')"
+CRD25=$(printf 'x%.0s' $(seq 1 25)); CRD26=$(printf 'x%.0s' $(seq 1 26))
+check "a coordinator's subject of 25 characters is accepted, of 26 refused" "1|1" \
+  "$(crdl --coordinator-successor --title "Coord : $CRD25" | grep -c -- "--name 'Coord : $CRD25'")|$(crd --coordinator-successor --title "Coord : $CRD26" >/dev/null 2>&1; echo $?)"
+check "a coordinator-successor under an agent's or an orchestrator's title is refused" "1|1|1" \
+  "$(crd --coordinator-successor --title 'Agent : x' >/dev/null 2>&1; echo $?)|$(crd --coordinator-successor --title 'Orch : x' >/dev/null 2>&1; echo $?)|$(crd --coordinator-successor --title 'Agent : x' | grep -c "the coordinator's title reads \"Coord : <subject>\"")"
+check "a Coord title is refused without --coordinator-successor: plain, anchored, free, successor" "1|1|1|1" \
+  "$(crd --title 'Coord : x' | grep -c 'a "Coord :" title is the coordinator')|$(crd --title 'Coord : x' --right-of self | grep -c 'a "Coord :" title is the coordinator')|$(crd --title-free --title 'Coord : x' | grep -c 'a "Coord :" title is the coordinator')|$(crd --successor --title 'Coord : x' | grep -c 'a "Coord :" title is the coordinator')"
+check "and that refusal exits 1" "1" "$(crd --title 'Coord : x' >/dev/null 2>&1; echo $?)"
+for CRDFLAG in --successor --auditor '--left-of /dev/ttys555' '--right-of self' \
+    --title-free '--tier deep' '--model m' --no-remote-control; do
+  # shellcheck disable=SC2086 # the flag and its value are two words on purpose
+  check "a coordinator-successor refuses $CRDFLAG" "1|1" \
+    "$(crd --coordinator-successor --title 'Coord : x' $CRDFLAG >/dev/null 2>&1; echo $?)|$(crd --coordinator-successor --title 'Coord : x' $CRDFLAG | grep -c "is not a coordinator-successor's")"
+done
+check "a coordinator-successor with no model on record is refused, naming the installer" "1" \
+  "$(CLAUDE_CODE_SESSION_ID=s-crd-none ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" bash "$AGENT" spawn --dir "$WORK" --coordinator-successor --title 'Coord : x' --prompt p 2>&1 | grep -c 'orchestrator:install')"
+check "--inherit-model beside --coordinator-successor asks for what is already implied" "1" \
+  "$(crdl --coordinator-successor --inherit-model --title 'Coord : x' | grep -c -- '--model crd-model')"
+
+# `rotate` and `move` treat the coordinator's tab as not the caller's to replace or place,
+# exactly like an auditor's: read by its NAME in the process table, so a stale chain entry
+# naming it moves nothing.
+PSCRD="$WORK/ps-coord.txt"
+printf '/dev/ttys950 /opt/x/claude --name Coord : ops\n/dev/ttys901 /opt/x/claude --name Agent : x\n' > "$PSCRD"
+crdrot() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" ORCHESTRATOR_PS_TABLE="$PSCRD" \
+  bash "$AGENT" rotate --dir "$WORK" --title "Agent : rotated" --prompt p "$@" 2>&1; }
+check "rotate refuses --coordinator-successor" "1" "$(crdrot --old-tty /dev/ttys901 --coordinator-successor | grep -c -- '--coordinator-successor is not a rotation')"
+CRDROT=$(crdrot --old-tty /dev/ttys950)
+check "rotate refuses the coordinator's tab before it spawns anything" "0|1|1" \
+  "$(printf '%s' "$CRDROT" | grep -c '^launch=')|$(printf '%s' "$CRDROT" | grep -c "rotate: refused: /dev/ttys950 is the coordinator's tab ('Coord : ops')")|$(crdrot --old-tty /dev/ttys950 >/dev/null 2>&1; echo $?)"
+check "--force rotates it, and says so" "1|1" \
+  "$(crdrot --old-tty /dev/ttys950 --force | tail -1 | grep -c '^close=/dev/ttys950')|$(crdrot --old-tty /dev/ttys950 --force | grep -c "^rotate: forced: /dev/ttys950 is the coordinator's tab")"
+check "an agent's tab still rotates without --force" "1" "$(crdrot --old-tty /dev/ttys901 | tail -1 | grep -c '^close=/dev/ttys901')"
+printf '{"tab_id":"9","tty":"/dev/ttys950","owner":"S-ME"}\n' >> "$CRDSTATE/chains/ttys900.jsonl"
+crdmv() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
+  ORCHESTRATOR_SELF_ID=S-ME ORCHESTRATOR_PS_TABLE="$PSCRD" bash "$AGENT" move "$@" 2>&1; }
+check "the coordinator's tab is not moved, even with a stale chain entry naming it" "1|1" \
+  "$(crdmv --tty /dev/ttys950 --right-of self >/dev/null 2>&1; echo $?)|$(crdmv --tty /dev/ttys950 --right-of self | grep -c "move: refused: /dev/ttys950 is the coordinator's tab ('Coord : ops'), not this session's to place (pass --force to move it anyway)")"
+check "--force moves it, and says so" "0|1" \
+  "$(crdmv --tty /dev/ttys950 --right-of self --force >/dev/null 2>&1; echo $?)|$(crdmv --tty /dev/ttys950 --right-of self --force | grep -c "^move: forced: /dev/ttys950 is the coordinator's tab")"
+check "the coordinator's tab is not moved leftmost either" "1|1" \
+  "$(crdmv --tty /dev/ttys950 --leftmost >/dev/null 2>&1; echo $?)|$(crdmv --tty /dev/ttys950 --leftmost | grep -c "move: refused: /dev/ttys950 is the coordinator's tab ('Coord : ops'), not this session's to place (pass --force to move it anyway)")"
+check "--force moves it leftmost too, and says so" "0|1" \
+  "$(crdmv --tty /dev/ttys950 --leftmost --force >/dev/null 2>&1; echo $?)|$(crdmv --tty /dev/ttys950 --leftmost --force | grep -c "^move: forced: /dev/ttys950 is the coordinator's tab")"
+check "an agent of the chain still moves" "1" "$(crdmv --tty /dev/ttys901 --right-of self | grep -c '^move=/dev/ttys901 right_of=/dev/ttys900$')"
+check "the coordinator's own tab moves leftmost, by itself" "1" \
+  "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys950 ORCHESTRATOR_SELF_ID=S-ME ORCHESTRATOR_PS_TABLE="$PSCRD" bash "$AGENT" move --tty /dev/ttys950 --leftmost | grep -c '^move=/dev/ttys950 left_of=leftmost$')"
+
+# The launcher's own documentation names the two new forms and the reserved title, in the
+# auditor's pattern: SKILL.md's tab layout convention, the command reference, and the
+# entry point's header synopsis.
+ITERMSKILL="$ROOT/skills/iterm-agents/SKILL.md"
+ITERMCMDS="$ROOT/skills/iterm-agents/references/commands.md"
+ITERMSH="$ROOT/skills/iterm-agents/scripts/iterm-agent.sh"
+check "SKILL.md names the coordinator-successor and --leftmost, in the auditor's pattern" "yes|yes|yes" \
+  "$(spells "$ITERMSKILL" '--coordinator-successor')|$(spells "$ITERMSKILL" '--leftmost')|$(spells "$ITERMSKILL" 'Coord :')"
+check "commands.md documents the coordinator-successor spawn and the move --leftmost form" "yes|yes|yes" \
+  "$(spells "$ITERMCMDS" '--coordinator-successor')|$(spells "$ITERMCMDS" '--leftmost')|$(spells "$ITERMCMDS" 'is refused on any')"
+check "the entry point's header lists both new forms" "yes|yes" \
+  "$(spells "$ITERMSH" '--coordinator-successor')|$(spells "$ITERMSH" '--leftmost')"
+
+# The coordinator's own rulebook and its two commands. The judgment is prose, so what is
+# checked here is that each rule sits in the file read at its moment, and that every command
+# line the prose hands the session is one the tooling runs: the succession's spawn line and
+# the start's leftmost move are taken out of the text and run dry through the launcher, and
+# the successor's brief, every placeholder filled, lints clean.
+COORDSKILL="$ROOT/skills/coordination/SKILL.md"
+COORDCMD="$ROOT/commands/coordinator.md"
+COORDEND="$ROOT/commands/coordinator-end.md"
+COORDTPL="$ROOT/templates/coordinator-succession-brief.md"
+check "the coordinator's skill is named and says when it is used" "1|1" \
+  "$(grep -c '^name: coordination$' "$COORDSKILL")|$(grep -c '^description: Use when this session is the machine.s coordinator' "$COORDSKILL")"
+# A skill and a command of one plugin share one address, `orchestrator:<name>`, and the host
+# resolves it to the command: a skill named like a command is never loaded by its name, and a
+# command that says « load that skill first » loads itself. The coordinator's skill was first
+# named like its start command, and a staged coordinator read the start steps as its rulebook.
+name_collisions() {  # <skills dir> <commands dir>: one line per name both carry
+  local s n
+  for s in "$1"/*/SKILL.md; do
+    n=$(sed -n 's/^name: //p' "$s" | head -1)
+    [ -f "$2/$n.md" ] && echo "collision:$n"
+    [ -f "$2/$(basename "$(dirname "$s")").md" ] && echo "collision:$(basename "$(dirname "$s")")"
+  done | sort -u
+}
+check "no skill and no command of the plugin share a name" "" "$(name_collisions "$ROOT/skills" "$ROOT/commands")"
+NCCMDS="$WORK/collision-commands"; mkdir -p "$NCCMDS"; cp "$ROOT"/commands/*.md "$NCCMDS"/; cp "$COORDCMD" "$NCCMDS/coordination.md"
+check "a command planted under a skill's name falls the check, and names it" "collision:coordination" \
+  "$(name_collisions "$ROOT/skills" "$NCCMDS")"
+check "both coordinator commands and the successor's brief load the coordination skill" "yes|yes|yes" \
+  "$(spells "$COORDCMD" 'described in `orchestrator:coordination`')|$(spells "$COORDEND" 'described in `orchestrator:coordination`')|$(spells "$COORDTPL" '`orchestrator:coordination` FIRST')"
+check "each coordinator command carries its description and its allowed tools" "1|1|1|1" \
+  "$(sed -n '1,5p' "$COORDCMD" | grep -c '^description: ')|$(sed -n '1,5p' "$COORDCMD" | grep -c '^allowed-tools: .*coordinator\.sh')|$(sed -n '1,5p' "$COORDEND" | grep -c '^description: ')|$(sed -n '1,5p' "$COORDEND" | grep -c '^allowed-tools: .*coordinator\.sh')"
+check "the coordinator puts one question per message, in the round's shape, under its prefix" "yes|yes|yes" \
+  "$(spells "$COORDSKILL" '**One question per message**')|$(spells "$COORDSKILL" '(`commands/decide.md`,')|$(spells "$COORDSKILL" "the orchestrator's \`ListAgents\` name and")"
+check "it relays his answer verbatim and dated to the session that asked" "yes" \
+  "$(spells "$COORDSKILL" '**His answer goes back verbatim and dated to the session that asked**')"
+check "it re-reads a question before presenting it and answers a settled one itself" "yes|yes" \
+  "$(spells "$COORDSKILL" '**Re-read before presenting.**')|$(spells "$COORDSKILL" 'question found settled is answered by you, never asked')"
+check "a question blocking a working agent goes first" "yes" "$(spells "$COORDSKILL" 'a question that blocks a working agent')"
+check "every declaration is crossed by the script, and each exit code has its answer" "yes|yes|yes|yes" \
+  "$(spells "$COORDSKILL" '**Run `coordinator.sh conflicts <id>` yourself**')|$(spells "$COORDSKILL" '**Exit 0 → « go »**')|$(spells "$COORDSKILL" 'line → you rule who goes first, then')|$(spells "$COORDSKILL" '**Exit 2 → neither « go » nor « wait ».**')"
+check "a release wakes those that waited" "yes" "$(spells "$COORDSKILL" '**On a release**')"
+check "ready, reports and audit ready are relayed unjudged, and ready is not a merge" "yes|yes" \
+  "$(spells "$COORDSKILL" 'are relayed as they are, unjudged')|$(spells "$COORDSKILL" '**« Ready » is not a merge.**')"
+check "an order to all is relayed verbatim and dated, its acknowledgments told" "yes|yes" \
+  "$(spells "$COORDSKILL" 'relay it **verbatim and dated**')|$(spells "$COORDSKILL" 'Then tell him who acknowledged')"
+check "the coordinator rules logistics only and writes in no repository" "yes|yes" \
+  "$(spells "$COORDSKILL" '**You rule logistics only**')|$(spells "$COORDSKILL" '**You write in no repository**')"
+check "a status request is answered from the facts" "yes" "$(spells "$COORDSKILL" '**A status request is answered from the facts, re-read now**')"
+check "it measures its context and succeeds itself at 80 %" "yes|yes" \
+  "$(spells "$COORDSKILL" 'orchestrator:context-gauge')|$(spells "$COORDSKILL" '**At 80 %, at the next quiet boundary**')"
+check "the predecessor forwards until handed over, and never closes its own tab" "yes|yes" \
+  "$(spells "$COORDSKILL" '**Until « handed over », you answer nothing new.**')|$(spells "$COORDSKILL" 'You never close your own tab.')"
+COORDSPAWN=$(grep -m1 -o 'iterm-agent.sh spawn --coordinator-successor.*' "$COORDSKILL" 2>/dev/null | sed -e 's/^iterm-agent.sh spawn //' \
+  -e 's#<subject>#ops#' -e "s#<your working directory>#$WORK#" -e 's#<brief path>#/tmp/coord-brief.md#')
+coordspawn() { eval "set -- $COORDSPAWN"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
+  ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-crd bash "$AGENT" spawn "$@" 2>&1; }
+COORDSPAWNOUT=$(if [ -n "$COORDSPAWN" ]; then coordspawn; else echo "no spawn line"; fi)
+check "the skill's succession spawn line is one the launcher runs as the coordinator's successor" "1|1|1|1" \
+  "$(printf '%s' "$COORDSPAWNOUT" | grep -c '^coordinator_successor=yes$')|$(printf '%s' "$COORDSPAWNOUT" | grep -c '^anchor=leftmost$')|$(printf '%s' "$COORDSPAWNOUT" | grep -c '^chain=none$')|$(printf '%s' "$COORDSPAWNOUT" | sed -n 's/^launch=//p' | grep -c -- "--name 'Coord : ops'")"
+
+# The start: nothing is registered before the operator has renamed the session and its name
+# is read back, since the registered address is the name the host lists.
+COORDLINE() { grep -n -m1 -F -- "$2" "$1" | cut -d: -f1; }
+check "the start refuses a live coordinator and a subject over 25 characters" "yes|yes" \
+  "$(spells "$COORDCMD" 'coordinator.sh lookup`')|$(spells "$COORDCMD" 'the subject is at most 25 characters')"
+check "the start hands the rename line before it registers, and reads the name back" "yes|1|yes" \
+  "$(spells "$COORDCMD" '/rename "Coord : <subject>"')|$([ "$(COORDLINE "$COORDCMD" '/rename "Coord : <subject>"')" -lt "$(COORDLINE "$COORDCMD" 'coordinator.sh register --name')" ] 2>/dev/null && echo 1 || echo 0)|$(spells "$COORDCMD" 'read the name back from `ListAgents`')"
+check "it registers under the name the host lists, on its own tty" "yes" \
+  "$(spells "$COORDCMD" 'coordinator.sh register --name "Coord : <subject> [<ref>]" --tty <your tty>')"
+COORDMOVE=$(grep -m1 -o 'iterm-agent.sh move --tty <your tty> --leftmost' "$COORDCMD" 2>/dev/null | sed -e 's/^iterm-agent.sh move //' -e 's#<your tty>#/dev/ttys950#')
+check "the command's move line puts the coordinator's own tab leftmost" "1" \
+  "$(if [ -n "$COORDMOVE" ]; then eval "set -- $COORDMOVE"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys950 ORCHESTRATOR_SELF_ID=S-ME ORCHESTRATOR_PS_TABLE="$PSCRD" bash "$AGENT" move "$@" 2>&1 | grep -c '^move=/dev/ttys950 left_of=leftmost$'; else echo 0; fi)"
+check "it announces itself to every orchestrator and auditor, and names the silent ones" "yes|yes|yes" \
+  "$(spells "$COORDCMD" 'to every `Orch :` and `Audit :` session it lists')|$(spells "$COORDCMD" 'notify_when_idle: true')|$(spells "$COORDCMD" 'it is named to the operator')"
+
+# The end: the queue is listed to the operator before anything is cleared, and the proof that
+# the record is gone is lookup printing nothing.
+check "the end runs on the operator's word only" "yes" "$(spells "$COORDEND" 'This command runs ONLY when the operator types it')"
+check "the end lists the queue first, then clears and proves it with lookup" "1|yes|yes" \
+  "$([ "$(COORDLINE "$COORDEND" '**The queue first.**')" -lt "$(COORDLINE "$COORDEND" 'coordinator.sh clear')" ] 2>/dev/null && echo 1 || echo 0)|$(spells "$COORDEND" '`lookup` printing nothing is the proof')|$(spells "$COORDEND" 'you speak to the operator directly again')"
+
+# The successor's brief: register refuses while the predecessor runs, so the order is fixed —
+# close, prove on ps, THEN register. Filled, it lints clean like every template.
+check "the successor closes its predecessor's tab before it registers" "yes|1|yes" \
+  "$(spells "$COORDTPL" 'close --tty {{PREDECESSOR_TTY}} --expect-title "Coord :"')|$([ "$(COORDLINE "$COORDTPL" 'close --tty {{PREDECESSOR_TTY}}')" -lt "$(COORDLINE "$COORDTPL" 'register --name')" ] 2>/dev/null && echo 1 || echo 0)|$(spells "$COORDTPL" '**THEN register**')"
+check "it waits for handed over and proves the close on ps" "yes|yes" \
+  "$(spells "$COORDTPL" '« takeover confirmed »')|$(spells "$COORDTPL" '`ps -t <that tty without /dev/>`')"
+# Filled as the predecessor fills it: its own address, a subject, real paths. The brief holds
+# exactly one session reference, the predecessor's, so a placeholder that lists sessions by
+# their exact addresses would put a second one beside it and the lint would block the
+# succession: the sessions to re-announce to come from the successor's own `ListAgents`.
+COORDFILLED="$WORK/coordinator-brief-filled.md"
+mkdir -p "$WORK/coord-fill/coordinator"; : > "$WORK/coord-fill/coordinator/queue.md"; : > "$WORK/coord-fill/gauge.sh"
+if [ -f "$COORDTPL" ]; then
+  sed -E -e 's#\{\{PREDECESSOR\}\}#Coord : ops [a1b2c3]#g' -e 's#\{\{PREDECESSOR_TTY\}\}#/dev/ttys950#g' -e 's#\{\{SUBJECT\}\}#ops#g' \
+    -e "s#\{\{STATE_DIR\}\}#$WORK/coord-fill#g" -e "s#\{\{QUEUE_FILE\}\}#$WORK/coord-fill/coordinator/queue.md#g" \
+    -e "s#\{\{COORDINATOR_SH\}\}#$ROOT/skills/coordinator/scripts/coordinator.sh#g" -e "s#\{\{ITERM_AGENT_SH\}\}#$AGENT#g" \
+    -e "s#\{\{GAUGE\}\}#$WORK/coord-fill/gauge.sh#g" -e 's#\{\{SESSIONS\}\}#`Orch : api [k2m4p7]`, `Audit : ops [d4e5f6]`#g' \
+    -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$COORDTPL" > "$COORDFILLED"
+fi
+check "the coordinator's succession brief, filled with a real predecessor's values, lints clean" "yes|0" \
+  "$([ -s "$COORDFILLED" ] && echo yes || echo no)|$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$COORDFILLED" >/dev/null 2>&1; echo $?)"
+check "the successor's brief lists no session by address: its own ListAgents supplies them" "0|yes" \
+  "$(grep -c '{{SESSIONS}}' "$COORDTPL")|$(spells "$COORDTPL" 'every `Orch :` or `Audit :` session a fresh `ListAgents` shows')"
+# The successor cannot find « the coordinator command's announcement »: its text travels in
+# the brief, word for word the start command's.
+coord_announcement() { sed -n '/^   > Coordinator: /,/^   > .*« acknowledged »\.$/p' "$1" | sed 's/^ *> //'; }
+check "the successor's brief carries the start command's announcement, word for word" "yes|yes" \
+  "$([ -n "$(coord_announcement "$COORDCMD")" ] && echo yes || echo no)|$([ "$(coord_announcement "$COORDCMD")" = "$(coord_announcement "$COORDTPL")" ] && echo yes || echo no)"
+check "the successor's status ends its turn; the queue's first question comes in its own message" "yes|yes" \
+  "$(spells "$COORDTPL" 'ends your turn. The queue'"'"'s first question comes in a message of its own')|$(spells "$COORDTPL" 'comes in a message of its own')"
+
+# The exit codes the rulebook reads, as the script's header states them: an exit 1 with no
+# overlap and no busy checkout is a refusal or a usage error, a busy checkout names its holder,
+# and a heavy run beside a running one is its own ruled wait.
+check "exit 0 beside a running heavy run is a ruled wait, told and woken on ps" "yes|yes" \
+  "$(spells "$COORDSKILL" '**Exit 0 beside a running heavy run → « wait for <that run> ».**')|$(spells "$COORDSKILL" 'when that pid is gone from `ps`')"
+check "exit 1 without an overlap or a busy checkout line is read as exit 2" "yes|yes" \
+  "$(spells "$COORDSKILL" '**Exit 1 with no `overlap` and no `busy checkout` line is exit 2**')|$(spells "$COORDSKILL" '**A `busy checkout <path>` → « wait for » its holder**')"
+check "a ledger fault is named to the operator, never repaired by the coordinator" "yes" \
+  "$(spells "$COORDSKILL" 'by hand or by any command but the script'"'"'s own `release`')"
+check "the queue file is re-read after a compaction and before every question" "yes" \
+  "$(spells "$COORDSKILL" '**Re-read `queue.md` after a compaction and before every question you present.**')"
+check "after handed over, the predecessor forwards everything until its tab closes" "yes" \
+  "$(spells "$COORDSKILL" 'From then until your tab closes, every message')"
+
+# The start never loses a queue, and refuses a subject the launcher would refuse at the gate.
+check "the start never overwrites an existing queue: its open items go to the operator first" "yes" \
+  "$(spells "$COORDCMD" 'never overwrite an existing `queue.md`')"
+check "the start refuses a subject that begins or ends with a space" "yes" \
+  "$(spells "$COORDCMD" 'neither begins nor ends with a space')"
+
+# The end runs only in the recorded coordinator, and releases those waiting on its word.
+check "the end checks this session is the recorded coordinator before it clears" "yes|1" \
+  "$(spells "$COORDEND" '**This session is the recorded coordinator.**')|$([ "$(COORDLINE "$COORDEND" '**This session is the recorded coordinator.**')" -lt "$(COORDLINE "$COORDEND" 'coordinator.sh clear')" ] 2>/dev/null && echo 1 || echo 0)"
+check "the end tells a waiting orchestrator that no go will come" "yes" \
+  "$(spells "$COORDEND" 'no « go » will come')"
 
 # `/orchestrator:audit` (§52): the brief instantiated and linted, the auditor spawned with
 # the launcher's own flag, verified on the artifact, recorded where `audit-end` finds it.
@@ -2201,8 +2466,8 @@ check "audit-end runs only when the operator types it, and « audit ready » is 
   "$(spells "$AUDEND" 'ONLY when the operator types it')|$(spells "$AUDEND" '« audit ready: <report path> »')|$(spells "$AUDEND" '« audit ready » message is not the word')"
 check "the auditor invites the operator to end the audit, and waits" "yes|yes|yes" \
   "$(spells "$AUDBRIEF" '« audit ready: {{REPORT_PATH}} »')|$(spells "$AUDBRIEF" 'the audit can be ended')|$(spells "$AUDBRIEF" 'you run no command and close nothing')"
-check "at 60 % the auditor reports, tells the operator, and waits for the operator's word" "yes|yes|0" \
-  "$(spells "$AUDBRIEF" '« audit at 60 %: {{REPORT_PATH}}, continue from <section> »')|$(spells "$AUDBRIEF" 'WAIT for the operator')|$(grep -cE '(^|[^/])orchestrator:audit-end' "$AUDBRIEF")"
+check "at 80 % the auditor reports, tells the operator, and waits for the operator's word" "yes|yes|0" \
+  "$(spells "$AUDBRIEF" '« audit at 80 %: {{REPORT_PATH}}, continue from <section> »')|$(spells "$AUDBRIEF" 'WAIT for the operator')|$(grep -cE '(^|[^/])orchestrator:audit-end' "$AUDBRIEF")"
 check "the rulebook and the design say who launches and who ends, and name the defect" "yes|yes|yes|yes" \
   "$(carries "$AUDRULEF" 'the operator launches the audit and the operator ends it')|$(carries "$AUDRULEF" 'a session that ends an audit by itself is the defect')|$(carries "$AUDDESIGNF" 'the operator launches the audit and the operator ends it')|$(carries "$AUDDESIGNF" 'a session that ends an audit by itself is the defect')"
 check "the README's two entries say whose word launches and ends the audit" "2" \
@@ -2216,10 +2481,27 @@ check "its close line is one the launcher runs, guarded on the audit title" "clo
 printf 'a prompt\n' > "$file"
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt" --prompt-file "$file" 2>&1)
 check "--prompt-file reuses the given file" "1" "$(printf '%s' "$out" | grep -c "prompt_file=$file")"
-out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt" 2>&1)
+out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt" --prompt "a prompt" 2>&1)
 cmd=${out#*launch=}; cmd=${cmd%%$'\n'*}
-check "no prompt: nothing appended after the server flag" "1" "$(printf '%s' "$cmd" | grep -c -- '--strict-mcp-config')"
+check "--prompt: the server flag is still there" "1" "$(printf '%s' "$cmd" | grep -c -- '--strict-mcp-config')"
 check_status "--prompt and --prompt-file together are refused" 1 env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --prompt x --prompt-file "$file"
+
+# A launch with no startup prompt at all could never have its mode read (the host writes
+# no transcript before a first prompt), so it is refused before any tab is made rather than
+# spending the mode timeout finding that out.
+check_status "a promptless spawn is refused before any tab is made" 1 \
+  env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt"
+noprompt=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt" 2>&1)
+check "and says why, before any dry-run launch line" "1|0" \
+  "$(printf '%s' "$noprompt" | grep -c 'no startup prompt')|$(printf '%s' "$noprompt" | grep -c '^launch=')"
+check_status "--no-verify does not lift the promptless refusal" 1 \
+  env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt" --no-verify
+check_status "a promptless rotation is refused the same way, the old session never touched" 1 \
+  env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
+  bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated"
+rotnoprompt=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
+  bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" 2>&1)
+check "and no close of the old tty is even attempted" "0" "$(printf '%s' "$rotnoprompt" | grep -c '^close=')"
 check_status "verify on a tty nobody has exits 1" 1 bash "$AGENT" verify --tty /dev/ttys999
 check "screen without a tty says which option is missing" "ERROR: screen: --tty is required" \
   "$(bash "$AGENT" screen 2>&1 | head -1)"
@@ -2234,18 +2516,18 @@ TRUSTF="$WORK/trust.json"; printf '{"projects":{}}' > "$TRUSTF"
 UNTRUSTED="$WORK/untrusted"; mkdir -p "$UNTRUSTED"
 check_status "an untrusted directory is refused before a tab is made" 1 \
   env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-  bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep
+  bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --prompt p
 check "the refusal says how to proceed" "1" \
   "$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-     bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep 2>&1 | grep -c -- '--trust')"
+     bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --prompt p 2>&1 | grep -c -- '--trust')"
 check_status "--trust records it and proceeds" 0 \
   env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-  bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --trust
+  bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --trust --prompt p
 check "the record now holds the directory" "true" \
   "$("$py" -c "import json,os,sys; d=json.load(open(sys.argv[1])); print(str(d['projects'].get(os.path.realpath(sys.argv[2]),{}).get('hasTrustDialogAccepted')).lower())" "$TRUSTF" "$UNTRUSTED")"
 check_status "a directory already recorded needs no flag" 0 \
   env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-  bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep
+  bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --prompt p
 check "the record keeps owner-only permissions" "600" \
   "$(stat -f '%OLp' "$TRUSTF" 2>/dev/null || stat -c '%a' "$TRUSTF")"
 
@@ -2255,17 +2537,17 @@ check "the record keeps owner-only permissions" "600" \
 compact="{\"projects\":{\"$(cd "$UNTRUSTED" && pwd -P)\":{\"hasTrustDialogAccepted\":true}}}"
 printf '%s' "$compact" > "$TRUSTF"
 out=$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-      bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --trust 2>&1)
+      bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --trust --prompt p 2>&1)
 check "--trust on a recorded directory does not rewrite the record" "$compact" "$(cat "$TRUSTF")"
 check "and the dry run says the record already held it" "1" "$(printf '%s' "$out" | grep -c '^trust=already$')"
 check "--trust on an unrecorded directory says it recorded it" "1" \
   "$(printf '{"projects":{}}' > "$TRUSTF"; env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-     bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --trust 2>&1 | grep -c '^trust=recorded$')"
+     bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --trust --prompt p 2>&1 | grep -c '^trust=recorded$')"
 # A record the launcher cannot read is a gate that cannot measure: it lets the launch
 # through AND says so, instead of launching past a question nobody will see.
 printf '{not json' > "$WORK/trust-garbage.json"
 out=$(env ORCHESTRATOR_TRUST_FILE="$WORK/trust-garbage.json" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-      bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep 2>&1); code=$?
+      bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --prompt p 2>&1); code=$?
 check "an unreadable record lets the launch through" "0" "$code"
 check "and says so, naming the flag" "1|1" \
   "$(printf '%s' "$out" | grep -c 'cannot be read')|$(printf '%s' "$out" | grep -c '^trust=unread$')"
@@ -2428,10 +2710,13 @@ check_status "a map with no bindings is not an error" 0 \
 check "a map with no bindings resolves to nothing" "" \
   "$(env ORCHESTRATOR_MODELS_MAP="$WORK/nobindings.json" bash "$AGENT" resolve-tier deep)"
 # And the refusal has to stop the launch, not just print: same shape as the rotation that
-# opened a tab for a tier that did not exist.
+# opened a tab for a tier that did not exist. --title and --prompt are required so this
+# check fails on the map, not on the title or promptless refusals running ahead of it
+# (verified: with the map made valid, this same call exits 0 and the check falls, as it
+# must not with a broken one).
 check_status "a broken map stops the spawn" 1 \
   env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$WORK/broken.json" \
-  bash "$AGENT" spawn --dir "$WORK" --tier deep
+  bash "$AGENT" spawn --dir "$WORK" --title "Agent : x" --tier deep --prompt p
 
 check "a missing map is an all-empty map" "" \
   "$(env ORCHESTRATOR_MODELS_MAP="$WORK/absent.json" bash "$AGENT" resolve-tier standard)"
@@ -2443,7 +2728,7 @@ check "resolve-tier wants exactly one tier" "ERROR: resolve-tier: exactly one ti
 tcmd() {
   local out
   out=$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
-    bash "$AGENT" spawn --dir "$WORK" --title "Agent : tier" "$@" 2>&1)
+    bash "$AGENT" spawn --dir "$WORK" --title "Agent : tier" --prompt p "$@" 2>&1)
   out=${out#*launch=}; printf '%s' "${out%%$'\n'*}"
 }
 check "a bound tier is typed as the model argument" "1" "$(tcmd --tier deep | grep -c -- '--model a-model')"
@@ -2451,26 +2736,26 @@ check "an unbound tier types no model argument" "0" "$(tcmd --tier light | grep 
 check "an explicit model is typed as given" "1" "$(tcmd --model b-model | grep -c -- '--model b-model')"
 check_status "--tier and --model together are refused" 1 \
   env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
-  bash "$AGENT" spawn --dir "$WORK" --tier deep --model b-model
+  bash "$AGENT" spawn --dir "$WORK" --tier deep --model b-model --prompt p
 mkdir -p "$ISTATE/ctx"
 printf '{"session_id":"s-inh","model_id":"a-model","updated_epoch":%s}\n' "$(date +%s)" > "$ISTATE/ctx/s-inh.json"
 check "inherit-model types the calling session's model" "1" \
-  "$(CLAUDE_CODE_SESSION_ID=s-inh ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Orch : heir" --inherit-model 2>&1 | sed -n 's/^launch=//p' | grep -c -- '--model a-model')"
+  "$(CLAUDE_CODE_SESSION_ID=s-inh ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Orch : heir" --inherit-model --prompt p 2>&1 | sed -n 's/^launch=//p' | grep -c -- '--model a-model')"
 check "inherit-model with no tap file refuses and names the installer" "1" \
-  "$(CLAUDE_CODE_SESSION_ID=s-none ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --inherit-model 2>&1 | grep -c 'orchestrator:install')"
+  "$(CLAUDE_CODE_SESSION_ID=s-none ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --inherit-model --prompt p 2>&1 | grep -c 'orchestrator:install')"
 check "inherit-model is exclusive with a tier" "1" \
-  "$(CLAUDE_CODE_SESSION_ID=s-inh ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --inherit-model --tier deep 2>&1 | grep -c 'exclusive')"
+  "$(CLAUDE_CODE_SESSION_ID=s-inh ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --inherit-model --tier deep --prompt p 2>&1 | grep -c 'exclusive')"
 check_status "an unknown tier is refused at spawn" 1 \
   env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
-  bash "$AGENT" spawn --dir "$WORK" --tier deepest
+  bash "$AGENT" spawn --dir "$WORK" --tier deepest --prompt p
 # rotate performs a real close, so its forwarding is checked on the source, as the
 # suite already checks that rotate inherits the spawn's verification.
 check "rotate forwards the tier to the spawn" "1" \
   "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
-      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" --tier deep 2>&1 | grep -c -- '--model a-model')"
+      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" --tier deep --prompt p 2>&1 | grep -c -- '--model a-model')"
 check "rotate closes the old tab only after the spawn" "1" \
   "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
-      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" --tier deep 2>&1 | tail -1 | grep -c '^close=/dev/ttys999')"
+      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" --tier deep --prompt p 2>&1 | tail -1 | grep -c '^close=/dev/ttys999')"
 # The rotation's spawn receives every argument the rotation does not consume, --trust
 # included — but the tab skill's line never said so, and a live rotation into a fresh
 # checkout was refused on the trust question and redone by hand (§39). Read on the record
@@ -2479,14 +2764,14 @@ ROTDIR="$WORK/rot-untrusted"; mkdir -p "$ROTDIR"
 printf '{"projects":{}}' > "$TRUSTF"
 check "rotate forwards --trust to the spawn, which records it" "true" \
   "$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
-      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$ROTDIR" --title "Agent : rotated" --tier deep --trust >/dev/null 2>&1; \
+      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$ROTDIR" --title "Agent : rotated" --tier deep --trust --prompt p >/dev/null 2>&1; \
      "$py" -c "import json,os,sys; d=json.load(open(sys.argv[1])); print(str(d['projects'].get(os.path.realpath(sys.argv[2]),{}).get('hasTrustDialogAccepted')).lower())" "$TRUSTF" "$ROTDIR")"
 # The rotation forwards --mcp too: an agent that needed a server is replaced by one that
 # still has it. It is not in the refused list below, and the dry run is where the
 # forwarding is read (§42) — with the name, since the flag carries one now.
 check "rotate forwards --mcp to the spawn, with its name" "a,b" \
   "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" ORCHESTRATOR_MCP_CATALOGUE="$CAT" \
-      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" --mcp b 2>&1 | sed -n 's/^mcp=//p')"
+      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" --mcp b --prompt p 2>&1 | sed -n 's/^mcp=//p')"
 # A rotation replaces an agent with a titled agent; a successor, an escape from the title
 # shape, or a plain agent stripped of remote control are none of that — each is refused
 # before the replacement is spawned.
@@ -2503,20 +2788,23 @@ check "rotate refuses --no-remote-control" "1" \
 # crossing a shell substitution. The guard reads what comes LAST: an exit code alone would
 # pass on that bug too, since the close that followed failed on its own.
 rot=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
-  bash "$AGENT" rotate --dir "$WORK" --old-tty /dev/ttys999 --tier bogus 2>&1 || true)
+  bash "$AGENT" rotate --dir "$WORK" --old-tty /dev/ttys999 --tier bogus --prompt p 2>&1 || true)
 check "an unresolvable tier stops the rotation, and nothing runs after it" \
   "ERROR: resolve-tier: unknown tier: bogus (expected deep, standard or light)" "$(printf '%s' "$rot" | tail -1)"
 
 echo "== context gate hook =="
-# A fake config dir with a tap file: at 70 % the hook orders the succession, at 30 % it
-# prints nothing, and with no tap file it says « unmeasured » exactly once.
+# A fake config dir with a tap file: at 85 % the hook orders the succession, at 30 % it
+# prints nothing, and with no tap file it says « unmeasured » exactly once. The default gate
+# is 80, not the old 60: a figure of 70 must stay under it and stay silent.
 GH="$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")"; mkdir -p "$GH/claude-orchestrator/ctx"
 now=$(date +%s)
-printf '{"session_id":"g-hi","context_percent":70,"updated_epoch":%s}\n' "$now" > "$GH/claude-orchestrator/ctx/g-hi.json"
+printf '{"session_id":"g-hi","context_percent":85,"updated_epoch":%s}\n' "$now" > "$GH/claude-orchestrator/ctx/g-hi.json"
 printf '{"session_id":"g-lo","context_percent":30,"updated_epoch":%s}\n' "$now" > "$GH/claude-orchestrator/ctx/g-lo.json"
+printf '{"session_id":"g-under","context_percent":70,"updated_epoch":%s}\n' "$now" > "$GH/claude-orchestrator/ctx/g-under.json"
 gate() { printf '{"session_id":"%s"}' "$1" | CLAUDE_CONFIG_DIR="$GH" bash "$ROOT/hooks/context-gate.sh"; }
 check "past the gate the hook orders the succession" "1" "$(gate g-hi | grep -c 'SUCCEEDS at the next quiet boundary')"
 check "under the gate the hook is silent" "" "$(gate g-lo)"
+check "the default gate is 80, not 60: 70 stays under it" "" "$(gate g-under)"
 check "unmeasured says so once" "1" "$(gate g-none | grep -c 'unmeasured'; )"
 check "unmeasured stays silent the second time" "" "$(gate g-none)"
 
@@ -2531,6 +2819,47 @@ printf '{"type":"assistant","message":{"model":"b-model","usage":{"input_tokens"
 check "a changed model is said once, naming both" "1" "$(gate g-drift | grep -c 'MODEL DRIFT: this session now answers as b-model; it answered as a-model until now')"
 check "and not again while it holds" "" "$(gate g-drift)"
 rm -rf "$GH"
+
+echo "== context threshold sweep =="
+# The operator's ruling (2026-09-29): every context limit is 80 %, the previous figure nowhere
+# left as a context threshold. Same pattern as item 1's occurrence grep, its \b rewritten as
+# a portable non-digit lookaround: this git's -E engine does not honor \b (confirmed: it drops
+# every \b-anchored match silently instead of erroring). This file is excluded from the swept
+# tree: it necessarily carries the retired figure in the pattern below and in its own fixture.
+# The three keywords (gate, threshold, context) are matched in both orders around the figure,
+# and a bash default-value assignment on a GATE-named variable is matched in its three common
+# spellings (:-, :=, =), case-insensitively, since a stray env default is as live a threshold
+# as prose is.
+OLD_FIGURE=60
+THRESHOLD_RE="([^0-9]|^)${OLD_FIGURE} ?%|~${OLD_FIGURE}|sixty|(gate|threshold|context).{0,20}${OLD_FIGURE}|${OLD_FIGURE}.{0,20}(gate|threshold|context)|GATE ?(:-|:=|=) ?${OLD_FIGURE}"
+check "no context threshold other than 80 % remains in the tracked tree" "" \
+  "$(cd "$ROOT" && git grep -n -E -i "$THRESHOLD_RE" -- . ':!tests/run-tests.sh' 2>/dev/null)"
+
+# Proof the sweep still catches a stale figure, planted only into a scratch copy — one file
+# per new spelling this broadening adds, plus the original one it already caught.
+SWEEP="$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-sweep-XXXXXX")"
+printf 'Mark sessions past %s%%\n' "$OLD_FIGURE" > "$SWEEP/note.md"
+printf 'the threshold sits above %s still\n' "$OLD_FIGURE" > "$SWEEP/threshold-first.md"
+printf 'the context reads %s during setup\n' "$OLD_FIGURE" > "$SWEEP/context-first.md"
+printf 'GATE:-%s\n' "$OLD_FIGURE" > "$SWEEP/gate-default.sh"
+printf 'export GATE:=%s\n' "$OLD_FIGURE" > "$SWEEP/gate-walrus.sh"
+printf 'export GATE=%s\n' "$OLD_FIGURE" > "$SWEEP/gate-eq.sh"
+printf 'export gate=%s\n' "$OLD_FIGURE" > "$SWEEP/gate-lower.sh"
+check "the sweep catches a figure planted in a scratch copy" "1" \
+  "$(grep -rn -E -i "$THRESHOLD_RE" "$SWEEP" | grep -c "past $OLD_FIGURE")"
+check "the sweep catches the threshold-before-figure order" "1" \
+  "$(grep -rn -E -i "$THRESHOLD_RE" "$SWEEP" | grep -c 'threshold sits above')"
+check "the sweep catches the context-before-figure order" "1" \
+  "$(grep -rn -E -i "$THRESHOLD_RE" "$SWEEP" | grep -c 'context reads')"
+check "the sweep catches a GATE:- default" "1" \
+  "$(grep -rn -E -i "$THRESHOLD_RE" "$SWEEP" | grep -c 'GATE:-60')"
+check "the sweep catches a GATE:= assignment" "1" \
+  "$(grep -rn -E -i "$THRESHOLD_RE" "$SWEEP" | grep -c 'GATE:=60')"
+check "the sweep catches a GATE= assignment" "1" \
+  "$(grep -rn -E -i "$THRESHOLD_RE" "$SWEEP" | grep -c 'export GATE=60')"
+check "the sweep catches a lowercase gate= assignment" "1" \
+  "$(grep -rn -E -i "$THRESHOLD_RE" "$SWEEP" | grep -c 'export gate=60')"
+rm -rf "$SWEEP"
 
 echo "== push guard hook =="
 # Active only in a session the launcher spawned (ORCHESTRATOR_SPAWNED, set by build_command
@@ -3123,6 +3452,50 @@ check "a close that raises is said, not thrown, and returns False; one that work
   "False|1|True|False|1" \
   "$(closemade_raise | tail -1)|$(closemade_raise | grep -c -- 'spawn: the refused session could not be closed: kaboom')|$(closemade_ok)|$(closemade_raise_empty | tail -1)|$(closemade_raise_empty | grep -c -- 'spawn: the refused session could not be closed: unknown error')"
 
+# A named exception to "a gate that cannot measure lets the run through and says so" (§29):
+# a session whose mode is unread may be parked on a dialog or hung at start, which the
+# plugin already calls "not launched" — so the timeout no longer prints and lets the launch
+# through, it refuses and closes the tab the spawn made, exactly like a mismatch. The
+# polling loop itself (`find_transcript`/`mode_of_transcript`) is already covered above;
+# what is new is the verdict once the loop ends, so it is tested through `verify_mode` with
+# both stubbed and an injected no-op sleep — fixture driven, never a real tab.
+unread_msg() { "$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+print(m.unread_refusal(sys.argv[1], sys.argv[2]))" "$1" "$2"; }
+check "the unread refusal names the checkout, the timeout, and the remedy" "1|1|1|1" \
+  "$(unread_msg /work/dir 20 | grep -c '^spawn: refused: no transcript for /work/dir')|$(unread_msg /work/dir 20 | grep -c 'parked on a dialog or hung at start')|$(unread_msg /work/dir 20 | grep -c 'the tab was closed')|$(unread_msg /work/dir 20 | grep -c 'ORCHESTRATOR_MODE_TIMEOUT')"
+
+# `verify_mode` is the assembled decision the old inline block made: `path` of 'none' fakes
+# a transcript that never appears (or one that never carries a mode, the same branch, per
+# the closing round's ruling on an empty permissionMode); `timeout=1` with a no-op `sleep`
+# makes one polling pass instant instead of a real wait.
+verify_mode_run() { "$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+closed = []
+m.close_made = lambda made: closed.append(made) or True
+m.find_transcript = lambda d, since: (None if sys.argv[1] == 'none' else sys.argv[1])
+m.mode_of_transcript = lambda p: sys.argv[2]
+try:
+    line = m.verify_mode('/checkout', 0, sys.argv[3], 'a-model', {'session_id': 'x'},
+                          timeout=1, sleep=lambda s: None)
+    print('ok=' + line)
+except SystemExit as e:
+    print('exit=%s' % e.code)
+print('closed=%s' % bool(closed))" "$1" "$2" "$3"; }
+out_unread=$(verify_mode_run none '' auto 2>/dev/null)
+msg_unread=$(verify_mode_run none '' auto 2>&1 1>/dev/null)
+check "an unread mode is refused, the made tab closed, the remedy said" "exit=1|True|1" \
+  "$(printf '%s' "$out_unread" | sed -n '1p')|$(printf '%s' "$out_unread" | sed -n '2p' | sed 's/closed=//')|$(printf '%s' "$msg_unread" | grep -c 'parked on a dialog or hung at start')"
+out_mismatch=$(verify_mode_run /checkout/t.jsonl default auto 2>/dev/null)
+check "a mismatch is still refused, the made tab still closed" "exit=1|True" \
+  "$(printf '%s' "$out_mismatch" | sed -n '1p')|$(printf '%s' "$out_mismatch" | sed -n '2p' | sed 's/closed=//')"
+out_match=$(verify_mode_run /checkout/t.jsonl auto auto 2>/dev/null)
+check "a readable matching mode still passes, and closes nothing" \
+  "ok=spawn: mode auto read on the transcript|False" \
+  "$(printf '%s' "$out_match" | sed -n '1p')|$(printf '%s' "$out_match" | sed -n '2p' | sed 's/closed=//')"
+
 # `screen --lines N` returned the FIRST N lines of the tab, which on a tall terminal are
 # blank: the blocked agent's prompt sat at the bottom and three reads out of four came back
 # empty while the tooling reported success. Trailing blanks go, interior ones stay — a
@@ -3270,6 +3643,331 @@ check_status "move with identical ttys fails" 1 bash "$ITERM" move --tty /dev/tt
 check_status "spawn without --dir fails" 1 bash "$ITERM" spawn --title x
 check_status "unknown subcommand fails" 1 bash "$ITERM" bogus
 check "close error names the option" "ERROR: close: --tty is required" "$(bash "$ITERM" close 2>&1)"
+
+echo "== coordinator =="
+
+# The coordinator's record, its claims ledger and the overlap check are what nothing
+# downstream re-checks: an orchestrator that reads a dead coordinator as alive speaks into
+# the void, and one that reads a live one as dead talks over it. Every liveness answer here
+# comes from the stub standing in for `iterm-agent.sh verify`, which reads a file of live
+# ttys, so no real tab or session is ever needed; the state directory is a temporary one.
+COORD="$ROOT/skills/coordinator/scripts/coordinator.sh"
+CS="$WORK/coord-state"
+CLIVE="$WORK/coord-live"
+CWS="$WORK/coord-ws"
+mkdir -p "$CS" "$CWS"
+: > "$CLIVE"
+cat > "$WORK/coord-verify" <<'EOF'
+#!/bin/bash
+[ "$1" = --tty ] && grep -qxF "$2" "$COORD_LIVE"
+EOF
+chmod +x "$WORK/coord-verify"
+coord() {
+  ORCHESTRATOR_STATE_DIR="$CS" COORDINATOR_VERIFY="$WORK/coord-verify" COORD_LIVE="$CLIVE" \
+    ORCHESTRATOR_WORKSPACES="$CWS" bash "$COORD" "$@"
+}
+coord_status() { coord "$@" >/dev/null 2>&1; echo "exit $?"; }
+live() { printf '%s\n' "$@" > "$CLIVE"; }
+CREC="$CS/coordinator.json"
+CLAIMS="$CS/claims.jsonl"
+
+out=$(coord register --name "Coord : one [aaa111]" --tty /dev/ttys101 2>"$WORK/coord.err")
+check "register prints what it recorded" "registered Coord : one [aaa111]" "$out"
+check "register writes the name and the tty" "Coord : one [aaa111]|/dev/ttys101" \
+  "$(jq -r '[.name,.tty]|join("|")' "$CREC" 2>/dev/null)"
+check "register stamps the start in UTC" "1" \
+  "$(jq -r '.started' "$CREC" 2>/dev/null | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$')"
+check "register leaves no lock behind" "0" "$([ -e "$CS/coordinator.lock" ] && echo 1 || echo 0)"
+
+live /dev/ttys101
+check "a second register is refused while the recorded one runs" "exit 1" \
+  "$(coord_status register --name "Coord : two [bbb222]" --tty /dev/ttys102)"
+check "the refusal names the live coordinator" \
+  "coordinator: refused: a live coordinator is recorded: Coord : one [aaa111] on /dev/ttys101" \
+  "$(coord register --name "Coord : two [bbb222]" --tty /dev/ttys102 2>&1 >/dev/null)"
+check "a refused register leaves the live record alone" "Coord : one [aaa111]" "$(jq -r .name "$CREC")"
+
+live
+out=$(coord register --name "Coord : two [bbb222]" --tty /dev/ttys102 2>"$WORK/coord.err")
+check "a record whose tty no longer runs the host is replaced" "registered Coord : two [bbb222]|/dev/ttys102" \
+  "$out|$(jq -r .tty "$CREC")"
+check "and the replacement is said" "coordinator: replaced a stale record: Coord : one [aaa111]" \
+  "$(cat "$WORK/coord.err")"
+
+# The record is written before it is announced: one that cannot be written is no
+# registration, and one that cannot be read is replaced like a stale one.
+cp "$CREC" "$WORK/coord-rec"
+echo 'not json' > "$CREC"
+out=$(coord register --name "Coord : r [r00001]" --tty /dev/ttys110 2>"$WORK/coord.err")
+check "a corrupt record is replaced as an unreadable one" \
+  "registered Coord : r [r00001]|coordinator: replaced a stale record: an unreadable record|Coord : r [r00001]" \
+  "$out|$(cat "$WORK/coord.err")|$(jq -r .name "$CREC")"
+rm -f "$CREC" && mkdir "$CREC"
+out=$(coord register --name "Coord : r [r00001]" --tty /dev/ttys110 2>"$WORK/coord.err"); code=$?
+check "a record that cannot be written is no registration" "|exit 1" "$out|exit $code"
+check "and the failure is said" "coordinator: cannot write $CREC: it is a directory" "$(cat "$WORK/coord.err")"
+rmdir "$CREC" && cp "$WORK/coord-rec" "$CREC"
+
+# The lock: its holder records its pid and its operation inside it; the next caller waits
+# five seconds, then refuses, naming the lock, its holder and whether it still runs, and
+# never removes a lock it does not hold.
+CLOCK="$CS/coordinator.lock"
+mkdir "$CLOCK" && echo "$$ registration" > "$CLOCK/holder"
+t0=$(date +%s)
+out=$(coord register --name "Coord : three [ccc333]" --tty /dev/ttys103 2>&1 >/dev/null)
+t1=$(date +%s)
+check "a register that cannot take the lock is refused, naming the lock and its holder" \
+  "coordinator: refused: a registration holds the lock: $CLOCK held by pid $$ (running): remove $CLOCK" "$out"
+check "the refusal comes after five seconds, not one and not ten" "1" \
+  "$([ $((t1 - t0)) -ge 4 ] && [ $((t1 - t0)) -le 8 ] && echo 1 || echo 0)"
+check "the refused register leaves the other's lock in place" "1|$$ registration" \
+  "$([ -d "$CLOCK" ] && echo 1 || echo 0)|$(cat "$CLOCK/holder")"
+sh -c 'exit 0' & deadpid=$!; wait "$deadpid"
+echo "$deadpid" > "$CLOCK/holder"
+check "declare waits for the same lock, and a holder whose operation is unknown is not guessed" \
+  "coordinator: refused: the coordinator's lock is held: $CLOCK held by pid $deadpid (dead): remove $CLOCK|exit 1" \
+  "$(coord declare --orchestrator "Orch : a [a00001]" --tty /dev/ttys201 --repo /r 2>&1)|$(coord_status declare --orchestrator "Orch : a [a00001]" --tty /dev/ttys201 --repo /r)"
+rm -f "$CLOCK/holder"
+check "a lock with no holder recorded is refused all the same" \
+  "coordinator: refused: the coordinator's lock is held: $CLOCK names no holder: remove $CLOCK" \
+  "$(coord release c1 2>&1)"
+rmdir "$CLOCK"
+
+# A state directory that cannot be written is refused at once, not after five seconds.
+CRO="$WORK/coord-ro"
+mkdir -p "$CRO" && chmod 555 "$CRO"
+t0=$(date +%s)
+out=$(ORCHESTRATOR_STATE_DIR="$CRO" COORDINATOR_VERIFY="$WORK/coord-verify" COORD_LIVE="$CLIVE" \
+  bash "$COORD" declare --orchestrator "Orch : a [a00001]" --tty /dev/ttys201 --repo /r 2>&1); code=$?
+t1=$(date +%s)
+check "an unwritable state directory is refused at once" \
+  "coordinator: cannot write into the state directory $CRO|exit 1|1" \
+  "$out|exit $code|$([ $((t1 - t0)) -le 2 ] && echo 1 || echo 0)"
+chmod 755 "$CRO"
+
+# Two registrations at the same instant: exactly one records itself, the other is refused.
+coord clear
+live /dev/ttys104 /dev/ttys105
+coord register --name "Coord : four [ddd444]" --tty /dev/ttys104 > "$WORK/coord-r1" 2>&1 &
+coord register --name "Coord : five [eee555]" --tty /dev/ttys105 > "$WORK/coord-r2" 2>&1 &
+wait
+check "two concurrent registers: one recorded, one refused" "1|1" \
+  "$(cat "$WORK/coord-r1" "$WORK/coord-r2" | grep -c '^registered ')|$(cat "$WORK/coord-r1" "$WORK/coord-r2" | grep -c 'refused')"
+
+check "clear removes the record" "exit 0|0" "$(coord_status clear)|$([ -e "$CREC" ] && echo 1 || echo 0)"
+check "clear with no record is not an error" "exit 0" "$(coord_status clear)"
+
+# lookup: the address only while its session lives; the file alone is never the answer.
+check "lookup with no record prints nothing and says nothing" "|exit 0" \
+  "$(coord lookup 2>&1)|$(coord_status lookup)"
+live /dev/ttys106
+coord register --name "Coord : six [fff666]" --tty /dev/ttys106 >/dev/null 2>&1
+check "lookup prints the live coordinator's name" "Coord : six [fff666]" "$(coord lookup 2>/dev/null)"
+live
+check "lookup of a dead coordinator prints nothing" "|exit 0" "$(coord lookup 2>/dev/null)|$(coord_status lookup)"
+check "and names the stale record on the error stream" "coordinator: stale record: Coord : six [fff666] on /dev/ttys106" \
+  "$(coord lookup 2>&1 >/dev/null)"
+coord clear
+
+# declare: one line per declaration, ids from the highest in the file.
+id1=$(coord declare --orchestrator "Orch : a [a00001]" --tty /dev/ttys201 --repo /r/one --branch feat/x \
+  --pr 12 --checkout /w/one/x/ --heavy suite)
+id2=$(coord declare --orchestrator "Orch : b [b00002]" --tty /dev/ttys202 --repo /r/one)
+check "declare prints monotonic ids" "c1|c2" "$id1|$id2"
+check "a declaration is one line with every field" \
+  '["branch","checkout","heavy","id","opened","orchestrator","pr","released","repo","tty"]' \
+  "$(sed -n 1p "$CLAIMS" | jq -c 'keys')"
+check "the fields say what was declared" "c1|Orch : a [a00001]|/dev/ttys201|/r/one|feat/x|12|/w/one/x|suite|null" \
+  "$(sed -n 1p "$CLAIMS" | jq -r '[.id,.orchestrator,.tty,.repo,.branch,(.pr|tostring),.checkout,.heavy,(.released|tostring)]|join("|")')"
+check "an option not given is null" "null|null|null|null" \
+  "$(sed -n 2p "$CLAIMS" | jq -r '[.branch,.pr,.checkout,.heavy]|map(tostring)|join("|")')"
+check "opened is stamped in UTC" "1" \
+  "$(sed -n 1p "$CLAIMS" | jq -r .opened | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$')"
+jq -c '.id="c9"' <<< "$(sed -n 2p "$CLAIMS")" >> "$CLAIMS"
+check "the next id follows the highest in the file" "c10" \
+  "$(coord declare --orchestrator "Orch : a [a00001]" --tty /dev/ttys201 --repo /r/one)"
+check "declare without --repo is refused" "exit 1" \
+  "$(coord_status declare --orchestrator "Orch : a [a00001]" --tty /dev/ttys201)"
+check "declare with a relative repository is refused" "exit 1" \
+  "$(coord_status declare --orchestrator "Orch : a [a00001]" --tty /dev/ttys201 --repo r/one)"
+check "declare with a pull request that is not a number is refused" "coordinator: declare: --pr must be a number: x" \
+  "$(coord declare --orchestrator "Orch : a [a00001]" --tty /dev/ttys201 --repo /r/one --pr x 2>&1)"
+check "declare leaves no lock behind" "0" "$([ -e "$CLOCK" ] && echo 1 || echo 0)"
+# The overlap check reads the ledger's fields tab-separated and one declaration per line.
+check "declare refuses a tab in a value" "coordinator: declare: --orchestrator must not hold a tab or a newline|exit 1" \
+  "$(coord declare --orchestrator "$(printf 'Orch\t: a [a00001]')" --tty /dev/ttys201 --repo /r/one 2>&1)|$(coord_status declare --orchestrator "$(printf 'Orch\t: a [a00001]')" --tty /dev/ttys201 --repo /r/one)"
+check "declare refuses a newline in a value" "coordinator: declare: --branch must not hold a tab or a newline" \
+  "$(coord declare --orchestrator "Orch : a [a00001]" --tty /dev/ttys201 --repo /r/one --branch "$(printf 'feat\nx')" 2>&1)"
+check "declare refuses a newline in a path" "coordinator: declare: --repo must not hold a tab or a newline" \
+  "$(coord declare --orchestrator "Orch : a [a00001]" --tty /dev/ttys201 --repo "$(printf '/r/one\nx')" 2>&1)"
+
+rm -f "$CLAIMS"
+for n in 1 2 3 4 5 6 7 8; do
+  coord declare --orchestrator "Orch : p$n [p0000$n]" --tty /dev/ttys30$n --repo /r/par > "$WORK/coord-d$n" 2>&1 &
+done
+wait
+check "eight concurrent declarations get eight distinct ids" "c1 c2 c3 c4 c5 c6 c7 c8|8" \
+  "$(cat "$WORK"/coord-d? | sort -V | tr '\n' ' ' | sed 's/ $//')|$(jq -s 'length' "$CLAIMS")"
+
+# release: closes an open declaration, and only one.
+check "release closes an open declaration" "exit 0|1" \
+  "$(coord_status release c3)|$(jq -r 'select(.id=="c3")|.released' "$CLAIMS" | grep -cE '^[0-9]{4}-.*Z$')"
+check "release leaves the others open" "7" "$(jq -s '[.[]|select(.released==null)]|length' "$CLAIMS")"
+check "releasing it twice is refused" "coordinator: no open declaration c3" "$(coord release c3 2>&1)"
+check "releasing an unknown id is refused" "exit 1" "$(coord_status release c99)"
+check "the next id still follows the highest" "c9" "$(coord declare --orchestrator "Orch : a [a00001]" --tty /dev/ttys201 --repo /r/par)"
+coord release c4
+check "release leaves no lock behind" "0" "$([ -e "$CLOCK" ] && echo 1 || echo 0)"
+
+# A ledger with a line that does not read: release refuses and leaves every line as it
+# was, rather than rewriting the ledger from what was read before the bad line.
+echo '{"id":"c10", broken' >> "$CLAIMS"
+printf '%s\n' "$(sed -n 1p "$CLAIMS" | jq -c '.id="c11"')" >> "$CLAIMS"
+cp "$CLAIMS" "$WORK/coord-ledger"
+check "release over a corrupt ledger is refused" "coordinator: release: cannot read $CLAIMS|exit 1" \
+  "$(coord release c5 2>&1)|$(coord_status release c5)"
+check "and leaves the ledger untouched" "" "$(diff "$WORK/coord-ledger" "$CLAIMS")"
+
+# conflicts: A and B live, D dead; each case on a fresh ledger.
+live /dev/ttys401 /dev/ttys402
+dA() { coord declare --orchestrator "Orch : a [a00001]" --tty /dev/ttys401 "$@"; }
+dB() { coord declare --orchestrator "Orch : b [b00002]" --tty /dev/ttys402 "$@"; }
+dD() { coord declare --orchestrator "Orch : d [d00004]" --tty /dev/ttys404 "$@"; }
+overlaps() { coord conflicts "$1" 2>/dev/null | grep -E '^(overlap|busy|stale) '; }
+
+rm -f "$CLAIMS"; a=$(dA --repo /r/one --branch feat/x); b=$(dB --repo /r/one --branch feat/x)
+check "same repository and branch is an overlap" "overlap branch $b $a Orch : a [a00001]|exit 1" \
+  "$(overlaps "$b")|$(coord_status conflicts "$b")"
+rm -f "$CLAIMS"; a=$(dA --repo /r/one --branch feat/x); b=$(dB --repo /r/two --branch feat/x)
+check "the same branch name in another repository is not" "|exit 0" "$(overlaps "$b")|$(coord_status conflicts "$b")"
+rm -f "$CLAIMS"; a=$(dA --repo /r/one --checkout /w/one/p1); b=$(dB --repo /r/two --checkout /w/one/p1/)
+check "the same checkout is an overlap" "overlap checkout $b $a Orch : a [a00001]|exit 1" \
+  "$(overlaps "$b")|$(coord_status conflicts "$b")"
+rm -f "$CLAIMS"; a=$(dA --repo /r/one --pr 7); b=$(dB --repo /r/one --pr 7)
+check "the same pull request is an overlap" "overlap pr $b $a Orch : a [a00001]|exit 1" \
+  "$(overlaps "$b")|$(coord_status conflicts "$b")"
+rm -f "$CLAIMS"; a=$(dA --repo /r/one --pr 7); b=$(dB --repo /r/two --pr 7)
+check "the same number in another repository is not" "" "$(overlaps "$b")"
+rm -f "$CLAIMS"; a=$(dA --repo /r/one --heavy suite); b=$(dB --repo /r/two --heavy evals)
+check "two heavy runs are an overlap" "overlap heavy $b $a Orch : a [a00001]|exit 1" \
+  "$(overlaps "$b")|$(coord_status conflicts "$b")"
+rm -f "$CLAIMS"; a=$(dA --repo /r/one --branch feat/x --pr 7 --checkout /w/a --heavy suite)
+b=$(dB --repo /r/two --branch feat/y --pr 8 --checkout /w/b)
+check "nothing shared, no overlap" "|exit 0" "$(overlaps "$b")|$(coord_status conflicts "$b")"
+rm -f "$CLAIMS"; a=$(dA --repo /r/one --branch feat/x); coord release "$a"; b=$(dB --repo /r/one --branch feat/x)
+check "a released declaration is no overlap" "|exit 0" "$(overlaps "$b")|$(coord_status conflicts "$b")"
+rm -f "$CLAIMS"; d=$(dD --repo /r/one --branch feat/x); b=$(dB --repo /r/one --branch feat/x)
+check "an open declaration of a dead orchestrator is named stale, not an overlap" \
+  "stale $d Orch : d [d00004]|exit 0" "$(overlaps "$b")|$(coord_status conflicts "$b")"
+check "conflicts on an unknown id is neither go nor wait" "exit 2" "$(coord_status conflicts c99)"
+coord release "$d"
+check "conflicts on a released declaration is neither go nor wait" "exit 2" "$(coord_status conflicts "$d")"
+check "conflicts leaves no lock behind" "0" "$([ -e "$CLOCK" ] && echo 1 || echo 0)"
+
+# Every open declaration of a dead orchestrator is named, not only one that would overlap.
+rm -f "$CLAIMS"; d=$(dD --repo /r/dead --branch feat/d --pr 99 --checkout /w/dead)
+b=$(dB --repo /r/one --branch feat/x --pr 7 --checkout /w/one)
+check "a dead orchestrator's unrelated declaration is named stale too" \
+  "stale $d Orch : d [d00004]|exit 0" "$(overlaps "$b")|$(coord_status conflicts "$b")"
+
+# Names are printed as they were declared, never escaped.
+rm -f "$CLAIMS"; a=$(coord declare --orchestrator 'Orch : a\b [a00001]' --tty /dev/ttys401 --repo /r/one --pr 7)
+b=$(dB --repo /r/one --pr 7)
+check "an orchestrator's name is printed as declared" "overlap pr $b $a Orch : a\\b [a00001]" "$(overlaps "$b")"
+
+# Paths: a checkout and its resolved form are one checkout, and a space is part of a path.
+mkdir -p "$WORK/coord-real/co" "$WORK/coord sp/co x" && ln -s "$WORK/coord-real" "$WORK/coord-link"
+CREAL=$(cd "$WORK/coord-real/co" && pwd -P)
+rm -f "$CLAIMS"; a=$(dA --repo /r/one --checkout "$WORK/coord-link/co"); b=$(dB --repo /r/two --checkout "$CREAL")
+check "a checkout reached through a symbolic link is the same checkout" \
+  "overlap checkout $b $a Orch : a [a00001]|$CREAL" "$(overlaps "$b")|$(sed -n 1p "$CLAIMS" | jq -r .checkout)"
+CSP=$(cd "$WORK/coord sp/co x" && pwd -P)
+rm -f "$CLAIMS"; a=$(dA --repo /r/one --checkout "$WORK/coord sp/co x"); b=$(dB --repo /r/two --checkout "$CSP/")
+check "a path with a space is kept whole" "overlap checkout $b $a Orch : a [a00001]|$CSP" \
+  "$(overlaps "$b")|$(sed -n 1p "$CLAIMS" | jq -r .checkout)"
+
+# A ledger line that does not read makes the answer unknown, never « go »: a declaration
+# read before it would otherwise miss an overlap after it, and one after it would be
+# called unknown.
+rm -f "$CLAIMS"; a=$(dA --repo /r/one --branch feat/x)
+echo '{"id":"c2", broken' >> "$CLAIMS"
+printf '%s\n' "$(sed -n 1p "$CLAIMS" | jq -c '.id="c3" | .orchestrator="Orch : b [b00002]" | .tty="/dev/ttys402"')" >> "$CLAIMS"
+check "conflicts over a corrupt ledger is neither go nor wait" "coordinator: cannot read the ledger $CLAIMS|exit 2" \
+  "$(coord conflicts "$a" 2>&1)|$(coord_status conflicts "$a")"
+check "an id after the bad line is not called unknown" "coordinator: cannot read the ledger $CLAIMS|exit 2" \
+  "$(coord conflicts c3 2>&1)|$(coord_status conflicts c3)"
+
+# Liveness: an error of the check is no « dead ». Its own « not running », exit 1 and
+# silent, is the only answer read as dead.
+rm -f "$CLAIMS"; a=$(dA --repo /r/one --branch feat/x); b=$(dB --repo /r/one --branch feat/x)
+live /dev/ttys401 /dev/ttys402 /dev/ttys106
+coord register --name "Coord : six [fff666]" --tty /dev/ttys106 >/dev/null 2>&1
+cvar() { ORCHESTRATOR_STATE_DIR="$CS" COORD_LIVE="$CLIVE" ORCHESTRATOR_WORKSPACES="$CWS" COORDINATOR_VERIFY="$1" \
+  bash "$COORD" "${@:2}"; }
+cvar_status() { cvar "$@" >/dev/null 2>&1; echo "exit $?"; }
+check "a missing liveness command is said, exit 1 from lookup" \
+  "coordinator: the liveness command $WORK/no-verify is missing or not executable|exit 1" \
+  "$(cvar "$WORK/no-verify" lookup 2>&1)|$(cvar_status "$WORK/no-verify" lookup)"
+check "and from register, the record kept" "exit 1|Coord : six [fff666]" \
+  "$(cvar_status "$WORK/no-verify" register --name "Coord : x [xxx000]" --tty /dev/ttys107)|$(jq -r .name "$CREC")"
+check "and exit 2 from conflicts" "exit 2" "$(cvar_status "$WORK/no-verify" conflicts "$b")"
+printf '#!/bin/bash\necho "cannot read the process table" >&2\nexit 1\n' > "$WORK/coord-verify-err"
+chmod +x "$WORK/coord-verify-err"
+check "a liveness check that fails is not read as dead" \
+  "coordinator: the liveness check failed on /dev/ttys106: cannot read the process table|exit 1" \
+  "$(cvar "$WORK/coord-verify-err" lookup 2>&1)|$(cvar_status "$WORK/coord-verify-err" lookup)"
+check "nor as a stale claim" "|exit 2" \
+  "$(cvar "$WORK/coord-verify-err" conflicts "$b" 2>/dev/null | grep '^stale')|$(cvar_status "$WORK/coord-verify-err" conflicts "$b")"
+# The lock's holder writes its pid and its operation into it: read here from inside the
+# lock, by a liveness check that register runs while it holds it.
+printf '#!/bin/bash\ncat "$ORCHESTRATOR_STATE_DIR/coordinator.lock/holder" > "$COORD_PEEK"\nexit 1\n' > "$WORK/coord-verify-peek"
+chmod +x "$WORK/coord-verify-peek"
+COORD_PEEK="$WORK/coord-peek" cvar "$WORK/coord-verify-peek" register --name "Coord : seven [ggg777]" --tty /dev/ttys108 >/dev/null 2>&1
+check "the lock's holder records its pid and its operation" "1" "$(grep -cE '^[0-9]+ registration$' "$WORK/coord-peek" 2>/dev/null)"
+# A check that reads its standard input must not eat the declarations still to be read.
+printf '#!/bin/bash\ncat >/dev/null\n[ "$1" = --tty ] && grep -qxF "$2" "$COORD_LIVE"\n' > "$WORK/coord-verify-cat"
+chmod +x "$WORK/coord-verify-cat"
+rm -f "$CLAIMS"; a=$(dA --repo /r/one --heavy suite); a2=$(dA --repo /r/two --heavy evals); b=$(dB --repo /r/three --heavy suite)
+check "every other declaration is read whatever the check does with its input" \
+  "overlap heavy $b $a Orch : a [a00001]|overlap heavy $b $a2 Orch : a [a00001]" \
+  "$(cvar "$WORK/coord-verify-cat" conflicts "$b" 2>/dev/null | grep '^overlap' | tr '\n' '|' | sed 's/|$//')"
+coord clear
+
+# The facts, re-read now: a checkout already held by another branch, and the heavy runs
+# the process table shows. This suite is one of them, so its own pid must be listed.
+mkdir -p "$CWS/proj" && git init -q -b other "$CWS/proj/p1" \
+  && git -C "$CWS/proj/p1" -c user.email=t@local -c user.name=t commit -q --allow-empty -m "Set up"
+rm -f "$CLAIMS"; b=$(dB --repo /r/one --branch mine --checkout "$CWS/proj/p1")
+check "a checkout held by another branch is busy" "busy checkout $(cd "$CWS/proj/p1" && pwd -P)|exit 1" \
+  "$(overlaps "$b")|$(coord_status conflicts "$b")"
+rm -f "$CLAIMS"; b=$(dB --repo /r/one --branch other --checkout "$CWS/proj/p1")
+check "a checkout held by the declared branch is not" "|exit 0" "$(overlaps "$b")|$(coord_status conflicts "$b")"
+check "a running suite is reported with its pid" "1" \
+  "$(coord conflicts "$b" 2>/dev/null | grep -cE "^running $$ .*run-tests\.sh")"
+check "a running suite alone is no conflict" "exit 0" "$(coord_status conflicts "$b")"
+# A plugin evaluation run, stood in for by a process whose arguments carry the words, and
+# stopped before the next check so nothing outlives the suite.
+python3 -c 'import time; time.sleep(30)' plugin eval coord-fixture &
+EVALPID=$!
+check "a plugin evaluation run is reported with its pid" "1" \
+  "$(coord conflicts "$b" 2>/dev/null | grep -cE "^running $EVALPID .*plugin eval coord-fixture")"
+kill "$EVALPID" 2>/dev/null; wait "$EVALPID" 2>/dev/null
+
+# The script's neighbours, in a copy of its tree: a workspace list that fails and a missing
+# launcher make the answer unknown, never « go ».
+CT="$WORK/coord-tree/skills"
+mkdir -p "$CT/coordinator/scripts" "$CT/orchestrator/scripts"
+cp "$COORD" "$CT/coordinator/scripts/"
+printf '#!/bin/bash\necho "workspace: cannot read the root" >&2\nexit 1\n' > "$CT/orchestrator/scripts/workspace.sh"
+ctree() { ORCHESTRATOR_STATE_DIR="$CS" COORD_LIVE="$CLIVE" ORCHESTRATOR_WORKSPACES="$CWS" bash "$CT/coordinator/scripts/coordinator.sh" "$@"; }
+rm -f "$CLAIMS"; b=$(dB --repo /r/one --branch mine --checkout "$CWS/proj/p1")
+check "a workspace list that fails is neither go nor wait" "coordinator: workspace.sh list failed: the checkout's state is unknown|exit 2" \
+  "$(COORDINATOR_VERIFY="$WORK/coord-verify" ctree conflicts "$b" 2>&1 | grep '^coordinator: ')|$(COORDINATOR_VERIFY="$WORK/coord-verify" ctree conflicts "$b" >/dev/null 2>&1; echo "exit $?")"
+a=$(dA --repo /r/two)
+check "a missing launcher is said, exit 2 from conflicts" \
+  "coordinator: the launcher <tree>/skills/coordinator/scripts/../../iterm-agents/scripts/iterm-agent.sh is missing|exit 2" \
+  "$(COORDINATOR_VERIFY= ctree conflicts "$b" 2>&1 | sed 's|launcher .*/coord-tree/|launcher <tree>/|')|$(COORDINATOR_VERIFY= ctree conflicts "$b" >/dev/null 2>&1; echo "exit $?")"
+check "an unknown subcommand is refused" "exit 1" "$(coord_status bogus)"
 
 echo "== rules trace =="
 
@@ -3511,6 +4209,25 @@ printf '# Beta\n' > "$TR/beta.md"
 ( cd "$TR" && git -c user.name=suite -c user.email=suite@localhost commit -qam shorten )
 check "trace: sources at HEAD sees the shortened file" "exit 1" "$(trace_status sources inventory.md)"
 check "trace: sources --ref reads the older commit" "exit 0" "$(trace_status sources inventory.md --ref HEAD~1)"
+
+# A rule added after the commit the inventory is checked at cites a file that commit never
+# had: its citation reads 'path:line@HEAD', the literal current head, and is read there
+# instead of failing as absent. No other suffix survives a rebase, so `@HEAD` is the only
+# one accepted; a commit sha or any other ref is refused rather than read.
+variant srcathead.md 's/| beta.md:3 |/| beta.md:3@HEAD |/'
+check "trace: a citation suffixed @HEAD is read at the literal head, overriding --ref" \
+  "FIX-004 past-end:beta.md:3@HEAD beta.md" \
+  "$(trace sources srcathead.md --ref HEAD~1 | grep '^FIX-004 ')"
+variant srcatsha.md 's/| beta.md:3 |/| beta.md:3@2f2e22b |/'
+check "trace: a citation suffixed with a commit sha is refused" \
+  "FIX-004 bad-suffix:beta.md:3@2f2e22b beta.md" \
+  "$(row FIX-004 sources srcatsha.md)"
+variant srcatref.md 's/| beta.md:3 |/| beta.md:3@HEAD~1 |/'
+check "trace: a citation suffixed with anything but HEAD is refused" \
+  "FIX-004 bad-suffix:beta.md:3@HEAD~1 beta.md" \
+  "$(row FIX-004 sources srcatref.md)"
+check "trace: a plain citation is still read at --ref" "FIX-004 past-end:beta.md:3 beta.md" \
+  "$(row FIX-004 sources inventory.md)"
 
 check "trace: the real inventory holds every signature" "exit 0" \
   "$( ( cd "$ROOT" && bash "$TRACE" targets docs/rules-inventory.md >/dev/null 2>&1 ); echo "exit $?")"

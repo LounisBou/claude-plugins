@@ -27,6 +27,10 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --i
     # is exclusive with --prompt/--prompt-file, which stay for a spawn that carries no brief
     # (`--prompt "Read and execute <path>. Your orchestrator is <name [ref]>."` hand-built,
     # unlinted).
+    # One of --brief, --prompt or --prompt-file is REQUIRED: a launch carrying none of the
+    # three is refused before any tab exists (the host writes no transcript before a first
+    # prompt, so the session's mode could never be read, §29) — --no-verify does not lift
+    # this, a promptless session stays refused whether or not the mode is checked.
     # --title has a SHAPE — `Orch : <subject>` for an orchestrator and its successor,
     # `Agent : <subject>` for anything you spawn, the subject at most 25 characters —
     # because it is the session's name in every listing and the operator reads that listing.
@@ -46,8 +50,11 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --i
     # refuses a session that came up in another one — closing the tab it just made and
     # naming both modes, the model, and the two repairs: rebind the tier, or pass
     # --permission-mode acceptEdits for an agent that only edits. A transcript that has
-    # not appeared within ORCHESTRATOR_MODE_TIMEOUT (20s) lets the launch through and says
-    # the mode is unread. --no-verify skips it, with the CLI check.
+    # not appeared within ORCHESTRATOR_MODE_TIMEOUT (20s) refuses the spawn too, the tab
+    # closed the same way, naming the checkout, the timeout, and the remedy: read the tab
+    # with `screen` before retrying, or raise ORCHESTRATOR_MODE_TIMEOUT if the machine is
+    # only slow. --no-verify skips it, with the CLI check (but not the promptless refusal
+    # above, which runs before either check and does not depend on --verify).
     # writes the prompt to a file under the plugin's state directory, writes the launch
     # to a second file, asks the app to run it in a new tab AT AN INDEX, WAITS until the
     # host CLI is running on the new tty (30 s, ORCHESTRATOR_SPAWN_TIMEOUT), and prints
@@ -73,6 +80,14 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --i
     #   refused on any spawn without --auditor. --successor, an anchor, --title-free, --tier,
     #   --model and --no-remote-control are refused beside it. `rotate` and `move` refuse a tab
     #   whose session is named `Audit :` unless --force.
+    # --coordinator-successor --title "Coord : <subject>": the coordinator's own successor —
+    #   opens at the FIRST place of your window, not merely beside you, the chain ignored, on
+    #   your model (implied) and under remote control under its title; it takes no chain and
+    #   joins none, because it is nobody's successor and nobody's agent. Its title is
+    #   required, and `Coord :` is refused on any spawn without --coordinator-successor.
+    #   --successor, --auditor, --left-of and --right-of are refused beside it: the placement
+    #   is its own. `rotate` and `move` refuse a tab whose session is named `Coord :` unless
+    #   --force.
 
 $SCRIPT verify --tty /dev/ttysNNN
     # succeeds with the pid when the host CLI runs on that tty; exit 1 otherwise
@@ -85,9 +100,11 @@ $SCRIPT close --tty /dev/ttysNNN --expect-title <substring>
     # tty-exact; refuses if the session's current title does not contain the substring;
     # waits for the host CLI to leave the tty, and fails loudly naming what survived
 
-$SCRIPT move --tty /dev/ttysNNN (--right-of self | --right-of /dev/ttysMMM | --left-of /dev/ttysMMM) [--force]
-    # places a tab immediately beside another (same window); idempotent, verified after the move.
-    # `self` is the calling session's own tty, found by walking up the process tree.
+$SCRIPT move --tty /dev/ttysNNN (--right-of self | --right-of /dev/ttysMMM | --left-of /dev/ttysMMM | --leftmost) [--force]
+    # places a tab immediately beside another (same window), or at the FIRST place of its
+    # window with --leftmost, exclusive with --left-of and --right-of; idempotent, verified
+    # after the move. `self` is the calling session's own tty, found by walking up the
+    # process tree.
     # Refuses a --tty that is neither your own tab nor one of your chain: a session you did
     # not launch is not yours to place. --force moves it anyway and says so on stderr.
     # --force is the operator's hand and the layout repair.
@@ -97,6 +114,9 @@ $SCRIPT rotate --dir <workdir> --old-tty <tty> [--trust] [--tier <tier>] [--expe
     # spawns the replacement FIRST and verifies it is running, then closes the old tab
     # every argument it does not consume reaches the spawn, `--trust` and `--mcp <name>`
     # included: an agent that needed a server is replaced by one that still has it.
+    # One of --prompt, --prompt-file or --brief is required here too — a promptless
+    # rotation is refused the same way a promptless spawn is, before the replacement's
+    # tab exists and with the old session untouched.
 
 $SCRIPT trust prune [--apply]      # entries of the trust record whose directory is gone; --apply removes them
 ```

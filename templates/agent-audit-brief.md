@@ -181,9 +181,9 @@ changes you order, and ends your turn. Then answer the orchestrator's acknowledg
   re-sent after a fresh `ListAgents`, to the session whose NAME matches, marked as a re-send.
   If that name is not listed, tell the operator in your own tab and stop waiting.
 - Every message to the orchestrator ends with your measured context: run `{{GAUGE}}` and
-  paste its `context_percent=` and `source=` lines. At 60 %, finish the section in progress,
+  paste its `context_percent=` and `source=` lines. At 80 %, finish the section in progress,
   write the report's state into the report, message the orchestrator
-  « audit at 60 %: {{REPORT_PATH}}, continue from <section> », tell the operator in your own
+  « audit at 80 %: {{REPORT_PATH}}, continue from <section> », tell the operator in your own
   tab, and WAIT for the operator's word. You spawn nothing and end nothing: an auditor launches no session. On
   the operator's word the ORCHESTRATOR relaunches the audit with the scope « continue from
   {{REPORT_PATH}} », and the new brief's previous report is this one.

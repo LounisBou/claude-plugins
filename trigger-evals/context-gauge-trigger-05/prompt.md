@@ -5,4 +5,4 @@ timeout_seconds: 300
 allowed_tools: [Read, Glob, Grep, Skill]
 ---
 
-Hold on before sending phase 3 out to the implementer: are you under 60% yourself? Check, don't guess.
+Hold on before sending phase 3 out to the implementer: are you under 80% yourself? Check, don't guess.

@@ -149,9 +149,13 @@ check "the tab landed immediately right of its anchor" "$((pos_self + 1))" "$pos
 # The second agent goes after the FIRST, not between the orchestrator and it. `self` here
 # is the tab running this script; both probes anchor on it and the chain orders them.
 # The dry run carries --trust because the trust gate runs before the dry-run print (§31)
-# and the sandbox is not yet recorded here: without it the launcher refuses, `me` is
-# empty and the chain block is skipped in silence.
-me=$(ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" spawn --dir "$SANDBOX/repo" --title "Agent : e2e self" --trust --right-of self 2>/dev/null | sed -n 's/^self=//p')
+# and the sandbox is not yet recorded here; it carries --prompt because a promptless
+# launch is refused up front, same as any real one. Either refusal, or this shell simply
+# having no tty of its own to resolve `self` against, leaves `me` empty — two different
+# causes the block below must tell apart instead of reporting one for the other.
+me_err=$(mktemp "$SANDBOX/self-probe.XXXXXX")
+me=$(ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" spawn --dir "$SANDBOX/repo" --title "Agent : e2e self" --trust \
+      --prompt "Do nothing." --right-of self 2>"$me_err" | sed -n 's/^self=//p')
 if [ -n "$me" ]; then
   # The caller's own row, marked: the reading an orchestrator goes without when it takes the
   # last tab in the listing for its own, and moves a stranger's session (§38).
@@ -189,8 +193,14 @@ if [ -n "$me" ]; then
   bash "$AGENT" close --tty "$ONE" >/dev/null 2>&1
   check "a closed agent leaves the chain" "0" "$(grep -c "\"tty\": \"$ONE\"\|\"tty\": \"$TWO\"" "$succ_chain")"
 else
-  echo "  skip the chain: this shell has no tty of its own"
+  self_reason=$(head -1 "$me_err")
+  if [ -n "$self_reason" ]; then
+    echo "  skip the chain: the self probe was refused: $self_reason"
+  else
+    echo "  skip the chain: this shell has no tty of its own"
+  fi
 fi
+rm -f "$me_err"
 
 # A running process is not a launched agent. Until this check existed, every round here
 # passed with its session parked on a question nobody was there to answer.
@@ -286,7 +296,8 @@ check "and its tab is still there" "1" "$(bash "$AGENT" list | grep -c "$old_tty
 # title to say what it is doing. The tty is the identity; what makes the close safe is the
 # stand-down that preceded it, not a string that was true a moment ago.
 out=$(bash "$AGENT" rotate --old-tty "$old_tty" \
-      --dir "$SANDBOX/repo" --tier "$tier" --title "Agent : e2e rotated" 2>&1)
+      --dir "$SANDBOX/repo" --tier "$tier" --title "Agent : e2e rotated" \
+      --prompt "Do nothing." 2>&1)
 TTY=$(printf '%s' "$out" | grep -oE '/dev/ttys[0-9]+' | head -1)
 check "the rotation returned a new tty" "yes" "$(printf '%s' "$TTY" | grep -qE '^/dev/tty' && echo yes || echo "$out")"
 check "the replacement is not the session it replaced" "different" \
@@ -300,7 +311,9 @@ for _ in 1 2 3 4 5 6; do
 done
 check "the session it replaced is gone" "1" "$gone"
 check "and its tab with it" "0" "$(bash "$AGENT" list | grep -c "$old_tty")"
-OLD_TTY=""
+# Cleared only once the old session is PROVED gone: a rotation this probe fails past this
+# point must still find its old tab closed by the trap, not leaked past the sandbox.
+[ "$gone" = 1 ] && OLD_TTY=""
 
 echo "== stand down =="
 title=$(bash "$AGENT" list | grep "$TTY" | cut -d'|' -f3 | sed 's/^ *//;s/ *$//' | cut -c1-6)

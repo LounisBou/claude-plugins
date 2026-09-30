@@ -81,7 +81,8 @@ and three runs (`--runs 3 --case <id>`) on any case that scored below its baseli
   nothing else is trusted.
 - `--allow-tools Write` is the one grant. `Write` is gated, so the cases that grade a
   written brief (`orch-038-040-043`, `orch-050-052-053-068-168-179-220`, `orch-061-063`,
-  `orch-093-095-096-tpl-review-002-004-005`, the only ones listing it) cannot pass without
+  `orch-093-095-096-tpl-review-002-004-005`, `coord-048-050-051-053`, the only ones listing
+  it) cannot pass without
   it. It writes into the run's sandbox directory and reaches nothing else.
 
 ## The committed baseline

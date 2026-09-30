@@ -146,10 +146,10 @@ When an auditor runs (`references/audit.md`):
 
 They hold at every step of the loop, whatever a reference adds.
 
-Agents report context % in every report. Two gates on the same ~60% threshold:
+Agents report context % in every report. Two gates on the same ~80% threshold:
 
-- **Pre-dispatch gate**: never assign a new phase to an agent already past ~60%: it must have room to FINISH the phase without saturating mid-work. Rotate first. **Read the number when it arrives** — an agent reporting 71% with a phase done is an agent that gets its N-bis and nothing after it.
-- **Mid-work gate**: an agent crossing ~60% finishes the in-progress unit, then stops.
+- **Pre-dispatch gate**: never assign a new phase to an agent already past ~80%: it must have room to FINISH the phase without saturating mid-work. Rotate first. **Read the number when it arrives** — an agent reporting 83% with a phase done is an agent that gets its N-bis and nothing after it.
+- **Mid-work gate**: an agent crossing ~80% finishes the in-progress unit, then stops.
 
 **One writer per checkout** — stated in the phase rules above.
 
@@ -230,7 +230,7 @@ A plan, a prompt template or a norms file that outlives the decision it served i
 | "I'll read the diff this round and build it next round" | There is no next round. Build and walk in the review round, or the build is never done. |
 | "The prompt is in my scratch directory, I'll paste it when asked" | A prompt the next session cannot open by path does not exist. Write it where the session runs. |
 | "Eight workers reproduce the failure faster" | Eight workers on a machine with room for three is the failure. Do the arithmetic, set the variable. |
-| "71% context, but the fix is one line" | The number is the gate. N-bis at most; the next phase goes to a fresh session. |
+| "83% context, but the fix is one line" | The number is the gate. N-bis at most; the next phase goes to a fresh session. |
 | "The project says the operator instantiates the orchestrator, so I wait for the word" | That rule is the first instantiation's. Succession at the gate is yours: spawn, then tell. |
 | "I'll offer the user the choice: hand over now or continue" | At the context gate, the hand-over is not a choice. Spawn at the quiet boundary; the user learns it happened. |
 | "The successor will pick a permission mode" | It inherits the operator's decision mode from the spawn, or it stalls unattended. |

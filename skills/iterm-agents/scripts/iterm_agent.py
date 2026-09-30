@@ -100,6 +100,13 @@ TITLE_SHAPE = re.compile(r"^(Orch|Agent) : \S(.{0,23}\S)?\Z")
 # anchor: a title is a claim about what a session is, and the launcher holds it to that.
 AUDIT_TITLE_SHAPE = re.compile(r"^Audit : \S(.{0,23}\S)?\Z")
 AUDIT_ROLE = "Audit :"
+# The coordinator's own successor's title, and ONLY that spawn's. The coordinator sits above
+# every orchestrator on the machine, so the operator tells its tab apart from an auditor's or
+# an agent's the same way: by the role word. `Coord :` is accepted under
+# --coordinator-successor alone and refused everywhere else, the way `Audit :` is refused
+# outside --auditor.
+COORD_TITLE_SHAPE = re.compile(r"^Coord : \S(.{0,23}\S)?\Z")
+COORD_ROLE = "Coord :"
 
 
 def die(msg):
@@ -184,6 +191,44 @@ def mode_refusal(asked, got, model):
             "host ignores the mode asked for this model; bind the tier to another model, or "
             "pass --permission-mode acceptEdits for an agent that only edits"
             % (got, asked, model or "the host default"))
+
+
+def unread_refusal(dir_, timeout):
+    """What was checked, for how long, why it may have happened, and what to look at next.
+    A named exception to "a gate that cannot measure lets the run through and says so"
+    (§29): a session whose mode is unread may be parked on a dialog or hung at start, which
+    the plugin already calls "not launched" (§43) — so the tab this spawn made is closed
+    rather than left for the operator to find blank."""
+    return ("spawn: refused: no transcript for %s carrying a mode after %ss: the session may "
+            "be parked on a dialog or hung at start; the tab was closed. Read it next time "
+            "with `screen` before retrying, or raise ORCHESTRATOR_MODE_TIMEOUT if the "
+            "machine is only slow" % (dir_, timeout))
+
+
+def verify_mode(dir_, launch_epoch, asked_mode, model, made, timeout=None, sleep=time.sleep):
+    """Poll for the session's own transcript and the first mode it carries, up to `timeout`
+    seconds (MODE_TIMEOUT by default); the line to print once it is read and matches.
+
+    A mode that never gets read is now refused exactly like a mismatch: the tab this spawn
+    made is closed and the process dies on the same exit status, because a session nobody
+    can read is a session waiting for a click, which is not launched either (§43)."""
+    timeout = MODE_TIMEOUT if timeout is None else timeout
+    waited, mode = 0, ""
+    while waited < timeout:
+        path = find_transcript(dir_, launch_epoch)
+        if path:
+            mode = mode_of_transcript(path)
+            if mode:
+                break
+        sleep(1)
+        waited += 1
+    if not mode:
+        close_made(made)
+        die(unread_refusal(dir_, timeout))
+    elif mode != asked_mode:
+        close_made(made)
+        die(mode_refusal(asked_mode, mode, model))
+    return "spawn: mode %s read on the transcript" % mode
 
 
 def last_lines(lines, n):
@@ -922,17 +967,19 @@ def chain_owned(entries, owner):
     return [e for e in entries if e.get("owner") == owner]
 
 
-def chain_effect(successor, auditor):
+def chain_effect(successor, auditor, coordinator_successor=False):
     """What a spawn does to its caller's chain: `append`, `transfer` or `none`.
 
     An agent joins the chain, so the next agent lands after it. A successor takes the
     chain, because it takes the predecessor's place (§34). An auditor does neither (§52):
     the orchestrator it audits keeps its agents, and the auditor is nobody's agent — written
     into the chain, it would become the anchor the orchestrator's next agent lands after,
-    and the operator's window would read the audit as part of the build."""
+    and the operator's window would read the audit as part of the build. The coordinator's
+    successor is the same kind of nobody's-agent: it takes over no orchestrator's build, so
+    it joins none of them."""
     if successor:
         return "transfer"
-    if auditor:
+    if auditor or coordinator_successor:
         return "none"
     return "append"
 
@@ -945,6 +992,17 @@ def audit_name_on(tty):
     on a recycled tty could make it look like an agent (§52)."""
     name = session_name_on(tty)
     if name and name != UNREADABLE_NAME and name.startswith(AUDIT_ROLE):
+        return name
+    return None
+
+
+def coord_name_on(tty):
+    """The name of the session on a tty when it is the coordinator's, None otherwise.
+
+    Read by NAME, exactly like an auditor's tab: the coordinator is written into no chain
+    either, so a stale chain entry on a recycled tty must not be read as its own."""
+    name = session_name_on(tty)
+    if name and name != UNREADABLE_NAME and name.startswith(COORD_ROLE):
         return name
     return None
 
@@ -1343,6 +1401,8 @@ def cmd_spawn(argv):
     p.add_argument("--trust", action="store_true", default=False)
     p.add_argument("--successor", action="store_true", default=False)
     p.add_argument("--auditor", action="store_true", default=False)
+    p.add_argument("--coordinator-successor", dest="coordinator_successor",
+                    action="store_true", default=False)
     p.add_argument("--mcp", action="append", default=[])
     args, unknown = p.parse_known_args(argv)
     if unknown:
@@ -1351,6 +1411,32 @@ def cmd_spawn(argv):
         die("spawn: --dir is required")
     if args.left_of and args.right_of:
         die("spawn: --left-of and --right-of are mutually exclusive")
+    if args.coordinator_successor:
+        # A coordinator's successor is placed, named, modelled and reached ONE way: at the
+        # first place of the caller's window, "Coord : <subject>", the caller's model, remote
+        # control on. Each of these would quietly replace one of those terms with the
+        # launcher's default, so each is refused rather than obeyed; the placement is its own,
+        # so it takes no anchor either. Checked BEFORE the auditor's own block, so a caller
+        # naming both flags reads which one was theirs to give up.
+        for flag, given in (("--successor", args.successor), ("--auditor", args.auditor),
+                            ("--left-of", args.left_of), ("--right-of", args.right_of),
+                            ("--title-free", args.title_free), ("--tier", args.tier),
+                            ("--model", args.model),
+                            ("--no-remote-control", not args.remote_control)):
+            if given:
+                die("spawn: refused: %s is not a coordinator-successor's: it lands at the "
+                    "first place of your window, reads \"Coord : <subject>\", runs on your "
+                    "model and comes up under remote control" % flag)
+        if not args.title:
+            die('spawn: refused: --coordinator-successor needs --title "Coord : <subject>"')
+        if not COORD_TITLE_SHAPE.match(args.title):
+            die("spawn: refused: the coordinator's title reads \"Coord : <subject>\", the "
+                "subject at most 25 characters and neither starting nor ending with a space, "
+                "got '%s'" % args.title)
+    elif args.title.startswith(COORD_ROLE):
+        die("spawn: refused: a \"Coord :\" title is the coordinator's; spawn it with "
+            "--coordinator-successor, which places it at the first place of your window, "
+            "keeps it out of every chain and brings it up under remote control on your model")
     if args.auditor:
         # An auditor is placed, named, modelled and reached ONE way (§52): immediately left
         # of its caller, `Audit : <subject>`, the caller's model, remote control on. Each of
@@ -1415,6 +1501,15 @@ def cmd_spawn(argv):
             die("spawn: refused: brief-lint found findings in %s" % brief_abs)
         brief_prompt = ("Read and execute %s. Your orchestrator is %s; handshake first, "
                          "silence rule 15 min." % (brief_abs, args.orchestrator))
+    if not (brief_prompt or args.prompt or args.prompt_file):
+        # The host writes a session's transcript only once it has a first prompt (§29): a
+        # promptless launch has no transcript to read a mode on, so verify_mode's own
+        # refusal always fires, tab and all, for a launch that could never have passed it.
+        # Refused here instead, before any tab is made, and --no-verify does not lift it —
+        # a session nobody can read is not one that skipping the read makes readable.
+        die("spawn: refused: no startup prompt: the host writes no transcript before a "
+            "first prompt, so the session's mode cannot be read; give the brief with "
+            "--prompt or --prompt-file")
     if args.tier and args.model:
         die("spawn: --tier and --model are mutually exclusive")
     if args.inherit and (args.tier or args.model):
@@ -1424,9 +1519,10 @@ def cmd_spawn(argv):
         model = resolve_tier(args.tier)
         if model is None:
             die("spawn: cannot resolve tier: %s" % args.tier)
-    if args.inherit or args.auditor:
-        # An auditor reads with the judgment of the session it audits: the caller's model,
-        # like a successor's, whether or not the flag was typed (§52).
+    if args.inherit or args.auditor or args.coordinator_successor:
+        # An auditor, and the coordinator's own successor, read with the judgment of the
+        # session that spawns them: the caller's model, like a successor's, whether or not
+        # the flag was typed (§52).
         model = inherited_model()
     # The anchor first, before a prompt file is written or a trust record changed: an
     # anchor that is not there is a refusal, and a refusal must leave nothing behind.
@@ -1461,7 +1557,7 @@ def cmd_spawn(argv):
             # the rest of a launch line has no business filling a terminal.
             die("spawn: refused: the caller's session name '%s' does not read "
                 '"Orch : <subject>"; pass --title "Orch : <subject>"' % title[:40])
-    elif not args.auditor and not TITLE_SHAPE.match(title):
+    elif not args.auditor and not args.coordinator_successor and not TITLE_SHAPE.match(title):
         die("spawn: refused: a title reads \"Orch : <subject>\" or \"Agent : <subject>\", "
             "the subject at most 25 characters and neither starting nor ending with a "
             "space, got '%s' (pass --title-free for a tab named otherwise)" % title)
@@ -1474,7 +1570,13 @@ def cmd_spawn(argv):
         # takes nothing with it (§52) — the operator's layout: the auditor beside its
         # orchestrator on the left, agents and successor on the right.
         side, anchor = "left", "self"
-    effect = chain_effect(args.successor, args.auditor)
+    elif args.coordinator_successor:
+        # The coordinator's successor is placed at the FIRST place of the caller's window,
+        # not immediately beside it: unlike an auditor or a successor, no other tab anchors
+        # it, so the sentinel below is resolved against the caller's own window, never
+        # against a neighbour tab.
+        side, anchor = "left", "leftmost"
+    effect = chain_effect(args.successor, args.auditor, args.coordinator_successor)
     if anchor == "self":
         if not own and not DRY_RUN:
             die("spawn: --right-of self: cannot resolve this session's own tty")
@@ -1490,7 +1592,23 @@ def cmd_spawn(argv):
                     app = await iterm2.async_get_app(connection)
                     return await chain_anchor(app, own)
                 anchor = run(last) or own
-    if anchor and anchor != "self" and not DRY_RUN:
+    elif anchor == "leftmost":
+        if not own and not DRY_RUN:
+            die("spawn: --coordinator-successor: cannot resolve this session's own tty")
+        if not DRY_RUN:
+            async def probe_leftmost(iterm2, connection):
+                app = await iterm2.async_get_app(connection)
+                win, _, _ = await find_tab(app, own)
+                return win is not None
+            if not run(probe_leftmost):
+                # Same reading as anchor_after_probe's for "self": the caller is running
+                # outside the app (a multiplexer, a plain shell), so there is no window to
+                # place a first tab of — the new tab lands where the app puts it instead.
+                print("spawn: this session is not a tab of the app's (%s), so the new tab "
+                      "cannot be placed at the first place of your window; it lands where "
+                      "the app puts it." % own, file=sys.stderr)
+                anchor = ""
+    if anchor and anchor not in ("self", "leftmost") and not DRY_RUN:
         async def probe(iterm2, connection):
             app = await iterm2.async_get_app(connection)
             win, _ = await anchor_position(app, anchor, side)
@@ -1538,7 +1656,8 @@ def cmd_spawn(argv):
         prompt_file = (state_file_path("prompt", title, "txt") if DRY_RUN
                        else write_prompt_file(prompt, title))
 
-    remote_control = title if ((args.successor and args.remote_control) or args.auditor) else ""
+    remote_control = title if ((args.successor and args.remote_control) or args.auditor
+                                or args.coordinator_successor) else ""
     launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control,
                            mcp_file)
 
@@ -1554,6 +1673,7 @@ def cmd_spawn(argv):
         print("trust=%s" % trust_state)
         print("successor=%s" % ("yes" if args.successor else "no"))
         print("auditor=%s" % ("yes" if args.auditor else "no"))
+        print("coordinator_successor=%s" % ("yes" if args.coordinator_successor else "no"))
         print("chain=%s" % effect)
         print("name=%s" % title)
         print("title_free=%s" % ("yes" if args.title_free else "no"))
@@ -1572,7 +1692,14 @@ def cmd_spawn(argv):
     async def go(iterm2, connection):
         app = await iterm2.async_get_app(connection)
         index = None
-        if anchor:
+        if anchor == "leftmost":
+            # No neighbour tab to resolve against: the target is the caller's own window,
+            # at its very first place, whatever tab happens to sit there today.
+            win, _, _ = await find_tab(app, own)
+            if win is None:
+                die("spawn: no session found on %s" % own)
+            index = 0
+        elif anchor:
             # Resolved again on a fresh app: the probe above ran on another connection,
             # and a window object is a cached copy (§14).
             win, index = await anchor_position(app, anchor, side)
@@ -1650,24 +1777,7 @@ def cmd_spawn(argv):
         # that runs and waits for a click is not. The mode asked for is carried on the
         # process line and honoured for some models and not others, so the mode the session
         # actually came up in is read on its own transcript (§43).
-        waited, mode = 0, ""
-        while waited < MODE_TIMEOUT:
-            path = find_transcript(args.dir, launch_epoch)
-            if path:
-                mode = mode_of_transcript(path)
-                if mode:
-                    break
-            time.sleep(1)
-            waited += 1
-        if not mode:
-            # A gate that cannot measure holds nothing, and says so (§29).
-            print("spawn: no transcript for %s after %ss: the session's mode is unread"
-                  % (args.dir, MODE_TIMEOUT), file=sys.stderr)
-        elif mode != args.mode:
-            close_made(made)
-            die(mode_refusal(args.mode, mode, model))
-        else:
-            print("spawn: mode %s read on the transcript" % mode, file=sys.stderr)
+        print(verify_mode(args.dir, launch_epoch, args.mode, model, made), file=sys.stderr)
     print(new_tty)
 
 
@@ -1826,19 +1936,24 @@ def cmd_move(argv):
     p.add_argument("--tty", dest="tty")
     p.add_argument("--left-of", dest="left_of", default="")
     p.add_argument("--right-of", dest="right_of", default="")
+    p.add_argument("--leftmost", action="store_true", default=False)
     p.add_argument("--force", action="store_true", default=False)
     args, _ = p.parse_known_args(argv)
     if not args.tty:
         die("move: --tty is required")
-    if not args.left_of and not args.right_of:
-        die("move: --left-of or --right-of is required")
+    if not args.left_of and not args.right_of and not args.leftmost:
+        die("move: --left-of, --right-of or --leftmost is required")
+    if args.leftmost and (args.left_of or args.right_of):
+        die("move: --leftmost is exclusive with --left-of and --right-of")
     if args.left_of and args.right_of:
         die("move: --left-of and --right-of are mutually exclusive")
     own = self_tty() or ""
-    anchor = args.right_of or args.left_of
+    # No anchor to resolve for --leftmost: the target is a place in the tab's own window,
+    # never a neighbour tab, so "leftmost" stands in as the printed field's sentinel below.
+    anchor = "leftmost" if args.leftmost else (args.right_of or args.left_of)
     if anchor == "self":
         anchor = own
-    if anchor == args.tty:
+    if not args.leftmost and anchor == args.tty:
         die("move: --tty and its anchor are the same session")
     def guard(is_ours):
         """A session the caller did not launch is not its to place. An orchestrator that
@@ -1846,8 +1961,17 @@ def cmd_move(argv):
         moved a stranger's session out from between itself and its agents; the script
         obeyed, because `move` moved anything it was told to (§38).
 
-        An auditor's tab is read first, by its name: it is in no chain, so it is nobody's
-        to place but its own session's, whatever a stale chain entry on its tty says (§52)."""
+        An auditor's tab, and the coordinator's, are read first, by their NAME: each is in
+        no chain, so each is nobody's to place but its own session's, whatever a stale chain
+        entry on its tty says (§52)."""
+        coord = coord_name_on(args.tty) if args.tty != own else None
+        if coord:
+            if not args.force:
+                die("move: refused: %s is the coordinator's tab ('%s'), not this session's "
+                    "to place (pass --force to move it anyway)" % (args.tty, coord))
+            print("move: forced: %s is the coordinator's tab ('%s')" % (args.tty, coord),
+                  file=sys.stderr)
+            return
         audit = audit_name_on(args.tty) if args.tty != own else None
         if audit:
             if not args.force:
@@ -1880,15 +2004,19 @@ def cmd_move(argv):
             die("move: no session found on %s" % args.tty)
         guard(await move_is_owned(app, args.tty, own))
         tabs = list(win.tabs)
-        target = None
-        for i, t in enumerate(tabs):
-            if await tty_of(t) == anchor:
-                target = t
-                break
-        if target is None:
-            die("move: no session found on %s" % anchor)
-        tabs.remove(tab)
-        at = tabs.index(target) + (1 if args.right_of else 0)
+        if args.leftmost:
+            tabs.remove(tab)
+            at = 0
+        else:
+            target = None
+            for i, t in enumerate(tabs):
+                if await tty_of(t) == anchor:
+                    target = t
+                    break
+            if target is None:
+                die("move: no session found on %s" % anchor)
+            tabs.remove(tab)
+            at = tabs.index(target) + (1 if args.right_of else 0)
         tabs.insert(at, tab)
         await win.async_set_tabs(tabs)
         # Re-read the APP, not the window we already hold: both carry a cached tab list,
@@ -1912,14 +2040,24 @@ def cmd_rotate(argv):
         die("rotate: --old-tty is required")
     # A rotation replaces an agent with a titled agent; none of these are that. A successor
     # is spawned with `spawn --successor`, not smuggled through the replacement a rotation
-    # makes, and neither is an auditor.
-    for flag in ("--successor", "--auditor", "--title-free", "--no-remote-control"):
+    # makes, and neither is an auditor or the coordinator's own successor.
+    for flag in ("--successor", "--auditor", "--coordinator-successor", "--title-free",
+                 "--no-remote-control"):
         if flag in rest:
             die("rotate: refused: %s is not a rotation's (a rotation replaces an agent with "
                 "a titled agent; a successor is spawned with spawn --successor)" % flag)
-    # Nor is the tab it closes an auditor's: an auditor is not an agent of the caller's, and
-    # a rotation that closed one would end an audit nobody ended (§52). Read before the
+    # Nor is the tab it closes the coordinator's or an auditor's: neither is an agent of the
+    # caller's, and a rotation that closed one would end an audit nobody ended, or drop the
+    # machine's coordinator, without anyone having asked for either (§52). Read before the
     # spawn, so a refusal leaves no replacement behind.
+    coord = coord_name_on(args.old_tty)
+    if coord:
+        if not args.force:
+            die("rotate: refused: %s is the coordinator's tab ('%s'): the coordinator is "
+                "not an agent and is not rotated (pass --force to rotate it anyway)"
+                % (args.old_tty, coord))
+        print("rotate: forced: %s is the coordinator's tab ('%s')" % (args.old_tty, coord),
+              file=sys.stderr)
     audit = audit_name_on(args.old_tty)
     if audit:
         if not args.force:
