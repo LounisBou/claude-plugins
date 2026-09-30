@@ -118,18 +118,31 @@ check "the rotation closes by tty with the acknowledgment as its guard" "1" \
   "$(grep -c 'closes the old tab by its tty — the stood-down acknowledgment is the guard, and a rotation takes no title guard' "$lc")"
 check "the rotation names the replacement's place" "1" "$(grep -c 'rotate --right-of self` (it spawns the fresh session with the brief path as its startup prompt at the end of your chain' "$lc")"
 check "no title guard left on a rotation" "0" "$(grep -c 'tty + title guard' "$lc")"
+check "a project's instantiation rule no longer carves out succession" "0" \
+  "$(grep -c 'governs the FIRST instantiation, never the succession' "$lc")"
 
 # Merging and undrafting a pull request are the operator's, on his clear and explicit request:
 # they left every « decide and move » list and every list of what the orchestrator runs,
 # the auditor's included. A list that names merges again hands them back to a session.
 hits=$(cd "$ROOT" && git grep -nE 'merges, deploys|Opening, merging|merging and tagging' -- skills/ commands/ templates/ README.md || true)
 check "no merge in a decide-and-move or orchestrator-runs list" "" "$hits"
-check "the rulebook keeps merge and undraft the operator's" "1" \
-  "$(grep -c 'Merging a pull request and taking it out of draft are the two exceptions' "$ROOT/skills/orchestrator/SKILL.md")"
+check "the rulebook keeps merge and undraft the operator's by default" "1" \
+  "$(grep -c 'By default, merging a pull request and taking it out of draft are his, on his clear and' "$ROOT/skills/orchestrator/SKILL.md")"
+check "a project's own method may decide otherwise on merge and undraft" "1" \
+  "$(grep -c "project's own method may decide otherwise — auto-merge, pull requests that ship ready rather" "$ROOT/skills/orchestrator/SKILL.md")"
+check "the coordinator's overview keeps merge and undraft the operator's by default" "1" \
+  "$(grep -c "operator's by default (a project's own method may decide otherwise), method is the auditor's" "$ROOT/skills/coordination/SKILL.md")"
+check "the coordinator's ready-is-not-a-merge section names the default too" "1" \
+  "$(grep -c "that call is his by default, or a" "$ROOT/skills/coordination/SKILL.md")"
 check "the audit reference keeps merge and undraft out of its list" "1" \
   "$(grep -c 'Merging a pull request and taking it out of draft are in no such list, the auditor' "$ROOT/skills/orchestrator/references/audit.md")"
 check "the audit brief keeps merge and undraft out of its list" "1" \
   "$(grep -c 'draft are in no such list: they are the operator.s, on his clear and explicit request' "$ROOT/templates/agent-audit-brief.md")"
+# Two locks hold whatever is said — the push guard and the title-verified close — and
+# nothing else the launcher refuses is written as an absolute. Read with the rulebook's
+# line breaks folded.
+check "only the two locks hold whatever is said, never routed around" "1" \
+  "$(tr '\n' ' ' < "$ROOT/skills/orchestrator/SKILL.md" | tr -s ' ' | grep -oF -- "Two locks hold whatever is said, never routed around: the push guard, and the tab close verified by its title." | wc -l | tr -d ' ')"
 check "the succession brief closes the predecessor's tab" "1" "$(grep -c 'CLOSE ITS TAB' "$ROOT/templates/orchestrator-succession-brief.md")"
 # Ready is the operator's turn: the pull request stays in draft, rebased, and the squash-merge
 # of a lower branch is replayed around, never through.
@@ -293,12 +306,16 @@ check_status "a summary of nothing is not an error" 0 bash "$REC" summary "$WORK
 # its verdict » was written in the rulebook and in the review template, and was still broken
 # twice in one day: two rounds replaced the project's norms tool by a hand reading of its
 # norms file. A rule only prose carries is applied from memory. `review` records what a round
-# actually read; `ready` refuses everything else.
+# actually read; a row `ready` cannot see a review on no longer stops it, it warns and says
+# so — this default a project may still tighten in its own method, the way it may tighten
+# anything else this file no longer refuses.
 G="$WORK/gate.jsonl"
 g1=$(bash "$REC" open "$G" --class behaviour-phase --tier standard --label "gate")
-check_status "ready refuses a row no review has touched" 1 bash "$REC" ready "$G" "$g1" --head aaa1111
-check "and says which condition failed" "1" \
-  "$(bash "$REC" ready "$G" "$g1" --head aaa1111 2>&1 | grep -c 'no review recorded')"
+check_status "ready warns, it does not refuse, a row no review has touched" 0 bash "$REC" ready "$G" "$g1" --head aaa1111
+check "and names what is missing" "1" \
+  "$(bash "$REC" ready "$G" "$g1" --head aaa1111 2>&1 | grep -c 'no review recorded on row')"
+check "ready still prints its reading of the row" "1" \
+  "$(bash "$REC" ready "$G" "$g1" --head aaa1111 2>/dev/null | grep -c 'ready: row 1 has no review recorded yet; head aaa1111 is unverified')"
 
 bash "$REC" review "$G" "$g1" --head aaa1111 --norms tool >/dev/null
 check "a review records the head it read and its norms check" "aaa1111|tool" \
@@ -336,15 +353,23 @@ check "and says so" "1" "$(bash "$REC" ready "$G" "$g2" --head 012345 2>&1 | gre
 # The operator's process: ONE review round, the orchestrator's triage, ONE correction round
 # the orchestrator verifies on the artifact, done. The correction moves the head, and the
 # review that read the previous one must still let the pull request through at the head the
-# orchestrator verified - once, and only after a review, or the gate stops meaning anything.
+# orchestrator verified. `fixed` no longer refuses a row with no review, or a second
+# correction round: it warns and records anyway, the way a project's own method may still
+# forbid either.
 g3=$(bash "$REC" open "$G" --class behaviour-phase --tier standard --label "one fix")
-check_status "fixed refuses a row no review has touched" 1 bash "$REC" fixed "$G" "$g3" --head ddd4444
-check "and says a review comes first" "1" \
-  "$(bash "$REC" fixed "$G" "$g3" --head ddd4444 2>&1 | grep -c 'fixed: no review recorded on row')"
-check "a refused fix leaves no fixed head" "" "$(jq -r --argjson i "$g3" 'select(.id==$i)|.review.fixed.head // ""' "$G")"
+fout=$(bash "$REC" fixed "$G" "$g3" --head ddd4444 2>&1); fcode=$?
+check "fixed warns, it does not refuse, a row no review has touched" "0" "$fcode"
+check "and says a review is missing" "1" "$(printf '%s\n' "$fout" | grep -c 'fixed: row 3 has no review recorded')"
+check "the correction round is recorded anyway" "ddd4444|1" \
+  "$(jq -r --argjson i "$g3" 'select(.id==$i)|[.review.fixed.head,.rounds]|join("|")' "$G")"
+
+# A proper review round replaces the whole `.review` object — the out-of-order fix it
+# carried does not survive it, which is the point: a review is the row's fresh read.
 bash "$REC" review "$G" "$g3" --head ccc3333 --norms tool >/dev/null
+check "the review starts the row fresh" "ccc3333|tool||2" \
+  "$(jq -r --argjson i "$g3" 'select(.id==$i)|[.review.head,.review.norms,(.review.fixed.head // ""),.rounds]|join("|")' "$G")"
 bash "$REC" fixed "$G" "$g3" --head ddd4444 >/dev/null
-check "fixed records the head the orchestrator verified, and counts the round" "ccc3333|ddd4444|2" \
+check "fixed records the head the orchestrator verified, and counts the round" "ccc3333|ddd4444|3" \
   "$(jq -r --argjson i "$g3" 'select(.id==$i)|[.review.head,.review.fixed.head,.rounds]|join("|")' "$G")"
 check_status "ready passes at the fixed head" 0 bash "$REC" ready "$G" "$g3" --head ddd4444
 check "and says which reading it rests on" "1" \
@@ -354,10 +379,10 @@ check_status "ready still passes at the reviewed head" 0 bash "$REC" ready "$G" 
 check_status "ready refuses a head neither reviewed nor fixed" 1 bash "$REC" ready "$G" "$g3" --head eee5555
 check "and names all three heads" "1" \
   "$(bash "$REC" ready "$G" "$g3" --head eee5555 2>&1 | grep -c 'last review read ccc3333, its correction ddd4444, head is eee5555')"
-check_status "a second correction round is refused" 1 bash "$REC" fixed "$G" "$g3" --head eee5555
-check "and says there is one" "1" \
-  "$(bash "$REC" fixed "$G" "$g3" --head eee5555 2>&1 | grep -c 'fixed: row 3 already has its correction round at ddd4444')"
-check "a refused second fix leaves the first" "ddd4444|2" \
+sout=$(bash "$REC" fixed "$G" "$g3" --head eee5555 2>&1); scode=$?
+check "a second correction round warns, it does not refuse" "0" "$scode"
+check "and names the one it already had" "1" "$(printf '%s\n' "$sout" | grep -c 'fixed: row 3 already has its correction round at ddd4444')"
+check "the second fix overwrites the first" "eee5555|4" \
   "$(jq -r --argjson i "$g3" 'select(.id==$i)|[.review.fixed.head,.rounds]|join("|")' "$G")"
 check_status "fixed without --head is an error" 1 bash "$REC" fixed "$G" "$g2"
 check "and says the head is required" "1" "$(bash "$REC" fixed "$G" "$g2" 2>&1 | grep -c 'fixed: --head is required')"
@@ -1957,15 +1982,19 @@ check_status "--brief without --orchestrator is refused" 1 \
 check_status "a brief that does not exist refuses the spawn" 1 \
   env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : brief" --brief "$B/absent.md" --orchestrator "$ORCHREF"
 
-# A brief with a lint finding refuses the spawn and prints the finding — before any tab
-# exists, and before a prompt file is written for a spawn that will never happen.
+# A brief with a lint finding no longer refuses the spawn: the finding prints as a
+# warning on stderr and the launch goes on, prompt built and all.
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : brief" --brief "$B/placeholder.md" --orchestrator "$ORCHREF" 2>&1); code=$?
-check "a brief with a lint finding refuses the spawn" "1" "$code"
-check "the finding is printed" "1" "$(printf '%s\n' "$out" | grep -c 'unfilled placeholder')"
+check "a brief with a lint finding still spawns" "0" "$code"
+# Twice in the combined stream: once in the stderr warning, once in the dry run's own
+# "lint=" introspection field, which a refusal used to make unreachable.
+check "the finding is printed" "2" "$(printf '%s\n' "$out" | grep -c 'unfilled placeholder')"
+check "the finding is a warning on stderr, and the launch still built a prompt" "1|1" \
+  "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : brief" --brief "$B/placeholder.md" --orchestrator "$ORCHREF" 2>&1 1>/dev/null | grep -c 'unfilled placeholder')|$(printf '%s\n' "$out" | grep -c '^prompt=Read and execute')"
 
 D9STATE=$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")
 ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$D9STATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : brief" --brief "$B/placeholder.md" --orchestrator "$ORCHREF" >/dev/null 2>&1
-check "the lint refusal leaves no prompt file" "0" \
+check "a dry run still writes no prompt file, warning or not" "0" \
   "$(find "$D9STATE/prompts" -type f 2>/dev/null | wc -l | tr -d ' ')"
 rm -rf "$D9STATE"
 
@@ -2124,19 +2153,27 @@ check "an unresolvable tier stops the rotation, and nothing runs after it" \
 
 echo "== context gate hook =="
 # A fake config dir with a tap file: at 85 % the hook orders the succession, at 30 % it
-# prints nothing, and with no tap file it says « unmeasured » exactly once. The default gate
-# is 80, not the old 60: a figure of 70 must stay under it and stay silent.
-GH="$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")"; mkdir -p "$GH/claude-orchestrator/ctx"
+# prints nothing, and past the first turn with no tap file it says « unmeasured » exactly
+# once. The default gate is 80, not the old 60: a figure of 70 must stay under it and stay
+# silent.
+GH="$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")"; mkdir -p "$GH/claude-orchestrator/ctx" "$GH/transcripts"
 now=$(date +%s)
 printf '{"session_id":"g-hi","context_percent":85,"updated_epoch":%s}\n' "$now" > "$GH/claude-orchestrator/ctx/g-hi.json"
 printf '{"session_id":"g-lo","context_percent":30,"updated_epoch":%s}\n' "$now" > "$GH/claude-orchestrator/ctx/g-lo.json"
 printf '{"session_id":"g-under","context_percent":70,"updated_epoch":%s}\n' "$now" > "$GH/claude-orchestrator/ctx/g-under.json"
+# The first prompt's own transcript carries no assistant entry yet; the shape appears
+# only once a turn has answered — this is what tells the hook its first chance came.
+printf '{"type":"user","message":{"role":"user","content":"hi"}}\n' > "$GH/transcripts/no-turn.jsonl"
+printf '{"type":"user","message":{"role":"user","content":"hi"}}\n{"type":"assistant","message":{"role":"assistant","content":"hey"}}\n' > "$GH/transcripts/past-turn.jsonl"
 gate() { printf '{"session_id":"%s"}' "$1" | CLAUDE_CONFIG_DIR="$GH" bash "$ROOT/hooks/context-gate.sh"; }
+gate_t() { printf '{"session_id":"%s","transcript_path":"%s"}' "$1" "$2" | CLAUDE_CONFIG_DIR="$GH" bash "$ROOT/hooks/context-gate.sh"; }
 check "past the gate the hook orders the succession" "1" "$(gate g-hi | grep -c 'SUCCEEDS at the next quiet boundary')"
 check "under the gate the hook is silent" "" "$(gate g-lo)"
 check "the default gate is 80, not 60: 70 stays under it" "" "$(gate g-under)"
-check "unmeasured says so once" "1" "$(gate g-none | grep -c 'unmeasured'; )"
-check "unmeasured stays silent the second time" "" "$(gate g-none)"
+check "unmeasured with no transcript at all prints nothing yet" "" "$(gate g-none)"
+check "unmeasured with a transcript but no turn answered yet prints nothing" "" "$(gate_t g-none2 "$GH/transcripts/no-turn.jsonl")"
+check "unmeasured past the first turn says so once" "1" "$(gate_t g-turn "$GH/transcripts/past-turn.jsonl" | grep -c 'unmeasured')"
+check "unmeasured stays silent the second time" "" "$(gate_t g-turn "$GH/transcripts/past-turn.jsonl")"
 
 # The model that answers can be switched under a session by the host's own fallback, and
 # nothing showed it (§32). The gate keeps the last model it read and says a change once —

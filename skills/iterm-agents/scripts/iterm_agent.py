@@ -1486,8 +1486,9 @@ def cmd_spawn(argv):
     if args.brief:
         # Before any tab exists: a brief is this plugin's whole specification act, and the
         # two defects that reached a live agent before anything read the file are exactly
-        # what the lint catches. A refusal here leaves nothing behind — no trust record
-        # touched, no prompt file written.
+        # what the lint catches. A finding no longer refuses the spawn — it is printed on
+        # stderr as a warning and the launch goes on; a project's own method may still make
+        # it a refusal.
         if not os.path.isfile(args.brief):
             die("spawn: brief not found: %s" % args.brief)
         brief_abs = os.path.abspath(args.brief)
@@ -1497,8 +1498,8 @@ def cmd_spawn(argv):
                                stderr=subprocess.STDOUT)
         lint_verdict = lint.stdout.decode("utf-8", "replace").strip()
         if lint.returncode != 0:
+            sys.stderr.write("spawn: warning: brief-lint found findings in %s\n" % brief_abs)
             sys.stderr.write(lint_verdict + "\n")
-            die("spawn: refused: brief-lint found findings in %s" % brief_abs)
         brief_prompt = ("Read and execute %s. Your orchestrator is %s; handshake first, "
                          "silence rule 15 min." % (brief_abs, args.orchestrator))
     if not (brief_prompt or args.prompt or args.prompt_file):

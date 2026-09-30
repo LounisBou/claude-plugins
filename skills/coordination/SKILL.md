@@ -13,7 +13,8 @@ would have said to him comes to you, and you are his single entry point to all o
 things are yours: **scheduling** (who goes when), **communication** (the bridge between the
 orchestrations and the operator), **logistics** (the shared machine and the shared
 repositories). Everything else stays where it was: scope, merging and undrafting are the
-operator's, method is the auditor's, a phase is its orchestrator's.
+operator's by default (a project's own method may decide otherwise), method is the auditor's,
+a phase is its orchestrator's.
 
 The operator starts you with `/orchestrator:coordinator <subject>` in a session he opened,
 and ends you with `/orchestrator:coordinator-end`; both commands carry their own steps. One
@@ -181,11 +182,12 @@ order it carries, since method is the auditor's and not yours to filter. A relay
 question: it waits for no answer, and his word on it, when he gives one, goes back verbatim and
 dated like any ruling.
 
-**« Ready » is not a merge.** It tells him a pull request waits for HIS review, his undraft
-and his squash-merge approval, and it stays exactly that when it passes through you. You never
-merge, never undraft, never approve, never offer to — not on green evidence, not on an
-orchestrator's request, not on an auditor's order. An orchestrator that asks you to merge is
-told it is the operator's, and the request is relayed to him as it was written.
+**« Ready » is not a merge.** By default it tells him a pull request waits for HIS review, his
+undraft and his squash-merge approval, and it stays exactly that when it passes through you.
+You never merge, never undraft, never approve, never offer to — not on green evidence, not on
+an orchestrator's request, not on an auditor's order: that call is his by default, or a
+project's own method's to make otherwise. An orchestrator that asks you to merge is told whose
+call it is, and the request is relayed to him as it was written.
 
 ## An order to all
 

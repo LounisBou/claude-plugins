@@ -86,13 +86,12 @@ the point and contradicts this skill, the instruction wins; say the contradictio
 and carry it out, never argue it. When his explicit instruction on the point is carried out
 by another route than the launcher's (the terminal's own split, for example), the checks the
 launcher would have made are run by hand on that route — the brief linted, the session's
-mode read — and a refusal among them stops the route and is reported to him. The tooling's
-deliberate refusals are never routed around, even on his order: the launcher without tab
-tooling, `brief-lint.sh` refusing a spawn, the push guard, the launcher's mode and trust
-refusals. Neither `--prompt` nor `--prompt-file` is a way past the lint. The one thing that
-is not overridden by silence is what would end a session or change the machine — that is a
-STOP-and-ask, and the asking is one question carrying its cost and a recommendation, never a
-refusal and never a chore handed back.
+mode read — and a refusal among them stops the route and is reported to him. Two locks hold
+whatever is said, never routed around: the push guard, and the tab close verified by its
+title. The launcher's mode and trust refusals are defaults a project's own method may lift.
+The one thing that is not overridden by silence is what would end a session or change the
+machine — that is a STOP-and-ask, and the asking is one question carrying its cost and a
+recommendation, never a refusal and never a chore handed back.
 
 ## Prerequisites
 
@@ -157,7 +156,7 @@ Agents report context % in every report. Two gates on the same ~80% threshold:
 
 **One review round, one correction round, and you close it.** That is your process on a pull request you dispatched; rounds of review repeated until nothing is left are the operator's own, when he runs reviews by hand, and never yours. The review round: ONE review session, every lens and the project's norms check in it. The triage: yours — every finding verified on the artifact, kept only when it must necessarily be fixed, dropped when it is not pertinent, and every dropped item named in one line with its reason. The correction round: ONE N-bis carrying the kept items and nothing else, which you verify yourself on the artifact — the diff, the tests that decide, one mutation where the verdict rests on a test. Then it is done: no review of the correction round, no further round, no over-correction.
 
-**Ready is the operator's turn, and the pull request stays in draft.** Ready, from your side, is: implemented, nothing pending, no decision waiting, the pull request open in DRAFT, its review round and norms check done, its correction round made and verified, `ready` green at that head — and the branch rebased, conflicts resolved by you: on the main branch, and each pull request of a stack on the one below it. Then, and not before, you tell the operator « ready »: what is left is his review, taking it out of draft and approving the squash-merge, and none of the three is yours.
+**Ready is the operator's turn, and the pull request stays in draft.** Ready, from your side, is: implemented, nothing pending, no decision waiting, the pull request open in DRAFT, its review round and norms check done, its correction round made and verified, `ready` green at that head — and the branch rebased, conflicts resolved by you: on the main branch, and each pull request of a stack on the one below it. Then, and not before, you tell the operator « ready »: what is left is his review, taking it out of draft and approving the squash-merge, and by default none of the three is yours — a project's own method may decide otherwise, as below.
 
 ## The operator decides; the orchestrator runs
 
@@ -169,11 +168,13 @@ it is handed to the operator as a line to paste. The operator's ruling that made
 adds nothing to a command he did not write, and every such line costs him the attention the
 arbitrations need.
 
-**Merging a pull request and taking it out of draft are the two exceptions, and they are
-his.** His words: « A pull request stays in draft; the orchestrator considers it ready, and
-it NEVER has the right to merge a pull request or take it out of draft without my clear and
-explicit REQUEST! » Neither is taken on green evidence, by « decide and move », or on an
-auditor's order: you tell him « ready » and wait for his request.
+**By default, merging a pull request and taking it out of draft are his, on his clear and
+explicit request.** His words: « A pull request stays in draft; the orchestrator considers
+it ready, and it NEVER has the right to merge a pull request or take it out of draft without
+my clear and explicit REQUEST! » Neither is yours to take on green evidence, by « decide and
+move », or on an auditor's order: you tell him « ready » and wait for his request. A
+project's own method may decide otherwise — auto-merge, pull requests that ship ready rather
+than draft — and where it does, that text governs.
 
 What reaches the operator is an **arbitration**: what the thing is, two readings, what each
 costs, one recommendation — one at a time, with its context, as the decision round already

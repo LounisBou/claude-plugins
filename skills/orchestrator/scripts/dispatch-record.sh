@@ -25,8 +25,14 @@
 # correction round that review produced, which the orchestrator verified on the artifact.
 # That rule was written in the rulebook and in the review brief, and was still broken twice
 # in one day by a reader's opinion of the norms file standing in for the tool. A rule only
-# prose carries is applied from memory, and memory forgets it; `ready` is the refusal prose
-# cannot make.
+# prose carries is applied from memory, and memory forgets it; a project's own method is
+# free to make `ready` refuse what this default only warns about.
+#
+# `fixed` and `ready` no longer die on a missing review, and `fixed` no longer dies on a
+# second correction round: each records what it was given, prints a warning naming what is
+# missing, and exits 0. Only this repository's own two locks - the push guard and the
+# title-verified close - stay refusals a project's method cannot lift; this is not one of
+# them.
 #
 # The record belongs to the PROJECT being built, not to this plugin: the default table
 # ships here, a project's corrections belong with that project's state.
@@ -34,6 +40,7 @@
 set -uo pipefail
 
 die() { echo "ERROR: $*" >&2; exit 1; }
+warn() { echo "WARNING: $*" >&2; }
 command -v jq >/dev/null 2>&1 || die "jq is required"
 
 cmd="${1:-}"; record="${2:-}"
@@ -139,35 +146,41 @@ review)
         --arg h "$head" --arg n "$norms" --arg a "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     ;;
 fixed)
-    # The ONE correction round a review produced, verified by the orchestrator on the artifact
+    # The correction round a review produced, verified by the orchestrator on the artifact
     # (the diff, the decisive tests, a mutation). It lives inside the review it answers: a
     # correction belongs to the findings that ordered it. It counts as a round - the routing
-    # signal reads what a dispatch cost - and it is accepted once, because a second correction
-    # round is the over-correction the operator's process forbids, not a record to keep.
+    # signal reads what a dispatch cost. A row with no review recorded, or one already
+    # carrying a correction round, is recorded anyway - a project's own method may still
+    # forbid either; this default only warns, naming what is missing or what it overwrites.
     id="${3:-}"; [ -n "$id" ] || die "fixed: a row id is required"
     require_row fixed "$id"
     shift 3; head=$(head_option fixed "$@") || exit 1
     reviewed=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].review.head // ""' "$record")
-    [ -n "$reviewed" ] || die "fixed: no review recorded on row $id: the correction round answers a review round, record it with \`review\` first"
+    [ -n "$reviewed" ] || warn "fixed: row $id has no review recorded: the correction round should answer a review round, recording it anyway"
     previous=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].review.fixed.head // ""' "$record")
-    [ -z "$previous" ] || die "fixed: row $id already has its correction round at $previous: one review round, one correction round, and a second one is the over-correction"
+    [ -z "$previous" ] || warn "fixed: row $id already has its correction round at $previous: recording a second one anyway"
     rewrite 'if .id==$i then .rounds += 1 | .review.fixed={head:$h,at:$a} else . end' "$id" \
         --arg h "$head" --arg a "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     ;;
 ready)
-    # The gate, and the whole of it: this row's last review read exactly this head (`review`
-    # records no review without its norms value), or this head is the one correction round
-    # that review produced (`fixed`). No other condition, no policy: what it cannot see -
-    # whether the findings were triaged, whether the correction was verified, whether the
-    # operator approved - stays the orchestrator's, and a green `ready` is not an approved
-    # pull request.
+    # This row's last review read exactly this head (`review` records no review without
+    # its norms value), or this head is the correction round that review produced
+    # (`fixed`). What it cannot see - whether the findings were triaged, whether the
+    # correction was verified, whether the operator approved - stays the orchestrator's,
+    # and a green `ready` is not an approved pull request. A row with no review recorded
+    # no longer stops it either: it warns, prints its reading of the row, and exits 0 - a
+    # project's own method may still make this one refuse.
     id="${3:-}"; [ -n "$id" ] || die "ready: a row id is required"
     require_row ready "$id"
     shift 3; head=$(head_option ready "$@") || exit 1
     reviewed=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].review.head // ""' "$record")
     norms=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].review.norms // ""' "$record")
     fixed=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].review.fixed.head // ""' "$record")
-    [ -n "$reviewed" ] || die "ready: no review recorded on row $id: dispatch a review round and record it with \`review\`"
+    if [ -z "$reviewed" ]; then
+        warn "ready: no review recorded on row $id: dispatch a review round and record it with \`review\`"
+        echo "ready: row $id has no review recorded yet; head $head is unverified"
+        exit 0
+    fi
     # In this shell, not in a substitution: `same_commit` dies on a head too short to
     # identify anything, and that refusal must stop the gate, not read as a mismatch.
     if same_commit "$reviewed" "$head"; then

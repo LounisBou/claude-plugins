@@ -12,7 +12,10 @@
 # it can rationalise away; a line the harness puts in front of every prompt is not.
 #
 # A gate that cannot measure lets the prompt through and SAYS SO — once per
-# session, not on every prompt — instead of staying silent as if the fill were low.
+# session, not on every prompt — instead of staying silent as if the fill were low. But
+# not before the tap had its chance: the status line renders only after a turn has
+# answered, so a session's very first prompt has no tap file yet by construction, and
+# saying "unmeasured" there is a false alarm, not a finding.
 set -u
 GATE="${ORCHESTRATOR_CONTEXT_GATE:-80}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -48,10 +51,17 @@ if [ -n "$model" ] && [ "$model" != "unavailable" ]; then
 fi
 
 if [ "$source" != "tap" ] || [ -z "$percent" ]; then
-    marker="$STATE_DIR/ctx/$session_id.gate-unmeasured"
-    if [ ! -f "$marker" ]; then
-        mkdir -p "$STATE_DIR/ctx" 2>/dev/null && : > "$marker"
-        echo "CONTEXT GATE: unmeasured for this session (the gauge's tap is not feeding it — /orchestrator:install, then restart). The ${GATE}% gate cannot be read; measure by hand before dispatching or rotating."
+    # The tap has had its chance only once a turn has answered: before that, the
+    # transcript carries no assistant entry, and a session with none yet is not a
+    # session the tap failed, it is a session the tap has not rendered for at all.
+    transcript_path="$(printf '%s' "$payload" | sed -n 's/.*"transcript_path"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+    if [ -n "$transcript_path" ] && [ -f "$transcript_path" ] \
+        && grep -q '"type"[[:space:]]*:[[:space:]]*"assistant"' "$transcript_path" 2>/dev/null; then
+        marker="$STATE_DIR/ctx/$session_id.gate-unmeasured"
+        if [ ! -f "$marker" ]; then
+            mkdir -p "$STATE_DIR/ctx" 2>/dev/null && : > "$marker"
+            echo "CONTEXT GATE: unmeasured for this session (the gauge's tap is not feeding it — /orchestrator:install, then restart). The ${GATE}% gate cannot be read; measure by hand before dispatching or rotating."
+        fi
     fi
     exit 0
 fi
