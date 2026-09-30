@@ -38,7 +38,7 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --i
     # Anything else is refused; `--title-free` is the escape for a probe that names its tab
     # otherwise, and only under `--title-free` does no title mean `agent` — without it, a
     # spawn with no title is refused.
-    # The session's servers are CHOSEN. The launch is always strict, and carries a file
+    # The session's servers are CHOSEN. The launch is strict by default, and carries a file
     # the launcher writes for that session from the operator's catalogue,
     # <state dir>/mcp.json (ORCHESTRATOR_MCP_CATALOGUE overrides the path): named
     # definitions in the host's own shape, and a `default` list every agent gets.
@@ -46,6 +46,13 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --i
     # or comma-separated — and --mcp none gives the session no server at all. A name the
     # catalogue does not hold is refused before a tab exists, naming the ones it holds;
     # with no catalogue at all a plain spawn launches with nothing and says so on stderr.
+    # --account-connectors: this ONE spawn also loads every connector of the OPERATOR'S
+    # ACCOUNT — not one of them, all of them, the same set a session the operator opens by
+    # hand already loads. It drops --strict-mcp-config for this spawn only; the chosen
+    # servers above still travel exactly as before, and the project's own "enable these MCP
+    # servers?" dialog, which strict otherwise makes moot, is pre-answered so the session
+    # never parks on it. Off unless asked — the default launch is byte-for-byte unchanged
+    # without it. `rotate` forwards it like any other spawn option.
     # An agent comes up with remote control off; only a successor comes up under it (§39).
     # The spawn then reads the mode the session came up in, on its own transcript, and
     # refuses a session that came up in another one — closing the tab it just made and

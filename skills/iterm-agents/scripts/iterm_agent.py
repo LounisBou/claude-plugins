@@ -1224,7 +1224,8 @@ def write_prompt_file(prompt, title):
     return path
 
 
-def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_file=""):
+def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_file="",
+                  account_connectors=False):
     """The command iTerm2 runs in the new tab. It is HANDED to the app, never typed, so
     its length and its bytes stop being a hazard. No model argument at all when neither a
     tier nor an explicit identifier says which: the host's own default is the right
@@ -1246,14 +1247,19 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
     cli = [shq(cli_path)]
     if model:
         cli += ["--model", shq(model)]
-    # The launch is strict ALWAYS, and hands the session a configuration file of its own
-    # when it has servers to load (§42). Strict alone would leave an agent with no server
-    # of any scope — not the project's, but not the operator's or the account's either,
-    # which is what the first answer to this section got wrong; the file puts back exactly
-    # the ones the orchestrator chose. The pair goes BEFORE --permission-mode: the host's
-    # --mcp-config takes several values, so whatever follows it is read as another file,
-    # and the prompt placed there was read as one.
-    cli += ["--strict-mcp-config"]
+    # The launch is strict by DEFAULT, and hands the session a configuration file of its
+    # own when it has servers to load (§42). Strict alone would leave an agent with no
+    # server of any scope — not the project's, but not the operator's or the account's
+    # either, which is what the first answer to this section got wrong; the file puts back
+    # exactly the ones the orchestrator chose. `--account-connectors` drops strict for ONE
+    # chosen spawn, so the session also loads the account's own connectors — the ones
+    # sessions the operator opens by hand already load, and which strict excludes from
+    # every other spawn — while the chosen servers below still travel exactly as before.
+    # The pair goes BEFORE --permission-mode: the host's --mcp-config takes several values,
+    # so whatever follows it is read as another file, and the prompt placed there was read
+    # as one.
+    if not account_connectors:
+        cli += ["--strict-mcp-config"]
     if mcp_file:
         cli += ["--mcp-config", shq(mcp_file)]
     cli += ["--permission-mode", shq(mode)]
@@ -1261,8 +1267,17 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
     # everyone but a successor and an auditor, which the operator also drives from the
     # host's remote client (§52). The setting and the flag below are mutually exclusive —
     # only those two carry the flag, and they carry no such setting.
+    settings = {}
     if not remote_control:
-        cli += ["--settings", shq('{"remoteControlAtStartup":false}')]
+        settings["remoteControlAtStartup"] = False
+    # Dropping strict reopens the project's own "enable these MCP servers?" dialog that
+    # strict had made moot — a fresh session parked on it never reads its brief, and nobody
+    # sits at that keyboard (§42's own reasoning). Pre-answered here, for this spawn only,
+    # the way every launch pre-answered it before the catalogue existed.
+    if account_connectors:
+        settings["enableAllProjectMcpServers"] = True
+    if settings:
+        cli += ["--settings", shq(json.dumps(settings, separators=(",", ":")))]
     # The prompt goes BEFORE the options that follow it, and --name is the LAST of them or
     # next to last. `ps` shows a command line with the shell's quoting gone, so whatever
     # follows --name runs into the name: with the prompt there, every spawned session's
@@ -1404,6 +1419,8 @@ def cmd_spawn(argv):
     p.add_argument("--coordinator-successor", dest="coordinator_successor",
                     action="store_true", default=False)
     p.add_argument("--mcp", action="append", default=[])
+    p.add_argument("--account-connectors", dest="account_connectors",
+                    action="store_true", default=False)
     args, unknown = p.parse_known_args(argv)
     if unknown:
         die("spawn: unknown option %s" % unknown[0])
@@ -1660,7 +1677,7 @@ def cmd_spawn(argv):
     remote_control = title if ((args.successor and args.remote_control) or args.auditor
                                 or args.coordinator_successor) else ""
     launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control,
-                           mcp_file)
+                           mcp_file, args.account_connectors)
 
     if DRY_RUN:
         print("launch=%s" % launch)
@@ -1680,6 +1697,7 @@ def cmd_spawn(argv):
         print("title_free=%s" % ("yes" if args.title_free else "no"))
         print("mcp=%s" % (",".join(servers) or "none"))
         print("mcp_file=%s" % (mcp_file or "none"))
+        print("account_connectors=%s" % ("yes" if args.account_connectors else "no"))
         print("remote_control=%s" % ("yes" if remote_control else "no"))
         print("mode_check=skipped")
         print("program=%s -l <launch-file>" % LOGIN_SHELL)

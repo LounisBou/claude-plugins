@@ -1347,6 +1347,32 @@ check "the setting that enabled every project server is in no launch" "0|0|0" \
 check "the server file lives beside the prompt file, named like it" "yes|yes" \
   "$(f=$(mcp_file_of "$(mcpd)"); [ "${f#"$ISTATE"/prompts/mcp-}" != "$f" ] && echo yes || echo "$f")|$(f=$(mcp_file_of "$(mcpd)"); [ "${f%.json}" != "$f" ] && echo yes || echo "$f")"
 
+# --account-connectors: one CHOSEN spawn loads the account's connectors — the ones sessions
+# the operator opens by hand already load, and which --strict-mcp-config (§42) excludes from
+# every spawn since it drops every scope but the file the catalogue writes. The flag drops
+# strict for that spawn only; the catalogue's chosen servers still travel exactly as before.
+# Dropping strict reopens the project's own "enable these MCP servers?" dialog that
+# --strict-mcp-config had made moot, so it is pre-answered again, the way every launch
+# pre-answered it before the catalogue existed (`enableAllProjectMcpServers`, confirmed
+# against the host's own settings shape — `enabledMcpjsonServers` / `disabledMcpjsonServers`
+# sit beside it there). Without the flag nothing changes: byte-identical to every other spawn.
+check "without the flag, the launch is unchanged: strict, no project-server setting" "1|0" \
+  "$(mcpd | sed -n 's/^launch=//p' | grep -c -- '--strict-mcp-config')|$(mcpd | sed -n 's/^launch=//p' | grep -c -- 'enableAllProjectMcpServers')"
+check "--account-connectors drops --strict-mcp-config" "0" \
+  "$(mcpd --account-connectors | sed -n 's/^launch=//p' | grep -c -- '--strict-mcp-config')"
+check "--account-connectors still hands over the chosen servers' file, unchanged" "1|a" \
+  "$(mcpd --account-connectors | sed -n 's/^launch=//p' | grep -c -- '--mcp-config ')|$(mcpd --account-connectors | sed -n 's/^mcp=//p')"
+check "--account-connectors pre-answers the project's own server dialog" "1" \
+  "$(mcpd --account-connectors | sed -n 's/^launch=//p' | grep -Fc -- '"enableAllProjectMcpServers":true')"
+check "--account-connectors merges into the one --settings JSON already on the launch" "1" \
+  "$(mcpd --account-connectors | sed -n 's/^launch=//p' | grep -Fc -- "--settings '{\"remoteControlAtStartup\":false,\"enableAllProjectMcpServers\":true}'")"
+check "the dry run says the option is on, and off by default" "1|1" \
+  "$(mcpd --account-connectors | grep -c '^account_connectors=yes$')|$(mcpd | grep -c '^account_connectors=no$')"
+# No catalogue at all: still drops strict and still pre-answers, and still writes no file —
+# the option changes strict and the setting, nothing about server SELECTION.
+check "--account-connectors with no catalogue still drops strict and pre-answers" "0|0|1" \
+  "$(nocat --account-connectors | sed -n 's/^launch=//p' | grep -c -- '--strict-mcp-config')|$(nocat --account-connectors | sed -n 's/^launch=//p' | grep -c -- '--mcp-config ')|$(nocat --account-connectors | sed -n 's/^launch=//p' | grep -Fc -- '"enableAllProjectMcpServers":true')"
+
 # A successor carries the PREDECESSOR's name, read from the process table, and comes up
 # under remote control: the operator drives his orchestrators from the host's remote
 # client as well as from the tab, and an agent is driven by its orchestrator alone (§39).
@@ -2079,6 +2105,11 @@ check "rotate forwards --trust to the spawn, which records it" "true" \
 check "rotate forwards --mcp to the spawn, with its name" "a,b" \
   "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" ORCHESTRATOR_MCP_CATALOGUE="$CAT" \
       bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" --mcp b --prompt p 2>&1 | sed -n 's/^mcp=//p')"
+# rotate forwards --account-connectors like any other spawn option: a replaced agent that
+# needed the account's connectors is replaced by one that still has them.
+check "rotate forwards --account-connectors to the spawn" "0" \
+  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" ORCHESTRATOR_MCP_CATALOGUE="$CAT" \
+      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" --account-connectors --prompt p 2>&1 | sed -n 's/^launch=//p' | grep -c -- '--strict-mcp-config')"
 # A rotation replaces an agent with a titled agent; a successor, an escape from the title
 # shape, or a plain agent stripped of remote control are none of that — each is refused
 # before the replacement is spawned.
