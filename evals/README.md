@@ -16,15 +16,15 @@ evals/
   SELECTION.md           the planned cases and the criteria that chose them
   <case-id>/
     prompt.md            frontmatter (max_turns, timeout_seconds, allowed_tools) + the staged situation
-    graders/<name>.md    one grader per file; each cites the inventory ids it grades
+    graders/<name>.md    one grader per file; each names in words the decision it grades
   baseline-0.34.0.json   the first baseline, both arms
   baseline-0.36.0.json   the current baseline, plugin arm
 ```
 
-A case id is the lowercase inventory ids it covers, joined by `-`; consecutive ids of one
-family share their prefix (`orch-151-152-iterm-055` covers `ORCH-151`, `ORCH-152` and
-`ITERM-055`). A rule whose decision has two branches is staged by one case per branch, the
-id suffixed with the branch (`orch-016-missed`, `orch-016-unanswered`).
+A case id is a short kebab-case phrase saying the decision it stages and grades (for
+example `commits-or-drops-before-closing`). A rule whose decision has two branches is
+staged by one case per branch, the id suffixed with the branch (`answers-the-third-ask-missed`,
+`answers-the-third-ask-unanswered`).
 
 ## How a case is staged
 
@@ -43,7 +43,7 @@ id suffixed with the branch (`orch-016-missed`, `orch-016-unanswered`).
 - Nothing is granted that could open a terminal tab, spawn a session, send a cross-session
   message, push, or reach the forge: no other `--allow-tools`, no `--allow-real-servers`,
   no `--scaffold`.
-- A grader cites the ids it grades in its text: an `llm` rubric in its body, a `regex` or
+- A grader states in words the decision it grades: an `llm` rubric in its body, a `regex` or
   `tool_used` grader in a comment of its frontmatter.
 - A staged session can read the plugin's own files, so a rule moved to a reference file
   stays reachable, provided the skill tells the session to read it.
@@ -78,7 +78,7 @@ and three runs (`--runs 3 --case <id>`) on any case that scored below its baseli
 - `--trust-plugin` answers the first-run trust question for this repository's own plugin;
   nothing else is trusted.
 - `--allow-tools Write` is the one grant. `Write` is gated, so the cases that grade a
-  written brief (`orch-050-052-053-068-168-179-220`, `coord-succession`, the only
+  written brief (`writes-a-well-formed-phase-brief`, `coord-succession`, the only
   ones listing it) cannot pass without it. It writes into the run's sandbox directory and
   reaches nothing else.
 
@@ -94,7 +94,9 @@ keys added.
 
 `baseline-0.34.0.json` is the first baseline, with the no-plugin arm beside the plugin arm.
 It is not the raw `--json` output, which carries model identifiers, machine paths and whole
-session traces. It is reduced from the raw files of every part of the baseline run by:
+session traces. Its `cases` keys were renamed after the 2026-09-30 reduction to the word
+name of the case they read, the `legacy-*` keys included; every reading is unchanged. It is
+reduced from the raw files of every part of the baseline run by:
 
 ```bash
 python3 -c 'import json,sys; runs=[json.load(open(f)) for f in sys.argv[1:]]; print(json.dumps({"ablation": runs[0]["suite"]["ablation"], "agent": "deep tier", "judge": "deep tier", "costUsd": round(sum(r["costUsd"] for r in runs), 2), "cases": {c["name"]: {arm: [{"score": x["score"], "passed": x["passed"], "costUsd": round(x["costUsd"], 3), "durationSeconds": x["durationSeconds"], "error": x["error"], "graders": {g["name"]: g["passed"] for g in x["graders"]}} for x in xs] for arm, xs in c["arms"].items()} for r in runs for c in r["cases"]}}, indent=1, sort_keys=True))' <out>/*/run.json > evals/baseline-0.34.0.json
@@ -107,9 +109,9 @@ python3 -c 'import json,sys; runs=[json.load(open(f)) for f in sys.argv[1:]]; pr
   does.
 - **Judge**: the same `deep` tier model. A judge of another model would avoid
   self-preference, but the `standard` and `light` judges were measured failing correct
-  outputs inside the evaluation command: on the case that then covered ORCH-089, a message
-  listing exactly the check its rubric asks for got FAIL 3/3 from both, and PASS 3/3 from
-  the `deep` judge.
+  outputs inside the evaluation command: on the removed case that covered the plan's
+  literals checked against the upstream contract, a message listing exactly the check its
+  rubric asks for got FAIL 3/3 from both, and PASS 3/3 from the `deep` judge.
   Every rubric states a pass or fail criterion, where self-preference weighs less than a
   judge that fails what it should pass.
 - Wherever the graded decision is a literal — a command, a flag, a path, an address — the
@@ -133,9 +135,9 @@ different agent models are not comparable.
 
 - A case that passes without the plugin proves nothing: it is rewritten until it fails
   without the plugin, or removed.
-- `orch-002` and `orch-025-026` are kept although they pass without the plugin: there the
-  plugin arm scores worse than the host's default, so each is a finding against the
-  directives, not a proof of them.
+- `dispatches-a-fix-never-writes-it` and `rereads-the-artifact-before-answering` are kept
+  although they pass without the plugin: there the plugin arm scores worse than the host's
+  default, so each is a finding against the directives, not a proof of them.
 - A case not stable with the plugin (below three passes out of three at baseline) is either
   a rule badly obeyed today, reported as a finding, or a badly written case, rewritten.
 - After a rewrite, a case scoring below its baseline is a finding until the mechanism of

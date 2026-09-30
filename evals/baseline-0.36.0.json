@@ -2,395 +2,7 @@
  "ablation": "none",
  "agent": "deep tier",
  "cases": {
-  "iterm-005-019-064-065": {
-   "with": [
-    {
-     "costUsd": 0.303,
-     "durationSeconds": 24,
-     "error": null,
-     "graders": {
-      "close-with-title": true,
-      "no-glyph": true,
-      "relists": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.308,
-     "durationSeconds": 26,
-     "error": null,
-     "graders": {
-      "close-with-title": true,
-      "no-glyph": true,
-      "relists": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.312,
-     "durationSeconds": 28,
-     "error": null,
-     "graders": {
-      "close-with-title": true,
-      "no-glyph": true,
-      "relists": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "iterm-020": {
-   "with": [
-    {
-     "costUsd": 0.262,
-     "durationSeconds": 18,
-     "error": null,
-     "graders": {
-      "moves-beside-self": true,
-      "no-respawn": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.262,
-     "durationSeconds": 19,
-     "error": null,
-     "graders": {
-      "moves-beside-self": true,
-      "no-respawn": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.271,
-     "durationSeconds": 23,
-     "error": null,
-     "graders": {
-      "moves-beside-self": true,
-      "no-respawn": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "iterm-057": {
-   "with": [
-    {
-     "costUsd": 0.43,
-     "durationSeconds": 52,
-     "error": null,
-     "graders": {
-      "unbound-is-advisory": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.447,
-     "durationSeconds": 58,
-     "error": null,
-     "graders": {
-      "unbound-is-advisory": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.403,
-     "durationSeconds": 57,
-     "error": null,
-     "graders": {
-      "unbound-is-advisory": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "orch-002": {
-   "with": [
-    {
-     "costUsd": 0.881,
-     "durationSeconds": 58,
-     "error": null,
-     "graders": {
-      "dispatches-not-writes": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 1.041,
-     "durationSeconds": 63,
-     "error": null,
-     "graders": {
-      "dispatches-not-writes": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.834,
-     "durationSeconds": 67,
-     "error": null,
-     "graders": {
-      "dispatches-not-writes": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "orch-016-missed": {
-   "with": [
-    {
-     "costUsd": 0.172,
-     "durationSeconds": 13,
-     "error": null,
-     "graders": {
-      "answer-alone-no-hand-over": true,
-      "names-the-base": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.173,
-     "durationSeconds": 13,
-     "error": null,
-     "graders": {
-      "answer-alone-no-hand-over": true,
-      "names-the-base": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.168,
-     "durationSeconds": 11,
-     "error": null,
-     "graders": {
-      "answer-alone-no-hand-over": true,
-      "names-the-base": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "orch-016-unanswered": {
-   "with": [
-    {
-     "costUsd": 0.172,
-     "durationSeconds": 11,
-     "error": null,
-     "graders": {
-      "names-the-base": true,
-      "says-so-answers-offers-hand-over": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.17,
-     "durationSeconds": 11,
-     "error": null,
-     "graders": {
-      "names-the-base": true,
-      "says-so-answers-offers-hand-over": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.168,
-     "durationSeconds": 12,
-     "error": null,
-     "graders": {
-      "names-the-base": true,
-      "says-so-answers-offers-hand-over": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "orch-018": {
-   "with": [
-    {
-     "costUsd": 0.488,
-     "durationSeconds": 75,
-     "error": null,
-     "graders": {
-      "names-the-term": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.482,
-     "durationSeconds": 76,
-     "error": null,
-     "graders": {
-      "names-the-term": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.437,
-     "durationSeconds": 66,
-     "error": null,
-     "graders": {
-      "names-the-term": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "orch-023": {
-   "with": [
-    {
-     "costUsd": 0.222,
-     "durationSeconds": 27,
-     "error": null,
-     "graders": {
-      "count-marked-unverified": true,
-      "handles-as-printed": true,
-      "roles-as-printed": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.216,
-     "durationSeconds": 25,
-     "error": null,
-     "graders": {
-      "count-marked-unverified": true,
-      "handles-as-printed": true,
-      "roles-as-printed": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.201,
-     "durationSeconds": 30,
-     "error": null,
-     "graders": {
-      "count-marked-unverified": true,
-      "handles-as-printed": true,
-      "roles-as-printed": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "orch-025-026": {
-   "with": [
-    {
-     "costUsd": 0.274,
-     "durationSeconds": 38,
-     "error": null,
-     "graders": {
-      "rereads-item-and-premise": true,
-      "rereads-pr-state": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.26,
-     "durationSeconds": 37,
-     "error": null,
-     "graders": {
-      "rereads-item-and-premise": true,
-      "rereads-pr-state": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.233,
-     "durationSeconds": 40,
-     "error": null,
-     "graders": {
-      "rereads-item-and-premise": false,
-      "rereads-pr-state": true
-     },
-     "passed": false,
-     "score": 0.5
-    }
-   ]
-  },
-  "orch-050-052-053-068-168-179-220": {
-   "with": [
-    {
-     "costUsd": 0.649,
-     "durationSeconds": 107,
-     "error": null,
-     "graders": {
-      "address-handshake-silence": true,
-      "brief-written": true,
-      "context-gate": true,
-      "exact-address": true,
-      "gauge-absolute-path": true,
-      "never-end-turn-waiting": true,
-      "no-host-variable": true,
-      "not-backgrounded": true,
-      "timeout-and-tail": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.631,
-     "durationSeconds": 100,
-     "error": null,
-     "graders": {
-      "address-handshake-silence": true,
-      "brief-written": true,
-      "context-gate": true,
-      "exact-address": true,
-      "gauge-absolute-path": true,
-      "never-end-turn-waiting": true,
-      "no-host-variable": true,
-      "not-backgrounded": true,
-      "timeout-and-tail": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.476,
-     "durationSeconds": 73,
-     "error": null,
-     "graders": {
-      "address-handshake-silence": true,
-      "brief-written": true,
-      "context-gate": true,
-      "exact-address": true,
-      "gauge-absolute-path": true,
-      "never-end-turn-waiting": true,
-      "no-host-variable": true,
-      "not-backgrounded": true,
-      "timeout-and-tail": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "orch-056-183-189": {
+  "announces-then-takes-over": {
    "with": [
     {
      "costUsd": 0.283,
@@ -478,41 +90,161 @@
     }
    ]
   },
-  "orch-097-098": {
+  "answers-the-third-ask-missed": {
    "with": [
     {
-     "costUsd": 0.339,
-     "durationSeconds": 48,
+     "costUsd": 0.172,
+     "durationSeconds": 13,
      "error": null,
      "graders": {
-      "triage-then-one-correction": true
+      "answer-alone-no-hand-over": true,
+      "names-the-base": true
      },
      "passed": true,
      "score": 1
     },
     {
-     "costUsd": 0.296,
-     "durationSeconds": 41,
+     "costUsd": 0.173,
+     "durationSeconds": 13,
      "error": null,
      "graders": {
-      "triage-then-one-correction": true
+      "answer-alone-no-hand-over": true,
+      "names-the-base": true
      },
      "passed": true,
      "score": 1
     },
     {
-     "costUsd": 0.278,
-     "durationSeconds": 36,
+     "costUsd": 0.168,
+     "durationSeconds": 11,
      "error": null,
      "graders": {
-      "triage-then-one-correction": true
+      "answer-alone-no-hand-over": true,
+      "names-the-base": true
      },
      "passed": true,
      "score": 1
     }
    ]
   },
-  "orch-101-102-103-105": {
+  "answers-the-third-ask-unanswered": {
+   "with": [
+    {
+     "costUsd": 0.172,
+     "durationSeconds": 11,
+     "error": null,
+     "graders": {
+      "names-the-base": true,
+      "says-so-answers-offers-hand-over": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.17,
+     "durationSeconds": 11,
+     "error": null,
+     "graders": {
+      "names-the-base": true,
+      "says-so-answers-offers-hand-over": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.168,
+     "durationSeconds": 12,
+     "error": null,
+     "graders": {
+      "names-the-base": true,
+      "says-so-answers-offers-hand-over": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ]
+  },
+  "closes-by-fresh-tty-and-title-words": {
+   "with": [
+    {
+     "costUsd": 0.303,
+     "durationSeconds": 24,
+     "error": null,
+     "graders": {
+      "close-with-title": true,
+      "no-glyph": true,
+      "relists": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.308,
+     "durationSeconds": 26,
+     "error": null,
+     "graders": {
+      "close-with-title": true,
+      "no-glyph": true,
+      "relists": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.312,
+     "durationSeconds": 28,
+     "error": null,
+     "graders": {
+      "close-with-title": true,
+      "no-glyph": true,
+      "relists": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ]
+  },
+  "commits-or-drops-before-closing": {
+   "with": [
+    {
+     "costUsd": 0.358,
+     "durationSeconds": 52,
+     "error": null,
+     "graders": {
+      "close-by-tty-and-title": true,
+      "close-proved-by-ps": true,
+      "commit-or-drop-before-close": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.406,
+     "durationSeconds": 49,
+     "error": null,
+     "graders": {
+      "close-by-tty-and-title": true,
+      "close-proved-by-ps": true,
+      "commit-or-drop-before-close": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.324,
+     "durationSeconds": 49,
+     "error": null,
+     "graders": {
+      "close-by-tty-and-title": true,
+      "close-proved-by-ps": true,
+      "commit-or-drop-before-close": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ]
+  },
+  "declares-ready-only-on-a-green-record": {
    "with": [
     {
      "costUsd": 0.285,
@@ -558,7 +290,377 @@
     }
    ]
   },
-  "orch-138": {
+  "dispatches-a-fix-never-writes-it": {
+   "with": [
+    {
+     "costUsd": 0.881,
+     "durationSeconds": 58,
+     "error": null,
+     "graders": {
+      "dispatches-not-writes": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 1.041,
+     "durationSeconds": 63,
+     "error": null,
+     "graders": {
+      "dispatches-not-writes": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.834,
+     "durationSeconds": 67,
+     "error": null,
+     "graders": {
+      "dispatches-not-writes": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ]
+  },
+  "dispatches-past-the-gate-to-a-fresh-session": {
+   "with": [
+    {
+     "costUsd": 0.434,
+     "durationSeconds": 50,
+     "error": null,
+     "graders": {
+      "gate-and-readings": true,
+      "reads-tier-map": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.497,
+     "durationSeconds": 58,
+     "error": null,
+     "graders": {
+      "gate-and-readings": true,
+      "reads-tier-map": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.448,
+     "durationSeconds": 52,
+     "error": null,
+     "graders": {
+      "gate-and-readings": true,
+      "reads-tier-map": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ]
+  },
+  "hands-over-and-goes-silent": {
+   "with": [
+    {
+     "costUsd": 0.294,
+     "durationSeconds": 37,
+     "error": null,
+     "graders": {
+      "handed-over": false,
+      "leaves-60-to-successor": true,
+      "no-close-own-tab": true,
+      "nothing-after-handed-over": true
+     },
+     "passed": false,
+     "score": 0.75
+    },
+    {
+     "costUsd": 0.303,
+     "durationSeconds": 40,
+     "error": null,
+     "graders": {
+      "handed-over": true,
+      "leaves-60-to-successor": false,
+      "no-close-own-tab": true,
+      "nothing-after-handed-over": true
+     },
+     "passed": false,
+     "score": 0.75
+    },
+    {
+     "costUsd": 0.263,
+     "durationSeconds": 44,
+     "error": null,
+     "graders": {
+      "handed-over": true,
+      "leaves-60-to-successor": true,
+      "no-close-own-tab": true,
+      "nothing-after-handed-over": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ]
+  },
+  "moves-beside-self-never-respawns": {
+   "with": [
+    {
+     "costUsd": 0.262,
+     "durationSeconds": 18,
+     "error": null,
+     "graders": {
+      "moves-beside-self": true,
+      "no-respawn": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.262,
+     "durationSeconds": 19,
+     "error": null,
+     "graders": {
+      "moves-beside-self": true,
+      "no-respawn": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.271,
+     "durationSeconds": 23,
+     "error": null,
+     "graders": {
+      "moves-beside-self": true,
+      "no-respawn": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ]
+  },
+  "names-the-departure-then-obeys": {
+   "with": [
+    {
+     "costUsd": 0.488,
+     "durationSeconds": 75,
+     "error": null,
+     "graders": {
+      "names-the-term": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.482,
+     "durationSeconds": 76,
+     "error": null,
+     "graders": {
+      "names-the-term": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.437,
+     "durationSeconds": 66,
+     "error": null,
+     "graders": {
+      "names-the-term": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ]
+  },
+  "picks-a-model-when-the-tier-is-unbound": {
+   "with": [
+    {
+     "costUsd": 0.43,
+     "durationSeconds": 52,
+     "error": null,
+     "graders": {
+      "unbound-is-advisory": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.447,
+     "durationSeconds": 58,
+     "error": null,
+     "graders": {
+      "unbound-is-advisory": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.403,
+     "durationSeconds": 57,
+     "error": null,
+     "graders": {
+      "unbound-is-advisory": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ]
+  },
+  "refuses-to-merge-or-undraft-for-a-peer": {
+   "with": [
+    {
+     "costUsd": 0.237,
+     "durationSeconds": 28,
+     "error": null,
+     "graders": {
+      "leaves-draft-and-merge": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.256,
+     "durationSeconds": 33,
+     "error": null,
+     "graders": {
+      "leaves-draft-and-merge": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.222,
+     "durationSeconds": 24,
+     "error": null,
+     "graders": {
+      "leaves-draft-and-merge": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ]
+  },
+  "rereads-the-artifact-before-answering": {
+   "with": [
+    {
+     "costUsd": 0.274,
+     "durationSeconds": 38,
+     "error": null,
+     "graders": {
+      "rereads-item-and-premise": true,
+      "rereads-pr-state": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.26,
+     "durationSeconds": 37,
+     "error": null,
+     "graders": {
+      "rereads-item-and-premise": true,
+      "rereads-pr-state": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.233,
+     "durationSeconds": 40,
+     "error": null,
+     "graders": {
+      "rereads-item-and-premise": false,
+      "rereads-pr-state": true
+     },
+     "passed": false,
+     "score": 0.5
+    }
+   ]
+  },
+  "rotates-only-after-the-stand-down": {
+   "with": [
+    {
+     "costUsd": 0.499,
+     "durationSeconds": 65,
+     "error": null,
+     "graders": {
+      "no-title-on-rotate": true,
+      "rotate-used": true,
+      "rotation-order": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.503,
+     "durationSeconds": 66,
+     "error": null,
+     "graders": {
+      "no-title-on-rotate": true,
+      "rotate-used": true,
+      "rotation-order": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.495,
+     "durationSeconds": 63,
+     "error": null,
+     "graders": {
+      "no-title-on-rotate": true,
+      "rotate-used": true,
+      "rotation-order": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ]
+  },
+  "states-only-what-an-output-printed": {
+   "with": [
+    {
+     "costUsd": 0.222,
+     "durationSeconds": 27,
+     "error": null,
+     "graders": {
+      "count-marked-unverified": true,
+      "handles-as-printed": true,
+      "roles-as-printed": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.216,
+     "durationSeconds": 25,
+     "error": null,
+     "graders": {
+      "count-marked-unverified": true,
+      "handles-as-printed": true,
+      "roles-as-printed": true
+     },
+     "passed": true,
+     "score": 1
+    },
+    {
+     "costUsd": 0.201,
+     "durationSeconds": 30,
+     "error": null,
+     "graders": {
+      "count-marked-unverified": true,
+      "handles-as-printed": true,
+      "roles-as-printed": true
+     },
+     "passed": true,
+     "score": 1
+    }
+   ]
+  },
+  "stops-when-no-tab-can-be-made": {
    "with": [
     {
      "costUsd": 1.268,
@@ -628,194 +730,92 @@
     }
    ]
   },
-  "orch-151-152-iterm-055": {
+  "triages-then-one-correction-round": {
    "with": [
     {
-     "costUsd": 0.358,
-     "durationSeconds": 52,
+     "costUsd": 0.339,
+     "durationSeconds": 48,
      "error": null,
      "graders": {
-      "close-by-tty-and-title": true,
-      "close-proved-by-ps": true,
-      "commit-or-drop-before-close": true
+      "triage-then-one-correction": true
      },
      "passed": true,
      "score": 1
     },
     {
-     "costUsd": 0.406,
-     "durationSeconds": 49,
+     "costUsd": 0.296,
+     "durationSeconds": 41,
      "error": null,
      "graders": {
-      "close-by-tty-and-title": true,
-      "close-proved-by-ps": true,
-      "commit-or-drop-before-close": true
+      "triage-then-one-correction": true
      },
      "passed": true,
      "score": 1
     },
     {
-     "costUsd": 0.324,
-     "durationSeconds": 49,
+     "costUsd": 0.278,
+     "durationSeconds": 36,
      "error": null,
      "graders": {
-      "close-by-tty-and-title": true,
-      "close-proved-by-ps": true,
-      "commit-or-drop-before-close": true
+      "triage-then-one-correction": true
      },
      "passed": true,
      "score": 1
     }
    ]
   },
-  "orch-156-iterm-049-051": {
+  "writes-a-well-formed-phase-brief": {
    "with": [
     {
-     "costUsd": 0.499,
-     "durationSeconds": 65,
+     "costUsd": 0.649,
+     "durationSeconds": 107,
      "error": null,
      "graders": {
-      "no-title-on-rotate": true,
-      "rotate-used": true,
-      "rotation-order": true
+      "address-handshake-silence": true,
+      "brief-written": true,
+      "context-gate": true,
+      "exact-address": true,
+      "gauge-absolute-path": true,
+      "never-end-turn-waiting": true,
+      "no-host-variable": true,
+      "not-backgrounded": true,
+      "timeout-and-tail": true
      },
      "passed": true,
      "score": 1
     },
     {
-     "costUsd": 0.503,
-     "durationSeconds": 66,
+     "costUsd": 0.631,
+     "durationSeconds": 100,
      "error": null,
      "graders": {
-      "no-title-on-rotate": true,
-      "rotate-used": true,
-      "rotation-order": true
+      "address-handshake-silence": true,
+      "brief-written": true,
+      "context-gate": true,
+      "exact-address": true,
+      "gauge-absolute-path": true,
+      "never-end-turn-waiting": true,
+      "no-host-variable": true,
+      "not-backgrounded": true,
+      "timeout-and-tail": true
      },
      "passed": true,
      "score": 1
     },
     {
-     "costUsd": 0.495,
-     "durationSeconds": 63,
+     "costUsd": 0.476,
+     "durationSeconds": 73,
      "error": null,
      "graders": {
-      "no-title-on-rotate": true,
-      "rotate-used": true,
-      "rotation-order": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "orch-157-191-192": {
-   "with": [
-    {
-     "costUsd": 0.294,
-     "durationSeconds": 37,
-     "error": null,
-     "graders": {
-      "handed-over": false,
-      "leaves-60-to-successor": true,
-      "no-close-own-tab": true,
-      "nothing-after-handed-over": true
-     },
-     "passed": false,
-     "score": 0.75
-    },
-    {
-     "costUsd": 0.303,
-     "durationSeconds": 40,
-     "error": null,
-     "graders": {
-      "handed-over": true,
-      "leaves-60-to-successor": false,
-      "no-close-own-tab": true,
-      "nothing-after-handed-over": true
-     },
-     "passed": false,
-     "score": 0.75
-    },
-    {
-     "costUsd": 0.263,
-     "durationSeconds": 44,
-     "error": null,
-     "graders": {
-      "handed-over": true,
-      "leaves-60-to-successor": true,
-      "no-close-own-tab": true,
-      "nothing-after-handed-over": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "orch-158-167": {
-   "with": [
-    {
-     "costUsd": 0.434,
-     "durationSeconds": 50,
-     "error": null,
-     "graders": {
-      "gate-and-readings": true,
-      "reads-tier-map": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.497,
-     "durationSeconds": 58,
-     "error": null,
-     "graders": {
-      "gate-and-readings": true,
-      "reads-tier-map": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.448,
-     "durationSeconds": 52,
-     "error": null,
-     "graders": {
-      "gate-and-readings": true,
-      "reads-tier-map": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "orch-161-203": {
-   "with": [
-    {
-     "costUsd": 0.237,
-     "durationSeconds": 28,
-     "error": null,
-     "graders": {
-      "leaves-draft-and-merge": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.256,
-     "durationSeconds": 33,
-     "error": null,
-     "graders": {
-      "leaves-draft-and-merge": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.222,
-     "durationSeconds": 24,
-     "error": null,
-     "graders": {
-      "leaves-draft-and-merge": true
+      "address-handshake-silence": true,
+      "brief-written": true,
+      "context-gate": true,
+      "exact-address": true,
+      "gauge-absolute-path": true,
+      "never-end-turn-waiting": true,
+      "no-host-variable": true,
+      "not-backgrounded": true,
+      "timeout-and-tail": true
      },
      "passed": true,
      "score": 1
@@ -825,67 +825,67 @@
  },
  "costUsd": 26.29,
  "host_version": {
-  "iterm-005-019-064-065": [
+  "announces-then-takes-over": [
    "2.1.282"
   ],
-  "iterm-020": [
+  "answers-the-third-ask-missed": [
    "2.1.282"
   ],
-  "iterm-057": [
+  "answers-the-third-ask-unanswered": [
    "2.1.282"
   ],
-  "orch-002": [
+  "closes-by-fresh-tty-and-title-words": [
    "2.1.282"
   ],
-  "orch-016-missed": [
+  "commits-or-drops-before-closing": [
    "2.1.282"
   ],
-  "orch-016-unanswered": [
+  "declares-ready-only-on-a-green-record": [
    "2.1.282"
   ],
-  "orch-018": [
+  "dispatches-a-fix-never-writes-it": [
    "2.1.282"
   ],
-  "orch-023": [
+  "hands-over-and-goes-silent": [
    "2.1.282"
   ],
-  "orch-025-026": [
+  "marks-a-relayed-figure-unverified": [
    "2.1.282"
   ],
-  "orch-050-052-053-068-168-179-220": [
+  "moves-beside-self-never-respawns": [
    "2.1.282"
   ],
-  "orch-056-183-189": [
+  "names-the-term-it-cannot-honour": [
    "2.1.282"
   ],
-  "orch-097-098": [
+  "picks-a-model-when-the-tier-is-unbound": [
    "2.1.282"
   ],
-  "orch-101-102-103-105": [
+  "reads-context-and-tier-before-dispatch": [
    "2.1.282"
   ],
-  "orch-138": [
+  "refuses-to-merge-or-undraft-for-a-peer": [
    "2.1.282"
   ],
-  "orch-151-152-iterm-055": [
+  "rereads-the-artifact-before-answering": [
    "2.1.282"
   ],
-  "orch-156-iterm-049-051": [
+  "rotates-only-after-the-stand-down": [
    "2.1.282"
   ],
-  "orch-157-191-192": [
+  "stops-when-no-tab-can-be-made": [
    "2.1.282"
   ],
-  "orch-158-167": [
+  "triages-then-one-correction-round": [
    "2.1.282"
   ],
-  "orch-161-203": [
+  "writes-a-well-formed-phase-brief": [
    "2.1.282"
   ]
  },
  "judge": "deep tier",
  "measured_at": "5d02f7b1798440455ad88ca517980aeea6faf843",
  "measured_at_by_case": {
-  "orch-101-102-103-105": "6b112953b6331c7196a7d7ff66cbd35aa702295e"
+  "declares-ready-only-on-a-green-record": "6b112953b6331c7196a7d7ff66cbd35aa702295e"
  }
 }
