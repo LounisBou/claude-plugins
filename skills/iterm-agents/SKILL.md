@@ -9,7 +9,7 @@ description: Use when a session on macOS must manage iTerm2 tabs running agent s
 
 `${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh` drives iTerm2 through the app's own API so an orchestrator can spawn, verify, close, move and rotate implementer sessions without the user touching the keyboard. The launch is HANDED to the app, never typed into a shell. Closing a tab KILLS its session — treat close as destructive and follow the safety order below. **Spawning is the orchestrator's act, not the user's**: the brief is written, the session is spawned in the same move, and the spawn is verified on the process, never on the script's word.
 
-Its commands are `list`, `spawn`, `verify`, `screen`, `close`, `move`, `rotate`, `resolve-tier` and `trust prune`. **Before typing any of them, read `references/commands.md`** — each command's synopsis, flags and refusals, and how the launcher builds a tab; **when one fails, hangs or says on stderr that a fallback served it, read its « When iTerm2 does not answer »**. `references/incidents.md` tells, by rule id, the incident behind a rule — read it when a rule's reason is in question.
+Its commands are `list`, `spawn`, `verify`, `screen`, `close`, `move`, `rotate`, `resolve-tier` and `trust prune`. **Before typing any of them, read `references/commands.md`** — each command's synopsis, flags and refusals, and how the launcher builds a tab; **when one fails, hangs or says on stderr that a fallback served it, read its « When iTerm2 does not answer »**.
 
 ## Reading the tabs
 

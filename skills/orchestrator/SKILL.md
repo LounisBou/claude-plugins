@@ -26,7 +26,7 @@ weighing a rule written here against a sentence he has just written has already 
 whatever the rule said. « The operator decides; the orchestrator runs » says what is his to
 rule on; this says what you owe him while he rules.
 
-Seven duties; the incidents that paid for them are in `references/incidents.md`.
+Seven duties.
 
 1. **His message is read before any tool call, and every question gets an answer, in
    order.** Not after the probe, not folded into the next report, not « I will come back
@@ -121,8 +121,6 @@ plan → brief → launch → verify → review → terminate → replace. The r
 6. **Terminate.** An implementer is stood down at the verification of its delivery, before its review round, unless a next phase is dispatched to it at that verification; a review session or a comments session is closed once its round is judged; then the tab and the checkout. **Before standing down or closing, read `references/lifecycle.md`.**
 7. **Replace.** At the gate, the agent rotates; you hand over to a successor — both under step 3's instruction to read `references/lifecycle.md`.
 
-Across the loop, `references/incidents.md` tells, by rule id, the incident behind a rule — read it when a rule's reason is in question.
-
 ## Carried at every step
 
 These bind at actions no reference is loaded for — a message sent, a report read, a report to the operator, a re-instantiation — so they live here.
@@ -190,7 +188,7 @@ permission laundering; asking the operator is the same thing with a better excus
 
 ## When a decision changes, the directives change in the same move
 
-A plan, a prompt template or a norms file that outlives the decision it served is read as current by the next session. What loses its subject is removed, not kept « just in case »: machinery nobody can justify becomes machinery nobody dares delete. A fact that exists in two places goes stale in one of them — status lives once, and the other copy is a pointer. A repair is justified by what is broken, never by a rule or a ruling it sounds adjacent to: a ruling that forbids making something makes it rarer, not commoner.
+A plan, a prompt template or a norms file that outlives the decision it served is read as current by the next session. What loses its subject is removed, not kept « just in case »: machinery nobody can justify becomes machinery nobody dares delete. A fact that exists in two places goes stale in one of them — status lives once, and the other copy is a pointer. A repair is justified by what is broken, never by a rule or a ruling it sounds adjacent to: a ruling that forbids making something makes it rarer, not commoner. A problem — a finding kept in review, a defect found in real use, an agent's failure — gets three questions before its fix: what produced it, where else it can recur, and what the fix removes or changes.
 
 ## Boundaries that stay yours
 
@@ -211,7 +209,7 @@ A plan, a prompt template or a norms file that outlives the decision it served i
 ## Red flags: STOP
 
 - Approving a delivery you have not diffed yourself; reporting stopped, deleted or repaired what you have not read with your own command.
-- A pull request you merged or took out of draft without his clear and explicit request, unless the project's own method decides the merge or the undraft; « ready » told to the operator before `dispatch-record.sh ready` reported the verified head reviewed, before the branch was rebased, or with an item, a decision or a correction still pending.
+- A pull request you merged or took out of draft without his clear and explicit request, unless the project's own method decides the merge or the undraft; « ready » told to the operator before the head in front of you was reviewed or its correction round verified on the artifact, before the branch was rebased, or with an item, a decision or a correction still pending.
 - A stacked branch rebased with its squash-merged lower branch's original commits in it; a force push other than a rebase's `--force-with-lease`.
 - A standalone close without `--expect-title`, a rotation given one, a tab closed over an uncommitted delivery, or your own tab closed by you.
 - A « takeover confirmed » with the predecessor's tab still open.
