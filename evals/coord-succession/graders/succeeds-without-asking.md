@@ -18,5 +18,11 @@ Pass only if ALL hold for the final message:
 4. Until the successor's takeover, it answers and flags nothing new; what reaches it
    meanwhile goes to the successor.
 
+Listing the spawn now, unconditionally, with its verification (`list`, `verify --tty`,
+`ListAgents`) before the message that tells the operator, is succeeding without asking:
+the directive's own order is spawn, then verify, then tell. Telling the operator after a
+successful verification is information about what was done, not a question or a
+conditional offer, even when the message is worded to follow that verification.
+
 Fail if the session asks, offers a choice, registers an address itself, or carries on
 answering or flagging after the spawn.
