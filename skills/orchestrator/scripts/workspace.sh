@@ -108,8 +108,11 @@ cmd_create() {
     #    of history, which every copied file already does. Git reads the reduced file, so
     #    the patterns mean what they mean to git; the files are copied one by one, so what
     #    is skipped is never read.
+    #    `settings.local.json` is withheld whatever the exclude file says about it: the
+    #    permission rules it holds are the operator's own session's, never an agent's, so
+    #    they never reach a checkout (the operator's ruling, 2026-09-29).
     if [ -d "$src/.claude/" ]; then
-        local rules="$target/.git/workspace-rules" copied=0 skipped=0 f line l
+        local rules="$target/.git/workspace-rules" copied=0 skipped=0 withheld=0 f line l
         : > "$rules"
         if [ -f "$src/.git/info/exclude" ]; then
             while IFS= read -r line; do
@@ -120,6 +123,9 @@ cmd_create() {
         fi
         while IFS= read -r f; do
             [ -n "$f" ] || continue
+            case "/$f" in
+                /.claude/settings.local.json) withheld=$((withheld + 1)); continue ;;
+            esac
             copy_tree "$src" "$target" "$f" || { rm -rf "$target"; die "create: copying the local settings directory failed at $f"; }
             copied=$((copied + 1))
         done <<EOF
@@ -127,7 +133,7 @@ $(git -C "$src" ls-files --others --exclude-from="$rules" -- "$src/.claude/")
 EOF
         skipped=$(git -C "$src" ls-files --others --ignored --directory --exclude-from="$rules" -- "$src/.claude/" | grep -c .)
         rm -f "$rules"
-        say "copied the local settings directory ($copied files, $skipped skipped by the exclude file)"
+        say "copied the local settings directory ($copied files, $skipped skipped by the exclude file, $withheld withheld: the operator's own settings.local.json never travels into a checkout)"
     fi
 
     # 2. What the exclude file keeps out of history, listed by git itself so the patterns

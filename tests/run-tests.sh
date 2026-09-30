@@ -782,16 +782,22 @@ check "the checkout is on the base branch at the source's head" "main|$(git -C "
   "$(git -C "$C" rev-parse --abbrev-ref HEAD 2>/dev/null)|$(git -C "$C" rev-parse HEAD 2>/dev/null)"
 check "origin is the source's origin, not the source" "git@example.invalid:owner/proj.git" \
   "$(git -C "$C" remote get-url origin 2>/dev/null)"
-check "the local settings directory is copied" "{}" "$(cat "$C/.claude/settings.local.json" 2>/dev/null)"
+check "the local settings directory is copied" "a" "$(cat "$C/.claude/agents/a.md" 2>/dev/null)"
 
 # Inside the settings directory, what the exclude file names does not travel — the host
 # writes its runtime block there (worktrees, checkpoints) and a whole-directory copy once
 # carried 4 GB of worktrees into a checkout meant to hold a phase (§35). A pattern naming
 # the directory whole is set aside: it says the directory stays out of history, which every
 # copied file already does.
-check "the settings directory's own files travel" "a" "$(cat "$C/.claude/agents/a.md" 2>/dev/null)"
 check "what the exclude file names inside it does not" "0" "$([ -e "$C/.claude/worktrees" ] && echo 1 || echo 0)"
-check "and the copy says what it skipped" "1" "$(grep -c 'settings directory (3 files, 1 skipped by the exclude file)' "$WORK/ws.err")"
+
+# The operator's own local permission rules (a squash-merge, an undraft, a pinned-lease
+# push) are his session's, never an agent's: `settings.local.json` never travels into a
+# checkout, whatever the source's exclude file says about it.
+check "the operator's local permissions never travel into a checkout" "0" \
+  "$([ -e "$C/.claude/settings.local.json" ] && echo 1 || echo 0)"
+check "and the copy says what it skipped and withheld" "1" \
+  "$(grep -c 'settings directory (2 files, 1 skipped by the exclude file, 1 withheld' "$WORK/ws.err")"
 
 check "the exclude file's file is copied" "local" "$(cat "$C/LOCAL.md" 2>/dev/null)"
 check "the manifest's present file is copied and the absent one is said" "secret|1" \
