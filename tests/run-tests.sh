@@ -382,7 +382,7 @@ check "the phase brief's gauge names the installed copy" "1" "$(grep -c "the plu
 check "the review brief's gauge names the installed copy" "1" "$(grep -c "the plugin's installed copy" "$ROOT/templates/agent-review-brief.md")"
 check "the comments brief's gauge names the installed copy" "1" "$(grep -c "the plugin's installed copy" "$ROOT/templates/agent-comments-brief.md")"
 check "the rotation brief's gauge names the installed copy" "1" "$(grep -c "the plugin's installed copy" "$ROOT/templates/agent-rotation-brief.md")"
-check "the rulebook's first instantiation carries remote control" "1" "$(grep -c -- '--remote-control "Orch : <subject>"' "$ORCH_REFS/lifecycle.md")"
+check "the orchestrator's loading step hands the operator remote control" "1" "$(grep -c -- '--remote-control "Orch : <subject>"' "$ROOT/skills/orchestrator/SKILL.md")"
 check "the tab skill already reads the Chat caveat" "1" "$(grep -c 'before the session names itself' "$ROOT/skills/iterm-agents/SKILL.md")"
 
 # Read as presence, not as a count: a document may spell a literal on one line or on five,

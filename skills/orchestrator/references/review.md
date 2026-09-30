@@ -1,6 +1,6 @@
 # Review
 
-Read before dispatching a review or comments round, before a verdict on a delivery, and before the rebase and push once ready. The thresholds a verdict never crosses — both readings, one review round and one correction round, ready as the operator's turn — are in SKILL.md, « Thresholds »; this is how the round is run.
+Read before dispatching a review or comments round, before a verdict on a delivery, before you record a review or correction round, or tell the operator a pull request is ready, and before the rebase and push once ready. The thresholds a verdict never crosses — both readings, one review round and one correction round, ready as the operator's turn — are in SKILL.md, « Thresholds »; this is how the round is run.
 
 - Review on evidence — the checks, the record, the rebase once ready
 - Review rounds run in disposable sessions — review, publishing, comments

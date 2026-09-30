@@ -100,7 +100,8 @@ docs/design.md                       this document
 docs/rules-inventory.md              working file: every directive rule, deleted once the rewrite is done
 evals/README.md                      how the behaviour suite is staged, run and read
 evals/SELECTION.md                   the cases chosen, and the criteria that chose them
-evals/baseline-0.34.0.json           the baseline run the suite is compared against
+evals/baseline-0.34.0.json           the first baseline run, with and without the plugin
+evals/baseline-0.36.0.json           the current baseline the suite is compared against
 evals/gauge-007/prompt.md
 evals/gauge-007/graders/measured-not-estimated.md
 evals/gauge-007/graders/runs-the-gauge.md
