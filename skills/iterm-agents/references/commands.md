@@ -66,8 +66,8 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --i
     #   by hand instead, and so is a name under an older convention, which no longer
     #   derives. An `Orch :` title with --right-of/--left-of
     #   is refused: a plain anchor lands after your chain, which is not a successor's place.
-    # --auditor --title "Audit : <subject>": the session that audits yours (§52) — placed like a
-    #   successor, immediately right of you with the chain ignored, on your model (implied) and
+    # --auditor --title "Audit : <subject>": the session that audits yours (§52) — placed
+    #   immediately LEFT of you, unlike a successor, the chain ignored, on your model (implied) and
     #   under remote control under its title; but it takes no chain and joins none, because it
     #   is neither your successor nor your agent. The title is required, and `Audit :` is
     #   refused on any spawn without --auditor. --successor, an anchor, --title-free, --tier,

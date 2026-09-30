@@ -1352,7 +1352,7 @@ def cmd_spawn(argv):
     if args.left_of and args.right_of:
         die("spawn: --left-of and --right-of are mutually exclusive")
     if args.auditor:
-        # An auditor is placed, named, modelled and reached ONE way (§52): immediately right
+        # An auditor is placed, named, modelled and reached ONE way (§52): immediately left
         # of its caller, `Audit : <subject>`, the caller's model, remote control on. Each of
         # these would quietly replace one of those terms with the launcher's default, so
         # each is refused rather than obeyed.
@@ -1362,7 +1362,7 @@ def cmd_spawn(argv):
                             ("--no-remote-control", not args.remote_control)):
             if given:
                 die("spawn: refused: %s is not an auditor's: an auditor lands immediately "
-                    "right of its caller, reads \"Audit : <subject>\", runs on the caller's "
+                    "left of its caller, reads \"Audit : <subject>\", runs on the caller's "
                     "model and comes up under remote control" % flag)
         if not args.title:
             die('spawn: refused: --auditor needs --title "Audit : <subject>"')
@@ -1465,11 +1465,15 @@ def cmd_spawn(argv):
         die("spawn: refused: a title reads \"Orch : <subject>\" or \"Agent : <subject>\", "
             "the subject at most 25 characters and neither starting nor ending with a "
             "space, got '%s' (pass --title-free for a tab named otherwise)" % title)
-    if args.successor or args.auditor:
+    if args.successor:
         # A successor is not an agent: immediately right of this session, the chain
-        # ignored, and it takes the chain with it once its session can be read (§34). An
-        # auditor is placed the same way and takes nothing with it (§52).
+        # ignored, and it takes the chain with it once its session can be read (§34).
         side, anchor = "right", "self"
+    elif args.auditor:
+        # An auditor is placed immediately LEFT of this session, the chain ignored, and
+        # takes nothing with it (§52) — the operator's layout: the auditor beside its
+        # orchestrator on the left, agents and successor on the right.
+        side, anchor = "left", "self"
     effect = chain_effect(args.successor, args.auditor)
     if anchor == "self":
         if not own and not DRY_RUN:
@@ -1546,6 +1550,7 @@ def cmd_spawn(argv):
             print("lint=%s" % lint_verdict)
         print("self=%s" % own)
         print("anchor=%s" % ("self" if anchor == own else anchor))
+        print("side=%s" % side)
         print("trust=%s" % trust_state)
         print("successor=%s" % ("yes" if args.successor else "no"))
         print("auditor=%s" % ("yes" if args.auditor else "no"))

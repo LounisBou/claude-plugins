@@ -1906,11 +1906,11 @@ check "a tab that is neither is refused, and the refusal names it" "1|1" \
 check "--force moves it and says what it moved" "0|1" \
   "$(mv_ --tty /dev/ttys901 --left-of self --force >/dev/null 2>&1; echo $?)|$(mv_ --tty /dev/ttys901 --left-of self --force | grep -c "^move: forced: /dev/ttys901 is not in this session's chain$")"
 
-# An AUDITOR is neither a successor nor an agent (§52). It is placed like a successor —
-# immediately right of its caller, the chain ignored — on the caller's model and under
-# remote control under its own title; but it takes no chain and joins none: the
-# orchestrator it audits keeps its agents, and the auditor is nobody's agent. Its title is
-# REQUIRED and reads `Audit : <subject>`, a shape refused everywhere but under --auditor.
+# An AUDITOR is neither a successor nor an agent (§52). It is placed immediately LEFT of
+# its caller, the chain ignored — on the caller's model and under remote control under its
+# own title; but it takes no chain and joins none: the orchestrator it audits keeps its
+# agents, and the auditor is nobody's agent. Its title is REQUIRED and reads
+# `Audit : <subject>`, a shape refused everywhere but under --auditor.
 AUDSTATE="$WORK/audstate"; mkdir -p "$AUDSTATE/ctx" "$AUDSTATE/chains"
 printf '{"session_id":"s-aud","model_id":"aud-model","updated_epoch":%s}\n' "$(date +%s)" > "$AUDSTATE/ctx/s-aud.json"
 printf '{"tab_id":"7","tty":"/dev/ttys901","owner":"S-ME"}\n' > "$AUDSTATE/chains/ttys900.jsonl"
@@ -1925,6 +1925,8 @@ check "and without the setting that turns remote control off" "0" "$(printf '%s'
 check "an auditor runs on the caller's model with no flag to ask for it" "1" "$(printf '%s' "$AUDLAUNCH" | grep -c -- '--model aud-model')"
 check "an auditor anchors on self, past no agent, and the dry run says what it is" "1|1|1" \
   "$(printf '%s' "$AUDOUT" | grep -c '^anchor=self$')|$(printf '%s' "$AUDOUT" | grep -c '^auditor=yes$')|$(printf '%s' "$AUDOUT" | grep -c '^successor=no$')"
+check "an auditor sits on the LEFT of its caller; a successor and a plain anchor stay RIGHT" "left|right|right" \
+  "$(printf '%s' "$AUDOUT" | sed -n 's/^side=//p')|$(aud --title 'Orch : f' --successor | sed -n 's/^side=//p')|$(aud --title 'Agent : x' --right-of self | sed -n 's/^side=//p')"
 check "where a plain spawn from the same caller anchors after its last agent" "1" \
   "$(aud --title 'Agent : x' --right-of self | grep -c '^anchor=/dev/ttys901$')"
 check "a chain is appended to by an agent, handed over by a successor, left alone by an auditor" "append|transfer|none" \

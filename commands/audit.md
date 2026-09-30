@@ -60,7 +60,7 @@ Then:
    ${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --dir <repository> --auditor --title "Audit : <subject>" --permission-mode auto --trust --prompt "Read and execute <brief path>"
    ```
 
-   `--auditor` places the tab immediately right of yours, runs it on your model, brings it
+   `--auditor` places the tab immediately left of yours, runs it on your model, brings it
    up under remote control under its title, and writes it into no chain. No tier, no
    anchor, no successor's flag: the launcher refuses each beside `--auditor`.
 4. **Verify on the artifact.** `iterm-agent.sh list` shows the `Audit : <subject>` tab;

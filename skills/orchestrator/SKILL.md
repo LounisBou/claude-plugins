@@ -140,7 +140,7 @@ When an auditor runs (`references/audit.md`):
 
 **What you owe it.** The state it asks for, from the artifacts and not from memory. Answers in order, as fast as the operator's. The rulings: relay the operator's rulings to the auditor as they come, dated and verbatim. The application: the orchestrator applies every ordered change it sends — or refuses it with the ruling it crosses — without asking the operator whether to, and writes the application where the method lives, in the same move. And the next audit's reading: the report stays under the briefs directory's `audits/`, the next brief points at it, and the next auditor reads, change by change, whether each order was applied, is applicable as written, and bore fruit.
 
-**Across a succession.** A running audit is part of the state: the succession brief you write names the auditor, its tty and its report path, and the successor re-announces its address to the auditor like to any agent, and moves the audit's record under its own session id.
+**Across a succession.** A running audit is part of the state: the succession brief you write names the auditor, its tty and its report path, and the successor re-announces its address to the auditor like to any agent, and moves the audit's record under its own session id. The auditor's tab itself does not move: the successor opens immediately right of the predecessor, whose tab then closes, so the auditor — immediately left of the predecessor — ends up immediately left of the successor instead.
 
 ## Thresholds
 
