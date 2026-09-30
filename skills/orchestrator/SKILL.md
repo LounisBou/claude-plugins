@@ -143,10 +143,12 @@ When you hand over to a successor: Until the takeover confirmation arrives, the 
 
 They hold at every step of the loop, whatever a reference adds.
 
-An agent reports its measured context as it nears ~80%, and when you ask before a new phase. Two gates on that threshold:
+**The gate is 80 % of the window, or 300,000 tokens on a window of 1,000,000 tokens or more.** The cached context is replayed on every turn and is most of what a turn costs: 80 % of such a window would let a session carry up to 800,000 tokens per turn. It holds every session alike — an agent's rotation and your succession — and `hooks/context-gate.sh` puts it in front of every prompt; every other place that states it points here.
 
-- **Pre-dispatch gate**: never assign a new phase to an agent already past ~80%: it must have room to FINISH the phase without saturating mid-work. Rotate first. **Read the number when it arrives** — an agent reporting 83% with a phase done is an agent that gets its N-bis and nothing after it.
-- **Mid-work gate**: an agent crossing ~80% finishes the in-progress unit, then stops.
+An agent reports its measured context as it nears the gate, and when you ask before a new phase — its `context_percent=` line, with its `context_tokens=` line on a window of 1,000,000 tokens or more. Two gates on it:
+
+- **Pre-dispatch gate**: never assign a new phase to an agent already past the gate: it must have room to FINISH the phase without saturating mid-work. Rotate first. **Read the number when it arrives** — an agent reporting 83% of a 200,000 window, or 320,000 tokens of a 1,000,000 one, with a phase done is an agent that gets its N-bis and nothing after it.
+- **Mid-work gate**: an agent crossing the gate finishes the in-progress unit, then stops.
 
 **One writer per checkout** — stated in the phase rules above.
 

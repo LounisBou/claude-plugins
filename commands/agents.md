@@ -13,21 +13,24 @@ asked of the agent, then VERIFIED on the artifact before it is written down.
    message, this exact ask: « Status in five lines: phase and step in progress;
    branch and head sha; last push and PR; what blocks you, if anything; your
    measured context — run `${CLAUDE_PLUGIN_ROOT}/skills/context-gauge/scripts/context-gauge.sh`
-   and paste its `context_percent=` and `source=` lines. » Do not wait on the
+   and paste its `context_percent=`, `context_tokens=`, `context_window=` and
+   `source=` lines. » Do not wait on the
    answers in a loop: they arrive as messages; finish the report with what you
    have and complete it when they land.
 3. While they answer, read what you can without them: for each agent's branch,
    `git log --oneline origin/main..origin/<branch> | wc -l`, the head sha, and
    `gh pr list --head <branch>`; and the gauge's own files in
    `${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/ctx/*.json` younger than
-   ten minutes (session id, `context_percent`, age). A claim in an answer that
+   ten minutes (session id, `context_percent`, `context_used`, `context_total`,
+   age). A claim in an answer that
    the artifact contradicts is reported as the artifact says, with the claim
    beside it.
 4. Present one table: agent, phase and step, **the tier it was dispatched at**
    (from its brief or the dispatch record — not from the agent, which cannot see
    its own), branch and head, commits ahead of main, PR and CI state, blocker,
-   context % and its source. Mark any agent past
-   80% with ⚠ — the rotation gate of the `orchestrator:orchestrator` skill — and
+   context % and tokens with their source. Mark any agent past the gate —
+   80 % of the window, or 300,000 tokens on a window of 1,000,000 tokens or more — with ⚠ — the rotation gate of the `orchestrator:orchestrator` skill,
+   « Thresholds » — and
    say for each what YOU owe it (a verdict, an answer).
 5. An agent that has not answered within fifteen minutes is reported as such —
    « no answer, last artifact activity <time> » — never as « probably fine ».

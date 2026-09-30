@@ -2154,6 +2154,33 @@ check "unmeasured with a transcript but no turn answered yet prints nothing" "" 
 check "unmeasured past the first turn says so once" "1" "$(gate_t g-turn "$GH/transcripts/past-turn.jsonl" | grep -c 'unmeasured')"
 check "unmeasured stays silent the second time" "" "$(gate_t g-turn "$GH/transcripts/past-turn.jsonl")"
 
+# On a window of 1,000,000 tokens or more the gate is a count, 300,000 tokens, not a share:
+# 80 % of 1M lets a session replay up to 800k of cached context on every turn. Smaller
+# windows keep 80 %. The line names the figure that tripped it.
+tap() { printf '{"session_id":"%s","context_percent":%s,"context_used":%s,"context_total":%s,"updated_epoch":%s}\n' \
+  "$1" "$2" "$3" "$4" "$now" > "$GH/claude-orchestrator/ctx/$1.json"; }
+tap g-1m-under 29 299999 1000000
+tap g-1m-at 30 300000 1000000
+tap g-200k-under 79 158000 200000
+tap g-200k-at 80 160000 200000
+check "on a 1M window, 299,999 tokens stays under the gate" "" "$(gate g-1m-under)"
+check "on a 1M window, 300,000 tokens trips it, naming the tokens" "1" \
+  "$(gate g-1m-at | grep -c 'this session is at 300,000 tokens (gate 300,000 on a 1M window)\. An orchestrator SUCCEEDS')"
+check "on a 200k window, 79 % stays under the gate" "" "$(gate g-200k-under)"
+check "on a 200k window, 80 % trips it, naming the percent" "1" \
+  "$(gate g-200k-at | grep -c 'this session is at 80% (gate 80%)\. An orchestrator SUCCEEDS')"
+gate_env() { local sid="$1"; shift; printf '{"session_id":"%s"}' "$sid" | env CLAUDE_CONFIG_DIR="$GH" "$@" bash "$ROOT/hooks/context-gate.sh"; }
+check "ORCHESTRATOR_CONTEXT_GATE_TOKENS raises the token gate" "" \
+  "$(gate_env g-1m-at ORCHESTRATOR_CONTEXT_GATE_TOKENS=300001)"
+check "ORCHESTRATOR_CONTEXT_GATE_TOKENS lowers it" "1" \
+  "$(gate_env g-1m-under ORCHESTRATOR_CONTEXT_GATE_TOKENS=299999 | grep -c 'at 299,999 tokens (gate 299,999 on a 1M window)')"
+check "ORCHESTRATOR_LARGE_WINDOW above the window puts it back on the percent gate" "" \
+  "$(gate_env g-1m-at ORCHESTRATOR_LARGE_WINDOW=1000001)"
+check "ORCHESTRATOR_LARGE_WINDOW at 200k holds a 200k window to the tokens" "1" \
+  "$(gate_env g-200k-under ORCHESTRATOR_LARGE_WINDOW=200000 ORCHESTRATOR_CONTEXT_GATE_TOKENS=150000 | grep -c 'at 158,000 tokens (gate 150,000 on a 200,000 window)')"
+check "ORCHESTRATOR_CONTEXT_GATE still moves the percent gate" "1" \
+  "$(gate_env g-200k-under ORCHESTRATOR_CONTEXT_GATE=79 | grep -c 'at 79% (gate 79%)')"
+
 # The model that answers can be switched under a session by the host's own fallback, and
 # nothing showed it (§32). The gate keeps the last model it read and says a change once —
 # a line the session cannot miss, where the status line showed nothing.
@@ -2178,8 +2205,18 @@ echo "== context threshold sweep =="
 # default is as live a threshold as prose is.
 OLD_FIGURE=60
 THRESHOLD_RE="([^0-9]|^)${OLD_FIGURE} ?%|~${OLD_FIGURE}|sixty|(gate|threshold|context).{0,20}${OLD_FIGURE}|${OLD_FIGURE}.{0,20}(gate|threshold|context)|GATE ?(:-|:=|=) ?${OLD_FIGURE}"
-check "no context threshold other than 80 % remains in the tracked tree" "" \
+check "no context threshold other than the gate's rule remains in the tracked tree" "" \
   "$(cd "$ROOT" && git grep -n -E -i "$THRESHOLD_RE" -- . ':!tests/run-tests.sh' 2>/dev/null)"
+
+# The gate is 80 % of the window, or 300,000 tokens on a window of 1,000,000 tokens or
+# more. A line that states 80 % without the token half is a gate a large-window session
+# would read as its own: every such line carries the rule whole, in the same words.
+GATE_RULE='80 % of the window, or 300,000 tokens on a window of 1,000,000 tokens or more'
+BARE_RE='([^0-9,.]|^)80 ?%|~ ?80([^0-9]|$)'
+check "every line stating the 80 % gate states the token gate with it" "" \
+  "$(cd "$ROOT" && git grep -n -E "$BARE_RE" -- skills hooks templates commands README.md docs/design.md | grep -v -F "$GATE_RULE")"
+check "the rule is stated in « Thresholds »" "1" \
+  "$(grep -c -F "**The gate is $GATE_RULE.**" "$ROOT/skills/orchestrator/SKILL.md")"
 
 # Proof the sweep still catches a stale figure, planted only into a scratch copy — one file
 # per spelling it must catch.
@@ -2191,6 +2228,8 @@ printf 'GATE:-%s\n' "$OLD_FIGURE" > "$SWEEP/gate-default.sh"
 printf 'export GATE:=%s\n' "$OLD_FIGURE" > "$SWEEP/gate-walrus.sh"
 printf 'export GATE=%s\n' "$OLD_FIGURE" > "$SWEEP/gate-eq.sh"
 printf 'export gate=%s\n' "$OLD_FIGURE" > "$SWEEP/gate-lower.sh"
+printf 'the gate is %s; GATE_TOKENS:-300000; LARGE_WINDOW:-1000000\n' "$GATE_RULE" > "$SWEEP/new-rule.md"
+printf 'Mark sessions past 80%%\n' > "$SWEEP/bare-eighty.md"
 check "the sweep catches a figure planted in a scratch copy" "1" \
   "$(grep -rn -E -i "$THRESHOLD_RE" "$SWEEP" | grep -c "past $OLD_FIGURE")"
 check "the sweep catches the threshold-before-figure order" "1" \
@@ -2205,6 +2244,10 @@ check "the sweep catches a GATE= assignment" "1" \
   "$(grep -rn -E -i "$THRESHOLD_RE" "$SWEEP" | grep -c 'export GATE=60')"
 check "the sweep catches a lowercase gate= assignment" "1" \
   "$(grep -rn -E -i "$THRESHOLD_RE" "$SWEEP" | grep -c 'export gate=60')"
+check "the sweep lets the new rule's figures through" "" \
+  "$(grep -rn -E -i "$THRESHOLD_RE" "$SWEEP/new-rule.md")"
+check "a bare 80 % is caught, the rule stated whole is not" "1" \
+  "$(grep -rn -E "$BARE_RE" "$SWEEP" | grep -v -F "$GATE_RULE" | grep -c 'bare-eighty')"
 rm -rf "$SWEEP"
 
 echo "== push guard hook =="

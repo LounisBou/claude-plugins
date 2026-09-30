@@ -52,7 +52,7 @@ End the report with one machine line and nothing after it: `norms-check: tool {{
 - Your orchestrator is the session **`{{ORCHESTRATOR_NAME}}`** — its exact `ListAgents` name and reference — and no other.
 - A question for the operator is sent to the orchestrator, never left only in your tab; it relays the question to the operator verbatim and sends the answer back verbatim.
 - Report on start (after the state verification), once with the consolidated report, then answer the orchestrator's questions until it stands you down.
-- Report your measured context only as it nears ~80%, or when the orchestrator asks: run `{{GAUGE}}` — the plugin's installed copy, never a checkout of this repository — and paste its `context_percent=` and `source=` lines.
+- Report your measured context only as it nears the gate — 80 % of the window, or 300,000 tokens on a window of 1,000,000 tokens or more — or when the orchestrator asks: run `{{GAUGE}}` — the plugin's installed copy, never a checkout of this repository — and paste its `context_percent=` and `source=` lines, with its `context_tokens=` line on a window of 1,000,000 tokens or more.
 
 ## 7. Resource envelope
 

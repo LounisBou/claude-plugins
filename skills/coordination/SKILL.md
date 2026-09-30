@@ -96,8 +96,9 @@ asks for one; then tell him to whom it went.
 
 ## Your context
 
-Measure it with `orchestrator:context-gauge`. At 80 %, with no relay in flight, succeed
-yourself without asking and tell the operator after:
+Measure it with `orchestrator:context-gauge`. At the gate —
+80 % of the window, or 300,000 tokens on a window of 1,000,000 tokens or more —
+with no relay in flight, succeed yourself without asking and tell the operator after:
 
 1. Copy `${CLAUDE_PLUGIN_ROOT}/templates/coordinator-succession-brief.md` to
    `<state dir>/coordinator/succession-<date>.md`, fill every placeholder, and lint it with

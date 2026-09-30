@@ -6,6 +6,11 @@
 # miss: an orchestrator succeeds at the next quiet boundary, an implementer
 # finishes its unit and stops. Below the gate it prints nothing.
 #
+# The gate is 80 % of the window, or 300,000 tokens on a window of 1,000,000 tokens or more:
+# the cached context is replayed on every turn, and the percent alone would let a session
+# on such a window carry up to 800,000 tokens of it (skills/orchestrator/SKILL.md,
+# « Thresholds »).
+#
 # WHY A HOOK. The rule « succession is yours to trigger, do not wait » existed in
 # the skill and was not applied: an orchestrator reported its context at the gate
 # and asked the user what to do. A sentence the model must remember is a sentence
@@ -18,6 +23,8 @@
 # saying "unmeasured" there is a false alarm, not a finding.
 set -u
 GATE="${ORCHESTRATOR_CONTEXT_GATE:-80}"
+GATE_TOKENS="${ORCHESTRATOR_CONTEXT_GATE_TOKENS:-300000}"
+LARGE_WINDOW="${ORCHESTRATOR_LARGE_WINDOW:-1000000}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 GAUGE="$HERE/../skills/context-gauge/scripts/context-gauge.sh"
 CONFIG_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
@@ -30,7 +37,19 @@ session_id="${session_id:-${CLAUDE_CODE_SESSION_ID:-}}"
 
 reading="$(CLAUDE_CODE_SESSION_ID="$session_id" bash "$GAUGE" "$session_id" 2>/dev/null || true)"
 percent="$(printf '%s\n' "$reading" | sed -n 's/^context_percent=\([0-9]*\).*/\1/p' | head -1)"
+tokens="$(printf '%s\n' "$reading" | sed -n 's/^context_tokens=\([0-9][0-9]*\)$/\1/p' | head -1)"
+window="$(printf '%s\n' "$reading" | sed -n 's/^context_window=\([0-9][0-9]*\)$/\1/p' | head -1)"
 source="$(printf '%s\n' "$reading" | sed -n 's/^source=\(.*\)/\1/p' | head -1)"
+
+# 312000 -> 312,000; a whole number of millions reads as 1M.
+thousands() {
+    local n="$1" out=""
+    while [ "${#n}" -gt 3 ]; do out=",${n: -3}$out"; n="${n:0:${#n}-3}"; done
+    printf '%s%s' "$n" "$out"
+}
+window_label() {
+    if [ $(( $1 % 1000000 )) -eq 0 ]; then printf '%sM' $(( $1 / 1000000 )); else thousands "$1"; fi
+}
 
 # The model that answers can be switched under this session by the host's own fallback,
 # and no other surface shows it (§32). Kept per session; said once per change, the
@@ -60,13 +79,20 @@ if [ "$source" != "tap" ] || [ -z "$percent" ]; then
         marker="$STATE_DIR/ctx/$session_id.gate-unmeasured"
         if [ ! -f "$marker" ]; then
             mkdir -p "$STATE_DIR/ctx" 2>/dev/null && : > "$marker"
-            echo "CONTEXT GATE: unmeasured for this session (the gauge's tap is not feeding it — /orchestrator:install, then restart). The ${GATE}% gate cannot be read; measure by hand before dispatching or rotating."
+            echo "CONTEXT GATE: unmeasured for this session (the gauge's tap is not feeding it — /orchestrator:install, then restart). The gate (${GATE}%, or $(thousands "$GATE_TOKENS") tokens on a window of $(window_label "$LARGE_WINDOW") or more) cannot be read; measure by hand before dispatching or rotating."
         fi
     fi
     exit 0
 fi
 
-if [ "$percent" -ge "$GATE" ]; then
-    echo "CONTEXT GATE: this session is at ${percent}% (gate ${GATE}%). An orchestrator SUCCEEDS at the next quiet boundary — run /orchestrator:succeed: spawn the successor in the operator's decision mode, then tell the user; do not ask. An implementer finishes the unit in progress, reports, and stops; no new phase is dispatched to it."
+# Without the token count or the window, only the percent can be read.
+if [ -n "$tokens" ] && [ -n "$window" ] && [ "$window" -ge "$LARGE_WINDOW" ]; then
+    [ "$tokens" -ge "$GATE_TOKENS" ] || exit 0
+    tripped="$(thousands "$tokens") tokens (gate $(thousands "$GATE_TOKENS") on a $(window_label "$window") window)"
+elif [ "$percent" -ge "$GATE" ]; then
+    tripped="${percent}% (gate ${GATE}%)"
+else
+    exit 0
 fi
+echo "CONTEXT GATE: this session is at ${tripped}. An orchestrator SUCCEEDS at the next quiet boundary — run /orchestrator:succeed: spawn the successor in the operator's decision mode, then tell the user; do not ask. An implementer finishes the unit in progress, reports, and stops; no new phase is dispatched to it."
 exit 0

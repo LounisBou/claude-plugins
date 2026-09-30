@@ -33,7 +33,7 @@ The session id defaults to `CLAUDE_CODE_SESSION_ID`, which the host sets in ever
 
 ## Rules
 
-- **Report the measurement, never an estimate.** Paste the `context_percent=` line and its `source=` line in every report an orchestrator asks for.
+- **Report the measurement, never an estimate.** Paste the `context_percent=` line and its `source=` line in every report an orchestrator asks for, and the `context_tokens=` line on a window of 1,000,000 tokens or more, where the gate is a count of tokens (`orchestrator:orchestrator`, « Thresholds »).
 - An idle session stops rendering its status line, so its tap file ages and the gauge falls back to the transcript. That is expected: `source=transcript` is not an error.
 - `context_window_source=default` means the window was assumed. Pass `--window` when the model's window differs from 200000, or wire the tap so the file carries the real total.
 - Without the tap wired, only the transcript tier answers, and it needs `python3`.

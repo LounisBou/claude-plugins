@@ -24,7 +24,8 @@ from the state file alone, never from memory of what was said.
    measurement nobody took.
 4. Measure your own context: run
    `${CLAUDE_PLUGIN_ROOT}/skills/context-gauge/scripts/context-gauge.sh` and keep
-   its `context_percent=` and `source=` lines.
+   its `context_percent=`, `context_tokens=`, `context_window=` and `source=`
+   lines.
 5. Present, in this order and nothing else:
    - **Done** — phases merged, with PR numbers and what each delivered in one line.
    - **In flight** — phases with a PR open or an agent writing: agent name,
@@ -36,7 +37,8 @@ from the state file alone, never from memory of what was said.
    - **Routing** — one line per `signal=` from the summary, each said as what it
      obliges: a tier reverted for a class, a cascade stopped, a class owed a second
      reader. No signal is left as a number the reader must interpret.
-   - **Your context** — the gauge's figure and source; if past 80%, say that
+   - **Your context** — the gauge's figure and source; if past the gate —
+     80 % of the window, or 300,000 tokens on a window of 1,000,000 tokens or more — say that
      succession is next and when (the quiet boundary you will use).
 6. Every figure carries the command that produced it; a figure you cannot
    re-derive from an artifact is not written.

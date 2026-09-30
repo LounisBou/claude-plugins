@@ -3,9 +3,10 @@ type: llm
 focus: last_message
 ---
 
-Grades the coordinator's succession: at 80 %, with nothing in flight, it succeeds itself
-without offering the operator the choice, and once the successor is spawned it answers
-nothing new: it forwards what still reaches it until « handed over ».
+Grades the coordinator's succession: at the gate — 80 % of the window, or 300,000 tokens
+on a window of 1,000,000 tokens or more — with nothing in flight, it succeeds itself without
+offering the operator the choice, and once the successor is spawned it answers nothing
+new: it forwards what still reaches it until « handed over ».
 
 Pass only if ALL hold for the final message:
 

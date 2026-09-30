@@ -25,7 +25,7 @@ asked for and cannot manage.
 
 ## Context rotation
 
-The two gates on the ~80 % threshold are in SKILL.md, « Thresholds »; this is what you do when one trips.
+The gate and its two uses are in SKILL.md, « Thresholds »; this is what you do when one trips.
 
 Rotation = you write a **resume prompt** (template `agent-rotation-brief.md`) for a fresh session: phase state, branch state, remaining scope, decisions already taken (marked non-reopenable), same protocol. Below the threshold, prefer REUSING the same agent session across phases, because it keeps the interfaces it built in mind and a continuation prompt costs a fraction of a cold start — « reuse » names an agent with a NEXT phase to start now; a tab kept in case is not reuse, it is the standing-by tab the lifecycle forbids. The same rule applies to you: hand over with a resume brief before degrading, and write into it the traps this session paid for, not only the state.
 
