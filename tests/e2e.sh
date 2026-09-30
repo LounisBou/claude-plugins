@@ -14,7 +14,7 @@
 # both gone. Every one of those was a defect at least once, and none was reachable from a
 # dry run.
 #
-# It does NOT talk to the agent. Handshakes, verdicts and reviews are the orchestrator's
+# It does NOT talk to the agent. Verdicts and reviews are the orchestrator's
 # job and need judgment; this checks the mechanism underneath them.
 
 set -uo pipefail

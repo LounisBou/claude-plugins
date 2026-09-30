@@ -28,7 +28,7 @@ asked of the agent, then VERIFIED on the artifact before it is written down.
    its own), branch and head, commits ahead of main, PR and CI state, blocker,
    context % and its source. Mark any agent past
    80% with ⚠ — the rotation gate of the `orchestrator:orchestrator` skill — and
-   say for each what YOU owe it (a verdict, a release of the machine, an answer).
+   say for each what YOU owe it (a verdict, an answer).
 5. An agent that has not answered within fifteen minutes is reported as such —
    « no answer, last artifact activity <time> » — never as « probably fine ».
 6. An agent that reports the work needs more judgment than its brief anticipated

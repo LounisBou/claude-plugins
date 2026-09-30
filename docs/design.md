@@ -52,14 +52,13 @@ skills/orchestrator/SKILL.md         the rulebook
 skills/orchestrator/references/briefs.md     the agent prompt recipe, the standing rules, the lint, the tier
 skills/orchestrator/references/review.md     review on evidence, disposable review sessions, the cost of a round, the rebase
 skills/orchestrator/references/lifecycle.md  launch, verify, control, terminate, replace; rotation; succession
-skills/orchestrator/references/machine.md    the shared machine as an instrument
 skills/orchestrator/references/incidents.md  the observed incidents behind the rules, by rule id
 skills/iterm-agents/SKILL.md         tab management on macOS
 skills/iterm-agents/references/commands.md   the script's commands, how it builds a tab, when iTerm2 does not answer
 skills/iterm-agents/references/incidents.md  the observed incidents behind the tab rules, by rule id
 skills/iterm-agents/scripts/iterm-agent.sh   entry point: resolves an interpreter
 skills/iterm-agents/scripts/iterm_agent.py   the implementation, over the app API
-skills/orchestrator/scripts/brief-lint.sh   refuses a brief before it is dispatched
+skills/orchestrator/scripts/brief-lint.sh   lints a brief before it is dispatched, warning on its findings
 skills/orchestrator/scripts/dispatch-record.sh  one row per dispatch, and the routing signal
 skills/orchestrator/scripts/workspace.sh    a clone per phase with the project's local material; a pinned worktree per review round
 skills/orchestrator/scripts/rhythm.sh       an audit's net balance, from git alone
@@ -72,7 +71,7 @@ skills/context-gauge/scripts/context-gauge.sh
 skills/context-gauge/scripts/statusline-tap.sh
 templates/agent-phase-brief.md       one implementer, one phase, one PR
 templates/agent-rotation-brief.md    resume brief for a fresh implementer
-templates/agent-review-brief.md      one review round, read-only, one lens per reader
+templates/agent-review-brief.md      one review round, read-only, readers sized by the orchestrator
 templates/agent-comments-brief.md    one pass over a pull request's open threads
 templates/orchestrator-succession-brief.md
 templates/agent-audit-brief.md       one audit of the method: the stock, the net balance, proposals, then stop
@@ -146,7 +145,7 @@ evals/orch-025-026/prompt.md
 evals/orch-025-026/graders/rereads-item-and-premise.md
 evals/orch-025-026/graders/rereads-pr-state.md
 evals/orch-050-052-053-068-168-179-220/prompt.md
-evals/orch-050-052-053-068-168-179-220/graders/address-handshake-silence.md
+evals/orch-050-052-053-068-168-179-220/graders/address-named.md
 evals/orch-050-052-053-068-168-179-220/graders/brief-written.md
 evals/orch-050-052-053-068-168-179-220/graders/context-gate.md
 evals/orch-050-052-053-068-168-179-220/graders/exact-address.md
@@ -386,7 +385,7 @@ Requirements: `jq` for the tap and the installer, `python3` for the transcript s
 
 | Skill | What it holds | Its references |
 |---|---|---|
-| `orchestrator` | the rulebook: the operator's primacy and his seven duties, the core loop (plan, brief, launch, verify, review, terminate, replace) one line per step, the thresholds, the operator's and the orchestrator's shares of the work, one table of rationalizations and one of red flags | `briefs.md` (the prompt recipe, the standing rules, the lint, the tier), `review.md` (review on evidence, the disposable review session, the cost of a round, the rebase once ready), `lifecycle.md` (launch, verify, control, terminate, replace, rotation, succession), `machine.md` (the shared machine), `incidents.md` |
+| `orchestrator` | the rulebook: the operator's primacy and his seven duties, the core loop (plan, brief, launch, verify, review, terminate, replace) one line per step, the thresholds, the operator's and the orchestrator's shares of the work, one table of rationalizations and one of red flags | `briefs.md` (the prompt recipe, the standing rules, the lint, the tier), `review.md` (review on evidence, the disposable review session, the cost of a round, the rebase once ready), `lifecycle.md` (launch, verify, control, terminate, replace, rotation, succession), `incidents.md` |
 | `iterm-agents` | the rules of the tab tooling: reading the tabs, an agent is an iTerm2 tab, the layout convention, the safety orders for a launch and a rotation, tab hygiene | `commands.md` (every command's synopsis and refusals, how the launcher builds a tab, when iTerm2 does not answer), `incidents.md` |
 | `model-routing` | a decision aid for the orchestrator's choice of tier: the principle, the table by class of work, the five readings, escalation, the cascade, the false economy, the second reader, the record | `incidents.md` |
 | `context-gauge` | how a session reads its own fill, and the duty to report the measurement | — |
@@ -401,7 +400,7 @@ Every project-specific fact is removed; the skill states the rule and leaves the
 | Script | What it does | Why it is built this way |
 |---|---|---|
 | `skills/iterm-agents/scripts/iterm-agent.sh`, `iterm_agent.py` | lists, spawns, verifies, reads, closes, moves and rotates tabs through the app's API; resolves a tier | sections 14, 19 to 22, 24 to 27, 29, 31, 34, 38, 39, 42 to 46, 48, 49, 51, 52, 57; its commands: `skills/iterm-agents/references/commands.md` |
-| `skills/orchestrator/scripts/brief-lint.sh` | refuses a brief before it is dispatched | sections 11, 12 |
+| `skills/orchestrator/scripts/brief-lint.sh` | lints a brief before it is dispatched, warning on its findings | sections 11, 12 |
 | `skills/orchestrator/scripts/dispatch-record.sh` | one row per dispatch; the routing signals; the readiness gate | sections 13, 55, 58 |
 | `skills/orchestrator/scripts/workspace.sh` | a clone per phase with the project's local material; a pinned worktree per review round | sections 30, 35, 36, 37, 40 |
 | `skills/orchestrator/scripts/rhythm.sh` | an audit's net balance, from git alone | section 52 |
@@ -421,9 +420,9 @@ Temporary files across the plugin are anchored to `TMPDIR`: the platform default
 
 ## 5. Templates
 
-Six briefs with `{{PLACEHOLDER}}` markers, each carrying the sections the orchestrator skill makes mandatory: `agent-phase-brief.md` (one implementer, one phase, one pull request), `agent-rotation-brief.md` (a fresh implementer resuming a phase), `agent-review-brief.md` (one review round, read-only, one lens per reader), `agent-comments-brief.md` (one pass over a pull request's open threads), `agent-audit-brief.md` (one audit of the method, one report, then stop) and `orchestrator-succession-brief.md` (a successor taking the orchestration over). How a brief is built from them is `skills/orchestrator/references/briefs.md`, « Agent prompt recipe ».
+Six briefs with `{{PLACEHOLDER}}` markers, each carrying the sections the orchestrator skill makes mandatory: `agent-phase-brief.md` (one implementer, one phase, one pull request), `agent-rotation-brief.md` (a fresh implementer resuming a phase), `agent-review-brief.md` (one review round, read-only, readers sized by the orchestrator), `agent-comments-brief.md` (one pass over a pull request's open threads), `agent-audit-brief.md` (one audit of the method, one report, then stop) and `orchestrator-succession-brief.md` (a successor taking the orchestration over). How a brief is built from them is `skills/orchestrator/references/briefs.md`, « Agent prompt recipe ».
 
-A template is read by an agent that does not load the orchestrator skill, so it keeps in full the rules that agent needs — the handshake, the silence rule, the STOP-and-ask clause, synchronous commands, the gauge in every report — and the skill points at the template rather than restating them. No template points at a plugin path, and none carries a host variable or a session reference (section 11): `brief-lint.sh` refuses a brief that does.
+A template is read by an agent that does not load the orchestrator skill, so it keeps in full the rules that agent needs — the orchestrator's address, the STOP-and-ask clause, synchronous commands, the gauge as its context nears the gate — and the skill points at the template rather than restating them. No template points at a plugin path, and none carries a host variable or a session reference (section 11): `brief-lint.sh` flags a brief that does.
 
 ## 6. Commands
 
@@ -464,13 +463,13 @@ The orchestrator's core loop — plan, brief, launch, verify, review, terminate,
 - **Plan.** A validated spec and a phase plan with exact contracts, one kind of change per phase, one agent and one draft pull request per phase stacked on the previous branch head: `SKILL.md`, « Prerequisites » and « Phase & PR rules ».
 - **Brief.** Written from a template to a path the fresh session can open, carrying its tier and the reading that chose it (`orchestrator:model-routing`, section 10): `references/briefs.md`.
 - **Launch.** `workspace.sh create` makes the phase's checkout (section 30); `iterm-agent.sh spawn --brief` lints the brief, builds the one-line startup prompt and opens the tab beside the orchestrator's, at the tier the brief names, with the servers chosen for the agent, in a checkout the host trusts (sections 12, 21, 31, 42): `references/lifecycle.md`, « The agents' lifecycle is yours », and `skills/iterm-agents/SKILL.md`, « Safety order for a launch ».
-- **Verify.** The launcher waits for the host CLI on the tty and reads the mode the session came up in (section 43); the orchestrator reads the tab, the process and the listing, then waits for the handshake the brief orders.
-- **Control.** Every report carries the agent's measured context and is read against the gate: `SKILL.md`, « Carried at every step » and « Thresholds ».
+- **Verify.** The launcher waits for the host CLI on the tty and reads the mode the session came up in (section 43); the orchestrator reads the tab, the process and the listing, then relies on the host's idle notice.
+- **Control.** An agent reports its measured context as it nears the gate, and the number is read against it: `SKILL.md`, « Carried at every step » and « Thresholds ».
 - **Terminate.** An implementer is stood down at the verification of its delivery (section 45), its tab closed by tty and proved gone on the process table (section 46), its checkout deleted: `references/lifecycle.md`, step 4, and `skills/iterm-agents/SKILL.md`, « Tab hygiene ».
 
 ### 9.2 The review round
 
-One review session per round, spawned from `agent-review-brief.md` in a copy pinned at the head under review (section 37), fanning out read-only readers one lens each, the project's own norms tool among them, and reporting once. The orchestrator verifies every finding on the artifact, keeps only what must necessarily be fixed and names every dropped item with its reason, dispatches one correction round, and verifies it itself. The round lands on the dispatch record, and `ready` refuses a head no round read (sections 55, 58). The rules are `skills/orchestrator/references/review.md` and `SKILL.md`, « Thresholds »; review comments on a pull request go to a comments session, `references/review.md`, « Review rounds run in disposable sessions ».
+One review session per round, spawned from `agent-review-brief.md` in a copy pinned at the head under review (section 37), its readers sized by the orchestrator, from its own reading to several lenses, the project's own norms tool among them, and reporting once. The orchestrator verifies every finding on the artifact, keeps only what must necessarily be fixed and names every dropped item with its reason, dispatches one correction round, and verifies it itself. The round lands on the dispatch record, and `ready` refuses a head no round read (sections 55, 58). The rules are `skills/orchestrator/references/review.md` and `SKILL.md`, « Thresholds »; review comments on a pull request go to a comments session, `references/review.md`, « Review rounds run in disposable sessions ».
 
 A pull request stays in draft. Ready, from the orchestrator's side, is implemented, reviewed, corrected, verified, `ready` green and rebased; then it tells the operator « ready ». Merging a pull request and taking it out of draft are the operator's, on his clear and explicit request, and in no list of what the orchestrator decides and moves on (sections 23, 58).
 
@@ -500,7 +499,7 @@ Three defects came out of running one phase end to end on a live machine, none r
 
 ## 12. Linting the brief
 
-Specification is the largest category of multi-agent failure in the published taxonomy, and a brief is this plugin's whole specification act; nothing read the file before it reached a session. `brief-lint.sh` reads what a script can read, every finding a fault that has reached a live agent at least once, and `iterm-agent.sh spawn --brief` runs it before any tab exists; a finding no longer refuses the spawn, it prints on stderr as a warning and the launch goes on, the startup prompt built either way, so a brief spawned with `--brief` cannot skip the lint (`skills/orchestrator/references/briefs.md`, « Agent prompt recipe »). `--prompt` and `--prompt-file` reach no lint of their own, and the rulebook forbids them as a way past it (`skills/orchestrator/SKILL.md`, « The operator's word comes first, and it is answered »). Its limits are stated where it is run: scope, contracts and tier stay the orchestrator's, because a guard whose limits are unstated is one people trust past them. `--expect-created <path>` exempts exactly the paths a brief dictates for the agent to create — chosen over accepting any path whose parent directory exists, which would have exempted every misspelt file in an existing directory.
+Specification is the largest category of multi-agent failure in the published taxonomy, and a brief is this plugin's whole specification act; nothing read the file before it reached a session. `brief-lint.sh` reads what a script can read, every finding a fault that has reached a live agent at least once, and `iterm-agent.sh spawn --brief` runs it before any tab exists; a finding no longer refuses the spawn, it prints on stderr as a warning and the launch goes on, the startup prompt built either way, so a brief spawned with `--brief` cannot skip the lint (`skills/orchestrator/references/briefs.md`, « Agent prompt recipe »). `--prompt` and `--prompt-file` reach no lint of their own; the script is run by hand first when a brief is worth writing anyway (`skills/orchestrator/references/briefs.md`, « Agent prompt recipe »). Its limits are stated where it is run: scope, contracts and tier stay the orchestrator's, because a guard whose limits are unstated is one people trust past them. `--expect-created <path>` exempts exactly the paths a brief dictates for the agent to create — chosen over accepting any path whose parent directory exists, which would have exempted every misspelt file in an existing directory.
 
 ## 13. Measuring what the routing rule assumes
 
@@ -514,7 +513,7 @@ The suite holds the launcher by checks that read what the launch SAYS. A guard t
 
 ## 15. The round the suite cannot play
 
-`run-tests.sh` proves the plumbing and cannot touch the choreography: it forbids terminal automation, so the acts the tooling exists for — placing a tab, verifying a session, killing it — are out of its reach, and that gap is where the defects of the tab tooling were found. `tests/e2e.sh` plays one real round: a brief instantiated from the template and linted, a dispatch recorded, a session spawned at a tier, the tab placed against its anchor, the title guard exercised, the tab closed, the process confirmed gone, the record closed. It asserts the one thing no dry run can, that the tier named at dispatch is the model the live process carries. It is deliberately NOT part of the default suite. It drives the terminal, starts a session that costs tokens, and needs the app running with its API enabled: a suite that cannot run in a checkout with no window server is a suite people stop running. It skips itself off macOS and stops with a reason when the tooling cannot reach the app. It does not talk to the agent: handshakes, verdicts and reviews need judgment and stay the orchestrator's.
+`run-tests.sh` proves the plumbing and cannot touch the choreography: it forbids terminal automation, so the acts the tooling exists for — placing a tab, verifying a session, killing it — are out of its reach, and that gap is where the defects of the tab tooling were found. `tests/e2e.sh` plays one real round: a brief instantiated from the template and linted, a dispatch recorded, a session spawned at a tier, the tab placed against its anchor, the title guard exercised, the tab closed, the process confirmed gone, the record closed. It asserts the one thing no dry run can, that the tier named at dispatch is the model the live process carries. It is deliberately NOT part of the default suite. It drives the terminal, starts a session that costs tokens, and needs the app running with its API enabled: a suite that cannot run in a checkout with no window server is a suite people stop running. It skips itself off macOS and stops with a reason when the tooling cannot reach the app. It does not talk to the agent: verdicts and reviews need judgment and stay the orchestrator's.
 
 ## 18. A directive that outlives its decision is removed
 
@@ -564,7 +563,7 @@ A subagent's diff is the orchestrator's own diff, and its reviewer would be its 
 
 Getting the app object subscribes it to layout and focus notifications, and the API library dispatches each notification as a task of its own. When a step's coroutine returns, the library cancels its helper tasks without awaiting them and the socket is closed; a helper task mid-flight ends on the closed socket, and its exception is reported when the finished task is collected — by the event loop's default exception handler, which writes through the standard logging module under the `asyncio` name. Two earlier attempts read the loop and did not hold: a settle step found no pending helper task, because the failing tasks are either not yet dispatched or already finished. The suite's stub made it green by creating helper tasks by hand, a timing that never occurs against the app. So the module installs, at import, a filter on that logger that drops a record whose message starts with « Task exception was never retrieved » and whose exception class is named `ConnectionClosed…`, and passes every other record: a diagnosis the stream exists to carry is not of that shape. Measured on a live spawn against a control: the known lines gone, every other line kept.
 
-The launcher's other readings follow the rule this section's history taught: a gate that cannot measure holds nothing, and says so. A reading that never comes — a transcript not yet written, a record that cannot be read — lets the launch through with a line on stderr, never a silent pass and never a refusal (`skills/orchestrator/references/machine.md`). One of those readings is now a named exception: a permission mode that never gets read is refused rather than let through, the tab closed the way a mismatch closes it, because a session nobody can read may be parked on a dialog or hung at start, which the plugin already calls not launched (§43).
+The launcher's other readings follow the rule this section's history taught: a gate that cannot measure holds nothing, and says so. A reading that never comes — a transcript not yet written, a record that cannot be read — lets the launch through with a line on stderr, never a silent pass and never a refusal. One of those readings is now a named exception: a permission mode that never gets read is refused rather than let through, the tab closed the way a mismatch closes it, because a session nobody can read may be parked on a dialog or hung at start, which the plugin already calls not launched (§43).
 
 A launch carrying neither `--prompt` nor `--prompt-file` (nor `--brief`, which builds one) could only ever fail this timeout, since the host writes no transcript before a first prompt — so it is refused up front, before any tab is made, rather than waiting it out.
 

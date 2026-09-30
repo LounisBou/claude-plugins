@@ -147,7 +147,7 @@ review)
     ;;
 fixed)
     # The correction round a review produced, verified by the orchestrator on the artifact
-    # (the diff, the decisive tests, a mutation). It lives inside the review it answers: a
+    # (the diff, the decisive tests). It lives inside the review it answers: a
     # correction belongs to the findings that ordered it. It counts as a round - the routing
     # signal reads what a dispatch cost. A row with no review recorded, or one already
     # carrying a correction round, is recorded anyway - a project's own method may still

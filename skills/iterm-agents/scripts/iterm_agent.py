@@ -1517,8 +1517,8 @@ def cmd_spawn(argv):
         if lint.returncode != 0:
             sys.stderr.write("spawn: warning: brief-lint found findings in %s\n" % brief_abs)
             sys.stderr.write(lint_verdict + "\n")
-        brief_prompt = ("Read and execute %s. Your orchestrator is %s; handshake first, "
-                         "silence rule 15 min." % (brief_abs, args.orchestrator))
+        brief_prompt = ("Read and execute %s. Your orchestrator is %s."
+                        % (brief_abs, args.orchestrator))
     if not (brief_prompt or args.prompt or args.prompt_file):
         # The host writes a session's transcript only once it has a first prompt (§29): a
         # promptless launch has no transcript to read a mode on, so verify_mode's own
@@ -1803,7 +1803,7 @@ def cmd_spawn(argv):
 def cmd_screen(argv):
     """What a tab is showing, right now.
 
-    An agent that has not shaken hands is inspected, not waited for — and inspecting it
+    An agent that has gone quiet is inspected, not waited for — and inspecting it
     means reading what it is stopped on. The typed-command era read this through a
     scripting bridge; dropping that bridge dropped the reading with it, and the round that
     followed spent its sessions parked on a question nobody could see."""

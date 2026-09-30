@@ -30,8 +30,14 @@ characters: it becomes the title `Audit : <subject>`.
    ${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --dir <repository> --auditor --title "Audit : <subject>" --permission-mode auto --trust --prompt "Read and execute <brief path>"
    ```
 
-   `--auditor` places the tab immediately left of this one, on this session's model, under
-   remote control under its title, in no chain.
+   `--auditor` places the tab immediately left of this one, the chain ignored, on this
+   session's model, under remote control under its title. It takes no chain and joins none,
+   because the auditor is neither this session's successor nor its agent: this session's
+   agents stay its own, and its next `--right-of self` still lands after its last agent. The
+   title is required, and `Audit :` is refused on any spawn without `--auditor`;
+   `--successor`, an anchor, `--title-free`, `--tier`, `--model` and `--no-remote-control`
+   are refused beside it. `rotate` and `move` refuse a tab whose session is named `Audit :`
+   unless `--force`. The auditor never closes this tab.
 4. **Verify** that `iterm-agent.sh list` shows the `Audit : <subject>` tab and
    `iterm-agent.sh verify --tty <its tty>` its process.
 5. **Tell the operator** in one line: the tab, and the report path. Then carry on with your

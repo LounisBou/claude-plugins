@@ -145,11 +145,11 @@ check "the succession brief closes the predecessor's tab" "1" "$(grep -c 'CLOSE 
 check "ready leaves the pull request in draft" "1" "$(grep -c "Ready is the operator's turn, and the pull request stays in draft" "$ROOT/skills/orchestrator/SKILL.md")"
 check "ready includes the rebase and names the squash-merge trap" "1|1|1" \
   "$(grep -c "each pull request of a stack on the one below it" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "git rebase --onto <main> <old head of the lower branch> <branch>" "$ORCH_REFS/review.md")|$(grep -c "the one force this rule allows" "$ORCH_REFS/review.md")"
-check "the new excuses have their rows" "1|1|1" \
-  "$(grep -c "The reviewer found it, so it goes in the correction round" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "is green, I can take it out of draft" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "a plain rebase on main will do" "$ROOT/skills/orchestrator/SKILL.md")"
-check "the new red flags are listed" "1|1" \
-  "$(grep -c "A second review round scheduled on a pull request you dispatched" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "a force push other than a rebase" "$ROOT/skills/orchestrator/SKILL.md")"
-check "the ungated pull request has its red flag" "1" "$(grep -c "A pull request you merged or took out of draft without his clear and explicit request; « ready » told to the operator before" "$ROOT/skills/orchestrator/SKILL.md")"
+check "the undraft and the plain rebase have their rows" "1|1" \
+  "$(grep -c "is green, I can take it out of draft" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "a plain rebase on main will do" "$ROOT/skills/orchestrator/SKILL.md")"
+check "the force push has its red flag" "1" \
+  "$(grep -c "a force push other than a rebase" "$ROOT/skills/orchestrator/SKILL.md")"
+check "the ungated pull request has its red flag" "1" "$(grep -c "A pull request you merged or took out of draft without his clear and explicit request, unless the project's own method decides the merge or the undraft; « ready » told to the operator before" "$ROOT/skills/orchestrator/SKILL.md")"
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate2" bash "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" spawn --dir "$WORK" --prompt p --left-of /dev/ttys001 --right-of self 2>&1 || true)
 case "$out" in *"mutually exclusive"*) anchors="refused" ;; *) anchors="$out" ;; esac
 check "two anchors are refused at spawn" "refused" "$anchors"
@@ -1935,7 +1935,7 @@ BABS=$(cd "$B" && pwd)
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : brief" --brief "$B/good.md" --orchestrator "$ORCHREF" 2>&1)
 check_status "a lint-clean brief spawns" 0 env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : brief" --brief "$B/good.md" --orchestrator "$ORCHREF"
 check "the built prompt reads exactly" "1" \
-  "$(printf '%s\n' "$out" | grep -Fc "prompt=Read and execute $BABS/good.md. Your orchestrator is $ORCHREF; handshake first, silence rule 15 min.")"
+  "$(printf '%s\n' "$out" | grep -Fc "prompt=Read and execute $BABS/good.md. Your orchestrator is $ORCHREF.")"
 check "the lint verdict is shown" "1" "$(printf '%s\n' "$out" | grep -c '^lint=brief-lint: .*0 findings$')"
 
 # A relative brief path still resolves to the absolute one the fresh session can open.

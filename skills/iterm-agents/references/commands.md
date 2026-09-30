@@ -24,7 +24,7 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --i
     # exists; a finding no longer refuses the spawn — it is printed on stderr as a warning
     # and the launch goes on. It builds the startup prompt itself either way, exactly
     # "Read and execute <absolute brief path>. Your orchestrator is
-    # <name [ref]>; handshake first, silence rule 15 min." --brief needs --orchestrator and
+    # <name [ref]>." --brief needs --orchestrator and
     # is exclusive with --prompt/--prompt-file, which stay for a spawn that carries no brief
     # (`--prompt "Read and execute <path>. Your orchestrator is <name [ref]>."` hand-built,
     # unlinted).
@@ -81,13 +81,6 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --i
     #   by hand instead, and so is a name under an older convention, which no longer
     #   derives. An `Orch :` title with --right-of/--left-of
     #   is refused: a plain anchor lands after your chain, which is not a successor's place.
-    # --auditor --title "Audit : <subject>": the session that audits yours (§52) — placed
-    #   immediately LEFT of you, unlike a successor, the chain ignored, on your model (implied) and
-    #   under remote control under its title; but it takes no chain and joins none, because it
-    #   is neither your successor nor your agent. The title is required, and `Audit :` is
-    #   refused on any spawn without --auditor. --successor, an anchor, --title-free, --tier,
-    #   --model and --no-remote-control are refused beside it. `rotate` and `move` refuse a tab
-    #   whose session is named `Audit :` unless --force.
 
 $SCRIPT verify --tty /dev/ttysNNN
     # succeeds with the pid when the host CLI runs on that tty; exit 1 otherwise
