@@ -46,6 +46,9 @@ silent no-trigger pass or a false miss.
 
 ## Running it
 
+This set runs only on the skill whose `description` line changes — never as a systematic
+campaign over every skill.
+
 From the repository root, one skill per call, with the plugin only. `<host-cli>` is the
 host's command-line binary, as in `evals/README.md`; `<out>` is a directory outside the
 checkout.

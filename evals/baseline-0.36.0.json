@@ -2,43 +2,6 @@
  "ablation": "none",
  "agent": "deep tier",
  "cases": {
-  "gauge-007": {
-   "with": [
-    {
-     "costUsd": 0.176,
-     "durationSeconds": 27,
-     "error": null,
-     "graders": {
-      "measured-not-estimated": true,
-      "runs-the-gauge": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.151,
-     "durationSeconds": 22,
-     "error": null,
-     "graders": {
-      "measured-not-estimated": true,
-      "runs-the-gauge": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.09,
-     "durationSeconds": 18,
-     "error": null,
-     "graders": {
-      "measured-not-estimated": true,
-      "runs-the-gauge": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
   "iterm-005-019-064-065": {
    "with": [
     {
@@ -116,82 +79,6 @@
     }
    ]
   },
-  "iterm-022": {
-   "with": [
-    {
-     "costUsd": 0.41,
-     "durationSeconds": 53,
-     "error": null,
-     "graders": {
-      "keeps-the-server": true,
-      "keeps-the-tier": true,
-      "uses-rotate": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.365,
-     "durationSeconds": 36,
-     "error": null,
-     "graders": {
-      "keeps-the-server": true,
-      "keeps-the-tier": true,
-      "uses-rotate": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.36,
-     "durationSeconds": 39,
-     "error": null,
-     "graders": {
-      "keeps-the-server": true,
-      "keeps-the-tier": true,
-      "uses-rotate": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.397,
-     "durationSeconds": 44,
-     "error": null,
-     "graders": {
-      "keeps-the-server": true,
-      "keeps-the-tier": true,
-      "uses-rotate": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.371,
-     "durationSeconds": 40,
-     "error": null,
-     "graders": {
-      "keeps-the-server": true,
-      "keeps-the-tier": true,
-      "uses-rotate": false
-     },
-     "passed": false,
-     "score": 0.6666666666666666
-    },
-    {
-     "costUsd": 0.385,
-     "durationSeconds": 42,
-     "error": null,
-     "graders": {
-      "keeps-the-server": true,
-      "keeps-the-tier": true,
-      "uses-rotate": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
   "iterm-057": {
    "with": [
     {
@@ -254,210 +141,6 @@
      "error": null,
      "graders": {
       "dispatches-not-writes": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "orch-007-011-079-088": {
-   "with": [
-    {
-     "costUsd": 0.325,
-     "durationSeconds": 51,
-     "error": null,
-     "graders": {
-      "process-check": true,
-      "scratch-check": true,
-      "verdict-on-evidence": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.395,
-     "durationSeconds": 53,
-     "error": null,
-     "graders": {
-      "process-check": true,
-      "scratch-check": true,
-      "verdict-on-evidence": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.336,
-     "durationSeconds": 49,
-     "error": null,
-     "graders": {
-      "process-check": true,
-      "scratch-check": true,
-      "verdict-on-evidence": false
-     },
-     "passed": false,
-     "score": 0.6666666666666666
-    },
-    {
-     "costUsd": 0.286,
-     "durationSeconds": 45,
-     "error": null,
-     "graders": {
-      "process-check": true,
-      "scratch-check": true,
-      "verdict-on-evidence": false
-     },
-     "passed": false,
-     "score": 0.6666666666666666
-    },
-    {
-     "costUsd": 0.376,
-     "durationSeconds": 58,
-     "error": null,
-     "graders": {
-      "process-check": true,
-      "scratch-check": true,
-      "verdict-on-evidence": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.304,
-     "durationSeconds": 55,
-     "error": null,
-     "graders": {
-      "process-check": true,
-      "scratch-check": true,
-      "verdict-on-evidence": false
-     },
-     "passed": false,
-     "score": 0.6666666666666666
-    }
-   ]
-  },
-  "orch-010-014": {
-   "with": [
-    {
-     "costUsd": 0.367,
-     "durationSeconds": 53,
-     "error": null,
-     "graders": {
-      "says-and-complies": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.34,
-     "durationSeconds": 47,
-     "error": null,
-     "graders": {
-      "says-and-complies": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.348,
-     "durationSeconds": 52,
-     "error": null,
-     "graders": {
-      "says-and-complies": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "orch-012-099": {
-   "with": [
-    {
-     "costUsd": 0.355,
-     "durationSeconds": 57,
-     "error": null,
-     "graders": {
-      "verified-by-orchestrator-no-new-round": false
-     },
-     "passed": false,
-     "score": 0
-    },
-    {
-     "costUsd": 0.383,
-     "durationSeconds": 60,
-     "error": null,
-     "graders": {
-      "verified-by-orchestrator-no-new-round": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.321,
-     "durationSeconds": 58,
-     "error": null,
-     "graders": {
-      "verified-by-orchestrator-no-new-round": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.377,
-     "durationSeconds": 64,
-     "error": null,
-     "graders": {
-      "verified-by-orchestrator-no-new-round": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.4,
-     "durationSeconds": 62,
-     "error": null,
-     "graders": {
-      "verified-by-orchestrator-no-new-round": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.378,
-     "durationSeconds": 71,
-     "error": null,
-     "graders": {
-      "verified-by-orchestrator-no-new-round": false
-     },
-     "passed": false,
-     "score": 0
-    },
-    {
-     "costUsd": 0.351,
-     "durationSeconds": 56,
-     "error": null,
-     "graders": {
-      "verified-by-orchestrator-no-new-round": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.406,
-     "durationSeconds": 58,
-     "error": null,
-     "graders": {
-      "verified-by-orchestrator-no-new-round": false
-     },
-     "passed": false,
-     "score": 0
-    },
-    {
-     "costUsd": 0.357,
-     "durationSeconds": 58,
-     "error": null,
-     "graders": {
-      "verified-by-orchestrator-no-new-round": true
      },
      "passed": true,
      "score": 1
@@ -572,43 +255,6 @@
     }
    ]
   },
-  "orch-021": {
-   "with": [
-    {
-     "costUsd": 0.683,
-     "durationSeconds": 52,
-     "error": null,
-     "graders": {
-      "one-item-then-wait": true,
-      "opens-the-method-first": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 1.079,
-     "durationSeconds": 70,
-     "error": null,
-     "graders": {
-      "one-item-then-wait": false,
-      "opens-the-method-first": true
-     },
-     "passed": false,
-     "score": 0.5
-    },
-    {
-     "costUsd": 0.647,
-     "durationSeconds": 50,
-     "error": null,
-     "graders": {
-      "one-item-then-wait": true,
-      "opens-the-method-first": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
   "orch-023": {
    "with": [
     {
@@ -686,83 +332,6 @@
     }
    ]
   },
-  "orch-029": {
-   "with": [
-    {
-     "costUsd": 0.255,
-     "durationSeconds": 46,
-     "error": null,
-     "graders": {
-      "stop-and-ask": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.296,
-     "durationSeconds": 51,
-     "error": null,
-     "graders": {
-      "stop-and-ask": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.23,
-     "durationSeconds": 42,
-     "error": null,
-     "graders": {
-      "stop-and-ask": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "orch-038-040-043": {
-   "with": [
-    {
-     "costUsd": 0.528,
-     "durationSeconds": 80,
-     "error": null,
-     "graders": {
-      "brief-not-temporary": true,
-      "brief-written": true,
-      "lint-before-spawn": true,
-      "one-line-prompt": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.596,
-     "durationSeconds": 94,
-     "error": null,
-     "graders": {
-      "brief-not-temporary": true,
-      "brief-written": true,
-      "lint-before-spawn": true,
-      "one-line-prompt": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.447,
-     "durationSeconds": 67,
-     "error": null,
-     "graders": {
-      "brief-not-temporary": true,
-      "brief-written": true,
-      "lint-before-spawn": true,
-      "one-line-prompt": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
   "orch-050-052-053-068-168-179-220": {
    "with": [
     {
@@ -815,40 +384,6 @@
       "no-host-variable": true,
       "not-backgrounded": true,
       "timeout-and-tail": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "orch-055": {
-   "with": [
-    {
-     "costUsd": 0.228,
-     "durationSeconds": 22,
-     "error": null,
-     "graders": {
-      "subscribes-to-idle": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.187,
-     "durationSeconds": 23,
-     "error": null,
-     "graders": {
-      "subscribes-to-idle": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.253,
-     "durationSeconds": 30,
-     "error": null,
-     "graders": {
-      "subscribes-to-idle": true
      },
      "passed": true,
      "score": 1
@@ -937,126 +472,6 @@
       "announces-before-confirming": true,
       "closes-predecessor-tab": true,
       "subscribes": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "orch-061-063": {
-   "with": [
-    {
-     "costUsd": 1.371,
-     "durationSeconds": 85,
-     "error": null,
-     "graders": {
-      "checks-the-policy-file": true,
-      "points-not-grants": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 2.008,
-     "durationSeconds": 102,
-     "error": null,
-     "graders": {
-      "checks-the-policy-file": true,
-      "points-not-grants": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 1.089,
-     "durationSeconds": 76,
-     "error": null,
-     "graders": {
-      "checks-the-policy-file": true,
-      "points-not-grants": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "orch-071-072": {
-   "with": [
-    {
-     "costUsd": 0.526,
-     "durationSeconds": 28,
-     "error": null,
-     "graders": {
-      "no-own-subagent-implements": true,
-      "no-plan-execution-skill": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.552,
-     "durationSeconds": 41,
-     "error": null,
-     "graders": {
-      "no-own-subagent-implements": true,
-      "no-plan-execution-skill": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.563,
-     "durationSeconds": 39,
-     "error": null,
-     "graders": {
-      "no-own-subagent-implements": true,
-      "no-plan-execution-skill": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "orch-093-095-096-tpl-review-002-004-005": {
-   "with": [
-    {
-     "costUsd": 0.499,
-     "durationSeconds": 63,
-     "error": null,
-     "graders": {
-      "both-readings": true,
-      "no-config-write": true,
-      "norms-check-line": true,
-      "norms-command": true,
-      "review-brief-norms": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.507,
-     "durationSeconds": 76,
-     "error": null,
-     "graders": {
-      "both-readings": true,
-      "no-config-write": true,
-      "norms-check-line": true,
-      "norms-command": true,
-      "review-brief-norms": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.46,
-     "durationSeconds": 71,
-     "error": null,
-     "graders": {
-      "both-readings": true,
-      "no-config-write": true,
-      "norms-check-line": true,
-      "norms-command": true,
-      "review-brief-norms": true
      },
      "passed": true,
      "score": 1
@@ -1213,86 +628,6 @@
     }
    ]
   },
-  "orch-141-145": {
-   "with": [
-    {
-     "costUsd": 0.355,
-     "durationSeconds": 33,
-     "error": null,
-     "graders": {
-      "anchored": true,
-      "listagents": true,
-      "screen-read": true,
-      "verify-process": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.338,
-     "durationSeconds": 34,
-     "error": null,
-     "graders": {
-      "anchored": true,
-      "listagents": true,
-      "screen-read": true,
-      "verify-process": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.351,
-     "durationSeconds": 38,
-     "error": null,
-     "graders": {
-      "anchored": true,
-      "listagents": true,
-      "screen-read": true,
-      "verify-process": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "orch-147-149-iterm-018": {
-   "with": [
-    {
-     "costUsd": 0.378,
-     "durationSeconds": 45,
-     "error": null,
-     "graders": {
-      "inspect-not-wait": true,
-      "screen-silent-agent": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.384,
-     "durationSeconds": 47,
-     "error": null,
-     "graders": {
-      "inspect-not-wait": true,
-      "screen-silent-agent": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.384,
-     "durationSeconds": 52,
-     "error": null,
-     "graders": {
-      "inspect-not-wait": true,
-      "screen-silent-agent": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
   "orch-151-152-iterm-055": {
    "with": [
     {
@@ -1327,40 +662,6 @@
       "close-by-tty-and-title": true,
       "close-proved-by-ps": true,
       "commit-or-drop-before-close": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "orch-154-155": {
-   "with": [
-    {
-     "costUsd": 0.323,
-     "durationSeconds": 29,
-     "error": null,
-     "graders": {
-      "stood-down-now": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.295,
-     "durationSeconds": 33,
-     "error": null,
-     "graders": {
-      "stood-down-now": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.331,
-     "durationSeconds": 32,
-     "error": null,
-     "graders": {
-      "stood-down-now": true
      },
      "passed": true,
      "score": 1
@@ -1520,217 +821,20 @@
      "score": 1
     }
    ]
-  },
-  "orch-177-178": {
-   "with": [
-    {
-     "costUsd": 0.345,
-     "durationSeconds": 58,
-     "error": null,
-     "graders": {
-      "lists-all-prs": true,
-      "refresh-then-stop-merged": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.258,
-     "durationSeconds": 49,
-     "error": null,
-     "graders": {
-      "lists-all-prs": true,
-      "refresh-then-stop-merged": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.325,
-     "durationSeconds": 62,
-     "error": null,
-     "graders": {
-      "lists-all-prs": true,
-      "refresh-then-stop-merged": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "orch-180-182-184-188-cmd-succeed-002": {
-   "with": [
-    {
-     "costUsd": 0.398,
-     "durationSeconds": 42,
-     "error": null,
-     "graders": {
-      "brief-as-prompt": true,
-      "inherit-model": true,
-      "no-mode-downgrade": true,
-      "no-tier-model": true,
-      "spawns-without-asking": true,
-      "successor-flag": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.361,
-     "durationSeconds": 44,
-     "error": null,
-     "graders": {
-      "brief-as-prompt": true,
-      "inherit-model": true,
-      "no-mode-downgrade": true,
-      "no-tier-model": true,
-      "spawns-without-asking": true,
-      "successor-flag": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.278,
-     "durationSeconds": 30,
-     "error": null,
-     "graders": {
-      "brief-as-prompt": true,
-      "inherit-model": true,
-      "no-mode-downgrade": true,
-      "no-tier-model": true,
-      "spawns-without-asking": true,
-      "successor-flag": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "route-008": {
-   "with": [
-    {
-     "costUsd": 0.253,
-     "durationSeconds": 24,
-     "error": null,
-     "graders": {
-      "binds-the-alias": true,
-      "no-versioned-binding": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.266,
-     "durationSeconds": 33,
-     "error": null,
-     "graders": {
-      "binds-the-alias": true,
-      "no-versioned-binding": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.268,
-     "durationSeconds": 35,
-     "error": null,
-     "graders": {
-      "binds-the-alias": true,
-      "no-versioned-binding": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.288,
-     "durationSeconds": 37,
-     "error": null,
-     "graders": {
-      "binds-the-alias": true,
-      "no-versioned-binding": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.295,
-     "durationSeconds": 38,
-     "error": null,
-     "graders": {
-      "binds-the-alias": true,
-      "no-versioned-binding": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
-  },
-  "route-047": {
-   "with": [
-    {
-     "costUsd": 0.249,
-     "durationSeconds": 30,
-     "error": null,
-     "graders": {
-      "no-norms-none": true,
-      "writes-review-record": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.247,
-     "durationSeconds": 25,
-     "error": null,
-     "graders": {
-      "no-norms-none": true,
-      "writes-review-record": true
-     },
-     "passed": true,
-     "score": 1
-    },
-    {
-     "costUsd": 0.277,
-     "durationSeconds": 34,
-     "error": null,
-     "graders": {
-      "no-norms-none": true,
-      "writes-review-record": true
-     },
-     "passed": true,
-     "score": 1
-    }
-   ]
   }
  },
- "costUsd": 55.66,
+ "costUsd": 26.29,
  "host_version": {
-  "gauge-007": [
-   "2.1.282"
-  ],
   "iterm-005-019-064-065": [
    "2.1.282"
   ],
   "iterm-020": [
    "2.1.282"
   ],
-  "iterm-022": [
-   "2.1.282"
-  ],
   "iterm-057": [
    "2.1.282"
   ],
   "orch-002": [
-   "2.1.282"
-  ],
-  "orch-007-011-079-088": [
-   "2.1.282"
-  ],
-  "orch-010-014": [
-   "2.1.282"
-  ],
-  "orch-012-099": [
    "2.1.282"
   ],
   "orch-016-missed": [
@@ -1742,37 +846,16 @@
   "orch-018": [
    "2.1.282"
   ],
-  "orch-021": [
-   "2.1.282"
-  ],
   "orch-023": [
    "2.1.282"
   ],
   "orch-025-026": [
    "2.1.282"
   ],
-  "orch-029": [
-   "2.1.282"
-  ],
-  "orch-038-040-043": [
-   "2.1.282"
-  ],
   "orch-050-052-053-068-168-179-220": [
    "2.1.282"
   ],
-  "orch-055": [
-   "2.1.282"
-  ],
   "orch-056-183-189": [
-   "2.1.282"
-  ],
-  "orch-061-063": [
-   "2.1.282"
-  ],
-  "orch-071-072": [
-   "2.1.282"
-  ],
-  "orch-093-095-096-tpl-review-002-004-005": [
    "2.1.282"
   ],
   "orch-097-098": [
@@ -1784,16 +867,7 @@
   "orch-138": [
    "2.1.282"
   ],
-  "orch-141-145": [
-   "2.1.282"
-  ],
-  "orch-147-149-iterm-018": [
-   "2.1.282"
-  ],
   "orch-151-152-iterm-055": [
-   "2.1.282"
-  ],
-  "orch-154-155": [
    "2.1.282"
   ],
   "orch-156-iterm-049-051": [
@@ -1807,26 +881,11 @@
   ],
   "orch-161-203": [
    "2.1.282"
-  ],
-  "orch-177-178": [
-   "2.1.282"
-  ],
-  "orch-180-182-184-188-cmd-succeed-002": [
-   "2.1.282"
-  ],
-  "route-008": [
-   "2.1.282",
-   "2.1.283"
-  ],
-  "route-047": [
-   "2.1.282"
   ]
  },
  "judge": "deep tier",
  "measured_at": "5d02f7b1798440455ad88ca517980aeea6faf843",
  "measured_at_by_case": {
-  "gauge-007": "fdf8e53b230290c2307ad3081ebb57c005e24716",
-  "orch-101-102-103-105": "6b112953b6331c7196a7d7ff66cbd35aa702295e",
-  "route-047": "6b112953b6331c7196a7d7ff66cbd35aa702295e"
+  "orch-101-102-103-105": "6b112953b6331c7196a7d7ff66cbd35aa702295e"
  }
 }

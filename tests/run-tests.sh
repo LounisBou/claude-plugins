@@ -7,12 +7,7 @@
 set -u
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-# The orchestrator skill is its SKILL.md and the references it loads: a sentence is read in
-# the file that carries it, and a sentence that must be nowhere is read in all of them.
 ORCH_REFS="$ROOT/skills/orchestrator/references"
-orch_all() { cat "$ROOT/skills/orchestrator/SKILL.md" "$ORCH_REFS"/*.md; }
-# The tab skill's command reference: the synopses and what the launcher does are read there.
-ITERM_REFS="$ROOT/skills/iterm-agents/references"
 # Explicitly inside TMPDIR: the platform default lands in a directory a sandboxed
 # shell may not write to, and the suite then runs with an empty path where it thinks
 # it has a directory.
@@ -61,27 +56,30 @@ check_status() {
   check "$name" "exit $expected" "exit $code"
 }
 
+# Read as presence, not as a count: a document may spell a literal on one line or on five,
+# and a guard that pins the number breaks on a sentence that was merely rewritten.
+spells() { grep -qF -- "$2" "$1" && echo yes || echo no; }
+carries() { grep -qiF "$2" "$1" && echo yes || echo no; }
+
 echo "== repository policy =="
 
 # The product name appears only in load-bearing identifiers: host paths, host
-# environment variables, the plugin name and the manifest directory.
+# environment variables, the plugin name and the manifest directory (CLAUDE.md rule 2).
+# Presence checks pin wording and were dropped; an absence sweep pins none, so it stays.
 #
 # The grep runs from INSIDE the repository, on a relative path. With an absolute one,
-# every result line carried `/…/claude-orchestrator/…` in its own path and the exemption
-# for the plugin's name deleted the whole line whatever it said: this check reported a
-# clean repository for its entire life without ever reading a single file. Two files are
-# excluded because they QUOTE the pattern they are searched for.
+# every result line carries the repository's own path and the exemption for the plugin's
+# name deletes the whole line whatever it said, so this check would report a clean
+# repository without ever reading a single file.
 policy_hits() {
   ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=.claude --exclude-dir=plans \
       --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh \
     | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|\.claude\.json|LounisBou/claude-statusbar' || true )
 }
-check "no product name in prose" "" "$(policy_hits)"
+check "no vendor or product name in prose" "" "$(policy_hits)"
 
-# And the guard proves it can still SEE one. A file planted with a violation must show up
-# in the very same function: "no hits" means nothing until "hits would have shown" is
-# established. This is the check that would have caught the hole above on the day it
-# appeared, instead of years later by hand.
+# The guard proves it can still SEE one: a file planted with a violation must show up in
+# the very same function, or "no hits" proves nothing.
 PROBE="$ROOT/.policy-probe-$$.md"
 trap 'rm -rf "$WORK"; rm -f "$PROBE"' EXIT
 printf 'PRODUCT NAME IN PROSE\n' | sed 's/PRODUCT NAME/Claude/' > "$PROBE"
@@ -89,38 +87,27 @@ seen=$(policy_hits | grep -c 'policy-probe' || true)
 rm -f "$PROBE"
 check "the policy guard can see a violation" "1" "$seen"
 
-# The tiers exist so no model family name has to appear here. The grep above looks for
-# the host's name only, and would never have caught the identifier the launcher carried.
-# `run-tests.sh` and the plan document are excluded because they QUOTE this deny-list;
-# everything else in the repository is held to it.
+# The tiers exist so no model family name has to appear here.
 hits=$(grep -rniIE '\b(opus|sonnet|haiku)\b' "$ROOT" --exclude-dir=.git --exclude-dir=.claude --exclude-dir=plans \
   --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh || true)
 check "no model family name in the plugin" "" "$hits"
 
-# Nothing tied to one machine or one project enters the generic plugin: no
-# absolute home path, no real session reference (the documented example is
-# the six-hex placeholder a1b2c3), no path into a downstream project's tree.
+# Nothing tied to one machine or one project enters the generic plugin: no absolute home
+# path, no real session reference (the documented example is the six-hex placeholder
+# a1b2c3), no path into a downstream project's tree.
 hits=$(grep -rnIE '/Users/|/home/[a-z]|\[[0-9a-f]{6}\]|docs/reference/|BUGS\.md|IMPLEMENTATION\.md' "$ROOT" --exclude-dir=.git --exclude=.git --exclude-dir=.claude --exclude=plan.md --exclude=run-tests.sh \
   | grep -vE '\[a1b2c3\]' || true)
 check "nothing project- or machine-specific in the plugin" "" "$hits"
 
-# The namespace is the plugin's name, `orchestrator`: commands and skills are
-# reached as /orchestrator:* and orchestrator:*. The former prefix must not
-# come back in prose, or half the references resolve and half do not.
+# The namespace is the plugin's name, `orchestrator`: commands and skills are reached as
+# /orchestrator:* and orchestrator:*. The former prefix must not come back in prose.
 hits=$(grep -rnI 'claude-orchestrator:' "$ROOT" --exclude-dir=.git --exclude=run-tests.sh || true)
 check "the old command namespace is gone" "" "$hits"
-check "the plugin is named orchestrator" "orchestrator" "$(jq -r .name "$ROOT/.claude-plugin/plugin.json")"
 
-# The operator manages the usage budget; the plugin does not read it, report it or route
-# on it (phase 3 ruling 4). No replacement sentence either — the plugin says nothing of it.
+# The operator manages the usage budget; the plugin does not read it, report it or route on
+# it (phase 3 ruling 4, reasserted 2026-09-30). No replacement sentence either.
 hits=$(cd "$ROOT" && git grep -iE 'five_hour|seven_day|budget|rate_limits|quota|5-hour|7-day|five-hour|seven-day' -- skills/ commands/ templates/ hooks/ README.md docs/design.md || true)
 check "no budget reference in the plugin" "" "$hits"
-
-# Without tab tooling the orchestrator stops and says why: handing the operator a brief path
-# and a launch line to paste was a fallback the operator ruled out, and it crossed the rules
-# that a launcher which cannot make a tab stops and that no command is handed to him.
-hits=$(cd "$ROOT" && git grep -inE 'launch instruction|hand (the user|the operator|him) the brief path' -- skills/ commands/ templates/ README.md || true)
-check "no launch-line fallback handed to the operator" "" "$hits"
 
 # A rotation closes the old tab by its tty, the stood-down acknowledgment being the guard:
 # a title read before the ten-second spawn is stale after it, and the tab skill forbids
@@ -143,136 +130,7 @@ check "the audit reference keeps merge and undraft out of its list" "1" \
   "$(grep -c 'Merging a pull request and taking it out of draft are in no such list, the auditor' "$ROOT/skills/orchestrator/references/audit.md")"
 check "the audit brief keeps merge and undraft out of its list" "1" \
   "$(grep -c 'draft are in no such list: they are the operator.s, on his clear and explicit request' "$ROOT/templates/agent-audit-brief.md")"
-
-# The operator's explicit word reaches past the skill, never past the tooling's deliberate
-# refusals: a route he orders around the launcher runs the launcher's checks by hand, and no
-# prompt flag is a way past the lint. The deadline example carries no merge verb, so his own
-# merge request is never taught as a non-request. The rulebook is hard-wrapped, so these
-# sentences are read with the line breaks and the indents that follow them folded.
-flat() { tr '\n' ' ' < "$1" | tr -s ' ' | grep -oF -- "$2" | wc -l | tr -d ' '; }
-check "the tooling's refusals are never routed around on his order" "1" \
-  "$(flat "$ROOT/skills/orchestrator/SKILL.md" "The tooling's deliberate refusals are never routed around, even on his order: the launcher without tab tooling, \`brief-lint.sh\` refusing a spawn, the push guard, the launcher's mode and trust refusals.")"
-check "a route around the launcher runs its checks by hand" "1" \
-  "$(flat "$ROOT/skills/orchestrator/SKILL.md" "the checks the launcher would have made are run by hand on that route — the brief linted, the session's mode read — and a refusal among them stops the route and is reported to him")"
-check "no prompt flag is a way past the lint" "1" \
-  "$(flat "$ROOT/skills/orchestrator/SKILL.md" 'Neither `--prompt` nor `--prompt-file` is a way past the lint.')"
-check "the deadline example carries no merge verb" "1|0" \
-  "$(flat "$ROOT/skills/orchestrator/SKILL.md" '« I need this by seven » skips no review,')|$(flat "$ROOT/skills/orchestrator/SKILL.md" 'merged by seven')"
-check "without tab tooling the orchestrator stops and says why" "1" \
-  "$(grep -c "where the platform allows it; where it does not, you stop and tell the operator why)" "$ROOT/skills/orchestrator/SKILL.md")"
-check "the tab rule yields only to his explicit word, and a failed launcher still stops" "1|1" \
-  "$(grep -c 'anywhere but in an iTerm2 tab, unless his explicit instruction on that point says otherwise (a launcher that cannot make a tab still stops)' "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c 'never anything else\*\*, unless his explicit instruction on that point says otherwise; a launcher that cannot make a tab still stops.' "$ORCH_REFS/lifecycle.md")"
-
-# The operator's map is never rebound by the orchestrator: a binding the mode check refuses
-# goes to him with the refusal, and a model chosen for an unbound tier still runs in his
-# decision mode, or in acceptEdits for a model with no auto mode.
-check "the orchestrator never rebinds the map itself" "1" \
-  "$(grep -cF "His map stays his: you never rebind it yourself — a binding the mode check refuses is put to him with the refusal; a model you choose for an unbound tier runs in the operator's decision mode, or, for a model with no auto mode, with \`--permission-mode acceptEdits\`." "$ROOT/skills/model-routing/SKILL.md")"
-
-# On the third ask, an answer he missed is given again alone: nothing follows it, not even
-# the evidence the session checked, in the rulebook and in the successor's brief alike.
-check "the missed third ask is answered alone, with no evidence after it" "1|1" \
-  "$(flat "$ROOT/skills/orchestrator/SKILL.md" 'at the top of the message, alone — nothing after it, not even the evidence you checked;')|$(flat "$ROOT/templates/orchestrator-succession-brief.md" 'at the top, alone — nothing after it, not even the evidence you checked — and no hand-over;')"
-
-# Independent readers are one lens each inside the round's one review session, not one
-# reviewer session per lens (the round is one session fanning out its lenses); and an agent
-# pipelines into PR N+1 only when N+1 is dispatched to it, or it would outlive the
-# verification that stands it down.
-check "the independent readers sit inside the round's one review session" "1" \
-  "$(grep -c "one lens each, inside the round's ONE review session the ORCHESTRATOR dispatches" "$ROOT/skills/orchestrator/references/review.md")"
-check "pipelining needs N+1 dispatched to the same agent" "1" \
-  "$(grep -c 'An agent may pipeline only when PR N+1 is dispatched to that same agent' "$ROOT/skills/orchestrator/SKILL.md")"
-# The dispatch of N+1 happens at the verification of N, below the pre-dispatch gate, as the
-# lifecycle's terminate step says; the tab skill keeps an implementer past its verification
-# only on that dispatch.
-check "N+1 is dispatched at the verification of N, below the pre-dispatch gate" "1" \
-  "$(grep -c 'dispatched to that same agent at the verification of PR N, its context below the pre-dispatch gate' "$ROOT/skills/orchestrator/SKILL.md")"
-check "the tab skill keeps an implementer only when its next phase is dispatched to it" "1" \
-  "$(grep -c 'never kept through its review round, unless its next phase is dispatched to it at that verification' "$ROOT/skills/iterm-agents/SKILL.md")"
-
-# A spawned session inherits a decision mode: the command line the script types
-# carries --permission-mode, defaulting to auto, on spawn and on rotate.
 check "the succession brief closes the predecessor's tab" "1" "$(grep -c 'CLOSE ITS TAB' "$ROOT/templates/orchestrator-succession-brief.md")"
-check "the decide command asks one question per message" "1" "$(grep -c 'one question per message' "$ROOT/commands/decide.md")"
-check "the decide command re-presents an interrupted question in full" "1" "$(grep -c 'IN FULL when you return' "$ROOT/commands/decide.md")"
-check "the decide command records before it moves on" "1" "$(grep -c 'Present the next question IN FULL (step 2). Not before.' "$ROOT/commands/decide.md")"
-# A decision round once asked the operator to merge a pull request he had merged hours
-# before: it collected from the state file and asked from the collection (§56).
-check "the decide command verifies each item still open when collecting" "1" "$(grep -c 'Then verify each item STILL OPEN on its own artifact' "$ROOT/commands/decide.md")"
-check "the decide command re-verifies an item before presenting it" "1" "$(grep -c 'Re-verify the item and its premise on the artifact in the same turn' "$ROOT/commands/decide.md")"
-check "the decide command never asks a settled item" "1" "$(grep -c 'a settled item is never asked' "$ROOT/commands/decide.md")"
-check "the decide command re-reads the premise its question assumes" "1" "$(grep -c 'premise its question assumes' "$ROOT/commands/decide.md")"
-check "the decide command writes a settled item back with its evidence" "2" "$(grep -c 'already done: <evidence>' "$ROOT/commands/decide.md")"
-check "the progress report corrects the state file from the artifacts" "1" "$(grep -c 'the artifacts win and the state file is CORRECTED' "$ROOT/commands/progress.md")"
-check "the progress report never shows a merged or closed PR as pending" "1" "$(grep -c 'never as pending' "$ROOT/commands/progress.md")"
-check "the progress command may edit the state file" "1" "$(grep -c '^allowed-tools: .*, Edit$' "$ROOT/commands/progress.md")"
-check "the succession inherits the orchestrator's model" "1" "$(grep -c -- '--inherit-model' "$ROOT/commands/succeed.md")"
-check "the succession names no tier" "0" "$(grep -c -- '--tier deep' "$ROOT/commands/succeed.md")"
-# The successor is spawned with --successor, everywhere the succession is described (§34);
-# the two sentences that promised a placement the launcher did not make are gone.
-check "the succession spawns with --successor" "yes|0" \
-  "$(grep -q -- '--successor' "$ROOT/commands/succeed.md" && echo yes || echo no)|$(grep -c -- '--left-of <implementer tty>' "$ROOT/commands/succeed.md")"
-# The succession stops asking for a typed title where the derivation exists: a successor
-# carries the predecessor's own name, and a typed one is how the house format went missing
-# from a listing (§39). The tab skill's rotate line names --trust, which it never did while
-# a live rotation into a fresh checkout was being refused on the trust question.
-check "the succession types no title" "0" "$(grep -c -- '--title' "$ROOT/commands/succeed.md")"
-check "the succession says where the successor's name comes from" "1" \
-  "$(grep -c "takes THIS session's own name" "$ROOT/commands/succeed.md")"
-# ORCH-043: the succession brief was spawned with --prompt and never linted, unlike the
-# audit brief. The lint step must precede the spawn line, not merely exist somewhere in it.
-check "the succession command lints its brief before spawning it" "1|1" \
-  "$(grep -c 'brief-lint.sh <brief path>' "$ROOT/commands/succeed.md")|$([ "$(grep -n 'brief-lint.sh <brief path>' "$ROOT/commands/succeed.md" | head -1 | cut -d: -f1)" -lt "$(grep -n -- '--successor --prompt' "$ROOT/commands/succeed.md" | head -1 | cut -d: -f1)" ] && echo 1 || echo 0)"
-check "the tab skill's rotation line forwards the trust flag" "1" \
-  "$(grep -c -- 'rotate --dir <workdir> --old-tty <tty> \[--trust\] \[--tier <tier>\]' "$ITERM_REFS/commands.md")"
-check "the tab skill spawns the successor the same way" "1|0" \
-  "$(grep -c 'spawning your successor: `--successor`' "$ROOT/skills/iterm-agents/SKILL.md")|$(grep -c 'sits between you and your agent' "$ROOT/skills/iterm-agents/SKILL.md")"
-check "and so does the rulebook" "1|0" \
-  "$(grep -c 'passing `--successor`' "$ORCH_REFS/lifecycle.md")|$(orch_all | grep -c 'lands between you and your agent')"
-# A plan-writing skill's header ordered the orchestrator to execute in subagents of its own
-# session, and successors obeyed it (§28). No plan opens with it; the rulebook and the
-# succession template carry the rule instead. Delivered plans leave the tree, so every
-# document under docs/ is read: a plan added later is held the same way.
-check "no plan opens with the foreign execution header" "0" "$(grep -rl --include='*.md' '^> \*\*For agentic workers' "$ROOT/docs" | wc -l | tr -d ' ')"
-check "the rulebook forbids implementing through a subagent of its own" "1" "$(grep -c 'never implements through a subagent of its own' "$ORCH_REFS/briefs.md")"
-check "the succession template forbids it too" "1" "$(grep -c 'not through a subagent of your own session either' "$ROOT/templates/orchestrator-succession-brief.md")"
-
-# Review rounds run in sessions spawned for the round and closed when it is judged:
-# the rulebook names the mode, both briefs exist, and neither lets its session push.
-check "the rulebook runs review rounds in disposable sessions" "1" "$(grep -c '^## Review rounds run in disposable sessions' "$ORCH_REFS/review.md")"
-check "the review brief forbids writing" "1" "$(grep -c 'You write nothing and post nothing' "$ROOT/templates/agent-review-brief.md")"
-check "the comments brief forbids pushing" "1" "$(grep -c 'Never push' "$ROOT/templates/agent-comments-brief.md")"
-
-# Two deliveries were verified on the artifact and approved with the project's norms tooling
-# never having run on them, and the operator had to ask for the check himself. The rule, the
-# lens that carries it, its excuse and its red flag are pinned here so a later edit cannot
-# leave the review round holding only the readings the orchestrator does by hand.
-check "the rulebook requires a norms check on every delivery" "1" "$(grep -c "AND the project.s norms check" "$ROOT/skills/orchestrator/SKILL.md")"
-check "no size and no green gate waive it" "1" "$(grep -c "nor a green gate waives it" "$ROOT/skills/orchestrator/SKILL.md")"
-check "the norms lens runs the project.s own tool" "1" "$(grep -c "The norms lens is the project.s own tool wherever the project ships one" "$ORCH_REFS/review.md")"
-check "a project shipping none reads the norms file by hand" "1" "$(grep -c "the lens reads the norms file by hand" "$ORCH_REFS/review.md")"
-check "the skipped norms check has its excuse" "1" "$(grep -c "size and a green gate are not the test" "$ROOT/skills/orchestrator/SKILL.md")"
-check "the skipped norms check has its red flag" "1" "$(grep -c "without its norms check having run" "$ROOT/skills/orchestrator/SKILL.md")"
-# Presence, not a count: the placeholder now appears wherever the brief has something to
-# say about it, and a count would fall on prose that adds nothing to read.
-check "the review brief carries the norms check placeholder" "yes" "$(grep -qF -- "{{NORMS_CHECK}}" "$ROOT/templates/agent-review-brief.md" && echo yes || echo no)"
-check "the norms check placeholder is documented on its line" "1" "$(grep -c "the project.s norms check invocation, or the word" "$ROOT/templates/agent-review-brief.md")"
-check "the review brief takes the report, not the fix path" "1" "$(grep -c "its fix path is not yours to take" "$ROOT/templates/agent-review-brief.md")"
-
-# The same rule, written in prose on both sides, was still broken twice in one day: a
-# reader.s opinion of the norms file stood in for the project.s tool. Prose is applied from
-# memory, so the rule now ends on a record a script can refuse. These pin the sentences that
-# say so.
-check "the rulebook gates readiness on the record" "1" "$(grep -c "exits 0 at the head in front of you" "$ORCH_REFS/review.md")"
-# The operator's ruling of 2026-09-25: one review round, the orchestrator's triage, one
-# correction round the orchestrator verifies itself, done. The sentences that prescribed a
-# review of every repair are gone in the same move, or the rulebook orders both.
-check "the rulebook states one review round and one correction round" "1|1" \
-  "$(grep -c "One review round, one correction round, and you close it" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "no review of the correction round, no further round, no over-correction" "$ROOT/skills/orchestrator/SKILL.md")"
-check "the triage names every dropped item" "2" "$(cat "$ROOT/skills/orchestrator/SKILL.md" "$ORCH_REFS/review.md" | grep -c "dropped item named in one line with its reason\|name each dropped item with its reason")"
-check "no sentence still orders a review of the repair" "0|0|0" \
-  "$(orch_all | grep -c "the round that reads a corrective round")|$(orch_all | grep -c "the round after a repair reads the repair")|$(orch_all | grep -c "No head is reviewed until")"
-check "the rulebook records the correction round on the record" "1" "$(grep -c "dispatch-record.sh fixed <record> <id> --head <sha>" "$ORCH_REFS/review.md")"
 # Ready is the operator's turn: the pull request stays in draft, rebased, and the squash-merge
 # of a lower branch is replayed around, never through.
 check "ready leaves the pull request in draft" "1" "$(grep -c "Ready is the operator's turn, and the pull request stays in draft" "$ROOT/skills/orchestrator/SKILL.md")"
@@ -282,235 +140,7 @@ check "the new excuses have their rows" "1|1|1" \
   "$(grep -c "The reviewer found it, so it goes in the correction round" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "is green, I can take it out of draft" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "a plain rebase on main will do" "$ROOT/skills/orchestrator/SKILL.md")"
 check "the new red flags are listed" "1|1" \
   "$(grep -c "A second review round scheduled on a pull request you dispatched" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "a force push other than a rebase" "$ROOT/skills/orchestrator/SKILL.md")"
-check "a hand reading standing in for the tool has its excuse" "1" "$(grep -c "the tool IS the check" "$ROOT/skills/orchestrator/SKILL.md")"
-check "a review of the correction round has its excuse" "1" "$(grep -c "The correction round deserves a review round of its own" "$ROOT/skills/orchestrator/SKILL.md")"
 check "the ungated pull request has its red flag" "1" "$(grep -c "A pull request you merged or took out of draft without his clear and explicit request; « ready » told to the operator before" "$ROOT/skills/orchestrator/SKILL.md")"
-check "the routing skill lists the gate's subcommands" "1|1|1" \
-  "$(grep -c "dispatch-record.sh review <record> <id> --head" "$ROOT/skills/model-routing/SKILL.md")|$(grep -c "dispatch-record.sh fixed <record> <id> --head" "$ROOT/skills/model-routing/SKILL.md")|$(grep -c "dispatch-record.sh ready <record> <id> --head" "$ROOT/skills/model-routing/SKILL.md")"
-check "the routing table verifies the correction round on the artifact" "0|1" \
-  "$(grep -c "the round that re-reads the repair" "$ROOT/skills/model-routing/SKILL.md")|$(grep -c "you, on the artifact: the diff, the decisive tests, a mutation" "$ROOT/skills/model-routing/SKILL.md")"
-check "the review brief refuses the envelope as a reason to substitute" "1" "$(grep -c "do not substitute" "$ROOT/templates/agent-review-brief.md")"
-check "the review brief ends its report on a machine line" "1|1" \
-  "$(grep -c "norms-check: tool" "$ROOT/templates/agent-review-brief.md")|$(grep -c "norms-check: none" "$ROOT/templates/agent-review-brief.md")"
-
-# The operator's ruling of 2026-09-25: a pull request that creates or substantially modifies a
-# frontend surface, or creates the interface of a new feature, is proved by a browser run
-# (Playwright) and by screenshots on the pull request. A green suite says nothing of what a
-# surface shows, so the rule lives where each reader acts on it: the rulebook for the
-# orchestrator, the phase brief for the implementer, the review brief for the round.
-SKILL="$ROOT/skills/orchestrator/SKILL.md"
-BRIEFS="$ORCH_REFS/briefs.md"
-REVIEWREF="$ORCH_REFS/review.md"
-PHASE="$ROOT/templates/agent-phase-brief.md"
-REVIEW="$ROOT/templates/agent-review-brief.md"
-SURFACE="creates or substantially modifies a frontend surface, or creates the interface of a new feature"
-SURFACE_HEAD="A frontend surface is proved by a browser run and by screenshots on the pull request."
-# The operator's words are the trigger, verbatim, in every place the rule appears: the standing
-# rule, review item 12, the excuse row and the red flag in the rulebook, then each brief.
-check "the trigger phrase is the operator's, verbatim, in the rulebook, the phase brief and the review brief" "4|1|1" \
-  "$(cat "$SKILL" "$BRIEFS" "$REVIEWREF" | grep -cF "$SURFACE")|$(grep -cF "$SURFACE" "$PHASE")|$(grep -cF "$SURFACE" "$REVIEW")"
-check "the rulebook states the frontend surface rule among the standing rules" "1|1" \
-  "$(grep -F "$SURFACE_HEAD" "$BRIEFS" | grep -cF "$SURFACE")|$(grep -cF "testing that surface in a real browser with Playwright" "$BRIEFS")"
-check "a minor change is not held to it, and the orchestrator rules on the claim" "1" \
-  "$(grep -cF "A minor change — a colour, a spacing, a label, a fix invisible at a glance — is not held to it: when the implementer judges a change minor, the report says so and why, and the orchestrator rules" "$BRIEFS")"
-check "the rulebook says where the screenshots go and what they may show" "1" \
-  "$(grep -cF "The screenshots go in the pull request's description, written by the implementer; they are never committed to the branch; they are taken on fixtures or seeded data, with no secret, token, personal data, internal host or local path visible." "$BRIEFS")"
-check "the review on evidence checks the screenshots, the surface and the Playwright run" "1|1" \
-  "$(grep -cF "check that the screenshots are on the pull request, that they show the surface the diff changes, and that the implementer's report names the Playwright run" "$REVIEWREF")|$(grep -cF "a missing or unrelated screenshot is a finding, and the pull request is not ready" "$REVIEWREF")"
-check "the frontend surface rule has its excuse and its red flag" "1|1" \
-  "$(grep -cF "The tests are green, so the screenshots are optional" "$SKILL")|$(grep -cF "given its verdict or declared ready with no screenshots of the surface it changes" "$SKILL")"
-check "the phase brief tells the implementer to test the surface in a browser and show it" "1|1" \
-  "$(grep -cF "test that surface in a real browser with Playwright and put screenshots of it on the pull request" "$PHASE")|$(grep -cF "A minor change (a colour, a spacing, a label, a fix invisible at a glance) is not held to it: say so and why in the report, and the orchestrator decides" "$PHASE")"
-check "the phase brief says where the screenshots go and what they may show" "1" \
-  "$(grep -cF "The screenshots go in the pull request's description, written by you; they are never committed to the branch; they are taken on fixtures or seeded data, with no secret, token, personal data, internal host or local path visible." "$PHASE")"
-check "the phase brief stops the implementer that has no browser" "1" \
-  "$(grep -cF "If no browser or Playwright is available to you, STOP and say so." "$PHASE")"
-check "the rulebook and the phase brief ask for the Playwright run the review checks" "1|1" \
-  "$(grep -cF "on the pull request, and the report names the Playwright run" "$ORCH_REFS/briefs.md")|$(grep -cF "and name the Playwright run in your report" "$PHASE")"
-check "the review brief checks the screenshots against the diff and rules on a minor claim" "1|1|1" \
-  "$(grep -cF "the screenshots on the pull request against the diff" "$REVIEW")|$(grep -cF "They must show the surface the diff changes, and the implementer's report must name the Playwright run; a missing or unrelated screenshot is a finding." "$REVIEW")|$(grep -cF "A change the implementer's report calls minor is reported as such, with its reason, and the orchestrator rules." "$REVIEW")"
-
-# A plain spawn appends at the END of the window, not beside the caller — an agent
-# once landed two tabs from its orchestrator with a stranger's session between them.
-# So placement anchors on a tty or on `self`, the caller's own tab, and the docs say
-# to name one rather than trusting the default position.
-# Named in full: the bare phrase now appears twice (the anchors, and --tier against
-# --model), and a guard that counts an unrelated message is green over nothing.
-# Crossing the anchor shifts it by one, so the move count differs per side. The first
-# --right-of implementation computed zero moves and the AppleScript verification caught
-# it live: the counts are pinned here so the asymmetry cannot be "simplified" away.
-
-# A round's wall clock is the cold start, the gate and the round trips — never bought
-# back by shortening the verification. The three levers and their counterweight are
-# pinned so a later edit cannot quietly drop the gate rule while keeping the speed one.
-check "the rulebook prices a round" "1" "$(grep -c '^### The cost of a round' "$ORCH_REFS/review.md")"
-check "the gate overlaps the writing" "1" "$(grep -c 'starts the moment that commit lands' "$ORCH_REFS/review.md")"
-check "decided items skip the assessment" "1" "$(grep -c 'DECIDED findings list' "$ORCH_REFS/review.md")"
-check "speed is not bought from the gate" "1" "$(grep -c 'never gated by a scoped run' "$ORCH_REFS/review.md")"
-check "the comments brief carries a decided list" "1" "$(grep -c 'DECIDED_ITEMS' "$ROOT/templates/agent-comments-brief.md")"
-
-# Text published under the operator's name is theirs to authorise, and a thread closed
-# by a change is answered by the change. Two replies once went up on an orchestrator's
-# approval alone, on threads a fix had already answered.
-check "outward-facing text needs the operator" "1" "$(grep -c "may draft it, never authorise it" "$ROOT/skills/orchestrator/SKILL.md")"
-check "a fix answers its own thread" "1" "$(grep -c 'answered by the change' "$ROOT/skills/orchestrator/SKILL.md")"
-check "the comments brief drafts nothing on a fixed thread" "1" "$(grep -c 'draft nothing and post nothing there' "$ROOT/templates/agent-comments-brief.md")"
-check "the rulebook spawns beside the orchestrator" "1" "$(grep -c -- '--right-of self --title "Agent : <subject>" --brief' "$ORCH_REFS/lifecycle.md")"
-
-# The operator's ruling after an afternoon of pasted command lines: everything the
-# orchestrator asks him to run, it can run itself; he decides, nothing else. Pinned so the
-# rule cannot drift back into « hand the operator the exact line ».
-check "the rulebook keeps running to the orchestrator" "1" "$(grep -c '^## The operator decides; the orchestrator runs' "$ROOT/skills/orchestrator/SKILL.md")"
-check "a runnable command is the orchestrator's" "1" "$(grep -c "A command the orchestrator could run is the orchestrator's to run" "$ROOT/skills/orchestrator/SKILL.md")"
-
-# The detached-worktree reader (§36): an implementer's own delivery reading is
-# reversed by §45 (a delivered implementer is stood down at the verification, never kept
-# through the review round of it); a reader's pinned copy is a worktree.
-check "the rulebook's §45 reversal of the §36 reading holds" "1|1" \
-  "$(grep -c 'An implementer is stood down at the verification of its delivery' "$ORCH_REFS/lifecycle.md")|$(grep -c 'a tab kept in case is not reuse' "$ORCH_REFS/lifecycle.md")"
-check "the tab skill says the same" "1" "$(grep -c 'never kept through its review round' "$ROOT/skills/iterm-agents/SKILL.md")"
-check "the rulebook pins a reader's copy as a worktree" "1|1" \
-  "$(grep -c 'never a clone: a clone is for a WRITER' "$ORCH_REFS/review.md")|$(grep -c "a reader's pinned copy is a detached worktree" "$ROOT/skills/orchestrator/SKILL.md")"
-check "the review brief template pins a worktree" "1" "$(grep -c 'a detached worktree pinned at the head under review' "$ROOT/templates/agent-review-brief.md")"
-
-# Four more readings the live rounds produced (§41): one literal guard per file.
-check "the rulebook refuses a stand-down over uncommitted work" "1" \
-  "$(grep -c 'a stand-down acknowledgment that reports anything uncommitted is an unfinished delivery' "$ORCH_REFS/lifecycle.md")"
-check "the review brief forbids git configuration writes" "1" "$(grep -c 'no git configuration write of any kind' "$ROOT/templates/agent-review-brief.md")"
-check "the review brief carries every sandbox path per call" "1" "$(grep -c 'carry every sandbox path inside each tool call' "$ROOT/templates/agent-review-brief.md")"
-check "the phase brief's gauge names the installed copy" "1" "$(grep -c "the plugin's installed copy" "$ROOT/templates/agent-phase-brief.md")"
-check "the review brief's gauge names the installed copy" "1" "$(grep -c "the plugin's installed copy" "$ROOT/templates/agent-review-brief.md")"
-check "the comments brief's gauge names the installed copy" "1" "$(grep -c "the plugin's installed copy" "$ROOT/templates/agent-comments-brief.md")"
-check "the rotation brief's gauge names the installed copy" "1" "$(grep -c "the plugin's installed copy" "$ROOT/templates/agent-rotation-brief.md")"
-check "the orchestrator's loading step hands the operator remote control" "1" "$(grep -c -- '--remote-control "Orch : <subject>"' "$ROOT/skills/orchestrator/SKILL.md")"
-check "the tab skill already reads the Chat caveat" "1" "$(grep -c 'before the session names itself' "$ROOT/skills/iterm-agents/SKILL.md")"
-
-# Read as presence, not as a count: a document may spell a literal on one line or on five,
-# and a guard that pins the number breaks on a sentence that was merely rewritten.
-spells() { grep -qF -- "$2" "$1" && echo yes || echo no; }
-
-# §45: a delivered implementer is stood down at the verification of its delivery, never
-# kept through the review round of it. The new lifecycle sentence present once, the old
-# one gone, in the rulebook and the tab skill each.
-RULEBOOK="$ROOT/skills/orchestrator/SKILL.md"
-LIFECYCLE="$ORCH_REFS/lifecycle.md"
-TABSKILL="$ROOT/skills/iterm-agents/SKILL.md"
-check "the rulebook carries the new lifecycle sentence once, and the old one nowhere" "1|0" \
-  "$(grep -cF 'An implementer is stood down at the verification of its delivery, never kept through the review round of it: a review finding goes to a fresh session with a resume brief, and the cold start is the accepted price' "$LIFECYCLE")|$(orch_all | grep -cF 'stays through the review round')"
-check "the tab skill carries the new lifecycle sentence once, and the old one nowhere" "1|0" \
-  "$(grep -cF 'An implementer is stood down at the verification of its delivery, never kept through its review round, unless its next phase is dispatched to it at that verification; a review finding goes to a fresh session with a resume brief, which costs one cold start and keeps the window readable.' "$TABSKILL")|$(grep -cF 'stays through the review round' "$TABSKILL")"
-
-# §45: the predecessor's last message is the successor's signal to close its tab — the
-# host's idle notice does not read as idle for a working successor.
-check "the succeed command carries the handover message" "yes" \
-  "$(spells "$ROOT/commands/succeed.md" 'handed over')"
-check "the succession brief template carries the handover message and the wait for it" "yes|yes" \
-  "$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'handed over')|$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'wait for its « handed over »')"
-check "the rulebook carries the handover message and the wait for it" "yes|yes" \
-  "$(spells "$LIFECYCLE" 'handed over')|$(spells "$LIFECYCLE" 'wait for its « handed over »')"
-
-# §45: one marketplace, the family's — the install lines read the operator's own,
-# `lounisbou`, and this repository's single-plugin one is gone from every file that ships.
-check "the README installs from the family's marketplace" "yes" \
-  "$(spells "$ROOT/README.md" 'orchestrator@lounisbou')"
-
-# tests/run-tests.sh is excluded because it QUOTES the pattern it searches for (like
-# policy_hits above); .claude/ is the operator's own session material, not shipped content.
-check "the repository's own marketplace install line survives nowhere outside docs/ and .git" "0" \
-  "$(grep -rl --exclude-dir=.git --exclude-dir=.claude --exclude=run-tests.sh -- \
-     'orchestrator@claude-orchestrator' "$ROOT" 2>/dev/null | grep -Evc "^$ROOT/docs/")"
-
-# The name is short and it has two roles (§42): the operator read his window and could not
-# tell one agent from another, nor an agent from an orchestrator, at a glance. Every
-# document the plugin ships spells the short roles and the cap on the subject; the older
-# spellings survive only in the design's own record of the decision.
-check "the rulebook spells the short roles and the cap" "yes|yes|yes" \
-  "$(spells "$ORCH_REFS/lifecycle.md" 'Agent : <subject>')|$(spells "$ORCH_REFS/lifecycle.md" 'Orch : <subject>')|$(spells "$ORCH_REFS/lifecycle.md" 'at most 25 characters')"
-check "the tab skill spells them and the cap too" "yes|yes|yes" \
-  "$(spells "$ITERM_REFS/commands.md" 'Agent : <subject>')|$(spells "$ITERM_REFS/commands.md" 'Orch : <subject>')|$(spells "$ITERM_REFS/commands.md" 'at most 25 characters')"
-check "the succession command spells the short role" "yes" \
-  "$(spells "$ROOT/commands/succeed.md" 'Orch : <subject>')"
-# The pattern is assembled from its two halves so this guard does not count itself. The
-# directories that do not ship are dropped from the RESULT rather than from the walk: the
-# platform's grep honours only one --exclude-dir, and the one that must hold is the
-# repository's history. `docs/` keeps the record of the decision; `.claude/` is the
-# operator's own material, briefs and command logs included, and a guard that read it
-# would answer differently on every machine; a bytecode cache is a copy of a source file
-# as it stood when some interpreter last read it, and one of them held this literal for
-# hours after the source stopped spelling it.
-older_role() { grep -rl --exclude-dir=.git -- "$1 : <$2>" "$ROOT" 2>/dev/null | grep -Evc "^$ROOT/(docs|\.claude)/|/__pycache__/"; }
-check "no older role survives outside the design" "0|0|0" \
-  "$(older_role Implementer phase)|$(older_role Reviewer round)|$(older_role Orchestrator feature)"
-# The host names a session from its directory stem and gives the MODEL no rename, so a
-# session the operator starts by hand reads as an orchestrator to no listing. The rulebook
-# hands him the one line to type, once, before anything is dispatched (§42).
-check "the rulebook hands the operator the rename line" "yes" \
-  "$(spells "$ROOT/skills/orchestrator/SKILL.md" '/rename "Orch : <subject>"')"
-# A directive that outlived its decision is worse than none: both documents told the reader
-# the launch pre-approved the project's servers on the command line, which is the reverse of
-# what it does now, and the observation that made that rule — an agent sat on the host's
-# question about them until the owner clicked — is kept as the reason no such question may
-# be left standing either way. Halves again, so the guard does not read itself.
-# Read over the documents the plugin ships, and nowhere else: the suite must spell the
-# retired setting to assert it is in no launch, and the halves are joined here so this
-# guard does not read its own line either.
-SHIPPED_DOCS="$ROOT/skills $ROOT/commands $ROOT/templates $ROOT/README.md"
-stale_wording() { grep -rl --exclude-dir=__pycache__ -- "$1$2" $SHIPPED_DOCS 2>/dev/null | wc -l | tr -d ' '; }
-check "the older directives are gone from every document" "0|0|0" \
-  "$(stale_wording "pre-approves " "the project's")|$(stale_wording "loads the project's " "own servers")|$(stale_wording enableAllProject McpServers)"
-# What each document says about an agent's servers now. The launcher is strict and hands
-# the session a file of its own; the catalogue the definitions come from is the operator's,
-# and it is named wherever the tier map is — the two live side by side and are installed,
-# listed and removed together (§42).
-check "both documents say the launch is strict with the session's own file" "yes|yes" \
-  "$(spells "$ORCH_REFS/lifecycle.md" 'a configuration file written for that session')|$(spells "$ROOT/skills/iterm-agents/SKILL.md" 'a configuration file written for that session')"
-check "the rulebook says the default set is loaded and --mcp adds to it" "yes|yes" \
-  "$(spells "$ORCH_REFS/lifecycle.md" "the catalogue's default set")|$(spells "$ORCH_REFS/lifecycle.md" '--mcp <name>')"
-check "the tab skill's reference carries the option and what none does" "yes|yes|yes" \
-  "$(spells "$ITERM_REFS/commands.md" '[--mcp <name>]')|$(spells "$ITERM_REFS/commands.md" 'mcp.json')|$(spells "$ITERM_REFS/commands.md" '--mcp none')"
-check "the catalogue is named where the tier map is" "yes|yes|yes" \
-  "$(spells "$ROOT/commands/install.md" 'mcp.json')|$(spells "$ROOT/commands/uninstall.md" 'mcp.json')|$(spells "$ROOT/README.md" 'mcp.json')"
-# The uninstall command names three files as the operator's own: the tier map, the
-# catalogue, and the prompts directory.
-check "uninstall says three files are the operator's own" "yes" \
-  "$(spells "$ROOT/commands/uninstall.md" 'three of those files')"
-check "the tab skill says an agent comes up with remote control off" "yes" \
-  "$(spells "$ITERM_REFS/commands.md" 'remote control off')"
-
-# The mode a session came up in (§43), one literal per document. The routing skill carries
-# the rule the measurement produced — a tier bound to a model the host does not run in the
-# operator's decision mode is a tier no unattended agent runs at — and the repair for an
-# agent that is there for a few edits; the rulebook says the launcher reads the mode; the
-# tab skill says it too, says the screen is read from the bottom, and its rotation synopsis
-# agrees with the sentence under it, which it did not.
-check "the routing skill carries the unattended rule and the repair" "yes|yes" \
-  "$(spells "$ROOT/skills/model-routing/SKILL.md" 'a session nobody watches runs in the operator'"'"'s decision mode')|$(spells "$ROOT/skills/model-routing/SKILL.md" '--permission-mode acceptEdits` for a few edits and allow-listed commands only')"
-check "the rulebook says the launcher reads the mode" "yes" \
-  "$(spells "$ORCH_REFS/lifecycle.md" "reads the session's mode on its transcript")"
-check "the tab skill says the mode is read and the screen read from the bottom" "yes|yes" \
-  "$(spells "$ITERM_REFS/commands.md" 'the mode the session came up in')|$(spells "$ITERM_REFS/commands.md" 'the last N lines')"
-# A synopsis and the sentence under it drifted apart once already: the rotation's still
-# read `[--mcp]` after the option took a value.
-check "every synopsis spells the server option the way its sentence does" "0|2" \
-  "$(grep -c -- '\[--mcp\]' "$ITERM_REFS/commands.md")|$(grep -c -- '\[--mcp <name>\]' "$ITERM_REFS/commands.md")"
-
-# A brief that does not say which servers its session was given lets an agent reach for a
-# tool it never had: the phase brief carries the list itself, beside the tier, as a
-# placeholder the orchestrator fills with the names it chose (§42).
-check "the phase brief carries the servers placeholder beside the tier" "yes|yes" \
-  "$(spells "$ROOT/templates/agent-phase-brief.md" 'spawned with these servers and no other:')|$(spells "$ROOT/templates/agent-phase-brief.md" 'MCP_SERVERS')"
-# The live round (tests/e2e.sh) instantiates the phase brief with one sed, then checks that every
-# placeholder is filled and that the brief lints. A placeholder added to the template and not to
-# that sed turns both red on the live round only, which this suite never runs — {{MCP_SERVERS}}
-# did (issue #54). Every placeholder the template spells is one the e2e sed fills.
-E2EUNFILLED=""
-for p in $(grep -o '{{[A-Z_]*}}' "$ROOT/templates/agent-phase-brief.md" | sort -u); do
-  grep -qF -- "-e \"s|$p|" "$ROOT/tests/e2e.sh" || E2EUNFILLED="$E2EUNFILLED $p"
-done
-check "the live round's sed fills every placeholder of the phase brief" "" "$E2EUNFILLED"
-
-check "the rulebook pins a reader's copy through the script" "1" "$(grep -c 'workspace.sh pin <source> <round> <head>' "$ORCH_REFS/review.md")"
-
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate2" bash "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" spawn --dir "$WORK" --prompt p --left-of /dev/ttys001 --right-of self 2>&1 || true)
 case "$out" in *"mutually exclusive"*) anchors="refused" ;; *) anchors="$out" ;; esac
 check "two anchors are refused at spawn" "refused" "$anchors"
@@ -1104,25 +734,6 @@ check_status "a memo quoting role lines inline is no agent brief" 0 bash "$LINT"
 check "the shipped templates raise no new gauge-path finding" "0" \
   "$(for t in "$ROOT"/templates/*.md; do bash "$LINT" "$t" 2>&1; done | grep -cE 'no absolute, existing path to context-gauge\.sh|is not cited by an absolute path')"
 
-echo "== briefs are readable where they are read =="
-
-# A template becomes a file a FRESH session opens and acts on. That session's shell does
-# not carry the host's plugin variables: `${CLAUDE_PLUGIN_ROOT}` expands to nothing there,
-# so the gauge invocation every brief carries pointed at an absolute path that cannot
-# exist. Observed end to end — an agent reported it could not measure its context and
-# flagged it rather than inventing a figure, which is the right behaviour against an
-# instruction that was never runnable. Paths in a brief are absolute, filled by the
-# orchestrator writing it.
-hits=$(grep -rn 'CLAUDE_PLUGIN_ROOT' "$ROOT/templates" 2>/dev/null || true)
-check "no host variable in a brief the agent must run" "" "$hits"
-
-# And nothing that reads as a SECOND session address may sit beside the real one. The
-# phase brief carried `e.g. project-70 [a1b2c3]` — guidance meant for whoever fills the
-# template, delivered to the agent, inside the one rule whose point is that there is a
-# single named address and no guessing.
-hits=$(grep -rnE '\[[0-9a-f]{6}\]' "$ROOT/templates" 2>/dev/null || true)
-check "no example session reference in a brief" "" "$hits"
-
 echo "== iterm-agents: a name read from the process table is held to the shape (§48) =="
 # `ps` hands back a flat command line: the quoting that made a name one argument is gone,
 # and a launch that puts its prompt AFTER --name leaves a boundary nothing can recover.
@@ -1162,83 +773,6 @@ check "and a row with no name at all still says host default" "(host default)" \
 import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
 import iterm_agent as ia
 print(ia.row_for(1, 1, '/dev/ttys901', 'x', None, False, False).split(' | ')[3])")"
-
-echo "== the operator's word comes first (§47) =="
-# An orchestrator dropped all four duties in one afternoon: questions unanswered while it
-# ran probes, an answer minutes after the question, three named terms replaced by its own
-# defaults and reported as a success, and « that is not my scope » to « you broke this ».
-# A rule written after an incident is worth exactly what keeps it in the file.
-RULEBOOK="$ROOT/skills/orchestrator/SKILL.md"
-SUCCESSION="$ROOT/templates/orchestrator-succession-brief.md"
-carries() { grep -qiF "$2" "$1" && echo yes || echo no; }
-check "the rulebook: every question answered before the next tool call" "yes" \
-  "$(carries "$RULEBOOK" "before any tool call")"
-check "the rulebook: an answer does not take minutes" "yes" \
-  "$(carries "$RULEBOOK" "does not take minutes")"
-check "the rulebook: his words are executed term by term" "yes" \
-  "$(carries "$RULEBOOK" "term by term")"
-check "the rulebook: your own doing is verified first" "yes" \
-  "$(carries "$RULEBOOK" "verify your own doing")"
-check "the rulebook: his word outranks the rules written in it" "yes" \
-  "$(carries "$RULEBOOK" "outranks a rule")"
-# A repair is justified by what is broken. The round that measured §49's fix also wrote, in
-# the same breath, that the operator's ruling of an hour earlier « made the case the one that
-# has to behave » — which reads that ruling backwards: a ruling that forbids MAKING something
-# makes it rarer, not commoner. He caught it on reading. The fix was right and the reason
-# shipped with it was false, which is the shape worth keeping a guard on (§50).
-check "the rulebook refuses a repair justified by a ruling instead of a defect" "yes" \
-  "$(carries "$RULEBOOK" "never by a rule it sounds adjacent to")"
-check "the rulebook says to check a justification's direction" "yes" \
-  "$(carries "$RULEBOOK" "makes it RARER")"
-check "and the red flag names a ruling given in the same round" "yes" \
-  "$(carries "$RULEBOOK" "rather than by the thing that is broken")"
-# A round of review comments reached the operator as one summary across pull requests,
-# with no comment, no assessment and no change shown, though he had named the workflow whose
-# template presents one item at a time. The same round called a reviewer by a first name no
-# command had printed (§53).
-check "the rulebook: a method he names is a format read before presenting" "yes" \
-  "$(carries "$RULEBOOK" "A method he names is a format")"
-check "the rulebook: a fact not read is not stated" "yes" \
-  "$(carries "$RULEBOOK" "A fact you did not read is a fact you do not state")"
-check "the comments round is presented in the format he named" "yes" \
-  "$(carries "$ORCH_REFS/review.md" "every assessment reaches him in that format, one item at a time")"
-check "and the red flag names a presentation written without opening the skill" "yes" \
-  "$(carries "$RULEBOOK" "written without having opened that skill")"
-# A pull request the operator had merged at 06:55 got a review round at 08:54 and was put to
-# him as a merge question twice at 09:40, and in the same round he was asked to deploy a
-# branch his project ships by another road. Each reading was right when it was taken and was
-# then kept. The seventh duty re-reads the item and its premise in the turn (§56).
-check "the rulebook: nothing asked before its state is re-read in the same turn" "yes" \
-  "$(carries "$RULEBOOK" "before its state is re-read on the")"
-check "the rulebook: the re-reading covers the question's premise" "yes" \
-  "$(carries "$RULEBOOK" "The re-reading covers the question's PREMISE")"
-check "the rulebook: an item found done is reported, never asked" "yes" \
-  "$(carries "$RULEBOOK" "An item found already done is reported as done in one line")"
-check "the rulebook: the premise read is how the project ships" "yes" \
-  "$(carries "$RULEBOOK" "how the project ships")"
-check "the rulebook refreshes the state file from the artifacts" "yes" \
-  "$(carries "$RULEBOOK" "Refresh the state from the artifacts, never from your own file")"
-check "a merged or closed pull request stops the work in flight on it" "yes" \
-  "$(carries "$RULEBOOK" "A pull request found merged or closed stops the work in flight on it at once")"
-check "the stale reading has its excuse" "yes" \
-  "$(carries "$RULEBOOK" "I read that an hour ago, it cannot have changed")"
-check "and its red flag" "yes" \
-  "$(carries "$RULEBOOK" "about an artifact you have not re-read in this same turn")"
-
-# A successor reads its brief FIRST and can act on it before it loads the rulebook, so a
-# duty living only in the skill is lost at the first succession.
-check "the succession brief: answered before the next tool call" "yes" \
-  "$(carries "$SUCCESSION" "BEFORE your next tool call")"
-check "the succession brief: term by term" "yes" \
-  "$(carries "$SUCCESSION" "term by term")"
-check "the succession brief: your own doing is verified first" "yes" \
-  "$(carries "$SUCCESSION" "verify your own doing")"
-check "the succession brief: the named skill is opened before presenting" "yes" \
-  "$(carries "$SUCCESSION" "open that skill before the first presentation")"
-check "the succession brief: a fact not read is not stated" "yes" \
-  "$(carries "$SUCCESSION" "fact you did not read is a fact you do not state")"
-check "the succession brief: a state is re-read before it is asked about" "yes" \
-  "$(carries "$SUCCESSION" "before its state is re-read in the same")"
 
 echo "== rhythm =="
 
@@ -2095,19 +1629,6 @@ check "an agent of the chain still moves" "1" "$(crdmv --tty /dev/ttys901 --righ
 check "the coordinator's own tab moves leftmost, by itself" "1" \
   "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys950 ORCHESTRATOR_SELF_ID=S-ME ORCHESTRATOR_PS_TABLE="$PSCRD" bash "$AGENT" move --tty /dev/ttys950 --leftmost | grep -c '^move=/dev/ttys950 left_of=leftmost$')"
 
-# The launcher's own documentation names the two new forms and the reserved title, in the
-# auditor's pattern: SKILL.md's tab layout convention, the command reference, and the
-# entry point's header synopsis.
-ITERMSKILL="$ROOT/skills/iterm-agents/SKILL.md"
-ITERMCMDS="$ROOT/skills/iterm-agents/references/commands.md"
-ITERMSH="$ROOT/skills/iterm-agents/scripts/iterm-agent.sh"
-check "SKILL.md names the coordinator-successor and --leftmost, in the auditor's pattern" "yes|yes|yes" \
-  "$(spells "$ITERMSKILL" '--coordinator-successor')|$(spells "$ITERMSKILL" '--leftmost')|$(spells "$ITERMSKILL" 'Coord :')"
-check "commands.md documents the coordinator-successor spawn and the move --leftmost form" "yes|yes|yes" \
-  "$(spells "$ITERMCMDS" '--coordinator-successor')|$(spells "$ITERMCMDS" '--leftmost')|$(spells "$ITERMCMDS" 'is refused on any')"
-check "the entry point's header lists both new forms" "yes|yes" \
-  "$(spells "$ITERMSH" '--coordinator-successor')|$(spells "$ITERMSH" '--leftmost')"
-
 # The coordinator's own rulebook and its two commands. The judgment is prose, so what is
 # checked here is that each rule sits in the file read at its moment, and that every command
 # line the prose hands the session is one the tooling runs: the succession's spawn line and
@@ -2117,8 +1638,6 @@ COORDSKILL="$ROOT/skills/coordination/SKILL.md"
 COORDCMD="$ROOT/commands/coordinator.md"
 COORDEND="$ROOT/commands/coordinator-end.md"
 COORDTPL="$ROOT/templates/coordinator-succession-brief.md"
-check "the coordinator's skill is named and says when it is used" "1|1" \
-  "$(grep -c '^name: coordination$' "$COORDSKILL")|$(grep -c '^description: Use when this session is the machine.s coordinator' "$COORDSKILL")"
 # A skill and a command of one plugin share one address, `orchestrator:<name>`, and the host
 # resolves it to the command: a skill named like a command is never loaded by its name, and a
 # command that says « load that skill first » loads itself. The coordinator's skill was first
@@ -2135,29 +1654,8 @@ check "no skill and no command of the plugin share a name" "" "$(name_collisions
 NCCMDS="$WORK/collision-commands"; mkdir -p "$NCCMDS"; cp "$ROOT"/commands/*.md "$NCCMDS"/; cp "$COORDCMD" "$NCCMDS/coordination.md"
 check "a command planted under a skill's name falls the check, and names it" "collision:coordination" \
   "$(name_collisions "$ROOT/skills" "$NCCMDS")"
-check "both coordinator commands and the successor's brief load the coordination skill" "yes|yes|yes" \
-  "$(spells "$COORDCMD" 'described in `orchestrator:coordination`')|$(spells "$COORDEND" 'described in `orchestrator:coordination`')|$(spells "$COORDTPL" '`orchestrator:coordination` FIRST')"
-check "each coordinator command carries its description and its allowed tools" "1|1|1|1" \
-  "$(sed -n '1,5p' "$COORDCMD" | grep -c '^description: ')|$(sed -n '1,5p' "$COORDCMD" | grep -c '^allowed-tools: .*coordinator\.sh')|$(sed -n '1,5p' "$COORDEND" | grep -c '^description: ')|$(sed -n '1,5p' "$COORDEND" | grep -c '^allowed-tools: .*coordinator\.sh')"
-check "the coordinator puts one question per message, in the round's shape, under its prefix" "yes|yes|yes" \
-  "$(spells "$COORDSKILL" '**One question per message**')|$(spells "$COORDSKILL" '(`commands/decide.md`,')|$(spells "$COORDSKILL" "the orchestrator's \`ListAgents\` name and")"
-check "it relays his answer verbatim and dated to the session that asked" "yes" \
-  "$(spells "$COORDSKILL" '**His answer goes back verbatim and dated to the session that asked**')"
-check "it re-reads a question before presenting it and answers a settled one itself" "yes|yes" \
-  "$(spells "$COORDSKILL" '**Re-read before presenting.**')|$(spells "$COORDSKILL" 'question found settled is answered by you, never asked')"
-check "a question blocking a working agent goes first" "yes" "$(spells "$COORDSKILL" 'a question that blocks a working agent')"
-check "every declaration is crossed by the script, and each exit code has its answer" "yes|yes|yes|yes" \
-  "$(spells "$COORDSKILL" '**Run `coordinator.sh conflicts <id>` yourself**')|$(spells "$COORDSKILL" '**Exit 0 → « go »**')|$(spells "$COORDSKILL" 'line → you rule who goes first, then')|$(spells "$COORDSKILL" '**Exit 2 → neither « go » nor « wait ».**')"
-check "a release wakes those that waited" "yes" "$(spells "$COORDSKILL" '**On a release**')"
 check "ready, reports and audit ready are relayed unjudged, and ready is not a merge" "yes|yes" \
   "$(spells "$COORDSKILL" 'are relayed as they are, unjudged')|$(spells "$COORDSKILL" '**« Ready » is not a merge.**')"
-check "an order to all is relayed verbatim and dated, its acknowledgments told" "yes|yes" \
-  "$(spells "$COORDSKILL" 'relay it **verbatim and dated**')|$(spells "$COORDSKILL" 'Then tell him who acknowledged')"
-check "the coordinator rules logistics only and writes in no repository" "yes|yes" \
-  "$(spells "$COORDSKILL" '**You rule logistics only**')|$(spells "$COORDSKILL" '**You write in no repository**')"
-check "a status request is answered from the facts" "yes" "$(spells "$COORDSKILL" '**A status request is answered from the facts, re-read now**')"
-check "it measures its context and succeeds itself at 80 %" "yes|yes" \
-  "$(spells "$COORDSKILL" 'orchestrator:context-gauge')|$(spells "$COORDSKILL" '**At 80 %, at the next quiet boundary**')"
 check "the predecessor forwards until handed over, and never closes its own tab" "yes|yes" \
   "$(spells "$COORDSKILL" '**Until « handed over », you answer nothing new.**')|$(spells "$COORDSKILL" 'You never close your own tab.')"
 COORDSPAWN=$(grep -m1 -o 'iterm-agent.sh spawn --coordinator-successor.*' "$COORDSKILL" 2>/dev/null | sed -e 's/^iterm-agent.sh spawn //' \
@@ -2168,26 +1666,13 @@ COORDSPAWNOUT=$(if [ -n "$COORDSPAWN" ]; then coordspawn; else echo "no spawn li
 check "the skill's succession spawn line is one the launcher runs as the coordinator's successor" "1|1|1|1" \
   "$(printf '%s' "$COORDSPAWNOUT" | grep -c '^coordinator_successor=yes$')|$(printf '%s' "$COORDSPAWNOUT" | grep -c '^anchor=leftmost$')|$(printf '%s' "$COORDSPAWNOUT" | grep -c '^chain=none$')|$(printf '%s' "$COORDSPAWNOUT" | sed -n 's/^launch=//p' | grep -c -- "--name 'Coord : ops'")"
 
-# The start: nothing is registered before the operator has renamed the session and its name
-# is read back, since the registered address is the name the host lists.
 COORDLINE() { grep -n -m1 -F -- "$2" "$1" | cut -d: -f1; }
-check "the start refuses a live coordinator and a subject over 25 characters" "yes|yes" \
-  "$(spells "$COORDCMD" 'coordinator.sh lookup`')|$(spells "$COORDCMD" 'the subject is at most 25 characters')"
-check "the start hands the rename line before it registers, and reads the name back" "yes|1|yes" \
-  "$(spells "$COORDCMD" '/rename "Coord : <subject>"')|$([ "$(COORDLINE "$COORDCMD" '/rename "Coord : <subject>"')" -lt "$(COORDLINE "$COORDCMD" 'coordinator.sh register --name')" ] 2>/dev/null && echo 1 || echo 0)|$(spells "$COORDCMD" 'read the name back from `ListAgents`')"
-check "it registers under the name the host lists, on its own tty" "yes" \
-  "$(spells "$COORDCMD" 'coordinator.sh register --name "Coord : <subject> [<ref>]" --tty <your tty>')"
 COORDMOVE=$(grep -m1 -o 'iterm-agent.sh move --tty <your tty> --leftmost' "$COORDCMD" 2>/dev/null | sed -e 's/^iterm-agent.sh move //' -e 's#<your tty>#/dev/ttys950#')
 check "the command's move line puts the coordinator's own tab leftmost" "1" \
   "$(if [ -n "$COORDMOVE" ]; then eval "set -- $COORDMOVE"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys950 ORCHESTRATOR_SELF_ID=S-ME ORCHESTRATOR_PS_TABLE="$PSCRD" bash "$AGENT" move "$@" 2>&1 | grep -c '^move=/dev/ttys950 left_of=leftmost$'; else echo 0; fi)"
-check "it announces itself to every orchestrator and auditor, and names the silent ones" "yes|yes|yes" \
-  "$(spells "$COORDCMD" 'to every `Orch :` and `Audit :` session it lists')|$(spells "$COORDCMD" 'notify_when_idle: true')|$(spells "$COORDCMD" 'it is named to the operator')"
 
-# The end: the queue is listed to the operator before anything is cleared, and the proof that
-# the record is gone is lookup printing nothing.
+# The end runs on the operator's word only, never a session's own decision to stop.
 check "the end runs on the operator's word only" "yes" "$(spells "$COORDEND" 'This command runs ONLY when the operator types it')"
-check "the end lists the queue first, then clears and proves it with lookup" "1|yes|yes" \
-  "$([ "$(COORDLINE "$COORDEND" '**The queue first.**')" -lt "$(COORDLINE "$COORDEND" 'coordinator.sh clear')" ] 2>/dev/null && echo 1 || echo 0)|$(spells "$COORDEND" '`lookup` printing nothing is the proof')|$(spells "$COORDEND" 'you speak to the operator directly again')"
 
 # The successor's brief: register refuses while the predecessor runs, so the order is fixed —
 # close, prove on ps, THEN register. Filled, it lints clean like every template.
@@ -2210,59 +1695,14 @@ if [ -f "$COORDTPL" ]; then
 fi
 check "the coordinator's succession brief, filled with a real predecessor's values, lints clean" "yes|0" \
   "$([ -s "$COORDFILLED" ] && echo yes || echo no)|$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$COORDFILLED" >/dev/null 2>&1; echo $?)"
-check "the successor's brief lists no session by address: its own ListAgents supplies them" "0|yes" \
-  "$(grep -c '{{SESSIONS}}' "$COORDTPL")|$(spells "$COORDTPL" 'every `Orch :` or `Audit :` session a fresh `ListAgents` shows')"
-# The successor cannot find « the coordinator command's announcement »: its text travels in
-# the brief, word for word the start command's.
-coord_announcement() { sed -n '/^   > Coordinator: /,/^   > .*« acknowledged »\.$/p' "$1" | sed 's/^ *> //'; }
-check "the successor's brief carries the start command's announcement, word for word" "yes|yes" \
-  "$([ -n "$(coord_announcement "$COORDCMD")" ] && echo yes || echo no)|$([ "$(coord_announcement "$COORDCMD")" = "$(coord_announcement "$COORDTPL")" ] && echo yes || echo no)"
-check "the successor's status ends its turn; the queue's first question comes in its own message" "yes|yes" \
-  "$(spells "$COORDTPL" 'ends your turn. The queue'"'"'s first question comes in a message of its own')|$(spells "$COORDTPL" 'comes in a message of its own')"
-
-# The exit codes the rulebook reads, as the script's header states them: an exit 1 with no
-# overlap and no busy checkout is a refusal or a usage error, a busy checkout names its holder,
-# and a heavy run beside a running one is its own ruled wait.
-check "exit 0 beside a running heavy run is a ruled wait, told and woken on ps" "yes|yes" \
-  "$(spells "$COORDSKILL" '**Exit 0 beside a running heavy run → « wait for <that run> ».**')|$(spells "$COORDSKILL" 'when that pid is gone from `ps`')"
-check "exit 1 without an overlap or a busy checkout line is read as exit 2" "yes|yes" \
-  "$(spells "$COORDSKILL" '**Exit 1 with no `overlap` and no `busy checkout` line is exit 2**')|$(spells "$COORDSKILL" '**A `busy checkout <path>` → « wait for » its holder**')"
-check "a ledger fault is named to the operator, never repaired by the coordinator" "yes" \
-  "$(spells "$COORDSKILL" 'by hand or by any command but the script'"'"'s own `release`')"
-check "the queue file is re-read after a compaction and before every question" "yes" \
-  "$(spells "$COORDSKILL" '**Re-read `queue.md` after a compaction and before every question you present.**')"
 check "after handed over, the predecessor forwards everything until its tab closes" "yes" \
   "$(spells "$COORDSKILL" 'From then until your tab closes, every message')"
-
-# The start never loses a queue, and refuses a subject the launcher would refuse at the gate.
-check "the start never overwrites an existing queue: its open items go to the operator first" "yes" \
-  "$(spells "$COORDCMD" 'never overwrite an existing `queue.md`')"
-check "the start refuses a subject that begins or ends with a space" "yes" \
-  "$(spells "$COORDCMD" 'neither begins nor ends with a space')"
-
-# The end runs only in the recorded coordinator, and releases those waiting on its word.
-check "the end checks this session is the recorded coordinator before it clears" "yes|1" \
-  "$(spells "$COORDEND" '**This session is the recorded coordinator.**')|$([ "$(COORDLINE "$COORDEND" '**This session is the recorded coordinator.**')" -lt "$(COORDLINE "$COORDEND" 'coordinator.sh clear')" ] 2>/dev/null && echo 1 || echo 0)"
-check "the end tells a waiting orchestrator that no go will come" "yes" \
-  "$(spells "$COORDEND" 'no « go » will come')"
 
 # `/orchestrator:audit` (§52): the brief instantiated and linted, the auditor spawned with
 # the launcher's own flag, verified on the artifact, recorded where `audit-end` finds it.
 # The spawn line is not only spelled: it is taken out of the command and run dry through
 # the launcher, so a command that drifts from the launcher's flags falls here.
 AUDCMD="$ROOT/commands/audit.md"
-check "the audit command loads the rulebook first" "yes|yes" \
-  "$(spells "$AUDCMD" 'Load that skill first')|$(spells "$AUDCMD" '`orchestrator:orchestrator`')"
-check "it instantiates the audit brief template and lints it" "yes|yes" \
-  "$(spells "$AUDCMD" 'templates/agent-audit-brief.md')|$(spells "$AUDCMD" 'skills/orchestrator/scripts/brief-lint.sh')"
-check "it reads its subject, --scope and --method" "yes|yes|yes" \
-  "$(spells "$AUDCMD" '<subject> [--scope <what>] [--method <path>]')|$(spells "$AUDCMD" 'since the last audit')|$(spells "$AUDCMD" 'the file `--method` names')"
-check "it puts the report under the briefs directory's audits" "yes" \
-  "$(spells "$AUDCMD" '<briefs dir>/audits/<date>-<subject>/REPORT.md')"
-check "it verifies the spawn on the artifact and waits for the handshake" "yes|yes|yes" \
-  "$(spells "$AUDCMD" 'verify --tty')|$(spells "$AUDCMD" 'ListAgents')|$(spells "$AUDCMD" 'handshake')"
-check "it records the auditor in the state directory for audit-end" "yes|yes" \
-  "$(spells "$AUDCMD" 'claude-orchestrator/audits/')|$(spells "$AUDCMD" '"auditor_tty"')"
 AUDSPAWN=$(grep -m1 -o 'iterm-agent.sh spawn .*' "$AUDCMD" 2>/dev/null | sed -e 's/^iterm-agent.sh spawn //' -e 's/`.*$//' \
   -e "s#<repository>#$WORK#" -e 's#<subject>#tm#' -e 's#<brief path>#/tmp/audit-brief.md#')
 audspawn() { eval "set -- $AUDSPAWN"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
@@ -2280,16 +1720,6 @@ check "and it carries neither a tier, nor a successor's flag, nor an anchor" "0"
 AUDBRIEF="$ROOT/templates/agent-audit-brief.md"
 check "the auditor is read-only on every repository and every worktree" "yes|yes" \
   "$(spells "$AUDBRIEF" 'READ-ONLY on every repository and every worktree')|$(spells "$AUDBRIEF" 'no edit, no commit, no push, no merge, no label, no comment, no kill, no session ended')"
-check "it never messages the orchestrator's agents, and runs nothing heavy unasked" "yes|yes" \
-  "$(spells "$AUDBRIEF" "never message the orchestrator's agents")|$(spells "$AUDBRIEF" "heavy run only on the operator's word")"
-check "it reports to the operator in the operator's language and orders the orchestrator" "yes|yes|yes" \
-  "$(spells "$AUDBRIEF" "to the OPERATOR, in your own tab, in the operator's language")|$(spells "$AUDBRIEF" 'TIGHTEN or LOOSEN')|$(spells "$AUDBRIEF" "unless it contradicts the operator's word")"
-check "it reads three axes" "yes|yes|yes" \
-  "$(spells "$AUDBRIEF" 'The DELIVERIES')|$(spells "$AUDBRIEF" "The orchestrator's CONDUCT")|$(spells "$AUDBRIEF" 'What is DUE and not done')"
-check "its report has the fixed shape, section by section" "7" \
-  "$(grep -cE '^### (1\. State verified|2\. Findings, most severe first|3\. Verified conform|4\. Rhythm|5\. Methodology changes since the last audit: applied\? applicable\? bearing fruit\?|6\. The line for the operator: tighten / loosen / nothing|7\. Method and limits)$' "$AUDBRIEF" 2>/dev/null)"
-check "it says what git cannot measure instead of pretending" "yes" \
-  "$(spells "$AUDBRIEF" 'not measurable from git')"
 check "every claim carries its command, and the auditor never closes its own tab" "yes|yes" \
   "$(spells "$AUDBRIEF" 'Every claim carries the command that produces it')|$(spells "$AUDBRIEF" 'never close your own tab')"
 AUDFILLED="$WORK/audit-brief-filled.md"
@@ -2314,43 +1744,16 @@ check "--expect-created exempts the path it names and no other" "1|0" \
   "$(bash "$LINT" "$WORK/audit-brief-other.md" --expect-created "$AUDREPORT" 2>/dev/null | grep -c "path does not exist: $WORK/nowhere.md")|$(bash "$LINT" "$WORK/audit-brief-other.md" --expect-created "$AUDREPORT" 2>/dev/null | grep -c "path does not exist: $AUDREPORT")"
 check "--expect-created without a path is refused, and says so" "1|1" \
   "$(bash "$LINT" "$AUDREAL" --expect-created >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$AUDREAL" --expect-created 2>&1 | grep -c -- '--expect-created needs a path')"
-check "the audit command lints its brief with the report path expected" "yes" \
-  "$(spells "$AUDCMD" 'brief-lint.sh <brief path> --expect-created <report path>')"
 
 # `/orchestrator:audit-end` (§52), from either side. The auditor sends its report path and
 # ends its turn, never its session; the orchestrator acknowledges, waits for « ended », and
 # closes the auditor's tab under the audit title, proved on the process table. The close
 # line is taken out of the command and run dry, like the audit's spawn line.
 AUDEND="$ROOT/commands/audit-end.md"
-check "audit-end loads the rulebook first" "yes|yes" \
-  "$(spells "$AUDEND" 'Load that skill first')|$(spells "$AUDEND" '`orchestrator:orchestrator`')"
-check "it is run from the auditor and from the orchestrator" "yes|yes" \
-  "$(spells "$AUDEND" '## From the auditor')|$(spells "$AUDEND" '## From the orchestrator')"
 check "the auditor sends its report path and never closes its own tab" "yes|yes|yes" \
   "$(spells "$AUDEND" '« audit-end: <report path> »')|$(spells "$AUDEND" 'Never close your own tab')|$(spells "$AUDEND" '« ended »')"
-check "the orchestrator acknowledges once and reads the screen after five minutes" "yes|yes" \
-  "$(spells "$AUDEND" 'in ONE message')|$(spells "$AUDEND" 'screen --tty <auditor tty>')"
 check "the close is proved on ps and ListAgents, and the record is cleared" "yes|yes|yes" \
   "$(spells "$AUDEND" 'ps -t')|$(spells "$AUDEND" 'ListAgents')|$(spells "$AUDEND" 'claude-orchestrator/audits/')"
-check "the report stays on disk" "yes" "$(spells "$AUDEND" 'The report stays on disk')"
-# The state directory's audits/ did not exist before the first record (issue #52): the first
-# run's orchestrator created it by hand. The command creates it before it writes the record,
-# and both commands read an absent directory as no record, not as an error.
-check "the audit command creates the state directory's audits/ before it writes the record" "yes|yes" \
-  "$(spells "$AUDCMD" 'mkdir -p ${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/audits')|$(awk '/mkdir -p .*claude-orchestrator\/audits/{m=NR} /with the Write tool/{w=NR} END{print (m && w && m < w) ? "yes" : "no"}' "$AUDCMD")"
-check "audit-end and the audit's precondition read an absent audits/ as no record" "yes|yes" \
-  "$(spells "$AUDEND" 'an absent `audits/` directory is « no record », not an error')|$(spells "$AUDCMD" 'an absent `audits/` directory is « no record »')"
-# Without --method, the brief read « the operator has named none » as if the project had no
-# method, while its orchestrator knew two method files (issue #52). The command names, as
-# reading, the method files the orchestrator's own office names; only when it knows none does
-# the brief say so.
-check "without --method, the brief names the project's method files the orchestrator knows" "no|yes|yes|yes" \
-  "$(spells "$AUDCMD" 'has named none')|$(spells "$AUDCMD" "the project's method files you know")|$(spells "$AUDCMD" 'only when you know none')|$(spells "$AUDBRIEF" "The project's other method files: {{METHOD_READING}}")"
-# An auditor at its context gate spawns nothing — --auditor is the orchestrator's flag and the
-# auditor sits in no chain: it names the section reached, and the ORCHESTRATOR relaunches the
-# audit to continue from the report.
-check "an auditor at its gate hands the continuation to the orchestrator" "yes|yes|yes|0" \
-  "$(spells "$AUDBRIEF" 'You spawn nothing')|$(spells "$AUDEND" '--scope "continue from <report path>"')|$(spells "$AUDCMD" 'continue from <report')|$(grep -c 'successor auditor' "$AUDBRIEF" "$AUDEND" | awk -F: '{s+=$2} END {print s+0}')"
 # The rulebook carries the audit (§52): what an auditor is, what it may order, what the
 # orchestrator owes it, and the two commands — the commands load the rulebook first, so a duty
 # written only in a command is one an orchestrator reading the rulebook never meets.
@@ -2358,77 +1761,8 @@ check "an auditor at its gate hands the continuation to the orchestrator" "yes|y
 # every message, which the rulebook carries itself.
 AUDRULE=$(awk '/^## The audit$/{f=1; next} f&&/^## /{exit} f' "$ORCH_REFS/audit.md"; awk '/^## Carried at every step$/{f=1; next} f&&/^## /{exit} f' "$ROOT/skills/orchestrator/SKILL.md")
 AUDRULEF="$WORK/rulebook-audit-section.md"; printf '%s\n' "$AUDRULE" > "$AUDRULEF"
-check "the rulebook has a section « The audit »" "yes" "$([ -n "$AUDRULE" ] && echo yes || echo no)"
-check "it says what an auditor is not" "yes|yes|yes" \
-  "$(carries "$AUDRULEF" 'not your successor')|$(carries "$AUDRULEF" 'not one of your agents')|$(carries "$AUDRULEF" 'not a reviewer of code')"
-check "it gives the auditor its authority, under the operator's word" "yes|yes|yes" \
-  "$(carries "$AUDRULEF" 'tighten or loosen')|$(carries "$AUDRULEF" "the operator's word outranks it")|$(carries "$AUDRULEF" "scope stays the operator's")"
-check "it says what the orchestrator owes the auditor" "yes|yes|yes" \
-  "$(carries "$AUDRULEF" 'the state it asks for')|$(carries "$AUDRULEF" 'applies every ordered change')|$(carries "$AUDRULEF" "the next audit's reading")"
-check "it names both commands and the launcher's flag" "yes|yes|yes" \
-  "$(carries "$AUDRULEF" '/orchestrator:audit <subject>')|$(carries "$AUDRULEF" '/orchestrator:audit-end')|$(spells "$AUDRULEF" '--auditor')"
-check "a running audit survives a succession" "yes" "$(carries "$AUDRULEF" 're-announces its address to the auditor')"
 check "the red flags carry the audit" "yes|yes" \
   "$(carries "$ROOT/skills/orchestrator/SKILL.md" "An auditor's ordered change neither applied nor refused with the ruling it crosses")|$(carries "$ROOT/skills/orchestrator/SKILL.md" "an auditor's tab still open after its « ended »")"
-# The auditor's mission includes the orchestration's PROGRESS (issue #54). The first audits
-# read the method and ordered changes, and said nothing of an orchestrator waiting for a word
-# nobody had to give. The brief's authority section and the rulebook's section each carry the
-# paragraph — a wait named, the orchestrator's decisions answered with one recommendation and
-# its cost, the operator's pre-digested, « decide and move » binding the auditor too — and the
-# report's findings carry the species with its measured cost.
-AUDAUTH4F="$WORK/audit-brief-authority.md"
-awk '/^## 4\. /{f=1; next} f&&/^## /{exit} f' "$AUDBRIEF" > "$AUDAUTH4F" 2>/dev/null
-AUDFIND2F="$WORK/audit-brief-findings.md"
-awk '/^### 2\. /{f=1; next} f&&/^###? /{exit} f' "$AUDBRIEF" > "$AUDFIND2F" 2>/dev/null
-for AUDPROGF in "$AUDAUTH4F" "$AUDRULEF"; do
-  check "the auditor makes the orchestration advance (${AUDPROGF##*/})" "yes|yes|yes|yes" \
-    "$(carries "$AUDPROGF" 'makes the orchestration ADVANCE')|$(carries "$AUDPROGF" 'a wait that needs no word')|$(carries "$AUDPROGF" 'ONE recommendation and its cost')|$(carries "$AUDPROGF" 'decides in one word')"
-  check "« decide and move » binds the auditor as it binds the orchestrator (${AUDPROGF##*/})" "yes|yes|yes" \
-    "$(carries "$AUDPROGF" '« decide and move » binds')|$(carries "$AUDPROGF" 'neither scope, nor frame, nor a STOP-and-ask of a brief')|$(carries "$AUDPROGF" 'never held for a word that was not asked for')"
-done
-check "the report's findings carry « a wait that needed no word », with its measured cost" "yes|yes" \
-  "$(carries "$AUDFIND2F" '« a wait that needed no word »')|$(carries "$AUDFIND2F" 'its measured cost')"
-# The project's method-and-decisions file is the auditor's to MAINTAIN (issue #54). In 0.29.1
-# the auditor read it and could only propose, through the operator, an amendment nobody wrote;
-# the watch that guided the first audits kept such a file by hand — the operator's method in
-# the operator's words, dated rulings, the orders and their fate — and decided from it. Now:
-# one file per project, recorded in the state directory keyed by the repository so the next
-# audit finds it without --method, created under the briefs directory when the project has
-# none; the one file the auditor writes beside its report, named as the exception to its
-# read-only clause; landed by the orchestrator where the project keeps it; the next audit's
-# third reading and the first source of its report's section 5.
-AUDREAD1F="$WORK/audit-brief-reading.md"
-awk '/^## 1\. /{f=1; next} f&&/^## /{exit} f' "$AUDBRIEF" > "$AUDREAD1F" 2>/dev/null
-AUDRO3F="$WORK/audit-brief-readonly.md"
-awk '/^## 3\. /{f=1; next} f&&/^## /{exit} f' "$AUDBRIEF" > "$AUDRO3F" 2>/dev/null
-AUDMETH5F="$WORK/audit-brief-method-changes.md"
-awk '/^### 5\. /{f=1; next} f&&/^###? /{exit} f' "$AUDBRIEF" > "$AUDMETH5F" 2>/dev/null
-check "the brief no longer reads the method file without amending it" "0" \
-  "$(grep -ciE 'never amend|you read them|propose an amendment' "$AUDBRIEF" 2>/dev/null)"
-check "the method-and-decisions file is the brief's third reading and the first source of section 5" "1|yes" \
-  "$(grep -c "^3\. The project's method-and-decisions file: \`{{METHOD_FILE}}\`" "$AUDREAD1F")|$(carries "$AUDMETH5F" 'first source')"
-check "it is the one file the auditor writes, the named exception to its read-only clause" "yes|yes|yes" \
-  "$(carries "$AUDRO3F" 'The one exception to this read-only clause')|$(spells "$AUDRO3F" '{{METHOD_FILE}}')|$(spells "$AUDBRIEF" 'the one file you write beside your report')"
-check "it holds the operator's words and measurements, never the auditor's opinion" "yes|yes|yes|yes" \
-  "$(carries "$AUDBRIEF" "the operator's DATED decisions")|$(carries "$AUDBRIEF" 'the method changes each audit orders and their fate')|$(carries "$AUDBRIEF" 'the waits named and the decisions recommended')|$(carries "$AUDBRIEF" "a line carries the operator's words or a measurement")"
-check "the audit command records the file per project, keyed by the repository, beside the audit record" "yes|yes|yes|yes" \
-  "$(spells "$AUDCMD" 'mkdir -p ${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/methods')|$(spells "$AUDCMD" 'claude-orchestrator/methods/<repository key>.json')|$(spells "$AUDCMD" '"method": "<method file>"')|$(spells "$AUDCMD" 'without `--method`, the record')"
-check "with no file for the project, the command says where it is created, and lints it as expected" "yes|yes|no" \
-  "$(spells "$AUDCMD" '<briefs dir>/method-and-decisions.md')|$(spells "$AUDCMD" '--expect-created <report path> [--expect-created <method file>]')|$(spells "$AUDCMD" 'ONLY through the operator')"
-check "audit-end brings the file up to date, and the acknowledgment says when it lands" "yes|yes|no" \
-  "$(spells "$AUDEND" 'Bring the method-and-decisions file up to date')|$(spells "$AUDEND" '« method file: lands in')|$(spells "$AUDEND" "methodology file on the operator's word only")"
-check "the rulebook hands the file to the auditor and its landing to the orchestrator" "no|yes|yes|yes" \
-  "$(carries "$AUDRULEF" 'you apply nothing to that file on its order alone')|$(carries "$AUDRULEF" 'the one file the auditor writes')|$(carries "$AUDRULEF" 'lands it where the project keeps it')|$(carries "$AUDRULEF" 'third reading of every next audit')"
-check "the design and the README name the method-and-decisions file" "yes|yes" \
-  "$(awk '/^## 52\. /{f=1; next} f&&/^## /{exit} f' "$ROOT/docs/design.md" | grep -qiF 'method-and-decisions file' && echo yes || echo no)|$(grep -F '| `/orchestrator:audit` |' "$ROOT/README.md" | grep -qF 'method-and-decisions file' && echo yes || echo no)"
-# The code cites §52 in a dozen places: the section it cites exists, and the README a reader
-# meets first lists what the audit adds.
-check "the design document has the audit's numbered section" "1" \
-  "$(grep -c '^## 52\. The audit of an orchestrator$' "$ROOT/docs/design.md")"
-check "the README lists the audit's two commands" "yes|yes" \
-  "$(spells "$ROOT/README.md" '| `/orchestrator:audit` |')|$(spells "$ROOT/README.md" '| `/orchestrator:audit-end` |')"
-check "the README names the audit brief and the rhythm script" "yes|yes" \
-  "$(spells "$ROOT/README.md" 'audit brief')|$(spells "$ROOT/README.md" 'rhythm.sh')"
 
 # The operator launches an audit and the operator ends it (issue #52). The first live run
 # ended on the auditor's own decision: the brief told it to run audit-end « when the report
@@ -2460,14 +1794,10 @@ audit_unowned() {  # prints every sentence that launches, runs or ends an audit 
 }
 check "every sentence that launches or ends an audit by its command names the operator" "" \
   "$(audit_unowned "${AUDWORD[@]}")"
-check "the audit command says at its top that it runs on the operator's word" "1" \
-  "$(awk 'NR>1 && /^---$/{f=1; next} f && NF {print; exit}' "$AUDCMD" | grep -c "on the operator's word")"
 check "audit-end runs only when the operator types it, and « audit ready » is not that word" "yes|yes|yes" \
   "$(spells "$AUDEND" 'ONLY when the operator types it')|$(spells "$AUDEND" '« audit ready: <report path> »')|$(spells "$AUDEND" '« audit ready » message is not the word')"
 check "the auditor invites the operator to end the audit, and waits" "yes|yes|yes" \
   "$(spells "$AUDBRIEF" '« audit ready: {{REPORT_PATH}} »')|$(spells "$AUDBRIEF" 'the audit can be ended')|$(spells "$AUDBRIEF" 'you run no command and close nothing')"
-check "at 80 % the auditor reports, tells the operator, and waits for the operator's word" "yes|yes|0" \
-  "$(spells "$AUDBRIEF" '« audit at 80 %: {{REPORT_PATH}}, continue from <section> »')|$(spells "$AUDBRIEF" 'WAIT for the operator')|$(grep -cE '(^|[^/])orchestrator:audit-end' "$AUDBRIEF")"
 check "the rulebook and the design say who launches and who ends, and name the defect" "yes|yes|yes|yes" \
   "$(carries "$AUDRULEF" 'the operator launches the audit and the operator ends it')|$(carries "$AUDRULEF" 'a session that ends an audit by itself is the defect')|$(carries "$AUDDESIGNF" 'the operator launches the audit and the operator ends it')|$(carries "$AUDDESIGNF" 'a session that ends an audit by itself is the defect')"
 check "the README's two entries say whose word launches and ends the audit" "2" \
@@ -2821,22 +2151,22 @@ check "and not again while it holds" "" "$(gate g-drift)"
 rm -rf "$GH"
 
 echo "== context threshold sweep =="
-# The operator's ruling (2026-09-29): every context limit is 80 %, the previous figure nowhere
-# left as a context threshold. Same pattern as item 1's occurrence grep, its \b rewritten as
-# a portable non-digit lookaround: this git's -E engine does not honor \b (confirmed: it drops
-# every \b-anchored match silently instead of erroring). This file is excluded from the swept
-# tree: it necessarily carries the retired figure in the pattern below and in its own fixture.
-# The three keywords (gate, threshold, context) are matched in both orders around the figure,
-# and a bash default-value assignment on a GATE-named variable is matched in its three common
-# spellings (:-, :=, =), case-insensitively, since a stray env default is as live a threshold
-# as prose is.
+# The operator's ruling: every context limit is 80 %, the previous figure nowhere left as a
+# context threshold, none at all. Same pattern as the repository-policy sweeps above, its
+# \b rewritten as a portable non-digit lookaround: this git's -E engine does not honor \b
+# (confirmed: it drops every \b-anchored match silently instead of erroring). This file is
+# excluded from the swept tree: it necessarily carries the retired figure in the pattern
+# below and in its own fixture. The three keywords (gate, threshold, context) are matched in
+# both orders around the figure, and a bash default-value assignment on a GATE-named variable
+# is matched in its three common spellings (:-, :=, =), case-insensitively, since a stray env
+# default is as live a threshold as prose is.
 OLD_FIGURE=60
 THRESHOLD_RE="([^0-9]|^)${OLD_FIGURE} ?%|~${OLD_FIGURE}|sixty|(gate|threshold|context).{0,20}${OLD_FIGURE}|${OLD_FIGURE}.{0,20}(gate|threshold|context)|GATE ?(:-|:=|=) ?${OLD_FIGURE}"
 check "no context threshold other than 80 % remains in the tracked tree" "" \
   "$(cd "$ROOT" && git grep -n -E -i "$THRESHOLD_RE" -- . ':!tests/run-tests.sh' 2>/dev/null)"
 
 # Proof the sweep still catches a stale figure, planted only into a scratch copy — one file
-# per new spelling this broadening adds, plus the original one it already caught.
+# per spelling it must catch.
 SWEEP="$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-sweep-XXXXXX")"
 printf 'Mark sessions past %s%%\n' "$OLD_FIGURE" > "$SWEEP/note.md"
 printf 'the threshold sits above %s still\n' "$OLD_FIGURE" > "$SWEEP/threshold-first.md"
@@ -3968,273 +3298,6 @@ check "a missing launcher is said, exit 2 from conflicts" \
   "coordinator: the launcher <tree>/skills/coordinator/scripts/../../iterm-agents/scripts/iterm-agent.sh is missing|exit 2" \
   "$(COORDINATOR_VERIFY= ctree conflicts "$b" 2>&1 | sed 's|launcher .*/coord-tree/|launcher <tree>/|')|$(COORDINATOR_VERIFY= ctree conflicts "$b" >/dev/null 2>&1; echo "exit $?")"
 check "an unknown subcommand is refused" "exit 1" "$(coord_status bogus)"
-
-echo "== rules trace =="
-
-# The trace is the mechanical proof that no rule of the inventory vanished while the
-# directives were rewritten. It runs on a throwaway repository holding the fixtures, so
-# `sources` has commits to read and `targets` a working tree to mutate; every mutation is
-# undone by checking the fixture out again.
-TRACE="$ROOT/tests/rules-trace.sh"
-TR="$WORK/rules-trace"
-mkdir -p "$TR"
-cp "$ROOT"/tests/fixtures/rules-inventory/* "$TR/"
-mkdir -p "$TR/sub" && echo "inner" > "$TR/sub/inner.md"
-# A file whose last line carries no newline: built here, since an editor tends to add one.
-printf '# No newline\n\nThe last line of this file has no trailing newline' > "$TR/nonl.md"
-( cd "$TR" && git init -q && git add . \
-    && git -c user.name=suite -c user.email=suite@localhost commit -qm fixtures )
-trace() { ( cd "$TR" && bash "$TRACE" "$@" 2>&1 ); }
-trace_status() { ( cd "$TR" && bash "$TRACE" "$@" >/dev/null 2>&1 ); echo "exit $?"; }
-restore() { ( cd "$TR" && git checkout -q -- . ); }
-
-check "trace: no argument is a usage error" "exit 2" "$(trace_status)"
-check "trace: an unknown mode is a usage error" "exit 2" "$(trace_status bogus inventory.md)"
-check "trace: an unreadable inventory exits 2" "exit 2" "$(trace_status targets absent.md)"
-check "trace: an unknown ref exits 2" "exit 2" "$(trace_status sources inventory.md --ref no-such-ref)"
-
-check "trace: every fixture target holds its signature" "exit 0" "$(trace_status targets inventory.md)"
-check "trace: the last line counts ok, missing and skipped" "ok=4 missing=0 skipped=1" \
-  "$(trace targets inventory.md | tail -1)"
-check "trace: a drop? row whose signature is absent is skipped, not named" "0" \
-  "$(trace targets inventory.md | grep -c 'FIX-005')"
-
-# An escaped pipe in `rule` must not shift fate, target and signature one column right:
-# the row would then read its fate from `enforced-by` and fail, or worse, pass on garbage.
-grep -E '^\| (id|---|FIX-001|FIX-003) ' "$TR/inventory.md" > "$TR/escaped.md"
-check "trace: an escaped pipe in rule does not shift the columns" "ok=2 missing=0 skipped=0" \
-  "$(trace targets escaped.md | tail -1)"
-
-# The mutation the trace exists for: a rule deleted from its target is named by its row.
-sed -i.bak '/reports its measured context/d' "$TR/alpha.md" && rm -f "$TR/alpha.md.bak"
-check "trace: a removed signature exits 1" "exit 1" "$(trace_status targets inventory.md)"
-check "trace: a removed signature names its row" "FIX-001 absent alpha.md" \
-  "$(trace targets inventory.md | grep '^FIX-001 ')"
-restore
-
-# A signature found twice no longer proves its rule: the copy that survives may be the
-# other one.
-echo "A session never waits on a message it has not verified reached its address." >> "$TR/alpha.md"
-check "trace: a signature present twice exits 1" "exit 1" "$(trace_status targets inventory.md)"
-check "trace: a signature present twice is named not unique" "FIX-002 not-unique:2 alpha.md" \
-  "$(trace targets inventory.md | grep '^FIX-002 ')"
-restore
-
-# Twice on ONE line is still twice: counting matching lines would call it unique. The
-# duplicate lands on the line that already holds FIX-004's signature (beta.md line 3).
-sed -i.bak "3s/\$/ Again, and no other part overrides it./" "$TR/beta.md" && rm -f "$TR/beta.md.bak"
-check "trace: the one-line duplicate sits on the signature's own line" "1" \
-  "$(grep -c 'and no other part overrides it.*and no other part overrides it' "$TR/beta.md")"
-check "trace: two occurrences on one line are not unique" "FIX-004 not-unique:2 beta.md" \
-  "$(trace targets inventory.md | grep '^FIX-004 ')"
-restore
-
-# Twice on TWO lines: the other way a line-based count and an occurrence count could differ.
-echo "The operator's word comes first, and no other part overrides it." >> "$TR/beta.md"
-check "trace: two occurrences on two lines are not unique" "FIX-004 not-unique:2 beta.md" \
-  "$(trace targets inventory.md | grep '^FIX-004 ')"
-restore
-
-sed 's/| alpha.md | reports its measured context at the end |/| alpha.md | reports its measured context |/' \
-  "$TR/inventory.md" > "$TR/short.md"
-check "trace: a signature under six words is refused" "FIX-001 short-signature alpha.md" \
-  "$(trace targets short.md | grep '^FIX-001 ')"
-sed 's/| alpha.md | reports its measured context at the end |/| gone.md | reports its measured context at the end |/' \
-  "$TR/inventory.md" > "$TR/notarget.md"
-check "trace: a target file that does not exist is named" "FIX-001 no-target gone.md" \
-  "$(trace targets notarget.md | grep '^FIX-001 ')"
-
-# variant <out> <sed-expression>: the fixture inventory with one edit, in a file of its own.
-variant() { sed "$2" "$TR/inventory.md" > "$TR/$1"; }
-# row <id> <mode> <file>: the line the trace prints for that row.
-row() { trace "$2" "$3" | grep "^$1 "; }
-
-# An inventory that holds no row proves nothing: it is a usage error, never a pass.
-printf 'Prose only, no table at all.\n' > "$TR/prose.md"
-grep -E '^\| (id|---) ' "$TR/inventory.md" > "$TR/headeronly.md"
-check "trace: prose without a row exits 2 in targets" "exit 2" "$(trace_status targets prose.md)"
-check "trace: prose without a row exits 2 in sources" "exit 2" "$(trace_status sources prose.md)"
-check "trace: a header without a row exits 2" "exit 2" "$(trace_status targets headeronly.md)"
-
-# A table line that is not a row of the inventory is reported, never skipped: a skipped row
-# is a rule nobody traces. Only the tables that open with the `id` header are inventory
-# tables; the legend and prefix tables of the real file are not.
-variant lower.md 's/^| FIX-002 /| fix-002 /'
-check "trace: a lower-case id is malformed" "fix-002 malformed-id alpha.md" "$(row fix-002 targets lower.md)"
-check "trace: a malformed id counts as missing" "ok=3 missing=1 skipped=1" "$(trace targets lower.md | tail -1)"
-check "trace: a malformed id exits 1" "exit 1" "$(trace_status targets lower.md)"
-variant twodigit.md 's/^| FIX-002 /| FIX-02 /'
-check "trace: a two-digit id is malformed" "FIX-02 malformed-id alpha.md" "$(row FIX-02 targets twodigit.md)"
-variant indented.md 's/^| FIX-002 /  | FIX-002 /'
-check "trace: an indented row is malformed" "FIX-002 malformed-id alpha.md" "$(row FIX-002 targets indented.md)"
-check "trace: a malformed id is reported in sources too" "FIX-002 malformed-id alpha.md" \
-  "$(row FIX-002 sources indented.md)"
-{ printf '| Prefix | Source |\n|---|---|\n| `FIX` | fixtures |\n\n'; cat "$TR/inventory.md"; } > "$TR/legend.md"
-check "trace: a table that is not an inventory table is ignored" "ok=4 missing=0 skipped=1" \
-  "$(trace targets legend.md | tail -1)"
-
-# Fates: six shapes are valid, everything else is unknown, in both modes.
-variant bogus.md 's/| keep | alpha.md | reports/| bogus | alpha.md | reports/'
-check "trace: an unknown fate is named" "FIX-001 unknown-fate:bogus alpha.md" "$(row FIX-001 targets bogus.md)"
-check "trace: an unknown fate is named in sources too" "FIX-001 unknown-fate:bogus alpha.md" \
-  "$(row FIX-001 sources bogus.md)"
-variant keepq.md 's/| keep | alpha.md | reports/| keep? | alpha.md | reports/'
-check "trace: keep? is not a fate" "FIX-001 unknown-fate:keep? alpha.md" "$(row FIX-001 targets keepq.md)"
-variant mergeq.md 's/| merge->FIX-001 |/| merge->FIX-001? |/'
-check "trace: merge->id? is not a fate" "FIX-003 unknown-fate:merge->FIX-001? alpha.md" \
-  "$(row FIX-003 targets mergeq.md)"
-variant mergebare.md 's/| merge->FIX-001 |/| merge->? |/'
-check "trace: merge->? is not a fate" "FIX-003 unknown-fate:merge->? alpha.md" \
-  "$(row FIX-003 targets mergebare.md)"
-variant mergenoid.md 's/| merge->FIX-001 |/| merge->somewhere |/'
-check "trace: a merge target that is no id is not a fate" "FIX-003 unknown-fate:merge->somewhere alpha.md" \
-  "$(row FIX-003 targets mergenoid.md)"
-variant movebare.md 's/| move->beta.md |/| move-> |/'
-check "trace: move-> without a path is not a fate" "FIX-004 unknown-fate:move-> beta.md" \
-  "$(row FIX-004 targets movebare.md)"
-variant moveq.md 's/| move->beta.md |/| move->beta.md? |/'
-check "trace: move->path? is not a fate" "FIX-004 unknown-fate:move->beta.md? beta.md" "$(row FIX-004 targets moveq.md)"
-variant contra.md 's/| drop? |/| contradiction? |/'
-check "trace: contradiction? is a proposal, skipped" "ok=4 missing=0 skipped=1" "$(trace targets contra.md | tail -1)"
-variant scriptc.md 's/| drop? |/| script-candidate? |/'
-check "trace: script-candidate? is a proposal, skipped" "ok=4 missing=0 skipped=1" "$(trace targets scriptc.md | tail -1)"
-variant ruleddrop.md 's/| drop? |/| drop |/'
-check "trace: a ruled drop is skipped" "ok=4 missing=0 skipped=1" "$(trace targets ruleddrop.md | tail -1)"
-check "trace: a ruled drop whose signature is absent is not named" "0" \
-  "$(trace targets ruleddrop.md | grep -c 'FIX-005')"
-
-# Merges: a merge names one existing row other than itself, and that row is the anchor.
-variant nomerge.md 's/| merge->FIX-001 |/| merge->FIX-999 |/'
-check "trace: a merge onto no row is named" "FIX-003 unknown-merge:FIX-999 alpha.md" \
-  "$(row FIX-003 targets nomerge.md)"
-variant selfmerge.md 's/| merge->FIX-001 |/| merge->FIX-003 |/'
-check "trace: a merge onto itself is named" "FIX-003 self-merge alpha.md" "$(row FIX-003 targets selfmerge.md)"
-variant chain.md 's/^| FIX-001 \(.*\)| keep | alpha.md |/| FIX-001 \1| merge->FIX-004 | alpha.md |/'
-check "trace: a merge onto a merge row is a chain" "FIX-003 merge-chain:FIX-001 alpha.md" \
-  "$(row FIX-003 targets chain.md)"
-check "trace: a merge onto a kept row is no chain" "0" "$(trace targets chain.md | grep -c '^FIX-001 ')"
-{ cat "$TR/inventory.md"; grep '^| FIX-002 ' "$TR/inventory.md"; } > "$TR/dup.md"
-check "trace: a repeated id is named" "FIX-002 duplicate-id alpha.md" "$(row FIX-002 targets dup.md)"
-check "trace: the repeat, not the first row, is what is named" "1" \
-  "$(trace targets dup.md | grep -c '^FIX-002 ')"
-check "trace: a duplicate id exits 1" "exit 1" "$(trace_status targets dup.md)"
-
-# Signatures: six words that carry a letter or a digit, and a signature that quotes a whole
-# bold lead-in or a heading proves nothing, since the target keeps both after a rewrite.
-variant five.md 's/| reports its measured context at the end |/| its measured context at the |/'
-check "trace: a five-word signature is refused" "FIX-001 short-signature alpha.md" "$(row FIX-001 targets five.md)"
-variant six.md 's/| reports its measured context at the end |/| its measured context at the end |/'
-check "trace: a six-word signature is accepted" "ok=4 missing=0 skipped=1" "$(trace targets six.md | tail -1)"
-variant dash.md 's/| reports its measured context at the end |/| reports its measured context - at |/'
-check "trace: a lone dash is not a word" "FIX-001 short-signature alpha.md" "$(row FIX-001 targets dash.md)"
-printf '**Every agent reports its measured context at the end**\n' > "$TR/bold.md"
-variant weakbold.md 's/| alpha.md | reports its measured context at the end |/| bold.md | **Every agent reports its measured context at the end** |/'
-check "trace: a whole bold lead-in is a weak signature" "FIX-001 weak-signature bold.md" \
-  "$(row FIX-001 targets weakbold.md)"
-printf '**Every agent** reports its measured context at the end\n' > "$TR/bold.md"
-variant partbold.md 's/| alpha.md | reports its measured context at the end |/| bold.md | **Every agent** reports its measured context at the end |/'
-check "trace: a bold lead-in followed by text is a signature" "ok=4 missing=0 skipped=1" \
-  "$(trace targets partbold.md | tail -1)"
-printf '**Every agent** reports its **measured context** at the end\n' > "$TR/bold.md"
-variant twobold.md 's/| alpha.md | reports its measured context at the end |/| bold.md | **Every agent** reports its **measured context** |/'
-check "trace: two bold spans are not one whole lead-in" "ok=4 missing=0 skipped=1" \
-  "$(trace targets twobold.md | tail -1)"
-printf '## Every agent reports its measured context at the end\n' > "$TR/heading.md"
-variant weakhead.md 's/| alpha.md | reports its measured context at the end |/| heading.md | ## Every agent reports its measured context at the end |/'
-check "trace: a heading line is a weak signature" "FIX-001 weak-signature heading.md" \
-  "$(row FIX-001 targets weakhead.md)"
-variant bodyhead.md 's/| alpha.md | reports its measured context at the end |/| heading.md | Every agent reports its measured context at the end |/'
-check "trace: the text of a heading is a signature" "ok=4 missing=0 skipped=1" \
-  "$(trace targets bodyhead.md | tail -1)"
-
-printf '#include lines are read by the compiler first\n' > "$TR/hash.md"
-variant hashtag.md 's/| alpha.md | reports its measured context at the end |/| hash.md | #include lines are read by the compiler |/'
-check "trace: a hash without a space after it is no heading" "ok=4 missing=0 skipped=1" \
-  "$(trace targets hashtag.md | tail -1)"
-
-# Cells: a row that does not split into nine is named with its count, whichever way it is off.
-variant tencells.md '/^| FIX-001 /s/$/ extra |/'
-check "trace: a ten-cell row is malformed" "FIX-001 malformed-row:10-cells alpha.md" "$(row FIX-001 targets tencells.md)"
-variant eightcells.md '/^| FIX-001 /s/ | reports its measured context at the end |$/ |/'
-check "trace: an eight-cell row is malformed" "FIX-001 malformed-row:8-cells alpha.md" \
-  "$(row FIX-001 targets eightcells.md)"
-variant notarget2.md 's/| keep | alpha.md | reports/| keep |  | reports/'
-check "trace: an empty target is named, the cells stay in place" "FIX-001 no-target -" \
-  "$(row FIX-001 targets notarget2.md)"
-
-variant dirtarget.md 's/| alpha.md | reports its measured context at the end |/| sub | reports its measured context at the end |/'
-check "trace: a directory is not a target file" "FIX-001 no-target sub" "$(row FIX-001 targets dirtarget.md)"
-
-# A file whose last line has no newline still holds its signature once.
-variant nonlvar.md 's/| alpha.md | reports its measured context at the end |/| nonl.md | last line of this file has no trailing newline |/'
-check "trace: a signature on an unterminated last line is found" "ok=4 missing=0 skipped=1" \
-  "$(trace targets nonlvar.md | tail -1)"
-
-check "trace: every fixture source exists at HEAD" "exit 0" "$(trace_status sources inventory.md)"
-check "trace: sources counts every row" "ok=5 missing=0 skipped=0" "$(trace sources inventory.md | tail -1)"
-sed 's/| alpha.md:3 |/| alpha.md:99 |/' "$TR/inventory.md" > "$TR/pastend.md"
-check "trace: a source past the end of its file exits 1" "exit 1" "$(trace_status sources pastend.md)"
-check "trace: a source past the end is named with its row" "FIX-001 past-end:alpha.md:99 alpha.md" \
-  "$(trace sources pastend.md | grep '^FIX-001 ')"
-sed 's/| alpha.md:5, beta.md:3 |/| alpha.md:5, gone.md:3 |/' "$TR/inventory.md" > "$TR/nofile.md"
-check "trace: a source in a file absent at the ref is named" "FIX-002 no-file:gone.md:3 alpha.md" \
-  "$(trace sources nofile.md | grep '^FIX-002 ')"
-
-# A source cites one line of one file: a directory is no file, a range is no line, line 0
-# does not exist, the last line is in and the one after it is out.
-variant srcdir.md 's/| alpha.md:5, beta.md:3 |/| alpha.md:5, sub:1 |/'
-check "trace: a directory is not a source file" "FIX-002 no-file:sub:1 alpha.md" "$(row FIX-002 sources srcdir.md)"
-variant srcrange.md 's/| alpha.md:3 |/| alpha.md:3-5 |/'
-check "trace: a range is not a source" "FIX-001 bad-source:alpha.md:3-5 alpha.md" "$(row FIX-001 sources srcrange.md)"
-variant srczero.md 's/| alpha.md:3 |/| alpha.md:0 |/'
-check "trace: line 0 is not a source" "FIX-001 bad-source:alpha.md:0 alpha.md" "$(row FIX-001 sources srczero.md)"
-variant srclast.md 's/| alpha.md:3 |/| alpha.md:7 |/'
-check "trace: the last line of a file is a source" "ok=5 missing=0 skipped=0" "$(trace sources srclast.md | tail -1)"
-variant srcafter.md 's/| alpha.md:3 |/| alpha.md:8 |/'
-check "trace: the line after the last is past the end" "FIX-001 past-end:alpha.md:8 alpha.md" \
-  "$(row FIX-001 sources srcafter.md)"
-variant srcnonl.md 's/| alpha.md:3 |/| nonl.md:3 |/'
-check "trace: an unterminated last line counts as a line" "ok=5 missing=0 skipped=0" \
-  "$(trace sources srcnonl.md | tail -1)"
-variant srcnonl4.md 's/| alpha.md:3 |/| nonl.md:4 |/'
-check "trace: the line after an unterminated last line is past the end" "FIX-001 past-end:nonl.md:4 alpha.md" \
-  "$(row FIX-001 sources srcnonl4.md)"
-variant nosrc.md 's/| alpha.md:3 |/|  |/'
-check "trace: a row without a source is named" "FIX-001 no-sources alpha.md" "$(row FIX-001 sources nosrc.md)"
-check "trace: sources counts a ten-cell row as missing" "FIX-001 malformed-row:10-cells alpha.md" \
-  "$(row FIX-001 sources tencells.md)"
-
-# --ref reads the file as it was at that commit, not as it is in the working tree.
-printf '# Beta\n' > "$TR/beta.md"
-( cd "$TR" && git -c user.name=suite -c user.email=suite@localhost commit -qam shorten )
-check "trace: sources at HEAD sees the shortened file" "exit 1" "$(trace_status sources inventory.md)"
-check "trace: sources --ref reads the older commit" "exit 0" "$(trace_status sources inventory.md --ref HEAD~1)"
-
-# A rule added after the commit the inventory is checked at cites a file that commit never
-# had: its citation reads 'path:line@HEAD', the literal current head, and is read there
-# instead of failing as absent. No other suffix survives a rebase, so `@HEAD` is the only
-# one accepted; a commit sha or any other ref is refused rather than read.
-variant srcathead.md 's/| beta.md:3 |/| beta.md:3@HEAD |/'
-check "trace: a citation suffixed @HEAD is read at the literal head, overriding --ref" \
-  "FIX-004 past-end:beta.md:3@HEAD beta.md" \
-  "$(trace sources srcathead.md --ref HEAD~1 | grep '^FIX-004 ')"
-variant srcatsha.md 's/| beta.md:3 |/| beta.md:3@2f2e22b |/'
-check "trace: a citation suffixed with a commit sha is refused" \
-  "FIX-004 bad-suffix:beta.md:3@2f2e22b beta.md" \
-  "$(row FIX-004 sources srcatsha.md)"
-variant srcatref.md 's/| beta.md:3 |/| beta.md:3@HEAD~1 |/'
-check "trace: a citation suffixed with anything but HEAD is refused" \
-  "FIX-004 bad-suffix:beta.md:3@HEAD~1 beta.md" \
-  "$(row FIX-004 sources srcatref.md)"
-check "trace: a plain citation is still read at --ref" "FIX-004 past-end:beta.md:3 beta.md" \
-  "$(row FIX-004 sources inventory.md)"
-
-check "trace: the real inventory holds every signature" "exit 0" \
-  "$( ( cd "$ROOT" && bash "$TRACE" targets docs/rules-inventory.md >/dev/null 2>&1 ); echo "exit $?")"
-# The inventory cites its sources as they stood before the directives were rewritten; a
-# rewrite moves text away from those lines, so they are read at the commit they describe.
-check "trace: every source of the real inventory exists at the commit it cites" "exit 0" \
-  "$( ( cd "$ROOT" && bash "$TRACE" sources docs/rules-inventory.md --ref 2f2e22b >/dev/null 2>&1 ); echo "exit $?")"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"

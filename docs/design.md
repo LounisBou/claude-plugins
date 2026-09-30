@@ -97,12 +97,7 @@ tests/run-tests.sh
 tests/e2e.sh                         one real round: a tab, a session, a close
 tests/fixtures/transcript.jsonl      a transcript tail for the gauge's computed tier
 tests/fixtures/rhythm-repo.sh        builds the dated repository rhythm.sh is tested on
-tests/rules-trace.sh                 every inventoried rule found at its sources and its target
-tests/fixtures/rules-inventory/inventory.md   a small inventory the trace is tested on
-tests/fixtures/rules-inventory/alpha.md       a target file of that inventory
-tests/fixtures/rules-inventory/beta.md        a target file of that inventory
 docs/design.md                       this document
-docs/rules-inventory.md              working file: every directive rule, deleted once the rewrite is done
 docs/specs/2026-09-29-coordinator-design.md  the coordinator's design, deleted once it is built
 evals/README.md                      how the behaviour suite is staged, run and read
 evals/SELECTION.md                   the cases chosen, and the criteria that chose them
@@ -125,9 +120,6 @@ evals/coord-048-050-051-053/graders/brief-closes-then-registers.md
 evals/coord-048-050-051-053/graders/coordinator-successor-spawn.md
 evals/coord-048-050-051-053/graders/no-orchestrator-successor.md
 evals/coord-048-050-051-053/graders/succeeds-without-asking.md
-evals/gauge-007/prompt.md
-evals/gauge-007/graders/measured-not-estimated.md
-evals/gauge-007/graders/runs-the-gauge.md
 evals/iterm-005-019-064-065/prompt.md
 evals/iterm-005-019-064-065/graders/close-with-title.md
 evals/iterm-005-019-064-065/graders/no-glyph.md
@@ -135,22 +127,10 @@ evals/iterm-005-019-064-065/graders/relists.md
 evals/iterm-020/prompt.md
 evals/iterm-020/graders/moves-beside-self.md
 evals/iterm-020/graders/no-respawn.md
-evals/iterm-022/prompt.md
-evals/iterm-022/graders/keeps-the-server.md
-evals/iterm-022/graders/keeps-the-tier.md
-evals/iterm-022/graders/uses-rotate.md
 evals/iterm-057/prompt.md
 evals/iterm-057/graders/unbound-is-advisory.md
 evals/orch-002/prompt.md
 evals/orch-002/graders/dispatches-not-writes.md
-evals/orch-007-011-079-088/prompt.md
-evals/orch-007-011-079-088/graders/process-check.md
-evals/orch-007-011-079-088/graders/scratch-check.md
-evals/orch-007-011-079-088/graders/verdict-on-evidence.md
-evals/orch-010-014/prompt.md
-evals/orch-010-014/graders/says-and-complies.md
-evals/orch-012-099/prompt.md
-evals/orch-012-099/graders/verified-by-orchestrator-no-new-round.md
 evals/orch-016-missed/prompt.md
 evals/orch-016-missed/graders/answer-alone-no-hand-over.md
 evals/orch-016-missed/graders/names-the-base.md
@@ -159,9 +139,6 @@ evals/orch-016-unanswered/graders/names-the-base.md
 evals/orch-016-unanswered/graders/says-so-answers-offers-hand-over.md
 evals/orch-018/prompt.md
 evals/orch-018/graders/names-the-term.md
-evals/orch-021/prompt.md
-evals/orch-021/graders/one-item-then-wait.md
-evals/orch-021/graders/opens-the-method-first.md
 evals/orch-023/prompt.md
 evals/orch-023/graders/count-marked-unverified.md
 evals/orch-023/graders/handles-as-printed.md
@@ -171,13 +148,6 @@ evals/orch-161-203/graders/leaves-draft-and-merge.md
 evals/orch-025-026/prompt.md
 evals/orch-025-026/graders/rereads-item-and-premise.md
 evals/orch-025-026/graders/rereads-pr-state.md
-evals/orch-029/prompt.md
-evals/orch-029/graders/stop-and-ask.md
-evals/orch-038-040-043/prompt.md
-evals/orch-038-040-043/graders/brief-not-temporary.md
-evals/orch-038-040-043/graders/brief-written.md
-evals/orch-038-040-043/graders/lint-before-spawn.md
-evals/orch-038-040-043/graders/one-line-prompt.md
 evals/orch-050-052-053-068-168-179-220/prompt.md
 evals/orch-050-052-053-068-168-179-220/graders/address-handshake-silence.md
 evals/orch-050-052-053-068-168-179-220/graders/brief-written.md
@@ -188,26 +158,12 @@ evals/orch-050-052-053-068-168-179-220/graders/never-end-turn-waiting.md
 evals/orch-050-052-053-068-168-179-220/graders/no-host-variable.md
 evals/orch-050-052-053-068-168-179-220/graders/not-backgrounded.md
 evals/orch-050-052-053-068-168-179-220/graders/timeout-and-tail.md
-evals/orch-055/prompt.md
-evals/orch-055/graders/subscribes-to-idle.md
 evals/orch-056-183-189/prompt.md
 evals/orch-056-183-189/graders/agent-p8-addressed.md
 evals/orch-056-183-189/graders/agent-review-addressed.md
 evals/orch-056-183-189/graders/announces-before-confirming.md
 evals/orch-056-183-189/graders/closes-predecessor-tab.md
 evals/orch-056-183-189/graders/subscribes.md
-evals/orch-061-063/prompt.md
-evals/orch-061-063/graders/checks-the-policy-file.md
-evals/orch-061-063/graders/points-not-grants.md
-evals/orch-071-072/prompt.md
-evals/orch-071-072/graders/no-own-subagent-implements.md
-evals/orch-071-072/graders/no-plan-execution-skill.md
-evals/orch-093-095-096-tpl-review-002-004-005/prompt.md
-evals/orch-093-095-096-tpl-review-002-004-005/graders/both-readings.md
-evals/orch-093-095-096-tpl-review-002-004-005/graders/no-config-write.md
-evals/orch-093-095-096-tpl-review-002-004-005/graders/norms-check-line.md
-evals/orch-093-095-096-tpl-review-002-004-005/graders/norms-command.md
-evals/orch-093-095-096-tpl-review-002-004-005/graders/review-brief-norms.md
 evals/orch-097-098/prompt.md
 evals/orch-097-098/graders/triage-then-one-correction.md
 evals/orch-101-102-103-105/prompt.md
@@ -219,20 +175,10 @@ evals/orch-101-102-103-105/graders/ready-only-on-exit-0.md
 evals/orch-138/prompt.md
 evals/orch-138/graders/no-other-terminal.md
 evals/orch-138/graders/says-why-and-stops.md
-evals/orch-141-145/prompt.md
-evals/orch-141-145/graders/anchored.md
-evals/orch-141-145/graders/listagents.md
-evals/orch-141-145/graders/screen-read.md
-evals/orch-141-145/graders/verify-process.md
-evals/orch-147-149-iterm-018/prompt.md
-evals/orch-147-149-iterm-018/graders/inspect-not-wait.md
-evals/orch-147-149-iterm-018/graders/screen-silent-agent.md
 evals/orch-151-152-iterm-055/prompt.md
 evals/orch-151-152-iterm-055/graders/close-by-tty-and-title.md
 evals/orch-151-152-iterm-055/graders/close-proved-by-ps.md
 evals/orch-151-152-iterm-055/graders/commit-or-drop-before-close.md
-evals/orch-154-155/prompt.md
-evals/orch-154-155/graders/stood-down-now.md
 evals/orch-156-iterm-049-051/prompt.md
 evals/orch-156-iterm-049-051/graders/no-title-on-rotate.md
 evals/orch-156-iterm-049-051/graders/rotate-used.md
@@ -245,22 +191,6 @@ evals/orch-157-191-192/graders/nothing-after-handed-over.md
 evals/orch-158-167/prompt.md
 evals/orch-158-167/graders/gate-and-readings.md
 evals/orch-158-167/graders/reads-tier-map.md
-evals/orch-177-178/prompt.md
-evals/orch-177-178/graders/lists-all-prs.md
-evals/orch-177-178/graders/refresh-then-stop-merged.md
-evals/orch-180-182-184-188-cmd-succeed-002/prompt.md
-evals/orch-180-182-184-188-cmd-succeed-002/graders/brief-as-prompt.md
-evals/orch-180-182-184-188-cmd-succeed-002/graders/inherit-model.md
-evals/orch-180-182-184-188-cmd-succeed-002/graders/no-mode-downgrade.md
-evals/orch-180-182-184-188-cmd-succeed-002/graders/no-tier-model.md
-evals/orch-180-182-184-188-cmd-succeed-002/graders/spawns-without-asking.md
-evals/orch-180-182-184-188-cmd-succeed-002/graders/successor-flag.md
-evals/route-008/prompt.md
-evals/route-008/graders/binds-the-alias.md
-evals/route-008/graders/no-versioned-binding.md
-evals/route-047/prompt.md
-evals/route-047/graders/no-norms-none.md
-evals/route-047/graders/writes-review-record.md
 trigger-evals/README.md              what the triggering set measures, how it is run and read
 trigger-evals/context-gauge-no-trigger-01/prompt.md
 trigger-evals/context-gauge-no-trigger-01/graders/answered.md
@@ -507,9 +437,7 @@ A skill never takes a command's name: a plugin's commands and skills share one n
 
 `tests/e2e.sh` plays one real round against a live terminal and stays out of the default suite on purpose (section 15).
 
-`evals/` is the behaviour suite, run by the host's plugin evaluation command: one case per critical rule or cluster, staged at the moment of the action, graded on the decision, compared case by case with a committed baseline. How a case is staged, run and read is `evals/README.md`; which rules the cases cover and why is `evals/SELECTION.md`.
-
-`docs/rules-inventory.md` lists every rule the directives state, one row per rule with its sources, its fate and where it lives now, and `tests/rules-trace.sh` checks it: `sources` that every cited line exists at the base the inventory was taken on, `targets` that every kept rule's signature is found once where the inventory says it lives. It is the mechanical proof that a rewrite of the directives lost no rule silently; a row that would leave the plugin is dropped only on the operator's ruling.
+`evals/` is the behaviour suite, run by the host's plugin evaluation command: a small core of cases, each one that has caught a real defect or guards an irreversible action, graded on the decision, compared case by case with a committed baseline. How a case is staged, run and read is `evals/README.md`; which rules the cases cover and why is `evals/SELECTION.md`.
 
 `ORCHESTRATOR_*` variables are the suite's door into every script (a dry run, a state directory, a fixture process table) and the operator's alike (section 45).
 
