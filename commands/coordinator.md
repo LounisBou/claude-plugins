@@ -57,9 +57,10 @@ Then:
    `--successor`, `--auditor`, `--left-of` and `--right-of` beside it.
 
 5. **Read the facts**: `coordinator.sh owners`, then `coordinator.sh facts`.
-6. **Announce.** A fresh `ListAgents`; to every `Orch :` session it lists, one `SendMessage`,
-   this text verbatim, the brackets filled — the pull requests are those `owners` traced to
-   that orchestrator:
+6. **Announce.** Apply « Announcing newcomers » (`orchestrator:coordination`): a fresh
+   `ListAgents` names every running `Orch :` session as one you have not yet announced to.
+   Send each this text verbatim, the brackets filled — the pull requests are those `owners`
+   traced to that orchestrator:
 
    > A coordinator runs on this machine: I am `<your exact name and reference>`, since
    > <date -u +%FT%TZ>. When in doubt, ask me: whose pull request is this, is anyone on this

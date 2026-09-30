@@ -10,8 +10,10 @@ word on a point outranks this brief and the rulebook both.
 `register` refuses while the recorded coordinator's session still runs, so you register only
 once your predecessor is gone.
 
-1. **Read** the rulebook and the notes `{{NOTES_FILE}}` (the pull requests each orchestrator holds
-   and the flags sent).
+1. **Read** the rulebook and the notes `{{NOTES_FILE}}` (the pull requests each orchestrator holds,
+   the flags sent, and the sessions already announced to). That list is yours as it stands:
+   « Announcing newcomers » compares against it from here on, so you do not re-send the start
+   message to a session it already names.
 2. **Find yourself.** `ListAgents` — your exact name and reference; the launcher
    `{{ITERM_AGENT_SH}}`, its `list` — your tty, the row marked `self`.
 3. **Take over.** Message `{{PREDECESSOR}}` « takeover confirmed » and wait for its « handed

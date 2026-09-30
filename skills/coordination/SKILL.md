@@ -36,18 +36,27 @@ is its contract, read it before its first use in a session:
 last one: a checkout changes branch, a suite starts, a pull request merges between two of
 your turns. Your only file is `<state dir>/coordinator/notes.md` (the state directory is the
 script's own): the pull requests each orchestrator holds — what `owners` attributed to it at
-your start, overridden by its confirmation or correction — and the flags you sent. Re-read
-it after a compaction.
+your start, overridden by its confirmation or correction — the flags you sent, and the
+sessions you have announced to. Re-read it after a compaction.
 
 ## At your start
 
-Once the start command has registered you, run `owners` and `facts`, then send every
-`Orch :` session a fresh `ListAgents` shows ONE message — the start command holds its text:
-who you are, that they may ask you when in doubt, that asking is optional, and the pull
-requests the facts attribute to them, to confirm or correct once. Write into the notes what
-`owners` attributes to each orchestrator, then each answer, which overrides it; a silence is
-noted and never chased, and the facts' attribution stands for that orchestrator. A
-confirmation is a record, not a permission.
+Once the start command has registered you, run `owners` and `facts`, then apply
+« Announcing newcomers » below — every running `Orch :` session is, at this first turn, one
+you have not yet announced to. Write into the notes what `owners` attributes to each
+orchestrator, then each answer, which overrides it; a silence is noted and never chased, and
+the facts' attribution stands for that orchestrator. A confirmation is a record, not a
+permission.
+
+## Announcing newcomers
+
+Before you answer a question or act on an order, compare a fresh `ListAgents`' `Orch :`
+sessions against the notes' announced list: a session missing from it is a newcomer, and a
+successor of a session you already announced to is a newcomer too, since it is a new
+session under a familiar name. Send each newcomer ONE message — the start command holds its
+text: who you are, that asking is optional, and the pull requests `owners` attributes to it,
+or « none » — then record it as announced in the notes. This runs at every turn you already
+act on; there is no wake-up scheduled to run it on its own.
 
 ## Answering a question
 
