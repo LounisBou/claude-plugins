@@ -123,7 +123,7 @@ check "a project's instantiation rule no longer carves out succession" "0" \
 
 # Merging and undrafting a pull request are the operator's, on his clear and explicit request:
 # they left every « decide and move » list and every list of what the orchestrator runs,
-# the auditor's included. A list that names merges again hands them back to a session.
+# and the auditor applies nothing. A list that names merges again hands them back to a session.
 hits=$(cd "$ROOT" && git grep -nE 'merges, deploys|Opening, merging|merging and tagging' -- skills/ commands/ templates/ README.md || true)
 check "no merge in a decide-and-move or orchestrator-runs list" "" "$hits"
 check "the rulebook keeps merge and undraft the operator's by default" "1" \
@@ -134,10 +134,8 @@ check "the coordinator's overview keeps merge and undraft the operator's by defa
   "$(grep -c "operator's by default (a project's own method may decide otherwise), method is the auditor's" "$ROOT/skills/coordination/SKILL.md")"
 check "the coordinator's ready-is-not-a-merge section names the default too" "1" \
   "$(grep -c "that call is his by default, or a" "$ROOT/skills/coordination/SKILL.md")"
-check "the audit reference keeps merge and undraft out of its list" "1" \
-  "$(grep -c 'Merging a pull request and taking it out of draft are in no such list, the auditor' "$ROOT/skills/orchestrator/references/audit.md")"
-check "the audit brief keeps merge and undraft out of its list" "1" \
-  "$(grep -c 'draft are in no such list: they are the operator.s, on his clear and explicit request' "$ROOT/templates/agent-audit-brief.md")"
+check "the audit brief merges nothing" "1" \
+  "$(grep -c 'no label, no merge' "$ROOT/templates/agent-audit-brief.md")"
 # Two locks hold whatever is said — the push guard and the title-verified close — and
 # nothing else the launcher refuses is written as an absolute. Read with the rulebook's
 # line breaks folded.
@@ -801,20 +799,18 @@ print(ia.row_for(1, 1, '/dev/ttys901', 'x', None, False, False).split(' | ')[3])
 
 echo "== rhythm =="
 
-# `rhythm.sh` (§52): the figures an audit reads its rhythm from, generic and derived from git
+# `rhythm.sh` (§52): the net balance an audit reads, generic and derived from git
 # alone. The fixture repository is built by a script with fixed dates and line counts, and
 # every expected figure below is written in that script's header.
 RREPO="$WORK/rhythm-repo"
 bash "$ROOT/tests/fixtures/rhythm-repo.sh" "$RREPO" >/dev/null 2>&1
 RHYTHM="$ROOT/skills/orchestrator/scripts/rhythm.sh"
 rhythm() { bash "$RHYTHM" "$@" 2>&1; }
-ROUT=$(rhythm "$RREPO" --since 2026-08-10 --product 'design/src/**' --instrument 'scripts/**' --instrument 'tests/**' --register register.md)
+ROUT=$(rhythm "$RREPO" --since 2026-08-10 --product 'design/src/**' --instrument 'scripts/**' --instrument 'tests/**')
 check "merges per week, typed by the pull request's title" \
   "week feat fix chore docs ci build test refactor other total|2026-W33 1 1 0 1 0 0 0 0 0 3|2026-W34 1 0 0 0 1 0 1 0 1 4" \
   "$(printf '%s\n' "$ROUT" | grep -E '^(week feat |2026-W[0-9]+ [0-9])' | paste -sd'|' -)"
 check "nothing before --since is counted" "0" "$(printf '%s\n' "$ROUT" | grep -c 'W32')"
-check "feat commits per week count the merged branch's own" "feat 2026-W33 2|feat 2026-W34 1" \
-  "$(printf '%s\n' "$ROUT" | grep -E '^feat 2026-W' | paste -sd'|' -)"
 check "lines under the product's globs against the instruments'" "product +21 -1|instrument +27 -0" \
   "$(printf '%s\n' "$ROUT" | grep -E '^(product|instrument) \+' | sed 's/  *(.*$//' | paste -sd'|' -)"
 # A glob's `*` crosses directories, as in git's own pathspecs: under the `:(glob)` magic it
@@ -822,17 +818,8 @@ check "lines under the product's globs against the instruments'" "product +21 -1
 # measured on a real repository at +738 where git read +40936. The nested file decides it.
 check "a glob's * crosses directories, and the output says so" "product +21 -1|1" \
   "$(rhythm "$RREPO" --since 2026-08-10 --product 'design/src/*.ts' | grep '^product +' | sed 's/  *(.*$//')|$(printf '%s\n' "$ROUT" | grep -c 'git pathspecs, where \* crosses directories')"
-# A register that writes its statuses as code (`open` in backticks) read as zero open entries
-# on a real one holding a hundred. The backticks are stripped; the match stays exact. And the
-# header is read at EVERY table: fixed on a leading vocabulary table headed Status, the column
-# stayed there and the index was compared on its identifiers — « 1 open (open) » for 102.
-# A table whose FIRST column is Status is that vocabulary: its `open` row defines a status.
-check "open register entries are read in the Status column, exactly, backticks or not" "register register.md: 3 open (B-1, B-3, B-5)" \
-  "$(printf '%s\n' "$ROUT" | grep '^register ')"
-check "and the latency git cannot measure is said, not pretended" "1" \
-  "$(printf '%s\n' "$ROUT" | grep -c '^operator question latency: not measurable from git$')"
-check "without globs or a register, those readings say so" "1|1|0" \
-  "$(rhythm "$RREPO" --since 2026-08-10 | grep -c '^product: no --product glob given$')|$(rhythm "$RREPO" --since 2026-08-10 | grep -c '^instrument: no --instrument glob given$')|$(rhythm "$RREPO" --since 2026-08-10 | grep -c '^register ')"
+check "without globs, those readings say so" "1|1" \
+  "$(rhythm "$RREPO" --since 2026-08-10 | grep -c '^product: no --product glob given$')|$(rhythm "$RREPO" --since 2026-08-10 | grep -c '^instrument: no --instrument glob given$')"
 check "no --since, or no repository, is refused" "1|1" \
   "$(rhythm "$RREPO" >/dev/null 2>&1; echo $?)|$(rhythm "$WORK/not-a-repo-at-all" --since 2026-08-10 >/dev/null 2>&1; echo $?)"
 # A bare date means its midnight (issue #52). git completes `--since=2026-08-12` with the
@@ -840,8 +827,8 @@ check "no --since, or no repository, is refused" "1|1" \
 # were five. git's clock is pinned (GIT_TEST_DATE_NOW, 23:00 UTC on the fixture's merge day)
 # so that the reading does not depend on the hour the suite runs at.
 rhythm_late() { TZ=UTC GIT_TEST_DATE_NOW=1786575600 bash "$RHYTHM" "$@" 2>&1; }
-check "a bare --since on the day of the last merge counts that merge" "2026-W33 0 0 0 1 0 0 0 0 0 1|feat 2026-W33 1" \
-  "$(rhythm_late "$RREPO" --since 2026-08-12 | grep -E '^(2026-W33 [0-9]|feat 2026-W33 )' | paste -sd'|' -)"
+check "a bare --since on the day of the last merge counts that merge" "2026-W33 0 0 0 1 0 0 0 0 0 1" \
+  "$(rhythm_late "$RREPO" --since 2026-08-12 | grep -E '^2026-W33 [0-9]' | paste -sd'|' -)"
 check "a date with a time is passed as given, and the header says what was read" "0|1|1" \
   "$(rhythm_late "$RREPO" --since 2026-08-12T13:00:00 | grep -c '^2026-W33 ')|$(rhythm_late "$RREPO" --since 2026-08-12 | grep -c 'since 2026-08-12T00:00:00$')|$(rhythm_late "$RREPO" --since 2026-08-12T13:00:00 | grep -c 'since 2026-08-12T13:00:00$')"
 check "the usage says that a bare date is read from its midnight" "1" \
@@ -1724,10 +1711,14 @@ check "after handed over, the predecessor forwards everything until its tab clos
   "$(spells "$COORDSKILL" 'From then until your tab closes, every message')"
 
 # `/orchestrator:audit` (§52): the brief instantiated and linted, the auditor spawned with
-# the launcher's own flag, verified on the artifact, recorded where `audit-end` finds it.
-# The spawn line is not only spelled: it is taken out of the command and run dry through
-# the launcher, so a command that drifts from the launcher's flags falls here.
+# the launcher's own flag and verified on the artifact. The spawn line is not only spelled:
+# it is taken out of the command and run dry through the launcher, so a command that drifts
+# from the launcher's flags falls here.
 AUDCMD="$ROOT/commands/audit.md"
+check "the audit command says at its top that it runs on the operator's word" "1" \
+  "$(awk 'NR>1 && /^---$/{f=1; next} f && NF {print; exit}' "$AUDCMD" | grep -c "on the operator's word")"
+check "it instantiates the audit brief template and lints it with the report path expected" "yes|yes" \
+  "$(spells "$AUDCMD" 'templates/agent-audit-brief.md')|$(spells "$AUDCMD" 'brief-lint.sh <brief path> --expect-created <report path>')"
 AUDSPAWN=$(grep -m1 -o 'iterm-agent.sh spawn .*' "$AUDCMD" 2>/dev/null | sed -e 's/^iterm-agent.sh spawn //' -e 's/`.*$//' \
   -e "s#<repository>#$WORK#" -e 's#<subject>#tm#' -e 's#<brief path>#/tmp/audit-brief.md#')
 audspawn() { eval "set -- $AUDSPAWN"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
@@ -1738,15 +1729,14 @@ check "the command's spawn line is one the launcher runs as an auditor" "1|1|1|1
 check "and it carries neither a tier, nor a successor's flag, nor an anchor" "0" \
   "$(printf '%s' "$AUDSPAWN" | grep -cE -- '--tier|--successor|--right-of|--left-of')"
 
-# The audit brief (§52): read-only everywhere, reporting to the operator, ordering the
-# orchestrator with the measurement behind each change, and a report of a FIXED shape so
-# that two audits compare. Filled, it lints clean: a template whose own text trips the lint
-# would reach every auditor with a finding its orchestrator learned to ignore.
+# The audit brief (§52), filled, lints clean: a template whose own text trips the lint would
+# reach every auditor with a finding its caller learned to ignore. The report path is one the
+# auditor creates, so it cannot exist when the brief is linted (issue #52): the command names
+# it to the lint as created later, and the lint exempts exactly it — a second absent path in
+# the same brief is still a finding.
 AUDBRIEF="$ROOT/templates/agent-audit-brief.md"
-check "the auditor is read-only on every repository and every worktree" "yes|yes" \
-  "$(spells "$AUDBRIEF" 'READ-ONLY on every repository and every worktree')|$(spells "$AUDBRIEF" 'no edit, no commit, no push, no merge, no label, no comment, no kill, no session ended')"
-check "every claim carries its command, and the auditor never closes its own tab" "yes|yes" \
-  "$(spells "$AUDBRIEF" 'Every claim carries the command that produces it')|$(spells "$AUDBRIEF" 'never close your own tab')"
+check "the auditor writes nothing but its report, and the operator closes its tab" "1|1" \
+  "$(grep -c 'commit, no push, no comment, no label, no merge' "$AUDBRIEF")|$(grep -c 'He closes this tab' "$AUDBRIEF")"
 AUDFILLED="$WORK/audit-brief-filled.md"
 if [ -f "$AUDBRIEF" ]; then
   sed -E -e 's#\{\{ORCHESTRATOR_NAME\}\}#Orch : f [a1b2c3]#g' -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$AUDBRIEF" > "$AUDFILLED"
@@ -1757,81 +1747,25 @@ check "the audit brief, every placeholder filled, lints clean" "yes|0" \
 # the first live audit brief read two findings by construction (issue #52). The command names
 # that one path to the lint as created later, and the lint exempts exactly it — a second
 # absent path in the same brief is still a finding.
-AUDREPORT="$WORK/audits/2026-09-13-tm/REPORT.md"
+AUDREPORT="$WORK/audits/2026-09-13-tm.md"
 AUDREAL="$WORK/audit-brief-real.md"
 if [ -f "$AUDBRIEF" ]; then
-  sed -E -e 's#\{\{ORCHESTRATOR_NAME\}\}#Orch : f [a1b2c3]#g' -e "s#\{\{REPORT_PATH\}\}#$AUDREPORT#g" -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$AUDBRIEF" > "$AUDREAL"
+  sed -E -e "s#\{\{REPORT_PATH\}\}#$AUDREPORT#g" -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$AUDBRIEF" > "$AUDREAL"
 fi
-check "an instantiated audit brief lints to zero with its report path expected, two findings without" "0|brief-lint: $AUDREAL: 0 findings|2" \
+check "an instantiated audit brief lints to zero with its report path expected, one finding without" "0|brief-lint: $AUDREAL: 0 findings|1" \
   "$(bash "$LINT" "$AUDREAL" --expect-created "$AUDREPORT" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$AUDREAL" --expect-created "$AUDREPORT" 2>&1)|$(bash "$LINT" "$AUDREAL" 2>/dev/null | grep -c "path does not exist: $AUDREPORT")"
 cp "$AUDREAL" "$WORK/audit-brief-other.md" 2>/dev/null; printf 'Spec: `%s/nowhere.md`\n' "$WORK" >> "$WORK/audit-brief-other.md"
 check "--expect-created exempts the path it names and no other" "1|0" \
   "$(bash "$LINT" "$WORK/audit-brief-other.md" --expect-created "$AUDREPORT" 2>/dev/null | grep -c "path does not exist: $WORK/nowhere.md")|$(bash "$LINT" "$WORK/audit-brief-other.md" --expect-created "$AUDREPORT" 2>/dev/null | grep -c "path does not exist: $AUDREPORT")"
 check "--expect-created without a path is refused, and says so" "1|1" \
   "$(bash "$LINT" "$AUDREAL" --expect-created >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$AUDREAL" --expect-created 2>&1 | grep -c -- '--expect-created needs a path')"
-
-# `/orchestrator:audit-end` (§52), from either side. The auditor sends its report path and
-# ends its turn, never its session; the orchestrator acknowledges, waits for « ended », and
-# closes the auditor's tab under the audit title, proved on the process table. The close
-# line is taken out of the command and run dry, like the audit's spawn line.
-AUDEND="$ROOT/commands/audit-end.md"
-check "the auditor sends its report path and never closes its own tab" "yes|yes|yes" \
-  "$(spells "$AUDEND" '« audit-end: <report path> »')|$(spells "$AUDEND" 'Never close your own tab')|$(spells "$AUDEND" '« ended »')"
-check "the close is proved on ps and ListAgents, and the record is cleared" "yes|yes|yes" \
-  "$(spells "$AUDEND" 'ps -t')|$(spells "$AUDEND" 'ListAgents')|$(spells "$AUDEND" 'claude-orchestrator/audits/')"
-# The rulebook carries the audit (§52): what an auditor is, what it may order, what the
-# orchestrator owes it, and the two commands — the commands load the rulebook first, so a duty
-# written only in a command is one an orchestrator reading the rulebook never meets.
-# The audit's rules: its reference's section, and what the orchestrator owes an auditor at
-# every message, which the rulebook carries itself.
-AUDRULE=$(awk '/^## The audit$/{f=1; next} f&&/^## /{exit} f' "$ORCH_REFS/audit.md"; awk '/^## Carried at every step$/{f=1; next} f&&/^## /{exit} f' "$ROOT/skills/orchestrator/SKILL.md")
-AUDRULEF="$WORK/rulebook-audit-section.md"; printf '%s\n' "$AUDRULE" > "$AUDRULEF"
-check "the red flags carry the audit" "yes|yes" \
-  "$(carries "$ROOT/skills/orchestrator/SKILL.md" "An auditor's ordered change neither applied nor refused with the ruling it crosses")|$(carries "$ROOT/skills/orchestrator/SKILL.md" "an auditor's tab still open after its « ended »")"
-
-# The operator launches an audit and the operator ends it (issue #52). The first live run
-# ended on the auditor's own decision: the brief told it to run audit-end « when the report
-# is complete », and audit-end let the orchestrator run it « on your own decision ». The rule
-# lives in the plugin's own texts — the two commands, the brief, the rulebook's section, the
-# design's section and the README's entries — and nowhere else, so it is held here, on all of
-# them: no phrase that hands the end to a session, and no sentence that launches, runs or
-# ends an audit by its command without naming the operator.
-AUDDESIGNF="$WORK/design-audit-section.md"
-awk '/^## 52\. /{f=1; next} f&&/^## /{exit} f' "$ROOT/docs/design.md" > "$AUDDESIGNF"
-AUDREADMEF="$WORK/readme-audit-rows.md"
-grep -F '| `/orchestrator:audit' "$ROOT/README.md" > "$AUDREADMEF"
-AUDWORD=("$AUDCMD" "$AUDEND" "$AUDBRIEF" "$AUDRULEF" "$AUDDESIGNF" "$AUDREADMEF")
-check "no audit text hands the end of an audit to a session's own decision" "" \
-  "$(grep -hniE 'own decision|own initiative|own accord|when the report is complete, run|in your own session|run (the command )?/?orchestrator:audit-end' "${AUDWORD[@]}" 2>/dev/null)"
-audit_unowned() {  # prints every sentence that launches, runs or ends an audit by its command without the operator
-  local f
-  for f in "$@"; do
-    tr '\n' ' ' < "$f" | awk -v f="${f##*/}" '{
-      gsub(/dry run|run dry/, "")
-      n = split($0, s, "[.;] |: ")
-      for (i = 1; i <= n; i++) {
-        t = tolower(s[i]); gsub(/audit-end/, "", t)
-        if (s[i] ~ /orchestrator:audit/ && t ~ /(^|[^a-z])(runs?|launch(es|ed)?|relaunch(es)?|ends?|ended|types?|typed)([^a-z]|$)/ && s[i] !~ /operator/)
-          print f ": " s[i]
-      }
-    }'
-  done
-}
-check "every sentence that launches or ends an audit by its command names the operator" "" \
-  "$(audit_unowned "${AUDWORD[@]}")"
-check "audit-end runs only when the operator types it, and « audit ready » is not that word" "yes|yes|yes" \
-  "$(spells "$AUDEND" 'ONLY when the operator types it')|$(spells "$AUDEND" '« audit ready: <report path> »')|$(spells "$AUDEND" '« audit ready » message is not the word')"
-check "the auditor invites the operator to end the audit, and waits" "yes|yes|yes" \
-  "$(spells "$AUDBRIEF" '« audit ready: {{REPORT_PATH}} »')|$(spells "$AUDBRIEF" 'the audit can be ended')|$(spells "$AUDBRIEF" 'you run no command and close nothing')"
-check "the rulebook and the design say who launches and who ends, and name the defect" "yes|yes|yes|yes" \
-  "$(carries "$AUDRULEF" 'the operator launches the audit and the operator ends it')|$(carries "$AUDRULEF" 'a session that ends an audit by itself is the defect')|$(carries "$AUDDESIGNF" 'the operator launches the audit and the operator ends it')|$(carries "$AUDDESIGNF" 'a session that ends an audit by itself is the defect')"
-check "the README's two entries say whose word launches and ends the audit" "2" \
-  "$(grep -c "the operator's word" "$AUDREADMEF")"
-
-AUDCLOSE=$(grep -m1 -o 'iterm-agent.sh close .*' "$AUDEND" 2>/dev/null | sed -e 's/^iterm-agent.sh close //' -e 's/`.*$//' -e 's#<auditor tty>#/dev/ttys950#')
-audclose() { eval "set -- $AUDCLOSE"; ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" close "$@" 2>&1; }
-check "its close line is one the launcher runs, guarded on the audit title" "close=/dev/ttys950 expect_title=Audit :" \
-  "$(if [ -n "$AUDCLOSE" ]; then audclose; else echo 'no close line'; fi)"
+# Every placeholder of the brief is one the command says how to fill.
+check "the brief's placeholders are the ones the command fills" \
+  "{{PREVIOUS_REPORT}} {{PROJECT}} {{READING}} {{RECORDS}} {{REPORT_PATH}} {{REPOSITORY}} {{RHYTHM}} {{SINCE}} {{SUBJECT}}" \
+  "$(grep -oE '\{\{[A-Z_]+\}\}' "$AUDBRIEF" | sort -u | paste -sd' ' -)"
+# The code cites §52: the section it cites exists.
+check "the design document has the audit's numbered section" "1" \
+  "$(grep -c '^## 52\. The audit of an orchestrator$' "$ROOT/docs/design.md")"
 
 printf 'a prompt\n' > "$file"
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : prompt" --prompt-file "$file" 2>&1)
@@ -2439,12 +2373,27 @@ $1
 check "a bounded osascript that never answers is killed and reported as a timeout" "timeout" \
   "$(ORCHESTRATOR_OSASCRIPT="$IBIN/osascript-deaf" ORCHESTRATOR_PROBE_TIMEOUT=2 \
      ipy "print(ia.osascript_run('x')[0])")"
+# Scoped to this suite's own stub path, not the bare name: a bare `pgrep -f osascript-deaf`
+# reads machine-wide and flakes when another suite's own deaf stub is alive at the same time.
 check "the deaf probe leaves no osascript behind" "0" \
   "$(ORCHESTRATOR_OSASCRIPT="$IBIN/osascript-deaf" ORCHESTRATOR_PROBE_TIMEOUT=2 \
      ipy "
 import subprocess
 ia.osascript_run('x')
-print(subprocess.run(['pgrep','-f','osascript-deaf'],capture_output=True,text=True).stdout.count('\n'))")"
+print(subprocess.run(['pgrep','-f','$IBIN/osascript-deaf'],capture_output=True,text=True).stdout.count('\n'))")"
+
+# Proof the scoped guard still falls on a real leak: a copy of the stub started directly
+# under this suite's own work directory and left running on purpose, so "0" above means a
+# clean kill, not a pattern too narrow to ever match anything.
+LEAKED="$IBIN/osascript-deaf-leak"
+cp "$IBIN/osascript-deaf" "$LEAKED"
+"$LEAKED" </dev/null >/dev/null 2>&1 &
+LEAK_PID=$!
+check "the scoped guard still catches a leak planted in a scratch copy" "1" \
+  "$(pgrep -f -- "$LEAKED" | wc -l | tr -d ' ')"
+kill "$LEAK_PID" 2>/dev/null
+wait "$LEAK_PID" 2>/dev/null
+rm -f "$LEAKED"
 check "a live app answers the preflight with its version" "True 3.7.0" \
   "$(ORCHESTRATOR_OSASCRIPT="$IBIN/osascript-live" ipy \
      "print('%s %s' % ia.app_responsive())")"

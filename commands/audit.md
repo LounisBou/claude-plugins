@@ -1,106 +1,40 @@
 ---
-description: Launch an auditor of this orchestration, on the operator's word — a session in its own tab that reads the method and the results, reports to the operator and orders methodology changes
-argument-hint: <subject> [--scope <what>] [--method <path>]
-allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/context-gauge/scripts/context-gauge.sh:*), Bash(git:*), Bash(ls:*), Bash(mkdir:*), Bash(date:*), Read, Write, Edit, ListAgents, SendMessage
+description: Launch an audit of the method, on the operator's word — a session in its own tab that weighs what the method costs against what it yields, writes one report of proposals, and stops
+argument-hint: <subject> [--since <date>]
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh:*), Bash(git:*), Bash(ls:*), Bash(date:*), Read, Write
 ---
 
-Run on the operator's word only: the operator launches the audit and the operator ends it,
-with `/orchestrator:audit-end` typed by the operator. No session launches an audit by itself.
+Run on the operator's word only: he types this command, in the session whose tab the
+auditor should sit beside. Nothing of the audit stays with this session once it is launched.
 
-Launch the AUDITOR of this orchestration, described in `orchestrator:orchestrator`,
-its reference `references/audit.md`. Load that skill first.
+Usage: `/orchestrator:audit <subject> [--since <date>]`. The subject is at most 25
+characters: it becomes the title `Audit : <subject>`.
 
-Usage: `/orchestrator:audit <subject> [--scope <what>] [--method <path>]`.
-
-Preconditions, verify each before acting:
-
-- this session is an orchestrator (`Orch : <subject>` in `ListAgents`), not an agent;
-- no auditor of yours is running: no record under the state directory's `audits/` for
-  this session, or its auditor is absent from `ListAgents` (then clear the stale record);
-  an absent `audits/` directory is « no record »; one auditor at a time;
-- the subject is at most 25 characters: it becomes the title `Audit : <subject>`;
-- the project state file is current — the auditor verifies it, it does not rebuild it.
-
-Then:
-
-1. **Instantiate the brief.** Copy `${CLAUDE_PLUGIN_ROOT}/templates/agent-audit-brief.md`
-   into the project's briefs directory — the directory the standing succession brief lives
-   in — as `audit-<date>-<subject>-brief.md`, and fill every `{{PLACEHOLDER}}`:
-   - the orchestrator: your exact `ListAgents` name and reference, as they print;
-   - the repository (the checkout the auditor opens, read-only) and the state file;
-   - the scope: what `--scope` says, else everything since the last audit — the newest
-     `REPORT.md` under `<briefs dir>/audits/`, named with its date — else everything since
-     this orchestration started, with that date; a scope reading « continue from <report
-     path> » — the auditor ended at its context gate — names that report as the previous
-     one, and the new audit starts at the section it reached;
-   - the method-and-decisions file, by its absolute path — one per project, the one file
-     the auditor writes and you land (the rulebook's `references/audit.md`): the file `--method` names;
-     without `--method`, the record for this repository in the state directory (step 5),
-     so that every audit after the first finds it without the flag; with neither, the
-     project has none yet, and the brief names where the auditor creates it:
-     `<briefs dir>/method-and-decisions.md`. A `--method` naming another file than the
-     record replaces the record at step 5;
-   - the project's other method files, as reading: the project's method files you know —
-     the ones your own office names (the state file's rules, a methodology or conventions
-     document) — each by its absolute path; say that the
-     project has none only when you know none;
-   - the report path `<briefs dir>/audits/<date>-<subject>/REPORT.md` (create its
-     directory), and the previous report's path, or « none »;
-   - the gauge: the absolute path of the plugin's installed
-     `skills/context-gauge/scripts/context-gauge.sh`, resolved now — the auditor's shell
-     carries none of your variables; the same for `skills/orchestrator/scripts/rhythm.sh`;
-   - the resource envelope the machine runs under today.
-2. **Lint it.** `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <brief path> --expect-created <report path> [--expect-created <method file>]`;
-   the report path, and the method-and-decisions file while the project has none yet, are
-   the paths the lint accepts as absent — the auditor creates them. Any other finding is
-   repaired before the spawn, a known false positive is named.
-3. **Spawn.** `iterm-agent.sh list` — note your own tty. Then:
+1. **Fill the brief.** Copy `${CLAUDE_PLUGIN_ROOT}/templates/agent-audit-brief.md` into the
+   project's briefs directory as `audit-<date>-<subject>-brief.md`, and fill every
+   `{{PLACEHOLDER}}` with what you can read, each path absolute:
+   - the repository and the project's name;
+   - the previous report: the newest file under `<briefs dir>/audits/`, or « none »;
+   - the start: `--since`, else the previous report's date, else the repository's first
+     commit;
+   - the project's method files you know (its rules, its state file), or « none known »;
+   - its dispatch record and bug register when it keeps them, or « none »;
+   - `rhythm.sh`: the installed `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/rhythm.sh`,
+     resolved now — the auditor's shell carries none of your variables;
+   - the report: `<briefs dir>/audits/<date>-<subject>.md`.
+2. **Lint it.** `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <brief path> --expect-created <report path>`;
+   repair any other finding before the spawn.
+3. **Spawn**, beside this tab:
 
    ```
    ${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --dir <repository> --auditor --title "Audit : <subject>" --permission-mode auto --trust --prompt "Read and execute <brief path>"
    ```
 
-   `--auditor` places the tab immediately left of yours, runs it on your model, brings it
-   up under remote control under its title, and writes it into no chain. No tier, no
-   anchor, no successor's flag: the launcher refuses each beside `--auditor`.
-4. **Verify on the artifact.** `iterm-agent.sh list` shows the `Audit : <subject>` tab;
-   `iterm-agent.sh verify --tty <auditor tty>` shows the process; `ListAgents` shows the
-   session within a few seconds. Then wait for the handshake: answer it, subscribe to the
-   auditor's idle notice (`SendMessage` with `notify_when_idle: true`). An auditor that has
-   not shaken hands within minutes is inspected with `iterm-agent.sh screen --tty`, not
-   waited for.
-5. **Record it** so `/orchestrator:audit-end` finds it. The directory does not exist before
-   the first audit: create it first,
-   `mkdir -p ${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/audits`, then write
-   `${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/audits/<CLAUDE_CODE_SESSION_ID>.json`
-   (your own session id) with the Write tool:
-
-   ```json
-   {"auditor_name": "Audit : <subject> [a1b2c3]", "auditor_tty": "/dev/ttysNNN",
-    "report": "<briefs dir>/audits/<date>-<subject>/REPORT.md",
-    "brief": "<brief path>", "orchestrator_name": "<your name [ref]>", "started": "<date -u +%FT%TZ>"}
-   ```
-
-   The name and reference are the auditor's as `ListAgents` prints them; the tty is the one
-   `verify` read.
-
-   Then record the project's method-and-decisions file, so that the next audit finds it
-   without `--method`. One file per project, beside the audit records, keyed by the
-   repository: its absolute path (`git -C <repository> rev-parse --show-toplevel`) with
-   every `/` written `-`. Create the directory first,
-   `mkdir -p ${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/methods`, then write
-   `${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/methods/<repository key>.json`:
-
-   ```json
-   {"repository": "<repository>", "method": "<method file>", "recorded": "<date -u +%FT%TZ>"}
-   ```
-
-   A record that already names the same file is left as it is.
-6. **Tell the operator, after the fact**, in one line: the auditor is running, its tab,
-   its report path, and the method-and-decisions file it maintains.
-
-While the audit runs, what you owe the auditor is the rulebook's « Carried at every step »,
-« What you owe it ». Its end is the operator's word, never yours: `references/audit.md`,
-« Its end ».
+   `--auditor` places the tab immediately left of this one, on this session's model, under
+   remote control under its title, in no chain.
+4. **Verify** that `iterm-agent.sh list` shows the `Audit : <subject>` tab and
+   `iterm-agent.sh verify --tty <its tty>` its process.
+5. **Tell the operator** in one line: the tab, and the report path. Then carry on with your
+   own work: the auditor messages nobody, ends by itself, and the operator closes its tab.
 
 $ARGUMENTS

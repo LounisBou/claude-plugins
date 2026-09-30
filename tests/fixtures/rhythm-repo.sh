@@ -18,12 +18,7 @@
 #                                                      design/src/deep/c.ts +5
 #                  a subject with no type              README.md        +1
 #
-# and a register whose Status column holds three open rows — two bare, one written in
-# backticks the way a register that formats its statuses as code does — one `reopened`, one
-# backticked `fixed #12`, and a Title cell reading `open` that is not a status. Before the
-# index sits a vocabulary table whose FIRST column is headed Status, and after it a table with
-# no Status column whose cell reads `open`: a header is read at every table, not once. The
-# nested file is what tells a pathspec whose `*` crosses directories from one whose does not.
+# The nested file is what tells a pathspec whose `*` crosses directories from one whose does not.
 
 set -euo pipefail
 
@@ -51,33 +46,6 @@ commit() { git add -A && git commit -q -m "$1"; }
 
 at 2026-08-03
 grow README.md 1
-cat > register.md <<'EOF'
-# Register
-
-## Status vocabulary
-
-| Status | Means |
-|---|---|
-| `open` | reproduced, not fixed |
-| `fixed #N` | fixed by a pull request |
-
-## Index
-
-| Id | Title | Status |
-|---|---|---|
-| B-1 | one | open |
-| B-2 | open | fixed |
-| B-3 | three | open |
-| B-4 | four | reopened |
-| B-5 | five | `open` |
-| B-6 | six | `fixed #12` |
-
-## Notes
-
-| Id | Note |
-|---|---|
-| B-9 | open |
-EOF
 commit "chore: set up"
 
 at 2026-08-11

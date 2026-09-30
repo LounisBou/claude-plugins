@@ -53,7 +53,6 @@ skills/orchestrator/references/briefs.md     the agent prompt recipe, the standi
 skills/orchestrator/references/review.md     review on evidence, disposable review sessions, the cost of a round, the rebase
 skills/orchestrator/references/lifecycle.md  launch, verify, control, terminate, replace; rotation; succession
 skills/orchestrator/references/machine.md    the shared machine as an instrument
-skills/orchestrator/references/audit.md      the audit
 skills/orchestrator/references/incidents.md  the observed incidents behind the rules, by rule id
 skills/iterm-agents/SKILL.md         tab management on macOS
 skills/iterm-agents/references/commands.md   the script's commands, how it builds a tab, when iTerm2 does not answer
@@ -63,7 +62,7 @@ skills/iterm-agents/scripts/iterm_agent.py   the implementation, over the app AP
 skills/orchestrator/scripts/brief-lint.sh   refuses a brief before it is dispatched
 skills/orchestrator/scripts/dispatch-record.sh  one row per dispatch, and the routing signal
 skills/orchestrator/scripts/workspace.sh    a clone per phase with the project's local material; a pinned worktree per review round
-skills/orchestrator/scripts/rhythm.sh       an audit's rhythm figures, from git alone
+skills/orchestrator/scripts/rhythm.sh       an audit's net balance, from git alone
 skills/coordination/SKILL.md         the coordinator: one question at a time, relays, logistics rulings, its succession
 skills/coordinator/scripts/coordinator.sh  the coordinator's address and the claims ledger: register, clear, lookup, declare, release, conflicts
 skills/model-routing/SKILL.md        which capability tier a dispatch gets
@@ -76,7 +75,7 @@ templates/agent-rotation-brief.md    resume brief for a fresh implementer
 templates/agent-review-brief.md      one review round, read-only, one lens per reader
 templates/agent-comments-brief.md    one pass over a pull request's open threads
 templates/orchestrator-succession-brief.md
-templates/agent-audit-brief.md       one audit of an orchestration: read-only, a report of fixed shape
+templates/agent-audit-brief.md       one audit of the method: the stock, the net balance, proposals, then stop
 templates/coordinator-succession-brief.md  the coordinator's successor: close the predecessor, then register
 commands/install.md                  wires the tap, creates the state directory
 commands/uninstall.md                restores the previous status line
@@ -85,8 +84,7 @@ commands/succeed.md                  runs the orchestrator succession
 commands/agents.md                   each running implementer's progress
 commands/progress.md                 where the build stands
 commands/decide.md                   the decision round, one arbitration at a time
-commands/audit.md                    launches the orchestrator's auditor
-commands/audit-end.md                ends the audit on the operator's word; the orchestrator closes the tab
+commands/audit.md                    launches an audit of the method on the operator's word
 commands/coordinator.md              starts the machine's coordinator on the operator's word
 commands/coordinator-end.md          ends the coordinator on the operator's word; the record cleared
 hooks/hooks.json                     declares the context gate and the push guard
@@ -386,7 +384,7 @@ Requirements: `jq` for the tap and the installer, `python3` for the transcript s
 
 | Skill | What it holds | Its references |
 |---|---|---|
-| `orchestrator` | the rulebook: the operator's primacy and his seven duties, the core loop (plan, brief, launch, verify, review, terminate, replace) one line per step, the thresholds, the operator's and the orchestrator's shares of the work, one table of rationalizations and one of red flags | `briefs.md` (the prompt recipe, the standing rules, the lint, the tier), `review.md` (review on evidence, the disposable review session, the cost of a round, the rebase once ready), `lifecycle.md` (launch, verify, control, terminate, replace, rotation, succession), `machine.md` (the shared machine), `audit.md` (the auditor), `incidents.md` |
+| `orchestrator` | the rulebook: the operator's primacy and his seven duties, the core loop (plan, brief, launch, verify, review, terminate, replace) one line per step, the thresholds, the operator's and the orchestrator's shares of the work, one table of rationalizations and one of red flags | `briefs.md` (the prompt recipe, the standing rules, the lint, the tier), `review.md` (review on evidence, the disposable review session, the cost of a round, the rebase once ready), `lifecycle.md` (launch, verify, control, terminate, replace, rotation, succession), `machine.md` (the shared machine), `incidents.md` |
 | `iterm-agents` | the rules of the tab tooling: reading the tabs, an agent is an iTerm2 tab, the layout convention, the safety orders for a launch and a rotation, tab hygiene | `commands.md` (every command's synopsis and refusals, how the launcher builds a tab, when iTerm2 does not answer), `incidents.md` |
 | `model-routing` | a decision aid for the orchestrator's choice of tier: the principle, the table by class of work, the five readings, escalation, the cascade, the false economy, the second reader, the record | `incidents.md` |
 | `context-gauge` | how a session reads its own fill, and the duty to report the measurement | — |
@@ -403,7 +401,7 @@ Every project-specific fact is removed; the skill states the rule and leaves the
 | `skills/orchestrator/scripts/brief-lint.sh` | refuses a brief before it is dispatched | sections 11, 12 |
 | `skills/orchestrator/scripts/dispatch-record.sh` | one row per dispatch; the routing signals; the readiness gate | sections 13, 55, 58 |
 | `skills/orchestrator/scripts/workspace.sh` | a clone per phase with the project's local material; a pinned worktree per review round | sections 30, 35, 36, 37, 40 |
-| `skills/orchestrator/scripts/rhythm.sh` | an audit's rhythm figures, from git alone | section 52 |
+| `skills/orchestrator/scripts/rhythm.sh` | an audit's net balance, from git alone | section 52 |
 | `skills/context-gauge/scripts/context-gauge.sh`, `statusline-tap.sh` | the gauge and its tap | sections 3, 32 |
 | `install.sh`, `uninstall.sh` | wire and unwire the tap, create and remove the state directory | sections 3.4, 33 |
 
@@ -415,21 +413,21 @@ Temporary files across the plugin are anchored to `TMPDIR`: the platform default
 
 ### 4.4 The state directory
 
-`${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/` holds what the plugin keeps between sessions: the tap's installed copy and the status line it replaced (section 3.4); `ctx/`, the tap files and the gate's markers (sections 3, 32); `models.json`, the operator's tier map (section 10); `mcp.json`, the operator's server catalogue (section 42); `chains/`, one chain file per orchestrator tty (sections 21, 26, 34); `prompts/`, the files each launch was made from (section 45); `audits/` and `methods/`, the audit records and the method-file records (section 52); and the tab tooling's Python environment (section 14). `ORCHESTRATOR_STATE_DIR` overrides this path for the gauge, the tap and the launcher; `install.sh`, `uninstall.sh` and the context gate hook build it from the host configuration directory directly and do not read that override. Three things live elsewhere on purpose: the trust record is the host's own file (section 31), the dispatch record lives with the project being built (section 13), and the checkouts live under the workspace root (section 30).
+`${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/` holds what the plugin keeps between sessions: the tap's installed copy and the status line it replaced (section 3.4); `ctx/`, the tap files and the gate's markers (sections 3, 32); `models.json`, the operator's tier map (section 10); `mcp.json`, the operator's server catalogue (section 42); `chains/`, one chain file per orchestrator tty (sections 21, 26, 34); `prompts/`, the files each launch was made from (section 45); and the tab tooling's Python environment (section 14). `ORCHESTRATOR_STATE_DIR` overrides this path for the gauge, the tap and the launcher; `install.sh`, `uninstall.sh` and the context gate hook build it from the host configuration directory directly and do not read that override. Three things live elsewhere on purpose: the trust record is the host's own file (section 31), the dispatch record lives with the project being built (section 13), and the checkouts live under the workspace root (section 30).
 
 ## 5. Templates
 
-Six briefs with `{{PLACEHOLDER}}` markers, each carrying the sections the orchestrator skill makes mandatory: `agent-phase-brief.md` (one implementer, one phase, one pull request), `agent-rotation-brief.md` (a fresh implementer resuming a phase), `agent-review-brief.md` (one review round, read-only, one lens per reader), `agent-comments-brief.md` (one pass over a pull request's open threads), `agent-audit-brief.md` (one audit, read-only, a report of fixed shape) and `orchestrator-succession-brief.md` (a successor taking the orchestration over). How a brief is built from them is `skills/orchestrator/references/briefs.md`, « Agent prompt recipe ».
+Six briefs with `{{PLACEHOLDER}}` markers, each carrying the sections the orchestrator skill makes mandatory: `agent-phase-brief.md` (one implementer, one phase, one pull request), `agent-rotation-brief.md` (a fresh implementer resuming a phase), `agent-review-brief.md` (one review round, read-only, one lens per reader), `agent-comments-brief.md` (one pass over a pull request's open threads), `agent-audit-brief.md` (one audit of the method, one report, then stop) and `orchestrator-succession-brief.md` (a successor taking the orchestration over). How a brief is built from them is `skills/orchestrator/references/briefs.md`, « Agent prompt recipe ».
 
 A template is read by an agent that does not load the orchestrator skill, so it keeps in full the rules that agent needs — the handshake, the silence rule, the STOP-and-ask clause, synchronous commands, the gauge in every report — and the skill points at the template rather than restating them. No template points at a plugin path, and none carries a host variable or a session reference (section 11): `brief-lint.sh` refuses a brief that does.
 
 ## 6. Commands
 
-Each command carries its own procedure and points at the skill for the rules. `install` and `uninstall` wire and unwire the tap (section 3.4); `status` lists live sessions with their measured context fill; `agents` reports each running implementer's progress, asked and then verified on the artifact; `progress` says where the build stands and the orchestrator's own context; `decide` runs the decision round, one arbitration at a time; `succeed` runs the orchestrator's succession (section 9.3); `audit` and `audit-end` launch and end an audit on the operator's word (section 52).
+Each command carries its own procedure and points at the skill for the rules. `install` and `uninstall` wire and unwire the tap (section 3.4); `status` lists live sessions with their measured context fill; `agents` reports each running implementer's progress, asked and then verified on the artifact; `progress` says where the build stands and the orchestrator's own context; `decide` runs the decision round, one arbitration at a time; `succeed` runs the orchestrator's succession (section 9.3); `audit` launches an audit of the method on the operator's word (section 52).
 
 A command names in its `allowed-tools` the tools it needs, and nothing more: `progress` lets the artifacts win where they disagree with the state file, and corrects the file before presenting, which is why it holds `Edit` (section 56).
 
-A skill never takes a command's name: a plugin's commands and skills share one namespace, and a skill named like a command would shadow one or the other. The audit is a command pair and the rulebook's reference they both load, not a skill.
+A skill never takes a command's name: a plugin's commands and skills share one namespace, and a skill named like a command would shadow one or the other. The audit is a command and its brief, not a skill.
 
 ## 7. Tests
 
@@ -470,7 +468,7 @@ The orchestrator's core loop — plan, brief, launch, verify, review, terminate,
 
 One review session per round, spawned from `agent-review-brief.md` in a copy pinned at the head under review (section 37), fanning out read-only readers one lens each, the project's own norms tool among them, and reporting once. The orchestrator verifies every finding on the artifact, keeps only what must necessarily be fixed and names every dropped item with its reason, dispatches one correction round, and verifies it itself. The round lands on the dispatch record, and `ready` refuses a head no round read (sections 55, 58). The rules are `skills/orchestrator/references/review.md` and `SKILL.md`, « Thresholds »; review comments on a pull request go to a comments session, `references/review.md`, « Review rounds run in disposable sessions ».
 
-A pull request stays in draft. Ready, from the orchestrator's side, is implemented, reviewed, corrected, verified, `ready` green and rebased; then it tells the operator « ready ». Merging a pull request and taking it out of draft are the operator's, on his clear and explicit request, and in no list of what the orchestrator or the auditor decides and moves on (sections 23, 52, 58).
+A pull request stays in draft. Ready, from the orchestrator's side, is implemented, reviewed, corrected, verified, `ready` green and rebased; then it tells the operator « ready ». Merging a pull request and taking it out of draft are the operator's, on his clear and explicit request, and in no list of what the orchestrator decides and moves on (sections 23, 58).
 
 ### 9.3 Rotation and succession
 
@@ -478,7 +476,7 @@ An agent at the context gate is replaced: `rotate` spawns the fresh session from
 
 ### 9.4 The audit
 
-An auditor reads the orchestrator's method, reports to the operator and orders changes to the method, launched and ended on the operator's word: section 52, and `skills/orchestrator/references/audit.md`.
+An auditor weighs the method's cost against its yield and proposes to the operator, who launched it; it writes one report and stops: section 52.
 
 ## Decisions that hold
 
@@ -530,7 +528,7 @@ Every binary the package manager installs is on an agent's PATH, because an agen
 
 ## 23. The operator decides; the orchestrator runs
 
-A command the orchestrator could run is the orchestrator's to run: opening and tagging pull requests, running the live round, updating the installed plugin, restarting the sessions a change requires, pinning a head for review. What reaches the operator is an arbitration — what the thing is, two readings, what each costs, one recommendation — and a configuration change goes to the session that owns the configuration. Merging a pull request and taking it out of draft are the two exceptions: they are the operator's, on his clear and explicit request, never taken on green evidence, by « decide and move », or on an auditor's order; the orchestrator tells him « ready » and waits. When the orchestrator's own session lacks what the role needs, the repair is a successor spawned with the environment the task needs, not a favour asked of him. The rules are `skills/orchestrator/SKILL.md`, « The operator decides; the orchestrator runs ». The first of them came after an afternoon in which the orchestrator handed the operator three command lines — open this pull request, run this live round, refresh this credential: each justified by a limit of its session, none by its role.
+A command the orchestrator could run is the orchestrator's to run: opening and tagging pull requests, running the live round, updating the installed plugin, restarting the sessions a change requires, pinning a head for review. What reaches the operator is an arbitration — what the thing is, two readings, what each costs, one recommendation — and a configuration change goes to the session that owns the configuration. Merging a pull request and taking it out of draft are the two exceptions: they are the operator's, on his clear and explicit request, never taken on green evidence or by « decide and move »; the orchestrator tells him « ready » and waits. When the orchestrator's own session lacks what the role needs, the repair is a successor spawned with the environment the task needs, not a favour asked of him. The rules are `skills/orchestrator/SKILL.md`, « The operator decides; the orchestrator runs ». The first of them came after an afternoon in which the orchestrator handed the operator three command lines — open this pull request, run this live round, refresh this credential: each justified by a limit of its session, none by its role.
 
 ## 24. A session is named at launch
 
@@ -677,17 +675,17 @@ A NAMED anchor the app does not know is a tab the caller got wrong, and refusing
 
 ## 52. The audit of an orchestrator
 
-An orchestrator's deliveries are read by its reviews; its METHOD was read by nobody. The first audit of a live build was run by hand, by a second session the operator pointed at the first, and it found defects of the method's kind — a review round a standing instruction required and the plan no longer carried, two waves sharing one block of identifiers, directives a ruling had already reversed. The operator asked for the instrument. The rules of the audit are `skills/orchestrator/references/audit.md`; the procedure is the two commands', `commands/audit.md` and `commands/audit-end.md`; the auditor's own terms are `templates/agent-audit-brief.md`.
+An orchestrator's deliveries are read by its reviews; its METHOD was read by nobody. The first audit of a live build was run by hand, by a second session the operator pointed at the first, and it found defects of the method's kind. The operator asked for the instrument: `commands/audit.md` launches it, `templates/agent-audit-brief.md` holds the auditor's terms.
 
-**An auditor is a third kind of session**, not a successor, not an agent and not a reviewer of code, and the launcher treats it as one: `spawn --auditor` places it immediately left of its caller — a successor lands right — on the caller's model and under remote control, but writes it into no chain, because an auditor written into the chain would become the anchor the orchestrator's next agent lands after (`skills/iterm-agents/references/commands.md`).
+**Why it was redone.** Its first form ordered changes to the orchestrator, which applied them, and kept a method file of its own. On another project it issued 101 orders in 18 days, almost all of them new rules: it reacted to the incidents everyone saw and never to the time lost a little at every step, never ran the loop « change, measure, keep or undo », and ended up auditing its own rules. The role was right; ordering without a cost and without an end was not. It now proposes and the operator decides.
 
-**Who launches and who ends.** The operator launches the audit and the operator ends it; a session that ends an audit by itself is the defect. The audit command instantiates the audit brief into the briefs directory, lints it, spawns the auditor, verifies it on the artifact, and records its name, tty and report path under the state directory's `audits/`, keyed by the orchestrator's session id. The end command runs when the operator types it, in either session, each half doing its part; before that word the auditor only invites the operator to end the audit, and waits. The run went end to end, and it was the auditor, not the operator, that ended the first live audit, because its brief told it to once its report was complete: that is why this rule comes first.
+**What it does.** It starts from the stock — what is in place, what it costs, what it has yielded — shows the net balance — lines added and removed under the product against the instruments, time in gates against time producing — re-reads the figure of each proposal the previous audit made, and proposes at most five changes, each « remove X » or « restore Y » with its expected gain, its cost and the figure that will check it. Removing is proposed as freely as adding; adding asks for a product defect as its evidence. It writes one report under the briefs directory's `audits/`, tells the operator, and stops.
 
-**What the auditor does.** Its report has a fixed shape so that two audits compare; its orders carry their measurement; it also makes the orchestration advance, naming the waits that need no word and pre-digesting the operator's decisions. The auditor stays read-only: it names and recommends, the orchestrator acts. « Decide and move » binds it as it binds the orchestrator, and merging a pull request or taking it out of draft is in no such list, the auditor's included: they are the operator's, on his clear and explicit request (section 23).
+**What it does not do.** It writes no other file, applies nothing, orders nothing and messages no session. The orchestrator's skill says nothing about it: a proposal the operator relays is his word, like any other. There is no end command: the audit ends by itself, and the operator closes its tab.
 
-**The project's method-and-decisions file** is the one file the auditor writes beside its report: one per project, recorded under the state directory's `methods/` and keyed by the repository rather than the orchestrator's session, so that a successor or a new orchestration finds it; landed by the orchestrator where the project keeps it.
+**An auditor is a third kind of session** for the launcher: `spawn --auditor` places it immediately left of its caller, on the caller's model and under remote control, but writes it into no chain, because an auditor written into the chain would become the anchor the orchestrator's next agent lands after (`skills/iterm-agents/references/commands.md`).
 
-**Its instruments.** `rhythm.sh` reads the rhythm from git alone, and says the latency between the operator's questions and the answers is not in git rather than estimating it. Three readings of its first version were wrong on a real repository, each found by the orchestrator re-running it there and each repaired with a fixture case seen red first: a pathspec that stopped `*` at a slash, a register writing its statuses as code, and a header row compared on the wrong column. A bare `YYYY-MM-DD` is now written `YYYY-MM-DDT00:00:00` before it reaches git, which otherwise completes a bare date with the current time of day. The audit command creates the `audits/` directory with `mkdir -p` before it writes the record, and both commands read an absent directory as « no record ».
+**Its instrument.** `rhythm.sh` reads the net balance from git alone: merges per week by type, and lines under the product's globs against the instruments'. Two readings of its first version were wrong on a real repository, each repaired with a fixture case seen red first: a pathspec that stopped `*` at a slash, and a bare `YYYY-MM-DD` that git completes with the current time of day, now written `YYYY-MM-DDT00:00:00`.
 
 ## 53. A method he names is a format, and a fact not read is not stated
 

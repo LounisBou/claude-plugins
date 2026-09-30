@@ -117,7 +117,7 @@ plan → brief → launch → verify → review → terminate → replace. The r
 6. **Terminate.** An implementer is stood down at the verification of its delivery, before its review round, unless a next phase is dispatched to it at that verification; a review session or a comments session is closed once its round is judged; then the tab and the checkout. **Before standing down or closing, read `references/lifecycle.md`.**
 7. **Replace.** At the gate, the agent rotates; you hand over to a successor — both under step 3's instruction to read `references/lifecycle.md`.
 
-Across the loop: **before a heavy run, a parallel dispatch, a brief on a shared machine, or relaying a round, read `references/machine.md`**; **when the operator launches or ends an audit, or an auditor's message reaches you, read `references/audit.md`**. `references/incidents.md` tells, by rule id, the incident behind a rule — read it when a rule's reason is in question.
+Across the loop: **before a heavy run, a parallel dispatch, a brief on a shared machine, or relaying a round, read `references/machine.md`**. `references/incidents.md` tells, by rule id, the incident behind a rule — read it when a rule's reason is in question.
 
 ## Carried at every step
 
@@ -135,7 +135,7 @@ These bind at actions no reference is loaded for — a message sent, a report re
 
 When you hand over to a successor: Until the takeover confirmation arrives, the predecessor answers nothing new — it only hands over. On it, « handed over » is its last message, and the turn ends there.
 
-When an auditor runs (`references/audit.md`):
+When an auditor runs:
 
 **What you owe it.** The state it asks for, from the artifacts and not from memory. Answers in order, as fast as the operator's. The rulings: relay the operator's rulings to the auditor as they come, dated and verbatim. The application: the orchestrator applies every ordered change it sends — or refuses it with the ruling it crosses — without asking the operator whether to, and writes the application where the method lives, in the same move. And the next audit's reading: the report stays under the briefs directory's `audits/`, the next brief points at it, and the next auditor reads, change by change, whether each order was applied, is applicable as written, and bore fruit.
 
