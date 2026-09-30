@@ -25,6 +25,34 @@ say()  { printf '  %s\n' "$*"; }
 step() { printf '\n%s\n' "$*"; }
 run()  { if [ "$DRY" = "1" ]; then printf '  [dry-run] %s\n' "$*"; else eval "$@"; fi; }
 
+# settings.json is free text: a hand-written or templated statusLine.command
+# can spell our script's path expanded, or as $HOME/…, ${HOME}/…, ~/… when
+# CONFIG_DIR sits under $HOME (the default). List every spelling that
+# resolves to $DEST so a wrapped command is recognised regardless of which
+# one it uses.
+spellings_of() {
+  local dest="$1" home="$2" suffix
+  printf '%s\n' "$dest"
+  case "$dest" in
+    "$home"/*)
+      suffix="${dest#"$home"/}"
+      printf '%s\n' "\$HOME/$suffix"
+      printf '%s\n' "\${HOME}/$suffix"
+      printf '%s\n' "~/$suffix"
+      ;;
+  esac
+}
+
+already_wired() {
+  local cmd="$1" spelling
+  while IFS= read -r spelling; do
+    case "$cmd" in *"$spelling"*) return 0 ;; esac
+  done <<<"$SPELLINGS"
+  return 1
+}
+
+SPELLINGS=$(spellings_of "$DEST" "$HOME")
+
 # --- prerequisites ----------------------------------------------------------
 
 step "Prerequisites"
@@ -160,13 +188,22 @@ else
   [ -f "$SETTINGS" ] || { printf '{}\n' > "$SETTINGS"; chmod 600 "$SETTINGS"; }
   jq empty "$SETTINGS" 2>/dev/null || {
     echo "  $SETTINGS is not valid JSON, aborting." >&2; exit 1; }
-  mkdir -p "$BACKUP_DIR"
-  [ -f "$BACKUP_DIR/settings.json.before" ] || cp "$SETTINGS" "$BACKUP_DIR/settings.json.before"
-  tmp=$(mktemp)
-  jq --arg cmd "$DEST" '.statusLine = {type: "command", command: $cmd, padding: 0}' \
-     "$SETTINGS" > "$tmp"
-  chmod 600 "$tmp"; mv "$tmp" "$SETTINGS"
-  say "statusLine → $DEST"
+
+  # Another tool (the context gauge's tap) can turn statusLine.command into
+  # "<tap script> <previous command>". If it already carries our path, wrapped
+  # or not, the wiring is done: overwriting it would drop the tap.
+  current=$(jq -r '.statusLine.command // ""' "$SETTINGS")
+  if [ -n "$current" ] && already_wired "$current"; then
+    say "statusLine already wired to this status bar: $current"
+  else
+    mkdir -p "$BACKUP_DIR"
+    [ -f "$BACKUP_DIR/settings.json.before" ] || cp "$SETTINGS" "$BACKUP_DIR/settings.json.before"
+    tmp=$(mktemp)
+    jq --arg cmd "$DEST" '.statusLine = {type: "command", command: $cmd, padding: 0}' \
+       "$SETTINGS" > "$tmp"
+    chmod 600 "$tmp"; mv "$tmp" "$SETTINGS"
+    say "statusLine → $DEST"
+  fi
 fi
 
 # --- verification -----------------------------------------------------------

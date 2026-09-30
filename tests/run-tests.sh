@@ -177,6 +177,144 @@ else
   fail=$((fail + 1))
 fi
 
+echo "== install / uninstall: a wrapped statusLine survives =="
+
+# A second tool (the context tap) can wrap statusLine.command into
+# "<tap script> <previous command>". install.sh and uninstall.sh must not
+# clobber that wrapper: only this status bar's own path is theirs to manage.
+
+INSTALL="$HERE/../install.sh"
+UNINSTALL="$HERE/../uninstall.sh"
+
+# fresh_config [settings-json] -> path to an isolated CLAUDE_CONFIG_DIR,
+# pre-seeded with $1 as settings.json when given.
+fresh_config() {
+  local dir="$WORK/cfg.$RANDOM"
+  mkdir -p "$dir"
+  [ -n "${1:-}" ] && printf '%s' "$1" > "$dir/settings.json"
+  printf '%s' "$dir"
+}
+
+dest_for() { printf '%s/statusbar/statusline.sh' "$1"; }
+
+# check_json <name> <config-dir> <jq filter> <expected>
+check_json() {
+  local name="$1" dir="$2" filter="$3" expected="$4" actual
+  actual=$(jq -r "$filter" "$dir/settings.json" 2>/dev/null)
+  if [ "$actual" = "$expected" ]; then
+    printf '  ok   %s\n' "$name"; pass=$((pass + 1))
+  else
+    printf '  FAIL %s\n' "$name"
+    printf '       expected: %s\n' "$expected"
+    printf '       actual:   %s\n' "$actual"
+    fail=$((fail + 1))
+  fi
+}
+
+echo "-- install --"
+
+CFG=$(fresh_config "")
+DEST=$(dest_for "$CFG")
+CLAUDE_CONFIG_DIR="$CFG" bash "$INSTALL" >/dev/null
+check_json "fresh install writes statusLine" "$CFG" '.statusLine.command' "$DEST"
+
+CFG=$(fresh_config "")
+DEST=$(dest_for "$CFG")
+WRAPPED="/opt/tap.sh $DEST"
+printf '{"statusLine":{"type":"command","command":"%s","padding":0},"other":true}' \
+  "$WRAPPED" > "$CFG/settings.json"
+out=$(CLAUDE_CONFIG_DIR="$CFG" bash "$INSTALL")
+check_json "install over a wrapped command leaves it unchanged" "$CFG" \
+  '.statusLine.command' "$WRAPPED"
+check_json "install over a wrapped command keeps the other key" "$CFG" '.other' "true"
+if printf '%s' "$out" | grep -qF "$WRAPPED"; then
+  printf '  ok   %s\n' "install over a wrapped command reports the current command"
+  pass=$((pass + 1))
+else
+  printf '  FAIL %s\n' "install over a wrapped command reports the current command"
+  fail=$((fail + 1))
+fi
+
+CFG=$(fresh_config '{"statusLine":{"type":"command","command":"/some/other/statusline.sh","padding":0}}')
+DEST=$(dest_for "$CFG")
+CLAUDE_CONFIG_DIR="$CFG" bash "$INSTALL" >/dev/null
+check_json "install over a foreign command replaces it" "$CFG" '.statusLine.command' "$DEST"
+if grep -rq "/some/other/statusline.sh" "$CFG"/backups/*/settings.json.before 2>/dev/null; then
+  printf '  ok   %s\n' "install over a foreign command backs it up"
+  pass=$((pass + 1))
+else
+  printf '  FAIL %s\n' "install over a foreign command backs it up"
+  fail=$((fail + 1))
+fi
+
+echo "-- uninstall --"
+
+CFG=$(fresh_config "")
+DEST=$(dest_for "$CFG")
+printf '{"statusLine":{"type":"command","command":"%s","padding":0}}' "$DEST" > "$CFG/settings.json"
+CLAUDE_CONFIG_DIR="$CFG" bash "$UNINSTALL" >/dev/null
+check_json "uninstall of our own command deletes statusLine" "$CFG" 'has("statusLine")' "false"
+
+CFG=$(fresh_config "")
+DEST=$(dest_for "$CFG")
+WRAPPED="/opt/tap.sh $DEST"
+printf '{"statusLine":{"type":"command","command":"%s","padding":0},"other":true}' \
+  "$WRAPPED" > "$CFG/settings.json"
+CLAUDE_CONFIG_DIR="$CFG" bash "$UNINSTALL" >/dev/null
+check_json "uninstall of a wrapped command keeps the wrapper, drops our path" "$CFG" \
+  '.statusLine.command' "/opt/tap.sh"
+check_json "uninstall of a wrapped command keeps the other key" "$CFG" '.other' "true"
+
+CFG=$(fresh_config "")
+DEST=$(dest_for "$CFG")
+DEGENERATE="$DEST $DEST"
+printf '{"statusLine":{"type":"command","command":"%s","padding":0}}' "$DEGENERATE" > "$CFG/settings.json"
+CLAUDE_CONFIG_DIR="$CFG" bash "$UNINSTALL" >/dev/null
+check_json "uninstall leaving nothing runnable leaves statusLine untouched" "$CFG" \
+  '.statusLine.command' "$DEGENERATE"
+
+CFG=$(fresh_config '{"statusLine":{"type":"command","command":"/some/other/statusline.sh","padding":0}}')
+CLAUDE_CONFIG_DIR="$CFG" bash "$UNINSTALL" >/dev/null
+check_json "uninstall of a foreign command leaves statusLine untouched" "$CFG" \
+  '.statusLine.command' "/some/other/statusline.sh"
+
+echo "-- \$HOME spelling --"
+
+# settings.json is free text: a wrapper written by hand, or templated, may
+# spell our path "$HOME/.claude/statusbar/statusline.sh" instead of
+# expanding it. These runs leave CLAUDE_CONFIG_DIR unset and override HOME
+# instead, so CONFIG_DIR resolves the default way ($HOME/.claude) and the
+# literal "$HOME/…" spelling in the fixture really does name our script.
+
+FAKE_HOME=$(fresh_config "")
+mkdir -p "$FAKE_HOME/.claude"
+WRAPPED_HOME='/opt/tap.sh $HOME/.claude/statusbar/statusline.sh'
+printf '{"statusLine":{"type":"command","command":"%s","padding":0},"other":true}' \
+  "$WRAPPED_HOME" > "$FAKE_HOME/.claude/settings.json"
+out=$(env HOME="$FAKE_HOME" bash "$INSTALL")
+check_json "install over a \$HOME-spelled wrapped command leaves it unchanged" \
+  "$FAKE_HOME/.claude" '.statusLine.command' "$WRAPPED_HOME"
+check_json "install over a \$HOME-spelled wrapped command keeps the other key" \
+  "$FAKE_HOME/.claude" '.other' "true"
+if printf '%s' "$out" | grep -qF "$WRAPPED_HOME"; then
+  printf '  ok   %s\n' "install over a \$HOME-spelled wrapped command reports the current command"
+  pass=$((pass + 1))
+else
+  printf '  FAIL %s\n' "install over a \$HOME-spelled wrapped command reports the current command"
+  fail=$((fail + 1))
+fi
+
+FAKE_HOME=$(fresh_config "")
+mkdir -p "$FAKE_HOME/.claude"
+WRAPPED_HOME='/opt/tap.sh $HOME/.claude/statusbar/statusline.sh'
+printf '{"statusLine":{"type":"command","command":"%s","padding":0},"other":true}' \
+  "$WRAPPED_HOME" > "$FAKE_HOME/.claude/settings.json"
+env HOME="$FAKE_HOME" bash "$UNINSTALL" >/dev/null
+check_json "uninstall of a \$HOME-spelled wrapped command keeps the wrapper, drops our path" \
+  "$FAKE_HOME/.claude" '.statusLine.command' "/opt/tap.sh"
+check_json "uninstall of a \$HOME-spelled wrapped command keeps the other key" \
+  "$FAKE_HOME/.claude" '.other' "true"
+
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

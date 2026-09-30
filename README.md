@@ -128,6 +128,11 @@ clean/dirty/absent git repository, empty or invalid stdin, plus a check that no
 session cookie and no network call survive anywhere — including under a
 pristine `HOME`.
 
+If another tool has wrapped `statusLine.command` around this status bar's
+script, install and uninstall leave that wrapper in place — install skips
+the write when the command already carries our path, and uninstall strips
+only our path, never the whole key.
+
 ## Uninstall
 
 ```bash
