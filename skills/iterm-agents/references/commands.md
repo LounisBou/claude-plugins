@@ -81,14 +81,6 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --i
     #   refused on any spawn without --auditor. --successor, an anchor, --title-free, --tier,
     #   --model and --no-remote-control are refused beside it. `rotate` and `move` refuse a tab
     #   whose session is named `Audit :` unless --force.
-    # --coordinator-successor --title "Coord : <subject>": the coordinator's own successor —
-    #   opens at the FIRST place of your window, not merely beside you, the chain ignored, on
-    #   your model (implied) and under remote control under its title; it takes no chain and
-    #   joins none, because it is nobody's successor and nobody's agent. Its title is
-    #   required, and `Coord :` is refused on any spawn without --coordinator-successor.
-    #   --successor, --auditor, --left-of and --right-of are refused beside it: the placement
-    #   is its own. `rotate` and `move` refuse a tab whose session is named `Coord :` unless
-    #   --force.
 
 $SCRIPT verify --tty /dev/ttysNNN
     # succeeds with the pid when the host CLI runs on that tty; exit 1 otherwise

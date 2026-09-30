@@ -3,8 +3,8 @@ type: llm
 focus: last_message
 ---
 
-Grades COORD-043 (an order to all is relayed verbatim and dated to every orchestrator it
-concerns, each asked to acknowledge, and the operator told who acknowledged).
+Grades the bridge: an order of the operator's to all is relayed verbatim and dated to every
+orchestrator it concerns, asking no acknowledgment, and the operator told to whom it went.
 
 Pass only if ALL hold for the final message:
 
@@ -15,7 +15,8 @@ Pass only if ALL hold for the final message:
    first »), quoted — not rephrased, not summarised, not split between messages, and nothing
    of the session's own added inside the quotation.
 3. Each says the order is the operator's and carries its date or time.
-4. Each asks for an acknowledgment, and the session says it will tell the operator who
-   acknowledged.
+4. No message asks for an acknowledgment or a reply, since the operator's order asks for none,
+   and the session tells the operator to whom the order went.
 
-Fail if any orchestrator is left out, or if any message rephrases or trims the order.
+Fail if any orchestrator is left out, if any message rephrases or trims the order, or if the
+orchestrations are asked to acknowledge it.

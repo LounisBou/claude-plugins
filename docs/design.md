@@ -63,8 +63,8 @@ skills/orchestrator/scripts/brief-lint.sh   refuses a brief before it is dispatc
 skills/orchestrator/scripts/dispatch-record.sh  one row per dispatch, and the routing signal
 skills/orchestrator/scripts/workspace.sh    a clone per phase with the project's local material; a pinned worktree per review round
 skills/orchestrator/scripts/rhythm.sh       an audit's net balance, from git alone
-skills/coordination/SKILL.md         the coordinator: one question at a time, relays, logistics rulings, its succession
-skills/coordinator/scripts/coordinator.sh  the coordinator's address and the claims ledger: register, clear, lookup, declare, release, conflicts
+skills/coordination/SKILL.md         the coordinator: answers from the facts, flags collisions, relays what is the operator's, its succession
+skills/coordinator/scripts/coordinator.sh  the coordinator's record, and the facts: register, clear, lookup, facts, owners
 skills/model-routing/SKILL.md        which capability tier a dispatch gets
 skills/model-routing/references/incidents.md the observed incidents behind the routing rules, by rule id
 skills/context-gauge/SKILL.md        how a session reads its own context fill
@@ -85,7 +85,7 @@ commands/agents.md                   each running implementer's progress
 commands/progress.md                 where the build stands
 commands/decide.md                   the decision round, one arbitration at a time
 commands/audit.md                    launches an audit of the method on the operator's word
-commands/coordinator.md              starts the machine's coordinator on the operator's word
+commands/coordinator.md              starts the machine's coordinator on the operator's word, announced to every orchestrator
 commands/coordinator-end.md          ends the coordinator on the operator's word; the record cleared
 hooks/hooks.json                     declares the context gate and the push guard
 hooks/context-gate.sh                the gate the harness enforces, not the model
@@ -96,28 +96,27 @@ tests/e2e.sh                         one real round: a tab, a session, a close
 tests/fixtures/transcript.jsonl      a transcript tail for the gauge's computed tier
 tests/fixtures/rhythm-repo.sh        builds the dated repository rhythm.sh is tested on
 docs/design.md                       this document
-docs/specs/2026-09-29-coordinator-design.md  the coordinator's design, deleted once it is built
 evals/README.md                      how the behaviour suite is staged, run and read
 evals/SELECTION.md                   the cases chosen, and the criteria that chose them
 evals/baseline-0.34.0.json           the first baseline run, with and without the plugin
 evals/baseline-0.36.0.json           the current baseline the suite is compared against
-evals/coord-027-028-032/prompt.md
-evals/coord-027-028-032/graders/arrival-order.md
-evals/coord-027-028-032/graders/blocking-first.md
-evals/coord-027-028-032/graders/one-question-with-prefix.md
-evals/coord-037-044/prompt.md
-evals/coord-037-044/graders/ruled-then-told.md
-evals/coord-041-042/prompt.md
-evals/coord-041-042/graders/no-merge-no-undraft.md
-evals/coord-041-042/graders/relayed-unjudged.md
-evals/coord-043-046/prompt.md
-evals/coord-043-046/graders/orchestrators-not-agents.md
-evals/coord-043-046/graders/verbatim-dated-to-each.md
-evals/coord-048-050-051-053/prompt.md
-evals/coord-048-050-051-053/graders/brief-closes-then-registers.md
-evals/coord-048-050-051-053/graders/coordinator-successor-spawn.md
-evals/coord-048-050-051-053/graders/no-orchestrator-successor.md
-evals/coord-048-050-051-053/graders/succeeds-without-asking.md
+evals/coord-answers-from-facts/prompt.md
+evals/coord-answers-from-facts/graders/answers-from-facts.md
+evals/coord-answers-from-facts/graders/no-ruling.md
+evals/coord-flags-collision/prompt.md
+evals/coord-flags-collision/graders/flags-both.md
+evals/coord-flags-collision/graders/gates-nothing.md
+evals/coord-order-to-all/prompt.md
+evals/coord-order-to-all/graders/orchestrators-not-agents.md
+evals/coord-order-to-all/graders/verbatim-dated-to-each.md
+evals/coord-relays-merge/prompt.md
+evals/coord-relays-merge/graders/no-merge-no-undraft.md
+evals/coord-relays-merge/graders/relayed-unjudged.md
+evals/coord-succession/prompt.md
+evals/coord-succession/graders/brief-closes-then-registers.md
+evals/coord-succession/graders/coordinator-successor-spawn.md
+evals/coord-succession/graders/no-orchestrator-successor.md
+evals/coord-succession/graders/succeeds-without-asking.md
 evals/iterm-005-019-064-065/prompt.md
 evals/iterm-005-019-064-065/graders/close-with-title.md
 evals/iterm-005-019-064-065/graders/no-glyph.md
@@ -241,6 +240,9 @@ trigger-evals/coordination-no-trigger-06/graders/skill-not-loaded.md
 trigger-evals/coordination-no-trigger-07/prompt.md
 trigger-evals/coordination-no-trigger-07/graders/answered.md
 trigger-evals/coordination-no-trigger-07/graders/skill-not-loaded.md
+trigger-evals/coordination-no-trigger-08/prompt.md
+trigger-evals/coordination-no-trigger-08/graders/answered.md
+trigger-evals/coordination-no-trigger-08/graders/skill-not-loaded.md
 trigger-evals/coordination-trigger-01/prompt.md
 trigger-evals/coordination-trigger-01/graders/skill-loaded.md
 trigger-evals/coordination-trigger-02/prompt.md
@@ -388,6 +390,7 @@ Requirements: `jq` for the tap and the installer, `python3` for the transcript s
 | `iterm-agents` | the rules of the tab tooling: reading the tabs, an agent is an iTerm2 tab, the layout convention, the safety orders for a launch and a rotation, tab hygiene | `commands.md` (every command's synopsis and refusals, how the launcher builds a tab, when iTerm2 does not answer), `incidents.md` |
 | `model-routing` | a decision aid for the orchestrator's choice of tier: the principle, the table by class of work, the five readings, escalation, the cascade, the false economy, the second reader, the record | `incidents.md` |
 | `context-gauge` | how a session reads its own fill, and the duty to report the measurement | — |
+| `coordination` | the coordinator's role, outside every orchestration: answers from the facts, flags collisions, gates nothing, relays what is the operator's, succeeds itself at its gate | — |
 
 A rule lives once, where the session that needs it will read it when it needs it. `SKILL.md` holds what the orchestrator must carry at all times; a reference holds the rules of one action, and the step of the core loop that performs that action tells the session to read it at that moment (« before writing a brief, read `references/briefs.md` »). The risk of that shape is a rule sitting in a reference that is not read when it applies, so the load instruction is tied to the action rather than the topic, and every critical case of the eval suite is staged at the moment of the action. Each reference over a hundred lines opens with its table of contents, and each `SKILL.md` stays under five hundred lines.
 
@@ -403,6 +406,7 @@ Every project-specific fact is removed; the skill states the rule and leaves the
 | `skills/orchestrator/scripts/workspace.sh` | a clone per phase with the project's local material; a pinned worktree per review round | sections 30, 35, 36, 37, 40 |
 | `skills/orchestrator/scripts/rhythm.sh` | an audit's net balance, from git alone | section 52 |
 | `skills/context-gauge/scripts/context-gauge.sh`, `statusline-tap.sh` | the gauge and its tap | sections 3, 32 |
+| `skills/coordinator/scripts/coordinator.sh` | the coordinator's record; the sessions, checkouts, heavy runs and pull-request owners, and the collisions among them | section 9.5 |
 | `install.sh`, `uninstall.sh` | wire and unwire the tap, create and remove the state directory | sections 3.4, 33 |
 
 Temporary files across the plugin are anchored to `TMPDIR`: the platform default can be a directory a restricted shell may not write to, and a script that fails there fails on a path it never chose.
@@ -423,7 +427,7 @@ A template is read by an agent that does not load the orchestrator skill, so it 
 
 ## 6. Commands
 
-Each command carries its own procedure and points at the skill for the rules. `install` and `uninstall` wire and unwire the tap (section 3.4); `status` lists live sessions with their measured context fill; `agents` reports each running implementer's progress, asked and then verified on the artifact; `progress` says where the build stands and the orchestrator's own context; `decide` runs the decision round, one arbitration at a time; `succeed` runs the orchestrator's succession (section 9.3); `audit` launches an audit of the method on the operator's word (section 52).
+Each command carries its own procedure and points at the skill for the rules. `install` and `uninstall` wire and unwire the tap (section 3.4); `status` lists live sessions with their measured context fill; `agents` reports each running implementer's progress, asked and then verified on the artifact; `progress` says where the build stands and the orchestrator's own context; `decide` runs the decision round, one arbitration at a time; `succeed` runs the orchestrator's succession (section 9.3); `audit` launches an audit of the method on the operator's word (section 52); `coordinator` and `coordinator-end` start and end the machine's coordinator on the operator's word (section 9.5).
 
 A command names in its `allowed-tools` the tools it needs, and nothing more: `progress` lets the artifacts win where they disagree with the state file, and corrects the file before presenting, which is why it holds `Edit` (section 56).
 
@@ -477,6 +481,12 @@ An agent at the context gate is replaced: `rotate` spawns the fresh session from
 ### 9.4 The audit
 
 An auditor weighs the method's cost against its yield and proposes to the operator, who launched it; it writes one report and stops: section 52.
+
+### 9.5 The coordinator
+
+The operator runs several orchestrations on one machine at times, and they can step on each other: two checkouts on one branch, two agents pushing to it, two suites at once, one orchestration moving onto another's pull request. A coordinator, started with `commands/coordinator.md` and ended with `commands/coordinator-end.md` on his word only, watches for that from the outside. It reads the facts now — `skills/coordinator/scripts/coordinator.sh`, `facts` and `owners` (its header is the contract) — rather than any declaration: a pull request is traced to its orchestrator along its branch, the checkout on it, the session working there and the address that session's brief names. At its start it tells every orchestrator it exists and may be asked, and asks each once to confirm the pull requests the facts give it. It answers questions from the facts, flags a collision to both sides, relays to the operator what is his (a merge, a scope, a method, ending a process), carries his orders to all, and gates nothing: `skills/coordination/SKILL.md` (named `coordination`, not `coordinator`, so the skill never shares its start command's name — section 6). Its succession at its context gate is the same skill's « Your context », with `templates/coordinator-succession-brief.md`.
+
+It lives outside the orchestrator on purpose. The orchestrator's and the auditor's skills say nothing of it, so an orchestration run without a coordinator carries no word and no step for one, and one run with a coordinator loses nothing if it never asks. An earlier design put the orchestrators on a single channel through it, declaring before every dispatch and waiting for its « go »; that made every orchestrator carry the coordinator's weight to let it read what the process table, the checkouts and the forge already show.
 
 ## Decisions that hold
 

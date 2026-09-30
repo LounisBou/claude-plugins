@@ -1,5 +1,5 @@
 ---
-# Grades COORD-050: the successor is spawned with the coordinator's own flag (a launcher
+# Grades the spawn: the successor is spawned with the coordinator's own flag (a launcher
 # spawn line carrying --coordinator-successor, backslash continuations allowed)
 type: regex
 ---
