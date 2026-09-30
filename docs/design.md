@@ -98,6 +98,7 @@ tests/fixtures/rules-inventory/alpha.md       a target file of that inventory
 tests/fixtures/rules-inventory/beta.md        a target file of that inventory
 docs/design.md                       this document
 docs/rules-inventory.md              working file: every directive rule, deleted once the rewrite is done
+docs/specs/2026-09-29-coordinator-design.md  the coordinator's design, deleted once it is built
 evals/README.md                      how the behaviour suite is staged, run and read
 evals/SELECTION.md                   the cases chosen, and the criteria that chose them
 evals/baseline-0.34.0.json           the first baseline run, with and without the plugin
