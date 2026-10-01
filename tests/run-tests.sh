@@ -144,6 +144,24 @@ check "the audit brief merges nothing" "1" \
 check "only the two locks hold whatever is said, never routed around" "1" \
   "$(tr '\n' ' ' < "$ROOT/skills/orchestrator/SKILL.md" | tr -s ' ' | grep -oF -- "Two locks hold whatever is said, never routed around: the push guard, and the tab close verified by its title." | wc -l | tr -d ' ')"
 check "the succession brief closes the predecessor's tab" "1" "$(grep -c 'CLOSE ITS TAB' "$ROOT/templates/orchestrator-succession-brief.md")"
+# A predecessor started by hand lists as `(host default)`; the host refuses closing a session the
+# plugin did not launch unless the operator's word is already in the conversation, so the successor
+# asks him up front, before « takeover confirmed ». Step 4 is read with its line breaks folded for
+# the parts, and by line number for the order: the ask comes before the line that sends the
+# confirmation.
+SUCC="$ROOT/templates/orchestrator-succession-brief.md"
+SUCC4=$(awk '/^4\. /{f=1} /^5\. /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
+succ4_has() { printf '%s' "$SUCC4" | grep -oF -- "$1" | wc -l | tr -d ' '; }
+check "the succession brief holds the up-front close question by its parts" "1|1|1|1" \
+  "$(succ4_has 'BEFORE "takeover confirmed" is sent')|$(succ4_has '(host default)')|$(succ4_has 'asks him to close it himself or to say « close it »')|$(succ4_has 'A predecessor with a name is closed as below, nothing asked')"
+SUCC_ASK=$(grep -n -m1 -F -- 'asks him to close it himself or to say « close it »' "$SUCC" | cut -d: -f1)
+SUCC_CONFIRM=$(grep -n -m1 -F -- 'Then message the predecessor "takeover confirmed"' "$SUCC" | cut -d: -f1)
+check "the succession brief asks before it sends « takeover confirmed »" "1" \
+  "$([ -n "$SUCC_ASK" ] && [ -n "$SUCC_CONFIRM" ] && [ "$SUCC_ASK" -lt "$SUCC_CONFIRM" ] && echo 1 || echo 0)"
+# The lifecycle reference says the same in one sentence: the ask stands in front of the message
+# that confirms the takeover, not behind it.
+check "the lifecycle puts the close question before « takeover confirmed »" "1" \
+  "$(tr '\n' ' ' < "$ORCH_REFS/lifecycle.md" | tr -s ' ' | awk '{ a = index($0, "to close it himself or to say « close it »"); b = index($0, "message the predecessor \"takeover confirmed\""); print (a > 0 && b > 0 && a < b) ? 1 : 0 }')"
 # Ready is the operator's turn: the pull request stays in draft, rebased, and the squash-merge
 # of a lower branch is replayed around, never through.
 check "ready leaves the pull request in draft" "1" "$(grep -c "Ready is the operator's turn, and the pull request stays in draft" "$ROOT/skills/orchestrator/SKILL.md")"
