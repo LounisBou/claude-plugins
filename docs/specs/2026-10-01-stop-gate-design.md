@@ -33,7 +33,7 @@ a false refusal is the most expensive thing this mechanism can do: precision ove
 
 ## 3. Architecture
 
-One hook, `hooks/stop-gate.sh`, registered on the host's `Stop` event in `hooks/hooks.json`
+One hook, a new `stop-gate.sh` under the hooks directory, registered on the host's `Stop` event in `hooks/hooks.json`
 beside `context-gate.sh` and `push-guard.sh`.
 
 **Host contract used.** The hook reads on stdin `session_id`, `cwd`,
