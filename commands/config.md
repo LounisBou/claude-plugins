@@ -19,6 +19,7 @@ Every setting is `1` (shown) or `0` (hidden):
 | `SHOW_MODEL` | model name |
 | `SHOW_SESSION_NAME` | session name set with `/rename` |
 | `SHOW_CONTEXT` | percentage of context consumed |
+| `SHOW_CONTEXT_TOKENS` | tokens next to that percentage, against the gate in an orchestration session |
 | `SHOW_USAGE` | 5-hour quota |
 | `SHOW_SEVEN_DAY` | 7-day quota |
 | `SHOW_PROGRESS_BAR` | ten-block bar next to the quotas |

@@ -42,7 +42,8 @@ ctx: 26% │ 5h: 47% ▓▓▓▓▓░░░░░ → 2h13 │ 7d: 50% ▓▓�
 
 ## Settings (new toggles, default 1)
 
-`SHOW_CONTEXT`, `SHOW_GIT_STATUS` (the `*↑↓{}` extras only — `SHOW_BRANCH`
+`SHOW_CONTEXT`, `SHOW_CONTEXT_TOKENS` (tokens beside the percentage, against the
+gate in an orchestration session), `SHOW_GIT_STATUS` (the `*↑↓{}` extras only — `SHOW_BRANCH`
 still governs the whole segment), `SHOW_SESSION_NAME`, `SHOW_LINES_CHANGED`,
 `RESET_COUNTDOWN`.
 

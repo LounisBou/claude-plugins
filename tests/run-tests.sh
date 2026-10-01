@@ -92,6 +92,100 @@ check "0% fills no block" "$ALL_ON" \
 "plain
 5h: 0% ░░░░░░░░░░ → 2h13"
 
+echo "== context tokens against the gate =="
+
+# ctx_payload <session_name> <window size> <input> <cache creation> <cache read> <pct>
+# An empty session name leaves the field out of the payload.
+ctx_payload() {
+  local name=""
+  [ -n "$1" ] && name="\"session_name\":\"$1\","
+  printf '{%s"workspace":{"current_dir":"%s"},"context_window":{"used_percentage":%s,"context_window_size":%s,"current_usage":{"input_tokens":%s,"cache_creation_input_tokens":%s,"cache_read_input_tokens":%s}}}' \
+    "$name" "$EMPTY_DIR" "$6" "$2" "$3" "$4" "$5"
+}
+CTX_ONLY=$(config_with SHOW_DIRECTORY=0 SHOW_USAGE=0 SHOW_CONTEXT=1 SHOW_CONTEXT_TOKENS=1 \
+  SHOW_SESSION_NAME=0 SHOW_LINES_CHANGED=0)
+
+check "orchestrator session on a 1M window shows the 300k gate" "$CTX_ONLY" \
+  "$(ctx_payload 'Orch : build' 1000000 4000 2603 290000 30)" \
+"ctx: 30% · 296k/300k"
+
+check "agent session on a 1M window shows the 300k gate" "$CTX_ONLY" \
+  "$(ctx_payload 'Agent : phase 2' 1000000 4000 2603 290000 30)" \
+"ctx: 30% · 296k/300k"
+
+check "audit session shows the gate" "$CTX_ONLY" \
+  "$(ctx_payload 'Audit : method' 1000000 1000 0 99000 10)" \
+"ctx: 10% · 100k/300k"
+check "coordinator session shows the gate" "$CTX_ONLY" \
+  "$(ctx_payload 'Coord : machine' 1000000 1000 0 99000 10)" \
+"ctx: 10% · 100k/300k"
+
+check "quoted orchestrator name still counts" "$CTX_ONLY" \
+  "$(ctx_payload '\"Orch : x\"' 1000000 4000 2603 290000 30)" \
+"ctx: 30% · 296k/300k"
+
+check "unnamed session shows the tokens alone" "$CTX_ONLY" \
+  "$(ctx_payload '' 1000000 4000 2603 290000 30)" \
+"ctx: 30% · 296k"
+
+check "another session name shows the tokens alone" "$CTX_ONLY" \
+  "$(ctx_payload 'my session' 1000000 4000 2603 290000 30)" \
+"ctx: 30% · 296k"
+
+check "200k window: the gate is 80% of the window" "$CTX_ONLY" \
+  "$(ctx_payload 'Orch : small' 200000 1000 0 99000 50)" \
+"ctx: 50% · 100k/160k"
+
+actual=$(ctx_payload 'Orch : tuned' 1000000 1000 0 99000 10 \
+  | ORCHESTRATOR_CONTEXT_GATE_TOKENS=250000 STATUSBAR_CONFIG="$CTX_ONLY" bash "$SCRIPT" | strip_ansi)
+if [ "$actual" = "ctx: 10% · 100k/250k" ]; then
+  echo "  ok   ORCHESTRATOR_CONTEXT_GATE_TOKENS overrides the token gate"; pass=$((pass + 1))
+else
+  echo "  FAIL ORCHESTRATOR_CONTEXT_GATE_TOKENS overrides the token gate: got « $actual »"; fail=$((fail + 1))
+fi
+actual=$(ctx_payload 'Orch : small' 200000 1000 0 99000 50 \
+  | ORCHESTRATOR_CONTEXT_GATE=50 STATUSBAR_CONFIG="$CTX_ONLY" bash "$SCRIPT" | strip_ansi)
+if [ "$actual" = "ctx: 50% · 100k/100k" ]; then
+  echo "  ok   ORCHESTRATOR_CONTEXT_GATE overrides the percentage gate"; pass=$((pass + 1))
+else
+  echo "  FAIL ORCHESTRATOR_CONTEXT_GATE overrides the percentage gate: got « $actual »"; fail=$((fail + 1))
+fi
+actual=$(ctx_payload 'Orch : big' 2000000 1000 0 99000 5 \
+  | ORCHESTRATOR_LARGE_WINDOW=3000000 STATUSBAR_CONFIG="$CTX_ONLY" bash "$SCRIPT" | strip_ansi)
+if [ "$actual" = "ctx: 5% · 100k/1600k" ]; then
+  echo "  ok   ORCHESTRATOR_LARGE_WINDOW moves the large-window threshold"; pass=$((pass + 1))
+else
+  echo "  FAIL ORCHESTRATOR_LARGE_WINDOW moves the large-window threshold: got « $actual »"; fail=$((fail + 1))
+fi
+
+check "under 1,000 tokens printed as is" "$CTX_ONLY" \
+  "$(ctx_payload '' 200000 400 100 99 1)" \
+"ctx: 1% · 599"
+
+check "tokens absent: the segment stays as before" "$CTX_ONLY" \
+  "{\"session_name\":\"Orch : x\",\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"context_window\":{\"used_percentage\":30,\"context_window_size\":1000000}}" \
+"ctx: 30%"
+
+check "window size absent: tokens alone, no gate" "$CTX_ONLY" \
+  "{\"session_name\":\"Orch : x\",\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"context_window\":{\"used_percentage\":30,\"current_usage\":{\"input_tokens\":296000}}}" \
+"ctx: 30% · 296k"
+
+check "toggle off restores the plain segment" \
+  "$(config_with SHOW_DIRECTORY=0 SHOW_USAGE=0 SHOW_CONTEXT=1 SHOW_CONTEXT_TOKENS=0 SHOW_SESSION_NAME=0 SHOW_LINES_CHANGED=0)" \
+  "$(ctx_payload 'Orch : build' 1000000 4000 2603 290000 30)" \
+"ctx: 30%"
+
+check "a non-numeric token field leaves the other segments and no tokens" \
+  "$(config_with SHOW_DIRECTORY=0 SHOW_USAGE=0 SHOW_MODEL=1 SHOW_CONTEXT=1 SHOW_CONTEXT_TOKENS=1 \
+    SHOW_SESSION_NAME=0 SHOW_LINES_CHANGED=0)" \
+  "{\"model\":{\"display_name\":\"a-model\"},\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"context_window\":{\"used_percentage\":30,\"context_window_size\":1000000,\"current_usage\":{\"input_tokens\":\"abc\"}}}" \
+"a-model
+ctx: 30%"
+
+check "the warning keeps its mark with the tokens" "$CTX_ONLY" \
+  "$(ctx_payload 'Orch : full' 200000 1000 0 169000 85)" \
+"⚠ ctx: 85% · 170k/160k"
+
 echo "== regression: consecutive empty fields =="
 
 # The separator is 0x1F rather than a tab precisely so two empty fields in a

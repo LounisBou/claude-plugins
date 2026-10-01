@@ -27,6 +27,7 @@ show_seven=${SHOW_SEVEN_DAY:-1}
 show_pr=${SHOW_PR:-1}
 show_model=${SHOW_MODEL:-1}
 show_ctx=${SHOW_CONTEXT:-1}
+show_ctx_tokens=${SHOW_CONTEXT_TOKENS:-1}
 show_gitst=${SHOW_GIT_STATUS:-1}
 show_sname=${SHOW_SESSION_NAME:-1}
 show_lines=${SHOW_LINES_CHANGED:-1}
@@ -65,7 +66,7 @@ separator="${GRAY} │ ${RESET}"
 # variable, so a missing field elsewhere cannot corrupt it.
 US=$'\037'
 IFS="$US" read -r h5_pct h5_reset d7_pct d7_reset pr_num pr_state model_name \
-  ctx_pct lines_add lines_del session_name cur_path <<<"$(
+  ctx_pct ctx_used ctx_size lines_add lines_del session_name cur_path <<<"$(
   printf '%s' "$input" | jq -r --arg us "$US" '[
     .rate_limits.five_hour.used_percentage  // "",
     .rate_limits.five_hour.resets_at        // "",
@@ -75,6 +76,12 @@ IFS="$US" read -r h5_pct h5_reset d7_pct d7_reset pr_num pr_state model_name \
     .pr.review_state                        // "",
     .model.display_name                     // "",
     .context_window.used_percentage         // "",
+    (.context_window.current_usage
+      | if type == "object"
+        then ([.input_tokens, .cache_creation_input_tokens, .cache_read_input_tokens] | map(numbers)
+              | if length == 0 then "" else add end)
+        else "" end),
+    .context_window.context_window_size     // "",
     .cost.total_lines_added                 // "",
     .cost.total_lines_removed               // "",
     .session_name                           // "",
@@ -233,14 +240,45 @@ fi
 
 line2=""
 
+# 296603 -> 296k, rounded down; under 1,000 printed as is.
+fmt_tokens() {
+  if [ "$1" -ge 1000 ]; then printf '%dk' $(( $1 / 1000 )); else printf '%d' "$1"; fi
+}
+
+# The session's context gate, in tokens, resolved exactly as the orchestrator's
+# context gate hook does (same variables, same defaults) so the bar and the
+# gate never disagree: a fixed token count on a large window, a percentage of
+# the window otherwise. Prints nothing when the window size is unknown.
+# The gate only applies to orchestration sessions: they are named "Orch : …",
+# "Agent : …", "Audit : …" or "Coord : …".
+ctx_gate_tokens() {
+  local name=${session_name#\"}
+  case "$name" in
+    "Orch :"*|"Agent :"*|"Audit :"*|"Coord :"*) ;;
+    *) return 0 ;;
+  esac
+  is_number "$ctx_size" || return 0
+  if [ "$ctx_size" -ge "${ORCHESTRATOR_LARGE_WINDOW:-1000000}" ]; then
+    printf '%s' "${ORCHESTRATOR_CONTEXT_GATE_TOKENS:-300000}"
+  else
+    printf '%d' $(( ctx_size * ${ORCHESTRATOR_CONTEXT_GATE:-80} / 100 ))
+  fi
+}
+
 # >= 80% is roughly the auto-compaction threshold: context loss is close.
 if [ "$show_ctx" = "1" ]; then
   cpct=${ctx_pct%%.*}
   if is_number "$cpct"; then
+    ctx_text="ctx: ${cpct}%"
+    if [ "$show_ctx_tokens" = "1" ] && is_number "$ctx_used"; then
+      ctx_text="${ctx_text} · $(fmt_tokens "$ctx_used")"
+      gate=$(ctx_gate_tokens)
+      is_number "$gate" && ctx_text="${ctx_text}/$(fmt_tokens "$gate")"
+    fi
     if [ "$cpct" -ge 80 ]; then
-      line2=$(join_sep "$line2" "${RED}⚠ ctx: ${cpct}%${RESET}")
+      line2=$(join_sep "$line2" "${RED}⚠ ${ctx_text}${RESET}")
     else
-      line2=$(join_sep "$line2" "$(usage_color "$cpct")ctx: ${cpct}%${RESET}")
+      line2=$(join_sep "$line2" "$(usage_color "$cpct")${ctx_text}${RESET}")
     fi
   fi
 fi
