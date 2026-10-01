@@ -40,7 +40,7 @@ SANDBOX=$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")
 cleanup() {
   # The tab first: a session left running is the one failure this script must not cause,
   # and it outlives the shell that started it.
-  for t in "$TTY" "${OLD_TTY:-}" "${ONE:-}" "${TWO:-}" "${SUCC:-}" "${SIB:-}"; do
+  for t in "$TTY" "${OLD_TTY:-}" "${ONE:-}" "${TWO:-}" "${SUCC:-}" "${SIB:-}" "${AUD:-}"; do
     [ -n "$t" ] && bash "$AGENT" close --tty "$t" >/dev/null 2>&1
   done
   [ "$KEEP" = 1 ] || rm -rf "$SANDBOX"
@@ -201,6 +201,36 @@ else
   fi
 fi
 rm -f "$me_err"
+
+# An auditor is placed immediately LEFT of its caller (§52), and read back after the spawn:
+# the launch reports done only when the real order says so. The caller is `$me`, the tab this
+# script runs in; the auditor needs a model on record for this session, and a shell that has
+# none is refused by the launcher, which is a fact to state, not a failure of the placement.
+if [ -n "$me" ]; then
+  aud_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --auditor --title "Audit : e2e probe" --trust \
+        --prompt "Do nothing." 2>&1)
+  AUD=$(printf '%s' "$aud_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
+  if [ -z "$AUD" ] && printf '%s' "$aud_out" | grep -q 'orchestrator:install'; then
+    echo "  skip the auditor: no model on record for this session"
+  else
+    check "an auditor spawn returns a tty" "yes" \
+      "$(printf '%s' "$AUD" | grep -qE '^/dev/tty' && echo yes || printf 'no tty; spawn said: %s' "$(printf '%s' "$aud_out" | tail -2 | tr '\n' ' ')")"
+    pos_me=$(bash "$AGENT" list | grep -n "$me" | cut -d: -f1)
+    pos_aud=$(bash "$AGENT" list | grep -n "$AUD" | cut -d: -f1)
+    check "the auditor landed immediately left of its caller" "$((pos_me - 1))" "$pos_aud"
+    check "and the caller moved one place right" "$((pos_aud + 1))" "$pos_me"
+    aud_title=$(bash "$AGENT" list | grep "$AUD" | cut -d'|' -f3 | sed 's/^ *//;s/ *$//' | cut -c1-6)
+    bash "$AGENT" close --tty "$AUD" --expect-title "$aud_title" >/dev/null 2>&1
+    check "the auditor probe closes by its tty, title guard held" "0" "$?"
+    aud_dead=0
+    for _ in 1 2 3 4 5 6; do
+      ps -t "${AUD#/dev/}" -o command= 2>/dev/null | grep -q . || { aud_dead=1; break; }
+      sleep 2
+    done
+    check "the auditor's process is gone, not merely detached" "1" "$aud_dead"
+    [ "$aud_dead" = 1 ] && AUD=""
+  fi
+fi
 
 # A running process is not a launched agent. Until this check existed, every round here
 # passed with its session parked on a question nobody was there to answer.

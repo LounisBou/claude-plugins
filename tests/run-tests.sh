@@ -1568,6 +1568,155 @@ check "an auditor with no model on record is refused, naming the installer" "1" 
 check "--inherit-model beside --auditor asks for what is already implied" "1" \
   "$(audl --auditor --inherit-model --title 'Audit : x' | grep -c -- '--model aud-model')"
 
+# An auditor lands where it was told only if the terminal's API answered; the API-less rung
+# places nothing, and any other cause leaves the tab elsewhere with the launch reported as
+# done. So the launcher READS the order the listing prints, repairs once with its own move,
+# reads again, and says so on stdout, exiting non-zero, when it is still wrong. The decision
+# is a pure function of what was read, so the suite drives it with a scripted listing.
+settle() { "$py" -c "
+import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+AUD, CALLER = '/dev/ttys950', '/dev/ttys900'
+def rows(*order):
+    return [m.row_for(1, i, tty, 't', None, False, False) for i, tty in enumerate(order, 1)]
+RIGHT = rows('/dev/ttys800', AUD, CALLER, '/dev/ttys901')
+WRONG = rows(AUD, '/dev/ttys800', CALLER, '/dev/ttys901')
+OTHER_WINDOW = [m.row_for(2, 1, AUD, 't', None, False, False), m.row_for(1, 2, CALLER, 't', None, False, False)]
+HIDDEN = [m.row_for(1, 1, AUD, 't', None, False, False), m.row_for(1, 2, '/dev/ttys777', 't', None, False, False),
+          m.row_for(1, 2, CALLER, 't', None, False, True)]  # the caller is a hidden pane of tab 2
+scenario = sys.argv[1]
+reads, moves = [], []
+if scenario == 'placed': seq = [RIGHT]
+elif scenario == 'repaired': seq = [WRONG, RIGHT]
+elif scenario == 'stuck': seq = [WRONG, WRONG]
+elif scenario == 'unread': seq = [None]
+elif scenario == 'unread-after-move': seq = [WRONG, None]
+elif scenario == 'unserved': seq = [WRONG, WRONG]
+elif scenario == 'elsewhere': seq = [OTHER_WINDOW, OTHER_WINDOW]
+else:
+    seq = None
+if seq is None:
+    print(m.placed_left_of({'window': OTHER_WINDOW, 'hidden': HIDDEN}[scenario], AUD, CALLER))
+    sys.exit(0)
+def read():
+    reads.append(1)
+    return seq[min(len(reads), len(seq)) - 1]
+def move(tty, anchor):
+    moves.append((tty, anchor))
+    return False if scenario == 'unserved' else True
+line, code = m.settle_auditor(read, move, AUD, CALLER)
+print('%d|%d|%s|%d|%s' % (len(reads), len(moves), ','.join('%s>%s' % t for t in moves), code, line))
+" "$1"; }
+check "an auditor already immediately left of its caller is read once and moved never" "1|0||0|" "$(settle placed)"
+check "a misplaced auditor is moved --left-of its caller, then read again, and nothing is said" \
+  "2|1|/dev/ttys950>/dev/ttys900|0|" "$(settle repaired)"
+check "an auditor still misplaced after one move is said on one line naming both ttys and the remedy, exit 1" \
+  "2|1|/dev/ttys950>/dev/ttys900|1|spawn: the auditor on /dev/ttys950 is not immediately left of /dev/ttys900; repair it with: iterm-agent.sh move --tty /dev/ttys950 --left-of /dev/ttys900" \
+  "$(settle stuck)"
+check "a listing that cannot be read is said unverified, with the way to read it, and the session stays" \
+  "1|0||1|spawn: could not read the tab order, so the auditor's place on /dev/ttys950 is unverified; check with: iterm-agent.sh list" \
+  "$(settle unread)"
+check "a listing lost after the move is unverified too, not reported as misplaced" \
+  "2|1|/dev/ttys950>/dev/ttys900|1|spawn: could not read the tab order, so the auditor's place on /dev/ttys950 is unverified; check with: iterm-agent.sh list" \
+  "$(settle unread-after-move)"
+check "a move the terminal cannot serve says its API is not available, and offers no move command" \
+  "2|1|/dev/ttys950>/dev/ttys900|1|spawn: the auditor on /dev/ttys950 is not immediately left of /dev/ttys900, and could not be moved because the terminal's API is not available; read iterm-agent.sh list and move the tab by hand only if it is misplaced" \
+  "$(settle unserved)"
+check "an auditor in another window than its caller says so, since a move cannot cross windows" \
+  "2|1|/dev/ttys950>/dev/ttys900|1|spawn: the auditor on /dev/ttys950 is in another window than its orchestrator on /dev/ttys900; see iterm-agent.sh list" \
+  "$(settle elsewhere)"
+check "the same tab number in another window is not left of the caller" "False" "$(settle window)"
+check "a caller that is a hidden pane is placed by its tab: the auditor in the tab before it counts" "True" \
+  "$(settle hidden)"
+
+# The move finds its anchor by ANY pane of a tab, as the anchor probe does, and never across
+# windows: a caller in a split tab whose current pane is another pane is still in its tab.
+mvleft() { "$py" -c "
+import asyncio, sys
+sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+class S:
+    def __init__(self, tty): self.tty = tty; self.session_id = tty
+    async def async_get_variable(self, name): return self.tty
+class T:
+    def __init__(self, tab_id, *ttys): self.tab_id = tab_id; self.all_sessions = [S(x) for x in ttys]; self.current_session = self.all_sessions[-1]
+class W:
+    def __init__(self, window_id, *tabs): self.window_id = window_id; self.tabs = list(tabs); self.set = None
+    async def async_set_tabs(self, tabs): self.set = [t.tab_id for t in tabs]
+class App:
+    def __init__(self, *windows): self.windows = windows
+class API:
+    def __init__(self, app): self.app = app
+    async def async_get_app(self, connection): return self.app
+AUD, CALLER = '/dev/ttys950', '/dev/ttys900'
+split = T('c', CALLER, '/dev/ttys777')  # the caller's pane is hidden: another pane is current
+if sys.argv[1] == 'split':
+    w = W('w1', T('a', AUD), T('b', '/dev/ttys800'), split); api = API(App(w))
+else:
+    w = W('w1', T('a', AUD), T('b', '/dev/ttys800')); api = API(App(w, W('w2', split)))
+asyncio.run(m.move_left_of(api, None, AUD, CALLER))
+print(w.set)
+" "$1"; }
+check "an auditor moves immediately before a caller whose current pane is another pane of its tab" \
+  "['b', 'a', 'c']" "$(mvleft split)"
+check "a caller in another window moves nothing: a move does not cross windows" "None" "$(mvleft window)"
+
+# The wiring is a decision of its own: the repair is called, the line goes to STDOUT, the tty
+# is printed whatever the repair did, and the exit follows. The suite drives `cmd_spawn`
+# itself with the terminal stubbed under it — the real `served_by`, `repair_auditor_place`
+# and `settle_auditor` — and reads what a caller reads: stdout, stderr and the exit code.
+AUDTRUST="$WORK/aud-trust.json"; printf '{"projects":{}}\n' > "$AUDTRUST"
+spawn_aud() { # <scenario> [backend]: prints the exit code; stdout and stderr land in files
+  ORCHESTRATOR_STATE_DIR="$AUDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_SELF_ID=S-ME \
+  CLAUDE_CODE_SESSION_ID=s-aud ORCHESTRATOR_BACKEND="${2:-api}" ORCHESTRATOR_TRUST_FILE="$AUDTRUST" \
+  AUD_OUT="$WORK/aud-spawn.out" AUD_ERR="$WORK/aud-spawn.err" "$py" -c "
+import contextlib, sys
+sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+AUD, CALLER = '/dev/ttys950', '/dev/ttys900'
+def rows(*order):
+    return [m.row_for(1, i, tty, 't', None, False, False) for i, tty in enumerate(order, 1)]
+RIGHT = rows('/dev/ttys800', AUD, CALLER)
+WRONG = rows(AUD, '/dev/ttys800', CALLER)
+scenario = sys.argv[1]
+readings = {'misplaced': [WRONG, WRONG], 'unread': ['boom'], 'move-fails': [WRONG, RIGHT],
+            'api-less': [WRONG, WRONG], 'broken': [['wx/t1 | /dev/ttys950 | t | n']]}[scenario]
+reads = []
+def next_reading():
+    reads.append(1)
+    item = readings[min(len(reads), len(readings)) - 1]
+    if item == 'boom':
+        raise RuntimeError('the listing failed')
+    return item
+def stub_run(fn):
+    if fn.__name__ == 'probe': return True
+    if fn.__name__ == 'go': return AUD
+    if fn.__name__ == 'rows': return next_reading()
+    if scenario == 'move-fails': raise RuntimeError('set_tabs refused')
+m.run = stub_run
+m.as_spawn = lambda command: AUD
+m.as_list = next_reading
+code = 0
+with open('$WORK/aud-spawn.out', 'w') as out, open('$WORK/aud-spawn.err', 'w') as err, \
+     contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+    try:
+        m.cmd_spawn(['--dir', '$WORK', '--prompt', 'p', '--auditor', '--title', 'Audit : tm',
+                     '--trust', '--no-verify'])
+    except SystemExit as exc:
+        code = exc.code or 0
+print(code)
+" "$1"; }
+check "a misplaced auditor: the line on stdout, the tty still printed, exit 1" "1|1|1" \
+  "$(spawn_aud misplaced)|$(grep -c 'is not immediately left of /dev/ttys900; repair it with: iterm-agent.sh move --tty /dev/ttys950 --left-of /dev/ttys900' "$WORK/aud-spawn.out")|$(grep -c '^/dev/ttys950$' "$WORK/aud-spawn.out")"
+check "a listing that cannot be read: one line on stderr, the unverified line, the tty printed, exit 1" "1|1|1|1" \
+  "$(spawn_aud unread)|$(grep -c 'could not be read: the listing failed' "$WORK/aud-spawn.err")|$(grep -c "the auditor's place on /dev/ttys950 is unverified; check with: iterm-agent.sh list" "$WORK/aud-spawn.out")|$(grep -c '^/dev/ttys950$' "$WORK/aud-spawn.out")"
+check "an exception in the move: one line on stderr, the tty printed, the second reading decides" "0|1|1|0" \
+  "$(spawn_aud move-fails)|$(grep -c 'could not be moved' "$WORK/aud-spawn.err")|$(grep -c '^/dev/ttys950$' "$WORK/aud-spawn.out")|$(grep -c 'Traceback' "$WORK/aud-spawn.err")"
+check "a repair that itself breaks: one line on stderr, the unverified line, the tty printed, exit 1" "1|1|1|1" \
+  "$(spawn_aud broken)|$(grep -c 'could not be settled' "$WORK/aud-spawn.err")|$(grep -c 'is unverified' "$WORK/aud-spawn.out")|$(grep -c '^/dev/ttys950$' "$WORK/aud-spawn.out")"
+check "the API-less rung: no placement warning on stderr, the API-not-available line, the tty, exit 1" "1|0|1|1" \
+  "$(spawn_aud api-less applescript)|$(grep -c 'cannot place a tab' "$WORK/aud-spawn.err")|$(grep -c "could not be moved because the terminal's API is not available" "$WORK/aud-spawn.out")|$(grep -c '^/dev/ttys950$' "$WORK/aud-spawn.out")"
+
 # `rotate` and `move` treat an auditor's tab as not the caller's to replace or place: it is
 # read by its NAME in the process table, so a stale chain entry naming it moves nothing.
 PSAUD="$WORK/ps-audit.txt"

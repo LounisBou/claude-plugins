@@ -38,6 +38,11 @@ characters: it becomes the title `Audit : <subject>`.
    `--successor`, an anchor, `--title-free`, `--tier`, `--model` and `--no-remote-control`
    are refused beside it. `rotate` and `move` refuse a tab whose session is named `Audit :`
    unless `--force`. The auditor never closes this tab.
+   Its place is read after the spawn and repaired if wrong: a launch that leaves it
+   elsewhere prints one line on stdout naming both ttys and the `move` that repairs it, and
+   exits non-zero. On a non-zero exit, run the `move` the line prints and never relaunch;
+   when the line says « unverified » or « API is not available », read `list` and move the
+   tab by hand only if it is misplaced.
 4. **Verify** that `iterm-agent.sh list` shows the `Audit : <subject>` tab and
    `iterm-agent.sh verify --tty <its tty>` its process.
 5. **Tell the operator** in one line: the tab, and the report path. Then carry on with your
