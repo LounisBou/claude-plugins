@@ -36,6 +36,13 @@
 #
 # The record belongs to the PROJECT being built, not to this plugin: the default table
 # ships here, a project's corrections belong with that project's state.
+#
+# Every subcommand also registers the record's absolute path under the host session that ran
+# it, in `<state dir>/records/<CLAUDE_CODE_SESSION_ID>` (one path per line, no duplicate). An
+# order noted « to plan after the round » in prose alone was lost once: nothing read it back.
+# A row opened for it is read back by the stop gate (hooks/stop_gate.py), which refuses
+# `waiting: done` while a registered row is open, and by `summary`, which lists the open
+# rows. Registering never fails a command.
 
 set -uo pipefail
 
@@ -46,6 +53,23 @@ command -v jq >/dev/null 2>&1 || die "jq is required"
 cmd="${1:-}"; record="${2:-}"
 [ -n "$cmd" ] || die "usage: dispatch-record.sh {open|round|review|fixed|ready|close|escaped|summary} <record> [...] (see header)"
 [ -n "$record" ] || die "$cmd: a record path is required"
+
+# The hook resolves the same directory (hooks/stop_gate.py, STATE_DIR).
+STATE_DIR="${ORCHESTRATOR_STATE_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claude-orchestrator}"
+
+# Run on exit, so a record `open` has just created is registered with its directory in place.
+# Its status is the command's own: nothing here may change it.
+register_record() {
+    [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && [ -f "$record" ] || return 0
+    local dir abs list
+    dir=$(cd "$(dirname "$record")" 2>/dev/null && pwd -P) || return 0
+    abs="$dir/$(basename "$record")"
+    list="$STATE_DIR/records/${CLAUDE_CODE_SESSION_ID//[^A-Za-z0-9._-]/_}"
+    mkdir -p "$STATE_DIR/records" 2>/dev/null || return 0
+    grep -qxF "$abs" "$list" 2>/dev/null || printf '%s\n' "$abs" >> "$list" 2>/dev/null
+    return 0
+}
+trap register_record EXIT
 
 next_id() { if [ -f "$record" ]; then jq -s 'if length==0 then 1 else ([.[].id]|max)+1 end' "$record"; else echo 1; fi; }
 
@@ -247,6 +271,9 @@ summary)
         (.[] | select(.n >= 2 and .paid * 2 < .n)
              | "signal=stop cascading \(.class) at \(.tier): \(.paid) of \(.n) paid, the retries cost more than the tier saved")
     ' "$record"
+    # The rows still open are work: deferred, in flight, or lost. A successor reads them as
+    # such, never as history.
+    jq -sr '.[] | select(.state == "open") | "open=\(.id) label=\(.label)"' "$record"
     ;;
 *) die "unknown subcommand: $cmd (expected open, round, review, fixed, ready, close, escaped or summary)" ;;
 esac

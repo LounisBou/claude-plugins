@@ -28,6 +28,10 @@ fail=0
 # who runs it.
 export ORCHESTRATOR_HOST_CLI=claude
 
+# The dispatch record registers itself under the host's session id when it has one. A suite
+# run from inside a session must not write into that operator's own state directory.
+unset CLAUDE_CODE_SESSION_ID
+
 export ORCHESTRATOR_TRUST_FILE="$WORK/suite-trust.json"
 "$(command -v python3 || echo python3)" -c "
 import json,os,sys
@@ -256,6 +260,47 @@ check "a class that costs more than one round is signalled" "1" \
   "$(bash "$REC" summary "$R" | grep -c '^signal=n-bis at light averages 2 rounds')"
 check "a class that closes in one round raises no signal" "0" \
   "$(bash "$REC" summary "$R" | grep -c 'signal=conversion-phase')"
+
+# The open rows are work, not history: `summary` lists them, so a successor reading the
+# record sees what was deferred and never dispatched.
+RO="$WORK/open-rows.jsonl"
+bash "$REC" open "$RO" --class behaviour-phase --tier standard --label "plan after the round" >/dev/null
+bash "$REC" open "$RO" --class n-bis --tier light --label "second" >/dev/null
+bash "$REC" close "$RO" 2 --verdict ruled-out >/dev/null
+check "summary lists the open rows with their id and label, and only them" "open=1 label=plan after the round" \
+  "$(bash "$REC" summary "$RO" | grep '^open=')"
+
+# Every subcommand registers its record under the session, by absolute path, once. The
+# state directory is the hook's: the hook reads the same file for the same session id.
+RS="$WORK/rec-state"; RD="$WORK/rec-dir"; mkdir -p "$RD"
+RR="$RD/dispatch.jsonl"
+rec_with() {  # <session id> <args...>, run from the record's directory with a relative path
+  local sid="$1"; shift
+  ( cd "$RD" && CLAUDE_CODE_SESSION_ID="$sid" ORCHESTRATOR_STATE_DIR="$RS" bash "$REC" "$@" 2>/dev/null )
+}
+rec_with s-open open dispatch.jsonl --class n-bis --tier light --label l >/dev/null
+RDREAL="$(cd "$RD" && pwd -P)"
+check "open registers the record by its absolute path" "$RDREAL/dispatch.jsonl" "$(cat "$RS/records/s-open" 2>/dev/null)"
+rec_with s-round round dispatch.jsonl 1
+rec_with s-review review dispatch.jsonl 1 --head abcdef1234 --norms none
+rec_with s-fixed fixed dispatch.jsonl 1 --head abcdef1234
+rec_with s-ready ready dispatch.jsonl 1 --head abcdef1234 >/dev/null
+rec_with s-escaped escaped dispatch.jsonl 1
+rec_with s-summary summary dispatch.jsonl >/dev/null
+rec_with s-close close dispatch.jsonl 1 --verdict ok
+for sid in s-round s-review s-fixed s-ready s-escaped s-summary s-close; do
+  check "${sid#s-} registers the record" "$RDREAL/dispatch.jsonl" "$(cat "$RS/records/$sid" 2>/dev/null)"
+done
+rec_with s-open summary dispatch.jsonl >/dev/null; rec_with s-open round dispatch.jsonl 1; ( cd "$RD" && CLAUDE_CODE_SESSION_ID=s-open ORCHESTRATOR_STATE_DIR="$RS" bash "$REC" summary "$RR" >/dev/null )
+check "a record is registered once, whichever way its path is spelled" "1" "$(grep -c . "$RS/records/s-open")"
+rec_with s-open open "$WORK/second.jsonl" --class n-bis --tier light >/dev/null
+check "a second record is added on its own line" "2" "$(grep -c . "$RS/records/s-open")"
+RS2="$WORK/rec-state-none"
+( cd "$RD" && env -u CLAUDE_CODE_SESSION_ID ORCHESTRATOR_STATE_DIR="$RS2" bash "$REC" summary dispatch.jsonl >/dev/null 2>&1 )
+check "without a session id nothing is registered" "no" "$([ -e "$RS2" ] && echo yes || echo no)"
+check "a state directory that cannot be written never fails the command" "0|class=n-bis" \
+  "$(cd "$RD" && out=$(CLAUDE_CODE_SESSION_ID=s-x ORCHESTRATOR_STATE_DIR=/dev/null/nope bash "$REC" summary dispatch.jsonl 2>/dev/null); echo "$?|$(printf '%s' "$out" | head -1 | cut -c1-11)")"
+check "a failing command keeps its own exit code" "1" "$(cd "$RD" && CLAUDE_CODE_SESSION_ID=s-y ORCHESTRATOR_STATE_DIR="$RS" bash "$REC" close dispatch.jsonl 99 --verdict ok >/dev/null 2>&1; echo $?)"
 
 # A cascade starts one tier BELOW the table's row, on classes where a failed attempt is
 # cheap to detect and cheap to throw away. Marking the row is what makes the bet payable:
@@ -2495,6 +2540,377 @@ guard_payload Bash "git push -f" > "$WORK/nojq-payload.json"
 nojq_out=$(env PATH="$NOJQ" ORCHESTRATOR_SPAWNED=1 "$(command -v bash)" "$GUARD" < "$WORK/nojq-payload.json" 2>&1); nojq_code=$?
 check "without jq a marked session is let through, with one warning line" "0|1|1" \
   "$nojq_code|$(printf '%s\n' "$nojq_out" | grep -c .)|$(printf '%s' "$nojq_out" | grep -c 'jq')"
+
+echo "== stop gate hook =="
+# An orchestrator's stop is held until something will wake it (Check 1) and until the real
+# state of its open pull requests' checks has been put in front of it once per head
+# (Check 2). The hook is run from a tree of its own, beside a fake launcher whose `list`
+# prints the listing file and a fake `workspace.sh list` printing the checkouts file; a
+# fake `gh` on PATH answers from files and records each `pr checks` call.
+SG="$WORK/stop-gate"
+SGB="$SG/bin"; SGS="$SG/state"; SGP="$SG/sgproj"
+mkdir -p "$SG/hooks" "$SG/skills/iterm-agents/scripts" "$SG/skills/orchestrator/scripts" "$SGB" "$SGS/chains" "$SGP"
+cp "$ROOT/hooks/stop-gate.sh" "$ROOT/hooks/stop_gate.py" "$SG/hooks/" 2>/dev/null
+cp "$ROOT/skills/iterm-agents/scripts/iterm_agent.py" "$SG/skills/iterm-agents/scripts/"
+printf '#!/bin/bash\n[ "$1" = list ] || exit 1\ncat "%s/listing" 2>/dev/null || { echo "list: no terminal backend could serve this" >&2; exit 1; }\n' "$SG" \
+  > "$SG/skills/iterm-agents/scripts/iterm-agent.sh"
+printf '#!/bin/bash\n[ "$1" = list ] || exit 1\ncat "%s/checkouts" 2>/dev/null || { echo "workspace: cannot read the root" >&2; exit 1; }\n' "$SG" \
+  > "$SG/skills/orchestrator/scripts/workspace.sh"
+cat > "$SGB/gh" <<EOF
+#!/bin/bash
+[ -f "$SG/gh-offline" ] && { echo "error connecting to api.github.com" >&2; exit 1; }
+case "\$1 \$2" in
+  "pr list") echo "\$*" >> "$SG/gh-args"; cat "$SG/prs" 2>/dev/null || echo "[]" ;;
+  "pr checks") echo "\$3" >> "$SG/gh-calls"; cat "$SG/checks-\$3"; [ -f "$SG/checks-\$3.code" ] && exit "\$(cat "$SG/checks-\$3.code")" ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$SGB/gh" "$SG/skills/iterm-agents/scripts/iterm-agent.sh" "$SG/skills/orchestrator/scripts/workspace.sh"
+git -C "$SGP" init -q 2>/dev/null
+
+ORCHROW='w1/t1 | /dev/ttys900 | ✳ Orch : f | Orch : f [a1b2c3] | self'
+sg_listing() { printf '%s\n' "$ORCHROW" "$@" > "$SG/listing"; }
+sg_chain() {  # <tty> <owner> ...: the chain of the orchestrator's tty, in launch order
+  : > "$SGS/chains/ttys900.jsonl"
+  while [ $# -gt 0 ]; do
+    printf '{"tab_id": "t-%s", "tty": "%s", "owner": "%s"}\n' "${1##*/}" "$1" "$2" >> "$SGS/chains/ttys900.jsonl"
+    shift 2
+  done
+}
+# The session's name is read from the process table the way the launcher reads it (`--name`):
+# the suite's stand-in for `ps` is a file, and the session's own tty is given.
+sg_ps() { printf '/dev/ttys900 host-cli %s\n' "$1" > "$SG/ps"; }
+sg_reset() { rm -f "$SG/prs" "$SG/gh-calls" "$SG/gh-args" "$SG/gh-offline" "$SG"/checks-* "$SG/transcript" "$SGS/stop-gate.log"; rm -rf "$SGS/stop-gate" "$SGS/records"; : > "$SG/checkouts"; sg_ps '--name Orch : f [a1b2c3]'; sg_listing; sg_chain; }
+# sg <message> [stop_hook_active] [session id]: the hook's stdout. SG_TRANSCRIPT names the
+# payload's transcript, SG_ITERM stands in for ITERM_SESSION_ID, SG_DEADLINE for the hook's.
+sg() {
+  "$py" -c 'import json,sys; d={"session_id": sys.argv[4], "cwd": sys.argv[1], "last_assistant_message": sys.argv[2], "stop_hook_active": sys.argv[3] == "true"}
+if sys.argv[5]: d["transcript_path"] = sys.argv[5]
+json.dump(d, sys.stdout)' \
+    "$SGP" "$1" "${2:-false}" "${3:-sg-1}" "${SG_TRANSCRIPT:-}" \
+    | env PATH="$SGB:$PATH" ORCHESTRATOR_STATE_DIR="$SGS" ITERM_SESSION_ID="${SG_ITERM-w0t0p0:S-ME}" \
+        ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$SG/ps" \
+        ORCHESTRATOR_STOP_GATE_DEADLINE="${SG_DEADLINE:-20}" bash "$SG/hooks/stop-gate.sh" 2>/dev/null
+}
+reason() { "$py" -c 'import json,sys; d=json.load(sys.stdin); print(d["decision"] + "|" + d["reason"])' 2>/dev/null; }
+sglog() { cat "$SGS/stop-gate.log" 2>/dev/null; }
+BUSY='w1/t2 | /dev/ttys901 | ◐ Agent : one | Agent : one [b2c3d4]'
+IDLE='w1/t2 | /dev/ttys901 | ✳ Agent : one | Agent : one [b2c3d4]'
+
+echo "-- check 1: what will wake you"
+sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+check "a busy agent of this orchestrator lets the stop pass, silently" "" "$(sg 'I launched the phase.')"
+check "a stop that passes writes nothing to the log" "" "$(sglog)"
+sg_reset; sg_listing "$BUSY" 'w1/t3 | /dev/ttys902 | ✳ Agent : two | Agent : two [c3d4e5]'
+sg_chain /dev/ttys902 S-ME /dev/ttys901 S-ME
+check "one busy agent among idle ones suffices" "" "$(sg 'Waiting on agent one.')"
+
+sg_reset
+check "no agent and no machine line: refused, nothing will wake you" \
+  "block|Nothing will wake you: no agent of yours is running. Launch what you announced, or, if a question truly blocks, end with the line waiting: operator — blocks: <what it blocks>, or with waiting: done. The line goes as the message's last line, no markup." \
+  "$(sg 'I am launching the phase 3 agent now.' | reason)"
+check "the refusal is logged: session name, check, case" "1" \
+  "$(sglog | grep -c '| Orch : f \[a1b2c3\] | check1 | nothing-will-wake$')"
+sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-OTHER
+check "a busy agent of another orchestrator is never counted" "block|Nothing will wake you" \
+  "$(sg 'Waiting.' | reason | cut -c1-27)"
+sg_reset; sg_chain /dev/ttys905 S-ME
+check "a chain entry whose tab is gone is no agent" "block|Nothing will wake you" "$(sg 'Waiting.' | reason | cut -c1-27)"
+sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+check "without ITERM_SESSION_ID no chain entry is counted: the busy agent does not hold the stop" "block|Nothing will wake you" \
+  "$(SG_ITERM= sg 'Waiting.' | reason | cut -c1-27)"
+check "and the log says why" "1" "$(sglog | grep -c '| Orch : f \[a1b2c3\] | error | ITERM_SESSION_ID is not set: no chain entry is counted$')"
+sg_reset; sg_listing 'w1/t2 | /dev/ttys901 | -zsh | (host default)'; sg_chain /dev/ttys901 S-ME
+check "a tab with no activity glyph runs no agent" "block|Nothing will wake you" "$(sg 'Waiting.' | reason | cut -c1-27)"
+
+sg_reset; sg_listing "$IDLE"; sg_chain /dev/ttys901 S-ME
+check "only idle agents: refused, the agent named" \
+  "block|Agent : one [b2c3d4] is idle: its notice was spent. Read its report or relaunch it." \
+  "$(sg 'Waiting on agent one.' | reason)"
+check "the idle refusal is logged" "1" "$(sglog | grep -c '| check1 | idle-agents$')"
+
+sg_reset
+check "a question with no blocks: refused" \
+  "block|Your question blocks nothing declared: advance everything that can advance; its answer will come in a later turn." \
+  "$(sg 'Should I merge #12 now?' | reason)"
+check "a machine line naming the operator without blocks: is a question that blocks nothing" \
+  "block|Your question blocks nothing declared" "$(sg 'Merge #12?
+waiting: operator' | reason | cut -c1-43)"
+check "the question refusal is logged" "2" "$(sglog | grep -c '| check1 | question-without-blocks$')"
+
+sg_reset; printf '/ws/sgproj/phase-4 | feat/p4 | abc1234 | clean | pushed\n' > "$SG/checkouts"
+check "a blocking question with its machine line lets the stop pass, silently, a phase in flight or not" "" \
+  "$(sg 'Which base for phase 4, main or the release branch?
+
+waiting: operator — blocks: the base of phase 4
+
+')"
+check "the blocks: stop is logged with its reason" "1" \
+  "$(sglog | grep -c '| Orch : f \[a1b2c3\] | check1 | blocks | the base of phase 4$')"
+check "a question followed by a fenced block, then the machine line, lets the stop pass" "" \
+  "$(sg 'Which base for phase 4?
+
+```
+git log --oneline -1 origin/main
+```
+
+waiting: operator — blocks: the base of phase 4')"
+check "a machine line that is not the last non-empty line does not count" "block|Your question blocks nothing declared" \
+  "$(sg 'waiting: operator — blocks: the base
+Which base?' | reason | cut -c1-43)"
+check "a blocks: line with nothing after it does not count" "block|Your question blocks nothing declared" \
+  "$(sg 'waiting: operator — blocks: ' | reason | cut -c1-43)"
+
+# The model writes the line the way it writes everything: with markup, a dash of its own
+# choosing, an indent. Matched after normalisation, one check per variant the review listed.
+sg_variant() {  # <name> <last line>
+  sg_reset
+  check "the machine line $1 lets the stop pass" "" "$(sg "$(printf 'Which base?\n\n%s' "$2")")"
+}
+sg_variant "in backticks" '`waiting: operator — blocks: the base`'
+sg_variant "in bold" '**waiting: operator — blocks: the base**'
+sg_variant "in italics" '_waiting: operator — blocks: the base_'
+sg_variant "capitalised" 'Waiting: operator — blocks: the base'
+sg_variant "indented" '    waiting: operator — blocks: the base'
+sg_variant "quoted" '> waiting: operator — blocks: the base'
+sg_variant "as a dash bullet" '- waiting: operator — blocks: the base'
+sg_variant "as a star bullet" '* waiting: operator — blocks: the base'
+sg_variant "with a hyphen" 'waiting: operator - blocks: the base'
+sg_variant "with an en dash" 'waiting: operator – blocks: the base'
+sg_variant "with a double dash" 'waiting: operator -- blocks: the base'
+sg_variant "with a spaceless dash" 'waiting: operator—blocks: the base'
+sg_variant "with doubled spaces" 'waiting:  operator  —  blocks:  the base'
+sg_variant "with no space after blocks:" 'waiting: operator — blocks:phase 4'
+sg_variant "ending on a period" 'waiting: operator — blocks: the base.'
+sg_reset
+check "a done line ending on a period lets the stop pass" "" "$(sg 'All merged.
+waiting: done.')"
+check "a done line in bold lets the stop pass" "" "$(sg '**Waiting: done**')"
+sg_reset
+check "a hyphen inside the reason is kept: the line is read once" "1" \
+  "$(sg 'Which?
+waiting: operator - blocks: the pre-merge review' >/dev/null; sglog | grep -c '| check1 | blocks | the pre-merge review$')"
+check "a line that declares blocks: but is not the machine line is told the form, never « blocks nothing declared »" \
+  "block|Your last line is not the machine line: end the message with the line waiting: operator — blocks: <what it blocks>, or with waiting: done, as the message's last line, no markup." \
+  "$(sg 'Which base?
+waiting: operator blocks: the base' | reason)"
+check "and it is logged under its own case" "1" "$(sglog | grep -c '| check1 | malformed-machine-line$')"
+
+sg_reset
+check "done, no checkout, no agent: the stop passes, silently" "" "$(sg 'All merged.
+waiting: done')"
+check "a done stop writes no log line" "" "$(sglog)"
+sg_reset; printf '/ws/sgproj/phase-4 | feat/p4 | abc1234 | clean | pushed\n/ws/other/x | main | def5678 | clean | pushed\n' > "$SG/checkouts"
+check "done against a checkout of the project: refused, the checkout named" \
+  "block|Not done: /ws/sgproj/phase-4 is still there. Finish it, or say what blocks it." \
+  "$(sg 'waiting: done' | reason)"
+check "the not-done refusal is logged" "1" "$(sglog | grep -c '| check1 | not-done$')"
+sg_reset; printf '/ws/other/x | main | def5678 | clean | pushed\n' > "$SG/checkouts"
+check "a checkout of another project does not hold done" "" "$(sg 'waiting: done')"
+sg_reset; sg_listing "$IDLE"; sg_chain /dev/ttys901 S-ME
+check "done against an agent still there: refused, the agent named" \
+  "block|Not done: Agent : one [b2c3d4] is still there. Finish it, or say what blocks it." \
+  "$(sg 'waiting: done' | reason)"
+
+# Deferred work: an order noted « to plan after the round » in prose only is lost. Every
+# dispatch-record command registers its record under the session; a `done` stop refuses
+# while a row of those records is open.
+SGREC="$SG/dispatch.jsonl"
+sg_rec() { CLAUDE_CODE_SESSION_ID=sg-1 ORCHESTRATOR_STATE_DIR="$SGS" bash "$ROOT/skills/orchestrator/scripts/dispatch-record.sh" "$@"; }
+sg_reset; rm -f "$SGREC"
+rowA=$(sg_rec open "$SGREC" --class behaviour-phase --tier standard --label "plan the docs round")
+check "done against an open dispatch-record row: refused, the row named" \
+  "block|Not done: row 1 (plan the docs round) is open. Dispatch it, close it, or say what blocks it." \
+  "$(sg 'waiting: done' | reason)"
+check "the open-row refusal is logged" "1" "$(sglog | grep -c '| check1 | not-done$')"
+rowB=$(sg_rec open "$SGREC" --class n-bis --tier light --label "second fix")
+check "several open rows: the plural form" \
+  "block|Not done: rows 1 (plan the docs round), 2 (second fix) are open. Dispatch them, close them, or say what blocks them." \
+  "$(sg 'waiting: done' | reason)"
+sg_rec close "$SGREC" 1 --verdict ruled-out >/dev/null
+check "a closed row is no longer held against done" \
+  "block|Not done: row 2 (second fix) is open. Dispatch it, close it, or say what blocks it." \
+  "$(sg 'waiting: done' | reason)"
+sg_rec close "$SGREC" 2 --verdict approved >/dev/null
+check "every row closed: done passes" "" "$(sg 'waiting: done')"
+sg_rec open "$SGREC" --class n-bis --tier light --label "third" >/dev/null
+check "another session's records are not read" "" "$(sg 'waiting: done' false sg-other)"
+rm -rf "$SGS/records"
+check "no records file: no rows" "" "$(sg 'waiting: done')"
+sg_reset; mkdir -p "$SGS/records"; printf '/nowhere/dispatch.jsonl\n' > "$SGS/records/sg-1"
+check "a registered record that is gone: no rows" "" "$(sg 'waiting: done')"
+sg_reset; rm -f "$SGREC"; sg_rec open "$SGREC" --class n-bis --tier light --label "left open" >/dev/null
+sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+check "open rows hold done only: a busy agent still lets the stop pass" "" "$(sg 'Waiting on the agent.')"
+sg_reset; rm -f "$SGREC"; sg_rec open "$SGREC" --class n-bis --tier light --label "left open" >/dev/null; printf '/ws/sgproj/phase-4 | feat/p4 | abc1234 | clean | pushed\n' > "$SG/checkouts"
+check "a checkout and an open row: both are said" \
+  "block|Not done: /ws/sgproj/phase-4 is still there. Finish it, or say what blocks it. Not done: row 1 (left open) is open. Dispatch it, close it, or say what blocks it." \
+  "$(sg 'waiting: done' | reason)"
+rm -f "$SGREC"
+
+echo "-- scope, loop guard, own failures"
+sg_reset
+check "the loop guard: a stop already refused once in this turn passes" "" "$(sg 'I am launching it.' true)"
+sg_ps '--name Agent : one [b2c3d4]'
+check "an agent's session is untouched" "" "$(sg 'I am launching it.')"
+sg_ps '--name Coord : m [a1b2c3]'
+check "the coordinator's session is untouched" "" "$(sg 'I am launching it.')"
+check "an untouched session writes no log line" "" "$(sglog)"
+# The listing is only read for an orchestrator: the scope is decided from the session's own
+# tty and its name, before any call to the launcher.
+rm -f "$SG/listing"
+check "a session that is not an orchestrator never reads the listing: no error logged" "" "$(sg 'I am launching it.'; sglog)"
+sg_reset
+sg_ps ''
+check "a session started by hand, without the name, is untouched" "" "$(sg 'I am launching it.')"
+check "and the log says its name could not be read" "1|1" \
+  "$(sglog | grep -c .)|$(sglog | grep -c "| sg-1 | error | the session's name cannot be read on /dev/ttys900$")"
+sg_reset; : > "$SG/ps"
+check "a tty the process table does not know is untouched, the name logged unreadable" "1" \
+  "$(sg 'I am launching it.' >/dev/null; sglog | grep -c "| error | the session's name cannot be read on /dev/ttys900$")"
+# The own tty comes from the launcher's walk; a `ps` that answers nothing gives none.
+sg_reset; printf '#!/bin/bash\nexit 1\n' > "$SGB/ps"; chmod +x "$SGB/ps"
+check "a session whose own tty cannot be read passes" "" \
+  "$("$py" -c 'import json,sys; json.dump({"session_id": "sg-1", "cwd": sys.argv[1], "last_assistant_message": "x", "stop_hook_active": False}, sys.stdout)' "$SGP" \
+    | env -u ORCHESTRATOR_SELF_TTY PATH="$SGB:$PATH" ORCHESTRATOR_STATE_DIR="$SGS" ITERM_SESSION_ID="w0t0p0:S-ME" bash "$SG/hooks/stop-gate.sh" 2>/dev/null)"
+check "and the log says the tty could not be read" "1" "$(sglog | grep -c "| sg-1 | error | the session's own tty cannot be read$")"
+rm -f "$SGB/ps"
+
+echo "-- scope by the /rename name"
+# The host writes the rename into the transcript as a `custom-title` entry, the value
+# sometimes quoted. The launcher's `--name` comes first; the transcript's LAST entry only
+# when the launcher gives none.
+sg_reset; sg_ps ''
+printf '%s\n' '{"type":"user","message":"hi"}' '{"type":"custom-title","customTitle":"Orch : f [a1b2c3]"}' '{"type":"assistant","message":"ok"}' > "$SG/transcript"
+check "no launcher name, a renamed session: the transcript's title scopes the gate in" "block|Nothing will wake you" \
+  "$(SG_TRANSCRIPT="$SG/transcript" sg 'I am launching it.' | reason | cut -c1-27)"
+printf '%s\n' '{"type":"custom-title","customTitle":"\"Orch : f [a1b2c3]\""}' > "$SG/transcript"
+check "a quoted title is unquoted" "block|Nothing will wake you" \
+  "$(SG_TRANSCRIPT="$SG/transcript" sg 'I am launching it.' | reason | cut -c1-27)"
+printf '%s\n' '{"type":"custom-title","customTitle":"Orch : f [a1b2c3]"}' '{"type":"custom-title","customTitle":"my scratch session"}' > "$SG/transcript"
+check "the LAST title wins: renamed away from Orch, the session is untouched" "" \
+  "$(SG_TRANSCRIPT="$SG/transcript" sg 'I am launching it.')"
+printf '%s\n' '{"type":"custom-title","customTitle":"my scratch session"}' '{"type":"custom-title","customTitle":"Orch : f [a1b2c3]"}' > "$SG/transcript"
+check "the LAST title wins: renamed to Orch, the session is gated" "block|Nothing will wake you" \
+  "$(SG_TRANSCRIPT="$SG/transcript" sg 'I am launching it.' | reason | cut -c1-27)"
+sg_ps '--name Agent : one [b2c3d4]'
+check "the launcher's name comes first: an agent renamed to Orch stays untouched" "" \
+  "$(SG_TRANSCRIPT="$SG/transcript" sg 'I am launching it.')"
+sg_ps ''
+check "a transcript with no title: untouched, the log says the name is unreadable" "" \
+  "$(printf '%s\n' '{"type":"user"}' > "$SG/transcript"; SG_TRANSCRIPT="$SG/transcript" sg 'I am launching it.')"
+check "a transcript that cannot be read is no title" "" "$(SG_TRANSCRIPT="$SG/absent" sg 'I am launching it.')"
+# Not parsed whole: a line that is no JSON, elsewhere in the file, changes nothing.
+printf '%s\n' 'not json at all {{{' '{"type":"custom-title","customTitle":"Orch : f [a1b2c3]"}' 'tail garbage ][' > "$SG/transcript"
+check "only the title line is parsed: garbage around it is harmless" "block|Nothing will wake you" \
+  "$(SG_TRANSCRIPT="$SG/transcript" sg 'I am launching it.' | reason | cut -c1-27)"
+# A title line cut by a read block (64 KiB from the end) is still found whole.
+"$py" - "$SG/transcript" <<'PYEOF'
+import sys
+title = b'{"type":"custom-title","customTitle":"Orch : f [a1b2c3]"}\n'
+block = 65536
+pad = block - len(title) // 2
+open(sys.argv[1], "wb").write(b'{"type":"user"}\n' + title + b"x" * (pad - 1) + b"\n")
+PYEOF
+check "a title line straddling a read block is found whole" "block|Nothing will wake you" \
+  "$(SG_TRANSCRIPT="$SG/transcript" sg 'I am launching it.' | reason | cut -c1-27)"
+"$py" - "$SG/transcript" <<'PYEOF'
+import sys
+title = b'{"type":"custom-title","customTitle":"Orch : f [a1b2c3]"}\n'
+open(sys.argv[1], "wb").write(title + (b'{"type":"user","message":"' + b"y" * 4000 + b'"}\n') * 100)
+PYEOF
+check "a title far from the end of a large transcript is found" "block|Nothing will wake you" \
+  "$(SG_TRANSCRIPT="$SG/transcript" sg 'I am launching it.' | reason | cut -c1-27)"
+sg_reset
+sg_reset; rm -f "$SG/listing"
+check "an unreadable listing lets the stop pass, exit 0" "|0" "$(sg 'I am launching it.'; echo "|$?")"
+check "and appends one line to the log, naming the listing" "1|1" \
+  "$(sglog | grep -c .)|$(sglog | grep -c "| Orch : f \[a1b2c3\] | error | the launcher's listing failed: list: no terminal backend could serve this$")"
+sg_reset; rm -f "$SG/checkouts"
+check "an unreadable checkout list lets a done stop pass" "" "$(sg 'waiting: done')"
+check "and logs it" "1" "$(sglog | grep -c '| error | ')"
+
+echo "-- check 2: the real CI state, once per head"
+sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+printf '[{"number": 12, "headRefOid": "abc1234def5678abc1234def5678abc1234def56"}]\n' > "$SG/prs"
+printf '[{"name": "build", "bucket": "pending"}, {"name": "lint", "bucket": "pending"}, {"name": "test", "bucket": "pass"}]\n' > "$SG/checks-12"
+echo 8 > "$SG/checks-12.code"
+check "pending checks on a new head: refused with the real state" \
+  "block|#12 at abc1234: 2 checks pending (build, lint), 0 failing (). Report this state as it is, or wait for the end in one call: \`timeout 590 gh pr checks 12 --watch\`." \
+  "$(sg 'The reds are fixed, CI is green.' | reason)"
+check "the CI refusal is logged" "1" "$(sglog | grep -c '| check2 | ci-not-finished | #12 at abc1234')"
+check "the same head never refuses twice" "" "$(sg 'The reds are fixed, CI is green.')"
+check "and costs no further checks call" "1" "$(grep -c . "$SG/gh-calls")"
+check "the head is kept per session" "12 abc1234def5678abc1234def5678abc1234def56" "$(cat "$SGS/stop-gate/sg-1.heads")"
+check "another session is told again" "block|#12 at abc1234" "$(sg 'CI is green.' false sg-2 | reason | cut -c1-20)"
+
+check "only the operator's own pull requests are listed" "pr list --state open --author @me --limit 200 --json number,headRefOid" \
+  "$(head -1 "$SG/gh-args")"
+
+# A push is seen before its checks are registered: `gh pr checks` then answers an empty
+# list. That head is not green, it is unread, and it is not recorded.
+sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+printf '[{"number": 5, "headRefOid": "5555666677778888999900001111222233334444"}]\n' > "$SG/prs"
+printf '[]\n' > "$SG/checks-5"
+check "a head with no checks yet passes, silently" "" "$(sg 'Pushed.')"
+check "and is not recorded" "" "$(cat "$SGS/stop-gate/sg-1.heads" 2>/dev/null)"
+printf '[{"name": "build", "bucket": "pending"}]\n' > "$SG/checks-5"
+check "the same head, its checks now pending: refused" "block|#5 at 5555666: 1 checks pending (build), 0 failing ()" \
+  "$(sg 'Pushed.' | reason | sed 's/\. Report.*//')"
+sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+printf '[{"number": 7, "headRefOid": "0011223344556677889900112233445566778899"}]\n' > "$SG/prs"
+printf '[{"name": "test", "bucket": "fail"}, {"name": "e2e", "bucket": "cancel"}, {"name": "lint", "bucket": "pass"}]\n' > "$SG/checks-7"
+echo 1 > "$SG/checks-7.code"
+check "failing checks: refused with the real state" \
+  "block|#7 at 0011223: 0 checks pending (), 2 failing (test, e2e). Report this state as it is, or wait for the end in one call: \`timeout 590 gh pr checks 7 --watch\`." \
+  "$(sg 'Only the known red remains.' | reason)"
+printf '[{"number": 7, "headRefOid": "99887766554433221100aabbccddeeff00112233"}]\n' > "$SG/prs"
+check "a head moved by anyone is reported again" "block|#7 at 9988776" "$(sg 'Pushed.' | reason | cut -c1-19)"
+
+sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+printf '[{"number": 3, "headRefOid": "aaaa1111bbbb2222cccc3333dddd4444eeee5555"}]\n' > "$SG/prs"
+printf '[{"name": "test", "bucket": "pass"}, {"name": "docs", "bucket": "skipping"}]\n' > "$SG/checks-3"
+check "all checks finished and passing: the stop passes, silently" "" "$(sg 'CI is green.')"
+check "the green head is recorded" "3 aaaa1111bbbb2222cccc3333dddd4444eeee5555" "$(cat "$SGS/stop-gate/sg-1.heads")"
+check "a green stop writes no log line" "" "$(sglog)"
+sg 'CI is green.' >/dev/null
+check "a head that has not moved costs no checks call" "1" "$(grep -c . "$SG/gh-calls")"
+
+sg_reset; sg_listing "$IDLE"; sg_chain /dev/ttys901 S-ME
+printf '[{"number": 12, "headRefOid": "abc1234def5678abc1234def5678abc1234def56"}]\n' > "$SG/prs"
+printf '[{"name": "build", "bucket": "pending"}]\n' > "$SG/checks-12"
+sg 'Waiting.' >/dev/null
+check "Check 2 runs only when Check 1 let the stop pass" "0" "$(cat "$SG/gh-calls" 2>/dev/null | grep -c .)"
+
+sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME; : > "$SG/gh-offline"
+check "gh offline: the stop passes" "" "$(sg 'CI is green.')"
+check "and the failure is logged" "1" "$(sglog | grep -c '| error | ')"
+# One deadline for the whole hook: a slow listing leaves no time for the next call.
+sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+printf '[{"number": 12, "headRefOid": "abc1234def5678abc1234def5678abc1234def56"}]\n' > "$SG/prs"
+printf '[{"name": "build", "bucket": "pending"}]\n' > "$SG/checks-12"
+printf '#!/bin/bash\n[ "$1" = list ] || exit 1\nsleep 2\ncat "%s/listing"\n' "$SG" > "$SG/skills/iterm-agents/scripts/iterm-agent.sh"
+check "past the overall deadline the stop passes, the next call never made" "" "$(SG_DEADLINE=1 sg 'CI is green.')"
+check "and one line says so" "1|0" "$(sglog | grep -c '| error | the overall deadline of 1s passed before gh')|$(cat "$SG/gh-calls" 2>/dev/null | grep -c .)"
+check "within the deadline the same hook refuses" "block|#12 at abc1234" "$(sg 'CI is green.' | reason | cut -c1-20)"
+printf '#!/bin/bash\n[ "$1" = list ] || exit 1\ncat "%s/listing" 2>/dev/null || { echo "list: no terminal backend could serve this" >&2; exit 1; }\n' "$SG" \
+  > "$SG/skills/iterm-agents/scripts/iterm-agent.sh"
+sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+check "gh absent: the stop passes" "" \
+  "$("$py" -c 'import json,sys; json.dump({"session_id": "sg-1", "cwd": sys.argv[1], "last_assistant_message": "x", "stop_hook_active": False}, sys.stdout)' "$SGP" \
+    | env PATH="/usr/bin:/bin" ORCHESTRATOR_STATE_DIR="$SGS" ITERM_SESSION_ID="w0t0p0:S-ME" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$SG/ps" bash "$SG/hooks/stop-gate.sh" 2>/dev/null)"
+check "and the missing tool is logged" "1" "$(sglog | grep -c '| error | ')"
+NOPY="$SG/nopy-bin"; mkdir -p "$NOPY"; ln -sf "$(command -v mkdir)" "$(command -v date)" "$NOPY/"
+sg_reset; printf '{"session_id": "sg-1", "stop_hook_active": false}' > "$SG/nopy-payload.json"
+check "without python3 the stop passes, exit 0" "|0" \
+  "$(env PATH="$NOPY" ORCHESTRATOR_STATE_DIR="$SGS" "$(command -v bash)" "$SG/hooks/stop-gate.sh" < "$SG/nopy-payload.json" 2>/dev/null; echo "|$?")"
+check "and the missing interpreter is logged" "1" "$(sglog | grep -c '| - | error | python3 is not installed$')"
+
+check "the README's hooks table names the Stop hook" "yes" "$(spells "$ROOT/README.md" 'hook `Stop`')"
+check "the eval selection says its two stop-gate cases grade the staged spawn line and do not run the hook" "2" \
+  "$(grep -E '^\| 5[12] \|' "$ROOT/evals/SELECTION.md" | grep -c 'under staging; it does not run the hook')"
+check "the hook is registered on the Stop event" "1" \
+  "$("$py" -c 'import json,sys; h=json.load(open(sys.argv[1]))["hooks"]["Stop"]; print(sum("hooks/stop-gate.sh" in x["command"] for e in h for x in e["hooks"]))' "$ROOT/hooks/hooks.json" 2>/dev/null)"
 
 echo "== the app, stubbed =="
 # A pane behind a maximized sibling is in the tab's all_sessions and not in its sessions.

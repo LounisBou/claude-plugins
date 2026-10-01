@@ -24,6 +24,18 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/stop-gate.sh\"",
+            "shell": "bash",
+            "async": false
+          }
+        ]
+      }
     ]
   }
 }

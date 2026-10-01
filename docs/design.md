@@ -82,16 +82,18 @@ commands/decide.md                   the decision round, one arbitration at a ti
 commands/audit.md                    launches an audit of the method on the operator's word
 commands/coordinator.md              starts the machine's coordinator on the operator's word, announced to every orchestrator
 commands/coordinator-end.md          ends the coordinator on the operator's word; the record cleared
-hooks/hooks.json                     declares the context gate and the push guard
+hooks/hooks.json                     declares the context gate, the push guard and the stop gate
 hooks/context-gate.sh                the gate the harness enforces, not the model
 hooks/push-guard.sh                  refuses a force push other than a rebase's lease, in a launcher-spawned session
+hooks/stop-gate.sh                   holds an orchestrator's stop until something will wake it, and puts its pull requests' real checks in front of it
+hooks/stop_gate.py                   the stop gate's two checks and its log
 install.sh, uninstall.sh
 tests/run-tests.sh
 tests/e2e.sh                         one real round: a tab, a session, a close
 tests/fixtures/transcript.jsonl      a transcript tail for the gauge's computed tier
 tests/fixtures/rhythm-repo.sh        builds the dated repository rhythm.sh is tested on
 docs/design.md                       this document
-docs/specs/2026-10-01-stop-gate-design.md  the stop gate's approved spec, before its implementation
+docs/specs/2026-10-01-stop-gate-design.md  the stop gate's approved spec
 evals/README.md                      how the behaviour suite is staged, run and read
 evals/SELECTION.md                   the cases chosen, and the criteria that chose them
 evals/baseline-0.34.0.json           the first baseline run, with and without the plugin
@@ -138,6 +140,12 @@ evals/states-only-what-an-output-printed/graders/handles-as-printed.md
 evals/states-only-what-an-output-printed/graders/roles-as-printed.md
 evals/refuses-to-merge-or-undraft-for-a-peer/prompt.md
 evals/refuses-to-merge-or-undraft-for-a-peer/graders/leaves-draft-and-merge.md
+evals/launches-the-announced-agent-when-refused/prompt.md
+evals/launches-the-announced-agent-when-refused/graders/spawns-phase-4.md
+evals/launches-the-announced-agent-when-refused/graders/launches-in-this-turn.md
+evals/asks-and-dispatches-in-one-turn/prompt.md
+evals/asks-and-dispatches-in-one-turn/graders/dispatches-phase-5.md
+evals/asks-and-dispatches-in-one-turn/graders/asks-and-dispatches.md
 evals/rereads-the-artifact-before-answering/prompt.md
 evals/rereads-the-artifact-before-answering/graders/rereads-item-and-premise.md
 evals/rereads-the-artifact-before-answering/graders/rereads-pr-state.md
@@ -409,11 +417,11 @@ Temporary files across the plugin are anchored to `TMPDIR`: the platform default
 
 ### 4.3 Hooks
 
-`hooks/hooks.json` declares two hooks, both enforced by the harness rather than remembered by the model. `context-gate.sh` is section 3.5. `push-guard.sh` runs before every shell command of a session the launcher spawned — the launch marks it, and a session the operator starts by hand is never touched — and refuses a force push other than a rebase's `--force-with-lease=<branch>:<sha read>`, the one force the review rules allow (`skills/orchestrator/references/review.md`, « Review on evidence »). It reads text, so a push hidden inside a string another program runs passes; its header says which shapes it cannot see.
+`hooks/hooks.json` declares three hooks, all enforced by the harness rather than remembered by the model. `context-gate.sh` is section 3.5. `push-guard.sh` runs before every shell command of a session the launcher spawned — the launch marks it, and a session the operator starts by hand is never touched — and refuses a force push other than a rebase's `--force-with-lease=<branch>:<sha read>`, the one force the review rules allow (`skills/orchestrator/references/review.md`, « Review on evidence »). It reads text, so a push hidden inside a string another program runs passes; its header says which shapes it cannot see. `stop-gate.sh` runs when an orchestrator's session ends a turn — its name, launched with or given by a rename, starts with `Orch :`, decided from the session's own tty before any call to the launcher's listing; every other session is left alone — and refuses the stop, at most once per turn, unless something will wake the orchestrator: a busy agent of its own chain, a question declared blocking on the message's last line (`waiting: operator — blocks: <what it blocks>`), or `waiting: done` with no checkout of the project, no agent of its own and no open row in the dispatch records the session registered (`dispatch-record.sh` registers its record on every command, `summary` lists the open rows). The machine line is matched after normalisation of its markup, dash and spacing. When the stop passes that check, each of the operator's own open pull requests whose head moved since the hook last reported it is read with `gh pr checks`, and checks pending or failing refuse the stop once per head with the real state; a head with no checks yet is not recorded. It reads facts, never the words of the message; its own failures let the stop pass and are logged. Its spec is `docs/specs/2026-10-01-stop-gate-design.md`.
 
 ### 4.4 The state directory
 
-`${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/` holds what the plugin keeps between sessions: the tap's installed copy and the status line it replaced (section 3.4); `ctx/`, the tap files and the gate's markers (sections 3, 32); `models.json`, the operator's tier map (section 10); `mcp.json`, the operator's server catalogue (section 42); `chains/`, one chain file per orchestrator tty (sections 21, 26, 34); `prompts/`, the files each launch was made from (section 45); and the tab tooling's Python environment (section 14). `ORCHESTRATOR_STATE_DIR` overrides this path for the gauge, the tap and the launcher; `install.sh`, `uninstall.sh` and the context gate hook build it from the host configuration directory directly and do not read that override. Three things live elsewhere on purpose: the trust record is the host's own file (section 31), the dispatch record lives with the project being built (section 13), and the checkouts live under the workspace root (section 30).
+`${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/` holds what the plugin keeps between sessions: the tap's installed copy and the status line it replaced (section 3.4); `ctx/`, the tap files and the gate's markers (sections 3, 32); `models.json`, the operator's tier map (section 10); `mcp.json`, the operator's server catalogue (section 42); `chains/`, one chain file per orchestrator tty (sections 21, 26, 34); `prompts/`, the files each launch was made from (section 45); `stop-gate.log`, one line per stop the stop gate refused, per `blocks:` stop and per failure of its own, and `stop-gate/`, the pull request heads it last reported, per session (section 4.3); `records/`, per host session, the dispatch records it touched, which the stop gate reads for open rows; and the tab tooling's Python environment (section 14). `ORCHESTRATOR_STATE_DIR` overrides this path for the gauge, the tap, the launcher and the stop gate; `install.sh`, `uninstall.sh` and the context gate hook build it from the host configuration directory directly and do not read that override. Three things live elsewhere on purpose: the trust record is the host's own file (section 31), the dispatch record lives with the project being built (section 13), and the checkouts live under the workspace root (section 30).
 
 ## 5. Templates
 
