@@ -13,7 +13,7 @@
       "name": "claude-statusbar",
       "source": "./",
       "description": "Two-line status bar: directory, enriched git, PR, model, session name, context and 5h/7d quotas read natively from the stdin payload.",
-      "version": "1.0.1",
+      "version": "1.1.0",
       "author": {
         "name": "Lounis Bou"
       }
