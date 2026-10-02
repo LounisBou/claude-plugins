@@ -5,12 +5,13 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from bugs_bot.channel import Channel, mask
+from bugs_bot.channel import Channel, ChatId
+from bugs_bot.channels import mask
 from bugs_bot.errors import BugsError
 from bugs_bot.store import Store, load_report, write_json
 
 
-def set_reaction(channel: Channel, chat_id: int, report: dict, emoji: str) -> None:
+def set_reaction(channel: Channel, chat_id: ChatId, report: dict, emoji: str) -> None:
     """Put ``emoji`` on the report's first message and record the outcome in ``report``.
 
     A failure is recorded (not raised): the report must survive a refused reaction,
@@ -32,7 +33,7 @@ def set_reaction(channel: Channel, chat_id: int, report: dict, emoji: str) -> No
     state["error"] = None
 
 
-def retry_pending_reactions(channel: Channel, store: Store, chat_id: int) -> None:
+def retry_pending_reactions(channel: Channel, store: Store, chat_id: ChatId) -> None:
     """Land every reaction that is wanted but not applied yet, in the chat each report was written in.
 
     ``chat_id`` is the project's current chat, used for a report that records none.
@@ -52,7 +53,7 @@ def retry_pending_reactions(channel: Channel, store: Store, chat_id: int) -> Non
 
 
 def move_to(
-    channel: Channel, store: Store, chat_id: int, report_id: str, status: str, emoji: str
+    channel: Channel, store: Store, chat_id: ChatId, report_id: str, status: str, emoji: str
 ) -> tuple[int, Path, dict, BugsError | None]:
     """Set a report's status and its reaction; the status is saved before any network call.
 

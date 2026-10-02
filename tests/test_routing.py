@@ -67,7 +67,7 @@ def test_a_first_group_is_found_by_init_while_pull_runs_with_an_empty_registry(r
     given = InitArgs(project="first", agent_title="Agent : Famille")
     assert cmd_init(None, machine, repo, given, pull_running=True) == 0
 
-    assert machine.registry.entries()[FAMILY_ID].project == "first"
+    assert machine.registry.entries()[("telegram", FAMILY_ID)].project == "first"
 
 
 def test_pull_asks_only_for_messages(run, bound):
@@ -355,7 +355,7 @@ def test_the_registry_and_the_project_file_follow_a_migrated_chat(run, bound, tm
     assert run("pull", transport=tg) == 0
 
     registry = Registry(bound.parent / "projects.json")
-    assert set(registry.entries()) == {FAMILY_ID}
+    assert set(registry.entries()) == {("telegram", FAMILY_ID)}
     assert json.loads((tmp_path / "repo-demo" / PROJECT_FILE).read_text())["group"]["chat_id"] == FAMILY_ID
     [rep] = reports(bound)
     assert report_json(rep)["text"] == "après la migration"
@@ -412,7 +412,7 @@ def test_a_project_file_that_cannot_be_rebound_fails_the_pull_and_leaves_the_reg
     captured = capsys.readouterr()
     assert str(path) in captured.err
     assert "rebound" not in captured.out
-    assert set(Registry(bound.parent / "projects.json").entries()) == {GROUP_ID}
+    assert set(Registry(bound.parent / "projects.json").entries()) == {("telegram", GROUP_ID)}
     assert read_offset(bound) is None
 
 
@@ -430,7 +430,7 @@ def test_a_project_file_that_cannot_be_written_fails_the_pull_and_leaves_the_reg
     captured = capsys.readouterr()
     assert str(tmp_path / "repo-demo" / PROJECT_FILE) in captured.err
     assert "rebound" not in captured.out
-    assert set(Registry(bound.parent / "projects.json").entries()) == {GROUP_ID}
+    assert set(Registry(bound.parent / "projects.json").entries()) == {("telegram", GROUP_ID)}
     assert read_offset(bound) is None
 
 
@@ -444,7 +444,7 @@ def test_a_followed_migration_is_idempotent_when_the_pull_is_retried(run, bound,
 
     assert run("pull", transport=tg) == 0
 
-    assert set(Registry(bound.parent / "projects.json").entries()) == {FAMILY_ID}
+    assert set(Registry(bound.parent / "projects.json").entries()) == {("telegram", FAMILY_ID)}
     assert json.loads(path.read_text())["group"]["chat_id"] == FAMILY_ID
     assert "rebound" in capsys.readouterr().out
 

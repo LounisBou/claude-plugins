@@ -26,13 +26,17 @@ def card_key(author_id: int | str | None, author: str) -> str:
 def person_ref(store: Store, ref: str) -> tuple[str, str | None, int | str | None]:
     """Resolve a report id or an author id to ``(card key, display name, author id)``.
 
-    The key is the author id; a report without one falls back to its author's name.
+    The key is the author id; a report without one falls back to its author's name. An author id is
+    digits (Telegram's) or the key of an existing card (a Slack member id, ``U…``).
 
     Raises:
-        BugsError: If ``ref`` is neither digits nor the id of an existing report.
+        BugsError: If ``ref`` is neither digits, nor a card's key, nor the id of an existing report.
     """
     if re.fullmatch(r"\d+", ref):
         return ref, None, int(ref)
+    card = load_person(store, ref) if re.fullmatch(r"[0-9A-Za-z]+", ref) else None
+    if card is not None:
+        return ref, card.get("name"), card.get("author_id")
     _, report = load_report(store, ref)
     return card_key(report.get("author_id"), report["author"]), report["author"], report.get("author_id") or None
 

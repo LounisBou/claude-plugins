@@ -24,3 +24,10 @@ First release: the single-project Telegram bug relay, made a generic Claude Code
   offset copied exactly and the token written with mode 0600.
 - `tests/e2e.sh`: two projects driven through `bin/bugs-bot` against a fake Bot API.
 - `BUGS_BOT_API_ROOT`, to point the Telegram channel at that fake (end-to-end runs only).
+- Slack beside Telegram, ONE channel per project chosen at `init` (`--channel slack`): the project
+  file's `channel`, a registry keyed `<channel>:<chat_id>`, Slack read by polling
+  (`conversations.history` since a cursor per channel, `conversations.replies` of the open reports'
+  threads), a thread reply recorded on its report as an answer (`wait` prints `answer <id>`),
+  HTTP 429 honouring `Retry-After`; Telegram's held request cut to 10 s while a Slack project is
+  registered; `doctor` asks each registered platform whether it accepts its token.
+- `BUGS_BOT_SLACK_API_ROOT`, to point the Slack channel at a fake (end-to-end runs only).

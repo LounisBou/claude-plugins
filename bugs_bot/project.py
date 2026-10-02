@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from bugs_bot.channel import ChatId
 from bugs_bot.errors import BugsError
 from bugs_bot.jsonio import write_json
 
@@ -21,6 +22,13 @@ PROJECT_ID = re.compile(r"[a-z0-9-]+")
 DEFAULT_GATE_TOKENS = 300_000
 DEFAULT_FOLLOW_UP_HOURS = 24
 DEFAULT_LANGUAGE = "fr"
+DEFAULT_CHANNEL = "telegram"
+# Each channel kind and the shape of its chat ids: Telegram's are integers, Slack's a channel id
+# (« C… » public, « G… » private). The one table here that grows with a new channel kind.
+CHAT_IDS: dict[str, tuple[type, re.Pattern[str] | None]] = {
+    "telegram": (int, None),
+    "slack": (str, re.compile(r"[CG][A-Z0-9]+")),
+}
 
 
 @dataclass(frozen=True)
@@ -28,7 +36,7 @@ class Project:
     """One project, as its file declares it; ``repo`` is the directory holding the file."""
 
     project: str
-    chat_id: int
+    chat_id: ChatId
     title: str
     agent_title: str
     repo: Path
@@ -38,6 +46,7 @@ class Project:
     language: str = DEFAULT_LANGUAGE
     gate_tokens: int = DEFAULT_GATE_TOKENS
     follow_up_hours: float = DEFAULT_FOLLOW_UP_HOURS
+    channel: str = DEFAULT_CHANNEL
 
 
 def find_project_file(start: Path) -> Path | None:
@@ -51,6 +60,14 @@ def find_project_file(start: Path) -> Path | None:
 
 def _is_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _valid_chat_id(channel: str, chat_id: Any) -> bool:
+    """Tell whether ``chat_id`` has the shape of a chat id of ``channel``."""
+    kind, shape = CHAT_IDS[channel]
+    if kind is int:
+        return _is_int(chat_id)
+    return isinstance(chat_id, str) and (shape is None or shape.fullmatch(chat_id) is not None)
 
 
 def load_project(path: Path) -> Project:
@@ -86,8 +103,12 @@ def build_project(data: dict, repo: Path) -> Project:
     group = data.get("group")
     if not isinstance(group, dict):
         raise BugsError("group must be an object with chat_id and title")
-    if not _is_int(group.get("chat_id")):
-        raise BugsError(f"group.chat_id must be an integer, got {group.get('chat_id')!r}")
+    channel = data.get("channel", DEFAULT_CHANNEL)
+    if channel not in CHAT_IDS:
+        raise BugsError(f"channel must be one of {', '.join(CHAT_IDS)}, got {channel!r}")
+    if not _valid_chat_id(channel, group.get("chat_id")):
+        expected = "an integer" if CHAT_IDS[channel][0] is int else f"a {channel} channel id"
+        raise BugsError(f"group.chat_id must be {expected}, got {group.get('chat_id')!r}")
     title = group.get("title")
     if not isinstance(title, str) or not title.strip():
         raise BugsError("group.title must be a non-empty string")
@@ -121,6 +142,7 @@ def build_project(data: dict, repo: Path) -> Project:
         language=language,
         gate_tokens=gate,
         follow_up_hours=hours,
+        channel=channel,
     )
 
 
@@ -135,8 +157,10 @@ def dump_project(project: Project) -> dict:
         data["deploy_url"] = project.deploy_url
     if project.deploy_check is not None:
         data["deploy_check"] = project.deploy_check
+    data["docs"] = list(project.docs)
+    if project.channel != DEFAULT_CHANNEL:
+        data["channel"] = project.channel  # a Telegram project's file keeps the shape it always had
     data |= {
-        "docs": list(project.docs),
         "language": project.language,
         "gate_tokens": project.gate_tokens,
         "follow_up_hours": project.follow_up_hours,
@@ -144,7 +168,7 @@ def dump_project(project: Project) -> dict:
     return data
 
 
-def rebind_chat(path: Path, chat_id: int) -> None:
+def rebind_chat(path: Path, chat_id: ChatId) -> None:
     """Write a new chat id into a project file, after the group was promoted to a supergroup.
 
     Raises:

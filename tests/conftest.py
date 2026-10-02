@@ -48,13 +48,14 @@ def env(tmp_path: Path, bugs_home: Path) -> dict[str, str]:
     return {"BUGS_BOT_ENV_FILE": str(env_file), "BUGS_BOT_HOME": str(bugs_home)}
 
 
-def register(bugs_home: Path, repo: Path, project: str, chat_id: int, title: str = "Bugs") -> Path:
+def register(bugs_home: Path, repo: Path, project: str, chat_id: int | str, title: str = "Bugs", channel: str = "telegram") -> Path:
     """Write ``repo``'s project file and register it, as ``init`` will; return ``repo``."""
     repo.mkdir(parents=True, exist_ok=True)
-    (repo / PROJECT_FILE).write_text(
-        json.dumps({"project": project, "group": {"chat_id": chat_id, "title": title}, "agent_title": f"Agent : {title}"})
-    )
-    Registry(bugs_home / "projects.json").add(chat_id, project, repo)
+    data = {"project": project, "group": {"chat_id": chat_id, "title": title}, "agent_title": f"Agent : {title}"}
+    if channel != "telegram":
+        data["channel"] = channel
+    (repo / PROJECT_FILE).write_text(json.dumps(data))
+    Registry(bugs_home / "projects.json").add(channel, chat_id, project, repo)
     return repo
 
 

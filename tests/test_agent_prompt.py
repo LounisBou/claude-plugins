@@ -131,3 +131,20 @@ def test_a_free_phrase_is_not_a_session_name(run, bound, home, capsys):
     assert run("agent-prompt", "--launcher", LAUNCHER, "--predecessor", phrase, "--predecessor-tty", "/dev/ttys004") != 0
 
     assert not (home / "state.json").exists()
+
+
+def test_agent_md_tells_what_to_do_with_an_answer_in_a_thread():
+    from bugs_bot.agent import AGENT_MD
+
+    text = AGENT_MD.read_text()
+    assert "`answer <id>`" in text and "never a report of its own" in text and "`show <id>` prints the reply" in text
+
+
+def test_the_prompt_names_the_platform_the_group_is_on(tmp_path):
+    from bugs_bot.agent import project_facts
+    from bugs_bot.project import Project
+
+    slack = Project(project="sla", chat_id="C0FAKE01", title="sla-bugs", agent_title="Agent : Sla", repo=tmp_path, channel="slack")
+
+    assert '- Slack group: "sla-bugs"' in project_facts(slack)
+    assert '- Telegram group: "sla-bugs"' in project_facts(Project(project="t", chat_id=-1, title="sla-bugs", agent_title="A", repo=tmp_path))

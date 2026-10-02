@@ -170,7 +170,7 @@ def test_init_with_one_discovered_group_writes_the_file_and_registers(repo, mach
 
     project = load_project(repo / PROJECT_FILE)
     assert (project.project, project.chat_id, project.title, project.agent_title) == ("demo", GROUP_ID, "TM Bugs", "Agent : Demo Bugs")
-    assert machine.registry.project_for(GROUP_ID).project == "demo"
+    assert machine.registry.project_for("telegram", GROUP_ID).project == "demo"
     assert machine.load_offset() is None
     assert all("offset" not in p for p in tg.updates_calls())
     out = capsys.readouterr().out
@@ -252,13 +252,13 @@ def test_init_title_without_chat_id_is_refused(repo, machine):
 
 
 def test_init_refuses_a_chat_held_by_another_project_and_writes_nothing(repo, machine, tmp_path):
-    machine.registry.add(GROUP_ID, "other", tmp_path / "elsewhere")
+    machine.registry.add("telegram", GROUP_ID, "other", tmp_path / "elsewhere")
 
     with pytest.raises(BugsError, match="other"):
         cmd_init(None, machine, repo, args(), pull_running=False)
 
     assert not (repo / PROJECT_FILE).exists()
-    assert machine.registry.project_for(GROUP_ID).project == "other"
+    assert machine.registry.project_for("telegram", GROUP_ID).project == "other"
 
 
 # -- init: discovery outcomes (the cases of the former `bind`) --------------------
@@ -317,7 +317,7 @@ def test_init_a_migrated_chat_is_dropped_and_the_remaining_one_chosen(repo, mach
 
 
 def test_init_does_not_offer_a_group_another_project_already_holds(repo, machine, tmp_path):
-    machine.registry.add(OTHER_GROUP_ID, "other", tmp_path / "elsewhere")
+    machine.registry.add("telegram", OTHER_GROUP_ID, "other", tmp_path / "elsewhere")
     channel, _ = channel_with(message(10, 100, text="a"), message(11, 5, chat_id=OTHER_GROUP_ID, title="Famille"))
 
     assert cmd_init(channel, machine, repo, args(chat_id=None, title=None), pull_running=False) == 0
@@ -362,7 +362,7 @@ def test_init_rerun_updates_the_file_keeps_unspecified_values_and_never_duplicat
     assert project.language == "en"
     assert (project.project, project.chat_id, project.agent_title) == ("demo", GROUP_ID, "Agent : Demo Bugs")
     assert project.deploy_url == "https://x.example" and project.docs == ("docs/",)
-    assert machine.registry.entries().keys() == {GROUP_ID}
+    assert machine.registry.entries().keys() == {("telegram", GROUP_ID)}
     assert git_exclude_path(repo).read_text().splitlines().count(EXCLUDE_LINE) == 1
 
 
@@ -371,7 +371,7 @@ def test_init_rerun_with_a_new_group_replaces_the_registry_entry(repo, machine):
 
     cmd_init(None, machine, repo, InitArgs(chat_id=OTHER_GROUP_ID, title="Moved"), pull_running=False)
 
-    assert machine.registry.entries().keys() == {OTHER_GROUP_ID}
+    assert machine.registry.entries().keys() == {("telegram", OTHER_GROUP_ID)}
     assert load_project(repo / PROJECT_FILE).title == "Moved"
 
 
@@ -381,7 +381,7 @@ def test_init_rerun_restores_a_missing_registry_entry(repo, machine):
 
     cmd_init(None, machine, repo, InitArgs(), pull_running=False)
 
-    assert machine.registry.project_for(GROUP_ID).project == "demo"
+    assert machine.registry.project_for("telegram", GROUP_ID).project == "demo"
 
 
 def test_init_rerun_does_not_look_for_a_group(repo, machine):
@@ -542,7 +542,7 @@ def test_cli_init_end_to_end(run, repo, bugs_home, no_pull, monkeypatch):
 
     assert code == 0
     assert json.loads((repo / PROJECT_FILE).read_text())["group"] == {"chat_id": GROUP_ID, "title": "Demo Bugs"}
-    assert Registry(bugs_home / "projects.json").project_for(GROUP_ID).repo == repo.resolve()
+    assert Registry(bugs_home / "projects.json").project_for("telegram", GROUP_ID).repo == repo.resolve()
 
 
 def test_cli_init_repo_option_names_the_repository(run, repo, no_pull):

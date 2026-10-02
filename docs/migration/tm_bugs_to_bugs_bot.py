@@ -139,11 +139,14 @@ def check_repo(repo: Path, project: str, chat_id: object) -> None:
     """Check that ``init`` already bound ``repo`` to this project and to the legacy group.
 
     Raises:
-        Refused: If the project file is missing, names another project or another group.
+        Refused: If the project file is missing, names another project, another channel than Telegram
+            (the legacy group's), or another group.
     """
     data = read_json_object(repo / PROJECT_FILE, "project file")
     if data.get("project") != project:
         raise Refused(f"{repo / PROJECT_FILE} is for project {data.get('project')!r}, not {project!r}")
+    if data.get("channel", "telegram") != "telegram":
+        raise Refused(f"{repo / PROJECT_FILE} is bound to a {data['channel']!r} channel, the legacy group is on Telegram")
     group = data.get("group")
     bound = group.get("chat_id") if isinstance(group, dict) else None
     if chat_id is not None and bound != chat_id:

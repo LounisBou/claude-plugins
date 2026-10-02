@@ -14,9 +14,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from bugs_bot.channel import Transport
+from bugs_bot.channels import channel_for, mask, token_problem
 from bugs_bot.errors import BugsError
+from bugs_bot.project import DEFAULT_CHANNEL
 from bugs_bot.store import Machine, bugs_home
-from bugs_bot.channels import token_problem
 
 MIN_PYTHON = (3, 10)
 ALLOW_RULE = "Bash(bugs-bot:*)"
@@ -110,11 +112,36 @@ def _python() -> Check:
     return Check("python", tuple(sys.version_info[:2]) >= MIN_PYTHON, f"{version} (needs {'.'.join(map(str, MIN_PYTHON))}+)")
 
 
-def _token(env: Mapping[str, str]) -> Check:
-    problem = token_problem("telegram", env)
+def _entries(env: Mapping[str, str]) -> dict:
+    try:
+        return Machine(bugs_home(env)).registry.entries()
+    except BugsError:
+        return {}  # the registry check says why
+
+
+def _kinds(env: Mapping[str, str]) -> list[str]:
+    """Return the channel kinds whose token is needed: those of the registered projects, else Telegram's."""
+    return sorted({kind for kind, _ in _entries(env)}) or [DEFAULT_CHANNEL]
+
+
+def _token(env: Mapping[str, str], kind: str) -> Check:
+    # Telegram's check keeps the name it always had.
+    name = "token" if kind == DEFAULT_CHANNEL else f"{kind} token"
+    problem = token_problem(kind, env)
     if problem is not None:
-        return Check("token", False, problem)
-    return Check("token", True, "present")
+        return Check(name, False, problem)
+    return Check(name, True, "present")
+
+
+def _bot(env: Mapping[str, str], kind: str, transport: Transport) -> Check:
+    """Ask the platform who the bot is: the token is not only present but accepted."""
+    secret = None
+    try:
+        channel = channel_for(kind, env, transport)
+        secret = channel.secret
+        return Check(f"{kind} bot", True, f"answering as {channel.whoami()}")
+    except Exception as exc:  # noqa: BLE001 - a check fails, doctor goes on; the token never shows
+        return Check(f"{kind} bot", False, mask(str(exc), secret))
 
 
 def _registry(env: Mapping[str, str]) -> Check:
@@ -171,18 +198,25 @@ def _allow_rule(claude: Path) -> Check:
     return Check("allow rule", False, f"{ALLOW_RULE} not allowed{note}: the operator adds it, {PERMISSIONS_LINE}")
 
 
-def run_checks(env: Mapping[str, str], ps_output: str | BugsError) -> list[Check]:
+def run_checks(env: Mapping[str, str], ps_output: str | BugsError, transport: Transport | None = None) -> list[Check]:
     """Run every check; nothing is written.
 
     Args:
         env: Environment (the ``BUGS_BOT_*`` overrides place every file the checks read).
         ps_output: ``ps -eo pid=,command=`` output, so that tests never read the process table; the
             error when it could not be read, which fails the ``pull`` check and nothing else.
+        transport: To ask each platform with a registered project who the bot is; ``None`` asks none.
     """
     claude = _claude_dir(env)
+    registered = {kind for kind, _ in _entries(env)}
+    tokens = []
+    for kind in _kinds(env):
+        tokens.append(_token(env, kind))
+        if transport is not None and kind in registered and tokens[-1].ok:
+            tokens.append(_bot(env, kind, transport))
     return [
         _python(),
-        _token(env),
+        *tokens,
         _registry(env),
         _pull(ps_output),
         _orchestrator(claude),
@@ -191,17 +225,18 @@ def run_checks(env: Mapping[str, str], ps_output: str | BugsError) -> list[Check
     ]
 
 
-def cmd_doctor(env: Mapping[str, str], ps_output: str | BugsError, install: bool) -> int:
+def cmd_doctor(env: Mapping[str, str], ps_output: str | BugsError, install: bool, transport: Transport | None = None) -> int:
     """Print one line per check; return 0 only when all pass.
 
     Args:
         env: Environment.
         ps_output: The process table, as ``run_checks`` takes it.
         install: Install the launcher first (the first run, when it does not exist yet).
+        transport: To ask each platform with a registered project who the bot is.
     """
     if install:
         print(f"installed {install_launcher(_launcher_dir(env))}")
-    checks = run_checks(env, ps_output)
+    checks = run_checks(env, ps_output, transport)
     for check in checks:
         print(f"{'ok  ' if check.ok else 'FAIL'}  {check.name}: {check.detail}")
     return 0 if all(check.ok for check in checks) else 1

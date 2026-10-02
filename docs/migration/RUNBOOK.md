@@ -38,6 +38,7 @@ python3 - "$R" <<'PY'
 import json, sys
 r = sys.argv[1]
 print("offset ", json.load(open(f"{r}/legacy/state.json")).get("offset"), json.load(open(f"{r}/home/state.json"))["offset"])
+print("registry", "telegram:" + str(json.load(open(f"{r}/legacy/state.json"))["chat_id"]), *json.load(open(f"{r}/home/projects.json")))
 PY
 ls "$R/legacy/inbox" | wc -l; ls "$R/home/torrentmate/inbox" | wc -l       # reports
 ls "$R/legacy/people" | wc -l; ls "$R/home/torrentmate/people" | wc -l     # people cards
@@ -50,7 +51,7 @@ Then delete the copy, which holds the token: `rm -rf "$R"` and `ls -d "$R"` must
 A refusal (`migration refused: …`) changes nothing: read its line, fix, run again. The script refuses a
 non-empty project directory, an existing `<bugs-home>/state.json` or `.env`, a target that is a file, an
 unreadable source, a non-UTF-8 `.env`, an unreadable `settings.json`, a project file naming another
-project or group, and an offset that is not a natural number. A write that fails half-way (disk full,
+project or group, a project file bound to another channel than Telegram, and an offset that is not a natural number. A write that fails half-way (disk full,
 permissions) exits 1 too, and lists the paths that now exist: deal with them (remove a copy; move a
 moved directory back to the legacy home) before running again. The offset and the token are written
 last, so such a failure leaves neither.

@@ -86,6 +86,13 @@ def test_load_applies_the_defaults_to_a_minimal_file(tmp_path):
         ({"language": 3}, "language"),
         ({"deploy_url": 3}, "deploy_url"),
         ({"deploy_check": 3}, "deploy_check"),
+        ({"channel": "irc"}, "channel"),
+        ({"channel": 3}, "channel"),
+        ({"channel": "slack"}, "chat_id"),  # a Slack channel id is a string
+        ({"channel": "slack", "group": {"chat_id": "", "title": "T"}}, "chat_id"),
+        ({"channel": "slack", "group": {"chat_id": "C12 3", "title": "T"}}, "chat_id"),
+        ({"channel": "slack", "group": {"chat_id": "U123", "title": "T"}}, "chat_id"),  # a user, not a channel
+        ({"channel": "telegram", "group": {"chat_id": "C123", "title": "T"}}, "chat_id"),
     ],
 )
 def test_load_refuses_an_invalid_value_and_names_the_key(tmp_path, change, key):
@@ -152,7 +159,7 @@ def test_resolve_by_name_goes_through_the_registry_and_ignores_cwd(tmp_path):
     write_project(repo, MINIMAL)
     write_project(tmp_path / "elsewhere", MINIMAL | {"project": "other"})
     registry = Registry(tmp_path / "projects.json")
-    registry.add(-100123, "demo", repo)
+    registry.add("telegram", -100123, "demo", repo)
     project = resolve_project("demo", tmp_path / "elsewhere", registry)
     assert project.project == "demo" and project.repo == repo
 
@@ -169,7 +176,7 @@ def test_resolve_refuses_an_unregistered_name(tmp_path):
 
 def test_resolve_refuses_a_registered_project_whose_file_is_gone(tmp_path):
     registry = Registry(tmp_path / "projects.json")
-    registry.add(-1, "demo", tmp_path / "gone")
+    registry.add("telegram", -1, "demo", tmp_path / "gone")
     with pytest.raises(BugsError, match="demo"):
         resolve_project("demo", tmp_path, registry)
 
@@ -178,6 +185,25 @@ def test_resolve_by_name_refuses_a_file_that_declares_another_project(tmp_path):
     repo = tmp_path / "repo"
     write_project(repo, MINIMAL | {"project": "other"})
     registry = Registry(tmp_path / "projects.json")
-    registry.add(-100123, "demo", repo)
+    registry.add("telegram", -100123, "demo", repo)
     with pytest.raises(BugsError, match="demo.*other|other.*demo"):
         resolve_project("demo", tmp_path, registry)
+
+
+def test_a_file_without_channel_reads_as_telegram(tmp_path):
+    assert load_project(write_project(tmp_path, MINIMAL)).channel == "telegram"
+
+
+@pytest.mark.parametrize("chat_id", ["C0123ABCD", "G0123ABCD"])
+def test_a_slack_project_takes_its_channel_id_as_a_string(tmp_path, chat_id):
+    data = MINIMAL | {"group": {"chat_id": chat_id, "title": "demo-bugs"}, "channel": "slack"}
+
+    project = load_project(write_project(tmp_path, data))
+
+    assert (project.channel, project.chat_id) == ("slack", chat_id)
+    assert dump_project(project) == {**data, "docs": [], "language": "fr", "gate_tokens": DEFAULT_GATE_TOKENS, "follow_up_hours": 24}
+
+
+def test_dump_writes_channel_only_when_it_is_not_telegram(tmp_path):
+    # A Telegram project's file stays as it always was, key for key.
+    assert "channel" not in dump_project(load_project(write_project(tmp_path, MINIMAL | {"channel": "telegram"})))

@@ -12,7 +12,8 @@ from fake_channel import batch as fake_batch
 from samples import BASE_DATE, GROUP_ID, OTHER_GROUP_ID, TOKEN, FakeTelegram, message
 
 from bugs_bot import people, pull
-from bugs_bot.channel import Attachment, Author, Batch, InboundMessage, mask
+from bugs_bot.channel import Attachment, Author, Batch, InboundMessage
+from bugs_bot.channels import mask
 from bugs_bot.channels import channel_for, token_problem
 from bugs_bot.errors import BugsError
 from bugs_bot.init import discover_groups
@@ -207,11 +208,37 @@ def test_the_machine_keeps_the_telegram_cursor_as_the_offset_key(bugs_home):
     assert machine.load_offset() == 25
 
 
-def test_the_machine_refuses_a_cursor_of_an_unknown_kind(bugs_home):
+SLACK_CURSOR = {"C1": {"ts": "1790929800.000100", "threads": {"1790929700.000100": "1790929750.000200"}}}
+
+
+def test_the_machine_keeps_one_cursor_per_kind_side_by_side(bugs_home):
+    machine = Machine(bugs_home)
+    machine.save_cursor("telegram", {"offset": 25})
+    machine.save_cursor("slack", SLACK_CURSOR)
+    machine.save_cursor("telegram", {"offset": 26})
+
+    assert json.loads((bugs_home / "state.json").read_text()) == {"offset": 26, "slack": SLACK_CURSOR}
+    assert machine.load_cursor("slack") == SLACK_CURSOR
+    assert machine.load_cursor("telegram") == {"offset": 26}
+
+
+@pytest.mark.parametrize("state", [None, {}, {"offset": None}, {"slack": SLACK_CURSOR}])
+def test_no_cursor_has_one_form_whether_the_file_or_the_kind_is_missing(bugs_home, state):
+    if state is not None:
+        bugs_home.mkdir(parents=True)
+        (bugs_home / "state.json").write_text(json.dumps(state))
+
+    assert Machine(bugs_home).load_cursor("telegram") is None
+    if not (state or {}).get("slack"):
+        assert Machine(bugs_home).load_cursor("slack") is None
+
+
+def test_a_misshapen_cursor_is_never_guessed_around(bugs_home):
+    bugs_home.mkdir(parents=True)
+    (bugs_home / "state.json").write_text(json.dumps({"slack": ["C1"]}))
+
     with pytest.raises(BugsError, match="slack"):
         Machine(bugs_home).load_cursor("slack")
-    with pytest.raises(BugsError, match="slack"):
-        Machine(bugs_home).save_cursor("slack", {})
 
 
 # -- administrators -----------------------------------------------------------------------------
@@ -392,7 +419,7 @@ def test_a_migration_rebinds_the_project_and_its_old_messages_follow(tmp_path, b
 
     pull.cmd_pull(channel, machine, BASE_DATE)
 
-    assert set(machine.registry.entries()) == {GROUP_ID}
+    assert set(machine.registry.entries()) == {("telegram", GROUP_ID)}
     assert json.loads((repo / PROJECT_FILE).read_text())["group"]["chat_id"] == GROUP_ID
     [report] = machine.project_store("demo").reports()
     assert report[2]["chat_id"] == -555  # recorded in the chat it was sent in

@@ -40,7 +40,7 @@ def same_person(report: dict, author_id: int | str | None, author: str) -> bool:
     return bool(author) and report.get("author") == author
 
 
-def clear_answered(store: Store, author_id: int | None, author: str, since: float) -> list[str]:
+def clear_answered(store: Store, author_id: int | str | None, author: str, since: float) -> list[str]:
     """Clear the waits a new message answers: that person's, posted before the message.
 
     Returns:

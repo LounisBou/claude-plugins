@@ -1,5 +1,6 @@
 #!/bin/sh
-# End-to-end run of bin/bugs-bot against a fake Bot API on loopback, two projects, a temporary home.
+# End-to-end run of bin/bugs-bot against a fake Bot API and a fake Slack Web API on loopback: two
+# Telegram projects and one Slack project, a temporary home.
 #
 #   sh tests/e2e.sh                    prints "E2E OK" and exits 0
 #   E2E_FORCE_FAIL=1 sh tests/e2e.sh   fails half-way on purpose, to show the server is killed anyway
@@ -12,15 +13,16 @@ PY=${E2E_PYTHON:-python3}
 TOKEN="123456789:AAFakeTokenFakeTokenFakeTokenFake123"
 WORK=""
 SERVER_PID=""
+SLACK_PID=""
 
 # Runs on every way out: success, a failed command under `set -e`, a failed check, a signal.
 cleanup() {
     status=$?
     trap '' EXIT INT TERM HUP
-    if [ -n "$SERVER_PID" ]; then
-        kill "$SERVER_PID" 2>/dev/null || true
-        wait "$SERVER_PID" 2>/dev/null || true
-    fi
+    for pid in $SERVER_PID $SLACK_PID; do
+        kill "$pid" 2>/dev/null || true
+        wait "$pid" 2>/dev/null || true
+    done
     [ -z "$WORK" ] || rm -rf "$WORK"
     exit "$status"
 }
@@ -41,7 +43,8 @@ BUGS_BOT_ENV_FILE="$WORK/token.env"
 BUGS_BOT_CLAUDE_DIR="$WORK/claude"
 BUGS_BOT_LAUNCHER_DIR="$WORK/launcher"
 export BUGS_BOT_HOME BUGS_BOT_ENV_FILE BUGS_BOT_CLAUDE_DIR BUGS_BOT_LAUNCHER_DIR
-printf 'TELEGRAM_BOT_TOKEN=%s\n' "$TOKEN" > "$BUGS_BOT_ENV_FILE"
+SLACK_TOKEN="xoxb-0000-1111-FakeSlackTokenForE2E"
+printf 'TELEGRAM_BOT_TOKEN=%s\nSLACK_BOT_TOKEN=%s\n' "$TOKEN" "$SLACK_TOKEN" > "$BUGS_BOT_ENV_FILE"
 
 "$PY" "$ROOT/tests/http_server_fake_bot_api.py" "$WORK/port" "$WORK/calls.log" "$TOKEN" &
 SERVER_PID=$!
@@ -54,6 +57,18 @@ done
 PORT=$(cat "$WORK/port")
 BUGS_BOT_API_ROOT="http://127.0.0.1:$PORT"
 export BUGS_BOT_API_ROOT
+
+"$PY" "$ROOT/tests/http_server_fake_slack_api.py" "$WORK/slack-port" "$WORK/slack-calls.log" "$SLACK_TOKEN" &
+SLACK_PID=$!
+tries=0
+while [ ! -s "$WORK/slack-port" ]; do
+    tries=$((tries + 1))
+    [ "$tries" -le 100 ] || fail "the fake Slack API did not start"
+    sleep 0.1
+done
+SPORT=$(cat "$WORK/slack-port")
+BUGS_BOT_SLACK_API_ROOT="http://127.0.0.1:$SPORT/api"
+export BUGS_BOT_SLACK_API_ROOT
 
 bb() { "$PY" "$ROOT/bin/bugs-bot" "$@"; }
 
@@ -143,5 +158,53 @@ bb handover read | grep -q "Ana waits" || fail "handover read lost the note"
 second=$(bb handover read)
 check "second read" "${second%%: /*}" "no unread handover note; last archived"
 check "beta has no note" "$(bb handover read --project beta)" "no handover note"
+
+# slack: one project on a Slack channel beside the Telegram ones.
+# slack_post CHANNEL SECONDS_FROM_NOW TEXT [THREAD_TS]: Ana posts in a channel (in a thread when given); prints the ts.
+slack_post() {
+    "$PY" - "$SPORT" "$@" <<'PYEOF'
+import json, sys, time, urllib.request
+port, channel, later, text = sys.argv[1:5]
+ts = f"{time.time() + float(later):.6f}"
+message = {"channel": channel, "ts": ts, "user": "U0ANA", "text": text}
+if len(sys.argv) > 5:
+    message["thread_ts"] = sys.argv[5]
+urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{port}/_post", json.dumps([message]).encode())).read()
+print(ts)
+PYEOF
+}
+slack_calls() { grep -c "\"method\": \"$1\"" "$WORK/slack-calls.log" || true; }
+
+mkdir "$WORK/repo-gamma"
+git -C "$WORK/repo-gamma" init -q
+GAMMA=C0GAMMA
+PARENT=$(slack_post $GAMMA 0 "gamma: export fails")
+bb init --channel slack --project gamma --agent-title "Agent : Gamma" --repo "$WORK/repo-gamma" > "$WORK/init-gamma.out"
+grep -q "registered $GAMMA -> gamma" "$WORK/init-gamma.out" || fail "init gamma did not register its Slack channel"
+"$PY" - "$BUGS_BOT_HOME/projects.json" <<'PYEOF' || fail "the registry does not key each project by its channel"
+import json, sys
+keys = set(json.load(open(sys.argv[1])))
+assert keys == {"telegram:-1001", "telegram:-1002", "slack:C0GAMMA"}, keys
+PYEOF
+bb pull
+check "gamma reports" "$(bb list --project gamma | wc -l | tr -d ' ')" 1
+check "alpha untouched by gamma" "$(bb list --project alpha | wc -l | tr -d ' ')" 1
+check "slack reactions" "$(slack_calls reactions.add)" 1
+cd "$WORK/repo-gamma"
+GID=$(bb list | cut -d' ' -f1)
+bb triage "$GID" bug > /dev/null
+bb reply "$GID" "which file?" --mention --awaits > /dev/null
+"$PY" - "$WORK/slack-calls.log" "$PARENT" <<'PYEOF' || fail "reply did not post in the report's thread with a mention"
+import json, sys
+posted = [json.loads(line)["payload"] for line in open(sys.argv[1]) if '"chat.postMessage"' in line]
+assert posted[-1] == {"channel": "C0GAMMA", "text": "<@U0ANA> which file?", "thread_ts": sys.argv[2]}, posted[-1]
+PYEOF
+slack_post $GAMMA 2 "the csv one" "$PARENT" > /dev/null
+bb pull
+check "an answer in the thread is no report" "$(bb list | wc -l | tr -d ' ')" 1
+check "the answer wakes the agent" "$(bb wait --timeout 0)" "answer $GID"
+bb show "$GID" | grep -q "answer 1 .* Ana: the csv one" || fail "show does not print the answer"
+check "a shown answer wakes no more" "$(bb wait --timeout 0)" ""
+cd "$WORK"
 
 echo "E2E OK"

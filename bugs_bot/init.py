@@ -1,4 +1,4 @@
-"""``init`` and ``remove``: bind a repository to a Telegram group, or release it."""
+"""``init`` and ``remove``: bind a repository to its group (a Telegram group, a Slack channel), or release it."""
 
 from __future__ import annotations
 
@@ -9,9 +9,10 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 from bugs_bot.channel import Channel, ChatId
+from bugs_bot.channels import LONG_POLL_KINDS
 from bugs_bot.errors import BugsError
 from bugs_bot.jsonio import write_json
-from bugs_bot.project import PROJECT_FILE, Project, build_project, dump_project, find_project_file, load_project
+from bugs_bot.project import DEFAULT_CHANNEL, PROJECT_FILE, Project, build_project, dump_project, find_project_file, load_project
 from bugs_bot.store import Machine
 
 
@@ -21,7 +22,8 @@ class InitArgs:
 
     project: str | None = None
     agent_title: str | None = None
-    chat_id: int | None = None
+    channel: str | None = None
+    chat_id: ChatId | None = None
     title: str | None = None
     deploy_url: str | None = None
     deploy_check: str | None = None
@@ -82,27 +84,37 @@ def add_exclude(repo: Path) -> bool:
     return True
 
 
-def discover_groups(channel: Channel | None, machine: Machine, pull_running: bool) -> dict[ChatId, dict]:
+def discover_groups(channel: Channel | None, machine: Machine, pull_running: bool, logged: bool = True) -> dict[ChatId, dict]:
     """Return the group chats the bot has seen, by chat id.
 
-    Pull holds the bot's update stream, and a second poller would cut its held request: while it runs
-    only the chats it dropped are known. Otherwise the channel is read from where it stands and the cursor
-    it returns is never saved, so nothing is consumed; its chats are merged with those.
+    On a channel with one reader only (``Channel.exclusive``), Pull holds the bot's messages and a second
+    poller would cut its held request: while it runs only the chats it dropped are known. Otherwise the
+    channel is read from where it stands and the cursor it returns is never saved, so nothing is consumed;
+    its chats are merged with those. Any other channel is simply asked which chats the bot is in.
+
+    ``logged`` says whether the chats Pull dropped are this kind's (without a channel, the caller knows).
     """
-    found = {cid: {"title": item["title"], "type": item["type"]} for cid, item in machine.unregistered().items()}
-    if not pull_running and channel is not None:
+    exclusive = channel.exclusive if channel is not None else logged
+    found = {}
+    if exclusive:
+        found = {cid: {"title": item["title"], "type": item["type"]} for cid, item in machine.unregistered().items()}
+    if channel is not None and not (exclusive and pull_running):
         batch = channel.poll(None, [], 0)
         found |= {cid: {"title": chat.get("title") or "", "type": chat["type"]} for cid, chat in batch.chats.items()}
     return found
 
 
 def _chosen_group(
-    channel: Channel | None, machine: Machine, name: str, pull_running: bool | Callable[[], bool]
+    channel: Channel | None, machine: Machine, kind: str, name: str, pull_running: bool | Callable[[], bool]
 ) -> tuple[ChatId, str] | None:
     """Return the one new group, else say why there is none (or which are there) and return ``None``."""
-    held = {cid for cid, entry in machine.registry.entries().items() if entry.project != name}
-    pull_running = pull_running() if callable(pull_running) else pull_running  # asked only now: only a search needs it
-    groups = {cid: chat for cid, chat in discover_groups(channel, machine, pull_running).items() if cid not in held}
+    held = {cid for (k, cid), entry in machine.registry.entries().items() if k == kind and entry.project != name}
+    if channel.exclusive if channel is not None else kind in LONG_POLL_KINDS:
+        pull_running = pull_running() if callable(pull_running) else pull_running  # asked only now: only a search needs it
+    else:
+        pull_running = False  # a channel read by plain requests is never contended
+    logged = kind in LONG_POLL_KINDS
+    groups = {cid: chat for cid, chat in discover_groups(channel, machine, pull_running, logged).items() if cid not in held}
     if len(groups) == 1:
         (cid, chat), = groups.items()
         return cid, chat["title"]
@@ -111,10 +123,23 @@ def _chosen_group(
             raise BugsError("no bot token to look for the group: pass --chat-id and --title")
         print("bugs-bot: no group found: post one message in the new group, then run init again", file=sys.stderr)
         return None
-    for cid, chat in sorted(groups.items()):
+    for cid, chat in sorted(groups.items(), key=lambda item: str(item[0])):
         print(f"{cid}  {chat['title']}")
     print("bugs-bot: several groups found: pick one with --chat-id and --title", file=sys.stderr)
     return None
+
+
+def init_kind(repo: Path, args: InitArgs) -> str:
+    """Return the channel kind ``init`` works on: the one given, else the project file's, else Telegram.
+
+    A project file that cannot be read counts as none here: ``cmd_init`` says what is wrong with it.
+    """
+    if args.channel:
+        return args.channel
+    try:
+        return load_project(repo / PROJECT_FILE).channel
+    except BugsError:
+        return DEFAULT_CHANNEL
 
 
 def cmd_init(channel: Channel | None, machine: Machine, repo: Path, args: InitArgs, pull_running: bool | Callable[[], bool]) -> int:
@@ -146,9 +171,13 @@ def cmd_init(channel: Channel | None, machine: Machine, repo: Path, args: InitAr
         raise BugsError("--chat-id and --title go together" + (": --title is missing" if args.title is None else ": --chat-id is missing"))
     if existing is None and not args.agent_title:
         raise BugsError("--agent-title is required on a first run")
+    kind = args.channel or (existing.channel if existing else DEFAULT_CHANNEL)
+    if channel is not None and channel.kind != kind:
+        raise BugsError(f"init on {kind} was given a {channel.kind} channel")
     chat_id, title = args.chat_id, args.title
-    if chat_id is None and existing is None:
-        group = _chosen_group(channel, machine, name, pull_running)
+    # A first run, or a move to another channel, needs the group; a re-run keeps the one in the file.
+    if chat_id is None and (existing is None or existing.channel != kind):
+        group = _chosen_group(channel, machine, kind, name, pull_running)
         if group is None:
             return 1
         chat_id, title = group
@@ -156,6 +185,7 @@ def cmd_init(channel: Channel | None, machine: Machine, repo: Path, args: InitAr
     given = {
         key: value
         for key, value in {
+            "channel": kind,
             "chat_id": chat_id,
             "title": title,
             "agent_title": args.agent_title,
@@ -173,7 +203,7 @@ def cmd_init(channel: Channel | None, machine: Machine, repo: Path, args: InitAr
     held = machine.registry.by_project(project.project)
     if held and held[1].repo.resolve() != repo.resolve():
         raise BugsError(f"project {project.project} is already registered for {held[1].repo}: run remove there first")
-    machine.registry.add(project.chat_id, project.project, repo)
+    machine.registry.add(project.channel, project.chat_id, project.project, repo)
     write_json(path, data)
     if add_exclude(repo):
         print(f"added {exclude_line(repo)} to {exclude}")

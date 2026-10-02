@@ -1,6 +1,6 @@
 ---
 name: bugs-bot
-description: Use when a project's bug reports must be read — text and screenshots posted in the project's Telegram group — to collect them, see the screenshots, reply in the group, or mark a report handled; and on `/bugs-bot:start`, to launch the project's agent session that relays new reports to you and answers the group's questions.
+description: Use when a project's bug reports must be read — text and screenshots posted in the project's group (Telegram or Slack) — to collect them, see the screenshots, reply in the group, or mark a report handled; and on `/bugs-bot:start`, to launch the project's agent session that relays new reports to you and answers the group's questions.
 ---
 
 # bugs-bot
@@ -9,7 +9,7 @@ description: Use when a project's bug reports must be read — text and screensh
 
 ## What it is
 
-Testers of a project post bug reports and questions in the project's Telegram group. One bot serves every project, each in its own group; the bot is an administrator of each. The `bugs-bot` command line (Python 3, standard library only) turns those messages into reports on disk, which any session can read.
+Testers of a project post bug reports and questions in the project's group (Telegram or Slack). One bot serves every project, each in its own group; the bot is an administrator of each. The `bugs-bot` command line (Python 3, standard library only) turns those messages into reports on disk, which any session can read.
 
 A project is set up by `/bugs-bot:init` in its repository: it writes the **project file** `.bugs-bot.json` there (never versioned: it is kept out of git through `.git/info/exclude`) — the project id, the group, the agent's title, the deployment URL and an optional deploy check, the docs the agent answers from, the language, the context gate (`gate_tokens`) and the follow-up delay (`follow_up_hours`, default 24) — and registers the group in `~/.bugs-bot/projects.json`.
 
@@ -17,7 +17,7 @@ Data: `~/.bugs-bot/<project>/` — `people/<author_id>.json` (one card per perso
 
 Tags: one bot reaction on each report's first message, each replacing the last — 👀 `seen` (`pull` collected it) → 👨‍💻 `taken` (someone took it up) → 👌 `fixed`. `done` closes a report without a fix and changes no reaction. A refused reaction never loses a report: it is recorded in `report.json` (`reaction.error`) and retried at the next `pull`.
 
-ONE Pull process per machine, under PM2, runs `pull --watch`: Telegram long polling — each `getUpdates` request is held open (50 s) until a message arrives, then the next round starts at once, so a report is in the inbox within a second or two and `list` is current. It routes each group's messages to its project, and logs the chats of no project (that is how `init` finds a new group). It loops by itself rather than through PM2's `cron_restart`, whose double tick around a boundary killed the run it had just started.
+ONE Pull process per machine, under PM2, runs `pull --watch`: Telegram long polling — each `getUpdates` request is held open (50 s) until a message arrives, then the next round starts at once, so a report is in the inbox within a second or two and `list` is current. It routes each group's messages to its project, and logs the chats of no project (that is how `init` finds a new group). It loops by itself rather than through PM2's `cron_restart`, whose double tick around a boundary killed the run it had just started. A Slack project is read in the same process by polling: while one is registered the Telegram request is held 10 s instead of 50, and each round reads every Slack channel's new messages, and the replies in its reports' threads at most once a minute.
 
 ## Commands
 
@@ -27,7 +27,7 @@ Run as the plain `bugs-bot <command>` (the fixed launcher `/bugs-bot:doctor` ins
 | --- | --- |
 | `pull [--every S \| --watch [--poll-timeout S]]` | Collect new messages of every registered group into its project's reports (👀 on each); prints one line per new report. A new message of a person answers what the agent was waiting from them. Retries pending reactions. Deletes `done`/`fixed` reports older than 30 days. Alone: one non-blocking pull. `--watch` long-polls (PM2's form; request held `--poll-timeout` s, default 50, rounds chained with no sleep; the purge runs about hourly); `--every S` pulls then sleeps S s. In both loops a failed round is logged and followed by a backoff (watch: 5 s doubling to 60 s), and SIGINT/SIGTERM end it cleanly, even mid-request. |
 | `list` | Open reports (status `seen` or `taken`), oldest first: id, status, date, first line, image count. |
-| `show <id>` | Full text, the replies already sent, and the absolute path of each image. |
+| `show <id>` | Full text, the replies already sent, the answers posted in the report's thread (Slack; marked read once shown), and the absolute path of each image. |
 | `reply <id> "<text>" [--mention] [--awaits \| --follow-up]` | Post in the group, threaded on the report's first message; recorded in `report.json`. `--mention` opens the text with a mention of the report's author (`@username`, else a `text_mention` on the display name carrying their user id): Telegram notifies them. Refused when the report records neither. `--awaits`: the reply asks the person something and waits for the answer — one question at a time: while their answer is awaited on another open report, nothing is posted, the question is queued on their card (`queued <id>: <author> already awaits <other id>`, exit 0) and the agent's `wait` prints `ask <id>` once they answer. `--follow-up`: the one reminder of a wait older than `follow_up_hours`; refused when none is due. |
 | `edit <id> "<text>" [--reply N] [--mention] [--awaits]` | Rewrite, through `editMessageText`, a reply the bot posted on that report: the last recorded one, or the N-th (1-based, as `show` numbers them). `--mention` rebuilds the author's mention as `reply --mention` does; `--awaits` as for `reply`. The record holds the new text and keeps the previous one in the reply's `edits` (`show` gives the count). Refused: no such reply, a reply without `message_id`, an empty text. « message is not modified » is reported, exit 0. |
 | `delete <id> [--reply N]` | Delete, through `deleteMessage`, a reply the bot posted on that report: the last recorded one, or the N-th (1-based, as `show` numbers them). The reply stays in `report.json`, marked `deleted` with its date (`show` says it); a wait on it is lifted. Refused: no such reply, a reply without `message_id`, one already deleted (a deleted reply cannot be edited either). The bot's own messages only — a tester's message is never edited or deleted. |

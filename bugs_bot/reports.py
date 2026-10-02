@@ -6,6 +6,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from bugs_bot.answers import show_answers
 from bugs_bot.channel import Channel, ChatId, Mention
 from bugs_bot.errors import BugsError
 from bugs_bot.followup import mark_awaiting, mark_reminded, require_due
@@ -50,6 +51,8 @@ def cmd_show(store: Store, report_id: str) -> None:
         count = f" ({edits} edit{'s' if edits > 1 else ''})" if edits else ""
         gone = f" (deleted {reply['deleted']})" if reply.get("deleted") else ""
         print(f"reply {number} {reply['date']}: {reply['text']}{count}{gone}")
+    for line in show_answers(path, report):
+        print(line)
 
 
 def mention_of(report: dict) -> Mention:
@@ -71,7 +74,7 @@ def mention_of(report: dict) -> Mention:
 
 
 def send_reply(
-    channel: Channel, chat_id: int, path: Path, report: dict, text: str, now: float, mention: Mention | None = None
+    channel: Channel, chat_id: ChatId, path: Path, report: dict, text: str, now: float, mention: Mention | None = None
 ) -> None:
     """Post ``text`` threaded on the report's first message and record it in ``report.json``."""
     sent = channel.send(report.get("chat_id", chat_id), text, report["message_ids"][0], mention)
@@ -84,7 +87,7 @@ def send_reply(
 def cmd_reply(
     channel: Channel,
     store: Store,
-    chat_id: int,
+    chat_id: ChatId,
     report_id: str,
     text: str,
     now: float,
@@ -138,7 +141,7 @@ def posted_reply(report: dict, number: int | None, verb: str) -> tuple[int, dict
 def cmd_edit(
     channel: Channel,
     store: Store,
-    chat_id: int,
+    chat_id: ChatId,
     report_id: str,
     text: str,
     now: float,
@@ -209,7 +212,7 @@ def cmd_delete(
     print(f"deleted reply {number} of {report_id}{gone}")
 
 
-def cmd_taken(channel: Channel, store: Store, chat_id: int, report_id: str) -> int:
+def cmd_taken(channel: Channel, store: Store, chat_id: ChatId, report_id: str) -> int:
     """The launcher took the report up: 👨‍💻 reaction, status ``taken``.
 
     Returns:
@@ -226,7 +229,7 @@ def cmd_taken(channel: Channel, store: Store, chat_id: int, report_id: str) -> i
     return say_reaction_pending(channel, failure)
 
 
-def cmd_fixed(channel: Channel, store: Store, chat_id: int, report_id: str, note: str | None, now: float) -> int:
+def cmd_fixed(channel: Channel, store: Store, chat_id: ChatId, report_id: str, note: str | None, now: float) -> int:
     """Mark a report fixed: status, 👌 reaction, and the fix's ref (``note``) recorded as ``fix_ref``.
 
     Nothing is posted: a PR number or a commit means nothing to a tester (spec § 3.5); the agent
@@ -245,7 +248,7 @@ def cmd_fixed(channel: Channel, store: Store, chat_id: int, report_id: str, note
 
 
 def cmd_done(
-    channel: Channel | None, store: Store, chat_id: int, report_id: str, reason: str | None, now: float
+    channel: Channel | None, store: Store, chat_id: ChatId, report_id: str, reason: str | None, now: float
 ) -> None:
     """Close a report without a fix; with ``reason``, say why in a reply. No reaction change."""
     path, report = load_report(store, report_id)
@@ -259,7 +262,7 @@ def cmd_done(
 
 
 def cmd_post(
-    channel: Channel, store: Store, chat_id: int, text: str, now: float, mention_report: str | None = None
+    channel: Channel, store: Store, chat_id: ChatId, text: str, now: float, mention_report: str | None = None
 ) -> None:
     """Post a one-off message in the group (an announcement), recorded in ``state.json``.
 

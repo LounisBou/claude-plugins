@@ -43,10 +43,14 @@ class FakeChannel:
 
     # The machine keeps cursors by kind: the fake stands in for Telegram, whose cursor is {"offset": int}.
     kind = "telegram"
+    exclusive = True
 
-    def __init__(self, *batches: Batch) -> None:
+    def __init__(self, *batches: Batch, kind: str = "telegram") -> None:
+        self.kind = kind
+        self.exclusive = kind == "telegram"
         self.batches = list(batches)
         self.polls: list[tuple[dict | None, list, int]] = []
+        self.threads: list[dict | None] = []  # what each poll was given as ``threads``
         self.calls: list[tuple] = []
         self.files: dict[str, bytes] = {}
         self.fail_files: set[str] = set()
@@ -57,8 +61,9 @@ class FakeChannel:
     def secret(self) -> str:
         return SECRET
 
-    def poll(self, cursor: dict | None, chats: list, timeout: int) -> Batch:
+    def poll(self, cursor: dict | None, chats: list, timeout: int, *, threads: dict | None = None) -> Batch:
         self.polls.append((cursor, list(chats), timeout))
+        self.threads.append(None if threads is None else {chat: list(ids) for chat, ids in threads.items()})
         if self.batches:
             return self.batches.pop(0)
         return Batch(messages=[], chats={}, migrations={}, cursor=cursor or {})
@@ -90,6 +95,10 @@ class FakeChannel:
     def member_count(self, chat_id: ChatId) -> int:
         self.calls.append(("member_count", chat_id))
         return self.members
+
+    def whoami(self) -> str:
+        self.calls.append(("whoami",))
+        return "@fake_bot"
 
     def of(self, name: str) -> list[tuple]:
         """Return the recorded calls of one method."""

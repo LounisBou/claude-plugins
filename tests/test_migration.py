@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from bugs_bot import cli
+from bugs_bot.project import PROJECT_FILE
 from conftest import REPO_ROOT
 from samples import GROUP_ID, TOKEN
 
@@ -295,6 +296,17 @@ def test_the_script_accepts_the_project_file_that_init_writes(migrate, tmp_path)
     ) == 0
 
     assert migrate(repo=fresh) == 0
+    # The project file init writes routes Telegram's group under its channel-qualified key.
+    registry = json.loads((tmp_path / "rehearsal-home" / "projects.json").read_text())
+    assert registry == {f"telegram:{GROUP_ID}": {"project": "demo", "repo": str(fresh.resolve())}}
+
+
+def test_a_repository_bound_to_a_slack_channel_is_refused(migrate, repo):
+    data = json.loads((repo / PROJECT_FILE).read_text())
+    # Same chat id as the legacy state: only the channel tells the two apart.
+    (repo / PROJECT_FILE).write_text(json.dumps({**data, "channel": "slack"}))
+
+    assert migrate() == 1
 
 
 # --- the legacy gate -------------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 ---
-description: Bind this repository to its Telegram bug group and register the project
+description: Bind this repository to its bug group (a Telegram group or a Slack channel) and register the project
 allowed-tools: Bash(bugs-bot:*)
 ---
 
@@ -20,23 +20,29 @@ current value.
      checks);
    - the documentation the agent answers from: files or directories of this
      repository;
-   - the language of the agent's messages in the group (default `fr`).
-3. Ask him to post one message in the new group (the bot must already be a
-   member), then wait for him to say it is done. If the bot's Pull is running,
-   that message is found in Pull's log of dropped chats; otherwise in the bot's
-   pending updates, which are not consumed.
+   - the language of the agent's messages in the group (default `fr`);
+   - where the group is: Telegram (the default) or Slack — ONE per project.
+3. Telegram: ask him to post one message in the new group (the bot must already
+   be a member), then wait for him to say it is done. If the bot's Pull is
+   running, that message is found in Pull's log of dropped chats; otherwise in
+   the bot's pending updates, which are not consumed.
+   Slack: ask him to invite the app into the project's channel (`/invite
+   @<app>`), then wait for him to say it is done; `init` lists the channels the
+   app is a member of.
 4. Run the one line, with only the options he gave:
 
    ```
-   bugs-bot init --project <id> --agent-title "<title>" [--deploy-url <url>] [--deploy-check "<cmd>"] [--docs <path> ...] [--language <l>]
+   bugs-bot init --project <id> --agent-title "<title>" [--channel slack] [--deploy-url <url>] [--deploy-check "<cmd>"] [--docs <path> ...] [--language <l>]
    ```
 
    Exit 1 with a list means several groups were found: show him the list, ask
-   which, and run the line again with `--chat-id <id> --title "<title>"`. Exit 1
-   with « no group found » means his message was not seen: ask him to post again.
+   which, and run the line again with `--chat-id <id> --title "<title>"` (a Slack
+   channel id is `C…` or `G…`, its title the channel's name). Exit 1 with « no
+   group found » means his message was not seen (Telegram) or the app is in no
+   free channel (Slack): ask him to post, or to invite the app, again.
 5. Report what the command printed: the project file written, the registry line,
    and that the file is kept out of git through `.git/info/exclude`. Then point
    him to `/bugs-bot:doctor` if this machine was never checked, and to
    `/bugs-bot:start` to launch the agent.
 
-The project file is local and never committed. Never print the bot token.
+The project file is local and never committed. Never print a token.

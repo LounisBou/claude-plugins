@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import argparse
 
-from bugs_bot.agent import KINDS, WAIT_INTERVAL, WAIT_TIMEOUT
-from bugs_bot.pull import POLL_TIMEOUT
+from bugs_bot.agent import KINDS as REPORT_KINDS, WAIT_INTERVAL, WAIT_TIMEOUT
+from bugs_bot.channels import KINDS
+from bugs_bot.watch import POLL_TIMEOUT
 
 
 def _int_arg(text: str) -> int:
@@ -14,6 +15,16 @@ def _int_arg(text: str) -> int:
         return int(text)
     except ValueError:
         raise argparse.ArgumentTypeError(f"not an integer: {text!r}") from None
+
+
+def _chat_id_arg(text: str) -> int | str:
+    """Parse a chat id: digits are an integer id (Telegram's), anything else a string (a Slack channel id)."""
+    try:
+        return int(text)
+    except ValueError:
+        if not text.strip():
+            raise argparse.ArgumentTypeError("an empty chat id") from None
+        return text
 
 
 def build_parser(description: str) -> argparse.ArgumentParser:
@@ -27,15 +38,18 @@ def build_parser(description: str) -> argparse.ArgumentParser:
     mode = pull.add_mutually_exclusive_group()
     mode.add_argument("--every", type=float, metavar="SECONDS", help="loop: one pull, then sleep, until stopped")
     mode.add_argument(
-        "--watch", action="store_true", help="long polling: Telegram holds each request until a message arrives, no sleep"
+        "--watch", action="store_true", help="long polling: the channel holds each request until a message arrives, no sleep"
     )
     pull.add_argument(
         "--poll-timeout", type=int, default=POLL_TIMEOUT, metavar="SECONDS", help="with --watch: how long a request is held"
     )
-    init = sub.add_parser("init", help="bind this repository to its Telegram group and register the project")
+    init = sub.add_parser("init", help="bind this repository to its group (Telegram) or channel (Slack) and register the project")
     init.add_argument("--project", metavar="ID", help="the project id, [a-z0-9-]+ (required on a first run)")
     init.add_argument("--agent-title", help="the agent session's tab title (required on a first run)")
-    init.add_argument("--chat-id", type=_int_arg, help="the group's chat id (else the one group the bot has seen)")
+    init.add_argument("--channel", choices=KINDS, help="where the group is (default: the project file's, else telegram)")
+    init.add_argument(
+        "--chat-id", "--chat", dest="chat_id", type=_chat_id_arg, help="the group's chat id (else the one group the bot has seen)"
+    )
     init.add_argument("--title", help="the group's title, with --chat-id")
     init.add_argument("--deploy-url", help="where the project is deployed")
     init.add_argument("--deploy-check", metavar="CMD", help="a shell command proving a commit is served")
@@ -73,7 +87,7 @@ def build_parser(description: str) -> argparse.ArgumentParser:
     done.add_argument("--reason", help="why (not a bug, duplicate...); posted as a reply")
     triage = sub.add_parser("triage", parents=[project], help="record whether a report is a bug or a question")
     triage.add_argument("id")
-    triage.add_argument("kind", choices=KINDS)
+    triage.add_argument("kind", choices=REPORT_KINDS)
     wait = sub.add_parser("wait", parents=[project], help="block until an untriaged report lands or a wait falls due; print it")
     wait.add_argument("--timeout", type=float, default=WAIT_TIMEOUT, help="ceiling in seconds (prints nothing)")
     wait.add_argument("--interval", type=float, default=WAIT_INTERVAL, help="seconds between two looks")

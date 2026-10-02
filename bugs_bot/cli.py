@@ -1,4 +1,4 @@
-"""bugs-bot: relay a project's bug reports from its Telegram group to the session that launched the agent.
+"""bugs-bot: relay a project's bug reports from its group (Telegram or Slack) to the session that launched the agent.
 
 Machine-wide: ``pull [--every S | --watch]``. Per project (``--project <p>``, else the project whose
 ``.bugs-bot.json`` is in the current directory or a parent): ``list``, ``show <id>``,
@@ -24,17 +24,16 @@ from pathlib import Path
 
 from bugs_bot import parser
 from bugs_bot.agent import cmd_agent_prompt, cmd_deployed, cmd_overdue, cmd_pending, cmd_triage, cmd_wait
-from bugs_bot.channel import Transport, mask
-from bugs_bot.channels import channel_for, http_transport, token_problem
+from bugs_bot.channel import Transport
+from bugs_bot.channels import channel_for, http_transport, mask, token_problem
 from bugs_bot.doctor import cmd_doctor, pull_processes
 from bugs_bot.errors import BugsError
 from bugs_bot.followup import cmd_escalated
 from bugs_bot.gate import cmd_gate
 from bugs_bot.handover import last_archive, read_note, write_note
-from bugs_bot.init import InitArgs, cmd_init, cmd_remove, repo_root
+from bugs_bot.init import InitArgs, cmd_init, cmd_remove, init_kind, repo_root
 from bugs_bot.people import cmd_backfill_authors, cmd_person, cmd_person_lang, cmd_person_note
 from bugs_bot.project import find_project_file, load_project, resolve_project
-from bugs_bot.pull import cmd_pull, pull_loop, watch_loop
 from bugs_bot.questions import cmd_unask
 from bugs_bot.reports import (
     cmd_delete,
@@ -48,6 +47,7 @@ from bugs_bot.reports import (
     cmd_taken,
 )
 from bugs_bot.store import Machine, bugs_home
+from bugs_bot.watch import cmd_pull_once, pull_loop, watch_loop
 
 
 def read_ps() -> str:
@@ -116,25 +116,19 @@ def main(
         if args.command == "pull" and args.every:
             return pull_loop(machine, env, transport, args.every, wall, sleep)
         if args.command == "pull":
-            channel = channel_for("telegram", env, transport)
-            token = channel.secret
-            cmd_pull(channel, machine, now)
-            return 0
+            return cmd_pull_once(machine, env, transport, now)
         if args.command == "doctor":
             try:
                 ps_output = read_ps()
             except BugsError as exc:
                 ps_output = exc  # a failed check, not an exit: the other checks still tell their story
-            return cmd_doctor(env, ps_output, args.install_launcher)
+            return cmd_doctor(env, ps_output, args.install_launcher, transport)
         if args.command == "init":
-            # The bot token is optional here: an explicit --chat-id needs no bot, and Pull may hold the updates.
-            # Only a missing token goes without a channel: a refused API root still fails here.
-            channel = None if token_problem("telegram", env) else channel_for("telegram", env, transport)
-            token = channel.secret if channel else None
             repo = Path(args.repo).resolve() if args.repo else repo_root(Path.cwd())
             given = InitArgs(
                 project=args.project,
                 agent_title=args.agent_title,
+                channel=args.channel,
                 chat_id=args.chat_id,
                 title=args.title,
                 deploy_url=args.deploy_url,
@@ -143,6 +137,11 @@ def main(
                 language=args.language,
                 gate_tokens=args.gate_tokens,
             )
+            # The bot token is optional here: an explicit --chat-id needs no bot, and Pull may hold the updates.
+            # Only a missing token goes without a channel: a refused API root still fails here.
+            kind = init_kind(repo, given)
+            channel = None if token_problem(kind, env) else channel_for(kind, env, transport)
+            token = channel.secret if channel else None
             return cmd_init(channel, machine, repo, given, lambda: bool(pull_processes(read_ps())))
         if args.command == "remove":
             cmd_remove(machine, args.project or _project_of_cwd(machine))
@@ -192,7 +191,7 @@ def main(
         elif args.command == "gate":
             cmd_gate(project, args.set, args.window, args.tokens, args.measure, env)
         else:
-            channel = channel_for("telegram", env, transport)
+            channel = channel_for(project.channel, env, transport)
             token = channel.secret
             if args.command == "fixed":
                 return cmd_fixed(channel, store, chat_id, args.id, args.note, now)

@@ -43,12 +43,12 @@ class Machine:
         self.state_path = home / "state.json"
         self.unregistered_path = home / "unregistered.json"
 
-    def load_offset(self) -> int | None:
-        """Return the next update offset, ``None`` before the first pull.
+    def _load_machine_state(self) -> dict | None:
+        """Return ``state.json``, ``None`` while it is absent.
 
         Raises:
-            BugsError: If ``state.json`` is unreadable or not a JSON object (never guessed around:
-                a wrong offset would replay or lose messages).
+            BugsError: If it is unreadable or not a JSON object (never guessed around: a wrong cursor
+                would replay or lose messages).
         """
         try:
             state = json.loads(self.state_path.read_text())
@@ -58,35 +58,50 @@ class Machine:
             raise BugsError(f"cannot read {self.state_path}: {exc}") from None
         if not isinstance(state, dict):
             raise BugsError(f"{self.state_path} is not a JSON object")
-        return state.get("offset")
+        return state
+
+    def load_offset(self) -> int | None:
+        """Return the next update offset, ``None`` before the first pull.
+
+        Raises:
+            BugsError: If ``state.json`` is unreadable or not a JSON object.
+        """
+        return (self._load_machine_state() or {}).get("offset")
 
     def save_offset(self, offset: int | None) -> None:
-        """Write the offset atomically."""
-        write_json(self.state_path, {"offset": offset})
+        """Write the offset atomically; the other kinds' cursors are kept."""
+        self._save_machine_key("offset", offset)
+
+    def _save_machine_key(self, key: str, value: object) -> None:
+        state = self._load_machine_state() or {}
+        state[key] = value
+        write_json(self.state_path, state)
 
     def load_cursor(self, kind: str) -> dict | None:
-        """Return where a channel kind's reading stands, ``None`` before its first pull.
+        """Return where a channel kind's reading stands; ``None`` before its first pull, whether
+        ``state.json`` is absent or holds nothing for that kind.
 
-        Telegram's cursor is ``{"offset": ...}``, kept as the ``offset`` key of ``state.json``.
+        Telegram's cursor is ``{"offset": ...}``, kept as the ``offset`` key of ``state.json`` (the file
+        it always was); any other kind's is the value of its own key.
 
         Raises:
-            BugsError: If the kind has no cursor here, or ``state.json`` is unreadable.
+            BugsError: If ``state.json`` is unreadable, or the kind's cursor is not an object.
         """
-        if kind != "telegram":
-            raise BugsError(f"no cursor for channel {kind}")
-        if not self.state_path.exists():
-            return None
-        return {"offset": self.load_offset()}
+        state = self._load_machine_state() or {}
+        if kind == "telegram":
+            offset = state.get("offset")
+            return None if offset is None else {"offset": offset}
+        cursor = state.get(kind)
+        if cursor is not None and not isinstance(cursor, dict):
+            raise BugsError(f"{self.state_path}: the {kind} cursor is not a JSON object")
+        return cursor or None
 
     def save_cursor(self, kind: str, cursor: dict) -> None:
-        """Write a channel kind's cursor atomically, as ``load_cursor`` reads it.
-
-        Raises:
-            BugsError: If the kind has no cursor here.
-        """
-        if kind != "telegram":
-            raise BugsError(f"no cursor for channel {kind}")
-        self.save_offset(cursor.get("offset"))
+        """Write a channel kind's cursor atomically, as ``load_cursor`` reads it; the other kinds' are kept."""
+        if kind == "telegram":
+            self.save_offset(cursor.get("offset"))
+        else:
+            self._save_machine_key(kind, cursor)
 
     def note_unregistered(self, chat: dict, now: float) -> None:
         """Record a group chat Pull dropped, so that ``init`` can offer it; the latest sighting wins."""

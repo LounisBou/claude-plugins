@@ -10,7 +10,7 @@ import pytest
 from conftest import read_offset, register, reports
 from samples import BASE_DATE, GROUP_ID, OTHER_GROUP_ID, TOKEN, FakeTelegram, image_bytes, message
 
-from bugs_bot import channel, cli, store
+from bugs_bot import channels, cli, store
 from bugs_bot.registry import Registry
 from bugs_bot.store import Machine
 
@@ -210,7 +210,7 @@ def test_token_is_masked_in_an_api_description(run, bound, capsys):
 
 
 def test_mask_hides_any_bot_token_shape():
-    masked = channel.mask("GET /bot999:ABCdef_ghi-123/getMe failed", TOKEN)
+    masked = channels.mask("GET /bot999:ABCdef_ghi-123/getMe failed", TOKEN)
 
     assert "ABCdef_ghi-123" not in masked
 
@@ -243,7 +243,7 @@ def test_pull_rebinds_when_the_registered_chat_migrates(run, bugs_home, home, tm
 
     assert run("pull", transport=tg) == 0
 
-    assert list(Registry(bugs_home / "projects.json").entries()) == [GROUP_ID]
+    assert list(Registry(bugs_home / "projects.json").entries()) == [("telegram", GROUP_ID)]
     assert read_offset(home) == 13
     [rep] = reports(home)
     assert report_json(rep)["text"] == "après la migration"
@@ -257,7 +257,7 @@ def test_pull_ignores_migration_of_another_chat(run, bound):
 
     assert run("pull", transport=FakeTelegram([old])) == 0
 
-    assert list(Registry(bound.parent / "projects.json").entries()) == [GROUP_ID]
+    assert list(Registry(bound.parent / "projects.json").entries()) == [("telegram", GROUP_ID)]
     assert Machine(bound.parent).unregistered() == {}
 
 
