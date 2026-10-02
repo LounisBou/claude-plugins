@@ -1,0 +1,12 @@
+{
+  "name": "bugs-bot",
+  "description": "A Telegram bug-report relay for Claude Code: one bot, one group and one agent per project.",
+  "version": "0.0.0",
+  "author": {
+    "name": "Lounis Bou",
+    "email": "lounis.bou@gmail.com"
+  },
+  "homepage": "https://github.com/LounisBou/claude-bugs-bot",
+  "repository": "https://github.com/LounisBou/claude-bugs-bot",
+  "license": "MIT"
+}
