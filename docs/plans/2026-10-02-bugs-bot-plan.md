@@ -962,7 +962,11 @@ message; an edit written without the lock; the previous text lost.
 As Phase 6, on the amended sections (spec header « Amended »), criterion 6 re-judged; `tests/e2e.sh`
 extended to one Slack project on a fake Slack API on loopback beside the Telegram ones; the
 migration rehearsal re-run on a copy. A live Slack smoke test only if the operator provides a token
-and a test channel — otherwise said so in the document. PR `docs: conformity of the amendment` on p12.
+and a test channel — otherwise said so in the document (operator, 2026-10-02: no live Slack test
+before 0.1.0). The Slack edit path (`message_changed`, never returned by `conversations.history`)
+is documented as a known limitation of 0.1.0 in the README, the CHANGELOG and the conformity
+document (operator, 2026-10-02: « B »); its code is not removed. PR `docs: conformity of the
+amendment` on `main`.
 
 ---
 

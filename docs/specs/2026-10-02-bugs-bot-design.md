@@ -108,6 +108,9 @@ recorded on it) takes the new text; the previous text is kept in the report's `e
 (`{date, message_id, previous}`); `wait` prints `edited <report-id>` until `show` has displayed it.
 An edit of a message never recorded (an unregistered chat, a bot post) is ignored. An edit never
 creates a report, never clears or sets a wait, never changes the status.
+Slack, in 0.1.0 (operator, 2026-10-02): `conversations.history`, which Pull polls, never returns
+`message_changed` (an Events and RTM event only), so an edit on Slack is not seen; this is a known
+limitation of 0.1.0, documented, and its detection comes with the live Slack test.
 
 ### 3.3 Project
 
