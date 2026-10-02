@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from bugs_bot.errors import BugsError
-from bugs_bot.store import OPEN_STATUSES, Store, load_report, write_json
+from bugs_bot.store import Store, load_report, write_json
 
 
 def _iso(now: float) -> str:
@@ -33,7 +33,7 @@ def mark_awaiting(report_dir: Path, report: dict, reply_index: int, now: float) 
     write_json(report_dir / "report.json", report)
 
 
-def _same_person(report: dict, author_id: int | None, author: str) -> bool:
+def same_person(report: dict, author_id: int | str | None, author: str) -> bool:
     """Tell whether a message's author wrote ``report``: same user id, else the same display name."""
     if author_id is not None and report.get("author_id") is not None:
         return report["author_id"] == author_id
@@ -49,7 +49,7 @@ def clear_answered(store: Store, author_id: int | None, author: str, since: floa
     cleared = []
     for report_id, path, report in store.reports():
         wait = report.get("awaiting")
-        if wait and _same_person(report, author_id, author) and _epoch(wait["since"]) < since:
+        if wait and same_person(report, author_id, author) and _epoch(wait["since"]) < since:
             del report["awaiting"]
             write_json(path / "report.json", report)
             cleared.append(report_id)
@@ -61,7 +61,7 @@ def is_due(report: dict, hours: float, now: float) -> bool:
     wait = report.get("awaiting")
     return (
         bool(wait)
-        and report["status"] in OPEN_STATUSES
+        and report["status"] != "done"
         and "reminded" not in wait
         and now - _epoch(wait["since"]) >= hours * 3600
     )
@@ -72,7 +72,7 @@ def is_unanswered(report: dict, hours: float, now: float) -> bool:
     wait = report.get("awaiting")
     return (
         bool(wait)
-        and report["status"] in OPEN_STATUSES
+        and report["status"] != "done"
         and "reminded" in wait
         and "escalated" not in wait
         and now - _epoch(wait["reminded"]) >= hours * 3600
@@ -80,12 +80,12 @@ def is_unanswered(report: dict, hours: float, now: float) -> bool:
 
 
 def due(store: Store, hours: float, now: float) -> list[str]:
-    """Return the ids of the open reports whose wait is ``hours`` old or more and not yet reminded."""
+    """Return the ids of the reports not done whose wait is ``hours`` old or more and not yet reminded."""
     return [rid for rid, _, report in store.reports() if is_due(report, hours, now)]
 
 
 def unanswered(store: Store, hours: float, now: float) -> list[str]:
-    """Return the ids of the open reports still unanswered ``hours`` after their reminder, launcher not yet told."""
+    """Return the ids of the reports not done still unanswered ``hours`` after their reminder, launcher not yet told."""
     return [rid for rid, _, report in store.reports() if is_unanswered(report, hours, now)]
 
 

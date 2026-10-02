@@ -9,6 +9,10 @@ from pathlib import Path
 from bugs_bot.errors import BugsError
 from bugs_bot.store import Store
 
+# The note is read by a successor on its first turn: past this it costs more than the handover saves.
+NOTE_MAX_LINES = 40
+NOTE_MAX_CHARS = 8000
+
 
 def note_path(store: Store) -> Path:
     """Return where the unread note waits: ``handover.md`` in the project's data directory."""
@@ -19,17 +23,26 @@ def write_note(store: Store, text: str, now: float) -> Path:
     """Write the note for the successor and return its path.
 
     Raises:
-        BugsError: If the text is empty, or a note nobody has read yet is still there (it is
-            never overwritten: the successor that should have read it may have crashed half-way).
+        BugsError: If the text is empty, longer than ``NOTE_MAX_LINES`` lines or ``NOTE_MAX_CHARS``
+            characters (nothing is written: the agent shortens it and writes again), or a note nobody
+            has read yet is still there (it is never overwritten: the successor that should have read
+            it may have crashed half-way).
     """
     if not text.strip():
         raise BugsError("empty handover note")
+    body = text.rstrip("\n")
+    lines, chars = len(body.splitlines()), len(body)
+    if lines > NOTE_MAX_LINES or chars > NOTE_MAX_CHARS:
+        raise BugsError(
+            f"handover note too long: {lines} lines, {chars} characters "
+            f"(limit {NOTE_MAX_LINES} lines, {NOTE_MAX_CHARS} characters)"
+        )
     path = note_path(store)
     if path.exists():
         raise BugsError(f"an unread handover note is already there: {path} (`handover read` first)")
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(text.rstrip("\n") + "\n")
+    tmp.write_text(body + "\n")
     os.replace(tmp, path)
     return path
 

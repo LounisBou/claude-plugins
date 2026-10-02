@@ -380,17 +380,15 @@ def test_fixed_replaces_the_reaction_and_sets_status(run, bound, capsys):
     assert f"{FIRST_STAMP}-100" not in capsys.readouterr().out
 
 
-def test_fixed_with_note_replies_in_the_group(run, bound):
+def test_fixed_with_note_records_it_and_posts_nothing(run, bound):
     pulled(run, bound)
     tg = FakeTelegram()
 
     assert run("fixed", f"{FIRST_STAMP}-100", "--note", "corrigé dans la PR 42", transport=tg) == 0
 
-    [sent] = tg.sent
-    assert sent["reply_parameters"] == {"message_id": 100}
-    assert "corrigé dans la PR 42" in sent["text"]
-    [reply] = report_json(bound / "inbox" / f"{FIRST_STAMP}-100")["replies"]
-    assert "corrigé dans la PR 42" in reply["text"]
+    assert tg.sent == []  # a PR number means nothing to a tester: the agent tells them in its own words
+    data = report_json(bound / "inbox" / f"{FIRST_STAMP}-100")
+    assert data["fix_ref"] == "corrigé dans la PR 42" and data["replies"] == []
 
 
 def test_fixed_with_a_refused_reaction_keeps_status_and_pull_retries(run, bound, capsys):
@@ -403,7 +401,7 @@ def test_fixed_with_a_refused_reaction_keeps_status_and_pull_retries(run, bound,
     data = report_json(bound / "inbox" / f"{FIRST_STAMP}-100")
     assert data["status"] == "fixed" and data["reaction"]["applied"] != "\U0001f44c"
     assert "REACTION_INVALID" in capsys.readouterr().err
-    assert len(tg.sent) == 1  # the note still went out
+    assert report_json(bound / "inbox" / f"{FIRST_STAMP}-100")["fix_ref"] == "n"  # the note is still recorded
 
     tg.fail_reaction = False
     assert run("pull", transport=tg) == 0

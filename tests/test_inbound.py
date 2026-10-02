@@ -336,6 +336,23 @@ def test_an_empty_first_pull_writes_no_cursor(bugs_home):
     assert not (bugs_home / "state.json").exists()
 
 
+def test_a_batch_whose_every_message_is_dropped_still_moves_the_cursor(tmp_path, bugs_home):
+    register(bugs_home, tmp_path / "repo-demo", "demo", GROUP_ID)
+    machine = Machine(bugs_home)
+    machine.save_cursor("telegram", {"offset": 12})
+    bot_post = message(12, 105, text="annonce")
+    bot_post["message"]["from"] = {"id": 8, "is_bot": True, "first_name": "Bot"}
+    service = message(13, 106)
+    service["message"]["new_chat_title"] = "Renamed"
+    channel = TelegramChannel(TOKEN, FakeTelegram([bot_post, service]))
+
+    pull.cmd_pull(channel, machine, BASE_DATE)
+
+    # Nothing is kept, yet the updates were read: left unconfirmed, they would come back every round.
+    assert machine.project_store("demo").reports() == []
+    assert machine.load_cursor("telegram") == {"offset": 14}
+
+
 def test_a_failed_download_keeps_the_cursor_and_the_other_project_is_written_once(tmp_path, bugs_home, capsys):
     register(bugs_home, tmp_path / "repo-demo", "demo", GROUP_ID)
     register(bugs_home, tmp_path / "repo-other", "other", OTHER_GROUP_ID)

@@ -14,6 +14,7 @@ from pathlib import Path
 from bugs_bot.errors import BugsError
 from bugs_bot.followup import due, is_due, is_unanswered, unanswered
 from bugs_bot.project import Project
+from bugs_bot.questions import asks
 from bugs_bot.reports import one_line
 from bugs_bot.store import OPEN_STATUSES, Store, load_report, write_json
 
@@ -55,7 +56,8 @@ def cmd_wait(
     follow_up_hours: float,
 ) -> None:
     """Block until there is something to do, then print it: the untriaged open reports' ids, then
-    ``follow-up <id>`` for each wait owed its reminder and ``unanswered <id>`` for each to tell the launcher.
+    ``follow-up <id>`` for each wait owed its reminder, ``unanswered <id>`` for each to tell the launcher,
+    and ``ask <id>`` for each queued question whose person no longer owes an answer.
 
     Reads the inbox only (the PM2 pull fills it). Prints nothing when ``timeout`` elapses first,
     so the caller re-arms it. ``now`` is the wall time at the start; it advances with ``clock``.
@@ -67,6 +69,7 @@ def cmd_wait(
         found = untriaged(store)
         found += [f"follow-up {rid}" for rid in due(store, follow_up_hours, at)]
         found += [f"unanswered {rid}" for rid in unanswered(store, follow_up_hours, at)]
+        found += [f"ask {rid}" for rid in asks(store)]
         if found:
             print("\n".join(found))
             return
@@ -127,7 +130,7 @@ def project_facts(project: Project) -> str:
         f"- deployment URL: {_quoted(project.deploy_url) if project.deploy_url else 'none'}\n"
         f"- deploy check: {check}\n"
         f"- docs: {_quoted(list(project.docs)) if project.docs else 'none'}\n"
-        f"- language of your messages in the group: {_quoted(project.language)}\n"
+        f"- default language of your messages in the group (a person's own language comes first): {_quoted(project.language)}\n"
         f"- follow-up: one reminder when a question of yours is still unanswered after {project.follow_up_hours:g} hours\n"
     )
 

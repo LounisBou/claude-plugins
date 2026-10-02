@@ -143,3 +143,37 @@ AGENT_MD = Path(__file__).resolve().parent.parent / "agent" / "AGENT.md"
 ])
 def test_the_agent_knows_its_memory_and_its_note(phrase):
     assert phrase in AGENT_MD.read_text()
+
+
+# -- the cap: 40 lines, 8 000 characters --------------------------------------------------------
+
+
+@pytest.mark.parametrize("text", ["\n".join(f"ligne {i}" for i in range(40)), "x" * 8000], ids=["40-lines", "8000-chars"])
+def test_a_note_at_the_limit_is_accepted(bound, text):
+    assert write_note(Store(bound), text, BASE_DATE).read_text() == text + "\n"
+
+
+@pytest.mark.parametrize("text, size", [
+    ("\n".join(f"ligne {i}" for i in range(41)), "41 lines, 358 characters"),
+    ("x" * 8001, "1 lines, 8001 characters"),
+], ids=["41-lines", "8001-chars"])
+def test_a_note_over_the_limit_is_refused_and_nothing_is_written(run, bound, capsys, text, size):
+    assert run("handover", "write", text, now=BASE_DATE) == 1
+
+    err = capsys.readouterr().err
+    assert f"handover note too long: {size} (limit 40 lines, 8000 characters)" in err
+    assert sorted(p.name for p in bound.iterdir()) == []
+
+
+def test_a_refused_note_leaves_the_unread_one_untouched(run, bound):
+    run("handover", "write", NOTE, now=BASE_DATE)
+
+    assert run("handover", "write", "x" * 8001, now=BASE_DATE + 60) == 1
+
+    assert (bound / "handover.md").read_text() == NOTE + "\n"
+    assert sorted(p.name for p in bound.iterdir()) == ["handover.md"]
+
+
+def test_the_agent_shortens_a_refused_note_and_writes_again():
+    text = AGENT_MD.read_text()
+    assert "40 lines or 8 000 characters" in text and "shorten it and write again" in text

@@ -1,4 +1,4 @@
-"""People: what the agent remembers about each reporter, one card per author, and recovering the user id of older reports' authors."""
+"""People: what the agent remembers about each reporter, one card per author (notes, language), and recovering the user id of older reports' authors."""
 
 from __future__ import annotations
 
@@ -6,12 +6,24 @@ import json
 import re
 from datetime import datetime, timezone
 
-from bugs_bot.channel import Channel, ChatId
+from bugs_bot.channel import Author, Channel, ChatId
 from bugs_bot.errors import BugsError
 from bugs_bot.store import Store, load_report, write_json
 
 
-def person_ref(store: Store, ref: str) -> tuple[str, str | None, int | None]:
+# A language as a card stores it: the two lower-case letters of ISO 639-1.
+_LANGUAGE = re.compile(r"[a-z]{2}")
+
+
+def card_key(author_id: int | str | None, author: str) -> str:
+    """Return the card key of an author: their id, else ``name-<slug of their display name>``."""
+    if author_id:
+        return str(author_id)
+    slug = re.sub(r"[^0-9A-Za-z]+", "-", author).strip("-").lower() or "unknown"
+    return f"name-{slug}"
+
+
+def person_ref(store: Store, ref: str) -> tuple[str, str | None, int | str | None]:
     """Resolve a report id or an author id to ``(card key, display name, author id)``.
 
     The key is the author id; a report without one falls back to its author's name.
@@ -22,10 +34,7 @@ def person_ref(store: Store, ref: str) -> tuple[str, str | None, int | None]:
     if re.fullmatch(r"\d+", ref):
         return ref, None, int(ref)
     _, report = load_report(store, ref)
-    if report.get("author_id"):
-        return str(report["author_id"]), report["author"], report["author_id"]
-    slug = re.sub(r"[^0-9A-Za-z]+", "-", report["author"]).strip("-").lower() or "unknown"
-    return f"name-{slug}", report["author"], None
+    return card_key(report.get("author_id"), report["author"]), report["author"], report.get("author_id") or None
 
 
 def load_person(store: Store, key: str) -> dict | None:
@@ -36,13 +45,68 @@ def load_person(store: Store, key: str) -> dict | None:
         return None
 
 
+def card_of(store: Store, key: str, name: str | None, author_id: int | str | None) -> dict:
+    """Return a person's card, or a new empty one (not yet written)."""
+    card = load_person(store, key) or {"key": key, "name": name, "author_id": author_id, "notes": []}
+    card["name"] = name or card["name"]
+    return card
+
+
+def save_person(store: Store, card: dict) -> None:
+    """Write a person's card."""
+    write_json(store.people / f"{card['key']}.json", card)
+
+
+def record_language(store: Store, author: Author) -> None:
+    """Record the language the platform gives for ``author`` on their card, on first sight only.
+
+    The first two letters of the platform's code, lower-cased (« fr-FR » is ``fr``). A language
+    already on the card — the platform's earlier one or the agent's correction — is never
+    overwritten; a code that does not give two letters is ignored.
+    """
+    code = (author.language or "")[:2].lower()
+    if not _LANGUAGE.fullmatch(code):
+        return
+    key = card_key(author.id, author.name)
+    card = load_person(store, key)
+    if card is not None and card.get("language"):
+        return
+    card = card_of(store, key, author.name or None, author.id)
+    card["language"] = code
+    save_person(store, card)
+
+
+def cmd_person_lang(store: Store, ref: str, code: str) -> None:
+    """Set a person's language: the agent's correction when they write in another one than their card says.
+
+    Raises:
+        BugsError: If ``code`` is not two lower-case letters, or ``ref`` names no report nor author id.
+    """
+    if not _LANGUAGE.fullmatch(code):
+        raise BugsError(f"not a language code: {code!r} (two lower-case letters, e.g. fr, en)")
+    key, name, author_id = person_ref(store, ref)
+    card = card_of(store, key, name, author_id)
+    card["language"] = code
+    save_person(store, card)
+    print(f"language {key}: {code}")
+
+
+def language_of(store: Store, project_language: str, author_id: int | str | None, author: str) -> str:
+    """Return the language to write to a person in: their card's, else the project's default."""
+    card = load_person(store, card_key(author_id, author)) or {}
+    return card.get("language") or project_language
+
+
 def cmd_person(store: Store, ref: str) -> None:
-    """Print what is remembered about a person: the name and the dated notes."""
+    """Print what is remembered about a person: the name, the language and the dated notes."""
     key, name, _ = person_ref(store, ref)
     card = load_person(store, key)
     if card is None and name is None:
         raise BugsError(f"no such person: {ref}")
     print(f"person: {(card or {}).get('name') or name}  key: {key}")
+    print(f"language: {(card or {}).get('language') or 'unknown'}")
+    for question in (card or {}).get("questions", []):
+        print(f"question queued {question['queued'][:16]} for {question['report']}: {question['text']}")
     if not card or not card["notes"]:
         print("no notes yet")
         return
@@ -60,10 +124,9 @@ def cmd_person_note(store: Store, ref: str, text: str, now: float) -> None:
     if not text:
         raise BugsError("empty note")
     key, name, author_id = person_ref(store, ref)
-    card = load_person(store, key) or {"key": key, "name": name, "author_id": author_id, "notes": []}
-    card["name"] = name or card["name"]
+    card = card_of(store, key, name, author_id)
     card["notes"].append({"date": datetime.fromtimestamp(now, timezone.utc).isoformat(timespec="seconds"), "text": text})
-    write_json(store.people / f"{key}.json", card)
+    save_person(store, card)
     print(f"noted {key}")
 
 

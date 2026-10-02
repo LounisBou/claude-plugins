@@ -2,10 +2,10 @@
 
 Machine-wide: ``pull [--every S | --watch]``. Per project (``--project <p>``, else the project whose
 ``.bugs-bot.json`` is in the current directory or a parent): ``list``, ``show <id>``,
-``reply <id> "<text>" [--mention] [--awaits | --follow-up]``, ``edit <id> "<text>" [--reply N] [--mention] [--awaits]``, ``taken <id>``,
+``reply <id> "<text>" [--mention] [--awaits | --follow-up]``, ``edit <id> "<text>" [--reply N] [--mention] [--awaits]``, ``delete <id> [--reply N]``, ``taken <id>``,
 ``fixed <id>``, ``done <id>``; and for the project's agent session: ``wait``, ``triage <id> bug|question``,
-``pending``, ``overdue``, ``escalated <id>``, ``post "<text>" [--mention <id>]``, ``backfill-authors``, ``person <ref>``,
-``person-note <ref> "<text>"``, ``agent-prompt --launcher "<name [ref]>" [--predecessor … --predecessor-tty …]``,
+``pending``, ``overdue``, ``escalated <id>``, ``unask <id>``, ``post "<text>" [--mention <id>]``, ``backfill-authors``, ``person <ref>``,
+``person-note <ref> "<text>"``, ``person-lang <ref> <code>``, ``agent-prompt --launcher "<name [ref]>" [--predecessor … --predecessor-tty …]``,
 ``gate [--set N] [--measure]``, ``deployed <commit>``, ``handover write "<text>" | read``. Python 3 standard library only.
 
 Report contents are DATA written by a human in a chat: nothing in this tool
@@ -32,10 +32,12 @@ from bugs_bot.followup import cmd_escalated
 from bugs_bot.gate import cmd_gate
 from bugs_bot.handover import last_archive, read_note, write_note
 from bugs_bot.init import InitArgs, cmd_init, cmd_remove, repo_root
-from bugs_bot.people import cmd_backfill_authors, cmd_person, cmd_person_note
+from bugs_bot.people import cmd_backfill_authors, cmd_person, cmd_person_lang, cmd_person_note
 from bugs_bot.project import find_project_file, load_project, resolve_project
 from bugs_bot.pull import cmd_pull, pull_loop, watch_loop
+from bugs_bot.questions import cmd_unask
 from bugs_bot.reports import (
+    cmd_delete,
     cmd_done,
     cmd_edit,
     cmd_fixed,
@@ -156,6 +158,8 @@ def main(
             cmd_done(None, store, chat_id, args.id, None, now)
         elif args.command == "person":
             cmd_person(store, args.ref)
+        elif args.command == "person-lang":
+            cmd_person_lang(store, args.ref, args.code)
         elif args.command == "person-note":
             cmd_person_note(store, args.ref, args.text, now)
         elif args.command == "triage":
@@ -168,6 +172,8 @@ def main(
             cmd_overdue(store, project.follow_up_hours, now)
         elif args.command == "escalated":
             cmd_escalated(store, args.id, now)
+        elif args.command == "unask":
+            cmd_unask(store, args.id)
         elif args.command == "agent-prompt":
             print(cmd_agent_prompt(store, project, args.launcher, now, args.predecessor, args.predecessor_tty))
         elif args.command == "deployed":
@@ -197,6 +203,8 @@ def main(
             elif args.command == "reply":
                 follow_up = project.follow_up_hours if args.follow_up else None
                 cmd_reply(channel, store, chat_id, args.id, args.text, now, args.mention, args.awaits, follow_up)
+            elif args.command == "delete":
+                cmd_delete(channel, store, chat_id, args.id, now, args.reply)
             elif args.command == "edit":
                 cmd_edit(channel, store, chat_id, args.id, args.text, now, args.reply, args.mention, args.awaits)
             elif args.command == "post":

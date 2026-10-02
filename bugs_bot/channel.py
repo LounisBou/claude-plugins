@@ -98,6 +98,10 @@ class Channel(Protocol):
         """Rewrite a posted message; return ``{"message_id": id, "text": str}`` as ``send`` does."""
         ...
 
+    def delete(self, chat_id: ChatId, message_id: MessageId) -> None:
+        """Delete a message the bot posted."""
+        ...
+
     def react(self, chat_id: ChatId, message_id: MessageId, emoji: str) -> None:
         """Put ``emoji`` on a message, replacing the bot's previous reaction."""
         ...

@@ -120,6 +120,8 @@ class FakeTelegram:
                 return 400, json.dumps(body).encode()
             self.edited.append(payload)
             return 200, json.dumps({"ok": True, "result": {"message_id": payload["message_id"]}}).encode()
+        if method == "deleteMessage":
+            return 200, json.dumps({"ok": True, "result": True}).encode()
         if method == "sendMessage":
             self.sent.append(payload)
             return 200, json.dumps({"ok": True, "result": {"message_id": 777}}).encode()

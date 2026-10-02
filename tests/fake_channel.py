@@ -71,6 +71,9 @@ class FakeChannel:
         self.calls.append(("edit", chat_id, message_id, text, mention))
         return {"message_id": message_id, "text": text}
 
+    def delete(self, chat_id: ChatId, message_id: MessageId) -> None:
+        self.calls.append(("delete", chat_id, message_id))
+
     def react(self, chat_id: ChatId, message_id: MessageId, emoji: str) -> None:
         self.calls.append(("react", chat_id, message_id, emoji))
 

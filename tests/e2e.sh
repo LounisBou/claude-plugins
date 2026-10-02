@@ -124,9 +124,15 @@ assert last["chat_id"] == -1001 and last["text"] == "@ana on it, thanks", last
 assert last["entities"][0]["type"] == "mention" and last["entities"][0]["offset"] == 0, last
 assert last["reply_parameters"]["message_id"] == 102, last
 PYEOF
+bb delete "$ID" > /dev/null
+check "messages deleted" "$(calls deleteMessage)" 1
+bb show "$ID" | grep -q "on it, thanks (deleted " || fail "a deleted reply is not marked in show"
 bb taken "$ID" > /dev/null
 check "status after taken" "$(bb show "$ID" | grep -c 'taken')" 1
+posted=$(calls sendMessage)
 bb fixed "$ID" --note "PR 1" > /dev/null
+check "messages posted by fixed --note" "$(calls sendMessage)" "$posted"
+bb show "$ID" | grep -qx "fix ref: PR 1" || fail "fixed --note did not record the ref"
 bb list | grep -q "$ID" && fail "a fixed report is still listed"
 check "beta untouched by alpha's work" "$(bb list --project beta | wc -l | tr -d ' ')" 2
 

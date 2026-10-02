@@ -197,6 +197,10 @@ class TelegramChannel:
         self._api.call("editMessageText", chat_id=chat_id, message_id=message_id, text=text, **extra)
         return {"message_id": message_id, "text": text}
 
+    def delete(self, chat_id: ChatId, message_id: MessageId) -> None:
+        """Delete a message the bot posted (a bot may delete its own messages in a group)."""
+        self._api.call("deleteMessage", chat_id=chat_id, message_id=message_id)
+
     def react(self, chat_id: ChatId, message_id: MessageId, emoji: str) -> None:
         """Put ``emoji`` on a message (a bot holds one reaction per message: it replaces the last)."""
         self._api.call(

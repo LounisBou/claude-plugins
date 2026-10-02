@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
-import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from bugs_bot.channel import Channel, Mention, mask
+from bugs_bot.channel import Channel, ChatId, Mention
 from bugs_bot.errors import BugsError
 from bugs_bot.followup import mark_awaiting, mark_reminded, require_due
+from bugs_bot.questions import asked, awaited_elsewhere, drop_closed, queue_question
+from bugs_bot.reactions import move_to, say_reaction_pending
 from bugs_bot.store import CLOSED_STATUSES, EMOJI_FIXED, EMOJI_TAKEN, OPEN_STATUSES, Store, load_report, write_json
 
 
@@ -40,12 +41,15 @@ def cmd_show(store: Store, report_id: str) -> None:
         f"  kind: {report.get('kind') or 'untriaged'}"
     )
     print(report["text"] or "(no text)")
+    if report.get("fix_ref"):
+        print(f"fix ref: {report['fix_ref']}")
     for name in report["images"]:
         print(f"  {(path / name).resolve()}")
     for number, reply in enumerate(report["replies"], 1):
         edits = len(reply.get("edits", []))
         count = f" ({edits} edit{'s' if edits > 1 else ''})" if edits else ""
-        print(f"reply {number} {reply['date']}: {reply['text']}{count}")
+        gone = f" (deleted {reply['deleted']})" if reply.get("deleted") else ""
+        print(f"reply {number} {reply['date']}: {reply['text']}{count}{gone}")
 
 
 def mention_of(report: dict) -> Mention:
@@ -64,47 +68,6 @@ def mention_of(report: dict) -> Mention:
         "username": report.get("author_username"),
         "name": report.get("author") or "",
     }
-
-
-def set_reaction(channel: Channel, chat_id: int, report: dict, emoji: str) -> None:
-    """Put ``emoji`` on the report's first message and record the outcome in ``report``.
-
-    A failure is recorded (not raised): the report must survive a refused reaction,
-    and the next ``pull`` retries it.
-
-    Raises:
-        BugsError: Re-raised after recording, so the caller can say it.
-    """
-    state = report.setdefault("reaction", {"wanted": emoji, "applied": None, "error": None})
-    state["wanted"] = emoji
-    try:
-        channel.react(report.get("chat_id", chat_id), report["message_ids"][0], emoji)
-    except BugsError as exc:
-        state["error"] = str(exc)
-        # The operator deleted the message: no retry can ever land, stop trying.
-        state["gone"] = "message to react not found" in str(exc)
-        raise
-    state["applied"] = emoji
-    state["error"] = None
-
-
-def retry_pending_reactions(channel: Channel, store: Store, chat_id: int) -> None:
-    """Land every reaction that is wanted but not applied yet, in the chat each report was written in.
-
-    ``chat_id`` is the project's current chat, used for a report that records none.
-    Failures are reported on stderr and recorded; they do not fail the pull.
-    """
-    for report_id, path, report in store.reports():
-        reaction = report.get("reaction")
-        if not reaction or reaction.get("gone"):
-            continue
-        if reaction["wanted"] == reaction["applied"]:
-            continue
-        try:
-            set_reaction(channel, chat_id, report, reaction["wanted"])
-        except BugsError as exc:
-            print(f"bugs-bot: reaction on {report_id} pending: {mask(str(exc), channel.secret)}", file=sys.stderr)
-        write_json(path / "report.json", report)
 
 
 def send_reply(
@@ -131,18 +94,45 @@ def cmd_reply(
 ) -> None:
     """Answer in the group, threaded on the report's first message; ``tag`` mentions its author.
 
-    ``awaits`` records that the reply waits for the person's answer; ``follow_up_hours`` makes it the
-    one reminder of a wait that old (refused before anything is sent when none is due).
+    ``awaits`` records that the reply waits for the person's answer — unless their answer is already
+    awaited on another report not done: one question at a time (spec § 3.5), so nothing is posted and
+    the question is queued on their card, for ``wait`` to hand back (``ask <id>``) once they answer.
+    ``follow_up_hours`` makes it the one reminder of a wait that old (refused before anything is
+    sent when none is due).
     """
     path, report = load_report(store, report_id)
     if follow_up_hours is not None:
         require_due(report, follow_up_hours, now)
+    other = awaited_elsewhere(store, report) if awaits else None
+    if other:
+        queue_question(store, report, text, now)
+        print(f"queued {report_id}: {report['author']} already awaits {other}")
+        return
     send_reply(channel, chat_id, path, report, text, now, mention_of(report) if tag else None)
     if awaits:
         mark_awaiting(path, report, len(report["replies"]), now)
+        asked(store, report)
     if follow_up_hours is not None:
         mark_reminded(path, report, now)
     print(f"replied to {report_id}")
+
+
+def posted_reply(report: dict, number: int | None, verb: str) -> tuple[int, dict]:
+    """Return ``(number, reply)`` of the bot's ``number``-th reply on ``report`` (1-based; ``None``: the last).
+
+    Raises:
+        BugsError: If there is no such reply, or it has no ``message_id`` or is deleted: it cannot be ``verb``.
+    """
+    replies = report["replies"]
+    number = len(replies) if number is None else number
+    if not 1 <= number <= len(replies):
+        raise BugsError(f"no such reply: {report['id']} has {len(replies)} reply(ies), asked for {number}")
+    reply = replies[number - 1]
+    if not reply.get("message_id"):
+        raise BugsError(f"reply {number} of {report['id']} has no message_id: it cannot be {verb}")
+    if reply.get("deleted"):
+        raise BugsError(f"reply {number} of {report['id']} is already deleted ({reply['deleted']}): it cannot be {verb}")
+    return number, reply
 
 
 def cmd_edit(
@@ -163,16 +153,10 @@ def cmd_edit(
     Telegram's « message is not modified » is reported, not failed.
 
     Raises:
-        BugsError: On no such reply, a reply without ``message_id``, an empty text, or a Telegram error.
+        BugsError: On no such reply, a reply without ``message_id`` or deleted, an empty text, or a channel error.
     """
     path, report = load_report(store, report_id)
-    replies = report["replies"]
-    number = len(replies) if number is None else number
-    if not 1 <= number <= len(replies):
-        raise BugsError(f"no such reply: {report_id} has {len(replies)} reply(ies), asked for {number}")
-    reply = replies[number - 1]
-    if not reply.get("message_id"):
-        raise BugsError(f"reply {number} of {report_id} has no message_id: it cannot be edited")
+    number, reply = posted_reply(report, number, "edited")
     if not text.strip():
         raise BugsError("empty text: nothing to write")
     mention = mention_of(report) if tag else None
@@ -195,37 +179,34 @@ def cmd_edit(
     print(f"edited reply {number} of {report_id}")
 
 
-def move_to(
-    channel: Channel, store: Store, chat_id: int, report_id: str, status: str, emoji: str
-) -> tuple[int, Path, dict, BugsError | None]:
-    """Set a report's status and its reaction; the status is saved before any network call.
+def cmd_delete(
+    channel: Channel, store: Store, chat_id: ChatId, report_id: str, now: float, number: int | None = None
+) -> None:
+    """Delete a reply the bot posted on a report: the last one, or the ``number``-th (1-based, as ``show`` numbers them).
 
-    A refused reaction leaves the new status in place and the reaction pending,
-    which the next ``pull`` retries.
+    The reply stays in ``report.json``, marked ``deleted`` with the date: the record of what was said is
+    kept. A wait that pointed at it is lifted: a deleted question awaits no answer. A message the
+    group no longer has (« message to delete not found ») is marked the same, and said so.
 
-    Returns:
-        ``(chat_id, dir, report, reaction failure or None)``.
+    Raises:
+        BugsError: On no such reply, a reply without ``message_id`` or already deleted, or another channel
+            error (then nothing is marked).
     """
     path, report = load_report(store, report_id)
-    report["status"] = status
-    report["chat_id"] = report.get("chat_id", chat_id)
-    report.setdefault("reaction", {"wanted": emoji, "applied": None, "error": None})["wanted"] = emoji
-    write_json(path / "report.json", report)
-    failure = None
+    number, reply = posted_reply(report, number, "deleted")
+    gone = ""
     try:
-        set_reaction(channel, chat_id, report, emoji)
+        channel.delete(report.get("chat_id", chat_id), reply["message_id"])
     except BugsError as exc:
-        failure = exc
+        # Deleted already (by an admin, or a delete whose answer was lost): the outcome is the one wanted.
+        if "message to delete not found" not in str(exc):
+            raise
+        gone = " (already gone from the group)"
+    reply["deleted"] = datetime.fromtimestamp(now, timezone.utc).isoformat()
+    if (report.get("awaiting") or {}).get("reply") == number:
+        del report["awaiting"]
     write_json(path / "report.json", report)
-    return report["chat_id"], path, report, failure
-
-
-def say_reaction_pending(channel: Channel, failure: BugsError | None) -> int:
-    """Report a pending reaction on stderr; return the matching exit code."""
-    if failure is None:
-        return 0
-    print(f"bugs-bot: reaction pending, `pull` will retry: {mask(str(failure), channel.secret)}", file=sys.stderr)
-    return 1
+    print(f"deleted reply {number} of {report_id}{gone}")
 
 
 def cmd_taken(channel: Channel, store: Store, chat_id: int, report_id: str) -> int:
@@ -246,17 +227,19 @@ def cmd_taken(channel: Channel, store: Store, chat_id: int, report_id: str) -> i
 
 
 def cmd_fixed(channel: Channel, store: Store, chat_id: int, report_id: str, note: str | None, now: float) -> int:
-    """Mark a report fixed: status, 👌 reaction, and an optional note posted as a reply.
+    """Mark a report fixed: status, 👌 reaction, and the fix's ref (``note``) recorded as ``fix_ref``.
 
-    The status is saved before any network call, so a refused reaction leaves the
-    report fixed and ``pull`` retries the reaction.
+    Nothing is posted: a PR number or a commit means nothing to a tester (spec § 3.5); the agent
+    tells them in its own words, and ``show`` gives it the ref. The status is saved before any
+    network call, so a refused reaction leaves the report fixed and ``pull`` retries the reaction.
 
     Returns:
         1 if the reaction could not be set (it stays pending), else 0.
     """
     _, path, report, failure = move_to(channel, store, chat_id, report_id, "fixed", EMOJI_FIXED)
     if note:
-        send_reply(channel, chat_id, path, report, f"Corrigé : {note}", now)
+        report["fix_ref"] = note
+        write_json(path / "report.json", report)
     print(f"fixed {report_id}")
     return say_reaction_pending(channel, failure)
 
@@ -271,6 +254,7 @@ def cmd_done(
         send_reply(channel, chat_id, path, report, reason, now)
     report["status"] = "done"
     write_json(path / "report.json", report)
+    drop_closed(store, report)
     print(f"done {report_id}")
 
 
