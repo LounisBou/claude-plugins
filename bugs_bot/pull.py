@@ -16,7 +16,7 @@ from bugs_bot.reports import retry_pending_reactions
 from bugs_bot.project import PROJECT_FILE, rebind_chat
 from bugs_bot.store import CLOSED_STATUSES, EMOJI_SEEN, Machine, Store, write_json
 from bugs_bot.registry import Entry
-from bugs_bot.telegram import TelegramChannel, attachments, author_of, group_messages, has_content, mask, read_token
+from bugs_bot.telegram import TelegramChannel, api_root, attachments, author_of, group_messages, has_content, mask, read_token
 
 # Long polling (`pull --watch`): the channel holds a request until a message arrives or POLL_TIMEOUT seconds pass.
 POLL_TIMEOUT = 50
@@ -235,7 +235,7 @@ def pull_loop(
             try:
                 # Read afresh each round: a repaired .env or a new registration needs no restart.
                 token = read_token(env)
-                cmd_pull(TelegramChannel(token, transport), machine, wall())
+                cmd_pull(TelegramChannel(token, transport, api_root(env)), machine, wall())
             except Exception as exc:  # noqa: BLE001 - one bad round must not end the loop
                 print(f"bugs-bot: {type(exc).__name__}: {mask(str(exc), token)}", file=sys.stderr)
             sys.stdout.flush()
@@ -281,7 +281,7 @@ def watch_loop(
                 token = read_token(env)
                 at = clock()
                 purge = last_purge is None or at - last_purge >= PURGE_EVERY
-                cmd_pull(TelegramChannel(token, transport), machine, wall(), poll_timeout, purge)
+                cmd_pull(TelegramChannel(token, transport, api_root(env)), machine, wall(), poll_timeout, purge)
                 if purge:
                     last_purge = at
                 backoff = 0.0

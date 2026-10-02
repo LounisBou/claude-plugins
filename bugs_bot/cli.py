@@ -45,7 +45,7 @@ from bugs_bot.reports import (
     cmd_taken,
 )
 from bugs_bot.store import Machine, bugs_home
-from bugs_bot.telegram import TelegramChannel, http_transport, mask, read_token
+from bugs_bot.telegram import TelegramChannel, api_root, http_transport, mask, read_token
 
 
 def read_ps() -> str:
@@ -115,7 +115,7 @@ def main(
             return pull_loop(machine, env, transport, args.every, wall, sleep)
         if args.command == "pull":
             token = read_token(env)
-            cmd_pull(TelegramChannel(token, transport), machine, now)
+            cmd_pull(TelegramChannel(token, transport, api_root(env)), machine, now)
             return 0
         if args.command == "doctor":
             try:
@@ -130,7 +130,7 @@ def main(
             except BugsError:
                 channel = None
             else:
-                channel = TelegramChannel(token, transport)
+                channel = TelegramChannel(token, transport, api_root(env))
             repo = Path(args.repo).resolve() if args.repo else repo_root(Path.cwd())
             given = InitArgs(
                 project=args.project,
@@ -189,7 +189,7 @@ def main(
             cmd_gate(project, args.set, args.window, args.tokens, args.measure, env)
         else:
             token = read_token(env)
-            channel = TelegramChannel(token, transport)
+            channel = TelegramChannel(token, transport, api_root(env))
             if args.command == "fixed":
                 return cmd_fixed(channel, store, chat_id, args.id, args.note, now)
             elif args.command == "taken":

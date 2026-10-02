@@ -7,6 +7,7 @@ import mimetypes
 import re
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -15,12 +16,40 @@ from bugs_bot.channel import Mention, Transport
 from bugs_bot.errors import BugsError
 from bugs_bot.store import bugs_home
 
-API_ROOT = "https://api.telegram.org"
+DEFAULT_API_ROOT = "https://api.telegram.org"
+LOOPBACK_HOSTS = ("127.0.0.1", "localhost")
+API_ROOT_RULE = "BUGS_BOT_API_ROOT must be an https:// URL or http://127.0.0.1 / http://localhost"
 HTTP_TIMEOUT = 30
 # A held getUpdates request is read this much longer than Telegram holds it, so it is never cut.
 POLL_READ_MARGIN = 10
 
 _BOT_TOKEN_SHAPE = re.compile(r"\d{3,}:[A-Za-z0-9_-]{10,}")
+
+
+def api_root(env: Mapping[str, str]) -> str:
+    """Return the Bot API root: ``BUGS_BOT_API_ROOT`` when set (the end-to-end run's fake), else Telegram's.
+
+    The token travels in every URL built from the root: only ``https://`` and plain-http loopback pass.
+
+    Args:
+        env: Process environment (only ``BUGS_BOT_API_ROOT`` is consulted).
+
+    Returns:
+        The root, without a trailing slash.
+
+    Raises:
+        BugsError: If the variable holds any other URL. The message never repeats the value.
+    """
+    root = env.get("BUGS_BOT_API_ROOT") or DEFAULT_API_ROOT
+    try:
+        parts = urlsplit(root)
+        parts.port  # noqa: B018 - raises ValueError on a malformed port
+    except ValueError:
+        raise BugsError(API_ROOT_RULE) from None
+    local = parts.scheme == "http" and parts.hostname in LOOPBACK_HOSTS
+    if "@" in parts.netloc or not (local or (parts.scheme == "https" and parts.hostname)):
+        raise BugsError(API_ROOT_RULE)
+    return root.rstrip("/")
 
 
 def mask(text: str, token: str | None) -> str:
@@ -56,7 +85,7 @@ def http_transport(url: str, payload: dict | None = None, timeout: float | None 
     headers = {} if payload is None else {"Content-Type": "application/json"}
     request = urllib.request.Request(url, data=data, headers=headers)
     try:
-        with urllib.request.urlopen(request, timeout=timeout or HTTP_TIMEOUT) as resp:  # noqa: S310 - fixed https host
+        with urllib.request.urlopen(request, timeout=timeout or HTTP_TIMEOUT) as resp:  # noqa: S310 - https or loopback, see api_root
             return resp.status, resp.read()
     except urllib.error.HTTPError as exc:
         # Telegram explains its refusals in the body: keep it for the caller.
@@ -157,9 +186,10 @@ def group_messages(messages: list[dict]) -> list[list[dict]]:
 class Api:
     """Thin Telegram Bot API client over an injectable transport."""
 
-    def __init__(self, token: str, transport: Transport) -> None:
+    def __init__(self, token: str, transport: Transport, root: str = DEFAULT_API_ROOT) -> None:
         self._token = token
         self._transport = transport
+        self._root = root
 
     @property
     def token(self) -> str:
@@ -180,7 +210,7 @@ class Api:
         Raises:
             BugsError: On ``ok: false`` (whatever the HTTP status) or an unreadable answer.
         """
-        url = f"{API_ROOT}/bot{self._token}/{method}"
+        url = f"{self._root}/bot{self._token}/{method}"
         status, body = self._transport(url, params) if http_timeout is None else self._transport(url, params, http_timeout)
         try:
             answer = json.loads(body)
@@ -203,7 +233,7 @@ class Api:
             BugsError: If either step fails.
         """
         file_path = self.call("getFile", file_id=file_id)["file_path"]
-        status, body = self._transport(f"{API_ROOT}/file/bot{self._token}/{file_path}", None)
+        status, body = self._transport(f"{self._root}/file/bot{self._token}/{file_path}", None)
         if status != 200:
             raise BugsError(f"download of {file_id}: HTTP {status}")
         return body
@@ -212,8 +242,8 @@ class Api:
 class TelegramChannel:
     """The ``Channel`` over the Bot API."""
 
-    def __init__(self, token: str, transport: Transport) -> None:
-        self._api = Api(token, transport)
+    def __init__(self, token: str, transport: Transport, root: str = DEFAULT_API_ROOT) -> None:
+        self._api = Api(token, transport, root)
 
     @property
     def secret(self) -> str:
