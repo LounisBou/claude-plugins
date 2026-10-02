@@ -66,6 +66,7 @@ class InboundMessage:
     attachments: tuple[Attachment, ...]
     group_key: str | None  # the media group (Telegram's media_group_id) it belongs to; None when alone
     thread_of: MessageId | None = None  # the thread parent, on a platform that threads; None otherwise
+    edited: bool = False  # True when this is a new version of a message already sent
 
 
 @dataclass(frozen=True)

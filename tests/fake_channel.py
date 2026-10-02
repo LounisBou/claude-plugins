@@ -15,7 +15,7 @@ def author(id: int | str | None = 42, username: str | None = "izno_op", name: st
 
 
 def inbound(chat_id: ChatId, message_id: MessageId, text: str = "", *, date: float = 1790929800.0, **rest) -> InboundMessage:
-    """Return one normalised message; ``rest`` sets ``author``, ``attachments``, ``group_key``, ``thread_of``."""
+    """Return one normalised message; ``rest`` sets ``author``, ``attachments``, ``group_key``, ``thread_of``, ``edited``."""
     return InboundMessage(
         chat_id=chat_id,
         message_id=message_id,
@@ -25,6 +25,7 @@ def inbound(chat_id: ChatId, message_id: MessageId, text: str = "", *, date: flo
         attachments=tuple(rest.get("attachments", ())),
         group_key=rest.get("group_key"),
         thread_of=rest.get("thread_of"),
+        edited=rest.get("edited", False),
     )
 
 

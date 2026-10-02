@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import mimetypes
 from collections.abc import Callable, Mapping, Sequence
+from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,8 @@ from typing import Any
 from bugs_bot.channel import Attachment, Author, ChatId, InboundMessage, MessageId
 from bugs_bot.errors import BugsError
 
+# An edit: the event carries the message as now written under ``message``, its ts the original's.
+EDITED = "message_changed"
 # A message of these subtypes is someone's words (a file shared, a thread reply also sent to the channel);
 # every other subtype is a service message (a join, a topic change) or a bot's post.
 CONTENT_SUBTYPES = {None, "file_share", "thread_broadcast"}
@@ -85,8 +88,14 @@ def _attachments(msg: Mapping[str, Any]) -> tuple[Attachment, ...]:
 def to_inbound(chat_id: ChatId, msg: Mapping[str, Any], author_of: Callable[[str], Author]) -> InboundMessage | None:
     """Return a message as an ``InboundMessage``; ``None`` for a service message or a bot's post.
 
-    A message whose ``thread_ts`` is another message's is a reply in that thread (``thread_of``).
+    A message whose ``thread_ts`` is another message's is a reply in that thread (``thread_of``). An edit
+    (``message_changed``) is the inner message, ``edited`` and dated when it was edited.
     """
+    if msg.get("subtype") == EDITED:
+        inner = msg.get("message") or {}
+        found = to_inbound(chat_id, inner, author_of) if inner.get("subtype") != EDITED else None
+        when = (inner.get("edited") or {}).get("ts") or msg["ts"]
+        return None if found is None else replace(found, edited=True, date=float(ts_key(when)))
     if msg.get("subtype") not in CONTENT_SUBTYPES or msg.get("bot_id") or not msg.get("user"):
         return None
     text, attachments = _text(msg.get("text") or ""), _attachments(msg)
@@ -172,8 +181,9 @@ def read_chat(
             inbound = to_inbound(chat_id, msg, author_of)
             if inbound is not None:
                 found.append(inbound)
-    unique = {m.message_id: m for m in found}  # a reply also sent to the channel is read twice
-    ordered = sorted(unique.values(), key=lambda m: ts_key(str(m.message_id)))
+    # A reply also sent to the channel is read twice; an edit shares its message's ts, never its date.
+    unique = {(m.message_id, m.edited, m.date): m for m in found}
+    ordered = sorted(unique.values(), key=lambda m: (ts_key(str(m.message_id)), m.edited, m.date))
     moved: dict[str, Any] = {"ts": top, "threads": threads}
     if due or read_at is not None:
         moved["threads_read"] = now if due else read_at

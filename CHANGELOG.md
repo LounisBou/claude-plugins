@@ -37,3 +37,8 @@ First release: the single-project Telegram bug relay, made a generic Claude Code
   (`files:write`); each image sent copied to the report's `sent/` and listed by `show`. The agent asks
   its launcher « capture <id> : … », looks at every image before sending it, and never sends one
   showing code, a terminal, a commit, an internal host, a local path, a token or another person's data.
+- Edited messages: a tester's edit of a message already recorded (Telegram `edited_message`, Slack
+  `message_changed`) replaces its text in the report — the report's own, or an answer's — under the
+  project's lock, the previous text kept in the report's `edits`; `wait` prints `edited <id>` until
+  `show` has printed it. An edit never creates a report, never sets or clears a wait, never changes a
+  status or a reaction; the edit of a message no report records is ignored.

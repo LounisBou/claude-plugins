@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import TypeVar
 
+from bugs_bot.channel import ChatId, MessageId
 from bugs_bot.errors import BugsError
 from bugs_bot.jsonio import write_json
 from bugs_bot.project import PROJECT_ID
@@ -199,6 +200,17 @@ class Store:
                 continue
             found.append((path.name, path, json.loads((path / "report.json").read_text())))
         return found
+
+
+def find_by_message(store: Store, chat_id: ChatId, message_id: MessageId) -> str | None:
+    """Return the id of the report recording that message of that chat (its first message, a member of its media
+    group, or an answer in its thread), ``None`` when no report records it."""
+    for report_id, _, report in store.reports():
+        if report.get("chat_id", chat_id) != chat_id:
+            continue
+        if message_id in report.get("message_ids", []) or any(a.get("message_id") == message_id for a in report.get("answers", [])):
+            return report_id
+    return None
 
 
 def load_report(store: Store, report_id: str) -> tuple[Path, dict]:

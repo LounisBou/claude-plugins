@@ -22,7 +22,7 @@ SLACK_WIRE = re.compile(
     r"slack\.com|conversations\.(history|replies|members|info)|users\.(info|conversations)"
     r"|chat\.(postMessage|update|delete)|reactions\.(add|remove)|auth\.test|url_private|thread_ts"
     r"|SLACK_BOT_TOKEN|BUGS_BOT_SLACK_API_ROOT|xox[abp]-|response_metadata|next_cursor|bot_id|upload_url|initial_comment"
-    r"|\b(conversations|users|chat|reactions|files|auth)\.[a-z]+|[\"']slack[\"']"
+    r"|\b(conversations|users|chat|reactions|files|auth)\.[a-z]+|[\"']slack[\"']|message_changed"
 )
 OWNERS = {
     "telegram": ({"bugs_bot/telegram.py", "bugs_bot/telegram_inbound.py"}, TELEGRAM_WIRE),

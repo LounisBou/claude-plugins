@@ -182,7 +182,7 @@ def test_a_given_cursor_is_sent_as_the_offset():
     got, tg = poll(message(10, 100, text="x"), message(11, 101, text="y"), cursor={"offset": 11})
 
     assert [m.message_id for m in got.messages] == [101]
-    assert tg.updates_calls() == [{"timeout": 0, "allowed_updates": ["message"], "offset": 11}]
+    assert tg.updates_calls() == [{"timeout": 0, "allowed_updates": ["message", "edited_message"], "offset": 11}]
 
 
 def test_an_empty_batch_returns_the_cursor_it_was_given():
@@ -193,7 +193,7 @@ def test_an_empty_batch_returns_the_cursor_it_was_given():
 def test_a_held_poll_is_read_longer_than_telegram_holds_it():
     _, tg = poll(timeout=50)
 
-    assert tg.updates_calls() == [{"timeout": 50, "allowed_updates": ["message"]}]
+    assert tg.updates_calls() == [{"timeout": 50, "allowed_updates": ["message", "edited_message"]}]
     assert tg.timeouts == [60]
 
 

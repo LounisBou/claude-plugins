@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from bugs_bot.answers import unseen
+from bugs_bot.edits import unseen_edits
 from bugs_bot.errors import BugsError
 from bugs_bot.followup import due, is_due, is_unanswered, unanswered
 from bugs_bot.project import Project
@@ -55,7 +56,8 @@ def cmd_wait(
     follow_up_hours: float,
 ) -> None:
     """Block until there is something to do, then print it: the untriaged open reports' ids, then
-    ``answer <id>`` for each report holding a reply in its thread not yet shown, ``follow-up <id>`` for each
+    ``answer <id>`` for each report holding a reply in its thread not yet shown, ``edited <id>`` for each holding
+    an edit not yet shown, ``follow-up <id>`` for each
     wait owed its reminder, ``unanswered <id>`` for each to tell the launcher, and ``ask <id>`` for each queued
     question whose person no longer owes an answer.
 
@@ -68,6 +70,7 @@ def cmd_wait(
         at = now + clock() - start
         found = untriaged(store)
         found += [f"answer {rid}" for rid in unseen(store)]
+        found += [f"edited {rid}" for rid in unseen_edits(store)]
         found += [f"follow-up {rid}" for rid in due(store, follow_up_hours, at)]
         found += [f"unanswered {rid}" for rid in unanswered(store, follow_up_hours, at)]
         found += [f"ask {rid}" for rid in asks(store)]

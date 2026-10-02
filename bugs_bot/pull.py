@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from bugs_bot.answers import record_answer
 from bugs_bot.channel import Channel, ChatId, InboundMessage, MessageId
 from bugs_bot.channels import mask
+from bugs_bot.edits import joined, record_edit
 from bugs_bot.errors import BugsError
 from bugs_bot.followup import clear_answered
 from bugs_bot.people import record_language
@@ -70,19 +71,22 @@ def build_report(channel: Channel, store: Store, group: list[InboundMessage]) ->
                 name = f"{len(images) + 1}{attachment.ext}"
                 (tmp / name).write_bytes(channel.get_file(attachment.file_id))
                 images.append(name)
-        texts = [m.text for m in group if m.text]
+        # Each member's own text: an edit of one member corrects that member's line only.
+        texts = {str(m.message_id): m.text for m in group if m.text}
+        message_ids = [m.message_id for m in group]
         write_json(
             tmp / "report.json",
             {
                 "id": report_id,
                 "chat_id": first.chat_id,
-                "message_ids": [m.message_id for m in group],
+                "message_ids": message_ids,
                 "media_group_id": first.group_key,  # the stored key keeps its first name
                 "date": datetime.fromtimestamp(first.date, timezone.utc).isoformat(),
                 "author": first.author.name,
                 "author_id": first.author.id,
                 "author_username": first.author.username,
-                "text": "\n".join(texts),
+                "text": joined(message_ids, texts),
+                "texts": texts,
                 "images": images,
                 "status": "seen",
                 "reaction": {"wanted": EMOJI_SEEN, "applied": None, "error": None},
@@ -160,7 +164,8 @@ def cmd_pull(
     chats included. A report that cannot be built (an image will not download) keeps the cursor
     where it is, so the batch is delivered again; the reports of the other projects are written
     all the same and are skipped, not duplicated, on the retry. A reply in a report's thread is an
-    answer recorded on that report, never a report of its own.
+    answer recorded on that report, never a report of its own; an edited message replaces the text recorded
+    for it, never anything else.
 
     Args:
         channel: The channel. With no project registered the pull still runs: the chats it drops are how ``init`` finds a new group.
@@ -192,10 +197,12 @@ def cmd_pull(
         chat_id = batch.migrations.get(msg.chat_id, msg.chat_id)
         if chat_id in entries:
             kept.setdefault(chat_id, []).append(msg)
-    created, answers, failures = [], [], []
-    for chat_id, messages in kept.items():
+    created, answers, edited, failures = [], [], [], []
+    for chat_id, both in kept.items():
         project = entries[chat_id].project
         store = machine.project_store(project)
+        # A new version of a message already sent is never a report nor an answer: it only corrects one.
+        messages = [m for m in both if not m.edited]
         for msg in messages:
             # The platform's language of each author, on first sight: what the agent writes to them in (spec § 3.5).
             record_language(store, msg.author)
@@ -221,13 +228,20 @@ def cmd_pull(
             if answered:
                 answers.append((project, answered))
             clear_answered(store, msg.author.id, msg.author.name, msg.date)
-    if not created and not answers and not failures and not quiet:
+        # Last: an edit of a message of this very batch finds its report or answer written.
+        for msg in sorted((m for m in both if m.edited), key=in_order):
+            report_id = record_edit(store, chat_id, msg)
+            if report_id:
+                edited.append((project, report_id))
+    if not created and not answers and not edited and not failures and not quiet:
         print("bugs-bot: no new report")  # a scheduled run leaves a trace in the PM2 log
     for project, report_id, group in created:
         images = sum(len(m.attachments) for m in group)
         print(f"new {report_id} ({images} image{'s' * (images != 1)}) in {project}")
     for project, report_id in answers:
         print(f"answer on {report_id} in {project}")
+    for project, report_id in edited:
+        print(f"edited {report_id} in {project}")
     if failures:
         for exc in failures[1:]:  # the caller says the first one
             print(f"bugs-bot: {mask(str(exc), channel.secret)}", file=sys.stderr)

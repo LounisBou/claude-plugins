@@ -115,7 +115,7 @@ def test_discovery_reads_updates_without_an_offset_when_pull_is_not_running(mach
     assert {cid: chat["title"] for cid, chat in found.items()} == {GROUP_ID: "TM Bugs", OTHER_GROUP_ID: "Famille"}
     assert tg.updates_calls() and all("offset" not in p for p in tg.updates_calls())
     # Telegram keeps the last setting: asking for more than Pull does would change what Pull receives
-    assert [p["allowed_updates"] for p in tg.updates_calls()] == [["message"]]
+    assert [p["allowed_updates"] for p in tg.updates_calls()] == [["message", "edited_message"]]
     assert machine.load_offset() is None
 
 

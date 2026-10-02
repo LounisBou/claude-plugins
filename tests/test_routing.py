@@ -42,7 +42,7 @@ def test_pull_with_no_project_registered_notes_the_chat_and_moves_the_offset(run
     assert list(machine.unregistered()) == [FAMILY_ID]
     assert machine.load_offset() == 11
     assert f"unregistered chat {FAMILY_ID}" in capsys.readouterr().err
-    assert [c["allowed_updates"] for c in tg.updates_calls()] == [["message"]]
+    assert [c["allowed_updates"] for c in tg.updates_calls()] == [["message", "edited_message"]]
 
 
 def test_pull_with_no_project_registered_still_needs_the_token(bugs_home, tmp_path, capsys):
@@ -70,12 +70,12 @@ def test_a_first_group_is_found_by_init_while_pull_runs_with_an_empty_registry(r
     assert machine.registry.entries()[("telegram", FAMILY_ID)].project == "first"
 
 
-def test_pull_asks_only_for_messages(run, bound):
+def test_pull_asks_for_messages_and_their_edits(run, bound):
     tg = FakeTelegram()
 
     assert run("pull", transport=tg) == 0
 
-    assert [c["allowed_updates"] for c in tg.updates_calls()] == [["message"]]
+    assert [c["allowed_updates"] for c in tg.updates_calls()] == [["message", "edited_message"]]
 
 
 # -- Review Focus 1: the offset is machine-wide, the reports are per project -------------------

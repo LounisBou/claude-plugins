@@ -8,7 +8,8 @@ from pathlib import Path
 from bugs_bot.channel import Attachment, Author, Batch, ChatId, InboundMessage
 
 # What Telegram is asked to send: it keeps the last setting asked, so every poller asks for the same.
-ALLOWED_UPDATES = ("message",)
+# A message's new version (an edit) comes as ``edited_message``.
+ALLOWED_UPDATES = ("message", "edited_message")
 GROUP_CHAT_TYPES = {"group", "supergroup"}
 
 
@@ -41,8 +42,11 @@ def _attachments(msg: dict) -> tuple[Attachment, ...]:
     return tuple(found)
 
 
-def _inbound(msg: dict) -> InboundMessage | None:
-    """Return a message as an ``InboundMessage``; ``None`` for a service message or a bot post."""
+def _inbound(msg: dict, edited: bool = False) -> InboundMessage | None:
+    """Return a message as an ``InboundMessage``; ``None`` for a service message or a bot post.
+
+    An ``edited`` one is the message as now written, dated when it was edited.
+    """
     author = to_author(msg.get("from"))
     attachments = _attachments(msg)
     text = msg.get("text") or msg.get("caption") or ""
@@ -52,11 +56,12 @@ def _inbound(msg: dict) -> InboundMessage | None:
     return InboundMessage(
         chat_id=chat_id,
         message_id=msg["message_id"],
-        date=float(msg["date"]),
+        date=float(msg.get("edit_date") or msg["date"]) if edited else float(msg["date"]),
         author=author,
         text=text,
         attachments=attachments,
         group_key=msg.get("media_group_id"),
+        edited=edited,
     )
 
 
@@ -94,6 +99,11 @@ def _migrations(updates: list[dict]) -> dict[ChatId, ChatId]:
 
 def to_batch(updates: list[dict], cursor: dict | None) -> Batch:
     """Return pending updates as a ``Batch``; its cursor is past the last update, else the one given."""
-    messages = [inbound for update in updates if (inbound := _inbound(update.get("message") or {})) is not None]
+    messages = []
+    for update in updates:
+        edited = "edited_message" in update
+        inbound = _inbound(update.get("edited_message" if edited else "message") or {}, edited)
+        if inbound is not None:
+            messages.append(inbound)
     moved = {"offset": max(u["update_id"] for u in updates) + 1} if updates else dict(cursor or {})
     return Batch(messages=messages, chats=_chats_seen(updates), migrations=_migrations(updates), cursor=moved)
