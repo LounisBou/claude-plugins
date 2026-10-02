@@ -192,7 +192,7 @@ def test_backfill_skips_reports_that_already_have_an_id_and_unknown_names(run, b
 
 def test_backfill_unbound_refuses(run, home, capsys):
     assert run("backfill-authors") != 0
-    assert "unbound" in capsys.readouterr().err
+    assert "no .bugs-bot.json here or above" in capsys.readouterr().err
 
 
 # -- the method is written down --------------------------------------------------------

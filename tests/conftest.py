@@ -1,4 +1,4 @@
-"""Shared fixtures: an isolated inbox, a fake token file, a runner for the CLI."""
+"""Shared fixtures: an isolated bugs home, a registered project, a fake token file, a runner for the CLI."""
 
 from __future__ import annotations
 
@@ -14,28 +14,59 @@ sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(HERE))
 
 from bugs_bot import cli  # noqa: E402
+from bugs_bot.project import PROJECT_FILE  # noqa: E402
+from bugs_bot.registry import Registry  # noqa: E402
+from bugs_bot.store import Machine  # noqa: E402
 from samples import GROUP_ID, TOKEN, FakeTelegram  # noqa: E402
 
 
-@pytest.fixture
-def home(tmp_path: Path) -> Path:
-    """Return the inbox root used by the tests (never the real one)."""
-    return tmp_path / "tm-bugs"
+@pytest.fixture(autouse=True)
+def _outside_any_project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Start every test in an empty directory, so no stray project file above the checkout is found."""
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+    monkeypatch.chdir(cwd)
 
 
 @pytest.fixture
-def env(tmp_path: Path, home: Path) -> dict[str, str]:
-    """Return an environment pointing the script at a fake token and inbox."""
+def bugs_home(tmp_path: Path) -> Path:
+    """Return the machine's data directory used by the tests (never the real one)."""
+    return tmp_path / "bugs-bot"
+
+
+@pytest.fixture
+def home(bugs_home: Path) -> Path:
+    """Return the data directory of the project ``demo``."""
+    return bugs_home / "demo"
+
+
+@pytest.fixture
+def env(tmp_path: Path, bugs_home: Path) -> dict[str, str]:
+    """Return an environment pointing the script at a fake token and data directory."""
     env_file = tmp_path / ".env"
     env_file.write_text(f"OTHER=1\nTELEGRAM_BOT_TOKEN={TOKEN}\nTELEGRAM_CHAT_ID=5\n")
-    return {"TM_BUGS_ENV_FILE": str(env_file), "TM_BUGS_HOME": str(home)}
+    return {"BUGS_BOT_ENV_FILE": str(env_file), "BUGS_BOT_HOME": str(bugs_home)}
+
+
+def register(bugs_home: Path, repo: Path, project: str, chat_id: int, title: str = "Bugs") -> Path:
+    """Write ``repo``'s project file and register it, as ``init`` will; return ``repo``."""
+    repo.mkdir(parents=True, exist_ok=True)
+    (repo / PROJECT_FILE).write_text(
+        json.dumps({"project": project, "group": {"chat_id": chat_id, "title": title}, "agent_title": f"Agent : {title}"})
+    )
+    Registry(bugs_home / "projects.json").add(chat_id, project, repo)
+    return repo
 
 
 @pytest.fixture
-def bound(home: Path) -> Path:
-    """Bind the inbox to the TM Bugs group, as ``bind`` would."""
+def bound(tmp_path: Path, bugs_home: Path, home: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Register the ``GROUP_ID`` group as project ``demo`` and work from its repository.
+
+    Returns the project's data directory.
+    """
+    repo = register(bugs_home, tmp_path / "repo-demo", "demo", GROUP_ID, "Demo Bugs")
     home.mkdir(parents=True, exist_ok=True)
-    (home / "state.json").write_text(json.dumps({"chat_id": GROUP_ID, "offset": None}))
+    monkeypatch.chdir(repo)
     return home
 
 
@@ -50,8 +81,16 @@ def run(env: dict[str, str]):
 
 
 def read_state(home: Path) -> dict:
-    """Load ``state.json``."""
-    return json.loads((home / "state.json").read_text())
+    """Load a project's ``state.json``, ``{}`` while there is none."""
+    try:
+        return json.loads((home / "state.json").read_text())
+    except FileNotFoundError:
+        return {}
+
+
+def read_offset(home: Path) -> int | None:
+    """Return the machine-wide update offset, ``home`` being a project's data directory."""
+    return Machine(home.parent).load_offset()
 
 
 def reports(home: Path) -> list[Path]:

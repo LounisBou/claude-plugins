@@ -13,8 +13,8 @@ from typing import Any
 
 from bugs_bot.channel import Mention, Transport
 from bugs_bot.errors import BugsError
+from bugs_bot.store import bugs_home
 
-DEFAULT_ENV_FILE = Path("/Users/izno/dev/PersonalScraper/.env")
 API_ROOT = "https://api.telegram.org"
 HTTP_TIMEOUT = 30
 # A held getUpdates request is read this much longer than Telegram holds it, so it is never cut.
@@ -67,7 +67,7 @@ def read_token(env: Mapping[str, str]) -> str:
     """Read ``TELEGRAM_BOT_TOKEN`` from the ``.env`` file, nowhere else.
 
     Args:
-        env: Process environment (only ``TM_BUGS_ENV_FILE`` is consulted).
+        env: Process environment (only ``BUGS_BOT_ENV_FILE`` and ``BUGS_BOT_HOME`` are consulted).
 
     Returns:
         The token.
@@ -75,7 +75,7 @@ def read_token(env: Mapping[str, str]) -> str:
     Raises:
         BugsError: If the file or the variable is missing.
     """
-    path = Path(env.get("TM_BUGS_ENV_FILE") or DEFAULT_ENV_FILE)
+    path = Path(env.get("BUGS_BOT_ENV_FILE") or bugs_home(env) / ".env")
     try:
         lines = path.read_text().splitlines()
     except OSError as exc:

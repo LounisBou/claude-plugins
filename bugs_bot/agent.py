@@ -11,11 +11,11 @@ from bugs_bot.errors import BugsError
 from bugs_bot.reports import one_line
 from bugs_bot.store import OPEN_STATUSES, Store, load_report, write_json
 
-# What the agent session decides a report is (DESIGN § 8.6).
+# What the agent session decides a report is.
 KINDS = ("bug", "question")
 WAIT_TIMEOUT = 1800
 WAIT_INTERVAL = 5
-# The TM Bugs agent's own instructions, shipped in the repository's agent/ directory.
+# The agent's own instructions, shipped in the repository's agent/ directory.
 AGENT_MD = Path(__file__).resolve().parent.parent / "agent" / "AGENT.md"
 # A ListAgents name and reference: one line, no shell or markdown metacharacters.
 _LAUNCHER_SHAPE = re.compile(r"[\w :.()\[\]-]{1,120}")
@@ -64,7 +64,7 @@ def cmd_pending(store: Store) -> None:
 def cmd_agent_prompt(
     store: Store, launcher: str, now: float, predecessor: str | None = None, predecessor_tty: str | None = None
 ) -> None:
-    """Write the TM Bugs agent's startup prompt for ``launcher`` and record the launcher.
+    """Write the agent's startup prompt for ``launcher`` and record the launcher.
 
     With ``predecessor`` and ``predecessor_tty`` the prompt is a successor's: it opens with the
     handover (confirm to the predecessor, wait for its « handed over », close its tab).

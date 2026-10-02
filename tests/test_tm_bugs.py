@@ -7,10 +7,12 @@ import os
 from pathlib import Path
 
 import pytest
-from conftest import read_state, reports
+from conftest import read_offset, register, reports
 from samples import BASE_DATE, GROUP_ID, OTHER_GROUP_ID, TOKEN, FakeTelegram, image_bytes, message
 
 from bugs_bot import cli, store, telegram
+from bugs_bot.registry import Registry
+from bugs_bot.store import Machine
 
 FIRST_STAMP = "20261002-083000"
 
@@ -35,7 +37,7 @@ def test_pull_text_message(run, bound, capsys):
     assert data["message_ids"] == [100]
     assert data["author"] == "izno_op"
     assert data["replies"] == []
-    assert read_state(bound)["offset"] == 11
+    assert read_offset(bound) == 11
     assert capsys.readouterr().out.count("\n") == 1
 
 
@@ -87,21 +89,19 @@ def test_pull_ignores_other_chat_but_advances_offset(run, bound):
     assert run("pull", transport=tg) == 0
 
     assert reports(bound) == []
-    assert read_state(bound)["offset"] == 11
+    assert read_offset(bound) == 11
     # nothing of the other chat was downloaded or stored
-    assert not any("secret" in p.read_text() for p in bound.rglob("*.json"))
+    assert not any("secret" in p.read_text() for p in bound.parent.rglob("*.json"))
 
 
 def test_pull_with_nothing_new_says_so_in_one_line(run, bound, capsys):
     assert run("pull") == 0
 
-    assert capsys.readouterr().out == "tm-bugs: no new report\n"
+    assert capsys.readouterr().out == "bugs-bot: no new report\n"
 
 
 def test_pull_passes_stored_offset_and_zero_timeout(run, bound):
-    state = read_state(bound)
-    state["offset"] = 50
-    (bound / "state.json").write_text(json.dumps(state))
+    Machine(bound.parent).save_offset(50)
     tg = FakeTelegram([])
 
     assert run("pull", transport=tg) == 0
@@ -141,7 +141,7 @@ def test_pull_download_failure_keeps_offset_and_writes_nothing(run, bound, capsy
 
     assert run("pull", transport=tg) != 0
 
-    assert read_state(bound)["offset"] is None
+    assert read_offset(bound) is None
     # no half-written report, no leftover temporary directory
     leftovers = [p for p in reports(bound) if not (p / "report.json").exists()]
     assert leftovers == []
@@ -163,15 +163,15 @@ def test_pull_retry_after_failure_is_complete_and_not_duplicated(run, bound):
 
     names = sorted(p.name for p in reports(bound))
     assert names == [f"{FIRST_STAMP}-100", f"{FIRST_STAMP}-101"]
-    assert read_state(bound)["offset"] == 12
+    assert read_offset(bound) == 12
 
 
-def test_pull_unbound_exits_zero_with_one_line(run, home, capsys):
+def test_pull_with_no_project_registered_exits_zero_with_one_line(run, home, capsys):
     assert run("pull") == 0
 
     out = capsys.readouterr()
     assert out.out.count("\n") == 1
-    assert "unbound" in out.out
+    assert "no project registered" in out.out
     assert not (home / "inbox").exists()
 
 
@@ -228,76 +228,12 @@ def test_token_never_written_to_disk(run, bound):
     tg = FakeTelegram([message(10, 100, caption="x", photo="p1")])
     assert run("pull", transport=tg) == 0
 
-    for path in bound.rglob("*"):
+    for path in bound.parent.rglob("*"):
         if path.is_file() and path.suffix in {".json", ".txt"}:
             assert TOKEN not in path.read_text()
 
 
-# -- bind ---------------------------------------------------------------------
-
-
-def test_bind_with_one_group_binds_without_consuming(run, home, capsys):
-    tg = FakeTelegram(
-        [
-            message(10, 100, text="salut"),
-            message(11, 5, chat_id=OTHER_GROUP_ID, title="Famille"),
-        ]
-    )
-
-    assert run("bind", transport=tg) == 0
-
-    state = read_state(home)
-    assert state["chat_id"] == GROUP_ID
-    assert state["offset"] is None
-    assert all("offset" not in p for p in tg.updates_calls())
-    out = capsys.readouterr().out
-    assert "TM Bugs" in out and "Famille" in out
-
-
-def test_bind_with_no_tm_bugs_group_refuses(run, home, capsys):
-    tg = FakeTelegram([message(11, 5, chat_id=OTHER_GROUP_ID, title="Famille")])
-
-    assert run("bind", transport=tg) != 0
-
-    assert not (home / "state.json").exists()
-    assert "Famille" in capsys.readouterr().out
-
-
-def test_bind_with_zero_updates_refuses(run, home):
-    assert run("bind", transport=FakeTelegram()) != 0
-
-    assert not (home / "state.json").exists()
-
-
-def test_bind_with_two_tm_bugs_groups_refuses(run, home, capsys):
-    tg = FakeTelegram(
-        [
-            message(10, 100, text="a"),
-            message(11, 5, chat_id=OTHER_GROUP_ID, title="TM Bugs"),
-        ]
-    )
-
-    assert run("bind", transport=tg) != 0
-
-    assert not (home / "state.json").exists()
-    assert "several" in capsys.readouterr().err.lower()
-
-
-def test_bind_ignores_a_private_chat_titled_tm_bugs(run, home):
-    tg = FakeTelegram([message(10, 100, chat_type="private", title="TM Bugs", text="a")])
-
-    assert run("bind", transport=tg) != 0
-
-
-def test_bind_keeps_the_stored_offset_when_rebinding(run, bound):
-    state = read_state(bound)
-    state["offset"] = 33
-    (bound / "state.json").write_text(json.dumps(state))
-    tg = FakeTelegram([message(40, 100, text="a")])
-
-    assert run("bind", transport=tg) == 0
-
-    assert read_state(bound)["offset"] == 33
+# -- migration ----------------------------------------------------------------
 
 
 def migration_updates() -> list[dict]:
@@ -309,32 +245,15 @@ def migration_updates() -> list[dict]:
     return [old, new]
 
 
-def test_bind_drops_a_migrated_chat_and_binds_the_remaining_one(run, home):
-    tg = FakeTelegram(migration_updates())
-
-    assert run("bind", transport=tg) == 0
-
-    assert read_state(home)["chat_id"] == GROUP_ID
-
-
-def test_bind_still_refuses_two_unmigrated_groups_next_to_a_migrated_one(run, home):
-    third = message(12, 9, chat_id=-1007777777777)
-    tg = FakeTelegram([*migration_updates(), third])
-
-    assert run("bind", transport=tg) != 0
-
-    assert not (home / "state.json").exists()
-
-
-def test_pull_rebinds_when_the_bound_chat_migrates(run, home, capsys):
-    home.mkdir(parents=True)
-    (home / "state.json").write_text(json.dumps({"chat_id": OTHER_GROUP_ID, "offset": None}))
+def test_pull_rebinds_when_the_registered_chat_migrates(run, bugs_home, home, tmp_path, monkeypatch, capsys):
+    repo = register(bugs_home, tmp_path / "repo-demo", "demo", OTHER_GROUP_ID)
+    monkeypatch.chdir(repo)
     tg = FakeTelegram([*migration_updates(), message(12, 3, text="après la migration")])
 
     assert run("pull", transport=tg) == 0
 
-    assert read_state(home)["chat_id"] == GROUP_ID
-    assert read_state(home)["offset"] == 13
+    assert list(Registry(bugs_home / "projects.json").entries()) == [GROUP_ID]
+    assert read_offset(home) == 13
     [rep] = reports(home)
     assert report_json(rep)["text"] == "après la migration"
     out = capsys.readouterr().out
@@ -347,7 +266,8 @@ def test_pull_ignores_migration_of_another_chat(run, bound):
 
     assert run("pull", transport=FakeTelegram([old])) == 0
 
-    assert read_state(bound)["chat_id"] == GROUP_ID
+    assert list(Registry(bound.parent / "projects.json").entries()) == [GROUP_ID]
+    assert Machine(bound.parent).unregistered() == {}
 
 
 def test_pull_ignores_messages_sent_by_a_bot(run, bound):
@@ -357,7 +277,7 @@ def test_pull_ignores_messages_sent_by_a_bot(run, bound):
     assert run("pull", transport=FakeTelegram([own])) == 0
 
     assert reports(bound) == []
-    assert read_state(bound)["offset"] == 11
+    assert read_offset(bound) == 11
 
 
 def test_pull_keeps_every_human_author(run, bound):
@@ -376,7 +296,7 @@ def test_pull_skips_service_messages_without_content(run, bound):
     assert run("pull", transport=FakeTelegram([service])) == 0
 
     assert reports(bound) == []
-    assert read_state(bound)["offset"] == 11
+    assert read_offset(bound) == 11
 
 
 # -- reactions: seen (pull) and fixed ------------------------------------------
@@ -417,7 +337,7 @@ def test_failed_reaction_keeps_the_report_and_is_retried_at_next_pull(run, bound
     assert data["reaction"]["applied"] is None
     assert "REACTION_INVALID" in data["reaction"]["error"]
     assert "REACTION_INVALID" in capsys.readouterr().err
-    assert read_state(bound)["offset"] == 11
+    assert read_offset(bound) == 11
 
     tg.fail_reaction = False
     assert run("pull", transport=tg) == 0
@@ -623,4 +543,4 @@ def test_unknown_command_exits_non_zero():
 
 
 def test_default_state_dir_is_the_torrentmate_inbox():
-    assert str(store.DEFAULT_HOME).endswith(".torrentmate/tm-bugs")
+    assert str(store.DEFAULT_HOME).endswith(".bugs-bot")

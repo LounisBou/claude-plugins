@@ -48,18 +48,6 @@ def cmd_show(store: Store, report_id: str) -> None:
         print(f"reply {number} {reply['date']}: {reply['text']}{count}")
 
 
-def bound_chat(store: Store) -> int:
-    """Return the bound chat id.
-
-    Raises:
-        BugsError: Before ``bind`` has run.
-    """
-    chat_id = store.load_state().get("chat_id")
-    if chat_id is None:
-        raise BugsError("unbound — run `tm_bugs.py bind` first")
-    return chat_id
-
-
 def mention_of(report: dict) -> Mention:
     """Return who a mention of the report's author addresses.
 
@@ -90,7 +78,7 @@ def set_reaction(channel: Channel, chat_id: int, report: dict, emoji: str) -> No
     state = report.setdefault("reaction", {"wanted": emoji, "applied": None, "error": None})
     state["wanted"] = emoji
     try:
-        channel.react(chat_id, report["message_ids"][0], emoji)
+        channel.react(report.get("chat_id", chat_id), report["message_ids"][0], emoji)
     except BugsError as exc:
         state["error"] = str(exc)
         # The operator deleted the message: no retry can ever land, stop trying.
@@ -101,20 +89,21 @@ def set_reaction(channel: Channel, chat_id: int, report: dict, emoji: str) -> No
 
 
 def retry_pending_reactions(channel: Channel, store: Store, chat_id: int) -> None:
-    """Land every reaction that is wanted but not applied yet (bound chat only).
+    """Land every reaction that is wanted but not applied yet, in the chat each report was written in.
 
+    ``chat_id`` is the project's current chat, used for a report that records none.
     Failures are reported on stderr and recorded; they do not fail the pull.
     """
     for report_id, path, report in store.reports():
         reaction = report.get("reaction")
-        if report.get("chat_id") != chat_id or not reaction or reaction.get("gone"):
+        if not reaction or reaction.get("gone"):
             continue
         if reaction["wanted"] == reaction["applied"]:
             continue
         try:
             set_reaction(channel, chat_id, report, reaction["wanted"])
         except BugsError as exc:
-            print(f"tm-bugs: reaction on {report_id} pending: {mask(str(exc), channel.secret)}", file=sys.stderr)
+            print(f"bugs-bot: reaction on {report_id} pending: {mask(str(exc), channel.secret)}", file=sys.stderr)
         write_json(path / "report.json", report)
 
 
@@ -122,23 +111,31 @@ def send_reply(
     channel: Channel, chat_id: int, path: Path, report: dict, text: str, now: float, mention: Mention | None = None
 ) -> None:
     """Post ``text`` threaded on the report's first message and record it in ``report.json``."""
-    sent = channel.send(chat_id, text, report["message_ids"][0], mention)
+    sent = channel.send(report.get("chat_id", chat_id), text, report["message_ids"][0], mention)
     report["replies"].append(
         {"date": datetime.fromtimestamp(now, timezone.utc).isoformat(), "text": sent["text"], "message_id": sent["message_id"]}
     )
     write_json(path / "report.json", report)
 
 
-def cmd_reply(channel: Channel, store: Store, report_id: str, text: str, now: float, tag: bool = False) -> None:
+def cmd_reply(
+    channel: Channel, store: Store, chat_id: int, report_id: str, text: str, now: float, tag: bool = False
+) -> None:
     """Answer in the group, threaded on the report's first message; ``tag`` mentions its author."""
-    chat_id = bound_chat(store)
     path, report = load_report(store, report_id)
     send_reply(channel, chat_id, path, report, text, now, mention_of(report) if tag else None)
     print(f"replied to {report_id}")
 
 
 def cmd_edit(
-    channel: Channel, store: Store, report_id: str, text: str, now: float, number: int | None = None, tag: bool = False
+    channel: Channel,
+    store: Store,
+    chat_id: int,
+    report_id: str,
+    text: str,
+    now: float,
+    number: int | None = None,
+    tag: bool = False,
 ) -> None:
     """Rewrite a reply the bot posted on a report: the last one, or the ``number``-th (1-based).
 
@@ -148,7 +145,6 @@ def cmd_edit(
     Raises:
         BugsError: On no such reply, a reply without ``message_id``, an empty text, or a Telegram error.
     """
-    chat_id = bound_chat(store)
     path, report = load_report(store, report_id)
     replies = report["replies"]
     number = len(replies) if number is None else number
@@ -161,7 +157,7 @@ def cmd_edit(
         raise BugsError("empty text: nothing to write")
     mention = mention_of(report) if tag else None
     try:
-        edited = channel.edit(chat_id, reply["message_id"], text, mention)
+        edited = channel.edit(report.get("chat_id", chat_id), reply["message_id"], text, mention)
     except BugsError as exc:
         if "message is not modified" not in str(exc):
             raise
@@ -176,7 +172,7 @@ def cmd_edit(
 
 
 def move_to(
-    channel: Channel, store: Store, report_id: str, status: str, emoji: str
+    channel: Channel, store: Store, chat_id: int, report_id: str, status: str, emoji: str
 ) -> tuple[int, Path, dict, BugsError | None]:
     """Set a report's status and its reaction; the status is saved before any network call.
 
@@ -186,7 +182,6 @@ def move_to(
     Returns:
         ``(chat_id, dir, report, reaction failure or None)``.
     """
-    chat_id = bound_chat(store)
     path, report = load_report(store, report_id)
     report["status"] = status
     report["chat_id"] = report.get("chat_id", chat_id)
@@ -198,18 +193,18 @@ def move_to(
     except BugsError as exc:
         failure = exc
     write_json(path / "report.json", report)
-    return chat_id, path, report, failure
+    return report["chat_id"], path, report, failure
 
 
 def say_reaction_pending(channel: Channel, failure: BugsError | None) -> int:
     """Report a pending reaction on stderr; return the matching exit code."""
     if failure is None:
         return 0
-    print(f"tm-bugs: reaction pending, `pull` will retry: {mask(str(failure), channel.secret)}", file=sys.stderr)
+    print(f"bugs-bot: reaction pending, `pull` will retry: {mask(str(failure), channel.secret)}", file=sys.stderr)
     return 1
 
 
-def cmd_taken(channel: Channel, store: Store, report_id: str) -> int:
+def cmd_taken(channel: Channel, store: Store, chat_id: int, report_id: str) -> int:
     """The launcher took the report up: 👨‍💻 reaction, status ``taken``.
 
     Returns:
@@ -221,12 +216,12 @@ def cmd_taken(channel: Channel, store: Store, report_id: str) -> int:
     _, report = load_report(store, report_id)
     if report["status"] in CLOSED_STATUSES:
         raise BugsError(f"{report_id} is already {report['status']}")
-    _, _, _, failure = move_to(channel, store, report_id, "taken", EMOJI_TAKEN)
+    _, _, _, failure = move_to(channel, store, chat_id, report_id, "taken", EMOJI_TAKEN)
     print(f"taken {report_id}")
     return say_reaction_pending(channel, failure)
 
 
-def cmd_fixed(channel: Channel, store: Store, report_id: str, note: str | None, now: float) -> int:
+def cmd_fixed(channel: Channel, store: Store, chat_id: int, report_id: str, note: str | None, now: float) -> int:
     """Mark a report fixed: status, 👌 reaction, and an optional note posted as a reply.
 
     The status is saved before any network call, so a refused reaction leaves the
@@ -235,30 +230,33 @@ def cmd_fixed(channel: Channel, store: Store, report_id: str, note: str | None, 
     Returns:
         1 if the reaction could not be set (it stays pending), else 0.
     """
-    chat_id, path, report, failure = move_to(channel, store, report_id, "fixed", EMOJI_FIXED)
+    _, path, report, failure = move_to(channel, store, chat_id, report_id, "fixed", EMOJI_FIXED)
     if note:
         send_reply(channel, chat_id, path, report, f"Corrigé : {note}", now)
     print(f"fixed {report_id}")
     return say_reaction_pending(channel, failure)
 
 
-def cmd_done(channel: Channel | None, store: Store, report_id: str, reason: str | None, now: float) -> None:
+def cmd_done(
+    channel: Channel | None, store: Store, chat_id: int, report_id: str, reason: str | None, now: float
+) -> None:
     """Close a report without a fix; with ``reason``, say why in a reply. No reaction change."""
     path, report = load_report(store, report_id)
     if reason:
         assert channel is not None
-        send_reply(channel, bound_chat(store), path, report, reason, now)
+        send_reply(channel, chat_id, path, report, reason, now)
     report["status"] = "done"
     write_json(path / "report.json", report)
     print(f"done {report_id}")
 
 
-def cmd_post(channel: Channel, store: Store, text: str, now: float, mention_report: str | None = None) -> None:
+def cmd_post(
+    channel: Channel, store: Store, chat_id: int, text: str, now: float, mention_report: str | None = None
+) -> None:
     """Post a one-off message in the group (an announcement), recorded in ``state.json``.
 
     With ``mention_report`` (a report id) the text opens with a mention of that report's author.
     """
-    chat_id = bound_chat(store)
     mention = mention_of(load_report(store, mention_report)[1]) if mention_report else None
     sent = channel.send(chat_id, text, None, mention)
     state = store.load_state()
@@ -269,14 +267,13 @@ def cmd_post(channel: Channel, store: Store, text: str, now: float, mention_repo
     print(f"posted message {sent['message_id']}")
 
 
-def cmd_backfill_authors(channel: Channel, store: Store) -> None:
+def cmd_backfill_authors(channel: Channel, store: Store, chat_id: int) -> None:
     """Record the user id of authors of reports written before ``author_id`` existed.
 
     Only when it is proven: the group's members are all administrators (the member count
     equals the administrator list), so a display name matching exactly one human
     administrator can only be that person. Anything else is left alone and said.
     """
-    chat_id = bound_chat(store)
     todo = [(rid, path, rep) for rid, path, rep in store.reports() if not rep.get("author_id")]
     if not todo:
         print("no report without an author id")

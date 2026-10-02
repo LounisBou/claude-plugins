@@ -1,4 +1,4 @@
-"""Pull: collect the group's messages into reports (one pass, a timed loop, or long polling)."""
+"""Pull: collect the registered groups' messages into each project's reports (one pass, a timed loop, or long polling)."""
 
 from __future__ import annotations
 
@@ -12,14 +12,14 @@ from datetime import datetime, timezone
 from bugs_bot.channel import Channel, Transport
 from bugs_bot.errors import BugsError
 from bugs_bot.reports import retry_pending_reactions
-from bugs_bot.store import CLOSED_STATUSES, EMOJI_SEEN, Store, write_json
+from bugs_bot.project import PROJECT_FILE, rebind_chat
+from bugs_bot.store import CLOSED_STATUSES, EMOJI_SEEN, Machine, Store, write_json
+from bugs_bot.registry import Entry
 from bugs_bot.telegram import TelegramChannel, attachments, author_of, group_messages, has_content, mask, read_token
 
-GROUP_TITLE = "TM Bugs"
-# Long polling (`pull --watch`): the channel holds a request until a message arrives or
-# POLL_TIMEOUT seconds pass.
+# Long polling (`pull --watch`): the channel holds a request until a message arrives or POLL_TIMEOUT seconds pass.
 POLL_TIMEOUT = 50
-# A failed watch round waits BACKOFF_FIRST s, doubling up to BACKOFF_CEILING; unbound, it waits UNBOUND_WAIT.
+# A failed watch round waits BACKOFF_FIRST s, doubling up to BACKOFF_CEILING; with no project registered, it waits UNBOUND_WAIT.
 BACKOFF_FIRST = 5
 BACKOFF_CEILING = 60
 UNBOUND_WAIT = 30
@@ -91,49 +91,98 @@ def purge_old_done(store: Store, now: float) -> None:
             shutil.rmtree(path)
 
 
-def cmd_pull(channel: Channel, store: Store, now: float, poll_timeout: int = 0, purge: bool = True) -> None:
-    """Collect new messages of the bound chat into reports.
+def follow_migrations(machine: Machine, entries: dict[int, Entry], updates: list[dict]) -> dict[int, int]:
+    """Re-register the projects whose group was promoted to a supergroup (new chat id), updating ``entries`` in place.
+
+    The project file is rewritten before the registry: a retry after a failure between the two finds it done.
+
+    Returns:
+        ``{old: new chat id}`` of every migration in ``updates``, even one already followed (a redelivered
+        batch): messages sent before the promotion still carry the old id.
+
+    Raises:
+        BugsError: If a project file or the registry cannot be rewritten.
+    """
+    aliases: dict[int, int] = {}
+    for update in updates:
+        msg = update.get("message") or {}
+        old, new = (msg.get("chat") or {}).get("id"), msg.get("migrate_to_chat_id")
+        if not new or old is None:
+            continue
+        aliases[old] = new
+        if old not in entries:
+            continue
+        entry = entries[old]
+        rebind_chat(entry.repo / PROJECT_FILE, new)
+        machine.registry.add(new, entry.project, entry.repo)
+        entries[new] = entries.pop(old)
+        print(f"bugs-bot: group migrated, project {entry.project} rebound to chat {new}")
+    return aliases
+
+
+def cmd_pull(channel: Channel | None, machine: Machine, now: float, poll_timeout: int = 0, purge: bool = True) -> None:
+    """Collect new messages of every registered chat into its project's reports.
+
+    The update offset is machine-wide: it moves past the whole batch, messages of unregistered
+    chats included. A report that cannot be built (an image will not download) keeps the offset
+    where it is, so the batch is delivered again; the reports of the other projects are written
+    all the same and are skipped, not duplicated, on the retry.
 
     Args:
-        channel: The group's channel (``None`` is accepted while unbound: nothing is fetched).
-        store: The inbox.
+        channel: The channel (``None`` is accepted while no project is registered: nothing is fetched).
+        machine: The machine-wide files; the registry says which chat belongs to which project.
         now: Epoch seconds.
         poll_timeout: Seconds Telegram may hold the request waiting for a message (0: answer at once).
         purge: Also delete closed reports past retention.
+
+    Raises:
+        BugsError: If a report could not be built, after every other one was (the others go to stderr).
     """
-    state = store.load_state()
-    if "chat_id" not in state:
-        print("tm-bugs: unbound — run `tm_bugs.py bind` after posting in the group")
+    entries = machine.registry.entries()
+    if not entries:
+        print("bugs-bot: no project registered — run /bugs-bot:init")
         return
-    updates = channel.get_updates(state.get("offset"), poll_timeout, ["message"])
+    assert channel is not None
+    updates = channel.get_updates(machine.load_offset(), poll_timeout, ["message"])
+    aliases = follow_migrations(machine, entries, updates)
+    for chat_id, chat in chats_seen(updates).items():
+        if chat_id not in entries:
+            machine.note_unregistered(chat, now)
+            print(f"bugs-bot: unregistered chat {chat_id} {chat.get('title', '')!r} dropped", file=sys.stderr)
+    kept: dict[int, list[dict]] = {}
     for update in updates:
         msg = update.get("message") or {}
-        # A group promoted to supergroup gets a new chat id: follow it.
-        if msg.get("chat", {}).get("id") == state["chat_id"] and msg.get("migrate_to_chat_id"):
-            state["chat_id"] = msg["migrate_to_chat_id"]
-            print(f"tm-bugs: group migrated, rebound to chat {state['chat_id']}")
-    kept = [
-        u["message"]
-        for u in updates
-        if u.get("message", {}).get("chat", {}).get("id") == state["chat_id"] and has_content(u["message"])
-    ]
-    created = []
-    for group in group_messages(kept):
-        report_id = build_report(channel, store, group)
-        if report_id:
-            created.append((report_id, group))
+        chat_id = aliases.get(old := (msg.get("chat") or {}).get("id"), old)
+        if chat_id in entries and has_content(msg):
+            kept.setdefault(chat_id, []).append(msg)
+    created, failures = [], []
+    for chat_id, messages in kept.items():
+        project = entries[chat_id].project
+        for group in group_messages(messages):
+            try:
+                report_id = build_report(channel, machine.project_store(project), group)
+            except BugsError as exc:
+                failures.append(exc)
+                continue
+            if report_id:
+                created.append((project, report_id, group))
+    if not created and not failures and not poll_timeout:
+        print("bugs-bot: no new report")  # a scheduled run leaves a trace in the PM2 log; a held one would flood it
+    for project, report_id, group in created:
+        images = sum(len(attachments(m)) for m in group)
+        print(f"new {report_id} ({images} image{'s' * (images != 1)}) in {project}")
+    if failures:
+        for exc in failures[1:]:  # the caller says the first one
+            print(f"bugs-bot: {mask(str(exc), channel.secret)}", file=sys.stderr)
+        raise failures[0]
     if updates:
         # Only now is every kept update on disk: confirming earlier could lose a report.
-        state["offset"] = max(u["update_id"] for u in updates) + 1
-        store.save_state(state)
-    if not created and not poll_timeout:
-        print("tm-bugs: no new report")  # a scheduled run leaves a trace in the PM2 log; a held one would flood it
-    for report_id, group in created:
-        images = sum(len(attachments(m)) for m in group)
-        print(f"new {report_id} ({images} image{'s' * (images != 1)})")
-    retry_pending_reactions(channel, store, state["chat_id"])
-    if purge:
-        purge_old_done(store, now)
+        machine.save_offset(max(u["update_id"] for u in updates) + 1)
+    for chat_id, entry in entries.items():
+        store = machine.project_store(entry.project)
+        retry_pending_reactions(channel, store, chat_id)
+        if purge:
+            purge_old_done(store, now)
 
 
 def chats_seen(updates: list[dict]) -> dict[int, dict]:
@@ -157,32 +206,8 @@ def chats_seen(updates: list[dict]) -> dict[int, dict]:
     return {cid: chat for cid, chat in chats.items() if cid not in replaced}
 
 
-def cmd_bind(channel: Channel, store: Store) -> int:
-    """List the group chats seen in pending updates and bind « TM Bugs »."""
-    # No offset: Telegram only confirms (drops) updates when one is passed.
-    updates = channel.get_updates(None, 0, ["message", "my_chat_member"])
-    chats = chats_seen(updates)
-    for chat_id, chat in chats.items():
-        print(f"{chat['type']}  {chat_id}  {chat.get('title', '')!r}")
-    if not chats:
-        print("no group chat in the pending updates")
-    matches = [cid for cid, chat in chats.items() if chat.get("title") == GROUP_TITLE]
-    if not matches:
-        print(f"no group titled exactly {GROUP_TITLE!r}: post a message in it, then retry", file=sys.stderr)
-        return 1
-    if len(matches) > 1:
-        print(f"several groups titled {GROUP_TITLE!r}: refusing to guess", file=sys.stderr)
-        return 1
-    state = store.load_state()
-    state["chat_id"] = matches[0]
-    state.setdefault("offset", None)
-    store.save_state(state)
-    print(f"bound {GROUP_TITLE!r} ({matches[0]})")
-    return 0
-
-
 def pull_loop(
-    store: Store,
+    machine: Machine,
     env: Mapping[str, str],
     transport: Transport,
     every: float,
@@ -206,22 +231,22 @@ def pull_loop(
         while True:
             token = None
             try:
-                # Read afresh each round: a repaired .env or a new bind needs no restart.
-                token = read_token(env) if "chat_id" in store.load_state() else None
-                cmd_pull(TelegramChannel(token, transport) if token else None, store, wall())  # type: ignore[arg-type]
+                # Read afresh each round: a repaired .env or a new registration needs no restart.
+                token = read_token(env) if machine.registry.entries() else None
+                cmd_pull(TelegramChannel(token, transport) if token else None, machine, wall())
             except Exception as exc:  # noqa: BLE001 - one bad round must not end the loop
-                print(f"tm-bugs: {type(exc).__name__}: {mask(str(exc), token)}", file=sys.stderr)
+                print(f"bugs-bot: {type(exc).__name__}: {mask(str(exc), token)}", file=sys.stderr)
             sys.stdout.flush()
             sleep(every)
     except KeyboardInterrupt:
-        print("tm-bugs: stopped")
+        print("bugs-bot: stopped")
         return 0
     finally:
         signal.signal(signal.SIGTERM, previous)
 
 
 def watch_loop(
-    store: Store,
+    machine: Machine,
     env: Mapping[str, str],
     transport: Transport,
     poll_timeout: int,
@@ -250,26 +275,26 @@ def watch_loop(
         while True:
             token = None
             try:
-                # Read afresh each round: a repaired .env or a new bind needs no restart.
-                if "chat_id" not in store.load_state():
+                # Read afresh each round: a repaired .env or a new registration needs no restart.
+                if not machine.registry.entries():
                     sys.stdout.flush()
                     sleep(UNBOUND_WAIT)  # nothing to hold yet: do not spin
                     continue
                 token = read_token(env)
                 at = clock()
                 purge = last_purge is None or at - last_purge >= PURGE_EVERY
-                cmd_pull(TelegramChannel(token, transport), store, wall(), poll_timeout, purge)
+                cmd_pull(TelegramChannel(token, transport), machine, wall(), poll_timeout, purge)
                 if purge:
                     last_purge = at
                 backoff = 0.0
             except Exception as exc:  # noqa: BLE001 - one bad round must not end the loop
-                print(f"tm-bugs: {type(exc).__name__}: {mask(str(exc), token)}", file=sys.stderr)
+                print(f"bugs-bot: {type(exc).__name__}: {mask(str(exc), token)}", file=sys.stderr)
                 backoff = min(backoff * 2, BACKOFF_CEILING) if backoff else BACKOFF_FIRST
                 sys.stdout.flush()
                 sleep(backoff)
             sys.stdout.flush()
     except KeyboardInterrupt:
-        print("tm-bugs: stopped")
+        print("bugs-bot: stopped")
         return 0
     finally:
         signal.signal(signal.SIGTERM, previous)

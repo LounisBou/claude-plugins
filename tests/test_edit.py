@@ -159,7 +159,7 @@ def test_another_telegram_error_fails_and_leaves_the_record_alone(run, bound, ca
 
 def test_edit_unbound_refuses(run, home, capsys):
     assert run("edit", RID, "x") != 0
-    assert "unbound" in capsys.readouterr().err
+    assert "no .bugs-bot.json here or above" in capsys.readouterr().err
 
 
 def test_show_numbers_the_replies_and_displays_the_edits_count(run, bound, capsys):

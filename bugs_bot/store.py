@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import json
-import os
 import re
+import sys
+from collections.abc import Mapping
+from datetime import datetime, timezone
 from pathlib import Path
 
 from bugs_bot.errors import BugsError
+from bugs_bot.jsonio import write_json
+from bugs_bot.project import PROJECT_ID
+from bugs_bot.registry import Registry
 
-DEFAULT_HOME = Path.home() / ".torrentmate" / "tm-bugs"
+DEFAULT_HOME = Path.home() / ".bugs-bot"
 # Statuses still waiting for a fix, and those that retention may delete.
 OPEN_STATUSES = {"new", "seen", "taken"}
 CLOSED_STATUSES = {"done", "fixed"}
@@ -20,12 +25,86 @@ EMOJI_TAKEN = "\U0001f468‍\U0001f4bb"  # 👨‍💻
 EMOJI_FIXED = "\U0001f44c"  # 👌
 
 
-def write_json(path: Path, data: dict) -> None:
-    """Write JSON atomically: a temp file in the same directory, then rename."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n")
-    os.replace(tmp, path)
+def bugs_home(env: Mapping[str, str]) -> Path:
+    """Return the machine's data directory: ``BUGS_BOT_HOME``, else ``DEFAULT_HOME``."""
+    return Path(env.get("BUGS_BOT_HOME") or DEFAULT_HOME)
+
+
+class Machine:
+    """The machine-wide files of the bugs home, shared by every project.
+
+    ``state.json`` holds the update offset (one consumer per bot, so one per machine),
+    ``projects.json`` the registry, ``unregistered.json`` the group chats Pull dropped.
+    """
+
+    def __init__(self, home: Path) -> None:
+        self.home = home
+        self.registry = Registry(home / "projects.json")
+        self.state_path = home / "state.json"
+        self.unregistered_path = home / "unregistered.json"
+
+    def load_offset(self) -> int | None:
+        """Return the next update offset, ``None`` before the first pull.
+
+        Raises:
+            BugsError: If ``state.json`` is unreadable or not a JSON object (never guessed around:
+                a wrong offset would replay or lose messages).
+        """
+        try:
+            state = json.loads(self.state_path.read_text())
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError) as exc:
+            raise BugsError(f"cannot read {self.state_path}: {exc}") from None
+        if not isinstance(state, dict):
+            raise BugsError(f"{self.state_path} is not a JSON object")
+        return state.get("offset")
+
+    def save_offset(self, offset: int | None) -> None:
+        """Write the offset atomically."""
+        write_json(self.state_path, {"offset": offset})
+
+    def note_unregistered(self, chat: dict, now: float) -> None:
+        """Record a group chat Pull dropped, so that ``init`` can offer it; the latest sighting wins."""
+        seen = self.unregistered()
+        seen[chat["id"]] = {
+            "title": chat.get("title") or "",
+            "type": chat.get("type") or "",
+            "last_seen": datetime.fromtimestamp(now, timezone.utc).isoformat(),
+        }
+        write_json(self.unregistered_path, {str(cid): item for cid, item in seen.items()})
+
+    def unregistered(self) -> dict[int, dict]:
+        """Return the dropped group chats by chat id, ``{}`` when none was seen.
+
+        A log that cannot be read is only a list of suggestions for ``init``, and one bad file must
+        not stall Pull for every project: it counts as empty (one line on stderr) and the next
+        sighting rewrites it.
+        """
+        try:
+            raw = json.loads(self.unregistered_path.read_text())
+        except FileNotFoundError:
+            return {}
+        except (OSError, ValueError) as exc:
+            return self._ignore_unregistered(exc)
+        try:
+            return {int(cid): dict(item) for cid, item in raw.items()}
+        except (AttributeError, TypeError, ValueError) as exc:
+            return self._ignore_unregistered(exc)
+
+    def _ignore_unregistered(self, exc: Exception) -> dict[int, dict]:
+        print(f"bugs-bot: {self.unregistered_path} ignored: {exc}", file=sys.stderr)
+        return {}
+
+    def project_store(self, project: str) -> Store:
+        """Return the store of one project.
+
+        Raises:
+            BugsError: If the id is not ``[a-z0-9-]+``: it is a directory name and must not leave the home.
+        """
+        if not PROJECT_ID.fullmatch(project):
+            raise BugsError(f"project must match [a-z0-9-]+, got {project!r}")
+        return Store(self.home / project)
 
 
 class Store:
@@ -38,7 +117,7 @@ class Store:
         self.people = home / "people"
 
     def load_state(self) -> dict:
-        """Return the state, or ``{}`` before the first ``bind``."""
+        """Return the project's state (``posts``...), or ``{}`` while there is none."""
         try:
             return json.loads(self.state_path.read_text())
         except FileNotFoundError:
