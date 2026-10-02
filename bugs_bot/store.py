@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
+import os
 import re
 import sys
-from collections.abc import Mapping
+import threading
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TypeVar
 
 from bugs_bot.errors import BugsError
 from bugs_bot.jsonio import write_json
@@ -23,6 +28,10 @@ CLOSED_STATUSES = {"done", "fixed"}
 EMOJI_SEEN = "\U0001f440"  # 👀
 EMOJI_TAKEN = "\U0001f468‍\U0001f4bb"  # 👨‍💻
 EMOJI_FIXED = "\U0001f44c"  # 👌
+# One project's lock file: beside its inbox, never inside a report (a purge would take it along).
+LOCK_FILE = ".lock"
+
+T = TypeVar("T")
 
 
 def bugs_home(env: Mapping[str, str]) -> Path:
@@ -193,6 +202,67 @@ class Store:
 
 
 def load_report(store: Store, report_id: str) -> tuple[Path, dict]:
-    """Return a report's directory and its ``report.json`` content."""
+    """Return a report's directory and its ``report.json`` content, to read: a change goes through ``update_report``."""
     path = store.report_dir(report_id)
     return path, json.loads((path / "report.json").read_text())
+
+
+# Within a process the flock is taken once per project: a thread re-enters through its RLock (an update
+# nested in another, a card changed while a report is), another thread waits on it.
+_guards: dict[str, threading.RLock] = {}
+_guards_lock = threading.Lock()
+_depth: dict[str, int] = {}
+
+
+@contextmanager
+def locked(store: Store) -> Iterator[None]:
+    """Hold the project's lock: an exclusive ``flock`` on ``<store root>/.lock``, re-entrant within a process.
+
+    Pull and the agent's CLI are separate processes writing the same reports and cards; every change of
+    one is made under this lock, from the read to the atomic rename. Never hold it over a network call.
+    """
+    key = os.path.realpath(store.home)
+    with _guards_lock:
+        guard = _guards.setdefault(key, threading.RLock())
+    with guard:
+        if _depth.get(key):
+            _depth[key] += 1
+            try:
+                yield
+            finally:
+                _depth[key] -= 1
+            return
+        store.home.mkdir(parents=True, exist_ok=True)
+        with open(store.home / LOCK_FILE, "a") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)  # released when the file is closed
+            _depth[key] = 1
+            try:
+                yield
+            finally:
+                _depth[key] = 0
+
+
+def update_report(store: Store, report_id: str, change: Callable[[dict], T]) -> T:
+    """Change a report: under ``locked``, read ``report.json``, let ``change`` mutate it, write it back atomically.
+
+    Args:
+        store: The project's store.
+        report_id: The report to change.
+        change: Mutates the report it is given (the one on disk now, not an older copy); its result is returned.
+
+    Returns:
+        What ``change`` returned.
+
+    Raises:
+        BugsError: If the report does not exist, or no longer does (purged meanwhile): nothing is written.
+    """
+    store.report_dir(report_id)  # an unknown id is refused before anything is created on disk
+    with locked(store):
+        path = store.inbox / report_id / "report.json"
+        try:
+            report = json.loads(path.read_text())
+        except FileNotFoundError:
+            raise BugsError(f"no report {report_id}") from None
+        result = change(report)
+        write_json(path, report)
+        return result

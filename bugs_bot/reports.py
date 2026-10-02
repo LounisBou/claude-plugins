@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 
 from bugs_bot.answers import show_answers
 from bugs_bot.channel import Channel, ChatId, Mention
@@ -12,7 +11,7 @@ from bugs_bot.errors import BugsError
 from bugs_bot.followup import mark_awaiting, mark_reminded, require_due
 from bugs_bot.questions import asked, awaited_elsewhere, drop_closed, queue_question
 from bugs_bot.reactions import move_to, say_reaction_pending
-from bugs_bot.store import CLOSED_STATUSES, EMOJI_FIXED, EMOJI_TAKEN, OPEN_STATUSES, Store, load_report, write_json
+from bugs_bot.store import CLOSED_STATUSES, EMOJI_FIXED, EMOJI_TAKEN, OPEN_STATUSES, Store, load_report, update_report
 
 
 def one_line(text: str, width: int = 70) -> str:
@@ -51,7 +50,7 @@ def cmd_show(store: Store, report_id: str) -> None:
         count = f" ({edits} edit{'s' if edits > 1 else ''})" if edits else ""
         gone = f" (deleted {reply['deleted']})" if reply.get("deleted") else ""
         print(f"reply {number} {reply['date']}: {reply['text']}{count}{gone}")
-    for line in show_answers(path, report):
+    for line in show_answers(store, report_id, path, report):
         print(line)
 
 
@@ -74,14 +73,21 @@ def mention_of(report: dict) -> Mention:
 
 
 def send_reply(
-    channel: Channel, chat_id: ChatId, path: Path, report: dict, text: str, now: float, mention: Mention | None = None
-) -> None:
-    """Post ``text`` threaded on the report's first message and record it in ``report.json``."""
+    channel: Channel, chat_id: ChatId, store: Store, report: dict, text: str, now: float, mention: Mention | None = None
+) -> int:
+    """Post ``text`` threaded on the report's first message, then record it in ``report.json``.
+
+    Returns:
+        The reply's number (1-based, as ``show`` numbers them) in the report as it is now.
+    """
     sent = channel.send(report.get("chat_id", chat_id), text, report["message_ids"][0], mention)
-    report["replies"].append(
-        {"date": datetime.fromtimestamp(now, timezone.utc).isoformat(), "text": sent["text"], "message_id": sent["message_id"]}
-    )
-    write_json(path / "report.json", report)
+    reply = {"date": datetime.fromtimestamp(now, timezone.utc).isoformat(), "text": sent["text"], "message_id": sent["message_id"]}
+
+    def record(fresh: dict) -> int:
+        fresh["replies"].append(reply)
+        return len(fresh["replies"])
+
+    return update_report(store, report["id"], record)
 
 
 def cmd_reply(
@@ -103,7 +109,7 @@ def cmd_reply(
     ``follow_up_hours`` makes it the one reminder of a wait that old (refused before anything is
     sent when none is due).
     """
-    path, report = load_report(store, report_id)
+    _, report = load_report(store, report_id)
     if follow_up_hours is not None:
         require_due(report, follow_up_hours, now)
     other = awaited_elsewhere(store, report) if awaits else None
@@ -111,12 +117,12 @@ def cmd_reply(
         queue_question(store, report, text, now)
         print(f"queued {report_id}: {report['author']} already awaits {other}")
         return
-    send_reply(channel, chat_id, path, report, text, now, mention_of(report) if tag else None)
+    number = send_reply(channel, chat_id, store, report, text, now, mention_of(report) if tag else None)
     if awaits:
-        mark_awaiting(path, report, len(report["replies"]), now)
+        mark_awaiting(store, report_id, number, now)
         asked(store, report)
     if follow_up_hours is not None:
-        mark_reminded(path, report, now)
+        mark_reminded(store, report_id, now)
     print(f"replied to {report_id}")
 
 
@@ -158,7 +164,7 @@ def cmd_edit(
     Raises:
         BugsError: On no such reply, a reply without ``message_id`` or deleted, an empty text, or a channel error.
     """
-    path, report = load_report(store, report_id)
+    _, report = load_report(store, report_id)
     number, reply = posted_reply(report, number, "edited")
     if not text.strip():
         raise BugsError("empty text: nothing to write")
@@ -170,15 +176,17 @@ def cmd_edit(
             raise
         print(f"reply {number} of {report_id}: message is not modified")
         if awaits:  # the text stands as it was, and now waits for its answer
-            mark_awaiting(path, report, number, now)
+            mark_awaiting(store, report_id, number, now)
         return
-    reply.setdefault("edits", []).append(
-        {"date": datetime.fromtimestamp(now, timezone.utc).isoformat(), "text": reply["text"]}
-    )
-    reply["text"] = edited["text"]
-    write_json(path / "report.json", report)
+
+    def record(fresh: dict) -> None:
+        current = fresh["replies"][number - 1]  # replies are only ever appended: the number still holds
+        current.setdefault("edits", []).append({"date": datetime.fromtimestamp(now, timezone.utc).isoformat(), "text": current["text"]})
+        current["text"] = edited["text"]
+
+    update_report(store, report_id, record)
     if awaits:
-        mark_awaiting(path, report, number, now)
+        mark_awaiting(store, report_id, number, now)
     print(f"edited reply {number} of {report_id}")
 
 
@@ -195,7 +203,7 @@ def cmd_delete(
         BugsError: On no such reply, a reply without ``message_id`` or already deleted, or another channel
             error (then nothing is marked).
     """
-    path, report = load_report(store, report_id)
+    _, report = load_report(store, report_id)
     number, reply = posted_reply(report, number, "deleted")
     gone = ""
     try:
@@ -205,10 +213,13 @@ def cmd_delete(
         if "message to delete not found" not in str(exc):
             raise
         gone = " (already gone from the group)"
-    reply["deleted"] = datetime.fromtimestamp(now, timezone.utc).isoformat()
-    if (report.get("awaiting") or {}).get("reply") == number:
-        del report["awaiting"]
-    write_json(path / "report.json", report)
+
+    def record(fresh: dict) -> None:
+        fresh["replies"][number - 1]["deleted"] = datetime.fromtimestamp(now, timezone.utc).isoformat()
+        if (fresh.get("awaiting") or {}).get("reply") == number:
+            del fresh["awaiting"]
+
+    update_report(store, report_id, record)
     print(f"deleted reply {number} of {report_id}{gone}")
 
 
@@ -224,7 +235,7 @@ def cmd_taken(channel: Channel, store: Store, chat_id: ChatId, report_id: str) -
     _, report = load_report(store, report_id)
     if report["status"] in CLOSED_STATUSES:
         raise BugsError(f"{report_id} is already {report['status']}")
-    _, _, _, failure = move_to(channel, store, chat_id, report_id, "taken", EMOJI_TAKEN)
+    _, failure = move_to(channel, store, chat_id, report_id, "taken", EMOJI_TAKEN)
     print(f"taken {report_id}")
     return say_reaction_pending(channel, failure)
 
@@ -239,10 +250,9 @@ def cmd_fixed(channel: Channel, store: Store, chat_id: ChatId, report_id: str, n
     Returns:
         1 if the reaction could not be set (it stays pending), else 0.
     """
-    _, path, report, failure = move_to(channel, store, chat_id, report_id, "fixed", EMOJI_FIXED)
+    _, failure = move_to(channel, store, chat_id, report_id, "fixed", EMOJI_FIXED)
     if note:
-        report["fix_ref"] = note
-        write_json(path / "report.json", report)
+        update_report(store, report_id, lambda report: report.update(fix_ref=note))
     print(f"fixed {report_id}")
     return say_reaction_pending(channel, failure)
 
@@ -251,12 +261,11 @@ def cmd_done(
     channel: Channel | None, store: Store, chat_id: ChatId, report_id: str, reason: str | None, now: float
 ) -> None:
     """Close a report without a fix; with ``reason``, say why in a reply. No reaction change."""
-    path, report = load_report(store, report_id)
+    _, report = load_report(store, report_id)
     if reason:
         assert channel is not None
-        send_reply(channel, chat_id, path, report, reason, now)
-    report["status"] = "done"
-    write_json(path / "report.json", report)
+        send_reply(channel, chat_id, store, report, reason, now)
+    update_report(store, report_id, lambda fresh: fresh.update(status="done"))
     drop_closed(store, report)
     print(f"done {report_id}")
 

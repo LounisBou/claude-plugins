@@ -17,7 +17,7 @@ from bugs_bot.followup import due, is_due, is_unanswered, unanswered
 from bugs_bot.project import Project
 from bugs_bot.questions import asks
 from bugs_bot.reports import one_line
-from bugs_bot.store import OPEN_STATUSES, Store, load_report, write_json
+from bugs_bot.store import OPEN_STATUSES, Store, update_report
 
 # What the agent session decides a report is.
 KINDS = ("bug", "question")
@@ -36,9 +36,7 @@ DEPLOY_CHECK_TIMEOUT = 300
 
 def cmd_triage(store: Store, report_id: str, kind: str) -> None:
     """Record what the agent session decided a report is: ``bug`` or ``question``."""
-    path, report = load_report(store, report_id)
-    report["kind"] = kind
-    write_json(path / "report.json", report)
+    update_report(store, report_id, lambda report: report.update(kind=kind))
     print(f"{kind} {report_id}")
 
 

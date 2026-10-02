@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from bugs_bot.channel import Channel, ChatId, InboundMessage
-from bugs_bot.store import Store, write_json
+from bugs_bot.store import Store, update_report
 
 
 def _image_count(report: dict) -> int:
@@ -54,18 +54,23 @@ def record_answer(channel: Channel, store: Store, chat_id: ChatId, msg: InboundM
         for name in images:
             (path / name).unlink(missing_ok=True)
         raise
-    answers.append(
-        {
-            "date": datetime.fromtimestamp(msg.date, timezone.utc).isoformat(),
-            "author": msg.author.name,
-            "author_id": msg.author.id,
-            "text": msg.text,
-            "message_id": msg.message_id,
-            "images": images,
-            "seen": False,
-        }
-    )
-    write_json(path / "report.json", report)
+    answer = {
+        "date": datetime.fromtimestamp(msg.date, timezone.utc).isoformat(),
+        "author": msg.author.name,
+        "author_id": msg.author.id,
+        "text": msg.text,
+        "message_id": msg.message_id,
+        "images": images,
+        "seen": False,
+    }
+
+    def record(fresh: dict) -> None:
+        # The downloads ran unlocked on the copy read above; the answer joins the report as it is now.
+        recorded = fresh.setdefault("answers", [])
+        if not any(other["message_id"] == msg.message_id for other in recorded):
+            recorded.append(answer)
+
+    update_report(store, report_id, record)
     return report_id
 
 
@@ -74,14 +79,22 @@ def unseen(store: Store) -> list[str]:
     return [rid for rid, _, report in store.reports() if any(not a.get("seen") for a in report.get("answers", []))]
 
 
-def show_answers(path: Path, report: dict) -> list[str]:
-    """Return the lines ``show`` prints for the report's answers, and mark them seen in ``report.json``."""
+def show_answers(store: Store, report_id: str, path: Path, report: dict) -> list[str]:
+    """Return the lines ``show`` prints for the report's answers, and mark them seen in ``report.json``.
+
+    Only the answers printed: one Pull records meanwhile stays unseen, for ``wait`` to announce.
+    """
     lines = []
     for number, answer in enumerate(report.get("answers", []), 1):
         lines.append(f"answer {number} {answer['date']} {answer['author']}: {answer['text'] or '(no text)'}")
         lines += [f"  {(path / name).resolve()}" for name in answer.get("images", [])]
-    if any(not answer.get("seen") for answer in report.get("answers", [])):
-        for answer in report["answers"]:
-            answer["seen"] = True
-        write_json(path / "report.json", report)
+    shown = {answer["message_id"] for answer in report.get("answers", []) if not answer.get("seen")}
+    if shown:
+
+        def mark_seen(fresh: dict) -> None:
+            for answer in fresh.get("answers", []):
+                if answer["message_id"] in shown:
+                    answer["seen"] = True
+
+        update_report(store, report_id, mark_seen)
     return lines

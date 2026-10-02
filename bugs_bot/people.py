@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from datetime import datetime, timezone
+from typing import TypeVar
 
 from bugs_bot.channel import Author, Channel, ChatId
 from bugs_bot.errors import BugsError
-from bugs_bot.store import Store, load_report, write_json
+from bugs_bot.store import Store, load_report, locked, update_report, write_json
+
+T = TypeVar("T")
 
 
 # A language as a card stores it: the two lower-case letters of ISO 639-1.
@@ -56,9 +60,25 @@ def card_of(store: Store, key: str, name: str | None, author_id: int | str | Non
     return card
 
 
-def save_person(store: Store, card: dict) -> None:
-    """Write a person's card."""
-    write_json(store.people / f"{card['key']}.json", card)
+def update_card(store: Store, key: str, change: Callable[[dict], T], name: str | None, author_id: int | str | None) -> T:
+    """Change a person's card under the project's lock: read it (or a new one, as ``card_of`` makes it), let
+    ``change`` mutate it, write it back atomically.
+
+    Args:
+        store: The project's store.
+        key: The card's key (``card_key``).
+        change: Mutates the card it is given (the one on disk now); its result is returned.
+        name: The person's display name, kept over the card's when given.
+        author_id: The person's user id, for a card created here.
+
+    Returns:
+        What ``change`` returned.
+    """
+    with locked(store):
+        card = card_of(store, key, name, author_id)
+        result = change(card)
+        write_json(store.people / f"{key}.json", card)
+        return result
 
 
 def record_language(store: Store, author: Author) -> None:
@@ -74,10 +94,13 @@ def record_language(store: Store, author: Author) -> None:
     key = card_key(author.id, author.name)
     card = load_person(store, key)
     if card is not None and card.get("language"):
-        return
-    card = card_of(store, key, author.name or None, author.id)
-    card["language"] = code
-    save_person(store, card)
+        return  # nothing to write: a card is not rewritten for every message
+
+    def first_sight(fresh: dict) -> None:
+        if not fresh.get("language"):  # the agent may have set one since the read above
+            fresh["language"] = code
+
+    update_card(store, key, first_sight, author.name or None, author.id)
 
 
 def cmd_person_lang(store: Store, ref: str, code: str) -> None:
@@ -89,9 +112,7 @@ def cmd_person_lang(store: Store, ref: str, code: str) -> None:
     if not _LANGUAGE.fullmatch(code):
         raise BugsError(f"not a language code: {code!r} (two lower-case letters, e.g. fr, en)")
     key, name, author_id = person_ref(store, ref)
-    card = card_of(store, key, name, author_id)
-    card["language"] = code
-    save_person(store, card)
+    update_card(store, key, lambda card: card.update(language=code), name, author_id)
     print(f"language {key}: {code}")
 
 
@@ -128,9 +149,8 @@ def cmd_person_note(store: Store, ref: str, text: str, now: float) -> None:
     if not text:
         raise BugsError("empty note")
     key, name, author_id = person_ref(store, ref)
-    card = card_of(store, key, name, author_id)
-    card["notes"].append({"date": datetime.fromtimestamp(now, timezone.utc).isoformat(timespec="seconds"), "text": text})
-    save_person(store, card)
+    note = {"date": datetime.fromtimestamp(now, timezone.utc).isoformat(timespec="seconds"), "text": text}
+    update_card(store, key, lambda card: card["notes"].append(note), name, author_id)
     print(f"noted {key}")
 
 
@@ -148,11 +168,10 @@ def cmd_backfill_authors(channel: Channel, store: Store, chat_id: ChatId) -> Non
     admins = channel.list_admins(chat_id)
     everyone_listed = channel.member_count(chat_id) <= len(admins)
     humans = [a for a in admins if not a.is_bot]
-    for report_id, path, report in todo:
+    for report_id, _, report in todo:
         same = [a for a in humans if a.name == report["author"]]
         if len(same) == 1 and everyone_listed:
-            report["author_id"], report["author_username"] = same[0].id, same[0].username
-            write_json(path / "report.json", report)
+            update_report(store, report_id, lambda fresh, admin=same[0]: fresh.update(author_id=admin.id, author_username=admin.username))
             print(f"{report_id}  author id recorded")
         else:
             why = "several administrators share the name" if len(same) > 1 else (

@@ -10,10 +10,9 @@ launcher once (``escalated``) and never reminds again.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from pathlib import Path
 
 from bugs_bot.errors import BugsError
-from bugs_bot.store import Store, load_report, write_json
+from bugs_bot.store import Store, update_report
 
 
 def _iso(now: float) -> str:
@@ -24,13 +23,12 @@ def _epoch(iso: str) -> float:
     return datetime.fromisoformat(iso).timestamp()
 
 
-def mark_awaiting(report_dir: Path, report: dict, reply_index: int, now: float) -> None:
+def mark_awaiting(store: Store, report_id: str, reply_index: int, now: float) -> None:
     """Record that reply ``reply_index`` (1-based, as ``show`` numbers them) waits for the person's answer.
 
     A wait already there is replaced: a new question is awaited, and may be reminded, afresh.
     """
-    report["awaiting"] = {"since": _iso(now), "reply": reply_index}
-    write_json(report_dir / "report.json", report)
+    update_report(store, report_id, lambda report: report.update(awaiting={"since": _iso(now), "reply": reply_index}))
 
 
 def same_person(report: dict, author_id: int | str | None, author: str) -> bool:
@@ -46,14 +44,19 @@ def clear_answered(store: Store, author_id: int | str | None, author: str, since
     Returns:
         The ids of the reports whose wait was cleared.
     """
-    cleared = []
-    for report_id, path, report in store.reports():
+
+    def answered(report: dict) -> bool:
         wait = report.get("awaiting")
-        if wait and same_person(report, author_id, author) and _epoch(wait["since"]) < since:
-            del report["awaiting"]
-            write_json(path / "report.json", report)
-            cleared.append(report_id)
-    return cleared
+        return bool(wait) and same_person(report, author_id, author) and _epoch(wait["since"]) < since
+
+    def clear(report: dict) -> bool:
+        # Asked again: the read below may be older than a wait the agent set since.
+        if not answered(report):
+            return False
+        del report["awaiting"]
+        return True
+
+    return [rid for rid, _, report in store.reports() if answered(report) and update_report(store, rid, clear)]
 
 
 def is_due(report: dict, hours: float, now: float) -> bool:
@@ -99,10 +102,14 @@ def require_due(report: dict, hours: float, now: float) -> None:
         raise BugsError(f"no follow-up due on {report['id']}: one reminder only, once the wait is {hours:g} hours old")
 
 
-def mark_reminded(report_dir: Path, report: dict, now: float) -> None:
-    """Record the one reminder of the current wait."""
-    report["awaiting"]["reminded"] = _iso(now)
-    write_json(report_dir / "report.json", report)
+def mark_reminded(store: Store, report_id: str, now: float) -> None:
+    """Record the one reminder of the current wait (none left: nothing to record)."""
+
+    def remind(report: dict) -> None:
+        if report.get("awaiting"):
+            report["awaiting"]["reminded"] = _iso(now)
+
+    update_report(store, report_id, remind)
 
 
 def cmd_escalated(store: Store, report_id: str, now: float) -> None:
@@ -111,11 +118,13 @@ def cmd_escalated(store: Store, report_id: str, now: float) -> None:
     Raises:
         BugsError: If the report's wait was never reminded, or the launcher was already told.
     """
-    path, report = load_report(store, report_id)
-    wait = report.get("awaiting") or {}
-    if "reminded" not in wait or "escalated" in wait:
-        raise BugsError(f"nothing to escalate on {report_id}: no reminded wait, or the launcher was already told")
-    wait["escalated"] = _iso(now)
-    write_json(path / "report.json", report)
+
+    def escalate(report: dict) -> None:
+        wait = report.get("awaiting") or {}
+        if "reminded" not in wait or "escalated" in wait:
+            raise BugsError(f"nothing to escalate on {report_id}: no reminded wait, or the launcher was already told")
+        wait["escalated"] = _iso(now)
+
+    update_report(store, report_id, escalate)
     print(f"escalated {report_id}")
 

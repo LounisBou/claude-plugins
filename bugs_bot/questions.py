@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from bugs_bot.errors import BugsError
-from bugs_bot.people import card_key, card_of, load_person, save_person
+from bugs_bot.people import card_key, load_person, update_card
 from bugs_bot.store import Store, load_report
 
 
@@ -46,27 +46,34 @@ def queue_question(store: Store, report: dict, text: str, now: float) -> None:
 
     One question per report: one already queued about it takes the new text and keeps its date and its place.
     """
-    card = card_of(store, card_key(report.get("author_id"), report["author"]), report["author"], report.get("author_id"))
-    questions = card.setdefault("questions", [])
-    for question in questions:
-        if question["report"] == report["id"]:
-            question["text"] = text
-            break
-    else:
-        questions.append({"report": report["id"], "text": text, "queued": datetime.fromtimestamp(now, timezone.utc).isoformat()})
-    save_person(store, card)
+
+    def queue(card: dict) -> None:
+        questions = card.setdefault("questions", [])
+        for question in questions:
+            if question["report"] == report["id"]:
+                question["text"] = text
+                break
+        else:
+            questions.append({"report": report["id"], "text": text, "queued": datetime.fromtimestamp(now, timezone.utc).isoformat()})
+
+    update_card(store, card_key(report.get("author_id"), report["author"]), queue, report["author"], report.get("author_id"))
 
 
 def _remove(store: Store, report: dict) -> bool:
     """Take the question queued about ``report`` off its author's card; tell whether there was one."""
-    card = load_person(store, card_key(report.get("author_id"), report["author"]))
-    questions = (card or {}).get("questions", [])
-    kept = [question for question in questions if question["report"] != report["id"]]
-    if len(kept) == len(questions):
-        return False
-    card["questions"] = kept
-    save_person(store, card)
-    return True
+    key = card_key(report.get("author_id"), report["author"])
+    if load_person(store, key) is None:
+        return False  # no card, no queue: none is created to say so
+
+    def remove(card: dict) -> bool:
+        questions = card.get("questions", [])
+        kept = [question for question in questions if question["report"] != report["id"]]
+        if len(kept) == len(questions):
+            return False
+        card["questions"] = kept
+        return True
+
+    return update_card(store, key, remove, None, None)
 
 
 def asked(store: Store, report: dict) -> None:

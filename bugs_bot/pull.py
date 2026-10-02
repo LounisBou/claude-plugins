@@ -15,7 +15,7 @@ from bugs_bot.followup import clear_answered
 from bugs_bot.people import record_language
 from bugs_bot.reactions import retry_pending_reactions
 from bugs_bot.project import PROJECT_FILE, rebind_chat
-from bugs_bot.store import CLOSED_STATUSES, EMOJI_SEEN, Machine, Store, write_json
+from bugs_bot.store import CLOSED_STATUSES, EMOJI_SEEN, Machine, Store, locked, write_json
 from bugs_bot.registry import Entry
 
 # Long polling (`pull --watch`): the channel holds a request until a message arrives or POLL_TIMEOUT seconds pass.
@@ -97,13 +97,17 @@ def build_report(channel: Channel, store: Store, group: list[InboundMessage]) ->
 
 
 def purge_old_done(store: Store, now: float) -> None:
-    """Delete closed (``done``/``fixed``) reports older than the retention period."""
-    for _, path, report in store.reports():
-        if report.get("status") not in CLOSED_STATUSES:
-            continue
-        age = now - datetime.fromisoformat(report["date"]).timestamp()
-        if age > RETENTION_DAYS * 86400:
-            shutil.rmtree(path)
+    """Delete closed (``done``/``fixed``) reports older than the retention period.
+
+    Under the project's lock: a change of the report waits for the purge, and finds the report gone.
+    """
+    with locked(store):
+        for _, path, report in store.reports():
+            if report.get("status") not in CLOSED_STATUSES:
+                continue
+            age = now - datetime.fromisoformat(report["date"]).timestamp()
+            if age > RETENTION_DAYS * 86400:
+                shutil.rmtree(path)
 
 
 def follow_migrations(machine: Machine, kind: str, entries: dict[ChatId, Entry], migrations: dict[ChatId, ChatId]) -> None:
