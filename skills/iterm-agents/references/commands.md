@@ -19,7 +19,7 @@ $SCRIPT list
     # without one), then `self` on YOUR OWN tab.
 
 $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --inherit-model] [--permission-mode auto] \
-    --title "Agent : <subject>" --brief <brief-path> --orchestrator "<name [ref]>" [--right-of self | --successor] [--mcp <name>]
+    --title "Agent : <subject>" --brief <brief-path> --orchestrator "<name [ref]>" [--right-of self | --successor] [--mcp <name>] [--gate-tokens <N>]
     # --brief lints the brief (skills/orchestrator/scripts/brief-lint.sh) before any tab
     # exists; a finding no longer refuses the spawn — it is printed on stderr as a warning
     # and the launch goes on. It builds the startup prompt itself either way, exactly
@@ -53,6 +53,17 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --i
     # servers?" dialog, which strict otherwise makes moot, is pre-answered so the session
     # never parks on it. Off unless asked — the default launch is byte-for-byte unchanged
     # without it. `rotate` forwards it like any other spawn option.
+    # --gate-tokens <N>: THIS session's context gate, a positive integer of tokens; zero,
+    # a negative, a fraction or a non-number is refused before a tab exists. The launch then
+    # exports ORCHESTRATOR_CONTEXT_GATE_TOKENS=<N> beside ORCHESTRATOR_SPAWNED=1, so the
+    # context-gate hook and the status line, which both read it from their environment, use
+    # it. Absent, nothing is exported and the default (300,000 tokens on a window of
+    # 1,000,000 or more) holds. The token gate takes effect on a window of 1,000,000 tokens or
+    # more only; below, the percentage gate of the window decides. With --brief, the startup
+    # prompt adds « Your context gate is <N> tokens on a window of 1,000,000 tokens or more »
+    # and says that below it the window's percentage gate holds (a --prompt or --prompt-file
+    # spawn gets the export, not that line); a brief that says 300,000 is not rewritten. A successor does not inherit
+    # the predecessor's gate: it carries one only if the option is given. `rotate` forwards it.
     # An agent comes up with remote control off; only a successor comes up under it (§39).
     # The spawn then reads the mode the session came up in, on its own transcript, and
     # refuses a session that came up in another one — closing the tab it just made and
@@ -103,7 +114,7 @@ $SCRIPT move --tty /dev/ttysNNN (--right-of self | --right-of /dev/ttysMMM | --l
     # --force is the operator's hand and the layout repair.
 
 $SCRIPT rotate --dir <workdir> --old-tty <tty> [--trust] [--tier <tier>] [--expect-title <s>] \
-    [--title <t>] [--prompt <text> | --prompt-file <path>] [--right-of self | --left-of <tty>] [--mcp <name>]
+    [--title <t>] [--prompt <text> | --prompt-file <path>] [--right-of self | --left-of <tty>] [--mcp <name>] [--gate-tokens <N>]
     # spawns the replacement FIRST and verifies it is running, then closes the old tab
     # every argument it does not consume reaches the spawn, `--trust` and `--mcp <name>`
     # included: an agent that needed a server is replaced by one that still has it.

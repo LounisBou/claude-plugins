@@ -145,7 +145,7 @@ When you hand over to a successor: Until the takeover confirmation arrives, the 
 
 They hold at every step of the loop, whatever a reference adds.
 
-**The gate is 80 % of the window, or 300,000 tokens on a window of 1,000,000 tokens or more.** The cached context is replayed on every turn and is most of what a turn costs: 80 % of such a window would let a session carry up to 800,000 tokens per turn. It holds every session alike — an agent's rotation and your succession — and `hooks/context-gate.sh` puts it in front of every prompt of an orchestration session, a line per role; every other place that states it points here.
+**The gate is 80 % of the window, or 300,000 tokens on a window of 1,000,000 tokens or more.** The cached context is replayed on every turn and is most of what a turn costs: 80 % of such a window would let a session carry up to 800,000 tokens per turn. It holds every session alike — an agent's rotation and your succession — and `hooks/context-gate.sh` puts it in front of every prompt of an orchestration session, a line per role; every other place that states it points here. A session launched with `--gate-tokens` has its own.
 
 An agent reports its measured context as it nears the gate, and when you ask before a new phase — its `context_percent=` line, with its `context_tokens=` line on a window of 1,000,000 tokens or more. Two gates on it:
 

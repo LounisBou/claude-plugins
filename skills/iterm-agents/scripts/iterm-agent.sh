@@ -7,6 +7,10 @@
 #                        [--permission-mode auto] [--title <t>]
 #                        (--prompt <text> | --prompt-file <path> | --brief <path> --orchestrator <name>)
 #                        [--left-of <tty> | --right-of <tty> | --right-of self | --successor] [--no-verify]
+#                        [--gate-tokens <positive integer>]
+#     --gate-tokens sets THIS session's context gate, in tokens: the launch exports
+#     ORCHESTRATOR_CONTEXT_GATE_TOKENS beside ORCHESTRATOR_SPAWNED. Absent, nothing is
+#     exported and the default holds. With --brief, the startup prompt also says the gate.
 #   iterm-agent.sh spawn --dir <path> --auditor --title "Audit : <subject>" (--prompt <text> | --prompt-file <path>)
 #     the caller's auditor: left of the caller, its model, remote control on, no chain
 #   iterm-agent.sh spawn --dir <path> --coordinator-successor --title "Coord : <subject>" (--prompt <text> | --prompt-file <path>)

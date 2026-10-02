@@ -1343,7 +1343,7 @@ def write_prompt_file(prompt, title):
 
 
 def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_file="",
-                  account_connectors=False):
+                  account_connectors=False, gate_tokens=0):
     """The command iTerm2 runs in the new tab. It is HANDED to the app, never typed, so
     its length and its bytes stop being a hazard. No model argument at all when neither a
     tier nor an explicit identifier says which: the host's own default is the right
@@ -1362,6 +1362,10 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
              "export ORCHESTRATOR_SPAWNED=1",
              "printf '\\033]0;%%s\\007' %s" % shq(title),
              None]
+    if gate_tokens:
+        # The session's own context gate, read from the environment by the context-gate hook
+        # and by the status line. Exported only when asked for: absent, the default holds.
+        parts.insert(2, "export ORCHESTRATOR_CONTEXT_GATE_TOKENS=%d" % gate_tokens)
     cli = [shq(cli_path)]
     if model:
         cli += ["--model", shq(model)]
@@ -1414,7 +1418,7 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
     # own hand, and his launch line.
     if remote_control:
         cli += ["--remote-control", shq(remote_control)]
-    parts[3] = "exec " + " ".join(cli)
+    parts[-1] = "exec " + " ".join(cli)
     return " && ".join(parts)
 
 
@@ -1539,9 +1543,16 @@ def cmd_spawn(argv):
     p.add_argument("--mcp", action="append", default=[])
     p.add_argument("--account-connectors", dest="account_connectors",
                     action="store_true", default=False)
+    p.add_argument("--gate-tokens", dest="gate_tokens", default=None)
     args, unknown = p.parse_known_args(argv)
     if unknown:
         die("spawn: unknown option %s" % unknown[0])
+    gate_tokens = 0
+    if args.gate_tokens is not None:
+        if not re.fullmatch(r"[0-9]+", args.gate_tokens) or int(args.gate_tokens) < 1:
+            die("spawn: --gate-tokens must be a positive integer of tokens, got '%s'"
+                % args.gate_tokens)
+        gate_tokens = int(args.gate_tokens)
     if not args.dir:
         die("spawn: --dir is required")
     if args.left_of and args.right_of:
@@ -1637,6 +1648,15 @@ def cmd_spawn(argv):
             sys.stderr.write(lint_verdict + "\n")
         brief_prompt = ("Read and execute %s. Your orchestrator is %s."
                         % (brief_abs, args.orchestrator))
+        if gate_tokens:
+            # So a brief's "past 300,000" is read against the session's real gate. The brief
+            # itself is not rewritten. The option only takes effect on a large window: the
+            # line says so, or a small-window session would be told a gate that never trips.
+            # The literal breaks before its percent sign: the suite's sweep for a gate stated
+            # without its token half reads source lines, and this one states both halves.
+            brief_prompt += (" Your context gate is %d tokens on a window of 1,000,000 tokens"
+                             " or more; below, 80"
+                             " %% of the window." % gate_tokens)
     if not (brief_prompt or args.prompt or args.prompt_file):
         # The host writes a session's transcript only once it has a first prompt (§29): a
         # promptless launch has no transcript to read a mode on, so verify_mode's own
@@ -1795,7 +1815,7 @@ def cmd_spawn(argv):
     remote_control = title if ((args.successor and args.remote_control) or args.auditor
                                 or args.coordinator_successor) else ""
     launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control,
-                           mcp_file, args.account_connectors)
+                           mcp_file, args.account_connectors, gate_tokens)
 
     if DRY_RUN:
         print("launch=%s" % launch)

@@ -2159,6 +2159,26 @@ out=$(cd "$B" && ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$
 check "a relative brief path resolves absolute in the prompt" "1" \
   "$(printf '%s\n' "$out" | grep -Fc "prompt=Read and execute $BPHYS/good.md.")"
 
+# `--gate-tokens <N>` sets ONE session's context gate at launch: the launch exports the
+# variable beside ORCHESTRATOR_SPAWNED, so the hooks and the status line the host starts
+# inherit it. Without the option nothing is exported and the 300,000 default holds.
+gspawn() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : gate" "$@" 2>&1; }
+out=$(gspawn --prompt p --gate-tokens 200000)
+check "--gate-tokens exports the gate in the launch" "1" "$(printf '%s\n' "$out" | grep -c '^launch=.*export ORCHESTRATOR_CONTEXT_GATE_TOKENS=200000 && ')"
+check "without --gate-tokens nothing is exported" "0" "$(gspawn --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE_TOKENS')"
+for bad in 0 -5 abc 1.5 ""; do
+  badout=$(gspawn --prompt p --gate-tokens "$bad"); badcode=$?
+  check "--gate-tokens '$bad' is refused, nothing launched" "1|0|1" \
+    "$(printf '%s\n' "$badout" | grep -c 'spawn: --gate-tokens must be a positive integer')|$(printf '%s\n' "$badout" | grep -c '^launch=')|$([ "$badcode" != 0 ] && echo 1 || echo 0)"
+done
+out=$(gspawn --brief "$B/good.md" --orchestrator "$ORCHREF" --gate-tokens 200000)
+check "with --brief the startup prompt says the gate" "1" \
+  "$(printf '%s\n' "$out" | grep -Fc "prompt=Read and execute $BABS/good.md. Your orchestrator is $ORCHREF. Your context gate is 200000 tokens on a window of 1,000,000 tokens or more; below, 80 % of the window.")"
+check "without --gate-tokens the startup prompt says no gate" "0" \
+  "$(gspawn --brief "$B/good.md" --orchestrator "$ORCHREF" | grep -c 'Your context gate')"
+out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_PS_TABLE=/dev/null bash "$AGENT" rotate --old-tty /dev/ttys901 --dir "$WORK" --title "Agent : gate" --prompt p --gate-tokens 200000 2>&1)
+check "rotate passes --gate-tokens to the replacement" "1" "$(printf '%s\n' "$out" | grep -c '^launch=.*export ORCHESTRATOR_CONTEXT_GATE_TOKENS=200000 && ')"
+
 check_status "--brief with --prompt is mutually exclusive" 1 \
   env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : brief" --brief "$B/good.md" --orchestrator "$ORCHREF" --prompt x
 check_status "--brief with --prompt-file is mutually exclusive" 1 \
