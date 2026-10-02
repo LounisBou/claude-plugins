@@ -94,7 +94,7 @@ each pinned by a test in the phase that owns the code:
 | 5 | behaviour | `feat/p5-ops` (p4) | `pm2.config.js` (`bugs-bot-pull`), the migration script and its rehearsal test, the E2E script, README, CHANGELOG |
 | 6 | verification | `feat/p6-verify` (p5) | spec conformity section by section, E2E run, fixes of what it finds only |
 | 7 | conversion | `feat/p7-inbound` (`main`) | the Channel reads normalised messages (`poll` → `Batch`); the factory `channel_for`; Pull, init, people and the CLI free of Telegram's shape and helpers; tests through a fake `Channel` |
-| 8 | behaviour | `feat/p8-language-cap` (p7) | per-person `language` (recorded by Pull, `person-lang`, shown by `person`), `fixed --note` records the ref and posts nothing (no developer reference in the group), the agent writes in the person's language; `handover write` capped at 40 lines / 8 000 characters; one question at a time per person (spec § 3.5): `reply --awaits` refused while the person awaits another answer, the question queued, `wait` prints `ask <id>` |
+| 8 | behaviour | `feat/p8-language-cap` (p7) | per-person `language` (recorded by Pull, `person-lang`, shown by `person`), `fixed --note` records the ref and posts nothing (no developer reference in the group), the agent writes in the person's language; `delete` of the bot's own messages and edit/delete on the agent's own judgment; `handover write` capped at 40 lines / 8 000 characters; one question at a time per person (spec § 3.5): `reply --awaits` refused while the person awaits another answer, the question queued, `wait` prints `ask <id>` |
 | 9 | behaviour | `feat/p9-slack` (p8) | `channel` in the project file, registry keyed `<channel>:<chat_id>`, `SlackChannel` (polling, threads, files, mentions, 429), Pull reads both channels, `init --channel slack`, `doctor`'s Slack check, migration script and docs updated |
 | 10 | verification | `feat/p10-verify` (p9) | the conformity document updated for the amended sections, E2E with a fake Slack API beside the fake Bot API, fixes of what it finds only |
 
@@ -706,6 +706,12 @@ def language_of(store: Store, project_language: str, author_id: int | str | None
 # bugs_bot/reports.py
 def cmd_fixed(channel: Channel, store: Store, chat_id: ChatId, report_id: str, note: str | None, now: float) -> int: ...
     # status fixed, 👌, report["fix_ref"] = note when given; NOTHING posted in the group
+def cmd_delete(channel: Channel, store: Store, chat_id: ChatId, report_id: str, now: float, number: int | None = None) -> None: ...
+    # deletes the bot's last reply on the report, or the number-th as `show` numbers them; the reply kept,
+    # marked {"deleted": iso}; awaiting lifted when it pointed at that reply; BugsError on a reply already deleted
+
+# bugs_bot/channel.py — Channel gains
+    def delete(self, chat_id: ChatId, message_id: MessageId) -> None: ...   # Telegram deleteMessage (Slack: chat.delete, Phase 9)
 
 # bugs_bot/handover.py
 NOTE_MAX_LINES = 40
@@ -722,7 +728,9 @@ reference in the group); `show` prints the ref for the agent. Pull calls `record
 person writes in another language than their card says, `person-lang` first. The project's
 `language` is the default only. « corrigé <id> <ref> »: `fixed <id> --note "<ref>"`, then the agent
 tells the person in its own sentence that it is fixed — never a PR number, commit, branch or ticket
-id in the group; it asks them to check (« vérifier ») once deployed. The handover note: refused when too long → shorten, write again.
+id in the group; it asks them to check (« vérifier ») once deployed. `edit` and `delete` of its own
+messages on its own judgment (a wrong fact, a duplicate, the wrong report), not only on « réécrire »;
+never a tester's message. CLI: `bugs-bot delete <id> [--reply N]`. The handover note: refused when too long → shorten, write again.
 
 **One question at a time** (spec § 3.5): the card gains `questions: [{"report": id, "text": str, "queued": iso}]`.
 `reply <id> "<text>" --awaits` to an author who already has an `awaiting` on ANOTHER open report:
@@ -738,7 +746,8 @@ queued, not posted; a non-awaiting reply to them still posted; their answer → 
 two people never block each other; a queued question on a report closed meanwhile dropped. Then:
 language recorded on first sight, never overwritten (Pull twice, then a
 `person-lang`, then Pull again); `person` shows it; `fixed --note "#680"` posts nothing (the fake
-Channel records no `send`) and stores `fix_ref`; the AGENT.md rule « no PR number, commit or ticket
+Channel records no `send`) and stores `fix_ref`; `delete` removes the N-th reply through the Channel, keeps it marked deleted,
+lifts its awaiting, refuses a second delete; `show` marks it deleted; the AGENT.md rule « no PR number, commit or ticket
 id in the group » pinned; the note at 40 lines / 8 000 characters accepted, 41 lines or 8 001 characters
 refused with nothing written and the previous unread note untouched; the AGENT.md rules pinned as
 text.

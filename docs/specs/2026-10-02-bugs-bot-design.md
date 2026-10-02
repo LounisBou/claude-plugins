@@ -72,7 +72,7 @@ A small interface with TWO implementations, Telegram and Slack (standard library
 `poll(cursor, chats, timeout)` returns a batch of messages already normalised — chat, message id,
 date, author (id, username, display name, language when the platform gives one, bot or not), text,
 attachments, media-group key — plus the chats seen and the group migrations, and the next cursor;
-`send`, `edit`, `react`, `get_file`, `list_admins`, `member_count` as before. Chat and message ids
+`send`, `edit`, `delete`, `react`, `get_file`, `list_admins`, `member_count`. Chat and message ids
 are `int | str` (Slack's are strings). Reading never consumes: only the caller saving the returned
 cursor moves it. A factory, `channel_for(kind, env, transport)`, is the one place that names the
 implementations; nothing else imports or names a platform's API, token or URL. Each token is read by
@@ -182,6 +182,12 @@ launcher, wait armed).
   posts nothing; the agent tells the person in its own sentence, in their language and voice, that
   it is fixed (and, once deployed, asks them to check — « vérifier »). No PR number, commit, branch
   or ticket id is ever posted in the group.
+- **Edit and delete (operator, 2026-10-02):** « le plugin doit permettre à l'agent de modifier et
+  supprimer des messages au besoin ». The agent may rewrite (`edit`) or delete (`delete <id>
+  [--reply N]`) a message it posted, on its own judgment — a wrong fact, a duplicate, a message
+  posted on the wrong report — not only on its launcher's « réécrire ». A deleted reply stays in the
+  report, marked deleted with its date; a deleted message that awaited an answer no longer awaits.
+  The bot's own messages only: a tester's message is never edited or deleted.
 - **One question at a time (operator, 2026-10-02):** « Il faut que l'agent évite de poser trop de
   question d'un coup à un utilisateur, il pose une question à la fois, même si l'utilisateur à lui
   même déclenché plusieurs sujet, l'agent traite les sujets en paralléle mais n'intéroge
