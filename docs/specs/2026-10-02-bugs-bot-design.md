@@ -173,9 +173,15 @@ launcher, wait armed).
   enregistrée comme info pour chaque utilisateur. »):** each person's card carries `language`.
   Pull records it on first sight from the platform (Telegram `language_code`, Slack `locale`), never
   over a value already there; the agent corrects it with `bugs-bot person-lang <ref> <code>` when
-  the person writes in another language. Every message to a person is written in their language;
-  the CLI's own fixed words (« Corrigé : » of `fixed --note`) come from a table per language
-  (`fr`, `en`), the person's language first, then the project's `language`, then `en`.
+  the person writes in another language. Every message to a person is written in their language:
+  the person's language first, then the project's `language`.
+- **No developer reference reaches a person (operator, 2026-10-02):** « Tu peux pas parler comme
+  "Corrigé #680" à un utilisateur pour signaler qu'un bug est corrigé dans une PR #680, un
+  utilisateur ce n'est pas un dev, il n'a pas d'info sur le dev, ni les PR ça n'a pas de sens pour
+  lui et ce n'est pas une phrase. » `fixed <id> --note "<ref>"` records the ref in the report and
+  posts nothing; the agent tells the person in its own sentence, in their language and voice, that
+  it is fixed (and, once deployed, asks them to check — « vérifier »). No PR number, commit, branch
+  or ticket id is ever posted in the group.
 - **One question at a time (operator, 2026-10-02):** « Il faut que l'agent évite de poser trop de
   question d'un coup à un utilisateur, il pose une question à la fois, même si l'utilisateur à lui
   même déclenché plusieurs sujet, l'agent traite les sujets en paralléle mais n'intéroge
