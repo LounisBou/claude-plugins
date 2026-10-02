@@ -100,9 +100,16 @@ $SCRIPT screen --tty /dev/ttysNNN [--lines 40]
     # the last N lines, trailing blanks dropped: a tall terminal is blank at the top and
     # the prompt an agent is stopped on sits at the bottom.
 
-$SCRIPT close --tty /dev/ttysNNN --expect-title <substring>
+$SCRIPT close --tty /dev/ttysNNN --expect-title <substring> [--keep-checkout]
     # tty-exact; refuses if the session's current title does not contain the substring;
-    # waits for the host CLI to leave the tty, and fails loudly naming what survived
+    # waits for the host CLI to leave the tty, and fails loudly naming what survived.
+    # Once the close is proved, the checkout the session worked in is deleted when it is
+    # a checkout or a pin under the workspaces root: `workspace.sh delete`, never
+    # --discard, its host temporary directory with it. The directory is read BEFORE the
+    # close. The outcome is on stderr (`close: deleted checkout <path>` or
+    # `close: kept checkout <path>: <reason>`); the stdout line `closed 1 session on <tty>`
+    # is unchanged and a refused delete never fails the close. --keep-checkout opts out
+    # (the checkout is then deleted by hand, or by the next sweep). `rotate` always keeps it.
 
 $SCRIPT move --tty /dev/ttysNNN (--right-of self | --right-of /dev/ttysMMM | --left-of /dev/ttysMMM | --leftmost) [--force]
     # places a tab immediately beside another (same window), or at the FIRST place of its

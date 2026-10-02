@@ -32,6 +32,14 @@ twice. A head whose check list is still empty (a push seen before its checks are
 is not green but unread: it is not recorded. It reads facts, never the words of the message:
 a list of claim words fails open on any rewording and in any language.
 
+The sweep, run last and never part of the decision. Once the checks have let the stop pass,
+an orchestrator's stop also runs `workspace.sh sweep` — the checkouts and host temporary
+directories whose purpose is over — with what is left of the hook's deadline, minus a margin,
+at most once per ten minutes (a stamp file in the state directory). A refused stop runs none:
+the host reads the decision at the hook's exit, and a refusal never waits on a sweep. Each
+deletion is logged; a sweep that fails or overruns is logged and never changes the outcome
+of the stop.
+
 The whole hook runs under one deadline, checked between external calls: past it the stop
 passes and one line is logged.
 
@@ -49,6 +57,7 @@ import datetime
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import time
@@ -84,6 +93,11 @@ CALL_TIMEOUT = 30
 # And so is the hook as a whole, checked between its external calls.
 DEADLINE = float(os.environ.get("ORCHESTRATOR_STOP_GATE_DEADLINE") or 20)
 STARTED = time.monotonic()
+# The sweep runs at most this often, whichever orchestrator stops: one stamp, in the state directory.
+SWEEP_STAMP = os.path.join(STATE_DIR, "sweep.stamp")
+SWEEP_EVERY = float(os.environ.get("ORCHESTRATOR_SWEEP_INTERVAL") or 600)
+# What the sweep leaves of the hook's deadline for the hook's own exit.
+SWEEP_MARGIN = 3.0
 
 # The machine line is shown as plain text and the reason says where it goes: a line copied
 # with its backticks was the first way it failed.
@@ -367,10 +381,61 @@ def check_ci(cwd, session_id):
     return lines
 
 
+# --- the sweep --------------------------------------------------------------------------
+
+def sweep_due():
+    """True when no sweep ran within SWEEP_EVERY seconds."""
+    try:
+        return time.time() - os.path.getmtime(SWEEP_STAMP) >= SWEEP_EVERY
+    except OSError:
+        return True
+
+
+def sweep(who):
+    """Run `workspace.sh sweep` within what is left of the deadline, and log what it did.
+
+    Nothing here may refuse or delay a stop beyond the deadline: every failure is a log line.
+    The stamp is written before the run, so a sweep that hangs is not retried by every stop."""
+    try:
+        left = DEADLINE - (time.monotonic() - STARTED) - SWEEP_MARGIN
+        if left < 1 or not sweep_due():
+            return
+        os.makedirs(STATE_DIR, exist_ok=True)
+        with open(SWEEP_STAMP, "w") as fh:
+            fh.write("%d\n" % time.time())
+        proc = subprocess.Popen(["bash", WORKSPACE, "sweep", "--deadline", str(int(left))],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                start_new_session=True)
+        try:
+            out, err = proc.communicate(timeout=left + 1.5)
+        except subprocess.TimeoutExpired:
+            # TERM first, so the sweep's own exit trap removes its working directory.
+            for sig in (signal.SIGTERM, signal.SIGKILL):
+                try:
+                    os.killpg(proc.pid, sig)
+                except OSError:
+                    pass
+                try:
+                    proc.communicate(timeout=1)
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+            log(who, "sweep", "error", "did not finish within %ds" % int(left + 1.5))
+            return
+        for line in out.splitlines():
+            if line.startswith("deleted "):
+                log(who, "sweep", "deleted", line[len("deleted "):])
+        if proc.returncode != 0:
+            log(who, "sweep", "error", "exit %d: %s" % (proc.returncode, first_line(err)))
+    except Exception as exc:
+        log(who, "sweep", "error", "%s: %s" % (type(exc).__name__, exc))
+
+
 # --- the stop ---------------------------------------------------------------------------
 
 def refuse(reason):
     print(json.dumps({"decision": "block", "reason": reason}, ensure_ascii=False))
+    sys.stdout.flush()
 
 
 def gate(payload):
@@ -393,16 +458,26 @@ def gate(payload):
         if not name.startswith(ORCH_ROLE):
             return
         who = name
-        rows = listing()
-        held = check_wake(rows, own, message, cwd, who, session_id)
-        if held:
-            log(who, "check1", held[0])
-            refuse(held[1])
-            return
-        lines = check_ci(cwd, session_id)
-        if lines:
-            log(who, "check2", "ci-not-finished", " ; ".join(l.split(". Report")[0] for l in lines))
-            refuse("\n".join(lines))
+        refused = False
+        try:
+            rows = listing()
+            held = check_wake(rows, own, message, cwd, who, session_id)
+            if held:
+                log(who, "check1", held[0])
+                refuse(held[1])
+                refused = True
+                return
+            lines = check_ci(cwd, session_id)
+            if lines:
+                log(who, "check2", "ci-not-finished", " ; ".join(l.split(". Report")[0] for l in lines))
+                refuse("\n".join(lines))
+                refused = True
+        finally:
+            # After the checks have let the stop pass — or could not read and so let it pass.
+            # Never after a refusal: the host reads the decision at the hook's exit, and the
+            # session it holds must not wait on a sweep.
+            if not refused:
+                sweep(who)
     except Unread as exc:
         log(who, "error", str(exc))
 

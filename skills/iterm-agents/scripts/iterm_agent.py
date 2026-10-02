@@ -595,6 +595,91 @@ def wait_gone(tty, timeout=None):
         time.sleep(0.3)
 
 
+# --- the checkout a close leaves behind (§61) --------------------------------------
+
+WORKSPACE_SH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..",
+                            "orchestrator", "scripts", "workspace.sh")
+
+
+def host_cli_cwd(tty):
+    """The working directory of the host CLI on a tty, or None when it cannot be read.
+
+    ORCHESTRATOR_CWD_TABLE names a file that replaces the process table's answer, one
+    `<tty> <cwd>` line per session, because a suite has no live session to ask. Read BEFORE
+    a close: once the session is gone there is no process to ask."""
+    short = tty.replace("/dev/", "")
+    table = os.environ.get("ORCHESTRATOR_CWD_TABLE", "")
+    if table:
+        try:
+            with open(table) as fh:
+                for line in fh:
+                    parts = line.strip().split(None, 1)
+                    if len(parts) == 2 and parts[0].replace("/dev/", "") == short:
+                        return parts[1]
+        except OSError:
+            pass
+        return None
+    pid = host_cli_on(tty)
+    if not pid or not str(pid).isdigit():
+        return None
+    try:
+        out = subprocess.run(["lsof", "-a", "-p", str(pid), "-d", "cwd", "-Fn"],
+                             capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return None
+    for line in out.splitlines():
+        if line.startswith("n"):
+            return line[1:]
+    return None
+
+
+def checkout_of(cwd):
+    """The checkout or pin under the workspaces root that a directory is in, or None.
+
+    A checkout lives at <root>/<project>/<name>; a session that `cd`'d into a subdirectory is
+    still in that checkout. The orchestrator's own checkout is never under the root, so it is
+    never one."""
+    root = os.environ.get("ORCHESTRATOR_WORKSPACES") or os.path.expanduser("~/dev/workspaces")
+    try:
+        root = os.path.realpath(root)
+        real = os.path.realpath(cwd)
+    except (OSError, ValueError):
+        return None
+    if not real.startswith(root + os.sep):
+        return None
+    parts = real[len(root) + 1:].split(os.sep)
+    if len(parts) < 2:
+        return None
+    path = os.path.join(root, parts[0], parts[1])
+    return path if os.path.exists(os.path.join(path, ".git")) else None
+
+
+def delete_checkout(path):
+    """Ask `workspace.sh delete` (never --discard) to remove a checkout and report it on
+    stderr. A refusal is not an error of the close: it says why the checkout stays."""
+    try:
+        done = subprocess.run(["bash", WORKSPACE_SH, "delete", path],
+                              capture_output=True, text=True, timeout=120)
+    except Exception as exc:
+        print("close: kept checkout %s: workspace.sh did not run: %s" % (path, exc),
+              file=sys.stderr)
+        return
+    if done.returncode != 0 or os.path.exists(path):
+        reason = (done.stderr.strip().splitlines() or ["unknown"])[-1]
+        reason = re.sub(r"^workspace: (delete: )?", "", reason)
+        reason = re.sub(r" \(pass --discard.*$", "", reason)
+        print("close: kept checkout %s: %s" % (path, reason), file=sys.stderr)
+        return
+    first = True
+    for line in done.stdout.splitlines():
+        if line.startswith("deleted "):
+            what = "deleted checkout " if first else "deleted "
+            print("close: %s%s" % (what, line[len("deleted "):]), file=sys.stderr)
+            first = False
+    for line in done.stderr.splitlines():
+        print("close: " + re.sub(r"^workspace: ", "", line), file=sys.stderr)
+
+
 # --- the ladder: the rung that can serve, and it says which one did (§46) -----------
 
 _api_probe = {}
@@ -2067,6 +2152,7 @@ def cmd_close(argv):
     p = argparse.ArgumentParser(prog="close", add_help=False)
     p.add_argument("--tty", dest="tty")
     p.add_argument("--expect-title", dest="expect", default="")
+    p.add_argument("--keep-checkout", dest="keep_checkout", action="store_true", default=False)
     args, _ = p.parse_known_args(argv)
     if not args.tty:
         die("close: --tty is required")
@@ -2076,6 +2162,11 @@ def cmd_close(argv):
 
     # Read BEFORE the close: what the proof below is a proof ABOUT.
     was_running = host_cli_on(args.tty)
+    # And the same for the checkout the session works in: once it is gone nothing says where.
+    checkout = None
+    if not args.keep_checkout:
+        cwd = host_cli_cwd(args.tty)
+        checkout = checkout_of(cwd) if cwd else None
 
     async def go(iterm2, connection):
         app = await iterm2.async_get_app(connection)
@@ -2096,6 +2187,11 @@ def cmd_close(argv):
     # The first line is the contract every skill, command and brief parses; the reading
     # that qualifies it goes to stderr rather than changing it.
     print("closed 1 session on %s" % args.tty)
+    sys.stdout.flush()
+    # The session's purpose is over and its process is proved gone: its checkout goes with
+    # it, unless it holds work (`workspace.sh delete` refuses that, and says why).
+    if checkout:
+        delete_checkout(checkout)
 
 
 def cmd_move(argv):
@@ -2236,7 +2332,8 @@ def cmd_rotate(argv):
     # that killed the old agent on a spawn that never started would leave zero agents,
     # which is the one outcome this order exists to prevent.
     cmd_spawn(rest)
-    close_args = ["--tty", args.old_tty]
+    # The replacement works in the same checkout: a rotation deletes nothing.
+    close_args = ["--tty", args.old_tty, "--keep-checkout"]
     if args.expect:
         close_args += ["--expect-title", args.expect]
     cmd_close(close_args)

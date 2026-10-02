@@ -72,4 +72,5 @@ You are the COMMENTS agent for this round. You assess every open review thread w
 ## 8. Resource envelope
 
 - Kill what you start, delete what you build, and prove it with `ps` and `ls` before your final report.
+- Scratch (intermediate results, generated scripts, outputs that do not belong in the repository) lives in your own session's host scratchpad directory, which your system context names — never in a directory this brief or you invent. Do not delete it: the checkout it belongs to is deleted when your session is closed, and takes it along.
 {{RESOURCE_ENVELOPE}}

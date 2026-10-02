@@ -68,7 +68,8 @@ carries() { grep -qiF "$2" "$1" && echo yes || echo no; }
 echo "== repository policy =="
 
 # The product name appears only in load-bearing identifiers: host paths, host
-# environment variables, the plugin name and the manifest directory (CLAUDE.md rule 2).
+# environment variables, the plugin name, the manifest directory and the host's per-user
+# temporary area, a path the host imposes (CLAUDE.md rule 2).
 # Presence checks pin wording and were dropped; an absence sweep pins none, so it stays.
 #
 # The grep runs from INSIDE the repository, on a relative path. With an absolute one,
@@ -78,7 +79,7 @@ echo "== repository policy =="
 policy_hits() {
   ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=.claude --exclude-dir=plans \
       --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh \
-    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|\.claude\.json|LounisBou/claude-statusbar' || true )
+    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|\.claude\.json|LounisBou/claude-statusbar|/tmp/claude-' || true )
 }
 check "no vendor or product name in prose" "" "$(policy_hits)"
 
@@ -144,6 +145,9 @@ check "the audit brief merges nothing" "1" \
 check "only the two locks hold whatever is said, never routed around" "1" \
   "$(tr '\n' ' ' < "$ROOT/skills/orchestrator/SKILL.md" | tr -s ' ' | grep -oF -- "Two locks hold whatever is said, never routed around: the push guard, and the tab close verified by its title." | wc -l | tr -d ' ')"
 check "the succession brief closes the predecessor's tab" "1" "$(grep -c 'CLOSE ITS TAB' "$ROOT/templates/orchestrator-succession-brief.md")"
+# Every agent that works in a checkout keeps its scratch where the close takes it.
+check "the phase, review and comments briefs keep scratch in the session's host scratchpad" "yes|yes|yes" \
+  "$(for t in phase review comments; do carries "$ROOT/templates/agent-$t-brief.md" "lives in your own session's host scratchpad directory"; done | paste -sd'|' -)"
 # A predecessor started by hand lists as `(host default)`; the host refuses closing a session the
 # plugin did not launch unless the operator's word is already in the conversation, so the successor
 # asks him up front, before « takeover confirmed ». Step 4 is read with its line breaks folded for
@@ -589,7 +593,332 @@ check "a file ignored by nothing is absent from the checkout" "0" "$([ -e "$GE/p
 check "a path both the repository's and the global excludes ignore is copied once" "local|1" \
   "$(cat "$GE/LOCAL.md" 2>/dev/null)|$(grep -c 'copied 1 files kept out by the global excludes' "$WORK/wsge.err")"
 
-unset ORCHESTRATOR_WORKSPACES GIT_CONFIG_GLOBAL
+echo "== workspace: temporary directories are cleaned once their purpose is over =="
+# A checkout is deleted when its purpose is over — its stood-down session closed, its pull
+# request merged or closed — and the host's per-directory temporary area goes with it. The
+# one safety rule over every deletion: never a dirty tree, unpushed commits, a pin whose head
+# is on no branch, or a directory a live process has as its working directory. Everything
+# here runs on temporary repositories, a fake `gh`, and a host temporary area of its own.
+WC="$WORK/wc"
+mkdir -p "$WC/bin" "$WC/bin-nolsof" "$WC/hosttmp" "$WC/src"
+export ORCHESTRATOR_HOST_TMP="$WC/hosttmp"
+export ORCHESTRATOR_WORKSPACES="$WORK/wcroot"
+# The sweep caches each repository's pull requests in the state directory: one of the suite's own.
+export ORCHESTRATOR_STATE_DIR="$WC/state"
+rp() { ( cd "$1" && pwd -P ); }
+mkdir -p "$WORK/wcroot"
+WCR=$(rp "$WORK/wcroot")
+# The host's name of a directory: every character that is not a letter or a digit turned into `-`.
+enc() { local p; p=$(rp "$1"); printf '%s' "$p" | tr -c 'A-Za-z0-9' '-'; }
+# A commit made through an empty `-C` path would land in the repository the suite runs from.
+gc() { [ "${1:-}" = -C ] && [ -z "${2:-}" ] && return 1; git -c user.email=t@local -c user.name=t "$@"; }
+exists() { [ -e "$1" ] && echo 1 || echo 0; }
+
+for n in 1 2 3; do
+  suffix=""; [ "$n" -gt 1 ] && suffix=$n
+  trunk=main; [ "$n" = 3 ] && trunk=stable
+  git init -q --bare "$WC/origin$suffix.git"
+  mkdir -p "$WC/src/proj$suffix" && ( cd "$WC/src/proj$suffix" && git init -q -b $trunk \
+    && echo one > README.md && git add -A && gc commit -q -m "One" \
+    && git remote add origin "$WC/origin$suffix.git" && git push -q origin $trunk 2>/dev/null )
+done
+WCSRC="$WC/src/proj"; WCSRC2="$WC/src/proj2"; WCSRC3="$WC/src/proj3"
+
+# A fake `gh`: one JSON file per origin, named after the origin's last path part, and one
+# line per `pr list` call so the number of calls per repository can be counted.
+cat > "$WC/bin/gh" <<EOF
+#!/bin/bash
+[ -f "$WC/gh-offline" ] && { echo "gh: you are not logged in" >&2; exit 1; }
+[ "\$1 \$2" = "pr list" ] || exit 1
+echo "\$(pwd -P) \$*" >> "$WC/gh-calls"
+cat "$WC/prs-\$(basename "\$(git remote get-url origin)").json"
+EOF
+printf '#!/bin/bash\nexit 1\n' > "$WC/bin-nolsof/lsof"
+chmod +x "$WC/bin/gh" "$WC/bin-nolsof/lsof"
+wcgh() { env PATH="$WC/bin:$PATH" "$@"; }
+
+# A process whose working directory is a given directory, until `release`.
+LIVE=""
+hold() {
+  ( cd "$1" && exec sleep 60 ) & LIVE="$LIVE $!"
+  local i=0 want; want=$(rp "$1")
+  while [ $i -lt 50 ]; do
+    lsof -a -p "${LIVE##* }" -d cwd -Fn 2>/dev/null | grep -qxF "n$want" && return 0
+    sleep 0.1; i=$((i + 1))
+  done
+}
+release() { local p; for p in $LIVE; do kill "$p" 2>/dev/null; wait "$p" 2>/dev/null; done; LIVE=""; }
+
+# mkclone <source> <name> <branch> [dirty|unpushed]: a checkout on a pushed branch.
+mkclone() {
+  local c
+  c=$(bash "$WS" create "$1" "$2" --base main 2>/dev/null) || return 1
+  git -C "$c" checkout -q -b "$3" && echo "$2" > "$c/$2.txt" && git -C "$c" add -A && gc -C "$c" commit -q -m "Work on $2"
+  [ "${4:-}" = unpushed ] || git -C "$c" push -q origin "$3" 2>/dev/null
+  [ "${4:-}" = dirty ] && echo more >> "$c/$2.txt"
+  rp "$c"
+}
+# wcpin <args of pin>: the pin's real path.
+wcpin() { local p; p=$(bash "$WS" pin "$@" 2>/dev/null) && rp "$p"; }
+# scratch <checkout>: the host's temporary directory of a checkout, with something in it.
+scratch() { local h="$ORCHESTRATOR_HOST_TMP/$(enc "$1")"; mkdir -p "$h/scratchpad/s1"; echo x > "$h/scratchpad/s1/f"; echo "$h"; }
+
+echo "-- delete takes the host's temporary directory with it"
+CA=$(mkclone "$WCSRC" del-a feat/del-a); HA=$(scratch "$CA")
+out=$(bash "$WS" delete "$CA" 2>/dev/null)
+check "delete removes the checkout and its host temporary directory, and says both" "2|0|0" \
+  "$(printf '%s\n' "$out" | grep -c '^deleted ')|$(exists "$CA")|$(exists "$HA")"
+
+CB=$(mkclone "$WCSRC" del-b feat/del-b); HB=$(scratch "$CB")
+hold "$HB/scratchpad"
+out=$(bash "$WS" delete "$CB" 2>"$WC/del-b.err")
+release
+check "a live process inside the host temporary directory keeps it, and it is said" "0|1|1" \
+  "$(exists "$CB")|$(exists "$HB")|$(grep -c 'kept host temporary directory' "$WC/del-b.err")"
+rm -rf "$HB"
+
+CC=$(mkclone "$WCSRC" del-c feat/del-c); HC=$(scratch "$CC")
+hold "$CC"
+bash "$WS" delete "$CC" >/dev/null 2>"$WC/del-c.err"; code=$?
+release
+check "a live process inside the checkout refuses the delete and keeps both" "1|1|1" "$code|$(exists "$CC")|$(exists "$HC")"
+check "and the refusal names the live process" "1" "$(grep -c 'live process' "$WC/del-c.err")"
+env PATH="$WC/bin-nolsof:$PATH" bash "$WS" delete "$CC" >/dev/null 2>"$WC/del-c2.err"; code=$?
+check "a process table that cannot be read refuses the delete, nothing is assumed" "1|1" "$code|$(exists "$CC")"
+bash "$WS" delete "$CC" >/dev/null 2>&1
+rm -rf "$HC"
+
+CD=$(mkclone "$WCSRC" del-d feat/del-d dirty); HD=$(scratch "$CD")
+bash "$WS" delete "$CD" >/dev/null 2>&1; code=$?
+check "a dirty tree keeps the checkout and its host temporary directory" "1|1|1" "$code|$(exists "$CD")|$(exists "$HD")"
+bash "$WS" delete "$CD" --discard >/dev/null 2>&1
+check "--discard removes the dirty tree and takes the host directory with it" "0|0" "$(exists "$CD")|$(exists "$HD")"
+
+CE=$(mkclone "$WCSRC" del-e feat/del-e unpushed); HE=$(scratch "$CE")
+bash "$WS" delete "$CE" >/dev/null 2>&1; code=$?
+check "unpushed commits keep the checkout and its host temporary directory" "1|1|1" "$code|$(exists "$CE")|$(exists "$HE")"
+bash "$WS" delete "$CE" --discard >/dev/null 2>&1
+
+# A commit on a detached head is on no branch at all, and a stash is on none either: the
+# branches alone never see them.
+CF=$(mkclone "$WCSRC" del-f feat/del-f)
+git -C "$CF" checkout -q --detach && echo f > "$CF/detached.txt" && git -C "$CF" add -A && gc -C "$CF" commit -q -m "On a detached head"
+bash "$WS" delete "$CF" >/dev/null 2>"$WC/del-f.err"; code=$?
+check "a commit on a detached head keeps the checkout, and says why" "1|1|1" \
+  "$code|$(exists "$CF")|$(grep -c 'commits on no remote branch' "$WC/del-f.err")"
+bash "$WS" delete "$CF" --discard >/dev/null 2>&1
+CG=$(mkclone "$WCSRC" del-g feat/del-g)
+echo more >> "$CG/del-g.txt" && git -C "$CG" stash -q
+bash "$WS" delete "$CG" >/dev/null 2>"$WC/del-g.err"; code=$?
+check "a stash keeps the checkout, and says why" "1|1|1" \
+  "$code|$(exists "$CG")|$(grep -c 'a stash is held' "$WC/del-g.err")"
+bash "$WS" delete "$CG" --discard >/dev/null 2>&1
+
+# A git that cannot read the checkout knows nothing of its state: never « clean and pushed ».
+CH=$(mkclone "$WCSRC" del-h feat/del-h)
+echo garbage > "$CH/.git/HEAD"
+bash "$WS" delete "$CH" >/dev/null 2>"$WC/del-h.err"; code=$?
+check "a checkout git cannot read is kept, with git's own first line" "1|1|1" \
+  "$code|$(exists "$CH")|$(grep -c 'git cannot read the checkout: .' "$WC/del-h.err")"
+bash "$WS" delete "$CH" --discard >/dev/null 2>&1
+
+# The host spells every character that is not a letter or a digit as `-`, not only `/`.
+CI=$(mkclone "$WCSRC" del.i_x feat/del-i)
+HI="$ORCHESTRATOR_HOST_TMP/$(enc "$WCR")-proj-del-i-x"; mkdir -p "$HI/scratchpad"
+out=$(bash "$WS" delete "$CI" 2>/dev/null)
+check "a checkout named with a dot and an underscore takes its host directory, spelled as the host spells it" "0|0|1" \
+  "$(exists "$CI")|$(exists "$HI")|$(printf '%s\n' "$out" | grep -cxF "deleted $HI")"
+
+echo "-- a removal goes through a trash, so one cut short leaves nothing at the checkout's path"
+# A sweep killed in the middle of a removal left a partial checkout that read as dirty for
+# ever. The checkout is moved into a trash under the root in one rename, then removed; what
+# a removal leaves there (here, a directory it may not write into) the next sweep empties.
+CJ=$(mkclone "$WCSRC" del-j feat/del-j); HJ=$(scratch "$CJ")
+mkdir -p "$CJ/locked" && echo x > "$CJ/locked/f" && chmod a-w "$CJ/locked"
+out=$(bash "$WS" delete "$CJ" --discard 2>"$WC/del-j.err"); code=$?
+check "a removal that cannot complete leaves nothing at the checkout's path, says so, and keeps the rest in the trash" "0|0|0|1|1|1" \
+  "$code|$(exists "$CJ")|$(exists "$HJ")|$(printf '%s\n' "$out" | grep -cxF "deleted $CJ")|$(ls "$WCR/.trash" 2>/dev/null | grep -c .)|$(grep -c 'the trash keeps' "$WC/del-j.err")"
+chmod -R u+w "$WCR/.trash" "$CJ" 2>/dev/null
+mkdir -p "$ORCHESTRATOR_HOST_TMP/.workspace-trash/zz/x/scratchpad"
+git init -q "$WCR/.trash/zy"
+check "list ignores the trash" "0" "$(bash "$WS" list 2>/dev/null | grep -c trash)"
+out=$(wcgh bash "$WS" sweep --dry-run 2>/dev/null)
+check "a dry run says what it would empty from the trashes and empties nothing" "3|2|1" \
+  "$(printf '%s\n' "$out" | grep -c '^would delete .*trash')|$(ls "$WCR/.trash" | grep -c .)|$(ls "$ORCHESTRATOR_HOST_TMP/.workspace-trash" | grep -c .)"
+out=$(wcgh bash "$WS" sweep 2>/dev/null)
+check "a sweep empties a leftover trash first, and never takes it for a checkout or an orphan" "3|0|0|1" \
+  "$(printf '%s\n' "$out" | grep -c '^deleted .*trash')|$(ls "$WCR/.trash" | grep -c .)|$(ls "$ORCHESTRATOR_HOST_TMP/.workspace-trash" | grep -c .)|$(printf '%s\n' "$out" | head -1 | grep -c trash)"
+
+echo "-- pin --pr records the pull request the pin reviews"
+PINA=$(wcpin "$WCSRC" pin-a main --pr 7)
+PINB=$(wcpin "$WCSRC" pin-b main)
+check "pin --pr writes the number in the worktree's own git dir; a pin without it writes none" "7|0" \
+  "$(cat "$(git -C "$PINA" rev-parse --absolute-git-dir)/workspace-pr" 2>/dev/null)|$(exists "$(git -C "$PINB" rev-parse --absolute-git-dir)/workspace-pr")"
+check "pin --pr needs a number, and makes no worktree without one" "1|0" \
+  "$(bash "$WS" pin "$WCSRC" pin-c main --pr seven >/dev/null 2>&1; echo $?)|$(exists "$WORK/wcroot/proj/pin-c")"
+check "list is unchanged by the record" "1|1" \
+  "$(bash "$WS" list 2>/dev/null | grep -c '/proj/pin-a | HEAD | [0-9a-f]* | clean | pinned$')|$(bash "$WS" list 2>/dev/null | grep -c '/proj/pin-b | HEAD | [0-9a-f]* | clean | pinned$')"
+HPA=$(scratch "$PINA")
+bash "$WS" delete "$PINA" >/dev/null 2>&1
+check "deleting a pin takes its host temporary directory too" "0|0" "$(exists "$PINA")|$(exists "$HPA")"
+check "and its source forgets it" "0" "$(git -C "$WCSRC" worktree list | grep -c '/pin-a ')"
+bash "$WS" delete "$PINB" >/dev/null 2>&1
+
+echo "-- sweep decides on facts"
+MAIN_SHA=$(git -C "$WCSRC" rev-parse main)
+C_MERGED=$(mkclone "$WCSRC" s-merged feat/merged)
+C_CLOSED=$(mkclone "$WCSRC" s-closed feat/closed)
+C_OPEN=$(mkclone "$WCSRC" s-open feat/open)
+C_NOPR=$(mkclone "$WCSRC" s-nopr feat/nopr)
+C_DIRTY=$(mkclone "$WCSRC" s-dirty feat/dirty dirty)
+C_UNPUSHED=$(mkclone "$WCSRC" s-unpushed feat/unpushed unpushed)
+C_LIVE=$(mkclone "$WCSRC" s-live feat/live)
+C_P2=$(mkclone "$WCSRC2" s-p2 feat/p2)
+C_MAIN=$(mkclone "$WCSRC" s-main feat/s-main); git -C "$C_MAIN" checkout -q main
+C_STABLE=$(rp "$(bash "$WS" create "$WCSRC3" s-stable --base stable 2>/dev/null)")
+C_PAST=$(mkclone "$WCSRC" s-past feat/past)
+C_BEHIND=$(mkclone "$WCSRC" s-behind feat/behind)
+echo second > "$C_BEHIND/second.txt" && git -C "$C_BEHIND" add -A && gc -C "$C_BEHIND" commit -q -m "Second" && git -C "$C_BEHIND" push -q origin feat/behind 2>/dev/null
+BEHIND_TIP=$(git -C "$C_BEHIND" rev-parse HEAD)
+git -C "$C_BEHIND" reset -q --hard HEAD~1
+head_of() { git -C "$1" rev-parse HEAD; }
+P_MERGED=$(wcpin "$WCSRC" p-merged main --pr 7)
+P_MOVED=$(wcpin "$WCSRC" p-moved main --pr 8)
+P_SAME=$(wcpin "$WCSRC" p-same main --pr 9)
+P_NOREC=$(wcpin "$WCSRC" p-norec main)
+P_NOBRANCH=$(wcpin "$WCSRC" p-nobranch main --pr 10)
+gc -C "$P_NOBRANCH" commit -q --allow-empty -m "Commit on no branch"
+cat > "$WC/prs-origin.git.json" <<EOF
+[{"number":1,"state":"MERGED","headRefName":"feat/merged","headRefOid":"$(head_of "$C_MERGED")"},
+ {"number":2,"state":"CLOSED","headRefName":"feat/closed","headRefOid":"$(head_of "$C_CLOSED")"},
+ {"number":3,"state":"OPEN","headRefName":"feat/open","headRefOid":"$(head_of "$C_OPEN")"},
+ {"number":4,"state":"MERGED","headRefName":"feat/dirty","headRefOid":"$(head_of "$C_DIRTY")"},
+ {"number":5,"state":"MERGED","headRefName":"feat/unpushed","headRefOid":"$(head_of "$C_UNPUSHED")"},
+ {"number":6,"state":"MERGED","headRefName":"feat/live","headRefOid":"$(head_of "$C_LIVE")"},
+ {"number":7,"state":"MERGED","headRefName":"feat/seven","headRefOid":"111"},
+ {"number":8,"state":"OPEN","headRefName":"feat/eight","headRefOid":"0000000000000000000000000000000000000000"},
+ {"number":9,"state":"OPEN","headRefName":"feat/nine","headRefOid":"$MAIN_SHA"},
+ {"number":10,"state":"MERGED","headRefName":"feat/ten","headRefOid":"222"},
+ {"number":11,"state":"MERGED","headRefName":"main","headRefOid":"$(head_of "$C_MAIN")"},
+ {"number":12,"state":"MERGED","headRefName":"feat/past","headRefOid":"$(git -C "$C_PAST" rev-parse HEAD~1)"},
+ {"number":13,"state":"MERGED","headRefName":"feat/behind","headRefOid":"$BEHIND_TIP"}]
+EOF
+cat > "$WC/prs-origin3.git.json" <<EOF
+[{"number":1,"state":"MERGED","headRefName":"stable","headRefOid":"$(head_of "$C_STABLE")"}]
+EOF
+cat > "$WC/prs-origin2.git.json" <<EOF
+[{"number":1,"state":"MERGED","headRefName":"feat/p2","headRefOid":"$(head_of "$C_P2")"}]
+EOF
+for d in "$C_MERGED" "$C_CLOSED" "$C_OPEN" "$C_NOPR" "$C_DIRTY" "$C_UNPUSHED" "$C_LIVE" "$C_P2" "$C_MAIN" "$C_STABLE" "$C_PAST" "$C_BEHIND" "$P_MERGED" "$P_MOVED" "$P_SAME" "$P_NOREC" "$P_NOBRANCH"; do scratch "$d" >/dev/null; done
+# The orphans of checkouts deleted before this change: the encoded root, an existing project,
+# then a name that matches no checkout. Those that must stay: one past the root's name without
+# the separator, one outside the root, two of a sibling of the root sharing its name as a
+# prefix (`<root>-old/x`, `<root>_2/x`), and two a live session still uses. A session's host
+# directory is named after the directory it STARTED in, never after its own scratch: one
+# session works in that very directory, a checkout's subdirectory; another started in a
+# subdirectory and works further below it now.
+ENCR=$(enc "$WCR")
+mkdir -p "$WORK/wcroot/plain" "$C_OPEN/sub" "$C_NOPR/sub/deeper"
+H_SRC="$ORCHESTRATOR_HOST_TMP/$(enc "$C_OPEN/sub")"; H_BELOW="$ORCHESTRATOR_HOST_TMP/$(enc "$C_NOPR/sub")"
+mkorphans() {
+  mkdir -p "$ORCHESTRATOR_HOST_TMP/$ENCR-proj/scratchpad" "$ORCHESTRATOR_HOST_TMP/$ENCR-plain/scratchpad"
+  mkdir -p "$ORCHESTRATOR_HOST_TMP/$ENCR-proj-gone/scratchpad" "$ORCHESTRATOR_HOST_TMP/${ENCR}2-x/scratchpad" \
+    "$ORCHESTRATOR_HOST_TMP/-elsewhere-thing/scratchpad" "$H_SRC/scratchpad" "$H_BELOW/scratchpad" \
+    "$ORCHESTRATOR_HOST_TMP/$ENCR-old-x/scratchpad" "$ORCHESTRATOR_HOST_TMP/$ENCR-2-x/scratchpad"
+}
+mkorphans
+nitems() { bash "$WS" list 2>/dev/null | grep -c .; }
+# gone | past the root's name | outside | live at its source | live below its source | <root>-old | <root>_2
+tmpstate() { printf '%s|%s|%s|%s|%s|%s|%s' "$(exists "$ORCHESTRATOR_HOST_TMP/$ENCR-proj-gone")" "$(exists "$ORCHESTRATOR_HOST_TMP/${ENCR}2-x")" \
+  "$(exists "$ORCHESTRATOR_HOST_TMP/-elsewhere-thing")" "$(exists "$H_SRC")" "$(exists "$H_BELOW")" \
+  "$(exists "$ORCHESTRATOR_HOST_TMP/$ENCR-old-x")" "$(exists "$ORCHESTRATOR_HOST_TMP/$ENCR-2-x")"; }
+hold "$C_LIVE"
+hold "$C_OPEN/sub"
+hold "$C_NOPR/sub/deeper"
+BEFORE=$(nitems)
+: > "$WC/gh-calls"
+
+out=$(wcgh bash "$WS" sweep --dry-run 2>"$WC/sweep-dry.err"); code=$?
+check "a dry run exits 0 and deletes nothing, checkouts or host directories" "0|$BEFORE|1|1|1|1|1|1|1" "$code|$(nitems)|$(tmpstate)"
+check "a dry run prints its decisions: six deletions and the orphan, none done" "7|0" \
+  "$(printf '%s\n' "$out" | grep -c '^would delete ')|$(printf '%s\n' "$out" | grep -c '^deleted ')"
+check "the pull requests are read once per repository, never once per checkout; a long-lived branch asks none" "2" "$(grep -c 'pr list' "$WC/gh-calls")"
+check "and with the fields the decision reads, two hundred at most" "2|2" \
+  "$(grep -c -- '--json headRefName,state,headRefOid,number' "$WC/gh-calls")|$(grep -c -- '--limit 200 ' "$WC/gh-calls")"
+# The orphans are local and cheap, the pull requests a call per repository: a sweep cut by its
+# deadline has done the orphans first.
+first_ckt=$(printf '%s\n' "$out" | grep -n "^[a-z ]* $WCR/proj" | head -1 | cut -d: -f1)
+last_tmp=$(printf '%s\n' "$out" | grep -n "^[a-z ]* $ORCHESTRATOR_HOST_TMP/" | tail -1 | cut -d: -f1)
+check "the orphans are decided before any checkout" "1" "$([ -n "$last_tmp" ] && [ -n "$first_ckt" ] && [ "$last_tmp" -lt "$first_ckt" ] && echo 1 || echo 0)"
+CACHED=$(ls "$ORCHESTRATOR_STATE_DIR/sweep-prs" 2>/dev/null | grep -c .)
+: > "$WC/gh-calls"
+wcgh bash "$WS" sweep --dry-run >/dev/null 2>&1
+check "the lists are cached in the state directory, one file per origin; a second sweep asks gh nothing" "2|0" "$CACHED|$(grep -c . "$WC/gh-calls")"
+touch -t 200001010000 "$ORCHESTRATOR_STATE_DIR"/sweep-prs/*
+wcgh bash "$WS" sweep --dry-run >/dev/null 2>&1
+check "a list older than thirty minutes is asked again" "2" "$(grep -c . "$WC/gh-calls")"
+rm -rf "$ORCHESTRATOR_STATE_DIR/sweep-prs"
+
+out=$(wcgh bash "$WS" sweep --deadline 0 2>"$WC/sweep-dl.err"); code=$?
+check "a spent deadline stops cleanly before the next item: nothing deleted, said" "0|$BEFORE|1" \
+  "$code|$(nitems)|$(grep -c 'deadline' "$WC/sweep-dl.err")"
+
+: > "$WC/gh-offline"
+out=$(wcgh bash "$WS" sweep 2>"$WC/sweep-off.err"); code=$?
+rm -f "$WC/gh-offline"
+check "gh unreachable: no checkout deleted, each repository says so once, the items are kept with the reason" "0|$BEFORE|2|1" \
+  "$code|$(nitems)|$(grep -c 'cannot read the pull requests' "$WC/sweep-off.err")|$(printf '%s\n' "$out" | grep -c "^kept $C_MERGED: .*pull requests")"
+check "and a failed call is never cached" "0" "$(ls "$ORCHESTRATOR_STATE_DIR/sweep-prs" 2>/dev/null | grep -c .)"
+mkorphans
+
+out=$(wcgh bash "$WS" sweep 2>"$WC/sweep.err"); code=$?
+check "sweep exits 0" "0" "$code"
+check "a clone whose pull request is merged or closed is deleted" "0|0|0" "$(exists "$C_MERGED")|$(exists "$C_CLOSED")|$(exists "$C_P2")"
+check "a pin whose pull request is merged, or whose head moved on the pull request, is deleted" "0|0" "$(exists "$P_MERGED")|$(exists "$P_MOVED")"
+check "their host temporary directories went with them" "0|0|0" \
+  "$(exists "$ORCHESTRATOR_HOST_TMP/$ENCR-proj-s-merged")|$(exists "$ORCHESTRATOR_HOST_TMP/$ENCR-proj-s-closed")|$(exists "$ORCHESTRATOR_HOST_TMP/$ENCR-proj-p-merged")"
+check "a clone with an open pull request is kept, with its reason" "1|1" \
+  "$(exists "$C_OPEN")|$(printf '%s\n' "$out" | grep -c "^kept $C_OPEN: .*open")"
+check "a clone with no pull request is kept, with its reason" "1|1" \
+  "$(exists "$C_NOPR")|$(printf '%s\n' "$out" | grep -c "^kept $C_NOPR: .*no pull request")"
+check "a dirty tree is kept even when its pull request is merged" "1|1" \
+  "$(exists "$C_DIRTY")|$(printf '%s\n' "$out" | grep -c "^kept $C_DIRTY: .*dirty")"
+check "unpushed commits are kept even when the pull request is merged" "1|1" \
+  "$(exists "$C_UNPUSHED")|$(printf '%s\n' "$out" | grep -c "^kept $C_UNPUSHED: .*no remote branch")"
+check "a clone on a long-lived branch is never swept on a name a pull request shares" "1|1" \
+  "$(exists "$C_MAIN")|$(printf '%s\n' "$out" | grep -c "^kept $C_MAIN: .*long-lived")"
+check "a clone on the repository's default branch is kept whatever its name" "1|1" \
+  "$(exists "$C_STABLE")|$(printf '%s\n' "$out" | grep -c "^kept $C_STABLE: .*default branch")"
+check "a clone past the head of its merged pull request keeps the work the pull request never carried" "1|1" \
+  "$(exists "$C_PAST")|$(printf '%s\n' "$out" | grep -c "^kept $C_PAST: .*moved past")"
+check "a clone behind the head of its merged pull request holds nothing the pull request lacks: deleted" "0" "$(exists "$C_BEHIND")"
+check "a live process inside is kept even when the pull request is merged" "1|1" \
+  "$(exists "$C_LIVE")|$(printf '%s\n' "$out" | grep -c "^kept $C_LIVE: .*live process")"
+check "a pin on the current head of an open pull request is kept" "1|1" \
+  "$(exists "$P_SAME")|$(printf '%s\n' "$out" | grep -c "^kept $P_SAME: ")"
+check "a pin with no record is kept, with its reason" "1|1" \
+  "$(exists "$P_NOREC")|$(printf '%s\n' "$out" | grep -c "^kept $P_NOREC: .*no recorded pull request")"
+check "a pin whose head is on no branch is kept even when its pull request is merged" "1|1" \
+  "$(exists "$P_NOBRANCH")|$(printf '%s\n' "$out" | grep -c "^kept $P_NOBRANCH: .*no branch")"
+check "every deletion is printed and proved by the path's absence" "6|0" \
+  "$(printf '%s\n' "$out" | grep -c "^deleted $WCR/proj")|$(printf '%s\n' "$out" | grep '^deleted ' | sed 's/^deleted //' | while read -r p; do [ -e "$p" ] && echo present; done | grep -c present)"
+check "an orphan is removed; one past the root's name and one outside it are not" "0|1|1" "$(tmpstate | cut -d'|' -f1-3)"
+check "a live session working in the directory a host directory is named after keeps it" "1" "$(tmpstate | cut -d'|' -f4)"
+check "and so does one that started in a checkout's subdirectory and works below it now" "1" "$(tmpstate | cut -d'|' -f5)"
+check "a sibling of the root sharing its name as a prefix is never a candidate" "1|1" "$(tmpstate | cut -d'|' -f6-7)"
+check "the host directory of a directory that still exists under the root is not an orphan's" "1|1" \
+  "$(exists "$ORCHESTRATOR_HOST_TMP/$ENCR-proj")|$(exists "$ORCHESTRATOR_HOST_TMP/$ENCR-plain")"
+check "the host directory of a kept checkout stays" "1|1" \
+  "$(exists "$ORCHESTRATOR_HOST_TMP/$(enc "$C_OPEN")")|$(exists "$ORCHESTRATOR_HOST_TMP/$(enc "$C_NOPR")")"
+release
+rm -rf "$H_SRC" "$H_BELOW" "$ORCHESTRATOR_HOST_TMP/${ENCR}2-x" "$ORCHESTRATOR_HOST_TMP/-elsewhere-thing" "$ORCHESTRATOR_HOST_TMP/$ENCR-old-x" "$ORCHESTRATOR_HOST_TMP/$ENCR-2-x"
+for d in "$C_OPEN" "$C_NOPR" "$C_UNPUSHED" "$C_LIVE" "$C_MAIN" "$C_STABLE" "$C_PAST" "$P_SAME" "$P_NOREC"; do bash "$WS" delete "$d" --discard >/dev/null 2>&1; done
+bash "$WS" delete "$C_DIRTY" --discard >/dev/null 2>&1
+bash "$WS" delete "$P_NOBRANCH" --discard >/dev/null 2>&1
+check "the temporary fixtures are gone and nothing is left under the root" "0" "$(nitems)"
+rm -rf "$ORCHESTRATOR_HOST_TMP"/* "$WC/gh-calls" "$ORCHESTRATOR_STATE_DIR"
+
+unset ORCHESTRATOR_WORKSPACES GIT_CONFIG_GLOBAL ORCHESTRATOR_HOST_TMP ORCHESTRATOR_STATE_DIR
 
 echo "== brief lint =="
 
@@ -2700,8 +3029,20 @@ cp "$ROOT/hooks/stop-gate.sh" "$ROOT/hooks/stop_gate.py" "$ROOT/hooks/session_na
 cp "$ROOT/skills/iterm-agents/scripts/iterm_agent.py" "$SG/skills/iterm-agents/scripts/"
 printf '#!/bin/bash\n[ "$1" = list ] || exit 1\ncat "%s/listing" 2>/dev/null || { echo "list: no terminal backend could serve this" >&2; exit 1; }\n' "$SG" \
   > "$SG/skills/iterm-agents/scripts/iterm-agent.sh"
-printf '#!/bin/bash\n[ "$1" = list ] || exit 1\ncat "%s/checkouts" 2>/dev/null || { echo "workspace: cannot read the root" >&2; exit 1; }\n' "$SG" \
-  > "$SG/skills/orchestrator/scripts/workspace.sh"
+# `sweep` records its arguments and answers from files: its lines, its stderr, its exit
+# code, and a sleep to be killed in.
+cat > "$SG/skills/orchestrator/scripts/workspace.sh" <<EOF
+#!/bin/bash
+case "\$1" in
+  list) cat "$SG/checkouts" 2>/dev/null || { echo "workspace: cannot read the root" >&2; exit 1; } ;;
+  sweep) echo "\$*" >> "$SG/sweep-args"
+         [ -f "$SG/sweep-sleep" ] && sleep "\$(cat "$SG/sweep-sleep")"
+         cat "$SG/sweep-out" 2>/dev/null
+         [ -f "$SG/sweep-err" ] && cat "$SG/sweep-err" >&2
+         exit "\$(cat "$SG/sweep-code" 2>/dev/null || echo 0)" ;;
+  *) exit 1 ;;
+esac
+EOF
 cat > "$SGB/gh" <<EOF
 #!/bin/bash
 [ -f "$SG/gh-offline" ] && { echo "error connecting to api.github.com" >&2; exit 1; }
@@ -2726,7 +3067,7 @@ sg_chain() {  # <tty> <owner> ...: the chain of the orchestrator's tty, in launc
 # The session's name is read from the process table the way the launcher reads it (`--name`):
 # the suite's stand-in for `ps` is a file, and the session's own tty is given.
 sg_ps() { printf '/dev/ttys900 host-cli %s\n' "$1" > "$SG/ps"; }
-sg_reset() { rm -f "$SG/prs" "$SG/gh-calls" "$SG/gh-args" "$SG/gh-offline" "$SG"/checks-* "$SG/transcript" "$SGS/stop-gate.log"; rm -rf "$SGS/stop-gate" "$SGS/records"; : > "$SG/checkouts"; sg_ps '--name Orch : f [a1b2c3]'; sg_listing; sg_chain; }
+sg_reset() { rm -f "$SG/prs" "$SG/gh-calls" "$SG/gh-args" "$SG/gh-offline" "$SG"/checks-* "$SG/transcript" "$SGS/stop-gate.log"; rm -rf "$SGS/stop-gate" "$SGS/records"; rm -f "$SG"/sweep-* "$SGS/sweep.stamp"; : > "$SG/checkouts"; sg_ps '--name Orch : f [a1b2c3]'; sg_listing; sg_chain; }
 # sg <message> [stop_hook_active] [session id]: the hook's stdout. SG_TRANSCRIPT names the
 # payload's transcript, SG_ITERM stands in for ITERM_SESSION_ID, SG_DEADLINE for the hook's.
 sg() {
@@ -3058,6 +3399,49 @@ check "the eval selection says its two stop-gate cases grade the staged spawn li
 check "the hook is registered on the Stop event" "1" \
   "$("$py" -c 'import json,sys; h=json.load(open(sys.argv[1]))["hooks"]["Stop"]; print(sum("hooks/stop-gate.sh" in x["command"] for e in h for x in e["hooks"]))' "$ROOT/hooks/hooks.json" 2>/dev/null)"
 
+echo "-- the sweep, run last and never part of the decision"
+sweepargs() { cat "$SG/sweep-args" 2>/dev/null; }
+sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+printf 'deleted /ws/p/one\nkept /ws/p/two: the tree is dirty\ndeleted /ws/p/three\n' > "$SG/sweep-out"
+check "a passing stop of an orchestrator runs the sweep and still passes silently" "" "$(sg 'I launched the phase.')"
+check "with what is left of the budget, minus a margin, as its deadline" "1" "$(sweepargs | grep -cE '^sweep --deadline 1[4-7]$')"
+check "each deletion is logged, a kept item is not" "2|0" \
+  "$(sglog | grep -c '| Orch : f \[a1b2c3\] | sweep | deleted | /ws/p/')|$(sglog | grep -c 'two')"
+sg 'And again.' >/dev/null
+check "a second stop within ten minutes does not sweep again" "1" "$(sweepargs | grep -c .)"
+touch -t 200001010000 "$SGS/sweep.stamp"
+sg 'And later.' >/dev/null
+check "one past the ten minutes does" "2" "$(sweepargs | grep -c .)"
+
+sg_reset; sg_listing
+# The host reads the decision at the hook's exit: a refusal never waits on a sweep.
+check "a refused stop is refused as before, and runs no sweep" "block|Nothing will wake you|0" \
+  "$(sg 'I am launching the phase 3 agent now.' | reason | cut -c1-27)|$(sweepargs | grep -c .)"
+
+sg_reset; sg_ps '--name Agent : one [b2c3d4]'
+sg 'done' >/dev/null
+check "a session that is not an orchestrator never sweeps" "0" "$(sweepargs | grep -c .)"
+
+sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+echo boom > "$SG/sweep-err"; echo 3 > "$SG/sweep-code"
+check "a sweep that fails never refuses the stop" "" "$(sg 'I launched the phase.')"
+check "and the failure is logged" "1" "$(sglog | grep -c '| sweep | error | exit 3: boom$')"
+
+sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+echo 20 > "$SG/sweep-sleep"
+t0=$SECONDS
+out=$(SG_DEADLINE=6 sg 'I launched the phase.')
+elapsed=$((SECONDS - t0))
+check "a sweep that overruns is stopped inside the budget, the stop passes" "|1|0" \
+  "$out|$([ "$elapsed" -lt 12 ] && echo 1 || echo 0)|$(ps -axo command | grep -c '^sleep 20$')"
+check "and the overrun is logged" "1" "$(sglog | grep -c '| sweep | error | did not finish within')"
+
+sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+SG_DEADLINE=3 sg 'I launched the phase.' >/dev/null
+check "no budget left after the checks: no sweep, and no stamp spent" "0|0" \
+  "$(sweepargs | grep -c .)|$([ -e "$SGS/sweep.stamp" ] && echo 1 || echo 0)"
+sg_reset
+
 echo "== the app, stubbed =="
 # A pane behind a maximized sibling is in the tab's all_sessions and not in its sessions.
 # The stub is the smallest app that tells the two apart; the live round reads the real one.
@@ -3292,6 +3676,109 @@ check "a close that watched an agent leave adds nothing" "" \
 check "and what survived is named, so the operator reads which process held on" "claude" \
   "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-alive.txt" ipy \
      "print('claude' if 'claude' in (ia.wait_gone('/dev/ttys901', 1) or '') else 'unnamed')")"
+
+echo "== iterm-agents: a close takes the stood-down session's checkout with it =="
+# The session's purpose is over once its close is proved on the process table, so the
+# checkout it worked in is deleted — through `workspace.sh delete`, never `--discard`, so a
+# checkout holding work stays and says why. The cwd is read BEFORE the close, `--keep-checkout`
+# opts out, and a rotation deletes nothing: its replacement works in the same checkout. The
+# suite stands in for the process table's cwd with ORCHESTRATOR_CWD_TABLE and runs on the
+# temporary repositories and the temporary host area of the workspace section above.
+export GIT_CONFIG_GLOBAL="$WORK/no-global-gitconfig"
+export ORCHESTRATOR_WORKSPACES="$WORK/wcroot"
+export ORCHESTRATOR_HOST_TMP="$WC/hosttmp"
+CT_TABLE="$WORK/cwd-table"
+export ORCHESTRATOR_CWD_TABLE="$CT_TABLE"
+cat > "$WORK/close_probe.py" <<'PYEOF'
+import contextlib, io, os, sys
+sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+mode = sys.argv[2]
+tty = '/dev/ttys901'
+table = os.environ['ORCHESTRATOR_CWD_TABLE']
+ia.host_cli_on = lambda t: '4242'
+ia.wait_gone = lambda t, timeout=None: '4242' if mode == 'survivor' else None
+ia.served_by = (lambda *a, **k: open(table, 'w').close()) if mode == 'vanish' else (lambda *a, **k: None)
+ia.cmd_spawn = lambda argv: None
+out, err = io.StringIO(), io.StringIO()
+code = 0
+try:
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        if mode == 'rotate':
+            ia.cmd_rotate(['--old-tty', tty, '--dir', '/x', '--title', 'T'])
+        else:
+            ia.cmd_close(['--tty', tty] + sys.argv[3:])
+except SystemExit as e:
+    code = e.code
+print('exit=%s' % code)
+print('OUT:' + out.getvalue().strip())
+print('ERR:' + err.getvalue().strip())
+PYEOF
+cprobe() { "$py" "$WORK/close_probe.py" "$ROOT/skills/iterm-agents/scripts" "$@"; }
+field() { printf '%s\n' "$1" | sed -n "s/^$2://p"; }
+
+CL=$(mkclone "$WCSRC" cl-a feat/cl-a); HCL=$(scratch "$CL"); printf '/dev/ttys901 %s\n' "$CL" > "$CT_TABLE"
+res=$(cprobe close)
+check "a proved close deletes the session's checkout and its host directory; stdout keeps its one contract line" \
+  "exit=0|closed 1 session on /dev/ttys901|0|0" \
+  "$(printf '%s\n' "$res" | head -1)|$(field "$res" OUT)|$(exists "$CL")|$(exists "$HCL")"
+check "and stderr says it" "1" "$(field "$res" ERR | grep -c "^close: deleted checkout $CL\$")"
+
+CL=$(mkclone "$WCSRC" cl-b feat/cl-b dirty); printf '/dev/ttys901 %s\n' "$CL" > "$CT_TABLE"
+res=$(cprobe close)
+check "a dirty checkout stays: the close succeeds, says why on stderr, and keeps its contract line" \
+  "exit=0|closed 1 session on /dev/ttys901|1|1" \
+  "$(printf '%s\n' "$res" | head -1)|$(field "$res" OUT)|$(exists "$CL")|$(field "$res" ERR | grep -c "^close: kept checkout $CL: the tree is dirty\$")"
+bash "$WS" delete "$CL" --discard >/dev/null 2>&1
+
+CL=$(mkclone "$WCSRC" cl-c feat/cl-c unpushed); printf '/dev/ttys901 %s\n' "$CL" > "$CT_TABLE"
+res=$(cprobe close)
+check "unpushed commits stay too, never discarded" "1|1" \
+  "$(exists "$CL")|$(field "$res" ERR | grep -c "^close: kept checkout $CL: commits on no remote branch\$")"
+bash "$WS" delete "$CL" --discard >/dev/null 2>&1
+
+CL=$(mkclone "$WCSRC" cl-d feat/cl-d); printf '/dev/ttys901 %s\n' "$CL" > "$CT_TABLE"
+res=$(cprobe close --keep-checkout)
+check "--keep-checkout opts out: nothing deleted, nothing said about a checkout" "1|0" \
+  "$(exists "$CL")|$(field "$res" ERR | grep -c 'checkout')"
+
+res=$(cprobe rotate)
+check "a rotation deletes nothing: its replacement works in the same checkout" "1|0" \
+  "$(exists "$CL")|$(field "$res" ERR | grep -c 'deleted')"
+
+printf '/dev/ttys901 %s\n' "$WCSRC" > "$CT_TABLE"
+res=$(cprobe close)
+check "a session outside the workspaces root (the orchestrator's own checkout) is never touched" "1|0" \
+  "$(exists "$WCSRC/README.md")|$(field "$res" ERR | grep -c 'checkout')"
+
+CLG=$(mkclone "$WCSRC" cl-g feat/cl-g)
+printf '/dev/ttys901 %s\n' "$(rp "$WORK/wcroot")Zproj/cl-g" > "$CT_TABLE"
+res=$(cprobe close)
+check "a sibling directory sharing the root's name is not under the root" "1" "$(exists "$CLG")"
+bash "$WS" delete "$CLG" >/dev/null 2>&1
+printf '/dev/ttys901 %s\n' "$CL/.git/info" > "$CT_TABLE"
+res=$(cprobe close)
+check "a session in a subdirectory of its checkout takes the whole checkout" "0" "$(exists "$CL")"
+
+CL=$(mkclone "$WCSRC" cl-e feat/cl-e); printf '/dev/ttys901 %s\n' "$CL" > "$CT_TABLE"
+res=$(cprobe vanish close)
+check "the cwd is read before the close, not after it" "0" "$(exists "$CL")"
+
+CL=$(mkclone "$WCSRC" cl-f feat/cl-f); printf '/dev/ttys901 %s\n' "$CL" > "$CT_TABLE"
+res=$(cprobe survivor)
+check "a close that is not proved deletes nothing" "exit=1|1" "$(printf '%s\n' "$res" | head -1)|$(exists "$CL")"
+bash "$WS" delete "$CL" >/dev/null 2>&1
+
+hold "$WORK"
+check "the host CLI's cwd is read from the process table when no stand-in is set" "$(rp "$WORK")" \
+  "$(env -u ORCHESTRATOR_CWD_TABLE "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia
+ia.host_cli_on = lambda t: '${LIVE##* }'
+print(ia.host_cli_cwd('/dev/ttys901'))")"
+release
+unset GIT_CONFIG_GLOBAL ORCHESTRATOR_WORKSPACES ORCHESTRATOR_HOST_TMP ORCHESTRATOR_CWD_TABLE
+rm -rf "$WC/hosttmp"/* 2>/dev/null
 
 echo "== tap =="
 

@@ -18,7 +18,7 @@
 #     remote control on, no chain
 #   iterm-agent.sh verify --tty /dev/ttysNNN
 #   iterm-agent.sh resolve-tier <deep|standard|light>
-#   iterm-agent.sh close --tty /dev/ttysNNN [--expect-title <substring>]
+#   iterm-agent.sh close --tty /dev/ttysNNN [--expect-title <substring>] [--keep-checkout]
 #   iterm-agent.sh move --tty /dev/ttysNNN (--left-of <tty> | --right-of <tty> | --right-of self | --leftmost)
 #   iterm-agent.sh rotate --old-tty /dev/ttysNNN [--expect-title <s>] <spawn options...>
 #   iterm-agent.sh trust prune [--apply]
