@@ -10,6 +10,7 @@ from conftest import REPO_ROOT, reports
 from samples import BASE_DATE, TOKEN, FakeTelegram, message
 
 from bugs_bot import cli, pull
+from bugs_bot.store import Machine
 
 
 class Watch:
@@ -149,21 +150,26 @@ def test_watch_never_leaks_the_token(env, bound, capsys):
     assert "refused" in err and TOKEN not in err
 
 
-def test_watch_does_not_spin_while_unbound(env, home):
-    tg = FakeTelegram()
-    watch = Watch(env, tg, rounds=0)
-    sleeps_before_stop = []
+def test_watch_polls_with_an_empty_registry_and_notes_the_chat(env, bugs_home):
+    from samples import GROUP_ID
 
-    def stop_after_three(seconds: float) -> None:
-        sleeps_before_stop.append(seconds)
-        if len(sleeps_before_stop) == 3:
+    tg = FakeTelegram([message(10, 100, chat_id=GROUP_ID, title="Nouveau", text="x")])
+    watch = Watch(env, tg, rounds=2)
+    plain_sleep = watch.sleep
+
+    def sleep_or_give_up(seconds: float) -> None:  # a loop that never polls must fail, not hang
+        plain_sleep(seconds)
+        if len(watch.sleeps) > 3:
             raise KeyboardInterrupt
 
-    watch.sleep = stop_after_three
+    watch.sleep = sleep_or_give_up
+
     assert watch() == 0
 
-    assert sleeps_before_stop == [pull.UNBOUND_WAIT] * 3
-    assert tg.updates_calls() == []
+    assert [c["timeout"] for c in tg.updates_calls()] == [50, 50]
+    assert list(Machine(bugs_home).unregistered()) == [GROUP_ID]
+    assert Machine(bugs_home).load_offset() == 11
+    assert watch.sleeps == []  # the held request is the wait: no fixed sleep
 
 
 def test_watch_stops_cleanly_on_sigterm_in_the_middle_of_a_held_request(env, bound, capsys):

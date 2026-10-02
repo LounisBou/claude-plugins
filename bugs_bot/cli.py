@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import subprocess
 import sys
 import time
 from collections.abc import Callable, Mapping
@@ -23,10 +24,12 @@ from pathlib import Path
 
 from bugs_bot.agent import KINDS, WAIT_INTERVAL, WAIT_TIMEOUT, cmd_agent_prompt, cmd_pending, cmd_triage, cmd_wait
 from bugs_bot.channel import Transport
+from bugs_bot.doctor import cmd_doctor, pull_processes
 from bugs_bot.errors import BugsError
 from bugs_bot.gate import cmd_gate
+from bugs_bot.init import InitArgs, cmd_init, cmd_remove, repo_root
 from bugs_bot.people import cmd_person, cmd_person_note
-from bugs_bot.project import resolve_project
+from bugs_bot.project import find_project_file, load_project, resolve_project
 from bugs_bot.pull import POLL_TIMEOUT, cmd_pull, pull_loop, watch_loop
 from bugs_bot.reports import (
     cmd_backfill_authors,
@@ -41,6 +44,29 @@ from bugs_bot.reports import (
 )
 from bugs_bot.store import Machine, bugs_home
 from bugs_bot.telegram import TelegramChannel, http_transport, mask, read_token
+
+
+def read_ps() -> str:
+    """Return the process table as ``pid command`` lines, for ``init`` and ``doctor`` to find Pull in."""
+    try:
+        return subprocess.run(["ps", "-eo", "pid=,command="], capture_output=True, text=True, check=True).stdout
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise BugsError(f"cannot read the process table: {exc}") from None
+
+
+def _project_of_cwd(machine: Machine) -> str:
+    """Return the project of the current directory: the registry's entry for its repository, else its file's.
+
+    Raises:
+        BugsError: If there is no project file here or above and no entry for it.
+    """
+    path = find_project_file(Path.cwd())
+    if path is None:
+        raise BugsError("no .bugs-bot.json here or above: pass --project")
+    for entry in machine.registry.entries().values():
+        if entry.repo.resolve() == path.parent.resolve():
+            return entry.project
+    return load_project(path).project
 
 
 def _int_arg(text: str) -> int:
@@ -67,6 +93,20 @@ def build_parser() -> argparse.ArgumentParser:
     pull.add_argument(
         "--poll-timeout", type=int, default=POLL_TIMEOUT, metavar="SECONDS", help="with --watch: how long a request is held"
     )
+    init = sub.add_parser("init", help="bind this repository to its Telegram group and register the project")
+    init.add_argument("--project", metavar="ID", help="the project id, [a-z0-9-]+ (required on a first run)")
+    init.add_argument("--agent-title", help="the agent session's tab title (required on a first run)")
+    init.add_argument("--chat-id", type=_int_arg, help="the group's chat id (else the one group the bot has seen)")
+    init.add_argument("--title", help="the group's title, with --chat-id")
+    init.add_argument("--deploy-url", help="where the project is deployed")
+    init.add_argument("--deploy-check", metavar="CMD", help="a shell command proving a commit is served")
+    init.add_argument("--docs", nargs="+", metavar="PATH", help="the documentation the agent answers from")
+    init.add_argument("--language", help="the language of the agent's messages in the group")
+    init.add_argument("--gate-tokens", type=_int_arg, metavar="N", help="the context size at which the agent hands over")
+    init.add_argument("--repo", metavar="DIR", help="the repository (default: the git top level of the current directory)")
+    doctor = sub.add_parser("doctor", help="check the setup of this machine")
+    doctor.add_argument("--install-launcher", action="store_true", help="install the fixed launcher first")
+    sub.add_parser("remove", parents=[project], help="unregister a project (its data and project file are kept)")
     sub.add_parser("list", parents=[project], help="list reports with status new")
     sub.add_parser("show", parents=[project], help="print a report").add_argument("id")
     reply = sub.add_parser("reply", parents=[project], help="answer in the group")
@@ -149,13 +189,39 @@ def main(
             return watch_loop(machine, env, transport, args.poll_timeout, wall, sleep, clock)
         if args.command == "pull" and args.every:
             return pull_loop(machine, env, transport, args.every, wall, sleep)
-        # With no project registered a pull must stay quiet and green, even before the token is read.
-        if args.command == "pull" and not machine.registry.entries():
-            cmd_pull(None, machine, now)
-            return 0
         if args.command == "pull":
             token = read_token(env)
             cmd_pull(TelegramChannel(token, transport), machine, now)
+            return 0
+        if args.command == "doctor":
+            try:
+                ps_output = read_ps()
+            except BugsError as exc:
+                ps_output = exc  # a failed check, not an exit: the other checks still tell their story
+            return cmd_doctor(env, ps_output, args.install_launcher)
+        if args.command == "init":
+            # The bot token is optional here: an explicit --chat-id needs no bot, and Pull may hold the updates.
+            try:
+                token = read_token(env)
+            except BugsError:
+                channel = None
+            else:
+                channel = TelegramChannel(token, transport)
+            repo = Path(args.repo).resolve() if args.repo else repo_root(Path.cwd())
+            given = InitArgs(
+                project=args.project,
+                agent_title=args.agent_title,
+                chat_id=args.chat_id,
+                title=args.title,
+                deploy_url=args.deploy_url,
+                deploy_check=args.deploy_check,
+                docs=tuple(args.docs) if args.docs else None,
+                language=args.language,
+                gate_tokens=args.gate_tokens,
+            )
+            return cmd_init(channel, machine, repo, given, lambda: bool(pull_processes(read_ps())))
+        if args.command == "remove":
+            cmd_remove(machine, args.project or _project_of_cwd(machine))
             return 0
         project = resolve_project(args.project, Path.cwd(), machine.registry)
         store, chat_id = machine.project_store(project.project), project.chat_id

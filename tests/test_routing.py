@@ -33,15 +33,41 @@ def two(tmp_path, bugs_home, home, bound):
 # -- the registry decides ---------------------------------------------------------------------
 
 
-def test_pull_with_no_project_registered_says_so_and_never_calls_the_channel(run, home, capsys):
-    tg = FakeTelegram([message(10, 100, text="x")])
+def test_pull_with_no_project_registered_notes_the_chat_and_moves_the_offset(run, bugs_home, capsys):
+    tg = FakeTelegram([message(10, 100, chat_id=FAMILY_ID, title="Famille", text="x")])
 
     assert run("pull", transport=tg) == 0
 
-    out = capsys.readouterr().out
-    assert out.count("\n") == 1 and "no project registered" in out
+    machine = Machine(bugs_home)
+    assert list(machine.unregistered()) == [FAMILY_ID]
+    assert machine.load_offset() == 11
+    assert f"unregistered chat {FAMILY_ID}" in capsys.readouterr().err
+    assert [c["allowed_updates"] for c in tg.updates_calls()] == [["message"]]
+
+
+def test_pull_with_no_project_registered_still_needs_the_token(bugs_home, tmp_path, capsys):
+    env = {"BUGS_BOT_ENV_FILE": str(tmp_path / "missing.env"), "BUGS_BOT_HOME": str(bugs_home)}
+    tg = FakeTelegram([message(10, 100, chat_id=FAMILY_ID, text="x")])
+
+    assert cli.main(["pull"], transport=tg, env=env, now=BASE_DATE) == 1
+
     assert tg.calls == []
-    assert not home.exists()
+
+
+def test_a_first_group_is_found_by_init_while_pull_runs_with_an_empty_registry(run, bugs_home, tmp_path):
+    from bugs_bot.init import InitArgs, cmd_init
+    from test_init import git
+
+    repo = tmp_path / "first"
+    repo.mkdir()
+    git(repo, "init", "-q")
+    assert run("pull", transport=FakeTelegram([message(10, 100, chat_id=FAMILY_ID, title="Famille", text="x")])) == 0
+
+    machine = Machine(bugs_home)
+    given = InitArgs(project="first", agent_title="Agent : Famille")
+    assert cmd_init(None, machine, repo, given, pull_running=True) == 0
+
+    assert machine.registry.entries()[FAMILY_ID].project == "first"
 
 
 def test_pull_asks_only_for_messages(run, bound):

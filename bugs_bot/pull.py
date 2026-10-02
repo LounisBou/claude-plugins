@@ -19,13 +19,14 @@ from bugs_bot.telegram import TelegramChannel, attachments, author_of, group_mes
 
 # Long polling (`pull --watch`): the channel holds a request until a message arrives or POLL_TIMEOUT seconds pass.
 POLL_TIMEOUT = 50
-# A failed watch round waits BACKOFF_FIRST s, doubling up to BACKOFF_CEILING; with no project registered, it waits UNBOUND_WAIT.
+# A failed watch round waits BACKOFF_FIRST s, doubling up to BACKOFF_CEILING.
 BACKOFF_FIRST = 5
 BACKOFF_CEILING = 60
-UNBOUND_WAIT = 30
 # The 30-day purge needs no more than an hourly look.
 PURGE_EVERY = 3600
 RETENTION_DAYS = 30
+# What Telegram is asked to send: it keeps the last setting asked, so every poller asks for the same.
+ALLOWED_UPDATES = ("message",)
 GROUP_CHAT_TYPES = {"group", "supergroup"}
 
 
@@ -120,7 +121,7 @@ def follow_migrations(machine: Machine, entries: dict[int, Entry], updates: list
     return aliases
 
 
-def cmd_pull(channel: Channel | None, machine: Machine, now: float, poll_timeout: int = 0, purge: bool = True) -> None:
+def cmd_pull(channel: Channel, machine: Machine, now: float, poll_timeout: int = 0, purge: bool = True) -> None:
     """Collect new messages of every registered chat into its project's reports.
 
     The update offset is machine-wide: it moves past the whole batch, messages of unregistered
@@ -129,7 +130,7 @@ def cmd_pull(channel: Channel | None, machine: Machine, now: float, poll_timeout
     all the same and are skipped, not duplicated, on the retry.
 
     Args:
-        channel: The channel (``None`` is accepted while no project is registered: nothing is fetched).
+        channel: The channel. With no project registered the pull still runs: the chats it drops are how ``init`` finds a new group.
         machine: The machine-wide files; the registry says which chat belongs to which project.
         now: Epoch seconds.
         poll_timeout: Seconds Telegram may hold the request waiting for a message (0: answer at once).
@@ -139,11 +140,7 @@ def cmd_pull(channel: Channel | None, machine: Machine, now: float, poll_timeout
         BugsError: If a report could not be built, after every other one was (the others go to stderr).
     """
     entries = machine.registry.entries()
-    if not entries:
-        print("bugs-bot: no project registered — run /bugs-bot:init")
-        return
-    assert channel is not None
-    updates = channel.get_updates(machine.load_offset(), poll_timeout, ["message"])
+    updates = channel.get_updates(machine.load_offset(), poll_timeout, list(ALLOWED_UPDATES))
     aliases = follow_migrations(machine, entries, updates)
     for chat_id, chat in chats_seen(updates).items():
         if chat_id not in entries:
@@ -232,8 +229,8 @@ def pull_loop(
             token = None
             try:
                 # Read afresh each round: a repaired .env or a new registration needs no restart.
-                token = read_token(env) if machine.registry.entries() else None
-                cmd_pull(TelegramChannel(token, transport) if token else None, machine, wall())
+                token = read_token(env)
+                cmd_pull(TelegramChannel(token, transport), machine, wall())
             except Exception as exc:  # noqa: BLE001 - one bad round must not end the loop
                 print(f"bugs-bot: {type(exc).__name__}: {mask(str(exc), token)}", file=sys.stderr)
             sys.stdout.flush()
@@ -276,10 +273,6 @@ def watch_loop(
             token = None
             try:
                 # Read afresh each round: a repaired .env or a new registration needs no restart.
-                if not machine.registry.entries():
-                    sys.stdout.flush()
-                    sleep(UNBOUND_WAIT)  # nothing to hold yet: do not spin
-                    continue
                 token = read_token(env)
                 at = clock()
                 purge = last_purge is None or at - last_purge >= PURGE_EVERY

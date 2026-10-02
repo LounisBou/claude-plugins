@@ -166,15 +166,6 @@ def test_pull_retry_after_failure_is_complete_and_not_duplicated(run, bound):
     assert read_offset(bound) == 12
 
 
-def test_pull_with_no_project_registered_exits_zero_with_one_line(run, home, capsys):
-    assert run("pull") == 0
-
-    out = capsys.readouterr()
-    assert out.out.count("\n") == 1
-    assert "no project registered" in out.out
-    assert not (home / "inbox").exists()
-
-
 def test_pull_deletes_done_reports_older_than_30_days(run, bound):
     old = bound / "inbox" / "20260801-000000-1"
     fresh_done = bound / "inbox" / "20260925-000000-2"

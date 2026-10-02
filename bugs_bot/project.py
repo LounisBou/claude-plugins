@@ -69,13 +69,17 @@ def load_project(path: Path) -> Project:
     if not isinstance(data, dict):
         raise BugsError(f"{path} is not a JSON object")
     try:
-        return _build(data, path.parent)
+        return build_project(data, path.parent)
     except BugsError as exc:
         raise BugsError(f"{path}: {exc}") from None
 
 
-def _build(data: dict, repo: Path) -> Project:
-    """Validate the decoded file; the errors name the key, the caller adds the path."""
+def build_project(data: dict, repo: Path) -> Project:
+    """Validate a decoded project file and return the project; the errors name the key, the caller adds the path.
+
+    Raises:
+        BugsError: If a key is missing or invalid.
+    """
     project = data.get("project")
     if not isinstance(project, str) or not PROJECT_ID.fullmatch(project):
         raise BugsError(f"project must match [a-z0-9-]+, got {project!r}")

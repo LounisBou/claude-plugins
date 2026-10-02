@@ -1,0 +1,78 @@
+"""The slash commands of the plugin: what they may run."""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+from conftest import REPO_ROOT
+
+COMMANDS = sorted((REPO_ROOT / "commands").glob("*.md"))
+# The one invocation that is not `bugs-bot ...`: the first doctor run, before the launcher exists.
+BOOTSTRAP = "python3 ${CLAUDE_PLUGIN_ROOT}/bin/bugs-bot doctor"
+BOOTSTRAP_RULE = f"{BOOTSTRAP}:*"
+ALLOWED_RULES = {"bugs-bot:*"}
+# Nothing in a command line may chain, pipe, substitute, fetch, delete or start a shell.
+FORBIDDEN = (";", "|", "&&", "$(", "curl", "rm ", "sh -c", "bash")
+
+
+def front_matter(text: str) -> dict[str, str]:
+    """Return the ``key: value`` lines between the two ``---`` lines that open the file."""
+    head = re.match(r"---\n(.*?)\n---\n", text, re.DOTALL)
+    assert head, "no front matter"
+    return dict(line.split(": ", 1) for line in head.group(1).splitlines())
+
+
+def code_lines(text: str) -> list[str]:
+    """Return the non-empty lines inside fenced code blocks, stripped."""
+    lines, inside = [], False
+    for line in text.splitlines():
+        if line.strip().startswith("```"):
+            inside = not inside
+        elif inside and line.strip():
+            lines.append(line.strip())
+    return lines
+
+
+def rules_of(allowed_tools: str) -> list[str]:
+    """Return the inner rule of each ``Bash(...)`` of an ``allowed-tools`` value, refusing anything else in it."""
+    found = re.findall(r"Bash\(([^)]*)\)", allowed_tools)
+    assert allowed_tools == ", ".join(f"Bash({rule})" for rule in found), f"unexpected allowed-tools: {allowed_tools!r}"
+    return found
+
+
+def test_the_three_commands_exist():
+    assert {p.stem for p in COMMANDS} >= {"init", "remove", "doctor"}
+
+
+@pytest.mark.parametrize("path", COMMANDS, ids=lambda p: p.stem)
+def test_a_command_may_only_use_the_rules_it_needs(path: Path):
+    text = path.read_text()
+    allowed = ALLOWED_RULES | ({BOOTSTRAP_RULE} if path.stem == "doctor" else set())
+    # a git rule is justified only by a git command line in the file
+    if any(line.startswith("git ") for line in code_lines(text)):
+        allowed |= {"git:*"} if path.stem == "init" else set()
+
+    rules = rules_of(front_matter(text)["allowed-tools"])
+
+    assert set(rules) <= allowed, f"{path.name} allows {sorted(set(rules) - allowed)}"
+    assert len(rules) == len(set(rules))
+
+
+@pytest.mark.parametrize("path", COMMANDS, ids=lambda p: p.stem)
+def test_every_command_line_is_one_plain_bugs_bot_invocation(path: Path):
+    text = path.read_text()
+    assert text.startswith("---\ndescription: ")
+
+    for line in code_lines(text):
+        starts = ("bugs-bot ", BOOTSTRAP + " ") if path.stem == "doctor" else ("bugs-bot ",)
+        assert line.startswith(starts), f"{path.name}: {line!r} is not a bugs-bot command"
+        for token in FORBIDDEN:
+            assert token not in line, f"{path.name}: {line!r} carries {token!r}"
+    assert "$(" not in text and "&&" not in text
+
+
+def test_the_guard_reads_what_it_guards():
+    assert len(COMMANDS) == 3
+    assert all(code_lines(p.read_text()) for p in COMMANDS if p.stem in {"init", "doctor"})
