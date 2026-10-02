@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -90,3 +91,9 @@ def test_the_guard_reads_what_it_guards():
 ])
 def test_start_launches_the_projects_one_agent(phrase):
     assert phrase in (REPO_ROOT / "commands" / "start.md").read_text()
+
+
+def test_the_orchestrator_plugin_start_needs_is_a_declared_dependency():
+    manifest = json.loads((REPO_ROOT / ".claude-plugin" / "plugin.json").read_text())
+
+    assert "orchestrator@lounisbou" in manifest.get("dependencies", [])
