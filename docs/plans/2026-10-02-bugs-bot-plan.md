@@ -647,7 +647,7 @@ def mask(text: str, secret: str | None) -> str: ...   # moved from telegram.py, 
 # bugs_bot/channels.py — the one module naming the implementations
 def channel_for(kind: str, env: Mapping[str, str], transport: Transport) -> Channel: ...
     # reads that kind's token and API root itself; BugsError on an unknown kind or a missing token
-def token_present(kind: str, env: Mapping[str, str]) -> bool: ...   # for doctor, never prints the token
+def token_problem(kind: str, env: Mapping[str, str]) -> str | None: ...   # for doctor: the reason the token cannot be read (env file, variable), never the token; None when fine
 ```
 
 `Mention.user_id` widens to `int | str | None`. `get_updates` leaves the protocol (it stays a
