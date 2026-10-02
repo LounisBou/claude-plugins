@@ -17,6 +17,9 @@ Check the setup and report the verdict.
    what to do about each failure:
    - `python`: Python 3.10 or newer is needed.
    - `token`: `TELEGRAM_BOT_TOKEN` goes in `~/.bugs-bot/.env`; never print it.
+   - `slack token`: `SLACK_BOT_TOKEN` (`xoxb-…`) goes in the same file; never print it.
+   - `telegram bot` / `slack bot`: the platform refused the token (Telegram's
+     `getMe`, Slack's `auth.test`): the operator puts a valid one in the file.
    - `registry`: the file `~/.bugs-bot/projects.json` is damaged; say so, do not
      edit it.
    - `pull`: exactly one Pull process must run, under PM2; none or two is a fault.

@@ -4,7 +4,7 @@ allowed-tools: Bash(bugs-bot:*)
 ---
 
 Start the project's agent session: it relays each new bug of the project's
-Telegram group to you, answers the group's questions from the repository, and
+group (Telegram or Slack) to you, answers the group's questions from the repository, and
 tags the reports as you answer it. You become its **launcher**, its only
 correspondent. One agent per project: the inbox is single, and two would relay
 and tag every report twice.

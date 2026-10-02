@@ -97,3 +97,34 @@ def test_the_orchestrator_plugin_start_needs_is_a_declared_dependency():
     manifest = json.loads((REPO_ROOT / ".claude-plugin" / "plugin.json").read_text())
 
     assert "orchestrator@lounisbou" in manifest.get("dependencies", [])
+
+
+@pytest.mark.parametrize("kind", ["telegram", "slack"])
+def test_doctor_tells_what_to_do_about_each_channels_token_and_bot_check(kind):
+    from bugs_bot.channels import KINDS
+
+    text = (REPO_ROOT / "commands" / "doctor.md").read_text()
+    token = "token" if kind == "telegram" else f"{kind} token"  # the names doctor.py prints
+
+    assert kind in KINDS
+    assert f"- `{token}`:" in text and f"{kind.upper()}_BOT_TOKEN" in text
+    assert f"`{kind} bot`" in text
+
+
+@pytest.mark.parametrize("path, stale", [
+    ("agent/AGENT.md", "the Telegram group"),
+    ("commands/start.md", "Telegram group"),
+    ("skills/bugs-bot/SKILL.md", "Telegram's description"),
+    ("skills/bugs-bot/SKILL.md", "asks Telegram for"),
+])
+def test_no_instruction_says_a_projects_group_is_telegram_s_only(path, stale):
+    assert stale not in (REPO_ROOT / path).read_text()
+
+
+def test_the_skill_names_both_tokens_and_sets_up_both_channels():
+    text = (REPO_ROOT / "skills" / "bugs-bot" / "SKILL.md").read_text()
+    setup = text.split("## Setup by the operator", 1)[1]
+
+    assert "SLACK_BOT_TOKEN" in text and "TELEGRAM_BOT_TOKEN" in text
+    assert "Slack" in setup and "/invite" in setup
+    assert "chat.update" in text

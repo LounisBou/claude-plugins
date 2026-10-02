@@ -12,7 +12,7 @@ on one machine.
 | Piece | What it does |
 |---|---|
 | `bugs-bot pull --watch` | The one process per machine that reads the bot's updates (Telegram, long polling) and each registered Slack channel (polled every ~10 s) and files each message of a registered group into its project's inbox. A reply in a Slack report's thread is recorded on that report (`answer <id>` wakes the agent). Media groups are one report, a 👀 reaction acknowledges it, a message of an unregistered group is dropped and logged. Run by PM2 as `bugs-bot-pull`. |
-| `bugs-bot <command>` | The agent's and the launcher's only interface: `list`, `show`, `reply` (`--mention`, `--awaits`, `--follow-up`, `--image`), `edit`, `taken`, `fixed`, `done`, `escalated`, `post`, `triage`, `wait`, `pending`, `overdue`, `person`, `person-note`, `handover write\|read`, `gate`, `deployed`, `agent-prompt`, `backfill-authors`. |
+| `bugs-bot <command>` | The agent's and the launcher's only interface: `list`, `show`, `reply` (`--mention`, `--awaits`, `--follow-up`, `--image`), `edit`, `delete`, `taken`, `fixed`, `done`, `escalated`, `post`, `triage`, `wait`, `pending`, `overdue`, `unask`, `person`, `person-note`, `person-lang`, `handover write\|read`, `gate`, `deployed`, `agent-prompt`, `backfill-authors`. |
 | `/bugs-bot:init` | Binds the repository to its Telegram group or Slack channel (one per project): asks a few questions, finds the group among the bot's pending updates (or in Pull's log of dropped chats) or among the Slack channels the app is in, writes `.bugs-bot.json` (kept out of git through `.git/info/exclude`) and registers the project. Re-run: updates, never duplicates. |
 | `/bugs-bot:start` | Launches the project's agent in a tab right of your session, which becomes its launcher. Needs the orchestrator plugin. |
 | `/bugs-bot:remove` | Unregisters the project: Pull stops routing its group. Its data and project file are kept. |
@@ -69,6 +69,13 @@ channel since its cursor and the threads of its open reports; while a Slack proj
 Telegram's held request is cut to 10 s, so both are read in the same process. HTTP 429 is honoured
 (`Retry-After`). `BUGS_BOT_SLACK_API_ROOT` points the Slack channel at a fake (end-to-end runs only).
 
+## Known limitations
+
+- **An edit on Slack is not seen.** A tester who edits a message on Telegram updates its report
+  (`edited <id>`); on Slack, Pull reads `conversations.history`, which never returns
+  `message_changed` (an Events API and RTM event only), so the report keeps the text first
+  posted. Its detection comes with the live Slack test.
+
 ## Requirements
 
 - `python3` 3.10 or newer; the standard library only.
@@ -100,10 +107,10 @@ refuses to run over a non-empty project directory.
 
 ```
 python3 -m pytest -q      # no network, no PM2, no real ~/.bugs-bot: every location is overridden
-sh tests/e2e.sh           # two projects through bin/bugs-bot against a fake Bot API on loopback; prints E2E OK
+sh tests/e2e.sh           # two Telegram projects and one Slack project through bin/bugs-bot against a fake Bot API and a fake Slack API on loopback; prints E2E OK
 ```
 
-The end-to-end script starts its fake server on a free port of 127.0.0.1 and kills it on every
+The end-to-end script starts its fake servers on free ports of 127.0.0.1 and kills them on every
 way out — success, failure, signal. `E2E_FORCE_FAIL=1 sh tests/e2e.sh` fails half-way on purpose to
 show it.
 
