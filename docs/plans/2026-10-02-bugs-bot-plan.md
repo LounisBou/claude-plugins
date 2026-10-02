@@ -98,9 +98,10 @@ each pinned by a test in the phase that owns the code:
 | 9 | behaviour | `feat/p9-slack` (p8) | `channel` in the project file, registry keyed `<channel>:<chat_id>`, `SlackChannel` (polling, threads, files, mentions, 429), Pull reads both channels, `init --channel slack`, `doctor`'s Slack check, migration script and docs updated |
 | 10 | behaviour | `feat/p10-lock` (p9) | every update of a `report.json` or a person card is a locked read-modify-write (spec § 3.2, « One update at a time »): `store.update_report`, `people.update_card`, one per-project lock |
 | 11 | behaviour | `feat/p11-images` (p10) | screenshots to reporters (spec § 3.8): `Channel.send_images` (Telegram, Slack), `reply`/`post --image`, sent images recorded on the reply, the « capture » protocol in `AGENT.md` |
-| 12 | verification | `feat/p12-verify` (p11) | the conformity document updated for the amended sections, E2E with a fake Slack API beside the fake Bot API, fixes of what it finds only |
+| 12 | behaviour | `feat/p12-edits` (p11) | edited messages update their report (spec § 3.2, « Edited messages »): Telegram `edited_message`, Slack `message_changed`, `edits` kept, `wait` prints `edited <id>` |
+| 13 | verification | `feat/p13-verify` (p12) | the conformity document updated for the amended sections, E2E with a fake Slack API beside the fake Bot API, fixes of what it finds only |
 
-Phases 7–12 follow the operator's rulings of 2026-10-02 (spec header « Amended »). Phases 1–6 are
+Phases 7–13 follow the operator's rulings of 2026-10-02 (spec header « Amended »). Phases 1–6 are
 merged on `main`; Phase 7 branches from `main`. The project ships by **auto-merge** (operator,
 2026-10-02): each PR, once reviewed and its correction round verified, is squash-merged by the
 orchestrator.
@@ -913,12 +914,55 @@ leaving room to post a screenshot it has not looked at.
 
 ---
 
-### Phase 12 — Verification of the amendment
+### Phase 12 — Edited messages (behaviour)
+
+**Files:** modify `bugs_bot/channel.py` (the normalised message gains `edited: bool`), `bugs_bot/telegram.py`
+(`edited_message` in `allowed_updates` and normalised), `bugs_bot/slack.py` (`message_changed` subtype:
+the inner `message`, `edited` true), `bugs_bot/pull.py` (an edited message routed to its report),
+`bugs_bot/agent.py` (`wait` prints `edited <id>`), `bugs_bot/reports.py` (`show` prints the edits and marks
+them seen), `agent/AGENT.md`, `CHANGELOG.md`; create `tests/test_edits.py`. Modules ≤ 300 lines.
+
+**Interfaces — Produces:**
+
+```python
+# bugs_bot/channel.py — InboundMessage gains
+edited: bool = False      # True when this is a new version of a message already sent
+
+# bugs_bot/store.py
+def find_by_message(store: Store, chat_id: ChatId, message_id: MessageId) -> str | None: ...
+    # the id of the report recording that message (first message, media-group member, or answer), else None
+
+# report.json gains
+"edits": [{"date": iso, "message_id": id, "previous": str, "seen": bool}]
+```
+
+Pull: an edited message whose report is found → under the Phase 10 lock, the recorded text (report
+`text`, or the answer's `text`) replaced, the previous one appended to `edits` with `seen: false`; not
+found → ignored, logged at debug level only. `wait` prints `edited <report-id>` while an edit is
+unseen; `show` prints the edits (« modifié : <previous> → <current> ») and marks them seen. AGENT.md:
+on `edited <id>`, `show <id>` and treat the new text as what the person says now; never comment on the
+edit to the person.
+
+**Test matrix:** Telegram `edited_message` on a report's message → text replaced, `edits` kept, `wait`
+prints `edited`, `show` silences it; on a media-group member; on a Slack thread answer; an edit of an
+unknown message → nothing written, no report created; an edit leaves status, awaiting and
+reactions unchanged; `allowed_updates` contains `edited_message`; Slack `message_changed` normalised
+with the inner message's ts; the cursor moves past an edit like any message.
+
+**Definition of done:** PR `feat: edited messages update their report` on p11; suite green on 3.12 and
+3.10; `sh tests/e2e.sh` green.
+
+**Review focus:** an edit creating a report; Slack's `message_changed` read as a new top-level
+message; an edit written without the lock; the previous text lost.
+
+---
+
+### Phase 13 — Verification of the amendment
 
 As Phase 6, on the amended sections (spec header « Amended »), criterion 6 re-judged; `tests/e2e.sh`
 extended to one Slack project on a fake Slack API on loopback beside the Telegram ones; the
 migration rehearsal re-run on a copy. A live Slack smoke test only if the operator provides a token
-and a test channel — otherwise said so in the document. PR `docs: conformity of the amendment` on p11.
+and a test channel — otherwise said so in the document. PR `docs: conformity of the amendment` on p12.
 
 ---
 

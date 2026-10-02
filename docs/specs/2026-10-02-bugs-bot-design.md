@@ -6,7 +6,8 @@ operator's review before the implementation plan.
 Amended 2026-10-02 after the first build, on the operator's rulings: a second channel, Slack, is
 built now (D4, criterion 6, § 3.1, § 3.7); every message follows its person's language (§ 3.5);
 the handover note is capped by the CLI (§ 3.5); the agent sends screenshots to reporters, asked
-of its launcher (§ 3.8); every update of a report or a card is locked (§ 3.2).
+of its launcher (§ 3.8); every update of a report or a card is locked (§ 3.2); a message the reporter edits updates its
+report (§ 3.2).
 
 ## 1. Purpose
 
@@ -98,6 +99,15 @@ person's card). Every change to one of them is a locked read-modify-write: an ex
 after the atomic rename, so no writer saves over a change it did not read. Observed 2026-10-02 on
 the replaced code: a report triaged and closed by the agent came back « seen » with its reply gone,
 overwritten by Pull's stale copy.
+
+**Edited messages** (operator, 2026-10-02, on a report lost that day: a tester edited « Autre point
+bloquant: » into her real text and the agent never saw it). Pull also reads the edits of a message
+already recorded — Telegram `edited_message` (asked in `allowed_updates`), Slack `message_changed`.
+The report holding that message (its first message or a later one of its media group, or an answer
+recorded on it) takes the new text; the previous text is kept in the report's `edits`
+(`{date, message_id, previous}`); `wait` prints `edited <report-id>` until `show` has displayed it.
+An edit of a message never recorded (an unregistered chat, a bot post) is ignored. An edit never
+creates a report, never clears or sets a wait, never changes the status.
 
 ### 3.3 Project
 
