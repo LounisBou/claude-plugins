@@ -7,14 +7,17 @@ platform may name its chats and messages with strings.
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol, TypedDict
 from urllib.parse import urlsplit
 
 from bugs_bot.errors import BugsError
 
-# What a transport looks like: (url, json payload or None, timeout=None, headers=None) -> (status, body).
+# What a transport looks like: (url, payload, timeout=None, headers=None) -> (status, body); the payload is
+# a JSON object, an ``Upload`` (a body that is not JSON: a multipart form, a file's bytes) or None (a GET).
 # The timeout is passed only for a held (long-poll) request, otherwise the transport's default applies;
 # headers only by a platform that authenticates through them.
 Transport = Callable[..., "tuple[int, bytes]"]
@@ -75,6 +78,62 @@ class Batch:
     cursor: dict  # opaque, the channel's own; reading never moves it, only the caller saving it does
 
 
+@dataclass(frozen=True)
+class Upload:
+    """A request body that is not JSON: its bytes and their ``Content-Type``."""
+
+    data: bytes
+    content_type: str
+
+
+def _quoted(value: str) -> str:
+    """Return ``value`` fit for a quoted header parameter: backslashes and quotes escaped, line breaks dropped."""
+    return value.replace("\\", "\\\\").replace('"', '\\"').replace("\r", "").replace("\n", "")
+
+
+def multipart(fields: Mapping[str, str], files: Sequence[tuple[str, str, bytes, str]]) -> Upload:
+    """Encode a ``multipart/form-data`` body: text ``fields``, then ``files`` as ``(field, filename, bytes, content type)``.
+
+    The boundary is a fresh random one, drawn again in the unlikely case the content holds it.
+    """
+    contents = [value.encode() for value in fields.values()] + [data for _, _, data, _ in files]
+    boundary = uuid.uuid4().hex
+    while any(boundary.encode() in content for content in contents):
+        boundary = uuid.uuid4().hex
+    parts = [
+        f'--{boundary}\r\nContent-Disposition: form-data; name="{_quoted(name)}"\r\n\r\n'.encode() + value.encode() + b"\r\n"
+        for name, value in fields.items()
+    ]
+    parts += [
+        f'--{boundary}\r\nContent-Disposition: form-data; name="{_quoted(name)}"; filename="{_quoted(filename)}"\r\n'
+        f"Content-Type: {kind}\r\n\r\n".encode() + data + b"\r\n"
+        for name, filename, data, kind in files
+    ]
+    return Upload(b"".join(parts) + f"--{boundary}--\r\n".encode(), f"multipart/form-data; boundary={boundary}")
+
+
+@dataclass(frozen=True)
+class SentImages:
+    """What ``send_images`` posted."""
+
+    text: str  # the text as posted (the mention included), "" when there was none
+    message_ids: list[MessageId]  # every message posted, in order: the text's first when it went alone
+    file_ids: list[str]  # the files shared, on a platform that keeps them apart from messages (Slack); else []
+    files: list[tuple[str, bytes, str]]  # each image as read and sent: (name, bytes, content type)
+
+
+class ImagesNotSent(BugsError):
+    """The text of a message with images went out on its own (too long for a caption), and the images failed after it.
+
+    Attributes:
+        sent: The text message posted, ``{"message_id", "text"}`` as ``send`` returns it.
+    """
+
+    def __init__(self, message: str, sent: dict) -> None:
+        super().__init__(message)
+        self.sent = sent
+
+
 class Channel(Protocol):
     """A group chat the bot reads from and writes to."""
 
@@ -106,12 +165,31 @@ class Channel(Protocol):
         """
         ...
 
+    def send_images(
+        self, chat_id: ChatId, text: str, paths: list[Path], reply_to: MessageId | None = None, mention: Mention | None = None
+    ) -> SentImages:
+        """Post images (checked already) with ``text``, threaded on ``reply_to``; return what was posted.
+
+        The first message carries the text as its caption when the platform allows one that long; else
+        the text is posted first, then the images, on the same thread. Each image is read once, before
+        anything goes out: those bytes are the ones sent, and the ones returned.
+
+        Raises:
+            ImagesNotSent: The text went out first and the images failed: only it was posted.
+            BugsError: Nothing was posted.
+        """
+        ...
+
     def edit(self, chat_id: ChatId, message_id: MessageId, text: str, mention: Mention | None = None) -> dict:
         """Rewrite a posted message; return ``{"message_id": id, "text": str}`` as ``send`` does."""
         ...
 
     def delete(self, chat_id: ChatId, message_id: MessageId) -> None:
         """Delete a message the bot posted."""
+        ...
+
+    def delete_file(self, file_id: str) -> None:
+        """Delete a file the bot shared, on a platform that keeps files apart from messages (``SentImages.file_ids``)."""
         ...
 
     def react(self, chat_id: ChatId, message_id: MessageId, emoji: str) -> None:

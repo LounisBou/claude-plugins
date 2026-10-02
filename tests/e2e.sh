@@ -142,6 +142,19 @@ PYEOF
 bb delete "$ID" > /dev/null
 check "messages deleted" "$(calls deleteMessage)" 1
 bb show "$ID" | grep -q "on it, thanks (deleted " || fail "a deleted reply is not marked in show"
+mkdir -p "$WORK/shots dir"
+printf '\211PNG\r\n\032\nfake-png-body' > "$WORK/shots dir/step 1.png"
+bb reply "$ID" "here is where to tap" --image "$WORK/shots dir/step 1.png" > /dev/null
+"$PY" - "$WORK/calls.log" <<'PYEOF' || fail "reply --image did not send the photo threaded on the report"
+import json, sys
+sent = [json.loads(line)["payload"] for line in open(sys.argv[1]) if '"sendPhoto"' in line]
+assert len(sent) == 1, sent
+photo = sent[0]
+assert photo["chat_id"] == "-1001" and photo["caption"] == "here is where to tap", photo
+assert json.loads(photo["reply_parameters"]) == {"message_id": 102}, photo
+assert photo["photo"] == ["image-1.png", 21, "image/png"], photo
+PYEOF
+bb show "$ID" | grep -q "/sent/2-1.png$" || fail "show does not list the image sent"
 bb taken "$ID" > /dev/null
 check "status after taken" "$(bb show "$ID" | grep -c 'taken')" 1
 posted=$(calls sendMessage)

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from bugs_bot.channel import Author, Batch, ChatId, InboundMessage, Mention, MessageId
+from bugs_bot.channel import Author, Batch, ChatId, InboundMessage, Mention, MessageId, SentImages
 from bugs_bot.errors import BugsError
+from bugs_bot.images import wire_file
 
 SECRET = "fake-channel-secret"
 
@@ -72,12 +73,20 @@ class FakeChannel:
         self.calls.append(("send", chat_id, text, reply_to, mention))
         return {"message_id": 900 + len(self.calls), "text": text}
 
+    def send_images(self, chat_id: ChatId, text: str, paths: list, reply_to: MessageId | None = None, mention: Mention | None = None) -> SentImages:
+        self.calls.append(("send_images", chat_id, text, list(paths), reply_to, mention))
+        files = [wire_file(path, rank) for rank, path in enumerate(paths, 1)]
+        return SentImages(text, [900 + len(self.calls) + k for k in range(len(paths))], [], files)
+
     def edit(self, chat_id: ChatId, message_id: MessageId, text: str, mention: Mention | None = None) -> dict:
         self.calls.append(("edit", chat_id, message_id, text, mention))
         return {"message_id": message_id, "text": text}
 
     def delete(self, chat_id: ChatId, message_id: MessageId) -> None:
         self.calls.append(("delete", chat_id, message_id))
+
+    def delete_file(self, file_id: str) -> None:
+        self.calls.append(("delete_file", file_id))
 
     def react(self, chat_id: ChatId, message_id: MessageId, emoji: str) -> None:
         self.calls.append(("react", chat_id, message_id, emoji))

@@ -2,9 +2,9 @@
 
 Machine-wide: ``pull [--every S | --watch]``. Per project (``--project <p>``, else the project whose
 ``.bugs-bot.json`` is in the current directory or a parent): ``list``, ``show <id>``,
-``reply <id> "<text>" [--mention] [--awaits | --follow-up]``, ``edit <id> "<text>" [--reply N] [--mention] [--awaits]``, ``delete <id> [--reply N]``, ``taken <id>``,
+``reply <id> "<text>" [--mention] [--awaits | --follow-up] [--image <path>…]``, ``edit <id> "<text>" [--reply N] [--mention] [--awaits]``, ``delete <id> [--reply N]``, ``taken <id>``,
 ``fixed <id>``, ``done <id>``; and for the project's agent session: ``wait``, ``triage <id> bug|question``,
-``pending``, ``overdue``, ``escalated <id>``, ``unask <id>``, ``post "<text>" [--mention <id>]``, ``backfill-authors``, ``person <ref>``,
+``pending``, ``overdue``, ``escalated <id>``, ``unask <id>``, ``post "<text>" [--mention <id>] [--image <path>…]``, ``backfill-authors``, ``person <ref>``,
 ``person-note <ref> "<text>"``, ``person-lang <ref> <code>``, ``agent-prompt --launcher "<name [ref]>" [--predecessor … --predecessor-tty …]``,
 ``gate [--set N] [--measure]``, ``deployed <commit>``, ``handover write "<text>" | read``. Python 3 standard library only.
 
@@ -35,10 +35,9 @@ from bugs_bot.init import InitArgs, cmd_init, cmd_remove, init_kind, repo_root
 from bugs_bot.people import cmd_backfill_authors, cmd_person, cmd_person_lang, cmd_person_note
 from bugs_bot.project import find_project_file, load_project, resolve_project
 from bugs_bot.questions import cmd_unask
+from bugs_bot.replies import cmd_delete, cmd_edit
 from bugs_bot.reports import (
-    cmd_delete,
     cmd_done,
-    cmd_edit,
     cmd_fixed,
     cmd_list,
     cmd_post,
@@ -201,13 +200,13 @@ def main(
                 cmd_done(channel, store, chat_id, args.id, args.reason, now)
             elif args.command == "reply":
                 follow_up = project.follow_up_hours if args.follow_up else None
-                cmd_reply(channel, store, chat_id, args.id, args.text, now, args.mention, args.awaits, follow_up)
+                cmd_reply(channel, store, chat_id, args.id, args.text, now, args.mention, args.awaits, follow_up, args.image)
             elif args.command == "delete":
                 cmd_delete(channel, store, chat_id, args.id, now, args.reply)
             elif args.command == "edit":
                 cmd_edit(channel, store, chat_id, args.id, args.text, now, args.reply, args.mention, args.awaits)
             elif args.command == "post":
-                cmd_post(channel, store, chat_id, args.text, now, args.mention)
+                cmd_post(channel, store, chat_id, args.text, now, args.mention, args.image)
             elif args.command == "backfill-authors":
                 cmd_backfill_authors(channel, store, chat_id)
         return 0

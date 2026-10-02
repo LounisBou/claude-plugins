@@ -10,7 +10,7 @@ from samples import BASE_DATE, GROUP_ID, TOKEN, FakeTelegram
 from test_mention import DOCS, STAMP, write_report
 
 from bugs_bot.errors import BugsError
-from bugs_bot.reports import cmd_delete
+from bugs_bot.replies import cmd_delete
 from bugs_bot.store import Store
 from bugs_bot.telegram import TelegramChannel
 

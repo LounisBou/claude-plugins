@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
 from bugs_bot.answers import show_answers
 from bugs_bot.channel import Channel, ChatId, Mention
 from bugs_bot.errors import BugsError
 from bugs_bot.followup import mark_awaiting, mark_reminded, require_due
+from bugs_bot.images import check_images, post, record_sent
 from bugs_bot.questions import asked, awaited_elsewhere, drop_closed, queue_question
 from bugs_bot.reactions import move_to, say_reaction_pending
 from bugs_bot.store import CLOSED_STATUSES, EMOJI_FIXED, EMOJI_TAKEN, OPEN_STATUSES, Store, load_report, update_report
@@ -50,6 +52,8 @@ def cmd_show(store: Store, report_id: str) -> None:
         count = f" ({edits} edit{'s' if edits > 1 else ''})" if edits else ""
         gone = f" (deleted {reply['deleted']})" if reply.get("deleted") else ""
         print(f"reply {number} {reply['date']}: {reply['text']}{count}{gone}")
+        for name in reply.get("images", []):
+            print(f"  {(path / name).resolve()}")
     for line in show_answers(store, report_id, path, report):
         print(line)
 
@@ -73,21 +77,31 @@ def mention_of(report: dict) -> Mention:
 
 
 def send_reply(
-    channel: Channel, chat_id: ChatId, store: Store, report: dict, text: str, now: float, mention: Mention | None = None
+    channel: Channel, chat_id: ChatId, store: Store, report: dict, text: str, now: float,
+    mention: Mention | None = None, images: list[Path] | None = None,
 ) -> int:
-    """Post ``text`` threaded on the report's first message, then record it in ``report.json``.
+    """Post ``text`` threaded on the report's first message, with ``images`` (checked) when given, then record it
+    in ``report.json``: the images sent are copied beside the report and listed on the reply.
 
     Returns:
         The reply's number (1-based, as ``show`` numbers them) in the report as it is now.
+
+    Raises:
+        ImagesNotSent: The text went out alone: it is recorded, without images.
     """
-    sent = channel.send(report.get("chat_id", chat_id), text, report["message_ids"][0], mention)
-    reply = {"date": datetime.fromtimestamp(now, timezone.utc).isoformat(), "text": sent["text"], "message_id": sent["message_id"]}
+    posted, shown, failure = post(channel, report.get("chat_id", chat_id), text, images or [], report["message_ids"][0], mention)
+    reply = {"date": datetime.fromtimestamp(now, timezone.utc).isoformat(), **posted}
 
     def record(fresh: dict) -> int:
         fresh["replies"].append(reply)
+        if shown:
+            reply["images"] = record_sent(store.inbox / report["id"], len(fresh["replies"]), shown)
         return len(fresh["replies"])
 
-    return update_report(store, report["id"], record)
+    number = update_report(store, report["id"], record)
+    if failure:
+        raise failure
+    return number
 
 
 def cmd_reply(
@@ -100,6 +114,7 @@ def cmd_reply(
     tag: bool = False,
     awaits: bool = False,
     follow_up_hours: float | None = None,
+    images: list[str] | None = None,
 ) -> None:
     """Answer in the group, threaded on the report's first message; ``tag`` mentions its author.
 
@@ -107,120 +122,27 @@ def cmd_reply(
     awaited on another report not done: one question at a time (spec § 3.5), so nothing is posted and
     the question is queued on their card, for ``wait`` to hand back (``ask <id>``) once they answer.
     ``follow_up_hours`` makes it the one reminder of a wait that old (refused before anything is
-    sent when none is due).
+    sent when none is due). ``images`` go with the text, every one checked before anything is sent; a
+    question that would be queued is refused with them: ask first, show after.
     """
+    paths = check_images(images) if images else []
     _, report = load_report(store, report_id)
     if follow_up_hours is not None:
         require_due(report, follow_up_hours, now)
     other = awaited_elsewhere(store, report) if awaits else None
     if other:
+        if paths:
+            raise BugsError(f"{report['author']} already awaits {other}: a question is queued without images — ask first, show after")
         queue_question(store, report, text, now)
         print(f"queued {report_id}: {report['author']} already awaits {other}")
         return
-    number = send_reply(channel, chat_id, store, report, text, now, mention_of(report) if tag else None)
+    number = send_reply(channel, chat_id, store, report, text, now, mention_of(report) if tag else None, paths)
     if awaits:
         mark_awaiting(store, report_id, number, now)
         asked(store, report)
     if follow_up_hours is not None:
         mark_reminded(store, report_id, now)
     print(f"replied to {report_id}")
-
-
-def posted_reply(report: dict, number: int | None, verb: str) -> tuple[int, dict]:
-    """Return ``(number, reply)`` of the bot's ``number``-th reply on ``report`` (1-based; ``None``: the last).
-
-    Raises:
-        BugsError: If there is no such reply, or it has no ``message_id`` or is deleted: it cannot be ``verb``.
-    """
-    replies = report["replies"]
-    number = len(replies) if number is None else number
-    if not 1 <= number <= len(replies):
-        raise BugsError(f"no such reply: {report['id']} has {len(replies)} reply(ies), asked for {number}")
-    reply = replies[number - 1]
-    if not reply.get("message_id"):
-        raise BugsError(f"reply {number} of {report['id']} has no message_id: it cannot be {verb}")
-    if reply.get("deleted"):
-        raise BugsError(f"reply {number} of {report['id']} is already deleted ({reply['deleted']}): it cannot be {verb}")
-    return number, reply
-
-
-def cmd_edit(
-    channel: Channel,
-    store: Store,
-    chat_id: ChatId,
-    report_id: str,
-    text: str,
-    now: float,
-    number: int | None = None,
-    tag: bool = False,
-    awaits: bool = False,
-) -> None:
-    """Rewrite a reply the bot posted on a report: the last one, or the ``number``-th (1-based).
-
-    The new text replaces the recorded one, the previous text goes to the reply's ``edits``;
-    ``awaits`` records that the rewritten reply waits for the person's answer.
-    Telegram's « message is not modified » is reported, not failed.
-
-    Raises:
-        BugsError: On no such reply, a reply without ``message_id`` or deleted, an empty text, or a channel error.
-    """
-    _, report = load_report(store, report_id)
-    number, reply = posted_reply(report, number, "edited")
-    if not text.strip():
-        raise BugsError("empty text: nothing to write")
-    mention = mention_of(report) if tag else None
-    try:
-        edited = channel.edit(report.get("chat_id", chat_id), reply["message_id"], text, mention)
-    except BugsError as exc:
-        if "message is not modified" not in str(exc):
-            raise
-        print(f"reply {number} of {report_id}: message is not modified")
-        if awaits:  # the text stands as it was, and now waits for its answer
-            mark_awaiting(store, report_id, number, now)
-        return
-
-    def record(fresh: dict) -> None:
-        current = fresh["replies"][number - 1]  # replies are only ever appended: the number still holds
-        current.setdefault("edits", []).append({"date": datetime.fromtimestamp(now, timezone.utc).isoformat(), "text": current["text"]})
-        current["text"] = edited["text"]
-
-    update_report(store, report_id, record)
-    if awaits:
-        mark_awaiting(store, report_id, number, now)
-    print(f"edited reply {number} of {report_id}")
-
-
-def cmd_delete(
-    channel: Channel, store: Store, chat_id: ChatId, report_id: str, now: float, number: int | None = None
-) -> None:
-    """Delete a reply the bot posted on a report: the last one, or the ``number``-th (1-based, as ``show`` numbers them).
-
-    The reply stays in ``report.json``, marked ``deleted`` with the date: the record of what was said is
-    kept. A wait that pointed at it is lifted: a deleted question awaits no answer. A message the
-    group no longer has (« message to delete not found ») is marked the same, and said so.
-
-    Raises:
-        BugsError: On no such reply, a reply without ``message_id`` or already deleted, or another channel
-            error (then nothing is marked).
-    """
-    _, report = load_report(store, report_id)
-    number, reply = posted_reply(report, number, "deleted")
-    gone = ""
-    try:
-        channel.delete(report.get("chat_id", chat_id), reply["message_id"])
-    except BugsError as exc:
-        # Deleted already (by an admin, or a delete whose answer was lost): the outcome is the one wanted.
-        if "message to delete not found" not in str(exc):
-            raise
-        gone = " (already gone from the group)"
-
-    def record(fresh: dict) -> None:
-        fresh["replies"][number - 1]["deleted"] = datetime.fromtimestamp(now, timezone.utc).isoformat()
-        if (fresh.get("awaiting") or {}).get("reply") == number:
-            del fresh["awaiting"]
-
-    update_report(store, report_id, record)
-    print(f"deleted reply {number} of {report_id}{gone}")
 
 
 def cmd_taken(channel: Channel, store: Store, chat_id: ChatId, report_id: str) -> int:
@@ -271,18 +193,25 @@ def cmd_done(
 
 
 def cmd_post(
-    channel: Channel, store: Store, chat_id: ChatId, text: str, now: float, mention_report: str | None = None
+    channel: Channel, store: Store, chat_id: ChatId, text: str, now: float, mention_report: str | None = None,
+    images: list[str] | None = None,
 ) -> None:
     """Post a one-off message in the group (an announcement), recorded in ``state.json``.
 
-    With ``mention_report`` (a report id) the text opens with a mention of that report's author.
+    With ``mention_report`` (a report id) the text opens with a mention of that report's author;
+    ``images`` go with it, every one checked before anything is sent (the post records their count).
     """
+    paths = check_images(images) if images else []
     mention = mention_of(load_report(store, mention_report)[1]) if mention_report else None
-    sent = channel.send(chat_id, text, None, mention)
+    posted, shown, failure = post(channel, chat_id, text, paths, None, mention)
+    entry = {"date": datetime.fromtimestamp(now, timezone.utc).isoformat(), **posted}
     state = store.load_state()
-    state.setdefault("posts", []).append(
-        {"date": datetime.fromtimestamp(now, timezone.utc).isoformat(), "text": sent["text"], "message_id": sent["message_id"]}
-    )
+    state.setdefault("posts", []).append(entry | ({"images": len(shown)} if shown else {}))
     store.save_state(state)
-    print(f"posted message {sent['message_id']}")
+    if failure:
+        raise failure
+    if "message_id" in posted:
+        print(f"posted message {posted['message_id']}")
+    else:
+        print(f"posted file{'s' * (len(posted['file_ids']) > 1)} {' '.join(posted['file_ids'])}")
 

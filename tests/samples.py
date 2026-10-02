@@ -7,6 +7,8 @@ PhotoSize, File); ids, names and bytes are invented.
 from __future__ import annotations
 
 import json
+from email import policy
+from email.parser import BytesParser
 
 TOKEN = "123456789:AAFakeTokenFakeTokenFakeTokenFake123"
 GROUP_ID = -1001234567890
@@ -58,6 +60,23 @@ def message(
     return {"update_id": update_id, "message": msg}
 
 
+def parse_multipart(body) -> dict:
+    """Read a ``multipart/form-data`` body back with the standard library's own MIME parser (not the encoder's code).
+
+    Returns:
+        ``{"fields": {name: text}, "files": {name: (filename, bytes, content type)}}``.
+    """
+    raw = b"Content-Type: " + body.content_type.encode() + b"\r\n\r\n" + body.data
+    form: dict = {"fields": {}, "files": {}}
+    for part in BytesParser(policy=policy.HTTP).parsebytes(raw).iter_parts():
+        name = part.get_param("name", header="content-disposition")
+        if part.get_filename() is None:
+            form["fields"][name] = part.get_payload(decode=True).decode("utf-8")  # form fields are UTF-8 (RFC 7578)
+        else:
+            form["files"][name] = (part.get_filename(), part.get_payload(decode=True), part.get_content_type())
+    return form
+
+
 def image_bytes(file_id: str) -> bytes:
     """Return the fake bytes served for a file id."""
     return b"\xff\xd8\xff-" + file_id.encode()
@@ -81,6 +100,8 @@ class FakeTelegram:
         self.member_count = 0
         self.edited: list[dict] = []
         self.edit_error: str | None = None
+        self.photos: list[dict] = []  # each sendPhoto / sendMediaGroup, its form read back
+        self.photo_error: str | None = None
 
     def __call__(self, url: str, payload: dict | None = None, timeout: float | None = None) -> tuple[int, bytes]:
         self.calls.append((url, payload))
@@ -122,6 +143,16 @@ class FakeTelegram:
             return 200, json.dumps({"ok": True, "result": {"message_id": payload["message_id"]}}).encode()
         if method == "deleteMessage":
             return 200, json.dumps({"ok": True, "result": True}).encode()
+        if method in ("sendPhoto", "sendMediaGroup"):
+            if self.photo_error:
+                return 400, json.dumps({"ok": False, "error_code": 400, "description": self.photo_error}).encode()
+            form = parse_multipart(payload)
+            self.photos.append({"method": method, **form})
+            if method == "sendPhoto":
+                return 200, json.dumps({"ok": True, "result": {"message_id": 600 + len(self.photos)}}).encode()
+            count = len(json.loads(form["fields"]["media"]))
+            result = [{"message_id": 600 + 10 * len(self.photos) + k} for k in range(count)]
+            return 200, json.dumps({"ok": True, "result": result}).encode()
         if method == "sendMessage":
             self.sent.append(payload)
             return 200, json.dumps({"ok": True, "result": {"message_id": 777}}).encode()

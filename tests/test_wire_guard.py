@@ -12,15 +12,16 @@ from conftest import REPO_ROOT
 # Telegram's Bot API: its host, its methods, the update fields read, its token's variable; and its kind's name.
 TELEGRAM_WIRE = re.compile(
     r"api\.telegram\.org|getUpdates|sendMessage|editMessageText|deleteMessage|setMessageReaction|getFile"
+    r"|sendPhoto|sendMediaGroup|caption_entities|attach://"
     r"|getChatAdministrators|getChatMemberCount|getMe|update_id|migrate_to_chat_id|migrate_from_chat_id"
     r"|media_group_id|language_code|reply_parameters|text_mention|TELEGRAM_BOT_TOKEN|is_bot|\[.from.\]"
-    r"|BUGS_BOT_API_ROOT|allowed_updates|sendPhoto|sendMediaGroup|edited_message|[\"']telegram[\"']"
+    r"|BUGS_BOT_API_ROOT|allowed_updates|edited_message|[\"']telegram[\"']"
 )
 # Slack's Web API: its hosts, its methods, the message fields read, its token's variable and shape; and its kind's name.
 SLACK_WIRE = re.compile(
     r"slack\.com|conversations\.(history|replies|members|info)|users\.(info|conversations)"
     r"|chat\.(postMessage|update|delete)|reactions\.(add|remove)|auth\.test|url_private|thread_ts"
-    r"|SLACK_BOT_TOKEN|BUGS_BOT_SLACK_API_ROOT|xox[abp]-|response_metadata|next_cursor|bot_id"
+    r"|SLACK_BOT_TOKEN|BUGS_BOT_SLACK_API_ROOT|xox[abp]-|response_metadata|next_cursor|bot_id|upload_url|initial_comment"
     r"|\b(conversations|users|chat|reactions|files|auth)\.[a-z]+|[\"']slack[\"']"
 )
 OWNERS = {

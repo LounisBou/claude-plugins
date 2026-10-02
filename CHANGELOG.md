@@ -31,3 +31,9 @@ First release: the single-project Telegram bug relay, made a generic Claude Code
   HTTP 429 honouring `Retry-After`; Telegram's held request cut to 10 s while a Slack project is
   registered; `doctor` asks each registered platform whether it accepts its token.
 - `BUGS_BOT_SLACK_API_ROOT`, to point the Slack channel at a fake (end-to-end runs only).
+- Screenshots to reporters: `reply <id> "<text>" --image <path>` (repeatable) and `post … --image`,
+  1 to 10 PNG, JPEG or WebP images of 10 MB at most, all checked before anything is sent; Telegram
+  `sendPhoto` / `sendMediaGroup` (multipart built with the standard library), Slack's external upload
+  (`files:write`); each image sent copied to the report's `sent/` and listed by `show`. The agent asks
+  its launcher « capture <id> : … », looks at every image before sending it, and never sends one
+  showing code, a terminal, a commit, an internal host, a local path, a token or another person's data.

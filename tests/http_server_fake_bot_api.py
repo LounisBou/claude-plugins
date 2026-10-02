@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import json
 import sys
+from email import policy
+from email.parser import BytesParser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 PORT_FILE, LOG_FILE, TOKEN = sys.argv[1:4]
@@ -41,9 +43,23 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self._reply(404, {"ok": False, "error_code": 404, "description": "Not Found"})
 
+    def _form(self, raw: bytes) -> dict:
+        """Read a multipart upload back: its text fields, and each file as ``[filename, size, content type]``."""
+        message = BytesParser(policy=policy.HTTP).parsebytes(b"Content-Type: " + self.headers["Content-Type"].encode() + b"\r\n\r\n" + raw)
+        form: dict = {}
+        for part in message.iter_parts():
+            name, content = part.get_param("name", header="content-disposition"), part.get_payload(decode=True)
+            if part.get_filename() is None:
+                form[name] = content.decode("utf-8")
+            else:
+                form[name] = [part.get_filename(), len(content), part.get_content_type()]
+        return form
+
     def do_POST(self) -> None:  # noqa: N802 - http.server's name
         length = int(self.headers.get("Content-Length") or 0)
-        payload = json.loads(self.rfile.read(length) or b"{}")
+        raw = self.rfile.read(length)
+        multipart = (self.headers.get("Content-Type") or "").startswith("multipart/form-data")
+        payload = self._form(raw) if multipart else json.loads(raw or b"{}")
         if self.path == "/_enqueue":
             UPDATES.extend(payload)
             return self._reply(200, {"ok": True, "result": len(UPDATES)})
@@ -55,7 +71,7 @@ class Handler(BaseHTTPRequestHandler):
         if method == "getUpdates":
             offset = payload.get("offset")
             result = [u for u in UPDATES if offset is None or u["update_id"] >= offset]
-        elif method in ("sendMessage", "editMessageText"):
+        elif method in ("sendMessage", "editMessageText", "sendPhoto"):
             NEXT_MESSAGE_ID[0] += 1
             result = {"message_id": payload.get("message_id") or NEXT_MESSAGE_ID[0]}
         elif method == "getFile":

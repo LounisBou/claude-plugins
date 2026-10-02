@@ -57,6 +57,8 @@ class FakeSlack:
         self.statuses: dict[str, tuple[int, dict]] = {}
         self.files: dict[str, bytes] = {}
         self.next_ts = [BASE_TS + 5000]
+        self.uploads: list[dict] = []  # each POST to an upload URL: its URL and body
+        self.upload_status: dict[int, int] = {}  # the n-th upload (1-based) answered with this HTTP status
 
     def methods(self) -> list[str]:
         return [call["method"] for call in self.calls]
@@ -74,6 +76,10 @@ class FakeSlack:
             return 200, json.dumps({"ok": False, "error": "invalid_auth"}).encode()
         if url in self.files:
             return 200, Body(self.files[url], {"Content-Type": "image/png"})
+        if "/upload/" in parts.path:
+            self.uploads.append({"url": url, "body": payload})
+            status = self.upload_status.get(len(self.uploads), 200)
+            return status, Body(f"OK - {len(payload.data)}".encode() if status == 200 else b"upload failed", {})
         if method in self.statuses:
             status, header = self.statuses.pop(method)
             return status, Body(json.dumps({"ok": False, "error": "ratelimited"}).encode(), header)
@@ -102,6 +108,9 @@ class FakeSlack:
         if method == "chat.postMessage":
             self.next_ts[0] += 1
             return {"ok": True, "channel": params["channel"], "ts": f"{self.next_ts[0]}.000100", "message": {"text": params["text"]}}
+        if method == "files.getUploadURLExternal":
+            number = len(self.of(method))
+            return {"ok": True, "upload_url": f"https://files.slack.com/upload/v1/ticket{number}", "file_id": f"F0FILE{number}"}
         if method == "auth.test":
             return {"ok": True, "user": "bugsbot", "team": "Fake Team", "user_id": "U0BOT"}
         return {"ok": True}

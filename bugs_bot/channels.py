@@ -9,7 +9,7 @@ import urllib.request
 from collections.abc import Callable, Mapping
 
 from bugs_bot import slack, telegram
-from bugs_bot.channel import Body, Channel, Transport
+from bugs_bot.channel import Body, Channel, Transport, Upload
 from bugs_bot.errors import BugsError
 
 HTTP_TIMEOUT = 30
@@ -49,13 +49,13 @@ _OPENER = urllib.request.build_opener(_KeepCredentialHome)
 
 
 def http_transport(
-    url: str, payload: dict | None = None, timeout: float | None = None, headers: Mapping[str, str] | None = None
+    url: str, payload: dict | Upload | None = None, timeout: float | None = None, headers: Mapping[str, str] | None = None
 ) -> tuple[int, bytes]:
     """Send one request with ``urllib``; HTTP errors are returned, not raised.
 
     Args:
         url: Full URL.
-        payload: JSON body (POST) or ``None`` (GET).
+        payload: JSON body (POST), an ``Upload`` sent as its bytes (POST), or ``None`` (GET).
         timeout: Read timeout in seconds (default ``HTTP_TIMEOUT``).
         headers: Extra request headers (a platform's ``Authorization``).
 
@@ -63,8 +63,11 @@ def http_transport(
         ``(status, body)``; the body carries the response headers (``Body.headers``). A redirect of a request
         carrying ``Authorization`` is not followed: its 30x status is returned.
     """
-    data = None if payload is None else json.dumps(payload).encode()
-    sent = {} if payload is None else {"Content-Type": "application/json"}
+    if isinstance(payload, Upload):
+        data, sent = payload.data, {"Content-Type": payload.content_type}
+    else:
+        data = None if payload is None else json.dumps(payload).encode()
+        sent = {} if payload is None else {"Content-Type": "application/json"}
     request = urllib.request.Request(url, data=data, headers={**sent, **(headers or {})})
     try:
         with _OPENER.open(request, timeout=timeout or HTTP_TIMEOUT) as resp:  # noqa: S310 - https or loopback, see each channel's API root

@@ -16,7 +16,7 @@ from fake_channel import batch as fake_batch
 from samples import BASE_DATE, GROUP_ID
 from test_mention import STAMP, write_report
 
-from bugs_bot import people, pull, reports
+from bugs_bot import people, pull, replies, reports
 from bugs_bot.agent import cmd_wait
 from bugs_bot.answers import record_answer
 from bugs_bot.channel import Attachment, Author
@@ -355,6 +355,10 @@ class LockProbe(FakeChannel):
         self._free("send")
         return super().send(*args, **kw)
 
+    def send_images(self, *args, **kw):
+        self._free("send_images")
+        return super().send_images(*args, **kw)
+
     def edit(self, *args, **kw):
         self._free("edit")
         return super().edit(*args, **kw)
@@ -362,6 +366,10 @@ class LockProbe(FakeChannel):
     def delete(self, *args, **kw):
         self._free("delete")
         return super().delete(*args, **kw)
+
+    def delete_file(self, *args, **kw):
+        self._free("delete_file")
+        return super().delete_file(*args, **kw)
 
     def react(self, *args, **kw):
         self._free("react")
@@ -393,8 +401,8 @@ def test_no_channel_call_is_made_while_the_lock_is_held(bound, bugs_home):
 
     pull.cmd_pull(channel, Machine(bugs_home), BASE_DATE + 60)
     reports.cmd_reply(channel, store, GROUP_ID, REPORT, "Tu es sur quel iPhone ?", BASE_DATE + 70, awaits=True)
-    reports.cmd_edit(channel, store, GROUP_ID, REPORT, "Tu as quel iPhone ?", BASE_DATE + 80, awaits=True)
-    reports.cmd_delete(channel, store, GROUP_ID, REPORT, BASE_DATE + 90)
+    replies.cmd_edit(channel, store, GROUP_ID, REPORT, "Tu as quel iPhone ?", BASE_DATE + 80, awaits=True)
+    replies.cmd_delete(channel, store, GROUP_ID, REPORT, BASE_DATE + 90)
     reports.cmd_taken(channel, store, GROUP_ID, REPORT)
     reports.cmd_fixed(channel, store, GROUP_ID, REPORT, "abc1234", BASE_DATE + 100)
     reports.cmd_done(channel, store, GROUP_ID, other, "C'est voulu", BASE_DATE + 110)

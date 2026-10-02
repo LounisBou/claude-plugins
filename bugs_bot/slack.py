@@ -6,12 +6,14 @@ import json
 import re
 import time
 from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlsplit
 
-from bugs_bot.channel import Author, Batch, ChatId, Mention, MessageId, Transport, checked_root, headers_of
+from bugs_bot.channel import Author, Batch, ChatId, Mention, MessageId, SentImages, Transport, checked_root, headers_of, multipart
 from bugs_bot.envfile import read_secret
 from bugs_bot.errors import BugsError, RateLimited
+from bugs_bot.images import wire_file
 from bugs_bot.slack_inbound import read_chat, to_author
 
 DEFAULT_API_ROOT = "https://slack.com/api"
@@ -22,7 +24,7 @@ REACTIONS = {
     "\U0001f44c": "ok_hand",  # 👌 fixed
     "✅": "white_check_mark",
 }
-# Where a file's private URL may lead: the token is sent along, so never to any other host.
+# Where a file's private URL or an upload URL may lead: the token is sent along, so never to any other host.
 FILE_HOSTS = ("slack.com", ".slack.com")
 # The phrase reactions.py reads as « the message is gone, stop retrying ».
 GONE = "message to react not found"
@@ -176,6 +178,35 @@ class SlackChannel:
         sent = self.call("chat.postMessage", post=True, channel=chat_id, text=text, **extra)
         return {"message_id": sent["ts"], "text": text}
 
+    def send_images(
+        self, chat_id: ChatId, text: str, paths: list[Path], reply_to: MessageId | None = None, mention: Mention | None = None
+    ) -> SentImages:
+        """Post images with ``text`` as one message: each file gets an upload URL and is uploaded, then
+        ``files.completeUploadExternal`` shares them all, ``text`` as their comment, in ``reply_to``'s thread.
+
+        Nothing is shared until every upload went through: a failed upload posts nothing. Slack does not
+        say which message the share became: what was posted is named by its files' ids (``delete_file``).
+
+        Raises:
+            BugsError: Nothing was posted.
+        """
+        if mention:
+            text = with_mention(mention, text)
+        files, read = [], [wire_file(path, rank) for rank, path in enumerate(paths, 1)]  # read before any upload
+        for name, data, kind in read:
+            ticket = self.call("files.getUploadURLExternal", filename=name, length=len(data))
+            if not self._on_slack(ticket["upload_url"]):
+                raise BugsError("upload refused: the URL is not on Slack")
+            status, _ = self._transport(ticket["upload_url"], multipart({}, [("filename", name, data, kind)]), None, self._auth())
+            if status != 200:
+                raise BugsError(f"upload of {name}: HTTP {status}")
+            files.append({"id": ticket["file_id"], "title": name})
+        extra = {"initial_comment": text} if text else {}
+        if reply_to is not None:
+            extra["thread_ts"] = str(reply_to)
+        self.call("files.completeUploadExternal", post=True, files=files, channel_id=chat_id, **extra)
+        return SentImages(text, [], [file["id"] for file in files], read)
+
     def edit(self, chat_id: ChatId, message_id: MessageId, text: str, mention: Mention | None = None) -> dict:
         """Rewrite a posted message."""
         if mention:
@@ -186,6 +217,10 @@ class SlackChannel:
     def delete(self, chat_id: ChatId, message_id: MessageId) -> None:
         """Delete a message the bot posted."""
         self.call("chat.delete", post=True, channel=chat_id, ts=str(message_id))
+
+    def delete_file(self, file_id: str) -> None:
+        """Delete a file the bot shared: the images of a share go with it."""
+        self.call("files.delete", post=True, file=file_id)
 
     def react(self, chat_id: ChatId, message_id: MessageId, emoji: str) -> None:
         """Put ``emoji`` on a message, taking the bot's other reactions off: it holds one, as on Telegram.
@@ -222,16 +257,20 @@ class SlackChannel:
         Raises:
             BugsError: If the URL leads anywhere but Slack (or the configured root's host), or the download fails.
         """
-        parts, root = urlsplit(file_id), urlsplit(self._root)
-        host = parts.hostname or ""
-        on_slack = parts.scheme == "https" and (host == FILE_HOSTS[0] or host.endswith(FILE_HOSTS[1]))
-        if not (on_slack or (parts.scheme, parts.netloc) == (root.scheme, root.netloc)) or "@" in parts.netloc:
+        if not self._on_slack(file_id):
             raise BugsError("download refused: the file is not on Slack")
         status, body = self._transport(file_id, None, None, self._auth())
         # Without a valid token Slack answers 200 with its sign-in page, not the file.
         if status != 200 or headers_of(body).get("content-type", "").startswith("text/html"):
             raise BugsError(f"download of a Slack file: HTTP {status}")
         return body
+
+    def _on_slack(self, url: str) -> bool:
+        """Tell whether ``url`` leads to Slack (or the configured root's host): only there does the token go."""
+        parts, root = urlsplit(url), urlsplit(self._root)
+        host = parts.hostname or ""
+        on_slack = parts.scheme == "https" and (host == FILE_HOSTS[0] or host.endswith(FILE_HOSTS[1]))
+        return (on_slack or (parts.scheme, parts.netloc) == (root.scheme, root.netloc)) and "@" not in parts.netloc
 
     def list_admins(self, chat_id: ChatId) -> list[Author]:
         """Return the channel's members who are workspace admins or owners."""
