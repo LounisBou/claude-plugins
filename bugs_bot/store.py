@@ -64,6 +64,30 @@ class Machine:
         """Write the offset atomically."""
         write_json(self.state_path, {"offset": offset})
 
+    def load_cursor(self, kind: str) -> dict | None:
+        """Return where a channel kind's reading stands, ``None`` before its first pull.
+
+        Telegram's cursor is ``{"offset": ...}``, kept as the ``offset`` key of ``state.json``.
+
+        Raises:
+            BugsError: If the kind has no cursor here, or ``state.json`` is unreadable.
+        """
+        if kind != "telegram":
+            raise BugsError(f"no cursor for channel {kind}")
+        if not self.state_path.exists():
+            return None
+        return {"offset": self.load_offset()}
+
+    def save_cursor(self, kind: str, cursor: dict) -> None:
+        """Write a channel kind's cursor atomically, as ``load_cursor`` reads it.
+
+        Raises:
+            BugsError: If the kind has no cursor here.
+        """
+        if kind != "telegram":
+            raise BugsError(f"no cursor for channel {kind}")
+        self.save_offset(cursor.get("offset"))
+
     def note_unregistered(self, chat: dict, now: float) -> None:
         """Record a group chat Pull dropped, so that ``init`` can offer it; the latest sighting wins."""
         seen = self.unregistered()

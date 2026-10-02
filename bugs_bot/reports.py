@@ -7,11 +7,10 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from bugs_bot.channel import Channel, Mention
+from bugs_bot.channel import Channel, Mention, mask
 from bugs_bot.errors import BugsError
 from bugs_bot.followup import mark_awaiting, mark_reminded, require_due
 from bugs_bot.store import CLOSED_STATUSES, EMOJI_FIXED, EMOJI_TAKEN, OPEN_STATUSES, Store, load_report, write_json
-from bugs_bot.telegram import mask
 
 
 def one_line(text: str, width: int = 70) -> str:

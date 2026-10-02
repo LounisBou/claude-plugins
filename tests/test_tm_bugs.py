@@ -10,7 +10,7 @@ import pytest
 from conftest import read_offset, register, reports
 from samples import BASE_DATE, GROUP_ID, OTHER_GROUP_ID, TOKEN, FakeTelegram, image_bytes, message
 
-from bugs_bot import cli, store, telegram
+from bugs_bot import channel, cli, store
 from bugs_bot.registry import Registry
 from bugs_bot.store import Machine
 
@@ -210,7 +210,7 @@ def test_token_is_masked_in_an_api_description(run, bound, capsys):
 
 
 def test_mask_hides_any_bot_token_shape():
-    masked = telegram.mask("GET /bot999:ABCdef_ghi-123/getMe failed", TOKEN)
+    masked = channel.mask("GET /bot999:ABCdef_ghi-123/getMe failed", TOKEN)
 
     assert "ABCdef_ghi-123" not in masked
 

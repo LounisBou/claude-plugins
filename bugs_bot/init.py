@@ -8,11 +8,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-from bugs_bot.channel import Channel
+from bugs_bot.channel import Channel, ChatId
 from bugs_bot.errors import BugsError
 from bugs_bot.jsonio import write_json
 from bugs_bot.project import PROJECT_FILE, Project, build_project, dump_project, find_project_file, load_project
-from bugs_bot.pull import ALLOWED_UPDATES, chats_seen
 from bugs_bot.store import Machine
 
 
@@ -83,23 +82,23 @@ def add_exclude(repo: Path) -> bool:
     return True
 
 
-def discover_groups(channel: Channel | None, machine: Machine, pull_running: bool) -> dict[int, dict]:
+def discover_groups(channel: Channel | None, machine: Machine, pull_running: bool) -> dict[ChatId, dict]:
     """Return the group chats the bot has seen, by chat id.
 
     Pull holds the bot's update stream, and a second poller would cut its held request: while it runs
-    only the chats it dropped are known. Otherwise the pending updates are read without an offset, so
-    nothing is consumed, and merged with those chats.
+    only the chats it dropped are known. Otherwise the channel is read from where it stands and the cursor
+    it returns is never saved, so nothing is consumed; its chats are merged with those.
     """
     found = {cid: {"title": item["title"], "type": item["type"]} for cid, item in machine.unregistered().items()}
     if not pull_running and channel is not None:
-        updates = channel.get_updates(None, 0, list(ALLOWED_UPDATES))
-        found |= {cid: {"title": chat.get("title") or "", "type": chat["type"]} for cid, chat in chats_seen(updates).items()}
+        batch = channel.poll(None, [], 0)
+        found |= {cid: {"title": chat.get("title") or "", "type": chat["type"]} for cid, chat in batch.chats.items()}
     return found
 
 
 def _chosen_group(
     channel: Channel | None, machine: Machine, name: str, pull_running: bool | Callable[[], bool]
-) -> tuple[int, str] | None:
+) -> tuple[ChatId, str] | None:
     """Return the one new group, else say why there is none (or which are there) and return ``None``."""
     held = {cid for cid, entry in machine.registry.entries().items() if entry.project != name}
     pull_running = pull_running() if callable(pull_running) else pull_running  # asked only now: only a search needs it

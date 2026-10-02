@@ -6,7 +6,7 @@ import json
 import re
 from datetime import datetime, timezone
 
-from bugs_bot.channel import Channel
+from bugs_bot.channel import Channel, ChatId
 from bugs_bot.errors import BugsError
 from bugs_bot.store import Store, load_report, write_json
 
@@ -51,7 +51,7 @@ def cmd_person(store: Store, ref: str) -> None:
 
 
 def cmd_person_note(store: Store, ref: str, text: str, now: float) -> None:
-    """Add a dated note to a person's card, creating it. Nothing is sent to Telegram.
+    """Add a dated note to a person's card, creating it. Nothing is sent to the group.
 
     Raises:
         BugsError: If the text is empty.
@@ -67,7 +67,7 @@ def cmd_person_note(store: Store, ref: str, text: str, now: float) -> None:
     print(f"noted {key}")
 
 
-def cmd_backfill_authors(channel: Channel, store: Store, chat_id: int) -> None:
+def cmd_backfill_authors(channel: Channel, store: Store, chat_id: ChatId) -> None:
     """Record the user id of authors of reports written before ``author_id`` existed.
 
     Only when it is proven: the group's members are all administrators (the member count
@@ -80,11 +80,11 @@ def cmd_backfill_authors(channel: Channel, store: Store, chat_id: int) -> None:
         return
     admins = channel.list_admins(chat_id)
     everyone_listed = channel.member_count(chat_id) <= len(admins)
-    humans = [a["user"] for a in admins if not a["user"].get("is_bot")]
+    humans = [a for a in admins if not a.is_bot]
     for report_id, path, report in todo:
-        same = [u for u in humans if (u.get("username") or u.get("first_name")) == report["author"]]
+        same = [a for a in humans if a.name == report["author"]]
         if len(same) == 1 and everyone_listed:
-            report["author_id"], report["author_username"] = same[0]["id"], same[0].get("username")
+            report["author_id"], report["author_username"] = same[0].id, same[0].username
             write_json(path / "report.json", report)
             print(f"{report_id}  author id recorded")
         else:

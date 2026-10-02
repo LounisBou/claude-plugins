@@ -16,7 +16,7 @@ from pathlib import Path
 
 from bugs_bot.errors import BugsError
 from bugs_bot.store import Machine, bugs_home
-from bugs_bot.telegram import read_token
+from bugs_bot.channels import token_problem
 
 MIN_PYTHON = (3, 10)
 ALLOW_RULE = "Bash(bugs-bot:*)"
@@ -111,10 +111,9 @@ def _python() -> Check:
 
 
 def _token(env: Mapping[str, str]) -> Check:
-    try:
-        read_token(env)
-    except BugsError as exc:
-        return Check("token", False, str(exc))
+    problem = token_problem("telegram", env)
+    if problem is not None:
+        return Check("token", False, problem)
     return Check("token", True, "present")
 
 

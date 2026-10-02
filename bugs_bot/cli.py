@@ -24,7 +24,8 @@ from pathlib import Path
 
 from bugs_bot import parser
 from bugs_bot.agent import cmd_agent_prompt, cmd_deployed, cmd_overdue, cmd_pending, cmd_triage, cmd_wait
-from bugs_bot.channel import Transport
+from bugs_bot.channel import Transport, mask
+from bugs_bot.channels import channel_for, http_transport, token_problem
 from bugs_bot.doctor import cmd_doctor, pull_processes
 from bugs_bot.errors import BugsError
 from bugs_bot.followup import cmd_escalated
@@ -45,7 +46,6 @@ from bugs_bot.reports import (
     cmd_taken,
 )
 from bugs_bot.store import Machine, bugs_home
-from bugs_bot.telegram import TelegramChannel, api_root, http_transport, mask, read_token
 
 
 def read_ps() -> str:
@@ -89,7 +89,7 @@ def main(
 
     Args:
         argv: Arguments (default ``sys.argv[1:]``).
-        transport: Telegram transport; tests inject a fake, the default uses ``urllib``.
+        transport: The channel's transport; tests inject a fake, the default uses ``urllib``.
         env: Environment (default ``os.environ``).
         now: Epoch seconds (default the clock); tests pin it.
         sleep: Stands for ``time.sleep`` (``wait``, ``pull --every``); tests inject a fake.
@@ -114,8 +114,9 @@ def main(
         if args.command == "pull" and args.every:
             return pull_loop(machine, env, transport, args.every, wall, sleep)
         if args.command == "pull":
-            token = read_token(env)
-            cmd_pull(TelegramChannel(token, transport, api_root(env)), machine, now)
+            channel = channel_for("telegram", env, transport)
+            token = channel.secret
+            cmd_pull(channel, machine, now)
             return 0
         if args.command == "doctor":
             try:
@@ -125,12 +126,9 @@ def main(
             return cmd_doctor(env, ps_output, args.install_launcher)
         if args.command == "init":
             # The bot token is optional here: an explicit --chat-id needs no bot, and Pull may hold the updates.
-            try:
-                token = read_token(env)
-            except BugsError:
-                channel = None
-            else:
-                channel = TelegramChannel(token, transport, api_root(env))
+            # Only a missing token goes without a channel: a refused API root still fails here.
+            channel = None if token_problem("telegram", env) else channel_for("telegram", env, transport)
+            token = channel.secret if channel else None
             repo = Path(args.repo).resolve() if args.repo else repo_root(Path.cwd())
             given = InitArgs(
                 project=args.project,
@@ -188,8 +186,8 @@ def main(
         elif args.command == "gate":
             cmd_gate(project, args.set, args.window, args.tokens, args.measure, env)
         else:
-            token = read_token(env)
-            channel = TelegramChannel(token, transport, api_root(env))
+            channel = channel_for("telegram", env, transport)
+            token = channel.secret
             if args.command == "fixed":
                 return cmd_fixed(channel, store, chat_id, args.id, args.note, now)
             elif args.command == "taken":
