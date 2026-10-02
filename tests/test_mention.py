@@ -208,7 +208,7 @@ def test_agent_instructions_know_the_mention_phrases(phrase):
     assert phrase in DOCS["AGENT.md"].read_text()
 
 
-@pytest.mark.parametrize("phrase", ["Talking to a reporter", "DEPLOYED", "tm-design-follow", "vérifier <id>", "backfill-authors"])
+@pytest.mark.parametrize("phrase", ["Talking to a reporter", "DEPLOYED", "bugs-bot deployed", "vérifier <id>", "backfill-authors"])
 def test_skill_states_the_ask_fix_verify_method(phrase):
     assert phrase in DOCS["SKILL.md"].read_text()
 

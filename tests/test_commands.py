@@ -12,6 +12,9 @@ COMMANDS = sorted((REPO_ROOT / "commands").glob("*.md"))
 # The one invocation that is not `bugs-bot ...`: the first doctor run, before the launcher exists.
 BOOTSTRAP = "python3 ${CLAUDE_PLUGIN_ROOT}/bin/bugs-bot doctor"
 BOOTSTRAP_RULE = f"{BOOTSTRAP}:*"
+# start's two others: reading the newest iTerm launcher's path, then that launcher written out in full.
+ITERM_PATH_LINE = "ls -d ~/.claude/plugins/cache/lounisbou/orchestrator/*/skills/iterm-agents/scripts/iterm-agent.sh | sort -V | tail -1"
+ITERM_LAUNCHER = "$SCRIPT "
 ALLOWED_RULES = {"bugs-bot:*"}
 # Nothing in a command line may chain, pipe, substitute, fetch, delete or start a shell.
 FORBIDDEN = (";", "|", "&&", "$(", "curl", "rm ", "sh -c", "bash")
@@ -42,8 +45,8 @@ def rules_of(allowed_tools: str) -> list[str]:
     return found
 
 
-def test_the_three_commands_exist():
-    assert {p.stem for p in COMMANDS} >= {"init", "remove", "doctor"}
+def test_the_four_commands_exist():
+    assert {p.stem for p in COMMANDS} >= {"init", "start", "remove", "doctor"}
 
 
 @pytest.mark.parametrize("path", COMMANDS, ids=lambda p: p.stem)
@@ -66,7 +69,9 @@ def test_every_command_line_is_one_plain_bugs_bot_invocation(path: Path):
     assert text.startswith("---\ndescription: ")
 
     for line in code_lines(text):
-        starts = ("bugs-bot ", BOOTSTRAP + " ") if path.stem == "doctor" else ("bugs-bot ",)
+        if path.stem == "start" and line == ITERM_PATH_LINE:
+            continue
+        starts = {"doctor": ("bugs-bot ", BOOTSTRAP + " "), "start": ("bugs-bot ", ITERM_LAUNCHER)}.get(path.stem, ("bugs-bot ",))
         assert line.startswith(starts), f"{path.name}: {line!r} is not a bugs-bot command"
         for token in FORBIDDEN:
             assert token not in line, f"{path.name}: {line!r} carries {token!r}"
@@ -74,5 +79,14 @@ def test_every_command_line_is_one_plain_bugs_bot_invocation(path: Path):
 
 
 def test_the_guard_reads_what_it_guards():
-    assert len(COMMANDS) == 3
-    assert all(code_lines(p.read_text()) for p in COMMANDS if p.stem in {"init", "doctor"})
+    assert len(COMMANDS) == 4
+    assert all(code_lines(p.read_text()) for p in COMMANDS if p.stem in {"init", "doctor", "start"})
+
+
+@pytest.mark.parametrize("phrase", [
+    ".bugs-bot.json", "/bugs-bot:init", "ListAgents", "you already have one", "it belongs to",
+    'bugs-bot agent-prompt --launcher "', "sort -V | tail -1", "--right-of self", "move --tty", "verify --tty",
+    "orchestrator plugin",
+])
+def test_start_launches_the_projects_one_agent(phrase):
+    assert phrase in (REPO_ROOT / "commands" / "start.md").read_text()

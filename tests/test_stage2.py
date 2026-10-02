@@ -320,7 +320,7 @@ def test_agent_prompt_renders_the_startup_prompt_for_the_launcher(run, bound, ho
     prompt = path.read_text()
     assert LAUNCHER in prompt
     assert str(REPO_ROOT / "agent" / "AGENT.md") in prompt
-    record = json.loads((home / "agent.json").read_text())
+    record = json.loads((home / "state.json").read_text())["agent"]
     assert record["launcher"] == LAUNCHER and record["prompt_file"] == str(path)
 
 
@@ -328,7 +328,7 @@ def test_agent_prompt_renders_the_startup_prompt_for_the_launcher(run, bound, ho
 def test_agent_prompt_refuses_a_malformed_launcher_name(run, bound, home, bad, capsys):
     assert run("agent-prompt", "--launcher", bad) != 0
 
-    assert not (home / "agent.json").exists()
+    assert "agent" not in read_state(home)
 
 
 def test_agent_md_exists_and_opens_with_the_data_rule():

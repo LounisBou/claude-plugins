@@ -476,7 +476,8 @@ def test_a_pending_reaction_of_an_older_report_is_retried_in_its_own_chat(run, t
 PROJECT_COMMANDS = [
     ["list"], ["show", "i"], ["reply", "i", "t"], ["edit", "i", "t"], ["fixed", "i"], ["taken", "i"], ["done", "i"],
     ["triage", "i", "bug"], ["wait"], ["pending"], ["post", "t"], ["backfill-authors"], ["agent-prompt", "--launcher", "l"],
-    ["gate"], ["person", "r"], ["person-note", "r", "t"],
+    ["gate"], ["person", "r"], ["person-note", "r", "t"], ["overdue"], ["escalated", "i"], ["deployed", "abc1234"],
+    ["handover", "write", "t"], ["handover", "read"],
 ]
 
 

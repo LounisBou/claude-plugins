@@ -1,4 +1,4 @@
-"""People: what the agent remembers about each reporter, one card per author."""
+"""People: what the agent remembers about each reporter, one card per author, and recovering the user id of older reports' authors."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import json
 import re
 from datetime import datetime, timezone
 
+from bugs_bot.channel import Channel
 from bugs_bot.errors import BugsError
 from bugs_bot.store import Store, load_report, write_json
 
@@ -64,3 +65,30 @@ def cmd_person_note(store: Store, ref: str, text: str, now: float) -> None:
     card["notes"].append({"date": datetime.fromtimestamp(now, timezone.utc).isoformat(timespec="seconds"), "text": text})
     write_json(store.people / f"{key}.json", card)
     print(f"noted {key}")
+
+
+def cmd_backfill_authors(channel: Channel, store: Store, chat_id: int) -> None:
+    """Record the user id of authors of reports written before ``author_id`` existed.
+
+    Only when it is proven: the group's members are all administrators (the member count
+    equals the administrator list), so a display name matching exactly one human
+    administrator can only be that person. Anything else is left alone and said.
+    """
+    todo = [(rid, path, rep) for rid, path, rep in store.reports() if not rep.get("author_id")]
+    if not todo:
+        print("no report without an author id")
+        return
+    admins = channel.list_admins(chat_id)
+    everyone_listed = channel.member_count(chat_id) <= len(admins)
+    humans = [a["user"] for a in admins if not a["user"].get("is_bot")]
+    for report_id, path, report in todo:
+        same = [u for u in humans if (u.get("username") or u.get("first_name")) == report["author"]]
+        if len(same) == 1 and everyone_listed:
+            report["author_id"], report["author_username"] = same[0]["id"], same[0].get("username")
+            write_json(path / "report.json", report)
+            print(f"{report_id}  author id recorded")
+        else:
+            why = "several administrators share the name" if len(same) > 1 else (
+                "no administrator has that name" if not same else "other members could share the name"
+            )
+            print(f"{report_id}  not proven, left alone: {why}")

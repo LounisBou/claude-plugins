@@ -1,4 +1,4 @@
-"""Reports: list, show, answer in the group, move through the statuses, post, recover authors."""
+"""Reports: list, show, answer in the group, move through the statuses, post."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from pathlib import Path
 
 from bugs_bot.channel import Channel, Mention
 from bugs_bot.errors import BugsError
+from bugs_bot.followup import mark_awaiting, mark_reminded, require_due
 from bugs_bot.store import CLOSED_STATUSES, EMOJI_FIXED, EMOJI_TAKEN, OPEN_STATUSES, Store, load_report, write_json
 from bugs_bot.telegram import mask
 
@@ -119,11 +120,29 @@ def send_reply(
 
 
 def cmd_reply(
-    channel: Channel, store: Store, chat_id: int, report_id: str, text: str, now: float, tag: bool = False
+    channel: Channel,
+    store: Store,
+    chat_id: int,
+    report_id: str,
+    text: str,
+    now: float,
+    tag: bool = False,
+    awaits: bool = False,
+    follow_up_hours: float | None = None,
 ) -> None:
-    """Answer in the group, threaded on the report's first message; ``tag`` mentions its author."""
+    """Answer in the group, threaded on the report's first message; ``tag`` mentions its author.
+
+    ``awaits`` records that the reply waits for the person's answer; ``follow_up_hours`` makes it the
+    one reminder of a wait that old (refused before anything is sent when none is due).
+    """
     path, report = load_report(store, report_id)
+    if follow_up_hours is not None:
+        require_due(report, follow_up_hours, now)
     send_reply(channel, chat_id, path, report, text, now, mention_of(report) if tag else None)
+    if awaits:
+        mark_awaiting(path, report, len(report["replies"]), now)
+    if follow_up_hours is not None:
+        mark_reminded(path, report, now)
     print(f"replied to {report_id}")
 
 
@@ -136,10 +155,12 @@ def cmd_edit(
     now: float,
     number: int | None = None,
     tag: bool = False,
+    awaits: bool = False,
 ) -> None:
     """Rewrite a reply the bot posted on a report: the last one, or the ``number``-th (1-based).
 
-    The new text replaces the recorded one, the previous text goes to the reply's ``edits``.
+    The new text replaces the recorded one, the previous text goes to the reply's ``edits``;
+    ``awaits`` records that the rewritten reply waits for the person's answer.
     Telegram's « message is not modified » is reported, not failed.
 
     Raises:
@@ -162,12 +183,16 @@ def cmd_edit(
         if "message is not modified" not in str(exc):
             raise
         print(f"reply {number} of {report_id}: message is not modified")
+        if awaits:  # the text stands as it was, and now waits for its answer
+            mark_awaiting(path, report, number, now)
         return
     reply.setdefault("edits", []).append(
         {"date": datetime.fromtimestamp(now, timezone.utc).isoformat(), "text": reply["text"]}
     )
     reply["text"] = edited["text"]
     write_json(path / "report.json", report)
+    if awaits:
+        mark_awaiting(path, report, number, now)
     print(f"edited reply {number} of {report_id}")
 
 
@@ -266,29 +291,3 @@ def cmd_post(
     store.save_state(state)
     print(f"posted message {sent['message_id']}")
 
-
-def cmd_backfill_authors(channel: Channel, store: Store, chat_id: int) -> None:
-    """Record the user id of authors of reports written before ``author_id`` existed.
-
-    Only when it is proven: the group's members are all administrators (the member count
-    equals the administrator list), so a display name matching exactly one human
-    administrator can only be that person. Anything else is left alone and said.
-    """
-    todo = [(rid, path, rep) for rid, path, rep in store.reports() if not rep.get("author_id")]
-    if not todo:
-        print("no report without an author id")
-        return
-    admins = channel.list_admins(chat_id)
-    everyone_listed = channel.member_count(chat_id) <= len(admins)
-    humans = [a["user"] for a in admins if not a["user"].get("is_bot")]
-    for report_id, path, report in todo:
-        same = [u for u in humans if (u.get("username") or u.get("first_name")) == report["author"]]
-        if len(same) == 1 and everyone_listed:
-            report["author_id"], report["author_username"] = same[0]["id"], same[0].get("username")
-            write_json(path / "report.json", report)
-            print(f"{report_id}  author id recorded")
-        else:
-            why = "several administrators share the name" if len(same) > 1 else (
-                "no administrator has that name" if not same else "other members could share the name"
-            )
-            print(f"{report_id}  not proven, left alone: {why}")
