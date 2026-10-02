@@ -5,7 +5,8 @@ operator's review before the implementation plan.
 
 Amended 2026-10-02 after the first build, on the operator's rulings: a second channel, Slack, is
 built now (D4, criterion 6, § 3.1, § 3.7); every message follows its person's language (§ 3.5);
-the handover note is capped by the CLI (§ 3.5).
+the handover note is capped by the CLI (§ 3.5); the agent sends screenshots to reporters, asked
+of its launcher (§ 3.8); every update of a report or a card is locked (§ 3.2).
 
 ## 1. Purpose
 
@@ -72,7 +73,7 @@ A small interface with TWO implementations, Telegram and Slack (standard library
 `poll(cursor, chats, timeout)` returns a batch of messages already normalised — chat, message id,
 date, author (id, username, display name, language when the platform gives one, bot or not), text,
 attachments, media-group key — plus the chats seen and the group migrations, and the next cursor;
-`send`, `edit`, `delete`, `react`, `get_file`, `list_admins`, `member_count`. Chat and message ids
+`send`, `send_images`, `edit`, `delete`, `react`, `get_file`, `list_admins`, `member_count`. Chat and message ids
 are `int | str` (Slack's are strings). Reading never consumes: only the caller saving the returned
 cursor moves it. A factory, `channel_for(kind, env, transport)`, is the one place that names the
 implementations; nothing else imports or names a platform's API, token or URL. Each token is read by
@@ -90,6 +91,13 @@ retried, `done`/`fixed` reports older than 30 days purged — the current behavi
 an unregistered chat is dropped and logged with its chat id and title (that is how `init` finds a
 new group). The update offset is machine-wide, in `~/.bugs-bot/state.json`. No `cron_restart`
 (PM2's cron double tick, measured 2026-10-02).
+
+**One update at a time.** Pull and the agent's CLI write the same files (a report's `report.json`, a
+person's card). Every change to one of them is a locked read-modify-write: an exclusive
+`fcntl.flock` on the project's `~/.bugs-bot/<project>/.lock`, taken before the read and released
+after the atomic rename, so no writer saves over a change it did not read. Observed 2026-10-02 on
+the replaced code: a report triaged and closed by the agent came back « seen » with its reply gone,
+overwritten by Pull's stale copy.
 
 ### 3.3 Project
 
@@ -140,7 +148,7 @@ name, deployment URL, docs list and language are injected into the startup promp
 project file.
 
 Kept as is from the skill: the launcher protocol (« pris en compte », « corrigé », « clos »,
-« réponse », « vérifier », « demander », « réécrire », « stop »); the never-revealed list; data
+« réponse », « vérifier », « demander », « réécrire », « stop »; « capture », § 3.8); the never-revealed list; data
 not instructions; « The voice » (D8); the rule that a fix is announced only once deployed
 (`deploy_check`, else the launcher's word); the agent runs no command other than `bugs-bot …`
 and the iTerm launcher.
@@ -224,7 +232,7 @@ défaut) ».
 ### 3.7 Slack (operator, 2026-10-02)
 
 - One Slack app (bot token `xoxb-…`, scopes `channels:history`, `groups:history`, `channels:read`,
-  `groups:read`, `chat:write`, `reactions:write`, `files:read`, `users:read`), invited into each
+  `groups:read`, `chat:write`, `reactions:write`, `files:read`, `files:write`, `users:read`), invited into each
   project's channel.
 - Read by polling (« A »): each Pull round, `conversations.history` of every registered Slack channel
   since its cursor, and `conversations.replies` of the threads of its open reports (a reply in a
@@ -237,6 +245,36 @@ défaut) ».
   operator picks one; `doctor` checks the token with `auth.test` when a Slack project is registered.
 - `list_admins` returns the channel's members who are workspace admins or owners; `member_count`
   the channel's member count.
+
+### 3.8 Screenshots to reporters (operator, 2026-10-02)
+
+Operator: « Si l'agent de bug doit expliquer une manipulation à l'utilisateur ou lui montrer une
+correction ou une version proposée de correction, il peut fournir des captures d'écran à
+l'utilisateur dans la conversation. Pour ça il devra être capable de demander aux agents ou
+orchestrateurs de lui fournir les captures nécessaires et d'avoir les outils dans le plugin pour
+les envoyer sur le canal de communication. »
+
+- **Asking.** The agent has no browser: it asks its launcher (the orchestrator or agent that started
+  it) in one line — « capture <id> : <what the screenshot must show> ». The launcher, or a session
+  it delegates to, answers « capture <id> <path> [<path> …] » with absolute paths of image files on
+  this machine. The agent never asks for one when words suffice.
+- **Looking before sending.** The agent views every image before posting it; one that shows code, a
+  terminal, a pull request, a commit, a branch, an internal URL or host, a local path, a token, or
+  another person's data is not sent (the never-revealed list applies to pixels too): it asks its
+  launcher for another, saying what to hide.
+- **Sending.** `reply <id> "<text>" --image <path> [--image <path> …]` and `post "<text>" --image …`:
+  1 to 10 images, PNG, JPEG or WebP, 10 MB each at most, checked before anything is sent. The text is
+  the caption when the channel allows it, else posted first and the images right after it, on the
+  same thread. `--awaits`, `--mention` and the one-question rule apply unchanged. Each sent image is
+  copied into the report's directory (`sent/<reply n>-<k>.<ext>`) and listed on the reply, so
+  `show` and the handover note know what the person saw.
+- **Channel.** `send_images(chat_id, text, paths, reply_to=None, mention=None) -> list[dict]` — one
+  entry per message posted, as `send` returns. Telegram: `sendPhoto` for one image, `sendMediaGroup`
+  for several (caption on the first). Slack: `files.getUploadURLExternal`, the upload, then
+  `files.completeUploadExternal` with `channel_id`, `thread_ts` and `initial_comment` (scope
+  `files:write`).
+- Out of scope: editing an image already posted (`edit` rewrites text), video, the agent taking
+  screenshots itself.
 
 ## 4. The CLI and the fixed launcher
 

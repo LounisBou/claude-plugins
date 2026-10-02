@@ -96,9 +96,11 @@ each pinned by a test in the phase that owns the code:
 | 7 | conversion | `feat/p7-inbound` (`main`) | the Channel reads normalised messages (`poll` → `Batch`); the factory `channel_for`; Pull, init, people and the CLI free of Telegram's shape and helpers; tests through a fake `Channel` |
 | 8 | behaviour | `feat/p8-language-cap` (p7) | per-person `language` (recorded by Pull, `person-lang`, shown by `person`), `fixed --note` records the ref and posts nothing (no developer reference in the group), the agent writes in the person's language; `delete` of the bot's own messages and edit/delete on the agent's own judgment; `handover write` capped at 40 lines / 8 000 characters; one question at a time per person (spec § 3.5): `reply --awaits` refused while the person awaits another answer, the question queued, `wait` prints `ask <id>` |
 | 9 | behaviour | `feat/p9-slack` (p8) | `channel` in the project file, registry keyed `<channel>:<chat_id>`, `SlackChannel` (polling, threads, files, mentions, 429), Pull reads both channels, `init --channel slack`, `doctor`'s Slack check, migration script and docs updated |
-| 10 | verification | `feat/p10-verify` (p9) | the conformity document updated for the amended sections, E2E with a fake Slack API beside the fake Bot API, fixes of what it finds only |
+| 10 | behaviour | `feat/p10-lock` (p9) | every update of a `report.json` or a person card is a locked read-modify-write (spec § 3.2, « One update at a time »): `store.update_report`, `people.update_card`, one per-project lock |
+| 11 | behaviour | `feat/p11-images` (p10) | screenshots to reporters (spec § 3.8): `Channel.send_images` (Telegram, Slack), `reply`/`post --image`, sent images recorded on the reply, the « capture » protocol in `AGENT.md` |
+| 12 | verification | `feat/p12-verify` (p11) | the conformity document updated for the amended sections, E2E with a fake Slack API beside the fake Bot API, fixes of what it finds only |
 
-Phases 7–10 follow the operator's rulings of 2026-10-02 (spec header « Amended »). Phases 1–6 are
+Phases 7–12 follow the operator's rulings of 2026-10-02 (spec header « Amended »). Phases 1–6 are
 merged on `main`; Phase 7 branches from `main`. The project ships by **auto-merge** (operator,
 2026-10-02): each PR, once reviewed and its correction round verified, is squash-merged by the
 orchestrator.
@@ -817,12 +819,106 @@ report; the token in a log line or an exception; Telegram's hold left at 50 s wi
 
 ---
 
-### Phase 10 — Verification of the amendment
+### Phase 10 — One update at a time (behaviour)
+
+**Files:** modify `bugs_bot/store.py`, `bugs_bot/people.py`, and every module that loads, changes and
+saves a `report.json` or a card (`pull.py`, `reports.py`, `followup.py`, `questions.py`, `agent.py`,
+`reactions.py` — `grep -rn "write_json(\|save_person(" bugs_bot` lists them); create `tests/test_lock.py`.
+
+**Interfaces — Produces:**
+
+```python
+# bugs_bot/store.py
+@contextmanager
+def locked(store: Store) -> Iterator[None]: ...      # fcntl.flock(LOCK_EX) on <store root>/.lock; re-entrant within a process
+def update_report(store: Store, report_id: str, change: Callable[[dict], T]) -> T: ...
+    # under `locked`: load report.json, call change(report) (mutates it), write_json atomically, return change's result
+    # raises BugsError (« no report <id> ») when it is gone — purged meanwhile
+
+# bugs_bot/people.py
+def update_card(store: Store, key: str, change: Callable[[dict], T], name: str, author_id: int | str | None) -> T: ...
+    # same, on the person's card (created as card_of creates it)
+```
+
+Every read-modify-write of a report or a card goes through them; a plain `load_report` stays for
+reads. A channel call (send, react, delete) is made OUTSIDE the lock — the lock is never held over
+the network — and its result written in a second, locked update that re-reads the file (so a send
+followed by a crash leaves the message posted and unrecorded, as today, never a stale overwrite).
+Pull's new report is written to a temporary directory and renamed into `inbox/` (already the case:
+keep it). The lock file is per project, never the machine's `state.json`.
+
+**Test matrix:** two writers interleaved by hand (a `change` that, mid-call, runs a second update in a
+thread blocked on the lock): both changes present after; Pull's reaction marking vs the agent's
+`done` on the same report: status `done` and the reply kept (the 2026-10-02 defect, rebuilt in a
+test that FAILS on p9's head); a card: `record_language` vs `queue_question` both kept; a report
+purged meanwhile → BugsError, nothing written; no channel call made while the lock is held (a fake
+channel asserting the lock is free); the guard: no `write_json(` on a `report.json` or card path
+outside `update_report`/`update_card` (grep test).
+
+**Definition of done:** PR `fix: one update at a time on reports and person cards` on p9; suite green on
+3.12 and 3.10; `sh tests/e2e.sh` green.
+
+**Review focus:** a lock held across a network call; a path still doing load→change→save by hand; a
+deadlock (re-entrance, a nested update on another file under the same lock); the lock file inside a
+report directory (purged with it).
+
+---
+
+### Phase 11 — Screenshots to reporters (behaviour)
+
+**Files:** modify `bugs_bot/channel.py` (protocol), `bugs_bot/telegram.py`, `bugs_bot/slack.py`,
+`bugs_bot/reports.py` (`cmd_reply`, `cmd_post`), `bugs_bot/parser.py`, `agent/AGENT.md`,
+`skills/bugs-bot/SKILL.md`, `README.md`, `CHANGELOG.md`; create `bugs_bot/images.py` (checks and the
+record copy), `tests/test_images.py`. Modules ≤ 300 lines.
+
+**Interfaces — Produces:**
+
+```python
+# bugs_bot/channel.py — Channel gains
+def send_images(self, chat_id: ChatId, text: str, paths: list[Path], reply_to: MessageId | None = None,
+                mention: Author | None = None) -> list[dict]: ...
+    # one dict per message posted ({"message_id", "text"}), in order; the first carries the text when the
+    # platform allows a caption of that length, else a text message is posted first, then the images
+
+# bugs_bot/images.py
+MAX_IMAGES = 10
+MAX_BYTES = 10 * 1024 * 1024
+def check_images(paths: list[str]) -> list[Path]: ...   # exists, PNG/JPEG/WebP by magic bytes, size; BugsError before any send
+def record_sent(report_dir: Path, reply_number: int, paths: list[Path]) -> list[str]: ...  # copies to sent/<n>-<k>.<ext>, returns names
+```
+
+Telegram: `sendPhoto` (one image, multipart, caption ≤ 1024 characters) or `sendMediaGroup`
+(2–10, caption on the first); `reply_to` → `reply_parameters`. Slack: `files.getUploadURLExternal`
+per file, the upload POST, then one `files.completeUploadExternal` with `channel_id`, `thread_ts`,
+`initial_comment` (mention prefixed as `send` does). The transport gains multipart bodies where
+needed (standard library only). CLI: `reply <id> "<text>" --image <path>` (repeatable) and
+`post "<text>" --image <path>`; the reply record carries `images: [<names>]`; `show` lists them;
+`--awaits`, `--mention`, `--follow-up` and the one-question queue unchanged (a queued question with
+images is refused: ask first, show after — said in AGENT.md). AGENT.md: the « capture » line to the
+launcher, the look-before-sending rule and its never-revealed list for pixels (spec § 3.8), and when
+a screenshot helps (a manipulation to explain, a fix or a proposed fix to show).
+
+**Test matrix:** each channel against its fake transport: one image, several, caption too long,
+thread/reply_to, mention; `check_images` refusals (missing, not an image by magic bytes, > 10 MB,
+> 10 files) with nothing sent; the record copy and `show`; Telegram multipart body parsed back in the
+test; Slack's three calls in order with the token header and no token in an error; the E2E sends one
+image through the fake Bot API.
+
+**Definition of done:** PR `feat: screenshots to reporters` on p10; suite green on 3.12 and 3.10;
+`sh tests/e2e.sh` green.
+
+**Review focus:** an image sent before every check passed; a partial send recorded as whole (the
+second upload fails); multipart boundaries and filenames with spaces; the agent's instructions
+leaving room to post a screenshot it has not looked at.
+
+---
+
+### Phase 12 — Verification of the amendment
 
 As Phase 6, on the amended sections (spec header « Amended »), criterion 6 re-judged; `tests/e2e.sh`
 extended to one Slack project on a fake Slack API on loopback beside the Telegram ones; the
 migration rehearsal re-run on a copy. A live Slack smoke test only if the operator provides a token
-and a test channel — otherwise said so in the document. PR `docs: conformity of the amendment` on p9.
+and a test channel — otherwise said so in the document. PR `docs: conformity of the amendment` on p11.
 
 ---
 
