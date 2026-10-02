@@ -3,6 +3,10 @@
 Date: 2026-10-02. Status: approved in conversation section by section; this written spec awaits the
 operator's review before the implementation plan.
 
+Amended 2026-10-02 after the first build, on the operator's rulings: a second channel, Slack, is
+built now (D4, criterion 6, § 3.1, § 3.7); every message follows its person's language (§ 3.5);
+the handover note is capped by the CLI (§ 3.5).
+
 ## 1. Purpose
 
 Testers of a project post bug reports and questions in a Telegram group. An agent session per
@@ -28,17 +32,18 @@ on the LounisBou marketplace. TorrentMate becomes its first project.
 4. Plugin updates never break the session permissions: one allow rule, `Bash(bugs-bot:*)`, holds
    across every version.
 5. The handover costs at most ≈ 2 000 tokens on each side.
-6. A second channel (GitHub Issues, Slack…) can be added later behind one interface without
-   touching the rest. It is NOT built now.
+6. A second channel is built behind one interface: Slack beside Telegram. Adding a third touches
+   only its own module and the channel factory (operator, 2026-10-02: « A et prévoir Slack tout de
+   suite », then « A2 »).
 
 ## 2. Decisions taken (operator, 2026-10-02 — not reopenable)
 
 | # | Decision |
 | --- | --- |
-| D1 | Always Telegram; the same bot for every project; a different group per project. |
+| D1 | One bot per channel kind for every project (one Telegram bot, one Slack app); a different group or Slack channel per project. |
 | D2 | The repository changes per project; the group's information lives in the project, in a file created by an init command. |
 | D3 | One agent per project. |
-| D4 | Another channel stays possible later (an interface now, no second implementation). |
+| D4 | ~~An interface now, no second implementation~~ — reopened by the operator (2026-10-02, « A2 »): Slack is implemented behind the interface; ONE channel per project, chosen at init (« A »); Slack is read by polling (« A »). |
 | D5 | The project file is LOCAL, not versioned. |
 | D6 | Each project's data (inbox, images, state, people cards) lives in a machine directory, `~/.bugs-bot/<project>/`, outside the repository. |
 | D7 | A plugin now (not a generic skill first): repository `LounisBou/claude-bugs-bot`, entry in the LounisBou marketplace, release 0.1.0 on the operator's word. |
@@ -63,17 +68,23 @@ Telegram ──getUpdates──► [Pull]  (one per machine, PM2 `bugs-bot-pull`
 
 ### 3.1 Channel
 
-A small interface — `get_updates(offset, timeout)`, `send(chat, text, reply_to, mention)`,
-`edit(chat, message_id, text)`, `react(chat, message_id, emoji)`, `get_file(file_id)`,
-`list_admins(chat)` — with ONE implementation, Telegram (standard library only, as today). Nothing
-outside this unit imports or names Telegram's API. The bot token is read by this unit only.
+A small interface with TWO implementations, Telegram and Slack (standard library only):
+`poll(cursor, chats, timeout)` returns a batch of messages already normalised — chat, message id,
+date, author (id, username, display name, language when the platform gives one, bot or not), text,
+attachments, media-group key — plus the chats seen and the group migrations, and the next cursor;
+`send`, `edit`, `react`, `get_file`, `list_admins`, `member_count` as before. Chat and message ids
+are `int | str` (Slack's are strings). Reading never consumes: only the caller saving the returned
+cursor moves it. A factory, `channel_for(kind, env, transport)`, is the one place that names the
+implementations; nothing else imports or names a platform's API, token or URL. Each token is read by
+its own implementation only, never printed; errors mask it.
 
 ### 3.2 Pull
 
 `bugs-bot pull --watch`, ONE process per machine (PM2 `bugs-bot-pull`), because Telegram hands a
 bot's updates to a single consumer: two pollers steal each other's messages. Each round reads the
 registry, long-polls (50 s held request, rounds chained, backoff 5 s doubling to 60 s on failure,
-clean exit on SIGINT/SIGTERM — the current behaviour), and writes each message of a registered
+clean exit on SIGINT/SIGTERM — the current behaviour) — held 10 s instead of 50 s while a Slack
+project is registered, so Slack is read at least every ~10 s in the same process (§ 3.7) — and writes each message of a registered
 group to `~/.bugs-bot/<project>/inbox/` (media groups = one report, 👀 reaction, pending reactions
 retried, `done`/`fixed` reports older than 30 days purged — the current behaviour). A message from
 an unregistered chat is dropped and logged with its chat id and title (that is how `init` finds a
@@ -93,20 +104,24 @@ new group). The update offset is machine-wide, in `~/.bugs-bot/state.json`. No `
     "deploy_url": "https://tm-design.iznogoudatall.xyz",
     "deploy_check": "optional shell command proving a commit is served; absent = the launcher checks",
     "docs": ["docs/reference/product-intent.md", "docs/reference/", "docs/production/"],
+    "channel": "telegram",
     "language": "fr",
     "gate_tokens": 200000,
     "follow_up_hours": 24
   }
   ```
 
-  `project` is `[a-z0-9-]+` and names the data directory.
-- **Registry** `~/.bugs-bot/projects.json`: `{ "<chat_id>": { "project": "...", "repo": "/abs/path" } }`.
+  `project` is `[a-z0-9-]+` and names the data directory. `channel` is `telegram` (default) or
+  `slack`; for Slack, `group.chat_id` is the channel id (`C…`/`G…`). `language` is the default
+  for a person whose language is not known (§ 3.5).
+- **Registry** `~/.bugs-bot/projects.json`: `{ "<channel>:<chat_id>": { "project": "...", "repo": "/abs/path" } }`.
   The only file Pull reads to route. Written by `init`, entry removed by `/bugs-bot:remove`
   (data kept).
 - **Data** `~/.bugs-bot/<project>/`: `inbox/`, `people/`, `state.json` (per-project: the agent's
   launcher, handover note archive), `handover.md`.
-- **Secrets** `~/.bugs-bot/.env` (`TELEGRAM_BOT_TOKEN`), read by the Channel only, never printed;
-  errors mask it.
+- **Secrets** `~/.bugs-bot/.env` (`TELEGRAM_BOT_TOKEN`, `SLACK_BOT_TOKEN`), each read by its own
+  channel only, never printed; errors mask it. A token is needed only when a project of that
+  channel is registered.
 
 `/bugs-bot:init` (interactive, idempotent): asks the project id → asks the operator to post one
 message in the new group → finds that group among the bot's pending updates WITHOUT consuming
@@ -146,13 +161,21 @@ launcher, wait armed).
   a promise made, a joke shared, the tone they answered to. It survives even an abrupt end.
 - **At handover:** `bugs-bot handover write "<text>"` writes `~/.bugs-bot/<project>/handover.md`
   (20–40 lines: open threads only — who waits for what, what was promised, what must not be
-  repeated). `bugs-bot handover read` prints it once and archives it, dated, under
+  repeated). The CLI refuses a note over 40 lines or 8 000 characters, naming the limit and the
+  note's size; nothing is written, the agent shortens it and writes again (operator, 2026-10-02). `bugs-bot handover read` prints it once and archives it, dated, under
   `handover/`.
 - **Before every message to a person:** `person <report-id>` then `show <their last report>`
   (replies already sent): pick the thread up, never repeat an opening.
 - **One voice:** never a word in the group about a handover, a new session, forgetting, or
   « I'm new here »; the agent never introduces itself again.
 - Cost: the note ≈ 1–2 k tokens each side; cards read only when writing to that person.
+- **Language (operator, 2026-10-02: « On suit la langue des utilisateurs du channel. Et elle est
+  enregistrée comme info pour chaque utilisateur. »):** each person's card carries `language`.
+  Pull records it on first sight from the platform (Telegram `language_code`, Slack `locale`), never
+  over a value already there; the agent corrects it with `bugs-bot person-lang <ref> <code>` when
+  the person writes in another language. Every message to a person is written in their language;
+  the CLI's own fixed words (« Corrigé : » of `fixed --note`) come from a table per language
+  (`fr`, `en`), the person's language first, then the project's `language`, then `en`.
 
 ### 3.6 Follow-ups (operator, 2026-10-02)
 
@@ -177,13 +200,30 @@ défaut) ».
   line (« <Agent title> — sans réponse <id> : <what was asked> »), once; it never reminds again.
 - `bugs-bot overdue` lists the follow-ups due (also part of the restart's `pending` listing).
 
+### 3.7 Slack (operator, 2026-10-02)
+
+- One Slack app (bot token `xoxb-…`, scopes `channels:history`, `groups:history`, `channels:read`,
+  `groups:read`, `chat:write`, `reactions:write`, `files:read`, `users:read`), invited into each
+  project's channel.
+- Read by polling (« A »): each Pull round, `conversations.history` of every registered Slack channel
+  since its cursor, and `conversations.replies` of the threads of its open reports (a reply in a
+  thread answers there); cursors per channel in `~/.bugs-bot/state.json`. HTTP 429 honours
+  `Retry-After`.
+- A top-level message is a report; files of an image type are its images (downloaded with the
+  token); the bot's own posts are not reports. The reaction 👀 is Slack's `eyes`; a mention is
+  `<@U…>`; a reply is threaded on the report's message (`thread_ts`); `edit` is `chat.update`.
+- `init` for Slack lists the channels the bot is a member of (`users.conversations`) and the
+  operator picks one; `doctor` checks the token with `auth.test` when a Slack project is registered.
+- `list_admins` returns the channel's members who are workspace admins or owners; `member_count`
+  the channel's member count.
+
 ## 4. The CLI and the fixed launcher
 
 All commands through one entry point, `bugs-bot <command> [--project <p>]` (the project
 defaults to the one whose `.bugs-bot.json` is in the current directory or a parent). Commands:
 today's (`pull`, `list`, `show`, `reply`, `edit`, `fixed`, `taken`, `done`, `post`,
 `backfill-authors`, `person`, `person-note`, `wait`, `triage`, `pending`, `agent-prompt`, `gate`)
-plus `init`, `remove`, `handover write|read`, `doctor`, `overdue`.
+plus `init`, `remove`, `handover write|read`, `doctor`, `overdue`, `person-lang`.
 
 `/bugs-bot:doctor` installs `~/.local/bin/bugs-bot`, a 3-line launcher that runs the newest
 installed version of the plugin's CLI, and checks: python3 ≥ 3.10, the token readable, the
@@ -200,7 +240,7 @@ claude-bugs-bot/
   skills/bugs-bot/SKILL.md          the protocol for launchers + « Talking to a reporter » + « The voice »
   agent/AGENT.md                    the agent's instructions (generic)
   bin/bugs-bot                      the CLI (python3, standard library only)
-  bugs_bot/ channel.py telegram.py pull.py project.py registry.py store.py people.py
+  bugs_bot/ channel.py channels.py telegram.py slack.py pull.py project.py registry.py store.py people.py
             handover.py agent.py gate.py cli.py
   pm2.config.js                     bugs-bot-pull
   tests/
@@ -236,8 +276,9 @@ Rehearsed first on a copy of `~/.torrentmate/tm-bugs/` with a test registry.
 - New: routing by chat id (two projects, an unregistered chat dropped and logged); `init`
   idempotent (re-run updates, never duplicates; `.git/info/exclude` line added once); registry
   add/remove; `handover write/read` (archive dated, read twice prints nothing new); the fixed
-  launcher picks the newest version; `gate --measure` with a stubbed gauge; Channel interface
-  exercised by a fake in every test (no network).
+  launcher picks the newest version; `gate --measure` with a stubbed gauge; Pull, init and the
+  report commands exercised through a fake `Channel`, each implementation through a fake transport
+  (no network); Slack: polling, threads, files, mentions, 429; per-person language; the note cap.
 - A guard test: no file of the plugin contains a project name (`TorrentMate`, `PersonalScraper`,
   `tm-design`, `torrentmate`) outside `docs/` and test fixtures.
 - Migration rehearsal (§ 6) scripted against a copy.
@@ -254,5 +295,6 @@ Rehearsed first on a copy of `~/.torrentmate/tm-bugs/` with a test registry.
 
 ## 9. Out of scope
 
-A second channel; shared people cards across projects; a web view of reports; several agents
+A third channel; several channels for one project; Slack's Socket Mode or Events API; shared
+people cards across projects; a web view of reports; several agents
 for one project; any change to the launcher protocol's phrases.

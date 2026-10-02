@@ -93,6 +93,15 @@ each pinned by a test in the phase that owns the code:
 | 4 | behaviour | `feat/p4-agent` (p3) | generic `AGENT.md` + `SKILL.md`, startup-prompt injection, `/bugs-bot:start`, `handover write\|read`, `gate --measure`, `deployed`, follow-ups after `follow_up_hours` (spec § 3.6), the project-name guard |
 | 5 | behaviour | `feat/p5-ops` (p4) | `pm2.config.js` (`bugs-bot-pull`), the migration script and its rehearsal test, the E2E script, README, CHANGELOG |
 | 6 | verification | `feat/p6-verify` (p5) | spec conformity section by section, E2E run, fixes of what it finds only |
+| 7 | conversion | `feat/p7-inbound` (`main`) | the Channel reads normalised messages (`poll` → `Batch`); the factory `channel_for`; Pull, init, people and the CLI free of Telegram's shape and helpers; tests through a fake `Channel` |
+| 8 | behaviour | `feat/p8-language-cap` (p7) | per-person `language` (recorded by Pull, `person-lang`, shown by `person`), « Corrigé : » from a language table, the agent writes in the person's language; `handover write` capped at 40 lines / 8 000 characters |
+| 9 | behaviour | `feat/p9-slack` (p8) | `channel` in the project file, registry keyed `<channel>:<chat_id>`, `SlackChannel` (polling, threads, files, mentions, 429), Pull reads both channels, `init --channel slack`, `doctor`'s Slack check, migration script and docs updated |
+| 10 | verification | `feat/p10-verify` (p9) | the conformity document updated for the amended sections, E2E with a fake Slack API beside the fake Bot API, fixes of what it finds only |
+
+Phases 7–10 follow the operator's rulings of 2026-10-02 (spec header « Amended »). Phases 1–6 are
+merged on `main`; Phase 7 branches from `main`. The project ships by **auto-merge** (operator,
+2026-10-02): each PR, once reviewed and its correction round verified, is squash-merged by the
+orchestrator.
 
 Worktrees: `git -C /Users/izno/dev/claude-bugs-bot worktree add /Users/izno/dev/claude-bugs-bot-wt/p<N> -b <branch> <base>`
 (made by the orchestrator; `workspace.sh create` is not used — brief). One writer per worktree.
@@ -568,12 +577,234 @@ and its output quoted in the PR.
 
 ---
 
+### Phase 7 — Normalised inbound messages behind the Channel (conversion)
+
+**Proof of the phase: nothing observable changed.** Same commands, outputs, files written
+(`report.json` byte for byte, `state.json`, `unregistered.json`, `projects.json`), same Telegram
+payloads. Existing tests keep their assertions; tests that drove Pull, init or `backfill-authors`
+through the HTTP transport may stay — new tests drive them through a fake `Channel`.
+
+**Files:**
+- Modify: `bugs_bot/channel.py` (the types below, `mask`), `bugs_bot/telegram.py` (parsers become
+  private; `poll`; may split into `telegram.py` + `telegram_inbound.py` to stay ≤ 300 lines),
+  `bugs_bot/pull.py`, `bugs_bot/init.py`, `bugs_bot/people.py`, `bugs_bot/reports.py`,
+  `bugs_bot/doctor.py`, `bugs_bot/cli.py`.
+- Create: `bugs_bot/channels.py` (the factory), `tests/fake_channel.py` (a `FakeChannel`
+  recording every call), `tests/test_inbound.py`.
+
+**Interfaces — Produces:**
+
+```python
+# bugs_bot/channel.py
+ChatId = int | str
+MessageId = int | str
+
+@dataclass(frozen=True)
+class Author:
+    id: int | str | None
+    username: str | None
+    name: str                 # what author_of gives today: username, else first name
+    language: str | None      # platform code as given (Telegram language_code); None when absent
+    is_bot: bool
+
+@dataclass(frozen=True)
+class Attachment:
+    file_id: str
+    ext: str                  # ".jpg", ".png" … as attachments() gives today
+
+@dataclass(frozen=True)
+class InboundMessage:
+    chat_id: ChatId
+    message_id: MessageId
+    date: float               # epoch seconds
+    author: Author
+    text: str                 # text, else caption, else ""
+    attachments: tuple[Attachment, ...]
+    group_key: str | None     # Telegram media_group_id; None when alone
+    thread_of: MessageId | None = None   # Slack thread parent (Phase 9); None for Telegram
+
+@dataclass(frozen=True)
+class Batch:
+    messages: list[InboundMessage]       # content only: no service message, no bot post
+    chats: dict[ChatId, dict]            # every chat seen: {"id", "title", "type"} as chats_seen gives today
+    migrations: dict[ChatId, ChatId]     # old -> new chat id (Telegram supergroup promotion)
+    cursor: dict                         # opaque, channel-owned; saved by the caller only
+
+class Channel(Protocol):
+    kind: str                                                    # "telegram"
+    def poll(self, cursor: dict | None, chats: list[ChatId], timeout: int) -> Batch: ...
+    def send(self, chat_id: ChatId, text: str, reply_to: MessageId | None = None, mention: Mention | None = None) -> dict: ...
+    def edit(self, chat_id: ChatId, message_id: MessageId, text: str, mention: Mention | None = None) -> dict: ...
+    def react(self, chat_id: ChatId, message_id: MessageId, emoji: str) -> None: ...
+    def get_file(self, file_id: str) -> bytes: ...
+    def list_admins(self, chat_id: ChatId) -> list[dict]: ...
+    def member_count(self, chat_id: ChatId) -> int: ...
+    @property
+    def secret(self) -> str | None: ...
+
+def mask(text: str, secret: str | None) -> str: ...   # moved from telegram.py, same behaviour
+
+# bugs_bot/channels.py — the one module naming the implementations
+def channel_for(kind: str, env: Mapping[str, str], transport: Transport) -> Channel: ...
+    # reads that kind's token and API root itself; BugsError on an unknown kind or a missing token
+def token_present(kind: str, env: Mapping[str, str]) -> bool: ...   # for doctor, never prints the token
+```
+
+`Mention.user_id` widens to `int | str | None`. `get_updates` leaves the protocol (it stays a
+`TelegramChannel` method used by `poll`). Telegram's cursor is `{"offset": int | None}`, stored as
+today's `offset` key of `~/.bugs-bot/state.json` (`Machine.load_cursor(kind) -> dict | None`,
+`Machine.save_cursor(kind, cursor)`; Telegram maps to `offset`, the file unchanged).
+`init.discover_groups` reads `Batch.chats` from `poll(cursor, [], 0)` and never saves the cursor.
+
+**Steps:**
+- [ ] `tests/fake_channel.py` + `tests/test_inbound.py`: `TelegramChannel.poll` on recorded updates
+  (photo, image document, media group, bot post, service message, migration) gives the expected
+  `Batch` — failing, then green. Commit.
+- [ ] A golden test: one recorded `getUpdates` batch through `cmd_pull` before the change writes
+  `report.json`, `state.json`, `unregistered.json`; the same files after — committed FIRST, green
+  on the old code, kept green throughout.
+- [ ] Move: `pull.py` (`build_report`, `cmd_pull`, `follow_migrations`, `clear_answered` call) to
+  `InboundMessage`/`Batch`; `chats_seen` → `TelegramChannel`; `init.py`; `people.py`
+  (`cmd_backfill_authors`); `reports.py`/`doctor.py` imports; `cli.py` and `pull.py`'s loops build
+  through `channel_for("telegram", env, transport)`. One `refactor(<module>): …` commit each, suite
+  green after each.
+- [ ] Pull, init and backfill tests through `FakeChannel` (no transport): routing of two projects
+  and an unregistered chat, a failed download keeping the cursor, init while Pull runs.
+
+**Test matrix:** all existing tests unchanged in their assertions; the golden test; `test_inbound.py`;
+the fake-Channel tests above. Guard: `grep -rn 'from bugs_bot.telegram\|import telegram' bugs_bot | grep -v 'channels.py'` → empty;
+`grep -rnE "update_id|migrate_to_chat_id|media_group_id|is_bot|\[.from.\]" bugs_bot | grep -v 'telegram'` → empty.
+
+**Definition of done:** PR `refactor: normalised inbound messages behind the channel` on `main`;
+suite green on 3.12 and 3.10; golden files identical; each module ≤ 300 lines.
+
+**Review focus:** a stored field that changed type or key (an `int` id becoming a `str`, `author`
+computed differently); a cursor saved by `init`; masking lost when `mask` moved; the factory
+reading the token anywhere else.
+
+---
+
+### Phase 8 — Per-person language and the handover cap (behaviour)
+
+**Files:** `bugs_bot/people.py`, `bugs_bot/pull.py`, `bugs_bot/reports.py`, `bugs_bot/handover.py`,
+`bugs_bot/parser.py`, `bugs_bot/cli.py`, `agent/AGENT.md`, `skills/bugs-bot/SKILL.md`; tests
+`tests/test_language.py`, `tests/test_handover.py`.
+
+**Interfaces — Produces:**
+
+```python
+# bugs_bot/people.py
+def record_language(store: Store, author: Author) -> None: ...
+    # sets the card's "language" from author.language (first two letters, lower case) when the card has none; never overwrites
+def cmd_person_lang(store: Store, ref: str, code: str) -> None: ...   # sets it (the agent's correction); code [a-z]{2}
+def language_of(store: Store, project_language: str, author_id: int | str | None, author: str) -> str: ...
+    # the card's language, else project_language
+
+# bugs_bot/reports.py
+FIXED_PREFIX: dict[str, str] = {"fr": "Corrigé : ", "en": "Fixed: "}   # unknown -> "en"
+
+# bugs_bot/handover.py
+NOTE_MAX_LINES = 40
+NOTE_MAX_CHARS = 8000
+def write_note(store: Store, text: str, now: float) -> Path: ...
+    # BugsError "handover note too long: <n> lines, <m> characters (limit 40 lines, 8000 characters)"; nothing written
+```
+
+CLI: `bugs-bot person-lang <report-id|author-id> <code>`; `person` prints `language: <code>` (or
+`language: unknown`). `cmd_fixed` takes the project's `language` and picks the prefix by
+`language_of`. Pull calls `record_language` for each kept message's author.
+
+`AGENT.md`: every message to a person is written in their language (`person <id>` shows it); when a
+person writes in another language than their card says, `person-lang` first. The project's
+`language` is the default only. The handover note: refused when too long → shorten, write again.
+
+**Test matrix:** language recorded on first sight, never overwritten (Pull twice, then a
+`person-lang`, then Pull again); `person` shows it; `fixed --note` in `fr` for a French card, `en`
+for an English card in a French project, project language for an unknown card, `en` for a language
+outside the table; the note at 40 lines / 8 000 characters accepted, 41 lines or 8 001 characters
+refused with nothing written and the previous unread note untouched; the AGENT.md rules pinned as
+text.
+
+**Definition of done:** PR `feat: per-person language and a capped handover note` on p7.
+
+**Review focus:** a card's language overwritten by Pull; the prefix chosen from the project instead
+of the person; a refused note leaving a partial file.
+
+---
+
+### Phase 9 — Slack (behaviour)
+
+**Files:** create `bugs_bot/slack.py` (≤ 300 lines; split if needed), `tests/test_slack.py`,
+`tests/http_server_fake_slack_api.py`; modify `bugs_bot/channels.py`, `bugs_bot/project.py`,
+`bugs_bot/registry.py`, `bugs_bot/store.py`, `bugs_bot/pull.py`, `bugs_bot/init.py`,
+`bugs_bot/doctor.py`, `bugs_bot/parser.py`, `commands/init.md`, `docs/migration/tm_bugs_to_bugs_bot.py`
+(registry key), `README.md`, `CHANGELOG.md`.
+
+**Interfaces — Produces:**
+
+```python
+# bugs_bot/channel.py
+Transport = Callable[..., tuple[int, bytes]]   # (url, payload, timeout=None, headers: dict | None = None)
+
+# bugs_bot/slack.py
+class SlackChannel:              # implements Channel; kind = "slack"
+    def __init__(self, token: str, transport: Transport, root: str = "https://slack.com/api") -> None: ...
+    # poll: conversations.history per chat since cursor[chat]["ts"], then conversations.replies of the
+    #   threads listed in cursor[chat]["threads"] (the open reports' message ts); messages oldest first
+    # cursor = {"<chat>": {"ts": str, "threads": {"<parent ts>": "<last reply ts>"}}}
+    # react: 👀 -> "eyes", 👌 -> "ok_hand", ✅ -> "white_check_mark", unknown -> BugsError
+    # send: chat.postMessage, thread_ts = reply_to; mention "<@U…> " prefix; returns {"message_id": ts, "text": …}
+    # get_file: url_private with "Authorization: Bearer <token>"
+    # HTTP 429: BugsError carrying Retry-After; the watch loop sleeps that long
+
+# bugs_bot/registry.py — keys "<channel>:<chat_id>"
+class Registry:
+    def entries(self) -> dict[tuple[str, ChatId], Entry]: ...
+    def add(self, channel: str, chat_id: ChatId, project: str, repo: Path) -> None: ...
+    def project_for(self, channel: str, chat_id: ChatId) -> Entry | None: ...
+
+# bugs_bot/project.py
+Project.channel: str   # "telegram" (default) | "slack"
+```
+
+Pull: one round = Telegram `poll` (held 50 s, 10 s while a Slack project is registered) then
+Slack `poll` of every Slack project; each cursor saved after its batch is on disk. Unregistered
+Slack channels are not logged (init lists them itself). `init --channel slack`: lists
+`users.conversations` (channels the bot is in) and takes `--chat <id>` or asks. `doctor`: for each
+channel kind with a registered project, the token present and `auth.test` (Slack) / `getMe`
+(Telegram) answering. Environment override `BUGS_BOT_SLACK_API_ROOT` (https or loopback, as
+`BUGS_BOT_API_ROOT`).
+
+**Test matrix:** every `Channel` method of `SlackChannel` against a fake transport (payloads,
+headers, thread_ts, mention, reaction names); poll: new top-level message → report, file → image,
+bot post skipped, thread reply → answer to the waiting report (clears `awaiting`), cursor advanced
+only by the caller; 429 → wait then retry; registry: a Telegram and a Slack project side by side,
+same chat id string never confused; a project file without `channel` reads as Telegram; migration
+script writes `telegram:<id>` keys; `init --channel slack` idempotent; the guard: Slack's URL and
+method names only in `slack.py`.
+
+**Definition of done:** PR `feat: Slack channel` on p8; suite green; `sh tests/e2e.sh` green.
+
+**Review focus:** a Slack `ts` compared as a float (precision loss); a thread reply turned into a new
+report; the token in a log line or an exception; Telegram's hold left at 50 s with Slack registered.
+
+---
+
+### Phase 10 — Verification of the amendment
+
+As Phase 6, on the amended sections (spec header « Amended »), criterion 6 re-judged; `tests/e2e.sh`
+extended to one Slack project on a fake Slack API on loopback beside the Telegram ones; the
+migration rehearsal re-run on a copy. A live Slack smoke test only if the operator provides a token
+and a test channel — otherwise said so in the document. PR `docs: conformity of the amendment` on p9.
+
+---
+
 ## After the build (orchestrator, not implementers)
 
 1. GitHub repository `LounisBou/claude-bugs-bot` (public, MIT) created when Phase 1's PR needs it;
    `main` pushed.
-2. Each PR: review session + norms check, one correction round, rebased, « ready » to the operator;
-   undraft and squash-merge are his.
+2. Each PR: review session + norms check, one correction round, rebased; then squash-merged by the
+   orchestrator (auto-merge, operator 2026-10-02).
 3. Marketplace: a PR on `LounisBou/claude-statusbar` adding `bugs-bot` (source github
    `LounisBou/claude-bugs-bot`); « Orch : optim plugin 5 » told.
 4. Release 0.1.0: on the operator's word.
