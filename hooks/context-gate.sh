@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 # The context gate, enforced by the harness rather than remembered by the model.
 #
-# Runs on every user prompt. Reads the session's measured context fill from the
-# gauge's tap tier and, at or past the gate, injects one line the session cannot
-# miss: an orchestrator succeeds at the next quiet boundary, an implementer
-# finishes its unit and stops. Below the gate it prints nothing.
+# Runs on every user prompt, and speaks only to orchestration sessions: those whose name,
+# given at launch (`--name`) or by a rename, starts with `Orch :`, `Agent :`, `Audit :` or
+# `Coord :` (hooks/session_name.py reads it, the same reading the stop gate uses). A session
+# the operator started by hand, or one whose name cannot be read, gets nothing at all: no
+# gate line, no « unmeasured » line, no model-drift line, no marker.
+#
+# Reads the session's measured context fill from the gauge's tap tier and, at or past the
+# gate, injects one line the session cannot miss, fitted to its role: an orchestrator
+# succeeds at the next quiet boundary, an agent finishes its unit and stops, an auditor
+# writes its one report and stops, the coordinator succeeds when no relay is in flight.
+# Below the gate it prints nothing.
 #
 # The gate is 80 % of the window, or 300,000 tokens on a window of 1,000,000 tokens or more:
 # the cached context is replayed on every turn, and the percent alone would let a session
@@ -34,6 +41,24 @@ payload="$(cat 2>/dev/null || true)"
 session_id="$(printf '%s' "$payload" | sed -n 's/.*"session_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
 session_id="${session_id:-${CLAUDE_CODE_SESSION_ID:-}}"
 [ -n "$session_id" ] || exit 0
+
+# The scope first: the role is the prefix of the session's name. No python3, no readable
+# name, no role: nothing is said.
+name=""
+if command -v python3 >/dev/null 2>&1; then
+    name="$(printf '%s' "$payload" | python3 -S "$HERE/session_name.py" 2>/dev/null | head -1)"
+fi
+case "$name" in
+    "Orch :"*)
+        role_line="Succeed at the next quiet boundary — run /orchestrator:succeed: spawn the successor in the operator's decision mode, then tell the user; do not ask." ;;
+    "Agent :"*)
+        role_line="Finish the unit in progress, report to your orchestrator with your measured context, and stop; no new phase is dispatched to you." ;;
+    "Audit :"*)
+        role_line="Write the one report with what you have read, and stop." ;;
+    "Coord :"*)
+        role_line="With no relay in flight, succeed as skills/coordination/SKILL.md « Your context » says, then tell the operator." ;;
+    *) exit 0 ;;
+esac
 
 reading="$(CLAUDE_CODE_SESSION_ID="$session_id" bash "$GAUGE" "$session_id" 2>/dev/null || true)"
 percent="$(printf '%s\n' "$reading" | sed -n 's/^context_percent=\([0-9]*\).*/\1/p' | head -1)"
@@ -94,5 +119,5 @@ elif [ "$percent" -ge "$GATE" ]; then
 else
     exit 0
 fi
-echo "CONTEXT GATE: this session is at ${tripped}. An orchestrator SUCCEEDS at the next quiet boundary — run /orchestrator:succeed: spawn the successor in the operator's decision mode, then tell the user; do not ask. An implementer finishes the unit in progress, reports, and stops; no new phase is dispatched to it."
+echo "CONTEXT GATE: this session is at ${tripped}. ${role_line}"
 exit 0

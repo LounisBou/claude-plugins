@@ -2356,9 +2356,16 @@ printf '{"session_id":"g-under","context_percent":70,"updated_epoch":%s}\n' "$no
 # only once a turn has answered — this is what tells the hook its first chance came.
 printf '{"type":"user","message":{"role":"user","content":"hi"}}\n' > "$GH/transcripts/no-turn.jsonl"
 printf '{"type":"user","message":{"role":"user","content":"hi"}}\n{"type":"assistant","message":{"role":"assistant","content":"hey"}}\n' > "$GH/transcripts/past-turn.jsonl"
-gate() { printf '{"session_id":"%s"}' "$1" | CLAUDE_CONFIG_DIR="$GH" bash "$ROOT/hooks/context-gate.sh"; }
-gate_t() { printf '{"session_id":"%s","transcript_path":"%s"}' "$1" "$2" | CLAUDE_CONFIG_DIR="$GH" bash "$ROOT/hooks/context-gate.sh"; }
-check "past the gate the hook orders the succession" "1" "$(gate g-hi | grep -c 'SUCCEEDS at the next quiet boundary')"
+# The gate speaks only to orchestration sessions: it reads the session's name the way the
+# stop gate does (the process table's `--name`, else the transcript's last rename), and the
+# suite's stand-in for `ps` is a file. Unless a check says otherwise the session is an
+# orchestrator.
+gh_ps() { printf '/dev/ttys900 host-cli %s\n' "$1" > "$GH/ps"; }
+gh_ps '--name Orch : f [a1b2c3]'
+GH_ENV=(CLAUDE_CONFIG_DIR="$GH" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$GH/ps")
+gate() { printf '{"session_id":"%s"}' "$1" | env "${GH_ENV[@]}" bash "$ROOT/hooks/context-gate.sh"; }
+gate_t() { printf '{"session_id":"%s","transcript_path":"%s"}' "$1" "$2" | env "${GH_ENV[@]}" bash "$ROOT/hooks/context-gate.sh"; }
+check "past the gate the hook orders the succession" "1" "$(gate g-hi | grep -c 'Succeed at the next quiet boundary')"
 check "under the gate the hook is silent" "" "$(gate g-lo)"
 check "the default gate is 80, not 60: 70 stays under it" "" "$(gate g-under)"
 check "unmeasured with no transcript at all prints nothing yet" "" "$(gate g-none)"
@@ -2377,11 +2384,11 @@ tap g-200k-under 79 158000 200000
 tap g-200k-at 80 160000 200000
 check "on a 1M window, 299,999 tokens stays under the gate" "" "$(gate g-1m-under)"
 check "on a 1M window, 300,000 tokens trips it, naming the tokens" "1" \
-  "$(gate g-1m-at | grep -c 'this session is at 300,000 tokens (gate 300,000 on a 1M window)\. An orchestrator SUCCEEDS')"
+  "$(gate g-1m-at | grep -c 'this session is at 300,000 tokens (gate 300,000 on a 1M window)\. Succeed at the next quiet boundary')"
 check "on a 200k window, 79 % stays under the gate" "" "$(gate g-200k-under)"
 check "on a 200k window, 80 % trips it, naming the percent" "1" \
-  "$(gate g-200k-at | grep -c 'this session is at 80% (gate 80%)\. An orchestrator SUCCEEDS')"
-gate_env() { local sid="$1"; shift; printf '{"session_id":"%s"}' "$sid" | env CLAUDE_CONFIG_DIR="$GH" "$@" bash "$ROOT/hooks/context-gate.sh"; }
+  "$(gate g-200k-at | grep -c 'this session is at 80% (gate 80%)\. Succeed at the next quiet boundary')"
+gate_env() { local sid="$1"; shift; printf '{"session_id":"%s"}' "$sid" | env "${GH_ENV[@]}" "$@" bash "$ROOT/hooks/context-gate.sh"; }
 check "ORCHESTRATOR_CONTEXT_GATE_TOKENS raises the token gate" "" \
   "$(gate_env g-1m-at ORCHESTRATOR_CONTEXT_GATE_TOKENS=300001)"
 check "ORCHESTRATOR_CONTEXT_GATE_TOKENS lowers it" "1" \
@@ -2403,6 +2410,107 @@ check "the first reading of the model is silent" "" "$(gate g-drift)"
 printf '{"type":"assistant","message":{"model":"b-model","usage":{"input_tokens":1,"cache_creation_input_tokens":1,"cache_read_input_tokens":1}}}\n' >> "$GH/projects/p/g-drift.jsonl"
 check "a changed model is said once, naming both" "1" "$(gate g-drift | grep -c 'MODEL DRIFT: this session now answers as b-model; it answered as a-model until now')"
 check "and not again while it holds" "" "$(gate g-drift)"
+# A line per role, and nothing for a session the operator started by hand: the role is the
+# prefix of the session's name, `Orch :`, `Agent :`, `Audit :` or `Coord :`.
+role_line() { gh_ps "--name $1"; gate g-hi; }
+check "an orchestrator is told to succeed, without asking" "1" \
+  "$(role_line 'Orch : f [a1b2c3]' | grep -c '^CONTEXT GATE: this session is at 85% (gate 80%)\. Succeed at the next quiet boundary — run /orchestrator:succeed: spawn the successor in the operator.s decision mode, then tell the user; do not ask\.$')"
+check "an agent is told to finish its unit, report its context, and stop" "1" \
+  "$(role_line 'Agent : one [b2c3d4]' | grep -c '^CONTEXT GATE: this session is at 85% (gate 80%)\. Finish the unit in progress, report to your orchestrator with your measured context, and stop; no new phase is dispatched to you\.$')"
+check "an auditor is told to write its one report and stop" "1" \
+  "$(role_line 'Audit : method [c3d4e5]' | grep -c '^CONTEXT GATE: this session is at 85% (gate 80%)\. Write the one report with what you have read, and stop\.$')"
+check "the coordinator is told to succeed when no relay is in flight" "1" \
+  "$(role_line 'Coord : machine' | grep -c '^CONTEXT GATE: this session is at 85% (gate 80%)\. With no relay in flight, succeed as skills/coordination/SKILL\.md « Your context » says, then tell the operator\.$')"
+check "each role gets exactly one line" "1|1|1|1" \
+  "$(for n in 'Orch : f' 'Agent : one' 'Audit : m' 'Coord : machine'; do role_line "$n" | grep -c .; done | paste -sd'|' -)"
+for n in 'Orch : f [a1b2c3]' 'Agent : one [b2c3d4]' 'Audit : method [c3d4e5]' 'Coord : machine'; do
+  gh_ps "--name $n"
+  check "below the gate, $n hears nothing" "" "$(gate g-lo)"
+done
+
+# A hand-started session is out of scope: no gate line, no « unmeasured » line, no drift
+# line, and no marker written.
+for n in 'my scratch session' 'Orchestra' 'orch : lower' 'Orch: nospace'; do
+  gh_ps "--name $n"
+  check "a session named « $n » gets nothing at the gate" "" "$(gate g-hi)"
+  check "a session named « $n » gets nothing when unmeasured" "" "$(gate_t g-turn-hand "$GH/transcripts/past-turn.jsonl")"
+done
+gh_ps ''
+check "a session with no readable name gets nothing at the gate" "" "$(gate g-hi)"
+check "a session with no readable name gets nothing when unmeasured" "" "$(gate_t g-turn-hand2 "$GH/transcripts/past-turn.jsonl")"
+check "and the unmeasured marker is not written for it" "" "$(ls "$GH/claude-orchestrator/ctx" | grep 'g-turn-hand')"
+printf '{"type":"assistant","message":{"model":"a-model","usage":{"input_tokens":1,"cache_creation_input_tokens":1,"cache_read_input_tokens":1}}}\n' > "$GH/projects/p/g-drift2.jsonl"
+printf '{"session_id":"g-drift2","context_percent":30,"updated_epoch":%s}\n' "$now" > "$GH/claude-orchestrator/ctx/g-drift2.json"
+gh_ps '--name Orch : f [a1b2c3]'
+gate g-drift2 > /dev/null
+printf '{"type":"assistant","message":{"model":"b-model","usage":{"input_tokens":1,"cache_creation_input_tokens":1,"cache_read_input_tokens":1}}}\n' >> "$GH/projects/p/g-drift2.jsonl"
+gh_ps '--name my scratch session'
+check "a hand-started session gets nothing on a model change" "" "$(gate g-drift2)"
+check "and its model marker is left as it was" "a-model" "$(cat "$GH/claude-orchestrator/ctx/g-drift2.model")"
+gh_ps '--name Orch : f [a1b2c3]'
+
+# A name read from the transcript's last rename is in scope, the launcher's own first.
+gh_ps ''
+printf '%s\n' '{"type":"custom-title","customTitle":"my scratch"}' '{"type":"custom-title","customTitle":"Agent : one [b2c3d4]"}' > "$GH/transcripts/renamed.jsonl"
+check "a name read from the transcript's last custom-title is in scope" "1" \
+  "$(gate_t g-hi "$GH/transcripts/renamed.jsonl" | grep -c 'Finish the unit in progress')"
+printf '%s\n' '{"type":"custom-title","customTitle":"Agent : one [b2c3d4]"}' '{"type":"custom-title","customTitle":"my scratch"}' > "$GH/transcripts/renamed.jsonl"
+check "renamed away from a role, the session is out of scope" "" "$(gate_t g-hi "$GH/transcripts/renamed.jsonl")"
+gh_ps '--name Orch : f [a1b2c3]'
+
+# The reading as a script: the name on one line, or nothing, and never a failure.
+sn() { local out; out="$(printf '%s' "$1" | env "${GH_ENV[@]}" "$py" "$ROOT/hooks/session_name.py")"; echo "$out|$?"; }
+check "session_name.py prints the launcher's name" "Orch : f [a1b2c3]|0" "$(sn '{"session_id":"x"}')"
+gh_ps ''
+check "session_name.py prints the transcript's last rename when the launcher has none" "Agent : one [b2c3d4]|0" \
+  "$(printf '%s\n' '{"type":"custom-title","customTitle":"Agent : one [b2c3d4]"}' > "$GH/transcripts/sn.jsonl"; sn "{\"transcript_path\":\"$GH/transcripts/sn.jsonl\"}")"
+check "session_name.py prints nothing, exit 0, when no name is readable" "|0" "$(sn '{"session_id":"x"}')"
+check "session_name.py prints nothing, exit 0, on a payload that is no JSON" "|0" "$(sn 'not json {{{')"
+check "session_name.py prints nothing, exit 0, on an empty payload" "|0" "$(sn '')"
+check "session_name.py prints nothing, exit 0, on a payload that is no object" "|0" "$(sn '[1,2]')"
+
+# A name with irregular spacing is printed normalised, and a normalised name is in scope.
+printf '%s\n' '{"type":"custom-title","customTitle":"Orch  :  f"}' > "$GH/transcripts/spacing.jsonl"
+check "session_name.py prints a name with irregular spacing normalised" "Orch : f|0" \
+  "$(sn "{\"transcript_path\":\"$GH/transcripts/spacing.jsonl\"}")"
+check "a name with irregular spacing is in scope for the gate" "1" \
+  "$(gate_t g-hi "$GH/transcripts/spacing.jsonl" | grep -c 'Succeed at the next quiet boundary')"
+
+# The reading's misses are logged, one line each, and never fail the script: a session whose
+# name cannot be read would otherwise go dark with no trace. A session with no name at all is
+# the normal case and leaves nothing.
+GLOG="$GH/claude-orchestrator/context-gate.log"
+longname='Orch : a name run into the prompt that follows it, far past any name'
+check "no name at all: nothing is logged" "" \
+  "$(gh_ps ''; rm -f "$GLOG"; sn '{"session_id":"x"}' >/dev/null; cat "$GLOG" 2>/dev/null)"
+gh_ps "--name $longname"
+printf '%s\n' '{"type":"user"}' > "$GH/transcripts/no-rename.jsonl"
+rm -f "$GLOG"
+unread_payload="$(printf '{"session_id":"s-unread","transcript_path":"%s"}' "$GH/transcripts/no-rename.jsonl")"
+check "an unreadable name with no rename in the transcript: nothing printed, exit 0" "|0" \
+  "$(sn "$unread_payload")"
+check "and it is logged, one line, naming the session and the miss" "1|1" \
+  "$(echo "$(grep -c . "$GLOG")|$(grep -c ' | s-unread | .*unreadable' "$GLOG")")"
+check "an unreadable name that the transcript renames is not a miss: nothing logged" "" \
+  "$(rm -f "$GLOG"; sn "{\"transcript_path\":\"$GH/transcripts/spacing.jsonl\"}" >/dev/null; cat "$GLOG" 2>/dev/null)"
+# The launcher's module out of reach: the script copied where its sibling tree is absent.
+mkdir -p "$GH/bare/hooks"; cp "$ROOT/hooks/session_name.py" "$GH/bare/hooks/"
+rm -f "$GLOG"
+check "a launcher that cannot be loaded: nothing printed, exit 0" "|0" \
+  "$(out="$(printf '{"session_id":"s-nolaunch"}' | env "${GH_ENV[@]}" "$py" "$GH/bare/hooks/session_name.py")"; echo "$out|$?")"
+check "and it is logged, naming the session and the module" "1|1" \
+  "$(echo "$(grep -c . "$GLOG")|$(grep -c ' | s-nolaunch | .*cannot be loaded' "$GLOG")")"
+# The log lives where the stop gate's does, and a log that cannot be written never fails the script.
+rm -f "$GLOG"
+check "ORCHESTRATOR_STATE_DIR moves the log" "1" \
+  "$(printf '{"session_id":"s-moved"}' | env "${GH_ENV[@]}" ORCHESTRATOR_STATE_DIR="$GH/moved" "$py" "$GH/bare/hooks/session_name.py"; grep -c 's-moved' "$GH/moved/context-gate.log")"
+: > "$GH/not-a-dir"
+check "a log that cannot be written: nothing printed, exit 0" "|0" \
+  "$(out="$(printf '{"session_id":"s-ro"}' | env "${GH_ENV[@]}" ORCHESTRATOR_STATE_DIR="$GH/not-a-dir/x" "$py" "$GH/bare/hooks/session_name.py")"; echo "$out|$?")"
+check "the hook still says nothing for the session whose miss it logged" "" "$(gate g-hi)"
+# The interpreter is started without its site import: about a hundred milliseconds, on every prompt.
+check "the hook runs the reading with python3 -S" "1" "$(grep -c 'python3 -S "\$HERE/session_name\.py"' "$ROOT/hooks/context-gate.sh")"
+gh_ps '--name Orch : f [a1b2c3]'
 rm -rf "$GH"
 
 echo "== context threshold sweep =="
@@ -2568,7 +2676,7 @@ echo "== stop gate hook =="
 SG="$WORK/stop-gate"
 SGB="$SG/bin"; SGS="$SG/state"; SGP="$SG/sgproj"
 mkdir -p "$SG/hooks" "$SG/skills/iterm-agents/scripts" "$SG/skills/orchestrator/scripts" "$SGB" "$SGS/chains" "$SGP"
-cp "$ROOT/hooks/stop-gate.sh" "$ROOT/hooks/stop_gate.py" "$SG/hooks/" 2>/dev/null
+cp "$ROOT/hooks/stop-gate.sh" "$ROOT/hooks/stop_gate.py" "$ROOT/hooks/session_name.py" "$SG/hooks/" 2>/dev/null
 cp "$ROOT/skills/iterm-agents/scripts/iterm_agent.py" "$SG/skills/iterm-agents/scripts/"
 printf '#!/bin/bash\n[ "$1" = list ] || exit 1\ncat "%s/listing" 2>/dev/null || { echo "list: no terminal backend could serve this" >&2; exit 1; }\n' "$SG" \
   > "$SG/skills/iterm-agents/scripts/iterm-agent.sh"
