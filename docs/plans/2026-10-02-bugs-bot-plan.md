@@ -94,7 +94,7 @@ each pinned by a test in the phase that owns the code:
 | 5 | behaviour | `feat/p5-ops` (p4) | `pm2.config.js` (`bugs-bot-pull`), the migration script and its rehearsal test, the E2E script, README, CHANGELOG |
 | 6 | verification | `feat/p6-verify` (p5) | spec conformity section by section, E2E run, fixes of what it finds only |
 | 7 | conversion | `feat/p7-inbound` (`main`) | the Channel reads normalised messages (`poll` → `Batch`); the factory `channel_for`; Pull, init, people and the CLI free of Telegram's shape and helpers; tests through a fake `Channel` |
-| 8 | behaviour | `feat/p8-language-cap` (p7) | per-person `language` (recorded by Pull, `person-lang`, shown by `person`), « Corrigé : » from a language table, the agent writes in the person's language; `handover write` capped at 40 lines / 8 000 characters |
+| 8 | behaviour | `feat/p8-language-cap` (p7) | per-person `language` (recorded by Pull, `person-lang`, shown by `person`), « Corrigé : » from a language table, the agent writes in the person's language; `handover write` capped at 40 lines / 8 000 characters; one question at a time per person (spec § 3.5): `reply --awaits` refused while the person awaits another answer, the question queued, `wait` prints `ask <id>` |
 | 9 | behaviour | `feat/p9-slack` (p8) | `channel` in the project file, registry keyed `<channel>:<chat_id>`, `SlackChannel` (polling, threads, files, mentions, 429), Pull reads both channels, `init --channel slack`, `doctor`'s Slack check, migration script and docs updated |
 | 10 | verification | `feat/p10-verify` (p9) | the conformity document updated for the amended sections, E2E with a fake Slack API beside the fake Bot API, fixes of what it finds only |
 
@@ -718,7 +718,19 @@ CLI: `bugs-bot person-lang <report-id|author-id> <code>`; `person` prints `langu
 person writes in another language than their card says, `person-lang` first. The project's
 `language` is the default only. The handover note: refused when too long → shorten, write again.
 
-**Test matrix:** language recorded on first sight, never overwritten (Pull twice, then a
+**One question at a time** (spec § 3.5): the card gains `questions: [{"report": id, "text": str, "queued": iso}]`.
+`reply <id> "<text>" --awaits` to an author who already has an `awaiting` on ANOTHER open report:
+nothing posted, the question appended to their queue, exit 0 with the line `queued <id>: <author>
+already awaits <other id>`. When `clear_answered` lifts their wait, the oldest queued question
+surfaces: `wait` prints `ask <report-id>` and the agent posts it (`reply … --awaits`), in the voice,
+from the current state of that subject. `follow-up`/`unanswered` keep their meaning; a reminder is
+the question in flight, not a new one. `AGENT.md`: one question per message, one subject per
+person at a time; the other subjects worked on in parallel without asking.
+
+**Test matrix:** one question at a time — a second `--awaits` to the same person on another report
+queued, not posted; a non-awaiting reply to them still posted; their answer → `wait` prints `ask`;
+two people never block each other; a queued question on a report closed meanwhile dropped. Then:
+language recorded on first sight, never overwritten (Pull twice, then a
 `person-lang`, then Pull again); `person` shows it; `fixed --note` in `fr` for a French card, `en`
 for an English card in a French project, project language for an unknown card, `en` for a language
 outside the table; the note at 40 lines / 8 000 characters accepted, 41 lines or 8 001 characters

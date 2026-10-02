@@ -176,6 +176,15 @@ launcher, wait armed).
   the person writes in another language. Every message to a person is written in their language;
   the CLI's own fixed words (« Corrigé : » of `fixed --note`) come from a table per language
   (`fr`, `en`), the person's language first, then the project's `language`, then `en`.
+- **One question at a time (operator, 2026-10-02):** « Il faut que l'agent évite de poser trop de
+  question d'un coup à un utilisateur, il pose une question à la fois, même si l'utilisateur à lui
+  même déclenché plusieurs sujet, l'agent traite les sujets en paralléle mais n'intéroge
+  l'utilisateur que sur 1 sujet à la fois, car un utilisateur peut se sentir aggressé par trop de
+  question en même temps. » The agent works on every subject a person raised, but asks that person
+  about ONE subject at a time, one question per message. The CLI holds it: `reply --awaits` to a
+  person who already awaits an answer on another report is refused and the question is queued on
+  their card (`questions`); when they answer, `wait` hands the next queued question to the agent
+  (`ask <report-id>`). A follow-up reminder (§ 3.6) counts as the one question in flight.
 
 ### 3.6 Follow-ups (operator, 2026-10-02)
 
