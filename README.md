@@ -112,7 +112,8 @@ sh tests/e2e.sh           # two Telegram projects and one Slack project through 
 
 The end-to-end script starts its fake servers on free ports of 127.0.0.1 and kills them on every
 way out — success, failure, signal. `E2E_FORCE_FAIL=1 sh tests/e2e.sh` fails half-way on purpose to
-show it.
+show it. It also shadows `ps` with an empty process table, so a real Pull running on the machine
+does not change its result.
 
 ## License
 

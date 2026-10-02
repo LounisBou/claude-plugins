@@ -5,7 +5,8 @@
 #   sh tests/e2e.sh                    prints "E2E OK" and exits 0
 #   E2E_FORCE_FAIL=1 sh tests/e2e.sh   fails half-way on purpose, to show the server is killed anyway
 #
-# Touches nothing outside its own temporary directory: no real bugs home, no network, no PM2.
+# Touches nothing outside its own temporary directory: no real bugs home, no network, no PM2, and
+# it does not see a real Pull running on the host (it shadows `ps`).
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -43,6 +44,14 @@ BUGS_BOT_ENV_FILE="$WORK/token.env"
 BUGS_BOT_CLAUDE_DIR="$WORK/claude"
 BUGS_BOT_LAUNCHER_DIR="$WORK/launcher"
 export BUGS_BOT_HOME BUGS_BOT_ENV_FILE BUGS_BOT_CLAUDE_DIR BUGS_BOT_LAUNCHER_DIR
+
+# init and doctor read the host's process table by name to find a running Pull; a real one on this
+# machine must not count here, so `ps` is shadowed by one that prints no process (this run starts no Pull).
+mkdir "$WORK/bin"
+printf '#!/bin/sh\nexit 0\n' > "$WORK/bin/ps"
+chmod +x "$WORK/bin/ps"
+PATH="$WORK/bin:$PATH"
+export PATH
 SLACK_TOKEN="xoxb-0000-1111-FakeSlackTokenForE2E"
 printf 'TELEGRAM_BOT_TOKEN=%s\nSLACK_BOT_TOKEN=%s\n' "$TOKEN" "$SLACK_TOKEN" > "$BUGS_BOT_ENV_FILE"
 
