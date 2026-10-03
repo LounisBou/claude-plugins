@@ -24,6 +24,14 @@ from ITERM_SESSION_ID, the same id the launcher stores as the owner). An agent's
 the activity glyph its tab title carries in the listing: `✳` idle, a spinner glyph busy, no
 glyph at all no agent running there.
 
+Check 1 first refuses, whatever the machine line says and whatever another agent is doing,
+while an agent of this orchestrator is idle and its pull request is OPEN or MERGED: its
+delivery is over, its tab is only left behind, and the refusal names it, with « stand it down
+now » or, if the agent waits on a question, « answer it ». The pull request is found from the
+agent's tty alone: the working directory of the host process there (the launcher's
+`host_cli_cwd`), that checkout's branch, and one `gh pr view <branch> --json number,state` per idle agent, none for a busy
+one. A read that fails or runs past the deadline is a log line and counts as no pull request.
+
 Check 2, the real CI state, runs only when Check 1 let the stop pass. Each open pull
 request of the operator's own (`--author @me`) in the session's repository whose head differs from the head this hook last
 reported for this session is read with `gh pr checks`; any check pending or failing refuses the stop with the real
@@ -115,6 +123,8 @@ NOTHING = ("Nothing will wake you: no agent of yours is running. Launch what you
 MALFORMED = ("Your last line is not the machine line: end the message with the line "
              "waiting: operator — blocks: <what it blocks>, or with waiting: done, "
              "as the message's last line, no markup.")
+IDLE_DELIVERED = ("Idle with its pull request open or merged: %s. "
+                  "Stand it down now — or, if it waits on a question you have not answered, answer it.")
 IDLE_ONE = "%s is idle: its notice was spent. Read its report or relaunch it."
 IDLE_MANY = "%s are idle: their notices were spent. Read their reports or relaunch them."
 QUESTION = ("Your question blocks nothing declared: advance everything that can advance; "
@@ -199,7 +209,7 @@ def label(row):
 # --- check 1 ----------------------------------------------------------------------------
 
 def own_agents(rows, own_tty, who):
-    """(label, idle|busy) for each agent of this orchestrator whose tab runs one."""
+    """(label, idle|busy, tty) for each agent of this orchestrator whose tab runs one."""
     iterm_agent = launcher()
     owner = os.environ.get("ITERM_SESSION_ID", "").rpartition(":")[2]
     if not owner:
@@ -214,8 +224,49 @@ def own_agents(rows, own_tty, who):
         row = by_tty.get(entry["tty"])
         state = activity(row["title"]) if row else None
         if state:
-            agents.append((label(row), state))
+            agents.append((label(row), state, entry["tty"]))
     return agents
+
+
+def pull_request_of(tty, who):
+    """(number, state) of the pull request of the branch checked out where the agent on `tty`
+    works, or None. One `gh` call; the working directory and the branch are local reads. Any
+    read that fails, or runs past the deadline (tested first, before the launcher's own reads),
+    is one log line and no pull request."""
+    if time.monotonic() - STARTED > DEADLINE:
+        log(who, "error", "pull request of %s unread: the overall deadline of %gs passed before "
+            "the launcher's reads" % (tty, DEADLINE))
+        return None
+    try:
+        cwd = launcher().host_cli_cwd(tty)
+        if not cwd:
+            return None
+        out, _, code = run(["git", "-C", cwd, "symbolic-ref", "--short", "-q", "HEAD"], what="git")
+        branch = out.strip()
+        if code != 0 or not branch:
+            return None
+        out, err, code = run(["gh", "pr", "view", branch, "--json", "number,state"], cwd=cwd,
+                             what="gh pr view")
+        if code != 0:
+            return None
+        pr = json.loads(out)
+        return str(pr["number"]), str(pr["state"])
+    except (Unread, ValueError, KeyError, TypeError) as exc:
+        log(who, "error", "pull request of %s unread: %s" % (tty, exc))
+        return None
+
+
+def delivered_idle(agents, who):
+    """`<label> (pull request #n, STATE)` for each idle agent whose pull request is open or
+    merged: its delivery is over and its tab is only left behind."""
+    found = []
+    for name, state, tty in agents:
+        if state != "idle":
+            continue
+        pr = pull_request_of(tty, who)
+        if pr and pr[1] in ("OPEN", "MERGED"):
+            found.append("%s (pull request #%s, %s)" % (name, pr[0], pr[1]))
+    return found
 
 
 def normalise(line):
@@ -286,7 +337,11 @@ def project_checkouts(cwd):
 def check_wake(rows, own_tty, message, cwd, who, session_id):
     """None when something will wake the orchestrator, else (case, reason)."""
     agents = own_agents(rows, own_tty, who)
-    if any(state == "busy" for _, state in agents):
+    # Before everything else: neither a busy agent beside it nor a declared block lifts it.
+    delivered = delivered_idle(agents, who)
+    if delivered:
+        return "idle-delivered", IDLE_DELIVERED % ", ".join(delivered)
+    if any(state == "busy" for _, state, _ in agents):
         return None
     last = machine_line(message)
     matched = MACHINE_LINE.match(last)
@@ -294,7 +349,7 @@ def check_wake(rows, own_tty, message, cwd, who, session_id):
         log(who, "check1", "blocks", matched.group(1))
         return None
     if matched:
-        left = project_checkouts(cwd) + [name for name, _ in agents]
+        left = project_checkouts(cwd) + [name for name, _, _ in agents]
         deferred = open_rows(session_id)
         if not left and not deferred:
             return None
@@ -306,7 +361,7 @@ def check_wake(rows, own_tty, message, cwd, who, session_id):
         return "not-done", " ".join(reasons)
     if agents:
         form = IDLE_ONE if len(agents) == 1 else IDLE_MANY
-        return "idle-agents", form % ", ".join(name for name, _ in agents)
+        return "idle-agents", form % ", ".join(name for name, _, _ in agents)
     if last.lower().startswith("waiting") and LOOKS_DECLARED.search(last):
         return "malformed-machine-line", MALFORMED
     if last.lower().startswith("waiting:") or last.endswith("?"):

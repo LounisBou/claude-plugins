@@ -15,6 +15,10 @@
 # session reference sitting beside the real one, inside the rule whose point is that there
 # is exactly one address.
 #
+# Check 9 also refuses a duty ordered after the delivery in an implementer brief: the
+# phrases that keep a finished agent's tab idle (stand by, stay until merged, clean up
+# after the merge).
+#
 # What it CANNOT check: whether the scope is right, whether the contracts are the ones the
 # next phase consumes, whether the tier fits the work. Those stay the orchestrator's, and
 # a green lint is not an approved brief.
@@ -103,20 +107,10 @@ if is_class 'REVIEW agent'; then
         || say 1 "no norms-check: report line: the round's report must end on 'norms-check: tool <head>' or 'norms-check: none <head>', which is what the orchestrator records"
 fi
 
-# 7. An agent that ends its turn waiting for a run loses the work: the single most
-#    expensive failure mode observed. A clause that FORBIDS the background reads the
-#    opposite way and must raise nothing — "don't", "do not", "never", "no", "not" and
-#    "forbid(den)" name it — but only inside the trigger's own clause, before it: "never
-#    skip tests; run the suite in the background" is an order. Clauses end on `;`, `.`,
-#    `,` or `:` followed by a space, so a file name or a path is not cut in two. A tool
-#    parameter set to false (`run_in_background: false`) is the opposite of an order. One
-#    awk pass over the file, not a shell loop that forks a handful of processes per line:
-#    the per-line version measurably slowed the suite, which lints the same templates
-#    dozens of times over.
-while IFS=$'\t' read -r bg_n bg_msg; do
-    [ -n "${bg_n:-}" ] || continue
-    say "$bg_n" "$bg_msg"
-done < <(awk '
+# The awk helpers shared by the checks that must not read a forbidding clause as an order.
+# Both passes run under LC_ALL=C: under a UTF-8 locale a multibyte character (an em dash, a
+# guillemet) before a phrase made the byte-offset arithmetic below blind to it.
+AWK_CLAUSES='
     # Is the text before position p, from the start of its clause, forbidding?
     function negated(text, p,   head, q, start) {
         head = substr(text, 1, p - 1)
@@ -135,6 +129,22 @@ done < <(awk '
         }
         return 0
     }
+'
+
+# 7. An agent that ends its turn waiting for a run loses the work: the single most
+#    expensive failure mode observed. A clause that FORBIDS the background reads the
+#    opposite way and must raise nothing — "don't", "do not", "never", "no", "not" and
+#    "forbid(den)" name it — but only inside the trigger's own clause, before it: "never
+#    skip tests; run the suite in the background" is an order. Clauses end on `;`, `.`,
+#    `,` or `:` followed by a space, so a file name or a path is not cut in two. A tool
+#    parameter set to false (`run_in_background: false`) is the opposite of an order. One
+#    awk pass over the file, not a shell loop that forks a handful of processes per line:
+#    the per-line version measurably slowed the suite, which lints the same templates
+#    dozens of times over.
+while IFS=$'\t' read -r bg_n bg_msg; do
+    [ -n "${bg_n:-}" ] || continue
+    say "$bg_n" "$bg_msg"
+done < <(LC_ALL=C awk "$AWK_CLAUSES"'
     BEGIN { infence = 0 }
     {
         line = $0
@@ -156,6 +166,60 @@ done < <(awk '
         }
     }
 ' "$brief" 2>/dev/null || true)
+
+# 9. An implementer's duties end at its delivery: the final report, then the stand-down.
+#    A brief that orders anything after it (stand by, stay until merged, clean up after the
+#    merge) leaves a finished tab idle for hours, and nothing refused those briefs or the
+#    orchestrator's stop with those agents idle. Post-merge cleanup is the orchestrator's and
+#    the sweep's; a red after delivery goes to a fresh session. A clause that FORBIDS the duty
+#    ("never stand by") reads the opposite way and raises nothing, by the same rule as
+#    check 7. One finding per phrase and line; the cleanup phrase covers its own "after merge".
+#    A phrase quoted (backticks, guillemets) or inside a fence is a mention, not an order.
+if is_class implementer; then
+    while IFS=$'\t' read -r pd_n pd_msg; do
+        [ -n "${pd_n:-}" ] || continue
+        say "$pd_n" "$pd_msg"
+    done < <(LC_ALL=C awk "$AWK_CLAUSES"'
+        # The text with every quoted span removed: a phrase in backticks or in guillemets (two
+        # bytes each under the C locale) is mentioned, not ordered. An unclosed opener is kept.
+        function cut(text, opener, closer,   a, rest, b) {
+            while ((a = index(text, opener)) > 0) {
+                rest = substr(text, a + length(opener))
+                b = index(rest, closer)
+                if (b == 0) break
+                text = substr(text, 1, a - 1) " " substr(rest, b + length(closer))
+            }
+            return text
+        }
+        function unquoted(text) {
+            return cut(cut(text, "`", "`"), "\302\253", "\302\273")
+        }
+        BEGIN {
+            infence = 0
+            n = 0
+            phrase[++n] = "clean(-| )?up[^.;]*after (the )?merge"; name[n] = "cleanup after merge"
+            phrase[++n] = "(^|[^a-z])after (the )?merge"; name[n] = "after merge"; plain[n] = 1
+            phrase[++n] = "(^|[^a-z])once merged"; name[n] = "once merged"
+            phrase[++n] = "(^|[^a-z])stand by([^a-z]|$)"; name[n] = "stand by"
+            phrase[++n] = "(^|[^a-z])standing by([^a-z]|$)"; name[n] = "standing by"
+            phrase[++n] = "(^|[^a-z])stay until merged"; name[n] = "stay until merged"
+            phrase[++n] = "(^|[^a-z])stay available"; name[n] = "stay available"
+        }
+        {
+            if ($0 ~ /^[[:space:]]*```/) { infence = !infence; next }
+            if (infence) next
+            lower = unquoted(tolower($0))
+            cleanup = 0
+            for (i = 1; i <= n; i++) {
+                if (plain[i] && cleanup) continue
+                if (ordered(lower, phrase[i])) {
+                    if (i == 1) cleanup = 1
+                    printf "%d\tduty after delivery (%s): an implementer is stood down at its final report; post-merge work is the orchestrator'"'"'s and the sweep'"'"'s\n", NR, name[i]
+                }
+            }
+        }
+    ' "$brief" 2>/dev/null || true)
+fi
 
 # 8. Every session measures its own context from the gauge script, never an estimate;
 #    self-estimates ran 13 points high in observed runs. An implementer, review, comments

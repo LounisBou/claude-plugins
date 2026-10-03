@@ -66,7 +66,20 @@ checked between its external calls: past it, the stop passes and one line is log
 
 ## 4. Check 1 — what will wake you
 
-The stop passes in exactly three cases, checked in this order:
+Before those three cases, one refusal that nothing lifts: **an agent of this orchestrator
+is idle and its pull request is OPEN or MERGED.** Its delivery is over and its tab is only
+left behind (a brief ordered duties after the delivery, and nobody stood the agent down).
+Neither a busy agent beside it nor a `waiting:` line lifts it. The pull request is found
+from the agent's tty alone: the working directory of the host process there (the
+launcher's `host_cli_cwd`, one `ps` and one `lsof`), the branch checked out in it (`git
+symbolic-ref`), then `gh pr view <branch> --json number,state` run in that directory. Cost:
+at most one `gh` call per idle agent, none for a busy one, all inside the hook's deadline;
+measured on the development machine, about 0.4 s for the `gh` call and under 0.05 s for the
+local reads. A read that fails, or runs past the deadline, is one log line and counts as
+« no pull request »: the idle agent then falls under the cases below, as before. A CLOSED
+pull request, or none, does not trigger it.
+
+Otherwise the stop passes in exactly three cases, checked in this order:
 
 1. **An agent of this orchestrator is busy.** Its idle notice will wake the orchestrator.
    « Of this orchestrator » is read from the chain the launcher already keeps per
@@ -104,6 +117,7 @@ Otherwise the stop is refused, with the reason that fits:
 | Case | Reason sent back |
 |---|---|
 | no busy agent, no valid line | « Nothing will wake you: no agent of yours is running. Launch what you announced, or, if a question truly blocks, end with the line waiting: operator — blocks: <what it blocks>, or with waiting: done. The line goes as the message's last line, no markup. » |
+| an idle agent whose pull request is open or merged | « Idle with its pull request open or merged: <agent> (pull request #<n>, <OPEN or MERGED>). Stand it down now — or, if it waits on a question you have not answered, answer it. » |
 | only idle agents | « <agent> is idle: its notice was spent. Read its report or relaunch it. » |
 | a question without `blocks:` | « Your question blocks nothing declared: advance everything that can advance; its answer will come in a later turn. » |
 | `done` against a checkout or a running agent | « Not done: <checkout or agent> is still there. Finish it, or say what blocks it. » |
@@ -188,6 +202,8 @@ and treats every open row as work to dispatch or to ask about, not as history.
 - A question followed by a fenced block or blank lines: the machine line is the last
   non-empty line; the question itself may sit anywhere above it.
 - Several agents, some idle and some busy: one busy agent of this orchestrator suffices.
+- Several agents, one idle with its pull request open: the refusal holds whatever the
+  others do.
 - An agent of another orchestrator: not in this orchestrator's chain, never counted.
 - A successor: inherits its predecessor's chain through `chain_transfer`, so its agents
   count from its first turn.

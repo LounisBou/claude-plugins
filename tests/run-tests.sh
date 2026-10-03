@@ -999,6 +999,59 @@ check "an implementer brief is not held to it" "0" "$(bash "$LINT" "$B/good.md" 
 check "the shipped review template raises no norms-check finding" "0" \
   "$(bash "$LINT" "$ROOT/templates/agent-review-brief.md" 2>&1 | grep -c 'norms-check')"
 
+# An implementer's duties end at its delivery. A brief that orders anything after the final
+# report keeps a finished agent's tab idle; each phrase is a finding in an implementer brief,
+# none in a review brief, none when the clause forbids it.
+for phrase in 'After merge, delete your branch.' 'Once merged, report the sha.' 'Stand by for questions.' \
+              'Keep standing by.' 'Stay until merged.' 'Stay available for the review.' \
+              'Wait: after the merge, tidy up.' 'Do the cleanup after merge.'; do
+  ok_brief "$B/duty.md"; printf '%s\n' "$phrase" >> "$B/duty.md"
+  check_status "a post-delivery duty is a finding: $phrase" 1 bash "$LINT" "$B/duty.md"
+  check "and it is named: $phrase" "1" "$(bash "$LINT" "$B/duty.md" 2>&1 | grep -c 'duty after delivery')"
+  review_brief "$B/duty-review.md"; printf 'End the report with `norms-check: tool <head>`.\n%s\n' "$phrase" >> "$B/duty-review.md"
+  check_status "the same phrase in a review brief is not one: $phrase" 0 bash "$LINT" "$B/duty-review.md"
+done
+ok_brief "$B/duty-clean.md"; printf 'Do the cleanup after merge.\n'  >> "$B/duty-clean.md"
+check "a cleanup after merge is ONE finding, not two" "1" "$(bash "$LINT" "$B/duty-clean.md" 2>&1 | grep -c 'duty after delivery')"
+ok_brief "$B/duty-two.md"; printf 'Stand by; stay available.\n' >> "$B/duty-two.md"
+check "two phrases on a line are two findings" "2" "$(bash "$LINT" "$B/duty-two.md" 2>&1 | grep -c 'duty after delivery')"
+ok_brief "$B/duty-Caps.md"; printf 'STAND BY for review.\n' >> "$B/duty-Caps.md"
+check "the phrases are read case-insensitively" "1" "$(bash "$LINT" "$B/duty-Caps.md" 2>&1 | grep -c 'duty after delivery')"
+ok_brief "$B/duty-forbid.md"; printf 'Never stand by; no cleanup after merge, and do not stay available.\n' >> "$B/duty-forbid.md"
+check_status "a clause that forbids the duty is not one" 0 bash "$LINT" "$B/duty-forbid.md"
+ok_brief "$B/duty-fp.md"; printf 'Example `/tmp/claude-501/x`, see `skills/a.sh:12`, run /implement:phase; the stand-down follows.\n' >> "$B/duty-fp.md"
+check "paths, slash commands, file:line suffixes and the stand-down are no duty" "0" "$(bash "$LINT" "$B/duty-fp.md" 2>&1 | grep -c 'duty after delivery')"
+PHASEFILLED="$B/phase-filled.md"
+sed -e 's/{{[A-Z_]*}}/x/g' -e '1s/.*/# scratch/' "$ROOT/templates/agent-phase-brief.md" > "$PHASEFILLED"
+check "the repository's own phase template, filled, holds no post-delivery duty" "0" \
+  "$(bash "$LINT" "$PHASEFILLED" 2>&1 | grep -c 'duty after delivery')"
+# The clause awk must read a line the same way under any locale: a multibyte character before
+# the phrase (an em dash, a guillemet) made it blind under a UTF-8 locale, so both passes run
+# under LC_ALL=C. The locale is set here, not inherited from the runner.
+ok_brief "$B/loc-duty.md"; printf 'Report \xe2\x80\x94 \xc2\xab then stand by for questions.\n' >> "$B/loc-duty.md"
+check "check 9 sees a duty after a multibyte character under a UTF-8 locale" "1" \
+  "$(LC_ALL=fr_FR.UTF-8 bash "$LINT" "$B/loc-duty.md" 2>&1 | grep -c 'duty after delivery')"
+ok_brief "$B/loc-bg.md"; printf 'Report \xe2\x80\x94 \xc2\xab then run it in the background.\n' >> "$B/loc-bg.md"
+check "check 7 sees a background order after a multibyte character under a UTF-8 locale" "1" \
+  "$(LC_ALL=fr_FR.UTF-8 bash "$LINT" "$B/loc-bg.md" 2>&1 | grep -c 'background')"
+# A phrase QUOTED is a mention, not an order: inside backticks, inside guillemets, or on a line
+# inside a fence. The same phrase left bare on the same line is still read. Run under a UTF-8
+# locale, where the guillemets are multibyte.
+for quoted in 'The old clause « stand by » is removed.' 'The old clause `stand by` is removed.' \
+              'The old clause « after merge » and `once merged` are removed.'; do
+  ok_brief "$B/q.md"; printf '%s\n' "$quoted" >> "$B/q.md"
+  check "a quoted phrase is not a duty: $quoted" "0" \
+    "$(LC_ALL=fr_FR.UTF-8 bash "$LINT" "$B/q.md" 2>&1 | grep -c 'duty after delivery')"
+done
+ok_brief "$B/q-fence.md"; printf '```\nStand by for questions.\n```\n' >> "$B/q-fence.md"
+check "a phrase inside a fence is not a duty" "0" \
+  "$(LC_ALL=fr_FR.UTF-8 bash "$LINT" "$B/q-fence.md" 2>&1 | grep -c 'duty after delivery')"
+ok_brief "$B/q-bare.md"; printf 'The clause « stand by » is removed; once merged, stand by.\n' >> "$B/q-bare.md"
+check "the same phrase unquoted on the same line is still a duty" "2" \
+  "$(LC_ALL=fr_FR.UTF-8 bash "$LINT" "$B/q-bare.md" 2>&1 | grep -c 'duty after delivery')"
+ok_brief "$B/q-bare2.md"; printf 'The clause `stand by` is removed; stand by anyway.\n' >> "$B/q-bare2.md"
+check "a bare phrase after a backticked one is still a duty" "1" \
+  "$(LC_ALL=fr_FR.UTF-8 bash "$LINT" "$B/q-bare2.md" 2>&1 | grep -c 'duty after delivery')"
 check_status "a brief that does not exist is an error" 1 bash "$LINT" "$B/absent.md"
 check_status "no argument is an error" 1 bash "$LINT"
 
@@ -3049,6 +3102,8 @@ cat > "$SGB/gh" <<EOF
 case "\$1 \$2" in
   "pr list") echo "\$*" >> "$SG/gh-args"; cat "$SG/prs" 2>/dev/null || echo "[]" ;;
   "pr checks") echo "\$3" >> "$SG/gh-calls"; cat "$SG/checks-\$3"; [ -f "$SG/checks-\$3.code" ] && exit "\$(cat "$SG/checks-\$3.code")" ;;
+  "pr view") echo "\$3" >> "$SG/gh-views"; [ -f "$SG/view-sleep" ] && sleep "\$(cat "$SG/view-sleep")"
+             cat "$SG/view-\${3//\//_}" 2>/dev/null || { echo "no pull requests found for branch \\"\$3\\"" >&2; exit 1; } ;;
   *) exit 1 ;;
 esac
 EOF
@@ -3067,7 +3122,7 @@ sg_chain() {  # <tty> <owner> ...: the chain of the orchestrator's tty, in launc
 # The session's name is read from the process table the way the launcher reads it (`--name`):
 # the suite's stand-in for `ps` is a file, and the session's own tty is given.
 sg_ps() { printf '/dev/ttys900 host-cli %s\n' "$1" > "$SG/ps"; }
-sg_reset() { rm -f "$SG/prs" "$SG/gh-calls" "$SG/gh-args" "$SG/gh-offline" "$SG"/checks-* "$SG/transcript" "$SGS/stop-gate.log"; rm -rf "$SGS/stop-gate" "$SGS/records"; rm -f "$SG"/sweep-* "$SGS/sweep.stamp"; : > "$SG/checkouts"; sg_ps '--name Orch : f [a1b2c3]'; sg_listing; sg_chain; }
+sg_reset() { rm -f "$SG/prs" "$SG/gh-views" "$SG/cwds" "$SG"/view-* "$SG/gh-calls" "$SG/gh-args" "$SG/gh-offline" "$SG"/checks-* "$SG/transcript" "$SGS/stop-gate.log"; rm -rf "$SGS/stop-gate" "$SGS/records"; rm -f "$SG"/sweep-* "$SGS/sweep.stamp"; : > "$SG/checkouts"; sg_ps '--name Orch : f [a1b2c3]'; sg_listing; sg_chain; }
 # sg <message> [stop_hook_active] [session id]: the hook's stdout. SG_TRANSCRIPT names the
 # payload's transcript, SG_ITERM stands in for ITERM_SESSION_ID, SG_DEADLINE for the hook's.
 sg() {
@@ -3076,7 +3131,7 @@ if sys.argv[5]: d["transcript_path"] = sys.argv[5]
 json.dump(d, sys.stdout)' \
     "$SGP" "$1" "${2:-false}" "${3:-sg-1}" "${SG_TRANSCRIPT:-}" \
     | env PATH="$SGB:$PATH" ORCHESTRATOR_STATE_DIR="$SGS" ITERM_SESSION_ID="${SG_ITERM-w0t0p0:S-ME}" \
-        ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$SG/ps" \
+        ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$SG/ps" ORCHESTRATOR_CWD_TABLE="$SG/cwds" \
         ORCHESTRATOR_STOP_GATE_DEADLINE="${SG_DEADLINE:-20}" bash "$SG/hooks/stop-gate.sh" 2>/dev/null
 }
 reason() { "$py" -c 'import json,sys; d=json.load(sys.stdin); print(d["decision"] + "|" + d["reason"])' 2>/dev/null; }
@@ -3115,6 +3170,75 @@ check "only idle agents: refused, the agent named" \
   "block|Agent : one [b2c3d4] is idle: its notice was spent. Read its report or relaunch it." \
   "$(sg 'Waiting on agent one.' | reason)"
 check "the idle refusal is logged" "1" "$(sglog | grep -c '| check1 | idle-agents$')"
+
+# An own agent idle with its pull request OPEN or MERGED has delivered: nothing will wake the
+# orchestrator for it and its tab is only left behind. The refusal reads the agent's branch
+# (its tab's process working directory, that checkout's branch) and asks `gh pr view` once.
+SGA="$SG/agent-checkout"; rm -rf "$SGA"; mkdir -p "$SGA"; git -C "$SGA" init -q 2>/dev/null; git -C "$SGA" symbolic-ref HEAD refs/heads/feat/one
+IDLE2='w1/t3 | /dev/ttys902 | ✳ Agent : two | Agent : two [c3d4e5]'
+sg_idle_pr() {  # <state> [number]: agent one idle, its checkout on feat/one, its pull request in <state>
+  sg_reset; sg_listing "$IDLE"; sg_chain /dev/ttys901 S-ME
+  printf '/dev/ttys901 %s\n' "$SGA" > "$SG/cwds"
+  printf '{"number": %s, "state": "%s"}\n' "${2:-12}" "$1" > "$SG/view-feat_one"
+}
+sg_idle_pr OPEN
+check "an idle agent with its pull request open: refused, agent and pull request named" \
+  "block|Idle with its pull request open or merged: Agent : one [b2c3d4] (pull request #12, OPEN). Stand it down now — or, if it waits on a question you have not answered, answer it." \
+  "$(sg 'Waiting on agent one.' | reason)"
+check "the refusal is logged" "1" "$(sglog | grep -c '| check1 | idle-delivered$')"
+sg_idle_pr MERGED 13
+check "an idle agent with its pull request merged: refused" "block|Idle with its pull request open or merged: Agent : one [b2c3d4] (pull request #13, MERGED). Stand it down now — or, if it waits on a question you have not answered, answer it." \
+  "$(sg 'Waiting on agent one.' | reason)"
+sg_idle_pr OPEN
+check "a machine line declaring a block does not lift it" "block|Idle with its pull request open or merged" \
+  "$(sg 'Which base?
+
+waiting: operator — blocks: the base' | reason | cut -c1-47)"
+check "waiting: done does not lift it" "block|Idle with its pull request open or merged" "$(sg 'All done.
+
+waiting: done' | reason | cut -c1-47)"
+sg_idle_pr OPEN; sg_listing "$IDLE" 'w1/t3 | /dev/ttys902 | ◐ Agent : two | Agent : two [c3d4e5]'; sg_chain /dev/ttys901 S-ME /dev/ttys902 S-ME
+check "a busy agent beside it does not lift it" "block|Idle with its pull request open or merged" "$(sg 'Waiting on agent two.' | reason | cut -c1-47)"
+check "and the busy one costs no read" "1" "$(wc -l < "$SG/gh-views" | tr -d ' ')"
+sg_idle_pr CLOSED
+check "an idle agent with its pull request closed keeps today's refusal" "block|Agent : one [b2c3d4] is idle: its notice was spent. Read its report or relaunch it." \
+  "$(sg 'Waiting on agent one.' | reason)"
+sg_idle_pr OPEN; rm -f "$SG/view-feat_one"
+check "an idle agent with no pull request keeps today's refusal" "block|Agent : one [b2c3d4] is idle: its notice was spent. Read its report or relaunch it." \
+  "$(sg 'Waiting on agent one.' | reason)"
+sg_idle_pr OPEN; rm -f "$SG/cwds"
+check "an idle agent whose working directory cannot be read keeps today's refusal" "block|Agent : one [b2c3d4] is idle: its notice was spent. Read its report or relaunch it." \
+  "$(sg 'Waiting on agent one.' | reason)"
+check "and no gh call was made for it" "0" "$(cat "$SG/gh-views" 2>/dev/null | wc -l | tr -d ' ')"
+sg_idle_pr OPEN; printf 'not json\n' > "$SG/view-feat_one"
+check "a read that fails to parse counts as no pull request" "block|Agent : one [b2c3d4] is idle: its notice was spent. Read its report or relaunch it." \
+  "$(sg 'Waiting on agent one.' | reason)"
+sg_idle_pr OPEN; sg_listing "$IDLE" "$IDLE2"; sg_chain /dev/ttys901 S-ME /dev/ttys902 S-ME
+printf '/dev/ttys901 %s\n/dev/ttys902 %s\n' "$SGA" "$SGA" > "$SG/cwds"; printf '2\n' > "$SG/view-sleep"
+check "a read past the deadline counts as no pull request, never a crash: only the agent read in time is named" \
+  "block|Idle with its pull request open or merged: Agent : one [b2c3d4] (pull request #12, OPEN). Stand it down now — or, if it waits on a question you have not answered, answer it.|1" \
+  "$(SG_DEADLINE=1 sg 'Waiting.' | reason)|$(wc -l < "$SG/gh-views" | tr -d ' ')"
+check "and the late read is a log line" "1" "$(sglog | grep -c '| error | pull request of /dev/ttys902 unread: the overall deadline of 1s passed before the launcher'"'"'s reads$')"
+# With the deadline already passed, `pull_request_of` reads nothing: not the launcher's process
+# table and working directory (`host_cli_cwd`, its own calls), not git, not gh.
+check "a passed deadline: no launcher read, no gh call, one log line, no pull request" "None|0|0|1" \
+  "$(ORCHESTRATOR_STATE_DIR="$SGS" "$py" -c "
+import sys, time; sys.path.insert(0, '$SG/hooks'); sys.path.insert(0, '$SG/skills/iterm-agents/scripts')
+import stop_gate as g
+reads = dict(launcher=0, run=0)
+class L:
+    def host_cli_cwd(self, tty): reads['launcher'] += 1; return '/'
+g.launcher = lambda: L()
+def fake_run(*a, **k): reads['run'] += 1; return '', '', 1
+g.run = fake_run
+logged = []
+g.log = lambda *f: logged.append(f)
+g.STARTED = time.monotonic() - 1000
+print(g.pull_request_of('/dev/ttys901', 'w'), reads['launcher'], reads['run'], len(logged), sep='|')")"
+sg_idle_pr OPEN; sg_listing "$IDLE" "$IDLE2"; sg_chain /dev/ttys901 S-ME /dev/ttys902 S-ME
+printf '/dev/ttys901 %s\n/dev/ttys902 %s\n' "$SGA" "$SGA" > "$SG/cwds"
+check "two idle agents: one read each, both named" "block|Idle with its pull request open or merged: Agent : one [b2c3d4] (pull request #12, OPEN), Agent : two [c3d4e5] (pull request #12, OPEN). Stand it down now — or, if it waits on a question you have not answered, answer it.|2" \
+  "$(sg 'Waiting.' | reason)|$(wc -l < "$SG/gh-views" | tr -d ' ')"
 
 sg_reset
 check "a question with no blocks: refused" \
