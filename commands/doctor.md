@@ -12,7 +12,8 @@ Check the setup and report the verdict.
    python3 ${CLAUDE_PLUGIN_ROOT}/bin/bugs-bot doctor --install-launcher
    ```
 
-   Later runs are `bugs-bot doctor`.
+   Later runs are `bugs-bot doctor`. An installed launcher whose text differs (an update changed it) is
+   replaced by `bugs-bot doctor --install-launcher`, not by a plain `bugs-bot doctor`.
 2. Report each line as printed (`ok` or `FAIL`, the check and its detail), then
    what to do about each failure:
    - `python`: Python 3.10 or newer is needed.
@@ -22,9 +23,13 @@ Check the setup and report the verdict.
      `getMe`, Slack's `auth.test`): the operator puts a valid one in the file.
    - `registry`: the file `~/.bugs-bot/projects.json` is damaged; say so, do not
      edit it.
-   - `pull`: exactly one Pull process must run, under PM2; none or two is a fault.
+   - `pull`: exactly one Pull process must run, under PM2; none or two is a fault. When it says PM2
+     recorded a versioned path, print its remedy as given: the operator runs `bugs-bot doctor
+     --install-launcher`, then `pm2 delete bugs-bot-pull`, then `pm2 start` of the plugin's
+     `pm2.config.js` with `BUGS_BOT_PYTHON` set to a Python 3.10+, then `pm2 save`.
    - `orchestrator`: install the orchestrator plugin; `/bugs-bot:start` needs it.
-   - `launcher`: run the first-run line above.
+   - `launcher`: run the first-run line above; a launcher that differs is replaced by
+     `bugs-bot doctor --install-launcher`.
    - `allow rule`: the operator adds `Bash(bugs-bot:*)` himself, through
      `/permissions → Allow → Bash(bugs-bot:*)`. A session cannot change its own
      permissions, and doctor never edits a settings file: print the line for him.

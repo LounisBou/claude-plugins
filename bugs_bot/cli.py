@@ -57,6 +57,14 @@ def read_ps() -> str:
         raise BugsError(f"cannot read the process table: {exc}") from None
 
 
+def read_pm2() -> str | None:
+    """Return ``pm2 jlist`` output, or ``None`` when PM2 is absent or cannot be read: ``doctor`` then skips its check."""
+    try:
+        return subprocess.run(["pm2", "jlist"], capture_output=True, text=True, check=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
 def _project_of_cwd(machine: Machine) -> str:
     """Return the project of the current directory: the registry's entry for its repository, else its file's.
 
@@ -121,7 +129,7 @@ def main(
                 ps_output = read_ps()
             except BugsError as exc:
                 ps_output = exc  # a failed check, not an exit: the other checks still tell their story
-            return cmd_doctor(env, ps_output, args.install_launcher, transport)
+            return cmd_doctor(env, ps_output, args.install_launcher, transport, read_pm2())
         if args.command == "init":
             repo = Path(args.repo).resolve() if args.repo else repo_root(Path.cwd())
             given = InitArgs(

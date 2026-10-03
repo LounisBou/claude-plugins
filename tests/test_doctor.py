@@ -127,6 +127,110 @@ def test_pull_runs_exactly_once(machine_env, ps, ok):
         assert "4242" in check.detail and "4243" in check.detail
 
 
+def jlist(path: str, name: str = "bugs-bot-pull") -> str:
+    """Recorded ``pm2 jlist`` output: one process, with the script PM2 recorded for it."""
+    return json.dumps([{"name": "other", "pm2_env": {"pm_exec_path": "/srv/other.js"}}, {"name": name, "pm2_env": {"pm_exec_path": path}}])
+
+
+VERSIONED = "/home/u/.claude/plugins/cache/lounisbou/bugs-bot/0.1.0/bin/bugs-bot"
+
+
+def test_pull_fails_when_pm2_recorded_a_versioned_path(machine_env):
+    check = by_name(run_checks(machine_env, PULL_PS, pm2_jlist=jlist(VERSIONED)))["pull"]
+
+    assert not check.ok
+    assert f"PM2 recorded a versioned path for bugs-bot-pull: {VERSIONED}" in check.detail
+    for step in (
+        "bugs-bot doctor --install-launcher",
+        "pm2 delete bugs-bot-pull",
+        "BUGS_BOT_PYTHON=<python 3.10+> pm2 start <plugin>/pm2.config.js && pm2 save",
+    ):
+        assert step in check.detail
+
+
+def test_pull_passes_when_pm2_recorded_an_unrelated_path_under_a_cache(machine_env):
+    unrelated = "/home/u/.claude/plugins/cache/other-owner/other-plugin/1.0/bin/run"
+
+    assert by_name(run_checks(machine_env, PULL_PS, pm2_jlist=jlist(unrelated)))["pull"].ok
+
+
+def test_pull_reads_the_jlist_after_the_preamble_pm2_prints_without_a_daemon(machine_env):
+    preamble = "[PM2] Spawning PM2 daemon with pm2_home=/home/u/.pm2\n[PM2] PM2 Successfully daemonized\n"
+
+    check = by_name(run_checks(machine_env, PULL_PS, pm2_jlist=preamble + jlist(VERSIONED)))["pull"]
+
+    assert not check.ok and "versioned path" in check.detail
+
+
+def test_pull_passes_when_pm2_recorded_the_launcher(machine_env):
+    check = by_name(run_checks(machine_env, PULL_PS, pm2_jlist=jlist("/home/u/.local/bin/bugs-bot")))["pull"]
+
+    assert check.ok and "4242" in check.detail
+
+
+@pytest.mark.parametrize("recorded", [None, "", "not json", "{}", "[1, 2]", '[{"name": "bugs-bot-pull"}]', jlist(VERSIONED, name="other")])
+def test_pull_keeps_its_verdict_when_pm2_is_absent_or_unreadable(machine_env, recorded):
+    assert by_name(run_checks(machine_env, PULL_PS, pm2_jlist=recorded))["pull"].ok
+
+
+def test_pull_not_running_with_a_versioned_path_recorded_gets_the_versioned_verdict(machine_env):
+    """A pruned version: PM2's restart found no script, so no Pull runs; the remedy is not « start it »."""
+    check = by_name(run_checks(machine_env, "", pm2_jlist=jlist(VERSIONED)))["pull"]
+
+    assert not check.ok and "PM2 recorded a versioned path" in check.detail and "not running" not in check.detail
+
+
+@pytest.mark.parametrize("recorded", [None, jlist("/home/u/.local/bin/bugs-bot")])
+def test_pull_not_running_keeps_its_verdict_without_a_versioned_path(machine_env, recorded):
+    check = by_name(run_checks(machine_env, "", pm2_jlist=recorded))["pull"]
+
+    assert not check.ok and "not running" in check.detail
+
+
+def test_pull_two_processes_keep_their_verdict_whatever_pm2_recorded(machine_env):
+    ps = PULL_PS + PULL_PS.replace("4242", "4243")
+
+    check = by_name(run_checks(machine_env, ps, pm2_jlist=jlist(VERSIONED)))["pull"]
+
+    assert not check.ok and "4242" in check.detail and "two pollers" in check.detail
+
+
+@pytest.fixture
+def real_read_pm2(_no_pm2):
+    """Override the autouse stub: ``cli.read_pm2`` itself, to drive through a fake ``subprocess.run``."""
+    return _no_pm2
+
+
+def test_read_pm2_returns_the_jlist_stdout(real_read_pm2, monkeypatch):
+    calls = []
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        return type("Done", (), {"stdout": "[]"})()
+
+    monkeypatch.setattr(cli.subprocess, "run", run)
+
+    assert real_read_pm2() == "[]" and calls == [["pm2", "jlist"]]
+
+
+@pytest.mark.parametrize("error", [FileNotFoundError("pm2"), cli.subprocess.CalledProcessError(1, "pm2"), cli.subprocess.TimeoutExpired("pm2", 30)])
+def test_read_pm2_is_none_when_pm2_is_absent_or_fails(real_read_pm2, monkeypatch, error):
+    def run(cmd, **kwargs):
+        raise error
+
+    monkeypatch.setattr(cli.subprocess, "run", run)
+
+    assert real_read_pm2() is None
+
+
+def test_cli_doctor_reports_the_versioned_path_pm2_recorded(machine_env, ps, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "read_pm2", lambda: jlist(VERSIONED))
+
+    code = cli.main(["doctor"], env=machine_env)
+
+    assert code == 1 and "FAIL  pull: PM2 recorded a versioned path" in capsys.readouterr().out
+
+
 def test_orchestrator_check(machine_env, tmp_path):
     (tmp_path / "claude" / "plugins" / "cache" / "lounisbou" / "orchestrator" / "0.38.0").rmdir()
 

@@ -115,9 +115,20 @@ pm2 delete tm-bugs-pull && BUGS_BOT_PYTHON="$PY" pm2 start "$PLUGIN/pm2.config.j
 ```
 
 `BUGS_BOT_PYTHON` is required here: without it PM2 starts the `python3` of its own PATH, the pyenv
-shim (which PM2 cannot run) or `/usr/bin/python3` (3.9). `PLUGIN` is versioned, and so is the path
-`pm2 save` records: after each plugin update, run the `pm2 start` and `pm2 save` again (the
-`PLUGIN` of the new version).
+shim (which PM2 cannot run) or `/usr/bin/python3` (3.9). PM2 runs the launcher
+`~/.local/bin/bugs-bot` (installed by `/bugs-bot:doctor`; install it before this step), not a path in
+the versioned `PLUGIN` directory, so `pm2 save` records a path no plugin update moves: a restart picks
+the newest installed version. Nothing to run again after an update. `bugs-bot doctor` fails if PM2
+still holds a versioned path (a Pull started from the versioned plugin path); the steps below fix it.
+
+Update a machine whose Pull runs a versioned path:
+
+1. `bugs-bot doctor --install-launcher`
+2. `pm2 delete bugs-bot-pull`
+3. `BUGS_BOT_PYTHON=<python 3.10+> pm2 start <plugin>/pm2.config.js`
+4. `pm2 save`
+
+Check: `pm2 list` shows `bugs-bot-pull` online; `bugs-bot doctor` is green.
 
 Check: `pm2 list` shows `bugs-bot-pull` online and no `tm-bugs-pull`; `bugs-bot doctor` is green;
 a message posted in the group becomes a report (`bugs-bot list`) within seconds.

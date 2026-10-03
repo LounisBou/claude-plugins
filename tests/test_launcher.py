@@ -53,7 +53,7 @@ def test_install_writes_an_executable_file_named_bugs_bot(tmp_path):
 
 def test_install_twice_replaces_an_older_launcher(tmp_path):
     path = install_launcher(tmp_path)
-    older = LAUNCHER_TEXT.replace("exec python3", "exec python")
+    older = LAUNCHER_TEXT.replace("python3", "python")
     assert older != LAUNCHER_TEXT
     path.write_text(older)
 
@@ -189,3 +189,16 @@ def test_the_claude_dir_defaults_to_home_dot_claude(launcher, tmp_path):
     result = subprocess.run([str(launcher), "go"], capture_output=True, text=True, env=env, check=False)
 
     assert result.stdout.strip() == "0.3.0 go"
+
+
+def test_the_chosen_interpreter_runs_the_cli(launcher, claude_dir, tmp_path):
+    fake_version(claude_dir, "0.1.0")
+    python = tmp_path / "py" / "python3"
+    python.parent.mkdir()
+    python.write_text('#!/bin/sh\necho "chosen $@"\n')
+    python.chmod(0o755)
+    env = {"PATH": os.environ["PATH"], "HOME": str(tmp_path / "nohome"), "BUGS_BOT_CLAUDE_DIR": str(claude_dir), "BUGS_BOT_PYTHON": str(python)}
+
+    result = subprocess.run([str(launcher), "pull"], capture_output=True, text=True, env=env, check=False)
+
+    assert result.stdout.strip().endswith("0.1.0/bin/bugs-bot pull") and result.stdout.startswith("chosen ")

@@ -36,13 +36,19 @@ of the plugin. A session may not edit its own permissions: add the rule yourself
 /permissions → Allow → Bash(bugs-bot:*)
 ```
 
-Then start Pull, once per machine (never two: Telegram hands a bot's updates to one consumer):
+Then start Pull, once per machine (never two: Telegram hands a bot's updates to one consumer).
+Install the launcher first, by running `/bugs-bot:doctor` (it writes `~/.local/bin/bugs-bot`): PM2
+runs that launcher, not a path inside the plugin's versioned directory, so a plugin update does not
+break the saved process.
 
 ```
 pm2 start <plugin directory>/pm2.config.js && pm2 save
 ```
 
-PM2 runs `python3` from its own `PATH`; set `BUGS_BOT_PYTHON` to an interpreter (3.10 or newer,
+Without the launcher, `pm2 start` answers « Script not found » and registers nothing; `bugs-bot doctor`'s
+`launcher` check names it.
+
+The launcher runs `python3` from PM2's `PATH`; set `BUGS_BOT_PYTHON` to an interpreter (3.10 or newer,
 the pyenv binary itself rather than its shim) before the `pm2 start` to choose another.
 
 ## Setting up Telegram (the operator, once)
