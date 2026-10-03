@@ -28,6 +28,9 @@
 # not before the tap had its chance: the status line renders only after a turn has
 # answered, so a session's very first prompt has no tap file yet by construction, and
 # saying "unmeasured" there is a false alarm, not a finding.
+# Nor when the tap file is merely old: the gauge then reads the transcript against the
+# window the file carries, and that reading counts. The line names what was read: no tap
+# file, or a tap file the gauge could not read a figure from.
 set -u
 GATE="${ORCHESTRATOR_CONTEXT_GATE:-80}"
 GATE_TOKENS="${ORCHESTRATOR_CONTEXT_GATE_TOKENS:-300000}"
@@ -65,6 +68,7 @@ percent="$(printf '%s\n' "$reading" | sed -n 's/^context_percent=\([0-9]*\).*/\1
 tokens="$(printf '%s\n' "$reading" | sed -n 's/^context_tokens=\([0-9][0-9]*\)$/\1/p' | head -1)"
 window="$(printf '%s\n' "$reading" | sed -n 's/^context_window=\([0-9][0-9]*\)$/\1/p' | head -1)"
 source="$(printf '%s\n' "$reading" | sed -n 's/^source=\(.*\)/\1/p' | head -1)"
+window_source="$(printf '%s\n' "$reading" | sed -n 's/^context_window_source=\(.*\)/\1/p' | head -1)"
 
 # 312000 -> 312,000; a whole number of millions reads as 1M.
 thousands() {
@@ -94,7 +98,18 @@ if [ -n "$model" ] && [ "$model" != "unavailable" ]; then
     fi
 fi
 
-if [ "$source" != "tap" ] || [ -z "$percent" ]; then
+# A reading is a measure when the tap is fresh, and also when the tap file is older than the
+# gauge's freshness window or has no figure yet but carries the window: the gauge then reads
+# the transcript's last usage against that window. The status line renders after a turn, so
+# a prompt that follows a pause meets exactly that file; it is not a tap that failed.
+measured=0
+if [ -n "$percent" ]; then
+    if [ "$source" = "tap" ] || { [ "$source" = "transcript" ] && [ "$window_source" = "tap-file" ]; }; then
+        measured=1
+    fi
+fi
+
+if [ "$measured" -eq 0 ]; then
     # The tap has had its chance only once a turn has answered: before that, the
     # transcript carries no assistant entry, and a session with none yet is not a
     # session the tap failed, it is a session the tap has not rendered for at all.
@@ -104,7 +119,15 @@ if [ "$source" != "tap" ] || [ -z "$percent" ]; then
         marker="$STATE_DIR/ctx/$session_id.gate-unmeasured"
         if [ ! -f "$marker" ]; then
             mkdir -p "$STATE_DIR/ctx" 2>/dev/null && : > "$marker"
-            echo "CONTEXT GATE: unmeasured for this session (the gauge's tap is not feeding it — /orchestrator:install, then restart). The gate (${GATE}%, or $(thousands "$GATE_TOKENS") tokens on a window of $(window_label "$LARGE_WINDOW") or more) cannot be read; measure by hand before dispatching or rotating."
+            # Say what was read, and only that: no tap file now may be a file the tap pruned
+            # after a day without a render, and a tap file present may lack the window or
+            # carry it with a transcript not yet readable.
+            gate_words="The gate (${GATE}%, or $(thousands "$GATE_TOKENS") tokens on a window of $(window_label "$LARGE_WINDOW") or more) cannot be read; measure by hand before dispatching or rotating."
+            if [ -f "$STATE_DIR/ctx/$session_id.json" ]; then
+                echo "CONTEXT GATE: unmeasured: the tap file is present but the gauge could not read a figure from it (the next status line render may fill it). $gate_words"
+            else
+                echo "CONTEXT GATE: unmeasured: no tap file for this session now (never written, or pruned after a day without a render); /orchestrator:install is the repair only if the status line shows nothing. $gate_words"
+            fi
         fi
     fi
     exit 0
