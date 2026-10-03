@@ -16,7 +16,7 @@ ctx: 26% │ 5h: 47% ▓▓▓▓▓░░░░░ → 2h13 │ 7d: 50% ▓▓�
 ### From the plugin marketplace
 
 ```
-/plugin marketplace add LounisBou/claude-statusbar
+/plugin marketplace add LounisBou/claude-plugins-marketplace
 /plugin install claude-statusbar@lounisbou
 /claude-statusbar:install
 ```
