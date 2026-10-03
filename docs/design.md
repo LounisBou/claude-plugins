@@ -453,12 +453,12 @@ A skill never takes a command's name: a plugin's commands and skills share one n
 Version in `plugin.json` AND in both fields of `marketplace.json` — the same fact in three places, so the suite checks they agree and that the number never falls BEHIND a published tag (equal is a tagged release, ahead is unreleased work; only behind is the defect). Tag `orchestrator--v<version>` pushed with the code — the prefix since the plugin was renamed; the first three releases used `claude-orchestrator--v`, and the suite reads both when it checks the version against what is published. Install:
 
 ```
-/plugin marketplace add LounisBou/claude-statusbar
+/plugin marketplace add LounisBou/claude-plugins-marketplace
 /plugin install orchestrator@lounisbou
 /orchestrator:install
 ```
 
-The marketplace is the operator's family one, `lounisbou`, where every plugin of the family is listed; this repository's own `marketplace.json` stays the single-plugin manifest the suite reads for the version, as every plugin of the family carries one. The install line cites the family marketplace's repository by name, and the brand guard exempts that name as it exempts the plugin's own: a marketplace source is a load-bearing identifier, and removing it breaks the install rather than debranding the prose.
+The marketplace is the operator's family one, `lounisbou`, where every plugin of the family is listed; this repository's own `marketplace.json` stays the single-plugin manifest the suite reads for the version, as every plugin of the family carries one. The catalogue lives in `LounisBou/claude-plugins-marketplace`; it moved there from `LounisBou/claude-statusbar`. The install line cites the family marketplace's repository by name, and the brand guard exempts that name as it exempts the plugin's own: a marketplace source is a load-bearing identifier, and removing it breaks the install rather than debranding the prose.
 
 ## 9. How the parts fit
 

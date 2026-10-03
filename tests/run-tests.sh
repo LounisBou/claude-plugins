@@ -79,7 +79,7 @@ echo "== repository policy =="
 policy_hits() {
   ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=.claude --exclude-dir=plans \
       --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh \
-    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|\.claude\.json|LounisBou/claude-statusbar|/tmp/claude-' || true )
+    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|\.claude\.json|LounisBou/claude-statusbar|LounisBou/claude-plugins-marketplace|/tmp/claude-' || true )
 }
 check "no vendor or product name in prose" "" "$(policy_hits)"
 

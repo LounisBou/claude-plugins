@@ -42,7 +42,7 @@ purpose, because it costs tokens and needs the app running.
 ## Install
 
 ```
-/plugin marketplace add LounisBou/claude-statusbar
+/plugin marketplace add LounisBou/claude-plugins-marketplace
 /plugin install orchestrator@lounisbou
 /orchestrator:install
 ```
