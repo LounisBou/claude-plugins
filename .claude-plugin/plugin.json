@@ -1,7 +1,7 @@
 {
   "name": "bugs-bot",
   "description": "A Telegram or Slack bug-report relay for Claude Code: one bot, one group or channel and one agent per project.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "dependencies": ["orchestrator@lounisbou"],
   "author": {
     "name": "Lounis Bou",
