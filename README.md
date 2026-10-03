@@ -23,7 +23,7 @@ on one machine.
 ## Install
 
 ```
-/plugin marketplace add LounisBou/claude-statusbar
+/plugin marketplace add LounisBou/claude-plugins-marketplace
 /plugin install bugs-bot@lounisbou
 /bugs-bot:doctor
 ```
