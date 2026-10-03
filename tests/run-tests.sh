@@ -3318,18 +3318,54 @@ check "an unreadable checkout list lets a done stop pass" "" "$(sg 'waiting: don
 check "and logs it" "1" "$(sglog | grep -c '| error | ')"
 
 echo "-- check 2: the real CI state, once per head"
+# A head is recorded with its state: pending once a stop has refused it while pending, done
+# once its checks have all finished. A pending head refuses once, and again only when a
+# check turns red.
 sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
 printf '[{"number": 12, "headRefOid": "abc1234def5678abc1234def5678abc1234def56"}]\n' > "$SG/prs"
 printf '[{"name": "build", "bucket": "pending"}, {"name": "lint", "bucket": "pending"}, {"name": "test", "bucket": "pass"}]\n' > "$SG/checks-12"
 echo 8 > "$SG/checks-12.code"
 check "pending checks on a new head: refused with the real state" \
-  "block|#12 at abc1234: 2 checks pending (build, lint), 0 failing (). Report this state as it is, or wait for the end in one call: \`timeout 590 gh pr checks 12 --watch\`." \
+  "block|#12 at abc1234: 2 checks pending (build, lint), 0 failing (). Report this state as it is, or wait for the end in one call: \`timeout 590 gh pr checks 12 --watch --fail-fast\`." \
   "$(sg 'The reds are fixed, CI is green.' | reason)"
 check "the CI refusal is logged" "1" "$(sglog | grep -c '| check2 | ci-not-finished | #12 at abc1234')"
-check "the same head never refuses twice" "" "$(sg 'The reds are fixed, CI is green.')"
-check "and costs no further checks call" "1" "$(grep -c . "$SG/gh-calls")"
-check "the head is kept per session" "12 abc1234def5678abc1234def5678abc1234def56" "$(cat "$SGS/stop-gate/sg-1.heads")"
-check "another session is told again" "block|#12 at abc1234" "$(sg 'CI is green.' false sg-2 | reason | cut -c1-20)"
+check "the pending head is recorded as pending" "12 abc1234def5678abc1234def5678abc1234def56 pending" "$(cat "$SGS/stop-gate/sg-1.heads" 2>/dev/null)"
+check "a pending head already refused, nothing failing: the stop passes, silently" "" "$(sg 'The reds are fixed, CI is green.')"
+check "and the checks are still read at each stop" "2" "$(grep -c . "$SG/gh-calls")"
+check "and the head stays pending" "12 abc1234def5678abc1234def5678abc1234def56 pending" "$(cat "$SGS/stop-gate/sg-1.heads")"
+check "another session is told once as well" "block|#12 at abc1234" "$(sg 'CI is green.' false sg-2 | reason | cut -c1-20)"
+printf '[{"name": "build", "bucket": "pass"}, {"name": "lint", "bucket": "pass"}, {"name": "test", "bucket": "pass"}]\n' > "$SG/checks-12"
+echo 0 > "$SG/checks-12.code"
+check "pending, pending, then green: the stop passes" "" "$(sg 'CI is green.')"
+check "and the finished head is recorded as done" "12 abc1234def5678abc1234def5678abc1234def56 done" "$(cat "$SGS/stop-gate/sg-1.heads")"
+check "one refusal for this session, one for the other" "2" "$(sglog | grep -c '| check2 | ci-not-finished | #12 at abc1234')"
+
+# Pending, then one check turns red while another is still pending: refused again with the
+# red named, once; the finished red is the same failure and does not refuse a third time.
+sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+printf '[{"number": 9, "headRefOid": "9999aaaabbbbccccddddeeeeffff000011112222"}]\n' > "$SG/prs"
+printf '[{"name": "build", "bucket": "pending"}, {"name": "test", "bucket": "pending"}]\n' > "$SG/checks-9"
+check "pending then red: the first stop is refused" "block|#9 at 9999aaa: 2 checks pending (build, test), 0 failing ()" \
+  "$(sg 'Waiting for CI.' | reason | sed 's/\. Report.*//')"
+check "the second stop, still pending, nothing failing: passes" "" "$(sg 'Waiting for CI.')"
+printf '[{"name": "build", "bucket": "pending"}, {"name": "test", "bucket": "fail"}]\n' > "$SG/checks-9"
+echo 1 > "$SG/checks-9.code"
+check "a check turning red while another is pending: refused, naming the red" "block|#9 at 9999aaa: 1 checks pending (build), 1 failing (test)" \
+  "$(sg 'Waiting for CI.' | reason | sed 's/\. Report.*//')"
+check "and the head stays pending, the failure remembered" "9 9999aaaabbbbccccddddeeeeffff000011112222 pending test" "$(cat "$SGS/stop-gate/sg-1.heads")"
+check "the same failure never refuses twice while pending" "" "$(sg 'Waiting for CI.')"
+printf '[{"name": "build", "bucket": "pass"}, {"name": "test", "bucket": "fail"}]\n' > "$SG/checks-9"
+check "the red finished: the same failure, no third refusal" "" "$(sg 'Waiting for CI.')"
+check "and the head is recorded as done" "9 9999aaaabbbbccccddddeeeeffff000011112222 done" "$(cat "$SGS/stop-gate/sg-1.heads")"
+check "one refusal for the pending head, one for the red: two in all" "2" "$(sglog | grep -c '| check2 | ci-not-finished | #9 at 9999aaa')"
+
+# A line written by the previous version has two fields and reads as done.
+sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+printf '[{"number": 12, "headRefOid": "abc1234def5678abc1234def5678abc1234def56"}]\n' > "$SG/prs"
+printf '[{"name": "build", "bucket": "pending"}]\n' > "$SG/checks-12"
+mkdir -p "$SGS/stop-gate"; printf '12 abc1234def5678abc1234def5678abc1234def56\n' > "$SGS/stop-gate/sg-1.heads"
+check "a two-field heads line reads as done: silent, no checks call" "|0" "$(sg 'Pushed.')|$(cat "$SG/gh-calls" 2>/dev/null | grep -c .)"
+check "and is kept" "12 abc1234def5678abc1234def5678abc1234def56 done" "$(cat "$SGS/stop-gate/sg-1.heads")"
 
 check "only the operator's own pull requests are listed" "pr list --state open --author @me --limit 200 --json number,headRefOid" \
   "$(head -1 "$SG/gh-args")"
@@ -3349,8 +3385,10 @@ printf '[{"number": 7, "headRefOid": "0011223344556677889900112233445566778899"}
 printf '[{"name": "test", "bucket": "fail"}, {"name": "e2e", "bucket": "cancel"}, {"name": "lint", "bucket": "pass"}]\n' > "$SG/checks-7"
 echo 1 > "$SG/checks-7.code"
 check "failing checks: refused with the real state" \
-  "block|#7 at 0011223: 0 checks pending (), 2 failing (test, e2e). Report this state as it is, or wait for the end in one call: \`timeout 590 gh pr checks 7 --watch\`." \
+  "block|#7 at 0011223: 0 checks pending (), 2 failing (test, e2e). Report this state as it is, or wait for the end in one call: \`timeout 590 gh pr checks 7 --watch --fail-fast\`." \
   "$(sg 'Only the known red remains.' | reason)"
+check "failing checks on a finished head: recorded" "7 0011223344556677889900112233445566778899 done" "$(cat "$SGS/stop-gate/sg-1.heads")"
+check "and the same head never refuses twice" "1|" "$(grep -c . "$SG/gh-calls")|$(sg 'Only the known red remains.')"
 printf '[{"number": 7, "headRefOid": "99887766554433221100aabbccddeeff00112233"}]\n' > "$SG/prs"
 check "a head moved by anyone is reported again" "block|#7 at 9988776" "$(sg 'Pushed.' | reason | cut -c1-19)"
 
@@ -3358,7 +3396,7 @@ sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
 printf '[{"number": 3, "headRefOid": "aaaa1111bbbb2222cccc3333dddd4444eeee5555"}]\n' > "$SG/prs"
 printf '[{"name": "test", "bucket": "pass"}, {"name": "docs", "bucket": "skipping"}]\n' > "$SG/checks-3"
 check "all checks finished and passing: the stop passes, silently" "" "$(sg 'CI is green.')"
-check "the green head is recorded" "3 aaaa1111bbbb2222cccc3333dddd4444eeee5555" "$(cat "$SGS/stop-gate/sg-1.heads")"
+check "the green head is recorded" "3 aaaa1111bbbb2222cccc3333dddd4444eeee5555 done" "$(cat "$SGS/stop-gate/sg-1.heads")"
 check "a green stop writes no log line" "" "$(sglog)"
 sg 'CI is green.' >/dev/null
 check "a head that has not moved costs no checks call" "1" "$(grep -c . "$SG/gh-calls")"
@@ -3393,6 +3431,12 @@ check "without python3 the stop passes, exit 0" "|0" \
   "$(env PATH="$NOPY" ORCHESTRATOR_STATE_DIR="$SGS" "$(command -v bash)" "$SG/hooks/stop-gate.sh" < "$SG/nopy-payload.json" 2>/dev/null; echo "|$?")"
 check "and the missing interpreter is logged" "1" "$(sglog | grep -c '| - | error | python3 is not installed$')"
 
+check "the phase brief template imposes the fail-fast watch" "yes" "$(spells "$ROOT/templates/agent-phase-brief.md" 'timeout 590 gh pr checks <n> --watch --fail-fast')"
+check "the standing rules impose the fail-fast watch" "yes" "$(spells "$ROOT/skills/orchestrator/references/briefs.md" 'timeout 590 gh pr checks <n> --watch --fail-fast')"
+check "the orchestrator skill re-reads the checks at every idle notice" "yes" "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'At every idle notice of an agent with a pull request, re-read its checks')"
+check "the orchestrator skill merges a green head only where the method opts into auto-merge" "yes" "$(spells "$ROOT/skills/orchestrator/SKILL.md" "merge only where the project's own method opts into auto-merge")"
+check "and by default there is none: it reports ready" "yes" "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'by default there is none, and you report « ready »')"
+check "the review rules point to the skill for the idle-notice reading" "yes" "$(spells "$ORCH_REFS/review.md" 'SKILL.md, « Carried at every step », says how')"
 check "the README's hooks table names the Stop hook" "yes" "$(spells "$ROOT/README.md" 'hook `Stop`')"
 check "the eval selection says its two stop-gate cases grade the staged spawn line and do not run the hook" "2" \
   "$(grep -E '^\| 5[12] \|' "$ROOT/evals/SELECTION.md" | grep -c 'under staging; it does not run the hook')"

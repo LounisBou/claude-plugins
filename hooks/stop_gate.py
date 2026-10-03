@@ -26,10 +26,14 @@ glyph at all no agent running there.
 
 Check 2, the real CI state, runs only when Check 1 let the stop pass. Each open pull
 request of the operator's own (`--author @me`) in the session's repository whose head differs from the head this hook last
-reported for this session is read with `gh pr checks`; any check pending or failing refuses
-the stop once with the real state, and the head is recorded so the same head never refuses
-twice. A head whose check list is still empty (a push seen before its checks are registered)
-is not green but unread: it is not recorded. It reads facts, never the words of the message:
+reported for this session is read with `gh pr checks`; any check pending or failing refuses the stop with the real
+state. A head is recorded with its state: `pending` once a stop has refused it while its
+checks were pending, `done` once they have all finished. A pending head refuses once; it
+passes at the next stops until a check fails, and refuses again then, once per failing set
+(the failing names are kept with the record). A head whose checks finished green is recorded
+done and passes; one that finished red refuses once, unless that failure was already told.
+A moved head starts over. A head whose check list is still empty (a push seen before its
+checks are registered) is not green but unread: it is not recorded either. It reads facts, never the words of the message:
 a list of claim words fails open on any rewording and in any language.
 
 The sweep, run last and never part of the decision. Once the checks have let the stop pass,
@@ -61,6 +65,7 @@ import signal
 import subprocess
 import sys
 import time
+from urllib.parse import quote, unquote
 
 from session_name import Unread, launcher, session_name
 
@@ -79,6 +84,8 @@ HEADS_DIR = os.path.join(STATE_DIR, "stop-gate")
 # Where dispatch-record.sh registers the records a session touched, one file per session id.
 RECORDS_DIR = os.path.join(STATE_DIR, "records")
 
+# The state a recorded head carries (check 2).
+PENDING, DONE = "pending", "done"
 ORCH_ROLE = "Orch :"
 IDLE_GLYPH = "✳"
 # The machine line once normalised (see `normalise`): the dash between « operator » and
@@ -117,7 +124,7 @@ NOT_DONE_MANY = "Not done: %s are still there. Finish them, or say what blocks t
 ROW_ONE = "Not done: row %s is open. Dispatch it, close it, or say what blocks it."
 ROW_MANY = "Not done: rows %s are open. Dispatch them, close them, or say what blocks them."
 CI_STATE = ("#%s at %s: %d checks pending (%s), %d failing (%s). Report this state as it is, "
-            "or wait for the end in one call: `timeout 590 gh pr checks %s --watch`.")
+            "or wait for the end in one call: `timeout 590 gh pr checks %s --watch --fail-fast`.")
 
 
 def log(who, *fields):
@@ -315,13 +322,21 @@ def heads_path(session_id):
 
 
 def read_heads(path):
+    """Per pull request number: (head, state, failing names). A line is
+    `<number> <head> <pending|done> [<failing names, quoted, comma-joined>]`; a two-field
+    line, written by the previous version, reads as done."""
     heads = {}
     try:
         with open(path) as fh:
             for line in fh:
                 parts = line.split()
-                if len(parts) == 2:
-                    heads[parts[0]] = parts[1]
+                if len(parts) < 2 or len(parts) > 4:
+                    continue
+                state = parts[2] if len(parts) > 2 else DONE
+                if state not in (PENDING, DONE):
+                    continue
+                failing = frozenset(unquote(n) for n in parts[3].split(",")) if len(parts) == 4 else frozenset()
+                heads[parts[0]] = (parts[1], state, failing)
     except OSError:
         pass
     return heads
@@ -332,7 +347,11 @@ def write_heads(path, heads):
         os.makedirs(HEADS_DIR, exist_ok=True)
         with open(path + ".tmp", "w") as fh:
             for number in sorted(heads, key=int):
-                fh.write("%s %s\n" % (number, heads[number]))
+                head, state, failing = heads[number]
+                line = "%s %s %s" % (number, head, state)
+                if failing:
+                    line += " " + ",".join(quote(n, safe="") for n in sorted(failing))
+                fh.write(line + "\n")
         os.replace(path + ".tmp", path)
     except OSError as exc:
         raise Unread("the reported heads cannot be written: %s" % exc)
@@ -351,7 +370,10 @@ def gh_json(argv, cwd, tolerated=()):
 
 
 def check_ci(cwd, session_id):
-    """The refusal lines, one per pull request whose new head has checks pending or failing."""
+    """The refusal lines, one per pull request whose head has checks pending or failing and
+    has not been told for that state. A head is told once while pending, again when a check
+    fails (once per failing set), and once more when it finished failing for a set not yet
+    told."""
     if not session_id:
         raise Unread("no session id: the reported heads cannot be kept")
     # The operator's own pull requests: the check exists for the reports an orchestrator
@@ -363,20 +385,29 @@ def check_ci(cwd, session_id):
     heads, lines = {}, []
     for pr in prs:
         number, head = str(pr["number"]), pr["headRefOid"]
-        if reported.get(number) == head:
-            heads[number] = head
+        seen = reported.get(number)
+        if seen and seen[0] != head:
+            seen = None  # a moved head starts over
+        if seen and seen[1] == DONE:
+            heads[number] = seen
             continue
         checks = gh_json(["pr", "checks", number, "--json", "name,bucket"], cwd,
                          tolerated=("no checks reported",))
+        if not checks:
+            # A push seen before its checks were registered: unread, read again at the next
+            # stop. A head already told as pending keeps its record.
+            if seen:
+                heads[number] = seen
+            continue
         pending = [c["name"] for c in checks if c.get("bucket") == "pending"]
         failing = [c["name"] for c in checks if c.get("bucket") in ("fail", "cancel")]
-        # No check yet is a push seen before its checks were registered, not a green head:
-        # unread, so unrecorded, and read again at the next stop.
-        if checks:
-            heads[number] = head
-        if pending or failing:
+        told = seen[2] if seen else frozenset()
+        # A first sight of a pending head refuses; a pending head already told refuses only
+        # for a failing set it has not been told; a finished head refuses for a failure only.
+        if (pending and not seen) or (failing and set(failing) != told):
             lines.append(CI_STATE % (number, head[:7], len(pending), ", ".join(pending),
                                      len(failing), ", ".join(failing), number))
+        heads[number] = (head, PENDING if pending else DONE, frozenset(failing) if pending else frozenset())
     write_heads(path, heads)
     return lines
 
