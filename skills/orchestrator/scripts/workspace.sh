@@ -80,6 +80,13 @@ bounded() {
     fi
 }
 
+# default_branch <repo>: the repository's default branch as `origin/<name>`, from origin/HEAD
+# alone. No network and no guess: the sweep runs inside the stop gate, on a deadline, and a
+# branch guessed wrong would be kept as the default when it is not. Unset, it prints nothing,
+# so a comparison against it never matches. (rhythm.sh reads the same ref, then asks the
+# remote, then guesses; it has no deadline.)
+default_branch() { git -C "$1" symbolic-ref --short -q refs/remotes/origin/HEAD 2>/dev/null; }
+
 # The working directory of every live process, read once per run. An unreadable table is
 # not an empty one: with nothing known, nothing is deleted.
 CWD_LIST=""
@@ -295,17 +302,15 @@ cmd_create() {
                 printf '%s\n' "$line"
             done < "$src/.git/info/exclude" > "$rules"
         fi
-        while IFS= read -r f; do
+        while IFS= read -r -d '' f; do
             [ -n "$f" ] || continue
             case "/$f" in
                 /.claude/settings.local.json) withheld=$((withheld + 1)); continue ;;
             esac
             copy_tree "$src" "$target" "$f" || { rm -rf "$target"; die "create: copying the local settings directory failed at $f"; }
             copied=$((copied + 1))
-        done <<EOF
-$(git -C "$src" ls-files --others --exclude-from="$rules" -- "$src/.claude/")
-EOF
-        skipped=$(git -C "$src" ls-files --others --ignored --directory --exclude-from="$rules" -- "$src/.claude/" | grep -c .)
+        done < <(git -C "$src" ls-files -z --others --exclude-from="$rules" -- "$src/.claude/")
+        skipped=$(git -C "$src" -c core.quotePath=false ls-files --others --ignored --directory --exclude-from="$rules" -- "$src/.claude/" | grep -c .)
         rm -f "$rules"
         say "copied the local settings directory ($copied files, $skipped skipped by the exclude file, $withheld withheld: the operator's own settings.local.json never travels into a checkout)"
     fi
@@ -314,14 +319,12 @@ EOF
     #    are read the way git reads them and only present files are copied.
     local n=0
     if [ -f "$src/.git/info/exclude" ]; then
-        while IFS= read -r f; do
+        while IFS= read -r -d '' f; do
             [ -n "$f" ] || continue
             case "/$f" in /.claude/*) continue ;; esac
             copy_tree "$src" "$target" "$f" || { rm -rf "$target"; die "create: copying $f failed"; }
             n=$((n + 1))
-        done <<EOF
-$(git -C "$src" ls-files --others --ignored --exclude-from="$src/.git/info/exclude")
-EOF
+        done < <(git -C "$src" ls-files -z --others --ignored --exclude-from="$src/.git/info/exclude")
     fi
     say "copied $n excluded files"
 
@@ -349,15 +352,13 @@ EOF
     esac
     local gn=0
     if [ -s "$global_excludes" ]; then
-        while IFS= read -r f; do
+        while IFS= read -r -d '' f; do
             [ -n "$f" ] || continue
             case "/$f" in /.claude/*) continue ;; esac
             [ -e "$target/$f" ] && continue
             copy_tree "$src" "$target" "$f" || { rm -rf "$target"; die "create: copying $f (global excludes) failed"; }
             gn=$((gn + 1))
-        done <<EOF
-$(git -C "$src" ls-files --others --ignored --exclude-from="$global_excludes")
-EOF
+        done < <(git -C "$src" ls-files -z --others --ignored --exclude-from="$global_excludes")
         {
             echo "# workspace.sh: the operator's global excludes"
             cat "$global_excludes"
@@ -589,7 +590,7 @@ sweep_decide() {
     [ -n "$br" ] || { echo "keep no branch checked out, so no pull request to match"; return; }
     # A long-lived branch is matched by name by pull requests that are not about it (a fork's
     # own `main`): it is never swept on a name.
-    default=$(git -C "$real" symbolic-ref --short -q refs/remotes/origin/HEAD 2>/dev/null)
+    default=$(default_branch "$real")
     case "$br" in main|master|develop|trunk) echo "keep on $br, a long-lived branch"; return ;; esac
     [ "origin/$br" != "$default" ] || { echo "keep on $br, the repository's default branch"; return; }
     load_prs "$real" || { echo "keep pull requests unreadable: $PRS_WHY"; return; }

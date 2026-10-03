@@ -525,6 +525,29 @@ check "no global excludes configured: the stderr line reads 0" "1" \
   "$(grep -c 'copied 0 files kept out by the global excludes' "$WORK/ws.err")"
 check_status "create on an existing target refuses" 1 bash "$WS" create "$SRC" phase-1
 check "and leaves it intact" "local" "$(cat "$C/LOCAL.md" 2>/dev/null)"
+
+# File names git would quote and octal-escape by default (core.quotePath): an accented letter,
+# a space, a quote, a newline. This is a fixture whose purpose is to check Unicode handling,
+# so the accented names are deliberate. Each listing is read NUL-separated and the file is
+# copied byte for byte.
+USRC="$WORK/wsrc/uni"
+NL=$'\n'
+mkdir -p "$USRC" && ( cd "$USRC" && git init -q -b main && git config user.email t@local && git config user.name t \
+  && echo tracked > README.md && git add -A && git commit -q -m "Set up" \
+  && git remote add origin git@example.invalid:owner/uni.git \
+  && mkdir -p .claude \
+  && echo accent > ".claude/été.md" && echo space > ".claude/a b.md" \
+  && echo quote > ".claude/q\"uote.md" && echo newline > ".claude/nl${NL}name.md" \
+  && echo excluded > "café.txt" && printf 'café.txt\n/.claude/\n' > .git/info/exclude )
+uout=$(bash "$WS" create "$USRC" unicode --base main 2>"$WORK/ws-uni.err")
+UC="$WORK/wsroot/uni/unicode"
+check "create succeeds on a source holding non-ASCII file names" "$UC" "$uout"
+check "the settings directory's accented name is copied" "accent" "$(cat "$UC/.claude/été.md" 2>/dev/null)"
+check "a name with a space is copied" "space" "$(cat "$UC/.claude/a b.md" 2>/dev/null)"
+check "a name with a quote is copied" "quote" "$(cat "$UC/.claude/q\"uote.md" 2>/dev/null)"
+check "a name with a newline is copied" "newline" "$(cat "$UC/.claude/nl${NL}name.md" 2>/dev/null)"
+check "an excluded path with an accented name is copied" "excluded" "$(cat "$UC/café.txt" 2>/dev/null)"
+check "and the copy counts them" "1" "$(grep -c 'settings directory (4 files' "$WORK/ws-uni.err")"
 ( cd "$C" && git config user.email t@local && git config user.name t && echo more >> README.md && git commit -q -am "Local work" )
 check "list shows the checkout, clean and unpushed" "1" "$(bash "$WS" list 2>/dev/null | grep -c "/proj/phase-1 | main | [0-9a-f]* | clean | unpushed$")"
 check_status "delete refuses an unpushed commit" 1 bash "$WS" delete "$C"
@@ -1276,6 +1299,45 @@ check "a date with a time is passed as given, and the header says what was read"
   "$(rhythm_late "$RREPO" --since 2026-08-12T13:00:00 | grep -c '^2026-W33 ')|$(rhythm_late "$RREPO" --since 2026-08-12 | grep -c 'since 2026-08-12T00:00:00$')|$(rhythm_late "$RREPO" --since 2026-08-12T13:00:00 | grep -c 'since 2026-08-12T13:00:00$')"
 check "the usage says that a bare date is read from its midnight" "1" \
   "$(rhythm "$RREPO" --bogus x | grep -c 'a bare YYYY-MM-DD means its midnight')"
+
+# The default branch when the clone never learned origin/HEAD (`git init` + `remote add` +
+# `fetch`): the remote's own answer is asked, and the reading is said on stderr. `trunk-x` is
+# in no fallback list; the origin is a local bare repository, so no network is needed.
+RBARE="$WORK/rhythm-origin.git"
+RCLONE="$WORK/rhythm-clone"
+rm -rf "$RBARE" "$RCLONE"
+git clone -q --bare "$RREPO" "$RBARE" 2>/dev/null
+git -C "$RBARE" branch -q trunk-x main && git -C "$RBARE" symbolic-ref HEAD refs/heads/trunk-x
+git init -q "$RCLONE" && git -C "$RCLONE" remote add origin "$RBARE" && git -C "$RCLONE" fetch -q origin 2>/dev/null
+# A recent git sets origin/HEAD on the first fetch; the clones this covers never had it.
+git -C "$RCLONE" remote set-head origin -d >/dev/null 2>&1
+git -C "$RCLONE" checkout -q -b elsewhere origin/main~1 2>/dev/null
+rhythm_split() { bash "$RHYTHM" "$@" 2>"$WORK/rhythm.err"; }
+check "origin/HEAD unset: the remote's own default branch is read" "rhythm: $RCLONE on origin/trunk-x since 2026-08-10T00:00:00" \
+  "$(rhythm_split "$RCLONE" --since 2026-08-10 | head -1)"
+check "and the reading is said on stderr, in one line" "rhythm: origin/HEAD is unset; read origin/trunk-x from the remote" \
+  "$(cat "$WORK/rhythm.err")"
+git -C "$RCLONE" remote set-head origin trunk-x >/dev/null 2>&1
+rhythm_split "$RCLONE" --since 2026-08-10 >/dev/null
+check "origin/HEAD set: nothing on stderr" "0" "$(wc -c < "$WORK/rhythm.err" | tr -d ' ')"
+git -C "$RCLONE" remote set-head origin -d >/dev/null 2>&1
+git -C "$RCLONE" remote set-url origin "$WORK/no-such-origin.git"
+rhythm_split "$RCLONE" --since 2026-08-10 | head -1 | grep -q ' on elsewhere since ' && g=elsewhere || g=other
+check "the remote unreachable: the fallback is used and said as a guess" "elsewhere|rhythm: origin/HEAD is unset and the remote did not answer; guessed elsewhere" \
+  "$g|$(cat "$WORK/rhythm.err")"
+# The remote answers, but with a name this clone has neither as origin/<name> nor as a local
+# branch (never fetched): the line must not say that the remote did not answer.
+RBARE2="$WORK/rhythm-origin2.git"
+RCLONE2="$WORK/rhythm-clone2"
+rm -rf "$RBARE2" "$RCLONE2"
+git clone -q --bare "$RREPO" "$RBARE2" 2>/dev/null
+git -C "$RBARE2" branch -q trunk-y main && git -C "$RBARE2" symbolic-ref HEAD refs/heads/trunk-y
+git init -q "$RCLONE2" && git -C "$RCLONE2" remote add origin "$RBARE2"
+git -C "$RCLONE2" fetch -q origin main 2>/dev/null
+git -C "$RCLONE2" checkout -q -b work origin/main 2>/dev/null
+rhythm_split "$RCLONE2" --since 2026-08-10 >/dev/null
+check "the remote names a branch the clone lacks: said as such, not as silence" "rhythm: origin/HEAD is unset; the remote names trunk-y, which this clone does not have; guessed work" \
+  "$(cat "$WORK/rhythm.err")"
 
 echo "== triggering set =="
 
