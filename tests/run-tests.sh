@@ -1156,6 +1156,10 @@ ok_brief "$B/bg-false.md"; printf -- '- Every call carries `run_in_background: f
 check_status "run_in_background set to false is not a finding" 0 bash "$LINT" "$B/bg-false.md"
 ok_brief "$B/bg-second.md"; printf 'Never run the lint in the background, and run the suite in the background.\n' >> "$B/bg-second.md"
 check_status "a second trigger on a line is read in its own clause" 1 bash "$LINT" "$B/bg-second.md"
+ok_brief "$B/bg-nothing.md"; printf 'NOTHING runs in the background.\n' >> "$B/bg-nothing.md"
+check_status "nothing forbids the background" 0 bash "$LINT" "$B/bg-nothing.md"
+ok_brief "$B/bg-run-it.md"; printf 'Run it in the background.\n' >> "$B/bg-run-it.md"
+check_status "run it in the background is still a finding" 1 bash "$LINT" "$B/bg-run-it.md"
 
 check "the shipped templates raise no background finding" "0" \
   "$(for t in "$ROOT"/templates/*.md; do bash "$LINT" "$t" 2>&1; done | grep -cE 'background|run_in_background|ending in')"
@@ -3866,6 +3870,20 @@ check "and by default it reports ready" "yes" "$(spells "$ROOT/skills/orchestrat
 check "the review rules point to the skill for the watch" "yes" "$(spells "$ORCH_REFS/review.md" 'SKILL.md, « Carried at every step », says how')"
 check "the lifecycle never rotates an agent, nor spawns a session, to watch CI" "yes|yes" \
   "$(spells "$ORCH_REFS/lifecycle.md" 'is stood down, never rotated, and no session is spawned to watch CI')|$(spells "$ORCH_REFS/lifecycle.md" 'An agent whose remaining work is waiting on CI is not rotated')"
+check "a time in a state or journal line is read from the clock, never estimated" "yes|yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'A time in a state or journal line is read from the clock, never estimated')|$(spells "$ROOT/skills/orchestrator/SKILL.md" '`date +%H:%M`, or the event'"'"'s own git or `gh` timestamp')"
+check "a red outside what the pull request touches is re-run once before any correction" "yes|yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'when its failure is outside what the pull request touches')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Only a second red, or a red in what the pull request touches')"
+check "the re-run is the failed jobs, once, after the failing job's cause is named in one line" "yes|yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 're-run the failed jobs once with `gh run rerun <run-id> --failed`')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'after naming the failing job'"'"'s cause in one line (the flake or the infrastructure fault, read in its log)')"
+check "the design carries the re-run of a red outside what the pull request touches" "yes|yes" \
+  "$(spells "$ROOT/docs/design.md" 'a red outside what the pull request touches is re-run once (failed jobs) and the watch re-armed')|$(spells "$ROOT/docs/design.md" 'a second red, or a red in what it touches, is reported and corrected')"
+check "a mechanical base merge is the orchestrator's, in place; one that decides behaviour is a correction" "yes|yes" \
+  "$(spells "$ORCH_REFS/review.md" 'conflicts are mechanical (no behaviour decided) is yours, done in place in a checkout and never by a spawned session')|$(spells "$ORCH_REFS/review.md" 'one that decides behaviour goes to a correction session')"
+check "succession prunes the state file and archives the finished journal" "yes|yes" \
+  "$(spells "$ORCH_REFS/lifecycle.md" 'Prune the state file before you hand over')|$(spells "$ORCH_REFS/lifecycle.md" 'the finished journal moves to an archive file')"
+check "the succession brief inherits a pruned state file and does not load the archive" "yes" \
+  "$(spells "$SUCC" 'pruned by your predecessor to what is live, its finished journal archived in a file you are not asked to load')"
 check "the README's hooks table names the Stop hook" "yes" "$(spells "$ROOT/README.md" 'hook `Stop`')"
 check "the eval selection says its two stop-gate cases grade the staged spawn line and do not run the hook" "2" \
   "$(grep -E '^\| 5[12] \|' "$ROOT/evals/SELECTION.md" | grep -c 'under staging; it does not run the hook')"
@@ -3901,13 +3919,20 @@ check "a sweep that fails never refuses the stop" "" "$(sg 'I launched the phase
 check "and the failure is logged" "1" "$(sglog | grep -c '| sweep | error | exit 3: boom$')"
 
 sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-echo 20 > "$SG/sweep-sleep"
+# The stub sleeps a duration carrying this run's pid, so only its own leftover is counted: a
+# bare `sleep 20` belongs to whichever other run of the suite is at this check.
+own_sleeps() { ps -axo command | grep -c "^sleep 20\\.$$\$"; }
+echo "20.$$" > "$SG/sweep-sleep"
 t0=$SECONDS
 out=$(SG_DEADLINE=6 sg 'I launched the phase.')
 elapsed=$((SECONDS - t0))
 check "a sweep that overruns is stopped inside the budget, the stop passes" "|1|0" \
-  "$out|$([ "$elapsed" -lt 12 ] && echo 1 || echo 0)|$(ps -axo command | grep -c '^sleep 20$')"
+  "$out|$([ "$elapsed" -lt 12 ] && echo 1 || echo 0)|$(own_sleeps)"
 check "and the overrun is logged" "1" "$(sglog | grep -c '| sweep | error | did not finish within')"
+# Another run of the suite sleeping 20 seconds at the same moment is not this run's leftover.
+sleep 20 & stray=$!
+check "a stray sleep 20 of another process is not counted" "0" "$(own_sleeps)"
+kill "$stray"; wait "$stray" 2>/dev/null
 
 sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
 SG_DEADLINE=3 sg 'I launched the phase.' >/dev/null

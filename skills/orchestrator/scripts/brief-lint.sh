@@ -118,7 +118,7 @@ AWK_CLAUSES='
         for (q = 1; q < length(head); q++)
             if (substr(head, q, 1) ~ /[;.,:]/ && substr(head, q + 1, 1) ~ /[ \t]/) start = q
         head = substr(head, start + 1)
-        return head ~ /(^|[^a-z])(never|no|not|forbidden|forbid|don.t|dont)([^a-z]|$)/
+        return head ~ /(^|[^a-z])(never|no|nothing|not|forbidden|forbid|don.t|dont)([^a-z]|$)/
     }
     # Any occurrence of re in text not forbidden in its clause?
     function ordered(text, re,   off, rest) {
