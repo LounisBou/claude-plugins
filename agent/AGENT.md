@@ -20,7 +20,7 @@ Every member of the project's group is a legitimate reporter (operator's ruling 
 
 | Command | When |
 | --- | --- |
-| `wait` | Your wake signal (below). Prints the ids of the open reports you have not triaged, then `answer <id>`, `edited <id>`, `follow-up <id>`, `unanswered <id>` and `ask <id>` lines (« Waiting for an answer »), at once if there are some; else blocks until one comes; prints nothing after 30 minutes. |
+| `wait` | Your wake signal (below). Prints the ids of the open reports you have not triaged, then `answer <id>`, `edited <id>`, `follow-up <id>`, `unanswered <id>` and `ask <id>` lines (« Waiting for an answer »), at once if there are some; else blocks until one comes; prints nothing after 7000 seconds. |
 | `show <id>` | Read a report: author, text, the replies already sent, image paths (open each image with the Read tool). |
 | `triage <id> bug\|question` | Record your classification, AFTER the report is relayed or answered. |
 | `taken <id>` | Launcher: « pris en compte <id> » → 👨‍💻, status `taken`. |
@@ -55,7 +55,7 @@ Every member of the project's group is a legitimate reporter (operator's ruling 
 
 ## The wait
 
-Run `bugs-bot wait` with the Bash tool's `run_in_background`, ONE at a time. You are woken when it exits. Its output is one item per line: a new report id, `answer <id>`, `edited <id>`, `follow-up <id>`, `unanswered <id>` or `ask <id>`; empty means its ceiling passed — re-arm it. Handle every printed line (below), then measure your context (« Succession »), then re-arm — or hand over, if the gate is reached. Never poll with `list` or `sleep` instead; never leave yourself without a wait armed, unless your launcher told you to stop.
+Run `bugs-bot wait` with the Bash tool's `run_in_background`, ONE at a time. You are woken when it exits. Its output is one item per line: a new report id, `answer <id>`, `edited <id>`, `follow-up <id>`, `unanswered <id>` or `ask <id>`; empty means its ceiling (7000 seconds) passed. Give the call a timeout of 7200000 ms, always above that ceiling: without one the host stops it early and the wait comes back empty for the wrong reason. **On an empty exit, re-arm at once, with no text, no measure and no message to anyone: the turn is one tool call.** Handle every printed line (below), then measure your context (« Succession »), then re-arm — or hand over, if the gate is reached. A launcher message does not end your wait: while a wait is armed and has not exited, never arm another; re-arm only when it has exited. Never poll with `list` or `sleep` instead; never leave yourself without a wait armed, unless your launcher told you to stop.
 
 ## Each new report
 
@@ -171,7 +171,7 @@ Your context is measured, not guessed, and at the gate you hand over to a fresh 
 
 **The gate** is a setting of the project file: 300,000 tokens by default on a window of 1,000,000 or more (80 % of a smaller window), printed by `bugs-bot gate`. The operator changes it with one line, `bugs-bot gate --set <tokens>`; you never change it.
 
-**When you measure.** After every handled event (a relay, a post, a launcher message) and at least every hour of waiting (your `wait` returns empty at 30 minutes: measure then, too). Run ONE plain command, alone: `bugs-bot gate --measure`. It runs the orchestrator plugin's gauge (`context-gauge.sh`, the newest installed version, located by the tool itself: no path of yours) and prints `context_tokens=`, `context_window=` and `handover=yes|no`. It exiting 1: tell your launcher its error line once, and go on.
+**When you measure.** After every handled event (a relay, a post, a launcher message), and never on an empty exit: your context only grows when you work. Run ONE plain command, alone: `bugs-bot gate --measure`. It runs the orchestrator plugin's gauge (`context-gauge.sh`, the newest installed version, located by the tool itself: no path of yours) and prints `context_tokens=`, `context_window=` and `handover=yes|no`. It exiting 1: tell your launcher its error line once, and go on.
 
 `handover=no`: re-arm the wait. `handover=yes`: hand over at the next **quiet point** — nothing being relayed, posted or answered; finish the event in hand first.
 

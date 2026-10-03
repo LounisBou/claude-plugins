@@ -264,6 +264,22 @@ def test_wait_wakes_when_a_follow_up_falls_due(at, asked, capsys):
     assert slept == [5, 5, 5]
 
 
+def test_the_default_ceiling_stays_just_under_the_hosts_two_hours():
+    from bugs_bot.agent import WAIT_TIMEOUT
+
+    assert WAIT_TIMEOUT == 7000
+
+
+def test_wait_blocks_past_the_old_ceiling_and_still_prints_a_follow_up_that_falls_due(at, asked, capsys):
+    slept = []
+
+    # The reminder falls due 50 minutes in: past the former 30-minute ceiling, inside the new one.
+    assert at(BASE_DATE + DAY - 3000, "wait", "--interval", "600", sleep=slept.append) == 0
+
+    assert capsys.readouterr().out.strip() == f"follow-up {FIRST}"
+    assert sum(slept) == 3000
+
+
 def test_unanswered_after_the_reminder_once_then_never_again(at, asked, capsys):
     at(BASE_DATE + DAY, "reply", FIRST, "Petite relance ?", "--follow-up")
     capsys.readouterr()
@@ -373,3 +389,27 @@ def test_the_agent_knows_the_follow_up_rules(phrase):
 @pytest.mark.parametrize("phrase", ["--awaits", "--follow-up", "follow_up_hours", "sans réponse <id>", "ok va pour une seule"])
 def test_the_skill_states_the_follow_up_rules(phrase):
     assert phrase in SKILL_MD.read_text()
+
+
+def test_an_empty_exit_costs_no_words_and_measures_nothing():
+    text = AGENT_MD.read_text()
+
+    assert "measure then, too" not in text
+    assert "at least every hour of waiting" not in text
+    assert "On an empty exit, re-arm at once, with no text" in text
+    assert "never on an empty exit" in text
+
+
+def test_the_agent_is_told_the_ceiling_and_the_timeout_to_pass():
+    text = AGENT_MD.read_text()
+
+    assert "prints nothing after 7000 seconds" in text
+    assert "timeout of 7200000" in text
+    assert "30 minutes" not in text
+
+
+def test_a_launcher_message_does_not_arm_a_second_wait():
+    text = AGENT_MD.read_text()
+
+    assert "A launcher message does not end your wait" in text
+    assert "never arm another" in text

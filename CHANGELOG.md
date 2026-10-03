@@ -5,6 +5,15 @@ All notable changes are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- `bugs-bot wait` returns only when something is due: its default ceiling goes from 30 minutes to
+  7000 seconds, just under the host's 2-hour limit on a background command, and the agent
+  re-arms an empty exit with no text and no context measure, measuring only after a handled
+  event. An idle agent no longer replays its whole context every half hour for nothing.
+
 ## 0.1.0 — 2026-10-02
 
 First release: the single-project Telegram bug relay, made a generic Claude Code plugin.

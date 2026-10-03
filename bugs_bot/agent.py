@@ -22,7 +22,8 @@ from bugs_bot.store import OPEN_STATUSES, Store, update_report
 
 # What the agent session decides a report is.
 KINDS = ("bug", "question")
-WAIT_TIMEOUT = 1800
+# Just under the host's 2-hour limit on a background command (7 200 000 ms): the agent wakes on events, not on a clock.
+WAIT_TIMEOUT = 7000
 WAIT_INTERVAL = 5
 # The agent's own instructions, shipped in the repository's agent/ directory.
 AGENT_MD = Path(__file__).resolve().parent.parent / "agent" / "AGENT.md"
