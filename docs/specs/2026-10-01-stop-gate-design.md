@@ -155,7 +155,16 @@ the failing check named, once per failing set (the names are kept in the record)
 whose checks have all finished is recorded `done`, so the same head never refuses twice:
 
 « #NNN at <short sha>: <n> checks pending (<names>), <m> failing (<names>). Report this
-state as it is, or wait for the end in one call: `timeout 590 gh pr checks NNN --watch --fail-fast`. »
+state as it is; to wait for the end, start `<plugin>/skills/orchestrator/scripts/ci-watch.sh NNN`
+with `run_in_background` (timeout 7200000), never in the foreground. »
+
+Amended (2026-10-03, design section 62): nobody waits on CI in the foreground. A head whose
+checks are pending, with none failing and not yet told, does NOT refuse when a `ci-watch.sh NNN`
+process is alive: the watch ends by waking the orchestrator, and the head is left unrecorded so
+that a watch which dies is told once. The process table is read once for the whole check
+(`ps -axo command`), only when a pending head is met; a table that cannot be read is one log
+line and no watch alive. A failing check refuses with or without a watch: a red is treated,
+not waited for.
 
 All checks finished and passing: the head is recorded `done`, the stop passes, nothing is
 written. A head whose check list is empty is not green but unread (a push is seen before its

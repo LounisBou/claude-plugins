@@ -144,7 +144,7 @@ AWK_CLAUSES='
 while IFS=$'\t' read -r bg_n bg_msg; do
     [ -n "${bg_n:-}" ] || continue
     say "$bg_n" "$bg_msg"
-done < <(LC_ALL=C awk "$AWK_CLAUSES"'
+done < <(LC_ALL=C awk -v implementer="$(is_class implementer && echo 1 || echo 0)" "$AWK_CLAUSES"'
     BEGIN { infence = 0 }
     {
         line = $0
@@ -152,6 +152,16 @@ done < <(LC_ALL=C awk "$AWK_CLAUSES"'
         if (lower ~ /^[[:space:]]*```/) { infence = !infence; next }
         plain = lower
         gsub(/run_in_background`?[ \t]*[:=][ \t]*`?false/, "", plain)
+        # The orchestrator arms `ci-watch.sh` in the background, once per pull request; an
+        # agent never watches CI, so in an implementer brief the exception does not apply.
+        if (!implementer) {
+            while (match(plain, /ci-watch\.sh[^;.,]*(in the background|run_in_background)/)) {
+                plain = substr(plain, 1, RSTART - 1) " " substr(plain, RSTART + RLENGTH)
+            }
+            while (match(plain, /(in the background|run_in_background)[^;.,]*ci-watch\.sh/)) {
+                plain = substr(plain, 1, RSTART - 1) " " substr(plain, RSTART + RLENGTH)
+            }
+        }
         trigger = ""
         if (ordered(plain, "in the background")) trigger = "in the background"
         else if (ordered(plain, "run_in_background")) trigger = "run_in_background"
@@ -175,6 +185,8 @@ done < <(LC_ALL=C awk "$AWK_CLAUSES"'
 #    ("never stand by") reads the opposite way and raises nothing, by the same rule as
 #    check 7. One finding per phrase and line; the cleanup phrase covers its own "after merge".
 #    A phrase quoted (backticks, guillemets) or inside a fence is a mention, not an order.
+#    « until merged » is on the list: no agent waits for the merge, nor for the checks that
+#    precede it (check 10).
 if is_class implementer; then
     while IFS=$'\t' read -r pd_n pd_msg; do
         [ -n "${pd_n:-}" ] || continue
@@ -203,18 +215,64 @@ if is_class implementer; then
             phrase[++n] = "(^|[^a-z])stand by([^a-z]|$)"; name[n] = "stand by"
             phrase[++n] = "(^|[^a-z])standing by([^a-z]|$)"; name[n] = "standing by"
             phrase[++n] = "(^|[^a-z])stay until merged"; name[n] = "stay until merged"
+            phrase[++n] = "(^|[^a-z])until merged"; name[n] = "until merged"; subsumed[n] = 6
             phrase[++n] = "(^|[^a-z])stay available"; name[n] = "stay available"
         }
         {
             if ($0 ~ /^[[:space:]]*```/) { infence = !infence; next }
             if (infence) next
             lower = unquoted(tolower($0))
-            cleanup = 0
+            cleanup = 0; told_it = 0
             for (i = 1; i <= n; i++) {
                 if (plain[i] && cleanup) continue
+                if (subsumed[i] && told_it == subsumed[i]) continue
                 if (ordered(lower, phrase[i])) {
                     if (i == 1) cleanup = 1
+                    told_it = i
                     printf "%d\tduty after delivery (%s): an implementer is stood down at its final report; post-merge work is the orchestrator'"'"'s and the sweep'"'"'s\n", NR, name[i]
+                }
+            }
+        }
+    ' "$brief" 2>/dev/null || true)
+fi
+
+# 10. An agent never waits on CI: the orchestrator keeps one background watch per pull
+#     request (`ci-watch.sh`) and an agent's delivery ends at the push. An implementer brief
+#     that orders a `gh pr checks` with `--watch`, or a `gh pr view` / `gh pr checks` inside a
+#     loop around a sleep (on one line, or between a `for`/`while`/`until` and its `done`),
+#     rebuilds the polling that took a quarter of an audited orchestration's time. A clause
+#     that FORBIDS it reads the opposite way, by the rule of check 7; a mention inside a
+#     fence is read like a command, since the loops are written there.
+if is_class implementer; then
+    while IFS=$'\t' read -r cw_n cw_msg; do
+        [ -n "${cw_n:-}" ] || continue
+        say "$cw_n" "$cw_msg"
+    done < <(LC_ALL=C awk "$AWK_CLAUSES"'
+        function loop_start(text) { return text ~ /(^|[;&|][[:space:]]*|^[[:space:]]*)(for|while|until)[[:space:]]/ }
+        BEGIN {
+            msg = "an agent waits on CI (%s): the orchestrator owns the one watch; the delivery ends at the push"
+            depth = 0
+        }
+        {
+            lower = tolower($0)
+            if (lower ~ /^[[:space:]]*```/) next
+            gh = (lower ~ /gh pr (view|checks)/); sleeps = (lower ~ /(^|[^a-z])sleep[[:space:]]/)
+            if (ordered(lower, "gh pr checks[^;|&]*--watch")) {
+                printf "%d\t" msg "\n", NR, "gh pr checks --watch"
+            }
+            if (depth == 0 && loop_start(lower) && gh && sleeps && lower ~ /done[[:space:]]*($|[^a-z])/) {
+                if (!negated(lower, index(lower, "gh pr"))) printf "%d\t" msg "\n", NR, "a loop on gh pr view/checks"
+                next
+            }
+            if (loop_start(lower) && lower !~ /done/) {
+                if (depth == 0) { loop_n = NR; loop_gh = 0; loop_sleep = 0 }
+                depth++
+            }
+            if (depth > 0) {
+                loop_gh = loop_gh || gh; loop_sleep = loop_sleep || sleeps
+                if (lower ~ /^[[:space:]]*done([^a-z]|$)/) {
+                    depth--
+                    if (depth == 0 && loop_gh && loop_sleep) printf "%d\t" msg "\n", loop_n, "a loop on gh pr view/checks"
                 }
             }
         }

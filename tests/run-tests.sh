@@ -1044,6 +1044,40 @@ ok_brief "$B/duty-forbid.md"; printf 'Never stand by; no cleanup after merge, an
 check_status "a clause that forbids the duty is not one" 0 bash "$LINT" "$B/duty-forbid.md"
 ok_brief "$B/duty-fp.md"; printf 'Example `/tmp/claude-501/x`, see `skills/a.sh:12`, run /implement:phase; the stand-down follows.\n' >> "$B/duty-fp.md"
 check "paths, slash commands, file:line suffixes and the stand-down are no duty" "0" "$(bash "$LINT" "$B/duty-fp.md" 2>&1 | grep -c 'duty after delivery')"
+# Nobody waits on CI in the foreground, and an agent never waits on it at all: an implementer
+# brief that orders a `gh pr checks` watch, a loop of `gh pr view`/`gh pr checks` around a
+# sleep, or a wait « until merged » is a finding; a clause that forbids it is not one.
+for phrase in 'Watch it with `gh pr checks 12 --watch --fail-fast`.' 'Run timeout 590 gh pr checks <n> --watch.' \
+              'for i in $(seq 1 120); do gh pr view 12 --json state; sleep 30; done' \
+              'while true; do gh pr checks 12; sleep 60; done'; do
+  ok_brief "$B/ciw.md"; printf '%s\n' "$phrase" >> "$B/ciw.md"
+  check_status "a CI wait is a finding: $phrase" 1 bash "$LINT" "$B/ciw.md"
+  check "and it is named: $phrase" "1" "$(bash "$LINT" "$B/ciw.md" 2>&1 | grep -c 'waits on CI')"
+done
+ok_brief "$B/ciw-loop.md"; printf '```bash\nfor i in $(seq 1 120); do\n  gh pr view 12 --json state\n  gh pr checks 12\n  sleep 30\ndone\n```\n' >> "$B/ciw-loop.md"
+check "a loop over several lines, in a fence, is one finding" "1" "$(bash "$LINT" "$B/ciw-loop.md" 2>&1 | grep -c 'waits on CI')"
+ok_brief "$B/ciw-noloop.md"; printf '```bash\nfor n in 1 2 3; do\n  gh pr view $n --json state\ndone\ngh pr checks 12\n```\n' >> "$B/ciw-noloop.md"
+check "a loop with no sleep, and a single read of the checks, are no wait" "0" "$(bash "$LINT" "$B/ciw-noloop.md" 2>&1 | grep -c 'waits on CI')"
+ok_brief "$B/ciw-forbid.md"; printf 'Never run `gh pr checks 12 --watch`; do not loop on `gh pr view` with a sleep.\n' >> "$B/ciw-forbid.md"
+check_status "a clause that forbids the wait is not one" 0 bash "$LINT" "$B/ciw-forbid.md"
+review_brief "$B/ciw-review.md"; printf 'End the report with `norms-check: tool <head>`.\nRun `gh pr checks 12 --watch`.\n' >> "$B/ciw-review.md"
+check_status "the same command in a review brief is not one" 0 bash "$LINT" "$B/ciw-review.md"
+for phrase in 'Wait until merged.' 'Poll until MERGED.'; do
+  ok_brief "$B/ciw-until.md"; printf '%s\n' "$phrase" >> "$B/ciw-until.md"
+  check "a wait until the merge is a post-delivery duty: $phrase" "1" "$(bash "$LINT" "$B/ciw-until.md" 2>&1 | grep -c 'duty after delivery')"
+done
+ok_brief "$B/duty-stay.md"; printf 'Stay until merged.\n' >> "$B/duty-stay.md"
+check "stay until merged stays ONE finding" "1" "$(bash "$LINT" "$B/duty-stay.md" 2>&1 | grep -c 'duty after delivery')"
+# The orchestrator, and only it, starts the watch in the background: not a finding outside an
+# implementer brief, still one in it, and any other background run is one everywhere.
+printf '# memo\n\nStart `ci-watch.sh 12` with `run_in_background`.\n' > "$B/ciw-orch.md"
+check_status "ci-watch.sh in the background is no finding outside an implementer brief" 0 bash "$LINT" "$B/ciw-orch.md"
+ok_brief "$B/ciw-agent.md"; printf 'Start `ci-watch.sh 12` with `run_in_background`.\n' >> "$B/ciw-agent.md"
+check_status "in an implementer brief it still is" 1 bash "$LINT" "$B/ciw-agent.md"
+printf '# memo\n\nStart `ci-watch.sh 12` with `run_in_background`, and run the suite in the background.\n' > "$B/ciw-orch2.md"
+check_status "a second background run on the line is still one" 1 bash "$LINT" "$B/ciw-orch2.md"
+printf '# memo\n\nRun the suite in the background.\n' > "$B/ciw-orch3.md"
+check_status "another background run outside an implementer brief is still one" 1 bash "$LINT" "$B/ciw-orch3.md"
 PHASEFILLED="$B/phase-filled.md"
 sed -e 's/{{[A-Z_]*}}/x/g' -e '1s/.*/# scratch/' "$ROOT/templates/agent-phase-brief.md" > "$PHASEFILLED"
 check "the repository's own phase template, filled, holds no post-delivery duty" "0" \
@@ -3180,6 +3214,94 @@ nojq_out=$(env PATH="$NOJQ" ORCHESTRATOR_SPAWNED=1 "$(command -v bash)" "$GUARD"
 check "without jq a marked session is let through, with one warning line" "0|1|1" \
   "$nojq_code|$(printf '%s\n' "$nojq_out" | grep -c .)|$(printf '%s' "$nojq_out" | grep -c 'jq')"
 
+echo "== ci-watch =="
+# The one way to wait on CI: a script an orchestrator starts in the background, that exits on
+# the end of the checks with one line and a code. A fake `gh` on PATH answers from files:
+# `view` (one `<STATE> <head>` line per call, the last one repeated), `reg` (one answer per
+# registration read: a count, `none` or `fail`), `failing` (the names read after a red) and
+# `watch-code` (what the watch exits with, its output a marker that must never reach stdout).
+CW="$WORK/ci-watch"
+CWB="$CW/bin"; CWS="$CW/state"
+mkdir -p "$CWB" "$CWS"
+cat > "$CWB/gh" <<EOF
+#!/bin/bash
+echo "\$*" >> "$CW/gh-calls"
+nth() {  # <file> <counter>: the nth line of <file> for the nth call, the last one repeated
+  local n total
+  n=\$(( \$(cat "$CW/\$2" 2>/dev/null || echo 0) + 1 )); echo "\$n" > "$CW/\$2"
+  total=\$(grep -c '' "\$1" 2>/dev/null || echo 0)
+  [ "\$total" -gt 0 ] || return 1
+  [ "\$n" -le "\$total" ] || n="\$total"
+  sed -n "\${n}p" "\$1"
+}
+case "\$1 \$2" in
+  "pr view") [ -f "$CW/view" ] || { echo "gh: HTTP 502" >&2; exit 1; }
+             nth "$CW/view" view-n ;;
+  "pr checks")
+    case "\$*" in
+      *--watch*) echo "WATCH-OUTPUT-MARKER"; exit "\$(cat "$CW/watch-code" 2>/dev/null || echo 0)" ;;
+      *"--json name,bucket"*) cat "$CW/failing" 2>/dev/null; exit 1 ;;
+      *"--json name"*) r=\$(nth "$CW/reg" reg-n)
+         case "\$r" in
+           none) echo "no checks reported on the 'feat' branch" >&2; exit 1 ;;
+           fail) echo "error connecting to api.github.com" >&2; exit 1 ;;
+           *) echo "\$r" ;;
+         esac ;;
+    esac ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$CWB/gh"
+HA=aaaa1111bbbb2222cccc3333dddd4444eeee5555
+HB=bbbb2222cccc3333dddd4444eeee5555ffff6666
+CWSCRIPT="$ROOT/skills/orchestrator/scripts/ci-watch.sh"
+# cw <view lines> <reg lines> <watch code> <failing> [args...]: the script's stdout|exit code
+cw() {
+  local view="$1" reg="$2" code="$3" failing="$4" out rc
+  shift 4
+  rm -f "$CW"/gh-calls "$CW"/view "$CW"/reg "$CW"/failing "$CW"/watch-code "$CW"/view-n "$CW"/reg-n
+  [ -z "$view" ] || printf '%b\n' "$view" > "$CW/view"
+  [ -z "$reg" ] || printf '%b\n' "$reg" > "$CW/reg"
+  [ -z "$failing" ] || printf '%b\n' "$failing" > "$CW/failing"
+  printf '%s\n' "$code" > "$CW/watch-code"
+  out=$(env PATH="$CWB:$PATH" ORCHESTRATOR_STATE_DIR="$CWS" CI_WATCH_REGISTER_WAIT="${CW_WAIT:-2}" \
+    bash "$CWSCRIPT" "$@" 2>/dev/null); rc=$?
+  printf '%s|%s' "$out" "$rc"
+}
+check "ci-watch exists" "yes" "$([ -f "$CWSCRIPT" ] && echo yes || echo no)"
+check "green: one line, exit 0" "ci-watch: green 7 $HA|0" \
+  "$(cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
+check "the watch's own output never reaches stdout, it lands in a log file" "1|0" \
+  "$(grep -rl WATCH-OUTPUT-MARKER "$CWS" 2>/dev/null | wc -l | tr -d ' ')|$(cw "OPEN $HA" "2" 0 "" 7 --interval 1 | grep -c WATCH-OUTPUT-MARKER)"
+check "red: the failing names are on the line, exit 1" "ci-watch: red 7 $HA test, e2e|1" \
+  "$(cw "OPEN $HA" "2" 1 "test\ne2e" 7 --interval 1)"
+check "no checks within the bound: exit 2" "ci-watch: no-checks 7 $HA|2" \
+  "$(cw "OPEN $HA" "none" 0 "" 7 --interval 1)"
+check "and the watch never started" "0" "$(grep -c -e '--watch' "$CW/gh-calls")"
+check "checks registered after the first read (a fresh push) are waited for, not read as red" "ci-watch: green 7 $HA|0" \
+  "$(cw "OPEN $HA" "none\n2" 0 "" 7 --interval 1)"
+check "moved: the head differs when the watch returns, exit 3" "ci-watch: moved 7 $HA $HB|3" \
+  "$(cw "OPEN $HA\nOPEN $HB" "2" 1 "test" 7 --interval 1)"
+check "closed: exit 4, naming the state" "ci-watch: closed 7 MERGED|4" \
+  "$(cw "OPEN $HA\nMERGED $HA" "2" 0 "" 7 --interval 1)"
+check "already closed at the first read: exit 4" "ci-watch: closed 7 CLOSED|4" \
+  "$(cw "CLOSED $HA" "2" 0 "" 7 --interval 1)"
+check "and nothing is watched" "0" "$(grep -c -e '--watch' "$CW/gh-calls")"
+check "unread: the pull request cannot be read, exit 5" "ci-watch: unread 7 gh pr view failed: gh: HTTP 502|5" \
+  "$(cw "" "2" 0 "" 7 --interval 1)"
+check "unread: the registration read fails, exit 5" "ci-watch: unread 7 gh pr checks failed: error connecting to api.github.com|5" \
+  "$(cw "OPEN $HA" "fail" 0 "" 7 --interval 1)"
+check "unread: the watch fails with no failing check named, exit 5" "5" \
+  "$(cw "OPEN $HA" "2" 4 "" 7 --interval 1 | sed 's/.*|//')"
+check "the repository is passed on to every gh call" "0" \
+  "$(cw "OPEN $HA" "2" 0 "" 7 --repo o/r --interval 1 >/dev/null; grep -vc -e '-R o/r' "$CW/gh-calls")"
+check "the interval is passed on to the watch" "1" \
+  "$(cw "OPEN $HA" "2" 0 "" 7 --interval 3 >/dev/null; grep -c -e '--watch --fail-fast --interval 3' "$CW/gh-calls")"
+check "no loop on gh pr view: two reads in all, before and after the watch" "2" \
+  "$(cw "OPEN $HA" "2" 0 "" 7 --interval 1 >/dev/null; grep -c '^pr view' "$CW/gh-calls")"
+check "without a pull request number: exit 5" "5" "$(cw "OPEN $HA" "2" 0 "" | sed 's/.*|//')"
+check "an unknown argument: exit 5" "5" "$(cw "OPEN $HA" "2" 0 "" 7 --bogus | sed 's/.*|//')"
+
 echo "== stop gate hook =="
 # An orchestrator's stop is held until something will wake it (Check 1) and until the real
 # state of its open pull requests' checks has been put in front of it once per head
@@ -3187,6 +3309,8 @@ echo "== stop gate hook =="
 # prints the listing file and a fake `workspace.sh list` printing the checkouts file; a
 # fake `gh` on PATH answers from files and records each `pr checks` call.
 SG="$WORK/stop-gate"
+# The hook spells its own path normalised; the suite's temporary directory may end in a slash.
+SGW="$(printf '%s' "$SG" | sed 's|//|/|g')/skills/orchestrator/scripts/ci-watch.sh"
 SGB="$SG/bin"; SGS="$SG/state"; SGP="$SG/sgproj"
 mkdir -p "$SG/hooks" "$SG/skills/iterm-agents/scripts" "$SG/skills/orchestrator/scripts" "$SGB" "$SGS/chains" "$SGP"
 cp "$ROOT/hooks/stop-gate.sh" "$ROOT/hooks/stop_gate.py" "$ROOT/hooks/session_name.py" "$SG/hooks/" 2>/dev/null
@@ -3219,6 +3343,22 @@ case "\$1 \$2" in
 esac
 EOF
 chmod +x "$SGB/gh" "$SG/skills/iterm-agents/scripts/iterm-agent.sh" "$SG/skills/orchestrator/scripts/workspace.sh"
+# The one process-table read of check 2 (`ps -axo command`) answers from a file and counts
+# its calls; every other `ps` is the real one. Made where check 2 starts: a case of check 1
+# replaces and removes the `ps` of the suite.
+sg_fake_ps() {
+cat > "$SGB/ps" <<EOF
+#!/bin/bash
+if [ "\$*" = "-axo command" ]; then
+  echo x >> "$SG/ps-calls"
+  [ -f "$SG/ps-fail" ] && { echo "ps: operation not permitted" >&2; exit 1; }
+  cat "$SG/ps-live" 2>/dev/null
+  exit 0
+fi
+exec /bin/ps "\$@"
+EOF
+chmod +x "$SGB/ps"
+}
 git -C "$SGP" init -q 2>/dev/null
 
 ORCHROW='w1/t1 | /dev/ttys900 | ✳ Orch : f | Orch : f [a1b2c3] | self'
@@ -3233,7 +3373,7 @@ sg_chain() {  # <tty> <owner> ...: the chain of the orchestrator's tty, in launc
 # The session's name is read from the process table the way the launcher reads it (`--name`):
 # the suite's stand-in for `ps` is a file, and the session's own tty is given.
 sg_ps() { printf '/dev/ttys900 host-cli %s\n' "$1" > "$SG/ps"; }
-sg_reset() { rm -f "$SG/prs" "$SG/gh-views" "$SG/cwds" "$SG"/view-* "$SG/gh-calls" "$SG/gh-args" "$SG/gh-offline" "$SG"/checks-* "$SG/transcript" "$SGS/stop-gate.log"; rm -rf "$SGS/stop-gate" "$SGS/records"; rm -f "$SG"/sweep-* "$SGS/sweep.stamp"; : > "$SG/checkouts"; sg_ps '--name Orch : f [a1b2c3]'; sg_listing; sg_chain; }
+sg_reset() { rm -f "$SG/prs" "$SG/gh-views" "$SG/cwds" "$SG"/view-* "$SG/gh-calls" "$SG/gh-args" "$SG/gh-offline" "$SG"/checks-* "$SG/transcript" "$SGS/stop-gate.log" "$SG/ps-live" "$SG/ps-calls" "$SG/ps-fail"; rm -rf "$SGS/stop-gate" "$SGS/records"; rm -f "$SG"/sweep-* "$SGS/sweep.stamp"; : > "$SG/checkouts"; sg_ps '--name Orch : f [a1b2c3]'; sg_listing; sg_chain; }
 # sg <message> [stop_hook_active] [session id]: the hook's stdout. SG_TRANSCRIPT names the
 # payload's transcript, SG_ITERM stands in for ITERM_SESSION_ID, SG_DEADLINE for the hook's.
 sg() {
@@ -3553,6 +3693,7 @@ check "an unreadable checkout list lets a done stop pass" "" "$(sg 'waiting: don
 check "and logs it" "1" "$(sglog | grep -c '| error | ')"
 
 echo "-- check 2: the real CI state, once per head"
+sg_fake_ps
 # A head is recorded with its state: pending once a stop has refused it while pending, done
 # once its checks have all finished. A pending head refuses once, and again only when a
 # check turns red.
@@ -3561,7 +3702,7 @@ printf '[{"number": 12, "headRefOid": "abc1234def5678abc1234def5678abc1234def56"
 printf '[{"name": "build", "bucket": "pending"}, {"name": "lint", "bucket": "pending"}, {"name": "test", "bucket": "pass"}]\n' > "$SG/checks-12"
 echo 8 > "$SG/checks-12.code"
 check "pending checks on a new head: refused with the real state" \
-  "block|#12 at abc1234: 2 checks pending (build, lint), 0 failing (). Report this state as it is, or wait for the end in one call: \`timeout 590 gh pr checks 12 --watch --fail-fast\`." \
+  "block|#12 at abc1234: 2 checks pending (build, lint), 0 failing (). Report this state as it is; to wait for the end, start \`$SGW 12\` with \`run_in_background\` (timeout 7200000), never in the foreground." \
   "$(sg 'The reds are fixed, CI is green.' | reason)"
 check "the CI refusal is logged" "1" "$(sglog | grep -c '| check2 | ci-not-finished | #12 at abc1234')"
 check "the pending head is recorded as pending" "12 abc1234def5678abc1234def5678abc1234def56 pending" "$(cat "$SGS/stop-gate/sg-1.heads" 2>/dev/null)"
@@ -3574,6 +3715,50 @@ echo 0 > "$SG/checks-12.code"
 check "pending, pending, then green: the stop passes" "" "$(sg 'CI is green.')"
 check "and the finished head is recorded as done" "12 abc1234def5678abc1234def5678abc1234def56 done" "$(cat "$SGS/stop-gate/sg-1.heads")"
 check "one refusal for this session, one for the other" "2" "$(sglog | grep -c '| check2 | ci-not-finished | #12 at abc1234')"
+
+# A pending head with a `ci-watch.sh <n>` process alive is being waited for: it does not
+# refuse the stop. One read of the process table serves every pull request of the check.
+sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+printf '[{"number": 12, "headRefOid": "abc1234def5678abc1234def5678abc1234def56"}, {"number": 13, "headRefOid": "1234abcd5678ef901234abcd5678ef901234abcd"}]\n' > "$SG/prs"
+printf '[{"name": "build", "bucket": "pending"}]\n' > "$SG/checks-12"
+printf '[{"name": "build", "bucket": "pending"}]\n' > "$SG/checks-13"
+printf 'bash %s/skills/orchestrator/scripts/ci-watch.sh 12 --interval 10\ngh pr checks 12 --watch --fail-fast\n' "$SG" > "$SG/ps-live"
+check "pending checks with a live watch for one pull request: only the other is refused" \
+  "block|#13 at 1234abc: 1 checks pending (build), 0 failing ()" "$(sg 'Pushed.' | reason | sed 's/\. Report.*//')"
+check "the process table is read once for both" "1" "$(grep -c . "$SG/ps-calls")"
+check "the watched head is not recorded, so it is told once if the watch dies" "13 1234abcd5678ef901234abcd5678ef901234abcd pending" "$(cat "$SGS/stop-gate/sg-1.heads")"
+sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+printf '[{"number": 12, "headRefOid": "abc1234def5678abc1234def5678abc1234def56"}]\n' > "$SG/prs"
+printf '[{"name": "build", "bucket": "pending"}]\n' > "$SG/checks-12"
+printf '/bin/bash %s/skills/orchestrator/scripts/ci-watch.sh 12\n' "$SG" > "$SG/ps-live"
+check "a live watch: the stop passes, silently" "" "$(sg 'Pushed.')"
+rm -f "$SG/ps-live"
+check "the watch gone: one refusal, naming the background command" \
+  "block|#12 at abc1234: 1 checks pending (build), 0 failing (). Report this state as it is; to wait for the end, start \`$SGW 12\` with \`run_in_background\` (timeout 7200000), never in the foreground." \
+  "$(sg 'Pushed.' | reason)"
+check "and never twice for that head" "" "$(sg 'Pushed.')"
+sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+printf '[{"number": 12, "headRefOid": "abc1234def5678abc1234def5678abc1234def56"}]\n' > "$SG/prs"
+printf '[{"name": "build", "bucket": "pending"}]\n' > "$SG/checks-12"
+printf 'bash %s/skills/orchestrator/scripts/ci-watch.sh 120\nvim ci-watch.sh 12\ngrep ci-watch.sh 12\n' "$SG" > "$SG/ps-live"
+check "a watch of pull request 120 and an editor open on the script are no watch of 12" "block|#12 at abc1234" "$(sg 'Pushed.' | reason | cut -c1-20)"
+sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+printf '[{"number": 12, "headRefOid": "abc1234def5678abc1234def5678abc1234def56"}]\n' > "$SG/prs"
+printf '[{"name": "build", "bucket": "pending"}]\n' > "$SG/checks-12"
+: > "$SG/ps-fail"
+check "a process table that cannot be read counts as no watch: refused" "block|#12 at abc1234" "$(sg 'Pushed.' | reason | cut -c1-20)"
+check "and the failure is logged" "1" "$(sglog | grep -c '| error | ps ')"
+sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+printf '[{"number": 7, "headRefOid": "0011223344556677889900112233445566778899"}]\n' > "$SG/prs"
+printf '[{"name": "test", "bucket": "fail"}, {"name": "lint", "bucket": "pending"}]\n' > "$SG/checks-7"
+printf 'bash %s/skills/orchestrator/scripts/ci-watch.sh 7\n' "$SG" > "$SG/ps-live"
+check "a failing check refuses even with a live watch: a red is treated" "block|#7 at 0011223: 1 checks pending (lint), 1 failing (test)" \
+  "$(sg 'Waiting.' | reason | sed 's/\. Report.*//')"
+sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+printf '[{"number": 3, "headRefOid": "aaaa1111bbbb2222cccc3333dddd4444eeee5555"}]\n' > "$SG/prs"
+printf '[{"name": "test", "bucket": "pass"}]\n' > "$SG/checks-3"
+sg 'CI is green.' >/dev/null
+check "no pending head: the process table is not read" "0" "$(grep -c . "$SG/ps-calls" 2>/dev/null || echo 0)"
 
 # Pending, then one check turns red while another is still pending: refused again with the
 # red named, once; the finished red is the same failure and does not refuse a third time.
@@ -3620,7 +3805,7 @@ printf '[{"number": 7, "headRefOid": "0011223344556677889900112233445566778899"}
 printf '[{"name": "test", "bucket": "fail"}, {"name": "e2e", "bucket": "cancel"}, {"name": "lint", "bucket": "pass"}]\n' > "$SG/checks-7"
 echo 1 > "$SG/checks-7.code"
 check "failing checks: refused with the real state" \
-  "block|#7 at 0011223: 0 checks pending (), 2 failing (test, e2e). Report this state as it is, or wait for the end in one call: \`timeout 590 gh pr checks 7 --watch --fail-fast\`." \
+  "block|#7 at 0011223: 0 checks pending (), 2 failing (test, e2e). Report this state as it is; to wait for the end, start \`$SGW 7\` with \`run_in_background\` (timeout 7200000), never in the foreground." \
   "$(sg 'Only the known red remains.' | reason)"
 check "failing checks on a finished head: recorded" "7 0011223344556677889900112233445566778899 done" "$(cat "$SGS/stop-gate/sg-1.heads")"
 check "and the same head never refuses twice" "1|" "$(grep -c . "$SG/gh-calls")|$(sg 'Only the known red remains.')"
@@ -3666,12 +3851,21 @@ check "without python3 the stop passes, exit 0" "|0" \
   "$(env PATH="$NOPY" ORCHESTRATOR_STATE_DIR="$SGS" "$(command -v bash)" "$SG/hooks/stop-gate.sh" < "$SG/nopy-payload.json" 2>/dev/null; echo "|$?")"
 check "and the missing interpreter is logged" "1" "$(sglog | grep -c '| - | error | python3 is not installed$')"
 
-check "the phase brief template imposes the fail-fast watch" "yes" "$(spells "$ROOT/templates/agent-phase-brief.md" 'timeout 590 gh pr checks <n> --watch --fail-fast')"
-check "the standing rules impose the fail-fast watch" "yes" "$(spells "$ROOT/skills/orchestrator/references/briefs.md" 'timeout 590 gh pr checks <n> --watch --fail-fast')"
-check "the orchestrator skill re-reads the checks at every idle notice" "yes" "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'At every idle notice of an agent with a pull request, re-read its checks')"
-check "the orchestrator skill merges a green head only where the method opts into auto-merge" "yes" "$(spells "$ROOT/skills/orchestrator/SKILL.md" "merge only where the project's own method opts into auto-merge")"
-check "and by default there is none: it reports ready" "yes" "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'by default there is none, and you report « ready »')"
-check "the review rules point to the skill for the idle-notice reading" "yes" "$(spells "$ORCH_REFS/review.md" 'SKILL.md, « Carried at every step », says how')"
+check "the phase brief template ends the delivery at the push, no CI watch" "yes|no|no" \
+  "$(spells "$ROOT/templates/agent-phase-brief.md" 'The delivery ends at the push')|$(spells "$ROOT/templates/agent-phase-brief.md" 'gh pr checks')|$(spells "$ROOT/templates/agent-phase-brief.md" 'in the foreground')"
+check "the standing rules say an agent never waits on CI" "yes|no" \
+  "$(spells "$ROOT/skills/orchestrator/references/briefs.md" '**An agent never waits on CI.**')|$(spells "$ROOT/skills/orchestrator/references/briefs.md" 'timeout 590 gh pr checks <n> --watch')"
+check "the orchestrator skill arms one background watch per pull request" "yes|yes|yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'start `ci-watch.sh <n>`')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'with `run_in_background` and a timeout of 7 200 000 ms: one per pull request, never two')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Moved: re-arm on the new head')"
+check "and reads each ending: red, no checks, closed, unread" "yes|yes|yes|yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'dispatch the correction at once, to a fresh session')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'No checks: ready on the suite')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Closed: stop the work on it')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Unread, or the timeout: re-arm once, then report')"
+check "never a foreground watch, a loop on gh pr view or a wait for MERGED" "yes" "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'never a loop on `gh pr view` or `gh pr checks`, never a wait for MERGED')"
+check "the orchestrator skill no longer re-reads the checks at each idle notice" "no" "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'At every idle notice of an agent with a pull request, re-read its checks')"
+check "the orchestrator skill merges a green head only where the method opts into auto-merge" "yes" "$(spells "$ROOT/skills/orchestrator/SKILL.md" "in a project whose method opts into auto-merge, nothing")"
+check "and by default it reports ready" "yes" "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'otherwise report « ready » as above')"
+check "the review rules point to the skill for the watch" "yes" "$(spells "$ORCH_REFS/review.md" 'SKILL.md, « Carried at every step », says how')"
+check "the lifecycle never rotates an agent, nor spawns a session, to watch CI" "yes|yes" \
+  "$(spells "$ORCH_REFS/lifecycle.md" 'is stood down, never rotated, and no session is spawned to watch CI')|$(spells "$ORCH_REFS/lifecycle.md" 'An agent whose remaining work is waiting on CI is not rotated')"
 check "the README's hooks table names the Stop hook" "yes" "$(spells "$ROOT/README.md" 'hook `Stop`')"
 check "the eval selection says its two stop-gate cases grade the staged spawn line and do not run the hook" "2" \
   "$(grep -E '^\| 5[12] \|' "$ROOT/evals/SELECTION.md" | grep -c 'under staging; it does not run the hook')"

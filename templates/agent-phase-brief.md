@@ -68,8 +68,8 @@ Non-goals:
 - Draft PR, title `{{PR_TITLE}}`, base `{{BASE_BRANCH}}`.
 - Description: {{PR_DESCRIPTION_SHAPE}}
 - Figures (counts, sizes, timings) are written once, on the final head.
-- After every push, watch the pull request's checks fail-fast, in the foreground, in the call that waits for it (tool timeout 600000 ms): `timeout 590 gh pr checks <n> --watch --fail-fast`. Re-arm it after each push. On a red check, act at once: read the failing job's log (`gh run view <run> --log-failed`), fix, push, watch again. A run still pending at 590 s is watched again in the next call, never left, and a turn is never ended on « waiting for CI ». The final report states the check rollup at the final head. A project with no CI says so, and this clause does not apply.
-- Final report with the pull request number and head sha; you are then stood down.
+- The delivery ends at the push: the suite green locally on the final head, pushed, the pull request opened, then the final report, then the stand-down. You never watch the pull request's checks, never poll them and never wait for the merge: the orchestrator owns the CI watch, and a check that fails after your delivery is corrected by a fresh session. A project whose method opts into auto-merge says here how the pull request is delivered.
+- Final report with the pull request number, the head sha and the suite's result on that head; you are then stood down.
 
 ## 8. Resource envelope
 

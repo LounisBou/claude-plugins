@@ -133,8 +133,14 @@ NOT_DONE_ONE = "Not done: %s is still there. Finish it, or say what blocks it."
 NOT_DONE_MANY = "Not done: %s are still there. Finish them, or say what blocks them."
 ROW_ONE = "Not done: row %s is open. Dispatch it, close it, or say what blocks it."
 ROW_MANY = "Not done: rows %s are open. Dispatch them, close them, or say what blocks them."
-CI_STATE = ("#%s at %s: %d checks pending (%s), %d failing (%s). Report this state as it is, "
-            "or wait for the end in one call: `timeout 590 gh pr checks %s --watch --fail-fast`.")
+CI_WATCH = os.path.join(ROOT, "skills", "orchestrator", "scripts", "ci-watch.sh")
+CI_STATE = ("#%s at %s: %d checks pending (%s), %d failing (%s). Report this state as it is; "
+            "to wait for the end, start `%s %s` with `run_in_background` (timeout 7200000), "
+            "never in the foreground.")
+# `ci-watch.sh <n>` as a process's command line (`ps -axo command`, no pid): the script run by
+# a shell or by its own path, then the pull request number. An editor open on the script,
+# or a `grep ci-watch.sh 12`, is no watch.
+WATCH_PROCESS = re.compile(r"^\s*(?:\S*/)?(?:(?:bash|sh|zsh)\s+(?:-\S+\s+)*)?\S*ci-watch\.sh\s+(\d+)(?:\s|$)")
 
 
 def log(who, *fields):
@@ -424,7 +430,21 @@ def gh_json(argv, cwd, tolerated=()):
         raise Unread("gh %s failed (exit %d): %s" % (" ".join(argv[:2]), code, first_line(err)))
 
 
-def check_ci(cwd, session_id):
+def watched_numbers(who):
+    """The pull request numbers a `ci-watch.sh` process is alive for: one read of the process
+    table. A table that cannot be read is one log line and no watch alive."""
+    try:
+        out, err, code = run(["ps", "-axo", "command"], what="ps")
+    except Unread as exc:
+        log(who, "error", str(exc))
+        return set()
+    if code != 0:
+        log(who, "error", "ps failed: %s" % first_line(err))
+        return set()
+    return {m.group(1) for m in (WATCH_PROCESS.search(l) for l in out.splitlines()) if m}
+
+
+def check_ci(cwd, session_id, who=""):
     """The refusal lines, one per pull request whose head has checks pending or failing and
     has not been told for that state. A head is told once while pending, again when a check
     fails (once per failing set), and once more when it finished failing for a set not yet
@@ -438,6 +458,7 @@ def check_ci(cwd, session_id):
     path = heads_path(session_id)
     reported = read_heads(path)
     heads, lines = {}, []
+    watched = None  # read at the first pending head, once for the whole check
     for pr in prs:
         number, head = str(pr["number"]), pr["headRefOid"]
         seen = reported.get(number)
@@ -457,11 +478,18 @@ def check_ci(cwd, session_id):
         pending = [c["name"] for c in checks if c.get("bucket") == "pending"]
         failing = [c["name"] for c in checks if c.get("bucket") in ("fail", "cancel")]
         told = seen[2] if seen else frozenset()
+        if pending and not seen and not failing:
+            if watched is None:
+                watched = watched_numbers(who)
+            if number in watched:
+                # Waited for in the background, and woken by its end: nothing to refuse, and
+                # nothing recorded, so a watch that dies is told once.
+                continue
         # A first sight of a pending head refuses; a pending head already told refuses only
         # for a failing set it has not been told; a finished head refuses for a failure only.
         if (pending and not seen) or (failing and set(failing) != told):
             lines.append(CI_STATE % (number, head[:7], len(pending), ", ".join(pending),
-                                     len(failing), ", ".join(failing), number))
+                                     len(failing), ", ".join(failing), CI_WATCH, number))
         heads[number] = (head, PENDING if pending else DONE, frozenset(failing) if pending else frozenset())
     write_heads(path, heads)
     return lines
@@ -553,7 +581,7 @@ def gate(payload):
                 refuse(held[1])
                 refused = True
                 return
-            lines = check_ci(cwd, session_id)
+            lines = check_ci(cwd, session_id, who)
             if lines:
                 log(who, "check2", "ci-not-finished", " ; ".join(l.split(". Report")[0] for l in lines))
                 refuse("\n".join(lines))
