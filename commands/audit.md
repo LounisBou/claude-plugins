@@ -11,11 +11,12 @@ Usage: `/orchestrator:audit <subject> [--since <date>]`. The subject is at most 
 characters: it becomes the title `Audit : <subject>`.
 
 1. **Fill the brief.** Copy `${CLAUDE_PLUGIN_ROOT}/templates/agent-audit-brief.md` into the
-   project's briefs directory as `audit-<date>-<subject>-brief.md`, and fill every
+   project's briefs directory as `audit-<subject>-brief.md`, and fill every
    `{{PLACEHOLDER}}` with what you can read, each path absolute:
    - the repository and the project's name;
    - the previous report: the newest file under `<briefs dir>/audits/`, or « none »;
-   - the start: `--since`, else the previous report's date, else the repository's first
+   - the start: `--since`, else the previous report's date, read from
+     the previous report's file name, which a command wrote, else the repository's first
      commit;
    - the project's method files you know (its rules, its state file), or « none known »;
    - its dispatch record and bug register when it keeps them, or « none »;
@@ -25,7 +26,7 @@ characters: it becomes the title `Audit : <subject>`.
      succession template, `${CLAUDE_PLUGIN_ROOT}/templates/auditor-succession-brief.md`, both
      resolved now for the same reason: an auditor the operator keeps on past its report
      succeeds with them;
-   - the report: `<briefs dir>/audits/<date>-<subject>.md`.
+   - the report: `<briefs dir>/audits/<date>-<subject>.md`, where `<date>` is the output of `date +%F` run now, never typed (the report keeps a dated name so that successive reports of one subject do not collide and the previous one is the newest).
 2. **Lint it.** `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <brief path> --expect-created <report path>`;
    repair any other finding before the spawn.
 3. **Spawn**, beside this tab:

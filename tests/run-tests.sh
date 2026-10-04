@@ -3947,8 +3947,20 @@ check "and by default it reports ready" "yes" "$(spells "$ROOT/skills/orchestrat
 check "the review rules point to the skill for the watch" "yes" "$(spells "$ORCH_REFS/review.md" 'SKILL.md, « Carried at every step », says how')"
 check "the lifecycle never rotates an agent, nor spawns a session, to watch CI" "yes|yes" \
   "$(spells "$ORCH_REFS/lifecycle.md" 'is stood down, never rotated, and no session is spawned to watch CI')|$(spells "$ORCH_REFS/lifecycle.md" 'An agent whose remaining work is waiting on CI is not rotated')"
-check "a time in a state or journal line is read from the clock, never estimated" "yes|yes" \
-  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'A time in a state or journal line is read from the clock, never estimated')|$(spells "$ROOT/skills/orchestrator/SKILL.md" '`date +%H:%M`, or the event'"'"'s own git or `gh` timestamp')"
+check "no date or hour is written from memory, and a journal line carries no hour" "yes|yes|yes|no|no" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" '**No date or hour is written from memory.**')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'A state or journal line carries no hour')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'a dispatch record'"'"'s `opened` is `dispatch-record.sh`'"'"'s to write, never typed')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'date +%H:%M')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'A time in a state or journal line is read from the clock')"
+check "a time a message must carry is a command's output or the event's own timestamp, pasted" "yes|yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" '`date -u +%FT%TZ`')|$(spells "$ROOT/skills/orchestrator/SKILL.md" "the event's own git or \`gh\` timestamp, pasted, never typed")"
+check "a brief is named by its subject, never by a date" "yes|yes" \
+  "$(spells "$ORCH_REFS/briefs.md" '`<briefs dir>/<subject>.md`')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'a brief or a memory is named by its subject only, never by a date')"
+check "the audit brief is named by its subject, with no date" "yes|no" \
+  "$(spells "$ROOT/commands/audit.md" 'audit-<subject>-brief.md')|$(spells "$ROOT/commands/audit.md" 'audit-<date>')"
+check "the audit report keeps a dated name whose date is date +%F run at launch, never typed" "yes|yes" \
+  "$(spells "$ROOT/commands/audit.md" '`<briefs dir>/audits/<date>-<subject>.md`, where `<date>` is the output of `date +%F` run now, never typed')|$(spells "$ROOT/commands/audit.md" "the previous report's file name, which a command wrote")"
+check "the coordinator's succession brief is named with no date" "yes|no" \
+  "$(spells "$ROOT/skills/coordination/SKILL.md" '<state dir>/coordinator/succession-brief.md')|$(spells "$ROOT/skills/coordination/SKILL.md" 'succession-<date>')"
+check "a relayed ruling is dated by a command, pasted, never from memory" "yes|no" \
+  "$(spells "$ROOT/commands/decide.md" 'the ruling verbatim, dated (`date -u +%FT%TZ`, pasted),')|$(spells "$ROOT/commands/decide.md" 'the ruling verbatim, dated,')"
 check "a red outside what the pull request touches is re-run once before any correction" "yes|yes" \
   "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'when its failure is outside what the pull request touches')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Only a second red, or a red in what the pull request touches')"
 check "the re-run is the failed jobs, once, after the failing job's cause is named in one line" "yes|yes" \

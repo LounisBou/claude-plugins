@@ -110,7 +110,7 @@ Measure it with `orchestrator:context-gauge`. At the gate —
 with no relay in flight, succeed yourself without asking and tell the operator after:
 
 1. Copy `${CLAUDE_PLUGIN_ROOT}/templates/coordinator-succession-brief.md` to
-   `<state dir>/coordinator/succession-<date>.md`, fill every placeholder, and lint it with
+   `<state dir>/coordinator/succession-brief.md` (one at a time: the successor's own succession overwrites it), fill every placeholder, and lint it with
    `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <brief path>`.
 2. Spawn the successor at the first place of your window:
 

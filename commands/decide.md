@@ -62,7 +62,7 @@ question and its answer.
    entry, the plan — the durable place, never only the chat. A ruling that exists only in
    a conversation is a ruling the next session relitigates. Only the user's ruling is written
    there; a proposal never is.
-3. Tell the agent whose STOP it answers — `SendMessage`, the ruling verbatim, dated,
+3. Tell the agent whose STOP it answers — `SendMessage`, the ruling verbatim, dated (`date -u +%FT%TZ`, pasted),
    « the operator ruled » — and subscribe to its idle notice.
 4. Present the next question IN FULL (step 2). Not before.
 
