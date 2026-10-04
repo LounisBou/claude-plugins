@@ -9,6 +9,7 @@ import pytest
 from samples import BASE_DATE, FakeTelegram, message
 
 from bugs_bot import cli
+from bugs_bot.agent import WAIT_TIMED_OUT
 
 HOUR = 3600
 DAY = 24 * HOUR
@@ -264,10 +265,10 @@ def test_wait_wakes_when_a_follow_up_falls_due(at, asked, capsys):
     assert slept == [5, 5, 5]
 
 
-def test_the_default_ceiling_stays_just_under_the_hosts_two_hours():
+def test_the_default_ceiling_stays_under_the_prompt_cache_lifetime():
     from bugs_bot.agent import WAIT_TIMEOUT
 
-    assert WAIT_TIMEOUT == 7000
+    assert WAIT_TIMEOUT == 3300
 
 
 def test_wait_blocks_past_the_old_ceiling_and_still_prints_a_follow_up_that_falls_due(at, asked, capsys):
@@ -284,7 +285,7 @@ def test_unanswered_after_the_reminder_once_then_never_again(at, asked, capsys):
     at(BASE_DATE + DAY, "reply", FIRST, "Petite relance ?", "--follow-up")
     capsys.readouterr()
 
-    assert at(BASE_DATE + 2 * DAY - 1, "wait", "--timeout", "0") == 0
+    assert at(BASE_DATE + 2 * DAY - 1, "wait", "--timeout", "0") == WAIT_TIMED_OUT
     assert capsys.readouterr().out == ""
     assert at(BASE_DATE + 2 * DAY, "wait") == 0
     assert capsys.readouterr().out.strip() == f"unanswered {FIRST}"
@@ -293,7 +294,7 @@ def test_unanswered_after_the_reminder_once_then_never_again(at, asked, capsys):
     assert awaiting(asked)["escalated"] == "2026-10-04T08:31:00+00:00"
     capsys.readouterr()
 
-    assert at(BASE_DATE + 9 * DAY, "wait", "--timeout", "0") == 0
+    assert at(BASE_DATE + 9 * DAY, "wait", "--timeout", "0") == WAIT_TIMED_OUT
     assert capsys.readouterr().out == ""
     assert at(BASE_DATE + 9 * DAY, "escalated", FIRST) == 1
     assert at(BASE_DATE + 9 * DAY, "reply", FIRST, "Relance", "--follow-up") == 1
@@ -396,15 +397,17 @@ def test_an_empty_exit_costs_no_words_and_measures_nothing():
 
     assert "measure then, too" not in text
     assert "at least every hour of waiting" not in text
-    assert "On an empty exit, re-arm at once, with no text" in text
+    assert "On exit code 3, re-arm at once with one tool call: no read of the output, no text, no measure" in text
     assert "never on an empty exit" in text
 
 
 def test_the_agent_is_told_the_ceiling_and_the_timeout_to_pass():
     text = AGENT_MD.read_text()
 
-    assert "prints nothing after 7000 seconds" in text
-    assert "timeout of 7200000" in text
+    assert "after 3300 seconds it prints nothing and exits 3" in text
+    assert "timeout of 3600000" in text
+    assert "7000" not in text
+    assert "7200000" not in text
     assert "30 minutes" not in text
 
 

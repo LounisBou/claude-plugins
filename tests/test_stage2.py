@@ -10,6 +10,7 @@ from conftest import REPO_ROOT, read_state, reports
 from samples import BASE_DATE, GROUP_ID, TOKEN, FakeTelegram, message
 
 from bugs_bot import cli
+from bugs_bot.agent import WAIT_TIMED_OUT
 
 FIRST = "20261002-083000-100"
 SECOND = "20261002-083100-101"
@@ -205,7 +206,7 @@ def test_wait_ignores_triaged_closed_and_half_written_reports(run, run2, bound, 
     (bound / "inbox" / ".20261002-090000-200.tmp").mkdir()
     capsys.readouterr()
 
-    assert run2("wait", "--timeout", "30", "--interval", "10") == 0
+    assert run2("wait", "--timeout", "30", "--interval", "10") == WAIT_TIMED_OUT
 
     assert capsys.readouterr().out == ""
 
@@ -228,10 +229,15 @@ def test_wait_blocks_until_a_report_lands(run, run2, bound, capsys):
 def test_wait_gives_up_at_its_ceiling_printing_nothing(run2, bound, capsys):
     sleep = FakeSleep()
 
-    assert run2("wait", "--timeout", "60", "--interval", "5", sleep=sleep) == 0
+    assert run2("wait", "--timeout", "60", "--interval", "5", sleep=sleep) == 3
 
     assert capsys.readouterr().out == ""
     assert sum(sleep.calls) == 60
+
+
+def test_the_ceiling_exit_code_is_its_own():
+    assert WAIT_TIMED_OUT == 3
+    assert WAIT_TIMED_OUT not in (0, 1, 2, 127, 130)
 
 
 def test_wait_does_not_touch_the_network(run, run2, bound):

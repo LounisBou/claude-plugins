@@ -90,7 +90,7 @@ def build_parser(description: str) -> argparse.ArgumentParser:
     triage.add_argument("id")
     triage.add_argument("kind", choices=REPORT_KINDS)
     wait = sub.add_parser("wait", parents=[project], help="block until an untriaged report lands or a wait falls due; print it")
-    wait.add_argument("--timeout", type=float, default=WAIT_TIMEOUT, help="ceiling in seconds (prints nothing)")
+    wait.add_argument("--timeout", type=float, default=WAIT_TIMEOUT, help="ceiling in seconds: prints nothing and exits 3 (an event exits 0)")
     wait.add_argument("--interval", type=float, default=WAIT_INTERVAL, help="seconds between two looks")
     sub.add_parser("pending", parents=[project], help="triaged reports neither fixed nor done, and the overdue waits")
     sub.add_parser("overdue", parents=[project], help="the follow-ups due and the waits unanswered after their reminder")

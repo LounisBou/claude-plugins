@@ -12,6 +12,7 @@ from fake_slack import CHANNEL, SLACK_TOKEN, FakeSlack, msg, ts
 from samples import BASE_DATE, GROUP_ID, TOKEN, FakeTelegram, message
 
 from bugs_bot import cli, pull
+from bugs_bot.agent import WAIT_TIMED_OUT
 from bugs_bot.channel import Attachment
 from bugs_bot.store import Machine
 
@@ -126,7 +127,7 @@ def test_a_thread_reply_is_an_answer_on_its_report_never_a_report(bugs_home, sla
     assert cli.main(["show", report_id], env=env, now=NOW) == 0
     shown = capsys.readouterr().out
     assert "answer 1 2026-10-02T08:45:00+00:00 Ana: oui c'est mieux" in shown and "1.png" in shown
-    assert cli.main(["wait", "--timeout", "0"], env=env, now=NOW) == 0
+    assert cli.main(["wait", "--timeout", "0"], env=env, now=NOW) == WAIT_TIMED_OUT
     assert capsys.readouterr().out == ""
 
 

@@ -22,8 +22,10 @@ from bugs_bot.store import OPEN_STATUSES, Store, update_report
 
 # What the agent session decides a report is.
 KINDS = ("bug", "question")
-# Just under the host's 2-hour limit on a background command (7 200 000 ms): the agent wakes on events, not on a clock.
-WAIT_TIMEOUT = 7000
+# Under the host's one-hour prompt-cache lifetime: an empty exit finds the cache still warm and rewrites nothing.
+WAIT_TIMEOUT = 3300
+# The exit code of a ``wait`` that reached its ceiling with nothing to print; an event exits 0.
+WAIT_TIMED_OUT = 3
 WAIT_INTERVAL = 5
 # The agent's own instructions, shipped in the repository's agent/ directory.
 AGENT_MD = Path(__file__).resolve().parent.parent / "agent" / "AGENT.md"
@@ -55,15 +57,16 @@ def cmd_wait(
     clock: Callable[[], float],
     now: float,
     follow_up_hours: float,
-) -> None:
+) -> int:
     """Block until there is something to do, then print it: the untriaged open reports' ids, then
     ``answer <id>`` for each report holding a reply in its thread not yet shown, ``edited <id>`` for each holding
     an edit not yet shown, ``follow-up <id>`` for each
     wait owed its reminder, ``unanswered <id>`` for each to tell the launcher, and ``ask <id>`` for each queued
     question whose person no longer owes an answer.
 
-    Reads the inbox only (the PM2 pull fills it). Prints nothing when ``timeout`` elapses first,
-    so the caller re-arms it. ``now`` is the wall time at the start; it advances with ``clock``.
+    Reads the inbox only (the PM2 pull fills it). Prints nothing and returns ``WAIT_TIMED_OUT`` when ``timeout``
+    elapses first, so the caller re-arms it; returns 0 when it printed something. ``now`` is the wall time at the
+    start; it advances with ``clock``.
     """
     start = clock()
     deadline = start + timeout
@@ -77,10 +80,10 @@ def cmd_wait(
         found += [f"ask {rid}" for rid in asks(store)]
         if found:
             print("\n".join(found))
-            return
+            return 0
         left = deadline - clock()
         if left <= 0:
-            return
+            return WAIT_TIMED_OUT
         sleep(min(interval, left))
 
 

@@ -5,6 +5,20 @@ All notable changes are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- The agent writes to its launcher only to bring it information: no acknowledgement of a protocol
+  phrase, no « where does each stand » round on restart (the reports never relayed are
+  relayed as new reports by the first wait, as « Each new report » says), no launcher confirmation round, no handover line to the launcher (the
+  predecessor–successor exchange stays). A launcher message outside the protocol table is answered
+  only when it asks a question. The launcher's instructions (`skills/bugs-bot/SKILL.md`) follow.
+- `bugs-bot wait` has a ceiling of 3300 seconds, under the host's one-hour prompt-cache lifetime
+  (it was 7000), and exits 3 at that ceiling with no output; an event still exits 0. The agent
+  re-arms on exit 3 with one tool call and no read of the output. An idle agent no longer rewrites
+  its whole cache on every empty wake.
+
 ## 0.1.3 — 2026-10-04
 
 ### Fixed

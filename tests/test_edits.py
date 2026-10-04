@@ -13,6 +13,7 @@ from samples import BASE_DATE, GROUP_ID, OTHER_GROUP_ID, FakeTelegram, message
 from test_mention import STAMP, write_report
 
 from bugs_bot import cli, edits, pull
+from bugs_bot.agent import WAIT_TIMED_OUT
 from bugs_bot import reports as reports_
 from bugs_bot.store import EMOJI_TAKEN, Machine, Store, update_report
 
@@ -67,7 +68,7 @@ def test_an_edit_replaces_the_report_text_keeps_the_previous_and_wait_says_it_un
     shown = capsys.readouterr().out
     assert "modifié : Autre point bloquant: → Autre point bloquant: le lecteur gèle au lancement" in shown
     assert read(bound)["edits"][0]["seen"] is True
-    assert run("wait", "--timeout", "0") == 0
+    assert run("wait", "--timeout", "0") == WAIT_TIMED_OUT
     assert capsys.readouterr().out == ""
 
 
@@ -183,7 +184,7 @@ def test_an_edit_replayed_after_a_later_one_is_never_recorded_again(bound, run, 
     assert after["text"] == "C"
     assert [(e["previous"], e["date"]) for e in after["edits"]] == [("A", iso(BASE_DATE + 60)), ("B", iso(BASE_DATE + 120))]
     assert "edited" not in capsys.readouterr().out
-    assert run("wait", "--timeout", "0") == 0
+    assert run("wait", "--timeout", "0") == WAIT_TIMED_OUT
     assert capsys.readouterr().out == ""
 
 

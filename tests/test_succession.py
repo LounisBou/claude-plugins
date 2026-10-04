@@ -173,8 +173,6 @@ def test_agent_md_carries_both_sides_of_the_succession():
         "--successor",
         "--prompt-file",
         "--dir <repo>",
-        "relève à",
-        "successeur lancé",
         "relève confirmée",
         "handed over",
         "--expect-title",

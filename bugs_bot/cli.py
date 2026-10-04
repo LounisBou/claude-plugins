@@ -171,7 +171,7 @@ def main(
         elif args.command == "triage":
             cmd_triage(store, args.id, args.kind)
         elif args.command == "wait":
-            cmd_wait(store, args.timeout, args.interval, sleep, clock, now, project.follow_up_hours)
+            return cmd_wait(store, args.timeout, args.interval, sleep, clock, now, project.follow_up_hours)
         elif args.command == "pending":
             cmd_pending(store, project.follow_up_hours, now)
         elif args.command == "overdue":
