@@ -18,6 +18,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (it was 7000), and exits 3 at that ceiling with no output; an event still exits 0. The agent
   re-arms on exit 3 with one tool call and no read of the output. An idle agent no longer rewrites
   its whole cache on every empty wake.
+- `agent/AGENT.md` is shorter, 5361 words before and 4447 after: each rule stated once, the other
+  places pointing to it. No rule changed.
 
 ## 0.1.3 — 2026-10-04
 
