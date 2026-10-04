@@ -10,7 +10,8 @@
 # Reads the session's measured context fill from the gauge's tap tier and, at or past the
 # gate, injects one line the session cannot miss, fitted to its role: an orchestrator
 # succeeds at the next quiet boundary, an agent finishes its unit and stops, an auditor
-# writes its one report and stops, the coordinator succeeds when no relay is in flight.
+# writes its one report and stops (or, with work the operator gave it after the report still
+# in hand, succeeds), the coordinator succeeds when no relay is in flight.
 # Below the gate it prints nothing.
 #
 # The gate is 80 % of the window, or 300,000 tokens on a window of 1,000,000 tokens or more:
@@ -57,7 +58,7 @@ case "$name" in
     "Agent :"*)
         role_line="Finish the unit in progress, report to your orchestrator with your measured context, and stop; no new phase is dispatched to you." ;;
     "Audit :"*)
-        role_line="Write the one report with what you have read, and stop." ;;
+        role_line="Report not written, or nothing the operator gave you after it: write the one report with what you have read, and stop. Work he gave you after the report still in hand: succeed — $(cd "$HERE/.." && pwd)/templates/auditor-succession-brief.md; tell him before you hand over." ;;
     "Coord :"*)
         role_line="With no relay in flight, succeed as skills/coordination/SKILL.md « Your context » says, then tell the operator." ;;
     *) exit 0 ;;

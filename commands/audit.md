@@ -21,6 +21,10 @@ characters: it becomes the title `Audit : <subject>`.
    - its dispatch record and bug register when it keeps them, or « none »;
    - `rhythm.sh`: the installed `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/rhythm.sh`,
      resolved now — the auditor's shell carries none of your variables;
+   - the launcher, `${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh`, and the
+     succession template, `${CLAUDE_PLUGIN_ROOT}/templates/auditor-succession-brief.md`, both
+     resolved now for the same reason: an auditor the operator keeps on past its report
+     succeeds with them;
    - the report: `<briefs dir>/audits/<date>-<subject>.md`.
 2. **Lint it.** `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <brief path> --expect-created <report path>`;
    repair any other finding before the spawn.
@@ -46,6 +50,7 @@ characters: it becomes the title `Audit : <subject>`.
 4. **Verify** that `iterm-agent.sh list` shows the `Audit : <subject>` tab and
    `iterm-agent.sh verify --tty <its tty>` its process.
 5. **Tell the operator** in one line: the tab, and the report path. Then carry on with your
-   own work: the auditor messages nobody, ends by itself, and the operator closes its tab.
+   own work: the auditor messages nobody, ends by itself, and the operator closes its tab. An auditor he
+   keeps on past its report may succeed at its gate; its successor closes the predecessor's tab.
 
 $ARGUMENTS

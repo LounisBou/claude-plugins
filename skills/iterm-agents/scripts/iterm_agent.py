@@ -1052,7 +1052,7 @@ def chain_owned(entries, owner):
     return [e for e in entries if e.get("owner") == owner]
 
 
-def chain_effect(successor, auditor, coordinator_successor=False):
+def chain_effect(successor, auditor, coordinator_successor=False, auditor_successor=False):
     """What a spawn does to its caller's chain: `append`, `transfer` or `none`.
 
     An agent joins the chain, so the next agent lands after it. A successor takes the
@@ -1061,7 +1061,11 @@ def chain_effect(successor, auditor, coordinator_successor=False):
     into the chain, it would become the anchor the orchestrator's next agent lands after,
     and the operator's window would read the audit as part of the build. The coordinator's
     successor is the same kind of nobody's-agent: it takes over no orchestrator's build, so
-    it joins none of them."""
+    it joins none of them. An auditor's successor is the auditor again: it has no chain to
+    take, and written into one it would be the anchor the orchestrator's next agent lands
+    after."""
+    if auditor_successor:
+        return "none"
     if successor:
         return "transfer"
     if auditor or coordinator_successor:
@@ -1773,6 +1777,7 @@ def cmd_spawn(argv):
     # The title, before a prompt file is written or a trust record changed: it is the
     # session's name, and a refusal on it must leave nothing behind either.
     title = args.title
+    auditor_successor = False
     if args.title_free:
         # The escape, for a probe or a test that names its tab otherwise. `agent` was the
         # old default and it stays one HERE, where the caller has said the shape is not
@@ -1791,7 +1796,12 @@ def cmd_spawn(argv):
             die("spawn: refused: the caller's session name cannot be read from the process "
                 "table — a launch that places its prompt after --name loses the boundary "
                 'between the two; pass --title "Orch : <subject>"')
-        if not TITLE_SHAPE.match(title):
+        if AUDIT_TITLE_SHAPE.match(title):
+            # An auditor kept on past its report succeeds at its gate (§9.4): its successor
+            # carries its name, as an orchestrator's does. Only a DERIVED audit title gets
+            # here; a typed one was refused above, so `Audit :` is still no one's to claim.
+            auditor_successor = True
+        elif not TITLE_SHAPE.match(title):
             # The derived name answers to the same shape as a typed one: a caller named
             # under an older convention derives nothing, and neither does one whose name
             # is a whole launch line. Only the first forty characters are quoted back —
@@ -1817,7 +1827,17 @@ def cmd_spawn(argv):
         # it, so the sentinel below is resolved against the caller's own window, never
         # against a neighbour tab.
         side, anchor = "left", "leftmost"
-    effect = chain_effect(args.successor, args.auditor, args.coordinator_successor)
+    effect = chain_effect(args.successor, args.auditor, args.coordinator_successor,
+                          auditor_successor)
+    if auditor_successor:
+        for flag, given in (("--tier", args.tier), ("--model", args.model),
+                            ("--no-remote-control", not args.remote_control)):
+            if given:
+                die("spawn: refused: %s is not an auditor's successor's: it runs on your "
+                    "model and comes up under remote control under your name" % flag)
+        # Read with the judgment of the session it replaces, whether or not --inherit-model
+        # was typed, exactly like the auditor it succeeds (§52).
+        model = inherited_model()
     if anchor == "self":
         if not own and not DRY_RUN:
             die("spawn: --right-of self: cannot resolve this session's own tty")

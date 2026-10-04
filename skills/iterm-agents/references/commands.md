@@ -92,6 +92,11 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --i
     #   by hand instead, and so is a name under an older convention, which no longer
     #   derives. An `Orch :` title with --right-of/--left-of
     #   is refused: a plain anchor lands after your chain, which is not a successor's place.
+    #   From an `Audit : <subject>` session (an auditor kept on past its report, §9.4) it takes
+    #   that name too, runs on your model whether or not --inherit-model is typed, comes up
+    #   under remote control, and takes and hands NO chain (chain=none): an auditor has none,
+    #   and written into one it would anchor the orchestrator's next agent. --tier, --model and
+    #   --no-remote-control are refused there; a typed `Audit :` title still is, off --auditor.
 
 $SCRIPT verify --tty /dev/ttysNNN
     # succeeds with the pid when the host CLI runs on that tty; exit 1 otherwise

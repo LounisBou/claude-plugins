@@ -2113,6 +2113,45 @@ check "an auditor with no model on record is refused, naming the installer" "1" 
 check "--inherit-model beside --auditor asks for what is already implied" "1" \
   "$(audl --auditor --inherit-model --title 'Audit : x' | grep -c -- '--model aud-model')"
 
+# An auditor kept on past its report succeeds at its gate (§9.4, §52): `spawn --successor` from
+# a session named `Audit : <subject>` derives that name like it does for `Orch :`, lands
+# immediately right of the caller (so, once the predecessor's tab is closed, in the auditor's
+# own place left of its orchestrator), runs on the caller's model under remote control, and
+# takes and hands no chain: an auditor has none, and written into one it would anchor an
+# orchestrator's next agent.
+PSAUDTAB="$WORK/ps-audit-succ.txt"
+printf '/dev/ttys900 /opt/x/host --name Audit : tm --permission-mode auto\n' > "$PSAUDTAB"
+audsucc() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
+  ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-aud ORCHESTRATOR_PS_TABLE="${AUDPS:-$PSAUDTAB}" \
+  bash "$AGENT" spawn --dir "$WORK" --prompt p "$@" 2>&1; }
+AUDSUCCOUT=$(audsucc --successor --inherit-model --permission-mode auto)
+AUDSUCCLAUNCH=$(printf '%s' "$AUDSUCCOUT" | sed -n 's/^launch=//p')
+check "an auditor's successor takes the caller's name and comes up under remote control under it" "1|1|0" \
+  "$(printf '%s' "$AUDSUCCLAUNCH" | grep -c -- "--name 'Audit : tm'")|$(printf '%s' "$AUDSUCCLAUNCH" | grep -c -- "--remote-control 'Audit : tm'")|$(printf '%s' "$AUDSUCCLAUNCH" | grep -c -- '--settings')"
+check "it runs on the caller's model, with the flag or without" "1|1" \
+  "$(printf '%s' "$AUDSUCCLAUNCH" | grep -c -- '--model aud-model')|$(audsucc --successor | sed -n 's/^launch=//p' | grep -c -- '--model aud-model')"
+check "it lands immediately right of the caller, past no agent of any chain" "right|1" \
+  "$(printf '%s' "$AUDSUCCOUT" | sed -n 's/^side=//p')|$(printf '%s' "$AUDSUCCOUT" | grep -c '^anchor=self$')"
+check "it takes and hands no chain, and is not an auditor's spawn" "none|yes|no" \
+  "$(printf '%s' "$AUDSUCCOUT" | sed -n 's/^chain=//p')|$(printf '%s' "$AUDSUCCOUT" | sed -n 's/^successor=//p')|$(printf '%s' "$AUDSUCCOUT" | sed -n 's/^auditor=//p')"
+check "an orchestrator's successor from the same state still hands the chain over" "transfer" \
+  "$(succ "$PSTAB" --successor | sed -n 's/^chain=//p')"
+check "a typed audit title is still refused beside --successor, and a 26-character subject is refused" "1|1" \
+  "$(audsucc --successor --title 'Audit : x' | grep -c "an audit title is an auditor's")|$(printf '/dev/ttys900 /opt/x/host --name Audit : %s --permission-mode auto\n' "$AUD26" > "$WORK/ps-audit-long.txt"; AUDPS="$WORK/ps-audit-long.txt"; audsucc --successor >/dev/null 2>&1; echo $?)"
+# The 25-character subject is the longest an auditor's title takes: it is ACCEPTED as a
+# successor, under the caller's name, right of it, in no chain. That half falls with the auditor
+# branch removed, which the refusal of 26 alone does not (it fails either title shape).
+printf '/dev/ttys900 /opt/x/host --name Audit : %s --permission-mode auto\n' "$AUD25" > "$WORK/ps-audit-25.txt"
+AUD25OUT=$(AUDPS="$WORK/ps-audit-25.txt"; audsucc --successor)
+check "a 25-character subject is accepted as a successor: the caller's name, right of it, in no chain" "1|right|none" \
+  "$(printf '%s' "$AUD25OUT" | grep -c "^name=Audit : $AUD25\$")|$(printf '%s' "$AUD25OUT" | sed -n 's/^side=//p')|$(printf '%s' "$AUD25OUT" | sed -n 's/^chain=//p')"
+# An auditor's successor runs on the caller's model and comes up under remote control under its
+# name: a tier, a model or no remote control beside --successor is refused, one flag at a time.
+for AUDSUCCFLAG in "--tier standard" "--model a-model" "--no-remote-control"; do
+  check "an auditor's successor refuses ${AUDSUCCFLAG%% *}, and says so" "1|1" \
+    "$(audsucc --successor $AUDSUCCFLAG >/dev/null 2>&1; echo $?)|$(audsucc --successor $AUDSUCCFLAG | grep -c -- "spawn: refused: ${AUDSUCCFLAG%% *} is not an auditor's successor's")"
+done
+
 # An auditor lands where it was told only if the terminal's API answered; the API-less rung
 # places nothing, and any other cause leaves the tab elsewhere with the launch reported as
 # done. So the launcher READS the order the listing prints, repairs once with its own move,
@@ -2471,6 +2510,23 @@ check "and it carries neither a tier, nor a successor's flag, nor an anchor" "0"
 AUDBRIEF="$ROOT/templates/agent-audit-brief.md"
 check "the auditor writes nothing but its report, and the operator closes its tab" "1|1" \
   "$(grep -c 'commit, no push, no comment, no label, no merge' "$AUDBRIEF")|$(grep -c 'He closes this tab' "$AUDBRIEF")"
+# An auditor kept on past its report may succeed (§9.4): §2 lets it write the succession brief
+# besides the report and message its own successor and predecessor only, and nothing else; §4
+# names the template and the spawn line, which the launcher runs as an auditor's succession.
+check "the audit brief still forbids every other file, a commit, a push and any other session" "1|1|1" \
+  "$(grep -c '^(no method file, no register, no script), no commit, no push' "$AUDBRIEF")|$(grep -c 'You order nothing and apply nothing' "$AUDBRIEF")|$(grep -c 'message no session other than your own' "$AUDBRIEF")"
+check "and carries the succession: the template, the spawn line in full, the operator told" "1|1|1" \
+  "$(grep -c 'SUCCESSION_TEMPLATE}}. beside the report' "$AUDBRIEF")|$(grep -c -- '--successor --inherit-model --permission-mode auto --prompt "Read and execute ' "$AUDBRIEF")|$(grep -c 'He closes this tab' "$AUDBRIEF")"
+# The predecessor tells the operator BEFORE it hands over, as /orchestrator:succeed orders it:
+# « handed over » is its last message, nothing follows it.
+check "the audit brief has the predecessor tell the operator, then wait, then hand over as its last message" "1|1|0" \
+  "$(grep -c 'Tell the operator in one line that you are handing over' "$AUDBRIEF")|$(grep -c 'handed over » as your last message' "$AUDBRIEF")|$(grep -c 'Then tell the operator' "$AUDBRIEF")"
+AUDBRIEFSPAWN=$(grep -m1 -o '{{ITERM_AGENT_SH}} spawn .*' "$AUDBRIEF" 2>/dev/null | sed -e 's/^{{ITERM_AGENT_SH}} spawn //' -e 's/`.*$//' \
+  -e 's#{{REPOSITORY}}#'"$WORK"'#' -e 's#<succession brief path>#/tmp/audit-succession-brief.md#')
+audbriefspawn() { eval "set -- $AUDBRIEFSPAWN"; audsucc "$@"; }
+AUDBRIEFSPAWNOUT=$(if [ -n "$AUDBRIEFSPAWN" ]; then audbriefspawn; else echo "no spawn line"; fi)
+check "the brief's spawn line is one the launcher runs as an auditor's succession" "1|none|1" \
+  "$(printf '%s' "$AUDBRIEFSPAWNOUT" | grep -c '^name=Audit : tm$')|$(printf '%s' "$AUDBRIEFSPAWNOUT" | sed -n 's/^chain=//p')|$(printf '%s' "$AUDBRIEFSPAWNOUT" | sed -n 's/^launch=//p' | grep -c -- "--permission-mode auto")"
 AUDFILLED="$WORK/audit-brief-filled.md"
 if [ -f "$AUDBRIEF" ]; then
   sed -E -e 's#\{\{ORCHESTRATOR_NAME\}\}#Orch : f [a1b2c3]#g' -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$AUDBRIEF" > "$AUDFILLED"
@@ -2495,8 +2551,26 @@ check "--expect-created without a path is refused, and says so" "1|1" \
   "$(bash "$LINT" "$AUDREAL" --expect-created >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$AUDREAL" --expect-created 2>&1 | grep -c -- '--expect-created needs a path')"
 # Every placeholder of the brief is one the command says how to fill.
 check "the brief's placeholders are the ones the command fills" \
-  "{{PREVIOUS_REPORT}} {{PROJECT}} {{READING}} {{RECORDS}} {{REPORT_PATH}} {{REPOSITORY}} {{RHYTHM}} {{SINCE}} {{SUBJECT}}" \
+  "{{ITERM_AGENT_SH}} {{PREVIOUS_REPORT}} {{PROJECT}} {{READING}} {{RECORDS}} {{REPORT_PATH}} {{REPOSITORY}} {{RHYTHM}} {{SINCE}} {{SUBJECT}} {{SUCCESSION_TEMPLATE}}" \
   "$(grep -oE '\{\{[A-Z_]+\}\}' "$AUDBRIEF" | sort -u | paste -sd' ' -)"
+# The auditor's succession brief: modelled on the coordinator's, short, with the audit's terms
+# kept and the predecessor exchange the only message allowed.
+AUDSUCCTPL="$ROOT/templates/auditor-succession-brief.md"
+check "the auditor's succession brief exists, with its placeholders" \
+  "{{ITERM_AGENT_SH}} {{OPERATOR_WORK}} {{PREDECESSOR_TTY}} {{PREDECESSOR}} {{PROJECT}} {{REPORT_PATH}} {{REPOSITORY}} {{SUBJECT}} {{SUCCESSION_TEMPLATE}}" \
+  "$(grep -oE '\{\{[A-Z_]+\}\}' "$AUDSUCCTPL" 2>/dev/null | sort -u | paste -sd' ' -)"
+check "it makes the successor confirm, wait for « handed over », close the tab by title, prove it, tell the operator" "1|1|1|1|1" \
+  "$(grep -c 'takeover confirmed' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'its « handed over ». Until' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c -- 'close --tty {{PREDECESSOR_TTY}} --expect-title "Audit : {{SUBJECT}}"' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'ps -t ' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'Tell the operator' "$AUDSUCCTPL" 2>/dev/null)"
+check "and keeps the audit's terms: one report, not rewritten, nothing applied, no session messaged but the predecessor" "1|1|1" \
+  "$(grep -c 'not to rewrite' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'apply nothing' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'no session messaged' "$AUDSUCCTPL" 2>/dev/null)"
+# A successor can succeed again: it restates the spawn line in full and finds its own name,
+# reference and tty first, as the coordinator's successor does.
+check "the auditor's succession brief can itself succeed: the spawn line in full, and a « find yourself » step" "1|1|1" \
+  "$(grep -c -- '{{ITERM_AGENT_SH}} spawn --dir {{REPOSITORY}} --successor --inherit-model --permission-mode auto --prompt "Read and execute ' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'Find yourself' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c '{{SUCCESSION_TEMPLATE}}' "$AUDSUCCTPL" 2>/dev/null | awk '{print ($1>0)}')"
+AUDSUCCFILLED="$WORK/audit-succession-filled.md"
+[ -f "$AUDSUCCTPL" ] && sed -E -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$AUDSUCCTPL" > "$AUDSUCCFILLED"
+check "the auditor's succession brief, every placeholder filled, lints clean" "yes|0" \
+  "$([ -s "$AUDSUCCFILLED" ] && echo yes || echo no)|$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$AUDSUCCFILLED" >/dev/null 2>&1; echo $?)"
 # The code cites §52: the section it cites exists.
 check "the design document has the audit's numbered section" "1" \
   "$(grep -c '^## 52\. The audit of an orchestrator$' "$ROOT/docs/design.md")"
@@ -2968,8 +3042,11 @@ check "an orchestrator is told to succeed, without asking" "1" \
   "$(role_line 'Orch : f [a1b2c3]' | grep -c '^CONTEXT GATE: this session is at 85% (gate 80%)\. Succeed at the next quiet boundary — run /orchestrator:succeed: spawn the successor in the operator.s decision mode, then tell the user; do not ask\.$')"
 check "an agent is told to finish its unit, report its context, and stop" "1" \
   "$(role_line 'Agent : one [b2c3d4]' | grep -c '^CONTEXT GATE: this session is at 85% (gate 80%)\. Finish the unit in progress, report to your orchestrator with your measured context, and stop; no new phase is dispatched to you\.$')"
-check "an auditor is told to write its one report and stop" "1" \
-  "$(role_line 'Audit : method [c3d4e5]' | grep -c '^CONTEXT GATE: this session is at 85% (gate 80%)\. Write the one report with what you have read, and stop\.$')"
+# An auditor has two branches in one line: no report yet, or nothing the operator gave it after
+# the report, it writes the one report and stops; work he gave it after the report still in
+# hand, it succeeds with the auditor's succession template, at a path it can open.
+check "an auditor is told to write its one report and stop, or to succeed when work after it is in hand" "1|1|1" \
+  "$(role_line 'Audit : method [c3d4e5]' | grep -c '^CONTEXT GATE: this session is at 85% (gate 80%)\. Report not written, or nothing the operator gave you after it: write the one report with what you have read, and stop\. Work he gave you after the report still in hand: succeed — ')|$(role_line 'Audit : method [c3d4e5]' | grep -c 'succeed — /.*/templates/auditor-succession-brief\.md; tell him before you hand over\.$')|$(f=$(role_line 'Audit : method [c3d4e5]' | sed -n 's/.*succeed — \(\/[^;]*\); tell him before you hand over\.$/\1/p'); [ "$f" = "$ROOT/templates/auditor-succession-brief.md" ] && echo 1 || echo 0)"
 check "the coordinator is told to succeed when no relay is in flight" "1" \
   "$(role_line 'Coord : machine' | grep -c '^CONTEXT GATE: this session is at 85% (gate 80%)\. With no relay in flight, succeed as skills/coordination/SKILL\.md « Your context » says, then tell the operator\.$')"
 check "each role gets exactly one line" "1|1|1|1" \
