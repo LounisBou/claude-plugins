@@ -39,7 +39,8 @@ of the plugin. A session may not edit its own permissions: add the rule yourself
 Then start Pull, once per machine (never two: Telegram hands a bot's updates to one consumer).
 Install the launcher first, by running `/bugs-bot:doctor` (it writes `~/.local/bin/bugs-bot`): PM2
 runs that launcher, not a path inside the plugin's versioned directory, so a plugin update does not
-break the saved process.
+break the saved process. The config also pins the process's working directory to the home directory,
+whatever directory the shell that runs `pm2 start` is in.
 
 ```
 pm2 start <plugin directory>/pm2.config.js && pm2 save

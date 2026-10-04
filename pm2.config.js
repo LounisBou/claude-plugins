@@ -20,6 +20,8 @@ module.exports = {
     args: 'pull --watch',
     // The launcher is a shell script: run it as it is.
     interpreter: 'none',
+    // PM2 otherwise records the directory of the shell that ran `pm2 start`, which may be deleted later.
+    cwd: os.homedir(),
     // Set BUGS_BOT_PYTHON to a pyenv interpreter itself, not its shim: the shim needs a shell
     // environment PM2 lacks. The launcher runs it; without it, the python3 found on PM2's PATH (3.10 or newer).
     env: process.env.BUGS_BOT_PYTHON ? { BUGS_BOT_PYTHON: process.env.BUGS_BOT_PYTHON } : {},

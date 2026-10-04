@@ -121,12 +121,18 @@ the versioned `PLUGIN` directory, so `pm2 save` records a path no plugin update 
 the newest installed version. Nothing to run again after an update. `bugs-bot doctor` fails if PM2
 still holds a versioned path (a Pull started from the versioned plugin path); the steps below fix it.
 
-Update a machine whose Pull runs a versioned path:
+`pm2.config.js` pins the working directory of Pull to the home directory: PM2 otherwise records the
+directory of the shell that ran `pm2 start`, and a deleted checkout there breaks the next restart.
+`bugs-bot doctor` fails if PM2 recorded another one.
 
-1. `bugs-bot doctor --install-launcher`
-2. `pm2 delete bugs-bot-pull`
-3. `BUGS_BOT_PYTHON=<python 3.10+> pm2 start <plugin>/pm2.config.js`
-4. `pm2 save`
+Update a machine whose Pull runs a versioned path or from another working directory (start with
+`cd ~`, so PM2 records no throwaway directory):
+
+1. `cd ~`
+2. `bugs-bot doctor --install-launcher`
+3. `pm2 delete bugs-bot-pull`
+4. `BUGS_BOT_PYTHON=<python 3.10+> pm2 start <plugin>/pm2.config.js`
+5. `pm2 save`
 
 Check: `pm2 list` shows `bugs-bot-pull` online; `bugs-bot doctor` is green.
 

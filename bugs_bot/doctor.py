@@ -157,23 +157,25 @@ def _registry(env: Mapping[str, str]) -> Check:
     return Check("registry", True, f"{len(entries)} project(s) registered")
 
 
-def _pm2_script(jlist: str | None) -> str | None:
-    """Return the script PM2 recorded for ``bugs-bot-pull`` in ``pm2 jlist`` output; ``None`` when unknown.
+def _pm2_recorded(jlist: str | None) -> tuple[str | None, str | None]:
+    """Return the script and the working directory PM2 recorded for ``bugs-bot-pull`` in ``pm2 jlist`` output.
 
-    With no daemon up, PM2 prints ``[PM2] Spawning PM2 daemon …`` lines before the JSON array: it starts at
-    the first line that begins with ``[`` (the preamble's own lines begin with ``[PM2]``, then a space).
+    Each is ``None`` when unknown. With no daemon up, PM2 prints ``[PM2] Spawning PM2 daemon …`` lines before
+    the JSON array: it starts at the first line that begins with ``[`` (the preamble's own lines begin with
+    ``[PM2]``, then a space).
     """
     lines = (jlist or "").splitlines()
     start = next((i for i, line in enumerate(lines) if line.startswith("[") and not line.startswith("[PM2]")), None)
     if start is None:
-        return None
+        return None, None
     try:
         for app in json.loads("\n".join(lines[start:])):
             if app.get("name") == PULL_APP:
-                return app["pm2_env"]["pm_exec_path"]
+                recorded = app["pm2_env"]
+                return recorded["pm_exec_path"], recorded.get("pm_cwd")
     except (ValueError, TypeError, KeyError, AttributeError):
         pass
-    return None
+    return None, None
 
 
 def _pull(ps_output: str | BugsError, pm2_jlist: str | None = None) -> Check:
@@ -183,14 +185,30 @@ def _pull(ps_output: str | BugsError, pm2_jlist: str | None = None) -> Check:
     if len(pids) <= 1:
         # A pruned version leaves no Pull running at all: PM2's restart found no script. Read what PM2 recorded
         # either way, so « start it with PM2 » is not the remedy given for that.
-        script = _pm2_script(pm2_jlist)
-        if isinstance(script, str) and VERSIONED_DIR in Path(script).as_posix():
+        script, cwd = _pm2_recorded(pm2_jlist)
+        versioned = isinstance(script, str) and VERSIONED_DIR in Path(script).as_posix()
+        # A working directory other than the home directory is a throwaway shell's: deleting it breaks the next restart.
+        unstable = isinstance(cwd, str) and Path(cwd) != Path.home()
+        restart = "`BUGS_BOT_PYTHON=<python 3.10+> pm2 start <plugin>/pm2.config.js && pm2 save`"
+        if versioned and unstable:
+            return Check(
+                "pull",
+                False,
+                f"PM2 recorded a versioned path for {PULL_APP}: {script}, and the working directory {cwd}; "
+                f"run `bugs-bot doctor --install-launcher`, `cd ~ && pm2 delete {PULL_APP}`, then {restart}",
+            )
+        if versioned:
             return Check(
                 "pull",
                 False,
                 f"PM2 recorded a versioned path for {PULL_APP}: {script}; run `bugs-bot doctor --install-launcher`, "
-                f"`pm2 delete {PULL_APP}`, then "
-                "`BUGS_BOT_PYTHON=<python 3.10+> pm2 start <plugin>/pm2.config.js && pm2 save`",
+                f"`pm2 delete {PULL_APP}`, then {restart}",
+            )
+        if unstable:
+            return Check(
+                "pull",
+                False,
+                f"PM2 recorded the working directory {cwd} for {PULL_APP}; run `cd ~ && pm2 delete {PULL_APP}`, then {restart}",
             )
     if len(pids) == 1:
         return Check("pull", True, f"running (pid {pids[0]})")
@@ -244,7 +262,7 @@ def run_checks(
         ps_output: ``ps -eo pid=,command=`` output, so that tests never read the process table; the
             error when it could not be read, which fails the ``pull`` check and nothing else.
         transport: To ask each platform with a registered project who the bot is; ``None`` asks none.
-        pm2_jlist: ``pm2 jlist`` output, to fail a Pull that PM2 runs from a versioned path; ``None`` when
+        pm2_jlist: ``pm2 jlist`` output, to fail a Pull that PM2 runs from a versioned path or from a working directory other than home; ``None`` when
             PM2 is absent or unreadable, which leaves the ``pull`` verdict as the process table gives it.
     """
     claude = _claude_dir(env)

@@ -127,9 +127,10 @@ def test_pull_runs_exactly_once(machine_env, ps, ok):
         assert "4242" in check.detail and "4243" in check.detail
 
 
-def jlist(path: str, name: str = "bugs-bot-pull") -> str:
-    """Recorded ``pm2 jlist`` output: one process, with the script PM2 recorded for it."""
-    return json.dumps([{"name": "other", "pm2_env": {"pm_exec_path": "/srv/other.js"}}, {"name": name, "pm2_env": {"pm_exec_path": path}}])
+def jlist(path: str, name: str = "bugs-bot-pull", cwd: str | None = None) -> str:
+    """Recorded ``pm2 jlist`` output: one process, with the script (and the working directory) PM2 recorded for it."""
+    recorded = {"pm_exec_path": path} if cwd is None else {"pm_exec_path": path, "pm_cwd": cwd}
+    return json.dumps([{"name": "other", "pm2_env": {"pm_exec_path": "/srv/other.js"}}, {"name": name, "pm2_env": recorded}])
 
 
 VERSIONED = "/home/u/.claude/plugins/cache/lounisbou/bugs-bot/0.1.0/bin/bugs-bot"
@@ -193,6 +194,65 @@ def test_pull_two_processes_keep_their_verdict_whatever_pm2_recorded(machine_env
     check = by_name(run_checks(machine_env, ps, pm2_jlist=jlist(VERSIONED)))["pull"]
 
     assert not check.ok and "4242" in check.detail and "two pollers" in check.detail
+
+
+LAUNCHER = "/home/u/.local/bin/bugs-bot"
+CHECKOUT = "/home/u/dev/workspaces/demo/phase-3"
+
+
+@pytest.fixture
+def fake_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The home directory ``doctor`` sees: never the real one."""
+    home = tmp_path / "fakehome"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    return home
+
+
+def test_pull_fails_when_pm2_recorded_a_working_directory_other_than_home(machine_env, fake_home):
+    check = by_name(run_checks(machine_env, PULL_PS, pm2_jlist=jlist(LAUNCHER, cwd=CHECKOUT)))["pull"]
+
+    assert not check.ok
+    assert f"PM2 recorded the working directory {CHECKOUT} for bugs-bot-pull" in check.detail
+    assert "versioned path" not in check.detail
+    assert "cd ~ && pm2 delete bugs-bot-pull" in check.detail
+    assert "BUGS_BOT_PYTHON=<python 3.10+> pm2 start <plugin>/pm2.config.js && pm2 save" in check.detail
+
+
+def test_pull_passes_when_pm2_recorded_the_home_directory_as_working_directory(machine_env, fake_home):
+    check = by_name(run_checks(machine_env, PULL_PS, pm2_jlist=jlist(LAUNCHER, cwd=str(fake_home))))["pull"]
+
+    assert check.ok and "4242" in check.detail
+
+
+def test_pull_not_running_with_a_working_directory_recorded_gets_the_cwd_verdict(machine_env, fake_home):
+    check = by_name(run_checks(machine_env, "", pm2_jlist=jlist(LAUNCHER, cwd=CHECKOUT)))["pull"]
+
+    assert not check.ok and "working directory" in check.detail and "not running" not in check.detail
+
+
+def test_pull_names_both_when_the_path_and_the_working_directory_are_wrong(machine_env, fake_home):
+    check = by_name(run_checks(machine_env, PULL_PS, pm2_jlist=jlist(VERSIONED, cwd=CHECKOUT)))["pull"]
+
+    assert not check.ok
+    assert f"versioned path for bugs-bot-pull: {VERSIONED}" in check.detail
+    assert f"working directory {CHECKOUT}" in check.detail
+    assert check.detail.count("pm2 delete bugs-bot-pull") == 1
+    assert check.detail.count("pm2 start") == 1
+    assert check.detail.index("bugs-bot doctor --install-launcher") < check.detail.index("pm2 delete")
+    assert "cd ~ && pm2 delete bugs-bot-pull" in check.detail
+
+
+def test_pull_two_processes_keep_their_verdict_whatever_working_directory_pm2_recorded(machine_env, fake_home):
+    ps = PULL_PS + PULL_PS.replace("4242", "4243")
+
+    check = by_name(run_checks(machine_env, ps, pm2_jlist=jlist(LAUNCHER, cwd=CHECKOUT)))["pull"]
+
+    assert not check.ok and "two pollers" in check.detail and "working directory" not in check.detail
+
+
+def test_pull_keeps_its_verdict_when_pm2_recorded_no_working_directory(machine_env, fake_home):
+    assert by_name(run_checks(machine_env, PULL_PS, pm2_jlist=jlist(LAUNCHER)))["pull"].ok
 
 
 @pytest.fixture

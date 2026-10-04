@@ -26,7 +26,12 @@ Check the setup and report the verdict.
    - `pull`: exactly one Pull process must run, under PM2; none or two is a fault. When it says PM2
      recorded a versioned path, print its remedy as given: the operator runs `bugs-bot doctor
      --install-launcher`, then `pm2 delete bugs-bot-pull`, then `pm2 start` of the plugin's
-     `pm2.config.js` with `BUGS_BOT_PYTHON` set to a Python 3.10+, then `pm2 save`.
+     `pm2.config.js` with `BUGS_BOT_PYTHON` set to a Python 3.10+, then `pm2 save`. When it says PM2
+     recorded a working directory (not the home directory: the shell that ran `pm2 start` was in a
+     directory that may be deleted), print its remedy as given: the operator runs `cd ~`, then
+     `pm2 delete bugs-bot-pull`, then the same `pm2 start` and `pm2 save`. When it names both the
+     path and the directory, one remedy covers both: `bugs-bot doctor --install-launcher` first, then
+     those steps.
    - `orchestrator`: install the orchestrator plugin; `/bugs-bot:start` needs it.
    - `launcher`: run the first-run line above; a launcher that differs is replaced by
      `bugs-bot doctor --install-launcher`.

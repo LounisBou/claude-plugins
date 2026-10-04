@@ -15,7 +15,7 @@ from conftest import REPO_ROOT
 from samples import FakeTelegram
 
 
-def _pm2_app(python: str | None, launcher_dir: str | None = None) -> dict:
+def _pm2_app(python: str | None, launcher_dir: str | None = None, cwd: str | None = None) -> dict:
     """Evaluate ``pm2.config.js`` with node, with or without ``BUGS_BOT_PYTHON`` and the launcher dir; return its one app."""
     env = {k: v for k, v in os.environ.items() if k not in ("BUGS_BOT_PYTHON", "BUGS_BOT_LAUNCHER_DIR")}
     if python is not None:
@@ -24,7 +24,7 @@ def _pm2_app(python: str | None, launcher_dir: str | None = None) -> dict:
         env["BUGS_BOT_LAUNCHER_DIR"] = launcher_dir
     out = subprocess.run(
         ["node", "-e", "console.log(JSON.stringify(require(process.argv[1])))", str(REPO_ROOT / "pm2.config.js")],
-        env=env, capture_output=True, text=True, check=True,
+        env=env, capture_output=True, text=True, check=True, cwd=cwd,
     )
     (app,) = json.loads(out.stdout)["apps"]
     return app
@@ -53,6 +53,12 @@ def test_pm2_runs_the_launcher_directly_so_no_plugin_update_moves_its_path():
     assert app["script"] == os.path.join(os.path.expanduser("~"), ".local", "bin", "bugs-bot")
     assert "plugins/cache" not in app["script"]
     assert app["interpreter"] == "none"
+
+
+@needs_node
+def test_pm2_pins_the_working_directory_to_the_home_directory_whatever_directory_starts_it(tmp_path):
+    assert _pm2_app(None, cwd=str(tmp_path))["cwd"] == os.path.expanduser("~")
+    assert _pm2_app(None, cwd=str(REPO_ROOT))["cwd"] == os.path.expanduser("~")
 
 
 @needs_node

@@ -5,6 +5,19 @@ All notable changes are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- `pm2.config.js` pins the working directory of `bugs-bot-pull` to the home directory. PM2 otherwise
+  records the directory of the shell that ran `pm2 start`; a throwaway checkout there, once deleted,
+  broke the next restart.
+- `doctor`'s `pull` check also fails when PM2 recorded a working directory other than the home
+  directory for `bugs-bot-pull`, with the remedy `cd ~ && pm2 delete bugs-bot-pull`, then
+  `BUGS_BOT_PYTHON=<python 3.10+> pm2 start <plugin>/pm2.config.js && pm2 save`. When the versioned
+  path is wrong too, one verdict names both and carries one remedy. The migration runbook's update
+  steps start with `cd ~`.
+
 ## 0.1.2 — 2026-10-04
 
 ### Fixed
