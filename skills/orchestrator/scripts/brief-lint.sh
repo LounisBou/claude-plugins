@@ -19,6 +19,9 @@
 # phrases that keep a finished agent's tab idle (stand by, stay until merged, clean up
 # after the merge).
 #
+# Check 11 holds an orchestrator succession brief (first line `# Orchestrator succession
+# brief`) to 10,000 characters.
+#
 # What it CANNOT check: whether the scope is right, whether the contracts are the ones the
 # next phase consumes, whether the tier fits the work. Those stay the orchestrator's, and
 # a green lint is not an approved brief.
@@ -296,6 +299,17 @@ if is_class implementer || is_class 'REVIEW agent' || is_class 'COMMENTS agent' 
             | grep -qE '\{\{GAUGE\}\}|\$\{[A-Z]|\$[A-Z][A-Z0-9_]{2,}'; then
         say "${gauge_line%%:*}" "context-gauge.sh is not cited by an absolute path this machine can open"
     fi
+fi
+
+# 11. A succession brief is read whole by a session that has nothing else in its context yet:
+#     past 10,000 characters it costs a successor what the live state was meant to save. The
+#     class is read from the first line, as the template writes it. Characters, not bytes: the
+#     continuation bytes of a multibyte character are dropped before counting.
+succession_limit=10000
+if head -n 1 "$brief" 2>/dev/null | grep -q '^# Orchestrator succession brief'; then
+    chars=$(LC_ALL=C tr -d '\200-\277' < "$brief" | wc -c | tr -d ' ')
+    [ "$chars" -le "$succession_limit" ] \
+        || say 1 "succession brief is $chars characters, over the limit of $succession_limit: keep Live state to what is live and the rest as pointers"
 fi
 
 if [ "$findings" = 0 ]; then

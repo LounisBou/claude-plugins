@@ -31,17 +31,33 @@ His explicit instruction on the very point outranks this brief and the rulebook 
 deadline, a wish or a question is not an order to break a rule. The rulebook's section of the
 same name carries the rest.
 
+## Live state — written by your predecessor at the handover
+
+This section is the hand-over copy of the live part of the project state file `{{STATE_FILE}}` (status lives once, there; the file is pruned by your predecessor to what is live, its finished journal archived in a file you are not asked to load). It replaces reading the journal: you read the journal only for a question this section does not answer, and then by its section.
+
+- Rows open in the dispatch record (id, label, what remains): {{LIVE_ROWS}}
+- Pull requests open (number, head, where each stands): {{LIVE_PULL_REQUESTS}}
+- Agents running (name and reference, brief path): {{LIVE_AGENTS}}
+- The operator's rulings still binding, quoted verbatim — only those not yet carried out or standing; a ruling done is in the journal, not here: {{LIVE_RULINGS}}
+- The next step: {{LIVE_NEXT_STEP}}
+
 ## Your first task, in this exact order
 
-1. Read: the rulebook · the project state file `{{STATE_FILE}}`, pruned by your predecessor to what is live, its finished journal archived in a file you are not asked to load (STATUS LIVES THERE — phases, PRs, decisions marked non-reopenable, agent gotchas) · the spec `{{SPEC}}` · the plan `{{PLAN}}` · the runbook `{{RUNBOOK}}` · the briefs directory `{{BRIEFS_DIR}}`.
-2. VERIFY the state on the artifacts, believing nothing: branches and heads against origin, the PR chain, worktree cleanliness. Then run `dispatch-record.sh summary {{DISPATCH_RECORD}}`: every row it lists as open is work to dispatch or to ask the operator about, not history.
+1. Read the rulebook and THIS brief, and nothing else whole: the spec, the plan, the runbook, the state file and the briefs directory are pointers (« Standing context »), read later by the section a task needs.
+2. VERIFY the « Live state » items on the artifacts, believing nothing, one short command each: branches and heads against origin, the PR chain, worktree cleanliness. Then run `dispatch-record.sh summary {{DISPATCH_RECORD}}`: every row it lists as open is work to dispatch or to ask the operator about, not history.
 3. Run `ListAgents`. Message every live implementer (names like `{{AGENT_NAME_PATTERN}}`): identify yourself as the new orchestrator BY YOUR EXACT `ListAgents` NAME AND REFERENCE — copy it from the listing, the agents will address it verbatim — ask for a one-line status and, where a phase is to be dispatched, its measured context, and subscribe to each one's idle notice (`notify_when_idle: true`). Their standing protocol carries over unchanged, with the new address in place of the old. Then `workspace.sh list` under the state directory's root: every checkout it shows belongs to a phase that is open or was not cleaned up; none is yours to delete before you know which.
 4. BEFORE "takeover confirmed" is sent, `list` and read the predecessor's row. When its name is `(host default)` — it was started by hand — your first message to the operator, in his language and in one line, says which tab you will close (its tty and title) and asks him to close it himself or to say « close it »: the host refuses closing a session this plugin did not launch unless his word is already in the conversation. On his word you close it as below, with `close --tty --expect-title`, called by the launcher's path and never through a shell variable. The question is asked before « takeover confirmed » and the confirmation is NOT held for his answer; a tab he has already closed himself ends the step (no wait for « handed over », nothing to close: `list` shows it gone). A predecessor with a name is closed as below, nothing asked.
    Then message the predecessor "takeover confirmed" and wait for its « handed over » (its last message; five minutes without it, read its screen with `screen --tty` and close on a prompt with nothing in flight). Then CLOSE ITS TAB with `orchestrator:iterm-agents` (`list` first; close by tty with `--expect-title`) once its « handed over » has arrived or its screen has been read — never while it may still be writing, and never leave it open: a predecessor that stays alive answers agents that address it by habit. This step is not optional and a brief that drops it is defective.
-5. Announce the takeover to the user in one short message: state inherited, agents re-identified, predecessor terminated, next pending step.
+5. Announce the takeover to the user in one short message: state inherited, agents re-identified, predecessor terminated, next pending step, and your own measured context at that point — the `context_tokens=` line of `{{GAUGE}}` — so the cost of each takeover is a figure, not a guess.
 
 ## Standing context — stable pointers, not status (status lives in the state file)
 
+- Read each of these by the section a task needs — `grep -n` for the heading, then `sed -n <from>,<to>p` — never whole at takeover, never several in one `cat`. A pointer the project does not have is written `none` (a project with no spec or runbook), never an invented path:
+  - project state file: `{{STATE_FILE}}`
+  - spec: `{{SPEC}}`
+  - plan: `{{PLAN}}`
+  - runbook: `{{RUNBOOK}}`
+  - briefs directory: `{{BRIEFS_DIR}}`
 - Worktree: `{{WORKTREE}}`
 - User rules that bind you: {{USER_RULES}}
 - Deadlines: {{DEADLINES}}
