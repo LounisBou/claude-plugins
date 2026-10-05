@@ -35,7 +35,9 @@ Every sub-agent is read-only: no edits, no commits, no long runs, no verdicts on
 
 ## 4. Report shape — one message to the orchestrator
 
-For each finding: `[severity] file:line — what is wrong — evidence (the line, the test, the command output that shows it) — proposed fix — which lens raised it`. Severity is one of blocker, major, minor, nit. Merge duplicates across lenses. Add a « what the readers could not show » line for anything the fixtures or the environment hid. No recommendation on the whole; the verdict is the orchestrator's.
+The findings are the report's substance and the orchestrator verifies each, so their number is not capped; each finding is ONE line of at most 200 characters — `[severity] file:line — the claim — the evidence in a few words — proposed fix` — with no prose around it. Severity is one of blocker, major, minor, nit. Merge duplicates across lenses. No recommendation on the whole; the verdict is the orchestrator's.
+
+Report cap: everything else in the report — what was read, a « what the readers could not show » line for anything the fixtures or the environment hid, which of the norms lens's two modes was done — is at most 1,000 characters. One line says anything you saw that is wrong or doubtful outside the findings — this line is never cut to fit the cap.
 
 End the report with one machine line and nothing after it: `norms-check: tool {{HEAD}}` when the command ran, `norms-check: none {{HEAD}}` when `{{NORMS_CHECK}}` reads `none`. That line is what the orchestrator records against this round, and the head in it is the head you read — a round whose report does not carry it leaves the delivery unable to pass the orchestrator's own gate.
 
