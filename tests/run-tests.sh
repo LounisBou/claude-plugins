@@ -353,6 +353,20 @@ bash "$REC" close "$RO" 2 --verdict ruled-out >/dev/null
 check "summary lists the open rows with their id and label, and only them" "open=1 label=plan after the round" \
   "$(bash "$REC" summary "$RO" | grep '^open=')"
 
+# A takeover only needs the open rows: `--open` prints them in the same line format and
+# nothing else, while the statistics stay one plain `summary` away.
+check "summary --open prints the open rows and nothing else" "open=1 label=plan after the round" \
+  "$(bash "$REC" summary "$RO" --open)"
+check "summary --open prints no class, signal, cascade or escape line" "0" \
+  "$(bash "$REC" summary "$RO" --open | grep -c '^class=\|^signal=\|^cascade=\|^escapes=')"
+check "plain summary still prints the class lines and the open rows" "2|1" \
+  "$(bash "$REC" summary "$RO" | grep -c '^class=')|$(bash "$REC" summary "$RO" | grep -c '^open=')"
+check_status "summary --open of an absent record is not an error" 0 bash "$REC" summary "$WORK/absent.jsonl" --open
+check "summary --open of an absent record says so, as summary does" "dispatch-record: no record at $WORK/absent.jsonl" \
+  "$(bash "$REC" summary "$WORK/absent.jsonl" --open)"
+check "the succession brief's step 2 runs summary --open" "1" \
+  "$(grep -c 'dispatch-record.sh summary {{DISPATCH_RECORD}} --open' "$ROOT/templates/orchestrator-succession-brief.md")"
+
 # Every subcommand registers its record under the session, by absolute path, once. The
 # state directory is the hook's: the hook reads the same file for the same session id.
 RS="$WORK/rec-state"; RD="$WORK/rec-dir"; mkdir -p "$RD"

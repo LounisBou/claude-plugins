@@ -8,9 +8,10 @@
 #   dispatch-record.sh ready   <record> <id> --head <sha>
 #   dispatch-record.sh close   <record> <id> --verdict <text>
 #   dispatch-record.sh escaped <record> <id>      (a defect got past this row's review)
-#   dispatch-record.sh summary <record>
+#   dispatch-record.sh summary <record> [--open]
 #
-# `open` prints the row id. The record is JSON lines: appendable, greppable, and read back
+# `open` prints the row id. `summary --open` prints only the open rows, for a takeover that
+# has no use for the statistics. The record is JSON lines: appendable, greppable, and read back
 # with the `jq` the rest of this plugin already needs.
 #
 # Why it exists: the routing rule says a tier drop that costs a second corrective round is
@@ -241,7 +242,17 @@ escaped)
     rewrite 'if .id==$i then .escaped=true else . end' "$id"
     ;;
 summary)
+    only_open=0
+    case "${3:-}" in
+        "") ;;
+        --open) only_open=1 ;;
+        *) die "summary: unknown argument ${3} (expected --open)" ;;
+    esac
     [ -f "$record" ] || { echo "dispatch-record: no record at $record"; exit 0; }
+    if [ "$only_open" = 1 ]; then
+        jq -sr '.[] | select(.state == "open") | "open=\(.id) label=\(.label)"' "$record"
+        exit $?
+    fi
     jq -sr '
       group_by(.class + " " + .tier)
       | map({class: .[0].class, tier: .[0].tier,
