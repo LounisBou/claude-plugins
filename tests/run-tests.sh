@@ -691,6 +691,48 @@ check "a file ignored by nothing is absent from the checkout" "0" "$([ -e "$GE/p
 check "a path both the repository's and the global excludes ignore is copied once" "local|1" \
   "$(cat "$GE/LOCAL.md" 2>/dev/null)|$(grep -c 'copied 1 files kept out by the global excludes' "$WORK/wsge.err")"
 
+# Steps 1, 2 and 2b copy their lists in one pass each, never one process per file: a create
+# listing 3,421 excluded files ran over four minutes at heavy system CPU on a shared server.
+# mkmany <dir> <n>: a source whose settings directory, exclude file and global excludes each
+# list about n files, nested, one name with a space, one path both excludes files name.
+mkmany() {
+  local d="$1" n="$2" i
+  mkdir -p "$d" && ( cd "$d" && git init -q -b main && echo tracked > README.md && git add -A \
+    && git -c user.email=t@local -c user.name=t commit -q -m "Set up" \
+    && mkdir -p .claude/agents .claude/skills/deep/x .claude/cache data/a data/b/c logs \
+    && echo '{}' > .claude/settings.local.json && echo c > .claude/cache/c && echo sp > ".claude/a b.md" \
+    && echo sp > "data/b/c/with space.txt" && echo dup > data/a/dup.log \
+    && printf '/.claude/\n/.claude/cache/\ndata/\n' > .git/info/exclude ) || return 1
+  for i in $(seq 1 "$n"); do
+    echo "$i" > "$d/.claude/agents/n$i.md"; echo "$i" > "$d/.claude/skills/deep/x/s$i.md"
+    echo "$i" > "$d/data/a/f$i.txt"; echo "$i" > "$d/data/b/c/f$i.txt"; echo "$i" > "$d/logs/l$i.log"
+  done
+}
+mkmany "$WORK/wsrc/many" 100
+mkmany "$WORK/wsrc/few" 1
+printf '*.log\n' > "$WORK/many-global-excludes"
+printf '[core]\n\texcludesFile = %s\n' "$WORK/many-global-excludes" > "$WORK/many-gitconfig"
+mkdir -p "$WORK/cpshim"
+printf '#!/bin/bash\necho "$*" >> "%s"\nexec /bin/cp "$@"\n' "$WORK/cp-calls" > "$WORK/cpshim/cp"
+chmod +x "$WORK/cpshim/cp"
+: > "$WORK/cp-calls"
+PATH="$WORK/cpshim:$PATH" GIT_CONFIG_GLOBAL="$WORK/many-gitconfig" bash "$WS" create "$WORK/wsrc/few" one-pass --base main >/dev/null 2>&1
+few_cp=$(grep -c . "$WORK/cp-calls")
+: > "$WORK/cp-calls"
+PATH="$WORK/cpshim:$PATH" GIT_CONFIG_GLOBAL="$WORK/many-gitconfig" bash "$WS" create "$WORK/wsrc/many" one-pass --base main >/dev/null 2>"$WORK/wsmany.err"
+MC="$WORK/wsroot/many/one-pass"
+check "a create over many excluded files copies the same tree" \
+  "Only in $WORK/wsrc/many/.claude: cache|Only in $WORK/wsrc/many/.claude: settings.local.json" \
+  "$(diff -r -x .git "$WORK/wsrc/many" "$MC" 2>&1 | sort | paste -sd '|' -)"
+check "and says the same counts" "1|1|1" \
+  "$(grep -c 'settings directory (201 files, 1 skipped by the exclude file, 1 withheld' "$WORK/wsmany.err")|$(grep -c 'copied 202 excluded files' "$WORK/wsmany.err")|$(grep -c 'copied 100 files kept out by the global excludes' "$WORK/wsmany.err")"
+check "the cp processes a create spawns do not grow with the file count" "$few_cp" "$(grep -c . "$WORK/cp-calls")"
+# A file the copy cannot read fails the whole pass: the checkout is removed, the step named.
+echo locked > "$WORK/wsrc/few/data/a/locked.txt" && chmod 000 "$WORK/wsrc/few/data/a/locked.txt"
+check "a failed copy removes the checkout and names the step" "1|0|1" \
+  "$(GIT_CONFIG_GLOBAL="$WORK/many-gitconfig" bash "$WS" create "$WORK/wsrc/few" locked --base main >/dev/null 2>"$WORK/wslocked.err"; echo $?)|$([ -e "$WORK/wsroot/few/locked" ] && echo 1 || echo 0)|$(grep -c 'create: copying the excluded files failed' "$WORK/wslocked.err")"
+chmod 600 "$WORK/wsrc/few/data/a/locked.txt"
+
 echo "== workspace: temporary directories are cleaned once their purpose is over =="
 # A checkout is deleted when its purpose is over — its stood-down session closed, its pull
 # request merged or closed — and the host's per-directory temporary area goes with it. The

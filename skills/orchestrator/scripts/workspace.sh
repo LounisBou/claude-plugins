@@ -53,6 +53,16 @@ cmd="${1:-}"
 [ -n "$cmd" ] || die "usage: workspace.sh {create|pin|delete|sweep|list} ... (see header)"
 shift
 
+# copy_list <source-root> <checkout-root> <relative-path>...: every path in one pass, each kept
+# at its place under the root; non-zero when the copy fails. One process per file made a create
+# listing 3,421 files run over four minutes at heavy system CPU on a shared server.
+copy_list() {
+    local from="$1" to="$2"
+    shift 2
+    [ $# -gt 0 ] || return 0
+    printf '%s\0' "$@" | (cd "$from" && tar --null -cf - -T -) | tar -xf - -C "$to"
+}
+
 # copy_tree <source-root> <checkout-root> <relative-path>: 1 when absent, 2 when the copy fails.
 copy_tree() {
     local from="$1/$3" to="$2/$3"
@@ -287,13 +297,13 @@ cmd_create() {
     #    carried two full worktrees, 4 GB, each with a `.git` pointing at the source (§35).
     #    A pattern naming the directory whole is set aside: it says the directory stays out
     #    of history, which every copied file already does. Git reads the reduced file, so
-    #    the patterns mean what they mean to git; the files are copied one by one, so what
-    #    is skipped is never read.
+    #    the patterns mean what they mean to git; the listed files are copied in one pass, so
+    #    what is skipped is never read.
     #    `settings.local.json` is withheld whatever the exclude file says about it: the
     #    permission rules it holds are the operator's own session's, never an agent's, so
     #    they never reach a checkout (the operator's ruling, 2026-09-29).
     if [ -d "$src/.claude/" ]; then
-        local rules="$target/.git/workspace-rules" copied=0 skipped=0 withheld=0 f line l
+        local rules="$target/.git/workspace-rules" copied=0 skipped=0 withheld=0 f line l list=()
         : > "$rules"
         if [ -f "$src/.git/info/exclude" ]; then
             while IFS= read -r line; do
@@ -307,9 +317,10 @@ cmd_create() {
             case "/$f" in
                 /.claude/settings.local.json) withheld=$((withheld + 1)); continue ;;
             esac
-            copy_tree "$src" "$target" "$f" || { rm -rf "$target"; die "create: copying the local settings directory failed at $f"; }
-            copied=$((copied + 1))
+            list+=("$f")
         done < <(git -C "$src" ls-files -z --others --exclude-from="$rules" -- "$src/.claude/")
+        copy_list "$src" "$target" ${list[@]+"${list[@]}"} || { rm -rf "$target"; die "create: copying the local settings directory failed"; }
+        copied=${#list[@]}
         skipped=$(git -C "$src" -c core.quotePath=false ls-files --others --ignored --directory --exclude-from="$rules" -- "$src/.claude/" | grep -c .)
         rm -f "$rules"
         say "copied the local settings directory ($copied files, $skipped skipped by the exclude file, $withheld withheld: the operator's own settings.local.json never travels into a checkout)"
@@ -317,14 +328,15 @@ cmd_create() {
 
     # 2. What the exclude file keeps out of history, listed by git itself so the patterns
     #    are read the way git reads them and only present files are copied.
-    local n=0
+    local n=0 list=()
     if [ -f "$src/.git/info/exclude" ]; then
         while IFS= read -r -d '' f; do
             [ -n "$f" ] || continue
             case "/$f" in /.claude/*) continue ;; esac
-            copy_tree "$src" "$target" "$f" || { rm -rf "$target"; die "create: copying $f failed"; }
-            n=$((n + 1))
+            list+=("$f")
         done < <(git -C "$src" ls-files -z --others --ignored --exclude-from="$src/.git/info/exclude")
+        copy_list "$src" "$target" ${list[@]+"${list[@]}"} || { rm -rf "$target"; die "create: copying the excluded files failed"; }
+        n=${#list[@]}
     fi
     say "copied $n excluded files"
 
@@ -351,14 +363,16 @@ cmd_create() {
         "~/"*) global_excludes="$HOME/${global_excludes#\~/}" ;;
     esac
     local gn=0
+    list=()
     if [ -s "$global_excludes" ]; then
         while IFS= read -r -d '' f; do
             [ -n "$f" ] || continue
             case "/$f" in /.claude/*) continue ;; esac
             [ -e "$target/$f" ] && continue
-            copy_tree "$src" "$target" "$f" || { rm -rf "$target"; die "create: copying $f (global excludes) failed"; }
-            gn=$((gn + 1))
+            list+=("$f")
         done < <(git -C "$src" ls-files -z --others --ignored --exclude-from="$global_excludes")
+        copy_list "$src" "$target" ${list[@]+"${list[@]}"} || { rm -rf "$target"; die "create: copying the files kept out by the global excludes failed"; }
+        gn=${#list[@]}
         {
             echo "# workspace.sh: the operator's global excludes"
             cat "$global_excludes"
