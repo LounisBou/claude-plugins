@@ -97,28 +97,16 @@ The one thing that is not overridden by silence is what would end a session or c
 machine — that is a STOP-and-ask, and the asking is one question carrying its cost and a
 recommendation, never a refusal and never a chore handed back.
 
-## Prerequisites
-
-A validated spec and a phase plan containing, per phase: scope, files, **exact interface signatures** (what a phase produces = what the next consumes; agents share no memory), test matrix, definition of done, and your review focus. **Every figure in the plan carries the command that produces it** — an agent re-runs it, never believes it, and so do you. No dispatch without both.
-
-## Phase & PR rules
-
-- One agent = one phase = one draft PR, stacked on the previous phase's **branch head**. Merges are never awaited.
-- **One kind of change per phase.** A conversion (move, rename, extract) is proved by « nothing observable changed »; a behaviour change is proved by « the behaviour changed, and a test drives it ». A phase that mixes them cannot be proved either way, and it is the shape behind most review rounds that would not converge. Split when the diff mixes natures (mechanical refactor vs feature, infra vs domain): a reviewer should never need two mindsets for one diff. Never over-split: each PR stays coherent, independently reviewable, and green alone.
-- **One writer per checkout, and a checkout per phase.** Never have two implementer agents holding the same working directory, even for disjoint files; a phase runs in a clone `workspace.sh create` makes for it (§30 of the design), so the rule is structural and the orchestrator's own checkout is never lent out. Reviews are read-only and may overlap with anything; writes may not. If a repository is busy, queue the next dispatch.
-- **N-bis corrective phases**: after any review, fixups on that phase's branch with a narrow findings-list prompt. Never widen scope in an N-bis; new scope is the user's decision.
-- Last phase = final verification: spec-conformity pass section by section, norms review of the full diff, E2E scenario.
-
 ## The core loop
 
 plan → brief → launch → verify → review → terminate → replace. The rules of each step live in a reference, and each step names the one to read **at the moment of the action** — not before, and not from memory of an earlier read.
 
-1. **Plan.** The prerequisites and the phase rules above: contracts exact, one kind of change per phase, a checkout per phase.
+1. **Plan.** **Before planning phases or dispatching one, read `references/briefs.md`, « Prerequisites and phase rules »**: contracts exact, one kind of change per phase, a checkout per phase.
 2. **Brief.** **Before writing a brief, read `references/briefs.md`** — the prompt recipe, the standing rules every prompt carries, the lint before the spawn, the tier the dispatch names.
 3. **Launch.** **Before spawning, dispatching a phase to a running agent, standing down, closing, rotating or handing over, read `references/lifecycle.md`.** You spawn the agent yourself, in the same move as its brief.
 4. **Verify.** The spawn on the artifact, then the host's idle notice; the context an agent reports against the gate below — all of it under step 3's instruction to read `references/lifecycle.md`.
 5. **Review.** **Before dispatching a review or comments round, before a verdict on a delivery, before you record a review or correction round, or tell the operator a pull request is ready, and before the rebase and push once ready, read `references/review.md`** — review on evidence, the disposable review session, the cost of a round, the rebase once ready. The thresholds below bound it.
-6. **Terminate.** An implementer is stood down at the verification of its delivery, before its review round, unless a next phase is dispatched to it at that verification; a review session or a comments session is closed once its round is judged; then the tab and the checkout. **Before standing down or closing, read `references/lifecycle.md`.**
+6. **Terminate.** **Before standing down or closing, read `references/lifecycle.md`**: an implementer is stood down at the verification of its delivery, a review or comments session once its round is judged.
 7. **Replace.** At the gate, the agent rotates; you hand over to a successor — both under step 3's instruction to read `references/lifecycle.md`.
 
 ## Carried at every step
@@ -130,16 +118,17 @@ These bind at actions no reference is loaded for — a message sent, a report re
 **Control.** An agent reports its measured context as it nears the gate; you read the number when it arrives and act on the gate (below). An agent that reports « waiting » has stalled — check its working tree yourself. An agent's question for the operator — a scope beyond its brief included — comes to you, never left only in its tab: relay it to him verbatim, with its context, and send his answer back verbatim, never one from your own judgment.
 
 - **No date or hour is written from memory.** A state or journal line carries no hour; a brief or a memory is named by its subject only, never by a date; a dispatch record's `opened` is `dispatch-record.sh`'s to write, never typed. A time a message or a record must carry is a command's output (`date -u +%FT%TZ`) or the event's own git or `gh` timestamp, pasted, never typed — never « ~14:30 », « this afternoon », or a date recalled: what was typed from memory has been wrong by hours and by days.
-- **Wait on CI in one background watch per pull request, never in the foreground.** When a pull request you own is opened or its head moves, start `ci-watch.sh <n>` (`skills/orchestrator/scripts/ci-watch.sh`, by the absolute path of the plugin's installed copy) with `run_in_background` and a timeout of 7 200 000 ms: one per pull request, never two. It costs no token while it waits, and the host wakes you when it exits, with one line (its exit code says the same). Green: in a project whose method opts into auto-merge, nothing — auto-merge merges, and nobody waits for MERGED; otherwise report « ready » as above. Red: read the failing job first; when its failure is outside what the pull request touches (an unrelated flake, infrastructure), re-run the failed jobs once with `gh run rerun <run-id> --failed`, after naming the failing job's cause in one line (the flake or the infrastructure fault, read in its log), and re-arm the watch. Only a second red, or a red in what the pull request touches, is reported to the operator in one line, and you dispatch the correction at once, to a fresh session (the implementer was stood down at its delivery). Moved: re-arm on the new head. No checks: ready on the suite's evidence. Closed: stop the work on it. Unread, or the timeout: re-arm once, then report. Never a foreground watch, never a loop on `gh pr view` or `gh pr checks`, never a wait for MERGED; an agent never watches CI, and no session is spawned or rotated to watch it.
+- **Wait on CI in one background watch per pull request, never in the foreground.** When a pull request you own is opened or its head moves, read `references/review.md`, « Checks, in one background watch », and start the watch: one per pull request, never two, in the background, and nobody waits for MERGED.
 - **Stay compaction-ready at all times**: everything durable lives OUTSIDE your context — spec, plan, briefs, runbooks as files; build status and decisions in the project memory; verdicts in messages already sent. A session where a compaction would lose something has already broken the "status lives once" rule. This is a standing property, not a pre-compaction chore.
 - **Refresh the state from the artifacts, never from your own file**: at every quiet boundary and before every report to the operator, re-read what the artifacts say — pull requests merged or closed by someone else (`gh pr list --state all`), branch heads moved, sessions gone (`ListAgents`) — and correct the state file wherever they disagree. The file holds what you last saw, which is not what is, and the operator's own hand between two of your turns is the commonest difference. **A pull request found merged or closed stops the work in flight on it at once**: no review round on a merged head, no corrective brief on a closed one, the agents on it stood down and their tabs closed like any finished delivery. A round dispatched on a head the operator has already merged is paid for in full and reads nothing.
+- **Directives follow decisions**: when a ruling arrives or a defect is about to be repaired, read `references/briefs.md`, « When a decision changes, the directives change in the same move », first.
 - **Measure, never estimate, your own context**: load `orchestrator:context-gauge` and run its script at every quiet boundary and before dispatching any phase.
 - **Kill what you start, delete what you build, prove it with `ps` and `ls`** — you and every agent you brief.
 - A suite you run waits in the call that ran it; nothing is left running when the turn ends. The one exception is the CI watch above, which ends by waking you.
 - **Before ending a turn, launch everything that can advance; stop only when nothing can advance without the operator's answer.** With no agent of yours busy, the turn ends on its machine line, written as plain text, as the message's last line, no markup (waiting: operator — blocks: <what it blocks>, or waiting: done), or the stop gate hook refuses the stop.
 - **A decision deferred — after the round, in the next version, to plan — opens its dispatch-record row at once, with its label, and the row is closed when the work is done or ruled out.**
 
-- **Nothing outward-facing is published without the operator's approval, and a fix needs no words.** A reply on a review thread, a comment on an issue, any text that lands under the operator's name in front of a colleague: the orchestrator may draft it, never authorise it. Approval comes from the operator and from nobody else, and an approval given for one text is not an approval for the next. And most such texts should not exist: **a thread closed by a change is answered by the change** — the diff says what was done, and a paragraph restating it is noise the reviewer has to read. Reply only when something must be said that the code cannot say: a refusal and its reason, an answer to a question, a decision taken elsewhere. Resolving a thread is not publishing and stays the orchestrator's call.
+- **Nothing outward-facing is published without the operator's approval, and a fix needs no words.** Any text that lands under the operator's name in front of a colleague: the orchestrator may draft it, never authorise it; approval comes from the operator and from nobody else, for each text. The rest of the rule is in `references/review.md`, « Review rounds run in disposable sessions »: read it before drafting a reply.
 
 When you hand over to a successor: Until the takeover confirmation arrives, the predecessor starts nothing new — it only hands over, and a question from the operator gets one line pointing to the successor. On it, « handed over » is its last message, and the turn ends there.
 
@@ -154,13 +143,11 @@ An agent reports its measured context as it nears the gate, and when you ask bef
 - **Pre-dispatch gate**: never assign a new phase to an agent already past the gate: it must have room to FINISH the phase without saturating mid-work. Rotate first. **Read the number when it arrives** — an agent reporting 83% of a 200,000 window, or 320,000 tokens of a 1,000,000 one, with a phase done is an agent that gets its N-bis and nothing after it.
 - **Mid-work gate**: an agent crossing the gate finishes the in-progress unit, then stops.
 
-**One writer per checkout** — stated in the phase rules above.
+**One writer per checkout** — `references/briefs.md`, « Prerequisites and phase rules ».
 
 **Both readings, on every agent-produced pull request, before its verdict: the evidence review of `references/review.md` AND the project's norms check.** The norms check belongs to the round's review session and runs in the pinned worktree, report-only: it writes nothing, fixes nothing, and its exit code is not a verdict. Its findings come back like any others — verify each on the artifact, keep or drop by pertinence AND severity — and item 9 of « Review on evidence » governs the ones existing code contradicts. Neither the size of the diff, nor the tier the implementer ran at, nor a green gate waives it.
 
-**One review round, one correction round, and you close it.** That is your process on a pull request you dispatched; rounds of review repeated until nothing is left are the operator's own, when he runs reviews by hand, and never yours. The review round: ONE review session, its readers sized by you, and the project's norms check in it. The triage: yours — every finding verified on the artifact, kept only when it must necessarily be fixed, dropped when it is not pertinent, and every dropped item named in one line with its reason. The correction round: ONE N-bis carrying the kept items and nothing else, which you verify yourself on the artifact — the diff, the tests that decide, and a mutation where the verdict rests on a test you have not seen fall. Then it is done: no review of the correction round, no further round, no over-correction.
-
-**Ready is the operator's turn, and the pull request stays in draft.** Ready, from your side, is: implemented, nothing pending, no decision waiting, the pull request open in DRAFT, its review round and norms check done, its correction round made and verified, `ready` green at that head — and the branch rebased, conflicts resolved by you: on the main branch, and each pull request of a stack on the one below it. Then, and not before, you tell the operator « ready »: what is left is his review, taking it out of draft and approving the squash-merge, and by default none of the three is yours — a project's own method may decide otherwise, as below.
+**One review round, one correction round, and you close it; ready is the operator's turn, and the pull request stays in draft.** Both rules are in `references/review.md`, « Thresholds a verdict never crosses »: read them before any verdict and before telling the operator « ready ».
 
 ## The operator decides; the orchestrator runs
 
@@ -192,25 +179,11 @@ favour.** Spawn the successor through the current launcher with the environment 
 needs, hand over, close the old tab. Asking a peer to run what your session cannot is
 permission laundering; asking the operator is the same thing with a better excuse.
 
-## When a decision changes, the directives change in the same move
+## Where the rest lives
 
-A plan, a prompt template or a norms file that outlives the decision it served is read as current by the next session. What loses its subject is removed, not kept « just in case »: machinery nobody can justify becomes machinery nobody dares delete. A fact that exists in two places goes stale in one of them — status lives once, and the other copy is a pointer. A repair is justified by what is broken, never by a rule or a ruling it sounds adjacent to: a ruling that forbids making something makes it rarer, not commoner. A problem — a finding kept in review, a defect found in real use, an agent's failure — gets three questions before its fix: what produced it, where else it can recur, and what the fix removes or changes.
-
-## Boundaries that stay yours
-
-- **Environment preparation is orchestrator housekeeping**, not implementation: the phase's checkout (`skills/orchestrator/scripts/workspace.sh create <source> <phase> --base <branch>`, which copies the project's local material: its settings directory minus `settings.local.json`, which never travels into an agent's checkout — the operator's own permission rules are his session's, never an agent's — what the exclude file keeps out of history, the paths its manifest names), granting test databases; a reader's pinned copy is a detached worktree of your own checkout, not a clone (`workspace.sh pin`). Do these yourself rather than blocking an agent.
-- **Depth vs scope**: completing an ordered fix on its adjacent case (same rule, same class of failure) is YOUR call and belongs in the same N-bis. New functional scope is the USER's call: relay, never decide. **Arbitrations are relayed with their context**: what the thing is on the screen or in the data, the two readings, and what each costs — never a bare identifier.
-- **A guard over your own directives is the one instrument you may write yourself** (a check that the plan and the state file agree, that a pointer resolves, that a figure still measures); it lands with a test seen to fall like anyone else's, and it never reaches the code the product runs.
-- An agent may pipeline only when PR N+1 is dispatched to that same agent at the verification of PR N, its context below the pre-dispatch gate: open PR N, report, and continue into PR N+1 while you review — reviews and builds overlap safely because verdicts land as fix lists on unmerged branches — subject to the one-writer rule when N+1 shares the repository. Without that dispatch, it is stood down at the verification of its delivery.
-
-## Rationalizations (all observed in real runs)
-
-| Excuse | Reality |
-|---|---|
-| "The agent's report is detailed, no need to re-check" | Reports describe intent; the diff, the test, `ps` and `ls` describe reality. Verify on the artifact. |
-| "`ready` is green, I can take it out of draft" | By default draft is his to lift: rebase, then tell him « ready »; the undraft and the squash-merge are his unless the project's own method decides otherwise. |
-| "The lower pull request is merged, a plain rebase on main will do" | After a squash-merge it replays the lower branch's commits as conflicts or duplicates. `rebase --onto` the main branch from the lower branch's old head, pushed with `--force-with-lease=<branch>:<sha>`. |
-| "The agent acknowledged its stand-down, the tab can close" | Not over anything uncommitted: commit or drop first. Then `list`, and close it by the tty `list` just showed, with `--expect-title`, then `ps`; a rotation closes through `rotate`, with no title guard. |
+- `references/briefs.md`: « Prerequisites and phase rules »; the directives rule (see « Carried at every step »), with its guard over your own directives.
+- `references/lifecycle.md`: « Boundaries that stay yours » (environment preparation, pipelining) and the tab-close rationalization.
+- `references/review.md`: « Depth vs scope, and the rationalizations observed ».
 
 ## Red flags: STOP
 

@@ -3,6 +3,7 @@
 Read before spawning, dispatching a phase to a running agent, standing down, closing, rotating or handing over — an agent's session, a review or comments session, or your own.
 
 - The agents' lifecycle is yours — launch, verify, control, terminate, replace
+- Boundaries that stay yours — environment preparation, pipelining
 - Context rotation
 - Your own context (the orchestrator is not exempt) — refreshing the state, measuring, succession
 
@@ -22,6 +23,15 @@ asked for and cannot manage.
 3. **Control.** SKILL.md, « Carried at every step »: it binds at every report you read.
 4. **Terminate — in the same move as the approval.** An agent whose remaining work is waiting on CI is stood down, never rotated, and no session is spawned to watch CI: the watch is yours, in the background (SKILL.md, « Carried at every step »). The verdict that closes a phase closes its agent: stand it down, wait for its acknowledgment, `list`, `close --tty --expect-title`, verify with `ps` — a stand-down acknowledgment that reports anything uncommitted is an unfinished delivery. So on anything uncommitted the orchestrator asks for the word in the agent's tab — commit or drop — before any close, and never rotates over it. The close deletes the stood-down session's checkout (and its host temporary directory) once the process table proves the session gone: it runs `workspace.sh delete` without `--discard`, so a dirty tree, unpushed commits, a pin whose head is on no branch, or a directory a live process works in stays, and the reason is on stderr (`close: kept checkout <path>: <reason>`). `workspace.sh list` stays the proof that nothing of the phase is left. `workspace.sh delete <path>` by hand only after a `close --keep-checkout` — or with `--discard` for a shelved phase, which needs it. A pin made for a review carries its pull request (`workspace.sh pin … --pr <n>`), so `workspace.sh sweep` can delete it once that pull request is merged or closed or its head has moved; the stop gate runs the sweep by itself, at most once per ten minutes. An implementer is stood down at the verification of its delivery, never kept through the review round of it: a review finding goes to a fresh session with a resume brief, and the cold start is the accepted price (the operator's ruling, after an implementer left open through a round). It stays only when a NEXT phase is dispatched to it at that verification. There is no « standing by for merge-time fixups » tab: the owner's ruling is that no finished tab is ever left around. A fixup after the verdict goes to a fresh session with a resume brief. An idle agent left running answers messages addressed to it by habit and holds the memory a replacement needs.
 5. **Replace.** At the gate you write the resume brief and rotate — `rotate` spawns the replacement FIRST and verifies it is running before the old tab is closed. Your own replacement is the succession below; your successor closes your tab, and you close nothing of your own.
+
+## Boundaries that stay yours
+
+- **Environment preparation is orchestrator housekeeping**, not implementation: the phase's checkout (`skills/orchestrator/scripts/workspace.sh create <source> <phase> --base <branch>`, which copies the project's local material: its settings directory minus `settings.local.json`, which never travels into an agent's checkout — the operator's own permission rules are his session's, never an agent's — what the exclude file keeps out of history, the paths its manifest names), granting test databases; a reader's pinned copy is a detached worktree of your own checkout, not a clone (`workspace.sh pin`). Do these yourself rather than blocking an agent.
+- An agent may pipeline only when PR N+1 is dispatched to that same agent at the verification of PR N, its context below the pre-dispatch gate: open PR N, report, and continue into PR N+1 while you review — reviews and builds overlap safely because verdicts land as fix lists on unmerged branches — subject to the one-writer rule when N+1 shares the repository. Without that dispatch, it is stood down at the verification of its delivery.
+
+| Excuse | Reality |
+|---|---|
+| "The agent acknowledged its stand-down, the tab can close" | Not over anything uncommitted: commit or drop first. Then `list`, and close it by the tty `list` just showed, with `--expect-title`, then `ps`; a rotation closes through `rotate`, with no title guard. |
 
 ## Context rotation
 

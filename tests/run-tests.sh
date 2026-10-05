@@ -168,14 +168,29 @@ check "the lifecycle puts the close question before « takeover confirmed »" "1
   "$(tr '\n' ' ' < "$ORCH_REFS/lifecycle.md" | tr -s ' ' | awk '{ a = index($0, "to close it himself or to say « close it »"); b = index($0, "message the predecessor \"takeover confirmed\""); print (a > 0 && b > 0 && a < b) ? 1 : 0 }')"
 # Ready is the operator's turn: the pull request stays in draft, rebased, and the squash-merge
 # of a lower branch is replayed around, never through.
-check "ready leaves the pull request in draft" "1" "$(grep -c "Ready is the operator's turn, and the pull request stays in draft" "$ROOT/skills/orchestrator/SKILL.md")"
+check "ready leaves the pull request in draft" "1" "$(grep -c "Ready is the operator's turn, and the pull request stays in draft" "$ORCH_REFS/review.md")"
 check "ready includes the rebase and names the squash-merge trap" "1|1|1" \
-  "$(grep -c "each pull request of a stack on the one below it" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "git rebase --onto <main> <old head of the lower branch> <branch>" "$ORCH_REFS/review.md")|$(grep -c "the one force this rule allows" "$ORCH_REFS/review.md")"
+  "$(grep -c "each pull request of a stack on the one below it" "$ORCH_REFS/review.md")|$(grep -c "git rebase --onto <main> <old head of the lower branch> <branch>" "$ORCH_REFS/review.md")|$(grep -c "the one force this rule allows" "$ORCH_REFS/review.md")"
 check "the undraft and the plain rebase have their rows" "1|1" \
-  "$(grep -c "is green, I can take it out of draft" "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c "a plain rebase on main will do" "$ROOT/skills/orchestrator/SKILL.md")"
+  "$(grep -c "is green, I can take it out of draft" "$ORCH_REFS/review.md")|$(grep -c "a plain rebase on main will do" "$ORCH_REFS/review.md")"
 check "the force push has its red flag" "1" \
   "$(grep -c "a force push other than a rebase" "$ROOT/skills/orchestrator/SKILL.md")"
 check "the ungated pull request has its red flag" "1" "$(grep -c "A pull request you merged or took out of draft without his clear and explicit request, unless the project's own method decides the merge or the undraft; « ready » told to the operator before" "$ROOT/skills/orchestrator/SKILL.md")"
+# The rulebook is loaded whole at every start and every takeover: its size is bounded, and what
+# only one step needs lives in the reference that step names.
+check "the orchestrator rulebook stays at 21,000 bytes or fewer" "yes" \
+  "$([ "$(wc -c < "$ROOT/skills/orchestrator/SKILL.md" | tr -d ' ')" -le 21000 ] && echo yes || echo no)"
+# The directives rule moved out of the rulebook; the trigger that makes a session read it stays.
+check "the rulebook says when to read the directives rule: a ruling arrives or a defect is about to be repaired" "yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'when a ruling arrives or a defect is about to be repaired, read `references/briefs.md`')"
+check "the phase rules and the prerequisites live in the briefs reference" "yes|yes|yes|yes" \
+  "$(spells "$ORCH_REFS/briefs.md" '## Phase & PR rules')|$(spells "$ORCH_REFS/briefs.md" '**One kind of change per phase.**')|$(spells "$ORCH_REFS/briefs.md" '**One writer per checkout, and a checkout per phase.**')|$(spells "$ORCH_REFS/briefs.md" '**Every figure in the plan carries the command that produces it**')"
+check "the directives rule and the guard live in the briefs reference" "yes|yes" \
+  "$(spells "$ORCH_REFS/briefs.md" '## When a decision changes, the directives change in the same move')|$(spells "$ORCH_REFS/briefs.md" '**A guard over your own directives is the one instrument you may write yourself**')"
+check "environment preparation, pipelining and the tab-close row live in the lifecycle reference" "yes|yes|yes" \
+  "$(spells "$ORCH_REFS/lifecycle.md" '**Environment preparation is orchestrator housekeeping**')|$(spells "$ORCH_REFS/lifecycle.md" 'An agent may pipeline only when PR N+1 is dispatched to that same agent')|$(spells "$ORCH_REFS/lifecycle.md" 'The agent acknowledged its stand-down, the tab can close')"
+check "the one-round rule, depth versus scope and the publishing rule live in the review reference" "yes|yes|yes" \
+  "$(spells "$ORCH_REFS/review.md" '**One review round, one correction round, and you close it.**')|$(spells "$ORCH_REFS/review.md" '**Depth vs scope**')|$(spells "$ORCH_REFS/review.md" 'a thread closed by a change is answered by the change')"
 out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate2" bash "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" spawn --dir "$WORK" --prompt p --left-of /dev/ttys001 --right-of self 2>&1 || true)
 case "$out" in *"mutually exclusive"*) anchors="refused" ;; *) anchors="$out" ;; esac
 check "two anchors are refused at spawn" "refused" "$anchors"
@@ -3937,14 +3952,14 @@ check "the phase brief template ends the delivery at the push, no CI watch" "yes
 check "the standing rules say an agent never waits on CI" "yes|no" \
   "$(spells "$ROOT/skills/orchestrator/references/briefs.md" '**An agent never waits on CI.**')|$(spells "$ROOT/skills/orchestrator/references/briefs.md" 'timeout 590 gh pr checks <n> --watch')"
 check "the orchestrator skill arms one background watch per pull request" "yes|yes|yes" \
-  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'start `ci-watch.sh <n>`')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'with `run_in_background` and a timeout of 7 200 000 ms: one per pull request, never two')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Moved: re-arm on the new head')"
+  "$(spells "$ORCH_REFS/review.md" 'start `ci-watch.sh <n>`')|$(spells "$ORCH_REFS/review.md" 'with `run_in_background` and a timeout of 7 200 000 ms: one per pull request, never two')|$(spells "$ORCH_REFS/review.md" 'Moved: re-arm on the new head')"
 check "and reads each ending: red, no checks, closed, unread" "yes|yes|yes|yes" \
-  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'dispatch the correction at once, to a fresh session')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'No checks: ready on the suite')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Closed: stop the work on it')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Unread, or the timeout: re-arm once, then report')"
-check "never a foreground watch, a loop on gh pr view or a wait for MERGED" "yes" "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'never a loop on `gh pr view` or `gh pr checks`, never a wait for MERGED')"
-check "the orchestrator skill no longer re-reads the checks at each idle notice" "no" "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'At every idle notice of an agent with a pull request, re-read its checks')"
-check "the orchestrator skill merges a green head only where the method opts into auto-merge" "yes" "$(spells "$ROOT/skills/orchestrator/SKILL.md" "in a project whose method opts into auto-merge, nothing")"
-check "and by default it reports ready" "yes" "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'otherwise report « ready » as above')"
-check "the review rules point to the skill for the watch" "yes" "$(spells "$ORCH_REFS/review.md" 'SKILL.md, « Carried at every step », says how')"
+  "$(spells "$ORCH_REFS/review.md" 'dispatch the correction at once, to a fresh session')|$(spells "$ORCH_REFS/review.md" 'No checks: ready on the suite')|$(spells "$ORCH_REFS/review.md" 'Closed: stop the work on it')|$(spells "$ORCH_REFS/review.md" 'Unread, or the timeout: re-arm once, then report')"
+check "never a foreground watch, a loop on gh pr view or a wait for MERGED" "yes" "$(spells "$ORCH_REFS/review.md" 'never a loop on `gh pr view` or `gh pr checks`, never a wait for MERGED')"
+check "the orchestrator skill no longer re-reads the checks at each idle notice" "no" "$(spells "$ORCH_REFS/review.md" 'At every idle notice of an agent with a pull request, re-read its checks')"
+check "the orchestrator skill merges a green head only where the method opts into auto-merge" "yes" "$(spells "$ORCH_REFS/review.md" "in a project whose method opts into auto-merge, nothing")"
+check "and by default it reports ready" "yes" "$(spells "$ORCH_REFS/review.md" 'otherwise report « ready » as above')"
+check "the orchestrator skill points to the review reference for the watch" "yes" "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'read `references/review.md`, « Checks, in one background watch », and start the watch')"
 check "the lifecycle never rotates an agent, nor spawns a session, to watch CI" "yes|yes" \
   "$(spells "$ORCH_REFS/lifecycle.md" 'is stood down, never rotated, and no session is spawned to watch CI')|$(spells "$ORCH_REFS/lifecycle.md" 'An agent whose remaining work is waiting on CI is not rotated')"
 check "no date or hour is written from memory, and a journal line carries no hour" "yes|yes|yes|no|no" \
@@ -3962,9 +3977,9 @@ check "the coordinator's succession brief is named with no date" "yes|no" \
 check "a relayed ruling is dated by a command, pasted, never from memory" "yes|no" \
   "$(spells "$ROOT/commands/decide.md" 'the ruling verbatim, dated (`date -u +%FT%TZ`, pasted),')|$(spells "$ROOT/commands/decide.md" 'the ruling verbatim, dated,')"
 check "a red outside what the pull request touches is re-run once before any correction" "yes|yes" \
-  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'when its failure is outside what the pull request touches')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Only a second red, or a red in what the pull request touches')"
+  "$(spells "$ORCH_REFS/review.md" 'when its failure is outside what the pull request touches')|$(spells "$ORCH_REFS/review.md" 'Only a second red, or a red in what the pull request touches')"
 check "the re-run is the failed jobs, once, after the failing job's cause is named in one line" "yes|yes" \
-  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 're-run the failed jobs once with `gh run rerun <run-id> --failed`')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'after naming the failing job'"'"'s cause in one line (the flake or the infrastructure fault, read in its log)')"
+  "$(spells "$ORCH_REFS/review.md" 're-run the failed jobs once with `gh run rerun <run-id> --failed`')|$(spells "$ORCH_REFS/review.md" 'after naming the failing job'"'"'s cause in one line (the flake or the infrastructure fault, read in its log)')"
 check "the design carries the re-run of a red outside what the pull request touches" "yes|yes" \
   "$(spells "$ROOT/docs/design.md" 'a red outside what the pull request touches is re-run once (failed jobs) and the watch re-armed')|$(spells "$ROOT/docs/design.md" 'a second red, or a red in what it touches, is reported and corrected')"
 check "a mechanical base merge is the orchestrator's, in place; one that decides behaviour is a correction" "yes|yes" \

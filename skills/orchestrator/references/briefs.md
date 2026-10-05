@@ -1,6 +1,6 @@
 # Briefs
 
-Read before writing a brief — a phase brief, a correction round's, a review or comments session's, a rotation's or your own succession's: how it is built, the standing rules every prompt carries, the lint it passes before its spawn, and the tier its dispatch names.
+Read before planning phases or writing a brief — a phase brief, a correction round's, a review or comments session's, a rotation's or your own succession's: how it is built, the standing rules every prompt carries, the lint it passes before its spawn, and the tier its dispatch names.
 
 ## Agent prompt recipe
 
@@ -36,3 +36,23 @@ Its parts, in order:
 ## Every dispatch names its tier
 
 At the dispatch gate you read the context against the gate of SKILL.md, « Thresholds », then choose the capability tier the work needs. `orchestrator:model-routing` is the aid to that decision — the table by class of work, the five readings for a phase that does not sit on a row, escalation as a rotation, and the false-economy rule that reverts a drop which cost a second round: the table informs, you decide, and you write your choice and its reason in the brief. The rule it all rests on: **pay for judgment that nothing downstream re-checks**. Your own sequencing, the contracts a phase imposes on the next, and the final verification are re-read by nobody; a conversion phase is judged by the suite. The tier and the reading that chose it go into the brief, so the agent can tell you when the work outgrew them; the brief names the servers the session was given where it names the tier, so an agent never reaches for a tool it was not given.
+
+## Prerequisites and phase rules
+
+### Prerequisites
+
+A validated spec and a phase plan containing, per phase: scope, files, **exact interface signatures** (what a phase produces = what the next consumes; agents share no memory), test matrix, definition of done, and your review focus. **Every figure in the plan carries the command that produces it** — an agent re-runs it, never believes it, and so do you. No dispatch without both.
+
+### Phase & PR rules
+
+- One agent = one phase = one draft PR, stacked on the previous phase's **branch head**. Merges are never awaited.
+- **One kind of change per phase.** A conversion (move, rename, extract) is proved by « nothing observable changed »; a behaviour change is proved by « the behaviour changed, and a test drives it ». A phase that mixes them cannot be proved either way, and it is the shape behind most review rounds that would not converge. Split when the diff mixes natures (mechanical refactor vs feature, infra vs domain): a reviewer should never need two mindsets for one diff. Never over-split: each PR stays coherent, independently reviewable, and green alone.
+- **One writer per checkout, and a checkout per phase.** Never have two implementer agents holding the same working directory, even for disjoint files; a phase runs in a clone `workspace.sh create` makes for it (§30 of the design), so the rule is structural and the orchestrator's own checkout is never lent out. Reviews are read-only and may overlap with anything; writes may not. If a repository is busy, queue the next dispatch.
+- **N-bis corrective phases**: after any review, fixups on that phase's branch with a narrow findings-list prompt. Never widen scope in an N-bis; new scope is the user's decision.
+- Last phase = final verification: spec-conformity pass section by section, norms review of the full diff, E2E scenario.
+
+## When a decision changes, the directives change in the same move
+
+A plan, a prompt template or a norms file that outlives the decision it served is read as current by the next session. What loses its subject is removed, not kept « just in case »: machinery nobody can justify becomes machinery nobody dares delete. A fact that exists in two places goes stale in one of them — status lives once, and the other copy is a pointer. A repair is justified by what is broken, never by a rule or a ruling it sounds adjacent to: a ruling that forbids making something makes it rarer, not commoner. A problem — a finding kept in review, a defect found in real use, an agent's failure — gets three questions before its fix: what produced it, where else it can recur, and what the fix removes or changes.
+
+- **A guard over your own directives is the one instrument you may write yourself** (a check that the plan and the state file agree, that a pointer resolves, that a figure still measures); it lands with a test seen to fall like anyone else's, and it never reaches the code the product runs.

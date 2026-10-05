@@ -34,8 +34,8 @@ Four ideas carry the rest, each stated where it binds:
   (`skills/context-gauge/SKILL.md`), a verdict from the artifact
   (`skills/orchestrator/references/review.md`).
 - **A rule lives once, and a decision that changes changes its directives in the same
-  move**: `skills/orchestrator/SKILL.md`, « When a decision changes, the directives change
-  in the same move » (section 18).
+  move**: `skills/orchestrator/references/briefs.md`, « When a decision changes, the directives
+  change in the same move » (section 18).
 
 Out of scope: Windows and Linux terminal automation (the iterm-agents skill is macOS only;
 the other skills and the gauge work anywhere the host runs); a hook-based gauge, since no
@@ -469,7 +469,7 @@ The marketplace is the operator's family one, `lounisbou`, where every plugin of
 
 The orchestrator's core loop — plan, brief, launch, verify, review, terminate, replace — is `skills/orchestrator/SKILL.md`, « The core loop », each step naming the reference to read at the moment of the action.
 
-- **Plan.** A validated spec and a phase plan with exact contracts, one kind of change per phase, one agent and one draft pull request per phase stacked on the previous branch head: `SKILL.md`, « Prerequisites » and « Phase & PR rules ».
+- **Plan.** A validated spec and a phase plan with exact contracts, one kind of change per phase, one agent and one draft pull request per phase stacked on the previous branch head: `skills/orchestrator/references/briefs.md`, « Prerequisites and phase rules ».
 - **Brief.** Written from a template to a path the fresh session can open, carrying its tier and the reading that chose it (`orchestrator:model-routing`, section 10): `references/briefs.md`.
 - **Launch.** `workspace.sh create` makes the phase's checkout (section 30); `iterm-agent.sh spawn --brief` lints the brief, builds the one-line startup prompt and opens the tab beside the orchestrator's, at the tier the brief names, with the servers chosen for the agent, in a checkout the host trusts (sections 12, 21, 31, 42): `references/lifecycle.md`, « The agents' lifecycle is yours », and `skills/iterm-agents/SKILL.md`, « Safety order for a launch ».
 - **Verify.** The launcher waits for the host CLI on the tty and reads the mode the session came up in (section 43); the orchestrator reads the tab, the process and the listing, then relies on the host's idle notice.
@@ -526,7 +526,7 @@ The suite holds the launcher by checks that read what the launch SAYS. A guard t
 
 ## 18. A directive that outlives its decision is removed
 
-The rule is the rulebook's (`skills/orchestrator/SKILL.md`, « When a decision changes, the directives change in the same move ») and this document follows it: a decision since reversed leaves this file, and whatever a skill states is pointed at rather than restated. Six versions in ten hours had left four of them when the rule was written — one a section of this document contradicting another — and three commands had never been wired to what the last versions built.
+The rule is the rulebook's (`skills/orchestrator/references/briefs.md`, « When a decision changes, the directives change in the same move ») and this document follows it: a decision since reversed leaves this file, and whatever a skill states is pointed at rather than restated. Six versions in ten hours had left four of them when the rule was written — one a section of this document contradicting another — and three commands had never been wired to what the last versions built.
 
 ## 19. A rotation leaves the old session alive until the new one runs
 
@@ -578,7 +578,7 @@ A launch carrying neither `--prompt` nor `--prompt-file` (nor `--brief`, which b
 
 ## 30. A checkout per phase, with the project's local material
 
-Two rules of the method were held by discipline alone. « One writer per repository » queued every dispatch behind the orchestrator's own checkout, and a sandbox that should let an implementer write under one root could not, because a git worktree writes into its source's `.git`. A clone contains everything it touches, and a clone per phase turns the one-writer rule into a fact (`skills/orchestrator/SKILL.md`, « Phase & PR rules »). A clone carries only what git tracks, so the project's local material — its settings directory (never the operator's own `settings.local.json`, which stays his), what its exclude file keeps out of history, what its manifest names (`skills/orchestrator/scripts/workspace.sh`, its header comment) — is copied as part of making the checkout, not as a step after it, which by hand was done only sometimes. What is left out on purpose: several implementers on one repository, a `--workspace` flag, and cleanup by age.
+Two rules of the method were held by discipline alone. « One writer per repository » queued every dispatch behind the orchestrator's own checkout, and a sandbox that should let an implementer write under one root could not, because a git worktree writes into its source's `.git`. A clone contains everything it touches, and a clone per phase turns the one-writer rule into a fact (`skills/orchestrator/references/briefs.md`, « Prerequisites and phase rules »). A clone carries only what git tracks, so the project's local material — its settings directory (never the operator's own `settings.local.json`, which stays his), what its exclude file keeps out of history, what its manifest names (`skills/orchestrator/scripts/workspace.sh`, its header comment) — is copied as part of making the checkout, not as a step after it, which by hand was done only sometimes. What is left out on purpose: several implementers on one repository, a `--workspace` flag, and cleanup by age.
 
 `skills/orchestrator/scripts/workspace.sh`, bash 3.2 like its neighbours; the root is `ORCHESTRATOR_WORKSPACES`, else `~/dev/workspaces`, and a checkout lives at `<root>/<repository name>/<name>`.
 
@@ -690,7 +690,7 @@ A session running in another terminal still has a tty, and the app simply has no
 
 ## 50. A repair is justified by what is broken
 
-A repair is justified by the thing that is broken and by nothing else, and a justification's direction is read before it is written: a rule that forbids something makes it rarer, not commoner. The rulebook carries both as rationalizations and a red flag (`skills/orchestrator/SKILL.md`, « Rationalizations (all observed in real runs) », « Red flags: STOP »); section 49 is the case that taught them.
+A repair is justified by the thing that is broken and by nothing else, and a justification's direction is read before it is written: a rule that forbids something makes it rarer, not commoner. The rulebook carries both as rationalizations and a red flag (`skills/orchestrator/references/review.md`, « Depth vs scope, and the rationalizations observed »; `skills/orchestrator/SKILL.md`, « Red flags: STOP »); section 49 is the case that taught them.
 
 ## 51. A self-anchor the app cannot resolve is lost, not fatal
 
@@ -728,7 +728,7 @@ A tier is bound to a family alias, never to a versioned identifier, which goes s
 
 ## 58. One review round, one correction round, and ready is the operator's turn
 
-The orchestrator's process on a pull request it dispatched is one review round, its own triage, one correction round it verifies itself on the artifact, and done; rounds of review repeated until nothing is left are the operator's own process, when he runs reviews by hand (`skills/orchestrator/SKILL.md`, « Thresholds »). Rounds that repeat until nothing is left converge on nothing: each one reads the previous fix, finds something in it, and orders a fix of its own, and a finding nobody had to fix ships as churn. The gate follows the rule: `fixed` records the one correction round at the verified head and warns on a second, and `ready` passes at the reviewed or the fixed head. Ready from the orchestrator's side includes the rebase on the main branch, each pull request of a stack on the one below; then « ready » is told, and his review, taking the pull request out of draft and approving the squash-merge are his by default (`skills/orchestrator/references/review.md`, « The rebase, once ready »).
+The orchestrator's process on a pull request it dispatched is one review round, its own triage, one correction round it verifies itself on the artifact, and done; rounds of review repeated until nothing is left are the operator's own process, when he runs reviews by hand (`skills/orchestrator/references/review.md`, « Thresholds a verdict never crosses »). Rounds that repeat until nothing is left converge on nothing: each one reads the previous fix, finds something in it, and orders a fix of its own, and a finding nobody had to fix ships as churn. The gate follows the rule: `fixed` records the one correction round at the verified head and warns on a second, and `ready` passes at the reviewed or the fixed head. Ready from the orchestrator's side includes the rebase on the main branch, each pull request of a stack on the one below; then « ready » is told, and his review, taking the pull request out of draft and approving the squash-merge are his by default (`skills/orchestrator/references/review.md`, « The rebase, once ready »).
 
 ## 59. A frontend surface is proved by a browser run and screenshots on the pull request
 
@@ -766,7 +766,7 @@ What the plugin said that produced it: the agent's delivery clause watched the c
 The mechanism it uses instead: a command started with the host's `run_in_background` keeps running after the turn ends and re-invokes the session when it exits. A background command that exits on the event costs no token while it waits.
 
 - **`ci-watch.sh <pr> [--repo <owner/repo>] [--interval <s>]`** is the one way to wait. It reads the head once, waits (bounded, 180 s, `CI_WATCH_REGISTER_WAIT`) for checks to be registered on it — a push is seen before its checks, and « no checks reported » right then is not a red — then runs `gh pr checks --watch --fail-fast` with its output in a log file under the state directory, never on stdout, and reads the pull request once more when that returns. One line and a code: `green` 0, `red <names>` 1, `no-checks` 2, `moved <old> <new>` 3, `closed <MERGED|CLOSED>` 4, `unread <reason>` 5. It never loops on `gh pr view`.
-- **The orchestrator arms it**, once per pull request, when one it owns is opened or its head moves (`SKILL.md`, « Carried at every step »): green is nothing in a project whose method opts into auto-merge and « ready » otherwise; a red outside what the pull request touches is re-run once (failed jobs) and the watch re-armed; a second red, or a red in what it touches, is reported and corrected; moved re-arms; closed stops the work; unread re-arms once, then reports. Never a foreground watch, never a loop, never a wait for MERGED.
+- **The orchestrator arms it**, once per pull request, when one it owns is opened or its head moves (`skills/orchestrator/references/review.md`, « Checks, in one background watch »): green is nothing in a project whose method opts into auto-merge and « ready » otherwise; a red outside what the pull request touches is re-run once (failed jobs) and the watch re-armed; a second red, or a red in what it touches, is reported and corrected; moved re-arms; closed stops the work; unread re-arms once, then reports. Never a foreground watch, never a loop, never a wait for MERGED.
 - **An agent's delivery ends at the push**: the suite green locally on the final head, the pull request opened, the final report, the stand-down. The watch clause is gone from the agent's duties. A red found later is the orchestrator's.
 - **The stop gate** stops asking for a foreground wait (section 3, check 2). **The lint** refuses, in an implementer brief, a `gh pr checks --watch`, a `gh pr view` or `gh pr checks` in a loop around a sleep, and a wait « until merged »; check 7's background rule excepts `ci-watch.sh` outside an implementer brief.
 - **Rotation**: an agent whose remaining work is waiting on CI is stood down, never rotated, and no session is spawned to watch CI.
