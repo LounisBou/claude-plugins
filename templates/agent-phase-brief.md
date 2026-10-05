@@ -46,6 +46,7 @@ Non-goals:
 - Quality gate before the PR: `{{QUALITY_GATE}}` — started the moment the last commit lands, with the report written
   while it runs, and its exit code stated as DONE. A scoped run covers the tests of every file touched, never only the
   feature's; a signature, constructor or service change is never gated by a scoped run. Every command runs synchronously in the tool call that waits for it; long runs are wrapped in a timeout and piped to `tail` in the same call. Never end a turn "waiting for" a run: there is no later, the result is lost.
+- « Under load » means emulated throttling, never real load on the machine: injected latency, a capped rate, a slowed dependency, a reduced CPU share for your own process; never CPU burners, parallel browsers or suites, or a stress tool. If you find no way to emulate, STOP and ask.
 
 ## 5. Forbidden
 

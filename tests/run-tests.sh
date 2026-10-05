@@ -206,6 +206,14 @@ check "the ungated pull request has its red flag" "1" "$(grep -c "A pull request
 # only one step needs lives in the reference that step names.
 check "the orchestrator rulebook stays at 21,000 bytes or fewer" "yes" \
   "$([ "$(wc -c < "$ROOT/skills/orchestrator/SKILL.md" | tr -d ' ')" -le 21000 ] && echo yes || echo no)"
+# Real load on a shared machine is stopped, and « under load » means emulated throttling: the
+# rulebook, the briefs reference and the phase brief template each carry the rule.
+check "the rulebook stops real machine load an agent reports or plans" "yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'is stopped at once, its processes killed, and the work redone under emulated throttling')"
+check "the standing rules read « under load » as emulated throttling" "yes" \
+  "$(spells "$ORCH_REFS/briefs.md" '**« Under load » means emulated throttling, never real load on the machine.**')"
+check "the phase brief template reads « under load » as emulated throttling" "yes" \
+  "$(spells "$ROOT/templates/agent-phase-brief.md" '« Under load » means emulated throttling, never real load on the machine')"
 # The directives rule moved out of the rulebook; the trigger that makes a session read it stays.
 check "the rulebook says when to read the directives rule: a ruling arrives or a defect is about to be repaired" "yes" \
   "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'when a ruling arrives or a defect is about to be repaired, read `references/briefs.md`')"
