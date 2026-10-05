@@ -282,6 +282,26 @@ check "under the successor's tty and owner, the stale file replaced" \
 check "and leaves the predecessor only what was never its own" '{"tab_id": "7", "tty": "/dev/ttys907", "owner": "S-OTHER"}' \
   "$(cat "$CHAINS/ttys900.jsonl")"
 check "a predecessor with no agents hands over an empty chain" "0|0" "$(transfer)|$(wc -l < "$CHAINS/ttys950.jsonl" | tr -d ' ')"
+# A RESIDENT agent stays idle by design while a background command of its own waits: the
+# stop gate must not count it as an agent to read or relaunch. `--resident` marks its entry;
+# an entry written before the mark existed reads as not resident, and a hand-over keeps it.
+check "--resident is said by the dry run, and its absence too" "1|1" \
+  "$(chain_spawn --resident | grep -c '^resident=yes$')|$(chain_spawn | grep -c '^resident=no$')"
+check "--resident is an agent's only: a successor or an auditor joins no chain to mark" "1|1" \
+  "$(chain_spawn --resident --successor | grep -c 'spawn: refused: --resident marks an agent of your chain')|$(chain_spawn --resident --auditor --title 'Audit : x' | grep -c 'spawn: refused: --resident marks an agent of your chain')"
+append() { ORCHESTRATOR_STATE_DIR="$WORK/istate" "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+m.chain_append('/dev/ttys900', sys.argv[1], sys.argv[2], 'S-ME', resident=sys.argv[3] == 'yes')
+print('|'.join(str(m.is_resident(e)) for e in m.chain_read('/dev/ttys900')))" "$@" 2>&1; }
+printf '{"tab_id":"8","tty":"/dev/ttys908","owner":"S-ME"}\n' > "$CHAINS/ttys900.jsonl"
+check "a resident agent's entry carries the mark, a plain one's and an older one's do not" "False|True|False" \
+  "$(append 9 /dev/ttys909 yes >/dev/null; append 10 /dev/ttys910 no)"
+check "the mark is written only where it is set" \
+  '{"tab_id": "8", "tty": "/dev/ttys908", "owner": "S-ME"}|{"tab_id": "9", "tty": "/dev/ttys909", "owner": "S-ME", "resident": true}|{"tab_id": "10", "tty": "/dev/ttys910", "owner": "S-ME"}' \
+  "$(paste -sd'|' "$CHAINS/ttys900.jsonl")"
+check "a hand-over keeps the mark" '{"tab_id": "9", "tty": "/dev/ttys909", "owner": "S-NEW", "resident": true}' \
+  "$(transfer >/dev/null; sed -n 2p "$CHAINS/ttys950.jsonl")"
 
 echo "== dispatch record =="
 
@@ -3657,6 +3677,22 @@ check "only idle agents: refused, the agent named" \
   "block|Agent : one [b2c3d4] is idle: its notice was spent. Read its report or relaunch it." \
   "$(sg 'Waiting on agent one.' | reason)"
 check "the idle refusal is logged" "1" "$(sglog | grep -c '| check1 | idle-agents$')"
+# A resident agent (spawned with --resident) is idle by design while its background command
+# waits: never an agent to read or relaunch. Today's refusal holds for the same agent unmarked.
+sg_reset; sg_listing "$IDLE"
+printf '{"tab_id": "t-ttys901", "tty": "/dev/ttys901", "owner": "S-ME", "resident": true}\n' > "$SGS/chains/ttys900.jsonl"
+check "a resident idle agent and nothing else: the stop passes" "" "$(sg 'Waiting on agent one.')"
+# It lifts the last fallback only: another idle agent beside it is still refused.
+sg_reset; sg_listing "$IDLE" 'w1/t3 | /dev/ttys902 | ✳ Agent : two | Agent : two [c3d4e5]'
+printf '{"tab_id": "t-ttys901", "tty": "/dev/ttys901", "owner": "S-ME", "resident": true}\n{"tab_id": "t-ttys902", "tty": "/dev/ttys902", "owner": "S-ME"}\n' > "$SGS/chains/ttys900.jsonl"
+check "a resident idle agent beside another idle agent: refused on the other one" \
+  "block|Agent : two [c3d4e5] is idle: its notice was spent. Read its report or relaunch it." \
+  "$(sg 'Waiting on agent two.' | reason)"
+sg_reset; sg_listing "$IDLE"
+printf '{"tab_id": "t-ttys901", "tty": "/dev/ttys901", "owner": "S-ME", "resident": false}\n' > "$SGS/chains/ttys900.jsonl"
+check "the same agent not resident: refused as before" \
+  "block|Agent : one [b2c3d4] is idle: its notice was spent. Read its report or relaunch it." \
+  "$(sg 'Waiting on agent one.' | reason)"
 
 # An own agent idle with its pull request OPEN or MERGED has delivered: nothing will wake the
 # orchestrator for it and its tab is only left behind. The refusal reads the agent's branch
@@ -3843,6 +3879,12 @@ check "open rows hold done only: a busy agent still lets the stop pass" "" "$(sg
 sg_reset; rm -f "$SGREC"; sg_rec open "$SGREC" --class n-bis --tier light --label "left open" >/dev/null; printf '/ws/sgproj/phase-4 | feat/p4 | abc1234 | clean | pushed\n' > "$SG/checkouts"
 check "a checkout and an open row: both are said" \
   "block|Not done: /ws/sgproj/phase-4 is still there. Finish it, or say what blocks it. Not done: row 1 (left open) is open. Dispatch it, close it, or say what blocks it." \
+  "$(sg 'waiting: done' | reason)"
+sg_reset; rm -f "$SGREC"; sg_rec open "$SGREC" --class n-bis --tier light --label "left open" >/dev/null
+sg_listing "$IDLE"
+printf '{"tab_id": "t-ttys901", "tty": "/dev/ttys901", "owner": "S-ME", "resident": true}\n' > "$SGS/chains/ttys900.jsonl"
+check "a resident idle agent does not lift done: the open row still refuses" \
+  "block|Not done: row 1 (left open) is open. Dispatch it, close it, or say what blocks it." \
   "$(sg 'waiting: done' | reason)"
 rm -f "$SGREC"
 

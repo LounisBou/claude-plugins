@@ -7,7 +7,9 @@
 #                        [--permission-mode auto] [--title <t>]
 #                        (--prompt <text> | --prompt-file <path> | --brief <path> --orchestrator <name>)
 #                        [--left-of <tty> | --right-of <tty> | --right-of self | --successor] [--no-verify]
-#                        [--gate-tokens <positive integer>]
+#                        [--gate-tokens <positive integer>] [--resident]
+#     --resident marks an agent meant to stay idle while a background command of its own
+#     waits: the stop gate never counts it as idle. It is still closed when its purpose ends.
 #     --gate-tokens sets THIS session's context gate, in tokens: the launch exports
 #     ORCHESTRATOR_CONTEXT_GATE_TOKENS beside ORCHESTRATOR_SPAWNED. Absent, nothing is
 #     exported and the default holds. With --brief, the startup prompt also says the gate.

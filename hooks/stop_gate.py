@@ -215,23 +215,29 @@ def label(row):
 # --- check 1 ----------------------------------------------------------------------------
 
 def own_agents(rows, own_tty, who):
-    """(label, idle|busy, tty) for each agent of this orchestrator whose tab runs one."""
+    """(agents, resident): (label, idle|busy, tty) for each agent of this orchestrator whose
+    tab runs one, an idle resident agent left out, and whether one such resident was seen."""
     iterm_agent = launcher()
     owner = os.environ.get("ITERM_SESSION_ID", "").rpartition(":")[2]
     if not owner:
         # `chain_owned` filters nothing without an owner: every entry of the tty's chain, a
         # previous occupant's included, would count. No entry is the safe count.
         log(who, "error", "ITERM_SESSION_ID is not set: no chain entry is counted")
-        return []
+        return [], False
     entries = iterm_agent.chain_owned(iterm_agent.chain_read(own_tty), owner)
     by_tty = {r["tty"]: r for r in rows}
-    agents = []
+    agents, resident = [], False
     for entry in entries:
         row = by_tty.get(entry["tty"])
         state = activity(row["title"]) if row else None
+        if state == "idle" and iterm_agent.is_resident(entry):
+            # Spawned with --resident: idle by design, never one to read or relaunch. Not
+            # busy either: it lifts no check but the last fallback (see `check_wake`).
+            resident = True
+            continue
         if state:
             agents.append((label(row), state, entry["tty"]))
-    return agents
+    return agents, resident
 
 
 def pull_request_of(tty, who):
@@ -342,7 +348,7 @@ def project_checkouts(cwd):
 
 def check_wake(rows, own_tty, message, cwd, who, session_id):
     """None when something will wake the orchestrator, else (case, reason)."""
-    agents = own_agents(rows, own_tty, who)
+    agents, resident = own_agents(rows, own_tty, who)
     # Before everything else: neither a busy agent beside it nor a declared block lifts it.
     delivered = delivered_idle(agents, who)
     if delivered:
@@ -372,6 +378,10 @@ def check_wake(rows, own_tty, message, cwd, who, session_id):
         return "malformed-machine-line", MALFORMED
     if last.lower().startswith("waiting:") or last.endswith("?"):
         return "question-without-blocks", QUESTION
+    if resident:
+        # An idle resident agent waits on a background command of its own, and that command
+        # wakes it as a running turn would: something will wake the orchestrator.
+        return None
     return "nothing-will-wake", NOTHING
 
 

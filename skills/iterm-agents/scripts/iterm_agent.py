@@ -1025,13 +1025,22 @@ def chain_write(tty, entries):
     tmp = path + ".tmp"
     with open(tmp, "w") as fh:
         for e in entries:
-            fh.write(json.dumps({"tab_id": e["tab_id"], "tty": e["tty"],
-                                 "owner": e.get("owner", "")}) + "\n")
+            line = {"tab_id": e["tab_id"], "tty": e["tty"], "owner": e.get("owner", "")}
+            if is_resident(e):
+                line["resident"] = True
+            fh.write(json.dumps(line) + "\n")
     os.replace(tmp, path)
 
 
-def chain_append(tty, tab_id, new_tty, owner):
-    chain_write(tty, chain_read(tty) + [{"tab_id": tab_id, "tty": new_tty, "owner": owner}])
+def is_resident(entry):
+    """Whether the agent was spawned with --resident: meant to stay idle while a background
+    command of its own waits. An entry written before the mark existed is not resident."""
+    return entry.get("resident") is True
+
+
+def chain_append(tty, tab_id, new_tty, owner, resident=False):
+    chain_write(tty, chain_read(tty) + [{"tab_id": tab_id, "tty": new_tty, "owner": owner,
+                                         "resident": resident}])
 
 
 def chain_transfer(old_tty, old_owner, new_tty, new_owner):
@@ -1046,8 +1055,8 @@ def chain_transfer(old_tty, old_owner, new_tty, new_owner):
     entries = chain_read(old_tty)
     moved = chain_owned(entries, old_owner)
     kept = [e for e in entries if e not in moved]
-    chain_write(new_tty, [{"tab_id": e["tab_id"], "tty": e["tty"], "owner": new_owner}
-                          for e in moved])
+    chain_write(new_tty, [{"tab_id": e["tab_id"], "tty": e["tty"], "owner": new_owner,
+                           "resident": is_resident(e)} for e in moved])
     chain_write(old_tty, kept)
     return len(moved)
 
@@ -1639,6 +1648,7 @@ def cmd_spawn(argv):
     p.add_argument("--auditor", action="store_true", default=False)
     p.add_argument("--coordinator-successor", dest="coordinator_successor",
                     action="store_true", default=False)
+    p.add_argument("--resident", action="store_true", default=False)
     p.add_argument("--mcp", action="append", default=[])
     p.add_argument("--account-connectors", dest="account_connectors",
                     action="store_true", default=False)
@@ -1656,6 +1666,9 @@ def cmd_spawn(argv):
         die("spawn: --dir is required")
     if args.left_of and args.right_of:
         die("spawn: --left-of and --right-of are mutually exclusive")
+    if args.resident and (args.successor or args.auditor or args.coordinator_successor):
+        die("spawn: refused: --resident marks an agent of your chain; a successor, an auditor "
+            "or a coordinator's successor is written into no chain as an agent")
     if args.coordinator_successor:
         # A coordinator's successor is placed, named, modelled and reached ONE way: at the
         # first place of the caller's window, "Coord : <subject>", the caller's model, remote
@@ -1946,6 +1959,7 @@ def cmd_spawn(argv):
         print("auditor=%s" % ("yes" if args.auditor else "no"))
         print("coordinator_successor=%s" % ("yes" if args.coordinator_successor else "no"))
         print("chain=%s" % effect)
+        print("resident=%s" % ("yes" if args.resident else "no"))
         print("name=%s" % title)
         print("title_free=%s" % ("yes" if args.title_free else "no"))
         print("mcp=%s" % (",".join(servers) or "none"))
@@ -2008,7 +2022,7 @@ def cmd_spawn(argv):
                 print("spawn: chain of %d agent(s) handed to the successor on %s" % (n, new),
                       file=sys.stderr)
         elif own and new and effect == "append":
-            chain_append(own, tab.tab_id, new, own_sess_id)
+            chain_append(own, tab.tab_id, new, own_sess_id, args.resident)
         return new
 
     def fallback_tab(make):
