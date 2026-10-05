@@ -4406,6 +4406,32 @@ check "an unrecognised stack is not called a modal loop" "other" \
 check "no sample at all says so instead of guessing" "sampled" \
   "$(ipy "print('sampled' if 'sampled' in ia.cause_from_sample('') else 'no')")"
 
+echo "== iterm-agents: the AppleScript rung leaves the operator where they work =="
+# The API rung creates a tab without selecting it; `create tab` in AppleScript selects it,
+# so an orchestrator that fell to this rung pulled the operator onto every agent it
+# launched. The stub records the script the spawn sends and answers with the new tty.
+AS_SENT="$WORK/as-spawn-sent.applescript"
+printf '#!/bin/bash\ncat > "%s"\necho /dev/ttys900\n' "$AS_SENT" > "$IBIN/osascript-record"
+chmod +x "$IBIN/osascript-record"
+check "the AppleScript spawn still returns the new session's tty" "/dev/ttys900" \
+  "$(ORCHESTRATOR_OSASCRIPT="$IBIN/osascript-record" ipy "print(ia.as_spawn('true'))")"
+check "the AppleScript spawn re-selects the operator's tab after creating the agent's" "reselects" \
+  "$("$py" -c "
+import sys
+s = open(sys.argv[1]).read()
+create = s.find('create tab')
+remember = s.find('set prev to current tab')
+print('reselects' if -1 < remember < create < s.find('select prev', create) else 'no')" "$AS_SENT")"
+check "the re-selection is guarded, so a tab closed meanwhile cannot fail the spawn" "guarded" \
+  "$("$py" -c "
+import sys
+s = open(sys.argv[1]).read()
+select = s.find('select prev', s.find('create tab'))
+opened = s.rfind('try', 0, select)
+closed = s.find('end try', select)
+ret = s.find('return newTty', select)
+print('guarded' if -1 < opened < select < closed < ret else 'no')" "$AS_SENT")"
+
 echo "== iterm-agents: a self-anchor the app cannot resolve is lost, not fatal (§51) =="
 # Two refusals that look alike and are not. A NAMED anchor the app does not know is a tab
 # the caller got wrong: refuse it. The caller's OWN tty, when the app has no session on it,

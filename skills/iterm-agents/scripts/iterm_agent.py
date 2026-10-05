@@ -821,15 +821,25 @@ def as_close(tty, expect):
 
 
 def as_spawn(command):
+    # `create tab` selects the tab it makes, where the API rung creates it unselected: the
+    # operator's tab is remembered and selected again, so a launch does not pull them away.
+    # A new window has no tab to go back to. The re-selection is guarded: the agent's tab
+    # already runs, so the operator's tab closing meanwhile must not fail the spawn.
     return as_run('''
         tell application "iTerm2"
           if (count of windows) is 0 then
             set w to (create window with default profile command %s)
             return tty of current session of current tab of w
           end if
-          tell current window
+          set w to current window
+          tell w
+            set prev to current tab
             set t to (create tab with default profile command %s)
-            return tty of current session of t
+            set newTty to tty of current session of t
+            try
+              select prev
+            end try
+            return newTty
           end tell
         end tell''' % (as_quote(command), as_quote(command)), "a new tab")
 
