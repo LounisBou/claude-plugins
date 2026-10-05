@@ -4163,6 +4163,23 @@ check "the Live state section replaces reading the journal, which is read by sec
 SUCC5=$(awk '/^5\. /{f=1} /^## /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
 check "step 5 announces the successor's own measured context from the gauge" "1|1" \
   "$(printf '%s' "$SUCC5" | grep -oF 'context_tokens=' | wc -l | tr -d ' ')|$(printf '%s' "$SUCC5" | grep -oF '{{GAUGE}}' | wc -l | tr -d ' ')"
+# Every successor measures its takeover at the same point, the turn that sends « takeover
+# confirmed », so one orchestration's takeover figures compare from one succession to the next:
+# step 4 runs the gauge in that turn, before the message, and step 5 reports that reading only.
+check "step 4 runs the gauge in the « takeover confirmed » turn, immediately before the message" "1|1" \
+  "$(succ4_has 'In the turn that sends « takeover confirmed », run `{{GAUGE}}` immediately before the message and keep its `context_tokens=` line')|$(printf '%s' "$SUCC4" | awk '{ a = index($0, "run `{{GAUGE}}` immediately before the message"); b = index($0, "Then message the predecessor \"takeover confirmed\""); print (a > 0 && b > 0 && a < b) ? 1 : 0 }')"
+check "step 5 reports the context kept at « takeover confirmed », never a later reading" "1|1" \
+  "$(printf '%s' "$SUCC5" | grep -oF 'your own measured context at « takeover confirmed »' | wc -l | tr -d ' ')|$(printf '%s' "$SUCC5" | grep -oF 'the one you kept in that turn, never a later reading' | wc -l | tr -d ' ')"
+# The successor also keeps its first turn's reading: the gap between it and the « takeover
+# confirmed » reading is what the takeover's verification costs.
+check "step 1 runs the gauge in the successor's first tool call and keeps its reading as « first turn »" "1|1|1" \
+  "$(printf '%s' "$SUCC1" | grep -oF 'Your FIRST tool call, ahead of any skill load, runs `{{GAUGE}}`: keep its `context_tokens=` line as your « first turn » figure' | wc -l | tr -d ' ')|$(printf '%s' "$SUCC1" | grep -oF '{{GAUGE}}' | wc -l | tr -d ' ')|$(printf '%s' "$SUCC1" | awk '{ a = index($0, "{{GAUGE}}"); b = index($0, "Read the rulebook"); print (a > 0 && b > 0 && a < b) ? 1 : 0 }')"
+check "step 5 reports both figures, « first turn » and « at takeover confirmed », on one line" "1|1" \
+  "$(printf '%s' "$SUCC5" | grep -oF 'both on one line: « first turn » and « at takeover confirmed »' | wc -l | tr -d ' ')|$(printf '%s' "$SUCC5" | grep -oF 'the line kept in step 1' | wc -l | tr -d ' ')"
+check "the design names both figures and why: their gap is the takeover's verification cost" "yes|yes" \
+  "$(spells "$ROOT/docs/design.md" 'its first turn and the turn that sends « takeover confirmed »')|$(spells "$ROOT/docs/design.md" "the gap between them is what the takeover's verification costs")"
+check "the design says why the takeover is measured in the « takeover confirmed » turn" "yes" \
+  "$(spells "$ROOT/docs/design.md" 'so that its figures compare from one succession to the next')"
 # The predecessor fills the section before the spawn, and keeps the whole brief short.
 check "succeed.md and the lifecycle reference have the predecessor fill Live state and hold the brief to 10,000 characters" "yes|yes|yes|yes" \
   "$(spells "$ROOT/commands/succeed.md" 'Live state')|$(spells "$ROOT/commands/succeed.md" '10,000 characters')|$(spells "$ORCH_REFS/lifecycle.md" 'Live state')|$(spells "$ORCH_REFS/lifecycle.md" '10,000 characters')"
