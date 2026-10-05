@@ -5,6 +5,16 @@ All notable changes are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Changed
+
+- `/bugs-bot:start` spawns the project's agent with `--resident`. The agent sits idle by design
+  while its own `bugs-bot wait` blocks, and that wait wakes it; the launcher's stop gate read it as
+  an idle agent to read or relaunch, and no longer counts it as one. The orchestrator plugin's
+  launcher must be 0.46.1 or newer, the first to know the flag: with an older one, `start` stops
+  and asks for `claude plugin update orchestrator@lounisbou`, and never spawns without the flag.
+
 ## 0.1.4 — 2026-10-04
 
 ### Changed

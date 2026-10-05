@@ -21,7 +21,11 @@ and tag every report twice.
 
    Nothing printed: the orchestrator plugin is not installed — say that
    `/bugs-bot:start` needs it (`/bugs-bot:doctor` says the same) and stop.
-   Otherwise write that path out in full wherever `$SCRIPT` stands below (no
+   The launcher must be 0.46.1 or newer: its version is the path's directory
+   under `orchestrator/`. An older one does not know `--resident` (step 5):
+   say the orchestrator plugin must be updated first, with
+   `claude plugin update orchestrator@lounisbou`, and stop; never spawn
+   without the flag. Otherwise write that path out in full wherever `$SCRIPT` stands below (no
    variable, no command substitution), and read the `references/commands.md`
    of its skill before the first `$SCRIPT` command.
 3. `ListAgents`. A live row named as `agent_title` (or a variant of it) means the
@@ -42,9 +46,12 @@ and tag every report twice.
 5. Spawn the tab:
 
    ```
-   $SCRIPT spawn --dir <repository> --title "<agent_title>" --prompt-file <that path> --right-of self
+   $SCRIPT spawn --dir <repository> --title "<agent_title>" --prompt-file <that path> --right-of self --resident
    ```
 
+   `--resident`: the agent sits idle by design while its own `bugs-bot wait`
+   blocks, and that wait wakes it; your stop gate must not read it as an idle
+   agent to read or relaunch.
    The checkout is already trusted: no `--trust`. A refusal over trust, over the
    title's shape or anything else: stop and tell the operator; never spawn it
    another way. The last line printed is the tab's tty.

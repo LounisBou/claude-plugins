@@ -87,7 +87,8 @@ def test_the_guard_reads_what_it_guards():
 @pytest.mark.parametrize("phrase", [
     ".bugs-bot.json", "/bugs-bot:init", "ListAgents", "you already have one", "it belongs to",
     'bugs-bot agent-prompt --launcher "', "sort -V | tail -1", "--right-of self", "move --tty", "verify --tty",
-    "orchestrator plugin",
+    "orchestrator plugin", "--right-of self --resident", "0.46.1 or newer",
+    "claude plugin update orchestrator@lounisbou",
 ])
 def test_start_launches_the_projects_one_agent(phrase):
     assert phrase in (REPO_ROOT / "commands" / "start.md").read_text()
