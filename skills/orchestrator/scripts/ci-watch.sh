@@ -27,6 +27,8 @@
 # stdout, one line, and the exit code the caller reads without opening the log:
 #   ci-watch: green <pr> <head>                                 0  with auto-merge: no merge within the bound
 #   ci-watch: red <pr> <head> <failing check names>             1
+#                                                                  (a cancelled check is one, though the watch
+#                                                                  exits 0 over it)
 #   ci-watch: no-checks <pr> <head>                             2  none registered within the bound
 #   ci-watch: moved <pr> <old head> <new head>                  3  re-arm on the new head
 #   ci-watch: closed <pr> CLOSED                                4  closed without merge
@@ -220,22 +222,33 @@ read_pr
 [ "$head" = "$first" ] || { say "moved $pr $first $head"; exit 3; }
 
 if [ "$watch" -eq 0 ]; then
-    if [ "$base" = 1 ] && [ "$auto" = auto ]; then
-        # Auto-merge will merge: wait for it, bounded, and follow the base branch.
-        deadline=$((SECONDS + MERGE_WAIT))
-        while [ "$SECONDS" -lt "$deadline" ]; do
-            sleep "$interval"
-            read_pr
-            [ "$state" = OPEN ] || ended
-            [ "$head" = "$first" ] || { say "moved $pr $first $head"; exit 3; }
-            [ "$auto" = auto ] || break
-        done
+    # The watch exits 0 when no check is in the `fail` bucket, a cancelled one included: a check
+    # whose job was never run is no green, so the buckets are read once before saying so.
+    err=$(mktemp "${TMPDIR:-/tmp}/ci-watch.XXXXXX") || unread "cannot create a temporary file"
+    buckets=$(gh pr checks "$pr" ${repo[@]+"${repo[@]}"} --json name,bucket \
+        --jq '.[] | .bucket + "\t" + .name' 2>"$err")
+    code=$?
+    why=$(first_line < "$err"); rm -f "$err"
+    { [ "$code" -eq 0 ] && [ -n "$buckets" ]; } || unread "gh pr checks failed: ${why:-no answer}"
+    names=$(awk -F'\t' '$1 == "cancel" { print $2 }' <<< "$buckets" | paste -sd, - | sed 's/,/, /g')
+    if [ -z "$names" ]; then
+        if [ "$base" = 1 ] && [ "$auto" = auto ]; then
+            # Auto-merge will merge: wait for it, bounded, and follow the base branch.
+            deadline=$((SECONDS + MERGE_WAIT))
+            while [ "$SECONDS" -lt "$deadline" ]; do
+                sleep "$interval"
+                read_pr
+                [ "$state" = OPEN ] || ended
+                [ "$head" = "$first" ] || { say "moved $pr $first $head"; exit 3; }
+                [ "$auto" = auto ] || break
+            done
+        fi
+        say "green $pr $head"; exit 0
     fi
-    say "green $pr $head"; exit 0
+else
+    names=$(gh pr checks "$pr" ${repo[@]+"${repo[@]}"} --json name,bucket \
+        --jq '.[] | select(.bucket == "fail" or .bucket == "cancel") | .name' 2>/dev/null | paste -sd, - | sed 's/,/, /g')
+    [ -n "$names" ] || unread "gh pr checks --watch exited $watch with no failing check named (log: $log)"
 fi
-
-names=$(gh pr checks "$pr" ${repo[@]+"${repo[@]}"} --json name,bucket \
-    --jq '.[] | select(.bucket == "fail" or .bucket == "cancel") | .name' 2>/dev/null | paste -sd, - | sed 's/,/, /g')
-[ -n "$names" ] || unread "gh pr checks --watch exited $watch with no failing check named (log: $log)"
 say "red $pr $head $names"
 exit 1

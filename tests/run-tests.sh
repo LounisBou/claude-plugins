@@ -3433,7 +3433,9 @@ echo "== ci-watch =="
 # and the run's conclusion, read from the code when not given) and `jobs` (`<name>:<conclusion>`
 # lines). `gh run view` answers with the run as JSON and runs the script's own --jq filter on it.
 # `newest` answers the read of a workflow's newest push run on the branch, one `<id> <sha>` line
-# per call, the last one repeated.
+# per call, the last one repeated. `buckets` (`<name>:<bucket>` lines, one `build:pass` by
+# default) answers the bucket read after a watch that exits 0, the script's own --jq run on it;
+# without the file that read fails.
 CW="$WORK/ci-watch"
 CWB="$CW/bin"; CWS="$CW/state"
 mkdir -p "$CWB" "$CWS"
@@ -3476,7 +3478,11 @@ case "\$1 \$2" in
   "pr checks")
     case "\$*" in
       *--watch*) echo "WATCH-OUTPUT-MARKER"; exit "\$(cat "$CW/watch-code" 2>/dev/null || echo 0)" ;;
-      *"--json name,bucket"*) cat "$CW/failing" 2>/dev/null; exit 1 ;;
+      *"--json name,bucket"*)
+         [ -f "$CW/failing" ] && { cat "$CW/failing"; exit 1; }
+         [ -f "$CW/buckets" ] || { echo "gh: HTTP 502" >&2; exit 1; }
+         f=.; while [ \$# -gt 0 ]; do [ "\$1" = --jq ] && f="\$2"; shift; done
+         jq -Rn '[inputs | select(length > 0) | split(":") | {name: .[0], bucket: .[1]}]' "$CW/buckets" | jq -r "\$f" ;;
       *"--json name"*) r=\$(nth "$CW/reg" reg-n)
          case "\$r" in
            none) echo "no checks reported on the 'feat' branch" >&2; exit 1 ;;
@@ -3496,7 +3502,8 @@ cw() {
   local view="$1" reg="$2" code="$3" failing="$4" out rc
   shift 4
   rm -f "$CW"/gh-calls "$CW"/view "$CW"/reg "$CW"/failing "$CW"/watch-code "$CW"/view-n "$CW"/reg-n \
-    "$CW"/merge "$CW"/runs "$CW"/runs-n "$CW"/run-codes "$CW"/jobs "$CW"/newest "$CW"/newest-n
+    "$CW"/merge "$CW"/runs "$CW"/runs-n "$CW"/run-codes "$CW"/jobs "$CW"/newest "$CW"/newest-n "$CW"/buckets
+  [ "${CW_BUCKETS-build:pass}" = fail ] || printf '%b\n' "${CW_BUCKETS-build:pass}" > "$CW/buckets"
   [ -z "${CW_MERGE:-}" ] || printf '%b\n' "$CW_MERGE" > "$CW/merge"
   [ -z "${CW_RUNS:-}" ] || printf '%b\n' "$CW_RUNS" > "$CW/runs"
   [ -z "${CW_RUN_CODES:-}" ] || printf '%b\n' "$CW_RUN_CODES" > "$CW/run-codes"
@@ -3517,6 +3524,14 @@ check "the watch's own output never reaches stdout, it lands in a log file" "1|0
   "$(grep -rl WATCH-OUTPUT-MARKER "$CWS" 2>/dev/null | wc -l | tr -d ' ')|$(cw "OPEN $HA" "2" 0 "" 7 --interval 1 | grep -c WATCH-OUTPUT-MARKER)"
 check "red: the failing names are on the line, exit 1" "ci-watch: red 7 $HA test, e2e|1" \
   "$(cw "OPEN $HA" "2" 1 "test\ne2e" 7 --interval 1)"
+# The watch exits 0 over a cancelled check, as it does over a passing one: the buckets read
+# after it turns a cancelled check into a red, never a green.
+check "a watch that exits 0 over cancelled checks is a red naming them, exit 1" "ci-watch: red 7 $HA build, test, lint, e2e|1" \
+  "$(CW_BUCKETS="build:cancel\ntest:cancel\ndocs:skipping\nlint:cancel\npages:skipping\nunit:pass\na:skipping\nb:skipping\nc:skipping\nd:skipping\nsmoke:pass\ne2e:cancel\ne:skipping\nf:skipping" cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
+check "a watch that exits 0 over passing and skipped checks only is green, exit 0" "ci-watch: green 7 $HA|0" \
+  "$(CW_BUCKETS="unit:pass\ndocs:skipping\nsmoke:pass" cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
+check "unread: the buckets cannot be read after the watch, exit 5" "ci-watch: unread 7 gh pr checks failed: gh: HTTP 502|5" \
+  "$(CW_BUCKETS=fail cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
 check "no checks within the bound: exit 2" "ci-watch: no-checks 7 $HA|2" \
   "$(cw "OPEN $HA" "none" 0 "" 7 --interval 1)"
 check "and the watch never started" "0" "$(grep -c -e '--watch' "$CW/gh-calls")"
