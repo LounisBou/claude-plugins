@@ -1130,6 +1130,33 @@ def chain_drop_tab(tab_id):
             chain_write(tty, kept)
 
 
+def chain_repoint_tab(old_tab_id, new_tab_id, new_tty):
+    """Every chain, every entry naming the old tab now names the new one; returns how many.
+
+    A resident agent's succession hands over the agent's OWN chain (`chain_transfer`), but
+    the entry naming the agent's tab sits in its orchestrator's chain, written when the
+    orchestrator spawned it. Left alone it names a tab about to be closed — and once the
+    tty is recycled, a stranger's — as the orchestrator's resident agent. Owner and the
+    resident mark are kept; no other entry and no file that holds none is touched."""
+    if not os.path.isdir(CHAINS_DIR):
+        return 0
+    count = 0
+    for name in os.listdir(CHAINS_DIR):
+        if not name.endswith(".jsonl"):
+            continue
+        tty = "/dev/" + name[:-len(".jsonl")]
+        entries = chain_read(tty)
+        hit = [e for e in entries if e["tab_id"] == old_tab_id]
+        if not hit:
+            continue
+        for e in hit:
+            e["tab_id"] = new_tab_id
+            e["tty"] = new_tty
+        chain_write(tty, entries)
+        count += len(hit)
+    return count
+
+
 async def move_is_owned(app, tty, own):
     """Whether the tab on `tty` is the caller's own tab or one its session launched.
 
@@ -2021,6 +2048,16 @@ def cmd_spawn(argv):
                 n = chain_transfer(own, own_sess_id, new, new_sess.session_id)
                 print("spawn: chain of %d agent(s) handed to the successor on %s" % (n, new),
                       file=sys.stderr)
+                # The caller's own entry in its orchestrator's chain follows the successor.
+                _, own_tab, _ = await find_tab(fresh, own)
+                if own_tab is None:
+                    print("spawn: your own tab on %s could not be read, so no chain entry "
+                          "naming it was re-pointed to the successor." % own, file=sys.stderr)
+                else:
+                    repointed = chain_repoint_tab(own_tab.tab_id, tab.tab_id, new)
+                    if repointed:
+                        print("spawn: the entry naming your tab in %d chain(s) now names the "
+                              "successor on %s" % (repointed, new), file=sys.stderr)
         elif own and new and effect == "append":
             chain_append(own, tab.tab_id, new, own_sess_id, args.resident)
         return new

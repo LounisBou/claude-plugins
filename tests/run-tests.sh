@@ -310,6 +310,32 @@ check "the mark is written only where it is set" \
   "$(paste -sd'|' "$CHAINS/ttys900.jsonl")"
 check "a hand-over keeps the mark" '{"tab_id": "9", "tty": "/dev/ttys909", "owner": "S-NEW", "resident": true}' \
   "$(transfer >/dev/null; sed -n 2p "$CHAINS/ttys950.jsonl")"
+# A resident agent's own succession: the entry naming the caller's tab sits in its
+# ORCHESTRATOR's chain, not in the caller's, so the hand-over above never reaches it. It must
+# follow the successor, owner and mark kept, or the orchestrator reads a closed tab as its
+# resident agent.
+repoint() { ORCHESTRATOR_STATE_DIR="$WORK/istate" "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+print(m.chain_repoint_tab('41', '42', '/dev/ttys942'))" 2>&1; }
+dropt() { ORCHESTRATOR_STATE_DIR="$WORK/istate" "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as m
+m.chain_drop_tab('41')" 2>&1; }
+printf '{"tab_id": "40", "tty": "/dev/ttys940", "owner": "S-ORCH"}\n{"tab_id": "41", "tty": "/dev/ttys941", "owner": "S-ORCH", "resident": true}\n' > "$CHAINS/ttys899.jsonl"
+printf '{"tab_id": "43", "tty": "/dev/ttys943", "owner": "S-OTHER"}\n' > "$CHAINS/ttys898.jsonl"
+plain_before=$(sed -n 1p "$CHAINS/ttys899.jsonl")
+other_before=$(cat "$CHAINS/ttys898.jsonl")
+check "a successor's tab replaces the caller's in the chain that names it: one entry re-pointed" "1" "$(repoint)"
+check "the entry names the new tab and tty, owner and mark kept" \
+  '{"tab_id": "42", "tty": "/dev/ttys942", "owner": "S-ORCH", "resident": true}' \
+  "$(sed -n 2p "$CHAINS/ttys899.jsonl")"
+check "the other entry of that chain is byte-identical" "$plain_before" "$(sed -n 1p "$CHAINS/ttys899.jsonl")"
+check "a chain with no entry for the tab is left alone, and returns 0" "0|$other_before" \
+  "$(repoint | head -1)|$(cat "$CHAINS/ttys898.jsonl")"
+printf '%s\n' "$other_before" > "$CHAINS/ttys898.jsonl"
+check "the predecessor's close afterwards removes nothing" "2" "$(dropt; wc -l < "$CHAINS/ttys899.jsonl" | tr -d ' ')"
+rm -f "$CHAINS/ttys899.jsonl" "$CHAINS/ttys898.jsonl"
 
 echo "== dispatch record =="
 
