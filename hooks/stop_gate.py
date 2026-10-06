@@ -108,6 +108,9 @@ CALL_TIMEOUT = 30
 # And so is the hook as a whole, checked between its external calls.
 DEADLINE = float(os.environ.get("ORCHESTRATOR_STOP_GATE_DEADLINE") or 20)
 STARTED = time.monotonic()
+# One `<owner>/<repo> <check name>` per line: a check that fails by design (a draft guard)
+# and is read as neither pending nor failing.
+IGNORED_CHECKS = os.path.join(STATE_DIR, "ignored-checks")
 # The sweep runs at most this often, whichever orchestrator stops: one stamp, in the state directory.
 SWEEP_STAMP = os.path.join(STATE_DIR, "sweep.stamp")
 SWEEP_EVERY = float(os.environ.get("ORCHESTRATOR_SWEEP_INTERVAL") or 600)
@@ -454,6 +457,41 @@ def watched_numbers(who):
     return {m.group(1) for m in (WATCH_PROCESS.search(l) for l in out.splitlines()) if m}
 
 
+def ignored_checks(cwd, who):
+    """The names of the checks the machine ignores for the repository of `cwd`. The repository
+    is read only when the file holds an entry; a file that cannot be read counts as empty."""
+    try:
+        with open(IGNORED_CHECKS) as fh:
+            lines = fh.read().splitlines()
+    except FileNotFoundError:
+        return set()
+    except (OSError, UnicodeDecodeError) as exc:
+        log(who, "ignored-checks", "unreadable", str(exc))
+        return set()
+    entries = []
+    for line in lines:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        repo, _, name = line.strip().partition(" ")
+        if "/" not in repo or not name.strip():
+            log(who, "ignored-checks", "malformed line", line)
+            continue
+        entries.append((repo, name.strip()))
+    if not entries:
+        return set()
+    # A repository that cannot be read filters nothing: the CI check goes on without the file.
+    try:
+        answer = gh_json(["repo", "view", "--json", "nameWithOwner"], cwd)
+        repo = answer.get("nameWithOwner") if isinstance(answer, dict) else None
+    except Unread as exc:
+        log(who, "ignored-checks", "repository unread", str(exc))
+        return set()
+    if not repo:
+        log(who, "ignored-checks", "repository unread", "no nameWithOwner in the answer")
+        return set()
+    return {name for owner_repo, name in entries if owner_repo.casefold() == repo.casefold()}
+
+
 def check_ci(cwd, session_id, who=""):
     """The refusal lines, one per pull request whose head has checks pending or failing and
     has not been told for that state. A head is told once while pending, again when a check
@@ -468,6 +506,7 @@ def check_ci(cwd, session_id, who=""):
     path = heads_path(session_id)
     reported = read_heads(path)
     heads, lines = {}, []
+    ignored = ignored_checks(cwd, who)
     watched = None  # read at the first pending head, once for the whole check
     for pr in prs:
         number, head = str(pr["number"]), pr["headRefOid"]
@@ -479,9 +518,11 @@ def check_ci(cwd, session_id, who=""):
             continue
         checks = gh_json(["pr", "checks", number, "--json", "name,bucket"], cwd,
                          tolerated=("no checks reported",))
+        checks = [c for c in checks if c["name"] not in ignored]
         if not checks:
-            # A push seen before its checks were registered: unread, read again at the next
-            # stop. A head already told as pending keeps its record.
+            # A push seen before its checks were registered, or a head whose only checks are
+            # ignored ones: unread, read again at the next stop. A head already told as
+            # pending keeps its record.
             if seen:
                 heads[number] = seen
             continue

@@ -3739,6 +3739,7 @@ cat > "$SGB/gh" <<EOF
 case "\$1 \$2" in
   "pr list") echo "\$*" >> "$SG/gh-args"; cat "$SG/prs" 2>/dev/null || echo "[]" ;;
   "pr checks") echo "\$3" >> "$SG/gh-calls"; cat "$SG/checks-\$3"; [ -f "$SG/checks-\$3.code" ] && exit "\$(cat "$SG/checks-\$3.code")" ;;
+  "repo view") echo "\$*" >> "$SG/gh-repo-calls"; cat "$SG/repo" 2>/dev/null || exit 1 ;;
   "pr view") echo "\$3" >> "$SG/gh-views"; [ -f "$SG/view-sleep" ] && sleep "\$(cat "$SG/view-sleep")"
              cat "$SG/view-\${3//\//_}" 2>/dev/null || { echo "no pull requests found for branch \\"\$3\\"" >&2; exit 1; } ;;
   *) exit 1 ;;
@@ -3775,7 +3776,7 @@ sg_chain() {  # <tty> <owner> ...: the chain of the orchestrator's tty, in launc
 # The session's name is read from the process table the way the launcher reads it (`--name`):
 # the suite's stand-in for `ps` is a file, and the session's own tty is given.
 sg_ps() { printf '/dev/ttys900 host-cli %s\n' "$1" > "$SG/ps"; }
-sg_reset() { rm -f "$SG/prs" "$SG/gh-views" "$SG/cwds" "$SG"/view-* "$SG/gh-calls" "$SG/gh-args" "$SG/gh-offline" "$SG"/checks-* "$SG/transcript" "$SGS/stop-gate.log" "$SG/ps-live" "$SG/ps-calls" "$SG/ps-fail"; rm -rf "$SGS/stop-gate" "$SGS/records"; rm -f "$SG"/sweep-* "$SGS/sweep.stamp"; : > "$SG/checkouts"; sg_ps '--name Orch : f [a1b2c3]'; sg_listing; sg_chain; }
+sg_reset() { rm -f "$SG/prs" "$SG/gh-views" "$SG/cwds" "$SG"/view-* "$SG/gh-calls" "$SG/gh-args" "$SG/gh-offline" "$SG"/checks-* "$SG/transcript" "$SGS/stop-gate.log" "$SG/ps-live" "$SG/ps-calls" "$SG/ps-fail" "$SG/repo" "$SG/gh-repo-calls" "$SGS/ignored-checks"; rm -rf "$SGS/stop-gate" "$SGS/records"; rm -f "$SG"/sweep-* "$SGS/sweep.stamp"; : > "$SG/checkouts"; sg_ps '--name Orch : f [a1b2c3]'; sg_listing; sg_chain; }
 # sg <message> [stop_hook_active] [session id]: the hook's stdout. SG_TRANSCRIPT names the
 # payload's transcript, SG_ITERM stands in for ITERM_SESSION_ID, SG_DEADLINE for the hook's.
 sg() {
@@ -4244,6 +4245,68 @@ check "the green head is recorded" "3 aaaa1111bbbb2222cccc3333dddd4444eeee5555 d
 check "a green stop writes no log line" "" "$(sglog)"
 sg 'CI is green.' >/dev/null
 check "a head that has not moved costs no checks call" "1" "$(grep -c . "$SG/gh-calls")"
+
+# A check listed for the repository in the state directory's `ignored-checks` file (a job that
+# fails by design, such as a draft guard) is read as neither pending nor failing.
+sg_ignored_head() {  # one head, #8, with the checks given as the file's JSON
+  sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+  printf '[{"number": 8, "headRefOid": "8888aaaa8888aaaa8888aaaa8888aaaa8888aaaa"}]\n' > "$SG/prs"
+  printf '%s\n' "$1" > "$SG/checks-8"
+  printf '{"nameWithOwner": "acme/api"}\n' > "$SG/repo"
+}
+WIP='{"name": "wip-check / wip-check", "bucket": "fail"}'
+sg_ignored_head "[$WIP, {\"name\": \"test\", \"bucket\": \"pass\"}]"
+printf 'acme/api wip-check / wip-check\n' > "$SGS/ignored-checks"
+check "a head whose only failing check is listed for its repository: no refusal" "" "$(sg 'Pushed.')"
+check "and it is recorded done" "8 8888aaaa8888aaaa8888aaaa8888aaaa8888aaaa done" "$(cat "$SGS/stop-gate/sg-1.heads")"
+sg_ignored_head "[$WIP, {\"name\": \"test\", \"bucket\": \"fail\"}]"
+printf 'acme/api wip-check / wip-check\n' > "$SGS/ignored-checks"
+check "one more failing check, not listed: refused, naming only that one" \
+  "block|#8 at 8888aaa: 0 checks pending (), 1 failing (test)" "$(sg 'Pushed.' | reason | sed 's/\. Report.*//')"
+sg_ignored_head "[$WIP, {\"name\": \"build\", \"bucket\": \"pending\"}, {\"name\": \"test\", \"bucket\": \"pass\"}]"
+printf 'acme/api wip-check / wip-check\nacme/api build\n' > "$SGS/ignored-checks"
+check "a listed pending check is dropped too" "|8 8888aaaa8888aaaa8888aaaa8888aaaa8888aaaa done" \
+  "$(sg 'Pushed.')|$(cat "$SGS/stop-gate/sg-1.heads")"
+sg_ignored_head "[$WIP]"
+printf 'acme/other wip-check / wip-check\n' > "$SGS/ignored-checks"
+check "an entry for another repository does not drop the check" \
+  "block|#8 at 8888aaa: 0 checks pending (), 1 failing (wip-check / wip-check)" "$(sg 'Pushed.' | reason | sed 's/\. Report.*//')"
+sg_ignored_head "[$WIP]"
+check "no file: refused, and no repository read" "block|0" "$(sg 'Pushed.' | reason | cut -c1-5)|$(cat "$SG/gh-repo-calls" 2>/dev/null | grep -c .)"
+sg_ignored_head "[$WIP]"
+: > "$SGS/ignored-checks"
+check "an empty file: no repository read" "0" "$(sg 'Pushed.' >/dev/null; cat "$SG/gh-repo-calls" 2>/dev/null | grep -c .)"
+sg_ignored_head "[$WIP]"
+printf '# a comment\n\nmalformed\nacme/api wip-check / wip-check\n' > "$SGS/ignored-checks"
+check "a comment, a blank and a malformed line are skipped; the valid entry applies" "" "$(sg 'Pushed.')"
+check "and the malformed line is logged once" "1" "$(sglog | grep -c 'ignored-checks | malformed line')"
+# A head whose only registered checks are ignored ones is a head with no check yet: unrecorded,
+# read again at the next stop.
+sg_ignored_head "[$WIP]"
+printf 'acme/api wip-check / wip-check\n' > "$SGS/ignored-checks"
+check "a head whose only check is a listed failing one: no refusal, and not recorded" "|" \
+  "$(sg 'Pushed.')|$(cat "$SGS/stop-gate/sg-1.heads" 2>/dev/null)"
+printf '[%s, {"name": "test", "bucket": "fail"}]\n' "$WIP" > "$SG/checks-8"
+check "and at the next stop, with a real failing check added, it refuses" \
+  "block|#8 at 8888aaa: 0 checks pending (), 1 failing (test)" "$(sg 'Pushed.' | reason | sed 's/\. Report.*//')"
+# A repository that cannot be read filters nothing and never ends the CI check.
+sg_ignored_head "[$WIP, {\"name\": \"test\", \"bucket\": \"fail\"}]"
+printf 'acme/api wip-check / wip-check\n' > "$SGS/ignored-checks"
+rm -f "$SG/repo"
+check "a failing repository read: the refusal is still made, with nothing filtered" \
+  "block|#8 at 8888aaa: 0 checks pending (), 2 failing (wip-check / wip-check, test)" \
+  "$(sg 'Pushed.' | reason | sed 's/\. Report.*//')"
+check "and one line says the repository was not read" "1" "$(sglog | grep -c 'ignored-checks | repository unread')"
+sg_ignored_head "[$WIP]"
+printf '{}\n' > "$SG/repo"
+printf 'acme/api wip-check / wip-check\n' > "$SGS/ignored-checks"
+check "an answer with no nameWithOwner is the same: nothing filtered, one line" "block|1" \
+  "$(sg 'Pushed.' | reason | cut -c1-5)|$(sglog | grep -c 'ignored-checks | repository unread')"
+# The repository is compared without regard to case.
+sg_ignored_head "[$WIP]"
+printf '{"nameWithOwner": "Acme/API"}\n' > "$SG/repo"
+printf 'acme/api wip-check / wip-check\n' > "$SGS/ignored-checks"
+check "an entry typed in lowercase drops the check of the canonically cased repository" "" "$(sg 'Pushed.')"
 
 sg_reset; sg_listing "$IDLE"; sg_chain /dev/ttys901 S-ME
 printf '[{"number": 12, "headRefOid": "abc1234def5678abc1234def5678abc1234def56"}]\n' > "$SG/prs"
