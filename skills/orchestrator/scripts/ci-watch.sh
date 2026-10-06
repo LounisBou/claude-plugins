@@ -11,8 +11,13 @@
 # What it does: reads the head once; waits, bounded, for checks to be registered on it (a
 # push is seen before its checks, and « no checks reported » right then is not a red); runs
 # `gh pr checks --watch --fail-fast`, its output in a log file under the state directory,
-# never on stdout; reads the pull request once more when the watch returns. Green with
-# auto-merge enabled is not the end: the merge is coming, and nobody re-arms a watch after it,
+# never on stdout; reads the pull request once more when the watch returns. The watch ends once
+# the checks it knows are done, maybe before a slower workflow's checks are registered: every
+# workflow run of the head is read, each unfinished one watched to its end (`gh run watch`),
+# and the checks watched again, until none is unfinished. The bound, CI_WATCH_REGISTER_WAIT, is
+# no limit on how long a run may take: it bounds how long a run already watched may stay listed
+# unfinished (the listing's lag), restarts at each run watched, and past it the watch is unread.
+# Green with auto-merge enabled is not the end: the merge is coming, and nobody re-arms a watch after it,
 # so the pull request is read again at the interval, bounded, until it merges.
 #
 # A pull request found merged, at either read, is followed onto its base branch: a flaky test
@@ -25,7 +30,9 @@
 # reported with its own sha. A cancelled run with no newer one is a red.
 #
 # stdout, one line, and the exit code the caller reads without opening the log:
-#   ci-watch: green <pr> <head>                                 0  with auto-merge: no merge within the bound
+#   ci-watch: green <pr> <head>                                 0  every workflow run of the head completed and
+#                                                                  every check passed; with auto-merge: no merge
+#                                                                  within the bound
 #   ci-watch: red <pr> <head> <failing check names>             1
 #                                                                  (a cancelled check is one, though the watch
 #                                                                  exits 0 over it)
@@ -220,6 +227,50 @@ watch=$?
 read_pr
 [ "$state" = OPEN ] || ended
 [ "$head" = "$first" ] || { say "moved $pr $first $head"; exit 3; }
+
+# The watch returns once the checks it knows are done, and a slower workflow's checks may not
+# be registered yet: every workflow run of the head is read, each one unfinished is watched to
+# its end, and once none is, the checks are watched again, a late one read like the others.
+# The bound restarts whenever a run is watched for the first time; a run already watched and
+# still listed unfinished is polled within it.
+deadline=$((SECONDS + REGISTER_WAIT)); seen=" "; waited=0
+while [ "$watch" -eq 0 ]; do
+    err=$(mktemp "${TMPDIR:-/tmp}/ci-watch.XXXXXX") || unread "cannot create a temporary file"
+    pending=$(gh run list ${repo[@]+"${repo[@]}"} --commit "$head" --json databaseId,status \
+        --jq '.[] | select(.status != "completed") | .databaseId' 2>"$err")
+    if [ $? -ne 0 ]; then
+        why=$(first_line < "$err"); rm -f "$err"
+        unread "gh run list failed: ${why:-no answer}"
+    fi
+    rm -f "$err"
+    if [ -n "$pending" ]; then
+        waited=1; fresh=0
+        for id in $pending; do
+            case "$seen" in *" $id "*) continue ;; esac
+            seen="$seen$id "; fresh=1
+            gh run watch "$id" ${repo[@]+"${repo[@]}"} --interval "$interval" >> "$log" 2>&1
+        done
+        if [ "$fresh" = 1 ]; then
+            # The run watches may have lasted long: a head moved or a pull request closed meanwhile
+            # is said now, not after a checks watch has waited for the new head's checks.
+            read_pr
+            [ "$state" = OPEN ] || ended
+            [ "$head" = "$first" ] || { say "moved $pr $first $head"; exit 3; }
+            deadline=$((SECONDS + REGISTER_WAIT))
+        else
+            [ "$SECONDS" -ge "$deadline" ] && unread "workflow runs of the head still unfinished:" $pending
+            sleep "$interval"
+        fi
+        continue
+    fi
+    [ "$waited" = 1 ] || break
+    waited=0
+    gh pr checks "$pr" ${repo[@]+"${repo[@]}"} --watch --fail-fast --interval "$interval" >> "$log" 2>&1
+    watch=$?
+    read_pr
+    [ "$state" = OPEN ] || ended
+    [ "$head" = "$first" ] || { say "moved $pr $first $head"; exit 3; }
+done
 
 if [ "$watch" -eq 0 ]; then
     # The watch exits 0 when no check is in the `fail` bucket, a cancelled one included: a check

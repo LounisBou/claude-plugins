@@ -3435,7 +3435,9 @@ echo "== ci-watch =="
 # `newest` answers the read of a workflow's newest push run on the branch, one `<id> <sha>` line
 # per call, the last one repeated. `buckets` (`<name>:<bucket>` lines, one `build:pass` by
 # default) answers the bucket read after a watch that exits 0, the script's own --jq run on it;
-# without the file that read fails.
+# without the file that read fails. `watch-code` holds one line per checks watch, the last one
+# repeated. `head-runs` answers the read of the head's workflow runs, one answer per read:
+# `<id>:<status>` pairs joined by `;`, `-` for none, or `fail`; without the file, no run.
 CW="$WORK/ci-watch"
 CWB="$CW/bin"; CWS="$CW/state"
 mkdir -p "$CWB" "$CWS"
@@ -3460,6 +3462,15 @@ case "\$1 \$2" in
     esac ;;
   "run list")
     case "\$*" in
+      *--commit*--json\ databaseId,status*)
+                    [ -f "$CW/head-runs" ] || exit 0
+                    r=\$(nth "$CW/head-runs" head-runs-n)
+                    [ "\$r" = fail ] && { echo "gh: HTTP 502" >&2; exit 1; }
+                    f=.; while [ \$# -gt 0 ]; do [ "\$1" = --jq ] && f="\$2"; shift; done
+                    [ "\$r" = - ] && r=""
+                    printf '%s\n' "\$r" | tr ';' '\n' \
+                      | jq -Rn '[inputs | select(length > 0) | split(":") | {databaseId: (.[0] | tonumber), status: .[1]}]' \
+                      | jq -r "\$f" ;;
       *--workflow*) r=\$(nth "$CW/newest" newest-n) || { echo "gh: HTTP 502" >&2; exit 1; }
                     [ "\$r" = - ] || echo "\$r" ;;
       *) r=\$(nth "$CW/runs" runs-n) || { echo "gh: HTTP 502" >&2; exit 1; }
@@ -3477,9 +3488,9 @@ case "\$1 \$2" in
               jq -nr --arg c "\$c" --argjson j "\$j" '{conclusion: \$c, jobs: \$j}' | jq -r "\$f" ;;
   "pr checks")
     case "\$*" in
-      *--watch*) echo "WATCH-OUTPUT-MARKER"; exit "\$(cat "$CW/watch-code" 2>/dev/null || echo 0)" ;;
+      *--watch*) echo "WATCH-OUTPUT-MARKER"; c=\$(nth "$CW/watch-code" watch-n); exit "\${c:-0}" ;;
       *"--json name,bucket"*)
-         [ -f "$CW/failing" ] && { cat "$CW/failing"; exit 1; }
+         case "\$*" in *select*) [ -f "$CW/failing" ] && { cat "$CW/failing"; exit 1; } ;; esac
          [ -f "$CW/buckets" ] || { echo "gh: HTTP 502" >&2; exit 1; }
          f=.; while [ \$# -gt 0 ]; do [ "\$1" = --jq ] && f="\$2"; shift; done
          jq -Rn '[inputs | select(length > 0) | split(":") | {name: .[0], bucket: .[1]}]' "$CW/buckets" | jq -r "\$f" ;;
@@ -3502,17 +3513,19 @@ cw() {
   local view="$1" reg="$2" code="$3" failing="$4" out rc
   shift 4
   rm -f "$CW"/gh-calls "$CW"/view "$CW"/reg "$CW"/failing "$CW"/watch-code "$CW"/view-n "$CW"/reg-n \
-    "$CW"/merge "$CW"/runs "$CW"/runs-n "$CW"/run-codes "$CW"/jobs "$CW"/newest "$CW"/newest-n "$CW"/buckets
+    "$CW"/merge "$CW"/runs "$CW"/runs-n "$CW"/run-codes "$CW"/jobs "$CW"/newest "$CW"/newest-n "$CW"/buckets \
+    "$CW"/watch-n "$CW"/head-runs "$CW"/head-runs-n
   [ "${CW_BUCKETS-build:pass}" = fail ] || printf '%b\n' "${CW_BUCKETS-build:pass}" > "$CW/buckets"
   [ -z "${CW_MERGE:-}" ] || printf '%b\n' "$CW_MERGE" > "$CW/merge"
   [ -z "${CW_RUNS:-}" ] || printf '%b\n' "$CW_RUNS" > "$CW/runs"
   [ -z "${CW_RUN_CODES:-}" ] || printf '%b\n' "$CW_RUN_CODES" > "$CW/run-codes"
   [ -z "${CW_JOBS:-}" ] || printf '%b\n' "$CW_JOBS" > "$CW/jobs"
   [ -z "${CW_NEWEST:-}" ] || printf '%b\n' "$CW_NEWEST" > "$CW/newest"
+  [ -z "${CW_HEAD_RUNS:-}" ] || printf '%b\n' "$CW_HEAD_RUNS" > "$CW/head-runs"
   [ -z "$view" ] || printf '%b\n' "$view" > "$CW/view"
   [ -z "$reg" ] || printf '%b\n' "$reg" > "$CW/reg"
   [ -z "$failing" ] || printf '%b\n' "$failing" > "$CW/failing"
-  printf '%s\n' "$code" > "$CW/watch-code"
+  printf '%b\n' "$code" > "$CW/watch-code"
   out=$(env PATH="$CWB:$PATH" ORCHESTRATOR_STATE_DIR="$CWS" CI_WATCH_REGISTER_WAIT="${CW_WAIT:-2}" \
     CI_WATCH_BASE_WAIT="${CW_BASE_WAIT:-2}" CI_WATCH_MERGE_WAIT="${CW_MERGE_WAIT:-4}" CI_WATCH_BASE_WORKFLOWS="${CW_BASE_WORKFLOWS:-}" bash "$CWSCRIPT" "$@" 2>/dev/null); rc=$?
   printf '%s|%s' "$out" "$rc"
@@ -3530,6 +3543,34 @@ check "a watch that exits 0 over cancelled checks is a red naming them, exit 1" 
   "$(CW_BUCKETS="build:cancel\ntest:cancel\ndocs:skipping\nlint:cancel\npages:skipping\nunit:pass\na:skipping\nb:skipping\nc:skipping\nd:skipping\nsmoke:pass\ne2e:cancel\ne:skipping\nf:skipping" cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
 check "a watch that exits 0 over passing and skipped checks only is green, exit 0" "ci-watch: green 7 $HA|0" \
   "$(CW_BUCKETS="unit:pass\ndocs:skipping\nsmoke:pass" cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
+# A slower workflow's checks are not registered yet when a faster one's are done: the watch
+# exits 0 over the checks it knows, so the head's workflow runs are read before any green, and
+# a run still going is watched to its end, then the checks are watched again.
+check "a run of the head unfinished at a passing watch, then a failing check: red, exit 1" "ci-watch: red 7 $HA e2e|1" \
+  "$(CW_HEAD_RUNS="201:completed;202:in_progress\n201:completed;202:completed" cw "OPEN $HA" "2" "0\n1" "e2e" 7 --interval 1)"
+check "the unfinished run is watched, then the checks once more" "1|0|2" \
+  "$(grep -c '^run watch 202' "$CW/gh-calls")|$(grep -c '^run watch 201' "$CW/gh-calls")|$(grep -c -e '--watch' "$CW/gh-calls")"
+check "the head's runs are read at the head" "2" "$(grep -c "^run list --commit $HA --json databaseId,status" "$CW/gh-calls")"
+check "every run of the head completed and every check passed: green, no extra watch" "ci-watch: green 7 $HA|0|1|0" \
+  "$(CW_HEAD_RUNS="201:completed;202:completed" cw "OPEN $HA" "2" 0 "" 7 --interval 1)|$(grep -c -e '--watch' "$CW/gh-calls")|$(grep -c '^run watch' "$CW/gh-calls")"
+check "a run of the head unfinished at a passing watch that ends green: green, exit 0" "ci-watch: green 7 $HA|0|2" \
+  "$(CW_HEAD_RUNS="201:queued\n201:completed" cw "OPEN $HA" "2" 0 "" 7 --interval 1)|$(grep -c -e '--watch' "$CW/gh-calls")"
+check "the head moves while its runs are waited for: exit 3" "ci-watch: moved 7 $HA $HB|3" \
+  "$(CW_HEAD_RUNS="201:in_progress\n201:completed" cw "OPEN $HA\nOPEN $HA\nOPEN $HB" "2" 0 "" 7 --interval 1)"
+check "a head moved during a run watch is seen at once, before any second checks watch" "ci-watch: moved 7 $HA $HB|3|1" \
+  "$(CW_HEAD_RUNS="201:in_progress\n201:completed" cw "OPEN $HA\nOPEN $HA\nOPEN $HB" "2" 0 "" 7 --interval 1)|$(grep -c -e '--watch' "$CW/gh-calls")"
+check "closed while its runs are waited for: exit 4" "ci-watch: closed 7 CLOSED|4" \
+  "$(CW_HEAD_RUNS="201:in_progress\n201:completed" cw "OPEN $HA\nOPEN $HA\nCLOSED $HA" "2" 0 "" 7 --interval 1)"
+check "unread: the head's runs cannot be read, exit 5" "ci-watch: unread 7 gh run list failed: gh: HTTP 502|5" \
+  "$(CW_HEAD_RUNS="fail" cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
+check "a run of the head still unfinished past the bound is no green: unread, exit 5" "5" \
+  "$(CW_WAIT=1 CW_HEAD_RUNS="201:in_progress" cw "OPEN $HA" "2" 0 "" 7 --interval 1 | sed 's/.*|//')"
+check "the repository is passed on to every gh call of the run wait" "0" \
+  "$(CW_HEAD_RUNS="201:in_progress\n201:completed" cw "OPEN $HA" "2" 0 "" 7 --repo o/r --interval 1 >/dev/null; grep -vc -e '-R o/r' "$CW/gh-calls")"
+check "the head's run watch never reaches stdout, it lands in the pull request's log" "0|1" \
+  "$(CW_HEAD_RUNS="201:in_progress\n201:completed" cw "OPEN $HA" "2" 0 "" 7 --interval 1 | grep -c RUN-WATCH-MARKER)|$(grep -c RUN-WATCH-MARKER "$CWS/ci-watch/here-pr7.log")"
+# The base branch's checks below count the logs holding a run watch's output: start them clean.
+rm -rf "$CWS/ci-watch"
 check "unread: the buckets cannot be read after the watch, exit 5" "ci-watch: unread 7 gh pr checks failed: gh: HTTP 502|5" \
   "$(CW_BUCKETS=fail cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
 check "no checks within the bound: exit 2" "ci-watch: no-checks 7 $HA|2" \
