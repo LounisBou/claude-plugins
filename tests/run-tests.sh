@@ -3446,6 +3446,235 @@ nojq_out=$(env PATH="$NOJQ" ORCHESTRATOR_SPAWNED=1 "$(command -v bash)" "$GUARD"
 check "without jq a marked session is let through, with one warning line" "0|1|1" \
   "$nojq_code|$(printf '%s\n' "$nojq_out" | grep -c .)|$(printf '%s' "$nojq_out" | grep -c 'jq')"
 
+echo "== draft guard =="
+# A failing check of a draft pull request is a draft guard when the job that produced it tests
+# the draft flag in its own definition. `draft_guard.py` reads the run behind the check's link,
+# the workflow file at the run's head and, for a local reusable workflow, the called file. A fake
+# `gh` answers from files: `api` from DGA (the run, the contents), `pr view` and `pr checks` from
+# the files of DG. The fixtures are shared with the cases of ci-watch and of the stop gate below.
+DG="$WORK/draft-guard"; DGA="$DG/api"; DGB="$DG/bin"; DGS="$DG/state"
+mkdir -p "$DGA" "$DGB" "$DGS"
+DGSCRIPT="$ROOT/skills/orchestrator/scripts/draft_guard.py"
+dg_key() { printf '%s' "$1" | tr '/?=@' '____'; }
+dg_run() {  # <run id> <workflow path> <head sha>
+  printf '{"path": "%s", "head_sha": "%s"}\n' "$2" "$3" > "$DGA/$(dg_key "repos/acme/thing/actions/runs/$1")"
+}
+dg_file() {  # <workflow path> <head sha> <content>
+  printf '{"content": "%s", "encoding": "base64"}\n' "$(printf '%s\n' "$3" | base64 | tr -d '\n')" \
+    > "$DGA/$(dg_key "repos/acme/thing/contents/$1?ref=$2")"
+}
+dg_link() { printf 'https://github.com/acme/thing/actions/runs/%s/job/%s' "$1" "$2"; }
+IFS= read -r -d '' WF_CI <<'EOF'
+name: CI
+on: pull_request
+jobs:
+  wip-check:
+    uses: ./.github/workflows/wip-check.yml
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - run: make test
+EOF
+IFS= read -r -d '' WF_WIP <<'EOF'
+name: wip-check
+on:
+  workflow_call:
+jobs:
+  wip-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse a draft pull request
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" && "${{ github.event.pull_request.draft }}" == "true" ]]; then exit 1; fi
+EOF
+IFS= read -r -d '' WF_INLINE <<'EOF'
+name: CI
+on: pull_request
+jobs:
+  draft-gate:
+    name: draft-gate
+    runs-on: ubuntu-latest
+    steps:
+      - run: test "${{ github.event.pull_request.draft }}" != "true"
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - run: make test
+EOF
+DGSHA_R=aaaa000000000000000000000000000000000001   # run 555: the reusable guard
+DGSHA_I=bbbb000000000000000000000000000000000002   # run 556: the inline guard
+DGSHA_U=cccc000000000000000000000000000000000003   # run 558: a workflow file that cannot be read
+dg_run 555 .github/workflows/ci.yml "$DGSHA_R"
+dg_file .github/workflows/ci.yml "$DGSHA_R" "$WF_CI"
+dg_file .github/workflows/wip-check.yml "$DGSHA_R" "$WF_WIP"
+dg_run 556 .github/workflows/ci.yml "$DGSHA_I"
+dg_file .github/workflows/ci.yml "$DGSHA_I" "$WF_INLINE"
+dg_run 558 .github/workflows/ci.yml "$DGSHA_U"
+C_WIP='{"name": "wip-check / wip-check", "bucket": "fail", "link": "'"$(dg_link 555 9001)"'"}'
+C_TESTS='{"name": "tests", "bucket": "fail", "link": "'"$(dg_link 555 9002)"'"}'
+C_GATE='{"name": "draft-gate", "bucket": "fail", "link": "'"$(dg_link 556 9003)"'"}'
+C_TESTS_I='{"name": "tests", "bucket": "fail", "link": "'"$(dg_link 556 9006)"'"}'
+C_NOREAD='{"name": "wip-check / wip-check", "bucket": "fail", "link": "'"$(dg_link 558 9004)"'"}'
+C_PASS='{"name": "lint", "bucket": "pass", "link": "'"$(dg_link 555 9005)"'"}'
+cat > "$DGB/gh" <<EOF
+#!/bin/bash
+echo "\$*" >> "$DG/gh-calls"
+case "\$1 \$2" in
+  "pr view") [ -f "$DG/view" ] || { echo "gh: HTTP 502" >&2; exit 1; }; cat "$DG/view" ;;
+  "pr checks") [ -f "$DG/checks" ] || { echo "gh: HTTP 502" >&2; exit 1; }; cat "$DG/checks" ;;
+  "api "*) f="$DGA/\$(printf '%s' "\$2" | tr '/?=@' '____')"; [ -f "\$f" ] && cat "\$f" || { echo "gh: HTTP 404" >&2; exit 1; } ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$DGB/gh"
+check "draft_guard.py exists" "yes" "$([ -f "$DGSCRIPT" ] && echo yes || echo no)"
+# dg_raw: the command's stdout, its exit code; dg <draft: true|false> <checks, a JSON array>: the
+# names it printed joined by `, `, then the exit code.
+dg_raw() { env PATH="$DGB:$PATH" ORCHESTRATOR_STATE_DIR="$DGS" "$py" "$DGSCRIPT" acme/thing 7 2>"$DG/stderr"; }
+dg() {
+  local out rc
+  printf '{"isDraft": %s}\n' "$1" > "$DG/view"; printf '%s\n' "$2" > "$DG/checks"
+  out=$(dg_raw); rc=$?
+  printf '%s|%s' "$(printf '%s' "$out" | paste -sd, - | sed 's/,/, /g')" "$rc"
+}
+dg_apis() { { cat "$DG/gh-calls" 2>/dev/null; true; } | grep -c '^api'; }
+dg_reset() { rm -rf "$DGS/draft-guard" "$DG/gh-calls" "$DG/view" "$DG/checks"; }
+
+dg_reset
+check "a draft's failing check from a local reusable workflow that tests the draft flag: a guard, nothing printed" "|0" \
+  "$(dg true "[$C_WIP, $C_PASS]")"
+dg_reset
+check "a guard and a failing check that is not one: only the second is printed" "tests|0" \
+  "$(dg true "[$C_WIP, $C_TESTS]")"
+dg_reset
+check "a job with the draft test inline, no \`uses:\`, is a guard" "|0" "$(dg true "[$C_GATE]")"
+dg_reset
+check "the job of the same file that does not read the flag is not" "tests|0" "$(dg true "[$C_GATE, $C_TESTS_I]")"
+dg_reset
+check "a guard on a pull request that is not a draft is reported, and no run is read" "wip-check / wip-check|0|0" \
+  "$(dg false "[$C_WIP]")|$(dg_apis)"
+dg_reset
+check "an unreadable workflow file is no guard: the check is reported" "wip-check / wip-check|0" "$(dg true "[$C_NOREAD]")"
+dg_reset
+check "a check with no run behind its link is no guard" "ext|0" \
+  "$(dg true '[{"name": "ext", "bucket": "fail", "link": "https://ci.example.com/build/4"}]')"
+dg_reset
+C_CANCEL=$(sed 's/"fail"/"cancel"/' <<< "$C_WIP")
+check "a cancelled check is never a guard: it is printed" "wip-check / wip-check|0" "$(dg true "[$C_CANCEL]")"
+dg_reset
+check "a draft with no failing check prints nothing and reads no run" "|0|0" "$(dg true "[$C_PASS]")|$(dg_apis)"
+
+# The cache is keyed by repository, workflow path and head: a head already classified costs no call.
+dg_reset
+dg true "[$C_WIP]" >/dev/null
+rm -f "$DG/gh-calls"
+check "the same head classified again costs no api call, and the answer is the same" "|0|0" \
+  "$(dg true "[$C_WIP]")|$(dg_apis)"
+dg_reset
+dg true "[$C_NOREAD]" >/dev/null
+rm -f "$DG/gh-calls"
+dg true "[$C_NOREAD]" >/dev/null
+check "an unreadable file is not cached: it is read again" "yes" "$([ "$(dg_apis)" -gt 0 ] && echo yes || echo no)"
+dg_reset
+dg true "[$C_WIP]" >/dev/null
+mkdir -p "$DGS/draft-guard"; : > "$DGS/draft-guard/old-entry"; : > "$DGS/draft-guard/fresh-entry"
+touch -t 202001010000 "$DGS/draft-guard/old-entry"
+dg true "[$C_GATE]" >/dev/null
+check "an entry older than seven days is removed when one is written, a fresh one is kept" "no|yes" \
+  "$([ -e "$DGS/draft-guard/old-entry" ] && echo yes || echo no)|$([ -e "$DGS/draft-guard/fresh-entry" ] && echo yes || echo no)"
+
+dg_reset
+printf '[%s]\n' "$C_WIP" > "$DG/checks"
+dg_out=$(dg_raw); dg_rc=$?
+check "gh failing (the draft flag unread): exit 5, nothing on stdout, one line on stderr" "|5|1" \
+  "$dg_out|$dg_rc|$(grep -c . "$DG/stderr")"
+dg_reset
+check "guards() runs on an injected gh and answers the names of the guards" "wip-check / wip-check" \
+  "$(DGA="$DGA" DGCHECKS="[$C_WIP, $C_TESTS]" PYTHONPATH="$ROOT/skills/orchestrator/scripts" "$py" - "$DGS/stub" <<'PYEOF'
+import json, os, sys
+import draft_guard
+
+def gh(argv):
+    if argv[0] != "api":
+        raise RuntimeError("only api is stubbed")
+    path = os.path.join(os.environ["DGA"], argv[1].translate(str.maketrans("/?=@", "____")))
+    with open(path) as fh:
+        return fh.read()
+
+print(", ".join(sorted(draft_guard.guards("acme/thing", json.loads(os.environ["DGCHECKS"]), sys.argv[1], gh))))
+PYEOF
+)"
+
+# A trailing comment is no part of the definition; a draft test written only in one is no guard.
+IFS= read -r -d '' WF_TRAIL <<'EOF'
+name: CI
+on: pull_request
+jobs:
+  trailing:
+    runs-on: u # pull_request.draft
+    steps:
+      - run: make test
+EOF
+DGSHA_T=dddd000000000000000000000000000000000004
+dg_run 560 .github/workflows/ci.yml "$DGSHA_T"
+dg_file .github/workflows/ci.yml "$DGSHA_T" "$WF_TRAIL"
+C_TRAIL='{"name": "trailing", "bucket": "fail", "link": "'"$(dg_link 560 9007)"'"}'
+dg_reset
+check "a draft test only in a trailing comment is no guard: the check is reported" "trailing|0" \
+  "$(dg true "[$C_TRAIL]")"
+
+# One run, many failing names: its workflow file is read once, not once per name.
+IFS= read -r -d '' WF_MATRIX <<'EOF'
+name: CI
+on: pull_request
+jobs:
+  a:
+    runs-on: u
+  b:
+    runs-on: u
+  c:
+    runs-on: u
+EOF
+DGSHA_M=eeee000000000000000000000000000000000005
+dg_run 561 .github/workflows/ci.yml "$DGSHA_M"
+dg_file .github/workflows/ci.yml "$DGSHA_M" "$WF_MATRIX"
+dg_check() { printf '{"name": "%s", "bucket": "fail", "link": "%s"}' "$1" "$(dg_link "$2" "$3")"; }
+dg_reset
+dg true "[$(dg_check a 561 1), $(dg_check b 561 2), $(dg_check c 561 3)]" >/dev/null
+check "three failing names of one run cost one read of the workflow file" "1" \
+  "$(grep -c '^api repos/acme/thing/contents/' "$DG/gh-calls")"
+
+# The verdict entry is keyed by the head sha too: one check name, one workflow path, two heads whose
+# files disagree, two verdicts.
+IFS= read -r -d '' WF_GATE_ON <<'EOF'
+name: CI
+on: pull_request
+jobs:
+  gate:
+    runs-on: u
+    steps:
+      - run: test "${{ github.event.pull_request.draft }}" != "true"
+EOF
+IFS= read -r -d '' WF_GATE_OFF <<'EOF'
+name: CI
+on: pull_request
+jobs:
+  gate:
+    runs-on: u
+    steps:
+      - run: make test
+EOF
+DGSHA_G1=ffff000000000000000000000000000000000006
+DGSHA_G2=0000ffff00000000000000000000000000000007
+dg_run 562 .github/workflows/ci.yml "$DGSHA_G1"
+dg_file .github/workflows/ci.yml "$DGSHA_G1" "$WF_GATE_ON"
+dg_run 563 .github/workflows/ci.yml "$DGSHA_G2"
+dg_file .github/workflows/ci.yml "$DGSHA_G2" "$WF_GATE_OFF"
+dg_reset
+dg true "[$(dg_check gate 562 4)]" >/dev/null
+check "the same check name and workflow path at another head is classified on its own file" "gate|0" \
+  "$(dg true "[$(dg_check gate 563 5)]")"
+
 echo "== ci-watch =="
 # The one way to wait on CI: a script an orchestrator starts in the background, that exits on
 # the end of the checks with one line and a code. A fake `gh` on PATH answers from files:
@@ -3481,6 +3710,7 @@ nth() {  # <file> <counter>: the nth line of <file> for the nth call, the last o
 case "\$1 \$2" in
   "pr view")
     case "\$*" in
+      *"--json isDraft"*) if tail -n 1 "$CW/view" | grep -q draft; then echo '{"isDraft": true}'; else echo '{"isDraft": false}'; fi ;;
       *mergeCommit*) [ -f "$CW/merge" ] || { echo "gh: HTTP 404" >&2; exit 1; }
                      cat "$CW/merge" ;;
       *) [ -f "$CW/view" ] || { echo "gh: HTTP 502" >&2; exit 1; }
@@ -3514,6 +3744,7 @@ case "\$1 \$2" in
               jq -nr --arg c "\$c" --argjson j "\$j" '{conclusion: \$c, jobs: \$j}' | jq -r "\$f" ;;
   "pr checks")
     case "\$*" in
+      *"name,bucket,link"*) [ -f "$CW/checks-link" ] || { echo "gh: HTTP 502" >&2; exit 1; }; cat "$CW/checks-link" ;;
       *--watch*) echo "WATCH-OUTPUT-MARKER"; c=\$(nth "$CW/watch-code" watch-n); exit "\${c:-0}" ;;
       *"--json name,bucket"*)
          case "\$*" in *select*) [ -f "$CW/failing" ] && { cat "$CW/failing"; exit 1; } ;; esac
@@ -3527,6 +3758,8 @@ case "\$1 \$2" in
            *) echo "\$r" ;;
          esac ;;
     esac ;;
+  "repo view") echo "acme/thing" ;;
+  "api "*) f="$DGA/\$(printf '%s' "\$2" | tr '/?=@' '____')"; [ -f "\$f" ] && cat "\$f" || { echo "gh: HTTP 404" >&2; exit 1; } ;;
   *) exit 1 ;;
 esac
 EOF
@@ -3704,6 +3937,36 @@ check "no loop on gh pr view: two reads in all, before and after the watch" "2" 
 check "without a pull request number: exit 5" "5" "$(cw "OPEN $HA" "2" 0 "" | sed 's/.*|//')"
 check "an unknown argument: exit 5" "5" "$(cw "OPEN $HA" "2" 0 "" 7 --bogus | sed 's/.*|//')"
 
+# A draft pull request: a red whose every failing check is a draft guard is no red. The watch
+# runs without --fail-fast (it would stop on the guard before the real checks finish), then the
+# failing names are classified by draft_guard.py; a pull request that is no draft keeps its path.
+# The view file's `draft` token is what `gh pr view --json isDraft` answers from.
+CWD="OPEN $HA draft"
+printf '[%s]\n' "$C_WIP" > "$CW/checks-link"
+check "a draft whose only failure is a draft guard is no red: green, exit 0" "ci-watch: green 7 $HA|0" \
+  "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 1 "wip-check / wip-check" 7 --interval 1)"
+printf '[%s, %s]\n' "$C_WIP" "$C_TESTS" > "$CW/checks-link"
+check "and with a real failure too: red, naming only the real one" "ci-watch: red 7 $HA tests|1" \
+  "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 1 "wip-check / wip-check\ntests" 7 --repo acme/thing --interval 1)"
+check "a draft's watch runs without --fail-fast, once" "0|1" \
+  "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 1 "wip-check / wip-check\ntests" 7 --interval 1 >/dev/null
+     grep -c -e '--fail-fast' "$CW/gh-calls")|$(grep -c -e '--watch' "$CW/gh-calls")"
+check "the same failures on a pull request that is no draft: red naming both, --fail-fast kept, no run read" \
+  "ci-watch: red 7 $HA wip-check / wip-check, tests|1|1|0" \
+  "$(rm -rf "$CWS/draft-guard"; cw "OPEN $HA" "2" 1 "wip-check / wip-check\ntests" 7 --interval 1)|$(grep -c -e '--fail-fast' "$CW/gh-calls")|$(grep -c '^api' "$CW/gh-calls")"
+check "a pull request made ready during the watch reads its guard as a red" "ci-watch: red 7 $HA wip-check / wip-check, tests|1" \
+  "$(rm -rf "$CWS/draft-guard"; cw "$CWD\nOPEN $HA" "2" 1 "wip-check / wip-check\ntests" 7 --interval 1)"
+# A watch that exits non-zero names no failing check when `gh` itself failed (an API error): that is
+# no draft guard, so it must not settle to a pass.
+printf '[%s]\n' "$C_PASS" > "$CW/checks-link"
+check "a draft whose watch exits non-zero with no failing check is not green: unread, exit 5" "5" \
+  "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 1 "" 7 --interval 1 | sed 's/.*|//')"
+check "and its report never says green" "0" \
+  "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 1 "" 7 --interval 1 | grep -c 'ci-watch: green')"
+rm -f "$CW/checks-link"
+check "a draft whose failing checks cannot be classified: unread, exit 5" "ci-watch: unread 7 draft_guard|5" \
+  "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 1 "wip-check / wip-check" 7 --interval 1 | sed 's/\(draft_guard\).*|/\1|/')"
+
 echo "== stop gate hook =="
 # An orchestrator's stop is held until something will wake it (Check 1) and until the real
 # state of its open pull requests' checks has been put in front of it once per head
@@ -3717,6 +3980,7 @@ SGB="$SG/bin"; SGS="$SG/state"; SGP="$SG/sgproj"
 mkdir -p "$SG/hooks" "$SG/skills/iterm-agents/scripts" "$SG/skills/orchestrator/scripts" "$SGB" "$SGS/chains" "$SGP"
 cp "$ROOT/hooks/stop-gate.sh" "$ROOT/hooks/stop_gate.py" "$ROOT/hooks/session_name.py" "$SG/hooks/" 2>/dev/null
 cp "$ROOT/skills/iterm-agents/scripts/iterm_agent.py" "$SG/skills/iterm-agents/scripts/"
+cp "$ROOT/skills/orchestrator/scripts/draft_guard.py" "$SG/skills/orchestrator/scripts/" 2>/dev/null
 printf '#!/bin/bash\n[ "$1" = list ] || exit 1\ncat "%s/listing" 2>/dev/null || { echo "list: no terminal backend could serve this" >&2; exit 1; }\n' "$SG" \
   > "$SG/skills/iterm-agents/scripts/iterm-agent.sh"
 # `sweep` records its arguments and answers from files: its lines, its stderr, its exit
@@ -3739,6 +4003,7 @@ cat > "$SGB/gh" <<EOF
 case "\$1 \$2" in
   "pr list") echo "\$*" >> "$SG/gh-args"; cat "$SG/prs" 2>/dev/null || echo "[]" ;;
   "pr checks") echo "\$3" >> "$SG/gh-calls"; cat "$SG/checks-\$3"; [ -f "$SG/checks-\$3.code" ] && exit "\$(cat "$SG/checks-\$3.code")" ;;
+  "api "*) echo "\$*" >> "$SG/gh-api-calls"; f="$DGA/\$(printf '%s' "\$2" | tr '/?=@' '____')"; [ -f "\$f" ] && cat "\$f" || { echo "gh: HTTP 404" >&2; exit 1; } ;;
   "repo view") echo "\$*" >> "$SG/gh-repo-calls"; cat "$SG/repo" 2>/dev/null || exit 1 ;;
   "pr view") echo "\$3" >> "$SG/gh-views"; [ -f "$SG/view-sleep" ] && sleep "\$(cat "$SG/view-sleep")"
              cat "$SG/view-\${3//\//_}" 2>/dev/null || { echo "no pull requests found for branch \\"\$3\\"" >&2; exit 1; } ;;
@@ -4212,7 +4477,7 @@ mkdir -p "$SGS/stop-gate"; printf '12 abc1234def5678abc1234def5678abc1234def56\n
 check "a two-field heads line reads as done: silent, no checks call" "|0" "$(sg 'Pushed.')|$(cat "$SG/gh-calls" 2>/dev/null | grep -c .)"
 check "and is kept" "12 abc1234def5678abc1234def5678abc1234def56 done" "$(cat "$SGS/stop-gate/sg-1.heads")"
 
-check "only the operator's own pull requests are listed" "pr list --state open --author @me --limit 200 --json number,headRefOid" \
+check "only the operator's own pull requests are listed" "pr list --state open --author @me --limit 200 --json number,headRefOid,isDraft" \
   "$(head -1 "$SG/gh-args")"
 
 # A push is seen before its checks are registered: `gh pr checks` then answers an empty
@@ -4307,6 +4572,47 @@ sg_ignored_head "[$WIP]"
 printf '{"nameWithOwner": "Acme/API"}\n' > "$SG/repo"
 printf 'acme/api wip-check / wip-check\n' > "$SGS/ignored-checks"
 check "an entry typed in lowercase drops the check of the canonically cased repository" "" "$(sg 'Pushed.')"
+
+# A failing check of a draft pull request is dropped where the listed names are, when the job
+# that produced it tests the draft flag (draft_guard.py, with the fixtures of the section above).
+sg_draft_head() {  # <draft: true|false> <checks, a JSON array>
+  sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
+  rm -rf "$SGS/draft-guard"; rm -f "$SG/gh-api-calls"
+  printf '[{"number": 8, "headRefOid": "8888aaaa8888aaaa8888aaaa8888aaaa8888aaaa", "isDraft": %s}]\n' "$1" > "$SG/prs"
+  printf '%s\n' "$2" > "$SG/checks-8"
+  printf '{"nameWithOwner": "acme/thing"}\n' > "$SG/repo"
+}
+sg_apis() { { cat "$SG/gh-api-calls" 2>/dev/null; true; } | grep -c .; }
+sg_draft_head true "[$C_WIP, $C_PASS]"
+check "a draft whose only failing check is a guard of a reusable workflow: no refusal, recorded done" \
+  "|8 8888aaaa8888aaaa8888aaaa8888aaaa8888aaaa done" "$(sg 'Pushed.')|$(cat "$SGS/stop-gate/sg-1.heads")"
+sg_draft_head true "[$C_GATE, $C_PASS]"
+check "a job with the draft test inline is one too" "" "$(sg 'Pushed.')"
+sg_draft_head true "[$C_GATE]"
+check "a head whose only check is a guard: no refusal, and not recorded" "|" \
+  "$(sg 'Pushed.')|$(cat "$SGS/stop-gate/sg-1.heads" 2>/dev/null)"
+sg_draft_head true "[$C_WIP, $C_TESTS]"
+check "a failing job that does not read the flag still refuses, the guard left out" \
+  "block|#8 at 8888aaa: 0 checks pending (), 1 failing (tests)" "$(sg 'Pushed.' | reason | sed 's/\. Report.*//')"
+sg_draft_head false "[$C_WIP]"
+check "the same guard on a pull request that is no draft is reported, and no run is read" \
+  "block|#8 at 8888aaa: 0 checks pending (), 1 failing (wip-check / wip-check)|0" \
+  "$(sg 'Pushed.' | reason | sed 's/\. Report.*//')|$(sg_apis)"
+sg_draft_head true "[$C_NOREAD]"
+check "a workflow file that cannot be read is no guard: reported" \
+  "block|#8 at 8888aaa: 0 checks pending (), 1 failing (wip-check / wip-check)" "$(sg 'Pushed.' | reason | sed 's/\. Report.*//')"
+sg_draft_head true "[$C_WIP, $C_PASS]"
+sg 'Pushed.' >/dev/null; first_calls=$(sg_apis); rm -rf "$SGS/stop-gate"
+sg 'Pushed.' >/dev/null
+check "a head already classified costs no api call at the next read" "yes|yes" \
+  "$([ "$first_calls" -gt 0 ] && echo yes || echo no)|$([ "$(sg_apis)" = "$first_calls" ] && echo yes || echo no)"
+sg_draft_head true "[$C_WIP, $C_TESTS]"
+printf 'acme/thing tests\n' > "$SGS/ignored-checks"
+check "ignored-checks remains the manual fallback on a draft: the listed name goes with the guard" "" "$(sg 'Pushed.')"
+check "and the repository is read once for the file and the guards together" "1" "$(grep -c . "$SG/gh-repo-calls")"
+sg_draft_head true "[$C_PASS]"
+sg 'Pushed.' >/dev/null
+check "a draft with no failing check reads no repository" "0" "$({ cat "$SG/gh-repo-calls" 2>/dev/null; true; } | grep -c .)"
 
 sg_reset; sg_listing "$IDLE"; sg_chain /dev/ttys901 S-ME
 printf '[{"number": 12, "headRefOid": "abc1234def5678abc1234def5678abc1234def56"}]\n' > "$SG/prs"

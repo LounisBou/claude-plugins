@@ -17,6 +17,12 @@
 # and the checks watched again, until none is unfinished. The bound, CI_WATCH_REGISTER_WAIT, is
 # no limit on how long a run may take: it bounds how long a run already watched may stay listed
 # unfinished (the listing's lag), restarts at each run watched, and past it the watch is unread.
+# A draft pull request may carry a draft guard: a job that fails on purpose while the pull request
+# is a draft, recognised by its definition testing the draft flag (`draft_guard.py`). A red whose
+# every failing check is one is no red, so on a draft the watch runs without `--fail-fast` (it
+# would stop on the guard before the real checks finish) and the failing names are classified
+# when it returns: none left, the rest of the green path; some left, `red` naming only those. A
+# pull request that is no draft, or no longer one, keeps the path above exactly.
 # Green with auto-merge enabled is not the end: the merge is coming, and nobody re-arms a watch after it,
 # so the pull request is read again at the interval, bounded, until it merges.
 #
@@ -92,19 +98,57 @@ fi
 
 first_line() { head -n 1 | tr -d '\r'; }
 
-# The pull request's `state`, `head` and `auto` (`auto` when auto-merge is enabled), one read.
+# The pull request's `state`, `head`, `auto` (`auto` when auto-merge is enabled) and `draft`
+# (`draft` while it is a draft), one read.
 read_pr() {
     local out err rest
     err=$(mktemp "${TMPDIR:-/tmp}/ci-watch.XXXXXX") || unread "cannot create a temporary file"
-    out=$(gh pr view "$pr" ${repo[@]+"${repo[@]}"} --json state,headRefOid,autoMergeRequest \
-        --jq '.state + " " + .headRefOid + (if .autoMergeRequest then " auto" else "" end)' 2>"$err")
+    out=$(gh pr view "$pr" ${repo[@]+"${repo[@]}"} --json state,headRefOid,autoMergeRequest,isDraft \
+        --jq '.state + " " + .headRefOid + (if .autoMergeRequest then " auto" else "" end) + (if .isDraft then " draft" else "" end)' 2>"$err")
     if [ $? -ne 0 ] || [ -z "$out" ]; then
         local why; why=$(first_line < "$err"); rm -f "$err"
         unread "gh pr view failed: ${why:-no answer}"
     fi
     rm -f "$err"
     state="${out%% *}"; rest="${out#* }"; head="${rest%% *}"
-    auto=""; [ "$rest" = "$head" ] || auto="${rest#* }"
+    auto=""; draft=""
+    [ "$rest" = "$head" ] || case " ${rest#* } " in *" auto "*) auto=auto ;; esac
+    [ "$rest" = "$head" ] || case " ${rest#* } " in *" draft "*) draft=draft ;; esac
+}
+
+# `--fail-fast` is for a pull request that is no draft: on a draft it would stop on a draft
+# guard before the real checks finish.
+fail_fast() { failfast=(); [ "$draft" = draft ] || failfast=(--fail-fast); }
+
+# Sets `real` to the failing check names of a draft pull request that are no draft guard, one per
+# line, from draft_guard.py; the repository is the one given, else the one of the checkout. Not
+# run in a subshell: `unread` must end the script.
+real_failures() {
+    local err name
+    if [ ${#repo[@]} -gt 0 ]; then name="${repo[1]}"; else
+        name=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null)
+        [ -n "$name" ] || unread "gh repo view failed: no repository read"
+    fi
+    err=$(mktemp "${TMPDIR:-/tmp}/ci-watch.XXXXXX") || unread "cannot create a temporary file"
+    real=$(python3 "$(dirname "${BASH_SOURCE[0]}")/draft_guard.py" "$name" "$pr" 2>"$err")
+    if [ $? -ne 0 ]; then
+        local why; why=$(first_line < "$err"); rm -f "$err"
+        unread "${why:-draft_guard.py failed}"
+    fi
+    rm -f "$err"
+}
+
+# After a watch that exited non-zero on a draft: when at least one check fails and every failing
+# one is a draft guard, the watch counts as a pass (`watch` 0) and the green path goes on. A watch
+# that failed with no failing check (an API error) is no pass: it takes the path of a non-draft.
+settle_draft() {
+    [ "$watch" -ne 0 ] && [ "$draft" = draft ] || return 0
+    real_failures
+    [ -z "$real" ] || return 0
+    local failing
+    failing=$(gh pr checks "$pr" ${repo[@]+"${repo[@]}"} --json name,bucket \
+        --jq '.[] | select(.bucket == "fail" or .bucket == "cancel") | .name' 2>/dev/null)
+    [ -z "$failing" ] || watch=0
 }
 
 # Sets `log` to the log file of this pull request, `<suffix>` naming which watch writes it.
@@ -220,13 +264,15 @@ while :; do
 done
 
 log_file ""
-gh pr checks "$pr" ${repo[@]+"${repo[@]}"} --watch --fail-fast --interval "$interval" > "$log" 2>&1
+fail_fast
+gh pr checks "$pr" ${repo[@]+"${repo[@]}"} --watch ${failfast[@]+"${failfast[@]}"} --interval "$interval" > "$log" 2>&1
 watch=$?
 
 # One read, now that the watch returned: the pull request may have been closed or moved.
 read_pr
 [ "$state" = OPEN ] || ended
 [ "$head" = "$first" ] || { say "moved $pr $first $head"; exit 3; }
+settle_draft
 
 # The watch returns once the checks it knows are done, and a slower workflow's checks may not
 # be registered yet: every workflow run of the head is read, each one unfinished is watched to
@@ -265,11 +311,13 @@ while [ "$watch" -eq 0 ]; do
     fi
     [ "$waited" = 1 ] || break
     waited=0
-    gh pr checks "$pr" ${repo[@]+"${repo[@]}"} --watch --fail-fast --interval "$interval" >> "$log" 2>&1
+    fail_fast
+    gh pr checks "$pr" ${repo[@]+"${repo[@]}"} --watch ${failfast[@]+"${failfast[@]}"} --interval "$interval" >> "$log" 2>&1
     watch=$?
     read_pr
     [ "$state" = OPEN ] || ended
     [ "$head" = "$first" ] || { say "moved $pr $first $head"; exit 3; }
+    settle_draft
 done
 
 if [ "$watch" -eq 0 ]; then
@@ -297,8 +345,13 @@ if [ "$watch" -eq 0 ]; then
         say "green $pr $head"; exit 0
     fi
 else
-    names=$(gh pr checks "$pr" ${repo[@]+"${repo[@]}"} --json name,bucket \
-        --jq '.[] | select(.bucket == "fail" or .bucket == "cancel") | .name' 2>/dev/null | paste -sd, - | sed 's/,/, /g')
+    if [ "$draft" = draft ]; then
+        real_failures
+        names=$(printf '%s\n' "$real" | paste -sd, - | sed 's/,/, /g')
+    else
+        names=$(gh pr checks "$pr" ${repo[@]+"${repo[@]}"} --json name,bucket \
+            --jq '.[] | select(.bucket == "fail" or .bucket == "cancel") | .name' 2>/dev/null | paste -sd, - | sed 's/,/, /g')
+    fi
     [ -n "$names" ] || unread "gh pr checks --watch exited $watch with no failing check named (log: $log)"
 fi
 say "red $pr $head $names"

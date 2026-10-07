@@ -111,6 +111,10 @@ STARTED = time.monotonic()
 # One `<owner>/<repo> <check name>` per line: a check that fails by design (a draft guard)
 # and is read as neither pending nor failing.
 IGNORED_CHECKS = os.path.join(STATE_DIR, "ignored-checks")
+# A failing check of a draft pull request whose job tests the draft flag is a draft guard too:
+# recognised by its definition (draft_guard.py), cached here.
+DRAFT_GUARD_DIR = os.path.join(ROOT, "skills", "orchestrator", "scripts")
+DRAFT_GUARD_CACHE = os.path.join(STATE_DIR, "draft-guard")
 # The sweep runs at most this often, whichever orchestrator stops: one stamp, in the state directory.
 SWEEP_STAMP = os.path.join(STATE_DIR, "sweep.stamp")
 SWEEP_EVERY = float(os.environ.get("ORCHESTRATOR_SWEEP_INTERVAL") or 600)
@@ -457,7 +461,24 @@ def watched_numbers(who):
     return {m.group(1) for m in (WATCH_PROCESS.search(l) for l in out.splitlines()) if m}
 
 
-def ignored_checks(cwd, who):
+def repository_reader(cwd):
+    """A function answering (`<owner>/<repo>` or None, why not), reading it once however often
+    it is asked: the file of ignored checks and the draft guards both need it."""
+    answer = []
+
+    def read():
+        if not answer:
+            try:
+                reply = gh_json(["repo", "view", "--json", "nameWithOwner"], cwd)
+                repo = reply.get("nameWithOwner") if isinstance(reply, dict) else None
+                answer.append((repo, "" if repo else "no nameWithOwner in the answer"))
+            except Unread as exc:
+                answer.append((None, str(exc)))
+        return answer[0]
+    return read
+
+
+def ignored_checks(cwd, who, repository):
     """The names of the checks the machine ignores for the repository of `cwd`. The repository
     is read only when the file holds an entry; a file that cannot be read counts as empty."""
     try:
@@ -480,16 +501,37 @@ def ignored_checks(cwd, who):
     if not entries:
         return set()
     # A repository that cannot be read filters nothing: the CI check goes on without the file.
-    try:
-        answer = gh_json(["repo", "view", "--json", "nameWithOwner"], cwd)
-        repo = answer.get("nameWithOwner") if isinstance(answer, dict) else None
-    except Unread as exc:
-        log(who, "ignored-checks", "repository unread", str(exc))
-        return set()
+    repo, why = repository()
     if not repo:
-        log(who, "ignored-checks", "repository unread", "no nameWithOwner in the answer")
+        log(who, "ignored-checks", "repository unread", why)
         return set()
     return {name for owner_repo, name in entries if owner_repo.casefold() == repo.casefold()}
+
+
+def draft_guards(checks, cwd, who, repository):
+    """The names, among the failing checks of a DRAFT pull request, of those whose job tests
+    the draft flag in its own definition (draft_guard.py). Nothing readable, nothing dropped:
+    a red is never lost for want of a read."""
+    if not any(c.get("bucket") == "fail" for c in checks):
+        return set()
+    repo, why = repository()
+    if not repo:
+        log(who, "draft-guard", "repository unread", why)
+        return set()
+    try:
+        if DRAFT_GUARD_DIR not in sys.path:
+            sys.path.insert(0, DRAFT_GUARD_DIR)
+        import draft_guard
+
+        def gh(argv):
+            out, err, code = run(["gh"] + argv, cwd=cwd)
+            if code != 0:
+                raise Unread("gh %s failed (exit %d): %s" % (" ".join(argv[:2]), code, first_line(err)))
+            return out
+        return draft_guard.guards(repo, checks, DRAFT_GUARD_CACHE, gh)
+    except (ImportError, Unread) as exc:
+        log(who, "draft-guard", "unread", str(exc))
+        return set()
 
 
 def check_ci(cwd, session_id, who=""):
@@ -502,11 +544,12 @@ def check_ci(cwd, session_id, who=""):
     # The operator's own pull requests: the check exists for the reports an orchestrator
     # makes about the work it pushes, not for every open pull request of the repository.
     prs = gh_json(["pr", "list", "--state", "open", "--author", "@me", "--limit", "200",
-                   "--json", "number,headRefOid"], cwd)
+                   "--json", "number,headRefOid,isDraft"], cwd)
     path = heads_path(session_id)
     reported = read_heads(path)
     heads, lines = {}, []
-    ignored = ignored_checks(cwd, who)
+    repository = repository_reader(cwd)
+    ignored = ignored_checks(cwd, who, repository)
     watched = None  # read at the first pending head, once for the whole check
     for pr in prs:
         number, head = str(pr["number"]), pr["headRefOid"]
@@ -516,9 +559,12 @@ def check_ci(cwd, session_id, who=""):
         if seen and seen[1] == DONE:
             heads[number] = seen
             continue
-        checks = gh_json(["pr", "checks", number, "--json", "name,bucket"], cwd,
+        checks = gh_json(["pr", "checks", number, "--json", "name,bucket,link"], cwd,
                          tolerated=("no checks reported",))
         checks = [c for c in checks if c["name"] not in ignored]
+        if pr.get("isDraft") is True:
+            guards = draft_guards(checks, cwd, who, repository)
+            checks = [c for c in checks if c["name"] not in guards]
         if not checks:
             # A push seen before its checks were registered, or a head whose only checks are
             # ignored ones: unread, read again at the next stop. A head already told as
