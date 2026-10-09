@@ -154,7 +154,7 @@ walkthrough starts:
 ```bash
 # Each bash block is its own shell; resolve rather than inherit.
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/skills/github-curl/gh.py"
+GH="$GH_ROOT/engine/gh.py"
 PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
 [ -n "$PR_NUM" ] || { echo "no open pull request for this branch"; exit 1; }
 python3 "$GH" review-pending "$PR_NUM" --format pending-review-summary
@@ -375,7 +375,7 @@ use the top-level fallback (`pr-comment`) for this item and say so.
 ```bash
 # Each bash block is its own shell; resolve rather than inherit.
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/skills/github-curl/gh.py"
+GH="$GH_ROOT/engine/gh.py"
 
 python3 "$GH" review-submit <PR> --event COMMENT --comments-file <file>
 ```
@@ -385,7 +385,7 @@ python3 "$GH" review-submit <PR> --event COMMENT --comments-file <file>
 ```bash
 # Each bash block is its own shell; resolve rather than inherit.
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/skills/github-curl/gh.py"
+GH="$GH_ROOT/engine/gh.py"
 
 python3 "$GH" pr-comment <PR> --body-file <file>
 ```
@@ -471,7 +471,7 @@ drops both new sections and the review line.
 ```bash
 # Each bash block is its own shell; resolve rather than inherit.
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/skills/github-curl/gh.py"
+GH="$GH_ROOT/engine/gh.py"
 PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
 [ -n "$PR_NUM" ] || { echo "no open pull request for this branch"; exit 1; }
 PR_REVIEW_TMP=/tmp/claude-pr-review-$PR_NUM
@@ -490,7 +490,7 @@ python3 "$GH" review-pending-create "$PR_NUM" --comments-file "$PR_REVIEW_TMP/pe
 ```bash
 # Each bash block is its own shell; resolve rather than inherit.
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/skills/github-curl/gh.py"
+GH="$GH_ROOT/engine/gh.py"
 PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
 [ -n "$PR_NUM" ] || { echo "no open pull request for this branch"; exit 1; }
 PR_REVIEW_TMP=/tmp/claude-pr-review-$PR_NUM

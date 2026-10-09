@@ -90,7 +90,7 @@ If you catch yourself thinking any of these, STOP:
 
 ### GitHub API Scripts
 
-All GitHub API calls use the `github-curl` skill's `gh.py`, which ships in the
+All GitHub API calls use the `github` plugin's `engine/gh.py`, which ships in the
 separate `github` plugin. `${CLAUDE_PLUGIN_ROOT}` names this plugin's own
 directory and cannot reach a sibling, so the sibling's root is resolved through
 the platform's own install record — never by assembling a path into the plugin
@@ -106,7 +106,7 @@ string and `python3 ""` reports `can't find '__main__' module`, which is not the
 
 ```bash
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/skills/github-curl/gh.py"
+GH="$GH_ROOT/engine/gh.py"
 SKILL_DIR="${CLAUDE_PLUGIN_ROOT}/skills/process-comments/scripts"
 ```
 
@@ -124,7 +124,7 @@ scratch directory therefore derives the path itself:
 
 ```bash
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/skills/github-curl/gh.py"
+GH="$GH_ROOT/engine/gh.py"
 PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
 export PR_REVIEW_TMP="/tmp/claude-pr-review-$PR_NUM"
 ```
@@ -158,7 +158,8 @@ missing, which is a different directory from the one every other block uses.
 Two runs on two different PRs still get two directories; two runs on the *same*
 PR share one, and write the same content into it.
 
-`gh.py` takes no JSON on stdin. Every call below either names a real
+Every call below runs `gh.py` from its command line (the `mcp__github__gh`
+tool does the same where it is listed). Each either names a real
 subcommand (optionally with `--format <name>` to shape its own output) or
 runs one of the helper scripts in `$SKILL_DIR` against files already written
 to disk.
@@ -176,7 +177,7 @@ to disk.
 ```bash
 # Each bash block is its own shell; resolve rather than inherit.
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/skills/github-curl/gh.py"
+GH="$GH_ROOT/engine/gh.py"
 SKILL_DIR="${CLAUDE_PLUGIN_ROOT}/skills/process-comments/scripts"
 
 python3 "$GH" auth-check --format error-check
@@ -204,7 +205,7 @@ USER_LOGIN=$(python3 "$SKILL_DIR/extract_user_login.py") || exit 1
 ```bash
 # Each bash block is its own shell; resolve and re-derive rather than inherit.
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/skills/github-curl/gh.py"
+GH="$GH_ROOT/engine/gh.py"
 PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
 export PR_REVIEW_TMP="/tmp/claude-pr-review-$PR_NUM"
 
@@ -226,7 +227,7 @@ nothing downstream of this skill reads the unfiltered thread list.
 ```bash
 # Each bash block is its own shell; resolve and re-derive rather than inherit.
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/skills/github-curl/gh.py"
+GH="$GH_ROOT/engine/gh.py"
 PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
 export PR_REVIEW_TMP="/tmp/claude-pr-review-$PR_NUM"
 
@@ -272,7 +273,7 @@ After this phase, `$PR_REVIEW_TMP/open-issue-comments.json` contains ONLY open (
 # excludes none of the author's own reviews. Empty here means pr.json is
 # missing or empty — Phase 1 never ran for this PR — so this block stops.
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/skills/github-curl/gh.py"
+GH="$GH_ROOT/engine/gh.py"
 SKILL_DIR="${CLAUDE_PLUGIN_ROOT}/skills/process-comments/scripts"
 PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
 export PR_REVIEW_TMP="/tmp/claude-pr-review-$PR_NUM"
@@ -305,7 +306,7 @@ python3 "$SKILL_DIR/filter_reviews.py" "$USER_LOGIN"
 # the environment, where an unset value is a KeyError rather than a fallback.
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
 export GH_ROOT
-GH="$GH_ROOT/skills/github-curl/gh.py"
+GH="$GH_ROOT/engine/gh.py"
 PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
 export PR_REVIEW_TMP="/tmp/claude-pr-review-$PR_NUM"
 
@@ -321,7 +322,7 @@ python3 "$GH" pr-get --format pr-details
 # it) against the filtered file instead of re-fetching every comment again:
 python3 -c "
 import os, sys, json
-sys.path.insert(0, os.path.join(os.environ['GH_ROOT'], 'skills', 'github-curl'))
+sys.path.insert(0, os.path.join(os.environ['GH_ROOT'], 'engine'))
 from ghlib import fmt
 comments = json.load(open('$PR_REVIEW_TMP/open-issue-comments.json'))
 print(fmt.render('issue-comments-summary', comments))
@@ -345,7 +346,7 @@ print(fmt.render('issue-comments-summary', comments))
 # ran for this PR — and counting the files of a run that never happened reports
 # a confident zero, so this block stops instead.
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/skills/github-curl/gh.py"
+GH="$GH_ROOT/engine/gh.py"
 SKILL_DIR="${CLAUDE_PLUGIN_ROOT}/skills/process-comments/scripts"
 PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
 export PR_REVIEW_TMP="/tmp/claude-pr-review-$PR_NUM"
@@ -392,7 +393,7 @@ Immediately output one line, before any further tool call:
 # Each bash block is its own shell; resolve and re-derive rather than inherit.
 # extract_paths.py reads PR_REVIEW_TMP from the environment.
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/skills/github-curl/gh.py"
+GH="$GH_ROOT/engine/gh.py"
 SKILL_DIR="${CLAUDE_PLUGIN_ROOT}/skills/process-comments/scripts"
 PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
 export PR_REVIEW_TMP="/tmp/claude-pr-review-$PR_NUM"
@@ -408,7 +409,7 @@ python3 "$SKILL_DIR/extract_paths.py"
 ```bash
 # Each bash block is its own shell; resolve and re-derive rather than inherit.
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/skills/github-curl/gh.py"
+GH="$GH_ROOT/engine/gh.py"
 PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
 export PR_REVIEW_TMP="/tmp/claude-pr-review-$PR_NUM"
 
@@ -879,7 +880,7 @@ Resolution depends on comment type:
 ```bash
 # Each bash block is its own shell; resolve rather than inherit.
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/skills/github-curl/gh.py"
+GH="$GH_ROOT/engine/gh.py"
 
 # Resolve using the thread's PRRT_ ID
 python3 "$GH" thread-resolve "$THREAD_ID" --format resolve-status
@@ -890,7 +891,7 @@ python3 "$GH" thread-resolve "$THREAD_ID" --format resolve-status
 ```bash
 # Each bash block is its own shell; resolve rather than inherit.
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/skills/github-curl/gh.py"
+GH="$GH_ROOT/engine/gh.py"
 
 # Resolve by minimizing the comment (uses node_id, e.g. IC_...)
 python3 "$GH" comment-resolve "$NODE_ID" --format error-check
@@ -901,7 +902,7 @@ python3 "$GH" comment-resolve "$NODE_ID" --format error-check
 ```bash
 # Each bash block is its own shell; resolve rather than inherit.
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/skills/github-curl/gh.py"
+GH="$GH_ROOT/engine/gh.py"
 
 # Resolve by minimizing the review (uses the review's node_id, e.g. PRR_...)
 python3 "$GH" comment-resolve "$NODE_ID" --format error-check
