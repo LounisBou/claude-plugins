@@ -4,7 +4,7 @@
 #
 #   iterm-agent.sh list
 #   iterm-agent.sh spawn --dir <path> [--tier deep|standard|light | --model <id> | --inherit-model]
-#                        [--permission-mode auto] [--title <t>]
+#                        [--effort low|medium|high|xhigh|max] [--permission-mode auto] [--title <t>]
 #                        (--prompt <text> | --prompt-file <path> | --brief <path> --orchestrator <name>)
 #                        [--left-of <tty> | --right-of <tty> | --right-of self | --successor] [--no-verify]
 #                        [--gate-tokens <positive integer>] [--resident]

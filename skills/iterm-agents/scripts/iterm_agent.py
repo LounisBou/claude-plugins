@@ -79,6 +79,10 @@ PROJECTS_DIR = os.environ.get("ORCHESTRATOR_PROJECTS_DIR") or os.path.expanduser
 MODE_TIMEOUT = int(os.environ.get("ORCHESTRATOR_MODE_TIMEOUT", "20"))
 DRY_RUN = bool(os.environ.get("ORCHESTRATOR_DRY_RUN"))
 TIERS = ("deep", "standard", "light")
+# The host's effort levels. A tier may bind one with its model: effort moves token spend
+# as much as the model family does.
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
+EFFORT_LIST = "low, medium, high, xhigh or max"
 # A title reads `Orch : <subject>` or `Agent : <subject>`: two roles, and a subject of at
 # most twenty-five characters. It is the session's NAME (§24), so it is the operator's
 # format or it is nothing an orchestrator can recognise in a listing — a successor once
@@ -847,32 +851,46 @@ def as_spawn(command):
 
 # --- the tier map ----------------------------------------------------------------
 
-def resolve_tier(tier):
-    """A tier in, the identifier the operator bound to it out. An unbound tier returns the
-    empty string and succeeds: the caller reads that as "let the host choose", which is a
-    better answer than a name this plugin has no business carrying."""
+def resolve_tier_pair(tier):
+    """A tier in, the (model, effort) the operator bound to it out; either may be empty.
+    An unbound tier returns ("", "") and succeeds: the caller reads that as "let the host
+    choose", which is a better answer than a name this plugin has no business carrying.
+    A binding is a model, `model/effort`, or an object {"model": ..., "effort": ...}; with
+    no effort, none is typed and the host applies its own.
+    """
     if tier not in TIERS:
         die("resolve-tier: unknown tier: %s (expected deep, standard or light)" % tier)
-    override = os.environ.get("ORCHESTRATOR_TIER_" + tier.upper())
-    if override:
-        warn_versioned(tier, override)
-        return override
-    if not os.path.isfile(MODELS_MAP):
-        return ""
-    try:
-        with open(MODELS_MAP) as fh:
-            data = json.load(fh)
-        if not isinstance(data, dict):
-            raise ValueError("not an object")
-    except Exception:
-        # A map that does not parse is NOT an unbound tier. Reading the two alike sends
-        # every dispatch to the host's default while the caller reports the tier it
-        # believes it asked for: one missing comma, and the routing is advisory in silence.
-        die("resolve-tier: %s does not read as a tier map (invalid JSON, empty, or not an object)" % MODELS_MAP)
-    value = data.get(tier) or ""
-    value = "" if value is None else str(value)
-    warn_versioned(tier, value)
-    return value
+    value = os.environ.get("ORCHESTRATOR_TIER_" + tier.upper())
+    if not value:
+        if not os.path.isfile(MODELS_MAP):
+            return "", ""
+        try:
+            with open(MODELS_MAP) as fh:
+                data = json.load(fh)
+            if not isinstance(data, dict):
+                raise ValueError("not an object")
+        except Exception:
+            # A map that does not parse is NOT an unbound tier. Reading the two alike sends
+            # every dispatch to the host's default while the caller reports the tier it
+            # believes it asked for: one missing comma, and the routing is advisory in silence.
+            die("resolve-tier: %s does not read as a tier map (invalid JSON, empty, or not an object)" % MODELS_MAP)
+        value = data.get(tier) or ""
+    if isinstance(value, dict):
+        model, effort = str(value.get("model") or ""), str(value.get("effort") or "")
+        if not model:
+            die("resolve-tier: tier %s is bound to an object without a model" % tier)
+    else:
+        model, _, effort = str(value).partition("/")
+    if effort and effort not in EFFORTS:
+        die("resolve-tier: tier %s has an unknown effort: %s (expected %s)" % (tier, effort, EFFORT_LIST))
+    warn_versioned(tier, model)
+    return model, effort
+
+
+def resolve_tier(tier):
+    """The tier's binding as one word: `model`, `model/effort`, or empty when unbound."""
+    model, effort = resolve_tier_pair(tier)
+    return model + ("/" + effort if effort and model else "")
 
 
 def warn_versioned(tier, value):
@@ -1478,7 +1496,7 @@ def write_prompt_file(prompt, title):
 
 
 def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_file="",
-                  account_connectors=False, gate_tokens=0):
+                  account_connectors=False, gate_tokens=0, effort=""):
     """The command iTerm2 runs in the new tab. It is HANDED to the app, never typed, so
     its length and its bytes stop being a hazard. No model argument at all when neither a
     tier nor an explicit identifier says which: the host's own default is the right
@@ -1504,6 +1522,9 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
     cli = [shq(cli_path)]
     if model:
         cli += ["--model", shq(model)]
+    # Right after the model, which it qualifies; none typed leaves the host's own default.
+    if effort:
+        cli += ["--effort", shq(effort)]
     # The launch is strict by DEFAULT, and hands the session a configuration file of its
     # own when it has servers to load (§42). Strict alone would leave an agent with no
     # server of any scope — not the project's, but not the operator's or the account's
@@ -1658,6 +1679,7 @@ def cmd_spawn(argv):
     p.add_argument("--dir")
     p.add_argument("--model", default="")
     p.add_argument("--tier", default="")
+    p.add_argument("--effort", default="")
     p.add_argument("--inherit-model", dest="inherit", action="store_true")
     p.add_argument("--permission-mode", dest="mode", default="auto")
     p.add_argument("--title", default="")
@@ -1706,7 +1728,7 @@ def cmd_spawn(argv):
         for flag, given in (("--successor", args.successor), ("--auditor", args.auditor),
                             ("--left-of", args.left_of), ("--right-of", args.right_of),
                             ("--title-free", args.title_free), ("--tier", args.tier),
-                            ("--model", args.model),
+                            ("--model", args.model), ("--effort", args.effort),
                             ("--no-remote-control", not args.remote_control)):
             if given:
                 die("spawn: refused: %s is not a coordinator-successor's: it lands at the "
@@ -1730,6 +1752,7 @@ def cmd_spawn(argv):
         for flag, given in (("--successor", args.successor), ("--right-of", args.right_of),
                             ("--left-of", args.left_of), ("--title-free", args.title_free),
                             ("--tier", args.tier), ("--model", args.model),
+                            ("--effort", args.effort),
                             ("--no-remote-control", not args.remote_control)):
             if given:
                 die("spawn: refused: %s is not an auditor's: an auditor lands immediately "
@@ -1809,11 +1832,12 @@ def cmd_spawn(argv):
         die("spawn: --tier and --model are mutually exclusive")
     if args.inherit and (args.tier or args.model):
         die("spawn: --inherit-model is exclusive with --tier and --model")
-    model = args.model
+    if args.effort and args.effort not in EFFORTS:
+        die("spawn: unknown effort: %s (expected %s)" % (args.effort, EFFORT_LIST))
+    model, effort = args.model, args.effort
     if args.tier:
-        model = resolve_tier(args.tier)
-        if model is None:
-            die("spawn: cannot resolve tier: %s" % args.tier)
+        model, map_effort = resolve_tier_pair(args.tier)
+        effort = args.effort or map_effort
     if args.inherit or args.auditor or args.coordinator_successor:
         # An auditor, and the coordinator's own successor, read with the judgment of the
         # session that spawns them: the caller's model, like a successor's, whether or not
@@ -1881,6 +1905,7 @@ def cmd_spawn(argv):
                           auditor_successor)
     if auditor_successor:
         for flag, given in (("--tier", args.tier), ("--model", args.model),
+                            ("--effort", args.effort),
                             ("--no-remote-control", not args.remote_control)):
             if given:
                 die("spawn: refused: %s is not an auditor's successor's: it runs on your "
@@ -1970,7 +1995,7 @@ def cmd_spawn(argv):
     remote_control = title if ((args.successor and args.remote_control) or args.auditor
                                 or args.coordinator_successor) else ""
     launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control,
-                           mcp_file, args.account_connectors, gate_tokens)
+                           mcp_file, args.account_connectors, gate_tokens, effort)
 
     if DRY_RUN:
         print("launch=%s" % launch)

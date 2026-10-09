@@ -18,7 +18,7 @@ $SCRIPT list
     # tab title, then the session's NAME (its --name, `(host default)` when it was launched
     # without one), then `self` on YOUR OWN tab.
 
-$SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --inherit-model] [--permission-mode auto] \
+$SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --inherit-model] [--effort <low|medium|high|xhigh|max>] [--permission-mode auto] \
     --title "Agent : <subject>" --brief <brief-path> --orchestrator "<name [ref]>" [--right-of self | --successor] [--mcp <name>] [--gate-tokens <N>]
     # --brief lints the brief (skills/orchestrator/scripts/brief-lint.sh) before any tab
     # exists; a finding no longer refuses the spawn — it is printed on stderr as a warning
@@ -83,7 +83,10 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --i
     # orchestrator chose where the tier the work needs is unbound.
     # --tier resolves through the operator's map (<state dir>/models.json, or
     # ORCHESTRATOR_TIER_DEEP/_STANDARD/_LIGHT). An unbound tier and no --tier at all both
-    # type no model argument: the host chooses. `resolve-tier <tier>` prints the binding.
+    # type no model argument: the host chooses. `resolve-tier <tier>` prints the binding:
+    # `<model>` or `<model>/<effort>`; a tier may be bound to {"model": "<alias>", "effort": "<level>"}.
+    # --effort types the effort after the model; --tier takes the map's, an explicit one wins.
+    # None anywhere types no effort argument: the host applies its default.
     # --successor: the new session takes yours — immediately right of you, chain ignored, your chain handed to it (§34).
     #   With no --title it takes YOUR OWN name, read from the process table, so every brief
     #   that cites you still cites it; and it comes up under remote control under that name
@@ -95,8 +98,8 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --i
     #   From an `Audit : <subject>` session (an auditor kept on past its report, §9.4) it takes
     #   that name too, runs on your model whether or not --inherit-model is typed, comes up
     #   under remote control, and takes and hands NO chain (chain=none): an auditor has none,
-    #   and written into one it would anchor the orchestrator's next agent. --tier, --model and
-    #   --no-remote-control are refused there; a typed `Audit :` title still is, off --auditor.
+    #   and written into one it would anchor the orchestrator's next agent. --tier, --model,
+    #   --effort and --no-remote-control are refused there; a typed `Audit :` title still is, off --auditor.
 
 $SCRIPT verify --tty /dev/ttysNNN
     # succeeds with the pid when the host CLI runs on that tty; exit 1 otherwise

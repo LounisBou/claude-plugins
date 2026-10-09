@@ -1,13 +1,14 @@
 #!/bin/bash
 # dispatch-record.sh - one row per dispatch, and the signal the routing rule needs.
 #
-#   dispatch-record.sh open    <record> --class <c> --tier <deep|standard|light> [--label <text>] [--cascade]
+#   dispatch-record.sh open    <record> --class <c> (--tier <deep|standard|light> | --model <alias> [--effort <level>]) [--label <text>] [--cascade] [--explore]
 #   dispatch-record.sh round   <record> <id>
 #   dispatch-record.sh review  <record> <id> --head <sha> --norms tool|none
 #   dispatch-record.sh fixed   <record> <id> --head <sha>   (the one correction round, verified)
 #   dispatch-record.sh ready   <record> <id> --head <sha>
 #   dispatch-record.sh close   <record> <id> --verdict <text>
 #   dispatch-record.sh escaped <record> <id>      (a defect got past this row's review)
+#   dispatch-record.sh cost    <record> <id> --session <session id>   (adds that session's measured cost)
 #   dispatch-record.sh summary <record> [--open]
 #
 # `open` prints the row id. `summary --open` prints only the open rows, for a takeover that
@@ -35,6 +36,14 @@
 # title-verified close - stay refusals a project's method cannot lift; this is not one of
 # them.
 #
+# A pair row names the model alias and the effort it ran on, and `cost` adds each session's
+# measured cost to it - the corrective rounds of a dispatch are part of what it cost. A
+# session whose model has no price marks the row `cost_incomplete`, and the summary's
+# `cost_avg` leaves it out rather than rank a pair on part of its cost. `--explore` marks a
+# dispatch one notch below its class's pair: one that costs a corrective round, or lets a
+# defect escape, freezes the class (`frozen=`); three that close in one round promote the
+# lower pair (`promote=`). Rows written before pairs existed read as tier rows, unchanged.
+#
 # The record belongs to the PROJECT being built, not to this plugin: the default table
 # ships here, a project's corrections belong with that project's state.
 #
@@ -52,11 +61,15 @@ warn() { echo "WARNING: $*" >&2; }
 command -v jq >/dev/null 2>&1 || die "jq is required"
 
 cmd="${1:-}"; record="${2:-}"
-[ -n "$cmd" ] || die "usage: dispatch-record.sh {open|round|review|fixed|ready|close|escaped|summary} <record> [...] (see header)"
+[ -n "$cmd" ] || die "usage: dispatch-record.sh {open|round|review|fixed|ready|close|escaped|cost|summary} <record> [...] (see header)"
 [ -n "$record" ] || die "$cmd: a record path is required"
 
 # The hook resolves the same directory (hooks/stop_gate.py, STATE_DIR).
 STATE_DIR="${ORCHESTRATOR_STATE_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claude-orchestrator}"
+# What a session cost is measured by the routing skill's script, which reads the same state
+# directory from the same environment.
+ROUTING="$(cd "$(dirname "$0")/../../model-routing/scripts" && pwd)/routing.py"
+EFFORTS="low medium high xhigh max"
 
 # Run on exit, so a record `open` has just created is registered with its directory in place.
 # Its status is the command's own: nothing here may change it.
@@ -115,27 +128,38 @@ rewrite() {
 
 case "$cmd" in
 open)
-    shift 2; class=""; tier=""; label=""; cascade=false
+    shift 2; class=""; tier=""; model=""; effort=""; label=""; cascade=false; explore=false
     while [ $# -gt 0 ]; do
         case "$1" in
             --class) class="$2"; shift 2 ;;
             --tier) tier="$2"; shift 2 ;;
+            --model) model="$2"; shift 2 ;;
+            --effort) effort="$2"; shift 2 ;;
             --label) label="$2"; shift 2 ;;
             # A deliberate bet one tier below the table's row. Marking it is what makes the
             # bet payable: unmarked, a cascade that failed is indistinguishable from a row
             # that simply needed two rounds, and nobody can tell an economy from a cost.
             --cascade) cascade=true; shift ;;
+            # One notch below the class's pair, for one dispatch. Marked for the same
+            # reason as a cascade: the summary freezes or promotes it from its own row.
+            --explore) explore=true; shift ;;
             *) die "open: unknown option $1" ;;
         esac
     done
     [ -n "$class" ] || die "open: --class is required"
-    case "$tier" in deep|standard|light) ;; *) die "open: unknown tier: $tier (expected deep, standard or light)" ;; esac
+    [ -n "$tier" ] || [ -n "$model" ] || die "open: --tier or --model is required"
+    [ -z "$tier" ] || case "$tier" in deep|standard|light) ;; *) die "open: unknown tier: $tier (expected deep, standard or light)" ;; esac
+    [ -z "$effort" ] || case " $EFFORTS " in *" $effort "*) ;; *) die "open: unknown effort: $effort (expected low, medium, high, xhigh or max)" ;; esac
+    [ -z "$effort" ] || [ -n "$model" ] || die "open: --effort needs --model"
+    [ "$explore" = false ] || [ -n "$model" ] || die "open: --explore needs --model"
     id=$(next_id)
     mkdir -p "$(dirname "$record")"
     jq -nc --argjson id "$id" --arg c "$class" --arg t "$tier" --arg l "$label" \
+        --arg m "$model" --arg e "$effort" \
         --arg o "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        --argjson k "$cascade" \
-        '{id:$id,opened:$o,class:$c,tier:$t,label:$l,rounds:0,state:"open",verdict:"",cascade:$k}' >> "$record"
+        --argjson k "$cascade" --argjson x "$explore" \
+        '{id:$id,opened:$o,class:$c,tier:$t,label:$l,rounds:0,state:"open",verdict:"",cascade:$k}
+         + (if $m != "" then {model:$m,effort:$e,explore:$x,cost_usd:0,sessions:[],cost_incomplete:false} else {} end)' >> "$record"
     echo "$id"
     ;;
 round)
@@ -241,6 +265,34 @@ escaped)
     require_row escaped "$id"
     rewrite 'if .id==$i then .escaped=true else . end' "$id"
     ;;
+cost)
+    # What one session of this dispatch cost, added to the row: a dispatch's corrective
+    # rounds are part of what it cost, and a pair is ranked on the whole of it.
+    id="${3:-}"; [ -n "$id" ] || die "cost: a row id is required"
+    require_row cost "$id"
+    shift 3; session=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --session) session="$2"; shift 2 ;;
+            *) die "cost: unknown option $1" ;;
+        esac
+    done
+    [ -n "$session" ] || die "cost: --session is required"
+    if [ "$(jq -sr --argjson i "$id" --arg s "$session" '[.[]|select(.id==$i)][0].sessions // [] | index($s) != null' "$record")" = true ]; then
+        warn "cost: session $session is already counted on row $id"; exit 0
+    fi
+    alias=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].model // ""' "$record")
+    measured=$(python3 "$ROUTING" cost --session "$session" ${alias:+--alias "$alias"} --json) || die "cost: could not measure session $session"
+    usd=$(printf '%s' "$measured" | jq -r '.cost_usd // "null"')
+    if [ "$usd" = null ]; then
+        warn "cost: session $session has an unpriced model: row $id is marked cost_incomplete"
+        rewrite 'if .id==$i then .sessions = ((.sessions // []) + [$s]) | .cost_incomplete=true else . end' "$id" --arg s "$session"
+    else
+        rewrite 'if .id==$i then .sessions = ((.sessions // []) + [$s]) | .cost_usd = ((.cost_usd // 0) + $u) else . end' "$id" \
+            --arg s "$session" --argjson u "$usd"
+    fi
+    echo "cost: row $id +$usd (session $session)"
+    ;;
 summary)
     only_open=0
     case "${3:-}" in
@@ -253,38 +305,57 @@ summary)
         jq -sr '.[] | select(.state == "open") | "open=\(.id) label=\(.label)"' "$record"
         exit $?
     fi
-    jq -sr '
-      group_by(.class + " " + .tier)
-      | map({class: .[0].class, tier: .[0].tier,
+    # Every group is keyed by the row's pair when it has one and by its tier otherwise, so
+    # a tier row prints `tier=<t>` exactly as it did before pairs existed.
+    KEY='def key: if .model then "pair=" + .model + "/" + (.effort // "" | if . == "" then "default" else . end) else "tier=" + .tier end;'
+    jq -sr "$KEY"'
+      map(. + {key: key})
+      | group_by(.class + " " + .key)
+      | map({class: .[0].class, key: .[0].key, rows: .,
              n: length, closed: (map(select(.state=="closed"))|length),
              avg: (if length==0 then 0 else ((map(.rounds)|add) / length) end)})
-      | sort_by(.class, .tier)
-      | (.[] | "class=\(.class) tier=\(.tier) dispatches=\(.n) closed=\(.closed) rounds_avg=\(.avg*10|round/10)"),
-        (.[] | select(.avg > 1) | "signal=\(.class) at \(.tier) averages \(.avg*10|round/10) rounds: the drop did not pay, revert it for this class")
+      | map(. + {costs: (.rows | map(select(.state=="closed" and (.cost_incomplete|not) and (.cost_usd // 0) > 0)) | map(.cost_usd))})
+      | sort_by(.class, .key)
+      | (.[] | "class=\(.class) \(.key) dispatches=\(.n) closed=\(.closed) rounds_avg=\(.avg*10|round/10)"
+               + (if (.costs|length) > 0 then " cost_avg=\((.costs|add/length)*10000|round/10000)" else "" end)),
+        (.[] | select(.avg > 1) | "signal=\(.class) at \(.key|sub("^(tier|pair)=";"")) averages \(.avg*10|round/10) rounds: the drop did not pay, revert it for this class")
     ' "$record"
-    jq -sr '
+    jq -sr "$KEY"'
       map(select(.escaped == true))
-      | group_by(.class + " " + .tier)
-      | map({class: .[0].class, tier: .[0].tier, n: length})
-      | sort_by(.class, .tier)
-      | (.[] | "escapes=\(.class) at \(.tier): \(.n) of \(.n) approved rows had a defect found later"),
-        (.[] | "signal=double-read \(.class) at \(.tier): an approval missed a defect. Give the next round a SECOND reader with a different lens, and keep a finding only when both see it")
+      | map(. + {key: key})
+      | group_by(.class + " " + .key)
+      | map({class: .[0].class, key: .[0].key, n: length})
+      | sort_by(.class, .key)
+      | (.[] | "escapes=\(.class) at \(.key|sub("^(tier|pair)=";"")): \(.n) of \(.n) approved rows had a defect found later"),
+        (.[] | "signal=double-read \(.class) at \(.key|sub("^(tier|pair)=";"")): an approval missed a defect. Give the next round a SECOND reader with a different lens, and keep a finding only when both see it")
     ' "$record"
     # A cascade pays when it closes in one round: the attempt cost nothing beyond itself.
     # Below half, the retries cost more than the tier they saved, which is the whole test.
-    jq -sr '
+    jq -sr "$KEY"'
       map(select(.cascade == true))
-      | group_by(.class + " " + .tier)
-      | map({class: .[0].class, tier: .[0].tier,
+      | map(. + {key: key})
+      | group_by(.class + " " + .key)
+      | map({class: .[0].class, key: .[0].key,
              n: length, paid: (map(select(.rounds == 0))|length)})
-      | sort_by(.class, .tier)
-      | (.[] | "cascade=\(.class) at \(.tier): \(.paid) of \(.n) paid"),
+      | sort_by(.class, .key)
+      | (.[] | "cascade=\(.class) at \(.key|sub("^(tier|pair)=";"")): \(.paid) of \(.n) paid"),
         (.[] | select(.n >= 2 and .paid * 2 < .n)
-             | "signal=stop cascading \(.class) at \(.tier): \(.paid) of \(.n) paid, the retries cost more than the tier saved")
+             | "signal=stop cascading \(.class) at \(.key|sub("^(tier|pair)=";"")): \(.paid) of \(.n) paid, the retries cost more than the tier saved")
+    ' "$record"
+    # Exploration: one that cost a corrective round or let a defect escape freezes its
+    # class for the build; three that closed in one round promote the lower pair.
+    jq -sr "$KEY"'
+      map(select(.explore == true and .state == "closed"))
+      | map(. + {key: key})
+      | group_by(.class)
+      | (.[] | select(any(.[]; .rounds > 1 or .escaped == true)) | "frozen=\(.[0].class)"),
+        (.[] | select(all(.[]; .rounds <= 1 and (.escaped != true)))
+             | group_by(.key)[] | select(length >= 3)
+             | "promote=\(.[0].class) \(.[0].key|sub("^pair=";""))")
     ' "$record"
     # The rows still open are work: deferred, in flight, or lost. A successor reads them as
     # such, never as history.
     jq -sr '.[] | select(.state == "open") | "open=\(.id) label=\(.label)"' "$record"
     ;;
-*) die "unknown subcommand: $cmd (expected open, round, review, fixed, ready, close, escaped or summary)" ;;
+*) die "unknown subcommand: $cmd (expected open, round, review, fixed, ready, close, escaped, cost or summary)" ;;
 esac

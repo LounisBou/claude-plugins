@@ -576,7 +576,64 @@ check "and names the row it did not find" "1" "$(bash "$REC" ready "$G" 99 --hea
 check_status "review on an unknown option is an error" 1 bash "$REC" review "$G" "$g1" --head ccc333 --norms tool --force
 check_status "an unknown subcommand is an error" 1 bash "$REC" bogus "$G"
 check "and names the subcommands it expects" "1" \
-  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, fixed, ready, close, escaped or summary)')"
+  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, fixed, ready, close, escaped, cost or summary)')"
+
+# A pair row names the alias and the effort it ran on, and carries what its sessions cost:
+# rounds alone cannot say whether a lighter pair paid. The tier rows above print unchanged.
+CSTATE="$WORK/cstate"; mkdir -p "$CSTATE/routing"
+cp "$ROOT/tests/fixtures/routing/prices.json" "$CSTATE/routing/prices.json"
+crec() { ORCHESTRATOR_STATE_DIR="$CSTATE" ORCHESTRATOR_PROJECTS_DIR="$ROOT/tests/fixtures/routing/projects" bash "$REC" "$@"; }
+PR="$WORK/pairs.jsonl"
+p1=$(crec open "$PR" --class behaviour-phase --model a-model --effort medium --label "p1")
+check "a pair row carries model and effort" "a-model|medium|false|0" \
+  "$(jq -r 'select(.id==1)|[.model,.effort,.explore,.cost_usd]|map(tostring)|join("|")' "$PR")"
+crec cost "$PR" "$p1" --session s-1 >/dev/null
+check "cost adds the session's measured cost to the row" "0.1701|s-1" \
+  "$(jq -r 'select(.id==1)|[(.cost_usd*10000|round/10000|tostring), (.sessions|join(","))]|join("|")' "$PR")"
+check "the same session twice is not counted twice" "0.1701" \
+  "$(crec cost "$PR" "$p1" --session s-1 2>/dev/null; jq -r 'select(.id==1)|.cost_usd*10000|round/10000' "$PR")"
+check "cost records the identifier the row's alias resolved to" "a-model-1" "$(jq -r '.["a-model"]' "$CSTATE/routing/aliases.json")"
+crec close "$PR" "$p1" --verdict approved >/dev/null
+check "summary prints the pair and its average cost" "1" \
+  "$(crec summary "$PR" | grep -c '^class=behaviour-phase pair=a-model/medium dispatches=1 closed=1 rounds_avg=0 cost_avg=0.1701$')"
+# A pair row with no effort ran on the host's default: it says so rather than print a pair cut short.
+crec open "$WORK/pair-noeffort.jsonl" --class n-bis --model b-model >/dev/null
+check "a pair row without an effort groups as the host's default" "1" \
+  "$(crec summary "$WORK/pair-noeffort.jsonl" | grep -c '^class=n-bis pair=b-model/default dispatches=1 closed=0 rounds_avg=0$')"
+check_status "open refuses an unknown effort" 1 crec open "$PR" --class x --model a-model --effort huge
+check_status "open wants a tier or a model" 1 crec open "$PR" --class x
+check_status "an effort without a model is refused" 1 crec open "$PR" --class x --tier light --effort low
+check_status "an exploration without a model is refused" 1 crec open "$PR" --class x --tier light --explore
+check_status "cost wants a session" 1 crec cost "$PR" "$p1"
+check_status "cost of a session with no transcript is an error" 1 crec cost "$PR" "$p1" --session s-404
+# A transcript with no assistant usage is a refusal, and the row is left as it was.
+sessions_before=$(jq -c --argjson i "$p1" 'select(.id==$i)|.sessions' "$PR")
+check_status "cost of a session with no usage is an error" 1 crec cost "$PR" "$p1" --session s-4
+check "and the row's sessions are unchanged" "$sessions_before" \
+  "$(jq -c --argjson i "$p1" 'select(.id==$i)|.sessions' "$PR")"
+# An unpriced model leaves the row's cost incomplete, and the summary averages only rows
+# whose cost is whole: a partial figure would rank a pair cheaper than it is.
+# The incomplete row carries a positive partial cost (s-2 priced, s-3 not): the average
+# must drop it on cost_incomplete, not because its cost happens to be zero.
+p2=$(crec open "$PR" --class behaviour-phase --model a-model --effort medium)
+crec cost "$PR" "$p2" --session s-2 >/dev/null
+crec cost "$PR" "$p2" --session s-3 >/dev/null 2>&1
+check "an unpriced session marks the row cost_incomplete, its priced one still counted" "true|s-2,s-3|0.028" \
+  "$(jq -r --argjson i "$p2" 'select(.id==$i)|[(.cost_incomplete|tostring), (.sessions|join(",")), (.cost_usd*10000|round/10000|tostring)]|join("|")' "$PR")"
+crec close "$PR" "$p2" --verdict approved >/dev/null
+check "an incomplete cost stays out of the average" "1" \
+  "$(crec summary "$PR" | grep -c '^class=behaviour-phase pair=a-model/medium dispatches=2 closed=2 rounds_avg=0 cost_avg=0.1701$')"
+# Exploration: a failed one freezes the class; three that close in one round promote the pair.
+e1=$(crec open "$PR" --class conversion-phase --model a-model --effort low --explore)
+crec round "$PR" "$e1" >/dev/null; crec round "$PR" "$e1" >/dev/null; crec close "$PR" "$e1" --verdict approved >/dev/null
+check "an exploration that cost a corrective round freezes its class" "1" "$(crec summary "$PR" | grep -c '^frozen=conversion-phase$')"
+for i in 1 2 3; do e=$(crec open "$PR" --class n-bis --model a-model --effort low --explore); crec round "$PR" "$e" >/dev/null; crec close "$PR" "$e" --verdict approved >/dev/null; done
+check "three explorations closed in one round promote the pair" "1" "$(crec summary "$PR" | grep -c '^promote=n-bis a-model/low$')"
+for i in 1 2 3; do e=$(crec open "$WORK/pair-noeffort.jsonl" --class n-bis --model b-model --explore); crec round "$WORK/pair-noeffort.jsonl" "$e" >/dev/null; crec close "$WORK/pair-noeffort.jsonl" "$e" --verdict approved >/dev/null; done
+check "three explorations of a pair with no effort promote it as the host's default" "1" \
+  "$(crec summary "$WORK/pair-noeffort.jsonl" | grep -c '^promote=n-bis b-model/default$')"
+check "an escaped defect on an exploration freezes its class too" "1|0" \
+  "$(crec escaped "$PR" "$e" >/dev/null; crec summary "$PR" | grep -c '^frozen=n-bis$')|$(crec summary "$PR" | grep -c '^promote=n-bis')"
 
 echo "== workspace =="
 
@@ -2996,6 +3053,38 @@ check_status "a missing map is not an error" 0 \
   env ORCHESTRATOR_MODELS_MAP="$WORK/absent.json" bash "$AGENT" resolve-tier standard
 check "resolve-tier wants exactly one tier" "ERROR: resolve-tier: exactly one tier is required (deep, standard or light)" \
   "$(bash "$AGENT" resolve-tier 2>&1)"
+
+# A tier may bind an effort with its model: effort moves token spend as much as the family.
+PMAP="$WORK/pair-map.json"
+printf '{"deep":{"model":"a-model","effort":"high"},"standard":"b-model","light":{"model":"c-model"}}' > "$PMAP"
+check "a pair binding resolves to model/effort" "a-model/high" \
+  "$(env ORCHESTRATOR_MODELS_MAP="$PMAP" bash "$AGENT" resolve-tier deep)"
+check "a string binding still resolves to the model alone" "b-model" \
+  "$(env ORCHESTRATOR_MODELS_MAP="$PMAP" bash "$AGENT" resolve-tier standard)"
+check "an object without effort resolves to the model alone" "c-model" \
+  "$(env ORCHESTRATOR_MODELS_MAP="$PMAP" bash "$AGENT" resolve-tier light)"
+check "the environment may bind a pair too" "c-model/low" \
+  "$(env ORCHESTRATOR_MODELS_MAP="$PMAP" ORCHESTRATOR_TIER_DEEP=c-model/low bash "$AGENT" resolve-tier deep)"
+printf '{"deep":{"model":"a-model","effort":"huge"}}' > "$WORK/bad-effort.json"
+check "an unknown effort in the map is a refusal" \
+  "ERROR: resolve-tier: tier deep has an unknown effort: huge (expected low, medium, high, xhigh or max)" \
+  "$(env ORCHESTRATOR_MODELS_MAP="$WORK/bad-effort.json" bash "$AGENT" resolve-tier deep 2>&1)"
+printf '{"deep":{"effort":"high"}}' > "$WORK/no-model.json"
+check_status "an object without a model is a refusal" 1 \
+  env ORCHESTRATOR_MODELS_MAP="$WORK/no-model.json" bash "$AGENT" resolve-tier deep
+pcmd() { env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$PMAP" bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' --prompt p "$@" 2>/dev/null; }
+check "a pair tier types the model then the effort" "1" "$(pcmd --tier deep | grep -c -- '--model a-model --effort high')"
+check "an explicit effort wins over the map's" "1" "$(pcmd --tier deep --effort low | grep -c -- '--effort low')"
+check "an explicit effort with an explicit model" "1" "$(pcmd --model z-model --effort medium | grep -c -- '--model z-model --effort medium')"
+check "no effort anywhere: no effort argument" "0" "$(pcmd --tier standard | grep -c -- '--effort')"
+check "an unknown effort on spawn is a refusal" \
+  "ERROR: spawn: unknown effort: huge (expected low, medium, high, xhigh or max)" \
+  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' --prompt p --effort huge 2>&1 | tail -1)"
+check "an auditor refuses an effort: it runs as its caller runs" "1" \
+  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --auditor --title 'Audit : x' --prompt p --effort low 2>&1 | grep -c -- 'refused: --effort is not an auditor')"
+check "rotate forwards the effort to the spawn" "1" \
+  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$PMAP" \
+      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" --tier deep --effort max --prompt p 2>&1 | grep -c -- '--model a-model --effort max')"
 
 tcmd() {
   local out
@@ -6023,6 +6112,42 @@ check "without ORCHESTRATOR_HOST_CLI the host's name is the launcher's default" 
   "$(env -u ORCHESTRATOR_HOST_CLI ORCHESTRATOR_WORKSPACES="$CWS" COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$CT/coordinator/scripts/coordinator.sh" facts 2>/dev/null | grep -c '^session ')"
 check "the script never spells the host's name" "0" "$(grep -v 'CLAUDE_CONFIG_DIR' "$COORD" | grep -ci 'claude')"
 check "an unknown subcommand is refused" "exit 1" "$(coord_status bogus)"
+
+echo "== routing: cost =="
+
+ROUTING="$ROOT/skills/model-routing/scripts/routing.py"
+RFIX="$ROOT/tests/fixtures/routing"
+RSTATE="$WORK/rstate"; mkdir -p "$RSTATE/routing"
+cp "$RFIX/prices.json" "$RSTATE/routing/prices.json"
+rcost() { ORCHESTRATOR_STATE_DIR="$RSTATE" ORCHESTRATOR_PROJECTS_DIR="$RFIX/projects" python3 "$ROUTING" cost "$@"; }
+
+check "cost of a session: one usage per message id, subagents included, tiered price applied" \
+  "cost_usd=0.170100 models=a-model-1,c-model-1 tokens_in=202000 tokens_out=4000 cache_read=10000 cache_write=3000" \
+  "$(rcost --session s-1)"
+check "cost of one transcript file, by path" "0.1695" \
+  "$(rcost "$RFIX/projects/-repo/s-1.jsonl" --json | jq -r '.cost_usd|.*10000|round/10000')"
+check "a placeholder message with an all-zero usage is neither priced nor named" "0" \
+  "$(rcost --session s-1 2>&1 | grep -c 'synthetic')"
+# The upper rates apply when fresh input plus cache reads pass the threshold: 50000 + 60000
+# is 110000 > 100000 though input alone is below it. 50000 * 0.5 + 60000 * 0.05 = 28000
+# micro-dollars; at the lower rates it would be 5600.
+check "the tiered price is judged on the whole prompt, not on fresh input alone" \
+  "cost_usd=0.028000 models=c-model-1 tokens_in=50000 tokens_out=0 cache_read=60000 cache_write=0" \
+  "$(rcost --session s-2)"
+check_status "a transcript with no assistant usage is a refusal, never a cost of zero" 1 rcost --session s-4
+check "and the refusal names the session" "1" "$(rcost --session s-4 2>&1 | grep -c 's-4')"
+rm "$RSTATE/routing/prices.json"
+check "no price file: the cost is unknown, never guessed" "cost_usd=unknown" \
+  "$(rcost --session s-1 2>/dev/null | cut -d' ' -f1)"
+check "no price file: stderr names the model" "1" \
+  "$(rcost --session s-1 2>&1 >/dev/null | grep -c 'no price for a-model-1')"
+cp "$RFIX/prices.json" "$RSTATE/routing/prices.json"
+check_status "an unknown session is a refusal" 1 rcost --session s-404
+check "a transcript path that does not exist is a refusal, never a cost of zero" "ERROR: cost: no transcript at $WORK/none.jsonl" \
+  "$(rcost "$WORK/none.jsonl" 2>&1)"
+rcost --session s-1 --alias a-model >/dev/null
+check "the alias records the identifier it resolved to" "a-model-1" \
+  "$(jq -r '.["a-model"]' "$RSTATE/routing/aliases.json")"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
