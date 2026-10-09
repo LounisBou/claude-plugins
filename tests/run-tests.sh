@@ -443,7 +443,7 @@ echo "== skills call only what exists =="
 # The tool lives in the github plugin now, so the parser this reads is the real
 # installed one. An unresolvable dependency is a FAIL, never a skip: a skip here
 # would silently retire the only check that catches a phantom subcommand.
-GHDIR=$(CLAUDE_GITHUB_ROOT="${CLAUDE_GITHUB_ROOT:-}" python3 "$ROOT/scripts/resolve_github.py" 2>/dev/null)/skills/github-curl
+GHDIR=$(CLAUDE_GITHUB_ROOT="${CLAUDE_GITHUB_ROOT:-}" python3 "$ROOT/scripts/resolve_github.py" 2>/dev/null)/engine
 if [ ! -f "$GHDIR/gh.py" ]; then
   printf '  FAIL contract test cannot run: github plugin not resolved\n'
   printf '       fix: /plugin install github@lounisbou, or set CLAUDE_GITHUB_ROOT\n'
