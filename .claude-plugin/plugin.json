@@ -1,7 +1,7 @@
 {
   "name": "norms",
   "description": "Evidence-based code norms: eight review agents, a parallel conformity check, and a learner that turns resolved PR review threads into project rules.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "dependencies": ["github@lounisbou"],
   "author": {
     "name": "Lounis Bou",

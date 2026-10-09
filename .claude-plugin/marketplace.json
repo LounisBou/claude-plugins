@@ -3,14 +3,14 @@
   "owner": { "name": "Lounis Bou", "email": "lounis.bou@gmail.com" },
   "metadata": {
     "description": "Code norms tooling for Claude Code",
-    "version": "0.1.1"
+    "version": "0.1.2"
   },
   "plugins": [
     {
       "name": "norms",
       "source": "./",
       "description": "Evidence-based code norms: eight review agents, a parallel conformity check, and a learner that turns resolved PR review threads into project rules.",
-      "version": "0.1.1",
+      "version": "0.1.2",
       "author": { "name": "Lounis Bou" }
     }
   ]

@@ -39,7 +39,7 @@ never builds a cache path by hand:
 
 ```bash
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/skills/github-curl/gh.py"
+GH="$GH_ROOT/engine/gh.py"
 ```
 
 If it exits non-zero it prints an `error:` line and a `fix:` line. Stop and show
@@ -63,7 +63,7 @@ than relying on the variables set in Step 1:
 
 ```bash
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/skills/github-curl/gh.py"
+GH="$GH_ROOT/engine/gh.py"
 mkdir -p /tmp/claude
 python3 "$GH" pr-threads <PR_NUMBER> --format resolved-threads > /tmp/claude/resolved-<PR_NUMBER>.json
 ```
