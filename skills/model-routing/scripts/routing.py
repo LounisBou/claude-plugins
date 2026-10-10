@@ -11,14 +11,19 @@ the plugin. Only `export` writes into the plugin, in tier/effort form.
 """
 
 import argparse
+import concurrent.futures as cf
 import datetime
+import fnmatch
 import glob
 import json
 import os
 import re
+import shutil
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 
 STATE_DIR = os.environ.get("ORCHESTRATOR_STATE_DIR") or os.path.join(
     os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude"),
@@ -348,6 +353,18 @@ def resolve_shipped(pair):
     return "%s/%s" % (bound[0], effort) if bound else None
 
 
+def resolve_ladder(entry):
+    """A shipped entry with its tier-form rungs read through the map, so the ladder compares
+    with the dispatched pair; a rung on an unbound tier is dropped.
+    """
+    ladder = []
+    for r in entry.get("ladder") or []:
+        pair = resolve_shipped(r["pair"]) if isinstance(r, dict) and isinstance(r.get("pair"), str) else None
+        if pair:
+            ladder.append(dict(r, pair=pair))
+    return dict(entry, ladder=ladder)
+
+
 def lookup(repo, cls):
     slug = project_slug(repo)
     profile = project_profile(repo)
@@ -359,7 +376,7 @@ def lookup(repo, cls):
         if shipped:
             pair = resolve_shipped(entry["pair"])
             if pair:
-                return pair, "shipped:" + scope, entry
+                return pair, "shipped:" + scope, resolve_ladder(entry)
             continue
         return entry["pair"], scope, entry
     bound = read_map().get(CLASS_TIERS[cls])
@@ -498,12 +515,15 @@ def record_trials(record):
 
 def stats_of(trials):
     """Per pair: the graded trials (`n`, `passes`) and the cost of every trial, errors
-    included - an error is paid for, it just says nothing about the pair's reliability.
+    included - an error is paid for, it just says nothing about the pair's reliability. A
+    trial whose cost could not be read holds the ceiling it was launched with, not what it
+    cost: it stays out of the pair's costs.
     """
     stats = {}
     for t in trials:
         s = stats.setdefault(t["pair"], {"n": 0, "passes": 0, "costs": [], "models": set()})
-        s["costs"].append(float(t.get("cost_usd") or 0))
+        if not t.get("cost_incomplete"):
+            s["costs"].append(float(t.get("cost_usd") or 0))
         s["models"].update((t.get("models") or {}).keys())
         if t.get("status") in ("pass", "fail"):
             s["n"] += 1
@@ -517,7 +537,9 @@ def select_entry(cls, stats, floor):
         mean = sum(s["costs"]) / len(s["costs"]) if s["costs"] else 0.0
         rate = s["passes"] / s["n"] if s["n"] else 0.0
         ladder.append({"pair": pair, "n": s["n"], "pass_rate": round(rate, 4), "cost_usd": round(mean, 6),
-                       "eligible": s["n"] >= MIN_TRIALS and rate >= floor, "models": sorted(s["models"])})
+                       "eligible": (s["n"] >= MIN_TRIALS and rate >= floor and not s.get("held_back")
+                     and bool(s["costs"])),
+                       "models": sorted(s["models"])})
     ladder.sort(key=lambda r: (r["cost_usd"], r["pair"]))
     for i, r in enumerate(ladder):
         # A failure in production is paid by an escalation: the next pair up, or a retry.
@@ -564,7 +586,559 @@ def cmd_calibrate(argv):
     print("\n".join(lines))
 
 
-COMMANDS = {"cost": cmd_cost, "profile": cmd_profile, "pick": cmd_pick, "calibrate": cmd_calibrate}
+# --- bench: manifest ----------------------------------------------------------------
+
+FENCE = re.compile(r"```.*?```", re.S)
+
+
+def load_manifest(slug):
+    m = read_json(manifest_path(slug), None)
+    if m is None:
+        die("no manifest for project %s (harvest one first)" % slug)
+    return m
+
+
+def git(repo, *args):
+    r = subprocess.run(["git", "-C", repo] + list(args), capture_output=True, text=True)
+    if r.returncode != 0:
+        die("git %s failed in %s: %s" % (" ".join(args), repo, r.stderr.strip()))
+    return r.stdout.strip()
+
+
+def cmd_harvest(argv):
+    p = argparse.ArgumentParser(prog="harvest")
+    p.add_argument("repo")
+    p.add_argument("--class", dest="cls", required=True)
+    p.add_argument("--pr", action="append", type=int, required=True)
+    p.add_argument("--test-command")
+    p.add_argument("--test-glob", action="append", default=[])
+    p.add_argument("--budget-usd", type=float)
+    a = p.parse_args(argv)
+    if a.cls not in CLASS_TIERS:
+        die("harvest: unknown class: %s" % a.cls)
+    repo = git_top(a.repo)
+    slug = project_slug(repo)
+    m = read_json(manifest_path(slug), None) or {
+        "slug": slug, "repo": repo, "profile": infer_profile(repo), "test_command": "",
+        "test_globs": [], "budget_usd": 2.0, "tasks": []}
+    if a.test_command:
+        m["test_command"] = a.test_command
+    if a.test_glob:
+        m["test_globs"] = a.test_glob
+    if a.budget_usd:
+        m["budget_usd"] = a.budget_usd
+    for pr in a.pr:
+        try:
+            r = subprocess.run([GH_CLI, "pr", "view", str(pr), "--json", "title,body,mergeCommit"],
+                               cwd=repo, capture_output=True, text=True)
+            info = json.loads(r.stdout) if r.returncode == 0 else None
+        except (OSError, ValueError):
+            r, info = None, None
+        if not isinstance(info, dict):
+            die("harvest: the forge did not answer for pull request %d: %s"
+                % (pr, r.stderr.strip() if r else "no readable answer"))
+        merged = (info.get("mergeCommit") or {}).get("oid")
+        if not merged:
+            die("harvest: pull request %d is not merged" % pr)
+        base = git(repo, "rev-parse", merged + "^1")
+        tid = "pr-%d" % pr
+        brief = "briefs/%s.md" % tid
+        body = FENCE.sub("", info.get("body") or "").strip()
+        path = os.path.join(ROUTING_DIR, "projects", slug, brief)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w") as fh:
+            fh.write("# %s\n\n%s\n\nWork in the current directory. Run the project's tests "
+                     "before you finish.\n" % (info.get("title", ""), body))
+        m["tasks"] = [t for t in m["tasks"] if t["id"] != tid] + [{
+            "id": tid, "pr": pr, "class": a.cls, "base": base, "merged": merged,
+            "brief": brief, "status": "draft"}]
+        print("harvested %s (draft)" % tid)
+    write_json(manifest_path(slug), m)
+
+
+def cmd_ready(argv):
+    if len(argv) < 2:
+        die("ready: a project and at least one task id are required")
+    m = load_manifest(argv[0])
+    ids = {t["id"] for t in m["tasks"]}
+    for tid in argv[1:]:
+        if tid not in ids:
+            die("ready: no task %s in %s" % (tid, argv[0]))
+    for t in m["tasks"]:
+        if t["id"] in argv[1:]:
+            t["status"] = "ready"
+    write_json(manifest_path(argv[0]), m)
+    print("ready: %s" % " ".join(argv[1:]))
+
+
+# --- bench: one trial -----------------------------------------------------------------
+
+RUBRIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                      "references", "judge-rubric.md")
+TRIAL_TIMEOUT = int(os.environ.get("ORCHESTRATOR_TRIAL_TIMEOUT", "1800"))
+JUDGE_CEILING = 2.0
+
+
+def isolate(repo, base, root):
+    """The tree at base and NO history: an agent that can read the merged commit is
+    grading itself against the answer.
+    """
+    d = tempfile.mkdtemp(prefix="trial-", dir=root)
+    try:
+        archive = subprocess.run(["git", "-C", repo, "archive", base], capture_output=True, check=True)
+        subprocess.run(["tar", "-x", "-C", d], input=archive.stdout, check=True)
+        for args in (["init", "-q"], ["add", "-A"],
+                     ["-c", "user.name=bench", "-c", "user.email=bench@localhost", "commit", "-qm", "base"]):
+            subprocess.run(["git", "-C", d] + args, check=True, capture_output=True)
+    except BaseException:
+        shutil.rmtree(d, ignore_errors=True)
+        raise
+    return d
+
+
+def mode_for(alias):
+    return read_json(os.path.join(ROUTING_DIR, "config.json"), {}).get("modes", {}).get(alias, "auto")
+
+
+def judge_pair(prog):
+    """The judge runs at the deep tier's pair; with no effort bound, at `high`."""
+    deep = read_map().get("deep")
+    if not deep:
+        die("%s: the deep tier is unbound: the judge has no model" % prog)
+    return "%s/%s" % (deep[0], deep[1] or "high")
+
+
+def run_group(cmd, timeout, cwd=None, text_in=None):
+    """Run `cmd` in a session of its own and, on a timeout, kill the whole group: the
+    direct child alone would leave whatever it started running, and paying.
+    """
+    proc = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.PIPE if text_in is not None else subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            start_new_session=True)
+    try:
+        out, err = proc.communicate(text_in, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            pass
+        proc.communicate()
+        raise
+    return proc.returncode, out, err
+
+
+def number(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool)
+
+
+def host(pair, prompt, cwd, budget, mode):
+    """One headless run. A timeout, a host that cannot start or an answer that does not
+    read is not ok; the cost is the host's own per-model figure. A cost that cannot be read
+    is never zero: the trial is charged the ceiling it was launched with and marked
+    `incomplete`, or the cap would undercount what was spent.
+    """
+    model, effort = parse_pair(pair)
+    cmd = [HOST_CLI, "-p", "--model", model, "--effort", effort, "--permission-mode", mode,
+           "--output-format", "json", "--no-session-persistence", "--max-budget-usd", "%.2f" % budget]
+    started = time.time()
+    failed = {"ok": False, "models": {}, "cost": budget, "incomplete": True, "text": "", "tokens": None}
+    try:
+        _, stdout, _ = run_group(cmd, TRIAL_TIMEOUT, cwd, prompt)
+        res = json.loads(stdout.strip().splitlines()[-1])
+        if not isinstance(res, dict):
+            raise ValueError
+    except (subprocess.TimeoutExpired, OSError, ValueError, IndexError):
+        return dict(failed, duration=round(time.time() - started, 1))
+    usage_by_model = {k: v for k, v in (res.get("modelUsage") or {}).items() if isinstance(v, dict)}
+    models = {k: float(v["costUSD"]) if number(v.get("costUSD")) else 0.0 for k, v in usage_by_model.items()}
+    total = res.get("total_cost_usd")
+    if usage_by_model and all(number(v.get("costUSD")) for v in usage_by_model.values()):
+        cost, incomplete = sum(models.values()), False
+    elif number(total):
+        cost, incomplete = float(total), False
+    else:
+        cost, incomplete = budget, True
+    usage = res.get("usage") if isinstance(res.get("usage"), dict) else {}
+    tokens = {k: usage.get(k, 0) or 0 for k in TOKEN_KEYS} if usage else None
+    ok = not res.get("is_error") and res.get("subtype") == "success"
+    return {"ok": ok, "models": models, "cost": cost, "incomplete": incomplete,
+            "text": res.get("result") or "", "tokens": tokens, "duration": round(time.time() - started, 1)}
+
+
+def overlay_hidden_tests(repo, base, merged, d, globs):
+    """Copy the merged diff's test files over the agent's tree. The agent owns that tree: a
+    link it planted must never carry a write, or a delete, outside it.
+    """
+    root = os.path.realpath(d)
+    for line in git(repo, "diff", "--name-status", base, merged).splitlines():
+        status, path = line.split("\t", 1)
+        path = path.split("\t")[-1]
+        if not any(fnmatch.fnmatch(path, g) for g in globs):
+            continue
+        target = os.path.join(d, path)
+        parent = os.path.realpath(os.path.dirname(target))
+        if os.path.commonpath([root, parent]) != root:
+            warn("bench: overlay skipped %s, it resolves outside the trial" % path)
+            continue
+        if status.startswith("D"):
+            if os.path.lexists(target):
+                os.unlink(target)
+            continue
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        blob = subprocess.run(["git", "-C", repo, "show", "%s:%s" % (merged, path)], capture_output=True, check=True)
+        if os.path.islink(target):
+            os.unlink(target)
+        with open(target, "wb") as fh:
+            fh.write(blob.stdout)
+
+
+def judge(brief, agent_diff, ref_diff, tests_out, d):
+    """The verdict with the scores and reasons the rubric's JSON gives, and the judge's cost
+    (the ceiling it ran under when its cost could not be read).
+    """
+    pair = judge_pair("bench")
+    with open(RUBRIC) as fh:
+        rubric = fh.read()
+    prompt = "%s\n\n## Brief\n%s\n\n## Agent diff\n%s\n\n## Reference diff\n%s\n\n## Test output\n%s\n" % (
+        rubric, brief, agent_diff, ref_diff, tests_out[-4000:])
+    out = host(pair, prompt, d, JUDGE_CEILING, mode_for(pair.split("/")[0]))
+    try:
+        answer = json.loads(out["text"])
+        verdict = answer["verdict"]
+        if verdict not in ("pass", "fail"):
+            raise ValueError
+        return {"verdict": verdict, "scores": answer.get("scores"), "reasons": answer.get("reasons"),
+                "cost": out["cost"]}
+    except (ValueError, KeyError, TypeError):
+        return {"verdict": None, "scores": None, "reasons": None, "cost": out["cost"]}
+
+
+def run_trial(m, task, pair, rep, root, keep=False):
+    """One trial, recorded whatever happens: an exception becomes an `error` trial keeping
+    the cost measured before it, so a worker that raises never loses what was paid.
+    """
+    repo = m["repo"]
+    ceiling = float(m.get("budget_usd") or 2.0)
+    d = None
+    trial = {"task": task["id"], "class": task["class"], "pair": pair, "rep": rep,
+             "at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "quota_before": quota_reading(), "judge": None, "judge_cost_usd": 0,
+             "judge_scores": None, "judge_reasons": None, "models": {}, "cost_usd": 0.0}
+    try:
+        with open(os.path.join(ROUTING_DIR, "projects", m["slug"], task["brief"])) as fh:
+            brief = fh.read()
+        d = isolate(repo, task["base"], root)
+        base_hash = subprocess.run(["git", "-C", d, "rev-parse", "HEAD"], capture_output=True, text=True,
+                                   check=True).stdout.strip()
+        # Until the host has answered, what it cost is unknown: an exception here leaves the ceiling.
+        trial.update(cost_usd=ceiling, cost_incomplete=True)
+        agent = host(pair, brief, d, ceiling, mode_for(pair.split("/")[0]))
+        trial.update(models=agent["models"], cost_usd=round(agent["cost"], 6), tokens=agent["tokens"],
+                     duration_s=agent["duration"])
+        if not agent["incomplete"]:
+            del trial["cost_incomplete"]
+        if not agent["ok"]:
+            trial.update(mech="error", status="error")
+            return trial
+        subprocess.run(["git", "-C", d, "add", "-A"], check=True)
+        # Against the base it started from: an agent that commits leaves HEAD at its own work.
+        agent_diff = subprocess.run(["git", "-C", d, "diff", "--cached", base_hash], capture_output=True,
+                                    text=True).stdout
+        overlay_hidden_tests(repo, task["base"], task["merged"], d, m["test_globs"])
+        try:
+            t_code, t_out, t_err = run_group(["bash", "-c", m["test_command"]], TRIAL_TIMEOUT, d)
+        except subprocess.TimeoutExpired:
+            # Tests that never finish say nothing about the change: an error, not a fail.
+            trial.update(mech="error", status="error")
+            return trial
+        trial["mech"] = "pass" if t_code == 0 else "fail"
+        if trial["mech"] == "fail":
+            trial["status"] = "fail"
+            return trial
+        # Past this point the host ran for the judge: a failure of the judge's own cost is its ceiling.
+        trial["judge_cost_usd"] = JUDGE_CEILING
+        j = judge(brief, agent_diff, git(repo, "diff", task["base"], task["merged"]), t_out + t_err, d)
+        trial.update(judge=j["verdict"], judge_cost_usd=round(j["cost"], 6), judge_scores=j["scores"],
+                     judge_reasons=j["reasons"], status="error" if j["verdict"] is None else j["verdict"])
+        return trial
+    except Exception as exc:
+        warn("bench: trial %s %s rep %d failed: %s" % (task["id"], pair, rep, exc))
+        trial.update(mech="error", status="error")
+        return trial
+    finally:
+        trial["quota_after"] = quota_reading()
+        if d:
+            if keep:
+                trial["dir"] = d
+            else:
+                shutil.rmtree(d, ignore_errors=True)
+
+
+def quota_reading():
+    """The subscription gauge, as a control only: recorded, never acted on. Null unless a
+    source file is named and readable.
+    """
+    path = os.environ.get("ORCHESTRATOR_QUOTA_FILE")
+    return read_json(path, None) if path else None
+
+
+def append_trial(slug, trial):
+    path = os.path.join(ROUTING_DIR, "projects", slug, "trials.jsonl")
+    # A run killed mid-write leaves a torn last line: the next trial starts on a line of its own.
+    torn = False
+    if os.path.isfile(path) and os.path.getsize(path):
+        with open(path, "rb") as fh:
+            fh.seek(-1, os.SEEK_END)
+            torn = fh.read(1) != b"\n"
+    with open(path, "a") as fh:
+        fh.write(("\n" if torn else "") + json.dumps(trial, sort_keys=True) + "\n")
+
+
+def runnable(m, tid):
+    if not m.get("test_command") or not m.get("test_globs"):
+        die("bench: project %s has no test_command or test_globs in its manifest" % m["slug"])
+    task = next((t for t in m["tasks"] if t["id"] == tid), None)
+    if task is None:
+        die("trial: no task %s in %s" % (tid, m["slug"]))
+    if task["status"] != "ready":
+        die("trial: task %s is still a draft" % tid)
+    return task
+
+
+def cmd_trial(argv):
+    p = argparse.ArgumentParser(prog="trial")
+    p.add_argument("slug")
+    p.add_argument("task")
+    p.add_argument("pair")
+    p.add_argument("--rep", type=int, default=1)
+    p.add_argument("--keep", action="store_true")
+    a = p.parse_args(argv)
+    parse_pair(a.pair)
+    m = load_manifest(a.slug)
+    task = runnable(m, a.task)
+    judge_pair("trial")
+    trial = run_trial(m, task, a.pair, a.rep, tempfile.gettempdir(), a.keep)
+    append_trial(a.slug, trial)
+    note_alias(a.pair.split("/")[0], trial["models"])
+    print("trial %s %s rep %d: %s cost_usd=%s" % (a.task, a.pair, a.rep, trial["status"], trial["cost_usd"]))
+
+
+# --- bench: the grid ------------------------------------------------------------------
+
+def grid_of(a):
+    if a.grid:
+        pairs = a.grid.split(",")
+        for pr in pairs:
+            parse_pair(pr)
+        return pairs
+    families = a.families.split(",") if a.families else tier_order()
+    if not families:
+        die("bench: no family bound in the tier map; name them with --families")
+    return ["%s/%s" % (f, e) for f in families for e in EFFORTS]
+
+
+def cmd_bench(argv):
+    p = argparse.ArgumentParser(prog="bench")
+    p.add_argument("slug")
+    p.add_argument("--max-usd", type=float, required=True)
+    p.add_argument("--grid")
+    p.add_argument("--families")
+    p.add_argument("--reps", type=int, default=2)
+    p.add_argument("--concurrency", type=int, default=2)
+    p.add_argument("--class", dest="cls")
+    a = p.parse_args(argv)
+    m = load_manifest(a.slug)
+    if not m.get("test_command") or not m.get("test_globs"):
+        die("bench: project %s has no test_command or test_globs in its manifest" % m["slug"])
+    pairs = grid_of(a)
+    judge_pair("bench")
+    done = {(t["task"], t["pair"], t.get("rep", 1)): t
+            for t in read_trials(os.path.join(ROUTING_DIR, "projects", a.slug, "trials.jsonl"))}
+    state = {"spent": 0.0, "trials": 0, "errors": {}, "dropped": set()}
+    # Errors drop a pair for this run only: one host outage must not strike a pair for good.
+
+    def run(jobs):
+        """Jobs in order; a job already in trials.jsonl is reused, never re-paid. The cap
+        stops new trials only: those in flight finish and are recorded.
+        """
+        results = {}
+        queue = []
+        for job in jobs:
+            if job in done:
+                results[job] = done[job]
+            else:
+                queue.append(job)
+        workers = max(1, a.concurrency)
+        with cf.ThreadPoolExecutor(max_workers=workers) as pool:
+            running = {}
+            while queue or running:
+                while queue and len(running) < workers and state["spent"] < a.max_usd:
+                    task_id, pair, rep = queue.pop(0)
+                    if pair in state["dropped"]:
+                        continue
+                    task = runnable(m, task_id)
+                    running[pool.submit(run_trial, m, task, pair, rep, tempfile.gettempdir())] = (task_id, pair, rep)
+                if not running:
+                    break
+                fut = next(cf.as_completed(running))
+                job = running.pop(fut)
+                t = fut.result()
+                append_trial(a.slug, t)
+                note_alias(job[1].split("/")[0], t["models"])
+                done[job] = results[job] = t
+                state["spent"] += t["cost_usd"] + t.get("judge_cost_usd", 0)
+                state["trials"] += 1
+                print("trial %s %s rep %d: %s cost_usd=%s" % (job[0], job[1], job[2], t["status"], t["cost_usd"]),
+                      flush=True)
+                # A judge that answered nothing says nothing about the pair: the agent ran and passed.
+                judge_silent = t.get("mech") == "pass" and t.get("judge") is None
+                if t["status"] == "error" and not judge_silent:
+                    state["errors"][job[1]] = state["errors"].get(job[1], 0) + 1
+                    if state["errors"][job[1]] >= 3 and job[1] not in state["dropped"]:
+                        state["dropped"].add(job[1])
+                        warn("bench: dropping %s after 3 errors" % job[1])
+        # Unmeasured: every job with no trial, whether the cap or a dropped pair left it.
+        return results, len(set(jobs) - set(results))
+
+    unmeasured = 0
+    by_class = {}
+    for t in m["tasks"]:
+        if a.cls and t["class"] != a.cls:
+            continue
+        if t["status"] == "ready":
+            by_class.setdefault(t["class"], []).append(t["id"])
+        else:
+            warn("bench: task %s is still a draft, skipped" % t["id"])
+    for cls, tasks in sorted(by_class.items()):
+        screen = [(tid, pr, 1) for pr in pairs for tid in tasks[:2]]
+        res, left = run(screen)
+        unmeasured += left
+        passing = [pr for pr in pairs
+                   if all(res.get((tid, pr, 1), {}).get("status") == "pass" for tid in tasks[:2])]
+        if not passing:
+            continue
+        cost = lambda pr: sum(res[(tid, pr, 1)]["cost_usd"] for tid in tasks[:2])
+        cheapest = min(cost(pr) for pr in passing)
+        confirmed = [pr for pr in passing if cost(pr) <= 1.5 * cheapest]
+        jobs = [(tid, pr, rep) for pr in confirmed for tid in tasks for rep in range(1, a.reps + 1)]
+        _, left = run(jobs)
+        unmeasured += left
+    print("bench: spent=%.2f trials=%d unmeasured=%d" % (state["spent"], state["trials"], unmeasured))
+
+
+# --- generalisation and export --------------------------------------------------------
+
+def all_projects():
+    out = {}
+    for path in sorted(glob.glob(os.path.join(ROUTING_DIR, "projects", "*", "manifest.json"))):
+        m = read_json(path, {})
+        trials = read_trials(os.path.join(os.path.dirname(path), "trials.jsonl"))
+        if trials and m.get("slug"):
+            out[m["slug"]] = (m.get("profile") or "unknown/unknown", trials)
+    return out
+
+
+def fold(scope, projects):
+    """Pool the projects' trials; a pair qualifies only when it also meets the floor in
+    every project where it was measured, so one easy project cannot carry a profile. A pair
+    held back that way keeps its pooled figures on the ladder: it was measured, not unmeasured.
+    """
+    default, strict = floors()
+    entries = {}
+    classes = sorted({t["class"] for _, trials in projects.values() for t in trials})
+    for cls in classes:
+        floor = strict if cls in STRICT_CLASSES else default
+        pooled = stats_of([t for _, ts in projects.values() for t in ts if t["class"] == cls])
+        for _, ts in projects.values():
+            for pair, s in stats_of([t for t in ts if t["class"] == cls]).items():
+                # One weak trial is no verdict on a project: it needs a sample before it holds a pair back.
+                if s["n"] >= MIN_TRIALS and s["passes"] / s["n"] < floor:
+                    pooled[pair]["held_back"] = True
+        entry = select_entry(cls, pooled, floor)
+        if entry:
+            entries[cls] = entry
+    return {"scope": scope, "generated": datetime.date.today().isoformat(), "entries": entries}
+
+
+def cmd_generalize(argv):
+    if argv:
+        die("generalize: takes no argument")
+    projects = all_projects()
+    if not projects:
+        die("generalize: no project has trials")
+    profiles = {}
+    for slug, (profile, _) in projects.items():
+        profiles.setdefault(profile, []).append(slug)
+    for profile, slugs in sorted(profiles.items()):
+        # An unknown language is no profile: pooling such projects would serve one table to
+        # repositories that share nothing. They count toward the global table only.
+        if len(slugs) < 2 or profile.startswith("unknown/"):
+            continue
+        table = fold("profile:" + profile, {s: projects[s] for s in slugs})
+        write_json(table_path("profile:" + profile), table)
+        print("profile=%s projects=%d classes=%d" % (profile, len(slugs), len(table["entries"])))
+    table = fold("global", projects)
+    write_json(table_path("global"), table)
+    print("global projects=%d classes=%d" % (len(projects), len(table["entries"])))
+
+
+def cmd_export(argv):
+    p = argparse.ArgumentParser(prog="export")
+    p.add_argument("--to", default=DEFAULTS_DIR)
+    a = p.parse_args(argv)
+    tier_of = {}
+    for tier, (model, _) in read_map().items():
+        tier_of.setdefault(model, tier)
+
+    def tiered(pair):
+        model, effort = parse_pair(pair)
+        return "%s/%s" % (tier_of[model], effort) if model in tier_of else None
+
+    for path in sorted(glob.glob(os.path.join(ROUTING_DIR, "tables", "profile-*.json"))
+                       + glob.glob(os.path.join(ROUTING_DIR, "tables", "global.json"))):
+        table = read_json(path, {})
+        entries = {}
+        for cls, e in sorted(table.get("entries", {}).items()):
+            pair = tiered(e["pair"])
+            if not pair:
+                warn("export: %s is bound to no tier, %s skipped" % (e["pair"].split("/")[0], cls))
+                continue
+            # The ladder keeps its order and its measured reliability; a rung on an unbound
+            # family has no tier to be written in, and costs and identifiers never ship.
+            ladder = [{"pair": tiered(r["pair"]), "n": r.get("n"), "pass_rate": r.get("pass_rate"),
+                       "eligible": r.get("eligible")}
+                      for r in e.get("ladder") or [] if is_pair(r.get("pair")) and tiered(r["pair"])]
+            entries[cls] = {"pair": pair, "pass_rate": e["pass_rate"], "n": e["n"], "floor": e["floor"],
+                            "ladder": ladder}
+        out = os.path.join(a.to, os.path.basename(path))
+        if not entries:
+            warn("export: %s has no class in tier form, not written" % os.path.basename(path))
+            continue
+        write_json(out, {"scope": table.get("scope"), "generated": table.get("generated"), "entries": entries})
+        print("exported %s (%d classes)" % (out, len(entries)))
+
+
+def cmd_show(argv):
+    projects = os.path.join(ROUTING_DIR, "projects")
+    slugs = argv or (sorted(os.listdir(projects)) if os.path.isdir(projects) else [])
+    if not slugs:
+        die("show: no project under %s" % projects)
+    for slug in slugs:
+        m = load_manifest(slug)
+        tables = [read_json(table_path(s), {}).get("entries", {})
+                  for s in ("project:" + slug, "profile:" + (m.get("profile") or ""), "global")]
+        print("project=%s profile=%s" % (slug, m.get("profile")))
+        for cls in sorted(set().union(*tables)):
+            cells = [t[cls]["pair"] if cls in t else "-" for t in tables]
+            stale = any(cls in t and is_stale(t[cls]["pair"], t[cls]) for t in tables)
+            print("class=%s project=%s profile=%s global=%s%s" % (cls, cells[0], cells[1], cells[2],
+                                                                   " stale" if stale else ""))
+
+
+COMMANDS = {"cost": cmd_cost, "profile": cmd_profile, "pick": cmd_pick, "calibrate": cmd_calibrate,
+            "harvest": cmd_harvest, "ready": cmd_ready, "trial": cmd_trial,
+            "bench": cmd_bench, "generalize": cmd_generalize, "show": cmd_show,
+            "export": cmd_export}
 
 
 def main():

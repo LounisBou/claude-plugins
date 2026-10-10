@@ -1,6 +1,6 @@
 ---
 name: model-routing
-description: Use when this session is about to dispatch another one — an implementer, a review collector and its lenses, a comments agent, a search subagent, a successor — and must choose the capability tier that closes the work in one round at the least cost, however small the job; a general question about the tiers, with nothing to dispatch, is not one.
+description: Use when this session is about to dispatch another one — an implementer, a review collector and its lenses, a comments agent, a search subagent, a successor — and must choose the model/effort pair that closes the work in one round at the least cost, however small the job; a general question about the capability tiers, with nothing to dispatch, is not one.
 ---
 
 # Model routing
