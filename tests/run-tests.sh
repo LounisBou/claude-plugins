@@ -6375,6 +6375,24 @@ rtrial b-model/low >/dev/null
 check "a wrong change fails mechanically and is never judged" "fail|null|fail|0" \
   "$(last '[.mech,.judge,.status,.judge_cost_usd]|map(tostring)|join("|")')"
 check "a failed mechanical check records the tail of the test output" "FAIL greet: expected hello world" "$(last '.tests_tail' | tr -d '\n')"
+TC=$(jq -r '.test_command' "$BM")
+set_tests() { jq --arg c "$1" '.test_command=$c' "$BM" > "$WORK/bm.tmp" && mv "$WORK/bm.tmp" "$BM"; }
+set_tests "($TC); for i in \$(seq 1 120); do echo \"ok padding line \$i of passing output\"; done; exit 1"
+rtrial b-model/low >/dev/null
+check "the failing line survives output long enough to push it out of the tail" "FAIL greet: expected hello world|false" \
+  "$(last '"\(.tests_failed|join("|"))|\(.tests_tail|contains("FAIL"))"')"
+set_tests "for i in \$(seq 1 50); do echo \"FAIL case \$i\"; done; echo 'a FAILURE of nothing'; echo 'ERROR late'; exit 1"
+rtrial b-model/low >/dev/null
+check "tests_failed keeps at most 40 lines, in order" "40|FAIL case 1|FAIL case 40" "$(last '"\(.tests_failed|length)|\(.tests_failed[0])|\(.tests_failed[-1])"')"
+set_tests "echo 'no failure here'; echo 'a FAILURE of nothing'; printf 'FAILED %0400d\\n' 0; echo 'ERROR late' >&2; exit 1"
+rtrial b-model/low >/dev/null
+check "tests_failed matches whole words only, cuts at 300 characters, reads stderr after stdout" "2|300|ERROR late" \
+  "$(last '"\(.tests_failed|length)|\(.tests_failed[0]|length)|\(.tests_failed[1])"')"
+set_tests "echo all good; exit 1"
+rtrial b-model/low >/dev/null
+check "a failure with no matching line records an empty list" "[]" "$(last '.tests_failed|tostring')"
+set_tests "$TC"
+check "a passing trial has no tests_failed" "false" "$(jq -s '[.[]|select(.mech=="pass")][0]|has("tests_failed")' "$BT")"
 STUB_JUDGE=fail rtrial b-model/high >/dev/null
 check "a judge's fail is the trial's fail" "pass|fail|fail" "$(last '[.mech,.judge,.status]|join("|")')"
 STUB_JUDGE=garbage rtrial b-model/high >/dev/null

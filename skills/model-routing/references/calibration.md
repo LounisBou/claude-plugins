@@ -80,8 +80,11 @@ verdict, scores (`judge_scores`) and reasons (`judge_reasons`), and its cost kep
 file `ORCHESTRATOR_QUOTA_FILE` names, or `null`. Every trial also records which identifier its
 alias resolved to.
 A trial whose tests fail also carries `tests_tail`, the last 2,000 characters of the test
-output, and one whose judge answer does not read carries `judge_raw`, the first 2,000
-characters of that answer, with `judge_ok`, whether the host reported a successful run.
+output, and `tests_failed`, the lines of that output holding `FAIL`, `FAILED` or `ERROR` as a
+whole word, in order, at most 40 of them, each cut at 300 characters, and empty when no line
+matches, because a suite that prints its failures where they happen leaves none of them in the
+tail. A trial whose judge answer does not read carries `judge_raw`, the first 2,000 characters
+of that answer, with `judge_ok`, whether the host reported a successful run.
 
 Each class runs in two stages. **Screening**: every pair once on two tasks. **Confirmation**:
 the pairs that passed both screening trials and cost within 1.5 times the cheapest passing

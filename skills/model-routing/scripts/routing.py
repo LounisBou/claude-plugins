@@ -678,6 +678,9 @@ RUBRIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))
 TRIAL_TIMEOUT = int(os.environ.get("ORCHESTRATOR_TRIAL_TIMEOUT", "1800"))
 JUDGE_CEILING = 2.0
 RECORDED_CHARS = 2000  # what a trial keeps of a failed test run or of an unreadable judge answer
+FAIL_LINES = 40  # how many failing test lines a failed trial keeps, each cut at FAIL_LINE_CHARS
+FAIL_LINE_CHARS = 300
+FAIL_WORD = re.compile(r"\b(?:FAIL|FAILED|ERROR)\b")
 
 
 def isolate(repo, base, root):
@@ -859,7 +862,9 @@ def run_trial(m, task, pair, rep, root, keep=False):
             return trial
         trial["mech"] = "pass" if t_code == 0 else "fail"
         if trial["mech"] == "fail":
-            trial.update(status="fail", tests_tail=(t_out + t_err)[-RECORDED_CHARS:])
+            tests = t_out + t_err
+            failed = [line[:FAIL_LINE_CHARS] for line in tests.splitlines() if FAIL_WORD.search(line)]
+            trial.update(status="fail", tests_tail=tests[-RECORDED_CHARS:], tests_failed=failed[:FAIL_LINES])
             return trial
         # Past this point the host ran for the judge: a failure of the judge's own cost is its ceiling.
         trial["judge_cost_usd"] = JUDGE_CEILING
