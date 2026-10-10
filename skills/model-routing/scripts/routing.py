@@ -677,6 +677,7 @@ RUBRIC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))
                       "references", "judge-rubric.md")
 TRIAL_TIMEOUT = int(os.environ.get("ORCHESTRATOR_TRIAL_TIMEOUT", "1800"))
 JUDGE_CEILING = 2.0
+RECORDED_CHARS = 2000  # what a trial keeps of a failed test run or of an unreadable judge answer
 
 
 def isolate(repo, base, root):
@@ -804,15 +805,18 @@ def judge(brief, agent_diff, ref_diff, tests_out, d):
     prompt = "%s\n\n## Brief\n%s\n\n## Agent diff\n%s\n\n## Reference diff\n%s\n\n## Test output\n%s\n" % (
         rubric, brief, agent_diff, ref_diff, tests_out[-4000:])
     out = host(pair, prompt, d, JUDGE_CEILING, mode_for(pair.split("/")[0]))
+    # The rubric asks for one object, but a fence or a line of prose around it is still that object.
+    text = out["text"]
     try:
-        answer = json.loads(out["text"])
+        answer = json.loads(text[text.index("{"):text.rindex("}") + 1])
         verdict = answer["verdict"]
         if verdict not in ("pass", "fail"):
             raise ValueError
         return {"verdict": verdict, "scores": answer.get("scores"), "reasons": answer.get("reasons"),
                 "cost": out["cost"]}
     except (ValueError, KeyError, TypeError):
-        return {"verdict": None, "scores": None, "reasons": None, "cost": out["cost"]}
+        return {"verdict": None, "scores": None, "reasons": None, "cost": out["cost"],
+                "raw": text[:RECORDED_CHARS], "ok": out["ok"]}
 
 
 def run_trial(m, task, pair, rep, root, keep=False):
@@ -855,13 +859,15 @@ def run_trial(m, task, pair, rep, root, keep=False):
             return trial
         trial["mech"] = "pass" if t_code == 0 else "fail"
         if trial["mech"] == "fail":
-            trial["status"] = "fail"
+            trial.update(status="fail", tests_tail=(t_out + t_err)[-RECORDED_CHARS:])
             return trial
         # Past this point the host ran for the judge: a failure of the judge's own cost is its ceiling.
         trial["judge_cost_usd"] = JUDGE_CEILING
         j = judge(brief, agent_diff, git(repo, "diff", task["base"], task["merged"]), t_out + t_err, d)
         trial.update(judge=j["verdict"], judge_cost_usd=round(j["cost"], 6), judge_scores=j["scores"],
                      judge_reasons=j["reasons"], status="error" if j["verdict"] is None else j["verdict"])
+        if j["verdict"] is None:
+            trial.update(judge_raw=j["raw"], judge_ok=j["ok"])
         return trial
     except Exception as exc:
         warn("bench: trial %s %s rep %d failed: %s" % (task["id"], pair, rep, exc))

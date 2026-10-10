@@ -20,6 +20,9 @@ if printf '%s' "$prompt" | grep -q 'JUDGE-RUBRIC'; then
   case "${STUB_JUDGE:-pass}" in
     pass) usage success false '"{\"verdict\":\"pass\",\"scores\":{\"scope\":5},\"reasons\":[]}"' 0.02 ;;
     fail) usage success false '"{\"verdict\":\"fail\",\"scores\":{\"scope\":1},\"reasons\":[\"off scope\"]}"' 0.02 ;;
+    fenced) usage success false '"```json\n{\"verdict\":\"pass\",\"scores\":{\"scope\":4},\"reasons\":[]}\n```"' 0.02 ;;
+    lead) usage success false '"Here is my verdict:\n{\"verdict\":\"pass\",\"scores\":{\"scope\":3},\"reasons\":[]}"' 0.02 ;;
+    prose) usage success false '"The change looks fine to me, no object here."' 0.02 ;;
     *) usage success false '"not json at all"' 0.02 ;;
   esac
   exit 0

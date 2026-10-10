@@ -79,6 +79,9 @@ figure, so no price file is needed), tokens, duration, the mechanical result, th
 verdict, scores (`judge_scores`) and reasons (`judge_reasons`), and its cost kept apart, and the subscription gauge before and after, read from the
 file `ORCHESTRATOR_QUOTA_FILE` names, or `null`. Every trial also records which identifier its
 alias resolved to.
+A trial whose tests fail also carries `tests_tail`, the last 2,000 characters of the test
+output, and one whose judge answer does not read carries `judge_raw`, the first 2,000
+characters of that answer, with `judge_ok`, whether the host reported a successful run.
 
 Each class runs in two stages. **Screening**: every pair once on two tasks. **Confirmation**:
 the pairs that passed both screening trials and cost within 1.5 times the cheapest passing

@@ -6330,7 +6330,7 @@ make_bench_repo() {
   git -C "$d" add -A; git -C "$d" add -f by-repo.keepme by-global.globalignored
   git -C "$d" -c user.name=t -c user.email=t@t commit -qm base
   printf '#!/bin/bash\necho hello world\n' > "$d/hello.sh"
-  printf '#!/bin/bash\n[ "$(bash hello.sh)" = "hello world" ]\n' > "$d/tests/greet.sh"
+  printf '#!/bin/bash\n[ "$(bash hello.sh)" = "hello world" ] || { echo "FAIL greet: expected hello world"; exit 1; }\n' > "$d/tests/greet.sh"
   rm "$d/tests/old.sh"
   git -C "$d" add -A; git -C "$d" -c user.name=t -c user.email=t@t commit -qm merged
 }
@@ -6363,6 +6363,7 @@ last() { tail -1 "$BT" | jq -r "$1"; }
 check "a right change passes the hidden tests and the judge" "pass|pass|pass|0.1|0.02" \
   "$(last '[.mech,.judge,.status,.cost_usd,.judge_cost_usd]|map(tostring)|join("|")')"
 KEPT=$(last '.dir')
+check "a passing trial has no tests_tail and no judge_raw" "false|false" "$(last '[has("tests_tail"),has("judge_raw")]|map(tostring)|join("|")')"
 check "the judge's scores and reasons are on the trial line" "5|0" "$(last '"\(.judge_scores.scope)|\(.judge_reasons|length)"')"
 check "the trial tree starts at the base" "echo hi" "$(sed -n 2p "$KEPT/.start-hello")"
 check "the per-trial ceiling reaches the host" "1.25" "$(cat "$KEPT/.budget-ceiling")"
@@ -6373,11 +6374,20 @@ check "an alias with no mode configured runs in auto" "auto" "$(cat "$KEPT/.perm
 rtrial b-model/low >/dev/null
 check "a wrong change fails mechanically and is never judged" "fail|null|fail|0" \
   "$(last '[.mech,.judge,.status,.judge_cost_usd]|map(tostring)|join("|")')"
+check "a failed mechanical check records the tail of the test output" "FAIL greet: expected hello world" "$(last '.tests_tail' | tr -d '\n')"
 STUB_JUDGE=fail rtrial b-model/high >/dev/null
 check "a judge's fail is the trial's fail" "pass|fail|fail" "$(last '[.mech,.judge,.status]|join("|")')"
 STUB_JUDGE=garbage rtrial b-model/high >/dev/null
 check "a judge that does not answer JSON makes an error, cost kept" "error|0.1" "$(last '[.status,.cost_usd]|map(tostring)|join("|")')"
 check "and records no scores and no reasons" "null|null" "$(last '[.judge_scores,.judge_reasons]|map(tostring)|join("|")')"
+check "an unreadable answer is kept in judge_raw, with the host's success" "not json at all|true" "$(last '"\(.judge_raw)|\(.judge_ok)"')"
+STUB_JUDGE=prose rtrial b-model/high >/dev/null
+check "a judge answering prose with no object is an error holding that prose" "error|null|The change looks fine to me, no object here." \
+  "$(last '[.status,.judge,.judge_raw]|map(tostring)|join("|")')"
+STUB_JUDGE=fenced rtrial b-model/high >/dev/null
+check "a judge answering inside a code fence yields its verdict and scores" "pass|4|null" "$(last '"\(.judge)|\(.judge_scores.scope)|\(.judge_raw)"')"
+STUB_JUDGE=lead rtrial b-model/high >/dev/null
+check "a judge with a line of prose before its object yields its verdict and scores" "pass|3|pass" "$(last '"\(.judge)|\(.judge_scores.scope)|\(.status)"')"
 rtrial b-model/max >/dev/null
 check "an agent stopped by its cap is an error with its cost" "error|0.4" "$(last '[.status,.cost_usd]|map(tostring)|join("|")')"
 check "the trial records the identifiers used and the alias they resolve" "b-model-1|b-model-1" \
