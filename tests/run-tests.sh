@@ -6149,6 +6149,165 @@ rcost --session s-1 --alias a-model >/dev/null
 check "the alias records the identifier it resolved to" "a-model-1" \
   "$(jq -r '.["a-model"]' "$RSTATE/routing/aliases.json")"
 
+echo "== routing: pick =="
+
+T="$ROOT/tests/fixtures/routing/trees"
+check "profile: a composer project with artisan" "php/laravel-app" "$(python3 "$ROUTING" profile "$T/laravel")"
+check "profile: a plugin by its manifest, language by dominant extension" "shell/plugin" "$(python3 "$ROUTING" profile "$T/plugin")"
+check "profile: a python project with a bin entry point" "python/cli" "$(python3 "$ROUTING" profile "$T/pycli")"
+check "profile: a node package with no entry point" "javascript/library" "$(python3 "$ROUTING" profile "$T/jslib")"
+check_status "profile: no path is a refusal" 1 python3 "$ROUTING" profile
+
+PS="$WORK/pstate"; mkdir -p "$PS/routing/tables" "$PS/routing/projects/laravel"
+printf '{"deep":"a-model","standard":{"model":"b-model","effort":"medium"},"light":"c-model"}' > "$PS/models.json"
+printf '{"slug":"laravel","repo":"%s","profile":"php/laravel-app","tasks":[]}' "$T/laravel" > "$PS/routing/projects/laravel/manifest.json"
+DEF="$WORK/defaults"; mkdir -p "$DEF"
+rpick() { ORCHESTRATOR_STATE_DIR="$PS" ORCHESTRATOR_ROUTING_DEFAULTS="$DEF" python3 "$ROUTING" pick --repo "$T/laravel" "$@"; }
+check "nothing measured: the tier table through the map" "pair=b-model/medium source=tier-table" "$(rpick --class behaviour-phase)"
+check "nothing measured, a tier bound to a model alone" "pair=c-model source=tier-table" "$(rpick --class search)"
+mv "$PS/models.json" "$PS/models.json.off"
+check "nothing measured and nothing bound: the host's default" "pair=host-default source=tier-table" "$(rpick --class search)"
+mv "$PS/models.json.off" "$PS/models.json"
+printf '{"scope":"global","entries":{"behaviour-phase":{"pair":"light/high"}}}' > "$DEF/global.json"
+check "a shipped default resolves its tier through the map" "pair=c-model/high source=shipped:global" "$(rpick --class behaviour-phase)"
+printf '{"scope":"profile:php/laravel-app","entries":{"behaviour-phase":{"pair":"deep/low"}}}' > "$DEF/profile-php-laravel-app.json"
+check "a shipped profile default beats the shipped global one" "pair=a-model/low source=shipped:profile:php/laravel-app" "$(rpick --class behaviour-phase)"
+printf '{"scope":"profile:php/laravel-app","entries":{"behaviour-phase":{"pair":"nonsense/low"}}}' > "$DEF/profile-php-laravel-app.json"
+check "a shipped default on a tier the map does not bind falls through" "pair=c-model/high source=shipped:global" "$(rpick --class behaviour-phase)"
+printf '{"scope":"global","entries":{"behaviour-phase":{"pair":"c-model/medium","models":["c-model-1"]}}}' > "$PS/routing/tables/global.json"
+check "the local global table beats the shipped defaults" "pair=c-model/medium source=global" "$(rpick --class behaviour-phase)"
+printf '{"scope":"profile:php/laravel-app","entries":{"behaviour-phase":{"pair":"b-model/low","models":["b-model-1"]}}}' > "$PS/routing/tables/profile-php-laravel-app.json"
+check "the profile table beats the global one" "pair=b-model/low source=profile:php/laravel-app" "$(rpick --class behaviour-phase)"
+printf '{"scope":"project:laravel","entries":{"behaviour-phase":{"pair":"a-model/low","models":["a-model-1"],"floor":0.9,"ladder":[{"pair":"a-model/low","n":6,"pass_rate":1.0,"eligible":true}]},"conversion-phase":{"pair":"a-model/medium","models":["a-model-1"],"floor":0.9,"ladder":[{"pair":"a-model/low","n":8,"pass_rate":0.5,"eligible":false},{"pair":"a-model/medium","n":8,"pass_rate":1.0,"eligible":true}]},"comments":{"pair":"a-model/high","models":["a-model-1"],"floor":0.9,"ladder":[{"pair":"a-model/low","n":6,"pass_rate":1.0,"eligible":true},{"pair":"a-model/medium","n":8,"pass_rate":0.5,"eligible":false},{"pair":"a-model/high","n":6,"pass_rate":1.0,"eligible":true}]},"review-collector":{"pair":"a-model/high","models":["a-model-1"],"floor":0.9,"ladder":[{"pair":"a-model/low","n":6,"pass_rate":1.0,"eligible":true},{"pair":"a-model/medium","n":6,"pass_rate":1.0,"eligible":true},{"pair":"a-model/high","n":6,"pass_rate":1.0,"eligible":true}]},"review-lens":{"pair":"a-model/high","models":["a-model-1"],"floor":0.9,"ladder":[{"pair":"a-model/low","n":6,"pass_rate":1.0,"eligible":true},{"pair":"a-model/medium","n":2,"pass_rate":1.0,"eligible":false},{"pair":"a-model/high","n":6,"pass_rate":1.0,"eligible":true}]},"contract-phase":{"pair":"a-model/high","models":["a-model-1"]}}}' > "$PS/routing/tables/project-laravel.json"
+check "the project table beats them all" "pair=a-model/low source=project:laravel" "$(rpick --class behaviour-phase)"
+printf '{"a-model":"a-model-2"}' > "$PS/routing/aliases.json"
+check "an entry measured on another identifier is flagged stale" "pair=a-model/low source=project:laravel stale" "$(rpick --class behaviour-phase)"
+check_status "an unknown class is a refusal" 1 rpick --class nonsense
+# Exploration: three one-round closes at the class's pair, none escaped, and a class that may be explored.
+ER="$WORK/explore.jsonl"; : > "$ER"
+for i in 1 2 3; do printf '{"id":%d,"class":"behaviour-phase","model":"a-model","effort":"low","rounds":1,"state":"closed"}\n' "$i" >> "$ER"; done
+check "three clean closes offer one notch down: the lowest rung, no lower effort, so the next lighter family" \
+  "explore=b-model/low" "$(rpick --class behaviour-phase --record "$ER" | sed -n 2p)"
+check "two clean closes are not enough" "1" \
+  "$(sed -n 1,2p "$ER" > "$WORK/two.jsonl"; rpick --class behaviour-phase --record "$WORK/two.jsonl" | wc -l | tr -d ' ')"
+check "a line of the record that does not read is skipped, not fatal" "explore=b-model/low" \
+  "$({ cat "$ER"; echo '{"id":'; } > "$WORK/torn.jsonl"; rpick --class behaviour-phase --record "$WORK/torn.jsonl" 2>/dev/null | sed -n 2p)"
+check "an escaped defect at the class's pair closes the exploration" "1" \
+  "$({ cat "$ER"; printf '{"id":4,"class":"behaviour-phase","model":"a-model","effort":"low","rounds":1,"state":"closed","escaped":true}\n'; } > "$WORK/esc.jsonl"; rpick --class behaviour-phase --record "$WORK/esc.jsonl" | wc -l | tr -d ' ')"
+check "a failed exploration freezes the class for the build" "1" \
+  "$({ cat "$ER"; printf '{"id":5,"class":"behaviour-phase","model":"b-model","effort":"low","rounds":2,"state":"closed","explore":true}\n'; } > "$WORK/frozen.jsonl"; rpick --class behaviour-phase --record "$WORK/frozen.jsonl" | wc -l | tr -d ' ')"
+check "a notch the ladder measured below the floor is never offered" "1" \
+  "$(for i in 1 2 3; do printf '{"id":%d,"class":"conversion-phase","model":"a-model","effort":"medium","rounds":1,"state":"closed"}\n' "$i"; done > "$WORK/conv.jsonl"; rpick --class conversion-phase --record "$WORK/conv.jsonl" | wc -l | tr -d ' ')"
+hi3() { for i in 1 2 3; do printf '{"id":%d,"class":"%s","model":"a-model","effort":"high","rounds":1,"state":"closed"}\n' "$i" "$1"; done; }
+# The notch is the IMMEDIATE cheaper rung. Comments: medium was measured at 0.5 over 8, below
+# the 0.9 floor, so no notch - the eligible low rung beneath it is two notches, not one.
+hi3 comments > "$WORK/n-a.jsonl"
+check "an immediate rung measured below the floor is no notch, the eligible one beneath it is not offered" "1" \
+  "$(rpick --class comments --record "$WORK/n-a.jsonl" | wc -l | tr -d ' ')"
+hi3 review-collector > "$WORK/n-b.jsonl"
+check "an eligible immediate rung is the notch" "explore=a-model/medium" \
+  "$(rpick --class review-collector --record "$WORK/n-b.jsonl" | sed -n 2p)"
+# Review-lens: medium has only 2 trials at 1.0 - not yet eligible, which is why it is worth testing.
+hi3 review-lens > "$WORK/n-c.jsonl"
+check "an immediate rung with too few trials is offered, not skipped for the eligible one below" "explore=a-model/medium" \
+  "$(rpick --class review-lens --record "$WORK/n-c.jsonl" | sed -n 2p)"
+check "a contract phase is never explored, measured or not" "1" \
+  "$(printf '{"id":9,"class":"contract-phase","model":"a-model","effort":"high","rounds":1,"state":"closed"}\n%.0s' 1 2 3 > "$WORK/c.jsonl"; rpick --class contract-phase --record "$WORK/c.jsonl" | wc -l | tr -d ' ')"
+
+echo "== routing: calibrate =="
+
+CS="$WORK/calstate"; mkdir -p "$CS/routing/projects/demo"
+TR="$CS/routing/projects/demo/trials.jsonl"; : > "$TR"
+trial() { # class pair status cost
+  printf '{"task":"t","class":"%s","pair":"%s","rep":1,"models":{"%s-1":%s},"cost_usd":%s,"status":"%s"}\n' \
+    "$1" "$2" "${2%%/*}" "$4" "$4" "$3" >> "$TR"; }
+for i in 1 2 3 4; do trial behaviour-phase c-model/medium pass 0.10; done
+for i in 1 2; do trial behaviour-phase c-model/medium fail 0.10; done
+for i in 1 2 3 4 5 6; do trial behaviour-phase b-model/medium pass 0.30; trial behaviour-phase a-model/low pass 0.50; done
+trial behaviour-phase b-model/medium error 0.05
+for i in 1 2 3 4 5; do trial contract-phase b-model/high pass 0.40; done
+trial contract-phase b-model/high fail 0.40
+for i in 1 2 3 4 5 6; do trial contract-phase a-model/high pass 0.90; done
+# Escalation term. search: c-model/low costs 0.10 and passes 19 of 20 (0.95, eligible at 0.9);
+# b-model/medium costs 0.105 and passes 6 of 6. expected_usd(c) = 0.10 + (1 - 0.95) * 0.105 = 0.10525
+# against 0.105 for b, so the dearer pair wins; with the term at 0 the cheaper one would (0.10 < 0.105).
+for i in $(seq 19); do trial search c-model/low pass 0.10; done; trial search c-model/low fail 0.10
+for i in 1 2 3 4 5 6; do trial search b-model/medium pass 0.105; done
+# A pair between the default floor and 1.0: 19 of 20 at 0.20 is eligible at 0.9 and expected_usd
+# 0.20 + 0.05 * 0.40 = 0.22, which would beat a-model/high's 0.9 were the floor 0.9 rather than 1.0.
+for i in $(seq 19); do trial contract-phase c-model/high pass 0.20; done; trial contract-phase c-model/high fail 0.20
+printf '{"task":"t","class":"behaviour-phase","pair":"b-model/medium","rep":1,"cost_' >> "$TR"; echo >> "$TR"
+printf '{"task":"t","class":"behaviour-phase","pair":"b-model/default","rep":1,"cost_usd":9,"status":"pass"}\n' >> "$TR"
+# A trial with no cost is not free: it is unreadable, and left out of n and of the mean cost.
+printf '{"task":"t","class":"behaviour-phase","pair":"b-model/medium","rep":1,"models":{},"status":"pass"}\n' >> "$TR"
+printf '{"task":"t","class":"behaviour-phase","pair":"b-model/medium","rep":1,"models":{},"cost_usd":null,"status":"pass"}\n' >> "$TR"
+printf '{"slug":"demo","repo":"/nonexistent","profile":"x/y","tasks":[]}' > "$CS/routing/projects/demo/manifest.json"
+rcal() { ORCHESTRATOR_STATE_DIR="$CS" python3 "$ROUTING" calibrate "$@"; }
+out=$(rcal demo 2>"$WORK/cal.err")
+check "below the floor is never chosen, however cheap" "class=behaviour-phase pair=b-model/medium pass_rate=1.0 n=6 expected_usd=0.2643" \
+  "$(printf '%s\n' "$out" | grep '^class=behaviour-phase')"
+check "work nothing re-checks takes a floor of 1.0" "class=contract-phase pair=a-model/high pass_rate=1.0 n=6 expected_usd=0.9" \
+  "$(printf '%s\n' "$out" | grep '^class=contract-phase')"
+check "a cheaper pair that fails now and then loses to a dearer sure one on the escalation it costs" "class=search pair=b-model/medium pass_rate=1.0 n=6 expected_usd=0.105" \
+  "$(printf '%s\n' "$out" | grep '^class=search')"
+check "and its expected cost is the cheaper pair's cost plus the escalation" "0.10525" \
+  "$(jq -r '.entries.search.ladder[]|select(.pair=="c-model/low")|.expected_usd' "$CS/routing/tables/project-demo.json")"
+check "an error trial costs but does not count" "6|0.2643" \
+  "$(jq -r '.entries["behaviour-phase"].ladder[]|select(.pair=="b-model/medium")|"\(.n)|\(.cost_usd*10000|round/10000)"' "$CS/routing/tables/project-demo.json")"
+check "the ladder is ordered by cost, cheapest first" "c-model/medium,b-model/medium,a-model/low" \
+  "$(jq -r '[.entries["behaviour-phase"].ladder[].pair]|join(",")' "$CS/routing/tables/project-demo.json")"
+check "the entry keeps the identifiers it was measured on" "b-model-1" \
+  "$(jq -r '.entries["behaviour-phase"].models|join(",")' "$CS/routing/tables/project-demo.json")"
+check "the entry keeps its floor, its scope and the ladder's eligibility" "9|10|project:demo|false,true,true" \
+  "$(jq -r '"\(.entries["behaviour-phase"].floor*10|round)|\(.entries["contract-phase"].floor*10|round)|\(.scope)|\([.entries["behaviour-phase"].ladder[].eligible]|map(tostring)|join(","))"' "$CS/routing/tables/project-demo.json")"
+check "a torn trial line, a line with no pair and a trial with no cost are skipped with a warning each, never fatal" "4" \
+  "$(grep -c 'does not read as a trial, skipped' "$WORK/cal.err")"
+printf '{"floor":{"default":0.6}}' > "$CS/routing/config.json"
+check "the operator's config sets the floor" "class=behaviour-phase pair=c-model/medium" \
+  "$(rcal demo 2>/dev/null | grep '^class=behaviour-phase' | cut -d' ' -f1-2)"
+rm "$CS/routing/config.json"
+# Fewer than six trials: no eligible pair.
+: > "$TR"; for i in 1 2 3; do trial n-bis c-model/low pass 0.01; done
+check "fewer than six trials is never eligible" "class=n-bis no eligible pair" "$(rcal demo)"
+check "and the class gets no entry" "0" "$(jq '.entries|length' "$CS/routing/tables/project-demo.json")"
+# Record rows count as trials: closed in one round and not escaped is a pass.
+RR="$WORK/calrec.jsonl"; : > "$RR"
+for i in 1 2 3 4 5 6; do printf '{"id":%d,"class":"n-bis","model":"c-model","effort":"low","rounds":1,"state":"closed","cost_usd":0.02,"sessions":["s"],"cost_incomplete":false}\n' "$i" >> "$RR"; done
+# Left out: an open row, a row with no measured cost, an incomplete cost, a tier row, a row with no effort.
+printf '{"id":7,"class":"n-bis","model":"c-model","effort":"low","rounds":0,"state":"open","cost_usd":0,"sessions":[],"cost_incomplete":false}\n' >> "$RR"
+printf '{"id":8,"class":"n-bis","model":"c-model","effort":"low","rounds":1,"state":"closed","cost_usd":0,"sessions":[],"cost_incomplete":false}\n' >> "$RR"
+printf '{"id":9,"class":"n-bis","model":"c-model","effort":"low","rounds":1,"state":"closed","cost_usd":5,"sessions":["s"],"cost_incomplete":true}\n' >> "$RR"
+printf '{"id":10,"class":"n-bis","tier":"light","rounds":1,"state":"closed"}\n' >> "$RR"
+printf '{"id":11,"class":"n-bis","model":"c-model","effort":"","rounds":1,"state":"closed","cost_usd":5,"sessions":["s"],"cost_incomplete":false}\n' >> "$RR"
+check "record rows complete the measurement" "class=n-bis pair=c-model/low pass_rate=1.0 n=9 expected_usd=0.0167" \
+  "$(rcal demo --from-record "$RR")"
+printf '{"id":12,"class":"n-bis","model":"c-model","effort":"low","rounds":2,"state":"closed","cost_usd":0.02,"sessions":["s"],"cost_incomplete":false}\n' >> "$RR"
+printf '{"id":13,"class":"n-bis","model":"c-model","effort":"low","rounds":1,"state":"closed","cost_usd":0.02,"sessions":["s"],"cost_incomplete":false,"escaped":true}\n' >> "$RR"
+# Nine passes in eleven is 0.818, below the floor: both rows read as failures.
+check "a corrective round or an escaped defect grades a row as a failure" "class=n-bis no eligible pair" \
+  "$(rcal demo --from-record "$RR")"
+: > "$TR"
+check_status "no trial and no record row is a refusal" 1 rcal demo
+check_status "a record that does not exist is a refusal" 1 rcal demo --from-record "$WORK/no-such-record.jsonl"
+
+echo "== routing: the skill =="
+
+MR="$ROOT/skills/model-routing/SKILL.md"
+check "the skill picks a pair through routing.py pick" "yes" "$(spells "$MR" 'routing.py pick --repo')"
+check "the skill records each session's cost" "yes" "$(spells "$MR" 'dispatch-record.sh cost')"
+check "the skill bounds exploration to one notch" "yes" "$(spells "$MR" 'one notch')"
+check "the skill names what is never explored" "yes" "$(carries "$MR" 'never explored')"
+check "the skill points at the calibration reference" "yes" "$(spells "$MR" 'references/calibration.md')"
+check "the skill keeps the budget out of the choice" "yes" "$(carries "$MR" 'never read the subscription gauge to choose')"
+check "the skill folds a promotion into the table from the record" "yes" "$(spells "$MR" 'routing.py calibrate <slug> --from-record <record>')"
+CLASSES="$(python3 -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(" ".join(sorted(m.CLASS_TIERS)))' "$ROUTING")"
+check "pick knows classes to name" "yes" "$([ -n "$CLASSES" ] && echo yes || echo no)"
+check "the skill's table names every class pick knows, in backticks" "" \
+  "$(for c in $CLASSES; do grep -qF "\`$c\`" "$MR" || echo "$c"; done)"
+MRC="$ROOT/skills/model-routing/references/calibration.md"
+check "the calibration reference walks the bench in the operator's order" "yes|yes|yes" \
+  "$(spells "$MRC" 'max-usd')|$(spells "$MRC" 'generalize')|$(spells "$MRC" 'export')"
+
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
