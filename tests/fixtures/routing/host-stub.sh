@@ -1,16 +1,20 @@
 #!/bin/bash
 # A headless-host stub. Agent runs edit hello.sh by effort; judge runs answer from STUB_JUDGE.
-model=""; effort=""; mode=""; budget=""
+model=""; effort=""; mode=""; budget=""; sources="none"
 while [ $# -gt 0 ]; do
   case "$1" in
     --model) model="$2"; shift 2 ;;
     --effort) effort="$2"; shift 2 ;;
     --permission-mode) mode="$2"; shift 2 ;;
     --max-budget-usd) budget="$2"; shift 2 ;;
+    --setting-sources) sources="$2"; shift 2 ;;
     *) shift ;;
   esac
 done
 prompt=$(cat)
+# One line per run, agent or judge, with the settings sources it was given.
+role=agent; printf '%s' "$prompt" | grep -q 'JUDGE-RUBRIC' && role=judge
+[ -n "${STUB_ARGS_LOG:-}" ] && printf '%s sources=%s\n' "$role" "$sources" >> "$STUB_ARGS_LOG"
 [ -n "${STUB_SILENT:-}" ] && exit 0
 usage() { printf '{"type":"result","subtype":"%s","is_error":%s,"result":%s,"modelUsage":{"%s-1":{"costUSD":%s}}}\n' "$1" "$2" "$3" "$model" "$4"; }
 if printf '%s' "$prompt" | grep -q 'JUDGE-RUBRIC'; then

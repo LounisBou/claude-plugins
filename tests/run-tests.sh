@@ -6371,6 +6371,10 @@ check "the agent saw one commit and no history" "1|no" "$(cat "$KEPT/.reachable-
 check "the hidden test is in place, the deleted one is gone" "yes|no" \
   "$([ -f "$KEPT/tests/greet.sh" ] && echo yes || echo no)|$([ -f "$KEPT/tests/old.sh" ] && echo yes || echo no)"
 check "an alias with no mode configured runs in auto" "auto" "$(cat "$KEPT/.permission-mode")"
+ARGSLOG="$WORK/host-args.log"; rm -f "$ARGSLOG"
+STUB_ARGS_LOG="$ARGSLOG" rtrial b-model/medium >/dev/null
+check "a trial's agent run and its judge run load the project's settings only" "agent sources=project|judge sources=project" \
+  "$(paste -sd'|' "$ARGSLOG")"
 rtrial b-model/low >/dev/null
 check "a wrong change fails mechanically and is never judged" "fail|null|fail|0" \
   "$(last '[.mech,.judge,.status,.judge_cost_usd]|map(tostring)|join("|")')"

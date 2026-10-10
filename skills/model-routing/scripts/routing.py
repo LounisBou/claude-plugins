@@ -745,7 +745,8 @@ def host(pair, prompt, cwd, budget, mode):
     """
     model, effort = parse_pair(pair)
     cmd = [HOST_CLI, "-p", "--model", model, "--effort", effort, "--permission-mode", mode,
-           "--output-format", "json", "--no-session-persistence", "--max-budget-usd", "%.2f" % budget]
+           "--output-format", "json", "--no-session-persistence", "--setting-sources", "project",
+           "--max-budget-usd", "%.2f" % budget]
     started = time.time()
     failed = {"ok": False, "models": {}, "cost": budget, "incomplete": True, "text": "", "tokens": None}
     try:

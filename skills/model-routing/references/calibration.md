@@ -53,7 +53,9 @@ unreachable, and its one commit holds every file of the base whatever ignore rul
 trial ends. It runs headless on its pair, the brief on stdin, with the manifest's per-trial
 spending cap and a wall-clock timeout (`ORCHESTRATOR_TRIAL_TIMEOUT`, 1800 seconds by default),
 in the permission mode `config.json` gives its alias (`{"modes": {"<alias>": "acceptEdits"}}`)
-or `auto`. A mechanical pass goes to a judge at the `deep` tier's pair (effort `high` when the
+or `auto`. It loads the project's settings only, never the user's (instructions, plugins,
+hooks), because a trial measures the pair on the project, not on the operator's environment.
+A mechanical pass goes to a judge at the `deep` tier's pair (effort `high` when the
 map binds none) with the fixed rubric `references/judge-rubric.md`; a run with the `deep` tier
 unbound is refused before anything is spent. Satisfaction is a mechanical pass and a judge
 pass. A timeout, a host that crashes or cannot start, a cap reached, tests that never finish or
