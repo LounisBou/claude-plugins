@@ -687,7 +687,9 @@ def isolate(repo, base, root):
     try:
         archive = subprocess.run(["git", "-C", repo, "archive", base], capture_output=True, check=True)
         subprocess.run(["tar", "-x", "-C", d], input=archive.stdout, check=True)
-        for args in (["init", "-q"], ["add", "-A"],
+        # Every archived file was tracked at base: no ignore rule, the user's or the repository's,
+        # may leave one out of the base commit.
+        for args in (["init", "-q"], ["-c", "core.excludesFile=", "add", "-A", "--force"],
                      ["-c", "user.name=bench", "-c", "user.email=bench@localhost", "commit", "-qm", "base"]):
             subprocess.run(["git", "-C", d] + args, check=True, capture_output=True)
     except BaseException:

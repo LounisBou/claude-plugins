@@ -49,7 +49,7 @@ stops a run; the subscription gauge is recorded with each trial as a control, ne
 stop, slow or choose.
 
 A trial sees the tree at the task's base with no history, so the merged commit is
-unreachable; its directory is created under the system's temporary root and removed when the
+unreachable, and its one commit holds every file of the base whatever ignore rules apply; its directory is created under the system's temporary root and removed when the
 trial ends. It runs headless on its pair, the brief on stdin, with the manifest's per-trial
 spending cap and a wall-clock timeout (`ORCHESTRATOR_TRIAL_TIMEOUT`, 1800 seconds by default),
 in the permission mode `config.json` gives its alias (`{"modes": {"<alias>": "acceptEdits"}}`)

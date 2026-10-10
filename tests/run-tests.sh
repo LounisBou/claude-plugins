@@ -6323,7 +6323,12 @@ make_bench_repo() {
   git -C "$d" init -q
   printf '#!/bin/bash\necho hi\n' > "$d/hello.sh"
   printf '#!/bin/bash\n[ "$(bash hello.sh)" = "hi" ]\n' > "$d/tests/old.sh"
-  git -C "$d" add -A; git -C "$d" -c user.name=t -c user.email=t@t commit -qm base
+  # Two tracked files an ignore rule matches: one by the repository's own rule, one by a
+  # global excludes file the trial test names. Both were added with --force.
+  printf '*.keepme\n' > "$d/.gitignore"
+  echo repo > "$d/by-repo.keepme"; echo glob > "$d/by-global.globalignored"
+  git -C "$d" add -A; git -C "$d" add -f by-repo.keepme by-global.globalignored
+  git -C "$d" -c user.name=t -c user.email=t@t commit -qm base
   printf '#!/bin/bash\necho hello world\n' > "$d/hello.sh"
   printf '#!/bin/bash\n[ "$(bash hello.sh)" = "hello world" ]\n' > "$d/tests/greet.sh"
   rm "$d/tests/old.sh"
@@ -6386,6 +6391,13 @@ printf '{"modes":{"b-model":"acceptEdits"}}' > "$BS/routing/config.json"
 rtrial b-model/medium --keep >/dev/null
 check "config.json gives an alias its permission mode" "acceptEdits" "$(cat "$(last '.dir')/.permission-mode")"
 rm -rf "$(last '.dir')" "$BS/routing/config.json"
+# The base commit holds every archived file, whatever ignore rules apply.
+printf '*.globalignored\n' > "$WORK/global-excludes"
+printf '[core]\n\texcludesFile = %s\n' "$WORK/global-excludes" > "$WORK/global-gitconfig"
+GIT_CONFIG_GLOBAL="$WORK/global-gitconfig" rtrial b-model/medium --keep >/dev/null
+check "a file an ignore rule matches is still in the trial's base commit" "by-global.globalignored|by-repo.keepme" \
+  "$(git -C "$(last '.dir')" ls-files | grep -E 'by-(repo|global)' | sort | paste -sd'|' -)"
+rm -rf "$(last '.dir')"
 printf '{"standard":"b-model","light":"c-model"}' > "$BS/models.json"
 check "no judge without a deep tier, refused before any trial runs" "ERROR: trial: the deep tier is unbound: the judge has no model|0" \
   "$(rtrial b-model/medium 2>&1)|$(ls -d "$WORK"/trial-* 2>/dev/null | wc -l | tr -d ' ')"
