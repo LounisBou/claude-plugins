@@ -5,6 +5,20 @@ All notable changes are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.0 — 2026-10-10
+
+### Changed
+
+- `bugs-bot gate --measure` reads the orchestrator plugin's hooks module measure file
+  (`<config dir>/claude-orchestrator/measure/<session id>.json`, one JSON line the module
+  writes each turn) instead of running the plugin's retired `context-gauge.sh`. The command
+  and its `gate_tokens=` / `context_tokens=` / `context_window=` / `handover=` line are
+  unchanged; a partial, empty or absent file is one error line, exit 1. The plugin
+  dependency now requires orchestrator `>=0.49`, the release whose module writes the file.
+- `doctor`'s `orchestrator` check reads the active install from the host's
+  `plugins/installed_plugins.json` and fails below 0.49. It no longer takes the last directory
+  of the plugin cache, which keeps every version side by side.
+
 ## 0.1.5 — 2026-10-05
 
 ### Changed

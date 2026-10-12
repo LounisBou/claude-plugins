@@ -109,7 +109,9 @@ def build_parser(description: str) -> argparse.ArgumentParser:
     gate.add_argument("--set", type=_int_arg, metavar="TOKENS", help="change the gate setting")
     gate.add_argument("--window", type=_int_arg, help="the context window: under 1,000,000 the gate is 80 %% of it")
     gate.add_argument("--tokens", type=_int_arg, help="the measured context: also print handover=yes|no")
-    gate.add_argument("--measure", action="store_true", help="measure the context through the orchestrator's gauge")
+    gate.add_argument(
+        "--measure", action="store_true", help="measure the context through the orchestrator's measure file"
+    )
     deployed = sub.add_parser("deployed", parents=[project], help="say whether a commit is served, through the deploy check")
     deployed.add_argument("commit")
     handover = sub.add_parser("handover", help="the note an agent leaves its successor")

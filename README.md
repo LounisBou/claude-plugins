@@ -16,7 +16,7 @@ on one machine.
 | `/bugs-bot:init` | Binds the repository to its Telegram group or Slack channel (one per project): asks a few questions, finds the group among the bot's pending updates (or in Pull's log of dropped chats) or among the Slack channels the app is in, writes `.bugs-bot.json` (kept out of git through `.git/info/exclude`) and registers the project. Re-run: updates, never duplicates. |
 | `/bugs-bot:start` | Launches the project's agent in a tab right of your session, which becomes its launcher. Needs the orchestrator plugin. |
 | `/bugs-bot:remove` | Unregisters the project: Pull stops routing its group. Its data and project file are kept. |
-| `/bugs-bot:doctor` | Installs the fixed `~/.local/bin/bugs-bot` launcher and checks the machine: python3, each registered channel's token (and that its platform accepts it), registry, Pull running exactly once, the orchestrator plugin, the allow rule. |
+| `/bugs-bot:doctor` | Installs the fixed `~/.local/bin/bugs-bot` launcher and checks the machine: python3, each registered channel's token (and that its platform accepts it), registry, Pull running exactly once, the orchestrator plugin at 0.49 or later, the allow rule. |
 | skill `bugs-bot` | The protocol for launchers (what the agent says, and the words that answer it) and for the agent (talking to a reporter, the voice). |
 | `agent/AGENT.md` | The agent's instructions. They name no project: its facts come in the startup prompt, from the project file. |
 
@@ -88,7 +88,7 @@ Telegram's held request is cut to 10 s, so both are read in the same process. HT
 - `python3` 3.10 or newer; the standard library only.
 - PM2, for Pull.
 - for `/bugs-bot:start` and the agent's handover: the `orchestrator` plugin (its iTerm launcher
-  and context gauge), on macOS with iTerm2.
+  and the hooks module that measures the agent's context), on macOS with iTerm2.
 
 ## Where things live
 
@@ -101,7 +101,7 @@ Telegram's held request is cut to 10 s, so both are read in the same process. HT
 | Token | `~/.bugs-bot/.env` |
 
 Overrides, for tests and for the end-to-end run: `BUGS_BOT_HOME`, `BUGS_BOT_ENV_FILE`,
-`BUGS_BOT_CLAUDE_DIR`, `BUGS_BOT_LAUNCHER_DIR`, `BUGS_BOT_GAUGE`, `BUGS_BOT_API_ROOT` (a fake Bot
+`BUGS_BOT_CLAUDE_DIR`, `BUGS_BOT_LAUNCHER_DIR`, `BUGS_BOT_API_ROOT` (a fake Bot
 API; production never sets it).
 
 ## Migrating from the single-project skill

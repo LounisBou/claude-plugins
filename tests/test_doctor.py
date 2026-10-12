@@ -21,10 +21,17 @@ ALLOW = "Bash(bugs-bot:*)"
 def machine_env(tmp_path: Path, env: dict[str, str]) -> dict[str, str]:
     """A healthy machine: token, plugin cache, orchestrator, launcher, allow rule, all under ``tmp_path``."""
     claude = tmp_path / "claude"
-    (claude / "plugins" / "cache" / "lounisbou" / "orchestrator" / "0.38.0").mkdir(parents=True)
+    install_orchestrator(claude, "0.49.0")
     claude.joinpath("settings.json").write_text(json.dumps({"permissions": {"allow": [ALLOW]}}))
     install_launcher(tmp_path / "localbin")
     return {**env, "BUGS_BOT_CLAUDE_DIR": str(claude), "BUGS_BOT_LAUNCHER_DIR": str(tmp_path / "localbin")}
+
+
+def install_orchestrator(claude: Path, *versions: str) -> None:
+    """The host's record of the active orchestrator install, one entry per version given."""
+    claude.joinpath("plugins").mkdir(parents=True, exist_ok=True)
+    entries = [{"scope": "user", "installPath": str(claude / "plugins" / "cache" / "lounisbou" / "orchestrator" / v), "version": v} for v in versions]
+    claude.joinpath("plugins", "installed_plugins.json").write_text(json.dumps({"version": 2, "plugins": {"orchestrator@lounisbou": entries}}))
 
 
 def by_name(checks: list[Check]) -> dict[str, Check]:
@@ -292,11 +299,41 @@ def test_cli_doctor_reports_the_versioned_path_pm2_recorded(machine_env, ps, mon
 
 
 def test_orchestrator_check(machine_env, tmp_path):
-    (tmp_path / "claude" / "plugins" / "cache" / "lounisbou" / "orchestrator" / "0.38.0").rmdir()
+    (tmp_path / "claude" / "plugins" / "installed_plugins.json").unlink()
 
     check = by_name(run_checks(machine_env, PULL_PS))["orchestrator"]
 
     assert not check.ok and "orchestrator" in check.detail
+
+
+@pytest.mark.parametrize("version", ["0.49.0", "0.49", "0.50.1", "1.0.0"])
+def test_orchestrator_at_or_past_the_floor_passes(machine_env, tmp_path, version):
+    install_orchestrator(tmp_path / "claude", version)
+
+    check = by_name(run_checks(machine_env, PULL_PS))["orchestrator"]
+
+    assert check.ok and version in check.detail
+
+
+def test_orchestrator_below_the_floor_fails_naming_both_versions(machine_env, tmp_path):
+    """The measure file 0.2.0 reads exists from orchestrator 0.49 on: an older active install fails every gate."""
+    claude = tmp_path / "claude"
+    install_orchestrator(claude, "0.48.0")
+    # A newer version left in the cache is not the active one: the host's record decides.
+    (claude / "plugins" / "cache" / "lounisbou" / "orchestrator" / "0.50.0").mkdir(parents=True)
+
+    check = by_name(run_checks(machine_env, PULL_PS))["orchestrator"]
+
+    assert not check.ok and "0.48.0" in check.detail and "0.49" in check.detail
+
+
+@pytest.mark.parametrize("record", ["not json", json.dumps({"plugins": {}}), json.dumps({"plugins": {"orchestrator@lounisbou": [{"version": "x.y"}]}})])
+def test_orchestrator_record_absent_or_unreadable_fails(machine_env, tmp_path, record):
+    (tmp_path / "claude" / "plugins" / "installed_plugins.json").write_text(record)
+
+    check = by_name(run_checks(machine_env, PULL_PS))["orchestrator"]
+
+    assert not check.ok
 
 
 def test_launcher_check_fails_when_absent_or_different(machine_env, tmp_path):

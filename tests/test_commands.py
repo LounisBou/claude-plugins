@@ -97,7 +97,10 @@ def test_start_launches_the_projects_one_agent(phrase):
 def test_the_orchestrator_plugin_start_needs_is_a_declared_dependency():
     manifest = json.loads((REPO_ROOT / ".claude-plugin" / "plugin.json").read_text())
 
-    assert "orchestrator@lounisbou" in manifest.get("dependencies", [])
+    # The object form carries the floor: the measure file exists only from 0.49 on.
+    assert {"name": "orchestrator", "marketplace": "lounisbou", "version": ">=0.49"} in manifest.get(
+        "dependencies", []
+    )
 
 
 @pytest.mark.parametrize("kind", ["telegram", "slack"])

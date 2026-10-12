@@ -32,7 +32,7 @@ Check the setup and report the verdict.
      `pm2 delete bugs-bot-pull`, then the same `pm2 start` and `pm2 save`. When it names both the
      path and the directory, one remedy covers both: `bugs-bot doctor --install-launcher` first, then
      those steps.
-   - `orchestrator`: install the orchestrator plugin; `/bugs-bot:start` needs it.
+   - `orchestrator`: install the orchestrator plugin, 0.49 or later (`/plugin marketplace update lounisbou`, `/plugin update orchestrator@lounisbou`, then restart); `/bugs-bot:start` needs it, and `gate --measure` reads the measure file 0.49 writes.
    - `launcher`: run the first-run line above; a launcher that differs is replaced by
      `bugs-bot doctor --install-launcher`.
    - `allow rule`: the operator adds `Bash(bugs-bot:*)` himself, through

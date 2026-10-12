@@ -217,11 +217,43 @@ def _pull(ps_output: str | BugsError, pm2_jlist: str | None = None) -> Check:
     return Check("pull", False, f"{len(pids)} processes (pids {', '.join(map(str, pids))}): two pollers steal each other's messages")
 
 
+ORCHESTRATOR_KEY = "orchestrator@lounisbou"
+# The measure file `gate --measure` reads is written by the orchestrator's module from 0.49 on.
+ORCHESTRATOR_FLOOR = (0, 49)
+
+
+def _version(text: object) -> tuple[int, ...] | None:
+    parts = str(text).split(".")
+    return tuple(int(p) for p in parts) if all(p.isdigit() for p in parts) else None
+
+
 def _orchestrator(claude: Path) -> Check:
-    found = sorted((claude / "plugins" / "cache" / "lounisbou" / "orchestrator").glob("*/")) if claude.is_dir() else []
-    if found:
-        return Check("orchestrator", True, f"installed ({found[-1].name})")
-    return Check("orchestrator", False, "the orchestrator plugin is not installed: /bugs-bot:start needs it")
+    """The active orchestrator install, read from the host's own record, at or past the floor.
+
+    The cache keeps every version ever installed side by side; only the record says which one runs.
+    """
+    floor = ".".join(map(str, ORCHESTRATOR_FLOOR))
+    record = claude / "plugins" / "installed_plugins.json"
+    try:
+        entries = json.loads(record.read_text()).get("plugins", {}).get(ORCHESTRATOR_KEY) or []
+        versions = [str(e["version"]) for e in entries]
+    except (OSError, ValueError, AttributeError, KeyError, TypeError):
+        versions = []
+    if not versions:
+        return Check("orchestrator", False, f"the orchestrator plugin is not installed ({record} names no {ORCHESTRATOR_KEY}): /bugs-bot:start needs it")
+    readable = [(v, _version(v)) for v in versions]
+    known = [(v, n) for v, n in readable if n is not None]
+    if not known:
+        return Check("orchestrator", False, f"the orchestrator's installed version cannot be read ({', '.join(versions)}): {floor} or later is needed")
+    version, number = max(known, key=lambda vn: vn[1])
+    if number < ORCHESTRATOR_FLOOR:
+        return Check(
+            "orchestrator",
+            False,
+            f"orchestrator {version} is installed; {floor} or later writes the measure file `gate --measure` reads: "
+            f"/plugin marketplace update lounisbou, /plugin update {ORCHESTRATOR_KEY}, then restart",
+        )
+    return Check("orchestrator", True, f"installed ({version})")
 
 
 def _launcher(directory: Path) -> Check:

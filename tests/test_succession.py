@@ -164,7 +164,7 @@ def test_agent_md_carries_both_sides_of_the_succession():
     text = AGENT_MD.read_text()
 
     for needle in (
-        "context-gauge.sh",
+        "measure file",
         "sort -V | tail -1",
         "gate --measure",
         "agent-prompt --launcher",

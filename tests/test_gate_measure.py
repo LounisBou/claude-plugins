@@ -1,40 +1,132 @@
-"""``gate --measure``: the agent's context read through the orchestrator's gauge, located by the CLI."""
+"""``gate --measure``: the agent's context read from the orchestrator module's measure file, located by the CLI."""
 
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
 import pytest
 
-from bugs_bot.errors import BugsError
-from bugs_bot.gate import locate_gauge, measure
+from bugs_bot.gate import measure, measure_path, read_measure
 
-GAUGE_TAIL = "skills/context-gauge/scripts/context-gauge.sh"
+SESSION = "s1"
 
 
-def stub_gauge(path: Path, body: str) -> Path:
-    """Write a stand-in for the orchestrator's gauge: a shell script printing ``body``."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"#!/bin/sh\n{body}\n")
-    return path
+def write_measure(config: Path, session: str, body: str) -> Path:
+    """Write the module's measure file for ``session`` under ``config``; return its path."""
+    measure = config / "claude-orchestrator" / "measure" / f"{session}.json"
+    measure.parent.mkdir(parents=True, exist_ok=True)
+    measure.write_text(body)
+    return measure
+
+
+def line(tokens: int, window: int, percent: int = 31, model: str = "a-model") -> str:
+    """Return one JSON line as the module writes it (the MeasureReading shape)."""
+    return (
+        json.dumps(
+            {
+                "context_tokens": tokens,
+                "context_window": window,
+                "context_percent": percent,
+                "model": model,
+                "updated_at": "2026-10-10T10:00:00.000Z",
+            }
+        )
+        + "\n"
+    )
 
 
 @pytest.fixture
-def gauge(tmp_path: Path, env: dict[str, str]):
-    """Return ``gauge(body)``: point ``BUGS_BOT_GAUGE`` at a stub printing ``body``."""
+def measure_of(env: dict[str, str], tmp_path: Path):
+    """Return ``measure_of(body)``: point the tool at a config dir, name a session, write its file."""
+    config = tmp_path / "claude"
+    env["BUGS_BOT_CLAUDE_DIR"] = str(config)
+    env["CLAUDE_CODE_SESSION_ID"] = SESSION
 
-    def _gauge(body: str) -> Path:
-        path = stub_gauge(tmp_path / "gauge" / "context-gauge.sh", body)
-        env["BUGS_BOT_GAUGE"] = str(path)
-        return path
+    def _write(body: str) -> Path:
+        return write_measure(config, SESSION, body)
 
-    return _gauge
+    return _write
 
 
-def test_measure_at_the_gate_says_handover(run, bound, gauge, capsys):
-    gauge("echo context_percent=31\necho context_tokens=310000\necho context_window=1000000")
+# -- read_measure: the line itself ----------------------------------------------------------------
+
+
+def test_reads_the_module_measure_file(tmp_path):
+    measure = tmp_path / "measure" / "s1.json"
+    measure.parent.mkdir(parents=True)
+    measure.write_text('{"context_tokens":310000,"context_window":1000000,"context_percent":31,"model":"a-model","updated_at":"t"}\n')
+    out = read_measure(measure)
+    assert out["context_tokens"] == 310000
+
+
+def test_a_partial_line_reads_as_unmeasured(tmp_path):
+    measure = tmp_path / "measure" / "s2.json"
+    measure.parent.mkdir(parents=True)
+    measure.write_text('{"context_tokens":3100')
+    assert read_measure(measure) is None
+
+
+def test_an_empty_file_reads_as_unmeasured(tmp_path):
+    # The module empties the file when a session ends: that state reads as unmeasured too.
+    measure = tmp_path / "measure" / "s3.json"
+    measure.parent.mkdir(parents=True)
+    measure.write_text("")
+
+    assert read_measure(measure) is None
+
+
+def test_a_parseable_line_without_both_figures_reads_as_unmeasured(tmp_path):
+    measure = tmp_path / "measure" / "s4.json"
+    measure.parent.mkdir(parents=True)
+    measure.write_text('{"model":"a-model","updated_at":"t"}\n')
+
+    assert read_measure(measure) is None
+
+
+def test_a_missing_file_reads_as_unmeasured(tmp_path):
+    assert read_measure(tmp_path / "measure" / "never.json") is None
+
+
+# -- measure_path: the file is named by the session id, under the config dir ----------------------
+
+
+def test_measure_path_names_the_session_under_the_config_dir():
+    env = {"CLAUDE_CODE_SESSION_ID": "abc123", "CLAUDE_CONFIG_DIR": "/config"}
+
+    assert measure_path(env) == Path("/config/claude-orchestrator/measure/abc123.json")
+
+
+def test_measure_path_takes_the_tool_override_over_the_host_config_dir():
+    env = {"CLAUDE_CODE_SESSION_ID": "abc123", "BUGS_BOT_CLAUDE_DIR": "/override", "CLAUDE_CONFIG_DIR": "/config"}
+
+    assert measure_path(env) == Path("/override/claude-orchestrator/measure/abc123.json")
+
+
+def test_measure_path_never_answers_the_state_dir_override():
+    # ORCHESTRATOR_STATE_DIR governs only the roots the module shares with surviving shell
+    # writers; the measure file is the module's own artifact and stays under the config dir.
+    env = {"CLAUDE_CODE_SESSION_ID": "abc123", "CLAUDE_CONFIG_DIR": "/config", "ORCHESTRATOR_STATE_DIR": "/elsewhere"}
+
+    assert measure_path(env) == Path("/config/claude-orchestrator/measure/abc123.json")
+
+
+def test_measure_path_without_a_session_id_is_none():
+    assert measure_path({"CLAUDE_CONFIG_DIR": "/config"}) is None
+
+
+# -- measure and the command ----------------------------------------------------------------------
+
+
+def test_measure_returns_the_two_figures(tmp_path):
+    config = tmp_path / "claude"
+    write_measure(config, "s9", line(123, 456))
+
+    assert measure({"BUGS_BOT_CLAUDE_DIR": str(config), "CLAUDE_CODE_SESSION_ID": "s9"}) == (123, 456)
+
+
+def test_measure_at_the_gate_says_handover(run, bound, measure_of, capsys):
+    measure_of(line(310000, 1000000))
 
     assert run("gate", "--measure") == 0
 
@@ -43,16 +135,16 @@ def test_measure_at_the_gate_says_handover(run, bound, gauge, capsys):
     ]
 
 
-def test_measure_below_the_gate_says_no(run, bound, gauge, capsys):
-    gauge("echo context_tokens=120000\necho context_window=1000000")
+def test_measure_below_the_gate_says_no(run, bound, measure_of, capsys):
+    measure_of(line(120000, 1000000))
 
     assert run("gate", "--measure") == 0
 
     assert capsys.readouterr().out.split()[-1] == "handover=no"
 
 
-def test_measure_on_a_small_window_uses_80_percent_of_it(run, bound, gauge, capsys):
-    gauge("echo context_tokens=170000\necho context_window=200000")
+def test_measure_on_a_small_window_uses_80_percent_of_it(run, bound, measure_of, capsys):
+    measure_of(line(170000, 200000))
 
     assert run("gate", "--measure") == 0
 
@@ -60,11 +152,11 @@ def test_measure_on_a_small_window_uses_80_percent_of_it(run, bound, gauge, caps
     assert out[0] == "gate_tokens=160000" and out[-1] == "handover=yes"
 
 
-def test_measure_reads_the_gate_from_the_project_file(run, bound, gauge, capsys):
+def test_measure_reads_the_gate_from_the_project_file(run, bound, measure_of, capsys):
     project_file = Path.cwd() / ".bugs-bot.json"
     data = json.loads(project_file.read_text())
     project_file.write_text(json.dumps(data | {"gate_tokens": 100000}))
-    gauge("echo context_tokens=120000\necho context_window=1000000")
+    measure_of(line(120000, 1000000))
 
     assert run("gate", "--measure") == 0
 
@@ -72,88 +164,54 @@ def test_measure_reads_the_gate_from_the_project_file(run, bound, gauge, capsys)
     assert out[0] == "gate_tokens=100000" and out[-1] == "handover=yes"
 
 
-def test_a_failing_gauge_fails_the_command(run, bound, gauge, capsys):
-    gauge("echo 'ERROR: no session id' >&2\nexit 3")
+def test_measure_reads_the_file_of_its_own_session(run, bound, env, tmp_path, capsys):
+    config = tmp_path / "claude"
+    env["BUGS_BOT_CLAUDE_DIR"] = str(config)
+    env["CLAUDE_CODE_SESSION_ID"] = SESSION
+    write_measure(config, "another-session", line(999999, 1000000))
+    write_measure(config, SESSION, line(120000, 1000000))
+
+    assert run("gate", "--measure") == 0
+
+    assert capsys.readouterr().out.split() == [
+        "gate_tokens=300000", "context_tokens=120000", "context_window=1000000", "handover=no",
+    ]
+
+
+def test_a_missing_measure_file_fails_the_command_with_one_line(run, bound, env, tmp_path, capsys):
+    env["BUGS_BOT_CLAUDE_DIR"] = str(tmp_path / "claude")
+    env["CLAUDE_CODE_SESSION_ID"] = SESSION
 
     assert run("gate", "--measure") == 1
 
     captured = capsys.readouterr()
     assert "handover=" not in captured.out
-    assert "context gauge" in captured.err and "no session id" in captured.err
+    assert "no readable measure" in captured.err and "orchestrator" in captured.err
 
 
-def test_a_gauge_without_the_figures_fails_the_command(run, bound, gauge, capsys):
-    gauge("echo context_tokens=unavailable")
+def test_a_partial_line_fails_the_command_with_one_line(run, bound, measure_of, capsys):
+    measure_of('{"context_tokens":3100')
 
     assert run("gate", "--measure") == 1
 
-    assert "context_tokens" in capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert "handover=" not in captured.out
+    assert "no readable measure" in captured.err
 
 
-def test_measure_and_given_figures_do_not_mix(run, bound, gauge, capsys):
-    gauge("echo context_tokens=1\necho context_window=1000000")
+def test_without_a_session_id_the_command_fails(run, bound, env, tmp_path, capsys):
+    env["BUGS_BOT_CLAUDE_DIR"] = str(tmp_path / "claude")
+
+    assert run("gate", "--measure") == 1
+
+    captured = capsys.readouterr()
+    assert "handover=" not in captured.out
+    assert "CLAUDE_CODE_SESSION_ID" in captured.err
+
+
+def test_measure_and_given_figures_do_not_mix(run, bound, measure_of, capsys):
+    measure_of(line(1, 1000000))
 
     assert run("gate", "--measure", "--tokens", "5") == 1
 
     assert "--measure" in capsys.readouterr().err
-
-
-def test_measure_runs_the_gauge_alone_and_parses_its_lines(tmp_path):
-    path = stub_gauge(tmp_path / "g.sh", "")
-    calls = []
-
-    def run(argv: list[str]) -> str:
-        calls.append(argv)
-        return "context_percent=12\ncontext_tokens=123\ncontext_window=456\nmodel=x\n"
-
-    assert measure({"BUGS_BOT_GAUGE": str(path)}, run) == (123, 456)
-    assert calls == [["bash", str(path)]]
-
-
-def test_locate_gauge_takes_the_override_first(tmp_path):
-    path = stub_gauge(tmp_path / "g.sh", "")
-
-    assert locate_gauge({"BUGS_BOT_GAUGE": str(path), "BUGS_BOT_CLAUDE_DIR": str(tmp_path / "none")}) == path
-
-
-def test_locate_gauge_refuses_an_override_that_is_not_a_file(tmp_path):
-    with pytest.raises(BugsError, match="BUGS_BOT_GAUGE"):
-        locate_gauge({"BUGS_BOT_GAUGE": str(tmp_path / "missing.sh")})
-
-
-def test_locate_gauge_takes_the_newest_installed_version(tmp_path):
-    cache = tmp_path / "claude" / "plugins" / "cache" / "lounisbou" / "orchestrator"
-    for version in ("0.9.0", "0.38.0", "0.10.0"):
-        stub_gauge(cache / version / GAUGE_TAIL, "")
-    (cache / "0.40.0").mkdir()  # a half-removed version, with no gauge
-
-    found = locate_gauge({"BUGS_BOT_CLAUDE_DIR": str(tmp_path / "claude")})
-
-    assert found == cache / "0.38.0" / GAUGE_TAIL
-
-
-def test_locate_gauge_without_the_orchestrator_plugin_says_so(tmp_path):
-    with pytest.raises(BugsError, match="orchestrator"):
-        locate_gauge({"BUGS_BOT_CLAUDE_DIR": str(tmp_path / "claude")})
-
-
-def test_the_gauge_runs_in_the_callers_environment(run, bound, env, gauge, capsys):
-    # The real gauge reads the session id from its environment: whatever the caller has must reach it.
-    env["GAUGE_PROBE"] = "123456"
-    gauge("echo context_tokens=$GAUGE_PROBE\necho context_window=1000000")
-
-    assert run("gate", "--measure") == 0
-
-    assert "context_tokens=123456" in capsys.readouterr().out.split()
-
-
-def test_a_gauge_that_hangs_fails_the_command_with_one_line(run, bound, env, gauge, monkeypatch, capsys):
-    monkeypatch.setattr("bugs_bot.gate.GAUGE_TIMEOUT", 1)
-    env["PATH"] = os.environ["PATH"]
-    gauge("exec sleep 5")
-
-    assert run("gate", "--measure") == 1
-
-    captured = capsys.readouterr()
-    assert "the context gauge did not run" in captured.err
-    assert "handover=" not in captured.out

@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import re
-import subprocess
-from collections.abc import Callable, Mapping
+import json
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
 
@@ -16,68 +15,72 @@ from bugs_bot.project import PROJECT_FILE, Project, dump_project
 # on a smaller one, at GATE_SMALL_WINDOW_SHARE of the window.
 GATE_FULL_WINDOW = 1_000_000
 GATE_SMALL_WINDOW_SHARE = 0.8
-# The orchestrator plugin's gauge, under each installed version of it.
-GAUGE_GLOB = "plugins/cache/lounisbou/orchestrator/*/skills/context-gauge/scripts/context-gauge.sh"
-GAUGE_TIMEOUT = 60
+# The orchestrator plugin's hooks module writes one JSON line per session at
+# <config dir>/claude-orchestrator/measure/<session id>.json; `gate --measure` reads it.
+# The config dir, never ORCHESTRATOR_STATE_DIR: that override governs only the roots the
+# module shares with surviving shell writers, and the measure file is the module's own
+# artifact — its readers resolve the config dir as its writer does.
 
 
-def _version_key(name: str) -> tuple:
-    """Order version directory names as ``sort -V`` does for plain dotted numbers (0.10.0 after 0.9.0)."""
-    return tuple((0, int(part), "") if part.isdigit() else (1, 0, part) for part in re.split(r"(\d+)", name) if part)
+def _config_dir(env: Mapping[str, str]) -> Path:
+    """Return the host's config dir: the tool's override, else the host's, else ``~/.claude``."""
+    return Path(env.get("BUGS_BOT_CLAUDE_DIR") or env.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
 
 
-def locate_gauge(env: Mapping[str, str]) -> Path:
-    """Return the gauge to run: ``BUGS_BOT_GAUGE``, else the newest installed orchestrator's.
+def measure_path(env: Mapping[str, str]) -> Path | None:
+    """Return the measure file of the session the environment names, or ``None`` without one.
 
-    The agent runs one plain command, ``bugs-bot gate --measure``: no versioned path ever reaches a
-    permission rule, and a plugin update needs no new one.
-
-    Raises:
-        BugsError: If ``BUGS_BOT_GAUGE`` names no file, or no installed version carries the gauge.
+    The agent runs one plain command, ``bugs-bot gate --measure``: the session id and the
+    config dir it inherits from the host name the file, and no versioned path ever reaches
+    a permission rule.
     """
-    override = env.get("BUGS_BOT_GAUGE")
-    if override:
-        if not Path(override).is_file():
-            raise BugsError(f"BUGS_BOT_GAUGE is not a file: {override}")
-        return Path(override)
-    claude = Path(env.get("BUGS_BOT_CLAUDE_DIR") or Path.home() / ".claude")
-    found = sorted(claude.glob(GAUGE_GLOB), key=lambda p: _version_key(p.parents[3].name))
-    if not found:
-        raise BugsError("no context gauge found: the orchestrator plugin is not installed")
-    return found[-1]
+    session = env.get("CLAUDE_CODE_SESSION_ID", "")
+    if not session:
+        return None
+    return _config_dir(env) / "claude-orchestrator" / "measure" / f"{session}.json"
 
 
-def measure(env: Mapping[str, str], run: Callable[[list[str]], str]) -> tuple[int, int]:
-    """Run the gauge and return ``(context_tokens, context_window)``.
+def read_measure(path: Path) -> dict | None:
+    """Read the module's measure file: one JSON line, the ``MeasureReading`` shape.
+
+    A partial, empty or unparseable line — a write caught mid-flight, or a session the
+    module closed by emptying its file — reads as unmeasured (``None``): a reader between
+    two of the module's writes is the normal case, never an error to raise. The module's
+    own reader keeps the same rule.
+    """
+    try:
+        reading = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(reading, dict):
+        return None
+    for key in ("context_tokens", "context_window"):
+        value = reading.get(key)
+        if not isinstance(value, int) or isinstance(value, bool):
+            return None
+    return reading
+
+
+def measure(env: Mapping[str, str]) -> tuple[int, int]:
+    """Read the module's measure file and return ``(context_tokens, context_window)``.
 
     Args:
-        env: Where to find the gauge (``locate_gauge``).
-        run: Runs a command and returns its standard output; raises ``BugsError`` when it fails.
+        env: Where the session id and the config dir are (``measure_path``).
 
     Raises:
-        BugsError: If the gauge cannot be found, fails, or does not print both figures as integers.
+        BugsError: If the environment names no session, or its measure file holds no
+            readable line (absent, empty, partial).
     """
-    output = run(["bash", str(locate_gauge(env))])
-    figures = dict(line.split("=", 1) for line in output.splitlines() if "=" in line)
-    try:
-        return int(figures["context_tokens"]), int(figures["context_window"])
-    except (KeyError, ValueError):
-        raise BugsError(f"the context gauge gave no context_tokens / context_window figures: {output.strip()!r}") from None
-
-
-def _run_gauge(env: Mapping[str, str]) -> Callable[[list[str]], str]:
-    """Return a runner for the gauge, in the caller's environment (the gauge reads the session id there)."""
-
-    def run(argv: list[str]) -> str:
-        try:
-            done = subprocess.run(argv, capture_output=True, text=True, env=dict(env), timeout=GAUGE_TIMEOUT)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise BugsError(f"the context gauge did not run: {exc}") from None
-        if done.returncode != 0:
-            raise BugsError(f"the context gauge failed (exit {done.returncode}): {done.stderr.strip()}")
-        return done.stdout
-
-    return run
+    path = measure_path(env)
+    if path is None:
+        raise BugsError("no session id: CLAUDE_CODE_SESSION_ID is unset in the agent's environment")
+    reading = read_measure(path)
+    if reading is None:
+        raise BugsError(
+            f"no readable measure at {path}: the orchestrator plugin's hooks module writes it "
+            "each turn — load the plugin, take one turn, then retry"
+        )
+    return reading["context_tokens"], reading["context_window"]
 
 
 def cmd_gate(
@@ -92,11 +95,12 @@ def cmd_gate(
         set_to: A new gate to write first.
         window: The context window, when given by hand.
         tokens: The context size, when given by hand.
-        measure_now: Measure both through the gauge instead.
-        env: The environment (where the gauge is, and what it reads).
+        measure_now: Read both from the orchestrator module's measure file instead.
+        env: The environment (the session id and config dir that name the measure file).
 
     Raises:
-        BugsError: If ``set_to`` is not positive or the project file cannot be written, figures are both given and measured, or the gauge fails.
+        BugsError: If ``set_to`` is not positive or the project file cannot be written, figures are
+            both given and measured, or the measure file cannot be read.
     """
     if measure_now and (window is not None or tokens is not None):
         raise BugsError("--measure reads the window and the tokens itself: give neither")
@@ -111,7 +115,7 @@ def cmd_gate(
             raise BugsError(f"cannot write {path}: {exc.strerror or exc}") from None
         gate = set_to
     if measure_now:
-        tokens, window = measure(env, _run_gauge(env))
+        tokens, window = measure(env)
     if window is not None and window < GATE_FULL_WINDOW:
         gate = min(gate, int(window * GATE_SMALL_WINDOW_SHARE))
     print(f"gate_tokens={gate}")

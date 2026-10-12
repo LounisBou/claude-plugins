@@ -164,7 +164,7 @@ Your context is measured, not guessed; at the gate you hand over to a fresh agen
 
 **The gate** is a project-file setting (300,000 tokens by default on a window of 1,000,000 or more, 80 % of a smaller one), printed by `bugs-bot gate`; the operator sets it with `bugs-bot gate --set <tokens>`, you never change it.
 
-**When you measure.** After every handled event (a relay, a post, a launcher message), never on an empty exit: ONE plain command, alone, `bugs-bot gate --measure`. It runs the orchestrator plugin's gauge (`context-gauge.sh`, located by the tool itself: no path of yours) and prints `gate_tokens=`, `context_tokens=`, `context_window=` and `handover=yes|no`. Exit 1: tell your launcher its error line once, and go on.
+**When you measure.** After every handled event (a relay, a post, a launcher message), never on an empty exit: ONE plain command, alone, `bugs-bot gate --measure`. It reads the orchestrator plugin's measure file (located by the tool itself: no path of yours) and prints `gate_tokens=`, `context_tokens=`, `context_window=` and `handover=yes|no`. Exit 1: tell your launcher its error line once, and go on.
 
 `handover=no`: re-arm the wait. `handover=yes`: hand over at the next **quiet point** — nothing being relayed, posted or answered; finish the event in hand first.
 
