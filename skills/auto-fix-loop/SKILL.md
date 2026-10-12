@@ -240,7 +240,7 @@ Display:
 
 ## Commit Convention
 
-Follow the project's commit convention from CLAUDE.md (e.g., `vX.Y.Z: Description`).
+Follow the project's commit convention from CLAUDE.md (e.g., `fix(<scope>): description`).
 If no convention, default to `fix: {description}`.
 Never include `Co-Authored-By`, Claude, Anthropic, or AI references.
 

@@ -2,7 +2,10 @@
 # Refuse to run when a dependency is missing, so no skill degrades silently.
 set -u
 
-SETTINGS="${PR_REVIEW_SETTINGS:-$HOME/.claude/settings.json}"
+# Scopes the host merges, lowest precedence first: user, project, local. The
+# override (used by the tests) replaces the user file only.
+USER_SETTINGS="${PR_REVIEW_SETTINGS:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json}"
+PROJECT_DIR=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
 die() {
   printf 'error: %s\n' "$1" >&2
@@ -32,7 +35,7 @@ esac
 # The authority is enabledPlugins, not the presence of files under
 # ~/.claude/plugins/cache: a plugin can sit on disk and be inert.
 if [ "${PR_REVIEW_SKIP_PLUGINS:-0}" != "1" ]; then
-  missing=$(python3 - "$SETTINGS" <<'PY'
+  missing=$(python3 - "$USER_SETTINGS" "$PROJECT_DIR/.claude/settings.json" "$PROJECT_DIR/.claude/settings.local.json" <<'PY'
 import json, sys
 # One tuple per dependency: the keys that each satisfy it. The first key is the
 # canonical name, reported when none of the alternatives is enabled, so a
@@ -45,17 +48,18 @@ required = [
     ("pr-review-toolkit@claude-plugins-official",),
     ("github@lounisbou", "github@claude-github"),
 ]
-try:
-    with open(sys.argv[1]) as fh:
-        data = json.load(fh)
-    enabled = data["enabledPlugins"] if isinstance(data, dict) else None
-    if not isinstance(enabled, dict):
-        raise ValueError("enabledPlugins is not an object")
-except (OSError, ValueError, KeyError, TypeError):
-    # Unreadable, not JSON, or JSON of the wrong shape all mean the same
-    # thing: nothing here proves a dependency is enabled.
-    print(" ".join(group[0] for group in required))
-    sys.exit(0)
+# The later scope wins per plugin key. A file that is absent, unreadable, not
+# JSON or of the wrong shape contributes nothing; it never hides another scope.
+enabled = {}
+for path in sys.argv[1:]:
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+        scope = data["enabledPlugins"] if isinstance(data, dict) else None
+    except (OSError, ValueError, KeyError, TypeError):
+        continue
+    if isinstance(scope, dict):
+        enabled.update(scope)
 print(" ".join(
     group[0] for group in required
     if not any(enabled.get(key) is True for key in group)

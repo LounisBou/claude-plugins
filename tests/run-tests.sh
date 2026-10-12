@@ -57,7 +57,7 @@ check "github-curl is gone" "absent" \
 check "manifest declares the dependency" "github@lounisbou" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dependencies"][0])' "$ROOT/.claude-plugin/plugin.json")"
 
-check "manifest version" "0.3.7" \
+check "manifest version" "0.3.8" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$ROOT/.claude-plugin/plugin.json")"
 
 # The marketplace entry is a second copy of the same facts, read by the host that
@@ -205,6 +205,28 @@ check "a crashing python3 prints a fix line" "1" "$(printf '%s' "$output" | grep
 # it must not block.
 settings '{"enabledPlugins":{"pr-review-toolkit@claude-plugins-official":true,"github@lounisbou":true,"code-review@claude-plugins-official":false}}'
 check_status "code-review disabled is not a dependency, passes" 0 pf
+
+# Scopes: the host merges user, project and local settings; the later wins.
+pfs() {
+  env HOME="$WORK" PR_REVIEW_SETTINGS="$WORK/cfg/settings.json" PR_REVIEW_SKIP_AUTH=1 \
+    sh -c "cd '$WORK/repo' && bash '$ROOT/scripts/preflight.sh'"
+}
+mkdir -p "$WORK/repo/.claude"
+settings '{"enabledPlugins":{"pr-review-toolkit@claude-plugins-official":true}}'
+printf '%s' '{"enabledPlugins":{"github@lounisbou":true}}' > "$WORK/repo/.claude/settings.json"
+check_status "a dependency enabled only at project scope passes" 0 pfs
+rm -f "$WORK/repo/.claude/settings.json"
+
+settings '{"enabledPlugins":{"pr-review-toolkit@claude-plugins-official":true,"github@lounisbou":true}}'
+printf '%s' '{"enabledPlugins":{"github@lounisbou":false}}' > "$WORK/repo/.claude/settings.local.json"
+check_status "disabled at local scope while enabled at user fails" 10 pfs
+rm -f "$WORK/repo/.claude/settings.local.json"
+
+mkdir -p "$WORK/cfgdir"
+printf '%s' '{"enabledPlugins":{"pr-review-toolkit@claude-plugins-official":true,"github@lounisbou":true}}' > "$WORK/cfgdir/settings.json"
+check_status "CLAUDE_CONFIG_DIR is read as the user scope" 0 \
+  env HOME="$WORK" CLAUDE_CONFIG_DIR="$WORK/cfgdir" PR_REVIEW_SKIP_AUTH=1 \
+    sh -c "cd '$WORK/repo' && bash '$ROOT/scripts/preflight.sh'"
 
 echo "== preflight: GitHub token =="
 
