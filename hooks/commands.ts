@@ -22,7 +22,8 @@
 // import — so this file spells its own env resolution, its own store read and
 // its own record read, while the row parser, the staleness rule and the pane's
 // row shaper cross as plain imports from the supervision domain.
-import { parseSessionRow, paneRows, isStale, livePidsArgv, livePids, type SessionRow } from './supervision.ts'
+import { parseSessionRow, paneRows, isStale, livePidsArgv, livePids, sessionKey, type SessionRow } from './supervision.ts'
+import { hostRecordOf, roleOf } from './session-name.ts'
 import { withDeadline, isDegradedPass } from './stop-gate.ts'
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
 
@@ -95,14 +96,54 @@ export function statusText(rows: Record<string, SessionRow>): string {
 // What /orchestrator:agents says: the same rows cut to the implementer agents
 // alone — the role the dispatching domains spawn — shaped and sorted the same
 // way, so a coordinator's or an auditor's own fill never crowds the agents out.
-export function agentsText(rows: Record<string, SessionRow>): string {
+//
+// An agent is measured at the end of its turns, so one still in its first turn
+// has no row: the host's own records of the live sessions name it, and it is
+// listed last as not measured yet — « none running » beside a working agent
+// was the answer an orchestrator read while its agent worked.
+export type UnmeasuredAgent = { name: string; status: 'idle' | 'busy' | null }
+
+export function agentsText(rows: Record<string, SessionRow>, unmeasured: readonly UnmeasuredAgent[] = []): string {
   const agents: Record<string, SessionRow> = {}
   for (const [key, row] of Object.entries(rows)) {
     if (row.role === 'agent') agents[key] = row
   }
-  const labels = paneRows(agents).map(row => row.label)
+  const labels = [
+    ...paneRows(agents).map(row => row.label),
+    ...unmeasured.map(agent => [agent.name, 'agent', agent.status ?? 'status unknown', 'not measured yet'].join(' · ')),
+  ]
   if (labels.length === 0) return 'Implementer agents: none running.'
   return [`Implementer agents (${labels.length}), most urgent first — name · role · context · last measured:`, ...labels.map(label => `  ${label}`)].join('\n')
+}
+
+// The live agents the store has no row for: the host's records of its sessions
+// (<config>/sessions/<pid>.json), each pid checked alive by one ps, kept when
+// the name reads as an agent and no live row carries its session.
+async function unmeasuredAgents($: any, rows: Record<string, SessionRow>): Promise<UnmeasuredAgent[]> {
+  const dir = `${await configDir($)}/sessions`
+  let entries: { name: string; kind: string }[]
+  try {
+    entries = await $.fs.list(dir)
+  } catch {
+    return []
+  }
+  const records: [string, ReturnType<typeof hostRecordOf>][] = []
+  for (const entry of entries) {
+    const pid = entry && entry.kind === 'file' ? (entry.name.match(/^(\d+)\.json$/) ?? [])[1] : undefined
+    if (!pid) continue
+    records.push([pid, hostRecordOf(String(await $.fs.read(`${dir}/${entry.name}`).catch(() => '')))])
+  }
+  const argv = livePidsArgv(records.map(([pid]) => pid))
+  const ps = argv ? await withDeadline($.process.run(argv, { timeoutMs: await readBoundMs($) }), await readBoundMs($)).catch(() => null) : null
+  if (!ps || isDegradedPass(ps)) return []
+  const alive = livePids(String(ps.stdout ?? ''))
+  const agents: UnmeasuredAgent[] = []
+  for (const [pid, record] of records) {
+    if (!record || !record.sessionId || !alive.has(pid) || roleOf(record.name) !== 'agent') continue
+    if (sessionKey(record.sessionId) in rows) continue
+    agents.push({ name: record.name as string, status: record.status })
+  }
+  return agents.sort((a, b) => a.name.localeCompare(b.name))
 }
 
 // One row of a dispatch record, the launcher's own schema cut to what the text
@@ -192,7 +233,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   })
 
   on('command.run', { command: 'orchestrator:agents' }, async ($: any) => {
-    return { text: agentsText(await readRows($)) }
+    const rows = await readRows($)
+    return { text: agentsText(rows, await unmeasuredAgents($, rows)) }
   }).catch(async ($: any, e: any, next: any) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)

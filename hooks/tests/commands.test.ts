@@ -97,6 +97,7 @@ test('progress names the open rows and the tally, or says no record stands', () 
 // session id, a log the failures land in.
 type Fx = {
   dollar: any
+  alive: string[]
   files: Map<string, string>
   written: string[]
   env: Record<string, string>
@@ -107,7 +108,7 @@ function fakeDollar(over: { failEnv?: boolean; failSession?: boolean } = {}): Fx
   const files = new Map<string, string>()
   const written: string[] = []
   const env: Record<string, string> = { HOME }
-  const fx: Fx = { dollar: null, files, written, env, sessionId: 's-one' }
+  const fx: Fx = { dollar: null, files, written, env, sessionId: 's-one', alive: [] }
   fx.dollar = {
     session: {
       id: async () => {
@@ -150,6 +151,11 @@ function fakeDollar(over: { failEnv?: boolean; failSession?: boolean } = {}): Fx
       run: async (argv: readonly string[]) => {
         const line = logLineOf(argv)
         if (line !== null) written.push(line)
+        // ps -o pid= -p <list>: the asked pids this fixture holds alive.
+        if (argv[0] === 'ps') {
+          const asked = String(argv[argv.length - 1]).split(',')
+          return { exitCode: 0, stdout: asked.filter(pid => fx.alive.includes(pid)).join('\n'), stderr: '' }
+        }
         return { exitCode: 0, stdout: '', stderr: '' }
       },
     },
@@ -210,6 +216,37 @@ test('agents answers the agent rows alone', async () => {
   expect(answer).toEqual({ text: 'Implementer agents (1), most urgent first — name · role · context · last measured:\n  Agent : belt-p3 · agent · 30% · now' })
   const bare = fakeDollar()
   expect(await agents.handler(bare.dollar, { command: 'orchestrator:agents', args: '' })).toEqual({ text: 'Implementer agents: none running.' })
+})
+
+test('agents lists a live agent no measure has written yet, beside the measured ones', async () => {
+  const { registrations } = mounted()
+  const agents = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:agents')!
+  const fx = fakeDollar()
+  const HOSTS = `${HOME}/.claude/sessions`
+  fx.files.set(`${SESSIONS}/s-measured`, JSON.stringify(row({ role: 'agent', name: 'Agent : belt-p3' })) + '\n')
+  // The measured agent's own record: its row already lists it, never twice.
+  fx.files.set(`${HOSTS}/101.json`, JSON.stringify({ sessionId: 's-measured', name: 'Agent : belt-p3', status: 'idle' }))
+  // In its first turn: no row yet, the host's record names it.
+  fx.files.set(`${HOSTS}/102.json`, JSON.stringify({ sessionId: 's-first-turn', name: '"Agent : alert lists"', status: 'busy' }))
+  // Not an agent, a dead agent, and a record that is no record: none listed.
+  fx.files.set(`${HOSTS}/103.json`, JSON.stringify({ sessionId: 's-orch', name: 'Orch : main', status: 'idle' }))
+  fx.files.set(`${HOSTS}/104.json`, JSON.stringify({ sessionId: 's-dead', name: 'Agent : gone', status: 'idle' }))
+  fx.files.set(`${HOSTS}/105.json`, 'caught mid-write')
+  fx.files.set(`${HOSTS}/notes.txt`, 'not a record')
+  fx.alive = ['101', '102', '103', '105']
+  const answer = await agents.handler(fx.dollar, { command: 'orchestrator:agents', args: '' })
+  expect(answer).toEqual({ text: [
+    'Implementer agents (2), most urgent first — name · role · context · last measured:',
+    '  Agent : belt-p3 · agent · 30% · now',
+    '  Agent : alert lists · agent · busy · not measured yet',
+  ].join('\n') })
+  // The same agent alone, before its first measure: never « none running ».
+  fx.files.delete(`${SESSIONS}/s-measured`)
+  fx.alive = ['102']
+  expect(await agents.handler(fx.dollar, { command: 'orchestrator:agents', args: '' })).toEqual({ text: [
+    'Implementer agents (1), most urgent first — name · role · context · last measured:',
+    '  Agent : alert lists · agent · busy · not measured yet',
+  ].join('\n') })
 })
 
 test('progress answers the records this session registered, under the side-read bound', async () => {
