@@ -838,6 +838,17 @@ printf '{"id":1,"class":"x","model":"a-model","effort":"low","rounds":0,"state":
 rcrec cost "$WORK/legacy.jsonl" 1 --session s-3 >/dev/null 2>&1
 check "a legacy incomplete row with nothing counted is recounted" "false|1" \
   "$(jq -r '[(.cost_incomplete|tostring), (if .cost_usd > 0 then 1 else 0 end)]|map(tostring)|join("|")' "$WORK/legacy.jsonl")"
+# A row written before the list, incomplete with a figure counted (s-2 priced, s-3 not):
+# which session was unpriced cannot be read, so it is refused without --recount and
+# recounted with it, naming the session.
+printf '{"id":1,"class":"x","model":"a-model","effort":"low","rounds":0,"state":"open","cost_usd":0.028,"sessions":["s-2","s-3"],"cost_incomplete":true}\n' > "$WORK/mixed.jsonl"
+check "a mixed legacy row without --recount is not recounted, and says how" "0.028|1" \
+  "$(rcrec cost "$WORK/mixed.jsonl" 1 --session s-3 2>&1 | grep -c 'takes --recount' >/dev/null; jq -r '.cost_usd' "$WORK/mixed.jsonl")|$(rcrec cost "$WORK/mixed.jsonl" 1 --session s-3 2>&1 | grep -c 'takes --recount')"
+rcrec cost "$WORK/mixed.jsonl" 1 --session s-3 --recount >/dev/null 2>&1
+check "--recount on a mixed legacy row counts the named session and makes the row whole" "false||1|s-2,s-3" \
+  "$(jq -r '[(.cost_incomplete|tostring), (.unpriced|join(",")), (if .cost_usd > 0.028 then 1 else 0 end), (.sessions|join(","))]|map(tostring)|join("|")' "$WORK/mixed.jsonl")"
+check_status "--recount on a row that keeps the list is refused" 1 rcrec cost "$WORK/mixed.jsonl" 1 --session s-3 --recount
+check_status "--recount on a session the row does not count is refused" 1 rcrec cost "$WORK/legacy.jsonl" 1 --session s-9 --recount
 crec close "$PR" "$p2" --verdict approved >/dev/null
 check "an incomplete cost stays out of the average" "1" \
   "$(crec summary "$PR" | grep -c '^class=behaviour-phase pair=a-model/medium dispatches=2 closed=2 rounds_avg=0 cost_avg=0.1701$')"

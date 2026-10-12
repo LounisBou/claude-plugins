@@ -9,7 +9,7 @@
 #   dispatch-record.sh ready   <record> <id> --head <sha>
 #   dispatch-record.sh close   <record> <id> --verdict <text>
 #   dispatch-record.sh escaped <record> <id>      (a defect got past this row's review)
-#   dispatch-record.sh cost    <record> <id> --session <session id>   (adds that session's measured cost)
+#   dispatch-record.sh cost    <record> <id> --session <session id> [--recount]   (adds that session's measured cost)
 #   dispatch-record.sh summary <record> [--open]
 #   dispatch-record.sh goals   <record> init --spec <path>|none [--aim "<text>"] [--goal "<text>"]... [--replace]
 #   dispatch-record.sh goals   <record> status | plan <G> --phase "<text>" | met <G> --evidence "<token>"...
@@ -351,10 +351,14 @@ cost)
     # rounds are part of what it cost, and a pair is ranked on the whole of it.
     id="${3:-}"; [ -n "$id" ] || die "cost: a row id is required"
     require_row cost "$id"
-    shift 3; session=""
+    shift 3; session=""; force=0
     while [ $# -gt 0 ]; do
         case "$1" in
             --session) session="$2"; shift 2 ;;
+            # A row written before the `unpriced` list, incomplete with a figure already
+            # counted, cannot say which of its sessions was the unpriced one: the caller names
+            # it. Refused on any row that can say, or is not incomplete.
+            --recount) force=1; shift ;;
             *) die "cost: unknown option $1" ;;
         esac
     done
@@ -368,8 +372,14 @@ cost)
           elif ((.unpriced // []) | index($s)) != null then "recount"
           elif .unpriced == null and .cost_incomplete == true and (.cost_usd // 0) == 0 then "recount"
           else "counted" end' "$record")
+    if [ "$force" = 1 ]; then
+        legacy=$(jq -sr --argjson i "$id" --arg s "$session" '[.[]|select(.id==$i)][0]
+            | .unpriced == null and .cost_incomplete == true and ((.sessions // []) | index($s)) != null' "$record")
+        [ "$legacy" = true ] || die "cost: --recount is for a row written before the unpriced list, incomplete, that counts session $session; row $id is not one"
+        recount=named
+    fi
     if [ "$recount" = counted ]; then
-        warn "cost: session $session is already counted on row $id"; exit 0
+        warn "cost: session $session is already counted on row $id (a row written before the unpriced list takes --recount naming its unpriced session)"; exit 0
     fi
     alias=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].model // ""' "$record")
     measured=$(python3 "$ROUTING" cost --session "$session" ${alias:+--alias "$alias"} --json) || die "cost: could not measure session $session"
@@ -377,6 +387,8 @@ cost)
     # The legacy reading (incomplete, nothing counted, no list) names every counted session
     # unpriced, so the list is seeded from the sessions on the first recount.
     seed='.unpriced = (.unpriced // (if .cost_incomplete == true and (.cost_usd // 0) == 0 then (.sessions // []) else [] end))'
+    # Named by --recount: that session alone is the row's unpriced one.
+    [ "$recount" != named ] || seed='.unpriced = [$s]'
     if [ "$usd" = null ]; then
         warn "cost: session $session has an unpriced model: row $id is marked cost_incomplete"
         rewrite "if .id==\$i then $seed"' | .sessions = ((.sessions // []) - [$s] + [$s]) | .unpriced = (.unpriced - [$s] + [$s]) | .cost_incomplete=true else . end' "$id" --arg s "$session"
