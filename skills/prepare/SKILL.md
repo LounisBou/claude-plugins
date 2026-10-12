@@ -12,8 +12,10 @@ type confirmed once, the plan written phase by phase, and one line appended to t
 roadmap. It creates no branch and no state file, so it runs while another feature is
 in progress on another branch. `implement:feature` later offers it as a start.
 
-**Preflight:** run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh"` as the first
-action. A non-zero exit stops the skill: print its output verbatim and do nothing else.
+**Preflight:** when this text opens on a `Preflight: passed` line, the check already
+ran before the text was loaded: skip it. Otherwise run
+`bash "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh"` as the first action. A non-zero
+exit stops the skill: print its output verbatim and do nothing else.
 
 **Announce at start:** "I am using implement:prepare to plan this ahead." Speak to
 the user in the user's language; write every artifact in English.

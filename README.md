@@ -38,6 +38,42 @@ below.
 - **`/implement:prepare`** — plan a future feature onto `ROADMAP.md` without
   touching a branch, so it coexists with a feature in progress on another one.
 
+## The hooks module
+
+`hooks/` holds a module the host loads beside the skills. Where it loads, it
+does five things; where it does not, every skill and command runs from its
+markdown exactly as before, and each of its hooks falls back to that path when
+it fails.
+
+- **The commands answer at once.** `/implement:install` and `/implement:doctor`
+  are answered by the module, without a model turn, from the merged settings of
+  every scope.
+- **The preflight runs before the skill.** The module checks the dependency and
+  the repository as the skill's text is loaded: a failure replaces the text with
+  the `error:`/`fix:` lines, a pass leads it with a `Preflight: passed` line and
+  the state derived from the branch, and the skill skips its own preflight call.
+- **One state tool.** `mcp__implement__state` answers `get` (branch, codename,
+  artifacts path and mode, ignore-guard verdict, head, clean tree, the parsed
+  `IMPLEMENTATION.md` and its next phase) and `mark` (one row, its sha resolved
+  from `HEAD`). The skills use it in place of their derivation blocks when it is
+  listed.
+- **The Iron Rules are held at the call.** While `implement:phase` or
+  `implement:close` is armed, a `git push`, a `git merge`, `gh pr create`,
+  `gh pr merge` and the github tool's `pr-create` and `pr-merge` are refused;
+  while `implement:phase` is armed, so is a subagent other than `Explore`; while
+  `implement:check` runs, an edit, a `git add` and a `git commit` are refused
+  until its verdict line is written. No commit trailer is asked for while
+  `feature`, `phase` or `close` is armed.
+- **A band above the prompt** shows the phase run: phase N of M, its status, the
+  sha it started from, and the head.
+
+A guard stays armed across turns, so a phase stopped on a question resumes
+under the same rules. It is released by another implement skill starting, the
+user naming the action in a prompt (`push`, `merge`, `pull request`, `PR`,
+`agent`), an interrupted turn, the conversation ending or being cleared, and
+`/implement:release-guard`. A shell line is read word by word: a guarded command
+named inside quotes, a comment or a here-document is not a call.
+
 ## The artifact layout
 
 ```

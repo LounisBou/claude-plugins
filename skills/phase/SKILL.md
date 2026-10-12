@@ -13,8 +13,10 @@ written here, inline: failing tests first, the code, the project's own gate, one
 commit, then a check of what the commit range produced. Read-only search subagents
 are welcome; the work itself is never handed to one.
 
-**Preflight:** run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh"` as the first
-action. A non-zero exit stops the skill: print its output verbatim and do nothing else.
+**Preflight:** when this text opens on a `Preflight: passed` line, the check already
+ran before the text was loaded: skip it. Otherwise run
+`bash "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh"` as the first action. A non-zero
+exit stops the skill: print its output verbatim and do nothing else.
 
 **Announce at start:** "I am using implement:phase to run the plan." Speak to the
 user in the user's language; write every artifact in English.
@@ -36,6 +38,15 @@ user in the user's language; write every artifact in English.
 When `--docs <path>` was given, `export DOCS_OVERRIDE=<path>` before EVERY block
 below, not only the first: each block is its own shell and inherits nothing from the
 one before it.
+
+When the `mcp__implement__state` tool is listed, one call replaces the derivation:
+`get`, with `docs` set to the `--docs` path when one was given, answers the branch,
+the codename, the artifacts path and mode, the ignore-guard verdict, the head,
+whether the tree is clean, and the parsed state file with its next phase. A verdict
+other than `ok` is the stop it names; `artifacts path given, ignore guard skipped`
+is not a stop. `mark` (`phase`, `status`, `milestone: "HEAD"`) writes one row of the
+table, resolving the sha itself: it replaces the hand edits of the loop below.
+Without the tool, the blocks below are the path, and they compute the same values.
 
 ```bash
 # Each bash block is its own shell; derive rather than inherit.
@@ -205,6 +216,12 @@ NEVER mark a phase done while its check is red or its gate is untested
 ```
 
 Read-only search subagents are the one exception, and they read; they do not write.
+
+With this plugin's hooks module loaded, the first two lines are also held at the
+call: a push, a merge, a pull request and a subagent other than `Explore` are
+refused there, from this skill's start until another implement skill starts, the
+user asks for the action in a prompt, interrupts the turn, or runs
+`/implement:release-guard`. A refusal is a stop to report, never a wall to go around.
 
 ---
 

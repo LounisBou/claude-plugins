@@ -12,8 +12,10 @@ its codename, title, branch type and bump type, a branch cut from the main branc
 and a plan written phase by phase. It ends on a planned branch with the state file
 every later command reads. No code is written here.
 
-**Preflight:** run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh"` as the first
-action. A non-zero exit stops the skill: print its output verbatim and do nothing else.
+**Preflight:** when this text opens on a `Preflight: passed` line, the check already
+ran before the text was loaded: skip it. Otherwise run
+`bash "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh"` as the first action. A non-zero
+exit stops the skill: print its output verbatim and do nothing else.
 
 **Announce at start:** "I am using implement:feature to open this feature." Speak to
 the user in the user's language; write every artifact in English.

@@ -12,8 +12,10 @@ feature declared, a summary of everything the branch carries, and the removal of
 local working notes. It refuses while a phase is not done or the tree is not clean.
 What comes after the branch is the user's and is never done here.
 
-**Preflight:** run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh"` as the first
-action. A non-zero exit stops the skill: print its output verbatim and do nothing else.
+**Preflight:** when this text opens on a `Preflight: passed` line, the check already
+ran before the text was loaded: skip it. Otherwise run
+`bash "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh"` as the first action. A non-zero
+exit stops the skill: print its output verbatim and do nothing else.
 
 **Announce at start:** "I am using implement:close to finish this branch." Speak to
 the user in the user's language; write every artifact in English.
@@ -28,6 +30,10 @@ NEVER close while a phase is not done, or while the tree is dirty
 NEVER touch a version file when the bump type is none
 ```
 
+With this plugin's hooks module loaded, the push, the merge and the pull request are
+also refused at the call, until the user asks for one in a prompt, interrupts the
+turn, or runs `/implement:release-guard`.
+
 ---
 
 ## Preconditions
@@ -36,6 +42,14 @@ NEVER touch a version file when the bump type is none
 name (`feat/<codename>` or `fix/<codename>`). When `--docs <path>` was given,
 `export DOCS_OVERRIDE=<path>` before EVERY block below, not only the first: each
 block is its own shell and inherits nothing from the one before it.
+
+When the `mcp__implement__state` tool is listed, one call replaces the derivation:
+`get`, with `docs` set to the `--docs` path when one was given, answers the branch,
+the codename, the artifacts path and mode, the ignore-guard verdict, the head,
+whether the tree is clean, and the parsed state file with its next phase. A verdict
+other than `ok` is the stop it names; `artifacts path given, ignore guard skipped`
+is not a stop. The bump, the base and every row are in the state it returns. Without
+the tool, the blocks below are the path, and they compute the same values.
 
 ```bash
 # Each bash block is its own shell; derive rather than inherit.

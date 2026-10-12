@@ -12,8 +12,10 @@ verifications, each carrying the evidence that produced it, then one table and o
 verdict. It re-runs the project's gate itself rather than believing a report of it.
 It edits nothing: a defect is named here and repaired elsewhere.
 
-**Preflight:** run `bash "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh"` as the first
-action. A non-zero exit stops the skill: print its output verbatim and do nothing else.
+**Preflight:** when this text opens on a `Preflight: passed` line, the check already
+ran before the text was loaded: skip it. Otherwise run
+`bash "${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh"` as the first action. A non-zero
+exit stops the skill: print its output verbatim and do nothing else.
 
 **Announce at start:** "I am using implement:check to verify this delivery against
 its plan." Speak to the user in the user's language; write every artifact in English.
@@ -31,6 +33,10 @@ NEVER pass a row whose evidence was not read in this run
 A verification with no output quoted was not done. A claim with no evidence is a
 `FAIL`, not a doubt — `superpowers:verification-before-completion` states the same
 rule for the work this skill reads.
+
+With this plugin's hooks module loaded, an edit, a `git add` and a `git commit` are
+also refused at the call from this skill's start until its verdict line is written
+under the table, its turn ends, or the user speaks.
 
 ---
 
@@ -51,6 +57,14 @@ Two values travel by the environment rather than by a positional argument, becau
 each bash block below is its own shell and inherits nothing from the one before it:
 `export RANGE=<base>..<head>` before the blocks below, and, when `--docs <path>` was
 given, `export DOCS_OVERRIDE=<path>` before EVERY block below, not only the first.
+
+When the `mcp__implement__state` tool is listed, one call replaces the derivation:
+`get`, with `docs` set to the `--docs` path when one was given, answers the branch,
+the codename, the artifacts path and mode, the ignore-guard verdict, the head,
+whether the tree is clean, and the parsed state file with its next phase. A verdict
+other than `ok` is the stop it names; `artifacts path given, ignore guard skipped`
+is not a stop. The range is still exported for verification 2. Without the tool, the
+blocks below are the path, and they compute the same values.
 
 ```bash
 # Each bash block is its own shell; derive rather than inherit.

@@ -1,0 +1,4 @@
+{
+  "description": "The implement hooks module",
+  "modules": ["./register.ts"]
+}

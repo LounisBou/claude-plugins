@@ -38,8 +38,8 @@ check_status() {
 echo "== manifests =="
 MAN="$ROOT/.claude-plugin/plugin.json"; MKT="$ROOT/.claude-plugin/marketplace.json"
 check "plugin is named implement" "implement" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$MAN")"
-check "manifest version" "0.1.2" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$MAN")"
-check "marketplace and manifest agree on the version" "0.1.2 0.1.2" \
+check "manifest version" "0.2.0" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$MAN")"
+check "marketplace and manifest agree on the version" "0.2.0 0.2.0" \
   "$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["metadata"]["version"], m["plugins"][0]["version"])' "$MKT")"
 check "descriptions are identical" "True" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["description"]==json.load(open(sys.argv[2]))["plugins"][0]["description"])' "$MAN" "$MKT")"
@@ -171,7 +171,7 @@ phantoms=$(for skill in feature phase check close prepare; do
   grep -oE '(superpowers|implement):[a-z-]+' "$ROOT/skills/$skill/SKILL.md" 2>/dev/null | sort -u | while read -r ref; do
     case "$ref" in
       (superpowers:*) [ -d "$SP_ROOT/skills/${ref#superpowers:}" ] || printf '%s:%s ' "$skill" "$ref" ;;
-      (implement:*)   [ -d "$ROOT/skills/${ref#implement:}" ] || printf '%s:%s ' "$skill" "$ref" ;;
+      (implement:*)   [ -d "$ROOT/skills/${ref#implement:}" ] || [ -f "$ROOT/commands/${ref#implement:}.md" ] || printf '%s:%s ' "$skill" "$ref" ;;
     esac
   done
 done)
@@ -408,6 +408,48 @@ check "close takes away the empty parents it leaves" "1" \
   "$(awk '/^```bash/ { b = 1; next } /^```/ { b = 0 }
           b && index($0, "rmdir docs/features docs") { seen++ }
           END { print (seen > 0) ? 1 : 0 }' "$CLOSE_DOC")"
+
+echo "== module =="
+# The hooks module answers what the markdown does when it is not loaded. Its own
+# tests run in the host's test kit; what is pinned here is the seam between the
+# two halves: the contract strings, the state file's two parsers, the manifest.
+check "hooks.json names the module" "./register.ts" \
+  "$(python3 -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1]))["modules"]))' "$ROOT/hooks/hooks.json")"
+check "the manifest names the state contract, and it exists" "1" \
+  "$(python3 -c 'import json,os,sys; t=json.load(open(sys.argv[1])).get("types",""); print(1 if t and os.path.isfile(os.path.join(sys.argv[2], t)) else 0)' "$MAN" "$ROOT")"
+check "the module leads a skill with the line the skills skip on" "1" \
+  "$(grep -c "^export const PREFLIGHT_PASSED = 'Preflight: passed'$" "$ROOT/hooks/core.ts")"
+for skill in feature phase check close prepare; do
+  check "$skill skips its preflight on the module's line" "1" \
+    "$(grep -c 'when this text opens on a `Preflight: passed` line' "$ROOT/skills/$skill/SKILL.md")"
+done
+for skill in phase check close; do
+  check "$skill names the state tool" "1" \
+    "$(grep -c 'mcp__implement__state' "$ROOT/skills/$skill/SKILL.md" | awk '{print ($1 >= 1) ? 1 : 0}')"
+done
+
+# One fixture, two parsers: the module's (hooks/core.test.ts holds the same text)
+# and the close skill's own grep and sed lines, read out of the skill and run.
+FIX="$ROOT/tests/fixtures/state-table.md"
+check "the module's test reads the same fixture" "True" \
+  "$(python3 -c 'import sys; s=open(sys.argv[1]).read(); a=s.index("const FIXTURE = `")+17; print(s[a:s.index("`", a)]==open(sys.argv[2]).read())' "$ROOT/hooks/core.test.ts" "$FIX")"
+close_line() { grep -E "^$1" "$CLOSE_DOC" | head -1; }
+mkdir -p "$WORK/fx/feat"; cp "$FIX" "$WORK/fx/feat/IMPLEMENTATION.md"
+check "close's parser reads the fixture's bump" "minor" \
+  "$(DOCS="$WORK/fx/feat" bash -c "$(close_line 'BUMP=')"'; echo "$BUMP"')"
+check "close's parser reads the fixture's base" "abc1234" \
+  "$(DOCS="$WORK/fx/feat" bash -c "$(close_line 'BASE=')"'; echo "$BASE"')"
+check "close's parser sees the fixture's open phase" "a phase is not done" \
+  "$(DOCS="$WORK/fx/feat" bash -c "$(close_line 'grep -qE')")"
+sed -e 's/| doing | 9f31a0c |/| done | 9f31a0c |/' -e 's/| todo |  |/| done | 1234abc |/' "$FIX" > "$WORK/fx/feat/IMPLEMENTATION.md"
+check "close's parser passes the fixture once every row is done" "" \
+  "$(DOCS="$WORK/fx/feat" bash -c "$(close_line 'grep -qE')")"
+
+# The host validates the module the way it loads it, and runs its tests.
+check "the host validates the plugin" "0" \
+  "$(claude plugin validate "$ROOT" >/dev/null 2>&1; echo $?)"
+check "the module's tests pass in the host's kit" "0" \
+  "$(claude plugin test "$ROOT" >/dev/null 2>&1; echo $?)"
 
 echo
 echo "$pass passed, $fail failed"
