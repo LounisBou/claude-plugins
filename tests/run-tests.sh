@@ -819,6 +819,25 @@ crec cost "$PR" "$p2" --session s-2 >/dev/null
 crec cost "$PR" "$p2" --session s-3 >/dev/null 2>&1
 check "an unpriced session marks the row cost_incomplete, its priced one still counted" "true|s-2,s-3|0.028" \
   "$(jq -r --argjson i "$p2" 'select(.id==$i)|[(.cost_incomplete|tostring), (.sessions|join(",")), (.cost_usd*10000|round/10000|tostring)]|join("|")' "$PR")"
+check "the unpriced session is listed as such" "s-3" "$(jq -r --argjson i "$p2" 'select(.id==$i)|.unpriced|join(",")' "$PR")"
+# A price written later lets the unpriced session be counted: it is recounted, not refused,
+# and the row is whole again. A copy of the row is used so the average below is unchanged.
+RC="$WORK/recount.jsonl"; jq -c --argjson i "$p2" 'select(.id==$i)|.id=1' "$PR" > "$RC"
+RCS="$WORK/rcstate"; mkdir -p "$RCS/routing"
+jq '. + {"d-model-1": {"input": 1.0, "output": 5.0, "cache_write_5m": 1.25, "cache_write_1h": 2.0, "cache_read": 0.1}}' \
+  "$ROOT/tests/fixtures/routing/prices.json" > "$RCS/routing/prices.json"
+rcrec() { ORCHESTRATOR_STATE_DIR="$RCS" ORCHESTRATOR_PROJECTS_DIR="$ROOT/tests/fixtures/routing/projects" bash "$REC" "$@"; }
+rcrec cost "$RC" 1 --session s-3 >/dev/null 2>&1
+check "a session counted unpriced is recounted once priced, and the row is whole" "false|s-2,s-3||1" \
+  "$(jq -r '[(.cost_incomplete|tostring), (.sessions|join(",")), (.unpriced|join(",")), (if .cost_usd > 0.028 then 1 else 0 end)]|map(tostring)|join("|")' "$RC")"
+rc_before=$(jq -r '.cost_usd' "$RC")
+check "a session counted with a figure is never counted twice" "$rc_before|1" \
+  "$(rcrec cost "$RC" 1 --session s-3 2>/dev/null; jq -r '.cost_usd' "$RC")|$(rcrec cost "$RC" 1 --session s-3 2>&1 | grep -c 'already counted')"
+# A row written before the list existed: incomplete with nothing counted reads as all unpriced.
+printf '{"id":1,"class":"x","model":"a-model","effort":"low","rounds":0,"state":"open","cost_usd":0,"sessions":["s-3"],"cost_incomplete":true}\n' > "$WORK/legacy.jsonl"
+rcrec cost "$WORK/legacy.jsonl" 1 --session s-3 >/dev/null 2>&1
+check "a legacy incomplete row with nothing counted is recounted" "false|1" \
+  "$(jq -r '[(.cost_incomplete|tostring), (if .cost_usd > 0 then 1 else 0 end)]|map(tostring)|join("|")' "$WORK/legacy.jsonl")"
 crec close "$PR" "$p2" --verdict approved >/dev/null
 check "an incomplete cost stays out of the average" "1" \
   "$(crec summary "$PR" | grep -c '^class=behaviour-phase pair=a-model/medium dispatches=2 closed=2 rounds_avg=0 cost_avg=0.1701$')"

@@ -359,17 +359,29 @@ cost)
         esac
     done
     [ -n "$session" ] || die "cost: --session is required"
-    if [ "$(jq -sr --argjson i "$id" --arg s "$session" '[.[]|select(.id==$i)][0].sessions // [] | index($s) != null' "$record")" = true ]; then
+    # A session counted while its model had no price is counted again once it has one: the
+    # row lists it under `unpriced`, and a row written before that list existed is read as all
+    # unpriced when it is incomplete with nothing counted. A session counted with a figure is
+    # never counted twice.
+    recount=$(jq -sr --argjson i "$id" --arg s "$session" '[.[]|select(.id==$i)][0]
+        | if ((.sessions // []) | index($s)) == null then "new"
+          elif ((.unpriced // []) | index($s)) != null then "recount"
+          elif .unpriced == null and .cost_incomplete == true and (.cost_usd // 0) == 0 then "recount"
+          else "counted" end' "$record")
+    if [ "$recount" = counted ]; then
         warn "cost: session $session is already counted on row $id"; exit 0
     fi
     alias=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].model // ""' "$record")
     measured=$(python3 "$ROUTING" cost --session "$session" ${alias:+--alias "$alias"} --json) || die "cost: could not measure session $session"
     usd=$(printf '%s' "$measured" | jq -r '.cost_usd // "null"')
+    # The legacy reading (incomplete, nothing counted, no list) names every counted session
+    # unpriced, so the list is seeded from the sessions on the first recount.
+    seed='.unpriced = (.unpriced // (if .cost_incomplete == true and (.cost_usd // 0) == 0 then (.sessions // []) else [] end))'
     if [ "$usd" = null ]; then
         warn "cost: session $session has an unpriced model: row $id is marked cost_incomplete"
-        rewrite 'if .id==$i then .sessions = ((.sessions // []) + [$s]) | .cost_incomplete=true else . end' "$id" --arg s "$session"
+        rewrite "if .id==\$i then $seed"' | .sessions = ((.sessions // []) - [$s] + [$s]) | .unpriced = (.unpriced - [$s] + [$s]) | .cost_incomplete=true else . end' "$id" --arg s "$session"
     else
-        rewrite 'if .id==$i then .sessions = ((.sessions // []) + [$s]) | .cost_usd = ((.cost_usd // 0) + $u) else . end' "$id" \
+        rewrite "if .id==\$i then $seed"' | .sessions = ((.sessions // []) - [$s] + [$s]) | .unpriced = (.unpriced - [$s]) | .cost_usd = ((.cost_usd // 0) + $u) | .cost_incomplete = (.unpriced | length > 0) else . end' "$id" \
             --arg s "$session" --argjson u "$usd"
     fi
     echo "cost: row $id +$usd (session $session)"
