@@ -372,6 +372,9 @@ rm -f "$CHAINS/ttys899.jsonl" "$CHAINS/ttys898.jsonl"
 check "an existing test's assertion is never edited to pass: brief rule, template, review item" "1|1|1" \
   "$(grep -c "An existing test's assertion is never edited to make it pass" "$ROOT/skills/orchestrator/references/briefs.md")|$(grep -c "Never edit an existing test's assertion to make it pass" "$ROOT/templates/agent-phase-brief.md")|$(grep -c "A diff that changes an existing test's assertions is read first" "$ROOT/skills/orchestrator/references/review.md")"
 
+check "a TODO item of a pull request description is a task-list checkbox" "1" \
+  "$(grep -c 'a TODO item is a task-list checkbox, `- \[ \] <step>`, never a bare `- ` bullet' "$ROOT/skills/orchestrator/references/briefs.md")"
+
 echo "== dispatch record =="
 
 # The routing rule says a tier drop that costs a second corrective round is reverted for
