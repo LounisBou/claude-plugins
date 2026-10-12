@@ -40,10 +40,10 @@ check "declares the github dependency" "github@lounisbou" \
 check "marketplace lists the plugin" "norms" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["plugins"][0]["name"])' "$ROOT/.claude-plugin/marketplace.json")"
 
-check "plugin version" "0.1.2" \
+check "plugin version" "0.1.3" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$ROOT/.claude-plugin/plugin.json")"
 
-check "marketplace plugin version" "0.1.2" \
+check "marketplace plugin version" "0.1.3" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["plugins"][0]["version"])' "$ROOT/.claude-plugin/marketplace.json")"
 
 echo "== components =="
@@ -171,6 +171,63 @@ check "conformity agent reads a rule's cited reference before flagging" "1" \
   "$(grep -c -F 'Reference:' "$PC")"
 check "learn can file a rule under an existing project section" "1" \
   "$(grep -c -F 'already present in the project' "$ROOT/commands/learn.md")"
+
+echo "== base branch resolver =="
+
+BASE_SH="$ROOT/scripts/resolve_base.sh"
+GIT="git -c user.name=t -c user.email=t@example.invalid -c commit.gpgsign=false"
+
+# Fixtures never touch the network: a stub gh answers `pr view` from $FAKE_PR_BASE.
+mkdir -p "$WORK/bin"
+cat > "$WORK/bin/gh" <<'STUB'
+#!/bin/bash
+[ -n "${FAKE_PR_BASE:-}" ] && echo "$FAKE_PR_BASE" && exit 0
+exit 1
+STUB
+chmod +x "$WORK/bin/gh"
+
+# mkrepo <dir> <default-branch>: one commit on the default branch, then a feature
+# branch with one more commit. Prints nothing; sets nothing.
+mkrepo() {
+  git init -q -b "$2" "$1"
+  (cd "$1" && $GIT commit -q --allow-empty -m base && $GIT checkout -q -b feature \
+    && $GIT commit -q --allow-empty -m work)
+}
+base_in() { # <dir> [args...]: run the resolver inside <dir>
+  local d="$1"; shift
+  (cd "$d" && env PATH="$WORK/bin:$PATH" "$BASE_SH" "$@" 2>/dev/null)
+}
+
+# Default branch master, with an origin whose HEAD names it. Hard-coded main breaks here.
+mkrepo "$WORK/master-origin-src" master
+(cd "$WORK/master-origin-src" && git checkout -q master)
+git clone -q "$WORK/master-origin-src" "$WORK/master-clone" 2>/dev/null
+(cd "$WORK/master-clone" && $GIT checkout -q -b feature && $GIT commit -q --allow-empty -m work)
+want=$(cd "$WORK/master-clone" && git rev-parse origin/master)
+check "default branch master resolves through origin/HEAD" "$want" "$(base_in "$WORK/master-clone")"
+
+# Stacked: the open PR targets parent, which is ahead of main.
+mkrepo "$WORK/stack" main
+(cd "$WORK/stack" && $GIT checkout -q -b parent main && $GIT commit -q --allow-empty -m parent-work \
+  && $GIT checkout -q -b child && $GIT commit -q --allow-empty -m child-work)
+want=$(cd "$WORK/stack" && git rev-parse parent)
+check "stacked PR resolves to its base branch" "$want" "$(FAKE_PR_BASE=parent base_in "$WORK/stack")"
+check "explicit base wins over the PR base" "$(cd "$WORK/stack" && git rev-parse main)" \
+  "$(FAKE_PR_BASE=parent base_in "$WORK/stack" main)"
+
+# No remote, no PR: falls back to main.
+mkrepo "$WORK/lonely" main
+want=$(cd "$WORK/lonely" && git rev-parse main)
+check "no remote falls back to main" "$want" "$(base_in "$WORK/lonely")"
+
+# An unknown explicit base is an error, not a silent fallback.
+(cd "$WORK/lonely" && "$BASE_SH" nope >/dev/null 2>&1)
+check "unknown explicit base exits 1" "exit 1" "exit $?"
+
+check "check command calls the resolver, not a hard-coded main" "0" \
+  "$(grep -c 'merge-base HEAD main' "$ROOT/commands/check.md" "$ROOT/agents/norms-diff-scope.md" | awk -F: '{s+=$2} END {print s+0}')"
+check "suggested commit messages carry a type" "0" \
+  "$(grep -c 'git commit -m "Update project' "$ROOT/commands/learn.md")"
 
 echo
 echo "$pass passed, $fail failed"

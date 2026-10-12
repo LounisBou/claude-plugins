@@ -54,7 +54,7 @@ For each hunk in the diff, check:
 
 1. Get the branch name from `git branch --show-current`
 2. Infer the PR purpose from the branch name
-3. Get the full diff: `git diff $(git merge-base HEAD main)...HEAD`
+3. Get the full diff: `git diff "$BASE"...HEAD`, where `BASE` is the base commit passed by the caller, or else `BASE=$("${CLAUDE_PLUGIN_ROOT}/scripts/resolve_base.sh")`
 4. For each file in the diff:
    a. Check topical relevance against branch purpose
    b. For each hunk, check for minimal diff violations

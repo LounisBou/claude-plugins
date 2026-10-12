@@ -1,6 +1,6 @@
 ---
 description: "Analyze code against established project patterns and conventions using parallel agents"
-argument-hint: "[agents-to-run] [use also <path> as pattern reference]"
+argument-hint: "[agents-to-run] [base=<branch>] [use also <path> as pattern reference]"
 allowed-tools: ["Bash", "Glob", "Grep", "Read", "Task", "Edit", "Write", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "AskUserQuestion"]
 ---
 
@@ -65,8 +65,11 @@ Include this status in the summary report.
 ### Step 2: Get Changed Files
 
 ```bash
-git diff --name-only $(git merge-base HEAD main)...HEAD
+BASE=$("${CLAUDE_PLUGIN_ROOT}/scripts/resolve_base.sh" [<base>]) || exit 1
+git diff --name-only "$BASE"...HEAD
 ```
+
+`<base>` is the optional `base=<branch>` token of the arguments (for example `/norms:check base=develop`). Without it the script uses the base of the open pull request, then the remote default branch, then `main`. Pass `$BASE` to every agent that needs the diff.
 
 Classify each file into categories:
 - **source**: Application code files
@@ -141,8 +144,8 @@ Message 2: [Task call: norms-variable-naming agent]
 Each agent prompt MUST include:
 1. Project type and framework
 2. List of changed files relevant to that agent
-3. The full diff for those files (from `git diff $(git merge-base HEAD main)...HEAD -- <files>`)
-4. Branch name (for diff-scope agent)
+3. The full diff for those files (from `git diff "$BASE"...HEAD -- <files>`)
+4. Branch name and the base commit `$BASE` (for diff-scope agent)
 5. **External reference paths** (for pattern-conformity agent only): If the user specified external codebases, include the validated paths so the agent can search them for reference files
 
 ### Step 5: Present Summary Report
@@ -303,12 +306,13 @@ Wait for user response again. This loop continues until the user picks Fix or Pa
    ```bash
    git add <specific-files>
    git commit -m "$(cat <<'EOF'
-   <short description of the code change>
+   <type>(<scope>): <short description of the code change>
    EOF
    )"
    ```
    Commit message rules:
-   - Describe the code change only (e.g., "Rename usr variable to user in auth service")
+   - Conventional Commits: `<type>[(<scope>)]: <description>`, type one of `feat|fix|chore|refactor|style|docs|test|perf|build|ci`
+   - Describe the code change only (e.g., "refactor(auth): rename usr variable to user")
    - NEVER mention: norms check, TODO list, Claude, agent name, review
    - Keep under 72 characters
 4. **Record the commit hash** for the completion summary

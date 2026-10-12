@@ -151,7 +151,7 @@ After all rules are processed:
 2. Commit:
 ```bash
 git add CONTRIBUTING.md
-git commit -m "Update project code norms from PR review feedback"
+git commit -m "docs(contributing): update project code norms from PR review feedback"
 ```
 3. Present summary:
 
