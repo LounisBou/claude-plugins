@@ -435,6 +435,21 @@ else
   printf '  FAIL %s (got: %s)\n' "installed entry point runs the active plugin install" "$actual"; fail=$((fail + 1))
 fi
 
+# The plugin is named `statusbar` (the host reserves the `claude-` prefix); the entry point
+# finds it under that name, and still under the old one until a machine reinstalls.
+CFG=$(fresh_config "")
+mkdir -p "$CFG/plugins" "$WORK/renamed/statusline"
+printf '#!/bin/bash\necho renamed-install\n' > "$WORK/renamed/statusline/statusline.sh"
+printf '{"plugins":{"statusbar@some-market":[{"installPath":"%s"}]}}' "$WORK/renamed" \
+  > "$CFG/plugins/installed_plugins.json"
+CLAUDE_CONFIG_DIR="$CFG" bash "$INSTALL" >/dev/null
+actual=$(printf '{}' | CLAUDE_CONFIG_DIR="$CFG" bash "$(dest_for "$CFG")")
+if [ "$actual" = "renamed-install" ]; then
+  printf '  ok   %s\n' "installed entry point runs the active install under the plugin's new name"; pass=$((pass + 1))
+else
+  printf '  FAIL %s (got: %s)\n' "installed entry point runs the active install under the plugin's new name" "$actual"; fail=$((fail + 1))
+fi
+
 # The manifest's options are exactly the keys the default settings file names.
 expected=$(sed 's/=.*//' "$HERE/../statusline/statusline-config.default.txt" | sort)
 declared=$(jq -r '.userConfig | keys[]' "$HERE/../.claude-plugin/plugin.json" | sort)

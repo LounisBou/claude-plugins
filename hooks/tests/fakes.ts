@@ -51,7 +51,7 @@ export function fakeDollar(opts: FakeOptions = {}) {
       },
       write: async (p: string, text: string) => { files.set(p, text) },
     },
-    plugin: { name: 'claude-statusbar', root: '/plugins/sb' },
+    plugin: { name: 'statusbar', root: '/plugins/sb' },
     process: {
       run: async (argv: readonly string[]) => {
         ran.push(argv)

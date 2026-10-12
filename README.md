@@ -17,8 +17,8 @@ ctx: 26% │ 5h: 47% ▓▓▓▓▓░░░░░ → 2h13 │ 7d: 50% ▓▓�
 
 ```
 /plugin marketplace add LounisBou/claude-plugins-marketplace
-/plugin install claude-statusbar@lounisbou
-/claude-statusbar:install
+/plugin install statusbar@lounisbou
+/statusbar:install
 ```
 
 The `lounisbou` marketplace also lists [claude-orchestrator](https://github.com/LounisBou/claude-orchestrator), installable the same way once the marketplace is added.
@@ -36,6 +36,22 @@ cd claude-statusbar && ./install.sh
 `./install.sh --dry-run` shows what would happen without changing anything.
 
 Restart your session to see the bar.
+
+
+### Upgrade from claude-statusbar (1.x)
+
+The plugin is now named `statusbar`: the host reserves the `claude-` prefix. The status
+line itself keeps running through the change, since its entry point finds the active
+install under either name.
+
+```
+/plugin uninstall claude-statusbar@lounisbou
+/plugin install statusbar@lounisbou
+/statusbar:install
+```
+
+Uninstall the old plugin with `/plugin uninstall` alone, never with its own
+`/claude-statusbar:uninstall`, which would remove the installed status line.
 
 ## Requirements
 
@@ -66,14 +82,14 @@ The status line is a shell command that reads `statusline-config.txt` in
 | `RESET_COUNTDOWN` | 1 | `1` = `2h13`, `0` = absolute time/date |
 | `SHOW_LINES_CHANGED` | 1 | `+added/-removed` |
 
-Or in session: `/claude-statusbar:config hide the session name`.
-`/claude-statusbar:config` alone lists the current values.
+Or in session: `/statusbar:config hide the session name`.
+`/statusbar:config` alone lists the current values.
 
 ### Settings menu
 
 On a host that loads plugin modules, the same fourteen settings are rows in the
-host's `/config` menu, and `/claude-statusbar:install`,
-`/claude-statusbar:uninstall` and the bare config command answer without a
+host's `/config` menu, and `/statusbar:install`,
+`/statusbar:uninstall` and the bare config command answer without a
 model turn.
 
 The status line stays a shell command, because the host runs it from
@@ -157,7 +173,7 @@ only our path, never the whole key.
 ## Uninstall
 
 ```bash
-./uninstall.sh          # or /claude-statusbar:uninstall
+./uninstall.sh          # or /statusbar:uninstall
 ```
 
 ## License

@@ -31,7 +31,7 @@ export function settingsText(file: string, path: string): string {
     `Status bar settings (${path}):`,
     ...rows,
     '',
-    'A setting changed in /config wins over this file. To change one by request, run the command with it: /claude-statusbar:config hide the PR.',
+    'A setting changed in /config wins over this file. To change one by request, run the command with it: /statusbar:config hide the PR.',
   ].join('\n')
 }
 
@@ -52,15 +52,15 @@ async function runScript($: any, script: string, tail: string): Promise<{ text: 
 export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
   // The matcher names the invocation spelling the markdown commands carry, so
   // each hook answers its own command's run and no other plugin's.
-  on('command.run', { command: 'claude-statusbar:install' }, async ($: any) => runScript($, 'install.sh', RESTART))
+  on('command.run', { command: 'statusbar:install' }, async ($: any) => runScript($, 'install.sh', RESTART))
     .catch(async ($: any, e: any, next: any) => next(e))
 
-  on('command.run', { command: 'claude-statusbar:uninstall' }, async ($: any) => runScript($, 'uninstall.sh', ''))
+  on('command.run', { command: 'statusbar:uninstall' }, async ($: any) => runScript($, 'uninstall.sh', ''))
     .catch(async ($: any, e: any, next: any) => next(e))
 
   // A request needs the model to be read. Only the bare command, which shows the
   // current settings, is answered here; the request goes on to the markdown body.
-  on('command.run', { command: 'claude-statusbar:config' }, async ($: any, e: any, next: any) => {
+  on('command.run', { command: 'statusbar:config' }, async ($: any, e: any, next: any) => {
     if (String(e.args).trim() !== '') return next(e)
     const path = await configPath($)
     const file = await $.fs.read(path).catch(() => '')

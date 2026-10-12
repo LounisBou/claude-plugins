@@ -9,12 +9,12 @@ const FILE = '/home/u/.claude/statusline-config.txt'
 
 test('stored options come from the plugin entry under any marketplace spelling, booleans only', () => {
   const settings = { pluginConfigs: {
-    'claude-statusbar@inline': { options: { SHOW_PR: false, SHOW_MODEL: 'no', OTHER: false } },
+    'statusbar@inline': { options: { SHOW_PR: false, SHOW_MODEL: 'no', OTHER: false } },
     'another-plugin': { options: { SHOW_BRANCH: false } },
   } }
-  expect(storedOptions(settings, 'claude-statusbar')).toEqual({ SHOW_PR: false })
-  expect(storedOptions({}, 'claude-statusbar')).toEqual({})
-  expect(storedOptions(null, 'claude-statusbar')).toEqual({})
+  expect(storedOptions(settings, 'statusbar')).toEqual({ SHOW_PR: false })
+  expect(storedOptions({}, 'statusbar')).toEqual({})
+  expect(storedOptions(null, 'statusbar')).toEqual({})
 })
 
 test('merge rewrites a line in place, appends a missing one and keeps the rest', () => {
@@ -25,10 +25,10 @@ test('merge rewrites a line in place, appends a missing one and keeps the rest',
 })
 
 test('a row is this plugin\'s when it is one of the fourteen under its name', () => {
-  expect(isOwnRow('claude-statusbar.SHOW_PR', 'claude-statusbar')).toBe(true)
-  expect(isOwnRow('claude-statusbar@market.SHOW_PR', 'claude-statusbar')).toBe(true)
-  expect(isOwnRow('theme', 'claude-statusbar')).toBe(false)
-  expect(isOwnRow('other-plugin.SHOW_PR', 'claude-statusbar')).toBe(false)
+  expect(isOwnRow('statusbar.SHOW_PR', 'statusbar')).toBe(true)
+  expect(isOwnRow('statusbar@market.SHOW_PR', 'statusbar')).toBe(true)
+  expect(isOwnRow('theme', 'statusbar')).toBe(false)
+  expect(isOwnRow('other-plugin.SHOW_PR', 'statusbar')).toBe(false)
 })
 
 test('the module hooks session.start and config.set only', () => {
@@ -39,7 +39,7 @@ test('session start writes the stored options and leaves every unset line alone'
   const start = mount(register)[0]
   const fx = fakeDollar({
     files: { [FILE]: 'SHOW_MODEL=0\nSHOW_PR=1\n' },
-    pluginConfigs: { 'claude-statusbar@inline': { options: { SHOW_PR: false } } },
+    pluginConfigs: { 'statusbar@inline': { options: { SHOW_PR: false } } },
   })
   const e = { reason: 'startup' }
   expect(await start.handler(fx.dollar, e, fakeNext())).toEqual({ passed: e })
@@ -58,7 +58,7 @@ test('session start with nothing stored never touches the file', async () => {
 
 test('the file follows STATUSBAR_CONFIG and CLAUDE_CONFIG_DIR as the script does', async () => {
   const start = mount(register)[0]
-  const stored = { 'claude-statusbar': { options: { SHOW_PR: false } } }
+  const stored = { 'statusbar': { options: { SHOW_PR: false } } }
   const dir = fakeDollar({ env: { CLAUDE_CONFIG_DIR: '/cfg' }, pluginConfigs: stored })
   await start.handler(dir.dollar, {}, fakeNext())
   expect(dir.files.get('/cfg/statusline-config.txt')).toBe('SHOW_PR=0\n')
@@ -69,12 +69,12 @@ test('the file follows STATUSBAR_CONFIG and CLAUDE_CONFIG_DIR as the script does
 
 test('a menu change on one of the fourteen rows reaches the file after the host stored it', async () => {
   const set = mount(register)[1]
-  const fx = fakeDollar({ pluginConfigs: { 'claude-statusbar@inline': { options: { SHOW_BRANCH: false } } } })
-  const e = { key: 'claude-statusbar.SHOW_BRANCH', value: false }
+  const fx = fakeDollar({ pluginConfigs: { 'statusbar@inline': { options: { SHOW_BRANCH: false } } } })
+  const e = { key: 'statusbar.SHOW_BRANCH', value: false }
   expect(await set.handler(fx.dollar, e, fakeNext())).toEqual({ passed: e })
   expect(fx.files.get(FILE)).toBe('SHOW_BRANCH=0\n')
   // A row of another owner changes nothing here.
-  const other = fakeDollar({ pluginConfigs: { 'claude-statusbar@inline': { options: { SHOW_BRANCH: false } } } })
+  const other = fakeDollar({ pluginConfigs: { 'statusbar@inline': { options: { SHOW_BRANCH: false } } } })
   await set.handler(other.dollar, { key: 'theme', value: 'dark' }, fakeNext())
   expect(other.files.size).toBe(0)
 })
@@ -82,7 +82,7 @@ test('a menu change on one of the fourteen rows reaches the file after the host 
 test('a failing sync lets the start and the menu change through', async () => {
   const [start, set] = mount(register)
   const fx = fakeDollar({ failSettings: true })
-  const e = { key: 'claude-statusbar.SHOW_PR', value: false }
+  const e = { key: 'statusbar.SHOW_PR', value: false }
   const next = fakeNext('settings unavailable')
   expect(await start.net(fx.dollar, e, next)).toEqual({ passed: e })
   expect(await set.net(fx.dollar, e, next)).toEqual({ passed: e })
