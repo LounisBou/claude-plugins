@@ -1,6 +1,7 @@
 ---
 name: iterm-agents
 description: Use when a session on macOS must manage iTerm2 tabs running agent sessions — spawn a fresh agent tab with a startup prompt and verify it is running, close a stood-down agent's tab, list sessions, place a tab next to another, or replace a context-saturated agent with a fresh one (rotation).
+user-invocable: false
 ---
 
 # iTerm agent tabs

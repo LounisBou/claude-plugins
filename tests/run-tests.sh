@@ -160,6 +160,16 @@ check "a project's own method may decide otherwise on merge and undraft" "1" \
   "$(grep -c "project's own method may decide otherwise — auto-merge, pull requests that ship ready rather" "$ROOT/skills/orchestrator/SKILL.md")"
 check "the coordinator keeps merge and undraft the operator's by default" "1" \
   "$(grep -c "Merging and undrafting are his by default; where a project's own method decides otherwise, that" "$ROOT/skills/coordination/SKILL.md")"
+# The host lists a plugin's skills in the slash menu as if they were commands. A skill only
+# a session loads for itself must not be offered there: typed by the operator, the coordinator's
+# rulebook loaded into a session that was no coordinator. The operator's entry point stays visible.
+hidden_skills_missing=""
+for s in coordination iterm-agents; do
+  grep -q '^user-invocable: false$' "$ROOT/skills/$s/SKILL.md" || hidden_skills_missing="$hidden_skills_missing $s"
+done
+check "the session-only skills are hidden from the command menu" "" "$hidden_skills_missing"
+check "the operator's entry skill stays in the command menu" "0" \
+  "$(grep -c '^user-invocable: false$' "$ROOT/skills/orchestrator/SKILL.md")"
 check "the audit brief merges nothing" "1" \
   "$(grep -c 'no label, no merge' "$ROOT/templates/agent-audit-brief.md")"
 # Two locks hold whatever is said — the push guard and the title-verified close — and

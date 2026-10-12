@@ -1,6 +1,7 @@
 ---
 name: coordination
 description: Use when this session is the machine's coordinator — the operator started it with the coordinator command to watch every running orchestration from the outside, answer their questions about who works on which pull request, branch or file from the facts, flag orchestrations that collide, and carry his orders to them. Not for an orchestrator, an auditor or an implementer.
+user-invocable: false
 ---
 
 # Coordinator
