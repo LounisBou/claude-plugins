@@ -3,6 +3,10 @@ description: Launch this project's bug agent in a tab right of this session, whi
 allowed-tools: Bash(bugs-bot:*)
 ---
 
+Where the plugin's hooks module is loaded, this command runs the steps below
+itself and answers without a model turn; what follows is what it does, and
+what you do where it does not load.
+
 Start the project's agent session: it relays each new bug of the project's
 group (Telegram or Slack) to you, answers the group's questions from the repository, and
 tags the reports as you answer it. You become its **launcher**, its only

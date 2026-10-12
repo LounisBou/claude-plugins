@@ -17,6 +17,7 @@ on one machine.
 | `/bugs-bot:start` | Launches the project's agent in a tab right of your session, which becomes its launcher. Needs the orchestrator plugin. |
 | `/bugs-bot:remove` | Unregisters the project: Pull stops routing its group. Its data and project file are kept. |
 | `/bugs-bot:doctor` | Installs the fixed `~/.local/bin/bugs-bot` launcher and checks the machine: python3, each registered channel's token (and that its platform accepts it), registry, Pull running exactly once, the orchestrator plugin at 0.49 or later, the allow rule. |
+| hooks module | Where the host loads plugin modules: `/bugs-bot:start` runs its steps itself, with no model turn; the `bugs` tool (`mcp__bugs-bot__bugs`) runs the CLI with its arguments as a list, no shell quoting, and measures `gate --measure` from the session itself; a guard refuses a group post naming a PR, a commit, a branch, a local path or a host other than the deployment URL, and any read of the token file. Where modules do not load (`claude -p`, an older host), the markdown command, the shell form and the orchestrator's measure file do the same work. |
 | skill `bugs-bot` | The protocol for launchers (what the agent says, and the words that answer it) and for the agent (talking to a reporter, the voice). |
 | `agent/AGENT.md` | The agent's instructions. They name no project: its facts come in the startup prompt, from the project file. |
 
@@ -114,6 +115,8 @@ refuses to run over a non-empty project directory.
 
 ```
 python3 -m pytest -q      # no network, no PM2, no real ~/.bugs-bot: every location is overridden
+claude plugin test .      # the hooks module, against the host's own engine, every child and file faked
+claude plugin validate .  # the manifest and what the module hooks
 sh tests/e2e.sh           # two Telegram projects and one Slack project through bin/bugs-bot against a fake Bot API and a fake Slack API on loopback; prints E2E OK
 ```
 

@@ -20,6 +20,10 @@ Every member of the project's group is a legitimate reporter (operator's ruling 
 
 `bugs-bot <command>`, always run as that plain command from the repository: never a path, a variable, `$(…)`, `&&` or `;` — the one allow rule `Bash(bugs-bot:*)` covers exactly that. The machine's Pull process fills the inbox; you never run `pull`, `init` or `remove`.
 
+When your tools list `mcp__bugs-bot__bugs` (the plugin's module is loaded), use it for every command but `wait`: `command` is the command, `args` its arguments as a list, one word each — `{"command": "reply", "args": ["<id>", "<text>", "--mention", "--awaits"]}`. No shell reads the text, so no quote or apostrophe can cut it. Same commands, output and exit codes; an exit other than 0 ends its result with `exit=<code>`. `wait` stays `bugs-bot wait` in the background (« The wait »). Without that tool, the plain command as above.
+
+A text that would reach the group with a PR or ticket number, a commit, a branch, a path of the machine or a host but your deployment URL is refused before it is posted, with the reason: rewrite it as the never-revealed list says, never send it another way. The bot's token file is refused the same way.
+
 | Command | When |
 | --- | --- |
 | `wait` | Your wake signal (« The wait »). Prints the ids of the open reports you have not triaged, then `answer <id>`, `edited <id>`, `follow-up <id>`, `unanswered <id>` and `ask <id>` lines (« Waiting for an answer »), at once if there are some; else blocks until one comes (exit 0); after 3300 seconds it prints nothing and exits 3. |
@@ -164,7 +168,7 @@ Your context is measured, not guessed; at the gate you hand over to a fresh agen
 
 **The gate** is a project-file setting (300,000 tokens by default on a window of 1,000,000 or more, 80 % of a smaller one), printed by `bugs-bot gate`; the operator sets it with `bugs-bot gate --set <tokens>`, you never change it.
 
-**When you measure.** After every handled event (a relay, a post, a launcher message), never on an empty exit: ONE plain command, alone, `bugs-bot gate --measure`. It reads the orchestrator plugin's measure file (located by the tool itself: no path of yours) and prints `gate_tokens=`, `context_tokens=`, `context_window=` and `handover=yes|no`. Exit 1: tell your launcher its error line once, and go on.
+**When you measure.** After every handled event (a relay, a post, a launcher message), never on an empty exit: ONE call, alone — the `bugs` tool's `{"command": "gate", "args": ["--measure"]}`, which measures this session's own context, or, without that tool, the plain command `bugs-bot gate --measure`, which reads the orchestrator plugin's measure file (located by the tool itself: no path of yours). Either prints `gate_tokens=`, `context_tokens=`, `context_window=` and `handover=yes|no`. Exit 1: tell your launcher its error line once, and go on.
 
 `handover=no`: re-arm the wait. `handover=yes`: hand over at the next **quiet point** — nothing being relayed, posted or answered; finish the event in hand first.
 

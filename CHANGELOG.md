@@ -5,6 +5,32 @@ All notable changes are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.3.0 — 2026-10-12
+
+### Added
+
+- A hooks module (`hooks/register.ts`), loaded where the host loads plugin modules. Where it does not
+  load (`claude -p`, an older host), every command, the shell form and the measure file work as before.
+- `/bugs-bot:start` runs its seven steps itself and answers with no model turn: the project file, the
+  orchestrator's install directory from the host's record (`bugs-bot plugin-path`), its version read
+  from its manifest, `ListAgents`, `agent-prompt`, the `--resident` spawn, then `list`, `move` and
+  `verify`. A step it cannot read before the spawn hands the run to the markdown command; after the
+  spawn nothing falls back, so a second agent is never launched.
+- The `bugs` tool (`mcp__bugs-bot__bugs`): the CLI's commands, `wait` and the machine's own aside, with
+  the arguments as a JSON list, so no shell quoting can cut a text posted to testers. It runs this
+  plugin's own CLI, needs no launcher on the PATH, and honours the existing `Bash(bugs-bot:*)` grant:
+  without one, reads pass and writes are put to the person.
+- The `bugs` tool's `gate --measure` measures the session's own context and hands the CLI
+  `--tokens` and `--window`; the orchestrator's measure file is read only before the session's first
+  answer, and by the plain `bugs-bot gate --measure` where the module does not load.
+- A guard on what reaches the group: a `reply`, `edit`, `post` or `done --reason`, through the shell or
+  the tool, whose text holds a PR or ticket number, a commit hash, a branch, a path of the machine, a
+  local host or a link to a host other than `deploy_url` is refused with the reason; a text built by
+  `$(…)`, a backquote or a variable is refused as unreadable. A token the person typed in the session
+  passes.
+- A guard on the token file: a session's Read, Grep or shell line reaching `~/.bugs-bot/.env` (or
+  `BUGS_BOT_ENV_FILE`) is refused, unless the person named `.env` in the session.
+
 ## 0.2.2 — 2026-10-12
 
 ### Fixed
