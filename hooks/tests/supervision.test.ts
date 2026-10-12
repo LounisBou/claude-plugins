@@ -43,6 +43,7 @@ function fakeDollar(over: {
   origin?: string
   transcript?: string
   alive?: string[]
+  psFails?: 'reject' | 'exit' | 'empty'
 } = {}): Fx {
   const files = new Map<string, string>()
   const ran: string[] = []
@@ -102,11 +103,22 @@ function fakeDollar(over: {
           for (const p of argv.slice(2)) files.delete(p)
           return { exitCode: 0, stdout: '', stderr: '' }
         }
+        const alive = over.alive ?? ['501']
+        if (argv[0] === 'ps' && argv[1] === '-A') {
+          // Every live pid on the machine: the session's own host, 501, the
+          // fake's other living ones, and pid 1 — or the failure asked for.
+          if (over.psFails === 'reject') throw new Error('ps did not answer in time')
+          if (over.psFails === 'exit') return { exitCode: 1, stdout: '', stderr: 'ps: failed' }
+          if (over.psFails === 'empty') return { exitCode: 0, stdout: '', stderr: '' }
+          return { exitCode: 0, stdout: ['1', ...alive].map(pid => `  ${pid}\n`).join(''), stderr: '' }
+        }
         if (argv[0] === 'ps' && argv[1] === '-o' && argv[3] === '-p') {
-          // The live pids among those asked: the session's own host, 501, and the
-          // fake's other living ones.
-          const alive = String(argv[4]).split(',').filter(pid => (over.alive ?? ['501']).includes(pid))
-          return { exitCode: alive.length > 0 ? 0 : 1, stdout: alive.map(pid => `  ${pid}\n`).join(''), stderr: '' }
+          // The pid-list form, as the machine answers it: one pid it refuses
+          // (macOS: « process id too large ») fails the whole call, exit 1 and
+          // nothing printed, the live ones with it.
+          const asked = String(argv[4]).split(',')
+          if (asked.some(pid => !alive.includes(pid))) return { exitCode: 1, stdout: '', stderr: 'ps: process id too large' }
+          return { exitCode: 0, stdout: asked.map(pid => `  ${pid}\n`).join(''), stderr: '' }
         }
         if (argv[0] === 'sh') return { exitCode: 0, stdout: '123 ttys001\n', stderr: '' }
         if (argv[0] === 'ps' && argv[1] === '-t') {
@@ -174,6 +186,40 @@ test('a row lives while its host pid does, however long since its last measure',
   expect(files.has(`${SESSIONS}/ended`)).toBe(false)
   expect(files.has(`${SESSIONS}/waiting`)).toBe(true)
 })
+
+// The live defect: one dead pid among live ones, and a ps that fails, each
+// emptied the whole store — the pane read no live orchestrator while five ran.
+
+async function liveStore(over: Parameters<typeof fakeDollar>[0]): Promise<Fx> {
+  const fx = fakeDollar(over)
+  for (const [id, pid] of [['orch-a', '501'], ['orch-b', '601'], ['orch-c', '701']]) {
+    await writeSession(fx.dollar, id, { role: 'orchestrator', name: `Orch : ${id}`, pid })
+  }
+  return fx
+}
+
+test('one dead pid among live ones removes its own row alone, at every render', async () => {
+  const { dollar, files } = await liveStore({ alive: ['501', '601', '701'] })
+  await writeSession(dollar, 'crashed', { role: 'orchestrator', name: 'Orch : crashed', pid: '99999' })
+  // Two reads in a row: the pane's render, then its next one (a resize, a clock tick).
+  for (const pass of [1, 2]) {
+    const rows = await readSessions(dollar)
+    expect([pass, Object.keys(rows).sort()]).toEqual([pass, ['sessions/orch-a', 'sessions/orch-b', 'sessions/orch-c']])
+    for (const id of ['orch-a', 'orch-b', 'orch-c']) expect([pass, files.has(`${SESSIONS}/${id}`)]).toEqual([pass, true])
+    expect(files.has(`${SESSIONS}/crashed`)).toBe(false)
+  }
+})
+
+for (const psFails of ['reject', 'exit', 'empty'] as const) {
+  test(`a liveness read that fails (${psFails}) removes nothing and keeps the rows drawn`, async () => {
+    const { dollar, files, ran } = await liveStore({ alive: ['501', '601', '701'], psFails })
+    await writeSession(dollar, 'crashed', { role: 'orchestrator', name: 'Orch : crashed', pid: '99999' })
+    const rows = await readSessions(dollar)
+    expect(Object.keys(rows).sort()).toEqual(['sessions/crashed', 'sessions/orch-a', 'sessions/orch-b', 'sessions/orch-c'])
+    for (const id of ['orch-a', 'orch-b', 'orch-c', 'crashed']) expect(files.has(`${SESSIONS}/${id}`)).toBe(true)
+    expect(ran.filter(line => line.startsWith('rm '))).toEqual([])
+  })
+}
 
 test('a row written before rows carried a pid: older than one hour is dropped, a fresh one kept', async () => {
   const { dollar } = fakeDollar()

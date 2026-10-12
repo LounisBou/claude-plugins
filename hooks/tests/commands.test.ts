@@ -114,6 +114,7 @@ test('progress leads with the goals line of each record that has a goals.md, and
 type Fx = {
   dollar: any
   alive: string[]
+  psFails: boolean
   files: Map<string, string>
   written: string[]
   env: Record<string, string>
@@ -124,7 +125,7 @@ function fakeDollar(over: { failEnv?: boolean; failSession?: boolean } = {}): Fx
   const files = new Map<string, string>()
   const written: string[] = []
   const env: Record<string, string> = { HOME }
-  const fx: Fx = { dollar: null, files, written, env, sessionId: 's-one', alive: [] }
+  const fx: Fx = { dollar: null, files, written, env, sessionId: 's-one', alive: [], psFails: false }
   fx.dollar = {
     session: {
       id: async () => {
@@ -167,13 +168,21 @@ function fakeDollar(over: { failEnv?: boolean; failSession?: boolean } = {}): Fx
       run: async (argv: readonly string[]) => {
         const line = logLineOf(argv)
         if (line !== null) written.push(line)
-        // ps -o pid= -p <list>: the asked pids this fixture holds alive.
         if (argv[0] === 'python3' && String(argv[1]).endsWith('/skills/orchestrator/scripts/goals.py') && argv[2] === 'line') {
           return { exitCode: 0, stdout: 'goals met=3/5 ruled_out=1 open=G3 unplanned=none\n', stderr: '' }
         }
-        if (argv[0] === 'ps') {
+        // ps -A -o pid=: every pid this fixture holds alive, pid 1 among them.
+        if (argv[0] === 'ps' && argv[1] === '-A') {
+          if (fx.psFails) throw new Error('ps did not answer in time')
+          return { exitCode: 0, stdout: ['1', ...fx.alive].join('\n'), stderr: '' }
+        }
+        // ps -o pid= -p <list>, as the machine answers it: one pid it refuses
+        // fails the whole call, exit 1 and nothing printed.
+        if (argv[0] === 'ps' && argv[argv.length - 2] === '-p') {
+          if (fx.psFails) throw new Error('ps did not answer in time')
           const asked = String(argv[argv.length - 1]).split(',')
-          return { exitCode: 0, stdout: asked.filter(pid => fx.alive.includes(pid)).join('\n'), stderr: '' }
+          if (asked.some(pid => !fx.alive.includes(pid))) return { exitCode: 1, stdout: '', stderr: 'ps: process id too large' }
+          return { exitCode: 0, stdout: asked.join('\n'), stderr: '' }
         }
         return { exitCode: 0, stdout: '', stderr: '' }
       },
@@ -265,6 +274,39 @@ test('agents lists a live agent no measure has written yet, beside the measured 
   expect(await agents.handler(fx.dollar, { command: 'orchestrator:agents', args: '' })).toEqual({ text: [
     'Implementer agents (1), most urgent first — name · role · context · last measured:',
     '  Agent : alert lists · agent · busy · not measured yet',
+  ].join('\n') })
+})
+
+test('status keeps the live rows beside a dead pid, and every row when ps fails', async () => {
+  const { registrations } = mounted()
+  const status = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:status')!
+  const fx = fakeDollar()
+  fx.files.set(`${SESSIONS}/live`, JSON.stringify({ ...row({ name: 'Agent : live' }), pid: '501' }) + '\n')
+  fx.files.set(`${SESSIONS}/dead`, JSON.stringify({ ...row({ name: 'Agent : dead' }), pid: '99999' }) + '\n')
+  fx.alive = ['501']
+  expect(await status.handler(fx.dollar, { command: 'orchestrator:status', args: '' })).toEqual({ text: [
+    'Live sessions (1), most urgent first — name · role · context · last measured:',
+    '  Agent : live · agent · 30% · now',
+  ].join('\n') })
+  // A ps that fails knows of no death: both rows stay listed, neither hidden.
+  fx.psFails = true
+  expect(await status.handler(fx.dollar, { command: 'orchestrator:status', args: '' })).toEqual({ text: [
+    'Live sessions (2), most urgent first — name · role · context · last measured:',
+    '  Agent : live · agent · 30% · now',
+    '  Agent : dead · agent · 30% · now',
+  ].join('\n') })
+})
+
+test('agents still lists an agent in its first turn when ps fails', async () => {
+  const { registrations } = mounted()
+  const agents = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:agents')!
+  const fx = fakeDollar()
+  fx.files.set(`${HOME}/.claude/sessions/102.json`, JSON.stringify({ sessionId: 's-first-turn', name: 'Agent : first turn', status: 'busy' }))
+  fx.alive = ['102']
+  fx.psFails = true
+  expect(await agents.handler(fx.dollar, { command: 'orchestrator:agents', args: '' })).toEqual({ text: [
+    'Implementer agents (1), most urgent first — name · role · context · last measured:',
+    '  Agent : first turn · agent · busy · not measured yet',
   ].join('\n') })
 })
 

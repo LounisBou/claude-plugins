@@ -74,7 +74,8 @@ async function readRows($: any): Promise<Record<string, SessionRow>> {
   }
   const argv = livePidsArgv(read.map(([, row]) => String(row.pid ?? '')))
   const ps = argv ? await withDeadline($.process.run(argv, { timeoutMs: await readBoundMs($) }), await readBoundMs($)).catch(() => null) : null
-  const alive = ps && !isDegradedPass(ps) ? livePids(String(ps.stdout ?? '')) : new Set<string>()
+  // A liveness read that failed (null) keeps every row: it knows of no death.
+  const alive = argv ? livePids(ps) : new Set<string>()
   const rows: Record<string, SessionRow> = {}
   const now = Date.now()
   for (const [name, row] of read) {
@@ -135,11 +136,12 @@ async function unmeasuredAgents($: any, rows: Record<string, SessionRow>): Promi
   }
   const argv = livePidsArgv(records.map(([pid]) => pid))
   const ps = argv ? await withDeadline($.process.run(argv, { timeoutMs: await readBoundMs($) }), await readBoundMs($)).catch(() => null) : null
-  if (!ps || isDegradedPass(ps)) return []
-  const alive = livePids(String(ps.stdout ?? ''))
+  // A liveness read that failed (null) keeps every record: an agent in its
+  // first turn listed beside a stale record beats one hidden by a failed ps.
+  const alive = argv ? livePids(ps) : new Set<string>()
   const agents: UnmeasuredAgent[] = []
   for (const [pid, record] of records) {
-    if (!record || !record.sessionId || !alive.has(pid) || roleOf(record.name) !== 'agent') continue
+    if (!record || !record.sessionId || (alive !== null && !alive.has(pid)) || roleOf(record.name) !== 'agent') continue
     if (sessionKey(record.sessionId) in rows) continue
     agents.push({ name: record.name as string, status: record.status })
   }

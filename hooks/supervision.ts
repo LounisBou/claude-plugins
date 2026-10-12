@@ -50,21 +50,33 @@ const STALE_AFTER_MS = 60 * 60 * 1000
 // The rule above as a function, pure and exported: the commands read the same
 // store through their own $ (the fence forbids sharing the reader) and judge
 // every row by this same rule. `alive` is the set of live pids the caller read
-// (livePidsArgv, livePids).
-export function isStale(row: SessionRow, now: number, alive: ReadonlySet<string> = new Set()): boolean {
-  if (row.pid) return !alive.has(String(row.pid))
+// (livePidsArgv, livePids); null when that read failed, and a read that failed
+// knows nothing of any pid: the row is kept, never judged dead on no evidence.
+export function isStale(row: SessionRow, now: number, alive: ReadonlySet<string> | null = new Set()): boolean {
+  if (row.pid) return alive !== null && !alive.has(String(row.pid))
   const at = Date.parse(row.updated_at)
   return !Number.isFinite(at) || now - at > STALE_AFTER_MS
 }
 
-// One ps for every pid the store's rows name; it prints the live ones.
+// One ps listing every live pid on the machine, run when a row names a pid at
+// all; the caller intersects. Never `ps -p <the rows' pids>`: its exit and its
+// output depend on the pids asked — one it refuses (macOS: « process id too
+// large ») fails the whole call with nothing printed — so a single bad row
+// made every live row read as dead, and the store reader removed them all.
 export function livePidsArgv(pids: readonly string[]): string[] | null {
-  const valid = [...new Set(pids.filter(pid => /^\d+$/.test(pid)))]
-  return valid.length === 0 ? null : ['ps', '-o', 'pid=', '-p', valid.join(',')]
+  return pids.some(pid => /^\d+$/.test(pid)) ? ['ps', '-A', '-o', 'pid='] : null
 }
 
-export function livePids(out: string): Set<string> {
-  return new Set(out.split('\n').map(line => line.trim()).filter(pid => /^\d+$/.test(pid)))
+// The live pids out of that ps's result, or null when the read failed: no
+// result (it rejected, it timed out), a degraded pass, a non-zero exit, or a
+// listing with no pid in it — ps lists itself, so an honest one is never empty.
+// Null is « unknown », never « none alive »: a caller deletes nothing on it.
+export function livePids(result: unknown): Set<string> | null {
+  if (typeof result !== 'object' || result === null) return null
+  const { exitCode, stdout } = result as { exitCode?: unknown; stdout?: unknown }
+  if (exitCode !== 0) return null
+  const pids = new Set(String(stdout ?? '').split('\n').map(line => line.trim()).filter(pid => /^\d+$/.test(pid)))
+  return pids.size === 0 ? null : pids
 }
 
 // The supervision pane: the id names it at the engine (the open, the render's
@@ -155,7 +167,7 @@ export async function readSessions($: any): Promise<Record<string, SessionRow>> 
     read.push([entry.name, text, parseSessionRow(text)])
   }
   const argv = livePidsArgv(read.map(([, , row]) => String(row?.pid ?? '')))
-  const alive = argv ? livePids(String((await $.process.run(argv, { timeoutMs: 5000 }).catch(() => ({ stdout: '' }))).stdout ?? '')) : new Set<string>()
+  const alive = argv ? livePids(await $.process.run(argv, { timeoutMs: 5000 }).catch(() => null)) : new Set<string>()
   const rows: Record<string, SessionRow> = {}
   const dead: string[] = []
   const now = Date.now()
@@ -163,7 +175,10 @@ export async function readSessions($: any): Promise<Record<string, SessionRow>> 
     if (row && !isStale(row, now, alive)) rows[`sessions/${name}`] = row
     else if (text === '' || row) dead.push(`${dir}/${name}`)
   }
-  if (dead.length > 0) await $.process.run(['rm', '-f', ...dead], { timeoutMs: 5000 }).catch(() => undefined)
+  // A liveness read that failed removes nothing: its rows are drawn as alive
+  // and the next read that answers sweeps the dead. Removing on it wiped the
+  // whole store at every render the pane drew.
+  if (alive !== null && dead.length > 0) await $.process.run(['rm', '-f', ...dead], { timeoutMs: 5000 }).catch(() => undefined)
   return rows
 }
 
