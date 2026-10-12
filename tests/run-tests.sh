@@ -435,6 +435,21 @@ else
   printf '  FAIL %s (got: %s)\n' "installed entry point runs the active plugin install" "$actual"; fail=$((fail + 1))
 fi
 
+# The manifest's options are exactly the keys the default settings file names.
+expected=$(sed 's/=.*//' "$HERE/../statusline/statusline-config.default.txt" | sort)
+declared=$(jq -r '.userConfig | keys[]' "$HERE/../.claude-plugin/plugin.json" | sort)
+if [ "$declared" = "$expected" ]; then
+  printf '  ok   %s\n' "plugin options match the default settings keys"; pass=$((pass + 1))
+else
+  printf '  FAIL %s\n' "plugin options match the default settings keys"; fail=$((fail + 1))
+fi
+nonbool=$(jq -r '.userConfig | to_entries[] | select(.value.type != "boolean" or .value.default != true) | .key' "$HERE/../.claude-plugin/plugin.json")
+if [ -z "$nonbool" ]; then
+  printf '  ok   %s\n' "every plugin option is a boolean that defaults to on"; pass=$((pass + 1))
+else
+  printf '  FAIL %s (%s)\n' "every plugin option is a boolean that defaults to on" "$nonbool"; fail=$((fail + 1))
+fi
+
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

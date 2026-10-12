@@ -1,7 +1,7 @@
 {
   "name": "claude-statusbar",
   "description": "Two-line status bar: directory, git, PR, model, session, context and 5h/7d quotas. No network, no credentials.",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "author": {
     "name": "Lounis Bou",
     "email": "lounis.bou@gmail.com"
@@ -9,5 +9,98 @@
   "homepage": "https://github.com/LounisBou/claude-statusbar",
   "repository": "https://github.com/LounisBou/claude-statusbar",
   "license": "MIT",
-  "keywords": ["statusline", "statusbar", "quota", "rate-limits", "git", "bash"]
+  "keywords": [
+    "statusline",
+    "statusbar",
+    "quota",
+    "rate-limits",
+    "git",
+    "bash"
+  ],
+  "userConfig": {
+    "SHOW_DIRECTORY": {
+      "type": "boolean",
+      "title": "Directory",
+      "description": "Show the current directory name",
+      "default": true
+    },
+    "SHOW_BRANCH": {
+      "type": "boolean",
+      "title": "Git branch",
+      "description": "Show the git branch",
+      "default": true
+    },
+    "SHOW_GIT_STATUS": {
+      "type": "boolean",
+      "title": "Git status",
+      "description": "Show * when dirty, ahead/behind arrows and the stash count",
+      "default": true
+    },
+    "SHOW_PR": {
+      "type": "boolean",
+      "title": "Pull request",
+      "description": "Show the number and state of the open pull request",
+      "default": true
+    },
+    "SHOW_MODEL": {
+      "type": "boolean",
+      "title": "Model",
+      "description": "Show the model name",
+      "default": true
+    },
+    "SHOW_SESSION_NAME": {
+      "type": "boolean",
+      "title": "Session name",
+      "description": "Show the session name set with /rename",
+      "default": true
+    },
+    "SHOW_CONTEXT": {
+      "type": "boolean",
+      "title": "Context",
+      "description": "Show the percentage of context consumed",
+      "default": true
+    },
+    "SHOW_CONTEXT_TOKENS": {
+      "type": "boolean",
+      "title": "Context tokens",
+      "description": "Show the token count next to the context percentage",
+      "default": true
+    },
+    "SHOW_USAGE": {
+      "type": "boolean",
+      "title": "5-hour quota",
+      "description": "Show the 5-hour quota",
+      "default": true
+    },
+    "SHOW_SEVEN_DAY": {
+      "type": "boolean",
+      "title": "7-day quota",
+      "description": "Show the 7-day quota",
+      "default": true
+    },
+    "SHOW_PROGRESS_BAR": {
+      "type": "boolean",
+      "title": "Quota bar",
+      "description": "Show the ten-block bar next to the quotas",
+      "default": true
+    },
+    "SHOW_RESET_TIME": {
+      "type": "boolean",
+      "title": "Quota reset",
+      "description": "Show the quota reset deadline",
+      "default": true
+    },
+    "RESET_COUNTDOWN": {
+      "type": "boolean",
+      "title": "Reset as countdown",
+      "description": "On: time left (2h13). Off: absolute time or date",
+      "default": true
+    },
+    "SHOW_LINES_CHANGED": {
+      "type": "boolean",
+      "title": "Lines changed",
+      "description": "Show the +added/-removed counter",
+      "default": true
+    }
+  }
 }

@@ -46,7 +46,8 @@ Restart your session to see the bar.
 
 ## Settings
 
-`~/.claude/statusline-config.txt`, one key per line, `1` or `0`:
+The status line is a shell command that reads `statusline-config.txt` in
+`${CLAUDE_CONFIG_DIR:-$HOME/.claude}`, one key per line, `1` or `0`:
 
 | Key | Default | Effect |
 |---|---|---|
@@ -65,7 +66,26 @@ Restart your session to see the bar.
 | `RESET_COUNTDOWN` | 1 | `1` = `2h13`, `0` = absolute time/date |
 | `SHOW_LINES_CHANGED` | 1 | `+added/-removed` |
 
-Or in session: `/claude-statusbar:config hide the session name`
+Or in session: `/claude-statusbar:config hide the session name`.
+`/claude-statusbar:config` alone lists the current values.
+
+### Settings menu
+
+On a host that loads plugin modules, the same fourteen settings are rows in the
+host's `/config` menu, and `/claude-statusbar:install`,
+`/claude-statusbar:uninstall` and the bare config command answer without a
+model turn.
+
+The status line stays a shell command, because the host runs it from
+`settings.json` and a module cannot replace it. The shell command cannot be
+handed a plugin's options, so the file stays the source it reads:
+
+- a setting you change in `/config` is written into the file, and wins over a
+  hand edit of the same key;
+- a setting you never changed in `/config` leaves its line alone, so an existing
+  file keeps working as it was;
+- on a host that does not load modules, or under a non-interactive run, edit the
+  file or use the command above. Nothing else changes.
 
 ## Migrating from a session-cookie install
 
