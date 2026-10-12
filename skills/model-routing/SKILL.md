@@ -23,12 +23,27 @@ A dispatch runs on a **pair** `<alias>/<effort>`: a family alias and an effort, 
 
 ## Where the pair comes from
 
-Before each dispatch, run `routing.py pick --repo <checkout> --class <class> --record <record>`
-(`${CLAUDE_PLUGIN_ROOT}/skills/model-routing/scripts/routing.py`). It prints the pair and the
-table it came from — the project's, its profile's, the global one, a shipped default, or the
-tier table below. Write the pair, its source and your reason in the brief. You may override it:
-say why. An entry marked `stale` was measured on a model the alias no longer resolves to; use
-it, and tell the operator in one line that a bench run would refresh it.
+Before each dispatch, run `routing.py pick --repo <checkout> --class <class> --record <record>
+--files <n> --lines <n>` (`${CLAUDE_PLUGIN_ROOT}/skills/model-routing/scripts/routing.py`). It
+prints the pair and the table it came from — the project's, its profile's, the global one, a
+shipped default, or the tier table below. Write the pair, its source and your reason in the
+brief. You may override it: say why. An entry marked `stale` was measured on a model the alias
+no longer resolves to; use it, and tell the operator in one line that a bench run would refresh
+it.
+
+`--files` and `--lines` are the phase's size, given together or not at all: the files in the
+phase's scope and the lines the plan expects it to add and delete, test files left out. Given
+them, `pick` adds `size=small` or `size=large` to its first line, and an entry measured only on
+small work does not serve a large phase: it goes on down its order to the first entry measured
+on large work, or to the tier table, and prints `size=large beyond=<scope>`, naming the first
+scope it skipped. That scope was measured on smaller work than this phase: say so in the brief
+beside the pair and its source.
+
+**A phase beyond every measured size.** When `pick` served a large phase from a scope after a
+`beyond=`, or from the tier table, no table was measured at this size. Before dispatching the
+phase, run a read-only search exploration at the `search` class's pair and write its summary
+(the files, the contracts, the decisions) into the brief: the pair is a guess, so give it a
+map.
 
 `routing.py profile <checkout>` prints the inferred `<language>/<kind>`; a `profile` in the project's manifest overrides it, and `pick` takes the override first. A line `pair=host-default` means the class's tier is unbound: the paragraph on unbound tiers above applies.
 
@@ -60,11 +75,17 @@ For a phase that does not sit plainly on a row, take these before dispatching, f
 4. **Residual ambiguity** — questions still open on this phase in the decision log.
 5. **Repair history** — findings that survived a round on this phase or its class.
 
+Read the third and the fourth concretely. **Blast radius** is high when the phase touches files > 3 or lines > 50 (the thresholds of `--files` and `--lines`, so the reading and `pick` agree), creates a new file, or touches more than one module. **Residual ambiguity** is high when one question or more is open on the phase. The counts of the blast radius are what `pick` is given.
+
 Two readings high or more raises the pair by **one** notch up the class's ladder (the pairs of its table entry, ordered by measured cost per closed dispatch), never more, never as a running total: the readings are retaken at each dispatch.
+
+## The correction round runs one notch above its phase
+
+`pick` ends with `nbis=<pair>`: the phase's pair one effort level up on the same family, the same pair at `max`, and no line for a pair with no effort to raise. The phase's correction round runs at that pair, and the brief names it. The round is the retry: the phase starts cheap and a failure escalates, so the review and its correction round are the escalation, not a cascade; the phase itself is never retried at its own pair. `--class n-bis` serves a correction round whose phase's pair is unknown: the round runs at that call's `pair=` line, and its `nbis=` line is not read.
 
 ## Explore one notch, never more
 
-`pick` prints a second line, `explore=<pair>`, when the record shows three one-round closes at the class's pair, no escaped defect there, and no failed exploration of the class. The pair is **one notch** below: the immediate cheaper pair of the class's ladder, unless it was measured and found not equivalent to the best (a pair not measured on every task is offered); without a ladder to read it from, the effort one level down on the same family; at the lowest effort, the next lighter family in the map at the same effort. Take it only when the five readings show at most one high, and open the row `--explore`.
+`pick` prints a second line, `explore=<pair>` (`nbis=` stays last), when the record shows three one-round closes at the class's pair, no escaped defect there, and no failed exploration of the class. The pair is **one notch** below: the immediate cheaper pair of the class's ladder, unless it was measured and found not equivalent to the best (a pair not measured on every task is offered); without a ladder to read it from, the effort one level down on the same family; at the lowest effort, the next lighter family in the map at the same effort. Take it only when the five readings show at most one high, and open the row `--explore`.
 
 The orchestrator, a successor, a decision round, a contract-defining phase and the final verification are never explored: nothing re-checks that work, so a failure there is paid N times.
 
@@ -92,7 +113,7 @@ A cascade tries one notch below the class's pair and escalates when the result d
 | A read-only search subagent | it returns nothing where you know something is | one search |
 | An N-bis narrow enough that the gate judges it | the project's own quality gate | one short session |
 
-Dispatch one notch below and mark it — `dispatch-record.sh open … --cascade`; if it costs a round, re-dispatch at the class's pair and close the marked row `--verdict escalated`. `summary` reports `cascade=<class> at <pair>: N of M paid` and says `stop cascading` when fewer than half pay over at least two attempts. One notch below, never two.
+Dispatch one notch below and mark it — `dispatch-record.sh open … --cascade`; if it costs a round, re-dispatch at the class's pair and close the marked row `--verdict escalated`. `summary` reports `cascade=<class> at <pair>: N of M paid` and says `stop cascading` when fewer than half pay over at least two attempts. One notch below, never two. An N-bis cascades from its `nbis=` pair: its notch is read below that pair, not under the `n-bis` class's own entry.
 
 ## The false economy
 
@@ -133,6 +154,7 @@ signal=n-bis at light averages 2 rounds: the drop did not pay, revert it for thi
 ## The costliest mistakes
 
 - A pair chosen from how hard the phase feels, or two notches at once — run `pick`, take the five readings.
+- A large phase run on a pair measured on small work: `--files` and `--lines` not given to `pick`, or a `beyond=` left out of the brief.
 - A wave dispatched without reading the map or the summary, or a signal in it left standing.
 - A class explored that is never explored, or explored again after `frozen=`.
 - A phase cascaded, or an escalation attempted inside a live session instead of as a rotation.

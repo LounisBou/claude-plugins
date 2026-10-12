@@ -364,6 +364,17 @@ def ladder_down(pair, entry=None):
     return notch
 
 
+def nbis_pair(pair):
+    """The pair a phase's corrective round runs at: the same family one effort level up, the
+    same pair at the top. The round is the retry - cheap first, escalate on failure. None for a
+    pair with no effort to raise: the host's default, a bare model, an effort the list lacks.
+    """
+    model, _, effort = pair.partition("/")
+    if effort not in EFFORTS:
+        return None
+    return "%s/%s" % (model, EFFORTS[min(EFFORTS.index(effort) + 1, len(EFFORTS) - 1)])
+
+
 def resolve_shipped(pair):
     tier, _, effort = pair.partition("/")
     bound = read_map().get(tier)
@@ -382,24 +393,37 @@ def resolve_ladder(entry):
     return dict(entry, ladder=ladder)
 
 
-def lookup(repo, cls):
+def lookup(repo, cls, size=None):
+    """(pair, source, entry, beyond) from the most specific table that has one. For a `large`
+    phase an entry that was not measured on large work does not serve it (a table written
+    before the stamp has no size and reads as unknown): the order goes on, and `beyond` is the
+    source of the first entry skipped that way. A shipped entry whose tier the map does not
+    bind is skipped as ever and is never a `beyond`.
+    """
     slug = project_slug(repo)
     profile = project_profile(repo)
+    beyond = None
     for scope, shipped in (("project:" + slug, False), ("profile:" + profile, False), ("global", False),
                            ("profile:" + profile, True), ("global", True)):
         entry = read_json(table_path(scope, shipped), {}).get("entries", {}).get(cls)
         if not entry or not entry.get("pair"):
             continue
+        source = "shipped:" + scope if shipped else scope
         if shipped:
             pair = resolve_shipped(entry["pair"])
-            if pair:
-                return pair, "shipped:" + scope, resolve_ladder(entry)
+            if not pair:
+                continue
+            entry = resolve_ladder(entry)
+        else:
+            pair = entry["pair"]
+        if size == "large" and entry.get("size") != "large":
+            beyond = beyond or source
             continue
-        return entry["pair"], scope, entry
+        return pair, source, entry, beyond
     bound = read_map().get(CLASS_TIERS[cls])
     if not bound:
-        return "host-default", "tier-table", None
-    return (bound[0] + ("/" + bound[1] if bound[1] else "")), "tier-table", None
+        return "host-default", "tier-table", None, beyond
+    return (bound[0] + ("/" + bound[1] if bound[1] else "")), "tier-table", None, beyond
 
 
 def is_stale(pair, entry):
@@ -454,20 +478,42 @@ def cmd_profile(argv):
     print(infer_profile(argv[0]))
 
 
+def phase_size(files, lines):
+    """The bucket of the phase `pick` was given, or None when it was given none. Both counts or
+    neither: a bucket needs both, and a count is a whole number, 0 or more.
+    """
+    if files is None and lines is None:
+        return None
+    if files is None or lines is None:
+        die("pick: --files and --lines go together")
+    if not all(re.fullmatch(r"[0-9]+", c) for c in (files, lines)):
+        die("pick: --files and --lines are counts, 0 or more")
+    return size_bucket(int(files), int(lines))
+
+
 def cmd_pick(argv):
     p = argparse.ArgumentParser(prog="pick")
     p.add_argument("--repo", required=True)
     p.add_argument("--class", dest="cls", required=True)
     p.add_argument("--record")
+    p.add_argument("--files")
+    p.add_argument("--lines")
     a = p.parse_args(argv)
     if a.cls not in CLASS_TIERS:
         die("pick: unknown class: %s (expected one of %s)" % (a.cls, ", ".join(sorted(CLASS_TIERS))))
-    pair, source, entry = lookup(a.repo, a.cls)
-    print("pair=%s source=%s%s" % (pair, source, " stale" if is_stale(pair, entry) else ""))
+    size = phase_size(a.files, a.lines)
+    pair, source, entry, beyond = lookup(a.repo, a.cls, size)
+    line = "pair=%s source=%s%s" % (pair, source, " stale" if is_stale(pair, entry) else "")
+    if size:
+        line += " size=%s%s" % (size, " beyond=" + beyond if beyond else "")
+    print(line)
     if may_explore(a.record, a.cls, pair):
         below = ladder_down(pair, entry)
         if below:
             print("explore=%s" % below)
+    up = nbis_pair(pair)
+    if up:
+        print("nbis=%s" % up)
 
 
 # --- calibration --------------------------------------------------------------------
@@ -625,6 +671,13 @@ def median_ci(costs, rng):
     return statistics.median(costs), meds[round(0.05 * (RESAMPLES - 1))], meds[round(0.95 * (RESAMPLES - 1))]
 
 
+def size_bucket(files, lines):
+    """The bucket of a piece of work: `small` at most SMALL_FILES files and SMALL_LINES lines,
+    `large` beyond. The one rule a measured task and a phase given to `pick` are both read by.
+    """
+    return "small" if files <= SMALL_FILES and lines <= SMALL_LINES else "large"
+
+
 def task_sizes(m):
     """Each task's size from its merged diff, the test files left out: the hidden tests are not
     the agent's work. `small` at most SMALL_FILES files and SMALL_LINES lines added and
@@ -662,7 +715,7 @@ def task_sizes(m):
                 continue
             files += 1
             lines += sum(int(x) for x in (added, deleted) if x != "-")
-        out[tid] = "small" if files <= SMALL_FILES and lines <= SMALL_LINES else "large"
+        out[tid] = size_bucket(files, lines)
     return out
 
 

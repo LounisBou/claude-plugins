@@ -5692,46 +5692,46 @@ printf '{"deep":"a-model","standard":{"model":"b-model","effort":"medium"},"ligh
 printf '{"slug":"laravel","repo":"%s","profile":"php/laravel-app","tasks":[]}' "$T/laravel" > "$PS/routing/projects/laravel/manifest.json"
 DEF="$WORK/defaults"; mkdir -p "$DEF"
 rpick() { ORCHESTRATOR_STATE_DIR="$PS" ORCHESTRATOR_ROUTING_DEFAULTS="$DEF" python3 "$ROUTING" pick --repo "$T/laravel" "$@"; }
-check "nothing measured: the tier table through the map" "pair=b-model/medium source=tier-table" "$(rpick --class behaviour-phase)"
+check "nothing measured: the tier table through the map" $'pair=b-model/medium source=tier-table\nnbis=b-model/high' "$(rpick --class behaviour-phase)"
 check "nothing measured, a tier bound to a model alone" "pair=c-model source=tier-table" "$(rpick --class search)"
 mv "$PS/models.json" "$PS/models.json.off"
 check "nothing measured and nothing bound: the host's default" "pair=host-default source=tier-table" "$(rpick --class search)"
 mv "$PS/models.json.off" "$PS/models.json"
 printf '{"scope":"global","entries":{"behaviour-phase":{"pair":"light/high"}}}' > "$DEF/global.json"
-check "a shipped default resolves its tier through the map" "pair=c-model/high source=shipped:global" "$(rpick --class behaviour-phase)"
+check "a shipped default resolves its tier through the map" $'pair=c-model/high source=shipped:global\nnbis=c-model/xhigh' "$(rpick --class behaviour-phase)"
 printf '{"scope":"profile:php/laravel-app","entries":{"behaviour-phase":{"pair":"deep/low"}}}' > "$DEF/profile-php-laravel-app.json"
-check "a shipped profile default beats the shipped global one" "pair=a-model/low source=shipped:profile:php/laravel-app" "$(rpick --class behaviour-phase)"
+check "a shipped profile default beats the shipped global one" $'pair=a-model/low source=shipped:profile:php/laravel-app\nnbis=a-model/medium' "$(rpick --class behaviour-phase)"
 printf '{"scope":"profile:php/laravel-app","entries":{"behaviour-phase":{"pair":"nonsense/low"}}}' > "$DEF/profile-php-laravel-app.json"
-check "a shipped default on a tier the map does not bind falls through" "pair=c-model/high source=shipped:global" "$(rpick --class behaviour-phase)"
+check "a shipped default on a tier the map does not bind falls through" $'pair=c-model/high source=shipped:global\nnbis=c-model/xhigh' "$(rpick --class behaviour-phase)"
 printf '{"scope":"global","entries":{"behaviour-phase":{"pair":"c-model/medium","models":["c-model-1"]}}}' > "$PS/routing/tables/global.json"
-check "the local global table beats the shipped defaults" "pair=c-model/medium source=global" "$(rpick --class behaviour-phase)"
+check "the local global table beats the shipped defaults" $'pair=c-model/medium source=global\nnbis=c-model/high' "$(rpick --class behaviour-phase)"
 printf '{"scope":"profile:php/laravel-app","entries":{"behaviour-phase":{"pair":"b-model/low","models":["b-model-1"]}}}' > "$PS/routing/tables/profile-php-laravel-app.json"
-check "the profile table beats the global one" "pair=b-model/low source=profile:php/laravel-app" "$(rpick --class behaviour-phase)"
+check "the profile table beats the global one" $'pair=b-model/low source=profile:php/laravel-app\nnbis=b-model/medium' "$(rpick --class behaviour-phase)"
 printf '{"scope":"project:laravel","entries":{"behaviour-phase":{"pair":"a-model/low","models":["a-model-1"],"floor":0.9,"ladder":[{"pair":"a-model/low","n":6,"pass_rate":1.0,"eligible":true}]},"conversion-phase":{"pair":"a-model/medium","models":["a-model-1"],"floor":0.9,"ladder":[{"pair":"a-model/low","n":8,"pass_rate":0.5,"eligible":false},{"pair":"a-model/medium","n":8,"pass_rate":1.0,"eligible":true}]},"comments":{"pair":"a-model/high","models":["a-model-1"],"floor":0.9,"ladder":[{"pair":"a-model/low","n":6,"pass_rate":1.0,"eligible":true},{"pair":"a-model/medium","n":8,"pass_rate":0.5,"eligible":false},{"pair":"a-model/high","n":6,"pass_rate":1.0,"eligible":true}]},"review-collector":{"pair":"a-model/high","models":["a-model-1"],"floor":0.9,"ladder":[{"pair":"a-model/low","n":6,"pass_rate":1.0,"eligible":true},{"pair":"a-model/medium","n":6,"pass_rate":1.0,"eligible":true},{"pair":"a-model/high","n":6,"pass_rate":1.0,"eligible":true}]},"review-lens":{"pair":"a-model/high","models":["a-model-1"],"floor":0.9,"ladder":[{"pair":"a-model/low","n":6,"pass_rate":1.0,"eligible":true},{"pair":"a-model/medium","n":2,"pass_rate":1.0,"eligible":false},{"pair":"a-model/high","n":6,"pass_rate":1.0,"eligible":true}]},"contract-phase":{"pair":"a-model/high","models":["a-model-1"]}}}' > "$PS/routing/tables/project-laravel.json"
-check "the project table beats them all" "pair=a-model/low source=project:laravel" "$(rpick --class behaviour-phase)"
+check "the project table beats them all" $'pair=a-model/low source=project:laravel\nnbis=a-model/medium' "$(rpick --class behaviour-phase)"
 printf '{"a-model":"a-model-2"}' > "$PS/routing/aliases.json"
-check "an entry measured on another identifier is flagged stale" "pair=a-model/low source=project:laravel stale" "$(rpick --class behaviour-phase)"
+check "an entry measured on another identifier is flagged stale" $'pair=a-model/low source=project:laravel stale\nnbis=a-model/medium' "$(rpick --class behaviour-phase)"
 check_status "an unknown class is a refusal" 1 rpick --class nonsense
 # Exploration: three one-round closes at the class's pair, none escaped, and a class that may be explored.
 ER="$WORK/explore.jsonl"; : > "$ER"
 for i in 1 2 3; do printf '{"id":%d,"class":"behaviour-phase","model":"a-model","effort":"low","rounds":1,"state":"closed"}\n' "$i" >> "$ER"; done
 check "three clean closes offer one notch down: the lowest rung, no lower effort, so the next lighter family" \
   "explore=b-model/low" "$(rpick --class behaviour-phase --record "$ER" | sed -n 2p)"
-check "two clean closes are not enough" "1" \
+check "two clean closes are not enough" "2" \
   "$(sed -n 1,2p "$ER" > "$WORK/two.jsonl"; rpick --class behaviour-phase --record "$WORK/two.jsonl" | wc -l | tr -d ' ')"
 check "a line of the record that does not read is skipped, not fatal" "explore=b-model/low" \
   "$({ cat "$ER"; echo '{"id":'; } > "$WORK/torn.jsonl"; rpick --class behaviour-phase --record "$WORK/torn.jsonl" 2>/dev/null | sed -n 2p)"
-check "an escaped defect at the class's pair closes the exploration" "1" \
+check "an escaped defect at the class's pair closes the exploration" "2" \
   "$({ cat "$ER"; printf '{"id":4,"class":"behaviour-phase","model":"a-model","effort":"low","rounds":1,"state":"closed","escaped":true}\n'; } > "$WORK/esc.jsonl"; rpick --class behaviour-phase --record "$WORK/esc.jsonl" | wc -l | tr -d ' ')"
-check "a failed exploration freezes the class for the build" "1" \
+check "a failed exploration freezes the class for the build" "2" \
   "$({ cat "$ER"; printf '{"id":5,"class":"behaviour-phase","model":"b-model","effort":"low","rounds":2,"state":"closed","explore":true}\n'; } > "$WORK/frozen.jsonl"; rpick --class behaviour-phase --record "$WORK/frozen.jsonl" | wc -l | tr -d ' ')"
-check "a notch the ladder measured below the floor is never offered" "1" \
+check "a notch the ladder measured below the floor is never offered" "2" \
   "$(for i in 1 2 3; do printf '{"id":%d,"class":"conversion-phase","model":"a-model","effort":"medium","rounds":1,"state":"closed"}\n' "$i"; done > "$WORK/conv.jsonl"; rpick --class conversion-phase --record "$WORK/conv.jsonl" | wc -l | tr -d ' ')"
 hi3() { for i in 1 2 3; do printf '{"id":%d,"class":"%s","model":"a-model","effort":"high","rounds":1,"state":"closed"}\n' "$i" "$1"; done; }
 # The notch is the IMMEDIATE cheaper rung. Comments: medium was measured at 0.5 over 8, below
 # the 0.9 floor, so no notch - the eligible low rung beneath it is two notches, not one.
 hi3 comments > "$WORK/n-a.jsonl"
-check "an immediate rung measured below the floor is no notch, the eligible one beneath it is not offered" "1" \
+check "an immediate rung measured below the floor is no notch, the eligible one beneath it is not offered" "2" \
   "$(rpick --class comments --record "$WORK/n-a.jsonl" | wc -l | tr -d ' ')"
 hi3 review-collector > "$WORK/n-b.jsonl"
 check "an eligible immediate rung is the notch" "explore=a-model/medium" \
@@ -5740,11 +5740,74 @@ check "an eligible immediate rung is the notch" "explore=a-model/medium" \
 hi3 review-lens > "$WORK/n-c.jsonl"
 check "an immediate rung with too few trials is offered, not skipped for the eligible one below" "explore=a-model/medium" \
   "$(rpick --class review-lens --record "$WORK/n-c.jsonl" | sed -n 2p)"
-check "a contract phase is never explored, measured or not" "1" \
+check "a contract phase is never explored, measured or not" "2" \
   "$(printf '{"id":9,"class":"contract-phase","model":"a-model","effort":"high","rounds":1,"state":"closed"}\n%.0s' 1 2 3 > "$WORK/c.jsonl"; rpick --class contract-phase --record "$WORK/c.jsonl" | wc -l | tr -d ' ')"
 # A table written before the selection by equivalence: a floor, rungs with no new field.
 check "show --detail reads a table written before the tables by task, a missing figure as -" "1|1" \
   "$(ORCHESTRATOR_STATE_DIR="$PS" python3 "$ROUTING" show --detail laravel 2>&1 | grep -c '^class=conversion-phase project=a-model/medium ')|$(ORCHESTRATOR_STATE_DIR="$PS" python3 "$ROUTING" show --detail laravel 2>&1 | grep -c '^  rung pair=a-model/low tasks=- pass_rate=0.5 p_best=- median_usd=- ci=-..- expected_usd=- off_model=-$')"
+
+# The size of a phase: one rule, the bucket a task is stamped with and the one `pick` is given.
+rcall() { # a python expression over the module as `m`, printed; a crash is read as its last traceback line
+  "$py" -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(eval(sys.argv[2]))' "$ROUTING" "$1" 2>&1 | tail -1; }
+check "a phase of 3 files and 50 lines is small; one more file or one more line is large" "small|small|large|large" \
+  "$(rcall 'm.size_bucket(3, 50)')|$(rcall 'm.size_bucket(0, 0)')|$(rcall 'm.size_bucket(4, 0)')|$(rcall 'm.size_bucket(0, 51)')"
+
+# The N-bis pair: the corrective round runs one effort notch above its phase (the round is the
+# retry: cheap first, escalate on failure). The top effort has no notch above, so it stays.
+check "the notch up is the next effort of the same family, and the top stays" "a-model/medium|a-model/high|a-model/xhigh|a-model/max|a-model/max" \
+  "$(rcall 'm.nbis_pair("a-model/low")')|$(rcall 'm.nbis_pair("a-model/medium")')|$(rcall 'm.nbis_pair("a-model/high")')|$(rcall 'm.nbis_pair("a-model/xhigh")')|$(rcall 'm.nbis_pair("a-model/max")')"
+check "a pair with no effort, or one the efforts do not list, has no notch up" "None|None|None" \
+  "$(rcall 'm.nbis_pair("a-model")')|$(rcall 'm.nbis_pair("host-default")')|$(rcall 'm.nbis_pair("a-model/ultra")')"
+check "the notch up comes last, after the explore line" $'explore=b-model/low\nnbis=a-model/medium' \
+  "$(rpick --class behaviour-phase --record "$ER" | sed -n 2,3p)"
+check "and nothing follows it" "3" "$(rpick --class behaviour-phase --record "$ER" | wc -l | tr -d ' ')"
+
+# Pick by the phase's size. An entry stamped on smaller work than the phase does not serve it,
+# and pick goes on down its order; a table written before the stamp reads as unknown size.
+ZS="$WORK/zstate"; ZD="$WORK/zdefaults"; mkdir -p "$ZS/routing/tables" "$ZS/routing/projects/laravel" "$ZD"
+printf '{"deep":"a-model","standard":{"model":"b-model","effort":"medium"},"light":"c-model"}' > "$ZS/models.json"
+cp "$PS/routing/projects/laravel/manifest.json" "$ZS/routing/projects/laravel/manifest.json"
+printf '{"a-model":"a-model-2","b-model":"b-model-2"}' > "$ZS/routing/aliases.json"
+printf '{"scope":"project:laravel","entries":{"behaviour-phase":{"pair":"a-model/low","size":"small"},"conversion-phase":{"pair":"a-model/medium"},"comments":{"pair":"a-model/high","size":"large","models":["a-model-1"]},"review-lens":{"pair":"a-model/low","size":"small"}}}' > "$ZS/routing/tables/project-laravel.json"
+printf '{"scope":"profile:php/laravel-app","entries":{"behaviour-phase":{"pair":"b-model/low","size":"large"},"conversion-phase":{"pair":"b-model/medium","size":"large","models":["b-model-1"]},"review-lens":{"pair":"b-model/low","size":"small"}}}' > "$ZS/routing/tables/profile-php-laravel-app.json"
+printf '{"scope":"global","entries":{"behaviour-phase":{"pair":"c-model/medium","size":"small"},"review-lens":{"pair":"c-model/low","size":"small"}}}' > "$ZS/routing/tables/global.json"
+printf '{"scope":"profile:php/laravel-app","entries":{"search":{"pair":"nonsense/low","size":"small"},"n-bis":{"pair":"standard/low","size":"small"}}}' > "$ZD/profile-php-laravel-app.json"
+printf '{"scope":"global","entries":{"search":{"pair":"deep/high","size":"large"},"n-bis":{"pair":"standard/high","size":"small"}}}' > "$ZD/global.json"
+zpick() { ORCHESTRATOR_STATE_DIR="$ZS" ORCHESTRATOR_ROUTING_DEFAULTS="$ZD" python3 "$ROUTING" pick --repo "$T/laravel" "$@"; }
+check "a small phase takes the project's entry measured on small work" $'pair=a-model/low source=project:laravel size=small\nnbis=a-model/medium' \
+  "$(zpick --class behaviour-phase --files 2 --lines 40)"
+check "3 files and 50 lines, and nothing at all, are still a small phase" "size=small|size=small" \
+  "$(zpick --class behaviour-phase --files 3 --lines 50 | grep -o 'size=[a-z]*')|$(zpick --class behaviour-phase --files 0 --lines 0 | grep -o 'size=[a-z]*')"
+check "a large phase by its files skips an entry measured on small work and says which scope" $'pair=b-model/low source=profile:php/laravel-app size=large beyond=project:laravel\nnbis=b-model/medium' \
+  "$(zpick --class behaviour-phase --files 4 --lines 10)"
+check "a large phase by its lines falls through the same way" $'pair=b-model/low source=profile:php/laravel-app size=large beyond=project:laravel\nnbis=b-model/medium' \
+  "$(zpick --class behaviour-phase --files 1 --lines 51)"
+check "without the options pick reads no size: the project's entry, no size= and no beyond=" $'pair=a-model/low source=project:laravel\nnbis=a-model/medium' \
+  "$(zpick --class behaviour-phase)"
+check "a table written before the stamp reads as unknown size: skipped by a large phase" $'pair=b-model/medium source=profile:php/laravel-app stale size=large beyond=project:laravel\nnbis=b-model/high' \
+  "$(zpick --class conversion-phase --files 9 --lines 9)"
+check "and it serves a small phase" $'pair=a-model/medium source=project:laravel size=small\nnbis=a-model/high' \
+  "$(zpick --class conversion-phase --files 1 --lines 1)"
+check "a large phase with no entry measured on large work lands on the tier table, naming the first scope skipped" $'pair=b-model/medium source=tier-table size=large beyond=project:laravel\nnbis=b-model/high' \
+  "$(zpick --class review-lens --files 9 --lines 9)"
+check "a project entry measured on large work serves a large phase, nothing skipped" $'pair=a-model/high source=project:laravel stale size=large\nnbis=a-model/xhigh' \
+  "$(zpick --class comments --files 9 --lines 9)"
+check "a shipped entry measured on large work serves a large phase through the map, a shipped tier the map does not bind never being a beyond" \
+  $'pair=a-model/high source=shipped:global size=large\nnbis=a-model/xhigh' "$(zpick --class search --files 9 --lines 9)"
+check "a shipped entry measured on small work is skipped by a large phase, the first one named" $'pair=b-model/medium source=tier-table size=large beyond=shipped:profile:php/laravel-app\nnbis=b-model/high' \
+  "$(zpick --class n-bis --files 9 --lines 9)"
+check "and serves a small phase" $'pair=b-model/low source=shipped:profile:php/laravel-app size=small\nnbis=b-model/medium' \
+  "$(zpick --class n-bis --files 1 --lines 1)"
+check "the explore line keeps its place when the phase is sized" $'pair=a-model/low source=project:laravel size=small\nexplore=b-model/low\nnbis=a-model/medium' \
+  "$(zpick --class behaviour-phase --files 2 --lines 40 --record "$ER")"
+check "--files without --lines is a refusal that says they go together" "exit 1|ERROR: pick: --files and --lines go together" \
+  "$(zpick --class behaviour-phase --files 3 >/dev/null 2>&1; echo "exit $?")|$(zpick --class behaviour-phase --files 3 2>&1)"
+check "--lines without --files is the same refusal" "ERROR: pick: --files and --lines go together" \
+  "$(zpick --class behaviour-phase --lines 3 2>&1)"
+check "a negative count, or one that is not a whole number, is a refusal that says what a count is" \
+  "exit 1|ERROR: pick: --files and --lines are counts, 0 or more|ERROR: pick: --files and --lines are counts, 0 or more|ERROR: pick: --files and --lines are counts, 0 or more|ERROR: pick: --files and --lines are counts, 0 or more" \
+  "$(zpick --class behaviour-phase --files -1 --lines 3 >/dev/null 2>&1; echo "exit $?")|$(zpick --class behaviour-phase --files -1 --lines 3 2>&1)|$(zpick --class behaviour-phase --files 3 --lines -1 2>&1)|$(zpick --class behaviour-phase --files abc --lines 3 2>&1)|$(zpick --class behaviour-phase --files 2.5 --lines 3 2>&1)"
+check "a refusal prints no pair" "0" "$(zpick --class behaviour-phase --files -1 --lines 3 2>/dev/null | wc -l | tr -d ' ')"
 
 echo "== routing: calibrate =="
 
@@ -5939,6 +6002,9 @@ for f in a b c; do git -C "$NR" mv "$f.txt" "$f.moved"; done
 gc -C "$NR" commit -qm moved
 check "a rename counts as one file, whatever the configuration says about rename detection" "small" \
   "$(sized "$NR" "$NR0" "$(git -C "$NR" rev-parse HEAD)")"
+# One rule, two callers: a task's bucket is the one size_bucket gives, not a comparison of its own.
+check "a task is bucketed by size_bucket" "bucket-of-3-files" \
+  "$("$py" -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); m.size_bucket=lambda files, lines: "bucket-of-%d-files" % files; print(m.task_sizes({"repo":sys.argv[2],"tasks":[{"id":"t","base":sys.argv[3],"merged":sys.argv[4]}]})["t"])' "$ROUTING" "$NR" "$NR0" "$(git -C "$NR" rev-parse HEAD)" 2>&1 | tail -1)"
 check "the entry carries the selection it was made with, and no floor" "0.1|0.8|false|false" \
   "$(jq -r '.entries["behaviour-phase"]|"\(.delta)|\(.bar)|\(.strict)|\(has("floor"))"' "$TTAB")"
 check "every rung carries the per-task figures, the median and its interval" "true" \
@@ -6337,7 +6403,7 @@ out=$(rg generalize)
 check "projects of unknown language get no profile table, and still count globally" "no|global projects=5 classes=2" \
   "$([ -f "$GS/routing/tables/profile-unknown-library.json" ] && echo yes || echo no)|$(printf '%s\n' "$out" | grep '^global')"
 UT="$WORK/unknown-tree"; mkdir -p "$UT"
-check "a third project of unknown language is served by the global table" "pair=c-model/low source=global" \
+check "a third project of unknown language is served by the global table" $'pair=c-model/low source=global\nnbis=c-model/medium' \
   "$(ORCHESTRATOR_STATE_DIR="$GS" ORCHESTRATOR_ROUTING_DEFAULTS="$WORK/no-defaults" python3 "$ROUTING" pick --repo "$UT" --class search)"
 
 # One weak trial does not hold a pair back: r3 has a single failed trial of c-model/medium.
@@ -6359,7 +6425,7 @@ printf '{"deep":"a-model","standard":"b-model","light":"c-model"}' > "$XS/models
 printf '{"scope":"global","entries":{"behaviour-phase":{"pair":"standard/high","floor":0.9,"n":6,"pass_rate":1.0,"ladder":[{"pair":"light/high","n":6,"pass_rate":0.5,"eligible":false},{"pair":"standard/high","n":6,"pass_rate":1.0,"eligible":true}]}}}' > "$XD/global.json"
 for i in 1 2 3; do printf '{"id":%d,"class":"behaviour-phase","model":"b-model","effort":"high","rounds":1,"state":"closed"}\n' "$i"; done > "$WORK/x.jsonl"
 xpick() { ORCHESTRATOR_STATE_DIR="$XS" ORCHESTRATOR_ROUTING_DEFAULTS="$XD" python3 "$ROUTING" pick --repo "$UT" --class behaviour-phase --record "$WORK/x.jsonl"; }
-check "a shipped rung measured below the floor, read through the map, is no notch" "pair=b-model/high source=shipped:global" "$(xpick)"
+check "a shipped rung measured below the floor, read through the map, is no notch" $'pair=b-model/high source=shipped:global\nnbis=b-model/xhigh' "$(xpick)"
 printf '{"deep":"a-model","standard":"b-model"}' > "$XS/models.json"
 check "a shipped rung on an unbound tier is skipped: the effort notch stands" "explore=b-model/medium" "$(xpick | sed -n 2p)"
 
@@ -6411,6 +6477,17 @@ check "the calibration reference states the selection by equivalence, its keys a
 check "the calibration reference no longer states a floor for the tables" "no" "$(spells "$MRC" 'The reliability floors')"
 check "the routing skill skips a notch found not equivalent, not one below a floor" "yes|no" \
   "$(spells "$MR" 'measured and found not equivalent to the best')|$(spells "$MR" 'measured below the floor')"
+check "the skill passes the phase's size to pick: both options, and the two thresholds of the readings" "yes|yes|yes|yes" \
+  "$(spells "$MR" '--files')|$(spells "$MR" '--lines')|$(spells "$MR" 'files > 3')|$(spells "$MR" 'lines > 50')"
+check "the skill says what beyond= means for the brief, and that a correction round runs at nbis=" "yes|yes|yes" \
+  "$(spells "$MR" 'size=large beyond=<scope>')|$(spells "$MR" 'nbis=')|$(spells "$MR" '--class n-bis')"
+check "the skill says an n-bis call's own pair is the round's, not its nbis= line" "yes" "$(spells "$MR" "its \`nbis=\` line is not read")"
+check "the skill puts a search exploration, summary in the brief, before a phase beyond every measured size" "yes|yes" \
+  "$(spells "$MR" 'beyond every measured size')|$(carries "$MR" 'read-only search exploration')"
+check "the calibration reference states pick's options and its lines" "yes|yes|yes" \
+  "$(spells "$MRC" '--files <n> --lines <n>')|$(spells "$MRC" 'size=large beyond=<scope>')|$(spells "$MRC" 'nbis=<pair>')"
+check "the dispatch log holds the correction round's notch and the size rule" "yes|yes" \
+  "$(spells "$ROOT/docs/agent-dispatches.md" 'A correction round runs one effort notch above its phase')|$(spells "$ROOT/docs/agent-dispatches.md" 'A table measured on small work does not serve a large phase')"
 check "the routing skill and the brief say a pair, not a tier" "yes|yes" \
   "$(spells "$MR" 'must choose the model/effort pair')|$(spells "$ROOT/skills/orchestrator/references/briefs.md" 'then choose the model/effort pair the work needs')"
 

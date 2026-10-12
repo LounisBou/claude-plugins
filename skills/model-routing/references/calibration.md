@@ -1,7 +1,8 @@
 # Calibration: how the routing tables are measured
 
 `routing.py pick` reads a pair from the most specific table that has one: the project's, its
-profile's, the global one, a shipped default, then the tier table of the skill. This reference
+profile's, the global one, a shipped default, then the tier table of the skill, passing over an
+entry measured on smaller work than the phase it is given (section 5). This reference
 is how those tables are made, in the order the operator runs the steps. Every command is
 `routing.py <subcommand>` (`${CLAUDE_PLUGIN_ROOT}/skills/model-routing/scripts/routing.py`),
 and everything it writes lives under `<state dir>/routing/`: measured tables name model
@@ -171,6 +172,23 @@ beyond, `unknown` with one warning per task when the diff cannot be read. It is 
 each `calibrate`, never written into the manifest. The entry's `size` is the largest bucket
 among its class's tasks (`large` over `small` over `unknown`), and `sizes` counts the tasks of
 each.
+
+**Pick by size.** `pick --repo <r> --class <c> [--record <rec>] [--files <n> --lines <n>]` is
+given the phase's size: both counts or neither, whole numbers, 0 or more (one alone, or a
+count that is not one, is refused). They are bucketed by the rule a task is, `large` beyond 3
+files or 50 lines, and the first line gains `size=<bucket>`. An entry whose `size` is not
+`large` does not serve a `large` phase; a table written before the stamp has none and reads as
+`unknown`. `pick` goes on down its order (project, profile, global, shipped, tier table) to the
+first entry measured on large work, or to the tier table, and the line then reads
+`size=large beyond=<scope>`, the scope being the first entry skipped: `project:<slug>`,
+`profile:<p>`, `global`, `shipped:profile:<p>` or `shipped:global`. A shipped entry whose tier
+the map does not bind is skipped as ever and is never named. Without the options `pick` reads
+no size.
+
+The output, in order: `pair=<p> source=<s>[ stale][ size=<bucket>[ beyond=<scope>]]`;
+`explore=<pair>` when an exploration is offered; `nbis=<pair>` last, the picked pair one effort
+level up on the same family (the same pair at `max`), and no line for a pair with no effort.
+The skill runs a phase's correction round at that pair.
 
 `--from-record <record>`, repeatable, adds the dispatch record's closed pair rows as trials:
 one round and no escaped defect is a pass. A row whose cost is incomplete, or that names no

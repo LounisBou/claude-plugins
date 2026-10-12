@@ -137,3 +137,29 @@ The class of each kind of work and its tier: `skills/model-routing/SKILL.md`, «
 - Why: the tables must be measured on one release of the host. The update then brings the
   effort setting of a subagent launched inside a session, and the isolation options of an
   evaluation run.
+
+### 13. A correction round runs one effort notch above its phase
+
+- Since: routing phase 4 (#181, 2026-10-12), from the operator's study of the dispatch trials.
+- Rule: `skills/model-routing/SKILL.md`, « The correction round runs one notch above its
+  phase »; `routing.py pick` prints the pair as `nbis=<pair>`.
+- Choice: a phase starts at the cheap pair its table gives, and its correction round runs the
+  same family one effort level up (the same pair at the top effort). The review and the
+  correction round are the escalation; this is not a cascade, and a phase is never retried at
+  its own pair.
+- Why: the round is the retry of a first attempt that fell short, and the same pair repeats the
+  same shortfall; paying the notch only on a failure keeps the first attempt cheap.
+
+### 14. A table measured on small work does not serve a large phase
+
+- Since: routing phase 4 (#181, 2026-10-12), from the same study.
+- Rule: `skills/model-routing/SKILL.md`, « Where the pair comes from »;
+  `skills/model-routing/references/calibration.md`, « 5. Calibrate the project's table » (the
+  size stamp, pick by size).
+- Choice: a phase of more than 3 files or more than 50 lines is large. `pick`, given its size,
+  serves only an entry measured on large work, and otherwise names the scope it skipped
+  (`size=large beyond=<scope>`), falling to the tier table when none was. A phase beyond every
+  measured size gets a read-only search exploration first, its summary in the brief.
+- Why: the gaps between pairs are small on short single-file work with a full spec and large
+  beyond it, and our corpora are almost all short work: a pair's record there says little about
+  a large phase.
