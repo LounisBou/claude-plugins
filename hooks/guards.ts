@@ -11,7 +11,8 @@
 // - `git push` is refused unless the user's last words say "push";
 // - under /norms:check, a commit message naming the check, the tooling or the
 //   TODO list is refused unless the user's last words use that word;
-// - an interrupted turn ends the mode, and so do /clear and any other command.
+// - an interrupted turn ends the mode, and so do /clear and any other slash
+//   command the user submits.
 // A guard that fails lets the call through: the markdown still states every rule.
 
 export type Mode = 'check' | 'learn'
@@ -84,20 +85,32 @@ export function guardState(): { mode: Mode | undefined; lastPrompt: string | und
 
 const pass = ($: any, e: any, next: any) => next(e)
 
-export function register(on: any): void {
-  on('command.run', async ($: any, e: any, next: any) => {
-    const command = String(e.command ?? '')
-    if (command === 'norms:check' || command === 'norms:learn') {
-      mode = command === 'norms:check' ? 'check' : 'learn'
-      lastPrompt = `/${command} ${String(e.args ?? '')}`.trim()
-    } else if (!command.startsWith('norms:')) {
-      resetGuards()
-    }
-    return next(e)
-  }).catch(pass)
+// The commands that arm a mode. Only these are hooked: a command.run hook with no
+// matcher sits in every command's chain, and the host then names norms beside
+// the plugin that owns the command.
+const MODES: Record<string, Mode> = { 'norms:check': 'check', 'norms:learn': 'learn' }
 
+// The command a typed slash prompt names, without its slash; undefined for words.
+export function promptCommand(text: string): string | undefined {
+  const m = text.trim().match(/^\/([\w:.-]+)(\s|$)/)
+  return m ? m[1] : undefined
+}
+
+export function register(on: any): void {
+  for (const [command, armed] of Object.entries(MODES)) {
+    on('command.run', { command }, async ($: any, e: any, next: any) => {
+      mode = armed
+      lastPrompt = `/${command} ${String(e.args ?? '')}`.trim()
+      return next(e)
+    }).catch(pass)
+  }
+
+  // Any other command ends the mode: its slash prompt follows its command.run.
   on('prompt.submit', async ($: any, e: any, next: any) => {
-    if (USER_ORIGINS.includes(String(e.origin?.kind))) lastPrompt = String(e.text ?? '')
+    const text = String(e.text ?? '')
+    const command = promptCommand(text)
+    if (command !== undefined && !command.startsWith('norms:')) resetGuards()
+    if (USER_ORIGINS.includes(String(e.origin?.kind))) lastPrompt = text
     return next(e)
   }).catch(pass)
 

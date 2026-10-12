@@ -2,7 +2,8 @@
 // N4: the walkthrough guards, each false-positive case they were narrowed for,
 // and the releases (the user's own words, an interrupted turn, another command).
 import { expect, test } from 'claude-code/testing'
-import { editDecision, pushDecision, commitDecision, register, resetGuards, guardState } from '../guards.ts'
+import { editDecision, pushDecision, commitDecision, promptCommand, register, resetGuards, guardState } from '../guards.ts'
+import { register as registerAll } from '../register.ts'
 import { mount, hook, nextOf, fakeDollar } from './fakes.ts'
 
 test('under /norms:check, an edit is refused on the command turn and after pass or discuss', () => {
@@ -62,7 +63,7 @@ test('the hooks follow the session: command, the user\'s words, an interrupt, an
   resetGuards()
   const hooks = mount(register)
   const { $ } = fakeDollar({})
-  const run = (e: any) => hook(hooks, 'command.run').handler($, e, nextOf().next)
+  const run = (e: any) => hook(hooks, 'command.run', { command: e.command }).handler($, e, nextOf().next)
   const say = (text: string, kind = 'composer') => hook(hooks, 'prompt.submit').handler($, { text, origin: { kind } }, nextOf().next)
   const edit = async (file_path: string, agentId?: string) => {
     const { next, seen } = nextOf()
@@ -88,8 +89,11 @@ test('the hooks follow the session: command, the user\'s words, an interrupt, an
   expect(guardState().mode).toBeUndefined()
   expect(await edit('src/a.ts')).toBe('ran')
 
+  // Another command's slash prompt ends the mode, as its command.run once did.
   await run({ command: 'norms:check', args: '' })
-  await run({ command: 'commit', args: '' })
+  await say('/norms:check')
+  expect(guardState().mode).toBe('check')
+  await say('/commit')
   expect(guardState().mode).toBeUndefined()
 
   await run({ command: 'norms:learn', args: '12' })
@@ -101,7 +105,7 @@ test('the Bash guard refuses a push and a leaking commit, and passes the rest', 
   resetGuards()
   const hooks = mount(register)
   const { $ } = fakeDollar({})
-  await hook(hooks, 'command.run').handler($, { command: 'norms:check', args: '' }, nextOf().next)
+  await hook(hooks, 'command.run', { command: 'norms:check' }).handler($, { command: 'norms:check', args: '' }, nextOf().next)
   await hook(hooks, 'prompt.submit').handler($, { text: 'fix', origin: { kind: 'composer' } }, nextOf().next)
   const bash = async (command: string) => {
     const { next, seen } = nextOf()
@@ -121,4 +125,48 @@ test('a guard that fails lets the call through', async () => {
   const { next, seen } = nextOf()
   await hook(hooks, 'tool.call', { tool: 'Edit' }).net!($, e, next)
   expect(seen).toEqual([e])
+})
+
+test('norms hooks only its own commands, so no other command\'s run passes through it', () => {
+  const hooks = mount(registerAll)
+  const runs = hooks.filter(h => h.event === 'command.run')
+  expect(runs.length).toBeGreaterThan(0)
+  for (const h of runs) {
+    expect(h.matcher).toBeDefined()
+    expect(String(h.matcher!.command).startsWith('norms:')).toBe(true)
+  }
+  // What the host does for /orchestrator:supervision: only hooks whose matcher names it run.
+  const reached = runs.filter(h => h.matcher!.command === 'orchestrator:supervision')
+  expect(reached.length).toBe(0)
+})
+
+test('/norms:check and /norms:learn arm their mode, and a slash prompt after them resets it', async () => {
+  resetGuards()
+  const hooks = mount(register)
+  const { $ } = fakeDollar({})
+  const say = (text: string, kind = 'composer') => hook(hooks, 'prompt.submit').handler($, { text, origin: { kind } }, nextOf().next)
+  await hook(hooks, 'command.run', { command: 'norms:check' }).handler($, { command: 'norms:check', args: 'src' }, nextOf().next)
+  expect(guardState()).toEqual({ mode: 'check', lastPrompt: '/norms:check src' })
+  await say('/norms:check src')
+  expect(guardState().mode).toBe('check')
+  // A path typed as words is not a command.
+  await say('/src/a.ts is the one')
+  expect(guardState().mode).toBe('check')
+  // A norms skill does not end the walkthrough, as before.
+  await say('/norms:validate')
+  expect(guardState().mode).toBe('check')
+  await say('/orchestrator:supervision')
+  expect(guardState().mode).toBeUndefined()
+
+  await hook(hooks, 'command.run', { command: 'norms:learn' }).handler($, { command: 'norms:learn', args: '12' }, nextOf().next)
+  expect(guardState().mode).toBe('learn')
+  await say('/compact', 'sdk')
+  expect(guardState().mode).toBeUndefined()
+})
+
+test('promptCommand names the command of a slash prompt and nothing else', () => {
+  expect(promptCommand('/norms:check src')).toBe('norms:check')
+  expect(promptCommand('  /commit')).toBe('commit')
+  expect(promptCommand('/src/a.ts')).toBeUndefined()
+  expect(promptCommand('fix')).toBeUndefined()
 })
