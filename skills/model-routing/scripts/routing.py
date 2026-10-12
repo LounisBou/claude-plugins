@@ -17,9 +17,11 @@ import fnmatch
 import glob
 import json
 import os
+import random
 import re
 import shutil
 import signal
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -165,14 +167,18 @@ def measure(paths):
     return out
 
 
+def carries_alias(ident, alias):
+    """Whether a model identifier carries the alias as a dash segment (`b-model` in `b-model-1`)."""
+    return bool(re.search(r"(^|-)%s(-|$)" % re.escape(alias), ident))
+
+
 def resolve_alias(alias, models):
     """The identifier an alias resolved to: the one carrying the alias as a dash segment,
     else the costliest. None when nothing was reported.
     """
     if not alias or not models:
         return None
-    seg = re.compile(r"(^|-)%s(-|$)" % re.escape(alias))
-    named = [m for m in sorted(models) if seg.search(m)]
+    named = [m for m in sorted(models) if carries_alias(m, alias)]
     return named[0] if named else max(models, key=lambda m: models[m] or 0)
 
 
@@ -220,7 +226,7 @@ CLASS_TIERS = {
     "review-collector": "standard", "comments": "standard", "review-lens": "standard",
     "search": "light",
 }
-# Work nothing downstream re-checks: never explored online, held to a floor of 1.0 offline.
+# Work nothing downstream re-checks: never explored online, held offline to a pair that never failed.
 NEVER_EXPLORED = {"orchestrator", "successor", "decision-round", "contract-phase", "final-verification"}
 STRICT_CLASSES = {"contract-phase", "final-verification"}
 EXPLORE_AFTER = 3
@@ -321,16 +327,20 @@ def tier_order():
 
 
 def failed_rung(rung, entry):
-    """A rung measured and found wanting: enough trials, and a pass rate below the entry's floor.
-    A rung with too few trials is not failed, only unmeasured - the pair an exploration tests.
+    """A rung measured and found wanting: covered, and not equivalent to the best pair. A rung
+    that is not covered is not failed, only unmeasured - the pair an exploration tests. A rung
+    of an older table, written before equivalence, is read by the floor it was selected with:
+    a rung with no `equivalent`, or a null one, is such a rung.
     """
+    if rung.get("equivalent") is not None:
+        return bool(rung.get("covered")) and rung["equivalent"] is False
     return (rung.get("n") or 0) >= MIN_TRIALS and (rung.get("pass_rate") or 0) < entry.get("floor", 0)
 
 
 def ladder_down(pair, entry=None):
     """One notch below a pair: the IMMEDIATE cheaper rung of the entry's ladder; without a
     ladder to read it from, effort down a level on the same family; at the lowest effort, the
-    next lighter family at the same effort. A notch the ladder measured below the floor is no
+    next lighter family at the same effort. A notch the ladder measured and found wanting is no
     notch: the measurement already answered what an exploration would ask. None when there is
     nothing below.
     """
@@ -462,13 +472,70 @@ def cmd_pick(argv):
 
 # --- calibration --------------------------------------------------------------------
 
-MIN_TRIALS = 6
+MIN_TRIALS = 6  # graded trials a pair needs in a class with no bench task, record rows only
+MIN_TASKS = 3  # tasks a class needs before any pair of it is covered
+DRAWS = 4000  # posterior draws per pair
+RESAMPLES = 1000  # bootstrap resamples of a pair's costs
+SMALL_FILES = 3
+SMALL_LINES = 50
+SIZES = ("unknown", "small", "large")  # smallest first
+SELECTION = {"delta": 0.10, "bar": 0.8}
 STATUSES = ("pass", "fail", "error")
 
 
 def floors():
+    """The bench's confirmation floors. The tables no longer read them: they select by
+    equivalence to the best pair (`selection`).
+    """
     cfg = read_json(os.path.join(ROUTING_DIR, "config.json"), {}).get("floor", {})
     return float(cfg.get("default", 0.9)), float(cfg.get("strict", 1.0))
+
+
+def selection():
+    """`delta` and `bar` from config.json's "selection", else the defaults. A value that is not
+    a number (a boolean is not one), is not finite or lies outside [0, 1] is refused: a mistyped
+    threshold would otherwise select on nonsense without a word.
+    """
+    cfg = read_json(os.path.join(ROUTING_DIR, "config.json"), {}).get("selection") or {}
+    out = []
+    for key in ("delta", "bar"):
+        v = cfg.get(key, SELECTION[key])
+        # NaN fails every comparison and infinity lies outside the range: the range check alone
+        # refuses a value that is not finite.
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not 0 <= v <= 1:
+            die("selection: %s must be a number from 0 to 1, got %s" % (key, json.dumps(v)))
+        out.append(float(v))
+    return tuple(out)
+
+
+def main_model(models):
+    """The identifier a trial spent most on; None when it reported none."""
+    if not models:
+        return None
+    return max(sorted(models), key=lambda m: models[m] or 0)
+
+
+def is_identifier(model):
+    """Whether a pair's model names a release (`b-model-1`: a dash and a last segment that is a
+    number or a date) rather than a family alias (`b-model`).
+    """
+    return bool(re.search(r"-\d+$", model))
+
+
+def on_model(pair, models):
+    """Whether a trial ran on its pair's model. A pair that names a full identifier is on-model
+    only when the main model is that identifier, a bracketed suffix on the reported one
+    (`[1m]`) ignored: an identifier that merely starts or ends with it is another model. A pair
+    that names an alias is on-model when the main model carries it as a dash segment. A trial
+    that reports no model (a record row, an old trial) is not checked.
+    """
+    main = main_model(models)
+    if main is None:
+        return True
+    model = pair.split("/")[0]
+    if is_identifier(model):
+        return re.sub(r"\[[^\]]*\]$", "", main) == model
+    return carries_alias(main, model)
 
 
 def is_pair(text):
@@ -521,60 +588,197 @@ def record_trials(record):
 
 
 def stats_of(trials):
-    """Per pair: the graded trials (`n`, `passes`) and the cost of every trial, errors
-    included - an error is paid for, it just says nothing about the pair's reliability. A
-    trial whose cost could not be read holds the ceiling it was launched with, not what it
-    cost: it stays out of the pair's costs.
+    """Per pair: the graded trials (`n`, `passes`, and `per_task`, each task's [passes, graded],
+    a trial with no task filed under "record") and the cost of every trial, errors included -
+    an error is paid for, it just says nothing about the pair's reliability. A trial whose cost
+    could not be read holds the ceiling it was launched with, not what it cost: it stays out of
+    the pair's costs. A trial that ran on another model than its pair's (an alias resolved to
+    an older release, a fallback) measures that model: it is only counted in `off_model`.
     """
     stats = {}
     for t in trials:
-        s = stats.setdefault(t["pair"], {"n": 0, "passes": 0, "costs": [], "models": set()})
+        s = stats.setdefault(t["pair"], {"n": 0, "passes": 0, "costs": [], "models": set(),
+                                         "per_task": {}, "off_model": 0})
+        if not on_model(t["pair"], t.get("models") or {}):
+            s["off_model"] += 1
+            continue
         if not t.get("cost_incomplete"):
             s["costs"].append(float(t.get("cost_usd") or 0))
         s["models"].update((t.get("models") or {}).keys())
         if t.get("status") in ("pass", "fail"):
+            ok = t["status"] == "pass"
             s["n"] += 1
-            s["passes"] += t["status"] == "pass"
+            s["passes"] += ok
+            cell = s["per_task"].setdefault(t.get("task") or "record", [0, 0])
+            cell[0] += ok
+            cell[1] += 1
     return stats
 
 
-def select_entry(cls, stats, floor):
-    ladder = []
-    for pair, s in stats.items():
-        mean = sum(s["costs"]) / len(s["costs"]) if s["costs"] else 0.0
-        rate = s["passes"] / s["n"] if s["n"] else 0.0
-        ladder.append({"pair": pair, "n": s["n"], "pass_rate": round(rate, 4), "cost_usd": round(mean, 6),
-                       "eligible": (s["n"] >= MIN_TRIALS and rate >= floor and not s.get("held_back")
-                     and bool(s["costs"])),
-                       "models": sorted(s["models"])})
-    ladder.sort(key=lambda r: (r["cost_usd"], r["pair"]))
+def median_ci(costs, rng):
+    """The median cost, and the 5th and 95th percentiles of the median over RESAMPLES
+    bootstrap resamples of the costs.
+    """
+    if not costs:
+        return None, None, None
+    meds = sorted(statistics.median(rng.choices(costs, k=len(costs))) for _ in range(RESAMPLES))
+    return statistics.median(costs), meds[round(0.05 * (RESAMPLES - 1))], meds[round(0.95 * (RESAMPLES - 1))]
+
+
+def task_sizes(m):
+    """Each task's size from its merged diff, the test files left out: the hidden tests are not
+    the agent's work. `small` at most SMALL_FILES files and SMALL_LINES lines added and
+    deleted, `large` beyond, `unknown` with a warning when the diff cannot be read. A binary
+    file counts as a file of no line. Git's output is read as bytes: a path that is not UTF-8
+    is still a path. Renames are detected (`-M`) whatever the user's configuration says, so a
+    rename is one file.
+    """
+    repo, globs, out = m.get("repo") or "", m.get("test_globs") or [], {}
+    for t in m.get("tasks") or []:
+        tid = t.get("id")
+        if not tid:
+            continue
+        r = None
+        if os.path.isdir(repo):
+            r = subprocess.run(["git", "-C", repo, "diff", "-M", "--numstat", "-z", t.get("base") or "",
+                                t.get("merged") or ""], capture_output=True)
+        if r is None or r.returncode != 0:
+            warn("routing: the size of task %s cannot be read: %s"
+                 % (tid, r.stderr.decode("utf-8", errors="replace").strip() if r
+                    else "no repository at %s" % (repo or "''")))
+            out[tid] = "unknown"
+            continue
+        files = lines = 0
+        parts = r.stdout.decode("utf-8", errors="replace").split("\0")
+        while parts:
+            record = parts.pop(0)
+            if not record:
+                continue
+            added, deleted, path = record.split("\t", 2)
+            if not path:  # a rename: the old path, then the new one
+                path = parts[1] if len(parts) > 1 else ""
+                del parts[:2]
+            if any(fnmatch.fnmatch(path, g) for g in globs):
+                continue
+            files += 1
+            lines += sum(int(x) for x in (added, deleted) if x != "-")
+        out[tid] = "small" if files <= SMALL_FILES and lines <= SMALL_LINES else "large"
+    return out
+
+
+def class_tasks(stats):
+    return sorted({k for s in stats.values() for k in s["per_task"] if k != "record"})
+
+
+def compare(cls, stats, delta):
+    """Every pair's rung, cheapest first; the best covered pair (None when no pair is covered);
+    and the median of the best pair's posterior.
+
+    A pair is covered when it was graded on every task of the class, and the class has at
+    least MIN_TASKS of them; in a class with no bench task (record rows only) when it has
+    MIN_TRIALS graded trials. A stat carrying its own `covered`, as a fold sets it, keeps it.
+    Its pass rate is the mean of its per-task rates. Each covered pair's success probability is
+    Beta(1 + passes, 1 + fails): DRAWS draws, then the bootstrap of its costs, both from a
+    generator of the pair's own seeded by the class and the pair, so its draws depend on its
+    own trials only: a pair added without being covered, or a trial of another class, moves no
+    figure of the others. A covered pair is equivalent when its draw is at least the best's
+    minus `delta` in half the paired draws.
+    """
+    tasks = class_tasks(stats)
+    pairs = sorted(stats)
+    draws, rungs = {}, {}
+    for p in pairs:
+        s = stats[p]
+        cells = s["per_task"]
+        if "covered" in s:
+            covered = s["covered"]
+        elif tasks:
+            covered = len(tasks) >= MIN_TASKS and all(t in cells for t in tasks)
+        else:
+            covered = s["n"] >= MIN_TRIALS
+        rng = random.Random("%s|%s" % (cls, p))
+        if covered and s["n"]:
+            draws[p] = [rng.betavariate(1 + s["passes"], 1 + s["n"] - s["passes"]) for _ in range(DRAWS)]
+        med, lo, hi = median_ci(s["costs"], rng)
+        rate = sum(a / b for a, b in cells.values()) / len(cells) if cells else 0.0
+        rungs[p] = {"pair": p, "n": s["n"], "tasks": sum(1 for k in cells if k != "record"),
+                    "per_task": {k: list(v) for k, v in sorted(cells.items())},
+                    "pass_rate": round(rate, 4), "p_best": None,
+                    "cost_usd": round(sum(s["costs"]) / len(s["costs"]), 6) if s["costs"] else 0.0,
+                    "median_usd": None if med is None else round(med, 6),
+                    "median_ci": None if lo is None else [round(lo, 6), round(hi, 6)],
+                    "off_model": s["off_model"], "covered": bool(covered and s["n"]),
+                    "equivalent": False, "eligible": False}
+    ladder = sorted(rungs.values(), key=lambda r: (r["cost_usd"], r["pair"]))
     for i, r in enumerate(ladder):
         # A failure in production is paid by an escalation: the next pair up, or a retry.
         up = ladder[i + 1]["cost_usd"] if i + 1 < len(ladder) else r["cost_usd"]
         r["expected_usd"] = round(r["cost_usd"] + (1 - r["pass_rate"]) * up, 6)
+    covered = [p for p in pairs if rungs[p]["covered"]]
+    if not covered:
+        return ladder, None, None
+    # The best: the highest pass rate, ties to the more passes, then to the cheaper pair.
+    best = min(covered, key=lambda p: (-rungs[p]["pass_rate"], -stats[p]["passes"], rungs[p]["cost_usd"], p))
+    wins = dict.fromkeys(covered, 0.0)
+    for i in range(DRAWS):
+        top = max(draws[p][i] for p in covered)
+        winners = [p for p in covered if draws[p][i] == top]
+        for p in winners:
+            wins[p] += 1.0 / len(winners)
+    for p in covered:
+        rungs[p]["p_best"] = round(wins[p] / DRAWS, 4)
+        near = sum(1 for x, b in zip(draws[p], draws[best]) if x >= b - delta)
+        rungs[p]["equivalent"] = near / DRAWS >= 0.5
+    return ladder, best, statistics.median(draws[best])
+
+
+def select_entry(cls, stats, strict, sizes):
+    """The class's entry: the cheapest pair, by expected cost, among the covered pairs
+    equivalent to the best one; a strict class also needs every graded trial passed. None, with
+    the reason, when no pair is covered, when the best pair's posterior median is below `bar`,
+    or when no pair is equivalent. A pair a fold held back stays on the ladder, never chosen.
+    """
+    delta, bar = selection()
+    ladder, best, best_median = compare(cls, stats, delta)
+    if best is None:
+        return None, "no covered pair"
+    for r in ladder:
+        s = stats[r["pair"]]
+        r["eligible"] = (r["equivalent"] and bool(s["costs"]) and not s.get("held_back")
+                         and (not strict or s["passes"] == s["n"]))
+    if best_median < bar:
+        return None, "best %s weak" % best
     eligible = [r for r in ladder if r["eligible"]]
     if not eligible:
-        return None
-    best = min(eligible, key=lambda r: (r["expected_usd"], -r["pass_rate"]))
-    return {"pair": best["pair"], "pass_rate": best["pass_rate"], "n": best["n"],
-            "cost_usd": best["cost_usd"], "expected_usd": best["expected_usd"], "floor": floor,
-            "models": best["models"],
-            "ladder": [{k: v for k, v in r.items() if k != "models"} for r in ladder]}
+        return None, "no equivalent pair"
+    chosen = min(eligible, key=lambda r: (r["expected_usd"], -r["pass_rate"], r["pair"]))
+    buckets = [sizes.get(t, "unknown") for t in class_tasks(stats)]
+    return {"pair": chosen["pair"], "pass_rate": chosen["pass_rate"], "n": chosen["n"],
+            "tasks": chosen["tasks"], "p_best": chosen["p_best"], "cost_usd": chosen["cost_usd"],
+            "median_usd": chosen["median_usd"], "expected_usd": chosen["expected_usd"], "best": best,
+            "delta": delta, "bar": bar, "strict": strict,
+            "size": max(buckets, key=SIZES.index, default="unknown"),
+            "sizes": {b: buckets.count(b) for b in SIZES},
+            "models": sorted(stats[chosen["pair"]]["models"]), "ladder": ladder}, ""
 
 
-def build_table(scope, trials):
-    default, strict = floors()
+def entry_line(cls, entry, note):
+    if not entry:
+        return "class=%s no eligible pair (%s)" % (cls, note)
+    return ("class=%s pair=%s pass_rate=%s n=%d expected_usd=%s p_best=%s size=%s"
+            % (cls, entry["pair"], entry["pass_rate"], entry["n"], round(entry["expected_usd"], 4),
+               entry["p_best"], entry["size"]))
+
+
+def build_table(scope, trials, sizes):
+    """The same trials give the same file: every random figure is seeded by its class and pair."""
     entries, lines = {}, []
     for cls in sorted({t["class"] for t in trials}):
-        floor = strict if cls in STRICT_CLASSES else default
-        entry = select_entry(cls, stats_of([t for t in trials if t["class"] == cls]), floor)
+        entry, note = select_entry(cls, stats_of([t for t in trials if t["class"] == cls]),
+                                   cls in STRICT_CLASSES, sizes)
         if entry:
             entries[cls] = entry
-            lines.append("class=%s pair=%s pass_rate=%s n=%d expected_usd=%s"
-                         % (cls, entry["pair"], entry["pass_rate"], entry["n"],
-                            round(entry["expected_usd"], 4)))
-        else:
-            lines.append("class=%s no eligible pair" % cls)
+        lines.append(entry_line(cls, entry, note))
     return {"scope": scope, "generated": datetime.date.today().isoformat(), "entries": entries}, lines
 
 
@@ -588,7 +792,8 @@ def cmd_calibrate(argv):
         trials += record_trials(rec)
     if not trials:
         die("calibrate: no trial and no record row for %s" % a.slug)
-    table, lines = build_table("project:" + a.slug, trials)
+    sizes = task_sizes(read_json(manifest_path(a.slug), {}) or {})
+    table, lines = build_table("project:" + a.slug, trials, sizes)
     write_json(table_path("project:" + a.slug), table)
     print("\n".join(lines))
 
@@ -1145,27 +1350,45 @@ def all_projects():
         m = read_json(path, {})
         trials = read_trials(os.path.join(os.path.dirname(path), "trials.jsonl"))
         if trials and m.get("slug"):
-            out[m["slug"]] = (m.get("profile") or "unknown/unknown", trials)
+            out[m["slug"]] = (m.get("profile") or "unknown/unknown", trials, task_sizes(m))
     return out
 
 
 def fold(scope, projects):
-    """Pool the projects' trials; a pair qualifies only when it also meets the floor in
-    every project where it was measured, so one easy project cannot carry a profile. A pair
-    held back that way keeps its pooled figures on the ladder: it was measured, not unmeasured.
+    """Pool the projects' trials, class by class. A pair qualifies when it is covered in at
+    least two of the fold's projects having the class (one, for a fold of one project); its
+    pooled trials are those of the projects where it is covered, each task named by its
+    project so two projects' tasks never merge. A pair is held back when, in a project where it
+    is covered, it is not equivalent to that project's best, so one easy project cannot carry a
+    profile: it keeps its pooled figures on the ladder, measured, never chosen.
     """
-    default, strict = floors()
+    delta, _ = selection()
+    need = 1 if len(projects) == 1 else 2
     entries = {}
-    classes = sorted({t["class"] for _, trials in projects.values() for t in trials})
+    classes = sorted({t["class"] for _, trials, _ in projects.values() for t in trials})
     for cls in classes:
-        floor = strict if cls in STRICT_CLASSES else default
-        pooled = stats_of([t for _, ts in projects.values() for t in ts if t["class"] == cls])
-        for _, ts in projects.values():
-            for pair, s in stats_of([t for t in ts if t["class"] == cls]).items():
-                # One weak trial is no verdict on a project: it needs a sample before it holds a pair back.
-                if s["n"] >= MIN_TRIALS and s["passes"] / s["n"] < floor:
-                    pooled[pair]["held_back"] = True
-        entry = select_entry(cls, pooled, floor)
+        where, held, pooled_trials, sizes = {}, set(), [], {}
+        for slug in sorted(projects):
+            _, trials, task_size = projects[slug]
+            mine = [t for t in trials if t["class"] == cls]
+            if not mine:
+                continue
+            ladder, _, _ = compare(cls, stats_of(mine), delta)
+            for r in ladder:
+                if r["covered"]:
+                    where.setdefault(r["pair"], []).append(slug)
+                    if not r["equivalent"]:
+                        held.add(r["pair"])
+            for t in mine:
+                pooled_trials.append((slug, dict(t, task="%s:%s" % (slug, t["task"]) if t.get("task") else None)))
+            sizes.update(("%s:%s" % (slug, tid), b) for tid, b in task_size.items())
+        pooled = {}
+        for pair in sorted({t["pair"] for _, t in pooled_trials}):
+            qualifies = len(where.get(pair, [])) >= need
+            own = [t for slug, t in pooled_trials
+                   if t["pair"] == pair and (not qualifies or slug in where[pair])]
+            pooled[pair] = dict(stats_of(own)[pair], covered=qualifies, held_back=pair in held)
+        entry, _ = select_entry(cls, pooled, cls in STRICT_CLASSES, sizes)
         if entry:
             entries[cls] = entry
     return {"scope": scope, "generated": datetime.date.today().isoformat(), "entries": entries}
@@ -1178,7 +1401,7 @@ def cmd_generalize(argv):
     if not projects:
         die("generalize: no project has trials")
     profiles = {}
-    for slug, (profile, _) in projects.items():
+    for slug, (profile, _, _) in projects.items():
         profiles.setdefault(profile, []).append(slug)
     for profile, slugs in sorted(profiles.items()):
         # An unknown language is no profile: pooling such projects would serve one table to
@@ -1216,11 +1439,14 @@ def cmd_export(argv):
                 continue
             # The ladder keeps its order and its measured reliability; a rung on an unbound
             # family has no tier to be written in, and costs and identifiers never ship.
-            ladder = [{"pair": tiered(r["pair"]), "n": r.get("n"), "pass_rate": r.get("pass_rate"),
-                       "eligible": r.get("eligible")}
+            # Only the figures a rung or an entry has are written, never a null in their place: a
+            # table written before the selection by equivalence stays one, and a rung that was
+            # never covered has no p_best to write.
+            ladder = [dict({k: r[k] for k in ("tasks", "pass_rate", "p_best", "covered", "equivalent",
+                                                "eligible") if r.get(k) is not None}, pair=tiered(r["pair"]))
                       for r in e.get("ladder") or [] if is_pair(r.get("pair")) and tiered(r["pair"])]
-            entries[cls] = {"pair": pair, "pass_rate": e["pass_rate"], "n": e["n"], "floor": e["floor"],
-                            "ladder": ladder}
+            entries[cls] = dict({k: e[k] for k in ("pass_rate", "n", "delta", "bar", "strict", "size")
+                                 if e.get(k) is not None}, pair=pair, ladder=ladder)
         out = os.path.join(a.to, os.path.basename(path))
         if not entries:
             warn("export: %s has no class in tier form, not written" % os.path.basename(path))
@@ -1229,7 +1455,19 @@ def cmd_export(argv):
         print("exported %s (%d classes)" % (out, len(entries)))
 
 
+def rung_line(rung, chosen):
+    """One rung of a ladder for `show --detail`; a figure an older table lacks reads `-`."""
+    f = lambda k: "-" if rung.get(k) is None else rung[k]
+    ci = rung.get("median_ci") or ["-", "-"]
+    return ("  rung pair=%s tasks=%s pass_rate=%s p_best=%s median_usd=%s ci=%s..%s expected_usd=%s off_model=%s%s%s"
+            % (rung.get("pair"), f("tasks"), f("pass_rate"), f("p_best"), f("median_usd"), ci[0], ci[1],
+               f("expected_usd"), f("off_model"), " equivalent" if rung.get("equivalent") else "",
+               " chosen" if rung.get("pair") == chosen else ""))
+
+
 def cmd_show(argv):
+    detail = "--detail" in argv
+    argv = [a for a in argv if a != "--detail"]
     projects = os.path.join(ROUTING_DIR, "projects")
     slugs = argv or (sorted(os.listdir(projects)) if os.path.isdir(projects) else [])
     if not slugs:
@@ -1244,6 +1482,9 @@ def cmd_show(argv):
             stale = any(cls in t and is_stale(t[cls]["pair"], t[cls]) for t in tables)
             print("class=%s project=%s profile=%s global=%s%s" % (cls, cells[0], cells[1], cells[2],
                                                                    " stale" if stale else ""))
+            if detail and cls in tables[0]:
+                for rung in tables[0][cls].get("ladder") or []:
+                    print(rung_line(rung, tables[0][cls]["pair"]))
 
 
 COMMANDS = {"cost": cmd_cost, "profile": cmd_profile, "pick": cmd_pick, "calibrate": cmd_calibrate,

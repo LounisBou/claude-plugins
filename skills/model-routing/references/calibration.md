@@ -109,50 +109,115 @@ restarted re-pays no trial already recorded in `trials.jsonl`.
 ## 5. Calibrate the project's table
 
 `calibrate <slug>` reduces the project's trials to one entry per class, written to
-`tables/project-<slug>.json`. Per pair it measures `n` (graded trials, errors excluded), the
-pass rate, the mean cost per trial (errors included), and the **expected cost per satisfied
-dispatch**: the mean cost plus (1 - pass rate) times the mean cost of the next pair up the
-ladder, since a failure in production is paid by an escalation. The pairs, cheapest first,
-form the class's ladder; the entry is the eligible pair with the lowest expected cost, ties
-to the higher pass rate. A class with no eligible pair gets no entry, and `pick` falls
-through to the next table.
+`tables/project-<slug>.json`, and prints one line per class: `class=<c> pair=<p>
+pass_rate=<r> n=<n> expected_usd=<e> p_best=<p> size=<s>`, or `class=<c> no eligible pair
+(<reason>)`.
+
+**What enters.** A trial whose main model — the identifier it spent most on — is not its
+pair's model is off-model. A pair naming a full identifier (a dash and a last segment that is
+a number or a date, `b-model-1`) is on-model only when the main model is that identifier, a
+bracketed suffix on the reported one (`[1m]`) ignored: `b-model-1-1` is another model. A pair
+naming an alias is on-model when the main model carries it as a dash segment (`b-model` in
+`b-model-1`). Anything else (an alias resolved to another family, a fallback) measured another
+model. It is counted in its rung's `off_model` and kept out of every other figure. A trial
+that reports no model (a record row, an old trial) is not checked.
+
+**Per task.** A class's tasks are every task with at least one graded trial. Per pair:
+`per_task`, each task's `[passes, graded]`; `tasks`, the tasks it was graded on; `n`, its
+graded trials (errors excluded); `pass_rate`, the mean of its per-task rates, so a pair is
+weighed by the tasks it closed, not by how often it ran them. Its mean cost per trial (errors
+included, an unread cost left out) feeds the **expected cost per satisfied dispatch**: the mean
+cost plus (1 - pass rate) times the mean cost of the next pair up the ladder, since a failure
+in production is paid by an escalation. Beside it, `median_usd` and `median_ci`, the 5th and
+95th percentiles of the median over 1,000 bootstrap resamples of the pair's costs. The pairs,
+cheapest first, form the class's ladder.
+
+**The selection.** Each pair's success probability is Beta(1 + passes, 1 + fails), drawn 4,000
+times for each covered pair, from a generator of the pair's own seeded by the class and the
+pair (the cost bootstrap draws from the same one): the same trials give the same file, and
+a pair's draws depend on its own trials only, so a pair added without being covered, or a
+trial of another class, moves no figure of the others.
+
+- **Covered**: graded on every task of the class, in a class of at least 3 tasks. A class
+  with fewer gets `no covered pair`. A class with no bench task (record rows only) covers
+  every pair with at least 6 graded trials.
+- **Best**: the covered pair with the highest pass rate; ties to more passes, then the cheaper.
+  `p_best` is each covered pair's share of the draws where it is the highest.
+- **Weak**: the best pair's posterior median below `bar` gives the class no entry (`best
+  <pair> weak`), and `pick` falls through to the next table.
+- **Equivalent**: a covered pair whose draw is at least the best's minus `delta` in half the
+  paired draws or more. Against a best at 10/10, 9/10 is equivalent and 8/10 is not; against
+  14/14, 13/14 is and 12/14 is not; a best at 5/5 is not weak, at 4/5 it is.
+- **Strict classes**, `contract-phase` and `final-verification`, work nothing re-checks: an
+  equivalent pair is eligible only when none of its graded trials failed.
+- **The entry**: the eligible pair with the lowest expected cost, ties to the higher pass
+  rate; none eligible is `no equivalent pair`.
+
+`config.json` may set `{"selection": {"delta": <d>, "bar": <b>}}`; 0.10 and 0.8 by default.
+Each is a number from 0 to 1: any other value is refused, naming the key and the value.
+
+The entry keeps its pair, `pass_rate`, `n`, `tasks`, `p_best`, `cost_usd`, `median_usd`,
+`expected_usd`, the `best` pair, the `delta`, `bar` and `strict` it was selected with, the
+identifiers it was measured on, its size and the ladder. Each rung keeps `pair`, `n`, `tasks`,
+`per_task`, `pass_rate`, `p_best` (covered pairs only), `cost_usd`, `median_usd`,
+`median_ci`, `expected_usd`, `off_model`, `covered`, `equivalent` and `eligible`. A rung
+covered and not equivalent is no notch for an exploration; a rung not covered is offered. A
+table written before this selection still reads: its rungs are judged by the floor it carries.
+
+**The size stamp.** A task's size is read from its merged diff, `base..merged` in the
+manifest's repository, the files matching `test_globs` left out — the hidden tests are not the
+agent's work: `small` when it touches at most 3 files and 50 lines added and deleted, `large`
+beyond, `unknown` with one warning per task when the diff cannot be read. It is computed at
+each `calibrate`, never written into the manifest. The entry's `size` is the largest bucket
+among its class's tasks (`large` over `small` over `unknown`), and `sizes` counts the tasks of
+each.
 
 `--from-record <record>`, repeatable, adds the dispatch record's closed pair rows as trials:
 one round and no escaped defect is a pass. A row whose cost is incomplete, or that names no
-effort, is left out. This is how an exploration's promotion reaches the table.
+effort, is left out. A record row has no task: in a class measured on bench tasks it counts as
+one more cell of its pair's mean, and covers nothing. This is how an exploration's promotion
+reaches the table.
 
-**The reliability floors.** A pair is eligible with at least 6 graded trials and a pass rate
-at or above the floor: 0.9 by default, 1.0 for `contract-phase` and `final-verification`,
-work nothing re-checks. `config.json` may set `{"floor": {"default": <rate>, "strict":
-<rate>}}`.
+The bench's confirmation (section 4) still reads its floors from `config.json`'s `{"floor":
+{"default": <rate>, "strict": <rate>}}`, 0.9 and 1.0 by default; the tables do not.
 
 ## 6. Generalise to profiles and the global table
 
 `generalize` pools the trials of every project sharing a profile — the
 `<language>/<kind>` `routing.py profile <repo>` prints, or the manifest's own — and runs the
-same selection, with one more condition: the chosen pair must meet the floor in each project
-where it was measured, so one easy project cannot drag a profile down. A profile table needs
-at least two projects; until then the global table, the same fold over every project,
-serves it. Projects of unknown language never form a profile: they share nothing but the
-absence of a marker, so they count toward the global table only. A pair held back by one
-project (with at least 6 graded trials of it below the floor) keeps its pooled figures on the ladder, marked not eligible. `generalize` prints
-`profile=<p> projects=<n> classes=<n>` per profile table and `global projects=<n>
-classes=<n>`.
+same selection on the pooled figures, each task named by its project. A pair qualifies in a
+fold when it is covered in at least two of the fold's projects having the class (one, for a
+fold of a single project), and its pooled trials are those of the projects where it is
+covered. A pair is held back when, in a project where it is covered, it is not equivalent to
+that project's best, so one easy project cannot carry a profile: it keeps its pooled figures
+on the ladder, marked not eligible. A fold's entry takes the largest size over its pooled
+tasks. A profile table needs at least two projects; until then the global table, the same
+fold over every project, serves it. Projects of unknown language never form a profile: they
+share nothing but the absence of a marker, so they count toward the global table only.
+`generalize` prints `profile=<p> projects=<n> classes=<n>` per profile table and `global
+projects=<n> classes=<n>`.
 
 ## 7. Show what is measured
 
-`show [<slug>]` prints, per project, one line per class: `class=<c> project=<pair|->
-profile=<pair|-> global=<pair|->`, the coverage of each table, with `stale` at the end when an
-entry was measured on a model identifier the alias no longer resolves to; a class on no line
-falls to the tier table. Every `cost` run on a record row and every trial updates which identifier an
-alias resolves to. A stale entry is still used; the operator decides whether a bench run is
-worth refreshing it.
+`show [--detail] [<slug>...]` prints, per project, one line per class: `class=<c>
+project=<pair|-> profile=<pair|-> global=<pair|->`, the coverage of each table, with `stale` at
+the end when an entry was measured on a model identifier the alias no longer resolves to; a
+class on no line falls to the tier table. With `--detail`, each class of the project's table is
+followed by its ladder, cheapest first, one line per rung: `  rung pair=<p> tasks=<k>
+pass_rate=<r> p_best=<p> median_usd=<m> ci=<lo>..<hi> expected_usd=<e> off_model=<k>`, with
+` equivalent` and ` chosen` at the end where they hold; a figure an older table lacks reads
+`-`. Every `cost` run on a record row and every trial updates which identifier an alias
+resolves to. A stale entry is still used; the operator decides whether a bench run is worth
+refreshing it.
 
 ## 8. Export the shipped defaults
 
 `export [--to <dir>]` rewrites the local profile and global tables into the plugin's
 `defaults/`, each pair's family replaced by the tier the map binds it to (`standard/medium`),
-its ladder written the same way, model identifiers, costs and project names dropped. A table with no class in tier form is not written (`export: <file> has no class in tier form, not written`), and an existing file stays as it was. A family
+its ladder written the same way, model identifiers, costs and project names dropped. An
+exported entry keeps `pass_rate`, `n`, `delta`, `bar`, `strict` and `size`; a rung keeps
+`tasks`, `pass_rate`, `p_best`, `covered`, `equivalent` and `eligible`; a figure a table does
+not have is left out, never written as a null. A table with no class in tier form is not written (`export: <file> has no class in tier form, not written`), and an existing file stays as it was. A family
 bound to no tier is skipped with a warning, `export: <alias> is bound to no tier, <class>
 skipped`; `pick` reads a shipped ladder's rungs back through the map. The exported files name no model, so they resolve through any operator's own map.
 The operator decides when an export is committed.

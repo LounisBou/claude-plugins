@@ -64,7 +64,7 @@ Two readings high or more raises the pair by **one** notch up the class's ladder
 
 ## Explore one notch, never more
 
-`pick` prints a second line, `explore=<pair>`, when the record shows three one-round closes at the class's pair, no escaped defect there, and no failed exploration of the class. The pair is **one notch** below: the immediate cheaper pair of the class's ladder, unless it was measured below the floor (a pair short of trials is offered); without a ladder to read it from, the effort one level down on the same family; at the lowest effort, the next lighter family in the map at the same effort. Take it only when the five readings show at most one high, and open the row `--explore`.
+`pick` prints a second line, `explore=<pair>`, when the record shows three one-round closes at the class's pair, no escaped defect there, and no failed exploration of the class. The pair is **one notch** below: the immediate cheaper pair of the class's ladder, unless it was measured and found not equivalent to the best (a pair not measured on every task is offered); without a ladder to read it from, the effort one level down on the same family; at the lowest effort, the next lighter family in the map at the same effort. Take it only when the five readings show at most one high, and open the row `--explore`.
 
 The orchestrator, a successor, a decision round, a contract-defining phase and the final verification are never explored: nothing re-checks that work, so a failure there is paid N times.
 
@@ -113,6 +113,7 @@ dispatch-record.sh round <record> <id>                                  # a revi
 dispatch-record.sh review <record> <id> --head <sha> --norms tool|none  # and what it read
 dispatch-record.sh fixed <record> <id> --head <sha>                     # the one correction round, verified
 dispatch-record.sh surface <record> <id> --ui <owner/repo>#<n>|--minor <reason>|--none  # whether the pull request changes what a user sees
+dispatch-record.sh audit <record> <id> --head <sha> --images <n> [--defect "<text>"]...  # your own audit of the screenshots on a --ui pull request, read by ready
 dispatch-record.sh ready <record> <id> --head <sha>                     # refuses a head neither reviewed nor fixed, no surface, or a --ui pull request with no image; with no review, warns
 dispatch-record.sh close <record> <id> --verdict approved
 dispatch-record.sh cost <record> <id> --session <session id>         # after each session of the dispatch ends
