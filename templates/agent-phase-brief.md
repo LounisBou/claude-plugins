@@ -41,6 +41,7 @@ Non-goals:
 ## 4. Method
 
 - TDD: the failing test first, then the minimal implementation. A repair lands with the test that fails when it is reverted.
+- Never edit an existing test's assertion to make it pass. If a test or the spec looks wrong, STOP and report it to the orchestrator; change it only where this brief or a ruling names it.
 - Incremental conventional commits, one per logical unit.
 - Frontend surface: when the pull request creates or substantially modifies a frontend surface, or creates the interface of a new feature, test that surface in a real browser with Playwright and put screenshots of it on the pull request, and name the Playwright run in your report. A minor change (a colour, a spacing, a label, a fix invisible at a glance) is not held to it: say so and why in the report, and the orchestrator decides. A screen your test account has no data for is not a reason to skip it: seed the data on the local environment, and if you cannot, STOP and say so. The screenshots go in the pull request's description, written by you; they are never committed to the branch; they are taken on fixtures or seeded data, with no secret, token, personal data, internal host or local path visible. If no browser or Playwright is available to you, STOP and say so.
 - Quality gate before the PR: `{{QUALITY_GATE}}` — started the moment the last commit lands, with the report written
