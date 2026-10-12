@@ -148,7 +148,7 @@ echo "artifacts $MODE"
 ```
 
 In `committed` mode, and only there, the updated state and the plan travel in one
-commit `Finish phase N: <title>` after the sub-phase commits. In `local` mode the
+commit `chore(<codename>): phase N gate — <title>` after the sub-phase commits. In `local` mode the
 file is written and nothing under `docs/features/` is ever staged.
 
 Then: with `N`, stop and report that phase. Without `N`, start the next row that is

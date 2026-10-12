@@ -38,8 +38,8 @@ check_status() {
 echo "== manifests =="
 MAN="$ROOT/.claude-plugin/plugin.json"; MKT="$ROOT/.claude-plugin/marketplace.json"
 check "plugin is named implement" "implement" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$MAN")"
-check "manifest version" "0.1.1" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$MAN")"
-check "marketplace and manifest agree on the version" "0.1.1 0.1.1" \
+check "manifest version" "0.1.2" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$MAN")"
+check "marketplace and manifest agree on the version" "0.1.2 0.1.2" \
   "$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["metadata"]["version"], m["plugins"][0]["version"])' "$MKT")"
 check "descriptions are identical" "True" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["description"]==json.load(open(sys.argv[2]))["plugins"][0]["description"])' "$MAN" "$MKT")"
@@ -64,6 +64,29 @@ check "malformed settings is one error line and no traceback" "1 0" \
   "$(out=$(pf 2>&1 >/dev/null); printf '%s %s' "$(printf '%s\n' "$out" | grep -c '^error:')" "$(printf '%s\n' "$out" | grep -c Traceback)")"
 settings '{"enabledPlugins":{"superpowers@claude-plugins-official":true}}'
 check_status "outside a git repository exits 13" 13 env HOME="$WORK" PREFLIGHT_SETTINGS="$WORK/cfg/settings.json" bash -c "cd '$WORK' && bash '$PF'"
+
+# Scopes: user (CLAUDE_CONFIG_DIR), project, local. Later wins.
+SP='{"enabledPlugins":{"superpowers@claude-plugins-official":true}}'
+SPOFF='{"enabledPlugins":{"superpowers@claude-plugins-official":false}}'
+scoped() { # scoped <user-json|-> <project-json|-> <local-json|->
+  rm -rf "$WORK/scopes"; mkdir -p "$WORK/scopes/user" "$WORK/scopes/proj/.claude"
+  [ "$1" = - ] || printf '%s' "$1" > "$WORK/scopes/user/settings.json"
+  [ "$2" = - ] || printf '%s' "$2" > "$WORK/scopes/proj/.claude/settings.json"
+  [ "$3" = - ] || printf '%s' "$3" > "$WORK/scopes/proj/.claude/settings.local.json"
+}
+pfs() { env -u PREFLIGHT_SETTINGS HOME="$WORK/nohome" CLAUDE_CONFIG_DIR="$WORK/scopes/user" PREFLIGHT_SKIP_GIT=1 bash -c "cd '$WORK/scopes/proj' && bash '$PF'"; }
+scoped - "$SP" -
+check_status "dependency enabled only at project scope passes" 0 pfs
+scoped - - "$SP"
+check_status "dependency enabled only at local scope passes" 0 pfs
+scoped "$SP" - -
+check_status "dependency enabled only in CLAUDE_CONFIG_DIR passes" 0 pfs
+scoped "$SP" - "$SPOFF"
+check_status "disabled in local while enabled at user exits 10" 10 pfs
+scoped "$SPOFF" "$SP" -
+check_status "enabled at project over disabled at user passes" 0 pfs
+scoped - - -
+check_status "no scope file at all exits 10" 10 pfs
 
 echo "== skills =="
 for skill in feature phase check close prepare; do
@@ -376,7 +399,7 @@ check "close stops on a gate that turned red after the version write" "1" \
 # index() rather than a regex: the command carries the quote awk would end on.
 check "close reads the repository's last release subject" "1" \
   "$(awk '/^```bash/ { b = 1; next } /^```/ { b = 0 }
-          b && index($0, "--grep=\047^Release\047") { seen++ }
+          b && index($0, "--grep=\047^([a-z]+(\\([^)]*\\))?: )?[Rr]elease\047") { seen++ }
           END { print (seen > 0) ? 1 : 0 }' "$CLOSE_DOC")"
 
 # The feature directory goes, and the two parents it was the only tenant of go

@@ -1,7 +1,7 @@
 {
   "name": "implement",
   "description": "The feature lifecycle as five commands: brainstorm and plan a feature, run its phases, check a delivery, close the branch, prepare the next one.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "dependencies": ["superpowers@claude-plugins-official"],
   "author": {
     "name": "Lounis Bou",

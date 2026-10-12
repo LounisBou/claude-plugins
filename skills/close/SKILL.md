@@ -118,11 +118,11 @@ the repository's last release commit:
 
 ```bash
 # Each bash block is its own shell; derive rather than inherit.
-git log --format=%s --grep='^Release' -3
+git log --format=%s -E --grep='^([a-z]+(\([^)]*\))?: )?[Rr]elease' -3
 ```
 
-`Release pr-review 0.3.3` where that log reads `Release pr-review 0.3.2`, and
-`Release <version>` where it holds no release subject at all.
+`chore: release pr-review 0.3.3` where that log reads `chore: release pr-review 0.3.2`, and
+`chore: release <version>` where it holds no release subject at all.
 
 A bump type other than `none` with none of the five files present stops the skill:
 say which five were looked for and wait. Guessing a version file is how a version

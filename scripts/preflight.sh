@@ -3,7 +3,18 @@
 # no skill degrades silently.
 set -u
 
-SETTINGS="${PREFLIGHT_SETTINGS:-$HOME/.claude/settings.json}"
+# Scopes in increasing precedence: user, project, local. PREFLIGHT_SETTINGS, when
+# set, replaces all of them with one file (test override).
+if [ -n "${PREFLIGHT_SETTINGS:-}" ]; then
+  SCOPES=("$PREFLIGHT_SETTINGS")
+else
+  PROJECT_DIR=$(git rev-parse --show-toplevel 2>/dev/null) || PROJECT_DIR=$PWD
+  SCOPES=(
+    "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+    "$PROJECT_DIR/.claude/settings.json"
+    "$PROJECT_DIR/.claude/settings.local.json"
+  )
+fi
 
 die() {
   printf 'error: %s\n' "$1" >&2
@@ -13,22 +24,23 @@ die() {
 
 # ── Plugin dependency ─────────────────────────────────────────
 # The authority is enabledPlugins, not the presence of files under
-# ~/.claude/plugins/cache: a plugin can sit on disk and be inert.
-missing=$(python3 - "$SETTINGS" <<'PY'
+# the plugins cache: a plugin can sit on disk and be inert.
+missing=$(python3 - "${SCOPES[@]}" <<'PY'
 import json, sys
 
 required = ("superpowers@claude-plugins-official",)
-try:
-    with open(sys.argv[1]) as fh:
-        data = json.load(fh)
-    enabled = data["enabledPlugins"] if isinstance(data, dict) else None
-    if not isinstance(enabled, dict):
-        raise ValueError("enabledPlugins is not an object")
-except (OSError, ValueError, KeyError, TypeError):
-    # Unreadable, not JSON, or JSON of the wrong shape all mean the same
-    # thing: nothing here proves the dependency is enabled.
-    print(" ".join(required))
-    sys.exit(0)
+# Later scopes win, key by key. A scope that is absent, unreadable or of the
+# wrong shape contributes nothing: it can never prove the dependency enabled.
+enabled = {}
+for path in sys.argv[1:]:
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+        scope = data["enabledPlugins"] if isinstance(data, dict) else None
+    except (OSError, ValueError, KeyError, TypeError):
+        continue
+    if isinstance(scope, dict):
+        enabled.update(scope)
 print(" ".join(dep for dep in required if enabled.get(dep) is not True))
 PY
 )
