@@ -1,6 +1,6 @@
 ---
 description: Hand the orchestration over to a fresh successor session
-allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/context-gauge/scripts/context-gauge.sh:*), Read, Write, Edit, ListAgents, SendMessage
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh:*), Read, Write, Edit, ListAgents, SendMessage
 ---
 
 Execute the orchestrator succession described in
@@ -29,12 +29,13 @@ Then:
    decision mode, or the successor stops at its first prompt in a tab nobody watches.
    No title: `--successor` takes THIS session's own name, so the successor is the same
    `Orch : <subject>` with a reference of its own, which is what every brief
-   cites; it also comes up under remote control under that name (spec §39). A session
-   launched by hand carries no name, and the launcher then says to type one. A name the
-   launcher cannot read as one — a whole launch line from an older launcher, or a session
-   named under the older convention — does not derive either, and the title is typed by
-   hand, in the house format: this is the case of every orchestrator alive across the
-   upgrade.
+   cites; it also comes up under remote control under that name (spec §39). The launcher
+   reads that name from the host's registry, where `rename_session` puts it, before the
+   launch line's `--name`. Where it reads none — the rename never landed — or none it can
+   read as one — a whole launch line from an older launcher, or a session named under the
+   older convention — it says to type one: pass `--title "<this session's current name>"`,
+   the name `ListAgents` prints for it without its bracketed reference, in the house format. This is the case of every
+   orchestrator alive across the upgrade.
    The successor runs on the model this session runs on NOW — the operator's choice, carried
    across every succession; the map binds agents, never the orchestrator (spec §27).
    `--successor` places it immediately right of this tab, between it and the first agent,

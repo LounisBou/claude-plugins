@@ -16,5 +16,9 @@
 # host state in a checkout: logs and local settings, never repository content
 /.claude/
 
+# typings a live plugin load writes into a checkout, generated never authored
+/.claude-plugin/types/
+/tsconfig.json
+
 # Eval run output
 evals/results/

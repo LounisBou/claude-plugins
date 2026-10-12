@@ -15,8 +15,8 @@ $SCRIPT list
     # w1/t3 | /dev/ttys000 | ✳ chaining the PRs | Orch : plugin family | self
     # w1/t4 | /dev/ttys004 | ◐ reading the brief | Agent : phase 2
     # w1/t5 | /dev/ttys007 | ◐ Chat | (host default) | hidden   ← behind a maximized sibling pane
-    # tab title, then the session's NAME (its --name, `(host default)` when it was launched
-    # without one), then `self` on YOUR OWN tab.
+    # tab title, then the session's NAME (the host registry's, else its --name; `(host
+    # default)` when neither gives one), then `self` on YOUR OWN tab.
 
 $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --inherit-model] [--effort <low|medium|high|xhigh|max>] [--permission-mode auto] \
     --title "Agent : <subject>" --brief <brief-path> --orchestrator "<name [ref]>" [--right-of self | --successor] [--mcp <name>] [--gate-tokens <N>]
@@ -56,7 +56,7 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --i
     # --gate-tokens <N>: THIS session's context gate, a positive integer of tokens; zero,
     # a negative, a fraction or a non-number is refused before a tab exists. The launch then
     # exports ORCHESTRATOR_CONTEXT_GATE_TOKENS=<N> beside ORCHESTRATOR_SPAWNED=1, so the
-    # context-gate hook and the status line, which both read it from their environment, use
+    # module's context gate and its band, which both read it from their environment, use
     # it. Absent, nothing is exported and the default (300,000 tokens on a window of
     # 1,000,000 or more) holds. The token gate takes effect on a window of 1,000,000 tokens or
     # more only; below, the percentage gate of the window decides. With --brief, the startup
@@ -78,7 +78,15 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --i
     # to a second file, asks the app to run it in a new tab AT AN INDEX, WAITS until the
     # host CLI is running on the new tty (30 s, ORCHESTRATOR_SPAWN_TIMEOUT), and prints
     # the tty on its last line. `--prompt-file <path>` uses a file you already wrote.
-    # --inherit-model types the calling session's current model (from the context tap); for a successor.
+    # The host is the process whose pid has a host registry file, or whose program's
+    # basename is ORCHESTRATOR_HOST_CLI's or that of what it resolves to; a session that
+    # wrote its transcript in --dir since the launch has started too. The chain (an agent
+    # appended, a successor handed yours) is written only once the session is verified.
+    # Every refusal after the tab exists — never started, mode unread or wrong, no tty —
+    # closes that tab, prints its tty on stdout and says on stderr whether the close
+    # happened (`the tab on <tty> was NOT closed: close it with close --tty <tty>`), the
+    # chain untouched. A caller that is not a tab of the app writes no chain entry.
+    # --inherit-model types the calling session's current model (from the hooks module's measure file); for a successor.
     # --model <name> types that model for this one spawn, exclusive with --tier: the model the
     # orchestrator chose where the tier the work needs is unbound.
     # --tier resolves through the operator's map (<state dir>/models.json, or
@@ -135,7 +143,8 @@ $SCRIPT rotate --dir <workdir> --old-tty <tty> [--trust] [--tier <tier>] [--expe
     # included: an agent that needed a server is replaced by one that still has it.
     # One of --prompt, --prompt-file or --brief is required here too — a promptless
     # rotation is refused the same way a promptless spawn is, before the replacement's
-    # tab exists and with the old session untouched.
+    # tab exists and with the old session untouched. --no-verify is refused: the old tab
+    # is closed only on a replacement verified running.
 
 $SCRIPT trust prune [--apply]      # entries of the trust record whose directory is gone; --apply removes them
 ```

@@ -2,7 +2,7 @@
 # workspace.sh — a checkout per phase, with the project's local material.
 #
 #   workspace.sh create <source-repo> <name> [--base <branch|origin/branch>]   prints the checkout's path
-#   workspace.sh pin <source-repo> <name> <ref> [--pr <n>]     a detached worktree at that commit, nothing local; prints its path
+#   workspace.sh pin <source-repo> <name> <ref> [--pr <n>]     a detached worktree at that commit, of the local material only the global excludes' files; prints its path
 #   workspace.sh delete <path> [--discard]                     refuses unpushed work unless told; also removes the host's
 #                                                              temporary directory of the path when no live process uses it
 #   workspace.sh sweep [--deadline <seconds>] [--dry-run]      the leftovers, decided on facts: one line per item,
@@ -69,6 +69,42 @@ copy_tree() {
     [ -e "$from" ] || return 1
     mkdir -p "$(dirname "$to")" || return 2
     cp -R "$from" "$to" || return 2
+}
+
+# global_excluded <source-root> <checkout-root> [--not-local]: what the OPERATOR's global
+# excludes file keeps out of the source (§40), listed by git itself, in GLOBAL_EXCLUDED; the
+# file's path in GLOBAL_EXCLUDES, empty when there is none. A `~` in the configured path is
+# expanded the way git expands it. Never the settings directory, never a path the checkout
+# already holds. With --not-local, never a path the source's own exclude file keeps out
+# either: that file holds the orchestrator's own material, which a pin never carries (§37).
+global_excluded() {
+    local src="$1" target="$2" not_local="${3:-}" f sep=$'\x1f' locals=""
+    GLOBAL_EXCLUDED=()
+    GLOBAL_EXCLUDES=$(git -C "$src" config --get core.excludesFile 2>/dev/null || true)
+    [ -n "$GLOBAL_EXCLUDES" ] || GLOBAL_EXCLUDES="${XDG_CONFIG_HOME:-$HOME/.config}/git/ignore"
+    case "$GLOBAL_EXCLUDES" in
+        "~") GLOBAL_EXCLUDES="$HOME" ;;
+        "~/"*) GLOBAL_EXCLUDES="$HOME/${GLOBAL_EXCLUDES#\~/}" ;;
+    esac
+    if [ ! -s "$GLOBAL_EXCLUDES" ]; then
+        GLOBAL_EXCLUDES=""
+        return 0
+    fi
+    if [ -n "$not_local" ] && [ -f "$src/.git/info/exclude" ]; then
+        # One listing, kept as a separator-joined string: a name may carry a newline, never
+        # the unit separator, and bash 3 has no set.
+        while IFS= read -r -d '' f; do
+            locals="$locals$sep$f"
+        done < <(git -C "$src" ls-files -z --others --ignored --exclude-from="$src/.git/info/exclude")
+        locals="$locals$sep"
+    fi
+    while IFS= read -r -d '' f; do
+        [ -n "$f" ] || continue
+        case "/$f" in /.claude/*) continue ;; esac
+        [ -e "$target/$f" ] && continue
+        case "$locals" in *"$sep$f$sep"*) continue ;; esac
+        GLOBAL_EXCLUDED+=("$f")
+    done < <(git -C "$src" ls-files -z --others --ignored --exclude-from="$GLOBAL_EXCLUDES")
 }
 
 trim() { printf '%s' "$1" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'; }
@@ -352,33 +388,17 @@ cmd_create() {
     # 2b. What the OPERATOR's global excludes file keeps out of the source. The project's
     #    own instruction file travelled by hand on every live run of this family: it is
     #    kept out of history by core.excludesFile, not by the repository's own exclude
-    #    file, so step 2 above never lists it (§40). A `~` in the configured path is
-    #    expanded the way git expands it; a path already copied by step 1 or 2 is skipped
-    #    here so it is copied once and counted once.
-    local global_excludes
-    global_excludes=$(git -C "$src" config --get core.excludesFile 2>/dev/null || true)
-    [ -n "$global_excludes" ] || global_excludes="${XDG_CONFIG_HOME:-$HOME/.config}/git/ignore"
-    case "$global_excludes" in
-        "~") global_excludes="$HOME" ;;
-        "~/"*) global_excludes="$HOME/${global_excludes#\~/}" ;;
-    esac
-    local gn=0
-    list=()
-    if [ -s "$global_excludes" ]; then
-        while IFS= read -r -d '' f; do
-            [ -n "$f" ] || continue
-            case "/$f" in /.claude/*) continue ;; esac
-            [ -e "$target/$f" ] && continue
-            list+=("$f")
-        done < <(git -C "$src" ls-files -z --others --ignored --exclude-from="$global_excludes")
-        copy_list "$src" "$target" ${list[@]+"${list[@]}"} || { rm -rf "$target"; die "create: copying the files kept out by the global excludes failed"; }
-        gn=${#list[@]}
+    #    file, so step 2 above never lists it (§40). A path already copied by step 1 or 2
+    #    is skipped here so it is copied once and counted once.
+    global_excluded "$src" "$target"
+    copy_list "$src" "$target" ${GLOBAL_EXCLUDED[@]+"${GLOBAL_EXCLUDED[@]}"} || { rm -rf "$target"; die "create: copying the files kept out by the global excludes failed"; }
+    if [ -n "$GLOBAL_EXCLUDES" ]; then
         {
             echo "# workspace.sh: the operator's global excludes"
-            cat "$global_excludes"
+            cat "$GLOBAL_EXCLUDES"
         } >> "$target/.git/info/exclude"
     fi
-    say "copied $gn files kept out by the global excludes"
+    say "copied ${#GLOBAL_EXCLUDED[@]} files kept out by the global excludes"
 
     # 3. The optional manifest: one relative path per line, a file or a directory. Absent
     #    is said and skipped (a manifest serves more than one machine); leaving the
@@ -419,11 +439,19 @@ cmd_pin() {
     local target="$ROOT_DIR/$(basename "$src")/$name"
     [ ! -e "$target" ] || die "pin: already exists, delete it first: $target"
     mkdir -p "$(dirname "$target")" || die "pin: cannot create $(dirname "$target")"
-    # A detached worktree, and nothing else: a reader's copy carries the code at the head
-    # and none of the local material — least of all the orchestrator's briefs and state
-    # file — and writes nothing but its metadata into the source, which is the
-    # orchestrator's own checkout (§37). A worktree shares the source's remotes.
+    # A detached worktree: a reader's copy carries the code at the head and none of the
+    # orchestrator's local material — its settings directory, what the source's own exclude
+    # file keeps out, least of all its briefs and state file — and writes nothing but its
+    # metadata into the source, which is the orchestrator's own checkout (§37). A worktree
+    # shares the source's remotes.
     git -C "$src" worktree add --quiet --detach "$target" "$sha" 2>/dev/null || { rm -rf "$target"; die "pin: worktree add failed at $sha"; }
+    # The one local material it does carry: what the OPERATOR's global excludes keep out of
+    # the source, the files `create` copies in its step 2b. The project's instruction file
+    # lives there, and two review sessions read the code without the project's norms. The
+    # worktree reads the same global excludes, so they read clean there.
+    global_excluded "$src" "$target" --not-local
+    copy_list "$src" "$target" ${GLOBAL_EXCLUDED[@]+"${GLOBAL_EXCLUDED[@]}"} || { git -C "$src" worktree remove --force "$target" 2>/dev/null; rm -rf "$target"; die "pin: copying the files kept out by the global excludes failed"; }
+    say "copied ${#GLOBAL_EXCLUDED[@]} files kept out by the global excludes"
     # The pull request this pin reviews, in the worktree's own git dir: `git worktree remove`
     # takes it away with the pin, and `sweep` reads it to know when the review is over.
     if [ -n "$pr" ]; then

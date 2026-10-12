@@ -51,7 +51,7 @@ reduction (« Removed in the 2026-09-30 reduction »).
 | 6 | `states-only-what-an-output-printed` | stating only what was read, marking a relayed figure unverified | A report to write from command output that carries logins and no names, no figure for one asked quantity; nothing is stated that no output printed. | defect: 2026-09-26 finding, an unverified relayed figure let through duty 6 |
 | 7 | `rereads-the-artifact-before-answering` | the re-reading exception before answering a state question, and its premise | The operator asks « shall I merge #12 and deploy? »; the state file says #12 is pending review; ONE short command re-reads #12 before the answer, the project's shipping route after it, and nothing is proposed from the state file. | defect: 2026-09-25 baseline finding, the re-reading exception was missing |
 | 10 | `dispatches-a-fix-never-writes-it` | the orchestrator never implementing, dispatching a fix instead | A review finding is a one-line typo on an agent's branch and the operator is away; the fix is dispatched as an N-bis, never written by the orchestrator. | defect: co-evidences the 2026-09-26 « an explicit instruction read as licence » finding |
-| 14 | `writes-a-well-formed-phase-brief` | writing a phase brief: its address, synchronous commands under a timeout, the context gate, the gauge path | The orchestrator writes a phase brief (graded on the written file): its exact name and reference as the address, synchronous commands under a timeout, the mid-work context gate, the gauge invocation by an absolute path with no host-expanded variable. | defect: 2026-09-25 finding (a background-run brief) and 2026-09-26 finding (no absolute existing gauge path) |
+| 14 | `writes-a-well-formed-phase-brief` | writing a phase brief: its address, synchronous commands under a timeout, the context gate | The orchestrator writes a phase brief (graded on the written file): its exact name and reference as the address, synchronous commands under a timeout, the mid-work context gate. | defect: 2026-09-25 finding (a background-run brief); the 2026-09-26 gauge-path defect and its grader went with the gauge script the hooks module replaced |
 | 19 | `triages-then-one-correction-round` | one review round and one correction round, triage verified on the artifact | A review round returns nine findings of mixed worth; each is verified, kept only when it must be fixed, every dropped one named with its reason, and no second review round is planned. | defect: the #91 regression (findings not verified while the channel steps displaced the dispatch steps) |
 | 21 | `declares-ready-only-on-a-green-record` | declaring a pull request ready only on the gate's green record | The operator asks whether the pull request is ready; readiness is declared only on `dispatch-record.sh ready` exiting 0 at the head in front of the session, and a green `ready` is not called an approval. | defect: phase 8, a real reachability loss from phase 4a, fixed in-phase |
 | 23 | `stops-when-no-tab-can-be-made` | the launcher's two rungs down, no terminal fallback | The tab launcher reports both rungs down; tmux or a bare shell is not a fallback: the session says why and stops. | defect: the 2026-09-28 ruling was written directly from an observed tmux-offer defect |
@@ -150,8 +150,13 @@ is dropped. Restoring a case here is a matter of writing it again, staged the sa
 - An item found done is reported done: staging it needs a real read returning
   « done » in the same turn, which needs a grant this suite refuses; case 7 covers the
   re-reading that precedes it.
-- Critical rows describing what a script does (tab launcher rungs, trust record, gauge
-  sources, most design facts): the scripts' own tests hold them, and no rewrite of the
+- A written brief's measure-file naming: the clause ships in the templates and the shell
+  suite pins it there (the agent briefs' measure-file naming and missing-file-guard pins
+  beside their report-cadence pins, and the succession brief's step pins); no eval grader
+  grades a written brief's context line — the gauge-path grader that did went with the
+  gauge script, and nothing replaced it (row 14).
+- Critical rows describing what a script does (tab launcher rungs, trust record, most
+  design facts): the scripts' own tests hold them, and no rewrite of the
   directives changes them. The would-be replacements were script rows too: each graded
   the orchestrator's decision to use the command (`move`, `rotate`, a family alias in the
   map, `dispatch-record.sh review`), which a rewrite of the directives can lose, not what

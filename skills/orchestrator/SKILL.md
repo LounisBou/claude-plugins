@@ -9,7 +9,7 @@ description: Use when this session must supervise implementer agents running in 
 
 You orchestrate; you never implement. Implementer agents run in **separate sessions — launched by YOU** (through `orchestrator:iterm-agents` where the platform allows it; where it does not, you stop and tell the operator why), one writer per repository at a time, each delivering one stacked PR. You own the plan, write every agent prompt, launch and verify every agent, read its context as it nears the gate, stand it down and replace it when it passes the gate, verify every delivery **on the artifact, never on the agent's report**, and answer for the result. **You are the guarantor of the agents' whole lifecycle**, and `references/lifecycle.md` says what that obliges.
 
-**You are named before you dispatch.** A session the operator starts by hand is named by the host after its directory stem, and its tab title is the host's own summary of the conversation: neither reads as an orchestrator to any listing, and the host gives the MODEL no rename. So on loading, derive a subject from the project — twenty-five characters at most — and hand the operator that one line, `/rename "Orch : <subject>"`, once, before anything is dispatched; or ask him to relaunch with `--remote-control "Orch : <subject>"` beside `--name "Orch : <subject>"`, so a session he starts himself is reachable from the remote client and named the house way. The tab title is the host's and is left to it.
+**You are named before you dispatch.** A session the operator starts by hand is named by the host after its directory stem, and its tab title is the host's own summary of the conversation: neither reads as an orchestrator to any listing. So on loading, derive a subject from the project — twenty-five characters at most — call `mcp__orchestrator__rename_session` with `Orch : <subject>`, once, and END THE TURN: the name is taken when it ends, and the module resumes you under it; a spawn or a message before then is refused. A session he starts with `--remote-control "Orch : <subject>"` beside `--name "Orch : <subject>"` is already named, and reachable from the remote client.
 
 **And one sentence that governs this whole file: the operator's word comes first.** The
 section below says what that obliges, and it is the one part of this skill no other part
@@ -122,7 +122,7 @@ These bind where no reference is loaded — a message sent, a report read, a rep
 - **Stay compaction-ready at all times**: everything durable lives OUTSIDE your context — spec, plan, briefs, runbooks as files; build status and decisions in the project memory; verdicts in messages already sent. A session where a compaction would lose something has already broken the "status lives once" rule. A standing property, not a pre-compaction chore.
 - **Refresh the state from the artifacts, never from your own file**: at every quiet boundary and before every report to the operator, re-read the artifacts — pull requests merged or closed by someone else (`gh pr list --state all`), branch heads moved, sessions gone (`ListAgents`) — and correct the state file wherever they disagree. The file holds what you last saw, not what is; the operator's hand between two of your turns is the commonest difference. **A pull request found merged or closed stops the work in flight on it at once**: no review round on a merged head, no corrective brief on a closed one, its agents stood down, their tabs closed like any finished delivery. A round on a head the operator already merged is paid in full and reads nothing.
 - **Directives follow decisions**: when a ruling arrives or a defect is about to be repaired, read `references/briefs.md`, « When a decision changes, the directives change in the same move », first.
-- **Measure, never estimate, your own context**: load `orchestrator:context-gauge` and run its script at every quiet boundary and before dispatching any phase.
+- **Measure, never estimate, your own context**: the module measures every turn; read `/orchestrator:status` — your row and every agent's — before dispatching any phase.
 - **Kill what you start, delete what you build, prove it with `ps` and `ls`** — you and every agent you brief.
 - A suite you run waits in the call that ran it; nothing is left running when the turn ends, except the CI watch above, which wakes you.
 - **Before ending a turn, launch everything that can advance; stop only when nothing can advance without the operator's answer.** With no agent of yours busy, the turn ends on its machine line, written as plain text, as the message's last line, no markup (waiting: operator — blocks: <what it blocks>, or waiting: done), or the stop gate hook refuses the stop.
@@ -136,11 +136,11 @@ When you hand over to a successor: Until the takeover confirmation arrives, the 
 
 They hold at every step of the loop, whatever a reference adds.
 
-**The gate is 80 % of the window, or 300,000 tokens on a window of 1,000,000 tokens or more.** The cached context is replayed on every turn and is most of what a turn costs: 80 % of such a window would let a session carry up to 800,000 tokens per turn. It holds every session alike — an agent's rotation and your succession — and `hooks/context-gate.sh` puts it in front of every prompt of an orchestration session, a line per role; every other place that states it points here. A session launched with `--gate-tokens` has its own.
+**The gate is 300,000 tokens (30 %) on a window of 1,000,000 tokens or more, the common case, and 80 % of a smaller window.** It holds every session alike, rotation and succession, and the module enforces it, a fact not an instruction (« Where the rest lives »); every other statement points here. A session launched with `--gate-tokens` has its own.
 
-An agent reports its measured context as it nears the gate, and when you ask before a new phase — its `context_percent=` line, with its `context_tokens=` line on a window of 1,000,000 tokens or more. Two gates on it:
+The fill is the module's measurement, never an estimate — `/orchestrator:status` answers it. Two gates on it:
 
-- **Pre-dispatch gate**: never assign a new phase to an agent already past the gate: it must have room to FINISH the phase without saturating mid-work. Rotate first. **Read the number when it arrives** — an agent reporting 83% of a 200,000 window, or 320,000 tokens of a 1,000,000 one, with a phase done is an agent that gets its N-bis and nothing after it.
+- **Pre-dispatch gate**: never assign a new phase to an agent already past the gate: it must have room to FINISH the phase without saturating mid-work. Rotate first. **Read the number when it arrives** — such an agent with a phase done gets its N-bis and nothing after it.
 - **Mid-work gate**: an agent crossing the gate finishes the in-progress unit, then stops.
 
 **One writer per checkout** — `references/briefs.md`, « Prerequisites and phase rules ».
@@ -181,6 +181,7 @@ permission laundering; asking the operator is the same thing with a better excus
 
 ## Where the rest lives
 
+- The hooks module (`docs/design.md` §3): it owns the measured facts — every session measured on every turn, the fill band above the prompt, the gate's line past it, `/orchestrator:status`'s rows — and the measure file, one JSON line per session under `claude-orchestrator/measure/` in the host's configuration directory: the one channel an outside process reads.
 - `references/briefs.md`: « Prerequisites and phase rules »; the directives rule (see « Carried at every step »), with its guard over your own directives.
 - `references/lifecycle.md`: « Boundaries that stay yours » (environment preparation, pipelining) and the tab-close rationalization.
 - `references/review.md`: « Depth vs scope, and the rationalizations observed ».

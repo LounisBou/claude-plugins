@@ -282,24 +282,11 @@ if is_class implementer; then
     ' "$brief" 2>/dev/null || true)
 fi
 
-# 8. Every session measures its own context from the gauge script, never an estimate;
-#    self-estimates ran 13 points high in observed runs. An implementer, review, comments
-#    or rotation brief — every class this lint tells apart by its own role line — must
-#    cite it by an absolute path on ANY line: prose naming the tool before or after the
-#    line that cites it is no finding. Whether that path exists is check 3's, and a
-#    host-expanded variable or an unfilled `{{GAUGE}}` placeholder in its place is ALREADY
-#    a finding above; this does not double either.
-if is_class implementer || is_class 'REVIEW agent' || is_class 'COMMENTS agent' \
-    || is_class 'ROTATION agent'; then
-    gauge_line=$(grep -n 'context-gauge\.sh\|{{GAUGE}}' "$brief" 2>/dev/null | head -1)
-    if [ -z "$gauge_line" ]; then
-        say 1 "no absolute, existing path to context-gauge.sh: an agent brief must cite the plugin's installed copy, which is how context is measured rather than estimated"
-    elif ! grep -qE '`/[^`]*context-gauge\.sh`' "$brief" 2>/dev/null \
-        && ! grep -E 'context-gauge\.sh|\{\{GAUGE\}\}' "$brief" 2>/dev/null \
-            | grep -qE '\{\{GAUGE\}\}|\$\{[A-Z]|\$[A-Z][A-Z0-9_]{2,}'; then
-        say "${gauge_line%%:*}" "context-gauge.sh is not cited by an absolute path this machine can open"
-    fi
-fi
+# 8. Retired with the context gauge's shell script (the hooks-module cutover): the
+#    check demanded an absolute path to context-gauge.sh, and the file is gone — the
+#    module measures every session itself, in-process, and no brief cites a script
+#    anymore. The number stays unused rather than renumbering every check above,
+#    which the suite's brief-lint cases cite by their finding texts.
 
 # 11. A succession brief is read whole by a session that has nothing else in its context yet:
 #     past 10,000 characters it costs a successor what the live state was meant to save. The

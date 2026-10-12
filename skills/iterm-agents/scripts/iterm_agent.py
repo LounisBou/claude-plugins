@@ -202,11 +202,12 @@ def unread_refusal(dir_, timeout):
     A named exception to "a gate that cannot measure lets the run through and says so"
     (§29): a session whose mode is unread may be parked on a dialog or hung at start, which
     the plugin already calls "not launched" (§43) — so the tab this spawn made is closed
-    rather than left for the operator to find blank."""
+    rather than left for the operator to find blank; whether that close happened is said
+    after this text, by `refuse_made`."""
     return ("spawn: refused: no transcript for %s carrying a mode after %ss: the session may "
-            "be parked on a dialog or hung at start; the tab was closed. Read it next time "
-            "with `screen` before retrying, or raise ORCHESTRATOR_MODE_TIMEOUT if the "
-            "machine is only slow" % (dir_, timeout))
+            "be parked on a dialog or hung at start. Read it next time with `screen` before "
+            "retrying, or raise ORCHESTRATOR_MODE_TIMEOUT if the machine is only slow"
+            % (dir_, timeout))
 
 
 def verify_mode(dir_, launch_epoch, asked_mode, model, made, timeout=None, sleep=time.sleep):
@@ -227,12 +228,35 @@ def verify_mode(dir_, launch_epoch, asked_mode, model, made, timeout=None, sleep
         sleep(1)
         waited += 1
     if not mode:
-        close_made(made)
-        die(unread_refusal(dir_, timeout))
+        refuse_made(made, unread_refusal(dir_, timeout))
     elif mode != asked_mode:
-        close_made(made)
-        die(mode_refusal(asked_mode, mode, model))
+        refuse_made(made, mode_refusal(asked_mode, mode, model))
     return "spawn: mode %s read on the transcript" % mode
+
+
+def closed_clause(closed, tty):
+    """What became of the tab a refused spawn made — only what is true of it."""
+    if closed:
+        return "the tab was closed"
+    if tty:
+        return "the tab on %s was NOT closed: close it with close --tty %s" % (tty, tty)
+    return "the tab was NOT closed: find it with list and close it"
+
+
+def refuse_made(made, msg):
+    """Refuse a spawn whose tab exists: close that tab, print its tty on stdout, and die
+    saying whether the close happened.
+
+    A refusal used to say « the tab was closed » whatever the close did, and the « never
+    started » refusal closed nothing at all and kept the tty to its stderr line: the
+    operator was told of a failure over a tab still open, possibly holding a running agent
+    nobody would now stop."""
+    closed = close_made(made)
+    tty = made.get("tty") or ""
+    if tty:
+        print(tty)
+        sys.stdout.flush()
+    die("%s; %s" % (msg, closed_clause(closed, tty)))
 
 
 def last_lines(lines, n):
@@ -546,18 +570,27 @@ def backend_chain():
 def ps_rows(tty):
     """`(pid, command)` for every process on a tty, from `ps` or from the suite's stand-in.
 
-    ORCHESTRATOR_PS_TABLE names a file that replaces `ps`, one `<tty> <command>` line per
-    process; a table written to check a name carries no pid, so the pid is empty there. Both
-    readers below are built on this, and so is the close's proof, because they were asking
-    the process table the same question in three different ways."""
+    ORCHESTRATOR_PS_TABLE names a file that replaces `ps`, one `<tty> [<pid>] <command>`
+    line per process; a table written to check a name carries no pid, so the pid is empty
+    there, and one written to check the host's registry carries it as an all-digit second
+    field. Both readers below are built on this, and so is the close's proof, because they
+    were asking the process table the same question in three different ways."""
     short = tty.replace("/dev/", "")
     table = os.environ.get("ORCHESTRATOR_PS_TABLE", "")
     try:
         if table:
+            rows = []
             with open(table) as fh:
-                lines = [l.strip().split(None, 1) for l in fh if l.strip()]
-            return [("", r[1]) for r in lines
-                    if len(r) == 2 and r[0].replace("/dev/", "") == short]
+                for l in fh:
+                    r = l.strip().split(None, 1)
+                    if len(r) != 2 or r[0].replace("/dev/", "") != short:
+                        continue
+                    rest = r[1].split(None, 1)
+                    if len(rest) == 2 and rest[0].isdigit():
+                        rows.append((rest[0], rest[1]))
+                    else:
+                        rows.append(("", r[1]))
+            return rows
         out = subprocess.run(["ps", "-t", short, "-o", "pid=,command="],
                              capture_output=True, text=True, timeout=10).stdout
     except Exception:
@@ -570,12 +603,64 @@ def ps_rows(tty):
     return rows
 
 
+def host_config_dir():
+    """The host's configuration directory, where its session registry lives."""
+    return os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+
+
+def host_registry(pid):
+    """The host's own record of the session a pid runs, as a dict, or None.
+
+    The host writes `<config dir>/sessions/<pid>.json` for every session it runs and keeps
+    the session's current name there. It is the one reading of « this process is the host »
+    that does not depend on how the process was started: a wrapper that `exec`s the binary,
+    a session typed as a bare command, a launch through a path the operator never set."""
+    if not pid or not str(pid).isdigit():
+        return None
+    try:
+        with open(os.path.join(host_config_dir(), "sessions", "%s.json" % pid)) as fh:
+            entry = json.load(fh)
+    except Exception:
+        return None
+    return entry if isinstance(entry, dict) else None
+
+
+def host_cli_names():
+    """The program names the host CLI answers to in the process table: the basename of
+    HOST_CLI, and the basename of what it resolves to once PATH and every link are
+    followed."""
+    import shutil
+    names = {os.path.basename(HOST_CLI)}
+    try:
+        names.add(os.path.basename(os.path.realpath(shutil.which(HOST_CLI) or HOST_CLI)))
+    except Exception:
+        pass
+    return {n for n in names if n}
+
+
+def is_host_process(pid, command, names=None):
+    """Whether one process-table row is the host session.
+
+    Matched on the full HOST_CLI path, this missed every session the operator typed as a
+    bare command whenever HOST_CLI was set to an absolute path, and every session a wrapper
+    started by `exec`: a live session read « not running », and every spawn through the
+    wrapper died « never started » after its tab existed. A row is the host when the host
+    registered its pid, or when its program's basename is HOST_CLI's or the basename of
+    what HOST_CLI resolves to."""
+    if host_registry(pid) is not None:
+        return True
+    words = command.split()
+    if not words:
+        return False
+    return os.path.basename(words[0]) in (names if names is not None else host_cli_names())
+
+
 def host_cli_on(tty):
     """What the host CLI on a tty is — its pid, or its command line where the suite's table
     carries no pid — or None when it is not there. Truthy means « still running »."""
-    pattern = re.compile(r"^(\S*/)?" + re.escape(HOST_CLI) + r"(\s|$)")
+    names = host_cli_names()
     for pid, command in ps_rows(tty):
-        if pattern.match(command):
+        if is_host_process(pid, command, names):
             return pid or command
     return None
 
@@ -911,21 +996,37 @@ def warn_versioned(tier, value):
               % (tier, value, parts[n - 1] + (suffix or "")), file=sys.stderr)
 
 
+# What the hooks module's measure file holds when the host gave it no model.
+UNAVAILABLE_MODEL = "unavailable"
+
+
 def inherited_model():
-    """The model the CALLING session runs on now, from the context tap's record — not the
-    launch line, which the operator may have moved away from. A succession must not guess
-    a model and the operator forbids a default (§27)."""
+    """The model the CALLING session runs on now, from the hooks module's measure file —
+    not the launch line, which the operator may have moved away from. A succession must
+    not guess a model and the operator forbids a default (§27)."""
     sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
-    path = os.path.join(STATE_DIR, "ctx", sid + ".json") if sid else "<CLAUDE_CODE_SESSION_ID unset>"
+    # The measure file is the module's own artifact: it lives under the config dir and
+    # nowhere else (gauge.ts resolves it through CLAUDE_CONFIG_DIR alone). STATE_DIR is
+    # NOT read here — it honors ORCHESTRATOR_STATE_DIR, the override the stop gate's
+    # shared roots (records, chains, CI logs) answer to, and the measure file is not one
+    # of them: under the override it is still written under the config dir.
+    config_dir = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
+    path = (os.path.join(config_dir, "claude-orchestrator", "measure", sid + ".json")
+            if sid else "<CLAUDE_CODE_SESSION_ID unset>")
     model = ""
     try:
         with open(path) as fh:
-            model = json.load(fh).get("model_id") or ""
+            model = json.load(fh).get("model") or ""
     except Exception:
         pass
+    # The module records `unavailable` when the host gave it no model: a sentinel, not a
+    # model, and typed as `--model` it starts the successor on a guess or not at all.
+    if not isinstance(model, str) or model.strip() in ("", UNAVAILABLE_MODEL):
+        model = ""
     if not model:
-        die("spawn: --inherit-model: no model recorded for this session (%s) — the context "
-            "tap must be installed and rendering: /orchestrator:install, then restart" % path)
+        die("spawn: --inherit-model: no model recorded for this session (%s) — the hooks "
+            "module writes the measure file each turn: load the plugin, take one turn, "
+            "then retry" % path)
     return model
 
 
@@ -947,11 +1048,36 @@ UNREADABLE_NAME = "\x00unreadable"
 NAME_READABLE_MAX = 40
 
 
-def session_name_on(tty):
-    """The name the host session on a tty was launched with (`--name`).
+# Both kinds a name may arrive wrapped in: the straight ones a shell leaves, the curly ones
+# a typed rename can carry.
+NAME_QUOTES = "\"'\u201c\u201d\u2018\u2019"
 
-    None when none was given, `UNREADABLE_NAME` when one was and the table cannot give it
-    back, the name itself otherwise.
+
+def registry_name_on(tty):
+    """The name the host registry holds for the session on a tty, or None.
+
+    A rename — the host's own command, or the module's tool — changes the registry and never
+    the process line: read from argv alone, an orchestrator renamed by hand listed as
+    « (host default) », its successor was refused for having no name, and a coordinator that
+    named itself was not one to `rotate`."""
+    for pid, _ in ps_rows(tty):
+        entry = host_registry(pid)
+        if entry is None:
+            continue
+        name = entry.get("name")
+        if isinstance(name, str):
+            name = name.strip().strip(NAME_QUOTES).strip()
+            if name:
+                return name
+    return None
+
+
+def session_name_on(tty):
+    """The name of the host session on a tty: the one the host registry holds, else the one
+    it was launched with (`--name`).
+
+    None when neither gives one, `UNREADABLE_NAME` when a launch name was given and the
+    table cannot give it back, the name itself otherwise.
 
     The tab title is the host's summary of the conversation and it is rewritten as the
     session works: a listing showing one of those named nothing an orchestrator could
@@ -959,7 +1085,7 @@ def session_name_on(tty):
     fixed at launch, and the API does not carry it, so it is read from the process table.
 
     ORCHESTRATOR_PS_TABLE names a file that stands in for `ps`, one line per process,
-    `<tty> <command>`. The suite sets it; a live run never does.
+    `<tty> [<pid>] <command>`. The suite sets it; a live run never does.
 
     **`ps` hands back a FLAT command line**: the quoting that made the name one argument is
     gone, and the words after `--name` run on until the next option or the end of the line.
@@ -976,6 +1102,9 @@ def session_name_on(tty):
     whole brief path and the sentence naming another orchestrator (§48). A name invented by
     wherever the words happened to stop would be worse than saying it cannot be read: it is
     a name an orchestrator would then address."""
+    registered = registry_name_on(tty)
+    if registered:
+        return registered
     for _, command in ps_rows(tty):
         words = command.split()
         if "--name" not in words:
@@ -1131,6 +1260,25 @@ def coord_name_on(tty):
     if name and name != UNREADABLE_NAME and name.startswith(COORD_ROLE):
         return name
     return None
+
+
+def registered_coord_on(tty):
+    """The coordinator's name when the coordinator's own record places it on this tty, None
+    otherwise.
+
+    The record is the one `coordinator.sh register` writes, under the same state directory.
+    A coordinator opened by hand that named itself through a rename carries no `--name`, and
+    a host registry that cannot be read leaves it nameless here too: the record still says
+    which tty it holds, so a rotation that would close it is refused on that."""
+    try:
+        with open(os.path.join(STATE_DIR, "coordinator.json")) as fh:
+            record = json.load(fh)
+    except Exception:
+        return None
+    if not isinstance(record, dict) or record.get("tty") != tty:
+        return None
+    name = record.get("name")
+    return name if isinstance(name, str) and name else COORD_ROLE
 
 
 def chain_drop_tab(tab_id):
@@ -1510,14 +1658,14 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
     import shutil
     cli_path = shutil.which(HOST_CLI) or HOST_CLI
     parts = ["cd %s" % shq(dir_),
-             # Marks this session as launcher-spawned: the push-guard hook (hooks/push-guard.sh)
+             # Marks this session as launcher-spawned: the module's push guard (hooks/guards.ts)
              # is active only where this is set, and the operator's own sessions never carry it.
              "export ORCHESTRATOR_SPAWNED=1",
              "printf '\\033]0;%%s\\007' %s" % shq(title),
              None]
     if gate_tokens:
-        # The session's own context gate, read from the environment by the context-gate hook
-        # and by the status line. Exported only when asked for: absent, the default holds.
+        # The session's own context gate, read from the environment by the module's context
+        # gate and its band. Exported only when asked for: absent, the default holds.
         parts.insert(2, "export ORCHESTRATOR_CONTEXT_GATE_TOKENS=%d" % gate_tokens)
     cli = [shq(cli_path)]
     if model:
@@ -2026,6 +2174,10 @@ def cmd_spawn(argv):
     command = "%s -l %s" % (LOGIN_SHELL, script)
 
     made = {}
+    # What this spawn does to the chain, read while the app is at hand and written only once
+    # the session is verified running: a spawn that dies unverified must leave the chain as
+    # it found it, and a successor that never started must not take the predecessor's agents.
+    plan = {}
 
     async def go(iterm2, connection):
         app = await iterm2.async_get_app(connection)
@@ -2051,40 +2203,35 @@ def cmd_spawn(argv):
         # select=False: the operator is working in another tab, and a spawn that pulls the
         # window to the new one interrupts them every time an agent is launched.
         tab = await win.async_create_tab(command=command, index=index, select=False)
-        new = await tty_of(tab, connection)
-        # Kept for the mode reading below: a refusal closes the session THIS spawn made,
-        # by its own id, never by a tty another session could hold by then.
+        # Kept for every refusal below: it closes the session THIS spawn made, by its own id,
+        # never by a tty another session could hold by then.
         made["tab_id"] = tab.tab_id
-        made["session_id"] = tab.current_session.session_id if tab.current_session else ""
-        if own and new and effect == "transfer":
-            new_sess = None
-            for _ in range(10):
+        try:
+            new = await tty_of(tab, connection)
+            made["tty"] = new or ""
+            # The session is read on a FRESH app: the tab handed back by the creation may be
+            # the stale copy whose `current_session` is still None, and an id read there is
+            # an empty one — a refusal that then closes nothing.
+            new_sess, fresh = None, app
+            for _ in range(10 if new else 0):
                 fresh = await iterm2.async_get_app(connection)
                 _, _, new_sess = await find_tab(fresh, new)
                 if new_sess is not None:
                     break
                 await asyncio.sleep(0.3)
-            if new_sess is None:
-                # A gate that cannot measure lets the launch through and says so.
-                print("spawn: the successor's session on %s could not be read, so the chain "
-                      "stays with %s; place its next agent with --right-of <last agent tty>."
-                      % (new, own), file=sys.stderr)
-            else:
-                n = chain_transfer(own, own_sess_id, new, new_sess.session_id)
-                print("spawn: chain of %d agent(s) handed to the successor on %s" % (n, new),
-                      file=sys.stderr)
-                # The caller's own entry in its orchestrator's chain follows the successor.
-                _, own_tab, _ = await find_tab(fresh, own)
-                if own_tab is None:
-                    print("spawn: your own tab on %s could not be read, so no chain entry "
-                          "naming it was re-pointed to the successor." % own, file=sys.stderr)
-                else:
-                    repointed = chain_repoint_tab(own_tab.tab_id, tab.tab_id, new)
-                    if repointed:
-                        print("spawn: the entry naming your tab in %d chain(s) now names the "
-                              "successor on %s" % (repointed, new), file=sys.stderr)
-        elif own and new and effect == "append":
-            chain_append(own, tab.tab_id, new, own_sess_id, args.resident)
+            made["session_id"] = (new_sess.session_id if new_sess is not None else
+                                  tab.current_session.session_id if tab.current_session else "")
+            if own and new and effect != "none":
+                plan.update(effect=effect, own_sess_id=own_sess_id, tab_id=tab.tab_id, new=new,
+                            new_sess_id=new_sess.session_id if new_sess is not None else "",
+                            own_tab_id="")
+                if effect == "transfer":
+                    _, own_tab, _ = await find_tab(fresh, own)
+                    plan["own_tab_id"] = own_tab.tab_id if own_tab is not None else ""
+        except Exception as exc:
+            # The tab exists: whatever failed after it, the refusal below closes it.
+            made["error"] = (str(exc).splitlines() or [type(exc).__name__])[0]
+            return None
         return new
 
     def fallback_tab(make):
@@ -2094,10 +2241,14 @@ def cmd_spawn(argv):
         the menu bar through the accessibility layer — a grant, the app brought to the front
         and a focus flicker per move, which is what the API replaced. A tab that lands in the
         wrong place is an agent that runs; a placement bought at that price is not. Said out
-        loud rather than assumed."""
+        loud rather than assumed — the placement and the chain both."""
         if anchor and not args.auditor:
             print("spawn: this rung cannot place a tab; the new session lands where the "
                   "terminal puts it, not beside %s." % anchor, file=sys.stderr)
+        if own and effect != "none":
+            print("spawn: this rung keeps no chain, so the chain was not updated (the %s "
+                  "was skipped)%s." % (effect, "; your agents stay in your own chain"
+                                       if effect == "transfer" else ""), file=sys.stderr)
         return make()
 
     # Before the tab exists, so no transcript older than this launch can be taken for its.
@@ -2106,8 +2257,12 @@ def cmd_spawn(argv):
         "api": lambda: run(go),
         "applescript": lambda: fallback_tab(lambda: as_spawn(command)),
     })
+    if made.get("error"):
+        refuse_made(made, "spawn: the tab was made, then the terminal failed: %s"
+                    % made["error"])
     if not new_tty:
-        die("spawn: the terminal returned no tty for the new tab")
+        refuse_made(made, "spawn: the terminal returned no tty for the new tab")
+    made.setdefault("tty", new_tty)
 
     # Before the verification below, which may wait or die: an auditor's place is settled as
     # soon as its tab exists, and said on stdout, where the orchestrator reads the launch.
@@ -2126,14 +2281,24 @@ def cmd_spawn(argv):
                 break
             time.sleep(1)
             waited += 1
-        if not pid:
-            die("spawn: %s never started on %s after %ss" % (HOST_CLI, new_tty, SPAWN_TIMEOUT))
-        print("spawn: %s running on %s (pid %s)" % (HOST_CLI, new_tty, pid), file=sys.stderr)
+        if pid:
+            print("spawn: %s running on %s (pid %s)" % (HOST_CLI, new_tty, pid), file=sys.stderr)
+        else:
+            # The process table is one reading of « it started », not the only one: a session
+            # that wrote its transcript in the launch directory since the launch has started,
+            # whatever its process line says. Declaring it dead there closed a working agent.
+            transcript = find_transcript(args.dir, launch_epoch)
+            if not transcript:
+                refuse_made(made, "spawn: %s never started on %s after %ss"
+                            % (HOST_CLI, new_tty, SPAWN_TIMEOUT))
+            print("spawn: no process on %s matched %s, but the session wrote %s since the "
+                  "launch: it started" % (new_tty, HOST_CLI, transcript), file=sys.stderr)
         # « The host CLI runs on the tty » is not « the session is launched »: a session
         # that runs and waits for a click is not. The mode asked for is carried on the
         # process line and honoured for some models and not others, so the mode the session
         # actually came up in is read on its own transcript (§43).
         print(verify_mode(args.dir, launch_epoch, args.mode, model, made), file=sys.stderr)
+    apply_chain_plan(plan, own, args.resident)
     print(new_tty)
     if misplaced:
         sys.exit(misplaced)
@@ -2192,28 +2357,42 @@ def stable_title(name):
 
 
 def close_made(made):
-    """Close the session a spawn just made, by its own id.
+    """Close the session a spawn just made, by its own id; True only when it was closed.
 
     A refusal after the tab exists must leave no tab: an agent nobody can use, in a window
     the operator reads, is worse than a spawn that failed. The id and not the tty, because
-    a tty is a claim about a moment and the session is the thing that was created.
+    a tty is a claim about a moment and the session is the thing that was created. The tab's
+    id stands in when the session's could not be read; the tty only when the AppleScript
+    rung made the tab, which hands back nothing else, and then seconds after it did.
 
     The call is wrapped: `run()` catches nothing, and a refusal path that ends on a
-    traceback is never an answer — the caller dies with `mode_refusal(...)` either way, so
-    a close that fails must be SAID, not thrown."""
+    traceback is never an answer — the caller dies with its refusal either way, so a close
+    that fails must be SAID, not thrown."""
     session_id = made.get("session_id") or ""
-    if not session_id:
-        return False
+    tab_id = made.get("tab_id") or ""
+    tty = made.get("tty") or ""
+    if not session_id and not tab_id:
+        if not tty:
+            return False
+        try:
+            return bool(as_close(tty, ""))
+        except (Exception, SystemExit) as exc:
+            print("spawn: the refused session could not be closed: %s"
+                  % (str(exc).splitlines() or ["unknown error"])[0], file=sys.stderr)
+            return False
 
     async def go(iterm2, connection):
         app = await iterm2.async_get_app(connection)
         for window in app.windows:
             for tab in window.tabs:
-                for sess in tab.sessions:
-                    if sess.session_id == session_id:
+                hit = [sess for sess in tab.sessions
+                       if (session_id and sess.session_id == session_id)
+                       or (not session_id and tab.tab_id == tab_id)]
+                if hit:
+                    for sess in hit:
                         await sess.async_close(force=True)
-                        chain_drop_tab(tab.tab_id)
-                        return True
+                    chain_drop_tab(tab.tab_id)
+                    return True
         return False
 
     try:
@@ -2222,6 +2401,44 @@ def close_made(made):
         print("spawn: the refused session could not be closed: %s"
               % (str(exc).splitlines() or ["unknown error"])[0], file=sys.stderr)
         return False
+
+
+def apply_chain_plan(plan, own, resident):
+    """Write what a verified spawn does to the chain (§34): an agent appended to its
+    caller's, or a successor handed the caller's agents and the entry naming the caller's tab.
+
+    Called only once the session is verified running, or at once under --no-verify. A caller
+    the app has no session for writes nothing: an empty owner reads every entry of a chain
+    file, a recycled tty's strangers included, and a transfer would hand them all over."""
+    if not plan:
+        return
+    effect, new = plan["effect"], plan["new"]
+    if not plan.get("own_sess_id"):
+        print("spawn: this session is not a tab of the app's (%s), so no session id names "
+              "its chain entries; the chain was not updated (the %s was skipped)."
+              % (own, effect), file=sys.stderr)
+        return
+    if effect == "append":
+        chain_append(own, plan["tab_id"], new, plan["own_sess_id"], resident)
+        return
+    if not plan.get("new_sess_id"):
+        # A gate that cannot measure lets the launch through and says so.
+        print("spawn: the successor's session on %s could not be read, so the chain "
+              "stays with %s; place its next agent with --right-of <last agent tty>."
+              % (new, own), file=sys.stderr)
+        return
+    n = chain_transfer(own, plan["own_sess_id"], new, plan["new_sess_id"])
+    print("spawn: chain of %d agent(s) handed to the successor on %s" % (n, new),
+          file=sys.stderr)
+    # The caller's own entry in its orchestrator's chain follows the successor.
+    if not plan.get("own_tab_id"):
+        print("spawn: your own tab on %s could not be read, so no chain entry "
+              "naming it was re-pointed to the successor." % own, file=sys.stderr)
+        return
+    repointed = chain_repoint_tab(plan["own_tab_id"], plan["tab_id"], new)
+    if repointed:
+        print("spawn: the entry naming your tab in %d chain(s) now names the "
+              "successor on %s" % (repointed, new), file=sys.stderr)
 
 
 async def close_session(app, tty, expect):
@@ -2249,8 +2466,8 @@ def close_note(tty, was_running):
     an agent. Saying which of the two happened costs one line and stops the stronger claim
     being read into the weaker case."""
     if was_running is None:
-        return ("close: no %s was running on %s, so this close is the app's word, not a "
-                "reading of the process table." % (HOST_CLI, tty))
+        return ("close: no process matching %s was found on %s, so this close is the app's "
+                "word, not a reading of the process table." % (HOST_CLI, tty))
     return ""
 
 
@@ -2333,7 +2550,8 @@ def cmd_move(argv):
         An auditor's tab, and the coordinator's, are read first, by their NAME: each is in
         no chain, so each is nobody's to place but its own session's, whatever a stale chain
         entry on its tty says (§52)."""
-        coord = coord_name_on(args.tty) if args.tty != own else None
+        coord = ((coord_name_on(args.tty) or registered_coord_on(args.tty))
+                 if args.tty != own else None)
         if coord:
             if not args.force:
                 die("move: refused: %s is the coordinator's tab ('%s'), not this session's "
@@ -2415,11 +2633,16 @@ def cmd_rotate(argv):
         if flag in rest:
             die("rotate: refused: %s is not a rotation's (a rotation replaces an agent with "
                 "a titled agent; a successor is spawned with spawn --successor)" % flag)
+    # The verification is the rotation's whole guarantee: without it the old agent is closed
+    # on a replacement nobody saw start, and a replacement that never started leaves none.
+    if "--no-verify" in rest:
+        die("rotate: refused: --no-verify is not a rotation's (the old agent is closed only "
+            "once its replacement is verified running)")
     # Nor is the tab it closes the coordinator's or an auditor's: neither is an agent of the
     # caller's, and a rotation that closed one would end an audit nobody ended, or drop the
     # machine's coordinator, without anyone having asked for either (§52). Read before the
     # spawn, so a refusal leaves no replacement behind.
-    coord = coord_name_on(args.old_tty)
+    coord = coord_name_on(args.old_tty) or registered_coord_on(args.old_tty)
     if coord:
         if not args.force:
             die("rotate: refused: %s is the coordinator's tab ('%s'): the coordinator is "

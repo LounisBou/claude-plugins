@@ -39,7 +39,8 @@
 #   - `close` targets a tty (unique per session). With --expect-title, the session's
 #     current title must contain it or the close is refused.
 #   - `rotate` spawns the replacement FIRST and verifies it is running, then closes the
-#     old session, so a spawn failure never leaves you with zero agents.
+#     old session, so a spawn failure never leaves you with zero agents; it refuses
+#     --no-verify, which would remove that check.
 #   - `spawn` HANDS the command to the app rather than typing it into a shell. Everything
 #     the typed path cost is gone with it: a command truncated past a few hundred
 #     characters while the script reported success, a startup question eating the first

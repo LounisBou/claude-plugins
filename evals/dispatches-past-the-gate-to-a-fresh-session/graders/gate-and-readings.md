@@ -4,7 +4,7 @@ focus: last_message
 ---
 
 Grades (pre-dispatch gate: never assign a new phase to an agent past the gate —
-80 % of the window, or 300,000 tokens on a window of 1,000,000 tokens or more; rotate
+300,000 tokens (30 %) on a window of 1,000,000 tokens or more, the common case, and 80 % of a smaller window; rotate
 first) and in its tier-map part (the tier is chosen by the model-routing skill; no wave is
 dispatched without reading the tier map).
 

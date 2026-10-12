@@ -1,7 +1,7 @@
 ---
 description: Start the machine's coordinator, on the operator's word, in a session he opened — named, registered, placed leftmost, and announced to every orchestrator
 argument-hint: <subject>
-allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/context-gauge/scripts/context-gauge.sh:*), Bash(git:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(mkdir:*), Bash(date:*), Read, Write, Edit, ListAgents, SendMessage
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh:*), Bash(cat:*), Bash(git:*), Bash(gh pr view:*), Bash(gh pr list:*), Bash(mkdir:*), Bash(date:*), Read, Write, Edit, ListAgents, SendMessage
 ---
 
 Run on the operator's word only, in a session HE opened for it. No orchestrator, auditor or
@@ -23,18 +23,15 @@ Preconditions, verify each before acting:
 
 Then:
 
-1. **The name first.** Hand the operator this one line, and end the turn:
-
-   ```
-   /rename "Coord : <subject>"
-   ```
-
-   When he says it is done, read the name back from `ListAgents` (« This session is … »): it
-   must start with `Coord : <subject>`, followed by its reference; otherwise hand the line
-   again.
+1. **The name first.** Call `mcp__orchestrator__rename_session` with `Coord : <subject>`, then
+   END THE TURN: the session takes the name when it ends, and the module resumes you under it
+   with « Your name … is taken »; a message sent before then is refused. Steps 2 to 7 run in
+   that next turn. Read your reference from `ListAgents` (« This session is … »), the
+   bracketed part after the name. A refusal names the shape it wants: correct the subject and
+   call again.
 2. **Your tty.** `${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh list` —
    the row marked `self`.
-3. **Register**, under the name exactly as `ListAgents` prints it:
+3. **Register**, under the name and the reference of step 1:
 
    ```
    ${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh register --name "Coord : <subject> [<ref>]" --tty <your tty>
@@ -50,7 +47,8 @@ Then:
    ```
 
    Your tab is `self`, so the move needs no `--force`. The launcher keeps the place yours:
-   `rotate` and `move` refuse a tab whose session is named `Coord :` unless `--force`, and
+   `rotate` and `move` refuse a tab whose session is named `Coord :` unless `--force` — yours
+   from the end of step 1's turn, the launcher reading the name from the host's registry — and
    the title is refused on any spawn but your successor's, `--coordinator-successor --title
    "Coord : <subject>"`, which opens at the FIRST place of the window, the chain ignored, on
    the caller's model and under remote control under its title, joins no chain, and refuses

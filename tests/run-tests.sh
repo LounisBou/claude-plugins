@@ -67,6 +67,10 @@ carries() { grep -qiF "$2" "$1" && echo yes || echo no; }
 
 echo "== repository policy =="
 
+# A live plugin load writes .claude-plugin/types/ and a root tsconfig.json into the
+# checkout — generated files the sweeps below must not read and git must not track.
+
+
 # The product name appears only in load-bearing identifiers: host paths, host
 # environment variables, the plugin name, the manifest directory and the host's per-user
 # temporary area, a path the host imposes (CLAUDE.md rule 2).
@@ -77,9 +81,9 @@ echo "== repository policy =="
 # name deletes the whole line whatever it said, so this check would report a clean
 # repository without ever reading a single file.
 policy_hits() {
-  ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=.claude --exclude-dir=plans \
-      --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh \
-    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|\.claude\.json|LounisBou/claude-statusbar|LounisBou/claude-plugins-marketplace|/tmp/claude-' || true )
+  ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=.claude --exclude-dir=.superpowers --exclude-dir=plans --exclude-dir=types \
+      --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh --exclude=tsconfig.json \
+    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|\.claude\.json|claude-code/|LounisBou/claude-statusbar|LounisBou/claude-plugins-marketplace|/tmp/claude-' || true )
 }
 check "no vendor or product name in prose" "" "$(policy_hits)"
 
@@ -93,20 +97,20 @@ rm -f "$PROBE"
 check "the policy guard can see a violation" "1" "$seen"
 
 # The tiers exist so no model family name has to appear here.
-hits=$(grep -rniIE '\b(opus|sonnet|haiku)\b' "$ROOT" --exclude-dir=.git --exclude-dir=.claude --exclude-dir=plans \
-  --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh || true)
+hits=$(grep -rniIE '\b(opus|sonnet|haiku)\b' "$ROOT" --exclude-dir=.git --exclude-dir=.claude --exclude-dir=.superpowers --exclude-dir=plans --exclude-dir=types \
+  --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh --exclude=tsconfig.json || true)
 check "no model family name in the plugin" "" "$hits"
 
 # Nothing tied to one machine or one project enters the generic plugin: no absolute home
 # path, no real session reference (the documented example is the six-hex placeholder
 # a1b2c3), no path into a downstream project's tree.
-hits=$(grep -rnIE '/Users/|/home/[a-z]|\[[0-9a-f]{6}\]|docs/reference/|BUGS\.md|IMPLEMENTATION\.md' "$ROOT" --exclude-dir=.git --exclude=.git --exclude-dir=.claude --exclude=plan.md --exclude=run-tests.sh \
+hits=$(grep -rnIE '/Users/|/home/[a-z]|\[[0-9a-f]{6}\]|docs/reference/|BUGS\.md|IMPLEMENTATION\.md' "$ROOT" --exclude-dir=.git --exclude=.git --exclude-dir=.claude --exclude-dir=.superpowers --exclude=plan.md --exclude=run-tests.sh --exclude-dir=types --exclude=tsconfig.json \
   | grep -vE '\[a1b2c3\]' || true)
 check "nothing project- or machine-specific in the plugin" "" "$hits"
 
 # The namespace is the plugin's name, `orchestrator`: commands and skills are reached as
 # /orchestrator:* and orchestrator:*. The former prefix must not come back in prose.
-hits=$(grep -rnI 'claude-orchestrator:' "$ROOT" --exclude-dir=.git --exclude=run-tests.sh || true)
+hits=$(grep -rnI 'claude-orchestrator:' "$ROOT" --exclude-dir=.git --exclude-dir=.superpowers --exclude=run-tests.sh || true)
 check "the old command namespace is gone" "" "$hits"
 
 # The operator manages the usage budget (ruling of 2026-10-10): no orchestrator or agent
@@ -188,29 +192,38 @@ check "the phase, comments and rotation briefs report context_tokens in the fina
   "$(for t in phase comments rotation; do spells "$ROOT/templates/agent-$t-brief.md" 'your context_tokens in the final report'; done | paste -sd'|' -)"
 check "the phase, comments and rotation gauge lines report the context in the final report" "yes|yes|yes" \
   "$(for t in phase comments rotation; do spells "$ROOT/templates/agent-$t-brief.md" 'when the orchestrator asks, and in the final report'; done | paste -sd'|' -)"
+# The cadence pins hold the when; these hold the what and the guard. The context source an
+# agent reads is its own measure file, named in prose — never a self-estimate, which ran 13
+# points high — and a file that is not there yields no figure at all, not an estimate.
+check "all four agent briefs name the agent's own measure file as its context source, and refuse a figure when it is missing" "yes|yes|yes|yes|yes|yes|yes|yes" \
+  "$(for t in phase comments review rotation; do spells "$ROOT/templates/agent-$t-brief.md" "your own measure file — the one JSON line the hooks module rewrites on every turn, your session id's file under \`claude-orchestrator/measure/\` in the host's configuration directory"; done | paste -sd'|' -)|$(for t in phase comments review rotation; do spells "$ROOT/templates/agent-$t-brief.md" 'If it is not there, say so and give no figure: an estimate presented as a measurement is worse than an admitted gap'; done | paste -sd'|' -)"
+# The session id is the host's variable, which the agent reads itself: a brief that only says
+# « your session id » left it to guess or to list the directory and read another's file.
+check "every brief that reads a measure file says how to find the session id and the directory" "yes|yes|yes|yes|yes" \
+  "$(for t in agent-phase agent-comments agent-review agent-rotation orchestrator-succession; do spells "$ROOT/templates/$t-brief.md" '`printenv CLAUDE_CODE_SESSION_ID` prints the id, `printenv CLAUDE_CONFIG_DIR` the directory'; done | paste -sd'|' -)"
 # review.md asks for each finding's proposed fix; the one-line finding keeps it as its last field.
 check "the review brief's finding line ends with the proposed fix" "yes" \
   "$(spells "$ROOT/templates/agent-review-brief.md" '`[severity] file:line — the claim — the evidence in a few words — proposed fix`')"
 check "the comments brief's end report carries the threads and their outcomes" "yes" \
   "$(spells "$ROOT/templates/agent-comments-brief.md" 'threads and their outcomes')"
-# A predecessor started by hand lists as `(host default)`; the host refuses closing a session the
-# plugin did not launch unless the operator's word is already in the conversation, so the successor
-# asks him up front, before « takeover confirmed ». Step 4 is read with its line breaks folded for
-# the parts, and by line number for the order: the ask comes before the line that sends the
-# confirmation.
+# The successor always closes its predecessor, one started by hand included (the operator's
+# standing order): nothing is asked of him, and where the host refuses the close of a tab the
+# plugin did not open, the predecessor is asked to end its own session through the module.
+# That end is proved on the tty, never on `list`, which keeps the row of a tab left holding a
+# shell.
 SUCC="$ROOT/templates/orchestrator-succession-brief.md"
 SUCC4=$(awk '/^4\. /{f=1} /^5\. /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
 succ4_has() { printf '%s' "$SUCC4" | grep -oF -- "$1" | wc -l | tr -d ' '; }
-check "the succession brief holds the up-front close question by its parts" "1|1|1|1" \
-  "$(succ4_has 'BEFORE "takeover confirmed" is sent')|$(succ4_has '(host default)')|$(succ4_has 'asks him to close it himself or to say « close it »')|$(succ4_has 'A predecessor with a name is closed as below, nothing asked')"
-SUCC_ASK=$(grep -n -m1 -F -- 'asks him to close it himself or to say « close it »' "$SUCC" | cut -d: -f1)
-SUCC_CONFIRM=$(grep -n -m1 -F -- 'Then message the predecessor "takeover confirmed"' "$SUCC" | cut -d: -f1)
-check "the succession brief asks before it sends « takeover confirmed »" "1" \
-  "$([ -n "$SUCC_ASK" ] && [ -n "$SUCC_CONFIRM" ] && [ "$SUCC_ASK" -lt "$SUCC_CONFIRM" ] && echo 1 || echo 0)"
-# The lifecycle reference says the same in one sentence: the ask stands in front of the message
-# that confirms the takeover, not behind it.
-check "the lifecycle puts the close question before « takeover confirmed »" "1" \
-  "$(tr '\n' ' ' < "$ORCH_REFS/lifecycle.md" | tr -s ' ' | awk '{ a = index($0, "to close it himself or to say « close it »"); b = index($0, "message the predecessor \"takeover confirmed\""); print (a > 0 && b > 0 && a < b) ? 1 : 0 }')"
+check "the succession brief closes every predecessor and asks nothing" "1|1|1|0" \
+  "$(succ4_has 'the successor ALWAYS closes its predecessor')|$(succ4_has 'a predecessor the launcher did not open (started by hand) included')|$(succ4_has 'call mcp__orchestrator__end_session')|$(succ4_has '« close it »')"
+check "the end_session fallback is proved on the tty, not on list" "1|1|0" \
+  "$(succ4_has '`verify --tty <its tty>` fails (no host on it)')|$(succ4_has '`ps -t <that tty without /dev/>` shows no host CLI')|$(succ4_has 'and `list` shows it gone; then tell')"
+# The successor waits for « handed over » on a subscription the stop gate counts: without it,
+# live, the gate refused that wait « Nothing will wake you ».
+check "the successor subscribes to its predecessor's idle notice with « takeover confirmed »" "1" \
+  "$(succ4_has 'message the predecessor "takeover confirmed" with `notify_when_idle: true`')"
+check "the lifecycle closes a predecessor started by hand like any other" "1|0" \
+  "$(grep -c 'is closed like any other, nothing asked' "$ORCH_REFS/lifecycle.md")|$(grep -c 'close it himself' "$ORCH_REFS/lifecycle.md")"
 # Ready is the operator's turn: the pull request stays in draft, rebased, and the squash-merge
 # of a lower branch is replayed around, never through.
 check "ready leaves the pull request in draft" "1" "$(grep -c "Ready is the operator's turn, and the pull request stays in draft" "$ORCH_REFS/review.md")"
@@ -502,6 +515,10 @@ check_status "a summary of nothing is not an error" 0 bash "$REC" summary "$WORK
 # anything else this file no longer refuses.
 G="$WORK/gate.jsonl"
 g1=$(bash "$REC" open "$G" --class behaviour-phase --tier standard --label "gate")
+check_status "ready refuses a row that does not say whether it changes a frontend surface" 1 bash "$REC" ready "$G" "$g1" --head aaa1111
+check "and names the subcommand that records it" "1" \
+  "$(bash "$REC" ready "$G" "$g1" --head aaa1111 2>&1 | grep -c 'ready: row 1 does not say whether its pull request changes a frontend surface: record it with `surface`')"
+bash "$REC" surface "$G" "$g1" --none >/dev/null
 check_status "ready warns, it does not refuse, a row no review has touched" 0 bash "$REC" ready "$G" "$g1" --head aaa1111
 check "and names what is missing" "1" \
   "$(bash "$REC" ready "$G" "$g1" --head aaa1111 2>&1 | grep -c 'no review recorded on row')"
@@ -531,6 +548,7 @@ check_status "a project shipping no norms tool still passes the gate" 0 bash "$R
 # characters up; anything shorter identifies nothing, and no git call is made to check.
 full=0123456789abcdef0123456789abcdef01234567
 g2=$(bash "$REC" open "$G" --class behaviour-phase --tier standard --label "abbreviated")
+bash "$REC" surface "$G" "$g2" --none >/dev/null
 bash "$REC" review "$G" "$g2" --head 0123456 --norms tool >/dev/null
 check_status "a short recorded head accepts the full head of the same commit" 0 bash "$REC" ready "$G" "$g2" --head "$full"
 bash "$REC" review "$G" "$g2" --head "$full" --norms tool >/dev/null
@@ -548,6 +566,7 @@ check "and says so" "1" "$(bash "$REC" ready "$G" "$g2" --head 012345 2>&1 | gre
 # correction round: it warns and records anyway, the way a project's own method may still
 # forbid either.
 g3=$(bash "$REC" open "$G" --class behaviour-phase --tier standard --label "one fix")
+bash "$REC" surface "$G" "$g3" --none >/dev/null
 fout=$(bash "$REC" fixed "$G" "$g3" --head ddd4444 2>&1); fcode=$?
 check "fixed warns, it does not refuse, a row no review has touched" "0" "$fcode"
 check "and says a review is missing" "1" "$(printf '%s\n' "$fout" | grep -c 'fixed: row 3 has no review recorded')"
@@ -595,7 +614,68 @@ check "and names the row it did not find" "1" "$(bash "$REC" ready "$G" 99 --hea
 check_status "review on an unknown option is an error" 1 bash "$REC" review "$G" "$g1" --head ccc333 --norms tool --force
 check_status "an unknown subcommand is an error" 1 bash "$REC" bogus "$G"
 check "and names the subcommands it expects" "1" \
-  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, fixed, ready, close, escaped, cost or summary)')"
+  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, fixed, surface, ready, close, escaped, cost or summary)')"
+
+# The screenshots. Five front-office pull requests were declared ready without one image,
+# under a rule written three times in prose. A `--ui` row reads its pull request's
+# description and refuses ready while no image is there; `--minor` passes with its reason
+# printed for the operator; a review round does not erase the surface.
+S="$WORK/surface.jsonl"; SB="$WORK/surface-bin"; mkdir -p "$SB"
+cat > "$SB/gh" <<'GH'
+#!/bin/bash
+# gh pr view <n> -R <repo> --json body -q .body: the body file named after the number.
+[ "$1 $2" = "pr view" ] || exit 9
+f="$SURFACE_BODIES/$3"; [ -f "$f" ] || { echo "no pull request $3" >&2; exit 1; }
+cat "$f"
+GH
+chmod +x "$SB/gh"
+export SURFACE_BODIES="$WORK/surface-bodies"; mkdir -p "$SURFACE_BODIES"
+printf 'Adds the alert pop-up avatar.\n\n**Related PRs:** none\n' > "$SURFACE_BODIES/11"
+printf 'Adds the avatar.\n\n![pop-up](https://github.com/user-attachments/assets/abc)\n' > "$SURFACE_BODIES/12"
+printf 'Adds the avatar.\n\n<img width="600" alt="pop-up" src="https://github.com/user-attachments/assets/def" />\n' > "$SURFACE_BODIES/13"
+srec() { env PATH="$SB:$PATH" bash "$REC" "$@"; }
+s1=$(srec open "$S" --class behaviour-phase --tier standard --label "ui")
+srec review "$S" "$s1" --head aaa1111 --norms tool >/dev/null
+srec surface "$S" "$s1" --ui acme/front#11 >/dev/null
+check "surface records the kind and the pull request" "ui|acme/front#11" \
+  "$(jq -r --argjson i "$s1" 'select(.id==$i)|[.surface.kind,.surface.pr]|join("|")' "$S")"
+check_status "ready refuses a frontend pull request with no image in its description" 1 srec ready "$S" "$s1" --head aaa1111
+check "and says why" "1" \
+  "$(srec ready "$S" "$s1" --head aaa1111 2>&1 | grep -c 'ready: acme/front#11 changes a frontend surface and its description carries no screenshot: not ready')"
+srec surface "$S" "$s1" --ui acme/front#12 >/dev/null
+check_status "a markdown image passes" 0 srec ready "$S" "$s1" --head aaa1111
+check "and is counted on the ready line" "1" \
+  "$(srec ready "$S" "$s1" --head aaa1111 2>/dev/null | grep -c 'norms check tool; 1 screenshot(s) on acme/front#12')"
+srec surface "$S" "$s1" --ui acme/front#13 >/dev/null
+check_status "an uploaded HTML image passes" 0 srec ready "$S" "$s1" --head aaa1111
+srec review "$S" "$s1" --head bbb2222 --norms tool >/dev/null
+check "a new review round keeps the surface" "ui|acme/front#13" \
+  "$(jq -r --argjson i "$s1" 'select(.id==$i)|[.surface.kind,.surface.pr]|join("|")' "$S")"
+srec surface "$S" "$s1" --ui acme/front#99 >/dev/null
+check_status "a description that cannot be read is not ready" 1 srec ready "$S" "$s1" --head bbb2222
+check "and says the screenshots are unverified" "1" \
+  "$(srec ready "$S" "$s1" --head bbb2222 2>&1 | grep -c 'could not read the description of acme/front#99: its screenshots are unverified')"
+srec surface "$S" "$s1" --minor "a label wording, nothing moves on screen" >/dev/null
+check "a minor ruling passes and prints its reason for the operator" "1" \
+  "$(srec ready "$S" "$s1" --head bbb2222 2>/dev/null | grep -c 'frontend change ruled minor: a label wording, nothing moves on screen - tell the operator this reason with the ready')"
+s2=$(srec open "$S" --class behaviour-phase --tier standard --label "no review yet")
+srec surface "$S" "$s2" --ui acme/front#11 >/dev/null
+check_status "the no-review warning does not let a frontend pull request with no image by" 1 srec ready "$S" "$s2" --head aaa1111
+check_status "surface without a kind is an error" 1 bash "$REC" surface "$S" "$s1"
+check_status "surface with two kinds is an error" 1 bash "$REC" surface "$S" "$s1" --none --minor x
+check_status "--ui needs <owner/repo>#<number>" 1 bash "$REC" surface "$S" "$s1" --ui 1520
+check_status "--minor needs a reason" 1 bash "$REC" surface "$S" "$s1" --minor ""
+check_status "surface on an unknown row is an error" 1 bash "$REC" surface "$S" 99 --none
+check_status "surface on an unknown option is an error" 1 bash "$REC" surface "$S" "$s1" --skip
+unset SURFACE_BODIES
+check "the review reference records the surface before ready" "1" \
+  "$(grep -c 'dispatch-record.sh surface <record> <id> --ui <owner/repo>#<n>' "$ROOT/skills/orchestrator/references/review.md")"
+check "a screen with no data on the reference account is seeded, never skipped" "1|1|1" \
+  "$(grep -c 'A screen the reference account has no data for is not minor and not skipped' "$ROOT/skills/orchestrator/references/review.md")|$(grep -c 'A screen the reference account has no data for is never minor' "$ROOT/skills/orchestrator/references/briefs.md")|$(grep -c 'seed the data on the local environment, and if you cannot, STOP' "$ROOT/templates/agent-phase-brief.md")"
+check "the review brief reports the surface in one line" "1" \
+  "$(grep -c 'frontend surface: yes|minor|no' "$ROOT/templates/agent-review-brief.md")"
+check "the record's subcommands list surface" "1" \
+  "$(grep -c '^dispatch-record.sh surface <record> <id>' "$ROOT/skills/model-routing/SKILL.md")"
 
 # A pair row names the alias and the effort it ran on, and carries what its sessions cost:
 # rounds alone cannot say whether a lighter pair paid. The tier rows above print unchanged.
@@ -800,6 +880,17 @@ check "a file ignored only by the global excludes is copied and reads clean" "no
 check "a file ignored by nothing is absent from the checkout" "0" "$([ -e "$GE/plain.txt" ] && echo 1 || echo 0)"
 check "a path both the repository's and the global excludes ignore is copied once" "local|1" \
   "$(cat "$GE/LOCAL.md" 2>/dev/null)|$(grep -c 'copied 1 files kept out by the global excludes' "$WORK/wsge.err")"
+# A review session in a pin lacked the project's instruction file, kept out by the global
+# excludes: the pin carries the files `create` copies from them (§37), and still nothing the
+# source's own exclude file or its settings directory holds — the orchestrator's material.
+out=$(GIT_CONFIG_GLOBAL="$WORK/global-gitconfig" bash "$WS" pin "$SRC" round-ge main 2>"$WORK/wspinge.err")
+PGE="$WORK/wsroot/proj/round-ge"
+check "a pin carries the files the global excludes keep out, and reads clean" "$PGE|notes||1" \
+  "$out|$(cat "$PGE/NOTES.local.md" 2>/dev/null)|$(GIT_CONFIG_GLOBAL="$WORK/global-gitconfig" git -C "$PGE" status --porcelain 2>/dev/null)|$(grep -c 'copied 1 files kept out by the global excludes' "$WORK/wspinge.err")"
+check "and nothing the source's own exclude file or settings directory holds" "0|0|0" \
+  "$([ -e "$PGE/LOCAL.md" ] && echo 1 || echo 0)|$([ -e "$PGE/.claude" ] && echo 1 || echo 0)|$([ -e "$PGE/plain.txt" ] && echo 1 || echo 0)"
+check "such a pin deletes clean and the source forgets it" "deleted|0" \
+  "$(GIT_CONFIG_GLOBAL="$WORK/global-gitconfig" bash "$WS" delete "$PGE" 2>/dev/null | cut -d' ' -f1)|$(git -C "$SRC" worktree list | grep -c round-ge)"
 
 # Steps 1, 2 and 2b copy their lists in one pass each, never one process per file: a create
 # listing 3,421 excluded files ran over four minutes at heavy system CPU on a shared server.
@@ -1200,7 +1291,7 @@ Non-goals:
 ## 6. Communication
 
 - Your orchestrator is the session **\`project-70 [a1b2c3]\`** and no other session.
-- Every report ends with your measured context: run \`$ROOT/skills/context-gauge/scripts/context-gauge.sh\`.
+- Every report ends with your measured context, from the hooks module's measure file.
 BRIEF
 }
 
@@ -1236,7 +1327,7 @@ check "the missing non-goals are named" "1" "$(bash "$LINT" "$B/noaddr.md" 2>&1 
 # orchestrator nothing to record, and the readiness gate then refuses a head whose round did
 # read it. The rule lived in prose on both sides of the round and was skipped twice in one
 # day, so the brief is read for it before the dispatch rather than after.
-review_brief() { printf '# round 2\n\nYou are the REVIEW agent for this round.\n\nYour orchestrator is `p-1 [a1b2c3]`.\n\nGauge: run `%s`.\n' "$ROOT/skills/context-gauge/scripts/context-gauge.sh" > "$1"; }
+review_brief() { printf '# round 2\n\nYou are the REVIEW agent for this round.\n\nYour orchestrator is `p-1 [a1b2c3]`.\n' > "$1"; }
 
 review_brief "$B/review.md"
 printf 'End the report with `norms-check: tool <head>` or `norms-check: none <head>`.\n' >> "$B/review.md"
@@ -1391,91 +1482,10 @@ check_status "run it in the background is still a finding" 1 bash "$LINT" "$B/bg
 check "the shipped templates raise no background finding" "0" \
   "$(for t in "$ROOT"/templates/*.md; do bash "$LINT" "$t" 2>&1; done | grep -cE 'background|run_in_background|ending in')"
 
-# An agent brief (implementer or review — the two classes the lint already tells apart;
-# comments and rotation briefs carry no marker of their own and are left out) without an
-# absolute, existing path to context-gauge.sh cannot measure context: self-estimates ran 13
-# points high in observed runs. A host-expanded variable in its place is ALREADY a finding
-# (check 2) — this must not double it.
-nogauge_brief() {
-  cat > "$1" <<BRIEF
-# scratch — Phase 1: thing
-
-You are the implementer for this phase.
-
-## 1. Required reading
-
-1. Spec: \`$WORK/briefs\`
-
-## 3. Scope
-
-Non-goals:
-
-- Nothing outside this list.
-- If you believe something outside this list is needed, STOP and ask the orchestrator first.
-
-## 6. Communication
-
-- Your orchestrator is the session **\`project-70 [a1b2c3]\`** and no other session.
-BRIEF
-}
-nogauge_brief "$B/nogauge.md"
-check_status "an agent brief without a gauge path is a finding" 1 bash "$LINT" "$B/nogauge.md"
-check "the missing gauge path is named" "1" "$(bash "$LINT" "$B/nogauge.md" 2>&1 | grep -c 'context-gauge.sh')"
-
-gaugevar_brief() {
-  cat > "$1" <<BRIEF
-# scratch — Phase 1: thing
-
-You are the implementer for this phase.
-
-## 1. Required reading
-
-1. Spec: \`$WORK/briefs\`
-
-## 3. Scope
-
-Non-goals:
-
-- Nothing outside this list.
-- If you believe something outside this list is needed, STOP and ask the orchestrator first.
-
-## 6. Communication
-
-- Your orchestrator is the session **\`project-70 [a1b2c3]\`** and no other session.
-- Every report ends with your measured context: run \`\${CLAUDE_PLUGIN_ROOT}/skills/context-gauge/scripts/context-gauge.sh\`.
-BRIEF
-}
-gaugevar_brief "$B/gaugevar.md"
-check_status "a variable in place of the gauge path is a finding" 1 bash "$LINT" "$B/gaugevar.md"
-check "exactly one finding fires for the variable gauge path, not two" "1" \
-  "$(bash "$LINT" "$B/gaugevar.md" 2>&1 | grep -c "^$B/gaugevar.md:")"
-
-check "a review brief without a gauge path is also a finding" "1" \
-  "$(printf '# round 2\n\nYou are the REVIEW agent for this round.\n\nYour orchestrator is \`p-1 [a1b2c3]\`.\n' > "$B/review-nogauge.md"; bash "$LINT" "$B/review-nogauge.md" 2>&1 | grep -c 'context-gauge.sh')"
-
-# The gauge rule holds for every class the lint can tell apart, comments and rotation
-# included: both sessions report their own context like any other (suite ruling 2).
-check "a comments brief without a gauge path is also a finding" "1" \
-  "$(printf '# round\n\nYou are the COMMENTS agent for this round.\n\nYour orchestrator is \`p-1 [a1b2c3]\`.\n' > "$B/comments-nogauge.md"; bash "$LINT" "$B/comments-nogauge.md" 2>&1 | grep -c 'context-gauge.sh')"
-
-check "a rotation brief without a gauge path is also a finding" "1" \
-  "$(printf '# resume\n\nYou are the ROTATION agent, replacing a previous implementer.\n\nYour orchestrator is \`p-1 [a1b2c3]\`.\n' > "$B/rotation-nogauge.md"; bash "$LINT" "$B/rotation-nogauge.md" 2>&1 | grep -c 'context-gauge.sh')"
-
-# Any line may carry the path: prose naming the tool before or after the line that cites it
-# is no finding, in either order, and a path cited inside a non-goal clause is cited.
-GAUGEABS="$ROOT/skills/context-gauge/scripts/context-gauge.sh"
-nogauge_brief "$B/gauge-prose-first.md"
-printf -- '- Measure with context-gauge.sh, never an estimate.\n- Run `%s`.\n' "$GAUGEABS" >> "$B/gauge-prose-first.md"
-check_status "a prose mention before the cited path is no finding" 0 bash "$LINT" "$B/gauge-prose-first.md"
-nogauge_brief "$B/gauge-prose-after.md"
-printf -- '- Run `%s`.\n- context-gauge.sh is the only source of the figure.\n' "$GAUGEABS" >> "$B/gauge-prose-after.md"
-check_status "a prose mention after the cited path is no finding" 0 bash "$LINT" "$B/gauge-prose-after.md"
-nogauge_brief "$B/gauge-nongoal.md"
-printf -- '- Non-goal: never estimate the context instead of running `%s`.\n' "$GAUGEABS" >> "$B/gauge-nongoal.md"
-check_status "a path cited inside a non-goal clause counts as cited" 0 bash "$LINT" "$B/gauge-nongoal.md"
-nogauge_brief "$B/gauge-prose-only.md"; printf -- '- Measure with context-gauge.sh.\n' >> "$B/gauge-prose-only.md"
-check "prose alone still leaves the path uncited, named at its line" "1" \
-  "$(bash "$LINT" "$B/gauge-prose-only.md" 2>&1 | grep -c 'is not cited by an absolute path')"
+# The gauge-path check (lint check 8) retired with the context gauge's shell script: the
+# module measures every session itself, in-process, and no brief cites a script any more.
+# Its eleven cases — the missing path, the variable in its place, the review, comments and
+# rotation briefs held to it, the prose-mention and non-goal clause readings — went with it.
 
 # The class is the role declared at the start of a line, not the phrase anywhere: a review
 # brief or a memo that quotes an implementer brief is not one.
@@ -1485,8 +1495,11 @@ check_status "a review brief quoting the implementer line gets no implementer fi
 printf '# memo\nThe brief said "You are the implementer for this phase." inline, and You are the REVIEW agent too.\n' > "$B/memo.md"
 check_status "a memo quoting role lines inline is no agent brief" 0 bash "$LINT" "$B/memo.md"
 
-check "the shipped templates raise no new gauge-path finding" "0" \
-  "$(for t in "$ROOT"/templates/*.md; do bash "$LINT" "$t" 2>&1; done | grep -cE 'no absolute, existing path to context-gauge\.sh|is not cited by an absolute path')"
+# The templates name no gauge script any more — the module's measure file replaced it,
+# named in prose as a path under the configuration directory. What the lint must still say
+# of them is that every path they DO name exists.
+check "the shipped templates raise no missing-path finding" "0" \
+  "$(for t in "$ROOT"/templates/*.md; do bash "$LINT" "$t" 2>&1; done | grep -c 'path does not exist')"
 
 echo "== iterm-agents: a name read from the process table is held to the shape (§48) =="
 # `ps` hands back a flat command line: the quoting that made a name one argument is gone,
@@ -1666,34 +1679,35 @@ check "every triggering case names an existing skill and can fail, and each skil
 
 TSET="$WORK/trigger-evals"
 cp -R "$ROOT/trigger-evals" "$TSET"
-rm -rf "$TSET/context-gauge-trigger-01"
+rm -rf "$TSET/coordination-trigger-01"
 cp -R "$TSET/orchestrator-trigger-01" "$TSET/no-such-skill-trigger-01"
 sed 's/max: 0/max: 1/' "$ROOT/trigger-evals/model-routing-no-trigger-01/graders/skill-not-loaded.md" \
   > "$TSET/model-routing-no-trigger-01/graders/skill-not-loaded.md"
 sed 's/)?iterm-agents/)?model-routing/' "$ROOT/trigger-evals/iterm-agents-trigger-01/graders/skill-loaded.md" \
   > "$TSET/iterm-agents-trigger-01/graders/skill-loaded.md"
 check "a case naming no skill, a grader of the wrong skill or bound, and a short side are each named" \
-  "few:context-gauge:trigger:5|few:iterm-agents:trigger:5|few:model-routing:no-trigger:5|grader:iterm-agents-trigger-01|grader:model-routing-no-trigger-01|shape:model-routing-no-trigger-01|unknown:no-such-skill-trigger-01" \
+  "few:coordination:trigger:5|few:iterm-agents:trigger:5|few:model-routing:no-trigger:5|grader:iterm-agents-trigger-01|grader:model-routing-no-trigger-01|shape:model-routing-no-trigger-01|unknown:no-such-skill-trigger-01" \
   "$(trigger_set_drift "$TSET" "$ROOT/skills" | sort | tr '\n' '|' | sed 's/|$//')"
 
-# One planted defect per requirement a case must meet to be able to fail.
+# One planted defect per requirement a case must meet to be able to fail. The context-gauge
+# cases that carried three of them went with the skill; coordination carries them now.
 FSET="$WORK/trigger-evals-shape"
 cp -R "$ROOT/trigger-evals" "$FSET"
 rm "$FSET/orchestrator-trigger-02/prompt.md"
 sed -i.bak 's/^type: tool_used$/type: regex/' "$FSET/iterm-agents-trigger-02/graders/skill-loaded.md"
-sed -i.bak 's/^tool: Skill$/tool: Read/' "$FSET/context-gauge-trigger-03/graders/skill-loaded.md"
+sed -i.bak 's/^tool: Skill$/tool: Read/' "$FSET/coordination-trigger-03/graders/skill-loaded.md"
 sed -i.bak 's/^min: 1$/min: 1\
 max: 3/' "$FSET/model-routing-trigger-04/graders/skill-loaded.md"
 sed -i.bak '/^min: 0$/d' "$FSET/orchestrator-no-trigger-02/graders/skill-not-loaded.md"
-rm "$FSET/context-gauge-no-trigger-02/graders/answered.md"
+rm "$FSET/coordination-no-trigger-02/graders/answered.md"
 sed -i.bak '/^arm: both$/d' "$FSET/iterm-agents-no-trigger-03/graders/answered.md"
 sed -i.bak '/^arm: both$/d' "$FSET/model-routing-no-trigger-04/graders/skill-not-loaded.md"
 printf 'Use the model-routing skill for this.\n' >> "$FSET/orchestrator-no-trigger-05/prompt.md"
 printf 'Then run /orchestrator:status.\n' >> "$FSET/iterm-agents-trigger-06/prompt.md"
-printf 'Run rhythm.sh first.\n' >> "$FSET/context-gauge-trigger-04/prompt.md"
+printf 'Run rhythm.sh first.\n' >> "$FSET/coordination-trigger-04/prompt.md"
 find "$FSET" -name '*.bak' -delete
 check "a missing prompt, a grader of the wrong type, tool or bounds, a missing floor or arm, and a prompt naming the plugin are each named" \
-  "arm:iterm-agents-no-trigger-03|arm:model-routing-no-trigger-04|floor:context-gauge-no-trigger-02|names:context-gauge-trigger-04|names:iterm-agents-trigger-06|names:orchestrator-no-trigger-05|prompt:orchestrator-trigger-02|shape:context-gauge-trigger-03|shape:iterm-agents-trigger-02|shape:model-routing-trigger-04|shape:orchestrator-no-trigger-02" \
+  "arm:iterm-agents-no-trigger-03|arm:model-routing-no-trigger-04|floor:coordination-no-trigger-02|names:coordination-trigger-04|names:iterm-agents-trigger-06|names:orchestrator-no-trigger-05|prompt:orchestrator-trigger-02|shape:coordination-trigger-03|shape:iterm-agents-trigger-02|shape:model-routing-trigger-04|shape:orchestrator-no-trigger-02" \
   "$(trigger_set_drift "$FSET" "$ROOT/skills" | sort | tr '\n' '|' | sed 's/|$//')"
 
 echo "== design layout =="
@@ -2222,6 +2236,23 @@ print(m.session_name_on(sys.argv[1]))" "$2"; }
 check "the table gives the name the host process was launched with" "Orch : f" "$(name_on "$PSTAB" /dev/ttys900)"
 check "a process launched without a name reads as none" "None" "$(name_on "$PSNONAME" /dev/ttys900)"
 check "a tty the table does not name reads as none" "None" "$(name_on "$PSTAB" /dev/ttys555)"
+# The host keeps a session's current name in its registry, and a rename changes the
+# registry, never argv: read from argv alone, a renamed orchestrator listed as « (host
+# default) » and its successor was refused for having no name.
+NCFG="$WORK/namecfg"; mkdir -p "$NCFG/sessions"
+printf '/dev/ttys900 5151 claude --resume x\n' > "$WORK/ps-reg.txt"
+printf '/dev/ttys900 5252 claude --name Agent : old\n' > "$WORK/ps-reg-argv.txt"
+printf '{"pid":5151,"name":"\xe2\x80\x9cOrch : g\xe2\x80\x9d"}\n' > "$NCFG/sessions/5151.json"
+printf '{"pid":5252,"name":""}\n' > "$NCFG/sessions/5252.json"
+check "a registry file names the session, its quotes stripped" "Orch : g" \
+  "$(CLAUDE_CONFIG_DIR="$NCFG" name_on "$WORK/ps-reg.txt" /dev/ttys900)"
+check "an empty registry name falls back to the launch name" "Agent : old" \
+  "$(CLAUDE_CONFIG_DIR="$NCFG" name_on "$WORK/ps-reg-argv.txt" /dev/ttys900)"
+printf '{"pid":5252,"name":"Agent : renamed"}\n' > "$NCFG/sessions/5252.json"
+check "and a registry name wins over the launch name" "Agent : renamed" \
+  "$(CLAUDE_CONFIG_DIR="$NCFG" name_on "$WORK/ps-reg-argv.txt" /dev/ttys900)"
+check "a successor of a session named only in the registry takes that name" "1" \
+  "$(CLAUDE_CONFIG_DIR="$NCFG" succ "$WORK/ps-reg.txt" --successor | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch : g'")"
 
 # What the dry run could not see and the live round did: `ps` shows a command line with
 # the shell's quoting gone, so whatever FOLLOWS --name runs into the name. The prompt sat
@@ -2300,10 +2331,15 @@ check "--force moves it leftmost too, and says what it moved" "0|1" \
 # own title; but it takes no chain and joins none: the orchestrator it audits keeps its
 # agents, and the auditor is nobody's agent. Its title is REQUIRED and reads
 # `Audit : <subject>`, a shape refused everywhere but under --auditor.
-AUDSTATE="$WORK/audstate"; mkdir -p "$AUDSTATE/ctx" "$AUDSTATE/chains"
-printf '{"session_id":"s-aud","model_id":"aud-model","updated_epoch":%s}\n' "$(date +%s)" > "$AUDSTATE/ctx/s-aud.json"
+AUDSTATE="$WORK/audstate"; AUDCFG="$WORK/audcfg"
+# The auditor inherits the caller's model from the measure file, and that file is the
+# module's own artifact: it is read under the config dir (CLAUDE_CONFIG_DIR, else the
+# home's .claude), never under the state override, while the chains and prompts the same
+# spawn touches still sit under the override.
+mkdir -p "$AUDSTATE/chains" "$AUDCFG/claude-orchestrator/measure"
+printf '{"context_tokens":21000,"context_window":200000,"context_percent":10,"model":"aud-model","updated_at":"2026-10-10T00:00:00Z"}\n' > "$AUDCFG/claude-orchestrator/measure/s-aud.json"
 printf '{"tab_id":"7","tty":"/dev/ttys901","owner":"S-ME"}\n' > "$AUDSTATE/chains/ttys900.jsonl"
-aud() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
+aud() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" CLAUDE_CONFIG_DIR="$AUDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
   ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-aud bash "$AGENT" spawn --dir "$WORK" --prompt p "$@" 2>&1; }
 audl() { aud "$@" | sed -n 's/^launch=//p'; }
 AUDOUT=$(aud --auditor --title 'Audit : tm')
@@ -2335,8 +2371,8 @@ for AUDFLAG in --successor '--right-of self' '--left-of /dev/ttys555' --title-fr
   check "an auditor refuses $AUDFLAG" "1|1" \
     "$(aud --auditor --title 'Audit : x' $AUDFLAG >/dev/null 2>&1; echo $?)|$(aud --auditor --title 'Audit : x' $AUDFLAG | grep -c "is not an auditor's")"
 done
-check "an auditor with no model on record is refused, naming the installer" "1" \
-  "$(CLAUDE_CODE_SESSION_ID=s-aud-none ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" bash "$AGENT" spawn --dir "$WORK" --auditor --title 'Audit : x' --prompt p 2>&1 | grep -c 'orchestrator:install')"
+check "an auditor with no model on record is refused, naming the module's measure file" "1" \
+  "$(CLAUDE_CODE_SESSION_ID=s-aud-none ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" bash "$AGENT" spawn --dir "$WORK" --auditor --title 'Audit : x' --prompt p 2>&1 | grep -c 'the hooks module writes the measure file')"
 check "--inherit-model beside --auditor asks for what is already implied" "1" \
   "$(audl --auditor --inherit-model --title 'Audit : x' | grep -c -- '--model aud-model')"
 
@@ -2348,7 +2384,7 @@ check "--inherit-model beside --auditor asks for what is already implied" "1" \
 # orchestrator's next agent.
 PSAUDTAB="$WORK/ps-audit-succ.txt"
 printf '/dev/ttys900 /opt/x/host --name Audit : tm --permission-mode auto\n' > "$PSAUDTAB"
-audsucc() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
+audsucc() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" CLAUDE_CONFIG_DIR="$AUDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
   ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-aud ORCHESTRATOR_PS_TABLE="${AUDPS:-$PSAUDTAB}" \
   bash "$AGENT" spawn --dir "$WORK" --prompt p "$@" 2>&1; }
 AUDSUCCOUT=$(audsucc --successor --inherit-model --permission-mode auto)
@@ -2478,7 +2514,7 @@ check "a caller in another window moves nothing: a move does not cross windows" 
 # and `settle_auditor` — and reads what a caller reads: stdout, stderr and the exit code.
 AUDTRUST="$WORK/aud-trust.json"; printf '{"projects":{}}\n' > "$AUDTRUST"
 spawn_aud() { # <scenario> [backend]: prints the exit code; stdout and stderr land in files
-  ORCHESTRATOR_STATE_DIR="$AUDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_SELF_ID=S-ME \
+  ORCHESTRATOR_STATE_DIR="$AUDSTATE" CLAUDE_CONFIG_DIR="$AUDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_SELF_ID=S-ME \
   CLAUDE_CODE_SESSION_ID=s-aud ORCHESTRATOR_BACKEND="${2:-api}" ORCHESTRATOR_TRUST_FILE="$AUDTRUST" \
   AUD_OUT="$WORK/aud-spawn.out" AUD_ERR="$WORK/aud-spawn.err" "$py" -c "
 import contextlib, sys
@@ -2561,10 +2597,11 @@ check "an auditor places its own tab" "1" \
 # merely beside it), the chain ignored — on the caller's model and under remote control
 # under its own title; it takes no chain and joins none. Its title is REQUIRED and reads
 # `Coord : <subject>`, a shape refused everywhere but under --coordinator-successor.
-CRDSTATE="$WORK/crdstate"; mkdir -p "$CRDSTATE/ctx" "$CRDSTATE/chains"
-printf '{"session_id":"s-crd","model_id":"crd-model","updated_epoch":%s}\n' "$(date +%s)" > "$CRDSTATE/ctx/s-crd.json"
+CRDSTATE="$WORK/crdstate"; CRDCFG="$WORK/crdcfg"
+mkdir -p "$CRDSTATE/chains" "$CRDCFG/claude-orchestrator/measure"
+printf '{"context_tokens":21000,"context_window":200000,"context_percent":10,"model":"crd-model","updated_at":"2026-10-10T00:00:00Z"}\n' > "$CRDCFG/claude-orchestrator/measure/s-crd.json"
 printf '{"tab_id":"7","tty":"/dev/ttys901","owner":"S-ME"}\n' > "$CRDSTATE/chains/ttys900.jsonl"
-crd() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
+crd() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" CLAUDE_CONFIG_DIR="$CRDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
   ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-crd bash "$AGENT" spawn --dir "$WORK" --prompt p "$@" 2>&1; }
 crdl() { crd "$@" | sed -n 's/^launch=//p'; }
 CRDOUT=$(crd --coordinator-successor --title 'Coord : ops')
@@ -2591,8 +2628,8 @@ for CRDFLAG in --successor --auditor '--left-of /dev/ttys555' '--right-of self' 
   check "a coordinator-successor refuses $CRDFLAG" "1|1" \
     "$(crd --coordinator-successor --title 'Coord : x' $CRDFLAG >/dev/null 2>&1; echo $?)|$(crd --coordinator-successor --title 'Coord : x' $CRDFLAG | grep -c "is not a coordinator-successor's")"
 done
-check "a coordinator-successor with no model on record is refused, naming the installer" "1" \
-  "$(CLAUDE_CODE_SESSION_ID=s-crd-none ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" bash "$AGENT" spawn --dir "$WORK" --coordinator-successor --title 'Coord : x' --prompt p 2>&1 | grep -c 'orchestrator:install')"
+check "a coordinator-successor with no model on record is refused, naming the module's measure file" "1" \
+  "$(CLAUDE_CODE_SESSION_ID=s-crd-none ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" bash "$AGENT" spawn --dir "$WORK" --coordinator-successor --title 'Coord : x' --prompt p 2>&1 | grep -c 'the hooks module writes the measure file')"
 check "--inherit-model beside --coordinator-successor asks for what is already implied" "1" \
   "$(crdl --coordinator-successor --inherit-model --title 'Coord : x' | grep -c -- '--model crd-model')"
 
@@ -2610,6 +2647,24 @@ check "rotate refuses the coordinator's tab before it spawns anything" "0|1|1" \
 check "--force rotates it, and says so" "1|1" \
   "$(crdrot --old-tty /dev/ttys950 --force | tail -1 | grep -c '^close=/dev/ttys950')|$(crdrot --old-tty /dev/ttys950 --force | grep -c "^rotate: forced: /dev/ttys950 is the coordinator's tab")"
 check "an agent's tab still rotates without --force" "1" "$(crdrot --old-tty /dev/ttys901 | tail -1 | grep -c '^close=/dev/ttys901')"
+# The first coordinator is opened by hand and names itself through a rename, which never
+# reaches argv: named only in the host registry, or only in the coordinator's own record,
+# its tab is still not an agent to rotate or to move.
+CRDREGCFG="$WORK/crdregcfg"; mkdir -p "$CRDREGCFG/sessions"
+printf '{"pid":6161,"name":"Coord : hand"}\n' > "$CRDREGCFG/sessions/6161.json"
+printf '/dev/ttys951 6161 claude --resume x\n/dev/ttys952 6262 claude --resume y\n' > "$WORK/ps-coord-reg.txt"
+crdregrot() { CLAUDE_CONFIG_DIR="$CRDREGCFG" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$1" ORCHESTRATOR_PS_TABLE="$WORK/ps-coord-reg.txt" \
+  bash "$AGENT" rotate --dir "$WORK" --title "Agent : rotated" --prompt p --old-tty "$2" 2>&1; }
+CRDREGROT=$(crdregrot "$CRDSTATE" /dev/ttys951)
+check "rotate refuses a coordinator named only in the host registry" "0|1" \
+  "$(printf '%s' "$CRDREGROT" | grep -c '^launch=')|$(printf '%s' "$CRDREGROT" | grep -c "rotate: refused: /dev/ttys951 is the coordinator's tab ('Coord : hand')")"
+CRDRECSTATE="$WORK/crdrecstate"; mkdir -p "$CRDRECSTATE"
+printf '{"name":"Coord : rec [abc123]","tty":"/dev/ttys952"}\n' > "$CRDRECSTATE/coordinator.json"
+CRDRECROT=$(crdregrot "$CRDRECSTATE" /dev/ttys952)
+check "rotate refuses the tty the coordinator's record registers" "0|1" \
+  "$(printf '%s' "$CRDRECROT" | grep -c '^launch=')|$(printf '%s' "$CRDRECROT" | grep -c "rotate: refused: /dev/ttys952 is the coordinator's tab ('Coord : rec \[abc123\]')")"
+check "and move names it, forced or not" "1|1" \
+  "$(CLAUDE_CONFIG_DIR="$CRDREGCFG" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDRECSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_SELF_ID=S-ME ORCHESTRATOR_PS_TABLE="$WORK/ps-coord-reg.txt" bash "$AGENT" move --tty /dev/ttys952 --right-of self 2>&1 | grep -c "move: refused: /dev/ttys952 is the coordinator's tab")|$(CLAUDE_CONFIG_DIR="$CRDREGCFG" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDRECSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_SELF_ID=S-ME ORCHESTRATOR_PS_TABLE="$WORK/ps-coord-reg.txt" bash "$AGENT" move --tty /dev/ttys952 --right-of self --force 2>&1 | grep -c "^move: forced: /dev/ttys952 is the coordinator's tab")"
 printf '{"tab_id":"9","tty":"/dev/ttys950","owner":"S-ME"}\n' >> "$CRDSTATE/chains/ttys900.jsonl"
 crdmv() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
   ORCHESTRATOR_SELF_ID=S-ME ORCHESTRATOR_PS_TABLE="$PSCRD" bash "$AGENT" move "$@" 2>&1; }
@@ -2676,16 +2731,26 @@ check "a merge is the operator's, relayed and never decided by the coordinator" 
 check "the coordinator never closes its own tab" "yes" "$(spells "$COORDSKILL" 'never close your own tab')"
 COORDSPAWN=$(grep -m1 -o 'iterm-agent.sh spawn --coordinator-successor.*' "$COORDSKILL" 2>/dev/null | sed -e 's/^iterm-agent.sh spawn //' \
   -e 's#<subject>#ops#' -e "s#<your working directory>#$WORK#" -e 's#<brief path>#/tmp/coord-brief.md#')
-coordspawn() { eval "set -- $COORDSPAWN"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
+coordspawn() { eval "set -- $COORDSPAWN"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" CLAUDE_CONFIG_DIR="$CRDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
   ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-crd bash "$AGENT" spawn "$@" 2>&1; }
 COORDSPAWNOUT=$(if [ -n "$COORDSPAWN" ]; then coordspawn; else echo "no spawn line"; fi)
 check "the skill's succession spawn line is one the launcher runs as the coordinator's successor" "1|1|1|1" \
   "$(printf '%s' "$COORDSPAWNOUT" | grep -c '^coordinator_successor=yes$')|$(printf '%s' "$COORDSPAWNOUT" | grep -c '^anchor=leftmost$')|$(printf '%s' "$COORDSPAWNOUT" | grep -c '^chain=none$')|$(printf '%s' "$COORDSPAWNOUT" | sed -n 's/^launch=//p' | grep -c -- "--name 'Coord : ops'")"
 
-# The start registers under the name the host lists, after the rename, and places its tab.
+# The start renames itself through the plugin's tool before it registers, and places its tab.
 COORDLINE() { grep -n -m1 -F -- "$2" "$1" | cut -d: -f1; }
-check "the start hands the rename line before it registers" "1" \
-  "$([ "$(COORDLINE "$COORDCMD" '/rename "Coord : <subject>"')" -lt "$(COORDLINE "$COORDCMD" 'coordinator.sh register --name')" ] 2>/dev/null && echo 1 || echo 0)"
+check "the start renames itself before it registers" "1" \
+  "$([ "$(COORDLINE "$COORDCMD" 'Call `mcp__orchestrator__rename_session` with `Coord : <subject>`')" -lt "$(COORDLINE "$COORDCMD" 'coordinator.sh register --name')" ] 2>/dev/null && echo 1 || echo 0)"
+# The orchestrator's rename lands when its turn ends: a spawn in the same turn would carry
+# the directory-stem name into every brief, so the rulebook ends the turn on the call, and
+# the module refuses the spawn or the message made before it, then resumes the session.
+# A session the launcher cannot read a name for still succeeds: the title is passed by hand.
+check "succeed passes the current name as the title when the launcher reads none" "yes" \
+  "$(spells "$ROOT/commands/succeed.md" 'older convention — it says to type one: pass `--title "<this session'"'"'s current name>"`,')"
+check "the orchestrator ends the turn on its rename and the module resumes it under the name" "yes|no" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'once, and END THE TURN: the name is taken when it ends, and the module resumes you under it; a spawn or a message before then is refused')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'so you dispatch from the next turn')"
+check "the coordinator ends the turn on its rename and the module resumes it" "yes|no" \
+  "$(spells "$COORDCMD" 'END THE TURN: the session takes the name when it ends, and the module resumes you under it')|$(spells "$COORDCMD" 'nothing below waits for it')"
 COORDMOVE=$(grep -m1 -o 'iterm-agent.sh move --tty <your tty> --leftmost' "$COORDCMD" 2>/dev/null | sed -e 's/^iterm-agent.sh move //' -e 's#<your tty>#/dev/ttys950#')
 check "the command's move line puts the coordinator's own tab leftmost" "1" \
   "$(if [ -n "$COORDMOVE" ]; then eval "set -- $COORDMOVE"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys950 ORCHESTRATOR_SELF_ID=S-ME ORCHESTRATOR_PS_TABLE="$PSCRD" bash "$AGENT" move "$@" 2>&1 | grep -c '^move=/dev/ttys950 left_of=leftmost$'; else echo 0; fi)"
@@ -2699,13 +2764,19 @@ check "the end checks this session is the recorded coordinator before it clears"
 # close by title, prove on ps, THEN register. Filled, it lints clean like every template.
 check "the successor closes its predecessor's tab by title before it registers" "yes|1|yes" \
   "$(spells "$COORDTPL" 'close --tty {{PREDECESSOR_TTY}} --expect-title "Coord :"')|$([ "$(COORDLINE "$COORDTPL" 'close --tty {{PREDECESSOR_TTY}}')" -lt "$(COORDLINE "$COORDTPL" 'register --name')" ] 2>/dev/null && echo 1 || echo 0)|$(spells "$COORDTPL" '`ps -t <that tty without /dev/>`')"
+# A coordinator started by hand is closed too, nothing asked: its title is the host's, the
+# host may refuse the close, and the end it then asks for is proved on the tty, not on list.
+check "the coordinator's successor closes a hand-started predecessor, with the end_session fallback" "yes|yes|yes|yes" \
+  "$(spells "$COORDTPL" "The operator's standing order: you ALWAYS close your")|$(spells "$COORDTPL" '`list` printed for it as `--expect-title` instead')|$(spells "$COORDTPL" 'mcp__orchestrator__end_session »: the module ends its session')|$(spells "$COORDTPL" 'verify --tty {{PREDECESSOR_TTY}}` fails')"
+check "the coordinator calls end_session when its successor asks" "yes" \
+  "$(spells "$COORDSKILL" 'mcp__orchestrator__end_session » (the host refused it the close), you call it and end the')"
 COORDFILLED="$WORK/coordinator-brief-filled.md"
-mkdir -p "$WORK/coord-fill/coordinator"; : > "$WORK/coord-fill/coordinator/notes.md"; : > "$WORK/coord-fill/gauge.sh"
+mkdir -p "$WORK/coord-fill/coordinator"; : > "$WORK/coord-fill/coordinator/notes.md"
 if [ -f "$COORDTPL" ]; then
   sed -E -e 's#\{\{PREDECESSOR\}\}#Coord : ops [a1b2c3]#g' -e 's#\{\{PREDECESSOR_TTY\}\}#/dev/ttys950#g' -e 's#\{\{SUBJECT\}\}#ops#g' \
     -e "s#\{\{STATE_DIR\}\}#$WORK/coord-fill#g" -e "s#\{\{NOTES_FILE\}\}#$WORK/coord-fill/coordinator/notes.md#g" \
     -e "s#\{\{COORDINATOR_SH\}\}#$ROOT/skills/coordinator/scripts/coordinator.sh#g" -e "s#\{\{ITERM_AGENT_SH\}\}#$AGENT#g" \
-    -e "s#\{\{GAUGE\}\}#$WORK/coord-fill/gauge.sh#g" -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$COORDTPL" > "$COORDFILLED"
+    -e 's#\{\{[A-Z_]+\}\}#$WORK#g' "$COORDTPL" > "$COORDFILLED"
 fi
 check "the coordinator's succession brief, filled with a real predecessor's values, lints clean" "yes|0" \
   "$([ -s "$COORDFILLED" ] && echo yes || echo no)|$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$COORDFILLED" >/dev/null 2>&1; echo $?)"
@@ -2721,7 +2792,7 @@ check "it instantiates the audit brief template and lints it with the report pat
   "$(spells "$AUDCMD" 'templates/agent-audit-brief.md')|$(spells "$AUDCMD" 'brief-lint.sh <brief path> --expect-created <report path>')"
 AUDSPAWN=$(grep -m1 -o 'iterm-agent.sh spawn .*' "$AUDCMD" 2>/dev/null | sed -e 's/^iterm-agent.sh spawn //' -e 's/`.*$//' \
   -e "s#<repository>#$WORK#" -e 's#<subject>#tm#' -e 's#<brief path>#/tmp/audit-brief.md#')
-audspawn() { eval "set -- $AUDSPAWN"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
+audspawn() { eval "set -- $AUDSPAWN"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" CLAUDE_CONFIG_DIR="$AUDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
   ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-aud bash "$AGENT" spawn "$@" 2>&1; }
 AUDSPAWNOUT=$(if [ -n "$AUDSPAWN" ]; then audspawn; else echo "no spawn line"; fi)
 check "the command's spawn line is one the launcher runs as an auditor" "1|1|1|1" \
@@ -3117,14 +3188,29 @@ check "an explicit model is typed as given" "1" "$(tcmd --model b-model | grep -
 check_status "--tier and --model together are refused" 1 \
   env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
   bash "$AGENT" spawn --dir "$WORK" --tier deep --model b-model --prompt p
-mkdir -p "$ISTATE/ctx"
-printf '{"session_id":"s-inh","model_id":"a-model","updated_epoch":%s}\n' "$(date +%s)" > "$ISTATE/ctx/s-inh.json"
+# The measure file the succession reads is the module's own artifact: it lives under the
+# config dir, never under the state override (gauge.ts resolves CLAUDE_CONFIG_DIR alone).
+# A decoy planted under the override root proves the reading; so does a session whose file
+# exists ONLY there, which must refuse naming the config-dir path.
+ICFG="$WORK/icfg"; mkdir -p "$ICFG/claude-orchestrator/measure" "$ISTATE/measure"
+printf '{"context_tokens":21000,"context_window":200000,"context_percent":10,"model":"a-model","updated_at":"2026-10-10T00:00:00Z"}\n' > "$ICFG/claude-orchestrator/measure/s-inh.json"
+printf '{"context_tokens":21000,"context_window":200000,"context_percent":10,"model":"override-root-model","updated_at":"2026-10-10T00:00:00Z"}\n' > "$ISTATE/measure/s-inh.json"
+inh() { local sid=$1; shift; CLAUDE_CODE_SESSION_ID="$sid" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" CLAUDE_CONFIG_DIR="$ICFG" \
+  bash "$AGENT" spawn --dir "$WORK" "$@" 2>&1; }
 check "inherit-model types the calling session's model" "1" \
-  "$(CLAUDE_CODE_SESSION_ID=s-inh ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Orch : heir" --inherit-model --prompt p 2>&1 | sed -n 's/^launch=//p' | grep -c -- '--model a-model')"
-check "inherit-model with no tap file refuses and names the installer" "1" \
-  "$(CLAUDE_CODE_SESSION_ID=s-none ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --inherit-model --prompt p 2>&1 | grep -c 'orchestrator:install')"
+  "$(inh s-inh --title "Orch : heir" --inherit-model --prompt p | sed -n 's/^launch=//p' | grep -c -- '--model a-model')"
+printf '{"context_tokens":21000,"context_window":200000,"context_percent":10,"model":"override-root-model","updated_at":"2026-10-10T00:00:00Z"}\n' > "$ISTATE/measure/s-ovr.json"
+check "the measure file is read under the config dir, not the state override" "1" \
+  "$(inh s-ovr --inherit-model --prompt p | grep -cF "$ICFG/claude-orchestrator/measure/s-ovr.json")"
+check "inherit-model with no measure file refuses and names the module" "1" \
+  "$(inh s-none --inherit-model --prompt p | grep -c 'hooks module')"
+# The module records `unavailable` when the host gave it no model: a sentinel, never a
+# model to type, and a succession must not start on a guess (§27).
+printf '{"context_tokens":21000,"context_window":200000,"context_percent":10,"model":"unavailable","updated_at":"2026-10-10T00:00:00Z"}\n' > "$ICFG/claude-orchestrator/measure/s-unav.json"
+check "inherit-model refuses the unavailable sentinel, as if no model were recorded" "0|1" \
+  "$(inh s-unav --title "Orch : heir" --inherit-model --prompt p | grep -c -- '--model unavailable')|$(inh s-unav --title "Orch : heir" --inherit-model --prompt p | grep -c 'no model recorded for this session')"
 check "inherit-model is exclusive with a tier" "1" \
-  "$(CLAUDE_CODE_SESSION_ID=s-inh ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --inherit-model --tier deep --prompt p 2>&1 | grep -c 'exclusive')"
+  "$(inh s-inh --inherit-model --tier deep --prompt p | grep -c 'exclusive')"
 check_status "an unknown tier is refused at spawn" 1 \
   env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
   bash "$AGENT" spawn --dir "$WORK" --tier deepest --prompt p
@@ -3168,6 +3254,10 @@ check "rotate refuses --title-free" "1" \
   "$(rot_refuse --title-free | grep -c -- '--title-free is not a rotation')"
 check "rotate refuses --no-remote-control" "1" \
   "$(rot_refuse --no-remote-control | grep -c -- '--no-remote-control is not a rotation')"
+# A rotation closes the old agent only once its replacement is verified running; without
+# the verification, a replacement that never started leaves no agent at all.
+check "rotate refuses --no-verify, before it spawns anything" "1|0" \
+  "$(rot_refuse --no-verify --prompt p | grep -c -- '--no-verify is not a rotation')|$(rot_refuse --no-verify --prompt p | grep -c '^launch=')"
 # ...and forwarding is not enough: the refusal has to STOP the rotation. A tier that does
 # not resolve once opened a real tab with no model at all, because the failure was swallowed
 # crossing a shell substitution. The guard reads what comes LAST: an exit code alone would
@@ -3177,228 +3267,12 @@ rot=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODEL
 check "an unresolvable tier stops the rotation, and nothing runs after it" \
   "ERROR: resolve-tier: unknown tier: bogus (expected deep, standard or light)" "$(printf '%s' "$rot" | tail -1)"
 
-echo "== context gate hook =="
-# A fake config dir with a tap file: at 85 % the hook orders the succession, at 30 % it
-# prints nothing, and past the first turn with no tap file it says « unmeasured » exactly
-# once. The default gate is 80, not the old 60: a figure of 70 must stay under it and stay
-# silent.
-GH="$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")"; mkdir -p "$GH/claude-orchestrator/ctx" "$GH/transcripts"
-now=$(date +%s)
-printf '{"session_id":"g-hi","context_percent":85,"updated_epoch":%s}\n' "$now" > "$GH/claude-orchestrator/ctx/g-hi.json"
-printf '{"session_id":"g-lo","context_percent":30,"updated_epoch":%s}\n' "$now" > "$GH/claude-orchestrator/ctx/g-lo.json"
-printf '{"session_id":"g-under","context_percent":70,"updated_epoch":%s}\n' "$now" > "$GH/claude-orchestrator/ctx/g-under.json"
-# The first prompt's own transcript carries no assistant entry yet; the shape appears
-# only once a turn has answered — this is what tells the hook its first chance came.
-printf '{"type":"user","message":{"role":"user","content":"hi"}}\n' > "$GH/transcripts/no-turn.jsonl"
-printf '{"type":"user","message":{"role":"user","content":"hi"}}\n{"type":"assistant","message":{"role":"assistant","content":"hey"}}\n' > "$GH/transcripts/past-turn.jsonl"
-# The gate speaks only to orchestration sessions: it reads the session's name the way the
-# stop gate does (the process table's `--name`, else the transcript's last rename), and the
-# suite's stand-in for `ps` is a file. Unless a check says otherwise the session is an
-# orchestrator.
-gh_ps() { printf '/dev/ttys900 host-cli %s\n' "$1" > "$GH/ps"; }
-gh_ps '--name Orch : f [a1b2c3]'
-GH_ENV=(CLAUDE_CONFIG_DIR="$GH" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$GH/ps")
-gate() { printf '{"session_id":"%s"}' "$1" | env "${GH_ENV[@]}" bash "$ROOT/hooks/context-gate.sh"; }
-gate_t() { printf '{"session_id":"%s","transcript_path":"%s"}' "$1" "$2" | env "${GH_ENV[@]}" bash "$ROOT/hooks/context-gate.sh"; }
-check "past the gate the hook orders the succession" "1" "$(gate g-hi | grep -c 'Succeed at the next quiet boundary')"
-check "under the gate the hook is silent" "" "$(gate g-lo)"
-check "the default gate is 80, not 60: 70 stays under it" "" "$(gate g-under)"
-check "unmeasured with no transcript at all prints nothing yet" "" "$(gate g-none)"
-check "unmeasured with a transcript but no turn answered yet prints nothing" "" "$(gate_t g-none2 "$GH/transcripts/no-turn.jsonl")"
-check "unmeasured past the first turn says so once" "1" "$(gate_t g-turn "$GH/transcripts/past-turn.jsonl" | grep -c 'unmeasured')"
-check "unmeasured stays silent the second time" "" "$(gate_t g-turn "$GH/transcripts/past-turn.jsonl")"
-
-# « Unmeasured » is a finding about the tap, so it fires only when the tap has not fed the
-# session. The status line renders after a turn, so a prompt that follows a pause, or a long
-# turn, meets a tap file older than the gauge's freshness window: the file is there and
-# carries the window, the gauge reads the transcript's last usage against it, and that is a
-# measure, not a failure. A first render with no figure yet (`context_percent` null) is the
-# same case. The gate says what it read, so the reader is not sent to reinstall a working tap.
-printf '{"type":"user","message":{"role":"user","content":"hi"}}\n{"type":"assistant","message":{"role":"assistant","model":"a-model","usage":{"input_tokens":1,"cache_creation_input_tokens":100000,"cache_read_input_tokens":249999}}}\n' > "$GH/transcripts/used-350k.jsonl"
-printf '{"type":"user","message":{"role":"user","content":"hi"}}\n{"type":"assistant","message":{"role":"assistant","model":"a-model","usage":{"input_tokens":1,"cache_creation_input_tokens":1000,"cache_read_input_tokens":1000}}}\n' > "$GH/transcripts/used-2k.jsonl"
-stale=$((now - 3600))
-printf '{"session_id":"g-stale-hi","context_percent":12,"context_used":120000,"context_total":1000000,"transcript_path":"%s","updated_epoch":%s}\n' "$GH/transcripts/used-350k.jsonl" "$stale" > "$GH/claude-orchestrator/ctx/g-stale-hi.json"
-printf '{"session_id":"g-stale-lo","context_percent":12,"context_used":120000,"context_total":1000000,"transcript_path":"%s","updated_epoch":%s}\n' "$GH/transcripts/used-2k.jsonl" "$stale" > "$GH/claude-orchestrator/ctx/g-stale-lo.json"
-printf '{"session_id":"g-null-hi","context_percent":null,"context_used":null,"context_total":1000000,"transcript_path":"%s","updated_epoch":%s}\n' "$GH/transcripts/used-350k.jsonl" "$now" > "$GH/claude-orchestrator/ctx/g-null-hi.json"
-stale_hi="$(gate_t g-stale-hi "$GH/transcripts/used-350k.jsonl")"
-check "a stale tap file with the window: the transcript's figure trips the gate" "1" \
-  "$(printf '%s\n' "$stale_hi" | grep -c 'this session is at 350,000 tokens (gate 300,000 on a 1M window)')"
-check "a stale tap file with the window: no « unmeasured » line" "0" \
-  "$(printf '%s\n' "$stale_hi" | grep -c 'unmeasured')"
-check "a stale tap file with the window: no marker is left" "" "$(ls "$GH/claude-orchestrator/ctx" | grep 'g-stale-hi.gate-unmeasured')"
-check "a stale tap file under the gate is silent" "" "$(gate_t g-stale-lo "$GH/transcripts/used-2k.jsonl")"
-check "a stale tap file under the gate leaves no marker" "" "$(ls "$GH/claude-orchestrator/ctx" | grep 'g-stale-lo.gate-unmeasured')"
-check "a first render with no figure yet: the transcript's figure trips the gate" "1" \
-  "$(gate_t g-null-hi "$GH/transcripts/used-350k.jsonl" | grep -c 'this session is at 350,000 tokens')"
-# The words say what was read, and only that. No tap file now does not prove a broken
-# install: the tap prunes files older than a day on another session's first render, so a
-# session paused that long has none. The line says so and names the install as the repair
-# only if the status line shows nothing. A tap file present is worded the same whether it
-# lacks the window or carries it and the transcript could not be read.
-none_words="$(gate_t g-words-none "$GH/transcripts/past-turn.jsonl")"
-check "no tap file: the line says there is none now, and why it may be" "1" \
-  "$(printf '%s\n' "$none_words" | grep -c 'unmeasured: no tap file for this session now (never written, or pruned after a day without a render)')"
-check "no tap file: the install is the repair only if the status line shows nothing" "1" \
-  "$(printf '%s\n' "$none_words" | grep -c '/orchestrator:install is the repair only if the status line shows nothing')"
-check "no tap file: the line does not assert the tap is not feeding the session" "0" \
-  "$(printf '%s\n' "$none_words" | grep -c 'not feeding')"
-printf '{"session_id":"g-words-nowin","context_percent":null,"context_used":null,"context_total":null,"updated_epoch":%s}\n' "$now" > "$GH/claude-orchestrator/ctx/g-words-nowin.json"
-words="$(gate_t g-words-nowin "$GH/transcripts/past-turn.jsonl")"
-check "a tap file with no figure: the line says the file is there" "1" \
-  "$(printf '%s\n' "$words" | grep -c 'unmeasured: the tap file is present but the gauge could not read a figure from it (the next status line render may fill it)')"
-check "a tap file with no figure: the line does not send the reader to reinstall" "0" \
-  "$(printf '%s\n' "$words" | grep -c '/orchestrator:install')"
-# The file carries the window, the transcript has no usage block yet: the old words claimed
-# there was no window size, which is false here.
-printf '{"session_id":"g-words-win","context_percent":null,"context_used":null,"context_total":1000000,"transcript_path":"%s","updated_epoch":%s}\n' "$GH/transcripts/past-turn.jsonl" "$now" > "$GH/claude-orchestrator/ctx/g-words-win.json"
-words_win="$(gate_t g-words-win "$GH/transcripts/past-turn.jsonl")"
-check "a tap file with the window, transcript unreadable: the line is the neutral one" "1" \
-  "$(printf '%s\n' "$words_win" | grep -c 'unmeasured: the tap file is present but the gauge could not read a figure from it')"
-check "a tap file with the window, transcript unreadable: no claim about the window size" "0" \
-  "$(printf '%s\n' "$words_win" | grep -c 'no window size')"
-
-# On a window of 1,000,000 tokens or more the gate is a count, 300,000 tokens, not a share:
-# 80 % of 1M lets a session replay up to 800k of cached context on every turn. Smaller
-# windows keep 80 %. The line names the figure that tripped it.
-tap() { printf '{"session_id":"%s","context_percent":%s,"context_used":%s,"context_total":%s,"updated_epoch":%s}\n' \
-  "$1" "$2" "$3" "$4" "$now" > "$GH/claude-orchestrator/ctx/$1.json"; }
-tap g-1m-under 29 299999 1000000
-tap g-1m-at 30 300000 1000000
-tap g-200k-under 79 158000 200000
-tap g-200k-at 80 160000 200000
-check "on a 1M window, 299,999 tokens stays under the gate" "" "$(gate g-1m-under)"
-check "on a 1M window, 300,000 tokens trips it, naming the tokens" "1" \
-  "$(gate g-1m-at | grep -c 'this session is at 300,000 tokens (gate 300,000 on a 1M window)\. Succeed at the next quiet boundary')"
-check "on a 200k window, 79 % stays under the gate" "" "$(gate g-200k-under)"
-check "on a 200k window, 80 % trips it, naming the percent" "1" \
-  "$(gate g-200k-at | grep -c 'this session is at 80% (gate 80%)\. Succeed at the next quiet boundary')"
-gate_env() { local sid="$1"; shift; printf '{"session_id":"%s"}' "$sid" | env "${GH_ENV[@]}" "$@" bash "$ROOT/hooks/context-gate.sh"; }
-check "ORCHESTRATOR_CONTEXT_GATE_TOKENS raises the token gate" "" \
-  "$(gate_env g-1m-at ORCHESTRATOR_CONTEXT_GATE_TOKENS=300001)"
-check "ORCHESTRATOR_CONTEXT_GATE_TOKENS lowers it" "1" \
-  "$(gate_env g-1m-under ORCHESTRATOR_CONTEXT_GATE_TOKENS=299999 | grep -c 'at 299,999 tokens (gate 299,999 on a 1M window)')"
-check "ORCHESTRATOR_LARGE_WINDOW above the window puts it back on the percent gate" "" \
-  "$(gate_env g-1m-at ORCHESTRATOR_LARGE_WINDOW=1000001)"
-check "ORCHESTRATOR_LARGE_WINDOW at 200k holds a 200k window to the tokens" "1" \
-  "$(gate_env g-200k-under ORCHESTRATOR_LARGE_WINDOW=200000 ORCHESTRATOR_CONTEXT_GATE_TOKENS=150000 | grep -c 'at 158,000 tokens (gate 150,000 on a 200,000 window)')"
-check "ORCHESTRATOR_CONTEXT_GATE still moves the percent gate" "1" \
-  "$(gate_env g-200k-under ORCHESTRATOR_CONTEXT_GATE=79 | grep -c 'at 79% (gate 79%)')"
-
-# The model that answers can be switched under a session by the host's own fallback, and
-# nothing showed it (§32). The gate keeps the last model it read and says a change once —
-# a line the session cannot miss, where the status line showed nothing.
-mkdir -p "$GH/projects/p"
-printf '{"type":"assistant","message":{"model":"a-model","usage":{"input_tokens":1,"cache_creation_input_tokens":1,"cache_read_input_tokens":1}}}\n' > "$GH/projects/p/g-drift.jsonl"
-printf '{"session_id":"g-drift","context_percent":30,"updated_epoch":%s}\n' "$now" > "$GH/claude-orchestrator/ctx/g-drift.json"
-check "the first reading of the model is silent" "" "$(gate g-drift)"
-printf '{"type":"assistant","message":{"model":"b-model","usage":{"input_tokens":1,"cache_creation_input_tokens":1,"cache_read_input_tokens":1}}}\n' >> "$GH/projects/p/g-drift.jsonl"
-check "a changed model is said once, naming both" "1" "$(gate g-drift | grep -c 'MODEL DRIFT: this session now answers as b-model; it answered as a-model until now')"
-check "and not again while it holds" "" "$(gate g-drift)"
-# A line per role, and nothing for a session the operator started by hand: the role is the
-# prefix of the session's name, `Orch :`, `Agent :`, `Audit :` or `Coord :`.
-role_line() { gh_ps "--name $1"; gate g-hi; }
-check "an orchestrator is told to succeed, without asking" "1" \
-  "$(role_line 'Orch : f [a1b2c3]' | grep -c '^CONTEXT GATE: this session is at 85% (gate 80%)\. Succeed at the next quiet boundary — run /orchestrator:succeed: spawn the successor in the operator.s decision mode, then tell the user; do not ask\.$')"
-check "an agent is told to finish its unit, report its context, and stop" "1" \
-  "$(role_line 'Agent : one [b2c3d4]' | grep -c '^CONTEXT GATE: this session is at 85% (gate 80%)\. Finish the unit in progress, report to your orchestrator with your measured context, and stop; no new phase is dispatched to you\.$')"
-# An auditor has two branches in one line: no report yet, or nothing the operator gave it after
-# the report, it writes the one report and stops; work he gave it after the report still in
-# hand, it succeeds with the auditor's succession template, at a path it can open.
-check "an auditor is told to write its one report and stop, or to succeed when work after it is in hand" "1|1|1" \
-  "$(role_line 'Audit : method [c3d4e5]' | grep -c '^CONTEXT GATE: this session is at 85% (gate 80%)\. Report not written, or nothing the operator gave you after it: write the one report with what you have read, and stop\. Work he gave you after the report still in hand: succeed — ')|$(role_line 'Audit : method [c3d4e5]' | grep -c 'succeed — /.*/templates/auditor-succession-brief\.md; tell him before you hand over\.$')|$(f=$(role_line 'Audit : method [c3d4e5]' | sed -n 's/.*succeed — \(\/[^;]*\); tell him before you hand over\.$/\1/p'); [ "$f" = "$ROOT/templates/auditor-succession-brief.md" ] && echo 1 || echo 0)"
-check "the coordinator is told to succeed when no relay is in flight" "1" \
-  "$(role_line 'Coord : machine' | grep -c '^CONTEXT GATE: this session is at 85% (gate 80%)\. With no relay in flight, succeed as skills/coordination/SKILL\.md « Your context » says, then tell the operator\.$')"
-check "each role gets exactly one line" "1|1|1|1" \
-  "$(for n in 'Orch : f' 'Agent : one' 'Audit : m' 'Coord : machine'; do role_line "$n" | grep -c .; done | paste -sd'|' -)"
-for n in 'Orch : f [a1b2c3]' 'Agent : one [b2c3d4]' 'Audit : method [c3d4e5]' 'Coord : machine'; do
-  gh_ps "--name $n"
-  check "below the gate, $n hears nothing" "" "$(gate g-lo)"
-done
-
-# A hand-started session is out of scope: no gate line, no « unmeasured » line, no drift
-# line, and no marker written.
-for n in 'my scratch session' 'Orchestra' 'orch : lower' 'Orch: nospace'; do
-  gh_ps "--name $n"
-  check "a session named « $n » gets nothing at the gate" "" "$(gate g-hi)"
-  check "a session named « $n » gets nothing when unmeasured" "" "$(gate_t g-turn-hand "$GH/transcripts/past-turn.jsonl")"
-done
-gh_ps ''
-check "a session with no readable name gets nothing at the gate" "" "$(gate g-hi)"
-check "a session with no readable name gets nothing when unmeasured" "" "$(gate_t g-turn-hand2 "$GH/transcripts/past-turn.jsonl")"
-check "and the unmeasured marker is not written for it" "" "$(ls "$GH/claude-orchestrator/ctx" | grep 'g-turn-hand')"
-printf '{"type":"assistant","message":{"model":"a-model","usage":{"input_tokens":1,"cache_creation_input_tokens":1,"cache_read_input_tokens":1}}}\n' > "$GH/projects/p/g-drift2.jsonl"
-printf '{"session_id":"g-drift2","context_percent":30,"updated_epoch":%s}\n' "$now" > "$GH/claude-orchestrator/ctx/g-drift2.json"
-gh_ps '--name Orch : f [a1b2c3]'
-gate g-drift2 > /dev/null
-printf '{"type":"assistant","message":{"model":"b-model","usage":{"input_tokens":1,"cache_creation_input_tokens":1,"cache_read_input_tokens":1}}}\n' >> "$GH/projects/p/g-drift2.jsonl"
-gh_ps '--name my scratch session'
-check "a hand-started session gets nothing on a model change" "" "$(gate g-drift2)"
-check "and its model marker is left as it was" "a-model" "$(cat "$GH/claude-orchestrator/ctx/g-drift2.model")"
-gh_ps '--name Orch : f [a1b2c3]'
-
-# A name read from the transcript's last rename is in scope, the launcher's own first.
-gh_ps ''
-printf '%s\n' '{"type":"custom-title","customTitle":"my scratch"}' '{"type":"custom-title","customTitle":"Agent : one [b2c3d4]"}' > "$GH/transcripts/renamed.jsonl"
-check "a name read from the transcript's last custom-title is in scope" "1" \
-  "$(gate_t g-hi "$GH/transcripts/renamed.jsonl" | grep -c 'Finish the unit in progress')"
-printf '%s\n' '{"type":"custom-title","customTitle":"Agent : one [b2c3d4]"}' '{"type":"custom-title","customTitle":"my scratch"}' > "$GH/transcripts/renamed.jsonl"
-check "renamed away from a role, the session is out of scope" "" "$(gate_t g-hi "$GH/transcripts/renamed.jsonl")"
-gh_ps '--name Orch : f [a1b2c3]'
-
-# The reading as a script: the name on one line, or nothing, and never a failure.
-sn() { local out; out="$(printf '%s' "$1" | env "${GH_ENV[@]}" "$py" "$ROOT/hooks/session_name.py")"; echo "$out|$?"; }
-check "session_name.py prints the launcher's name" "Orch : f [a1b2c3]|0" "$(sn '{"session_id":"x"}')"
-gh_ps ''
-check "session_name.py prints the transcript's last rename when the launcher has none" "Agent : one [b2c3d4]|0" \
-  "$(printf '%s\n' '{"type":"custom-title","customTitle":"Agent : one [b2c3d4]"}' > "$GH/transcripts/sn.jsonl"; sn "{\"transcript_path\":\"$GH/transcripts/sn.jsonl\"}")"
-check "session_name.py prints nothing, exit 0, when no name is readable" "|0" "$(sn '{"session_id":"x"}')"
-check "session_name.py prints nothing, exit 0, on a payload that is no JSON" "|0" "$(sn 'not json {{{')"
-check "session_name.py prints nothing, exit 0, on an empty payload" "|0" "$(sn '')"
-check "session_name.py prints nothing, exit 0, on a payload that is no object" "|0" "$(sn '[1,2]')"
-
-# A name with irregular spacing is printed normalised, and a normalised name is in scope.
-printf '%s\n' '{"type":"custom-title","customTitle":"Orch  :  f"}' > "$GH/transcripts/spacing.jsonl"
-check "session_name.py prints a name with irregular spacing normalised" "Orch : f|0" \
-  "$(sn "{\"transcript_path\":\"$GH/transcripts/spacing.jsonl\"}")"
-check "a name with irregular spacing is in scope for the gate" "1" \
-  "$(gate_t g-hi "$GH/transcripts/spacing.jsonl" | grep -c 'Succeed at the next quiet boundary')"
-
-# The reading's misses are logged, one line each, and never fail the script: a session whose
-# name cannot be read would otherwise go dark with no trace. A session with no name at all is
-# the normal case and leaves nothing.
-GLOG="$GH/claude-orchestrator/context-gate.log"
-longname='Orch : a name run into the prompt that follows it, far past any name'
-check "no name at all: nothing is logged" "" \
-  "$(gh_ps ''; rm -f "$GLOG"; sn '{"session_id":"x"}' >/dev/null; cat "$GLOG" 2>/dev/null)"
-gh_ps "--name $longname"
-printf '%s\n' '{"type":"user"}' > "$GH/transcripts/no-rename.jsonl"
-rm -f "$GLOG"
-unread_payload="$(printf '{"session_id":"s-unread","transcript_path":"%s"}' "$GH/transcripts/no-rename.jsonl")"
-check "an unreadable name with no rename in the transcript: nothing printed, exit 0" "|0" \
-  "$(sn "$unread_payload")"
-check "and it is logged, one line, naming the session and the miss" "1|1" \
-  "$(echo "$(grep -c . "$GLOG")|$(grep -c ' | s-unread | .*unreadable' "$GLOG")")"
-check "an unreadable name that the transcript renames is not a miss: nothing logged" "" \
-  "$(rm -f "$GLOG"; sn "{\"transcript_path\":\"$GH/transcripts/spacing.jsonl\"}" >/dev/null; cat "$GLOG" 2>/dev/null)"
-# The launcher's module out of reach: the script copied where its sibling tree is absent.
-mkdir -p "$GH/bare/hooks"; cp "$ROOT/hooks/session_name.py" "$GH/bare/hooks/"
-rm -f "$GLOG"
-check "a launcher that cannot be loaded: nothing printed, exit 0" "|0" \
-  "$(out="$(printf '{"session_id":"s-nolaunch"}' | env "${GH_ENV[@]}" "$py" "$GH/bare/hooks/session_name.py")"; echo "$out|$?")"
-check "and it is logged, naming the session and the module" "1|1" \
-  "$(echo "$(grep -c . "$GLOG")|$(grep -c ' | s-nolaunch | .*cannot be loaded' "$GLOG")")"
-# The log lives where the stop gate's does, and a log that cannot be written never fails the script.
-rm -f "$GLOG"
-check "ORCHESTRATOR_STATE_DIR moves the log" "1" \
-  "$(printf '{"session_id":"s-moved"}' | env "${GH_ENV[@]}" ORCHESTRATOR_STATE_DIR="$GH/moved" "$py" "$GH/bare/hooks/session_name.py"; grep -c 's-moved' "$GH/moved/context-gate.log")"
-: > "$GH/not-a-dir"
-check "a log that cannot be written: nothing printed, exit 0" "|0" \
-  "$(out="$(printf '{"session_id":"s-ro"}' | env "${GH_ENV[@]}" ORCHESTRATOR_STATE_DIR="$GH/not-a-dir/x" "$py" "$GH/bare/hooks/session_name.py")"; echo "$out|$?")"
-check "the hook still says nothing for the session whose miss it logged" "" "$(gate g-hi)"
-# The interpreter is started without its site import: about a hundred milliseconds, on every prompt.
-check "the hook runs the reading with python3 -S" "1" "$(grep -c 'python3 -S "\$HERE/session_name\.py"' "$ROOT/hooks/context-gate.sh")"
-gh_ps '--name Orch : f [a1b2c3]'
-rm -rf "$GH"
+# The context gate's hook cases — the role lines verbatim, the unmeasured-once rule, the
+# model drift and its marker, the name reading both gates share, the wiring over a faked $ —
+# moved module-side with the gate itself: hooks/tests/context-gate.test.ts,
+# session-name.test.ts, gauge-core.test.ts and gauge-band.test.ts, run by the host's plugin
+# test. The threshold sweep below stays: the numbers are the rulebook's, not the gate's
+# implementation, and they bind the module's gate the same as they bound the script's.
 
 echo "== context threshold sweep =="
 # The operator's ruling: every context limit is 80 %, the previous figure nowhere left as a
@@ -3415,10 +3289,11 @@ THRESHOLD_RE="([^0-9]|^)${OLD_FIGURE} ?%|~${OLD_FIGURE}|sixty|(gate|threshold|co
 check "no context threshold other than the gate's rule remains in the tracked tree" "" \
   "$(cd "$ROOT" && git grep -n -E -i "$THRESHOLD_RE" -- . ':!tests/run-tests.sh' 2>/dev/null)"
 
-# The gate is 80 % of the window, or 300,000 tokens on a window of 1,000,000 tokens or
-# more. A line that states 80 % without the token half is a gate a large-window session
-# would read as its own: every such line carries the rule whole, in the same words.
-GATE_RULE='80 % of the window, or 300,000 tokens on a window of 1,000,000 tokens or more'
+# The gate is 300,000 tokens (30 %) on a window of 1,000,000 tokens or more, the common
+# case, and 80 % of a smaller window. A line that states 80 % without the token half is a
+# gate a large-window session would read as its own: every such line carries the rule
+# whole, in the same words.
+GATE_RULE='300,000 tokens (30 %) on a window of 1,000,000 tokens or more, the common case, and 80 % of a smaller window'
 BARE_RE='([^0-9,.]|^)80 ?%|~ ?80([^0-9]|$)'
 check "every line stating the 80 % gate states the token gate with it" "" \
   "$(cd "$ROOT" && git grep -n -E "$BARE_RE" -- skills hooks templates commands README.md docs/design.md | grep -v -F "$GATE_RULE")"
@@ -3457,102 +3332,10 @@ check "a bare 80 % is caught, the rule stated whole is not" "1" \
   "$(grep -rn -E "$BARE_RE" "$SWEEP" | grep -v -F "$GATE_RULE" | grep -c 'bare-eighty')"
 rm -rf "$SWEEP"
 
-echo "== push guard hook =="
-# Active only in a session the launcher spawned (ORCHESTRATOR_SPAWNED, set by build_command
-# in the launch script): the operator's own sessions carry no such marker and are never
-# touched. Refuses `git push` carrying `--force`, `-f`, a `+<refspec>`, or
-# `--force-with-lease` without the `<branch>:<sha>` form (phase 3 ruling 5).
-GUARD="$ROOT/hooks/push-guard.sh"
-guard_payload() {  # tool_name command
-  "$py" -c "import json,sys; json.dump({'tool_name': sys.argv[1], 'tool_input': {'command': sys.argv[2]}}, sys.stdout)" "$1" "$2"
-}
-guard() { guard_payload "$1" "$2" | env ORCHESTRATOR_SPAWNED="${3-}" bash "$GUARD"; }
-
-check_status "a marked session refuses a forced push" 2 guard Bash "git push --force origin main" 1
-check "the refusal names the flag it will accept" "1" \
-  "$(guard Bash 'git push --force origin main' 1 2>&1 | grep -c -- '--force-with-lease=<branch>:<sha>')"
-check_status "a marked session refuses -f" 2 guard Bash "git push -f origin main" 1
-check_status "a marked session refuses a +refspec" 2 guard Bash "git push origin +feature:main" 1
-check_status "a marked session refuses a bare --force-with-lease" 2 guard Bash "git push --force-with-lease origin main" 1
-check_status "a marked session refuses --force-with-lease without a colon" 2 guard Bash "git push --force-with-lease=main origin main" 1
-check_status "a marked session accepts --force-with-lease=<branch>:<sha>" 0 guard Bash "git push --force-with-lease=main:$(printf 'a%.0s' $(seq 1 40)) origin main" 1
-check_status "a marked session accepts a plain push" 0 guard Bash "git push origin main" 1
-check_status "a marked session accepts an unrelated command" 0 guard Bash "git status" 1
-check_status "a forced push earlier in the line, unrelated to the push, is not read as forcing it" 0 \
-  guard Bash "git fetch -f && git push origin main" 1
-
-check_status "an unmarked session is untouched by a forced push" 0 guard Bash "git push --force origin main" ""
-check_status "a non-Bash tool is untouched" 0 guard Write "git push --force origin main" 1
-
-# A push is git in command position — bare or by an absolute path, behind git's own global
-# options, assignments or a wrapper that runs it — then `push`. The first matching read
-# `git push` as two adjacent words and let every one of these through.
-SHA40=$(printf 'a%.0s' $(seq 1 40))
-for c in "git -C /tmp/r push --force" "git -C . push --force-with-lease" "git -c x=y push -f" \
-         "git --no-pager push -f" "/usr/bin/git push -f origin main" \
-         "git --git-dir=/tmp/r/.git --work-tree /tmp/r push -f" "FOO=1 git push -f" \
-         "timeout 60 git push --force origin main" "env -u X git push -f"; do
-  check_status "refused: $c" 2 guard Bash "$c" 1
-done
-# `-f` inside a cluster of short flags is a force; `-o` takes a value, so what follows it
-# is not a cluster member nor a refspec.
-for c in "git push -uf origin main" "git push -fu origin main" "git push -vf" "git push -nf"; do
-  check_status "refused: $c" 2 guard Bash "$c" 1
-done
-check_status "a push option's value is not a flag or a refspec" 0 guard Bash "git push -o +foo origin main" 1
-check_status "nor when it is glued to -o" 0 guard Bash "git push -o+foo -v origin main" 1
-# Quotes and shell punctuation are the shell's, not the flag's: unquoted, split on the
-# operators, the words git receives are the ones read.
-for c in "(cd x && git push -f)" "git push -f)" 'git push "-f"' 'git push origin "+main"' \
-         "git push origin 'a:b' '+x'" 'git push -f`true`' "git push -f>out" "{ git push -f; }" \
-         "git push origin main 2>/dev/null --force"; do
-  check_status "refused: $c" 2 guard Bash "$c" 1
-done
-check_status "refused: a force behind a line continuation" 2 guard Bash 'git push \
-  --force origin main' 1
-# Every lease is read, not the first one: one unpinned lease beside a pinned one is a force.
-check_status "refused: a pinned lease beside a bare one" 2 guard Bash "git push --force-with-lease=main:$SHA40 --force-with-lease origin main" 1
-check_status "refused: a pinned lease beside one with no sha" 2 guard Bash "git push --force-with-lease=main:$SHA40 --force-with-lease=other origin main" 1
-check_status "two pinned leases pass" 0 guard Bash "git push --force-with-lease=main:$SHA40 --force-with-lease=dev:$SHA40 origin main dev" 1
-check_status "a pinned lease with its output redirected passes" 0 guard Bash "git push --force-with-lease=main:$SHA40 origin main 2>&1 | tail -3" 1
-# The other forms that overwrite a remote: --mirror, and the abbreviations of --force git
-# accepts.
-for c in "git push --mirror origin" "git push --fo origin main" "git push --for origin main" "git push --forc origin main"; do
-  check_status "refused: $c" 2 guard Bash "$c" 1
-done
-# Text about a push is not a push. The first matching refused a commit message that
-# mentioned one: a quoted argument of another command, a heredoc body and a comment are
-# the shell's data, never a command.
-check_status "a commit message quoting a forced push passes" 0 guard Bash 'git commit -m "fix; git push -f later"' 1
-check_status "a pull request body quoting a forced push passes" 0 guard Bash 'gh pr create --body "rebase && git push --force is refused"' 1
-check_status "a heredoc body naming a forced push passes" 0 guard Bash "git commit -F - <<'EOF'
-subject
-
-git push --force
-EOF" 1
-check_status "a heredoc inside a quoted substitution, with a stray quote in it, passes" 0 guard Bash "git commit -m \"\$(cat <<'EOF'
-say \"why; git push -f is refused
-EOF
-)\"" 1
-check_status "a comment after a plain push passes" 0 guard Bash "git push origin main # --force" 1
-check_status "and a forced push after a heredoc is still read" 2 guard Bash "cat <<EOF
-text
-EOF
-git push -f" 1
-check_status "a forced push inside a command substitution is read" 2 guard Bash 'echo "$(git push -f)"' 1
-# The refusal is the host's documented denial: a plain reason on stderr, exit 2, ending on
-# the way out for a command that only mentions a push.
-refusal=$(guard Bash "git push -f" 1 2>&1 >/dev/null)
-check "the refusal is plain text, not a JSON object" "0" "$(printf '%s' "$refusal" | grep -c '^{')"
-check "the refusal ends on the way out" "1" \
-  "$(printf '%s' "$refusal" | grep -c 'put text that mentions a push in a file (`git commit -F`, `gh … --body-file`)\.$')"
-# The guard that cannot read its input says so and lets the call through: it never blocks
-# every command of a session because a tool is missing.
-NOJQ="$WORK/nojq-bin"; mkdir -p "$NOJQ"
-guard_payload Bash "git push -f" > "$WORK/nojq-payload.json"
-nojq_out=$(env PATH="$NOJQ" ORCHESTRATOR_SPAWNED=1 "$(command -v bash)" "$GUARD" < "$WORK/nojq-payload.json" 2>&1); nojq_code=$?
-check "without jq a marked session is let through, with one warning line" "0|1|1" \
-  "$nojq_code|$(printf '%s\n' "$nojq_out" | grep -c .)|$(printf '%s' "$nojq_out" | grep -c 'jq')"
+# The push guard's hook cases — every forced form the awk tokeniser answered, the pinned
+# lease, the spawn marker, the degraded read, the wiring over a faked $ — moved module-side
+# with the guard: hooks/tests/tokenizer.test.ts (the fixtures, moved not shrunk) and
+# hooks/tests/push-guard.test.ts, run by the host's plugin test.
 
 echo "== draft guard =="
 # A failing check of a draft pull request is a draft guard when the job that produced it tests
@@ -4075,683 +3858,12 @@ rm -f "$CW/checks-link"
 check "a draft whose failing checks cannot be classified: unread, exit 5" "ci-watch: unread 7 draft_guard|5" \
   "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 1 "wip-check / wip-check" 7 --interval 1 | sed 's/\(draft_guard\).*|/\1|/')"
 
-echo "== stop gate hook =="
-# An orchestrator's stop is held until something will wake it (Check 1) and until the real
-# state of its open pull requests' checks has been put in front of it once per head
-# (Check 2). The hook is run from a tree of its own, beside a fake launcher whose `list`
-# prints the listing file and a fake `workspace.sh list` printing the checkouts file; a
-# fake `gh` on PATH answers from files and records each `pr checks` call.
-SG="$WORK/stop-gate"
-# The hook spells its own path normalised; the suite's temporary directory may end in a slash.
-SGW="$(printf '%s' "$SG" | sed 's|//|/|g')/skills/orchestrator/scripts/ci-watch.sh"
-SGB="$SG/bin"; SGS="$SG/state"; SGP="$SG/sgproj"
-mkdir -p "$SG/hooks" "$SG/skills/iterm-agents/scripts" "$SG/skills/orchestrator/scripts" "$SGB" "$SGS/chains" "$SGP"
-cp "$ROOT/hooks/stop-gate.sh" "$ROOT/hooks/stop_gate.py" "$ROOT/hooks/session_name.py" "$SG/hooks/" 2>/dev/null
-cp "$ROOT/skills/iterm-agents/scripts/iterm_agent.py" "$SG/skills/iterm-agents/scripts/"
-cp "$ROOT/skills/orchestrator/scripts/draft_guard.py" "$SG/skills/orchestrator/scripts/" 2>/dev/null
-printf '#!/bin/bash\n[ "$1" = list ] || exit 1\ncat "%s/listing" 2>/dev/null || { echo "list: no terminal backend could serve this" >&2; exit 1; }\n' "$SG" \
-  > "$SG/skills/iterm-agents/scripts/iterm-agent.sh"
-# `sweep` records its arguments and answers from files: its lines, its stderr, its exit
-# code, and a sleep to be killed in.
-cat > "$SG/skills/orchestrator/scripts/workspace.sh" <<EOF
-#!/bin/bash
-case "\$1" in
-  list) cat "$SG/checkouts" 2>/dev/null || { echo "workspace: cannot read the root" >&2; exit 1; } ;;
-  sweep) echo "\$*" >> "$SG/sweep-args"
-         [ -f "$SG/sweep-sleep" ] && sleep "\$(cat "$SG/sweep-sleep")"
-         cat "$SG/sweep-out" 2>/dev/null
-         [ -f "$SG/sweep-err" ] && cat "$SG/sweep-err" >&2
-         exit "\$(cat "$SG/sweep-code" 2>/dev/null || echo 0)" ;;
-  *) exit 1 ;;
-esac
-EOF
-cat > "$SGB/gh" <<EOF
-#!/bin/bash
-[ -f "$SG/gh-offline" ] && { echo "error connecting to api.github.com" >&2; exit 1; }
-case "\$1 \$2" in
-  "pr list") echo "\$*" >> "$SG/gh-args"; cat "$SG/prs" 2>/dev/null || echo "[]" ;;
-  "pr checks") echo "\$3" >> "$SG/gh-calls"; cat "$SG/checks-\$3"; [ -f "$SG/checks-\$3.code" ] && exit "\$(cat "$SG/checks-\$3.code")" ;;
-  "api "*) echo "\$*" >> "$SG/gh-api-calls"; f="$DGA/\$(printf '%s' "\$2" | tr '/?=@' '____')"; [ -f "\$f" ] && cat "\$f" || { echo "gh: HTTP 404" >&2; exit 1; } ;;
-  "repo view") echo "\$*" >> "$SG/gh-repo-calls"; cat "$SG/repo" 2>/dev/null || exit 1 ;;
-  "pr view") echo "\$3" >> "$SG/gh-views"; [ -f "$SG/view-sleep" ] && sleep "\$(cat "$SG/view-sleep")"
-             cat "$SG/view-\${3//\//_}" 2>/dev/null || { echo "no pull requests found for branch \\"\$3\\"" >&2; exit 1; } ;;
-  *) exit 1 ;;
-esac
-EOF
-chmod +x "$SGB/gh" "$SG/skills/iterm-agents/scripts/iterm-agent.sh" "$SG/skills/orchestrator/scripts/workspace.sh"
-# The one process-table read of check 2 (`ps -axo command`) answers from a file and counts
-# its calls; every other `ps` is the real one. Made where check 2 starts: a case of check 1
-# replaces and removes the `ps` of the suite.
-sg_fake_ps() {
-cat > "$SGB/ps" <<EOF
-#!/bin/bash
-if [ "\$*" = "-axo command" ]; then
-  echo x >> "$SG/ps-calls"
-  [ -f "$SG/ps-fail" ] && { echo "ps: operation not permitted" >&2; exit 1; }
-  cat "$SG/ps-live" 2>/dev/null
-  exit 0
-fi
-exec /bin/ps "\$@"
-EOF
-chmod +x "$SGB/ps"
-}
-git -C "$SGP" init -q 2>/dev/null
-
-ORCHROW='w1/t1 | /dev/ttys900 | ✳ Orch : f | Orch : f [a1b2c3] | self'
-sg_listing() { printf '%s\n' "$ORCHROW" "$@" > "$SG/listing"; }
-sg_chain() {  # <tty> <owner> ...: the chain of the orchestrator's tty, in launch order
-  : > "$SGS/chains/ttys900.jsonl"
-  while [ $# -gt 0 ]; do
-    printf '{"tab_id": "t-%s", "tty": "%s", "owner": "%s"}\n' "${1##*/}" "$1" "$2" >> "$SGS/chains/ttys900.jsonl"
-    shift 2
-  done
-}
-# The session's name is read from the process table the way the launcher reads it (`--name`):
-# the suite's stand-in for `ps` is a file, and the session's own tty is given.
-sg_ps() { printf '/dev/ttys900 host-cli %s\n' "$1" > "$SG/ps"; }
-sg_reset() { rm -f "$SG/prs" "$SG/gh-views" "$SG/cwds" "$SG"/view-* "$SG/gh-calls" "$SG/gh-args" "$SG/gh-offline" "$SG"/checks-* "$SG/transcript" "$SGS/stop-gate.log" "$SG/ps-live" "$SG/ps-calls" "$SG/ps-fail" "$SG/repo" "$SG/gh-repo-calls" "$SGS/ignored-checks"; rm -rf "$SGS/stop-gate" "$SGS/records"; rm -f "$SG"/sweep-* "$SGS/sweep.stamp"; : > "$SG/checkouts"; sg_ps '--name Orch : f [a1b2c3]'; sg_listing; sg_chain; }
-# sg <message> [stop_hook_active] [session id]: the hook's stdout. SG_TRANSCRIPT names the
-# payload's transcript, SG_ITERM stands in for ITERM_SESSION_ID, SG_DEADLINE for the hook's.
-sg() {
-  "$py" -c 'import json,sys; d={"session_id": sys.argv[4], "cwd": sys.argv[1], "last_assistant_message": sys.argv[2], "stop_hook_active": sys.argv[3] == "true"}
-if sys.argv[5]: d["transcript_path"] = sys.argv[5]
-json.dump(d, sys.stdout)' \
-    "$SGP" "$1" "${2:-false}" "${3:-sg-1}" "${SG_TRANSCRIPT:-}" \
-    | env PATH="$SGB:$PATH" ORCHESTRATOR_STATE_DIR="$SGS" ITERM_SESSION_ID="${SG_ITERM-w0t0p0:S-ME}" \
-        ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$SG/ps" ORCHESTRATOR_CWD_TABLE="$SG/cwds" \
-        ORCHESTRATOR_STOP_GATE_DEADLINE="${SG_DEADLINE:-20}" bash "$SG/hooks/stop-gate.sh" 2>/dev/null
-}
-reason() { "$py" -c 'import json,sys; d=json.load(sys.stdin); print(d["decision"] + "|" + d["reason"])' 2>/dev/null; }
-sglog() { cat "$SGS/stop-gate.log" 2>/dev/null; }
-BUSY='w1/t2 | /dev/ttys901 | ◐ Agent : one | Agent : one [b2c3d4]'
-IDLE='w1/t2 | /dev/ttys901 | ✳ Agent : one | Agent : one [b2c3d4]'
-
-echo "-- check 1: what will wake you"
-sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-check "a busy agent of this orchestrator lets the stop pass, silently" "" "$(sg 'I launched the phase.')"
-check "a stop that passes writes nothing to the log" "" "$(sglog)"
-sg_reset; sg_listing "$BUSY" 'w1/t3 | /dev/ttys902 | ✳ Agent : two | Agent : two [c3d4e5]'
-sg_chain /dev/ttys902 S-ME /dev/ttys901 S-ME
-check "one busy agent among idle ones suffices" "" "$(sg 'Waiting on agent one.')"
-
-sg_reset
-check "no agent and no machine line: refused, nothing will wake you" \
-  "block|Nothing will wake you: no agent of yours is running. Launch what you announced, or, if a question truly blocks, end with the line waiting: operator — blocks: <what it blocks>, or with waiting: done. The line goes as the message's last line, no markup." \
-  "$(sg 'I am launching the phase 3 agent now.' | reason)"
-check "the refusal is logged: session name, check, case" "1" \
-  "$(sglog | grep -c '| Orch : f \[a1b2c3\] | check1 | nothing-will-wake$')"
-sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-OTHER
-check "a busy agent of another orchestrator is never counted" "block|Nothing will wake you" \
-  "$(sg 'Waiting.' | reason | cut -c1-27)"
-sg_reset; sg_chain /dev/ttys905 S-ME
-check "a chain entry whose tab is gone is no agent" "block|Nothing will wake you" "$(sg 'Waiting.' | reason | cut -c1-27)"
-sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-check "without ITERM_SESSION_ID no chain entry is counted: the busy agent does not hold the stop" "block|Nothing will wake you" \
-  "$(SG_ITERM= sg 'Waiting.' | reason | cut -c1-27)"
-check "and the log says why" "1" "$(sglog | grep -c '| Orch : f \[a1b2c3\] | error | ITERM_SESSION_ID is not set: no chain entry is counted$')"
-sg_reset; sg_listing 'w1/t2 | /dev/ttys901 | -zsh | (host default)'; sg_chain /dev/ttys901 S-ME
-check "a tab with no activity glyph runs no agent" "block|Nothing will wake you" "$(sg 'Waiting.' | reason | cut -c1-27)"
-
-sg_reset; sg_listing "$IDLE"; sg_chain /dev/ttys901 S-ME
-check "only idle agents: refused, the agent named" \
-  "block|Agent : one [b2c3d4] is idle: its notice was spent. Read its report or relaunch it." \
-  "$(sg 'Waiting on agent one.' | reason)"
-check "the idle refusal is logged" "1" "$(sglog | grep -c '| check1 | idle-agents$')"
-# A resident agent (spawned with --resident) is idle by design while its background command
-# waits: never an agent to read or relaunch. Today's refusal holds for the same agent unmarked.
-sg_reset; sg_listing "$IDLE"
-printf '{"tab_id": "t-ttys901", "tty": "/dev/ttys901", "owner": "S-ME", "resident": true}\n' > "$SGS/chains/ttys900.jsonl"
-check "a resident idle agent and nothing else: the stop passes" "" "$(sg 'Waiting on agent one.')"
-# It lifts the last fallback only: another idle agent beside it is still refused.
-sg_reset; sg_listing "$IDLE" 'w1/t3 | /dev/ttys902 | ✳ Agent : two | Agent : two [c3d4e5]'
-printf '{"tab_id": "t-ttys901", "tty": "/dev/ttys901", "owner": "S-ME", "resident": true}\n{"tab_id": "t-ttys902", "tty": "/dev/ttys902", "owner": "S-ME"}\n' > "$SGS/chains/ttys900.jsonl"
-check "a resident idle agent beside another idle agent: refused on the other one" \
-  "block|Agent : two [c3d4e5] is idle: its notice was spent. Read its report or relaunch it." \
-  "$(sg 'Waiting on agent two.' | reason)"
-sg_reset; sg_listing "$IDLE"
-printf '{"tab_id": "t-ttys901", "tty": "/dev/ttys901", "owner": "S-ME", "resident": false}\n' > "$SGS/chains/ttys900.jsonl"
-check "the same agent not resident: refused as before" \
-  "block|Agent : one [b2c3d4] is idle: its notice was spent. Read its report or relaunch it." \
-  "$(sg 'Waiting on agent one.' | reason)"
-
-# An own agent idle with its pull request OPEN or MERGED has delivered: nothing will wake the
-# orchestrator for it and its tab is only left behind. The refusal reads the agent's branch
-# (its tab's process working directory, that checkout's branch) and asks `gh pr view` once.
-SGA="$SG/agent-checkout"; rm -rf "$SGA"; mkdir -p "$SGA"; git -C "$SGA" init -q 2>/dev/null; git -C "$SGA" symbolic-ref HEAD refs/heads/feat/one
-IDLE2='w1/t3 | /dev/ttys902 | ✳ Agent : two | Agent : two [c3d4e5]'
-sg_idle_pr() {  # <state> [number]: agent one idle, its checkout on feat/one, its pull request in <state>
-  sg_reset; sg_listing "$IDLE"; sg_chain /dev/ttys901 S-ME
-  printf '/dev/ttys901 %s\n' "$SGA" > "$SG/cwds"
-  printf '{"number": %s, "state": "%s"}\n' "${2:-12}" "$1" > "$SG/view-feat_one"
-}
-sg_idle_pr OPEN
-check "an idle agent with its pull request open: refused, agent and pull request named" \
-  "block|Idle with its pull request open or merged: Agent : one [b2c3d4] (pull request #12, OPEN). Stand it down now — or, if it waits on a question you have not answered, answer it." \
-  "$(sg 'Waiting on agent one.' | reason)"
-check "the refusal is logged" "1" "$(sglog | grep -c '| check1 | idle-delivered$')"
-sg_idle_pr MERGED 13
-check "an idle agent with its pull request merged: refused" "block|Idle with its pull request open or merged: Agent : one [b2c3d4] (pull request #13, MERGED). Stand it down now — or, if it waits on a question you have not answered, answer it." \
-  "$(sg 'Waiting on agent one.' | reason)"
-sg_idle_pr OPEN
-check "a machine line declaring a block does not lift it" "block|Idle with its pull request open or merged" \
-  "$(sg 'Which base?
-
-waiting: operator — blocks: the base' | reason | cut -c1-47)"
-check "waiting: done does not lift it" "block|Idle with its pull request open or merged" "$(sg 'All done.
-
-waiting: done' | reason | cut -c1-47)"
-sg_idle_pr OPEN; sg_listing "$IDLE" 'w1/t3 | /dev/ttys902 | ◐ Agent : two | Agent : two [c3d4e5]'; sg_chain /dev/ttys901 S-ME /dev/ttys902 S-ME
-check "a busy agent beside it does not lift it" "block|Idle with its pull request open or merged" "$(sg 'Waiting on agent two.' | reason | cut -c1-47)"
-check "and the busy one costs no read" "1" "$(wc -l < "$SG/gh-views" | tr -d ' ')"
-sg_idle_pr CLOSED
-check "an idle agent with its pull request closed keeps today's refusal" "block|Agent : one [b2c3d4] is idle: its notice was spent. Read its report or relaunch it." \
-  "$(sg 'Waiting on agent one.' | reason)"
-sg_idle_pr OPEN; rm -f "$SG/view-feat_one"
-check "an idle agent with no pull request keeps today's refusal" "block|Agent : one [b2c3d4] is idle: its notice was spent. Read its report or relaunch it." \
-  "$(sg 'Waiting on agent one.' | reason)"
-sg_idle_pr OPEN; rm -f "$SG/cwds"
-check "an idle agent whose working directory cannot be read keeps today's refusal" "block|Agent : one [b2c3d4] is idle: its notice was spent. Read its report or relaunch it." \
-  "$(sg 'Waiting on agent one.' | reason)"
-check "and no gh call was made for it" "0" "$(cat "$SG/gh-views" 2>/dev/null | wc -l | tr -d ' ')"
-sg_idle_pr OPEN; printf 'not json\n' > "$SG/view-feat_one"
-check "a read that fails to parse counts as no pull request" "block|Agent : one [b2c3d4] is idle: its notice was spent. Read its report or relaunch it." \
-  "$(sg 'Waiting on agent one.' | reason)"
-sg_idle_pr OPEN; sg_listing "$IDLE" "$IDLE2"; sg_chain /dev/ttys901 S-ME /dev/ttys902 S-ME
-printf '/dev/ttys901 %s\n/dev/ttys902 %s\n' "$SGA" "$SGA" > "$SG/cwds"; printf '2\n' > "$SG/view-sleep"
-check "a read past the deadline counts as no pull request, never a crash: only the agent read in time is named" \
-  "block|Idle with its pull request open or merged: Agent : one [b2c3d4] (pull request #12, OPEN). Stand it down now — or, if it waits on a question you have not answered, answer it.|1" \
-  "$(SG_DEADLINE=1 sg 'Waiting.' | reason)|$(wc -l < "$SG/gh-views" | tr -d ' ')"
-check "and the late read is a log line" "1" "$(sglog | grep -c '| error | pull request of /dev/ttys902 unread: the overall deadline of 1s passed before the launcher'"'"'s reads$')"
-# With the deadline already passed, `pull_request_of` reads nothing: not the launcher's process
-# table and working directory (`host_cli_cwd`, its own calls), not git, not gh.
-check "a passed deadline: no launcher read, no gh call, one log line, no pull request" "None|0|0|1" \
-  "$(ORCHESTRATOR_STATE_DIR="$SGS" "$py" -c "
-import sys, time; sys.path.insert(0, '$SG/hooks'); sys.path.insert(0, '$SG/skills/iterm-agents/scripts')
-import stop_gate as g
-reads = dict(launcher=0, run=0)
-class L:
-    def host_cli_cwd(self, tty): reads['launcher'] += 1; return '/'
-g.launcher = lambda: L()
-def fake_run(*a, **k): reads['run'] += 1; return '', '', 1
-g.run = fake_run
-logged = []
-g.log = lambda *f: logged.append(f)
-g.STARTED = time.monotonic() - 1000
-print(g.pull_request_of('/dev/ttys901', 'w'), reads['launcher'], reads['run'], len(logged), sep='|')")"
-sg_idle_pr OPEN; sg_listing "$IDLE" "$IDLE2"; sg_chain /dev/ttys901 S-ME /dev/ttys902 S-ME
-printf '/dev/ttys901 %s\n/dev/ttys902 %s\n' "$SGA" "$SGA" > "$SG/cwds"
-check "two idle agents: one read each, both named" "block|Idle with its pull request open or merged: Agent : one [b2c3d4] (pull request #12, OPEN), Agent : two [c3d4e5] (pull request #12, OPEN). Stand it down now — or, if it waits on a question you have not answered, answer it.|2" \
-  "$(sg 'Waiting.' | reason)|$(wc -l < "$SG/gh-views" | tr -d ' ')"
-
-sg_reset
-check "a question with no blocks: refused" \
-  "block|Your question blocks nothing declared: advance everything that can advance; its answer will come in a later turn." \
-  "$(sg 'Should I merge #12 now?' | reason)"
-check "a machine line naming the operator without blocks: is a question that blocks nothing" \
-  "block|Your question blocks nothing declared" "$(sg 'Merge #12?
-waiting: operator' | reason | cut -c1-43)"
-check "the question refusal is logged" "2" "$(sglog | grep -c '| check1 | question-without-blocks$')"
-
-sg_reset; printf '/ws/sgproj/phase-4 | feat/p4 | abc1234 | clean | pushed\n' > "$SG/checkouts"
-check "a blocking question with its machine line lets the stop pass, silently, a phase in flight or not" "" \
-  "$(sg 'Which base for phase 4, main or the release branch?
-
-waiting: operator — blocks: the base of phase 4
-
-')"
-check "the blocks: stop is logged with its reason" "1" \
-  "$(sglog | grep -c '| Orch : f \[a1b2c3\] | check1 | blocks | the base of phase 4$')"
-check "a question followed by a fenced block, then the machine line, lets the stop pass" "" \
-  "$(sg 'Which base for phase 4?
-
-```
-git log --oneline -1 origin/main
-```
-
-waiting: operator — blocks: the base of phase 4')"
-check "a machine line that is not the last non-empty line does not count" "block|Your question blocks nothing declared" \
-  "$(sg 'waiting: operator — blocks: the base
-Which base?' | reason | cut -c1-43)"
-check "a blocks: line with nothing after it does not count" "block|Your question blocks nothing declared" \
-  "$(sg 'waiting: operator — blocks: ' | reason | cut -c1-43)"
-
-# The model writes the line the way it writes everything: with markup, a dash of its own
-# choosing, an indent. Matched after normalisation, one check per variant the review listed.
-sg_variant() {  # <name> <last line>
-  sg_reset
-  check "the machine line $1 lets the stop pass" "" "$(sg "$(printf 'Which base?\n\n%s' "$2")")"
-}
-sg_variant "in backticks" '`waiting: operator — blocks: the base`'
-sg_variant "in bold" '**waiting: operator — blocks: the base**'
-sg_variant "in italics" '_waiting: operator — blocks: the base_'
-sg_variant "capitalised" 'Waiting: operator — blocks: the base'
-sg_variant "indented" '    waiting: operator — blocks: the base'
-sg_variant "quoted" '> waiting: operator — blocks: the base'
-sg_variant "as a dash bullet" '- waiting: operator — blocks: the base'
-sg_variant "as a star bullet" '* waiting: operator — blocks: the base'
-sg_variant "with a hyphen" 'waiting: operator - blocks: the base'
-sg_variant "with an en dash" 'waiting: operator – blocks: the base'
-sg_variant "with a double dash" 'waiting: operator -- blocks: the base'
-sg_variant "with a spaceless dash" 'waiting: operator—blocks: the base'
-sg_variant "with doubled spaces" 'waiting:  operator  —  blocks:  the base'
-sg_variant "with no space after blocks:" 'waiting: operator — blocks:phase 4'
-sg_variant "ending on a period" 'waiting: operator — blocks: the base.'
-sg_reset
-check "a done line ending on a period lets the stop pass" "" "$(sg 'All merged.
-waiting: done.')"
-check "a done line in bold lets the stop pass" "" "$(sg '**Waiting: done**')"
-sg_reset
-check "a hyphen inside the reason is kept: the line is read once" "1" \
-  "$(sg 'Which?
-waiting: operator - blocks: the pre-merge review' >/dev/null; sglog | grep -c '| check1 | blocks | the pre-merge review$')"
-check "a line that declares blocks: but is not the machine line is told the form, never « blocks nothing declared »" \
-  "block|Your last line is not the machine line: end the message with the line waiting: operator — blocks: <what it blocks>, or with waiting: done, as the message's last line, no markup." \
-  "$(sg 'Which base?
-waiting: operator blocks: the base' | reason)"
-check "and it is logged under its own case" "1" "$(sglog | grep -c '| check1 | malformed-machine-line$')"
-
-sg_reset
-check "done, no checkout, no agent: the stop passes, silently" "" "$(sg 'All merged.
-waiting: done')"
-check "a done stop writes no log line" "" "$(sglog)"
-sg_reset; printf '/ws/sgproj/phase-4 | feat/p4 | abc1234 | clean | pushed\n/ws/other/x | main | def5678 | clean | pushed\n' > "$SG/checkouts"
-check "done against a checkout of the project: refused, the checkout named" \
-  "block|Not done: /ws/sgproj/phase-4 is still there. Finish it, or say what blocks it." \
-  "$(sg 'waiting: done' | reason)"
-check "the not-done refusal is logged" "1" "$(sglog | grep -c '| check1 | not-done$')"
-sg_reset; printf '/ws/other/x | main | def5678 | clean | pushed\n' > "$SG/checkouts"
-check "a checkout of another project does not hold done" "" "$(sg 'waiting: done')"
-sg_reset; sg_listing "$IDLE"; sg_chain /dev/ttys901 S-ME
-check "done against an agent still there: refused, the agent named" \
-  "block|Not done: Agent : one [b2c3d4] is still there. Finish it, or say what blocks it." \
-  "$(sg 'waiting: done' | reason)"
-
-# Deferred work: an order noted « to plan after the round » in prose only is lost. Every
-# dispatch-record command registers its record under the session; a `done` stop refuses
-# while a row of those records is open.
-SGREC="$SG/dispatch.jsonl"
-sg_rec() { CLAUDE_CODE_SESSION_ID=sg-1 ORCHESTRATOR_STATE_DIR="$SGS" bash "$ROOT/skills/orchestrator/scripts/dispatch-record.sh" "$@"; }
-sg_reset; rm -f "$SGREC"
-rowA=$(sg_rec open "$SGREC" --class behaviour-phase --tier standard --label "plan the docs round")
-check "done against an open dispatch-record row: refused, the row named" \
-  "block|Not done: row 1 (plan the docs round) is open. Dispatch it, close it, or say what blocks it." \
-  "$(sg 'waiting: done' | reason)"
-check "the open-row refusal is logged" "1" "$(sglog | grep -c '| check1 | not-done$')"
-rowB=$(sg_rec open "$SGREC" --class n-bis --tier light --label "second fix")
-check "several open rows: the plural form" \
-  "block|Not done: rows 1 (plan the docs round), 2 (second fix) are open. Dispatch them, close them, or say what blocks them." \
-  "$(sg 'waiting: done' | reason)"
-sg_rec close "$SGREC" 1 --verdict ruled-out >/dev/null
-check "a closed row is no longer held against done" \
-  "block|Not done: row 2 (second fix) is open. Dispatch it, close it, or say what blocks it." \
-  "$(sg 'waiting: done' | reason)"
-sg_rec close "$SGREC" 2 --verdict approved >/dev/null
-check "every row closed: done passes" "" "$(sg 'waiting: done')"
-sg_rec open "$SGREC" --class n-bis --tier light --label "third" >/dev/null
-check "another session's records are not read" "" "$(sg 'waiting: done' false sg-other)"
-rm -rf "$SGS/records"
-check "no records file: no rows" "" "$(sg 'waiting: done')"
-sg_reset; mkdir -p "$SGS/records"; printf '/nowhere/dispatch.jsonl\n' > "$SGS/records/sg-1"
-check "a registered record that is gone: no rows" "" "$(sg 'waiting: done')"
-sg_reset; rm -f "$SGREC"; sg_rec open "$SGREC" --class n-bis --tier light --label "left open" >/dev/null
-sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-check "open rows hold done only: a busy agent still lets the stop pass" "" "$(sg 'Waiting on the agent.')"
-sg_reset; rm -f "$SGREC"; sg_rec open "$SGREC" --class n-bis --tier light --label "left open" >/dev/null; printf '/ws/sgproj/phase-4 | feat/p4 | abc1234 | clean | pushed\n' > "$SG/checkouts"
-check "a checkout and an open row: both are said" \
-  "block|Not done: /ws/sgproj/phase-4 is still there. Finish it, or say what blocks it. Not done: row 1 (left open) is open. Dispatch it, close it, or say what blocks it." \
-  "$(sg 'waiting: done' | reason)"
-sg_reset; rm -f "$SGREC"; sg_rec open "$SGREC" --class n-bis --tier light --label "left open" >/dev/null
-sg_listing "$IDLE"
-printf '{"tab_id": "t-ttys901", "tty": "/dev/ttys901", "owner": "S-ME", "resident": true}\n' > "$SGS/chains/ttys900.jsonl"
-check "a resident idle agent does not lift done: the open row still refuses" \
-  "block|Not done: row 1 (left open) is open. Dispatch it, close it, or say what blocks it." \
-  "$(sg 'waiting: done' | reason)"
-rm -f "$SGREC"
-
-echo "-- scope, loop guard, own failures"
-sg_reset
-check "the loop guard: a stop already refused once in this turn passes" "" "$(sg 'I am launching it.' true)"
-sg_ps '--name Agent : one [b2c3d4]'
-check "an agent's session is untouched" "" "$(sg 'I am launching it.')"
-sg_ps '--name Coord : m [a1b2c3]'
-check "the coordinator's session is untouched" "" "$(sg 'I am launching it.')"
-check "an untouched session writes no log line" "" "$(sglog)"
-# The listing is only read for an orchestrator: the scope is decided from the session's own
-# tty and its name, before any call to the launcher.
-rm -f "$SG/listing"
-check "a session that is not an orchestrator never reads the listing: no error logged" "" "$(sg 'I am launching it.'; sglog)"
-sg_reset
-sg_ps ''
-check "a session started by hand, without the name, is untouched" "" "$(sg 'I am launching it.')"
-check "and the log says its name could not be read" "1|1" \
-  "$(sglog | grep -c .)|$(sglog | grep -c "| sg-1 | error | the session's name cannot be read on /dev/ttys900$")"
-sg_reset; : > "$SG/ps"
-check "a tty the process table does not know is untouched, the name logged unreadable" "1" \
-  "$(sg 'I am launching it.' >/dev/null; sglog | grep -c "| error | the session's name cannot be read on /dev/ttys900$")"
-# The own tty comes from the launcher's walk; a `ps` that answers nothing gives none.
-sg_reset; printf '#!/bin/bash\nexit 1\n' > "$SGB/ps"; chmod +x "$SGB/ps"
-check "a session whose own tty cannot be read passes" "" \
-  "$("$py" -c 'import json,sys; json.dump({"session_id": "sg-1", "cwd": sys.argv[1], "last_assistant_message": "x", "stop_hook_active": False}, sys.stdout)' "$SGP" \
-    | env -u ORCHESTRATOR_SELF_TTY PATH="$SGB:$PATH" ORCHESTRATOR_STATE_DIR="$SGS" ITERM_SESSION_ID="w0t0p0:S-ME" bash "$SG/hooks/stop-gate.sh" 2>/dev/null)"
-check "and the log says the tty could not be read" "1" "$(sglog | grep -c "| sg-1 | error | the session's own tty cannot be read$")"
-rm -f "$SGB/ps"
-
-echo "-- scope by the /rename name"
-# The host writes the rename into the transcript as a `custom-title` entry, the value
-# sometimes quoted. The launcher's `--name` comes first; the transcript's LAST entry only
-# when the launcher gives none.
-sg_reset; sg_ps ''
-printf '%s\n' '{"type":"user","message":"hi"}' '{"type":"custom-title","customTitle":"Orch : f [a1b2c3]"}' '{"type":"assistant","message":"ok"}' > "$SG/transcript"
-check "no launcher name, a renamed session: the transcript's title scopes the gate in" "block|Nothing will wake you" \
-  "$(SG_TRANSCRIPT="$SG/transcript" sg 'I am launching it.' | reason | cut -c1-27)"
-printf '%s\n' '{"type":"custom-title","customTitle":"\"Orch : f [a1b2c3]\""}' > "$SG/transcript"
-check "a quoted title is unquoted" "block|Nothing will wake you" \
-  "$(SG_TRANSCRIPT="$SG/transcript" sg 'I am launching it.' | reason | cut -c1-27)"
-printf '%s\n' '{"type":"custom-title","customTitle":"Orch : f [a1b2c3]"}' '{"type":"custom-title","customTitle":"my scratch session"}' > "$SG/transcript"
-check "the LAST title wins: renamed away from Orch, the session is untouched" "" \
-  "$(SG_TRANSCRIPT="$SG/transcript" sg 'I am launching it.')"
-printf '%s\n' '{"type":"custom-title","customTitle":"my scratch session"}' '{"type":"custom-title","customTitle":"Orch : f [a1b2c3]"}' > "$SG/transcript"
-check "the LAST title wins: renamed to Orch, the session is gated" "block|Nothing will wake you" \
-  "$(SG_TRANSCRIPT="$SG/transcript" sg 'I am launching it.' | reason | cut -c1-27)"
-sg_ps '--name Agent : one [b2c3d4]'
-check "the launcher's name comes first: an agent renamed to Orch stays untouched" "" \
-  "$(SG_TRANSCRIPT="$SG/transcript" sg 'I am launching it.')"
-sg_ps ''
-check "a transcript with no title: untouched, the log says the name is unreadable" "" \
-  "$(printf '%s\n' '{"type":"user"}' > "$SG/transcript"; SG_TRANSCRIPT="$SG/transcript" sg 'I am launching it.')"
-check "a transcript that cannot be read is no title" "" "$(SG_TRANSCRIPT="$SG/absent" sg 'I am launching it.')"
-# Not parsed whole: a line that is no JSON, elsewhere in the file, changes nothing.
-printf '%s\n' 'not json at all {{{' '{"type":"custom-title","customTitle":"Orch : f [a1b2c3]"}' 'tail garbage ][' > "$SG/transcript"
-check "only the title line is parsed: garbage around it is harmless" "block|Nothing will wake you" \
-  "$(SG_TRANSCRIPT="$SG/transcript" sg 'I am launching it.' | reason | cut -c1-27)"
-# A title line cut by a read block (64 KiB from the end) is still found whole.
-"$py" - "$SG/transcript" <<'PYEOF'
-import sys
-title = b'{"type":"custom-title","customTitle":"Orch : f [a1b2c3]"}\n'
-block = 65536
-pad = block - len(title) // 2
-open(sys.argv[1], "wb").write(b'{"type":"user"}\n' + title + b"x" * (pad - 1) + b"\n")
-PYEOF
-check "a title line straddling a read block is found whole" "block|Nothing will wake you" \
-  "$(SG_TRANSCRIPT="$SG/transcript" sg 'I am launching it.' | reason | cut -c1-27)"
-"$py" - "$SG/transcript" <<'PYEOF'
-import sys
-title = b'{"type":"custom-title","customTitle":"Orch : f [a1b2c3]"}\n'
-open(sys.argv[1], "wb").write(title + (b'{"type":"user","message":"' + b"y" * 4000 + b'"}\n') * 100)
-PYEOF
-check "a title far from the end of a large transcript is found" "block|Nothing will wake you" \
-  "$(SG_TRANSCRIPT="$SG/transcript" sg 'I am launching it.' | reason | cut -c1-27)"
-sg_reset
-sg_reset; rm -f "$SG/listing"
-check "an unreadable listing lets the stop pass, exit 0" "|0" "$(sg 'I am launching it.'; echo "|$?")"
-check "and appends one line to the log, naming the listing" "1|1" \
-  "$(sglog | grep -c .)|$(sglog | grep -c "| Orch : f \[a1b2c3\] | error | the launcher's listing failed: list: no terminal backend could serve this$")"
-sg_reset; rm -f "$SG/checkouts"
-check "an unreadable checkout list lets a done stop pass" "" "$(sg 'waiting: done')"
-check "and logs it" "1" "$(sglog | grep -c '| error | ')"
-
-echo "-- check 2: the real CI state, once per head"
-sg_fake_ps
-# A head is recorded with its state: pending once a stop has refused it while pending, done
-# once its checks have all finished. A pending head refuses once, and again only when a
-# check turns red.
-sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-printf '[{"number": 12, "headRefOid": "abc1234def5678abc1234def5678abc1234def56"}]\n' > "$SG/prs"
-printf '[{"name": "build", "bucket": "pending"}, {"name": "lint", "bucket": "pending"}, {"name": "test", "bucket": "pass"}]\n' > "$SG/checks-12"
-echo 8 > "$SG/checks-12.code"
-check "pending checks on a new head: refused with the real state" \
-  "block|#12 at abc1234: 2 checks pending (build, lint), 0 failing (). Report this state as it is; to wait for the end, start \`$SGW 12\` with \`run_in_background\` (timeout 7200000), never in the foreground." \
-  "$(sg 'The reds are fixed, CI is green.' | reason)"
-check "the CI refusal is logged" "1" "$(sglog | grep -c '| check2 | ci-not-finished | #12 at abc1234')"
-check "the pending head is recorded as pending" "12 abc1234def5678abc1234def5678abc1234def56 pending" "$(cat "$SGS/stop-gate/sg-1.heads" 2>/dev/null)"
-check "a pending head already refused, nothing failing: the stop passes, silently" "" "$(sg 'The reds are fixed, CI is green.')"
-check "and the checks are still read at each stop" "2" "$(grep -c . "$SG/gh-calls")"
-check "and the head stays pending" "12 abc1234def5678abc1234def5678abc1234def56 pending" "$(cat "$SGS/stop-gate/sg-1.heads")"
-check "another session is told once as well" "block|#12 at abc1234" "$(sg 'CI is green.' false sg-2 | reason | cut -c1-20)"
-printf '[{"name": "build", "bucket": "pass"}, {"name": "lint", "bucket": "pass"}, {"name": "test", "bucket": "pass"}]\n' > "$SG/checks-12"
-echo 0 > "$SG/checks-12.code"
-check "pending, pending, then green: the stop passes" "" "$(sg 'CI is green.')"
-check "and the finished head is recorded as done" "12 abc1234def5678abc1234def5678abc1234def56 done" "$(cat "$SGS/stop-gate/sg-1.heads")"
-check "one refusal for this session, one for the other" "2" "$(sglog | grep -c '| check2 | ci-not-finished | #12 at abc1234')"
-
-# A pending head with a `ci-watch.sh <n>` process alive is being waited for: it does not
-# refuse the stop. One read of the process table serves every pull request of the check.
-sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-printf '[{"number": 12, "headRefOid": "abc1234def5678abc1234def5678abc1234def56"}, {"number": 13, "headRefOid": "1234abcd5678ef901234abcd5678ef901234abcd"}]\n' > "$SG/prs"
-printf '[{"name": "build", "bucket": "pending"}]\n' > "$SG/checks-12"
-printf '[{"name": "build", "bucket": "pending"}]\n' > "$SG/checks-13"
-printf 'bash %s/skills/orchestrator/scripts/ci-watch.sh 12 --interval 10\ngh pr checks 12 --watch --fail-fast\n' "$SG" > "$SG/ps-live"
-check "pending checks with a live watch for one pull request: only the other is refused" \
-  "block|#13 at 1234abc: 1 checks pending (build), 0 failing ()" "$(sg 'Pushed.' | reason | sed 's/\. Report.*//')"
-check "the process table is read once for both" "1" "$(grep -c . "$SG/ps-calls")"
-check "the watched head is not recorded, so it is told once if the watch dies" "13 1234abcd5678ef901234abcd5678ef901234abcd pending" "$(cat "$SGS/stop-gate/sg-1.heads")"
-sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-printf '[{"number": 12, "headRefOid": "abc1234def5678abc1234def5678abc1234def56"}]\n' > "$SG/prs"
-printf '[{"name": "build", "bucket": "pending"}]\n' > "$SG/checks-12"
-printf '/bin/bash %s/skills/orchestrator/scripts/ci-watch.sh 12\n' "$SG" > "$SG/ps-live"
-check "a live watch: the stop passes, silently" "" "$(sg 'Pushed.')"
-rm -f "$SG/ps-live"
-check "the watch gone: one refusal, naming the background command" \
-  "block|#12 at abc1234: 1 checks pending (build), 0 failing (). Report this state as it is; to wait for the end, start \`$SGW 12\` with \`run_in_background\` (timeout 7200000), never in the foreground." \
-  "$(sg 'Pushed.' | reason)"
-check "and never twice for that head" "" "$(sg 'Pushed.')"
-sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-printf '[{"number": 12, "headRefOid": "abc1234def5678abc1234def5678abc1234def56"}]\n' > "$SG/prs"
-printf '[{"name": "build", "bucket": "pending"}]\n' > "$SG/checks-12"
-printf 'bash %s/skills/orchestrator/scripts/ci-watch.sh 120\nvim ci-watch.sh 12\ngrep ci-watch.sh 12\n' "$SG" > "$SG/ps-live"
-check "a watch of pull request 120 and an editor open on the script are no watch of 12" "block|#12 at abc1234" "$(sg 'Pushed.' | reason | cut -c1-20)"
-sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-printf '[{"number": 12, "headRefOid": "abc1234def5678abc1234def5678abc1234def56"}]\n' > "$SG/prs"
-printf '[{"name": "build", "bucket": "pending"}]\n' > "$SG/checks-12"
-: > "$SG/ps-fail"
-check "a process table that cannot be read counts as no watch: refused" "block|#12 at abc1234" "$(sg 'Pushed.' | reason | cut -c1-20)"
-check "and the failure is logged" "1" "$(sglog | grep -c '| error | ps ')"
-sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-printf '[{"number": 7, "headRefOid": "0011223344556677889900112233445566778899"}]\n' > "$SG/prs"
-printf '[{"name": "test", "bucket": "fail"}, {"name": "lint", "bucket": "pending"}]\n' > "$SG/checks-7"
-printf 'bash %s/skills/orchestrator/scripts/ci-watch.sh 7\n' "$SG" > "$SG/ps-live"
-check "a failing check refuses even with a live watch: a red is treated" "block|#7 at 0011223: 1 checks pending (lint), 1 failing (test)" \
-  "$(sg 'Waiting.' | reason | sed 's/\. Report.*//')"
-sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-printf '[{"number": 3, "headRefOid": "aaaa1111bbbb2222cccc3333dddd4444eeee5555"}]\n' > "$SG/prs"
-printf '[{"name": "test", "bucket": "pass"}]\n' > "$SG/checks-3"
-sg 'CI is green.' >/dev/null
-check "no pending head: the process table is not read" "0" "$(grep -c . "$SG/ps-calls" 2>/dev/null || echo 0)"
-
-# Pending, then one check turns red while another is still pending: refused again with the
-# red named, once; the finished red is the same failure and does not refuse a third time.
-sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-printf '[{"number": 9, "headRefOid": "9999aaaabbbbccccddddeeeeffff000011112222"}]\n' > "$SG/prs"
-printf '[{"name": "build", "bucket": "pending"}, {"name": "test", "bucket": "pending"}]\n' > "$SG/checks-9"
-check "pending then red: the first stop is refused" "block|#9 at 9999aaa: 2 checks pending (build, test), 0 failing ()" \
-  "$(sg 'Waiting for CI.' | reason | sed 's/\. Report.*//')"
-check "the second stop, still pending, nothing failing: passes" "" "$(sg 'Waiting for CI.')"
-printf '[{"name": "build", "bucket": "pending"}, {"name": "test", "bucket": "fail"}]\n' > "$SG/checks-9"
-echo 1 > "$SG/checks-9.code"
-check "a check turning red while another is pending: refused, naming the red" "block|#9 at 9999aaa: 1 checks pending (build), 1 failing (test)" \
-  "$(sg 'Waiting for CI.' | reason | sed 's/\. Report.*//')"
-check "and the head stays pending, the failure remembered" "9 9999aaaabbbbccccddddeeeeffff000011112222 pending test" "$(cat "$SGS/stop-gate/sg-1.heads")"
-check "the same failure never refuses twice while pending" "" "$(sg 'Waiting for CI.')"
-printf '[{"name": "build", "bucket": "pass"}, {"name": "test", "bucket": "fail"}]\n' > "$SG/checks-9"
-check "the red finished: the same failure, no third refusal" "" "$(sg 'Waiting for CI.')"
-check "and the head is recorded as done" "9 9999aaaabbbbccccddddeeeeffff000011112222 done" "$(cat "$SGS/stop-gate/sg-1.heads")"
-check "one refusal for the pending head, one for the red: two in all" "2" "$(sglog | grep -c '| check2 | ci-not-finished | #9 at 9999aaa')"
-
-# A line written by the previous version has two fields and reads as done.
-sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-printf '[{"number": 12, "headRefOid": "abc1234def5678abc1234def5678abc1234def56"}]\n' > "$SG/prs"
-printf '[{"name": "build", "bucket": "pending"}]\n' > "$SG/checks-12"
-mkdir -p "$SGS/stop-gate"; printf '12 abc1234def5678abc1234def5678abc1234def56\n' > "$SGS/stop-gate/sg-1.heads"
-check "a two-field heads line reads as done: silent, no checks call" "|0" "$(sg 'Pushed.')|$(cat "$SG/gh-calls" 2>/dev/null | grep -c .)"
-check "and is kept" "12 abc1234def5678abc1234def5678abc1234def56 done" "$(cat "$SGS/stop-gate/sg-1.heads")"
-
-check "only the operator's own pull requests are listed" "pr list --state open --author @me --limit 200 --json number,headRefOid,isDraft" \
-  "$(head -1 "$SG/gh-args")"
-
-# A push is seen before its checks are registered: `gh pr checks` then answers an empty
-# list. That head is not green, it is unread, and it is not recorded.
-sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-printf '[{"number": 5, "headRefOid": "5555666677778888999900001111222233334444"}]\n' > "$SG/prs"
-printf '[]\n' > "$SG/checks-5"
-check "a head with no checks yet passes, silently" "" "$(sg 'Pushed.')"
-check "and is not recorded" "" "$(cat "$SGS/stop-gate/sg-1.heads" 2>/dev/null)"
-printf '[{"name": "build", "bucket": "pending"}]\n' > "$SG/checks-5"
-check "the same head, its checks now pending: refused" "block|#5 at 5555666: 1 checks pending (build), 0 failing ()" \
-  "$(sg 'Pushed.' | reason | sed 's/\. Report.*//')"
-sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-printf '[{"number": 7, "headRefOid": "0011223344556677889900112233445566778899"}]\n' > "$SG/prs"
-printf '[{"name": "test", "bucket": "fail"}, {"name": "e2e", "bucket": "cancel"}, {"name": "lint", "bucket": "pass"}]\n' > "$SG/checks-7"
-echo 1 > "$SG/checks-7.code"
-check "failing checks: refused with the real state" \
-  "block|#7 at 0011223: 0 checks pending (), 2 failing (test, e2e). Report this state as it is; to wait for the end, start \`$SGW 7\` with \`run_in_background\` (timeout 7200000), never in the foreground." \
-  "$(sg 'Only the known red remains.' | reason)"
-check "failing checks on a finished head: recorded" "7 0011223344556677889900112233445566778899 done" "$(cat "$SGS/stop-gate/sg-1.heads")"
-check "and the same head never refuses twice" "1|" "$(grep -c . "$SG/gh-calls")|$(sg 'Only the known red remains.')"
-printf '[{"number": 7, "headRefOid": "99887766554433221100aabbccddeeff00112233"}]\n' > "$SG/prs"
-check "a head moved by anyone is reported again" "block|#7 at 9988776" "$(sg 'Pushed.' | reason | cut -c1-19)"
-
-sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-printf '[{"number": 3, "headRefOid": "aaaa1111bbbb2222cccc3333dddd4444eeee5555"}]\n' > "$SG/prs"
-printf '[{"name": "test", "bucket": "pass"}, {"name": "docs", "bucket": "skipping"}]\n' > "$SG/checks-3"
-check "all checks finished and passing: the stop passes, silently" "" "$(sg 'CI is green.')"
-check "the green head is recorded" "3 aaaa1111bbbb2222cccc3333dddd4444eeee5555 done" "$(cat "$SGS/stop-gate/sg-1.heads")"
-check "a green stop writes no log line" "" "$(sglog)"
-sg 'CI is green.' >/dev/null
-check "a head that has not moved costs no checks call" "1" "$(grep -c . "$SG/gh-calls")"
-
-# A check listed for the repository in the state directory's `ignored-checks` file (a job that
-# fails by design, such as a draft guard) is read as neither pending nor failing.
-sg_ignored_head() {  # one head, #8, with the checks given as the file's JSON
-  sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-  printf '[{"number": 8, "headRefOid": "8888aaaa8888aaaa8888aaaa8888aaaa8888aaaa"}]\n' > "$SG/prs"
-  printf '%s\n' "$1" > "$SG/checks-8"
-  printf '{"nameWithOwner": "acme/api"}\n' > "$SG/repo"
-}
-WIP='{"name": "wip-check / wip-check", "bucket": "fail"}'
-sg_ignored_head "[$WIP, {\"name\": \"test\", \"bucket\": \"pass\"}]"
-printf 'acme/api wip-check / wip-check\n' > "$SGS/ignored-checks"
-check "a head whose only failing check is listed for its repository: no refusal" "" "$(sg 'Pushed.')"
-check "and it is recorded done" "8 8888aaaa8888aaaa8888aaaa8888aaaa8888aaaa done" "$(cat "$SGS/stop-gate/sg-1.heads")"
-sg_ignored_head "[$WIP, {\"name\": \"test\", \"bucket\": \"fail\"}]"
-printf 'acme/api wip-check / wip-check\n' > "$SGS/ignored-checks"
-check "one more failing check, not listed: refused, naming only that one" \
-  "block|#8 at 8888aaa: 0 checks pending (), 1 failing (test)" "$(sg 'Pushed.' | reason | sed 's/\. Report.*//')"
-sg_ignored_head "[$WIP, {\"name\": \"build\", \"bucket\": \"pending\"}, {\"name\": \"test\", \"bucket\": \"pass\"}]"
-printf 'acme/api wip-check / wip-check\nacme/api build\n' > "$SGS/ignored-checks"
-check "a listed pending check is dropped too" "|8 8888aaaa8888aaaa8888aaaa8888aaaa8888aaaa done" \
-  "$(sg 'Pushed.')|$(cat "$SGS/stop-gate/sg-1.heads")"
-sg_ignored_head "[$WIP]"
-printf 'acme/other wip-check / wip-check\n' > "$SGS/ignored-checks"
-check "an entry for another repository does not drop the check" \
-  "block|#8 at 8888aaa: 0 checks pending (), 1 failing (wip-check / wip-check)" "$(sg 'Pushed.' | reason | sed 's/\. Report.*//')"
-sg_ignored_head "[$WIP]"
-check "no file: refused, and no repository read" "block|0" "$(sg 'Pushed.' | reason | cut -c1-5)|$(cat "$SG/gh-repo-calls" 2>/dev/null | grep -c .)"
-sg_ignored_head "[$WIP]"
-: > "$SGS/ignored-checks"
-check "an empty file: no repository read" "0" "$(sg 'Pushed.' >/dev/null; cat "$SG/gh-repo-calls" 2>/dev/null | grep -c .)"
-sg_ignored_head "[$WIP]"
-printf '# a comment\n\nmalformed\nacme/api wip-check / wip-check\n' > "$SGS/ignored-checks"
-check "a comment, a blank and a malformed line are skipped; the valid entry applies" "" "$(sg 'Pushed.')"
-check "and the malformed line is logged once" "1" "$(sglog | grep -c 'ignored-checks | malformed line')"
-# A head whose only registered checks are ignored ones is a head with no check yet: unrecorded,
-# read again at the next stop.
-sg_ignored_head "[$WIP]"
-printf 'acme/api wip-check / wip-check\n' > "$SGS/ignored-checks"
-check "a head whose only check is a listed failing one: no refusal, and not recorded" "|" \
-  "$(sg 'Pushed.')|$(cat "$SGS/stop-gate/sg-1.heads" 2>/dev/null)"
-printf '[%s, {"name": "test", "bucket": "fail"}]\n' "$WIP" > "$SG/checks-8"
-check "and at the next stop, with a real failing check added, it refuses" \
-  "block|#8 at 8888aaa: 0 checks pending (), 1 failing (test)" "$(sg 'Pushed.' | reason | sed 's/\. Report.*//')"
-# A repository that cannot be read filters nothing and never ends the CI check.
-sg_ignored_head "[$WIP, {\"name\": \"test\", \"bucket\": \"fail\"}]"
-printf 'acme/api wip-check / wip-check\n' > "$SGS/ignored-checks"
-rm -f "$SG/repo"
-check "a failing repository read: the refusal is still made, with nothing filtered" \
-  "block|#8 at 8888aaa: 0 checks pending (), 2 failing (wip-check / wip-check, test)" \
-  "$(sg 'Pushed.' | reason | sed 's/\. Report.*//')"
-check "and one line says the repository was not read" "1" "$(sglog | grep -c 'ignored-checks | repository unread')"
-sg_ignored_head "[$WIP]"
-printf '{}\n' > "$SG/repo"
-printf 'acme/api wip-check / wip-check\n' > "$SGS/ignored-checks"
-check "an answer with no nameWithOwner is the same: nothing filtered, one line" "block|1" \
-  "$(sg 'Pushed.' | reason | cut -c1-5)|$(sglog | grep -c 'ignored-checks | repository unread')"
-# The repository is compared without regard to case.
-sg_ignored_head "[$WIP]"
-printf '{"nameWithOwner": "Acme/API"}\n' > "$SG/repo"
-printf 'acme/api wip-check / wip-check\n' > "$SGS/ignored-checks"
-check "an entry typed in lowercase drops the check of the canonically cased repository" "" "$(sg 'Pushed.')"
-
-# A failing check of a draft pull request is dropped where the listed names are, when the job
-# that produced it tests the draft flag (draft_guard.py, with the fixtures of the section above).
-sg_draft_head() {  # <draft: true|false> <checks, a JSON array>
-  sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-  rm -rf "$SGS/draft-guard"; rm -f "$SG/gh-api-calls"
-  printf '[{"number": 8, "headRefOid": "8888aaaa8888aaaa8888aaaa8888aaaa8888aaaa", "isDraft": %s}]\n' "$1" > "$SG/prs"
-  printf '%s\n' "$2" > "$SG/checks-8"
-  printf '{"nameWithOwner": "acme/thing"}\n' > "$SG/repo"
-}
-sg_apis() { { cat "$SG/gh-api-calls" 2>/dev/null; true; } | grep -c .; }
-sg_draft_head true "[$C_WIP, $C_PASS]"
-check "a draft whose only failing check is a guard of a reusable workflow: no refusal, recorded done" \
-  "|8 8888aaaa8888aaaa8888aaaa8888aaaa8888aaaa done" "$(sg 'Pushed.')|$(cat "$SGS/stop-gate/sg-1.heads")"
-sg_draft_head true "[$C_GATE, $C_PASS]"
-check "a job with the draft test inline is one too" "" "$(sg 'Pushed.')"
-sg_draft_head true "[$C_GATE]"
-check "a head whose only check is a guard: no refusal, and not recorded" "|" \
-  "$(sg 'Pushed.')|$(cat "$SGS/stop-gate/sg-1.heads" 2>/dev/null)"
-sg_draft_head true "[$C_WIP, $C_TESTS]"
-check "a failing job that does not read the flag still refuses, the guard left out" \
-  "block|#8 at 8888aaa: 0 checks pending (), 1 failing (tests)" "$(sg 'Pushed.' | reason | sed 's/\. Report.*//')"
-sg_draft_head false "[$C_WIP]"
-check "the same guard on a pull request that is no draft is reported, and no run is read" \
-  "block|#8 at 8888aaa: 0 checks pending (), 1 failing (wip-check / wip-check)|0" \
-  "$(sg 'Pushed.' | reason | sed 's/\. Report.*//')|$(sg_apis)"
-sg_draft_head true "[$C_NOREAD]"
-check "a workflow file that cannot be read is no guard: reported" \
-  "block|#8 at 8888aaa: 0 checks pending (), 1 failing (wip-check / wip-check)" "$(sg 'Pushed.' | reason | sed 's/\. Report.*//')"
-sg_draft_head true "[$C_WIP, $C_PASS]"
-sg 'Pushed.' >/dev/null; first_calls=$(sg_apis); rm -rf "$SGS/stop-gate"
-sg 'Pushed.' >/dev/null
-check "a head already classified costs no api call at the next read" "yes|yes" \
-  "$([ "$first_calls" -gt 0 ] && echo yes || echo no)|$([ "$(sg_apis)" = "$first_calls" ] && echo yes || echo no)"
-sg_draft_head true "[$C_WIP, $C_TESTS]"
-printf 'acme/thing tests\n' > "$SGS/ignored-checks"
-check "ignored-checks remains the manual fallback on a draft: the listed name goes with the guard" "" "$(sg 'Pushed.')"
-check "and the repository is read once for the file and the guards together" "1" "$(grep -c . "$SG/gh-repo-calls")"
-sg_draft_head true "[$C_PASS]"
-sg 'Pushed.' >/dev/null
-check "a draft with no failing check reads no repository" "0" "$({ cat "$SG/gh-repo-calls" 2>/dev/null; true; } | grep -c .)"
-
-sg_reset; sg_listing "$IDLE"; sg_chain /dev/ttys901 S-ME
-printf '[{"number": 12, "headRefOid": "abc1234def5678abc1234def5678abc1234def56"}]\n' > "$SG/prs"
-printf '[{"name": "build", "bucket": "pending"}]\n' > "$SG/checks-12"
-sg 'Waiting.' >/dev/null
-check "Check 2 runs only when Check 1 let the stop pass" "0" "$(cat "$SG/gh-calls" 2>/dev/null | grep -c .)"
-
-sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME; : > "$SG/gh-offline"
-check "gh offline: the stop passes" "" "$(sg 'CI is green.')"
-check "and the failure is logged" "1" "$(sglog | grep -c '| error | ')"
-# One deadline for the whole hook: a slow listing leaves no time for the next call.
-sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-printf '[{"number": 12, "headRefOid": "abc1234def5678abc1234def5678abc1234def56"}]\n' > "$SG/prs"
-printf '[{"name": "build", "bucket": "pending"}]\n' > "$SG/checks-12"
-printf '#!/bin/bash\n[ "$1" = list ] || exit 1\nsleep 2\ncat "%s/listing"\n' "$SG" > "$SG/skills/iterm-agents/scripts/iterm-agent.sh"
-check "past the overall deadline the stop passes, the next call never made" "" "$(SG_DEADLINE=1 sg 'CI is green.')"
-check "and one line says so" "1|0" "$(sglog | grep -c '| error | the overall deadline of 1s passed before gh')|$(cat "$SG/gh-calls" 2>/dev/null | grep -c .)"
-check "within the deadline the same hook refuses" "block|#12 at abc1234" "$(sg 'CI is green.' | reason | cut -c1-20)"
-printf '#!/bin/bash\n[ "$1" = list ] || exit 1\ncat "%s/listing" 2>/dev/null || { echo "list: no terminal backend could serve this" >&2; exit 1; }\n' "$SG" \
-  > "$SG/skills/iterm-agents/scripts/iterm-agent.sh"
-sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-check "gh absent: the stop passes" "" \
-  "$("$py" -c 'import json,sys; json.dump({"session_id": "sg-1", "cwd": sys.argv[1], "last_assistant_message": "x", "stop_hook_active": False}, sys.stdout)' "$SGP" \
-    | env PATH="/usr/bin:/bin" ORCHESTRATOR_STATE_DIR="$SGS" ITERM_SESSION_ID="w0t0p0:S-ME" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$SG/ps" bash "$SG/hooks/stop-gate.sh" 2>/dev/null)"
-check "and the missing tool is logged" "1" "$(sglog | grep -c '| error | ')"
-NOPY="$SG/nopy-bin"; mkdir -p "$NOPY"; ln -sf "$(command -v mkdir)" "$(command -v date)" "$NOPY/"
-sg_reset; printf '{"session_id": "sg-1", "stop_hook_active": false}' > "$SG/nopy-payload.json"
-check "without python3 the stop passes, exit 0" "|0" \
-  "$(env PATH="$NOPY" ORCHESTRATOR_STATE_DIR="$SGS" "$(command -v bash)" "$SG/hooks/stop-gate.sh" < "$SG/nopy-payload.json" 2>/dev/null; echo "|$?")"
-check "and the missing interpreter is logged" "1" "$(sglog | grep -c '| - | error | python3 is not installed$')"
-
+echo "== stop gate: the prose and the pins that survive the module =="
+# The hook's own cases — the wake decision, the once-per-tell CI record, the deadline race,
+# the sweep it runs after a passing stop — moved module-side with the gate
+# (hooks/tests/stop-gate.test.ts, run by the host's plugin test). What stays here is what
+# the module cannot check itself: the prose the briefs and references must carry, the
+# succession figures, and the registration pins.
 check "the phase brief template ends the delivery at the push, no CI watch" "yes|no|no" \
   "$(spells "$ROOT/templates/agent-phase-brief.md" 'The delivery ends at the push')|$(spells "$ROOT/templates/agent-phase-brief.md" 'gh pr checks')|$(spells "$ROOT/templates/agent-phase-brief.md" 'in the foreground')"
 check "the standing rules say an agent never waits on CI" "yes|no" \
@@ -4789,8 +3901,22 @@ check "the audit report keeps a dated name whose date is date +%F run at launch,
   "$(spells "$ROOT/commands/audit.md" '`<briefs dir>/audits/<date>-<subject>.md`, where `<date>` is the output of `date +%F` run now, never typed')|$(spells "$ROOT/commands/audit.md" "the previous report's file name, which a command wrote")"
 check "the coordinator's succession brief is named with no date" "yes|no" \
   "$(spells "$ROOT/skills/coordination/SKILL.md" '<state dir>/coordinator/succession-brief.md')|$(spells "$ROOT/skills/coordination/SKILL.md" 'succession-<date>')"
+# status, progress and agents are answered by the hooks module without a model turn; their
+# bodies run only when that answer fails, and each says so, with what the answer leaves out.
+check "the three hooked commands say the module answers them and their body is the fallback" "yes|yes|yes" \
+  "$(for c in status agents progress; do spells "$ROOT/commands/$c.md" 'The hooks module answers this command on the spot, with no model turn'; done | paste -sd'|' -)"
+# The question of a decision round ends on the machine line: the stop gate refuses a turn
+# whose last line is a bare question.
+check "a decision round's question ends on the operator's machine line" "yes" \
+  "$(spells "$ROOT/commands/decide.md" 'text, as the message'"'"'s last line: `waiting: operator — blocks: <the question>`')"
 check "a relayed ruling is dated by a command, pasted, never from memory" "yes|no" \
   "$(spells "$ROOT/commands/decide.md" 'the ruling verbatim, dated (`date -u +%FT%TZ`, pasted),')|$(spells "$ROOT/commands/decide.md" 'the ruling verbatim, dated,')"
+# The operator's time: a round is a wave of questions back to back, nothing relayed or launched
+# inside it; the relays and the work come at its end, and a second wave is chained at once.
+check "a decision round asks its questions back to back and acts only when the wave ends" "yes|yes|yes" \
+  "$(spells "$ROOT/commands/decide.md" 'in this same message, right under the')|$(spells "$ROOT/commands/decide.md" 'nothing relayed, launched or reported inside a wave')|$(spells "$ROOT/commands/decide.md" 'announce « Wave 2: M questions, back to back. »')"
+check "a decision round no longer relays a ruling before the next question" "no" \
+  "$(spells "$ROOT/commands/decide.md" 'Present the next question IN FULL (step 2). Not before.')"
 check "a red outside what the pull request touches is re-run once before any correction" "yes|yes" \
   "$(spells "$ORCH_REFS/review.md" 'when its failure is outside what the pull request touches')|$(spells "$ORCH_REFS/review.md" 'Only a second red, or a red in what the pull request touches')"
 check "the re-run is the failed jobs, once, after the failing job's cause is named in one line" "yes|yes" \
@@ -4826,21 +3952,33 @@ check "the Live state section carries its five placeholders" "1|1|1|1|1" \
 check "the Live state section replaces reading the journal, which is read by section for a question it leaves open" "yes|yes" \
   "$(printf '%s' "$LIVE_BODY" | tr '\n' ' ' | tr -s ' ' | grep -qF 'replaces reading the journal' && echo yes || echo no)|$(printf '%s' "$LIVE_BODY" | tr '\n' ' ' | tr -s ' ' | grep -qF 'by its section' && echo yes || echo no)"
 SUCC5=$(awk '/^5\. /{f=1} /^## /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
-check "step 5 announces the successor's own measured context from the gauge" "1|1" \
-  "$(printf '%s' "$SUCC5" | grep -oF 'context_tokens=' | wc -l | tr -d ' ')|$(printf '%s' "$SUCC5" | grep -oF '{{GAUGE}}' | wc -l | tr -d ' ')"
+check "step 5 announces the successor's own measured context from its measure file" "1|1" \
+  "$(printf '%s' "$SUCC5" | grep -oF 'context_tokens' | wc -l | tr -d ' ')|$(printf '%s' "$SUCC5" | grep -oF 'measure file' | wc -l | tr -d ' ')"
 # Every successor measures its takeover at the same point, the turn that sends « takeover
 # confirmed », so one orchestration's takeover figures compare from one succession to the next:
-# step 4 runs the gauge in that turn, before the message, and step 5 reports that reading only.
-check "step 4 runs the gauge in the « takeover confirmed » turn, immediately before the message" "1|1" \
-  "$(succ4_has 'In the turn that sends « takeover confirmed », run `{{GAUGE}}` immediately before the message and keep its `context_tokens=` line')|$(printf '%s' "$SUCC4" | awk '{ a = index($0, "run `{{GAUGE}}` immediately before the message"); b = index($0, "Then message the predecessor \"takeover confirmed\""); print (a > 0 && b > 0 && a < b) ? 1 : 0 }')"
+# step 4 keeps the figure recorded when that turn ends, and step 5 reports that reading only.
+# The module writes the measure file only when a turn ends: a reading inside the turn that
+# sends « takeover confirmed » is the turn before's, or no file at all on a first turn. The
+# figure is the one recorded when that turn ends, read at the next turn's first tool call.
+check "step 4 takes the takeover figure the module records when the « takeover confirmed » turn ends" "1|1|0" \
+  "$(succ4_has 'Your « at takeover confirmed » figure is the `context_tokens` the module records when the turn that sends « takeover confirmed » ends')|$(succ4_has 'read your measure file at the first tool call of your next turn and keep that figure')|$(succ4_has 'immediately before the message')"
 check "step 5 reports the context kept at « takeover confirmed », never a later reading" "1|1" \
-  "$(printf '%s' "$SUCC5" | grep -oF 'your own measured context at « takeover confirmed »' | wc -l | tr -d ' ')|$(printf '%s' "$SUCC5" | grep -oF 'the one you kept in that turn, never a later reading' | wc -l | tr -d ' ')"
+  "$(printf '%s' "$SUCC5" | grep -oF 'your own measured context at « takeover confirmed »' | wc -l | tr -d ' ')|$(printf '%s' "$SUCC5" | grep -oF 'the one step 4 kept, never a later reading' | wc -l | tr -d ' ')"
 # The successor also keeps its first turn's reading: the gap between it and the « takeover
 # confirmed » reading is what the takeover's verification costs.
-check "step 1 runs the gauge in the successor's first tool call and keeps its reading as « first turn »" "1|1|1" \
-  "$(printf '%s' "$SUCC1" | grep -oF 'Your FIRST tool call, ahead of any skill load, runs `{{GAUGE}}`: keep its `context_tokens=` line as your « first turn » figure' | wc -l | tr -d ' ')|$(printf '%s' "$SUCC1" | grep -oF '{{GAUGE}}' | wc -l | tr -d ' ')|$(printf '%s' "$SUCC1" | awk '{ a = index($0, "{{GAUGE}}"); b = index($0, "Read the rulebook"); print (a > 0 && b > 0 && a < b) ? 1 : 0 }')"
+# Live, a successor asked to read its measure file at its first tool call found none: the
+# module writes it only when a turn ends. The « first turn » figure is the one recorded at
+# the end of the first turn, read at the second turn's first tool call.
+check "step 1 says the measure file is written only when a turn ends, and asks no reading before" "1|0|0" \
+  "$(printf '%s' "$SUCC1" | grep -oF 'the module writes it only when a turn of yours ends, so it is not there during your first turn' | wc -l | tr -d ' ')|$(printf '%s' "$SUCC1" | grep -oF 'Your FIRST tool call, ahead of any skill load, reads your own measure file' | wc -l | tr -d ' ')|$(printf '%s' "$SUCC1" | grep -oF 'at this call' | wc -l | tr -d ' ')"
+check "step 1's « first turn » figure is the one recorded at the end of the first turn, read at the next turn's first tool call" "1" \
+  "$(printf '%s' "$SUCC1" | grep -oF 'Your « first turn » figure is the `context_tokens` it records when your first turn ends: read the file at the first tool call of your next turn and keep that figure' | wc -l | tr -d ' ')"
+# A file still missing when it is read — a first turn the host could not measure — gets the
+# four agent briefs' guard: no figure rather than an estimate.
+check "step 1 guards the measure file missing when it is read" "1" \
+  "$(printf '%s' "$SUCC1" | grep -oF 'If it is not there, say so and give no figure: an estimate presented as a measurement is worse than an admitted gap' | wc -l | tr -d ' ')"
 check "step 5 reports both figures, « first turn » and « at takeover confirmed », on one line" "1|1" \
-  "$(printf '%s' "$SUCC5" | grep -oF 'both on one line: « first turn » and « at takeover confirmed »' | wc -l | tr -d ' ')|$(printf '%s' "$SUCC5" | grep -oF 'the line kept in step 1' | wc -l | tr -d ' ')"
+  "$(printf '%s' "$SUCC5" | grep -oF 'both on one line: « first turn » and « at takeover confirmed »' | wc -l | tr -d ' ')|$(printf '%s' "$SUCC5" | grep -oF 'the figure kept in step 1' | wc -l | tr -d ' ')"
 check "the design names both figures and why: their gap is the takeover's verification cost" "yes|yes" \
   "$(spells "$ROOT/docs/design.md" 'its first turn and the turn that sends « takeover confirmed »')|$(spells "$ROOT/docs/design.md" "the gap between them is what the takeover's verification costs")"
 check "the design says why the takeover is measured in the « takeover confirmed » turn" "yes" \
@@ -4857,8 +3995,9 @@ check "the design says what a successor reads at takeover, and why" "yes|yes" \
   "$(spells "$ROOT/docs/design.md" 'the successor reads the rulebook and its brief'"'"'s live state, the rest by section on demand')|$(spells "$ROOT/docs/design.md" 'input and cache tokens of each assistant turn')"
 # The lint: a succession brief past 10,000 characters is a finding naming the count and the limit.
 SUCCFILL="$WORK/succession-filled.md"
+# {{GAUGE}} is gone from the template with the gauge script it named — the module's measure
+# file replaced both — and what this fill proves is the size limit over a full brief.
 sed -E -e 's#\{\{PROJECT\}\}#scratch#g' -e 's#\{\{PREDECESSOR_NAME_PATTERN\}\}#Orch : scratch#g' \
-  -e "s#\{\{GAUGE\}\}#$ROOT/skills/context-gauge/scripts/context-gauge.sh#g" \
   -e 's#\{\{LIVE_[A-Z_]+\}\}#none open#g' -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$SUCC" > "$SUCCFILL"
 check "a succession brief, every placeholder filled, lints clean and stays under 10,000 characters" "0|yes" \
   "$(bash "$LINT" "$SUCCFILL" >/dev/null 2>&1; echo $?)|$([ "$(LC_ALL=C tr -d '\200-\277' < "$SUCCFILL" | wc -c | tr -d ' ')" -le 10000 ] && echo yes || echo no)"
@@ -4873,58 +4012,19 @@ check "the size limit binds a succession brief only" "0" "$(bash "$LINT" "$SUCCO
 check "the README's hooks table names the Stop hook" "yes" "$(spells "$ROOT/README.md" 'hook `Stop`')"
 check "the eval selection says its two stop-gate cases grade the staged spawn line and do not run the hook" "2" \
   "$(grep -E '^\| 5[12] \|' "$ROOT/evals/SELECTION.md" | grep -c 'under staging; it does not run the hook')"
-check "the hook is registered on the Stop event" "1" \
-  "$("$py" -c 'import json,sys; h=json.load(open(sys.argv[1]))["hooks"]["Stop"]; print(sum("hooks/stop-gate.sh" in x["command"] for e in h for x in e["hooks"]))' "$ROOT/hooks/hooks.json" 2>/dev/null)"
-
-echo "-- the sweep, run last and never part of the decision"
-sweepargs() { cat "$SG/sweep-args" 2>/dev/null; }
-sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-printf 'deleted /ws/p/one\nkept /ws/p/two: the tree is dirty\ndeleted /ws/p/three\n' > "$SG/sweep-out"
-check "a passing stop of an orchestrator runs the sweep and still passes silently" "" "$(sg 'I launched the phase.')"
-check "with what is left of the budget, minus a margin, as its deadline" "1" "$(sweepargs | grep -cE '^sweep --deadline 1[4-7]$')"
-check "each deletion is logged, a kept item is not" "2|0" \
-  "$(sglog | grep -c '| Orch : f \[a1b2c3\] | sweep | deleted | /ws/p/')|$(sglog | grep -c 'two')"
-sg 'And again.' >/dev/null
-check "a second stop within ten minutes does not sweep again" "1" "$(sweepargs | grep -c .)"
-touch -t 200001010000 "$SGS/sweep.stamp"
-sg 'And later.' >/dev/null
-check "one past the ten minutes does" "2" "$(sweepargs | grep -c .)"
-
-sg_reset; sg_listing
-# The host reads the decision at the hook's exit: a refusal never waits on a sweep.
-check "a refused stop is refused as before, and runs no sweep" "block|Nothing will wake you|0" \
-  "$(sg 'I am launching the phase 3 agent now.' | reason | cut -c1-27)|$(sweepargs | grep -c .)"
-
-sg_reset; sg_ps '--name Agent : one [b2c3d4]'
-sg 'done' >/dev/null
-check "a session that is not an orchestrator never sweeps" "0" "$(sweepargs | grep -c .)"
-
-sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-echo boom > "$SG/sweep-err"; echo 3 > "$SG/sweep-code"
-check "a sweep that fails never refuses the stop" "" "$(sg 'I launched the phase.')"
-check "and the failure is logged" "1" "$(sglog | grep -c '| sweep | error | exit 3: boom$')"
-
-sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-# The stub sleeps a duration carrying this run's pid, so only its own leftover is counted: a
-# bare `sleep 20` belongs to whichever other run of the suite is at this check.
-own_sleeps() { ps -axo command | grep -c "^sleep 20\\.$$\$"; }
-echo "20.$$" > "$SG/sweep-sleep"
-t0=$SECONDS
-out=$(SG_DEADLINE=6 sg 'I launched the phase.')
-elapsed=$((SECONDS - t0))
-check "a sweep that overruns is stopped inside the budget, the stop passes" "|1|0" \
-  "$out|$([ "$elapsed" -lt 12 ] && echo 1 || echo 0)|$(own_sleeps)"
-check "and the overrun is logged" "1" "$(sglog | grep -c '| sweep | error | did not finish within')"
-# Another run of the suite sleeping 20 seconds at the same moment is not this run's leftover.
-sleep 20 & stray=$!
-check "a stray sleep 20 of another process is not counted" "0" "$(own_sleeps)"
-kill "$stray"; wait "$stray" 2>/dev/null
-
-sg_reset; sg_listing "$BUSY"; sg_chain /dev/ttys901 S-ME
-SG_DEADLINE=3 sg 'I launched the phase.' >/dev/null
-check "no budget left after the checks: no sweep, and no stamp spent" "0|0" \
-  "$(sweepargs | grep -c .)|$([ -e "$SGS/sweep.stamp" ] && echo 1 || echo 0)"
-sg_reset
+check "hooks.json declares the module and nothing else" "1|0|0" \
+  "$("$py" -c 'import json,sys; d=json.load(open(sys.argv[1])); print(str(sum(m=="./register.ts" for m in d.get("modules",[])))+"|"+str(len(d.get("hooks",{})))+"|"+str(sum(k!="description" and k!="modules" for k in d)))' "$ROOT/hooks/hooks.json" 2>/dev/null)"
+# The module's log is appended, never read and rewritten: every session shares it, and a
+# read-then-write lost the lines written in between and wiped the history past the host's
+# 4 MiB read limit. Forty writers at once keep all forty lines; past the cap the log moves
+# to its one `.1` generation and the next line starts a fresh file.
+LOGD="$WORK/module-log"
+for i in $(seq 1 40); do sh "$ROOT/hooks/log-append.sh" "$LOGD/hooks-module.log" "line $i" 1000000 & done; wait
+check "the module's log keeps every line forty sessions append at once" "40|40" \
+  "$(wc -l < "$LOGD/hooks-module.log" | tr -d ' ')|$(sort -u "$LOGD/hooks-module.log" | grep -c '^line [0-9]*$')"
+sh "$ROOT/hooks/log-append.sh" "$LOGD/hooks-module.log" "past the cap" 100
+check "a log past its cap is rotated to one .1 generation, the new line alone in the fresh file" "40|past the cap|no" \
+  "$(grep -c '^line' "$LOGD/hooks-module.log.1")|$(cat "$LOGD/hooks-module.log")|$([ -e "$LOGD/hooks-module.log.lock" ] && echo yes || echo no)"
 
 echo "== the app, stubbed =="
 # A pane behind a maximized sibling is in the tab's all_sessions and not in its sessions.
@@ -5186,6 +4286,33 @@ check "a close that watched an agent leave adds nothing" "" \
 check "and what survived is named, so the operator reads which process held on" "claude" \
   "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-alive.txt" ipy \
      "print('claude' if 'claude' in (ia.wait_gone('/dev/ttys901', 1) or '') else 'unnamed')")"
+# Which row IS the host. Matched on the full HOST_CLI path, a host typed as a bare command
+# was « not running » whenever HOST_CLI was absolute, and a wrapper that `exec`s the binary
+# made every spawn die « never started » after its tab existed. A row is the host when the
+# host registered its pid, or when its program's basename is HOST_CLI's or that of what
+# HOST_CLI resolves to.
+printf '/dev/ttys901 claude --resume x\n' > "$WORK/ps-bare.txt"
+printf '/dev/ttys901 /opt/homebrew/bin/claude --name Agent : x\n' > "$WORK/ps-binary.txt"
+printf '/dev/ttys901 4242 node /opt/lib/cli.js --resume x\n' > "$WORK/ps-node.txt"
+printf '/dev/ttys901 -zsh\n' > "$WORK/ps-shell.txt"
+mkdir -p "$WORK/wrapbin" "$WORK/hostcfg/sessions"
+printf '#!/bin/bash\nexec /opt/homebrew/bin/claude "$@"\n' > "$WORK/wrapbin/claude"
+printf '#!/bin/bash\nexec /opt/homebrew/bin/claude "$@"\n' > "$WORK/wrapbin/run-host.sh"
+chmod +x "$WORK/wrapbin/claude" "$WORK/wrapbin/run-host.sh"
+ln -sf "$WORK/wrapbin/claude" "$WORK/wrapbin/host-link"
+hostp() { ORCHESTRATOR_HOST_CLI="$1" ORCHESTRATOR_PS_TABLE="$2" CLAUDE_CONFIG_DIR="$WORK/hostcfg" \
+  ipy "print('host' if ia.host_cli_on('/dev/ttys901') else 'none')"; }
+check "an absolute HOST_CLI matches a bare host row" "host" "$(hostp /opt/homebrew/bin/claude "$WORK/ps-bare.txt")"
+check "a wrapper path matches the binary's row" "host" "$(hostp "$WORK/wrapbin/claude" "$WORK/ps-binary.txt")"
+check "a link to the wrapper matches through what it resolves to" "host" "$(hostp "$WORK/wrapbin/host-link" "$WORK/ps-binary.txt")"
+check "a wrapper named otherwise does not match on argv alone" "none" "$(hostp "$WORK/wrapbin/run-host.sh" "$WORK/ps-node.txt")"
+printf '{"pid":4242,"sessionId":"s-reg","name":"Agent : x"}\n' > "$WORK/hostcfg/sessions/4242.json"
+check "a pid the host registered is the host, whatever its argv" "host" "$(hostp "$WORK/wrapbin/run-host.sh" "$WORK/ps-node.txt")"
+check "a shell on the tty is not the host" "none" "$(hostp /opt/homebrew/bin/claude "$WORK/ps-shell.txt")"
+check "verify reads a bare host row under an absolute HOST_CLI" "0" \
+  "$(ORCHESTRATOR_HOST_CLI=/opt/homebrew/bin/claude ORCHESTRATOR_PS_TABLE="$WORK/ps-bare.txt" bash "$AGENT" verify --tty /dev/ttys901 >/dev/null 2>&1; echo $?)"
+check "the close note claims no more than the table showed" "1|0" \
+  "$(ipy "print(ia.close_note('/dev/ttys901', None))" | grep -c 'no process matching claude was found on /dev/ttys901')|$(ipy "print(ia.close_note('/dev/ttys901', None))" | grep -c 'was running')"
 
 echo "== iterm-agents: a close takes the stood-down session's checkout with it =="
 # The session's purpose is over once its close is proved on the process table, so the
@@ -5290,132 +4417,10 @@ release
 unset GIT_CONFIG_GLOBAL ORCHESTRATOR_WORKSPACES ORCHESTRATOR_HOST_TMP ORCHESTRATOR_CWD_TABLE
 rm -rf "$WC/hosttmp"/* 2>/dev/null
 
-echo "== tap =="
-
-TAP="$ROOT/skills/context-gauge/scripts/statusline-tap.sh"
-# The payload shape is the one the host actually sends: context_window carries
-# used_percentage, context_window_size and a current_usage breakdown.
-PAYLOAD='{"session_id":"s-1","transcript_path":"/t/s-1.jsonl","context_window":{"used_percentage":36.4,"context_window_size":250000,"current_usage":{"input_tokens":1000,"cache_creation_input_tokens":2000,"cache_read_input_tokens":88000}},"rate_limits":{"five_hour":{"used_percentage":3,"resets_at":1788560000},"seven_day":{"used_percentage":1,"resets_at":1788900000}}}'
-STATE="$WORK/state"
-
-out=$(printf '%s' "$PAYLOAD" | ORCHESTRATOR_STATE_DIR="$STATE" bash "$TAP")
-check "no wrapped command: one-line render, context only" "ctx: 36%" "$out"
-check "file written with every field, no rate-limit field even though the payload carries one" \
-  '{"session_id":"s-1","context_percent":36.4,"context_used":91000,"context_total":250000,"transcript_path":"/t/s-1.jsonl","model_id":null}' \
-  "$(jq -c 'del(.updated_epoch)' "$STATE/ctx/s-1.json")"
-out=$(printf '{"session_id":"s-early","context_window":{"used_percentage":0}}' | ORCHESTRATOR_STATE_DIR="$STATE" bash "$TAP")
-check "early payload without usage or transcript: nulls, no crash" \
-  '{"session_id":"s-early","context_percent":0,"context_used":null,"context_total":null,"transcript_path":null,"model_id":null}' \
-  "$(jq -c 'del(.updated_epoch)' "$STATE/ctx/s-early.json")"
-# The model in use travels with the context figures: a succession hands it to the
-# successor, and the launch line is not it — the operator may have switched since (§27).
-printf '{"session_id":"s-m","model":{"id":"a-model","display_name":"A"},"context_window":{"used_percentage":10}}' | ORCHESTRATOR_STATE_DIR="$STATE" bash "$TAP" >/dev/null
-check "the tap records the model in use" "a-model" "$(jq -r '.model_id' "$STATE/ctx/s-m.json")"
-rm -f "$STATE/ctx/s-m.json"
-age=$(( $(date +%s) - $(jq '.updated_epoch' "$STATE/ctx/s-1.json") ))
-check "updated_epoch is now" "recent" "$([ "$age" -lt 5 ] && echo recent || echo "$age s old")"
-
-cat > "$WORK/echo.sh" <<'EOF'
-#!/bin/bash
-cat
-exit 3
-EOF
-chmod +x "$WORK/echo.sh"
-out=$(printf '%s' "$PAYLOAD" | ORCHESTRATOR_STATE_DIR="$STATE" bash "$TAP" "$WORK/echo.sh")
-code=$?
-check "payload passed byte-for-byte to the wrapped command" "$PAYLOAD" "$out"
-check "wrapped command's exit status returned" "3" "$code"
-
-out=$(printf 'not json' | ORCHESTRATOR_STATE_DIR="$STATE" bash "$TAP" "$WORK/echo.sh")
-check "invalid stdin still reaches the wrapped command" "not json" "$out"
-check "invalid stdin writes no file" "2" "$(ls "$STATE/ctx" | wc -l | tr -d ' ')"
-out=$(printf '' | ORCHESTRATOR_STATE_DIR="$STATE" bash "$TAP")
-check "empty stdin renders a placeholder" "ctx: ~" "$out"
-
-touch -t 202001010000 "$STATE/ctx/old.json"
-# The gate writes a marker beside the context files so it says "unmeasured" once per
-# session rather than on every prompt. Nothing removed them: the sweep took `*.json` only,
-# so the plugin pruned half of what it makes, and the markers outnumbered the files they
-# sat beside — twenty-six of them on the machine this was found on, the oldest four days
-# old. Kill what you start, delete what you build.
-touch -t 202001010000 "$STATE/ctx/old.gate-unmeasured"
-touch "$STATE/ctx/today.gate-unmeasured"
-touch -t 202001010000 "$STATE/ctx/old.model"
-printf '%s' "$PAYLOAD" | sed 's/s-1/s-2/' | ORCHESTRATOR_STATE_DIR="$STATE" bash "$TAP" >/dev/null
-check "stale files pruned on a session's first render" "gone" "$([ -f "$STATE/ctx/old.json" ] && echo kept || echo gone)"
-check "stale gate markers pruned with them" "gone" "$([ -f "$STATE/ctx/old.gate-unmeasured" ] && echo kept || echo gone)"
-check "a marker from today is kept" "kept" "$([ -f "$STATE/ctx/today.gate-unmeasured" ] && echo kept || echo gone)"
-check "stale model markers pruned with them" "gone" "$([ -f "$STATE/ctx/old.model" ] && echo kept || echo gone)"
-
-echo "== gauge =="
-
-GAUGE="$ROOT/skills/context-gauge/scripts/context-gauge.sh"
-GSTATE="$WORK/gstate"
-mkdir -p "$GSTATE/ctx" "$WORK/projects/p1"
-cp "$ROOT/tests/fixtures/transcript.jsonl" "$WORK/projects/p1/g-1.jsonl"
-printf '{"session_id":"g-1","context_percent":36.4,"context_used":91000,"context_total":250000,"transcript_path":null,"updated_epoch":%s}\n' \
-  "$(date +%s)" > "$GSTATE/ctx/g-1.json"
-gauge() { ORCHESTRATOR_STATE_DIR="$GSTATE" ORCHESTRATOR_TRANSCRIPTS_DIR="$WORK/projects" bash "$GAUGE" "$@"; }
-
-# g-2 has no transcript under the projects directory: only the path recorded in
-# its stale tap file can lead to it.
-printf '{"session_id":"g-2","context_percent":36.4,"context_used":91000,"context_total":250000,"transcript_path":"%s","updated_epoch":0}\n' \
-  "$WORK/projects/p1/g-1.jsonl" > "$GSTATE/ctx/g-2.json"
-check "stale tap file: transcript found through its recorded path" "context_percent=36.0
-context_tokens=90000
-context_window=250000
-context_window_source=tap-file
-model=a-model
-model_source=transcript
-source=transcript" "$(gauge g-2)"
-
-# A tap file carrying a rate-limit field (a payload from before this build, or a host
-# that still sends one) is read for context and model alone — no five_hour_percent, no
-# seven_day_percent, in either tier's output.
-printf '{"session_id":"g-3","context_percent":36.4,"context_used":91000,"context_total":250000,"five_hour_percent":3,"seven_day_percent":1,"transcript_path":null,"updated_epoch":%s}\n' \
-  "$(date +%s)" > "$GSTATE/ctx/g-3.json"
-check "a tap file carrying a rate-limit field: no budget line in the output" "0" \
-  "$(gauge g-3 | grep -cE '^(five_hour|seven_day)_percent=')"
-rm -f "$GSTATE/ctx/g-3.json"
-
-# No transcript reachable: the tap's declared model is the reading, said as the tap's.
-printf '{"session_id":"g-4","context_percent":36.4,"context_used":91000,"context_total":250000,"transcript_path":null,"model_id":"t-model","updated_epoch":%s}\n' \
-  "$(date +%s)" > "$GSTATE/ctx/g-4.json"
-check "no transcript: the model comes from the tap, and says so" "model=t-model
-model_source=tap" "$(gauge g-4 | grep '^model')"
-rm -f "$GSTATE/ctx/g-4.json"
-
-check "fresh tap file wins" "context_percent=36.4
-context_tokens=91000
-context_window=250000
-model=a-model
-model_source=transcript
-source=tap" "$(gauge g-1)"
-
-check "stale tap file: transcript with the file's window" "context_percent=36.0
-context_tokens=90000
-context_window=250000
-context_window_source=tap-file
-model=a-model
-model_source=transcript
-source=transcript" "$(gauge g-1 --max-age 0)"
-
-rm "$GSTATE/ctx/g-1.json"
-check "no tap file: --window" "context_percent=45.0
-context_tokens=90000
-context_window=200000
-context_window_source=flag
-model=a-model
-model_source=transcript
-source=transcript" "$(gauge g-1 --window 200000)"
-
-check "session id from the environment, default window" "context_window_source=default" \
-  "$(CLAUDE_CODE_SESSION_ID=g-1 gauge | grep context_window_source)"
-check "assumed window carries a warning line" "1" "$(CLAUDE_CODE_SESSION_ID=g-1 gauge | grep -c '^warning=window assumed')"
-check "known window carries no warning" "0" "$(gauge g-1 --window 200000 | grep -c '^warning=')"
-
-check_status "nothing readable exits 1" 1 gauge nope
-check_status "no session id exits 1" 1 env -u CLAUDE_CODE_SESSION_ID ORCHESTRATOR_STATE_DIR="$GSTATE" bash "$GAUGE"
+# The tap and the gauge script are gone with the cutover, and their cases with them: the
+# tap's writes, the freshness window, the transcript tier and the pruning are the module's
+# now, pinned in hooks/tests/gauge-core.test.ts and gauge-band.test.ts (run by the host's
+# plugin test), and the one file that survives — the measure file — is pinned there too.
 
 echo "== the mode a session came up in (§43) =="
 # Two agents stood on a permission prompt in tabs nobody watched. One carried
@@ -5575,8 +4580,10 @@ unread_msg() { "$py" -c "
 import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
 import iterm_agent as m
 print(m.unread_refusal(sys.argv[1], sys.argv[2]))" "$1" "$2"; }
-check "the unread refusal names the checkout, the timeout, and the remedy" "1|1|1|1" \
-  "$(unread_msg /work/dir 20 | grep -c '^spawn: refused: no transcript for /work/dir')|$(unread_msg /work/dir 20 | grep -c 'parked on a dialog or hung at start')|$(unread_msg /work/dir 20 | grep -c 'the tab was closed')|$(unread_msg /work/dir 20 | grep -c 'ORCHESTRATOR_MODE_TIMEOUT')"
+# Whether the tab was closed is not the refusal's to assert: `refuse_made` says it after the
+# text, from what the close returned.
+check "the unread refusal names the checkout, the timeout, and the remedy, and claims no close" "1|1|0|1" \
+  "$(unread_msg /work/dir 20 | grep -c '^spawn: refused: no transcript for /work/dir')|$(unread_msg /work/dir 20 | grep -c 'parked on a dialog or hung at start')|$(unread_msg /work/dir 20 | grep -c 'closed')|$(unread_msg /work/dir 20 | grep -c 'ORCHESTRATOR_MODE_TIMEOUT')"
 
 # `verify_mode` is the assembled decision the old inline block made: `path` of 'none' fakes
 # a transcript that never appears (or one that never carries a mode, the same branch, per
@@ -5608,6 +4615,118 @@ check "a readable matching mode still passes, and closes nothing" \
   "ok=spawn: mode auto read on the transcript|False" \
   "$(printf '%s' "$out_match" | sed -n '1p')|$(printf '%s' "$out_match" | sed -n '2p' | sed 's/closed=//')"
 
+# The whole spawn after its tab exists, over a fake app: a refusal closes the tab it made,
+# prints its tty on stdout, says whether the close happened, and leaves the chain as it found
+# it — the chain is written only once the session is verified. The « never started » refusal
+# closed nothing and kept the tty to stderr, after a successor had already taken the
+# predecessor's chain.
+cat > "$WORK/spawn_probe.py" <<'PYEOF'
+import asyncio, contextlib, io, json, os, sys
+sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+scenario, workdir = sys.argv[2], sys.argv[3]
+argv = sys.argv[4:]
+class S:
+    def __init__(s, sid, tty): s.session_id = sid; s.tty = tty
+    async def async_get_variable(s, k): return {"tty": s.tty}.get(k)
+    async def async_close(s, force=False):
+        if scenario.endswith("stuck"):
+            raise RuntimeError("the app refused the close")
+        for w in app.windows:
+            w.tabs = [t for t in w.tabs if s not in t.sessions]
+class T:
+    def __init__(s, tid, sess): s.tab_id = tid; s.sessions = [sess]; s.all_sessions = [sess]
+    @property
+    def current_session(s): return s.sessions[0]
+class W:
+    def __init__(s, tabs): s.window_id = "w"; s.tabs = tabs
+    async def async_create_tab(s, command=None, index=None, select=True):
+        t = T("NEW", S("S-NEW", "/dev/ttys902"))
+        s.tabs.insert(len(s.tabs) if index is None else index, t)
+        return t
+class App:
+    def __init__(s, wins): s.windows = wins; s.current_window = wins[0]
+app = App([W([T("1", S("S-OWN", "/dev/ttys801")), T("2", S("S-AG", "/dev/ttys802"))])])
+class Api:
+    async def async_get_app(self, connection): return app
+ia.run = lambda fn: asyncio.run(fn(Api(), None))
+ia.SPAWN_TIMEOUT = 1
+ia.time.sleep = lambda s: None
+ia.find_transcript = lambda d, since: "/x/t.jsonl" if scenario.startswith("transcript") else None
+ia.verify_mode = lambda *a, **k: "spawn: mode auto read on the transcript"
+closed_by_tty = []
+ia.as_spawn = lambda command: (app.windows[0].tabs.append(T("AS", S("S-AS", "/dev/ttys902")))
+                               or "/dev/ttys902")
+ia.as_close = lambda tty, expect: closed_by_tty.append(tty) or "the made one"
+if scenario.startswith("raise"):
+    async def boom(tab, connection=None, tries=10): raise RuntimeError("the tab vanished")
+    ia.tty_of = boom
+out, err = io.StringIO(), io.StringIO()
+code = 0
+try:
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        ia.cmd_spawn(["--dir", workdir, "--prompt", "p"] + argv)
+except SystemExit as e:
+    code = e.code
+def chain(name):
+    try:
+        return [(e["tab_id"], e["owner"]) for e in map(json.loads, open(os.path.join(ia.CHAINS_DIR, name)))]
+    except OSError:
+        return "absent"
+print("exit=%s" % code)
+print("stdout=%s" % out.getvalue().strip().splitlines()[-1:])
+print("tabs=%s" % [t.tab_id for t in app.windows[0].tabs])
+print("own=%s" % chain("ttys801.jsonl"))
+print("new=%s" % chain("ttys902.jsonl"))
+print("outside=%s" % chain("ttys999.jsonl"))
+print("bytty=%s" % closed_by_tty)
+print("ERR:" + " ".join(err.getvalue().split()))
+PYEOF
+PSPAWN="$WORK/ps-spawn"; mkdir -p "$PSPAWN"
+: > "$PSPAWN/none"
+printf '/dev/ttys902 claude --name Agent : x\n' > "$PSPAWN/running"
+sprobe() { local scenario="$1" state="$WORK/spawnstate-$1" ps="$2" tty="$3"; shift 3
+  rm -rf "$state"; mkdir -p "$state/chains"
+  printf '{"tab_id":"2","tty":"/dev/ttys802","owner":"S-OWN"}\n' > "$state/chains/ttys801.jsonl"
+  printf '{"tab_id":"7","tty":"/dev/ttys807","owner":"S-STRANGER"}\n' > "$state/chains/ttys999.jsonl"
+  ORCHESTRATOR_BACKEND="${BACKEND:-api}" ORCHESTRATOR_STATE_DIR="$state" ORCHESTRATOR_SELF_TTY="$tty" \
+    ORCHESTRATOR_PS_TABLE="$PSPAWN/$ps" "$py" "$WORK/spawn_probe.py" "$ROOT/skills/iterm-agents/scripts" \
+    "$scenario" "$WORK" "$@" 2>&1; }
+sfield() { printf '%s\n' "$1" | sed -n "s/^$2[=:]//p"; }
+res=$(sprobe never none /dev/ttys801 --title "Agent : x")
+check "a spawn that never started closes its tab, prints its tty, and leaves the chain untouched" \
+  "1|['/dev/ttys902']|['1', '2']|[('2', 'S-OWN')]|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" stdout)|$(sfield "$res" tabs)|$(sfield "$res" own)|$(sfield "$res" ERR | grep -c 'never started on /dev/ttys902 after 1s; the tab was closed')"
+res=$(sprobe succnever none /dev/ttys801 --successor --title "Orch : heir")
+check "a successor that never started takes no chain and re-points no entry" \
+  "1|['1', '2']|[('2', 'S-OWN')]|absent" \
+  "$(sfield "$res" exit)|$(sfield "$res" tabs)|$(sfield "$res" own)|$(sfield "$res" new)"
+res=$(sprobe neverstuck none /dev/ttys801 --title "Agent : x")
+check "a close that fails is said, with the command that closes the tab" "1|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" ERR | grep -c 'the tab on /dev/ttys902 was NOT closed: close it with close --tty /dev/ttys902')"
+res=$(sprobe agent running /dev/ttys801 --title "Agent : x")
+check "a verified agent is appended to its caller's chain, and its tty printed last" \
+  "0|['/dev/ttys902']|[('2', 'S-OWN'), ('NEW', 'S-OWN')]" \
+  "$(sfield "$res" exit)|$(sfield "$res" stdout)|$(sfield "$res" own)"
+res=$(sprobe succ running /dev/ttys801 --successor --title "Orch : heir")
+check "a verified successor takes the chain" "0|[]|[('2', 'S-NEW')]" \
+  "$(sfield "$res" exit)|$(sfield "$res" own)|$(sfield "$res" new)"
+res=$(sprobe transcript none /dev/ttys801 --title "Agent : x")
+check "a session that wrote its transcript has started, whatever the process table says" \
+  "0|[('2', 'S-OWN'), ('NEW', 'S-OWN')]|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" own)|$(sfield "$res" ERR | grep -c 'but the session wrote /x/t.jsonl since the launch: it started')"
+res=$(sprobe outside running /dev/ttys999 --successor --title "Orch : heir")
+check "a caller the app does not know writes no chain entry, hands none over, and says so" \
+  "0|[('7', 'S-STRANGER')]|absent|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" outside)|$(sfield "$res" new)|$(sfield "$res" ERR | grep -c 'the chain was not updated (the transfer was skipped)')"
+res=$(sprobe raise none /dev/ttys801 --title "Agent : x")
+check "a failure after the tab exists closes it and says what failed" "1|['1', '2']|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" tabs)|$(sfield "$res" ERR | grep -c 'then the terminal failed: the tab vanished; the tab was closed')"
+res=$(BACKEND=applescript sprobe ascript none /dev/ttys801 --title "Agent : x")
+check "the AppleScript rung says it keeps no chain, and a refusal there closes by tty" \
+  "1|['/dev/ttys902']|[('2', 'S-OWN')]|1|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" bytty)|$(sfield "$res" own)|$(sfield "$res" ERR | grep -c 'this rung keeps no chain, so the chain was not updated (the append was skipped)')|$(sfield "$res" ERR | grep -c 'the tab was closed')"
+
 # `screen --lines N` returned the FIRST N lines of the tab, which on a tall terminal are
 # blank: the blocked agent's prompt sat at the bottom and three reads out of four came back
 # empty while the tooling reported success. Trailing blanks go, interior ones stay — a
@@ -5628,16 +4747,55 @@ check "the dry run skips the reading and says so" "1" \
 
 echo "== install =="
 
-H="$WORK/home"
-mkdir -p "$H/.claude"
-TAPDEST="$H/.claude/claude-orchestrator/statusline-tap.sh"
-printf '{"statusLine":{"type":"command","command":"/x/bar.sh","padding":0},"other":1}\n' > "$H/.claude/settings.json"
-env HOME="$H" bash "$ROOT/install.sh" >/dev/null 2>&1
-check "existing command wrapped" "$TAPDEST /x/bar.sh" "$(jq -r '.statusLine.command' "$H/.claude/settings.json")"
-check "other settings untouched" "1" "$(jq '.other' "$H/.claude/settings.json")"
-check "previous statusLine saved" '{"type":"command","command":"/x/bar.sh","padding":0}' \
-  "$(jq -c . "$H/.claude/claude-orchestrator/statusline.previous.json")"
-check "tap copied and executable" "yes" "$([ -x "$TAPDEST" ] && echo yes || echo no)"
+# The installer asks the host for its version before it touches anything, so every run
+# below goes through a stand-in host CLI: the suite must not depend on the host that
+# happens to be on the machine, and two of the runs exist to show a refusal.
+HBIN="$WORK/hostcli"; mkdir -p "$HBIN"
+printf '#!/usr/bin/env bash\necho "2.1.292 (stand-in)"\n' > "$HBIN/claude"; chmod +x "$HBIN/claude"
+OBIN="$WORK/oldcli"; mkdir -p "$OBIN"
+printf '#!/usr/bin/env bash\necho "2.1.100 (stand-in)"\n' > "$OBIN/claude"; chmod +x "$OBIN/claude"
+NBIN="$WORK/nocli"; mkdir -p "$NBIN"
+printf '#!/usr/bin/env bash\necho "a version I will not say"\n' > "$NBIN/claude"; chmod +x "$NBIN/claude"
+# Both scripts resolve CLAUDE_CONFIG_DIR before HOME: an operator's exported one would aim
+# every case below at his real configuration, and the uninstall at its removal. Each run
+# drops it, and the state override with it, so HOME alone decides where they act.
+inst() { env -u CLAUDE_CONFIG_DIR -u ORCHESTRATOR_STATE_DIR HOME="$1" ORCHESTRATOR_HOST_CLI="$HBIN/claude" bash "$ROOT/install.sh" "${@:2}"; }
+uninst() { env -u CLAUDE_CONFIG_DIR -u ORCHESTRATOR_STATE_DIR HOME="$1" bash "$ROOT/uninstall.sh" "${@:2}"; }
+instwith() { env -u CLAUDE_CONFIG_DIR -u ORCHESTRATOR_STATE_DIR HOME="$1" ORCHESTRATOR_HOST_CLI="$2" bash "$ROOT/install.sh"; }
+# The tab tooling's environment is planted, not built: a real build is network work the
+# suite must not wait on. The stand-in python answers the probe the installer makes.
+stub_venv() {
+  mkdir -p "$1/.claude/claude-orchestrator/venv/bin"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$1/.claude/claude-orchestrator/venv/bin/python"
+  chmod +x "$1/.claude/claude-orchestrator/venv/bin/python"
+}
+
+H0="$WORK/home0"; mkdir -p "$H0/.claude"
+check_status "a host below 2.1.287 is refused" 1 \
+  instwith "$H0" "$OBIN/claude"
+check "the refusal names the floor and what needs it" "1" \
+  "$(instwith "$H0" "$OBIN/claude" 2>&1 \
+    | grep -c 'this plugin needs 2.1.287 or later (the hooks module)')"
+check_status "a version that cannot be read is refused, not guessed at" 1 \
+  instwith "$H0" "$NBIN/claude"
+check "the unreadable refusal names where it looked" "1" \
+  "$(instwith "$H0" "$NBIN/claude" 2>&1 | grep -c 'could not be read from')"
+check "a refused install creates nothing" "none" \
+  "$([ -e "$H0/.claude/claude-orchestrator" ] && echo made || echo none)"
+
+# The unwrap, on a settings.json wired the way the tap's own installer wired it:
+# tests/fixtures/tap-settings.json carries @TAP@ where that installer wrote its copy.
+H="$WORK/home"; mkdir -p "$H/.claude"; stub_venv "$H"
+sed "s#@TAP@#$H/.claude/claude-orchestrator/statusline-tap.sh#" \
+  "$ROOT/tests/fixtures/tap-settings.json" > "$H/.claude/settings.json"
+printf '{"type":"command","command":"/x/bar.sh","padding":0}\n' \
+  > "$H/.claude/claude-orchestrator/statusline.previous.json"
+inst "$H" >/dev/null 2>&1
+check "a saved status line is restored whole by the unwrap" \
+  '{"type":"command","command":"/x/bar.sh","padding":0}' "$(jq -c '.statusLine' "$H/.claude/settings.json")"
+check "the rest of settings is untouched by the unwrap" "1" "$(jq '.other' "$H/.claude/settings.json")"
+check "measure directory created" "yes" \
+  "$([ -d "$H/.claude/claude-orchestrator/measure" ] && echo yes || echo no)"
 check "tier map created with three empty bindings" '{"deep":"","standard":"","light":""}' \
   "$(jq -c . "$H/.claude/claude-orchestrator/models.json")"
 # The catalogue sits beside the tier map and is empty on a fresh install: the operator owns
@@ -5648,60 +4806,172 @@ check "server catalogue created empty" '{"servers":{},"default":[]}' \
 printf '{"deep":"a-model","standard":"","light":""}\n' > "$H/.claude/claude-orchestrator/models.json"
 printf '{"servers":{"a":{"command":"a-cmd"}},"default":["a"]}\n' > "$H/.claude/claude-orchestrator/mcp.json"
 catbefore=$(cat "$H/.claude/claude-orchestrator/mcp.json")
-env HOME="$H" bash "$ROOT/install.sh" >/dev/null 2>&1
+inst "$H" >/dev/null 2>&1
 check "an existing tier map is never overwritten" "a-model" \
   "$(jq -r .deep "$H/.claude/claude-orchestrator/models.json")"
 check "an existing catalogue is left byte for byte" "$catbefore" \
   "$(cat "$H/.claude/claude-orchestrator/mcp.json")"
 check "the installer says which of the two it found" "1|1" \
-  "$(env HOME="$H" bash "$ROOT/install.sh" 2>&1 | grep -c "server catalogue already present: $H/.claude/claude-orchestrator/mcp.json$")|$(env HOME="$H" bash "$ROOT/install.sh" 2>&1 | grep -c 'tier map already present')"
+  "$(inst "$H" 2>&1 | grep -c "server catalogue already present: $H/.claude/claude-orchestrator/mcp.json$")|$(inst "$H" 2>&1 | grep -c 'tier map already present')"
 before=$(cat "$H/.claude/settings.json")
-env HOME="$H" bash "$ROOT/install.sh" >/dev/null 2>&1
-check "second run is a no-op" "$before" "$(cat "$H/.claude/settings.json")"
-env HOME="$H" bash "$ROOT/uninstall.sh" >/dev/null 2>&1
-check "uninstall restores the previous object" '{"type":"command","command":"/x/bar.sh","padding":0}' \
-  "$(jq -c '.statusLine' "$H/.claude/settings.json")"
-check "uninstall removes the state directory" "gone" "$([ -d "$H/.claude/claude-orchestrator" ] && echo kept || echo gone)"
+inst "$H" >/dev/null 2>&1
+check "second run leaves settings untouched" "$before" "$(cat "$H/.claude/settings.json")"
+# The module's log rotates to one `.1` file beside a lock; the uninstall takes all three.
+for f in hooks-module.log hooks-module.log.1 hooks-module.log.lock; do
+  printf 'line\n' > "$H/.claude/claude-orchestrator/$f"
+done
+uninst "$H" >/dev/null 2>&1
+check "uninstall removes the state directory, the module's rotated log and lock with it" "gone|absent|absent" \
+  "$([ -d "$H/.claude/claude-orchestrator" ] && echo kept || echo gone)|$([ -e "$H/.claude/claude-orchestrator/hooks-module.log.1" ] && echo present || echo absent)|$([ -e "$H/.claude/claude-orchestrator/hooks-module.log.lock" ] && echo present || echo absent)"
 
-H2="$WORK/home2"
-mkdir -p "$H2/.claude"
-printf '{}\n' > "$H2/.claude/settings.json"
-env HOME="$H2" bash "$ROOT/install.sh" >/dev/null 2>&1
-check "no statusLine: tap alone" "$H2/.claude/claude-orchestrator/statusline-tap.sh" \
+H2="$WORK/home2"; mkdir -p "$H2/.claude"; stub_venv "$H2"
+sed "s#@TAP@#$H2/.claude/claude-orchestrator/statusline-tap.sh#" \
+  "$ROOT/tests/fixtures/tap-settings.json" > "$H2/.claude/settings.json"
+inst "$H2" >/dev/null 2>&1
+check "no saved object: the tap's prefix is stripped" "/x/bar.sh" \
   "$(jq -r '.statusLine.command' "$H2/.claude/settings.json")"
-env HOME="$H2" bash "$ROOT/uninstall.sh" >/dev/null 2>&1
-check "uninstall deletes the key it created" "null" "$(jq '.statusLine' "$H2/.claude/settings.json")"
 
-H3="$WORK/home3"
-mkdir -p "$H3/.claude"
-printf '{"statusLine":{"type":"command","command":"/x/bar.sh"}}\n' > "$H3/.claude/settings.json"
-env HOME="$H3" bash "$ROOT/install.sh" --dry-run >/dev/null 2>&1
-check "dry-run changes nothing" "/x/bar.sh" "$(jq -r '.statusLine.command' "$H3/.claude/settings.json")"
-check "dry-run creates no state directory" "none" "$([ -d "$H3/.claude/claude-orchestrator" ] && echo created || echo none)"
+# The follower is the authority whenever there is one: the saved object dates from the
+# day the tap was wired, and an operator may have changed his line since — or made it
+# portable. Restoring the saved command would undo both and write a machine-absolute
+# path into a settings file other machines share. The saved object only fills the keys
+# the line lacks; the command stays the follower, spelled as it was written.
+H2B="$WORK/home2b"; mkdir -p "$H2B/.claude/claude-orchestrator"; stub_venv "$H2B"
+jq --arg cmd '$HOME/.claude/claude-orchestrator/statusline-tap.sh $HOME/.claude/statusbar/statusline.sh' \
+  '.statusLine.command = $cmd | del(.statusLine.padding)' "$ROOT/tests/fixtures/tap-settings.json" > "$H2B/.claude/settings.json"
+printf '{"type":"command","command":"/Users/elsewhere/.claude/statusbar/statusline.sh","padding":2}\n' \
+  > "$H2B/.claude/claude-orchestrator/statusline.previous.json"
+inst "$H2B" >/dev/null 2>&1
+check "a saved object never overrides the follower: its spelling is kept, the missing keys filled" \
+  '{"type":"command","command":"$HOME/.claude/statusbar/statusline.sh","padding":2}' \
+  "$(jq -c '.statusLine' "$H2B/.claude/settings.json")"
+
+# The uninstall unwraps the same way, through the same code: the follower kept as
+# written beside a saved object, and kept as well when no saved object exists — the
+# status bar behind the tap is the operator's, not the plugin's to drop.
+H2C="$WORK/home2c"; mkdir -p "$H2C/.claude/claude-orchestrator"
+jq --arg cmd '$HOME/.claude/claude-orchestrator/statusline-tap.sh $HOME/.claude/statusbar/statusline.sh' \
+  '.statusLine.command = $cmd' "$ROOT/tests/fixtures/tap-settings.json" > "$H2C/.claude/settings.json"
+printf '{"type":"command","command":"/Users/elsewhere/.claude/statusbar/statusline.sh","padding":0}\n' \
+  > "$H2C/.claude/claude-orchestrator/statusline.previous.json"
+uninst "$H2C" >/dev/null 2>&1
+check "uninstall keeps the follower's spelling beside a saved object" \
+  '$HOME/.claude/statusbar/statusline.sh' "$(jq -r '.statusLine.command' "$H2C/.claude/settings.json")"
+H2D="$WORK/home2d"; mkdir -p "$H2D/.claude/claude-orchestrator"
+sed "s#@TAP@#$H2D/.claude/claude-orchestrator/statusline-tap.sh#" \
+  "$ROOT/tests/fixtures/tap-settings.json" > "$H2D/.claude/settings.json"
+uninst "$H2D" >/dev/null 2>&1
+check "uninstall with no saved object keeps the follower, not an empty settings" "/x/bar.sh|0" \
+  "$(jq -r '.statusLine.command' "$H2D/.claude/settings.json")|$(jq -r '.statusLine.padding' "$H2D/.claude/settings.json")"
+H2E="$WORK/home2e"; mkdir -p "$H2E/.claude/claude-orchestrator"
+jq --arg cmd "$H2E/.claude/claude-orchestrator/statusline-tap.sh" '.statusLine.command = $cmd' \
+  "$ROOT/tests/fixtures/tap-settings.json" > "$H2E/.claude/settings.json"
+printf '{"type":"command","command":"/x/saved.sh"}\n' > "$H2E/.claude/claude-orchestrator/statusline.previous.json"
+uninst "$H2E" >/dev/null 2>&1
+check "uninstall restores the saved object whole when the tap was all the line held" \
+  '{"type":"command","command":"/x/saved.sh"}' "$(jq -c '.statusLine' "$H2E/.claude/settings.json")"
+
+H3="$WORK/home3"; mkdir -p "$H3/.claude"; stub_venv "$H3"
+jq --arg cmd "$H3/.claude/claude-orchestrator/statusline-tap.sh" '.statusLine.command = $cmd' \
+  "$ROOT/tests/fixtures/tap-settings.json" > "$H3/.claude/settings.json"
+inst "$H3" >/dev/null 2>&1
+check "a statusLine that held only the tap is removed" "null" "$(jq '.statusLine' "$H3/.claude/settings.json")"
+
+H4="$WORK/home4"; mkdir -p "$H4/.claude"; stub_venv "$H4"
+jq --arg cmd "/x/other.sh" '.statusLine.command = $cmd' \
+  "$ROOT/tests/fixtures/tap-settings.json" > "$H4/.claude/settings.json"
+inst "$H4" >/dev/null 2>&1
+check "a statusLine carrying no tap is left untouched" "/x/other.sh" \
+  "$(jq -r '.statusLine.command' "$H4/.claude/settings.json")"
+
+# An unparseable settings.json is named on stderr and skipped, never silently read as
+# empty: the operator must know the unwrap never ran, for the tap's wiring may still be
+# in the broken file, and the rest of the install is no hostage to it.
+H4B="$WORK/home4b"; mkdir -p "$H4B/.claude"; stub_venv "$H4B"
+printf '{"statusLine": {"command": "not json' > "$H4B/.claude/settings.json"
+before=$(cat "$H4B/.claude/settings.json")
+check "an unparseable settings.json still installs, says what was skipped, touches nothing" "0|1|1" \
+  "$(inst "$H4B" >/dev/null 2>&1; echo $?)|$(inst "$H4B" 2>&1 >/dev/null | grep -c 'does not parse as JSON')|$([ "$(cat "$H4B/.claude/settings.json")" = "$before" ] && echo 1 || echo 0)"
+# The broken file may still point at the tap's copy: the copy stays while it might be
+# in use, by the install and the uninstall alike, so the status line does not break on
+# top of the settings file.
+mkdir -p "$H4B/.claude/claude-orchestrator"
+printf '#!/bin/sh\n' > "$H4B/.claude/claude-orchestrator/statusline-tap.sh"
+inst "$H4B" >/dev/null 2>&1
+check "an install that could not unwire keeps the tap's copy" "kept" \
+  "$([ -f "$H4B/.claude/claude-orchestrator/statusline-tap.sh" ] && echo kept || echo gone)"
+for f in hooks-module.log.1 hooks-module.log.lock; do printf 'line\n' > "$H4B/.claude/claude-orchestrator/$f"; done
+uninst "$H4B" >/dev/null 2>&1
+check "an uninstall that could not unwire keeps the tap's copy, removes the rest, the log's rotation and lock among it" "kept|gone|gone|gone" \
+  "$([ -f "$H4B/.claude/claude-orchestrator/statusline-tap.sh" ] && echo kept || echo gone)|$([ -e "$H4B/.claude/claude-orchestrator/models.json" ] && echo kept || echo gone)|$([ -e "$H4B/.claude/claude-orchestrator/hooks-module.log.1" ] && echo kept || echo gone)|$([ -e "$H4B/.claude/claude-orchestrator/hooks-module.log.lock" ] && echo kept || echo gone)"
+
+# What the old pipeline left behind: the tap's ctx/ directory, its copy and saved object,
+# the shell gates' logs and heads, and measure files from sessions long ended. A session
+# writes its measure file only when a turn ends, so age alone proves nothing: an idle one
+# waits for days. A file is pruned only past a week AND when no live session owns it —
+# the host's registry names each session's pid; a dead or absent pid frees the file.
+H5="$WORK/home5"; mkdir -p "$H5/.claude"; stub_venv "$H5"
+S5="$H5/.claude/claude-orchestrator"
+mkdir -p "$S5/ctx" "$S5/measure" "$S5/stop-gate" "$H5/.claude/sessions"
+printf 'noise\n' > "$S5/ctx/old.json"
+for f in statusline-tap.sh context-gate.log stop-gate.log stop-gate/s-a.heads stop-gate/s-a.mheads; do
+  printf 'old\n' > "$S5/$f"
+done
+printf '{"type":"command","command":"/x/bar.sh"}\n' > "$S5/statusline.previous.json"
+for sid in s-gone s-dead s-live s-idle s-kept; do
+  printf '{"context_tokens":1,"context_window":200000,"context_percent":0,"model":"a-model","updated_at":"2026-10-10T00:00:00Z"}\n' \
+    > "$S5/measure/$sid.json"
+done
+sleep 0 & deadpid=$!; wait "$deadpid"
+printf '{"pid":%s,"sessionId":"s-live"}\n' "$$" > "$H5/.claude/sessions/$$.json"
+printf '{"pid":%s,"sessionId":"s-dead"}\n' "$deadpid" > "$H5/.claude/sessions/$deadpid.json"
+touch -t 202001010000 "$S5/measure/s-gone.json" "$S5/measure/s-dead.json" "$S5/measure/s-live.json"
+touch -t "$(date -v-3d +%Y%m%d%H%M 2>/dev/null || date -d '3 days ago' +%Y%m%d%H%M)" "$S5/measure/s-idle.json"
+inst "$H5" >/dev/null 2>&1
+check "the tap's ctx/ is purged" "gone" \
+  "$([ -d "$S5/ctx" ] && echo kept || echo gone)"
+present() { [ -e "$1" ] && echo present || echo absent; }
+check "a measure file is pruned only past a week with no live session: gone, dead pid, live pid, idle, fresh" \
+  "absent|absent|present|present|present" \
+  "$(present "$S5/measure/s-gone.json")|$(present "$S5/measure/s-dead.json")|$(present "$S5/measure/s-live.json")|$(present "$S5/measure/s-idle.json")|$(present "$S5/measure/s-kept.json")"
+check "with no tap wired, the old pipeline's files are removed and the module's heads kept" \
+  "absent|absent|absent|absent|absent|present" \
+  "$(present "$S5/statusline-tap.sh")|$(present "$S5/statusline.previous.json")|$(present "$S5/context-gate.log")|$(present "$S5/stop-gate.log")|$(present "$S5/stop-gate/s-a.heads")|$(present "$S5/stop-gate/s-a.mheads")"
+# After an unwrap the same files go: nothing reads them once the line no longer runs the tap.
+H5B="$WORK/home5b"; mkdir -p "$H5B/.claude/claude-orchestrator"; stub_venv "$H5B"
+sed "s#@TAP@#$H5B/.claude/claude-orchestrator/statusline-tap.sh#" \
+  "$ROOT/tests/fixtures/tap-settings.json" > "$H5B/.claude/settings.json"
+printf '#!/bin/sh\n' > "$H5B/.claude/claude-orchestrator/statusline-tap.sh"
+printf '{"type":"command","command":"/x/bar.sh","padding":0}\n' > "$H5B/.claude/claude-orchestrator/statusline.previous.json"
+inst "$H5B" >/dev/null 2>&1
+check "an unwrap that succeeded removes the tap's copy and saved object" "/x/bar.sh|absent|absent" \
+  "$(jq -r '.statusLine.command' "$H5B/.claude/settings.json")|$(present "$H5B/.claude/claude-orchestrator/statusline-tap.sh")|$(present "$H5B/.claude/claude-orchestrator/statusline.previous.json")"
+
+H6="$WORK/home6"; mkdir -p "$H6/.claude"
+sed "s#@TAP@#$H6/.claude/claude-orchestrator/statusline-tap.sh#" \
+  "$ROOT/tests/fixtures/tap-settings.json" > "$H6/.claude/settings.json"
+inst "$H6" --dry-run >/dev/null 2>&1
+check "dry-run changes nothing" "$H6/.claude/claude-orchestrator/statusline-tap.sh /x/bar.sh" \
+  "$(jq -r '.statusLine.command' "$H6/.claude/settings.json")"
+check "dry-run creates no state directory" "none" \
+  "$([ -d "$H6/.claude/claude-orchestrator" ] && echo created || echo none)"
 check "dry-run writes no tier map" "none" \
-  "$([ -f "$H3/.claude/claude-orchestrator/models.json" ] && echo written || echo none)"
+  "$([ -f "$H6/.claude/claude-orchestrator/models.json" ] && echo written || echo none)"
 check "dry-run writes no catalogue, and says it would create one" "none|1" \
-  "$([ -f "$H3/.claude/claude-orchestrator/mcp.json" ] && echo written || echo none)|$(env HOME="$H3" bash "$ROOT/install.sh" --dry-run 2>&1 | grep -c "\[dry-run\] server catalogue created: $H3/.claude/claude-orchestrator/mcp.json$")"
+  "$([ -f "$H6/.claude/claude-orchestrator/mcp.json" ] && echo written || echo none)|$(inst "$H6" --dry-run 2>&1 | grep -c "\[dry-run\] server catalogue created: $H6/.claude/claude-orchestrator/mcp.json$")"
+check "dry-run says what it would strip" "1" \
+  "$(inst "$H6" --dry-run 2>&1 | grep -c '\[dry-run\] statusLine.command → /x/bar.sh')"
 
-# A portable settings file spells the home as `$HOME` or `~`, and the host expands it when
-# it runs the line; the installer compared the stored command to its expanded path and read
-# such a file as unwired (live on the operator's machine, 11 September): a second run would
-# wrap the tap twice, and uninstall would leave it. The fixture is wired by the installer
-# itself, then rewritten the portable way, as the operator's configuration commit did.
-for spelling in '$HOME' '~'; do
-  H4="$WORK/home4"; rm -rf "$H4"; mkdir -p "$H4/.claude"
-  printf '{"statusLine":{"type":"command","command":"/x/bar.sh","padding":0}}\n' > "$H4/.claude/settings.json"
-  env HOME="$H4" bash "$ROOT/install.sh" >/dev/null 2>&1
-  portable="$spelling/.claude/claude-orchestrator/statusline-tap.sh $spelling/.claude/statusbar/statusline.sh"
-  jq --arg cmd "$portable" '.statusLine.command = $cmd' "$H4/.claude/settings.json" > "$H4/settings.tmp" \
-    && mv "$H4/settings.tmp" "$H4/.claude/settings.json"
-  before=$(cat "$H4/.claude/settings.json")
-  out=$(env HOME="$H4" bash "$ROOT/install.sh" 2>&1)
-  check "a command spelled with $spelling is read as already wired" "1" "$(printf '%s' "$out" | grep -c 'already wired')"
-  check "and the settings file keeps its bytes ($spelling)" "$before" "$(cat "$H4/.claude/settings.json")"
-  env HOME="$H4" bash "$ROOT/uninstall.sh" >/dev/null 2>&1
-  check "uninstall restores through the $spelling spelling" '{"type":"command","command":"/x/bar.sh","padding":0}' \
-    "$(jq -c '.statusLine' "$H4/.claude/settings.json")"
+# A portable settings file spells the home as `$HOME`, `${HOME}` or `~`, and the host
+# expands it when the line runs; the unwrap matches the stored spelling verbatim, so
+# the command that followed the tap keeps the spelling it was written with (§33).
+for spelling in '$HOME' '${HOME}' '~'; do
+  H7="$WORK/home7"; rm -rf "$H7"; mkdir -p "$H7/.claude"; stub_venv "$H7"
+  jq --arg cmd "$spelling/.claude/claude-orchestrator/statusline-tap.sh $spelling/.claude/statusbar/statusline.sh" \
+    '.statusLine.command = $cmd' "$ROOT/tests/fixtures/tap-settings.json" > "$H7/.claude/settings.json"
+  inst "$H7" >/dev/null 2>&1
+  check "a tap spelled $spelling is unwired, the follower keeps its spelling" \
+    "$spelling/.claude/statusbar/statusline.sh" "$(jq -r '.statusLine.command' "$H7/.claude/settings.json")"
 done
 
 echo "== iterm-agents: the asyncio stderr filter (§29) =="

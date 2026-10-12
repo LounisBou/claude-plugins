@@ -34,10 +34,13 @@ is its contract, read it before its first use in a session:
 
 **Every answer you give rests on a reading made in that turn**, never on your memory of the
 last one: a checkout changes branch, a suite starts, a pull request merges between two of
-your turns. Your only file is `<state dir>/coordinator/notes.md` (the state directory is the
-script's own): the pull requests each orchestrator holds — what `owners` attributed to it at
-your start, overridden by its confirmation or correction — the flags you sent, and the
-sessions you have announced to. Re-read it after a compaction.
+your turns. Read the live state with `/orchestrator:status` — every live session, its role
+and its context fill, answered on the spot. Your only file is
+`<state dir>/coordinator/notes.md` (the state directory is the script's own): the pull
+requests each orchestrator holds — what `owners` attributed to it at your start, overridden
+by its confirmation or correction — the flags you sent, and the sessions you have announced
+to; it holds only what no command answers. After a compaction, read the live state with
+`/orchestrator:status`, then re-read the notes.
 
 ## At your start
 
@@ -105,8 +108,9 @@ asks for one; then tell him to whom it went.
 
 ## Your context
 
-Measure it with `orchestrator:context-gauge`. At the gate —
-80 % of the window, or 300,000 tokens on a window of 1,000,000 tokens or more —
+The module measures it every turn; read the live state with `/orchestrator:status`, your
+own session's row included. At the gate —
+300,000 tokens (30 %) on a window of 1,000,000 tokens or more, the common case, and 80 % of a smaller window —
 with no relay in flight, succeed yourself without asking and tell the operator after:
 
 1. Copy `${CLAUDE_PLUGIN_ROOT}/templates/coordinator-succession-brief.md` to
@@ -121,4 +125,6 @@ with no relay in flight, succeed yourself without asking and tell the operator a
    and verify it: `iterm-agent.sh list`, `verify --tty`, `ListAgents`.
 3. From then on you only forward, verbatim, what still reaches you — « forwarded from
    <sender>: <message> » — and on its « takeover confirmed » you answer « handed over ». You
-   never close your own tab: the successor does, then registers.
+   never close your own tab: the successor does, then registers. Asked « call
+   mcp__orchestrator__end_session » (the host refused it the close), you call it and end the
+   turn.

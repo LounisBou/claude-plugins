@@ -1,41 +1,4 @@
 {
-  "hooks": {
-    "UserPromptSubmit": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/context-gate.sh\"",
-            "shell": "bash",
-            "async": false
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/push-guard.sh\"",
-            "shell": "bash",
-            "async": false
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PLUGIN_ROOT}/hooks/stop-gate.sh\"",
-            "shell": "bash",
-            "async": false
-          }
-        ]
-      }
-    ]
-  }
+  "description": "The orchestrator hooks module",
+  "modules": ["./register.ts"]
 }

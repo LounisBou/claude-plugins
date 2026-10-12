@@ -5,6 +5,7 @@
 #   dispatch-record.sh round   <record> <id>
 #   dispatch-record.sh review  <record> <id> --head <sha> --norms tool|none
 #   dispatch-record.sh fixed   <record> <id> --head <sha>   (the one correction round, verified)
+#   dispatch-record.sh surface <record> <id> (--ui <owner/repo>#<n> | --minor <reason> | --none)
 #   dispatch-record.sh ready   <record> <id> --head <sha>
 #   dispatch-record.sh close   <record> <id> --verdict <text>
 #   dispatch-record.sh escaped <record> <id>      (a defect got past this row's review)
@@ -36,6 +37,18 @@
 # title-verified close - stay refusals a project's method cannot lift; this is not one of
 # them.
 #
+# `surface` and `ready` carry a third: a pull request that changes what a user sees carries
+# screenshots of it. The rule was in the rulebook, the phase brief and the review brief, and
+# five front-office pull requests were still declared ready without one image - two
+# « skipped, no data on the reference account », three never shot at all. So the row says,
+# once, whether its pull request changes a frontend surface (`--ui`, naming the pull
+# request), makes a change the orchestrator ruled minor (`--minor`, with the reason the
+# operator will read), or changes none (`--none`); `ready` refuses a row that says nothing,
+# and on a `--ui` row reads the pull request's description and refuses it when no image is
+# there. The surface lives beside the review, not in it: a new review round must not erase
+# it. This is a default refusal, unlike the two warnings above; a project with no frontend
+# says `--none` on its rows.
+#
 # A pair row names the model alias and the effort it ran on, and `cost` adds each session's
 # measured cost to it - the corrective rounds of a dispatch are part of what it cost. A
 # session whose model has no price marks the row `cost_incomplete`, and the summary's
@@ -50,9 +63,9 @@
 # Every subcommand also registers the record's absolute path under the host session that ran
 # it, in `<state dir>/records/<CLAUDE_CODE_SESSION_ID>` (one path per line, no duplicate). An
 # order noted « to plan after the round » in prose alone was lost once: nothing read it back.
-# A row opened for it is read back by the stop gate (hooks/stop_gate.py), which refuses
-# `waiting: done` while a registered row is open, and by `summary`, which lists the open
-# rows. Registering never fails a command.
+# A row opened for it is read back by the stop gate (the module's own gate, over the Stop
+# event), which refuses `waiting: done` while a registered row is open, and by `summary`,
+# which lists the open rows. Registering never fails a command.
 
 set -uo pipefail
 
@@ -61,10 +74,12 @@ warn() { echo "WARNING: $*" >&2; }
 command -v jq >/dev/null 2>&1 || die "jq is required"
 
 cmd="${1:-}"; record="${2:-}"
-[ -n "$cmd" ] || die "usage: dispatch-record.sh {open|round|review|fixed|ready|close|escaped|cost|summary} <record> [...] (see header)"
+[ -n "$cmd" ] || die "usage: dispatch-record.sh {open|round|review|fixed|surface|ready|close|escaped|cost|summary} <record> [...] (see header)"
 [ -n "$record" ] || die "$cmd: a record path is required"
 
-# The hook resolves the same directory (hooks/stop_gate.py, STATE_DIR).
+# The stop gate's state root — the one the module's gate (hooks/guards.ts over
+# hooks/stop-gate.ts) resolves too — is shared here: the override first, else the config
+# dir's claude-orchestrator, so the registry the gate reads and this script writes agree.
 STATE_DIR="${ORCHESTRATOR_STATE_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claude-orchestrator}"
 # What a session cost is measured by the routing skill's script, which reads the same state
 # directory from the same environment.
@@ -211,6 +226,29 @@ fixed)
     rewrite 'if .id==$i then .rounds += 1 | .review.fixed={head:$h,at:$a} else . end' "$id" \
         --arg h "$head" --arg a "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     ;;
+surface)
+    # Whether the row's pull request changes what a user sees. Recorded once, read by
+    # `ready`; recording it again replaces it.
+    id="${3:-}"; [ -n "$id" ] || die "surface: a row id is required"
+    require_row surface "$id"
+    shift 3; kind=""; pr=""; reason=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --ui) [ -z "$kind" ] || die "surface: give one of --ui, --minor or --none"; kind=ui; pr="${2:-}"; shift 2 ;;
+            --minor) [ -z "$kind" ] || die "surface: give one of --ui, --minor or --none"; kind=minor; reason="${2:-}"; shift 2 ;;
+            --none) [ -z "$kind" ] || die "surface: give one of --ui, --minor or --none"; kind=none; shift ;;
+            *) die "surface: unknown option $1" ;;
+        esac
+    done
+    [ -n "$kind" ] || die "surface: give one of --ui <owner/repo>#<n>, --minor <reason> or --none"
+    if [ "$kind" = ui ]; then
+        [[ "$pr" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+#[0-9]+$ ]] \
+            || die "surface: --ui takes the pull request as <owner/repo>#<number>, got: ${pr:-nothing}"
+    fi
+    [ "$kind" != minor ] || [ -n "$reason" ] || die "surface: --minor needs the reason the operator will read"
+    rewrite 'if .id==$i then .surface={kind:$k,pr:$p,reason:$r,at:$a} else . end' "$id" \
+        --arg k "$kind" --arg p "$pr" --arg r "$reason" --arg a "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    ;;
 ready)
     # This row's last review read exactly this head (`review` records no review without
     # its norms value), or this head is the correction round that review produced
@@ -222,20 +260,36 @@ ready)
     id="${3:-}"; [ -n "$id" ] || die "ready: a row id is required"
     require_row ready "$id"
     shift 3; head=$(head_option ready "$@") || exit 1
+    # The surface first, before any reading of the heads: a pull request with no screenshot
+    # is not ready whatever was reviewed, and the no-review warning below must not let it by.
+    kind=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].surface.kind // ""' "$record")
+    case "$kind" in
+        "") die "ready: row $id does not say whether its pull request changes a frontend surface: record it with \`surface\` (--ui <owner/repo>#<n>, --minor <reason> or --none)" ;;
+        ui)
+            pr=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].surface.pr' "$record")
+            body=$(gh pr view "${pr##*#}" -R "${pr%#*}" --json body -q .body 2>/dev/null) \
+                || die "ready: could not read the description of $pr: its screenshots are unverified, not ready"
+            # A markdown image or an HTML one, which is what an uploaded attachment becomes.
+            shots=$(printf '%s\n' "$body" | grep -oiE '!\[[^]]*\]\([^)]+\)|<img[[:space:]]' | wc -l | tr -d ' ')
+            [ "$shots" -gt 0 ] || die "ready: $pr changes a frontend surface and its description carries no screenshot: not ready"
+            surface_line="$shots screenshot(s) on $pr" ;;
+        minor) surface_line="frontend change ruled minor: $(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].surface.reason' "$record") - tell the operator this reason with the ready" ;;
+        none) surface_line="no frontend surface" ;;
+    esac
     reviewed=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].review.head // ""' "$record")
     norms=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].review.norms // ""' "$record")
     fixed=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].review.fixed.head // ""' "$record")
     if [ -z "$reviewed" ]; then
         warn "ready: no review recorded on row $id: dispatch a review round and record it with \`review\`"
-        echo "ready: row $id has no review recorded yet; head $head is unverified"
+        echo "ready: row $id has no review recorded yet; head $head is unverified; $surface_line"
         exit 0
     fi
     # In this shell, not in a substitution: `same_commit` dies on a head too short to
     # identify anything, and that refusal must stop the gate, not read as a mismatch.
     if same_commit "$reviewed" "$head"; then
-        echo "ready: row $id reviewed at $head, norms check $norms"
+        echo "ready: row $id reviewed at $head, norms check $norms; $surface_line"
     elif [ -n "$fixed" ] && same_commit "$fixed" "$head"; then
-        echo "ready: row $id reviewed at $reviewed, corrected and verified at $head, norms check $norms"
+        echo "ready: row $id reviewed at $reviewed, corrected and verified at $head, norms check $norms; $surface_line"
     elif [ -n "$fixed" ]; then
         die "ready: last review read $reviewed, its correction $fixed, head is $head: the head in front of you has been neither read nor verified"
     else
@@ -357,5 +411,5 @@ summary)
     # such, never as history.
     jq -sr '.[] | select(.state == "open") | "open=\(.id) label=\(.label)"' "$record"
     ;;
-*) die "unknown subcommand: $cmd (expected open, round, review, fixed, ready, close, escaped, cost or summary)" ;;
+*) die "unknown subcommand: $cmd (expected open, round, review, fixed, surface, ready, close, escaped, cost or summary)" ;;
 esac
