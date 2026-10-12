@@ -163,3 +163,19 @@ The class of each kind of work and its tier: `skills/model-routing/SKILL.md`, «
 - Why: the gaps between pairs are small on short single-file work with a full spec and large
   beyond it, and our corpora are almost all short work: a pair's record there says little about
   a large phase.
+
+### 15. The bench runs every pair on the same tasks
+
+- Since: routing phase 4 (#184, 2026-10-12), from the operator's study of the dispatch trials.
+- Rule: `skills/model-routing/references/calibration.md`, « 4. Run the bench, on the
+  operator's cap ».
+- Choice: every pair of the grid runs the first half of a class's tasks; a pair stops there
+  only when it passed nothing or another pair costs no more, passes every task it passed and
+  beats it on one of the two; the survivors run the rest; a second repetition goes only to
+  the best pair and to the pairs the data cannot yet tell from it; a class left weak or with
+  no equivalent pair brings the pruned pairs back, cheapest first, until one gives an entry.
+- Why: screening on two tasks and confirmation in cost bands confirmed a dearer pair only when
+  every cheaper one had missed, so the best measured pair was often not on every task and no
+  comparison was paired. Adding tasks beats adding repetitions, and a pair another pair
+  dominates cannot win whatever a second repetition says.
+- Superseded: the screening on two tasks and the cost bands.

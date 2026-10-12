@@ -45,12 +45,12 @@ Both are set by `harvest --test-command` and `--test-glob`, or in the manifest.
 [--concurrency 2] [--class <class>]` runs the ready tasks on a grid of pairs: the families
 bound in the tier map (or those `--families` names) times the five efforts, or the pairs
 `--grid` names. It prints one line per trial and a last line `bench: spent=<usd> trials=<n>
-unmeasured=<n>`, where unmeasured counts every planned trial the cap or a dropped pair left
-undone. `--max-usd` is required and
-the operator gives it: the run stops starting trials when the trials and their judges have
-cost that much, finishes those in flight, and prints what is left unmeasured. Nothing else
-stops a run; the subscription gauge is recorded with each trial as a control, never read to
-stop, slow or choose.
+unmeasured=<n> pruned=<n>`, where unmeasured counts every planned trial the cap or a dropped
+pair left undone and pruned the pairs stopped after stage A and never re-admitted (below).
+`--max-usd` is required and the operator gives it: the run stops starting trials when the
+trials and their judges have cost that much, finishes those in flight, and prints what is left
+unmeasured. Nothing else stops a run; the subscription gauge is recorded with each trial as a
+control, never read to stop, slow or choose.
 
 A trial sees the tree at the task's base with no history, so the merged commit is
 unreachable, and its one commit holds every file of the base whatever ignore rules apply; its directory is created under the system's temporary root and removed when the
@@ -97,15 +97,32 @@ matches, because a suite that prints its failures where they happen leaves none 
 tail. A trial whose judge answer does not read carries `judge_raw`, the first 2,000 characters
 of that answer, with `judge_ok`, whether the host reported a successful run.
 
-Each class runs in two stages. **Screening**: every pair once on two tasks. **Confirmation**,
-band after band, cheapest first: a band is the pairs that passed both screening trials, are not
-confirmed yet, and cost within 1.5 times the cheapest of them; each runs on every task of the
-class, `--reps` times (2 by default). After each band, a pair with at least 6 graded trials at
-or above the class's floor is eligible, and the next band is drawn only from the pairs cheaper
-than the cheapest eligible one. Confirmation stops when no such pair is left, or when the cap is
-spent. An easy screen can let a cheap family through that then misses the floor; the dearer
-pairs that passed screening are confirmed next instead of leaving the class with no entry. A run interrupted and
-restarted re-pays no trial already recorded in `trials.jsonl`.
+Each class runs paired, its tasks in manifest order, every pair on the same tasks:
+
+1. **Stage A**: every pair of the grid, once, on the first half of the class's tasks, rounded
+   up (a class of one task runs it).
+2. **Prune**: a pair stops here when it passed no stage-A task, or when another pair costs no
+   more on average (errors paid for, a cost that could not be read left out), passed every
+   stage-A task it passed, and beats it on one of the two: cheaper, or one more task passed. A
+   pair dropped after three errors is neither kept nor pruned.
+3. **Stage B**: every surviving pair, once, on the remaining tasks. A survivor is then covered
+   (section 5), in a class of at least 3 tasks.
+4. **Second repetition**: the selection of section 5 is computed on the class's trials. The
+   best pair, when it is in the grid, and each covered pair of the grid whose `p_equiv` lies
+   between 0.3 and 0.7, run repetitions 2 to `--reps` (2 by default; 1 skips the step) on every
+   task, and the selection is computed again. `p_equiv` is the share of paired draws where the
+   pair is at least the best minus `delta`, the figure `equivalent` thresholds at one half: a
+   pair well inside or well outside that threshold would not move, one near it might.
+5. **Re-admission**: when the class is then weak or has no equivalent pair, the pairs pruned
+   at step 2 re-enter, cheapest first (mean stage-A cost, then name): each runs stage B and,
+   as step 4 would for it, its second repetition if it is the best or between 0.3 and 0.7.
+   It stops at the first entry, or when none is left. A class with no covered pair, because it
+   has fewer than 3 tasks or nothing survived, has nothing a pruned pair could change.
+
+The cap ends a class at the stage it interrupts: the trials that stage left undone are
+counted unmeasured, and no later stage is planned. A run interrupted and restarted re-pays no trial
+already recorded in `trials.jsonl` and takes the same decisions: the trials of a pruned pair
+stay out of the selection until it re-enters.
 
 ## 5. Calibrate the project's table
 
@@ -160,8 +177,9 @@ Each is a number from 0 to 1: any other value is refused, naming the key and the
 The entry keeps its pair, `pass_rate`, `n`, `tasks`, `p_best`, `cost_usd`, `median_usd`,
 `expected_usd`, the `best` pair, the `delta`, `bar` and `strict` it was selected with, the
 identifiers it was measured on, its size and the ladder. Each rung keeps `pair`, `n`, `tasks`,
-`per_task`, `pass_rate`, `p_best` (covered pairs only), `cost_usd`, `median_usd`,
-`median_ci`, `expected_usd`, `off_model`, `covered`, `equivalent` and `eligible`. A rung
+`per_task`, `pass_rate`, `p_best` (covered pairs only), `p_equiv` (covered pairs only),
+`cost_usd`, `median_usd`, `median_ci`, `expected_usd`, `off_model`, `covered`, `equivalent`
+and `eligible`. A rung
 covered and not equivalent is no notch for an exploration; a rung not covered is offered. A
 table written before this selection still reads: its rungs are judged by the floor it carries.
 
@@ -196,8 +214,8 @@ effort, is left out. A record row has no task: in a class measured on bench task
 one more cell of its pair's mean, and covers nothing. This is how an exploration's promotion
 reaches the table.
 
-The bench's confirmation (section 4) still reads its floors from `config.json`'s `{"floor":
-{"default": <rate>, "strict": <rate>}}`, 0.9 and 1.0 by default; the tables do not.
+A `floor` key left in `config.json` is read by nothing: neither the tables nor the bench use a
+floor any more.
 
 ## 6. Generalise to profiles and the global table
 
