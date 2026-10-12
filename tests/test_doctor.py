@@ -306,7 +306,7 @@ def test_orchestrator_check(machine_env, tmp_path):
     assert not check.ok and "orchestrator" in check.detail
 
 
-@pytest.mark.parametrize("version", ["0.49.0", "0.49", "0.50.1", "1.0.0"])
+@pytest.mark.parametrize("version", ["0.49.0", "0.49", "0.50.1", "1.0.0", "0.49.1-2afa38391c2b"])
 def test_orchestrator_at_or_past_the_floor_passes(machine_env, tmp_path, version):
     install_orchestrator(tmp_path / "claude", version)
 
@@ -318,13 +318,13 @@ def test_orchestrator_at_or_past_the_floor_passes(machine_env, tmp_path, version
 def test_orchestrator_below_the_floor_fails_naming_both_versions(machine_env, tmp_path):
     """The measure file 0.2.0 reads exists from orchestrator 0.49 on: an older active install fails every gate."""
     claude = tmp_path / "claude"
-    install_orchestrator(claude, "0.48.0")
+    install_orchestrator(claude, "0.48.0-75b78a0ea1b2")
     # A newer version left in the cache is not the active one: the host's record decides.
     (claude / "plugins" / "cache" / "lounisbou" / "orchestrator" / "0.50.0").mkdir(parents=True)
 
     check = by_name(run_checks(machine_env, PULL_PS))["orchestrator"]
 
-    assert not check.ok and "0.48.0" in check.detail and "0.49" in check.detail
+    assert not check.ok and "0.48.0-75b78a0ea1b2" in check.detail and "0.49" in check.detail
 
 
 @pytest.mark.parametrize("record", ["not json", json.dumps({"plugins": {}}), json.dumps({"plugins": {"orchestrator@lounisbou": [{"version": "x.y"}]}})])

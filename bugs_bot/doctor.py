@@ -223,7 +223,9 @@ ORCHESTRATOR_FLOOR = (0, 49)
 
 
 def _version(text: object) -> tuple[int, ...] | None:
-    parts = str(text).split(".")
+    # A version installed from a tag carries the commit after a dash (`0.49.1-2afa38391c2b`):
+    # the number is what precedes it.
+    parts = str(text).split("-", 1)[0].split(".")
     return tuple(int(p) for p in parts) if all(p.isdigit() for p in parts) else None
 
 
