@@ -246,8 +246,10 @@ check "the force push has its red flag" "1" \
 check "the ungated pull request has its red flag" "1" "$(grep -c "A pull request you merged or took out of draft without his clear and explicit request, unless the project's own method decides the merge or the undraft; « ready » told to the operator before" "$ROOT/skills/orchestrator/SKILL.md")"
 # The rulebook is loaded whole at every start and every takeover: its size is bounded, and what
 # only one step needs lives in the reference that step names.
-check "the orchestrator rulebook stays at 21,000 bytes or fewer" "yes" \
-  "$([ "$(wc -c < "$ROOT/skills/orchestrator/SKILL.md" | tr -d ' ')" -le 21000 ] && echo yes || echo no)"
+# 21,000 until the operator's order routed every question for him through a running coordinator:
+# that rule binds wherever no reference is loaded, so it lives here, and the bound moved with it.
+check "the orchestrator rulebook stays at 21,600 bytes or fewer" "yes" \
+  "$([ "$(wc -c < "$ROOT/skills/orchestrator/SKILL.md" | tr -d ' ')" -le 21600 ] && echo yes || echo no)"
 # Real load on a shared machine is stopped, and « under load » means emulated throttling: the
 # rulebook, the briefs reference and the phase brief template each carry the rule.
 check "the rulebook stops real machine load an agent reports or plans" "yes" \
@@ -2929,8 +2931,16 @@ ITERMCMDS="$ROOT/skills/iterm-agents/references/commands.md"
 ITERMSH="$ROOT/skills/iterm-agents/scripts/iterm-agent.sh"
 check "the launcher's skill and command reference document move --leftmost" "yes|yes" \
   "$(spells "$ITERMSKILL" '--leftmost')|$(spells "$ITERMCMDS" '--leftmost')"
+# One exception, the operator's order: the rulebook and the decision round route a question for
+# him through a running coordinator. They name it in that one paragraph and nowhere else.
 check "no orchestrator, launcher or brief-template text names the coordinator" "" \
-  "$(cd "$ROOT" && grep -rln -i 'coordinat' skills/orchestrator skills/iterm-agents/SKILL.md skills/iterm-agents/references templates/agent-*.md templates/orchestrator-succession-brief.md commands/decide.md commands/succeed.md commands/audit.md)"
+  "$(cd "$ROOT" && grep -rln -i 'coordinat' skills/orchestrator skills/iterm-agents/SKILL.md skills/iterm-agents/references templates/agent-*.md templates/orchestrator-succession-brief.md commands/succeed.md commands/audit.md | grep -v '^skills/orchestrator/SKILL.md$')"
+coord_outside_routing() {
+  awk 'BEGIN { RS = "" } { p = $0; gsub(/(^|\n)allowed-tools:[^\n]*/, "", p) }
+    tolower(p) ~ /coordinat/ && p !~ /^\*\*While a coordinator runs/ { print FILENAME }' "$@"
+}
+check "the rulebook and the decision round name the coordinator only to route a question" "" \
+  "$(cd "$ROOT" && coord_outside_routing skills/orchestrator/SKILL.md commands/decide.md)"
 check "the start command and the successor's brief explain the coordinator's placement" "yes|yes|yes|yes" \
   "$(spells "$ROOT/commands/coordinator.md" '--coordinator-successor --title')|$(spells "$ROOT/commands/coordinator.md" 'refuse a tab whose session is named `Coord :` unless `--force`')|$(spells "$ROOT/templates/coordinator-succession-brief.md" '`--coordinator-successor`, which opens at the FIRST place of the window')|$(spells "$ROOT/templates/coordinator-succession-brief.md" 'refuse a `Coord :`')"
 check "the entry point's header lists both new forms" "yes|yes" \
@@ -2969,6 +2979,19 @@ check "each coordinator command carries its description and its allowed tools" "
 check "a merge is the operator's, relayed and never decided by the coordinator" "yes" \
   "$(spells "$COORDSKILL" 'You never decide it and never offer to')"
 check "the coordinator never closes its own tab" "yes" "$(spells "$COORDSKILL" 'never close your own tab')"
+# The operator's order: one interface for his questions, the coordinator's. While one runs, an
+# orchestrator sends it every question meant for him; the coordinator relays each verbatim and
+# answers none itself. Facts questions stay optional, and with no coordinator he is asked directly.
+check "the coordinator relays every operator question and answers none itself" "yes|yes|yes" \
+  "$(spells "$COORDSKILL" '## Relaying questions to the operator')|$(spells "$COORDSKILL" "**You are the operator's single question")|$(spells "$COORDSKILL" '**You never answer an operator question yourself**')"
+check "the coordinator's announcement routes operator questions through it, facts optional" "yes|yes|no" \
+  "$(spells "$COORDCMD" "I am the operator's single question interface")|$(spells "$COORDCMD" 'Asking me the facts is optional')|$(spells "$COORDCMD" 'you still speak to the operator directly')"
+check "the successor's announcement keeps operator questions coming to it" "yes" \
+  "$(spells "$COORDTPL" 'question meant for the operator still comes to me')"
+check "the orchestrator sends operator questions to a running coordinator, else asks directly" "yes|yes|yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" '**While a coordinator runs, every question for the operator goes to it, never to him**')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'skills/coordinator/scripts/coordinator.sh lookup')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'no coordinator runs, and you ask him directly')"
+check "a decision round goes through a running coordinator" "yes|1" \
+  "$(spells "$ROOT/commands/decide.md" '**While a coordinator runs, the wave goes through it.**')|$(sed -n '1,5p' "$ROOT/commands/decide.md" | grep -c '^allowed-tools: .*coordinator\.sh')"
 COORDSPAWN=$(grep -m1 -o 'iterm-agent.sh spawn --coordinator-successor.*' "$COORDSKILL" 2>/dev/null | sed -e 's/^iterm-agent.sh spawn //' \
   -e 's#<subject>#ops#' -e "s#<your working directory>#$WORK#" -e 's#<brief path>#/tmp/coord-brief.md#')
 coordspawn() { eval "set -- $COORDSPAWN"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" CLAUDE_CONFIG_DIR="$CRDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \

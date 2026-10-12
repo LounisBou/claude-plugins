@@ -1,6 +1,6 @@
 ---
 description: Run a decision round with the user — every open question back to back, one per message, with its context, its choices and their cost, one recommendation; rulings recorded at once, relayed and acted on when the wave ends, and a next wave asked at once if the work raises one
-allowed-tools: Read, Write, Edit, ListAgents, SendMessage, Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/dispatch-record.sh:*), Bash(git:*), Bash(gh:*), Bash(ls:*), Bash(date:*)
+allowed-tools: Read, Write, Edit, ListAgents, SendMessage, Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/dispatch-record.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh:*), Bash(git:*), Bash(gh:*), Bash(ls:*), Bash(date:*)
 ---
 
 Run a DECISION ROUND with the user. Use it when an agent has sent a STOP that is the
@@ -15,6 +15,14 @@ the work; and if a second wave of questions is needed, chain it. The goal is the
 for the fewest interruptions while he is there. So a round is a WAVE: the questions follow one
 another with nothing between them, and nothing is relayed, launched or reported until the wave
 is over.
+
+**While a coordinator runs, the wave goes through it.** Before the first question, run
+`${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh lookup`. A name printed, and
+the round not opened by the user typing this command in this session: every question, in
+the shape of step 2, goes to that coordinator with `SendMessage` instead of to him, one per
+message — it is his single question interface and relays each one verbatim — and the answer
+it sends back, verbatim and dated, is his ruling, recorded as step 4 says. Nothing printed,
+or the user typed the command here: ask him here.
 
 ## 1. Collect first, then announce the count
 

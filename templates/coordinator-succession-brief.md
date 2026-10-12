@@ -50,8 +50,9 @@ once your predecessor is gone.
    `SendMessage` each, this text verbatim, the brackets filled:
 
    > The coordinator of this machine is now `<your exact name and reference>`, since
-   > <date -u +%FT%TZ>, taking over from `{{PREDECESSOR}}`. Nothing else changes: asking me
-   > stays optional and never a gate.
+   > <date -u +%FT%TZ>, taking over from `{{PREDECESSOR}}`. Nothing else changes: every
+   > question meant for the operator still comes to me, and asking me the facts stays
+   > optional and never a gate.
 
 7. **Tell the operator** in one short message: you took over from `{{PREDECESSOR}}`, its tab
    is closed, and the `collision` and `unread` lines its `facts` prints, run now with

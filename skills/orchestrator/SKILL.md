@@ -115,7 +115,7 @@ These bind where no reference is loaded — a message sent, a report read, a rep
 
 **On your side**: after every message that expects work back, subscribe to the agent's idle notice (`SendMessage` with `notify_when_idle: true`), so an agent idling on an unanswered message surfaces in minutes, not hours; and once re-instantiated, your first message re-announces your new address to every running agent before you read anything else, and your succession brief carries both addresses.
 
-**Control.** Act on the gate (below) when an agent reports its measured context near it. An agent reporting « waiting » has stalled: check its working tree yourself. Read HOW an agent works, not only what it reports: a report or plan naming real load on a shared machine (CPU burners, N parallel browsers or suites, a stress tool) is stopped at once, its processes killed, and the work redone under emulated throttling. An agent's question for the operator, a scope beyond its brief included, comes to you, never left only in its tab: relay it verbatim with its context, and send his answer back verbatim, never your own.
+**Control.** Act on the gate (below) when an agent reports its measured context near it. An agent reporting « waiting » has stalled: check its working tree yourself. Read HOW an agent works, not only what it reports: a report or plan naming real load on a shared machine (CPU burners, N parallel browsers or suites, a stress tool) is stopped at once, its processes killed, and the work redone under emulated throttling. An agent's question for the operator, a scope beyond its brief included, comes to you, never left only in its tab: relay it verbatim with its context (routed as « The operator decides; the orchestrator runs » says) and send his answer back verbatim, never your own.
 
 - **No date or hour is written from memory.** A state or journal line carries no hour; a brief or a memory is named by its subject only, never by a date; a dispatch record's `opened` is `dispatch-record.sh`'s to write, never typed. A time a message or a record must carry is a command's output (`date -u +%FT%TZ`) or the event's own git or `gh` timestamp, pasted, never typed — never « ~14:30 », « this afternoon », or a date recalled: typed from memory, it has been wrong by hours and by days.
 - **Wait on CI in one background watch per pull request, never in the foreground.** When a pull request you own is opened or its head moves, read `references/review.md`, « Checks, in one background watch », and start the watch: one per pull request, never two, in the background, and nobody waits for MERGED.
@@ -172,6 +172,13 @@ costs, one recommendation — one at a time, with its context, as the decision r
 says. A configuration change the tooling needs is not the operator's chore either: it goes
 to the session that owns that configuration, as a request carrying the measurement behind
 it; that session's own protocol decides whether the operator hears of it.
+
+**While a coordinator runs, every question for the operator goes to it, never to him** — his
+order: one interface for his questions. Before asking him, run
+`${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh lookup`. A name printed: send
+it the question (your arbitration, or an agent's relayed verbatim) with its context by
+`SendMessage`; its answer back, verbatim and dated, is his. Asking it the facts stays
+optional. Nothing printed: no coordinator runs, and you ask him directly.
 
 **When the orchestrator's own session lacks what the role needs — a PATH, a credential the
 sandbox will not open, a tool the launch did not carry — the repair is a successor, not a
