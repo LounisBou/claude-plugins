@@ -1132,6 +1132,16 @@ check "a dirty tree keeps the checkout and its host temporary directory" "1|1|1"
 bash "$WS" delete "$CD" --discard >/dev/null 2>&1
 check "--discard removes the dirty tree and takes the host directory with it" "0|0" "$(exists "$CD")|$(exists "$HD")"
 
+# A working directory the process table prints without a leading slash once sent the
+# name walk into an endless loop: the delete never returned. A watchdog bounds the run.
+mkdir -p "$WC/bin-relcwd"
+printf '#!/bin/bash\nprintf "p1\\nfcwd\\nnrelative/dir\\np2\\nfcwd\\nn/\\n"\n' > "$WC/bin-relcwd/lsof"
+chmod +x "$WC/bin-relcwd/lsof"
+CR=$(mkclone "$WCSRC" del-r feat/del-r); HR=$(scratch "$CR")
+env PATH="$WC/bin-relcwd:$PATH" perl -e 'alarm shift; exec @ARGV' 20 bash "$WS" delete "$CR" >/dev/null 2>&1; code=$?
+check "a relative working directory in the process table does not hang the delete" "0|0" "$code|$(exists "$CR")"
+rm -rf "$HR"
+
 CE=$(mkclone "$WCSRC" del-e feat/del-e unpushed); HE=$(scratch "$CE")
 bash "$WS" delete "$CE" >/dev/null 2>&1; code=$?
 check "unpushed commits keep the checkout and its host temporary directory" "1|1|1" "$code|$(exists "$CE")|$(exists "$HE")"

@@ -166,13 +166,15 @@ EOF
 # session STARTED in, while its cwd is wherever it works now — that directory or below it —
 # and never the host directory itself: a session started in <root>/p/c1/sub and working in
 # <root>/p/c1/sub/x keeps `…-p-c1-sub`, and `…-p-c1` with it.
+# A name with no slash left to cut (a relative name the process table may print) ends the
+# walk: without the break it spun forever and held every delete and sweep behind it.
 LIVE_NAMES=""
 LIVE_NAMES_READ=0
 read_live_names() {
     [ "$LIVE_NAMES_READ" = 1 ] && return 0
     read_cwds || return 1
     LIVE_NAMES=$(printf '%s\n' "$CWD_LIST" \
-        | awk '{ p = $0; while (p != "" && p != "/") { print p; sub(/\/[^\/]*$/, "", p) } }' \
+        | awk '{ p = $0; while (p != "" && p != "/") { print p; if (!sub(/\/[^\/]*$/, "", p)) break } }' \
         | tr -c 'A-Za-z0-9\n' '-' | sort -u)
     LIVE_NAMES_READ=1
 }
