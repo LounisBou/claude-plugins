@@ -1,6 +1,6 @@
 ---
 description: Run a decision round with the user — every open question back to back, one per message, with its context, its choices and their cost, one recommendation; rulings recorded at once, relayed and acted on when the wave ends, and a next wave asked at once if the work raises one
-allowed-tools: Read, Write, Edit, ListAgents, SendMessage, Bash(git:*), Bash(gh:*), Bash(ls:*), Bash(date:*)
+allowed-tools: Read, Write, Edit, ListAgents, SendMessage, Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/dispatch-record.sh:*), Bash(git:*), Bash(gh:*), Bash(ls:*), Bash(date:*)
 ---
 
 Run a DECISION ROUND with the user. Use it when an agent has sent a STOP that is the
@@ -28,11 +28,13 @@ target, what that target already holds. A state file or a register describes wha
 when it was written, and the user's own merge or close is what most often settles a
 question behind it. Collect wide: add the questions the next steps will need from him in
 any case — a choice the next phase's brief must name, a premise its plan assumes — so that
-he answers them now, while he is there, instead of in an interruption later. Write the list to `decision-round.md` in the session's scratch
+he answers them now, while he is there, instead of in an interruption later. Every goal
+`dispatch-record.sh goals <record> status` lists as `unplanned=` is a question of the wave:
+plan it, or rule it out? Write the list to `decision-round.md` in the session's scratch
 directory — number, title, where it comes from, status — so the round survives a
 compaction. An item found settled is written there as « already done: <evidence> »,
-dropped from the count, and not asked. Announce it in one line: « N questions, back to
-back. » A question that arises mid-round is appended as N + 1, announced in one line, and
+dropped from the count, and not asked. Announce it in one line, the goals line from the same `goals status`:
+« N questions, back to back. Goals: m/n met, open: G3, G4. » A question that arises mid-round is appended as N + 1, announced in one line, and
 taken in order; the count in the header moves with it.
 
 ## 2. Present ONE question, in the user's language, in this exact shape
@@ -46,7 +48,8 @@ a settled item is never asked.
 - **Question i of N — the question as a sentence, naming the thing on the screen or in
   the data**, never a bare identifier.
 - _Context._ Two to six sentences: what the thing is, where the user meets it, what
-  happens today, what the plan or the agent says, and why this is the user's to decide.
+  happens today, what the plan or the agent says, and why this is the user's to decide, and which goal of `goals.md` it serves, and what
+  stays open after it.
   Plain words. An identifier appears only beside the words that explain it — a bare
   « R63 » or « B-312 » in a question is a defect of the question.
 - _The choices._ Two to four, lettered, each carrying its COST and its GAIN in one line,
@@ -75,7 +78,9 @@ question before it is presented.
 2. Write the ruling where it lives: the project's state file or memory, the register
    entry, the plan — the durable place, never only the chat. A ruling that exists only in
    a conversation is a ruling the next session relitigates. Only the user's ruling is written
-   there; a proposal never is. Mark it « to relay » in `decision-round.md`.
+   there; a proposal never is. A ruling that rules out a goal is written with
+   `dispatch-record.sh goals <record> rule-out <G> --ruling "<his words>"`, so the stop gate
+   reads it. Mark it « to relay » in `decision-round.md`.
 3. Present the next question IN FULL (step 2), in this same message, right under the
    « Recorded » line. Nothing else: no relay to an agent, no launch, no status — they all
    wait for the end of the wave (step 7), where they cost him nothing.

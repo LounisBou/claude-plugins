@@ -172,12 +172,15 @@ export function parseDispatchRow(line: string): DispatchRow | null {
 // as work, never as history — then the tally the record's own summary shapes
 // (dispatches, closed, rounds to the one decimal). An empty label keeps its
 // row and is named for what it is; no group at all is said as that.
-export function progressLines(groups: readonly DispatchRow[][]): string[] {
+//
+// The goals lines lead: one `goals met=m/n … open=…` per record that has a goals.md, the
+// distance to the spec one command away at any moment.
+export function progressLines(groups: readonly DispatchRow[][], goals: readonly string[] = []): string[] {
   const rows = groups.flat()
-  if (rows.length === 0) return ['no dispatch record registered']
-  const lines = rows
+  if (rows.length === 0) return goals.length > 0 ? [...goals, 'no dispatch yet'] : ['no dispatch record registered']
+  const lines = [...goals, ...rows
     .filter(row => row.state === 'open')
-    .map(row => `open=${row.id} label=${row.label === '' ? 'no label' : row.label}`)
+    .map(row => `open=${row.id} label=${row.label === '' ? 'no label' : row.label}`)]
   const closed = rows.filter(row => row.state === 'closed').length
   const avg = Math.round((rows.reduce((sum, row) => sum + row.rounds, 0) / rows.length) * 10) / 10
   lines.push(`dispatches=${rows.length} closed=${closed} rounds_avg=${avg}`)
@@ -201,13 +204,38 @@ async function progressText($: any): Promise<string> {
     return 'the dispatch record did not answer in time'
   }
   const groups: DispatchRow[][] = []
+  const goals: string[] = []
+  const seen = new Set<string>()
   for (const path of String(listed).split('\n')) {
     if (path === '') continue
+    const goalsFile = `${path.split('/').slice(0, -1).join('/')}/goals.md`
+    if (!seen.has(goalsFile)) {
+      seen.add(goalsFile)
+      const line = await goalsLine($, goalsFile, bound)
+      if (line) goals.push(line)
+    }
     const read = await withDeadline($.fs.read(path).catch(() => ''), bound)
     if (isDegradedPass(read)) continue
     groups.push(String(read).split('\n').map(parseDispatchRow).filter((row): row is DispatchRow => row !== null))
   }
-  return progressLines(groups).join('\n')
+  return progressLines(groups, goals).join('\n')
+}
+
+// The goals line of one goals.md, goals.py's own (`goals met=m/n ruled_out=k open=… unplanned=…`),
+// or null when there is no file, or its reading failed or ran out of time.
+async function goalsLine($: any, goalsFile: string, bound: number): Promise<string | null> {
+  const exists = await withDeadline(Promise.resolve($.fs.exists(goalsFile)).catch(() => false), bound)
+  if (exists !== true) return null
+  const done = await withDeadline(
+    $.process.run(['python3', `${$.plugin.root}/skills/orchestrator/scripts/goals.py`, 'line', goalsFile], { timeoutMs: bound }),
+    bound,
+  ).catch(() => null)
+  if (!done || isDegradedPass(done) || done.exitCode !== 0) {
+    await logLine($, `the goals of ${goalsFile} could not be read`)
+    return null
+  }
+  const line = String(done.stdout ?? '').trim()
+  return line.startsWith('goals ') ? line : null
 }
 
 export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {

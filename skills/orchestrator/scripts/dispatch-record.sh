@@ -11,6 +11,9 @@
 #   dispatch-record.sh escaped <record> <id>      (a defect got past this row's review)
 #   dispatch-record.sh cost    <record> <id> --session <session id>   (adds that session's measured cost)
 #   dispatch-record.sh summary <record> [--open]
+#   dispatch-record.sh goals   <record> init --spec <path>|none [--aim "<text>"] [--goal "<text>"]... [--replace]
+#   dispatch-record.sh goals   <record> status | plan <G> --phase "<text>" | met <G> --evidence "<token>"...
+#   dispatch-record.sh goals   <record> rule-out <G> --ruling "<his words>" | reopen <G> | check [--json]
 #
 # `open` prints the row id. `summary --open` prints only the open rows, for a takeover that
 # has no use for the statistics. The record is JSON lines: appendable, greppable, and read back
@@ -66,6 +69,15 @@
 # A row opened for it is read back by the stop gate (the module's own gate, over the Stop
 # event), which refuses `waiting: done` while a registered row is open, and by `summary`,
 # which lists the open rows. Registering never fails a command.
+#
+# `goals` keeps the spec's goals of the build in `goals.md`, beside the record (the grammar
+# and the reasons are `goals.py`'s header). A build was once declared done against its plan
+# while its plan had moved three of the spec's five goals « after the build », and no row was
+# ever opened for them. So `open` refuses while no `goals.md` sits beside the record (a build
+# with no spec says `goals <record> init --spec none`), warns on every open goal no phase
+# carries, and the stop gate refuses `waiting: done` while a goal is open, lacks evidence, or
+# was ruled out without the operator's words. `goals` registers the record even before its
+# first row, so the gate finds the goals from the first command.
 
 set -uo pipefail
 
@@ -74,7 +86,7 @@ warn() { echo "WARNING: $*" >&2; }
 command -v jq >/dev/null 2>&1 || die "jq is required"
 
 cmd="${1:-}"; record="${2:-}"
-[ -n "$cmd" ] || die "usage: dispatch-record.sh {open|round|review|fixed|surface|ready|close|escaped|cost|summary} <record> [...] (see header)"
+[ -n "$cmd" ] || die "usage: dispatch-record.sh {open|round|review|fixed|surface|ready|close|escaped|cost|summary|goals} <record> [...] (see header)"
 [ -n "$record" ] || die "$cmd: a record path is required"
 
 # The stop gate's state root — the one the module's gate (hooks/guards.ts over
@@ -85,11 +97,16 @@ STATE_DIR="${ORCHESTRATOR_STATE_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claude-
 # directory from the same environment.
 ROUTING="$(cd "$(dirname "$0")/../../model-routing/scripts" && pwd)/routing.py"
 EFFORTS="low medium high xhigh max"
+GOALS_PY="$(cd "$(dirname "$0")" && pwd)/goals.py"
+GOALS_FILE="$(dirname "$record")/goals.md"
+# `goals` registers a record that has no row yet: its goals are written before the first open.
+REGISTER_ABSENT=0
 
 # Run on exit, so a record `open` has just created is registered with its directory in place.
 # Its status is the command's own: nothing here may change it.
 register_record() {
-    [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] && [ -f "$record" ] || return 0
+    [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] || return 0
+    [ -f "$record" ] || { [ "$REGISTER_ABSENT" = 1 ] && [ -d "$(dirname "$record")" ]; } || return 0
     local dir abs list
     dir=$(cd "$(dirname "$record")" 2>/dev/null && pwd -P) || return 0
     abs="$dir/$(basename "$record")"
@@ -167,6 +184,16 @@ open)
     [ -z "$effort" ] || case " $EFFORTS " in *" $effort "*) ;; *) die "open: unknown effort: $effort (expected low, medium, high, xhigh or max)" ;; esac
     [ -z "$effort" ] || [ -n "$model" ] || die "open: --effort needs --model"
     [ "$explore" = false ] || [ -n "$model" ] || die "open: --explore needs --model"
+    # The spec's goals are written before the first dispatch, or done is measured against
+    # the plan alone.
+    [ -f "$GOALS_FILE" ] || die "open: no goals.md beside $record: write the spec's goals first, dispatch-record.sh goals $record init --spec <path>|none"
+    unplanned=0
+    while IFS= read -r g; do
+        [ -n "$g" ] || continue
+        warn "$g is in no phase and not ruled out: plan it or put it to the operator"
+        unplanned=1
+    done < <(python3 "$GOALS_PY" unplanned "$GOALS_FILE" 2>/dev/null)
+    [ "$unplanned" = 0 ] || warn "$(python3 "$GOALS_PY" line "$GOALS_FILE" 2>/dev/null)"
     id=$(next_id)
     mkdir -p "$(dirname "$record")"
     jq -nc --argjson id "$id" --arg c "$class" --arg t "$tier" --arg l "$label" \
@@ -411,5 +438,14 @@ summary)
     # such, never as history.
     jq -sr '.[] | select(.state == "open") | "open=\(.id) label=\(.label)"' "$record"
     ;;
-*) die "unknown subcommand: $cmd (expected open, round, review, fixed, surface, ready, close, escaped, cost or summary)" ;;
+goals)
+    sub="${3:-}"; [ -n "$sub" ] || die "goals: a subcommand is required (init, status, plan, met, rule-out, reopen or check)"
+    case "$sub" in init|status|plan|met|rule-out|reopen|check) ;; *) die "goals: unknown subcommand: $sub (expected init, status, plan, met, rule-out, reopen or check)" ;; esac
+    shift 3
+    REGISTER_ABSENT=1
+    [ "$sub" != init ] || mkdir -p "$(dirname "$record")"
+    python3 "$GOALS_PY" "$sub" "$GOALS_FILE" "$@"
+    exit $?
+    ;;
+*) die "unknown subcommand: $cmd (expected open, round, review, fixed, surface, ready, close, escaped, cost, summary or goals)" ;;
 esac

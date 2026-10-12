@@ -101,7 +101,7 @@ recommendation, never a refusal and never a chore handed back.
 
 plan → brief → launch → verify → review → terminate → replace. The rules of each step live in a reference, and each step names the one to read **at the moment of the action** — not before, and not from memory of an earlier read.
 
-1. **Plan.** **Before planning phases or dispatching one, read `references/briefs.md`, « Prerequisites and phase rules »**: contracts exact, one kind of change per phase, a checkout per phase.
+1. **Plan.** **Before planning phases or dispatching one, read `references/briefs.md`, « Prerequisites and phase rules »**: the spec's goals in `goals.md`, contracts exact, one kind of change per phase, a checkout per phase.
 2. **Brief.** **Before writing a brief, read `references/briefs.md`** — the prompt recipe, the standing rules every prompt carries, the lint before the spawn, the tier the dispatch names.
 3. **Launch.** **Before spawning, dispatching a phase to a running agent, standing down, closing, rotating or handing over, read `references/lifecycle.md`.** You spawn the agent yourself, in the same move as its brief.
 4. **Verify.** The spawn on the artifact, then the host's idle notice; the context an agent reports against the gate below — all of it under step 3's instruction to read `references/lifecycle.md`.
@@ -119,13 +119,13 @@ These bind where no reference is loaded — a message sent, a report read, a rep
 
 - **No date or hour is written from memory.** A state or journal line carries no hour; a brief or a memory is named by its subject only, never by a date; a dispatch record's `opened` is `dispatch-record.sh`'s to write, never typed. A time a message or a record must carry is a command's output (`date -u +%FT%TZ`) or the event's own git or `gh` timestamp, pasted, never typed — never « ~14:30 », « this afternoon », or a date recalled: typed from memory, it has been wrong by hours and by days.
 - **Wait on CI in one background watch per pull request, never in the foreground.** When a pull request you own is opened or its head moves, read `references/review.md`, « Checks, in one background watch », and start the watch: one per pull request, never two, in the background, and nobody waits for MERGED.
-- **Stay compaction-ready at all times**: everything durable lives OUTSIDE your context — spec, plan, briefs, runbooks as files; build status and decisions in the project memory; verdicts in messages already sent. A session where a compaction would lose something has already broken the "status lives once" rule. A standing property, not a pre-compaction chore.
+- **Stay compaction-ready at all times**: everything durable lives OUTSIDE your context — spec, plan, briefs, runbooks as files; build status and decisions in the project memory; verdicts in messages already sent. A session where a compaction would lose something has already broken the "status lives once" rule.
 - **Refresh the state from the artifacts, never from your own file**: at every quiet boundary and before every report to the operator, re-read the artifacts — pull requests merged or closed by someone else (`gh pr list --state all`), branch heads moved, sessions gone (`ListAgents`) — and correct the state file wherever they disagree. The file holds what you last saw, not what is; the operator's hand between two of your turns is the commonest difference. **A pull request found merged or closed stops the work in flight on it at once**: no review round on a merged head, no corrective brief on a closed one, its agents stood down, their tabs closed like any finished delivery. A round on a head the operator already merged is paid in full and reads nothing.
 - **Directives follow decisions**: when a ruling arrives or a defect is about to be repaired, read `references/briefs.md`, « When a decision changes, the directives change in the same move », first.
 - **Measure, never estimate, your own context**: the module measures every turn; read `/orchestrator:status` — your row and every agent's — before dispatching any phase.
 - **Kill what you start, delete what you build, prove it with `ps` and `ls`** — you and every agent you brief.
 - A suite you run waits in the call that ran it; nothing is left running when the turn ends, except the CI watch above, which wakes you.
-- **Before ending a turn, launch everything that can advance; stop only when nothing can advance without the operator's answer.** With no agent of yours busy, the turn ends on its machine line, written as plain text, as the message's last line, no markup (waiting: operator — blocks: <what it blocks>, or waiting: done), or the stop gate hook refuses the stop.
+- **Before ending a turn, launch everything that can advance; stop only when nothing can advance without the operator's answer.** With no agent of yours busy, the turn ends on its machine line, written as plain text, as the message's last line, no markup (waiting: operator — blocks: <what it blocks>, or waiting: done: every goal in `goals.md` met or ruled out by him), or the stop gate hook refuses the stop.
 - **A decision deferred — after the round, in the next version, to plan — opens its dispatch-record row at once, with its label, closed when the work is done or ruled out.**
 
 - **Nothing outward-facing is published without the operator's approval, and a fix needs no words.** Any text under the operator's name in front of a colleague: the orchestrator may draft it, never authorise it; the operator approves each text, nobody else. The rest of the rule is in `references/review.md`, « Review rounds run in disposable sessions »: read it before drafting a reply.
@@ -136,7 +136,7 @@ When you hand over to a successor: Until the takeover confirmation arrives, the 
 
 They hold at every step of the loop, whatever a reference adds.
 
-**The gate is 300,000 tokens (30 %) on a window of 1,000,000 tokens or more, the common case, and 80 % of a smaller window.** It holds every session alike, rotation and succession, and the module enforces it, a fact not an instruction (« Where the rest lives »); every other statement points here. A session launched with `--gate-tokens` has its own.
+**The gate is 300,000 tokens (30 %) on a window of 1,000,000 tokens or more, the common case, and 80 % of a smaller window.** It holds every session alike, rotation and succession, and the module enforces it (« Where the rest lives »); every other statement points here. A session launched with `--gate-tokens` has its own.
 
 The fill is the module's measurement, never an estimate — `/orchestrator:status` answers it. Two gates on it:
 

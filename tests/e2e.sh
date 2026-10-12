@@ -91,6 +91,7 @@ check "the brief passes its own lint" "0" "$code"
 
 echo "== the dispatch, recorded =="
 REC="$SANDBOX/dispatch.jsonl"
+bash "$RECORD" goals "$REC" init --spec none >/dev/null
 id=$(bash "$RECORD" open "$REC" --class probe --tier "$tier" --label "e2e")
 check "the dispatch is recorded before it happens" "1" "$id"
 

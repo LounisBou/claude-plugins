@@ -81,11 +81,23 @@ const NOT_DONE_ONE = 'Not done: %s is still there. Finish it, or say what blocks
 const NOT_DONE_MANY = 'Not done: %s are still there. Finish them, or say what blocks them.'
 const ROW_ONE = 'Not done: row %s is open. Dispatch it, close it, or say what blocks it.'
 const ROW_MANY = 'Not done: rows %s are open. Dispatch them, close them, or say what blocks them.'
+// The spec's goals (goals.md beside a registered record, read by goals.py check): done is
+// measured against what the spec set out to reach, not against the plan alone.
+const GOALS_OPEN = 'Not done against the spec: %s open. Dispatch the work that meets it and record its evidence '
+  + '(dispatch-record.sh goals <record> met <G> --evidence …), or put it to the operator: '
+  + 'waiting: operator — blocks: <G>: <what he must rule>.'
+const GOALS_FAULT = 'goals.md is not a record of the spec: %s.'
+// The presentation pass: the first done over a goals file's content shows the operator the
+// table, because whether a piece of evidence that exists is enough is his to judge.
+export const GOALS_SHOW = 'Show the operator this table, each goal with its evidence, then end on waiting: done again.'
 
-function notDoneReasons(left: readonly string[], deferred: readonly string[]): string[] {
+function notDoneReasons(left: readonly string[], deferred: readonly string[],
+  goals: { open: readonly string[]; faults: readonly string[] } = { open: [], faults: [] }): string[] {
   const reasons: string[] = []
   if (left.length > 0) reasons.push((left.length === 1 ? NOT_DONE_ONE : NOT_DONE_MANY).replace('%s', left.join(', ')))
   if (deferred.length > 0) reasons.push((deferred.length === 1 ? ROW_ONE : ROW_MANY).replace('%s', deferred.join(', ')))
+  if (goals.open.length > 0) reasons.push(GOALS_OPEN.replace('%s', goals.open.join(', ')))
+  if (goals.faults.length > 0) reasons.push(GOALS_FAULT.replace('%s', goals.faults.join('; ')))
   return reasons
 }
 
@@ -383,14 +395,80 @@ export function isSuccessorSpawn(command: string): boolean {
 // check_wake()'s done branch, over the facts the handler read: what is left of the
 // project and the rows still open. Nothing left and nothing open: the message's word
 // is taken and the stop passes.
+//
+// The spec's goals come third: the goals each goals.md beside a registered record still
+// holds open, and the faults that make the file no record of the spec (a goal met with no
+// evidence on disk, one ruled out without the operator's words, a row count or a text that
+// is not the spec's). goals.py check reads them, the one implementation of the grammar.
 export function checkWakeDone(left: {
   agents: readonly OwnAgent[]
   checkouts: readonly string[]
   deferred: readonly string[]
+  goalsOpen?: readonly string[]
+  goalsFaults?: readonly string[]
 }): Held | null {
   const stillThere = [...left.checkouts, ...left.agents.map(a => a.label)]
-  if (stillThere.length === 0 && left.deferred.length === 0) return null
-  return { case: 'not-done', reason: notDoneReasons(stillThere, left.deferred).join(' ') }
+  const goals = { open: left.goalsOpen ?? [], faults: left.goalsFaults ?? [] }
+  if (stillThere.length === 0 && left.deferred.length === 0 && goals.open.length === 0 && goals.faults.length === 0) return null
+  return { case: 'not-done', reason: notDoneReasons(stillThere, left.deferred, goals).join(' ') }
+}
+
+// One goals.md as the gate reads it: the path, and goals.py check --json's answer.
+export type GoalsReading = {
+  path: string
+  ok: boolean
+  open: readonly string[]
+  faults: readonly string[]
+  notes: readonly string[]
+  rows: number
+  table: string
+}
+
+// goals.py check --json's answer, or null when the text is none: a reading the gate cannot
+// parse is a read that failed, and lets the stop pass.
+export function parseGoalsCheck(path: string, text: string): GoalsReading | null {
+  try {
+    const a = JSON.parse(text)
+    if (!a || typeof a !== 'object' || typeof a.ok !== 'boolean' || !Array.isArray(a.open) || !Array.isArray(a.faults)) return null
+    const strings = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : [])
+    return {
+      path, ok: a.ok, open: strings(a.open), faults: strings(a.faults), notes: strings(a.notes),
+      rows: typeof a.rows === 'number' ? a.rows : 0, table: typeof a.table === 'string' ? a.table : '',
+    }
+  } catch {
+    return null
+  }
+}
+
+// The goals.md of each registered record: the file beside it, once per directory.
+export function goalsPaths(records: readonly string[]): string[] {
+  const seen = new Set<string>()
+  for (const record of records) {
+    const path = record.trim()
+    if (path) seen.add(`${dirname(path)}/goals.md`)
+  }
+  return [...seen]
+}
+
+// The presentation pass's memory: one hash per goals.md content it showed, kept per session.
+export function goalsShownPath(stateDir: string, sessionId: string): string {
+  const safe = sessionId.replace(/[^A-Za-z0-9._-]/g, '_')
+  return `${stateDir}/stop-gate/${safe}.goals`
+}
+
+// The tell of the goals the operator was shown: every reading's table, hashed together.
+export function goalsTell(readings: readonly GoalsReading[]): string {
+  return logTell(readings.map(r => `${r.path}\n${r.table}`).join('\n').replace(/\n/g, ' '))
+}
+
+// The presentation refusal: the tables of every goals file with at least one goal, when
+// their content was not shown yet. Null when there is nothing to show or it was shown.
+export function presentGoals(readings: readonly GoalsReading[], shown: string): { tell: string; reason: string } | null {
+  const withRows = readings.filter(r => r.rows > 0)
+  if (withRows.length === 0) return null
+  const tell = goalsTell(withRows)
+  if (shown.split('\n').map(l => l.trim()).includes(tell)) return null
+  return { tell, reason: [GOALS_SHOW, ...withRows.map(r => `${r.path}\n${r.table}`)].join('\n\n') }
 }
 
 // --- the heads record (stop_gate.py:397-435) ----------------------------------------------

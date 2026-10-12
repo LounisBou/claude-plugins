@@ -377,6 +377,8 @@ echo "== dispatch record =="
 # and a summary that names the classes where the drop did not pay.
 REC="$ROOT/skills/orchestrator/scripts/dispatch-record.sh"
 R="$WORK/dispatch.jsonl"
+# A build with no spec still writes its goals file, empty: `open` refuses without one.
+bash "$REC" goals "$R" init --spec none >/dev/null
 
 id1=$(bash "$REC" open "$R" --class behaviour-phase --tier standard --label "phase 1")
 check "open prints the row id" "1" "$id1"
@@ -432,10 +434,17 @@ check "summary --open of an absent record says so, as summary does" "dispatch-re
   "$(bash "$REC" summary "$WORK/absent.jsonl" --open)"
 check "the succession brief's step 2 runs summary --open" "1" \
   "$(grep -c 'dispatch-record.sh summary {{DISPATCH_RECORD}} --open' "$ROOT/templates/orchestrator-succession-brief.md")"
+check "the succession brief reads the goals by command and points at them" "yes|yes|yes" \
+  "$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'dispatch-record.sh goals {{DISPATCH_RECORD}} status')|$(spells "$ROOT/templates/orchestrator-succession-brief.md" '{{GOALS}}')|$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'goals met=m/n')"
+# Done is the spec's goals, said where each session reads it: the rulebook's machine line, the
+# prerequisites, the decision round's announcement, and the routing skill's map rule.
+check "the rulebook, the prerequisites, decide and the routing skill carry the goals and the map rule" "yes|yes|yes|yes|yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'or waiting: done: every goal in `goals.md` met or ruled out by him)')|$(spells "$ORCH_REFS/briefs.md" 'and a `goals.md` beside the dispatch record, every goal of the spec in a phase or ruled out by the operator')|$(spells "$ROOT/commands/decide.md" '« N questions, back to back. Goals: m/n met, open: G3, G4. »')|$(spells "$ROOT/skills/model-routing/SKILL.md" "A pair \`pick\` returns for one class or one project goes in the brief, the record and \`calibrate\`'s project table, never in \`models.json\`")|$(spells "$ORCH_REFS/briefs.md" 'A plan section that moves goal work after the build is a goal without a phase: put it to him.')"
 
 # Every subcommand registers its record under the session, by absolute path, once. The
 # state directory is the hook's: the hook reads the same file for the same session id.
 RS="$WORK/rec-state"; RD="$WORK/rec-dir"; mkdir -p "$RD"
+bash "$REC" goals "$RD/dispatch.jsonl" init --spec none >/dev/null
 RR="$RD/dispatch.jsonl"
 rec_with() {  # <session id> <args...>, run from the record's directory with a relative path
   local sid="$1"; shift
@@ -464,6 +473,94 @@ check "without a session id nothing is registered" "no" "$([ -e "$RS2" ] && echo
 check "a state directory that cannot be written never fails the command" "0|class=n-bis" \
   "$(cd "$RD" && out=$(CLAUDE_CODE_SESSION_ID=s-x ORCHESTRATOR_STATE_DIR=/dev/null/nope bash "$REC" summary dispatch.jsonl 2>/dev/null); echo "$?|$(printf '%s' "$out" | head -1 | cut -c1-11)")"
 check "a failing command keeps its own exit code" "1" "$(cd "$RD" && CLAUDE_CODE_SESSION_ID=s-y ORCHESTRATOR_STATE_DIR="$RS" bash "$REC" close dispatch.jsonl 99 --verdict ok >/dev/null 2>&1; echo $?)"
+
+# The spec's goals, beside the record. A build was declared done against its plan while the
+# plan had moved three of its spec's five goals « after the build », and no row was opened for
+# them: done was never measured against the spec. `goals.md` holds the spec's goals once, each
+# open, met with evidence a local read verifies, or ruled out in the operator's words.
+GSPEC="$ROOT/tests/fixtures/goals/spec.md"
+GAIM="every build measured against what its spec set out to reach"
+GD="$WORK/goals-build"; GR="$GD/dispatch.jsonl"; GF="$GD/goals.md"
+GREPO="$WORK/goals-repo"; mkdir -p "$GREPO"
+git -C "$GREPO" init -q && git -C "$GREPO" -c user.name=t -c user.email=t@t commit -q --allow-empty -m one
+GSHA=$(git -C "$GREPO" rev-parse HEAD); touch "$GREPO/table.json"
+check "goals init writes the spec's five goals verbatim and the aim" "0|5|aim: $GAIM|yes|yes" \
+  "$(bash "$REC" goals "$GR" init --spec "$GSPEC" --aim "$GAIM" --repo "$GREPO" >/dev/null 2>&1; echo $?)|$(grep -c '^| G[0-9] | open |' "$GF")|$(grep '^aim:' "$GF")|$(spells "$GF" '| G1 | open | The unit of choice is a **pair** `<alias>/<effort>`: a family alias and an effort level. |')|$(spells "$GF" 'one global table per language \| project kind.')"
+check_status "an aim with one word altered dies" 1 bash "$REC" goals "$WORK/goals-aim/d.jsonl" init --spec "$GSPEC" --aim "every build measured against what its plan set out to reach"
+printf '# No goals here\n\n## Why\n\nA reason.\n' > "$WORK/nogoals-spec.md"
+check_status "a spec with no Goals list and no --goal dies" 1 bash "$REC" goals "$WORK/goals-nolist/d.jsonl" init --spec "$WORK/nogoals-spec.md"
+check "the death names what to add" "1" "$(bash "$REC" goals "$WORK/goals-nolist/d.jsonl" init --spec "$WORK/nogoals-spec.md" 2>&1 | grep -c 'has no numbered list under « ## Goals »')"
+GN="$WORK/goals-none/d.jsonl"
+check "--spec none writes zero rows, and check exits 0" "0|0|0" \
+  "$(bash "$REC" goals "$GN" init --spec none >/dev/null 2>&1; echo $?)|$(grep -c '^| G' "$WORK/goals-none/goals.md")|$(bash "$REC" goals "$GN" check >/dev/null 2>&1; echo $?)"
+check_status "init over a file of another spec dies without --replace" 1 bash "$REC" goals "$GN" init --spec "$GSPEC" --aim "$GAIM"
+check "init --replace archives the old file under its spec's stem" "0|yes|5" \
+  "$(bash "$REC" goals "$GN" init --spec "$GSPEC" --aim "$GAIM" --replace >/dev/null 2>&1; echo $?)|$([ -f "$WORK/goals-none/goals-none.md" ] && echo yes || echo no)|$(grep -c '^| G[0-9] | open |' "$WORK/goals-none/goals.md")"
+check_status "met with a path that does not exist dies" 1 bash "$REC" goals "$GR" met G1 --evidence nowhere/table.json
+check_status "met with a commit git cannot resolve dies" 1 bash "$REC" goals "$GR" met G1 --evidence commit:0123456789abcdef
+check_status "met with a pull request alone dies" 1 bash "$REC" goals "$GR" met G1 --evidence 'pr:#12'
+check "met with a path that exists, or a commit that resolves, writes the row" "0|0|met|met" \
+  "$(bash "$REC" goals "$GR" met G1 --evidence table.json --evidence 'pr:#12' >/dev/null 2>&1; echo $?)|$(bash "$REC" goals "$GR" met G2 --evidence "commit:${GSHA:0:10}" >/dev/null 2>&1; echo $?)|$(grep '^| G1 ' "$GF" | cut -d'|' -f3 | tr -d ' ')|$(grep '^| G2 ' "$GF" | cut -d'|' -f3 | tr -d ' ')"
+check_status "rule-out without --ruling dies" 1 bash "$REC" goals "$GR" rule-out G4
+check_status "rule-out with an empty quote dies" 1 bash "$REC" goals "$GR" rule-out G4 --ruling '« »'
+check "check names the open goals and exits 1" "1|open: G3, G4, G5" \
+  "$(bash "$REC" goals "$GR" check >/dev/null 2>&1; echo $?)|$(bash "$REC" goals "$GR" check 2>/dev/null | grep '^open:')"
+bash "$REC" goals "$GR" plan G3 --phase "Phase 3" >/dev/null
+bash "$REC" goals "$GR" met G3 --evidence table.json >/dev/null
+bash "$REC" goals "$GR" met G5 --evidence table.json >/dev/null
+bash "$REC" goals "$GR" rule-out G4 --ruling 'not this build, one project is enough for now' >/dev/null
+check "every goal met or ruled out exits 0, and the ruling keeps his words" "0|yes" \
+  "$(bash "$REC" goals "$GR" check >/dev/null 2>&1; echo $?)|$(spells "$GF" 'operator: « not this build, one project is enough for now »')"
+check "a pipe in a goal round-trips through the file" "yes|0" \
+  "$(spells "$GF" 'per language \| project kind.')|$(bash "$REC" goals "$GR" check >/dev/null 2>&1; echo $?)"
+cp "$GF" "$WORK/goals-saved.md"
+grep -v '^| G5 ' "$WORK/goals-saved.md" > "$GF"
+check "four rows against the spec's five is a fault" "1|1" \
+  "$(bash "$REC" goals "$GR" check >/dev/null 2>&1; echo $?)|$(bash "$REC" goals "$GR" check 2>/dev/null | grep -c "4 rows, the spec's Goals list 5")"
+sed 's/a family alias and an effort level/a family alias/' "$WORK/goals-saved.md" > "$GF"
+check "an edited goal text is a fault" "1|1" \
+  "$(bash "$REC" goals "$GR" check >/dev/null 2>&1; echo $?)|$(bash "$REC" goals "$GR" check 2>/dev/null | grep -c "G1 is not the spec's text")"
+sed 's/^| G4 | ruled-out | \(.*\) | operator: « .* » |$/| G4 | ruled-out | \1 | dropped |/' "$WORK/goals-saved.md" > "$GF"
+check "a goal ruled out without his words is a fault" "1" \
+  "$(bash "$REC" goals "$GR" check 2>/dev/null | grep -c "G4 ruled out without the operator's words")"
+rm -f "$GREPO/table.json"; cp "$WORK/goals-saved.md" "$GF"
+check "a met goal whose evidence left the disk is a fault" "1|1" \
+  "$(bash "$REC" goals "$GR" check >/dev/null 2>&1; echo $?)|$(bash "$REC" goals "$GR" check 2>/dev/null | grep -c 'G1 met without evidence on disk: table.json does not exist')"
+touch "$GREPO/table.json"
+check "check --json is the stop gate's reading" "true|5" \
+  "$(bash "$REC" goals "$GR" check --json 2>/dev/null | jq -r '.ok')|$(bash "$REC" goals "$GR" check --json 2>/dev/null | jq -r '.rows')"
+check "a goals file that cannot be read exits 2" "2" "$(bash "$REC" goals "$WORK/goals-absent/d.jsonl" check --json >/dev/null 2>&1; echo $?)"
+
+# `open` refuses without the goals, and names the line that writes them; warns on a goal no
+# phase carries — the « after the build » deferral, said at every dispatch.
+GO="$WORK/goals-open/d.jsonl"; mkdir -p "$WORK/goals-open"
+check "open refuses with no goals.md and names the init line" "1|1" \
+  "$(bash "$REC" open "$GO" --class x --tier light >/dev/null 2>&1; echo $?)|$(bash "$REC" open "$GO" --class x --tier light 2>&1 | grep -c "dispatch-record.sh goals $GO init --spec <path>|none")"
+bash "$REC" goals "$GO" init --spec none >/dev/null
+check "after init --spec none, open passes" "1" "$(bash "$REC" open "$GO" --class x --tier light 2>/dev/null)"
+bash "$REC" goals "$GO" init --spec "$GSPEC" --aim "$GAIM" --replace >/dev/null
+bash "$REC" goals "$GO" plan G1 --phase "Phase 1" >/dev/null
+for g in G2 G3 G5; do bash "$REC" goals "$GO" plan "$g" --phase "Phase 2" >/dev/null; done
+check "open warns on a goal in no phase, and prints the goals line with unplanned=" "1|0|1" \
+  "$(bash "$REC" open "$GO" --class x --tier light 2>&1 >/dev/null | grep -c 'WARNING: G4 is in no phase and not ruled out: plan it or put it to the operator')|$(bash "$REC" open "$GO" --class x --tier light 2>&1 >/dev/null | grep -c 'G1 is in no phase')|$(bash "$REC" open "$GO" --class x --tier light 2>&1 >/dev/null | grep -c 'unplanned=G4$')"
+check "status prints the aim, the table and the goals line" "aim: $GAIM|goals met=0/5 ruled_out=0 open=G1,G2,G3,G4,G5 unplanned=G4" \
+  "$(bash "$REC" goals "$GO" status | head -1)|$(bash "$REC" goals "$GO" status | tail -1)"
+
+# Every goals subcommand registers the record under the session, even before its first row.
+GRS="$WORK/goals-rec-state"; GRD="$WORK/goals-rec"; GRDREAL=""
+for sub in "init --spec none" "status" "check"; do
+  sid="g-${sub%% *}"
+  CLAUDE_CODE_SESSION_ID="$sid" ORCHESTRATOR_STATE_DIR="$GRS" bash "$REC" goals "$GRD/dispatch.jsonl" $sub >/dev/null 2>&1
+  GRDREAL="$(cd "$GRD" && pwd -P)"
+  check "goals ${sub%% *} registers the record" "$GRDREAL/dispatch.jsonl" "$(cat "$GRS/records/$sid" 2>/dev/null)"
+done
+bash "$REC" goals "$GRD/dispatch.jsonl" init --spec "$GSPEC" --aim "$GAIM" --replace >/dev/null
+for sub in "plan G1 --phase P1" "met G1 --evidence $GSPEC" "rule-out G2 --ruling no" "reopen G2"; do
+  sid="g-${sub%% *}"
+  CLAUDE_CODE_SESSION_ID="$sid" ORCHESTRATOR_STATE_DIR="$GRS" bash "$REC" goals "$GRD/dispatch.jsonl" $sub >/dev/null 2>&1
+  check "goals ${sub%% *} registers the record" "$GRDREAL/dispatch.jsonl" "$(cat "$GRS/records/$sid" 2>/dev/null)"
+done
+check "reopen puts the goal back open, its ruling cleared" "yes" "$(grep -q '^| G2 | open | .* |  |  |$' "$GRD/goals.md" && echo yes || echo no)"
 
 # A cascade starts one tier BELOW the table's row, on classes where a failed attempt is
 # cheap to detect and cheap to throw away. Marking the row is what makes the bet payable:
@@ -614,7 +711,7 @@ check "and names the row it did not find" "1" "$(bash "$REC" ready "$G" 99 --hea
 check_status "review on an unknown option is an error" 1 bash "$REC" review "$G" "$g1" --head ccc333 --norms tool --force
 check_status "an unknown subcommand is an error" 1 bash "$REC" bogus "$G"
 check "and names the subcommands it expects" "1" \
-  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, fixed, surface, ready, close, escaped, cost or summary)')"
+  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, fixed, surface, ready, close, escaped, cost, summary or goals)')"
 
 # The screenshots. Five front-office pull requests were declared ready without one image,
 # under a rule written three times in prose. A `--ui` row reads its pull request's

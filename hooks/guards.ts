@@ -28,9 +28,10 @@ import {
   listing, chainEntries, ownAgents, hostStatusOf, pullRequestOf, openRows, projectCheckouts,
   headsPath, readHeads, writeHeads, parseCiWatchLog, watchNumberOf, watchSlug, watchedNumbers,
   checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownWatches, logTell,
-  noticeFrom, awaitingAny,
+  noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, presentGoals, goalsShownPath, type GoalsReading,
 } from './stop-gate.ts'
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
+import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, editsTheMap, bashWritesTheMap } from './models-guard.ts'
 
 // The config dir, gauge.ts's own resolution: $ never crosses an import, so
 // each domain that needs it spells the same two env reads itself.
@@ -283,7 +284,15 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // budget, can no longer read the environment, and the push guard's net decides
   // on this instead. Undefined until the first read answers.
   let spawnedMark: string | null | undefined = undefined
+  // The last prompt the operator typed in this session, keyed by its id like the memos
+  // above: the tier map's guard stands aside when it names the map or a tier.
+  let lastTyped: { sessionId: string; text: string } | null = null
   on('prompt.submit', async ($: any, e: any, next: (e: any) => any) => {
+    if (typedByOperator(String(e.origin?.kind ?? ''))) {
+      try {
+        lastTyped = { sessionId: await $.session.id(), text: String(e.text ?? '') }
+      } catch { /* no session id: the guard keeps no word of his, and stays up */ }
+    }
     // An awaited peer's notice or message ends the wait on it, whatever else this prompt is.
     if (awaited && awaited.peers.size > 0) {
       const text = String(e.text ?? '')
@@ -362,6 +371,31 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     }
     return out
   }).catch(async ($: any, e: any, next: any) => {
+    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+
+  // The tier map's guard: a session of the orchestration (one whose name gives it a role)
+  // never writes the operator's map — a Write, Edit or MultiEdit on it, or a Bash line that
+  // writes it, is denied with the rule — unless the last prompt he typed in this session
+  // names the map or a tier: then the binding is his word on the point. Mounted before the
+  // push guard, so a Bash call reaches it first; the session's role is read only for a call
+  // that writes the map. Never `ask`: under auto mode it goes to the mode's decider, not to him.
+  on('tool.call', { tool: ['Write', 'Edit', 'MultiEdit', 'Bash'] }, async ($: any, e: any, next: (e: any) => any) => {
+    const maps = mapPaths(await stateDir($), await configDir($))
+    const writes = e.tool === 'Bash'
+      ? bashWritesTheMap(String(e.command ?? ''), maps)
+      : editsTheMap(String(e.file_path ?? ''), maps)
+    if (!writes) return next(e)
+    const sessionId = await $.session.id()
+    if (lastTyped && lastTyped.sessionId === sessionId && namesTheMap(lastTyped.text)) return next(e)
+    const { name } = await readName($, await transcriptPathOf($, sessionId), sessionId)
+    if (!roleOf(name)) return next(e)                // the operator's own sessions: untouched
+    await logLine($, `models guard: a write of the tier map denied (${e.tool})`)
+    return { deny: MODELS_DENY }
+  }).catch(async ($: any, e: any, next: any) => {
+    // A guard that could not read lets the call through, and the log says why: the map is
+    // the operator's file, and a session held on the guard's own failure helps nobody.
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
@@ -498,11 +532,28 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         // The done line: the facts are read only now, as the shell gate read them lazily.
         const top = await projectTop($, String(e.cwd ?? ''), until)
         const checkouts = projectCheckouts(top, await mustRun($, ['bash', `${root}/skills/orchestrator/scripts/workspace.sh`, 'list'], 'workspace.sh list', until))
-        const deferred = openRows(await readRecords($, state, sessionId, until))
-        const held = checkWakeDone({ agents, checkouts, deferred })
+        const records = await registeredRecords($, state, sessionId, until)
+        const deferred = openRows(await readRecords($, records, until))
+        const goals = await readGoals($, records, root, until)
+        const held = checkWakeDone({
+          agents, checkouts, deferred,
+          goalsOpen: goals.flatMap(g => g.open),
+          goalsFaults: goals.flatMap(g => g.faults),
+        })
         if (held) {
           await logLine($, `stop gate: check1 ${held.case}`)
           return refuse(held.reason)
+        }
+        // Every goal holds: the operator is shown the table once per content of the files,
+        // since whether an existing piece of evidence is enough is his judgment, not the gate's.
+        if (sessionId) {
+          const shownFile = goalsShownPath(state, sessionId)
+          const shown = String(await quietly($, () => $.fs.read(shownFile), until, ''))
+          const present = presentGoals(goals, shown)
+          if (present && await inTime($, () => $.fs.write(shownFile, `${present.tell}\n`), until) !== null) {
+            await logLine($, 'stop gate: check1 goals-shown')
+            return refuse(present.reason)
+          }
         }
       } else if (wake !== null) {
         await logLine($, `stop gate: check1 ${wake.case}`)
@@ -795,15 +846,41 @@ async function projectTop($: any, cwd: string, until: number): Promise<string> {
 
 // open_rows()'s reads (stop_gate.py:315-337): the register this session's records were
 // filed under, one path a line, then each record file. A read that fails is no row.
-async function readRecords($: any, state: string, sessionId: string, until: number): Promise<string[]> {
+async function registeredRecords($: any, state: string, sessionId: string, until: number): Promise<string[]> {
   const safe = sessionId.replace(/[^A-Za-z0-9._-]/g, '_')
   const register = await quietly($, () => $.fs.read(`${state}/records/${safe}`), until, '')
+  return String(register).split('\n').map(line => line.trim()).filter(Boolean)
+}
+
+async function readRecords($: any, records: readonly string[], until: number): Promise<string[]> {
   const texts: string[] = []
-  for (const line of String(register).split('\n')) {
-    const path = line.trim()
-    if (path) texts.push(String(await quietly($, () => $.fs.read(path), until, '')))
-  }
+  for (const path of records) texts.push(String(await quietly($, () => $.fs.read(path), until, '')))
   return texts
+}
+
+// The spec's goals beside each registered record, read by goals.py check — the grammar's one
+// implementation, shared with dispatch-record.sh. A record with no goals.md is a legacy one,
+// opened before the file existed (open refuses without it now): it passes, said once. A
+// check that cannot run, runs out of time, or cannot read its file lets the stop pass on
+// that file, said in the log — the gate's own law. A spec that has moved is a note, logged.
+async function readGoals($: any, records: readonly string[], root: string, until: number): Promise<GoalsReading[]> {
+  const readings: GoalsReading[] = []
+  for (const path of goalsPaths(records)) {
+    const exists = await inTime($, () => $.fs.exists(path), until)
+    if (exists !== true) {
+      await logLine($, `stop gate: ${path.replace(/\/goals\.md$/, '')} has no goals.md`)
+      continue
+    }
+    const done = await inTime($, () => runUntil($, ['python3', `${root}/skills/orchestrator/scripts/goals.py`, 'check', path, '--json'], until), until)
+    const reading = done && (done.exitCode === 0 || done.exitCode === 1) ? parseGoalsCheck(path, String(done.stdout ?? '')) : null
+    if (!reading) {
+      await logLine($, `stop gate: goals unread: ${path}: ${!done ? 'it did not answer in time' : `it exited ${done.exitCode}`}`)
+      continue
+    }
+    for (const note of reading.notes) await logLine($, `stop gate: goals ${path}: ${note}`)
+    readings.push(reading)
+  }
+  return readings
 }
 
 // The session's repository (`owner/name`), read from the origin remote of the cwd —

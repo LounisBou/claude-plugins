@@ -87,6 +87,22 @@ test('progress names the open rows and the tally, or says no record stands', () 
     'dispatches=3 closed=1 rounds_avg=1',
   ])
   expect(progressLines([])).toEqual(['no dispatch record registered'])
+  expect(progressLines([[{ id: 1, label: 'x', state: 'closed', rounds: 0 }]], ['goals met=3/5 ruled_out=1 open=G3 unplanned=none']))
+    .toEqual(['goals met=3/5 ruled_out=1 open=G3 unplanned=none', 'dispatches=1 closed=1 rounds_avg=0'])
+})
+
+test('progress leads with the goals line of each record that has a goals.md, and nothing for one without', async () => {
+  const { registrations } = mounted()
+  const progress = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:progress')!
+  const fx = fakeDollar()
+  const withGoals = `${HOME}/belt/dispatch.jsonl`
+  const without = `${HOME}/legacy/dispatch.jsonl`
+  fx.files.set(withGoals, '{"id":1,"label":"a","rounds":0,"state":"closed"}\n')
+  fx.files.set(`${HOME}/belt/goals.md`, '# Goals\nspec: none\n')
+  fx.files.set(without, '{"id":1,"label":"b","rounds":0,"state":"closed"}\n')
+  fx.files.set(`${RECORDS}/s-one`, `${withGoals}\n${without}\n`)
+  const answer = await progress.handler(fx.dollar, { command: 'orchestrator:progress', args: '' })
+  expect(answer).toEqual({ text: ['goals met=3/5 ruled_out=1 open=G3 unplanned=none', 'dispatches=2 closed=2 rounds_avg=0'].join('\n') })
 })
 
 // --- the wiring ----------------------------------------------------------------------------
@@ -152,6 +168,9 @@ function fakeDollar(over: { failEnv?: boolean; failSession?: boolean } = {}): Fx
         const line = logLineOf(argv)
         if (line !== null) written.push(line)
         // ps -o pid= -p <list>: the asked pids this fixture holds alive.
+        if (argv[0] === 'python3' && String(argv[1]).endsWith('/skills/orchestrator/scripts/goals.py') && argv[2] === 'line') {
+          return { exitCode: 0, stdout: 'goals met=3/5 ruled_out=1 open=G3 unplanned=none\n', stderr: '' }
+        }
         if (argv[0] === 'ps') {
           const asked = String(argv[argv.length - 1]).split(',')
           return { exitCode: 0, stdout: asked.filter(pid => fx.alive.includes(pid)).join('\n'), stderr: '' }

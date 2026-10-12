@@ -11,7 +11,7 @@ import {
   machineLine, readHeads, writeHeads, headsPath, listing, ownAgents, hostStatusOf, openRows,
   projectCheckouts, watchedNumbers, parseCiWatchLog, watchNumberOf, pullRequestOf,
   checkWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches,
-  noticeFrom, awaitingAny, NOTICE_TTL_MS,
+  noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths, presentGoals, goalsShownPath, GOALS_SHOW,
 } from '../stop-gate.ts'
 import { register as registerGuards } from '../guards.ts'
 import { logLineOf, blockOf } from './fakes.ts'
@@ -299,6 +299,8 @@ const PROJECTS = `${HOME}/.claude/projects`
 const TRANSCRIPT = `${HOME}/elsewhere/s-stop.jsonl`
 const LAUNCHER = '/plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh'
 const WORKSPACE = '/plugins/orch-root/skills/orchestrator/scripts/workspace.sh'
+const GOALS_PY = '/plugins/orch-root/skills/orchestrator/scripts/goals.py'
+const GOALS_FILE = '/tmp/h/rec/goals.md'
 
 const BUSY_ROW = 'w1/t2 | /dev/ttys002 | ⠋ Agent : belt | Agent : belt-p3'
 const IDLE_ROW = 'w1/t3 | /dev/ttys003 | ✳ Agent : idle | Agent : idle-p3'
@@ -309,6 +311,7 @@ const OWNED = '{"tab_id":"T1","tty":"/dev/ttys002","owner":"17"}\n'
 // config dir, which is exactly what the override test below pins.
 function statePaths(root: string) {
   return {
+    root,
     chain: `${root}/chains/ttys001.jsonl`,
     register: `${root}/records/a1b2c3`,
     heads: `${root}/stop-gate/a1b2c3.mheads`,
@@ -348,6 +351,8 @@ type Setup = {
   hostRecord?: string
   agentRow?: string
   selfBin?: string
+  goals?: { exitCode: number; stdout: string } | 'hang'
+  goalsShown?: string
 }
 
 function fakeDollar(setup: Setup): { dollar: any; written: string[]; ran: string[]; wrote: Record<string, string>; stamp: { atRun?: string }; inits: Record<string, any> } {
@@ -382,6 +387,7 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[]; ran: string
           throw new Error(`ENOENT: ${p}`)
         }
         if (p === `${HOME}/.claude/sessions/77.json` && setup.hostRecord !== undefined) return setup.hostRecord
+        if (p === `${S.root}/stop-gate/a1b2c3.goals` && setup.goalsShown !== undefined) return setup.goalsShown
         if (p.startsWith(`${S.ci}/`)) {
           if (setup.failLogRead) throw new Error('EIO: the log cannot be read')
           return setup.ciLogs?.[p.slice(S.ci.length + 1)]?.text ?? ''
@@ -411,7 +417,7 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[]; ran: string
         if (p === PROJECTS) return []
         return []
       },
-      exists: async () => false,
+      exists: async (p: string) => p === GOALS_FILE && setup.goals !== undefined,
     },
     process: {
       run: async (argv: readonly string[], init?: object) => {
@@ -466,6 +472,10 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[]; ran: string
           return { exitCode: setup.sweep?.exitCode ?? 0, stdout: setup.sweep?.stdout ?? '', stderr: setup.sweep?.stderr ?? '' }
         }
         if (argv[0] === 'bash' && argv[1] === WORKSPACE) return { exitCode: 0, stdout: setup.workspace ?? '', stderr: '' }
+        if (argv[0] === 'python3' && argv[1] === GOALS_PY) {
+          if (setup.goals === 'hang') return new Promise(() => undefined)
+          return { exitCode: setup.goals?.exitCode ?? 2, stdout: setup.goals?.stdout ?? '', stderr: '' }
+        }
         return { exitCode: 0, stdout: '', stderr: '' }
       },
     },
@@ -1149,4 +1159,144 @@ test('the wake decision: handed over, a block before a delivered agent, a watch 
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting on CI', watching: true })).toBeNull()
   // A bare question still blocks nothing declared.
   expect((checkWake({ agents: [], resident: false, delivered: [], message: 'You decide: A or B?' }) as any).case).toBe('question-without-blocks')
+})
+
+// --- the spec's goals (goals.md beside a registered record) --------------------------------
+
+// A build was declared done against its plan while the plan had moved three of the spec's
+// five goals « after the build ». The done branch now reads goals.py check over each goals.md
+// beside a registered record, and refuses while a goal is open or the file does not hold.
+const goalsAnswer = (over: Record<string, unknown> = {}) => JSON.stringify({
+  ok: false, open: ['G3'], unplanned: ['G3'], faults: [], notes: [], rows: 5, met: 3, ruled_out: 1,
+  table: '| id | status |\n| G3 | open |', ...over,
+})
+const OPEN_GOALS = { exitCode: 1, stdout: goalsAnswer() }
+const ALL_MET = { exitCode: 0, stdout: goalsAnswer({ ok: true, open: [], unplanned: [], table: '| G1 | met |' }) }
+const DONE = { last_assistant_message: 'All five goals hold.\nwaiting: done' }
+const NO_ROWS = { records: [''] }
+
+test('the done branch names open goals and faults in their own texts, after what is left and the rows', () => {
+  const open = checkWakeDone({ agents: [], checkouts: [], deferred: [], goalsOpen: ['G3', 'G4'] })
+  expect(open?.reason).toBe('Not done against the spec: G3, G4 open. Dispatch the work that meets it and record its evidence '
+    + '(dispatch-record.sh goals <record> met <G> --evidence …), or put it to the operator: '
+    + 'waiting: operator — blocks: <G>: <what he must rule>.')
+  const faulty = checkWakeDone({ agents: [], checkouts: [], deferred: [], goalsFaults: ['G1 met without evidence on disk: x does not exist', '4 rows, the spec\'s Goals list 5'] })
+  expect(faulty?.reason).toBe("goals.md is not a record of the spec: G1 met without evidence on disk: x does not exist; 4 rows, the spec's Goals list 5.")
+  const all = checkWakeDone({ agents: [], checkouts: ['/tmp/c'], deferred: ['r-1 (x)'], goalsOpen: ['G3'], goalsFaults: ['G4 ruled out without the operator\'s words'] })!
+  const at = (needle: string) => all.reason.indexOf(needle)
+  expect(at('/tmp/c is still there')).toBeGreaterThanOrEqual(0)
+  expect(at('row r-1 (x) is open')).toBeGreaterThan(at('/tmp/c is still there'))
+  expect(at('Not done against the spec: G3')).toBeGreaterThan(at('row r-1 (x) is open'))
+  expect(at('goals.md is not a record')).toBeGreaterThan(at('Not done against the spec'))
+  expect(checkWakeDone({ agents: [], checkouts: [], deferred: [], goalsOpen: [], goalsFaults: [] })).toBeNull()
+})
+
+test('goals.py check --json is parsed, and anything else is no reading', () => {
+  expect(parseGoalsCheck('/r/goals.md', goalsAnswer())?.open).toEqual(['G3'])
+  expect(parseGoalsCheck('/r/goals.md', 'Traceback')).toBeNull()
+  expect(parseGoalsCheck('/r/goals.md', '{"ok":false,"error":"cannot read"}')).toBeNull()
+  expect(goalsPaths(['/a/rec.jsonl', '/a/other.jsonl', '/b/rec.jsonl', ''])).toEqual(['/a/goals.md', '/b/goals.md'])
+  expect(goalsShownPath('/s', 'a/b')).toBe('/s/stop-gate/a_b.goals')
+})
+
+test('the presentation pass shows a table once per content, never an empty one', () => {
+  const reading = parseGoalsCheck('/r/goals.md', ALL_MET.stdout)!
+  const first = presentGoals([reading], '')!
+  expect(first.reason.startsWith(GOALS_SHOW)).toBe(true)
+  expect(first.reason).toContain('| G1 | met |')
+  expect(presentGoals([reading], `${first.tell}\n`)).toBeNull()
+  const changed = parseGoalsCheck('/r/goals.md', goalsAnswer({ ok: true, open: [], table: '| G1 | met | commit:abc1234 |' }))!
+  expect(presentGoals([changed], `${first.tell}\n`)).not.toBeNull()
+  expect(presentGoals([parseGoalsCheck('/r/goals.md', goalsAnswer({ ok: true, open: [], rows: 0 }))!], '')).toBeNull()
+})
+
+test('a registered record whose goals.md holds an open goal refuses waiting: done, naming it', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ ...NO_ROWS, goals: OPEN_GOALS })
+  const held = await stop(handlers['classic.Stop'], fx.dollar, stopEvent(DONE))
+  expect((held.answer as any).block).toContain('Not done against the spec: G3 open')
+  expect(fx.ran).toContain(`python3 ${GOALS_PY} check ${GOALS_FILE} --json`)
+})
+
+test('the same goals, all met, pass once the operator was shown the table', async () => {
+  const { handlers } = mounted()
+  const first = fakeDollar({ ...NO_ROWS, goals: ALL_MET })
+  const shown = await stop(handlers['classic.Stop'], first.dollar, stopEvent(DONE))
+  expect((shown.answer as any).block).toContain(GOALS_SHOW)
+  const tell = first.wrote[`${STATE}/stop-gate/a1b2c3.goals`]
+  expect(tell).toBeDefined()
+  const again = fakeDollar({ ...NO_ROWS, goals: ALL_MET, goalsShown: tell })
+  const passed = await stop(handlers['classic.Stop'], again.dollar, stopEvent(DONE))
+  expect(passed.answer).toBe(passed.passed)
+  // A changed file is shown once more.
+  const changed = fakeDollar({ ...NO_ROWS, goals: { exitCode: 0, stdout: goalsAnswer({ ok: true, open: [], table: '| G1 | met | new |' }) }, goalsShown: tell })
+  expect(((await stop(handlers['classic.Stop'], changed.dollar, stopEvent(DONE))).answer as any).block).toContain(GOALS_SHOW)
+})
+
+test('a declared block passes with goals open, and the goals are never read', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ ...NO_ROWS, goals: OPEN_GOALS })
+  const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'waiting: operator — blocks: G3: plan it or rule it out' }))
+  expect(out.answer).toBe(out.passed)
+  expect(fx.ran.some(l => l.startsWith('python3'))).toBe(false)
+})
+
+test('a predecessor that handed over passes with goals open, the goals never read', async () => {
+  const { handlers } = mounted()
+  const last = fakeDollar({ ...NO_ROWS, goals: OPEN_GOALS })
+  const over = await stop(handlers['classic.Stop'], last.dollar, stopEvent({ last_assistant_message: 'handed over' }))
+  expect(over.answer).toBe(over.passed)
+  expect(last.ran.some(l => l.startsWith('python3'))).toBe(false)
+  const spawned = fakeDollar({ ...NO_ROWS, goals: OPEN_GOALS })
+  const spawn = { tool: 'Bash', tool_use_id: 't9', command: 'bash /plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh spawn --successor --title "Orch : belt"' }
+  await handlers['tool.call'](spawned.dollar, spawn, async () => ({ result: { stdout: 'spawned' } }))
+  const done = await stop(handlers['classic.Stop'], spawned.dollar, stopEvent(DONE))
+  expect(done.answer).toBe(done.passed)
+  expect(spawned.ran.some(l => l.startsWith('python3'))).toBe(false)
+})
+
+test('an agent session with open goals stops untouched, nothing read', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ ...NO_ROWS, goals: OPEN_GOALS, launchName: 'Agent : belt' })
+  const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent(DONE))
+  expect(out.answer).toBe(out.passed)
+  expect(fx.ran.some(l => l.startsWith('python3'))).toBe(false)
+})
+
+test('no record registered: the done passes and no goals check runs', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ goals: OPEN_GOALS })
+  const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent(DONE))
+  expect(out.answer).toBe(out.passed)
+  expect(fx.ran.some(l => l.startsWith('python3'))).toBe(false)
+})
+
+test('a legacy record with no goals.md passes and is said in one line', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar(NO_ROWS)
+  const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent(DONE))
+  expect(out.answer).toBe(out.passed)
+  expect(fx.written.filter(l => l.endsWith('| stop gate: /tmp/h/rec has no goals.md')).length).toBe(1)
+  expect(fx.ran.some(l => l.startsWith('python3'))).toBe(false)
+})
+
+test('a goals check that hangs or exits 2 lets the stop pass, said, and still sweeps', async () => {
+  const { handlers } = mounted()
+  const broken = fakeDollar({ ...NO_ROWS, goals: { exitCode: 2, stdout: '{"ok":false,"error":"x"}' }, stampMtimeMs: Date.now() - 3600 * 1000 })
+  const out = await stop(handlers['classic.Stop'], broken.dollar, stopEvent(DONE))
+  expect(out.answer).toBe(out.passed)
+  expect(broken.written.some(l => l.endsWith(`| stop gate: goals unread: ${GOALS_FILE}: it exited 2`))).toBe(true)
+  expect(broken.ran.some(l => l.includes('workspace.sh sweep'))).toBe(true)
+  const hung = fakeDollar({ ...NO_ROWS, goals: 'hang', env: { ORCHESTRATOR_STOP_GATE_DEADLINE: '0.2' } })
+  const late = await stop(handlers['classic.Stop'], hung.dollar, stopEvent(DONE))
+  expect(late.answer).toBe(late.passed)
+  expect(hung.written.some(l => l.includes('goals unread') || l.includes('did not answer in time'))).toBe(true)
+})
+
+test('the stop re-fired this turn passes with goals open, nothing read', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ ...NO_ROWS, goals: OPEN_GOALS })
+  const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...DONE, stop_hook_active: true }))
+  expect(out.answer).toBe(out.passed)
+  expect(fx.ran.length).toBe(0)
 })

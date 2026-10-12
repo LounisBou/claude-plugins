@@ -42,7 +42,7 @@ At the dispatch gate you read the context against the gate of SKILL.md, « Thres
 
 ### Prerequisites
 
-A validated spec and a phase plan containing, per phase: scope, files, **exact interface signatures** (what a phase produces = what the next consumes; agents share no memory), test matrix, definition of done, and your review focus. **Every figure in the plan carries the command that produces it** — an agent re-runs it, never believes it, and so do you. No dispatch without both.
+A validated spec and a phase plan containing, per phase: scope, files, **exact interface signatures** (what a phase produces = what the next consumes; agents share no memory), test matrix, definition of done, and your review focus. **Every figure in the plan carries the command that produces it** — an agent re-runs it, never believes it, and so do you. No dispatch without both, and a `goals.md` beside the dispatch record, every goal of the spec in a phase or ruled out by the operator (`dispatch-record.sh goals <record> init --spec <path>|none`; `open` refuses without it). A plan section that moves goal work after the build is a goal without a phase: put it to him.
 
 ### Phase & PR rules
 
@@ -50,7 +50,7 @@ A validated spec and a phase plan containing, per phase: scope, files, **exact i
 - **One kind of change per phase.** A conversion (move, rename, extract) is proved by « nothing observable changed »; a behaviour change is proved by « the behaviour changed, and a test drives it ». A phase that mixes them cannot be proved either way, and it is the shape behind most review rounds that would not converge. Split when the diff mixes natures (mechanical refactor vs feature, infra vs domain): a reviewer should never need two mindsets for one diff. Never over-split: each PR stays coherent, independently reviewable, and green alone.
 - **One writer per checkout, and a checkout per phase.** Never have two implementer agents holding the same working directory, even for disjoint files; a phase runs in a clone `workspace.sh create` makes for it (§30 of the design), so the rule is structural and the orchestrator's own checkout is never lent out. Reviews are read-only and may overlap with anything; writes may not. If a repository is busy, queue the next dispatch.
 - **N-bis corrective phases**: after any review, fixups on that phase's branch with a narrow findings-list prompt. Never widen scope in an N-bis; new scope is the user's decision.
-- Last phase = final verification: spec-conformity pass section by section, norms review of the full diff, E2E scenario.
+- Last phase = final verification: spec-conformity pass section by section, norms review of the full diff, E2E scenario, and every row of `goals.md` ticked on its artifact.
 
 ## When a decision changes, the directives change in the same move
 
