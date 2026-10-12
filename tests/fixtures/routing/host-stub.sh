@@ -16,7 +16,8 @@ prompt=$(cat)
 role=agent; printf '%s' "$prompt" | grep -q 'JUDGE-RUBRIC' && role=judge
 [ -n "${STUB_ARGS_LOG:-}" ] && printf '%s sources=%s\n' "$role" "$sources" >> "$STUB_ARGS_LOG"
 [ -n "${STUB_SILENT:-}" ] && exit 0
-usage() { printf '{"type":"result","subtype":"%s","is_error":%s,"result":%s,"modelUsage":{"%s-1":{"costUSD":%s}}}\n' "$1" "$2" "$3" "$model" "$4"; }
+# STUB_RELEASE names the release the alias resolves to (1 by default).
+usage() { printf '{"type":"result","subtype":"%s","is_error":%s,"result":%s,"modelUsage":{"%s-%s":{"costUSD":%s}}}\n' "$1" "$2" "$3" "$model" "${STUB_RELEASE:-1}" "$4"; }
 if printf '%s' "$prompt" | grep -q 'JUDGE-RUBRIC'; then
   # A judge that is handed no work to read fails the trial, so a lost agent diff shows.
   printf '%s' "$prompt" | sed -n '/^## Agent diff/,/^## Reference diff/p' | grep -q '^+echo hello' \
@@ -39,10 +40,23 @@ cp hello.sh .start-hello
 # An agent that plants a link where the tests live, and one that starts a process that outlives it.
 [ -n "${STUB_SYMLINK_OUT:-}" ] && { rm -rf tests; ln -s "$STUB_SYMLINK_OUT" tests; }
 [ -n "${STUB_GRANDCHILD:-}" ] && { sleep 31337 >/dev/null 2>&1 & sleep 30; }
+# STUB_COSTS prices an agent run per family ("c-model=0.05,a-model=0.30"); 0.10 otherwise.
+cost=0.10
+for kv in ${STUB_COSTS//,/ }; do [ "${kv%%=*}" = "$model" ] && cost="${kv#*=}"; done
+# STUB_FADE ("c-model:2:<dir>"): that family's first two runs do the work, every later one does not.
+fade=no
+if [ -n "${STUB_FADE:-}" ]; then
+  IFS=: read -r fmodel fpass fdir <<< "$STUB_FADE"
+  if [ "$fmodel" = "$model" ]; then
+    echo run >> "$fdir/fade-$model"
+    [ "$(wc -l < "$fdir/fade-$model")" -gt "$fpass" ] && fade=yes
+  fi
+fi
 case "$effort" in
   max) usage error_max_budget_usd true '""' 0.40; exit 0 ;;
   low) printf '#!/bin/bash\necho hello\n' > hello.sh ;;
-  *) printf '#!/bin/bash\necho hello world\n' > hello.sh ;;
+  *) if [ "$fade" = yes ]; then printf '#!/bin/bash\necho hello\n' > hello.sh
+     else printf '#!/bin/bash\necho hello world\n' > hello.sh; fi ;;
 esac
 [ -n "${STUB_COMMIT:-}" ] && { git add -A; git -c user.name=agent -c user.email=a@a commit -qm "agent work"; }
-usage success false '"done"' 0.10
+usage success false '"done"' "$cost"

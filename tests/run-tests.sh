@@ -5729,6 +5729,12 @@ check "ready marks the task" "ready" "$(jq -r '.tasks[0].status' "$BM")"
 check_status "ready refuses an unknown task" 1 rbench ready benchrepo pr-99
 check "a forge that does not answer stops harvest, naming the pull request" "1" \
   "$(ORCHESTRATOR_STATE_DIR="$BS" ORCHESTRATOR_GH=false python3 "$ROUTING" harvest "$BR" --class behaviour-phase --pr 12 2>&1 | grep -c 'pull request 12')"
+# One pull request whose merge commit the clone lacks costs no task harvested around it.
+HS="$WORK/hstate"
+hout=$(ORCHESTRATOR_STATE_DIR="$HS" ORCHESTRATOR_GH="$ROOT/tests/fixtures/routing/gh-stub.sh" STUB_MERGE="$MERGED" STUB_MISSING_PR=22 \
+  python3 "$ROUTING" harvest "$BR" --class behaviour-phase --pr 21 --pr 22 --pr 23 2>&1; echo "exit=$?")
+check "a pull request with no merge commit is skipped and named, the others written, the run fails" "pr-21,pr-23|1|1|exit=1" \
+  "$(jq -r '[.tasks[].id]|join(",")' "$HS/routing/projects/benchrepo/manifest.json")|$(printf '%s\n' "$hout" | grep -c 'pull request 22 is not in .*skipped')|$(printf '%s\n' "$hout" | grep -c '^ERROR: harvest: 1 pull request(s) skipped: 22$')|$(printf '%s\n' "$hout" | tail -1)"
 
 chmod +x "$ROOT/tests/fixtures/routing/host-stub.sh"
 printf '{"deep":"a-model","standard":"b-model","light":"c-model"}' > "$BS/models.json"
@@ -5791,6 +5797,21 @@ rtrial b-model/max >/dev/null
 check "an agent stopped by its cap is an error with its cost" "error|0.4" "$(last '[.status,.cost_usd]|map(tostring)|join("|")')"
 check "the trial records the identifiers used and the alias they resolve" "b-model-1|b-model-1" \
   "$(last '.models|keys|join(",")')|$(jq -r '.["b-model"]' "$BS/routing/aliases.json")"
+# The alias can lag behind the family's latest release: each trial names the identifier it
+# ran on, and a release older than one the host reported or the map names is flagged.
+check "a trial records the identifier its alias ran on" "b-model-1" "$(last '.model')"
+STUB_RELEASE=2 rtrial b-model/medium >/dev/null 2>"$WORK/release.err"
+check "a trial on the newest release the host reported warns nothing" "b-model-2|0" \
+  "$(last '.model')|$(grep -c 'older release' "$WORK/release.err")"
+rtrial b-model/medium >/dev/null 2>"$WORK/release.err"
+check "a trial on an older release than the host reported says so" "1" \
+  "$(grep -c '^WARNING: trial: b-model resolved to b-model-1, an older release than b-model-2 (reported by the host)' "$WORK/release.err")"
+printf '{"deep":"a-model","standard":"b-model-3","light":"c-model"}' > "$BS/models.json"
+STUB_RELEASE=2 rtrial b-model/medium >/dev/null 2>"$WORK/release.err"
+check "a trial on an older release than the map names says so" "1" \
+  "$(grep -c '^WARNING: trial: b-model resolved to b-model-2, an older release than b-model-3 (named by the map)' "$WORK/release.err")"
+printf '{"deep":"a-model","standard":"b-model","light":"c-model"}' > "$BS/models.json"
+: > "$BT"; rtrial b-model/medium >/dev/null
 check "trial directories are removed unless kept" "1" "$(ls -d "$WORK"/trial-* 2>/dev/null | wc -l | tr -d ' ')"
 rm -rf "$KEPT"
 ORCHESTRATOR_HOST_CLI="$WORK/no-such-host" ORCHESTRATOR_STATE_DIR="$BS" TMPDIR="$WORK" python3 "$ROUTING" trial benchrepo pr-7 b-model/medium >/dev/null 2>&1
@@ -5854,6 +5875,16 @@ check "a run leaves no trial directory behind" "0" "$(ls -d "$WORK"/trial-* 2>/d
 before=$(wc -l < "$BT" | tr -d ' ')
 rb --grid b-model/low,b-model/medium,c-model/medium --max-usd 100 --reps 2 --concurrency 1 >/dev/null
 check "a restart re-pays nothing already measured" "$before" "$(wc -l < "$BT" | tr -d ' ')"
+# An easy screen lets the cheapest family through and its confirmation misses the floor: the
+# next band up is confirmed, and a pair dearer than the eligible one is not.
+: > "$BT"; FADE="$WORK/fade"; rm -rf "$FADE"; mkdir -p "$FADE"
+STUB_COSTS="c-model=0.05,a-model=0.30" STUB_FADE="c-model:2:$FADE" \
+  rb --grid c-model/medium,b-model/medium,a-model/medium,b-model/low --max-usd 100 --reps 2 --concurrency 1 >/dev/null 2>&1
+check "a cheap band that misses the floor hands confirmation to the next band, and stops there" \
+  "a-model/medium=2|b-model/low=2|b-model/medium=6|c-model/medium=6" \
+  "$(jq -rs 'group_by(.pair)|map("\(.[0].pair)=\(length)")|join("|")' "$BT")"
+check "the band confirmed after it meets the floor" "6/6" \
+  "$(jq -rs '[.[]|select(.pair=="b-model/medium")]|"\(map(select(.status=="pass"))|length)/\(length)"' "$BT")"
 : > "$BT"
 out=$(rb --grid b-model/medium,c-model/medium --max-usd 0.15 --concurrency 1)
 check "the cap stops new trials and says what is left" "1" "$(printf '%s\n' "$out" | tail -1 | grep -c '^bench: spent=0.24 trials=2 unmeasured=6$')"

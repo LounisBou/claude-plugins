@@ -165,15 +165,22 @@ def measure(paths):
     return out
 
 
-def note_alias(alias, models):
+def resolve_alias(alias, models):
     """The identifier an alias resolved to: the one carrying the alias as a dash segment,
-    else the costliest. A stale table entry is read against this.
+    else the costliest. None when nothing was reported.
     """
     if not alias or not models:
-        return
+        return None
     seg = re.compile(r"(^|-)%s(-|$)" % re.escape(alias))
     named = [m for m in sorted(models) if seg.search(m)]
-    pick = named[0] if named else max(models, key=lambda m: models[m] or 0)
+    return named[0] if named else max(models, key=lambda m: models[m] or 0)
+
+
+def note_alias(alias, models):
+    """Record which identifier an alias resolved to. A stale table entry is read against this."""
+    pick = resolve_alias(alias, models)
+    if not pick:
+        return
     path = os.path.join(ROUTING_DIR, "aliases.json")
     data = read_json(path, {})
     data[alias] = pick
@@ -627,6 +634,9 @@ def cmd_harvest(argv):
         m["test_globs"] = a.test_glob
     if a.budget_usd:
         m["budget_usd"] = a.budget_usd
+    # One pull request that cannot be replayed is skipped and named: it must never cost the
+    # tasks harvested before it, which are written whatever happens to the rest.
+    skipped = []
     for pr in a.pr:
         try:
             r = subprocess.run([GH_CLI, "pr", "view", str(pr), "--json", "title,body,mergeCommit"],
@@ -635,12 +645,23 @@ def cmd_harvest(argv):
         except (OSError, ValueError):
             r, info = None, None
         if not isinstance(info, dict):
-            die("harvest: the forge did not answer for pull request %d: %s"
-                % (pr, r.stderr.strip() if r else "no readable answer"))
+            warn("harvest: the forge did not answer for pull request %d, skipped: %s"
+                 % (pr, (r.stderr.strip() if r else "") or "no readable answer"))
+            skipped.append(pr)
+            continue
         merged = (info.get("mergeCommit") or {}).get("oid")
         if not merged:
-            die("harvest: pull request %d is not merged" % pr)
-        base = git(repo, "rev-parse", merged + "^1")
+            warn("harvest: pull request %d is not merged, skipped" % pr)
+            skipped.append(pr)
+            continue
+        r = subprocess.run(["git", "-C", repo, "rev-parse", "--verify", "-q", merged + "^1"],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            warn("harvest: the merge commit %s of pull request %d is not in %s (fetch it), skipped"
+                 % (merged, pr, repo))
+            skipped.append(pr)
+            continue
+        base = r.stdout.strip()
         tid = "pr-%d" % pr
         brief = "briefs/%s.md" % tid
         body = FENCE.sub("", info.get("body") or "").strip()
@@ -653,7 +674,10 @@ def cmd_harvest(argv):
             "id": tid, "pr": pr, "class": a.cls, "base": base, "merged": merged,
             "brief": brief, "status": "draft"}]
         print("harvested %s (draft)" % tid)
-    write_json(manifest_path(slug), m)
+    if len(skipped) < len(a.pr):
+        write_json(manifest_path(slug), m)
+    if skipped:
+        die("harvest: %d pull request(s) skipped: %s" % (len(skipped), " ".join(str(n) for n in skipped)))
 
 
 def cmd_ready(argv):
@@ -833,7 +857,7 @@ def run_trial(m, task, pair, rep, root, keep=False):
     trial = {"task": task["id"], "class": task["class"], "pair": pair, "rep": rep,
              "at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
              "quota_before": quota_reading(), "judge": None, "judge_cost_usd": 0,
-             "judge_scores": None, "judge_reasons": None, "models": {}, "cost_usd": 0.0}
+             "judge_scores": None, "judge_reasons": None, "models": {}, "model": None, "cost_usd": 0.0}
     try:
         with open(os.path.join(ROUTING_DIR, "projects", m["slug"], task["brief"])) as fh:
             brief = fh.read()
@@ -844,7 +868,7 @@ def run_trial(m, task, pair, rep, root, keep=False):
         trial.update(cost_usd=ceiling, cost_incomplete=True)
         agent = host(pair, brief, d, ceiling, mode_for(pair.split("/")[0]))
         trial.update(models=agent["models"], cost_usd=round(agent["cost"], 6), tokens=agent["tokens"],
-                     duration_s=agent["duration"])
+                     duration_s=agent["duration"], model=resolve_alias(pair.split("/")[0], agent["models"]))
         if not agent["incomplete"]:
             del trial["cost_incomplete"]
         if not agent["ok"]:
@@ -934,7 +958,63 @@ def cmd_trial(argv):
     trial = run_trial(m, task, a.pair, a.rep, tempfile.gettempdir(), a.keep)
     append_trial(a.slug, trial)
     note_alias(a.pair.split("/")[0], trial["models"])
+    warn_release("trial", a.pair.split("/")[0], trial.get("model"), set())
     print("trial %s %s rep %d: %s cost_usd=%s" % (a.task, a.pair, a.rep, trial["status"], trial["cost_usd"]))
+
+
+def release_of(alias, ident):
+    """The release an identifier names within the alias's family: its numeric dash segments
+    after the alias, a date-like one (eight digits or more) only breaking a tie between equal
+    versions. None when the identifier carries no release of that family.
+    """
+    base = re.sub(r"\[[^\]]*\]$", "", ident or "")
+    m = re.search(r"(^|-)%s(-|$)" % re.escape(alias), base)
+    if not m:
+        return None
+    nums = [p for p in base[m.end():].split("-") if p.isdigit()]
+    if not nums:
+        return None
+    return (tuple(int(p) for p in nums if len(p) < 8), tuple(int(p) for p in nums if len(p) >= 8))
+
+
+def known_releases(alias):
+    """Every identifier of the family the host has reported - in any project's trials, and in
+    the alias record `cost` and every trial keep - and every one the map names, with where it
+    was seen. No family or release is written in the code: each is read from what was observed.
+    """
+    seen = {}
+    for path in glob.glob(os.path.join(ROUTING_DIR, "projects", "*", "trials.jsonl")):
+        with open(path) as fh:
+            for line in fh:
+                try:
+                    t = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(t, dict) and isinstance(t.get("models"), dict):
+                    for ident in t["models"]:
+                        seen.setdefault(ident, "reported by the host")
+    recorded = read_json(os.path.join(ROUTING_DIR, "aliases.json"), {}).get(alias)
+    if isinstance(recorded, str):
+        seen.setdefault(recorded, "reported by the host")
+    for model, _ in read_map().values():
+        seen[model] = "named by the map"
+    return {i: src for i, src in seen.items() if release_of(alias, i)}
+
+
+def warn_release(prog, alias, resolved, warned):
+    """The spec runs each family on its latest release, and the host's alias can lag behind
+    it: warn, once per family and run, when the alias resolved to an older release than one the
+    host reported or the map names. The trial still counts; the operator decides.
+    """
+    have = release_of(alias, resolved)
+    if alias in warned or not have:
+        return
+    known = known_releases(alias)
+    newest = max(known, key=lambda i: (release_of(alias, i), i), default=None)
+    if newest and release_of(alias, newest) > have:
+        warned.add(alias)
+        warn("%s: %s resolved to %s, an older release than %s (%s): the trials do not measure "
+             "the family's latest release" % (prog, alias, resolved, newest, known[newest]))
 
 
 # --- bench: the grid ------------------------------------------------------------------
@@ -968,7 +1048,7 @@ def cmd_bench(argv):
     judge_pair("bench")
     done = {(t["task"], t["pair"], t.get("rep", 1)): t
             for t in read_trials(os.path.join(ROUTING_DIR, "projects", a.slug, "trials.jsonl"))}
-    state = {"spent": 0.0, "trials": 0, "errors": {}, "dropped": set()}
+    state = {"spent": 0.0, "trials": 0, "errors": {}, "dropped": set(), "warned": set()}
     # Errors drop a pair for this run only: one host outage must not strike a pair for good.
 
     def run(jobs):
@@ -999,6 +1079,7 @@ def cmd_bench(argv):
                 t = fut.result()
                 append_trial(a.slug, t)
                 note_alias(job[1].split("/")[0], t["models"])
+                warn_release("bench", job[1].split("/")[0], t.get("model"), state["warned"])
                 done[job] = results[job] = t
                 state["spent"] += t["cost_usd"] + t.get("judge_cost_usd", 0)
                 state["trials"] += 1
@@ -1029,14 +1110,30 @@ def cmd_bench(argv):
         unmeasured += left
         passing = [pr for pr in pairs
                    if all(res.get((tid, pr, 1), {}).get("status") == "pass" for tid in tasks[:2])]
-        if not passing:
-            continue
-        cost = lambda pr: sum(res[(tid, pr, 1)]["cost_usd"] for tid in tasks[:2])
-        cheapest = min(cost(pr) for pr in passing)
-        confirmed = [pr for pr in passing if cost(pr) <= 1.5 * cheapest]
-        jobs = [(tid, pr, rep) for pr in confirmed for tid in tasks for rep in range(1, a.reps + 1)]
-        _, left = run(jobs)
-        unmeasured += left
+        floor = floors()[1] if cls in STRICT_CLASSES else floors()[0]
+        tried = set()
+        # Band after band, cheapest first: an easy screen lets a cheap pair through, and when
+        # its confirmation misses the floor the dearer pairs that also passed are still owed
+        # theirs. Only a pair cheaper than the best eligible one can still change the entry. A
+        # band the cap leaves unmeasured is counted, and no further band is tried.
+        while True:
+            stats = stats_of([t for (tid, _, _), t in done.items() if tid in tasks and t["class"] == cls])
+            mean = lambda pr: (sum(stats[pr]["costs"]) / len(stats[pr]["costs"])
+                               if pr in stats and stats[pr]["costs"] else float("inf"))
+            eligible = [pr for pr, s in stats.items()
+                        if s["n"] >= MIN_TRIALS and s["passes"] / s["n"] >= floor and s["costs"]]
+            best = min((mean(pr) for pr in eligible), default=float("inf"))
+            candidates = sorted((pr for pr in passing if pr not in tried and pr not in state["dropped"]
+                                 and pr not in eligible and mean(pr) < best), key=lambda pr: (mean(pr), pr))
+            if not candidates:
+                break
+            band = [pr for pr in candidates if mean(pr) <= 1.5 * mean(candidates[0])]
+            tried.update(band)
+            jobs = [(tid, pr, rep) for pr in band for tid in tasks for rep in range(1, a.reps + 1)]
+            _, left = run(jobs)
+            unmeasured += left
+            if state["spent"] >= a.max_usd:
+                break
     print("bench: spent=%.2f trials=%d unmeasured=%d" % (state["spent"], state["trials"], unmeasured))
 
 

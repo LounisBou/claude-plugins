@@ -17,9 +17,12 @@ fenced code block stripped. The task is appended to `projects/<slug>/manifest.js
 also holds the repository, its profile, the test command, the test globs and each trial's
 spending cap in dollars (`budget_usd`, 2 by default); harvesting a pull request again
 replaces its task and drafts it anew. Only merged pull requests are replayed: the bench has no
-synthetic task. The forge is reached through `gh` (`ORCHESTRATOR_GH` names another binary);
-when it does not answer, `harvest` stops and names the pull request, and a task can be written
-into the manifest by hand.
+synthetic task. The forge is reached through `gh` (`ORCHESTRATOR_GH` names another binary).
+A pull request that cannot be replayed (the forge does not answer for it, it is not merged, or
+its merge commit is not in the local clone) is skipped with a warning naming it; every other
+pull request of the run is still written to the manifest, and `harvest` then exits non-zero
+with `harvest: <n> pull request(s) skipped: <numbers>`. Fetch the missing commit and harvest
+the skipped ones again, or write their tasks into the manifest by hand.
 
 ## 2. Review each brief and mark it ready
 
@@ -79,8 +82,13 @@ Each trial is one line of `projects/<slug>/trials.jsonl`: task, class, pair, rep
 model identifiers the host reports with their cost, `cost_usd` (the host's own per-model
 figure, so no price file is needed), tokens, duration, the mechanical result, the judge's
 verdict, scores (`judge_scores`) and reasons (`judge_reasons`), and its cost kept apart, and the subscription gauge before and after, read from the
-file `ORCHESTRATOR_QUOTA_FILE` names, or `null`. Every trial also records which identifier its
-alias resolved to.
+file `ORCHESTRATOR_QUOTA_FILE` names, or `null`. Every trial also records `model`, the
+identifier its alias ran on, and updates which identifier the alias resolves to. The spec runs
+each family on its latest release, and an alias can lag behind it on a host: when the trial's
+identifier is an older release of the family than one the host has reported (in any trial, or
+in the alias record) or the map names, `bench` and `trial` warn once per family and run,
+naming both identifiers. The trial still counts; whether to rebench on the newer release is the
+operator's call.
 A trial whose tests fail also carries `tests_tail`, the last 2,000 characters of the test
 output, and `tests_failed`, the lines of that output holding `FAIL`, `FAILED` or `ERROR` as a
 whole word, in order, at most 40 of them, each cut at 300 characters, and empty when no line
@@ -88,9 +96,14 @@ matches, because a suite that prints its failures where they happen leaves none 
 tail. A trial whose judge answer does not read carries `judge_raw`, the first 2,000 characters
 of that answer, with `judge_ok`, whether the host reported a successful run.
 
-Each class runs in two stages. **Screening**: every pair once on two tasks. **Confirmation**:
-the pairs that passed both screening trials and cost within 1.5 times the cheapest passing
-one, on every task of the class, `--reps` times (2 by default). A run interrupted and
+Each class runs in two stages. **Screening**: every pair once on two tasks. **Confirmation**,
+band after band, cheapest first: a band is the pairs that passed both screening trials, are not
+confirmed yet, and cost within 1.5 times the cheapest of them; each runs on every task of the
+class, `--reps` times (2 by default). After each band, a pair with at least 6 graded trials at
+or above the class's floor is eligible, and the next band is drawn only from the pairs cheaper
+than the cheapest eligible one. Confirmation stops when no such pair is left, or when the cap is
+spent. An easy screen can let a cheap family through that then misses the floor; the dearer
+pairs that passed screening are confirmed next instead of leaving the class with no entry. A run interrupted and
 restarted re-pays no trial already recorded in `trials.jsonl`.
 
 ## 5. Calibrate the project's table
