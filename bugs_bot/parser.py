@@ -57,6 +57,9 @@ def build_parser(description: str) -> argparse.ArgumentParser:
     init.add_argument("--language", help="the language of the agent's messages in the group")
     init.add_argument("--gate-tokens", type=_int_arg, metavar="N", help="the context size at which the agent hands over")
     init.add_argument("--repo", metavar="DIR", help="the repository (default: the git top level of the current directory)")
+    plugin_path = sub.add_parser("plugin-path", help="print where a plugin of the lounisbou marketplace is installed")
+    plugin_path.add_argument("name", help="the plugin's name, such as orchestrator")
+
     doctor = sub.add_parser("doctor", help="check the setup of this machine")
     doctor.add_argument("--install-launcher", action="store_true", help="install the fixed launcher first")
     sub.add_parser("remove", parents=[project], help="unregister a project (its data and project file are kept)")

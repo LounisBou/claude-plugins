@@ -32,15 +32,18 @@ PULL_APP = "bugs-bot-pull"
 # update prunes that version.
 VERSIONED_DIR = "/plugins/cache/lounisbou/bugs-bot/"
 
-# What every session runs as ``bugs-bot``: the newest installed version of the plugin's CLI. The newest
-# directory is chosen first and only then checked for its CLI, so a half-removed version is refused
-# instead of letting an older one run silently. ``sort -V`` orders 0.10.0 after 0.2.0 (BSD sort on macOS has it).
+# What every session runs as ``bugs-bot``: the installed version of the plugin's CLI the host's record
+# (``installed_plugins.json``) names; only without a usable record, the newest cached directory. The directory is
+# chosen first and only then checked for its CLI, so a half-removed version is refused instead of letting an older
+# one run silently. ``sort -V`` orders 0.10.0 after 0.2.0 (BSD sort on macOS has it).
 # ``BUGS_BOT_PYTHON`` picks the interpreter (a pyenv binary, not its shim), as PM2 passes it through its ``env``.
 LAUNCHER_MARKER = "# bugs-bot launcher: installed by `bugs-bot doctor --install-launcher`"
 LAUNCHER_TEXT = "#!/bin/sh\n" + LAUNCHER_MARKER + """
-d=$(ls -d "${BUGS_BOT_CLAUDE_DIR:-$HOME/.claude}"/plugins/cache/lounisbou/bugs-bot/*/ 2>/dev/null | sort -V | tail -1)
-[ -n "$d" ] && [ -f "${d}bin/bugs-bot" ] || { echo "bugs-bot: no installed version found — run /bugs-bot:doctor" >&2; exit 127; }
-exec "${BUGS_BOT_PYTHON:-python3}" "${d}bin/bugs-bot" "$@"
+c="${BUGS_BOT_CLAUDE_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}}"
+d=$("${BUGS_BOT_PYTHON:-python3}" -c 'import json,sys;print(json.load(open(sys.argv[1]))["plugins"]["bugs-bot@lounisbou"][0]["installPath"])' "$c/plugins/installed_plugins.json" 2>/dev/null)
+[ -n "$d" ] && [ -f "$d/bin/bugs-bot" ] || d=$(ls -d "$c"/plugins/cache/lounisbou/bugs-bot/*/ 2>/dev/null | sort -V | tail -1); d=${d%/}
+[ -n "$d" ] && [ -f "$d/bin/bugs-bot" ] || { echo "bugs-bot: no installed version found — run /bugs-bot:doctor" >&2; exit 127; }
+exec "${BUGS_BOT_PYTHON:-python3}" "$d/bin/bugs-bot" "$@"
 """
 
 

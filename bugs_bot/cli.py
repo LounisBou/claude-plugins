@@ -1,6 +1,6 @@
 """bugs-bot: relay a project's bug reports from its group (Telegram or Slack) to the session that launched the agent.
 
-Machine-wide: ``pull [--every S | --watch]``. Per project (``--project <p>``, else the project whose
+Machine-wide: ``pull [--every S | --watch]``, ``plugin-path <name>``. Per project (``--project <p>``, else the project whose
 ``.bugs-bot.json`` is in the current directory or a parent): ``list``, ``show <id>``,
 ``reply <id> "<text>" [--mention] [--awaits | --follow-up] [--image <path>…]``, ``edit <id> "<text>" [--reply N] [--mention] [--awaits]``, ``delete <id> [--reply N]``, ``taken <id>``,
 ``fixed <id>``, ``done <id>``; and for the project's agent session: ``wait``, ``triage <id> bug|question``,
@@ -30,6 +30,7 @@ from bugs_bot.doctor import cmd_doctor, pull_processes
 from bugs_bot.errors import BugsError
 from bugs_bot.followup import cmd_escalated
 from bugs_bot.gate import cmd_gate
+from bugs_bot.plugin_path import plugin_path
 from bugs_bot.handover import last_archive, read_note, write_note
 from bugs_bot.init import InitArgs, cmd_init, cmd_remove, init_kind, repo_root
 from bugs_bot.people import cmd_backfill_authors, cmd_person, cmd_person_lang, cmd_person_note
@@ -124,6 +125,9 @@ def main(
             return pull_loop(machine, env, transport, args.every, wall, sleep)
         if args.command == "pull":
             return cmd_pull_once(machine, env, transport, now)
+        if args.command == "plugin-path":
+            print(plugin_path(args.name, env))
+            return 0
         if args.command == "doctor":
             try:
                 ps_output = read_ps()

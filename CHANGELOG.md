@@ -5,6 +5,16 @@ All notable changes are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.2 — 2026-10-12
+
+### Fixed
+
+- The newest installed copy of a plugin was guessed from the cache with `sort -V | tail -1`, but the host
+  keeps every version side by side, plain and `<version>-<sha>` tagged, so the guess could be a stale
+  copy. The fixed launcher and `/bugs-bot:start` now read `installPath` from the host's
+  `installed_plugins.json`, through the new `bugs-bot plugin-path <name>`; the newest cached directory
+  is only the fallback when the record is absent or unreadable.
+
 ## 0.2.1 — 2026-10-12
 
 ### Fixed

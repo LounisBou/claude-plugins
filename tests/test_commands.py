@@ -13,8 +13,7 @@ COMMANDS = sorted((REPO_ROOT / "commands").glob("*.md"))
 # The one invocation that is not `bugs-bot ...`: the first doctor run, before the launcher exists.
 BOOTSTRAP = "python3 ${CLAUDE_PLUGIN_ROOT}/bin/bugs-bot doctor"
 BOOTSTRAP_RULE = f"{BOOTSTRAP}:*"
-# start's two others: reading the newest iTerm launcher's path, then that launcher written out in full.
-ITERM_PATH_LINE = "ls -d ~/.claude/plugins/cache/lounisbou/orchestrator/*/skills/iterm-agents/scripts/iterm-agent.sh | sort -V | tail -1"
+# start's one other: the iTerm launcher written out in full.
 ITERM_LAUNCHER = "$SCRIPT "
 ALLOWED_RULES = {"bugs-bot:*"}
 # Nothing in a command line may chain, pipe, substitute, fetch, delete or start a shell.
@@ -70,8 +69,6 @@ def test_every_command_line_is_one_plain_bugs_bot_invocation(path: Path):
     assert text.startswith("---\ndescription: ")
 
     for line in code_lines(text):
-        if path.stem == "start" and line == ITERM_PATH_LINE:
-            continue
         starts = {"doctor": ("bugs-bot ", BOOTSTRAP + " "), "start": ("bugs-bot ", ITERM_LAUNCHER)}.get(path.stem, ("bugs-bot ",))
         assert line.startswith(starts), f"{path.name}: {line!r} is not a bugs-bot command"
         for token in FORBIDDEN:
@@ -86,7 +83,7 @@ def test_the_guard_reads_what_it_guards():
 
 @pytest.mark.parametrize("phrase", [
     ".bugs-bot.json", "/bugs-bot:init", "ListAgents", "you already have one", "it belongs to",
-    'bugs-bot agent-prompt --launcher "', "sort -V | tail -1", "--right-of self", "move --tty", "verify --tty",
+    'bugs-bot agent-prompt --launcher "', "bugs-bot plugin-path orchestrator", "--right-of self", "move --tty", "verify --tty",
     "orchestrator plugin", "--right-of self --resident", "0.46.1 or newer",
     "claude plugin update orchestrator@lounisbou",
 ])

@@ -165,7 +165,7 @@ def test_agent_md_carries_both_sides_of_the_succession():
 
     for needle in (
         "measure file",
-        "sort -V | tail -1",
+        "bugs-bot plugin-path orchestrator",
         "gate --measure",
         "agent-prompt --launcher",
         "--predecessor-tty",

@@ -13,19 +13,20 @@ and tag every report twice.
    such file: say the project is not set up, point to `/bugs-bot:init`, and stop.
    Otherwise keep its `project`, its `agent_title` and the repository's absolute
    path.
-2. Find the orchestrator plugin's iTerm launcher, the path read alone:
+2. Find the orchestrator plugin's install directory, the one the host's record names:
 
    ```
-   ls -d ~/.claude/plugins/cache/lounisbou/orchestrator/*/skills/iterm-agents/scripts/iterm-agent.sh | sort -V | tail -1
+   bugs-bot plugin-path orchestrator
    ```
 
-   Nothing printed: the orchestrator plugin is not installed — say that
+   The iTerm launcher is `skills/iterm-agents/scripts/iterm-agent.sh` under that directory.
+   Nothing printed (the command fails): the orchestrator plugin is not installed — say that
    `/bugs-bot:start` needs it (`/bugs-bot:doctor` says the same) and stop.
-   The launcher must be 0.46.1 or newer: its version is the path's directory
-   under `orchestrator/`. An older one does not know `--resident` (step 5):
+   The launcher must be 0.46.1 or newer: its version is the name of the install
+   directory (`0.49.1`, or `0.49.1-<commit>` for a tag). An older one does not know `--resident` (step 5):
    say the orchestrator plugin must be updated first, with
    `claude plugin update orchestrator@lounisbou`, and stop; never spawn
-   without the flag. Otherwise write that path out in full wherever `$SCRIPT` stands below (no
+   without the flag. Otherwise write the launcher's path out in full wherever `$SCRIPT` stands below (no
    variable, no command substitution), and read the `references/commands.md`
    of its skill before the first `$SCRIPT` command.
 3. `ListAgents`. A live row named as `agent_title` (or a variant of it) means the

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import stat
 import subprocess
@@ -202,3 +203,26 @@ def test_the_chosen_interpreter_runs_the_cli(launcher, claude_dir, tmp_path):
     result = subprocess.run([str(launcher), "pull"], capture_output=True, text=True, env=env, check=False)
 
     assert result.stdout.strip().endswith("0.1.0/bin/bugs-bot pull") and result.stdout.startswith("chosen ")
+
+
+def record(claude_dir: Path, name: str, install_path: Path) -> None:
+    claude_dir.joinpath("plugins").mkdir(parents=True, exist_ok=True)
+    entry = {"scope": "user", "installPath": str(install_path), "version": install_path.name}
+    claude_dir.joinpath("plugins", "installed_plugins.json").write_text(json.dumps({"version": 2, "plugins": {f"{name}@lounisbou": [entry]}}))
+
+
+def test_the_recorded_install_runs_not_a_newer_stale_directory(launcher, claude_dir):
+    active = fake_version(claude_dir, "0.2.1-2afa38391c2b")
+    fake_version(claude_dir, "0.3.0")
+    record(claude_dir, "bugs-bot", active)
+
+    result = launch(launcher, claude_dir, "x")
+
+    assert result.stdout.split() == ["0.2.1-2afa38391c2b", "x"]
+
+
+def test_a_missing_record_falls_back_to_the_newest_directory(launcher, claude_dir):
+    fake_version(claude_dir, "0.2.0")
+    fake_version(claude_dir, "0.10.0")
+
+    assert launch(launcher, claude_dir).stdout.split() == ["0.10.0"]
