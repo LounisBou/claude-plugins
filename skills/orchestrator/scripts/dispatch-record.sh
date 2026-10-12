@@ -6,6 +6,7 @@
 #   dispatch-record.sh review  <record> <id> --head <sha> --norms tool|none
 #   dispatch-record.sh fixed   <record> <id> --head <sha>   (the one correction round, verified)
 #   dispatch-record.sh surface <record> <id> (--ui <owner/repo>#<n> | --minor <reason> | --none)
+#   dispatch-record.sh audit   <record> <id> --head <sha> --images <n> [--defect "<text>"]...
 #   dispatch-record.sh ready   <record> <id> --head <sha>
 #   dispatch-record.sh close   <record> <id> --verdict <text>
 #   dispatch-record.sh escaped <record> <id>      (a defect got past this row's review)
@@ -52,6 +53,20 @@
 # it. This is a default refusal, unlike the two warnings above; a project with no frontend
 # says `--none` on its rows.
 #
+# `audit` and `ready` carry a fourth: an image is looked at, not only counted. On one day three
+# captures showing a defect - an off-centre icon in a control unlike its neighbours, a button
+# pushed onto its own row past the edge of the controls above, an « after » image with stray
+# text left in a search field - were each read by an orchestrator and passed, because every
+# check asked only whether the images were there and showed the surface. So the orchestrator
+# records its own audit of the images at a head: how many it opened (`--images`) and each
+# defect it saw (`--defect`, once per defect; none means every image is clean). A new audit
+# replaces the previous one, and a review round does not erase it. On a `--ui` row, `ready`
+# refuses when no audit is recorded at the head in front of it or at the reviewed or fixed
+# head the rules above accept, when the audit opened fewer images than the description
+# carries, and when it recorded any defect: the defect is fixed, the capture retaken, and the
+# images audited again. `--minor` and `--none` rows are not held to it. Whether the audit was
+# honest stays the orchestrator's; the record makes it a step nobody can skip by forgetting.
+#
 # A pair row names the model alias and the effort it ran on, and `cost` adds each session's
 # measured cost to it - the corrective rounds of a dispatch are part of what it cost. A
 # session whose model has no price marks the row `cost_incomplete`, and the summary's
@@ -86,7 +101,7 @@ warn() { echo "WARNING: $*" >&2; }
 command -v jq >/dev/null 2>&1 || die "jq is required"
 
 cmd="${1:-}"; record="${2:-}"
-[ -n "$cmd" ] || die "usage: dispatch-record.sh {open|round|review|fixed|surface|ready|close|escaped|cost|summary|goals} <record> [...] (see header)"
+[ -n "$cmd" ] || die "usage: dispatch-record.sh {open|round|review|fixed|surface|audit|ready|close|escaped|cost|summary|goals} <record> [...] (see header)"
 [ -n "$record" ] || die "$cmd: a record path is required"
 
 # The stop gate's state root — the one the module's gate (hooks/guards.ts over
@@ -276,6 +291,29 @@ surface)
     rewrite 'if .id==$i then .surface={kind:$k,pr:$p,reason:$r,at:$a} else . end' "$id" \
         --arg k "$kind" --arg p "$pr" --arg r "$reason" --arg a "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     ;;
+audit)
+    # The orchestrator's own audit of the images on the row's pull request, at a head: how many
+    # images it opened and each defect it saw. Read by `ready` on a `--ui` row; recording it
+    # again replaces it whole, defects included.
+    id="${3:-}"; [ -n "$id" ] || die "audit: a row id is required"
+    require_row audit "$id"
+    shift 3; head=""; images=""; defects='[]'
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --head) head="${2:-}"; shift 2 ;;
+            --images) images="${2:-}"; shift 2 ;;
+            --defect)
+                [ -n "${2:-}" ] || die "audit: --defect needs the defect, as the operator will read it"
+                defects=$(jq -c --arg d "$2" '. + [$d]' <<<"$defects"); shift 2 ;;
+            *) die "audit: unknown option $1" ;;
+        esac
+    done
+    [ -n "$head" ] || die "audit: --head is required"
+    [ "${#head}" -ge 7 ] || die "audit: head $head is too short to identify a commit (7 characters at least)"
+    [[ "$images" =~ ^[1-9][0-9]*$ ]] || die "audit: --images takes the number of images you opened and audited, got: ${images:-nothing}"
+    rewrite 'if .id==$i then .audit={head:$h,images:($n|tonumber),defects:$d,at:$a} else . end' "$id" \
+        --arg h "$head" --arg n "$images" --argjson d "$defects" --arg a "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    ;;
 ready)
     # This row's last review read exactly this head (`review` records no review without
     # its norms value), or this head is the correction round that review produced
@@ -299,7 +337,23 @@ ready)
             # A markdown image or an HTML one, which is what an uploaded attachment becomes.
             shots=$(printf '%s\n' "$body" | grep -oiE '!\[[^]]*\]\([^)]+\)|<img[[:space:]]' | wc -l | tr -d ' ')
             [ "$shots" -gt 0 ] || die "ready: $pr changes a frontend surface and its description carries no screenshot: not ready"
-            surface_line="$shots screenshot(s) on $pr" ;;
+            # Counted is not looked at: the orchestrator's own audit of every image, at a head
+            # the rules below accept, with no defect seen.
+            audit=$(jq -sc --argjson i "$id" '[.[]|select(.id==$i)][0].audit // empty' "$record")
+            [ -n "$audit" ] || die "ready: no audit of the images on $pr is recorded: open each one, audit it, and record it with \`audit <record> $id --head <sha> --images <n>\`: not ready"
+            a_head=$(jq -r .head <<<"$audit"); a_images=$(jq -r .images <<<"$audit")
+            a_ok=0
+            for h in "$head" \
+                "$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].review.head // ""' "$record")" \
+                "$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].review.fixed.head // ""' "$record")"; do
+                [ -n "$h" ] || continue
+                if same_commit "$a_head" "$h"; then a_ok=1; break; fi
+            done
+            [ "$a_ok" = 1 ] || die "ready: the images on $pr were audited at $a_head, head is $head: audit them again at the head in front of you"
+            [ "$a_images" -ge "$shots" ] || die "ready: the audit opened $a_images image(s), the description of $pr carries $shots: audit every image"
+            n_defects=$(jq -r '.defects | length' <<<"$audit")
+            [ "$n_defects" = 0 ] || die "ready: the audit of $pr recorded $n_defects defect(s): $(jq -r '.defects | join("; ")' <<<"$audit"). Fix each one, retake the capture, and audit again: not ready"
+            surface_line="$shots screenshot(s) on $pr, audited clean at $a_head" ;;
         minor) surface_line="frontend change ruled minor: $(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].surface.reason' "$record") - tell the operator this reason with the ready" ;;
         none) surface_line="no frontend surface" ;;
     esac
@@ -471,5 +525,5 @@ goals)
     python3 "$GOALS_PY" "$sub" "$GOALS_FILE" "$@"
     exit $?
     ;;
-*) die "unknown subcommand: $cmd (expected open, round, review, fixed, surface, ready, close, escaped, cost, summary or goals)" ;;
+*) die "unknown subcommand: $cmd (expected open, round, review, fixed, surface, audit, ready, close, escaped, cost, summary or goals)" ;;
 esac

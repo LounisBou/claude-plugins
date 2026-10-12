@@ -714,7 +714,7 @@ check "and names the row it did not find" "1" "$(bash "$REC" ready "$G" 99 --hea
 check_status "review on an unknown option is an error" 1 bash "$REC" review "$G" "$g1" --head ccc333 --norms tool --force
 check_status "an unknown subcommand is an error" 1 bash "$REC" bogus "$G"
 check "and names the subcommands it expects" "1" \
-  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, fixed, surface, ready, close, escaped, cost, summary or goals)')"
+  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, fixed, surface, audit, ready, close, escaped, cost, summary or goals)')"
 
 # The screenshots. Five front-office pull requests were declared ready without one image,
 # under a rule written three times in prose. A `--ui` row reads its pull request's
@@ -743,6 +743,7 @@ check_status "ready refuses a frontend pull request with no image in its descrip
 check "and says why" "1" \
   "$(srec ready "$S" "$s1" --head aaa1111 2>&1 | grep -c 'ready: acme/front#11 changes a frontend surface and its description carries no screenshot: not ready')"
 srec surface "$S" "$s1" --ui acme/front#12 >/dev/null
+srec audit "$S" "$s1" --head aaa1111 --images 1 >/dev/null
 check_status "a markdown image passes" 0 srec ready "$S" "$s1" --head aaa1111
 check "and is counted on the ready line" "1" \
   "$(srec ready "$S" "$s1" --head aaa1111 2>/dev/null | grep -c 'norms check tool; 1 screenshot(s) on acme/front#12')"
@@ -767,6 +768,81 @@ check_status "--ui needs <owner/repo>#<number>" 1 bash "$REC" surface "$S" "$s1"
 check_status "--minor needs a reason" 1 bash "$REC" surface "$S" "$s1" --minor ""
 check_status "surface on an unknown row is an error" 1 bash "$REC" surface "$S" 99 --none
 check_status "surface on an unknown option is an error" 1 bash "$REC" surface "$S" "$s1" --skip
+# The audit. Three captures that showed a defect were each read by an orchestrator and passed,
+# because every check only counted the images. A `--ui` row is ready only with the
+# orchestrator's own audit at a head `ready` accepts, covering every image, with no defect.
+# A new audit replaces the last one; a review round keeps it; `--minor` and `--none` rows are
+# not held to it.
+printf 'Before and after.\n\n![before](https://github.com/user-attachments/assets/b1)\n![after](https://github.com/user-attachments/assets/a1)\n' > "$SURFACE_BODIES/14"
+A="$WORK/audit.jsonl"
+a1=$(srec open "$A" --class behaviour-phase --tier standard --label "audit")
+srec surface "$A" "$a1" --ui acme/front#14 >/dev/null
+srec review "$A" "$a1" --head aaa1111 --norms tool >/dev/null
+check_status "ready refuses a --ui row with no audit recorded" 1 srec ready "$A" "$a1" --head aaa1111
+check "and names the subcommand that records it" "1" \
+  "$(srec ready "$A" "$a1" --head aaa1111 2>&1 | grep -c 'ready: no audit of the images on acme/front#14 is recorded: open each one, audit it, and record it with `audit <record> 1 --head <sha> --images <n>`')"
+srec audit "$A" "$a1" --head aaa1111 --images 1 >/dev/null
+check "audit records the head, the images and no defect" "aaa1111|1|0" \
+  "$(jq -r --argjson i "$a1" 'select(.id==$i)|[.audit.head,.audit.images,(.audit.defects|length)]|join("|")' "$A")"
+check "an audit is not a round" "1" "$(jq -r --argjson i "$a1" 'select(.id==$i)|.rounds' "$A")"
+check_status "ready refuses an audit that opened fewer images than the description carries" 1 srec ready "$A" "$a1" --head aaa1111
+check "and names both counts" "1" \
+  "$(srec ready "$A" "$a1" --head aaa1111 2>&1 | grep -c 'ready: the audit opened 1 image(s), the description of acme/front#14 carries 2: audit every image')"
+srec audit "$A" "$a1" --head aaa1111 --images 2 --defect "map button: icon off-centre, style unlike its neighbours" --defect "after: stray text in the search field" >/dev/null
+check "a defect is recorded per --defect" "2" "$(jq -r --argjson i "$a1" 'select(.id==$i)|.audit.defects|length' "$A")"
+check_status "ready refuses an audit that recorded a defect" 1 srec ready "$A" "$a1" --head aaa1111
+check "and names every defect" "1" \
+  "$(srec ready "$A" "$a1" --head aaa1111 2>&1 | grep -c 'ready: the audit of acme/front#14 recorded 2 defect(s): map button: icon off-centre, style unlike its neighbours; after: stray text in the search field. Fix each one, retake the capture, and audit again: not ready')"
+srec audit "$A" "$a1" --head aaa1111 --images 2 >/dev/null
+check "a new audit replaces the last, defects included" "aaa1111|2|0" \
+  "$(jq -r --argjson i "$a1" 'select(.id==$i)|[.audit.head,.audit.images,(.audit.defects|length)]|join("|")' "$A")"
+check_status "ready passes a clean audit of every image at the reviewed head" 0 srec ready "$A" "$a1" --head aaa1111
+check "and says the images were audited clean" "1" \
+  "$(srec ready "$A" "$a1" --head aaa1111 2>/dev/null | grep -c 'norms check tool; 2 screenshot(s) on acme/front#14, audited clean at aaa1111')"
+srec audit "$A" "$a1" --head aaa1111 --images 3 >/dev/null
+check_status "an audit that opened more images than the description carries passes" 0 srec ready "$A" "$a1" --head aaa1111
+srec fixed "$A" "$a1" --head bbb2222 >/dev/null
+check_status "an audit at the reviewed head still passes at the fixed head" 0 srec ready "$A" "$a1" --head bbb2222
+srec audit "$A" "$a1" --head bbb2222 --images 2 >/dev/null
+check_status "an audit at the fixed head passes there" 0 srec ready "$A" "$a1" --head bbb2222
+check_status "an audit at the fixed head passes at the reviewed head too" 0 srec ready "$A" "$a1" --head aaa1111
+srec audit "$A" "$a1" --head bbb2222abcdef --images 2 >/dev/null
+check_status "an audit head spelled in full accepts the short head" 0 srec ready "$A" "$a1" --head bbb2222
+srec review "$A" "$a1" --head ccc3333 --norms tool >/dev/null
+check "a new review round keeps the audit" "bbb2222abcdef|2" \
+  "$(jq -r --argjson i "$a1" 'select(.id==$i)|[.audit.head,.audit.images]|join("|")' "$A")"
+check_status "ready refuses an audit at a head it does not accept" 1 srec ready "$A" "$a1" --head ccc3333
+check "and names both heads" "1" \
+  "$(srec ready "$A" "$a1" --head ccc3333 2>&1 | grep -c 'ready: the images on acme/front#14 were audited at bbb2222abcdef, head is ccc3333: audit them again at the head in front of you')"
+srec audit "$A" "$a1" --head ccc3333 --images 2 >/dev/null
+check_status "an audit at the new head passes" 0 srec ready "$A" "$a1" --head ccc3333
+a2=$(srec open "$A" --class behaviour-phase --tier standard --label "audit, no review")
+srec surface "$A" "$a2" --ui acme/front#14 >/dev/null
+check_status "the no-review warning does not let a --ui row with no audit by" 1 srec ready "$A" "$a2" --head ddd4444
+srec audit "$A" "$a2" --head eee5555 --images 2 >/dev/null
+check_status "with no review, an audit at another head is refused" 1 srec ready "$A" "$a2" --head ddd4444
+srec audit "$A" "$a2" --head ddd4444 --images 2 --defect "reset button on its own row" >/dev/null
+check_status "with no review, a defect is still refused" 1 srec ready "$A" "$a2" --head ddd4444
+srec audit "$A" "$a2" --head ddd4444 --images 2 >/dev/null
+check_status "with no review, a clean audit at the head in front lets the warning speak" 0 srec ready "$A" "$a2" --head ddd4444
+a3=$(srec open "$A" --class behaviour-phase --tier standard --label "minor")
+srec review "$A" "$a3" --head aaa1111 --norms tool >/dev/null
+srec surface "$A" "$a3" --minor "a label wording" >/dev/null
+check_status "a --minor row needs no audit" 0 srec ready "$A" "$a3" --head aaa1111
+srec surface "$A" "$a3" --none >/dev/null
+check_status "a --none row needs no audit" 0 srec ready "$A" "$a3" --head aaa1111
+srec audit "$A" "$a3" --head aaa1111 --images 1 --defect "an unrelated defect" >/dev/null
+check_status "a --none row is not held to an audit's defect" 0 srec ready "$A" "$a3" --head aaa1111
+check_status "audit without --head is an error" 1 bash "$REC" audit "$A" "$a1" --images 2
+check_status "audit with a head too short to identify a commit is an error" 1 bash "$REC" audit "$A" "$a1" --head abc123 --images 2
+check_status "audit without --images is an error" 1 bash "$REC" audit "$A" "$a1" --head aaa1111
+check_status "audit with --images 0 is an error" 1 bash "$REC" audit "$A" "$a1" --head aaa1111 --images 0
+check_status "audit with --images not a number is an error" 1 bash "$REC" audit "$A" "$a1" --head aaa1111 --images two
+check_status "audit with an empty --defect is an error" 1 bash "$REC" audit "$A" "$a1" --head aaa1111 --images 2 --defect ""
+check_status "audit on an unknown row is an error" 1 bash "$REC" audit "$A" 99 --head aaa1111 --images 2
+check_status "audit on an unknown option is an error" 1 bash "$REC" audit "$A" "$a1" --head aaa1111 --images 2 --clean
+check "a refused audit leaves the last one in place" "ccc3333|2|0" \
+  "$(jq -r --argjson i "$a1" 'select(.id==$i)|[.audit.head,.audit.images,(.audit.defects|length)]|join("|")' "$A")"
 unset SURFACE_BODIES
 check "the review reference records the surface before ready" "1" \
   "$(grep -c 'dispatch-record.sh surface <record> <id> --ui <owner/repo>#<n>' "$ROOT/skills/orchestrator/references/review.md")"
@@ -774,6 +850,17 @@ check "a screen with no data on the reference account is seeded, never skipped" 
   "$(grep -c 'A screen the reference account has no data for is not minor and not skipped' "$ROOT/skills/orchestrator/references/review.md")|$(grep -c 'A screen the reference account has no data for is never minor' "$ROOT/skills/orchestrator/references/briefs.md")|$(grep -c 'seed the data on the local environment, and if you cannot, STOP' "$ROOT/templates/agent-phase-brief.md")"
 check "the review brief reports the surface in one line" "1" \
   "$(grep -c 'frontend surface: yes|minor|no' "$ROOT/templates/agent-review-brief.md")"
+VAUDIT='edges aligned with their neighbours; icons and text centred in their controls; no stray text left in an input; nothing truncated and nothing overflowing; no unexpected extra row or space; each control consistent with the controls beside it; both viewports'
+check "the phase brief orders the visual audit of every capture before delivery" "yes|yes|yes" \
+  "$(spells "$ROOT/templates/agent-phase-brief.md" "Before you deliver, audit every capture yourself, image by image, against this checklist: $VAUDIT.")|$(spells "$ROOT/templates/agent-phase-brief.md" 'Your report carries one line per image, `<image>: clean` or `<image>: <the defect>`.')|$(spells "$ROOT/templates/agent-phase-brief.md" 'A capture that shows a defect is not delivered: fix the defect, retake the capture, and audit it again.')"
+check "the standing rule carries the audit, its checklist and the retake" "yes|yes|yes" \
+  "$(spells "$ROOT/skills/orchestrator/references/briefs.md" "Every capture is audited by the implementer before delivery, image by image, against one checklist — $VAUDIT — and the report carries one line per image, clean or the defect it shows.")|$(spells "$ROOT/skills/orchestrator/references/briefs.md" 'A capture that shows a defect is not delivered: the defect is fixed and the capture retaken.')|$(spells "$ROOT/skills/orchestrator/references/briefs.md" 'The orchestrator audits each image again itself before its verdict')"
+check "the review brief audits every image and makes each defect a finding" "yes|yes" \
+  "$(spells "$ROOT/templates/agent-review-brief.md" "With \`yes\`, you also open and audit every image, one by one, against this checklist: $VAUDIT.")|$(spells "$ROOT/templates/agent-review-brief.md" 'and every defect is also a finding: a capture that shows a defect is never a pass')"
+check "item 12: the orchestrator audits each image itself, and a defect is a finding" "yes|yes|yes" \
+  "$(spells "$ROOT/skills/orchestrator/references/review.md" "Then open each image yourself and audit it, before the verdict, against the checklist the briefs carry: $VAUDIT.")|$(spells "$ROOT/skills/orchestrator/references/review.md" 'A defect you see on a capture is a finding, and the pull request is not ready')|$(spells "$ROOT/skills/orchestrator/references/review.md" 'dispatch-record.sh audit <record> <id> --head <sha> --images <n> [--defect "<text>"]...')"
+check "the script's header and the design name the audit" "yes|yes" \
+  "$(spells "$REC" '#   dispatch-record.sh audit   <record> <id> --head <sha> --images <n> [--defect "<text>"]...')|$(spells "$ROOT/docs/design.md" 'dispatch-record.sh audit <record> <id> --head <sha> --images <n> [--defect "<text>"]...')"
 check "the record's subcommands list surface" "1" \
   "$(grep -c '^dispatch-record.sh surface <record> <id>' "$ROOT/skills/model-routing/SKILL.md")"
 
