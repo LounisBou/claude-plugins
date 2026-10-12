@@ -409,6 +409,32 @@ check_json "uninstall of a \$HOME-spelled wrapped command keeps the wrapper, dro
 check_json "uninstall of a \$HOME-spelled wrapped command keeps the other key" \
   "$FAKE_HOME/.claude" '.other' "true"
 
+echo "-- config directory --"
+
+# The status line reads its settings from CLAUDE_CONFIG_DIR, not ~/.claude.
+CFG=$(fresh_config "")
+printf 'SHOW_MODEL=1\nSHOW_DIRECTORY=0\nSHOW_USAGE=0\nSHOW_CONTEXT=0\nSHOW_LINES_CHANGED=0\nSHOW_SESSION_NAME=0\nSHOW_PR=0\nSHOW_BRANCH=0\n' > "$CFG/statusline-config.txt"
+actual=$(printf '{"model":{"display_name":"fixture-model"}}' | env -u STATUSBAR_CONFIG CLAUDE_CONFIG_DIR="$CFG" bash "$SCRIPT" | strip_ansi)
+if [ "$actual" = "fixture-model" ]; then
+  printf '  ok   %s\n' "settings are read from CLAUDE_CONFIG_DIR"; pass=$((pass + 1))
+else
+  printf '  FAIL %s (got: %s)\n' "settings are read from CLAUDE_CONFIG_DIR" "$actual"; fail=$((fail + 1))
+fi
+
+# The registered entry point runs the active plugin install, not a frozen copy.
+CFG=$(fresh_config "")
+mkdir -p "$CFG/plugins" "$WORK/active/statusline"
+printf '#!/bin/bash\necho active-install\n' > "$WORK/active/statusline/statusline.sh"
+printf '{"plugins":{"claude-statusbar@some-market":[{"installPath":"%s"}]}}' "$WORK/active" \
+  > "$CFG/plugins/installed_plugins.json"
+CLAUDE_CONFIG_DIR="$CFG" bash "$INSTALL" >/dev/null
+actual=$(printf '{}' | CLAUDE_CONFIG_DIR="$CFG" bash "$(dest_for "$CFG")")
+if [ "$actual" = "active-install" ]; then
+  printf '  ok   %s\n' "installed entry point runs the active plugin install"; pass=$((pass + 1))
+else
+  printf '  FAIL %s (got: %s)\n' "installed entry point runs the active plugin install" "$actual"; fail=$((fail + 1))
+fi
+
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

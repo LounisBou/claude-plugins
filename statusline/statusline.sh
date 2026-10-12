@@ -12,9 +12,10 @@
 # of the README.
 #
 # STATUSBAR_CONFIG points at an alternate settings file (the test
-# suite uses it to isolate each case).
+# suite uses it to isolate each case). Otherwise the settings file lives in
+# ${CLAUDE_CONFIG_DIR:-$HOME/.claude}, the same directory install.sh uses.
 
-config_file="${STATUSBAR_CONFIG:-$HOME/.claude/statusline-config.txt}"
+config_file="${STATUSBAR_CONFIG:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline-config.txt}"
 if [ -f "$config_file" ]; then
   source "$config_file"
 fi
@@ -245,8 +246,10 @@ fmt_tokens() {
   if [ "$1" -ge 1000 ]; then printf '%dk' $(( $1 / 1000 )); else printf '%d' "$1"; fi
 }
 
-# The session's context gate, in tokens, resolved exactly as the orchestrator's
-# context gate hook does (same variables, same defaults) so the bar and the
+# The session's context gate, in tokens, resolved as the orchestrator's
+# in-process gate module does (same variables, same defaults:
+# ORCHESTRATOR_CONTEXT_GATE=80, ORCHESTRATOR_CONTEXT_GATE_TOKENS=300000,
+# ORCHESTRATOR_LARGE_WINDOW=1000000) so the bar and the
 # gate never disagree: a fixed token count on a large window, a percentage of
 # the window otherwise. Prints nothing when the window size is unknown.
 # The gate only applies to orchestration sessions: they are named "Orch : …",

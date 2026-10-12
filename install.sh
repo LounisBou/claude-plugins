@@ -152,12 +152,19 @@ fi
 step "Script"
 
 run "mkdir -p '$DEST_DIR'"
-if [ -f "$DEST" ] && cmp -s "$SRC/statusline/statusline.sh" "$DEST"; then
-  say "already up to date: $DEST"
-else
-  run "install -m 755 '$SRC/statusline/statusline.sh' '$DEST'"
-  say "installed: $DEST"
-fi
+# DEST is a launcher that runs the active plugin install's script, so plugin
+# updates apply without re-running this installer. statusline-core.sh is the
+# fallback copy it uses when the active install cannot be found.
+CORE="$DEST_DIR/statusline-core.sh"
+for pair in "statusline/launcher.sh:$DEST" "statusline/statusline.sh:$CORE"; do
+  src="$SRC/${pair%%:*}"; dst="${pair#*:}"
+  if [ -f "$dst" ] && cmp -s "$src" "$dst"; then
+    say "already up to date: $dst"
+  else
+    run "install -m 755 '$src' '$dst'"
+    say "installed: $dst"
+  fi
+done
 
 # The old install lived at the root of the config directory; archive it so no
 # leftover settings.json can keep pointing at a frozen copy.
