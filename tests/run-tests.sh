@@ -40,10 +40,10 @@ check "declares the github dependency" "github@lounisbou" \
 check "marketplace lists the plugin" "norms" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["plugins"][0]["name"])' "$ROOT/.claude-plugin/marketplace.json")"
 
-check "plugin version" "0.1.3" \
+check "plugin version" "0.2.0" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$ROOT/.claude-plugin/plugin.json")"
 
-check "marketplace plugin version" "0.1.3" \
+check "marketplace plugin version" "0.2.0" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["plugins"][0]["version"])' "$ROOT/.claude-plugin/marketplace.json")"
 
 echo "== components =="
@@ -228,6 +228,30 @@ check "check command calls the resolver, not a hard-coded main" "0" \
   "$(grep -c 'merge-base HEAD main' "$ROOT/commands/check.md" "$ROOT/agents/norms-diff-scope.md" | awk -F: '{s+=$2} END {print s+0}')"
 check "suggested commit messages carry a type" "0" \
   "$(grep -c 'git commit -m "Update project' "$ROOT/commands/learn.md")"
+
+echo "== hooks module =="
+
+check "hooks.json names the module" "./register.ts" \
+  "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["modules"][0])' "$ROOT/hooks/hooks.json")"
+
+# Each block the module appends must be one the markdown it lands in reads,
+# by the same tag, or the precomputed work is silently ignored.
+tag_read() { # <tag> <module file> <markdown file...>
+  local tag="$1" module="$2"
+  shift 2
+  local written read=0 f
+  written=$(grep -c -F "<$tag>" "$ROOT/hooks/$module")
+  for f in "$@"; do grep -q -F "\`<$tag>\`" "$f" && read=$((read + 1)); done
+  check "block <$tag> is written by $module and read by its $# reader(s)" "yes $#" \
+    "$([ "$written" -gt 0 ] && echo yes || echo no) $read"
+}
+tag_read norms-scope scope.ts "$ROOT/commands/check.md"
+tag_read norms-context scope.ts "$ROOT"/agents/norms-*.md
+tag_read norms-learn learn.ts "$ROOT/commands/learn.md"
+tag_read norms-validate-scan validate.ts "$ROOT/skills/validate/SKILL.md"
+
+check "the module resolves the base with the shared script" "yes" \
+  "$(grep -q -F '/scripts/resolve_base.sh`' "$ROOT/hooks/check.ts" && echo yes || echo no)"
 
 echo
 echo "$pass passed, $fail failed"

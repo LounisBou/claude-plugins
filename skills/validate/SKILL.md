@@ -24,6 +24,8 @@ Validates `CONTRIBUTING.md` structure before norm-checking agents use it. Catche
 
 Run ALL checks against `CONTRIBUTING.md`. Each check produces PASS, WARNING, or ERROR.
 
+When this prompt ends with a `<norms-validate-scan>` block, the plugin has already run the lexical part of checks 2, 3, 5 and 6 with exact line numbers. Report those findings as given, and spend your own reading on checks 1 and 4 and on rules buried in prose (check 6).
+
 ### Check 1: Contradictions
 
 Search for rules within the same section that conflict:

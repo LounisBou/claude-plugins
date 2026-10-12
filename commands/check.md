@@ -8,7 +8,9 @@ allowed-tools: ["Bash", "Glob", "Grep", "Read", "Task", "Edit", "Write", "TaskCr
 
 Run a comprehensive code norms check using multiple specialized agents, each focusing on a different aspect of code quality.
 
-**Requested agents (optional):** "$ARGUMENTS"
+**Arguments (optional agents, `base=<branch>`, reference paths):**
+
+$ARGUMENTS
 
 ## Iron Rules
 
@@ -33,6 +35,12 @@ Run a comprehensive code norms check using multiple specialized agents, each foc
 | "I should push these commits" | NEVER push. Remind user to do it. |
 
 ## Workflow
+
+### Step 0: Precomputed Scope
+
+When the arguments above end with a `<norms-scope>` block, the plugin has already run Steps 1 to 3 for this run: the base commit, the changed files and their classes, the project type, the CONTRIBUTING.md status, the applicable and skipped agents, the agents the words request and the validated reference paths. Use those values as given and go to Step 4. The user's own words are the text before the block.
+
+Run Steps 1 to 3 yourself only when the block is absent.
 
 ### Step 1: Detect Project Type
 
@@ -144,7 +152,7 @@ Message 2: [Task call: norms-variable-naming agent]
 Each agent prompt MUST include:
 1. Project type and framework
 2. List of changed files relevant to that agent
-3. The full diff for those files (from `git diff "$BASE"...HEAD -- <files>`)
+3. The full diff for those files (from `git diff "$BASE"...HEAD -- <files>`), **unless** the `<norms-scope>` block is present: then do not paste any diff. The plugin appends each agent's diff and its CONTRIBUTING.md sections to the agent's prompt when it starts.
 4. Branch name and the base commit `$BASE` (for diff-scope agent)
 5. **External reference paths** (for pattern-conformity agent only): If the user specified external codebases, include the validated paths so the agent can search them for reference files
 

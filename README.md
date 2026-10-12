@@ -27,6 +27,31 @@ in the existing codebase. No evidence, no finding.
 - `find-pattern` skill — pre-implementation pattern discovery for a given file type
 - `validate` skill — validates `CONTRIBUTING.md` structure before `/norms:check` relies on it
 
+## Hooks module
+
+Where the host loads plugin modules, `hooks/register.ts` takes over the
+mechanical work the markdown would otherwise hand the model:
+
+- `/norms:check`: the base commit (through `scripts/resolve_base.sh`), the
+  changed files and their classes, the project type, the CONTRIBUTING.md status,
+  the applicable agents and the validated reference paths arrive as a
+  `<norms-scope>` block after the arguments.
+- Each `norms-*` agent receives, when it starts, the diff of its own files and
+  the CONTRIBUTING.md sections it applies, as a `<norms-context>` block.
+- `/norms:learn`: with no PR number the usage answers at once; otherwise each
+  PR's resolved threads come from the `github` plugin's tool, with the rules
+  CONTRIBUTING.md already holds, as a `<norms-learn>` block.
+- The walkthrough rules hold: no code edit on the report turn or after a
+  "pass" or "discuss" answer, no CONTRIBUTING.md edit before "add" or after
+  "skip", no `git push` unless the user's last words ask for one, and under
+  `/norms:check` no commit message naming the check or its tooling. Any other
+  words the user types, an interrupted turn and any other command release them.
+- `validate`: the lexical checks (empty entries, vague words, no code block,
+  mixed list markers, no top-level header) arrive with exact line numbers.
+
+Every hook that fails passes the event on unchanged, and the markdown keeps
+its own instructions for each step, so a host without modules runs as before.
+
 ## CONTRIBUTING.md stays with the project
 
 `CONTRIBUTING.md` lives at the root of whatever project you run these commands
@@ -63,7 +88,11 @@ becomes the canonical install key instead.
 
 ```
 CLAUDE_GITHUB_ROOT=<path to a github plugin checkout> bash tests/run-tests.sh
+claude plugin test .
+claude plugin validate .
 ```
+
+`claude plugin test .` runs the hooks module's tests in `hooks/tests/`.
 
 The suite runs offline and needs no GitHub account or installed plugin; it
 resolves the `github` plugin from `CLAUDE_GITHUB_ROOT` (or the platform's own
@@ -73,7 +102,7 @@ the suite fails loudly with an `error:`/`fix:` pair rather than skipping the
 check. Sample run:
 
 ```
-20 passed, 0 failed
+45 passed, 0 failed
 ```
 
 ## Licence

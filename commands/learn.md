@@ -32,6 +32,10 @@ Learn project-specific code norms from resolved PR review threads and add them t
 
 ## Workflow
 
+### Step 0: Prefetched Threads
+
+When the PR numbers above end with a `<norms-learn>` block, the plugin has already fetched every PR's resolved threads and listed the rules CONTRIBUTING.md already holds. Skip Steps 1 and 3: take the threads, the count and the existing rules from the block, report the count, and go on from Step 4 without parsing CONTRIBUTING.md again. Run Steps 1 to 4 as written only when the block is absent.
+
 ### Step 1: Prerequisites
 
 Locate the `github` plugin. The resolver reads the platform's install record; it
