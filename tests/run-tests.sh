@@ -57,7 +57,7 @@ check "github-curl is gone" "absent" \
 check "manifest declares the dependency" "github@lounisbou" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dependencies"][0])' "$ROOT/.claude-plugin/plugin.json")"
 
-check "manifest version" "0.3.8" \
+check "manifest version" "0.4.0" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$ROOT/.claude-plugin/plugin.json")"
 
 # The marketplace entry is a second copy of the same facts, read by the host that
@@ -288,112 +288,111 @@ for skill in start-review auto-fix-loop process-comments; do
     "$(grep -o '\.claude/skills/[a-z-]*' "$doc" 2>/dev/null || true)"
 done
 
-check "process-comments ships its helper scripts" "4" \
-  "$(ls "$ROOT/skills/process-comments/scripts/" 2>/dev/null | grep -c '\.py$')"
+check "process-comments ships its triage script, and nothing else" "triage.py" \
+  "$(ls "$ROOT/skills/process-comments/scripts/" 2>/dev/null | grep '\.py$' | tr '\n' ' ' | sed 's/ $//')"
 
-echo "== process-comments helper scripts: null-safety =="
+echo "== process-comments triage: null-safety and filtering =="
 
-# These four scripts are executed directly by the skill, but exercised by no
-# other test in this suite. Each is fed a fixture GitHub would plausibly
-# send -- a null author, a null user, a null body, an empty PR list -- that
-# an unguarded ".get(key, default)" chain (which only substitutes its
-# default for an ABSENT key, not a present null) turns into an uncaught
-# AttributeError/IndexError instead of a handled "nothing here". A bare
-# exit-code check cannot tell a mapped "no data" apart from a crash, so each
-# case also asserts there is no traceback and that the printed value is the
-# sane one, not an artifact of the crash.
-PCSCRIPTS="$ROOT/skills/process-comments/scripts"
+# triage.py is run by the module (--stdin, after fetching through the github
+# tool) and by the Bash route (--gh, fetching itself). Each case feeds it a
+# payload GitHub plausibly sends -- a null author, a null user, a null body, a
+# null node, an empty PR list -- that an unguarded ".get(key, default)" chain
+# (which substitutes its default only for an ABSENT key, never a present null)
+# turns into a traceback instead of a handled "nothing here". An exit code
+# alone cannot tell a mapped failure from a crash, so each case also reads the
+# value printed and asserts no traceback.
+TRIAGE="$ROOT/skills/process-comments/scripts/triage.py"
+PR_OK='{"number":7,"user":{"login":"author"},"title":"T","html_url":"https://x/7","body":"intent"}'
 
-# count_open.py: a review thread whose last comment has a null author (a
-# deleted GitHub account) must count as pending, not crash.
-PCTMP="$WORK/pc-null-author"; mkdir -p "$PCTMP"
-printf '%s' '[{"comments":{"nodes":[{"author":null}]}}]' > "$PCTMP/open-threads.json"
-printf '%s' '[]' > "$PCTMP/open-issue-comments.json"
-printf '%s' '[]' > "$PCTMP/open-reviews.json"
-out=$(env PR_REVIEW_TMP="$PCTMP" python3 "$PCSCRIPTS/count_open.py" someone 2>&1)
-check "count_open.py survives a null thread author" "0" \
-  "$(env PR_REVIEW_TMP="$PCTMP" python3 "$PCSCRIPTS/count_open.py" someone >/dev/null 2>&1; echo $?)"
-check "count_open.py null author has no traceback" "0" \
-  "$(printf '%s' "$out" | grep -cE 'Traceback|AttributeError')"
-check "count_open.py still counts the thread as pending" "1" \
-  "$(printf '%s' "$out" | grep -c '^PENDING=1$')"
+# triage <stdin json> <python expression on the document `d`>
+triage() {
+  printf '%s' "$1" | python3 "$TRIAGE" --stdin 2>"$WORK/triage.err" \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(eval(sys.argv[1]))' "$2" 2>&1
+}
+no_traceback() { grep -cE 'Traceback|Error:' "$WORK/triage.err"; }
 
-# filter_reviews.py: a null body and a null user (both legal GitHub payloads)
-# must be filtered out / compared safely, not crash the whole batch.
-PCTMP="$WORK/pc-null-review"; mkdir -p "$PCTMP"
-printf '%s' '[{"body":null,"user":null},{"body":"hello","user":{"login":"alice"}}]' \
-  > "$PCTMP/reviews.json"
-out=$(env PR_REVIEW_TMP="$PCTMP" python3 "$PCSCRIPTS/filter_reviews.py" bob 2>&1)
-check "filter_reviews.py survives a null body and null user" "0" \
-  "$(env PR_REVIEW_TMP="$PCTMP" python3 "$PCSCRIPTS/filter_reviews.py" bob >/dev/null 2>&1; echo $?)"
-check "filter_reviews.py null review has no traceback" "0" \
-  "$(printf '%s' "$out" | grep -cE 'Traceback|AttributeError')"
-check "filter_reviews.py keeps only the real review" "Open review body comments: 1" "$out"
+check "triage counts a thread whose last author is null as pending" "1 FAST" \
+  "$(triage '{"pr":['"$PR_OK"'],"threads":[{"id":"T1","comments":{"nodes":[{"author":null}]}}]}' '"%d %s" % (d["pending"], d["tier"])')"
+check "triage null author has no traceback" "0" "$(no_traceback)"
 
-# filter_reviews.py: a review already minimized on GitHub (per the
-# comments-resolved-batch fixture SKILL.md Phase 3 writes before calling
-# this script) must be dropped; a visible review with the same shape must
-# survive. This is the regression test for the review-body read side --
-# reverting the isMinimized check makes both reviews come back.
-PCTMP="$WORK/pc-minimized-review"; mkdir -p "$PCTMP"
-printf '%s' '[{"node_id":"PRR_hidden","body":"hide me","user":{"login":"alice"}},{"node_id":"PRR_visible","body":"keep me","user":{"login":"alice"}}]' \
-  > "$PCTMP/reviews.json"
-printf '%s' '{"PRR_hidden":{"node":{"isMinimized":true}},"PRR_visible":{"node":{"isMinimized":false}}}' \
-  > "$PCTMP/reviews-resolved-batch.json"
-out=$(env PR_REVIEW_TMP="$PCTMP" python3 "$PCSCRIPTS/filter_reviews.py" bob 2>&1)
-check "filter_reviews.py drops a minimized review and keeps the visible one" \
-  "Open review body comments: 1" "$out"
-check "filter_reviews.py's survivor is the visible node_id, not the hidden one" \
-  "PRR_visible" \
-  "$(python3 -c "import json; print(json.load(open('$PCTMP/open-reviews.json'))[0]['node_id'])")"
+check "triage auto-passes a thread the PR author answered last" "0 1 EXIT" \
+  "$(triage '{"pr":['"$PR_OK"'],"threads":[{"id":"T1","comments":{"nodes":[{"author":{"login":"rev"},"body":"q"},{"author":{"login":"author"},"body":"a"}]}}]}' '"%d %d %s" % (d["pending"], d["counts"]["auto_passed"], d["tier"])')"
 
-# filter_reviews.py: a resolved-batch entry whose "node" is null -- the id the
-# batch could not resolve, the same payload comments-resolved-batch can send
-# for an issue comment -- must be treated as "not minimized", not crash.
-# ".get('node', {})" would substitute its default only for an ABSENT key, not
-# this present null.
-PCTMP="$WORK/pc-review-null-node"; mkdir -p "$PCTMP"
-printf '%s' '[{"node_id":"PRR_x","body":"hi","user":{"login":"alice"}}]' > "$PCTMP/reviews.json"
-printf '%s' '{"PRR_x":{"node":null}}' > "$PCTMP/reviews-resolved-batch.json"
-out=$(env PR_REVIEW_TMP="$PCTMP" python3 "$PCSCRIPTS/filter_reviews.py" bob 2>&1)
-check "filter_reviews.py survives a null node in the resolved batch" "0" \
-  "$(env PR_REVIEW_TMP="$PCTMP" python3 "$PCSCRIPTS/filter_reviews.py" bob >/dev/null 2>&1; echo $?)"
-check "filter_reviews.py null node has no traceback" "0" \
-  "$(printf '%s' "$out" | grep -cE 'Traceback|AttributeError')"
-check "filter_reviews.py null node still counts the review as visible" \
-  "Open review body comments: 1" "$out"
+check "triage keeps only the real review of a null body and a null user" "1 alice" \
+  "$(triage '{"pr":['"$PR_OK"'],"reviews":[{"body":null,"user":null},{"node_id":"PRR_a","body":"hello","user":{"login":"alice"}}]}' '"%d %s" % (d["counts"]["review_bodies"], d["items"][0]["author"])')"
+check "triage null review has no traceback" "0" "$(no_traceback)"
 
-# filter_reviews.py: no resolved-batch file at all (a caller that never runs
-# the batch step) must behave exactly as before this change -- the minimized
-# check is additive, never mandatory.
-PCTMP="$WORK/pc-review-no-batch-file"; mkdir -p "$PCTMP"
-printf '%s' '[{"node_id":"PRR_y","body":"hi","user":{"login":"alice"}}]' > "$PCTMP/reviews.json"
-out=$(env PR_REVIEW_TMP="$PCTMP" python3 "$PCSCRIPTS/filter_reviews.py" bob 2>&1)
-check "filter_reviews.py with no resolved-batch file keeps the review" \
-  "Open review body comments: 1" "$out"
+check "triage drops the PR author's own review" "0" \
+  "$(triage '{"pr":['"$PR_OK"'],"reviews":[{"node_id":"PRR_a","body":"self","user":{"login":"author"}}]}' 'd["pending"]')"
 
-# extract_user_login.py: an empty PR list (no PR on this branch) is the
-# ordinary "not found" response from pr-get, fetched before the skill's own
-# "is PR_NUM empty" check runs -- pr_data[0] must not raise IndexError here.
-PCTMP="$WORK/pc-empty-pr"; mkdir -p "$PCTMP"
-printf '%s' '[]' > "$PCTMP/pr.json"
-out=$(env PR_REVIEW_TMP="$PCTMP" python3 "$PCSCRIPTS/extract_user_login.py" 2>&1)
-check "extract_user_login.py survives an empty PR list" "0" \
-  "$(env PR_REVIEW_TMP="$PCTMP" python3 "$PCSCRIPTS/extract_user_login.py" >/dev/null 2>&1; echo $?)"
-check "extract_user_login.py empty PR list has no traceback" "0" \
-  "$(printf '%s' "$out" | grep -cE 'Traceback|IndexError')"
-check "extract_user_login.py prints an empty login" "" "$out"
+# A review or an issue comment minimized on GitHub is resolved: dropped. The
+# visible one with the same shape survives. Reverting the isMinimized check
+# makes both come back.
+check "triage drops a minimized review and keeps the visible one" "PRR_visible" \
+  "$(triage '{"pr":['"$PR_OK"'],"reviews":[{"node_id":"PRR_hidden","body":"x","user":{"login":"alice"}},{"node_id":"PRR_visible","body":"y","user":{"login":"alice"}}],"reviews_resolved":{"PRR_hidden":{"node":{"isMinimized":true}},"PRR_visible":{"node":{"isMinimized":false}}}}' '",".join(i["id"] for i in d["items"])')"
+check "triage drops a minimized issue comment and keeps the visible one" "IC_visible" \
+  "$(triage '{"pr":['"$PR_OK"'],"issue_comments":[{"id":1,"node_id":"IC_hidden","body":"x","user":{"login":"bob"}},{"id":2,"node_id":"IC_visible","body":"y","user":{"login":"bob"}}],"issue_resolved":{"IC_hidden":{"node":{"isMinimized":true}}}}' '",".join(i["node_id"] for i in d["items"])')"
 
-# extract_paths.py: the open-threads.json file is simply absent (e.g. Fast
-# tier, which skips producing it) -- the unguarded json.load(open(...)) must
-# not crash the read.
-PCTMP="$WORK/pc-missing-threads"; mkdir -p "$PCTMP"
-out=$(env PR_REVIEW_TMP="$PCTMP" python3 "$PCSCRIPTS/extract_paths.py" 2>&1)
-check "extract_paths.py survives a missing open-threads.json" "0" \
-  "$(env PR_REVIEW_TMP="$PCTMP" python3 "$PCSCRIPTS/extract_paths.py" >/dev/null 2>&1; echo $?)"
-check "extract_paths.py missing file has no traceback" "0" \
-  "$(printf '%s' "$out" | grep -cE 'Traceback|Error')"
-check "extract_paths.py prints nothing for a missing file" "" "$out"
+check "triage treats a null node in the resolved batch as visible" "1" \
+  "$(triage '{"pr":['"$PR_OK"'],"reviews":[{"node_id":"PRR_x","body":"hi","user":{"login":"alice"}}],"reviews_resolved":{"PRR_x":{"node":null}}}' 'd["pending"]')"
+check "triage null node has no traceback" "0" "$(no_traceback)"
+
+check "triage with no resolved batch at all keeps the review" "1" \
+  "$(triage '{"pr":['"$PR_OK"'],"reviews":[{"node_id":"PRR_y","body":"hi","user":{"login":"alice"}}]}' 'd["pending"]')"
+
+# An empty PR list is pr-get's ordinary "no PR on this branch": a document that
+# says so, not an IndexError.
+check "triage answers an empty PR list with no PR" "None no open pull request for this branch" \
+  "$(triage '{"pr":[]}' '"%s %s" % (d["pr"], d["error"])')"
+check "triage empty PR list has no traceback" "0" "$(no_traceback)"
+
+check "triage lists the paths of open threads once each, sorted" "a.ts,b.ts" \
+  "$(triage '{"pr":['"$PR_OK"'],"threads":[{"path":"b.ts","comments":{"nodes":[]}},{"path":"a.ts","comments":{"nodes":[]}},{"path":"a.ts","comments":{"nodes":[]}},{"path":"c.ts","isResolved":true}]}' '",".join(d["paths"])')"
+
+check "triage finds the image URLs of an issue comment" "https://user-images.githubusercontent.com/1/a.png" \
+  "$(triage '{"pr":['"$PR_OK"'],"issue_comments":[{"node_id":"IC_1","body":"see https://user-images.githubusercontent.com/1/a.png).","user":{"login":"bob"}}]}' '",".join(d["items"][0]["images"])')"
+
+check "triage announces the workload in one line" "PR #7 — 3 open comment(s): 1 review thread(s), 1 issue comment(s), 1 review body comment(s)." \
+  "$(triage '{"pr":['"$PR_OK"'],"threads":[{"id":"T","comments":{"nodes":[{"author":{"login":"rev"}}]}}],"issue_comments":[{"node_id":"IC","body":"x","user":{"login":"r"}}],"reviews":[{"node_id":"R","body":"y","user":{"login":"r"}}]}' 'd["announce"]')"
+check "triage picks the full tier from 3 comments" "FULL" \
+  "$(triage '{"pr":['"$PR_OK"'],"issue_comments":[{"node_id":"a","body":"1"},{"node_id":"b","body":"2"},{"node_id":"c","body":"3"}]}' 'd["tier"]')"
+
+out=$(printf 'not json' | python3 "$TRIAGE" --stdin 2>&1)
+code=$?
+check "triage refuses bad stdin with an error line, no traceback" "1 1 0" \
+  "$code $(printf '%s' "$out" | grep -c '^error:') $(printf '%s' "$out" | grep -c 'Traceback')"
+out=$(python3 "$TRIAGE" --gh "$WORK/no-such-gh.py" 2>&1)
+code=$?
+check "triage refuses a missing engine with an error line, no traceback" "1 1 0" \
+  "$code $(printf '%s' "$out" | grep -c '^error:') $(printf '%s' "$out" | grep -c 'Traceback')"
+
+# The Bash route, end to end, against a stand-in engine that answers each
+# subcommand from fixtures and records what it was asked.
+mkdir -p "$WORK/fakegh"
+cat > "$WORK/fakegh/gh.py" <<'FAKEGH'
+import json, os, sys
+log = os.path.join(os.path.dirname(__file__), "calls.log")
+with open(log, "a") as fh:
+    fh.write(" ".join(sys.argv[1:2] + [a for a in sys.argv[2:] if not a.startswith("/")]) + "\n")
+cmd = sys.argv[1]
+answers = {
+    "pr-get": [{"number": 7, "user": {"login": "author"}}],
+    "pr-issue-comments": [{"id": 1, "node_id": "IC_1", "body": "q", "user": {"login": "rev"}}],
+    "pr-reviews": [{"node_id": "PRR_1", "body": "r", "user": {"login": "rev"}}],
+    "pr-threads": [{"id": "PRRT_1", "path": "a.ts", "comments": {"nodes": [{"author": {"login": "rev"}}]}}],
+}
+if cmd == "comments-resolved-batch":
+    ids = json.load(open(sys.argv[2]))
+    print(json.dumps({i: {"node": {"isMinimized": i == "IC_1"}} for i in ids}))
+else:
+    print(json.dumps(answers[cmd]))
+FAKEGH
+out=$(python3 "$TRIAGE" --gh "$WORK/fakegh/gh.py" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["pending"], ",".join(i["type"] for i in d["items"]))')
+check "triage's Bash route fetches, resolves and counts" "2 review-thread,review-body" "$out"
+check "triage's Bash route asks for the open threads by formatter" "1" \
+  "$(grep -c '^pr-threads 7 --format open-threads$' "$WORK/fakegh/calls.log")"
+check "triage's Bash route checks both node id sets" "2" \
+  "$(grep -c '^comments-resolved-batch' "$WORK/fakegh/calls.log")"
 
 echo "== process-comments: review body resolution =="
 
@@ -408,11 +407,11 @@ check "process-comments no longer claims a review body cannot be resolved via AP
   "$(grep -n 'cannot be resolved via API' "$PC_DOC" 2>/dev/null || true)"
 
 # Step 4 resolves a review body the same way it resolves an issue comment --
-# comment-resolve on the node id -- so the exact call appears twice: once
+# comment-resolve on the node id -- so the exact request appears twice: once
 # under "For issue comments", once under "For review body comments". Reverting
 # the review-body block drops this back to one.
 check "comment-resolve is called for both issue comments and review bodies" "2" \
-  "$(grep -c 'python3 "\$GH" comment-resolve "\$NODE_ID" --format error-check' "$PC_DOC")"
+  "$(grep -c '^{"command": "comment-resolve", "args": {"node_id": "<node_id>", "format": "error-check"}}$' "$PC_DOC")"
 
 
 echo "== install =="
@@ -495,6 +494,63 @@ print(" ".join(bad))
 PYREV
 )
   check "every skill invocation names something real" "" "$phantom"
+
+  # The same contract for the requests the skills make of the mcp__github__gh
+  # tool: each one-line JSON object in a json fence that names a "command" is
+  # mapped by the engine's own stdin-json mapper (the one the tool runs) and
+  # parsed by the real parser, placeholders filled with a value of their type.
+  # An unknown command, an argument the subcommand does not take, a missing
+  # positional or a formatter that does not exist all land here.
+  requests=$(python3 - "$GHDIR" "$ROOT" <<'PYREQ'
+import json, os, re, sys, tempfile
+sys.path.insert(0, sys.argv[1])
+import gh
+from ghlib import fmt, stdinjson, errors
+NUMBERS = {"pr", "line", "start-line", "review-id"}
+def fill(key, value):
+    if isinstance(value, dict):
+        return {k: fill(k, v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [fill(key, v) for v in value]
+    if isinstance(value, str) and re.fullmatch(r"<[^>]*>", value):
+        return 1 if key in NUMBERS else "x"
+    return value
+bad, seen = [], 0
+for name in ("start-review", "process-comments", "auto-fix-loop"):
+    path = os.path.join(sys.argv[2], "skills", name, "SKILL.md")
+    fence = None
+    for i, line in enumerate(open(path, encoding="utf-8"), 1):
+        stripped = line.strip()
+        if stripped.startswith(chr(96) * 3):
+            fence = None if fence is not None else stripped[3:]
+            continue
+        if fence != "json" or not stripped.startswith("{"):
+            continue
+        try:
+            request = json.loads(stripped)
+        except ValueError:
+            bad.append("%s:%d not JSON" % (name, i))
+            continue
+        if "command" not in request:
+            continue
+        seen += 1
+        request = fill("", request)
+        fmt_name = (request.get("args") or {}).get("format")
+        if fmt_name and fmt_name not in fmt._FORMATTERS:
+            bad.append("%s:%d format %s" % (name, i, fmt_name))
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                argv = stdinjson.build_argv(gh.build_parser(), request, tmp)
+                gh.build_parser().parse_args(argv)
+            except errors.GhError as exc:
+                bad.append("%s:%d %s" % (name, i, exc.message))
+            except SystemExit:
+                bad.append("%s:%d rejected by the parser" % (name, i))
+print("%d %s" % (seen, " ".join(bad)))
+PYREQ
+)
+  check "every tool request in a skill maps onto the real parser" "" "${requests#* }"
+  check "the skills make tool requests at all" "1" "$([ "${requests%% *}" -ge 8 ] 2>/dev/null && echo 1 || echo 0)"
 fi
 
 echo "== start-review pending review =="
@@ -517,8 +573,12 @@ f { if (blk == "") s = NR; blk = blk "\n" $0 }'
 
 check "start-review submits from exactly one bash block" "1" \
   "$(awk "${FENCES/CLOSE/if (blk ~ /review-submit/) cnt++} END { print cnt + 0 }" "$START_DOC")"
-check "start-review passes --event only beside review-submit" "" \
-  "$(awk "${FENCES/CLOSE/if (blk ~ /--event/ && blk !~ /review-submit/) print s}" "$START_DOC")"
+check "start-review passes an event only beside review-submit" "" \
+  "$(awk "${FENCES/CLOSE/if (blk ~ /--event|\"event\"/ && blk !~ /review-submit/) print s}" "$START_DOC")"
+# And the one event it passes is COMMENT: a review opened with any other is
+# submitted with a verdict the user never gave.
+check "start-review submits with the COMMENT event alone" "" \
+  "$(grep -oE '"event": "[A-Z_]+"' "$START_DOC" | grep -v '"COMMENT"' || true)"
 
 # Both section checks below track which "## " heading a line sits under, and a
 # heading inside a fence is content the reader is shown, not a section of the
@@ -540,7 +600,7 @@ check "start-review calls no tool under post" "" \
   "$(awk "$FENCE_TRACK"'
      !f && /^## After "post"$/ { in_post = 1; next }
      !f && /^## / { in_post = 0 }
-     in_post && /python3[[:space:]]+("\$GH"|\$GH|"\$\{GH\}"|\$\{GH\})/ { print NR }' "$START_DOC")"
+     in_post && /python3[[:space:]]+("\$GH"|\$GH|"\$\{GH\}"|\$\{GH\})|"command":/ { print NR }' "$START_DOC")"
 
 # The pending review is written once, at completion. A write reached from an
 # item's own turn would publish part of the walkthrough while it is still running.
@@ -569,7 +629,7 @@ check "start-review renders the next item after post and post now" "2" \
 # The three pending subcommands are the new path; the contract loop proves they exist.
 for sub in review-pending review-pending-create review-pending-add; do
   check "start-review invokes $sub" "1" \
-    "$(grep -cE 'python3[[:space:]]+("\$GH"|\$GH|"\$\{GH\}"|\$\{GH\})[[:space:]]+'"$sub"'( |$)' "$START_DOC" 2>/dev/null | awk '{print ($1>=1)?1:0}')"
+    "$(grep -cE '^\{"command": "'"$sub"'"' "$START_DOC" 2>/dev/null | awk '{print ($1>=1)?1:0}')"
 done
 
 echo "== start-review comment voice =="
@@ -715,6 +775,32 @@ check "start-review's drop command runs git restore --staged" "1" \
      !f && /^## / { in_done = 0 }
      in_done && f && index($0, "git restore --staged") { hits++ }
      END { if (hits > 0) print 1; else print 0 }' "$START_DOC")"
+
+echo "== the hooks module and the routes without it =="
+
+check "hooks.json names the module" "./register.ts" \
+  "$(python3 -c 'import json,sys; print(" ".join(json.load(open(sys.argv[1]))["modules"]))' "$ROOT/hooks/hooks.json")"
+
+# The tools the skills call are the ones the module registers, by name. The
+# module lists them as mcp__pr-review__<name>.
+check "process-comments calls the triage tool the module registers" "1 1" \
+  "$(grep -c 'mcp__pr-review__open_comments' "$PC_DOC" | awk '{print ($1>=1)?1:0}') $(grep -c "OPEN_COMMENTS = 'open_comments'" "$ROOT/hooks/triage.ts")"
+check "auto-fix-loop calls the loop tool the module registers" "1 1" \
+  "$(grep -c 'mcp__pr-review__loop' "$ROOT/skills/auto-fix-loop/SKILL.md" | awk '{print ($1>=1)?1:0}') $(grep -c "LOOP_TOOL = 'loop'" "$ROOT/hooks/loop.ts")"
+
+# A session where modules do not load (claude -p, an older host) has neither
+# the github tool nor this plugin's: every skill keeps a route that works there.
+for doc in "$START_DOC" "$PC_DOC"; do
+  check "$(basename "$(dirname "$doc")") keeps the engine route for a session without the tool" "1" \
+    "$(awk "$FENCE_TRACK"'
+       f && /resolve_github\.py/ { r = 1 }
+       f && /engine\/gh\.py" --stdin-json </ { g = 1 }
+       END { print (r && g) ? 1 : 0 }' "$doc")"
+done
+check "process-comments keeps the triage route for a session without its tool" "1" \
+  "$(grep -c 'scripts/triage.py" --gh "\$GH_ROOT/engine/gh.py"' "$PC_DOC")"
+check "auto-fix-loop keeps its state by hand where the loop tool is not listed" "1" \
+  "$(grep -c 'When the tool is not listed, keep the same state yourself' "$ROOT/skills/auto-fix-loop/SKILL.md")"
 
 echo "== github resolver =="
 

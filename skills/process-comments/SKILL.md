@@ -16,7 +16,7 @@ action. A non-zero exit stops the skill: print its output verbatim and do nothin
 
 **Announce at start:** "Using pr-review:process-comments to process PR feedback interactively."
 
-**REQUIRED SUB-SKILL:** Use the `github` plugin's `github-curl` skill for all GitHub API calls. Its location is resolved below, never hard-coded.
+**GitHub:** every call goes through the github plugin's `mcp__github__gh` tool, as GitHub calls below describes; the Bash route is for sessions where that tool is not listed.
 
 ## Iron Rules
 
@@ -88,287 +88,90 @@ If you catch yourself thinking any of these, STOP:
 
 ## Workflow
 
-### GitHub API Scripts
+### GitHub calls
 
-All GitHub API calls use the `github` plugin's `engine/gh.py`, which ships in the
-separate `github` plugin. `${CLAUDE_PLUGIN_ROOT}` names this plugin's own
-directory and cannot reach a sibling, so the sibling's root is resolved through
-the platform's own install record — never by assembling a path into the plugin
-cache by hand, whose directory names are sometimes git SHAs rather than
-versions.
+Every GitHub call below is written as the request the github plugin's
+`mcp__github__gh` tool takes: one JSON object holding `command` and `args`. Make
+it as a call of that tool, the placeholders filled in: `"<PR>"` and every other
+number (`line`, `start-line`, `review-id`) as a JSON number, text as a string. A
+body travels as `body` and a set of inline comments as `comments`, never as a
+file path: the tool writes them to files itself.
 
-**Every bash block below is its own shell.** Variables do not survive from one
-Bash call to the next, so the resolution is repeated at the top of each block
-that needs it rather than set once — that repetition is deliberate, not
-oversight. Dropping it does not fail loudly: `$GH` simply expands to the empty
-string and `python3 ""` reports `can't find '__main__' module`, which is not the
-`error:`/`fix:` pair this skill promises.
+A write made through the tool passes the session's permission check. Where this
+plugin's module loads, it also holds this skill's Iron Rules (no code change
+without option 1 or 3, no resolve without option 1 or 4, no reply posted, no
+push): a refused call says which word of the user lifts it. Ask the user for that word, and never take
+another route around a refusal.
 
-```bash
-GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/engine/gh.py"
-SKILL_DIR="${CLAUDE_PLUGIN_ROOT}/skills/process-comments/scripts"
-```
-
-Blocks whose inline Python reads `GH_ROOT` from the environment add
-`export GH_ROOT` as well. If the resolver fails it has already printed an
-`error:` line and a `fix:` line naming the install command; stop there rather
-than continuing without the tool.
-
-**The scratch directory follows the same rule.** It is keyed on the PR number
-— `/tmp/claude-pr-review-$PR_NUM` — precisely so that every block can work out
-where it is without being told: the PR number is re-derivable anywhere with
-`python3 "$GH" pr-get --format pr-number`, whereas a shell PID (`$$`) is
-knowable only inside the one shell that read it. A block that reaches into the
-scratch directory therefore derives the path itself:
+**When `mcp__github__gh` is not in your tool list** (a session where plugin
+modules do not load, such as `claude -p`), send the same request to the same
+engine from Bash. Write the request object with the Write tool to
+`/tmp/claude-pr-review-request.json`, then run:
 
 ```bash
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/engine/gh.py"
-PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
-export PR_REVIEW_TMP="/tmp/claude-pr-review-$PR_NUM"
+python3 "$GH_ROOT/engine/gh.py" --stdin-json < /tmp/claude-pr-review-request.json
 ```
 
-`|| exit 1`, on that derivation as much as on the resolver line above it: a
-block that carries on after the tool has failed does not stop, it degrades. An
-unguarded `PR_NUM` leaves the path at `/tmp/claude-pr-review-`, a bucket shared
-with every other failed run, and the count taken from it is a plausible zero —
-the skill then announces "No open review comments" and stops, having dropped
-every comment on the PR.
+`${CLAUDE_PLUGIN_ROOT}` names this plugin and reaches no sibling, so the resolver
+reads the platform's install record rather than assembling a path into the plugin
+cache. When the dependency is missing it prints an `error:` line and a `fix:`
+line: stop there. Never take this route while the tool is listed.
 
-`USER_LOGIN` is guarded differently, and the difference matters.
-`extract_user_login.py` never fails: it catches its own errors and prints an
-empty line with exit 0, on purpose, so that a branch with no open PR reaches the
-"If PR_NUM is empty" message below rather than dying without a word. `|| exit 1`
-on that assignment therefore never fires — it is symmetry with the line above
-it, not protection. What actually stops an empty login is the explicit
-`[ -n "$USER_LOGIN" ] || exit 1` in the two blocks that pass the login to a
-helper, and only there. An empty
-login is not a harmless default: `filter_reviews.py` excludes none of the
-author's own reviews with it, `count_open.py` auto-passes no thread, and the run
-reports a workload that is quietly wrong. Empty in those two blocks means
-`pr.json` is missing or empty — Phase 1 never ran, or ran for a different PR —
-and both blocks run long after the PR is established, so refusing to continue
-costs nothing. They exit silently: a bare exit 1 from either means re-run
-Phase 1 for this PR. Phase 1 itself carries no such test, deliberately.
+### Step 0: Triage — one call
 
-`export`, not plain assignment: the helper scripts in `$SKILL_DIR` read
-`PR_REVIEW_TMP` from the environment and fall back to `/tmp/claude` when it is
-missing, which is a different directory from the one every other block uses.
-Two runs on two different PRs still get two directories; two runs on the *same*
-PR share one, and write the same content into it.
+Call the `mcp__pr-review__open_comments` tool, with no input for the current branch's pull request, or `{"pr": <number>}`
+when the user named one. It reads the PR, its issue comments, its reviews and its
+open threads through `mcp__github__gh`, drops what is resolved or minimized on
+GitHub, and answers one JSON document.
 
-Every call below runs `gh.py` from its command line (the `mcp__github__gh`
-tool does the same where it is listed). Each either names a real
-subcommand (optionally with `--format <name>` to shape its own output) or
-runs one of the helper scripts in `$SKILL_DIR` against files already written
-to disk.
-
-### Step 0: Parallel Data Fetch (SPEED CRITICAL)
-
-**IMPORTANT:** Never store JSON API responses in bash variables then `echo` them — zsh's `echo` interprets `\n` escape sequences, corrupting JSON. Always use temp files or direct pipes.
-
-**IMPORTANT:** The Bash tool escapes `!` to `\!` in ALL contexts (heredocs, single quotes, double quotes). This corrupts Python's `!=` operator. **Never write inline Python containing `!=` via the Bash tool.** Instead, use `.py` files from the skill directory or create them via the Write tool first.
-
-**All initial data fetching MUST happen in parallel.** Do not fetch sequentially.
-
-**Phase 1 — Auth + PR (sequential, needed for PR_NUM):**
+**When `mcp__pr-review__open_comments` is not in your tool list**, run the same
+triage from Bash. It fetches everything itself through the github plugin's engine
+and prints the same document:
 
 ```bash
-# Each bash block is its own shell; resolve rather than inherit.
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/engine/gh.py"
-SKILL_DIR="${CLAUDE_PLUGIN_ROOT}/skills/process-comments/scripts"
-
-python3 "$GH" auth-check --format error-check
-
-# The per-run directory, keyed on the PR number so that every later block can
-# derive the same path with nothing but the tool. Two PRs stay separate, and
-# the directory exists before the first write lands in it.
-PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
-export PR_REVIEW_TMP="/tmp/claude-pr-review-$PR_NUM"
-mkdir -p "$PR_REVIEW_TMP"
-
-# The redirection truncates pr.json before python3 runs, so an unguarded
-# failure here leaves a 0-byte file that extract_user_login.py reads as "no
-# login" without complaint. This block owns pr.json; it stops if it cannot
-# write it. No -n test on USER_LOGIN below: a branch with no open PR must
-# reach the message under this block, not die here without a word.
-python3 "$GH" pr-get --format raw > "$PR_REVIEW_TMP/pr.json" || exit 1
-USER_LOGIN=$(python3 "$SKILL_DIR/extract_user_login.py") || exit 1
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/process-comments/scripts/triage.py" --gh "$GH_ROOT/engine/gh.py"
 ```
 
-**If PR_NUM is empty:** Tell the user there is no PR associated with the current branch and stop.
+Add `--pr <number>` when the user named a PR. A non-zero exit prints one `error:`
+line: show it and stop.
 
-**Phase 2 — Fetch ALL data in parallel (3 Bash calls in ONE message):**
+The document:
 
-```bash
-# Each bash block is its own shell; resolve and re-derive rather than inherit.
-GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/engine/gh.py"
-PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
-export PR_REVIEW_TMP="/tmp/claude-pr-review-$PR_NUM"
+| Field | Meaning |
+| --- | --- |
+| `pr`, `title`, `url`, `description` | the PR and its intent (Step 0.5 reads the intent here) |
+| `author` | the PR author's login: a thread whose last reply is theirs is awaiting the reviewer |
+| `pending`, `tier`, `counts` | the workload: open threads not auto-passed, issue comments, review bodies; `EXIT`, `FAST` or `FULL` |
+| `announce` | the line Step 1 says first, word for word |
+| `paths` | the files that carry an open thread |
+| `items` | one per open comment: `type` (`review-thread`, `issue-comment`, `review-body`), `id`, `node_id` (issue comments), `path` and `line` (threads), `author`, `body`, `images` (issue comments), `auto_passed`, `last_reply` (auto-passed threads), `state` (review bodies) |
 
-# Call 1: issue comments (general PR conversation)
-python3 "$GH" pr-issue-comments "$PR_NUM" --format raw > "$PR_REVIEW_TMP/issue-comments.json"
+`"pr": null` with an `error` means the branch has no open pull request: tell the
+user and stop.
 
-# Call 2: review body comments (text submitted with a review action)
-python3 "$GH" pr-reviews "$PR_NUM" --format raw > "$PR_REVIEW_TMP/reviews.json"
-
-# Call 3: read CLAUDE.md + CONTRIBUTING.md (use Read tool in parallel)
-```
-
-Review threads (inline code comments) are fetched directly in the filtered
-shape needed below — `pr-threads` has no raw dump to keep around, since
-nothing downstream of this skill reads the unfiltered thread list.
-
-**Phase 3 — Filter to open comments only:**
-
-```bash
-# Each bash block is its own shell; resolve and re-derive rather than inherit.
-GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/engine/gh.py"
-PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
-export PR_REVIEW_TMP="/tmp/claude-pr-review-$PR_NUM"
-
-# Review threads: the "open-threads" formatter applies at fetch time — there
-# is no local "threads.json" to filter, because gh.py always calls the live
-# API; it never reads a formatter's input from a file.
-python3 "$GH" pr-threads "$PR_NUM" --format open-threads > "$PR_REVIEW_TMP/open-threads.json"
-
-# Issue comments: gh.py and its formatters have no "open-issue-comments"
-# concept — resolving an issue comment means checking GraphQL isMinimized per
-# node id (comments-resolved-batch), then cross-referencing that against the
-# comment list, which is not something any subcommand or formatter does. Do
-# the extraction and the cross-reference locally instead of inventing a
-# gh.py subcommand for it. (No `!=` below, so this is safe to run inline.)
-python3 -c "
-import json
-comments = json.load(open('$PR_REVIEW_TMP/issue-comments.json'))
-ids = [c['node_id'] for c in comments if c.get('node_id')]
-json.dump(ids, open('$PR_REVIEW_TMP/issue-comment-ids.json', 'w'))
-"
-python3 "$GH" comments-resolved-batch "$PR_REVIEW_TMP/issue-comment-ids.json" > "$PR_REVIEW_TMP/resolved-batch.json"
-python3 -c "
-import json
-comments = json.load(open('$PR_REVIEW_TMP/issue-comments.json'))
-resolved = json.load(open('$PR_REVIEW_TMP/resolved-batch.json'))
-def is_minimized(comment):
-    entry = resolved.get(comment.get('node_id')) or {}
-    node = entry.get('node') or {}
-    return bool(node.get('isMinimized'))
-open_comments = [c for c in comments if not is_minimized(c)]
-json.dump(open_comments, open('$PR_REVIEW_TMP/open-issue-comments.json', 'w'), indent=2)
-print('Open issue comments:', len(open_comments))
-"
-```
-
-After this phase, `$PR_REVIEW_TMP/open-issue-comments.json` contains ONLY open (non-resolved) issue comments. **Use this file for all downstream operations** (summary, images, TODO list). Resolved issue comments are gone — they will never appear in the TODO list.
-
-```bash
-# Each bash block is its own shell; resolve and re-derive rather than inherit.
-# filter_reviews.py reads PR_REVIEW_TMP from the environment, so this block
-# derives it too — unset, the script would read /tmp/claude instead. USER_LOGIN
-# is re-derived for the same reason: inherited it is empty, and an empty login
-# excludes none of the author's own reviews. Empty here means pr.json is
-# missing or empty — Phase 1 never ran for this PR — so this block stops.
-GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/engine/gh.py"
-SKILL_DIR="${CLAUDE_PLUGIN_ROOT}/skills/process-comments/scripts"
-PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
-export PR_REVIEW_TMP="/tmp/claude-pr-review-$PR_NUM"
-USER_LOGIN=$(python3 "$SKILL_DIR/extract_user_login.py") || exit 1
-[ -n "$USER_LOGIN" ] || exit 1
-
-# Reviews: like issue comments above, resolving a review body means checking
-# GraphQL isMinimized per node id (comments-resolved-batch) before filtering
-# -- extract every review's node_id up front so filter_reviews.py can drop a
-# review already minimized on GitHub in the same pass as the body/author
-# filter below. (No `!=` below, so this is safe to run inline.)
-python3 -c "
-import json
-reviews = json.load(open('$PR_REVIEW_TMP/reviews.json'))
-ids = [r['node_id'] for r in reviews if r.get('node_id')]
-json.dump(ids, open('$PR_REVIEW_TMP/review-ids.json', 'w'))
-"
-python3 "$GH" comments-resolved-batch "$PR_REVIEW_TMP/review-ids.json" > "$PR_REVIEW_TMP/reviews-resolved-batch.json"
-
-# Reviews: filter to those with non-empty body, excluding PR author's own
-# reviews and any already minimized on GitHub (per reviews-resolved-batch.json
-# above).
-python3 "$SKILL_DIR/filter_reviews.py" "$USER_LOGIN"
-```
-
-**Phase 4 — Display summaries:**
-
-```bash
-# Exported, not just set: the inline python3 further down reads GH_ROOT from
-# the environment, where an unset value is a KeyError rather than a fallback.
-GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-export GH_ROOT
-GH="$GH_ROOT/engine/gh.py"
-PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
-export PR_REVIEW_TMP="/tmp/claude-pr-review-$PR_NUM"
-
-# thread-summary and pr-details are formatters on a live fetch, per the
-# pattern above — one call each, no intermediate file needed.
-python3 "$GH" pr-threads "$PR_NUM" --format thread-summary
-python3 "$GH" pr-get --format pr-details
-
-# issue-comments-summary exists as a formatter but, like open-threads above,
-# gh.py can only apply it to a fresh API response, not to the local
-# open-issue-comments.json this skill just built. Reuse the formatter
-# function itself (read-only import of github-curl, not a modification of
-# it) against the filtered file instead of re-fetching every comment again:
-python3 -c "
-import os, sys, json
-sys.path.insert(0, os.path.join(os.environ['GH_ROOT'], 'engine'))
-from ghlib import fmt
-comments = json.load(open('$PR_REVIEW_TMP/open-issue-comments.json'))
-print(fmt.render('issue-comments-summary', comments))
-"
-
-# There is no "reviews-summary" formatter anywhere in github-curl — this
-# capability does not exist. Do not invent one. Read the count already
-# printed by filter_reviews.py above, and rely on Step 3 to show each review
-# body comment in full; skip a summary table for this category.
-```
+Keep the scratch directory `/tmp/claude-pr-review-<pr>` for anything this skill
+writes to disk (downloaded images); the PR number in its name keeps two runs on two
+PRs apart.
 
 ### Step 1: Triage — Announce the Workload FIRST (MANDATORY)
 
-**Before building any context, count the open comments and tell the user.** The user must never wait through the full setup without knowing how much work there actually is.
+**Before building any context, tell the user how much work there is.** The user must never wait through the full setup without knowing it.
 
-```bash
-# Each bash block is its own shell; resolve and re-derive rather than inherit.
-# count_open.py reads PR_REVIEW_TMP from the environment, and USER_LOGIN is
-# re-derived alongside it: inherited it is empty, and an empty login auto-passes
-# no thread at all. Empty here means pr.json is missing or empty — Phase 1 never
-# ran for this PR — and counting the files of a run that never happened reports
-# a confident zero, so this block stops instead.
-GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/engine/gh.py"
-SKILL_DIR="${CLAUDE_PLUGIN_ROOT}/skills/process-comments/scripts"
-PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
-export PR_REVIEW_TMP="/tmp/claude-pr-review-$PR_NUM"
-USER_LOGIN=$(python3 "$SKILL_DIR/extract_user_login.py") || exit 1
-[ -n "$USER_LOGIN" ] || exit 1
-
-python3 "$SKILL_DIR/count_open.py" "$USER_LOGIN"
-```
-
-Immediately output one line, before any further tool call:
+Immediately output the document's `announce` line, before any further tool call:
 
 > **PR #N — X open comment(s):** Y review thread(s), Z issue comment(s), W review body comment(s).
 
-**Then pick the protocol tier from X. This is not optional — the protocol scales to the workload:**
+**Then take the protocol tier from `tier` (it follows X). This is not optional — the protocol scales to the workload:**
 
 | Open comments | Tier       | Skip                                                                    | Do                                                                        |
 | ------------- | ---------- | ----------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | **0**         | **Exit**   | Everything — no context, no TODO list, no tables                        | Say "No open review comments found on this PR." and **stop immediately**  |
-| **1–2**       | **Fast**   | Step 2 TODO list entirely; the summary tables; `extract_paths.py`       | Read only the commented file(s), then go straight to Step 3 per comment   |
+| **1–2**       | **Fast**   | Step 2 TODO list entirely; the summary tables; the `paths` pre-read      | Read only the commented file(s), then go straight to Step 3 per comment   |
 | **3+**        | **Full**   | Nothing                                                                 | Step 0.5 context build + Step 2 TODO list + full protocol                 |
 
-**Fast tier is the common case.** Most PRs have 1–2 open comments. Building a TaskCreate list, printing summary tables, and running path-extraction scripts for a single comment is pure ceremony — it burns the user's tokens and their patience for zero benefit. The `TaskCreate` tool's own documentation says not to use it for a single trivial task; that guidance wins over Step 2 here.
+**Fast tier is the common case.** Most PRs have 1–2 open comments. Building a TaskCreate list, printing summary tables, and pre-reading every commented file for a single comment is pure ceremony — it burns the user's tokens and their patience for zero benefit. The `TaskCreate` tool's own documentation says not to use it for a single trivial task; that guidance wins over Step 2 here.
 
 **Red flags at this step:**
 
@@ -386,53 +189,16 @@ Immediately output one line, before any further tool call:
 **Read these in parallel (multiple Read calls in ONE message):**
 
 1. **Project norms:** Read `CLAUDE.md`, `CONTRIBUTING.md` — coding standards and conventions.
-2. **PR intent:** Already fetched via `pr-details` above. Understand the feature's purpose.
-3. **All commented files upfront:** Collect the unique file paths from open threads. Read ALL of them now using parallel Read calls — do NOT re-read per comment in Step 3.
+2. **PR intent:** the document's `title` and `description`. Understand the feature's purpose.
+3. **All commented files upfront:** the document's `paths` lists the unique files that carry an open thread. Read ALL of them now using parallel Read calls — do NOT re-read per comment in Step 3.
+
+**Auto-pass detection:** the document already marks it: an item with `auto_passed` true is a review thread whose last reply is the PR author's (awaiting the reviewer). **Only the LAST reply decides.**
+
+**Image pre-download:** each issue comment's `images` lists the image URLs found in its body. Download each with auth into the scratch directory, spelled out with the PR number from Step 1, then Read it:
 
 ```bash
-# Each bash block is its own shell; resolve and re-derive rather than inherit.
-# extract_paths.py reads PR_REVIEW_TMP from the environment.
-GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/engine/gh.py"
-SKILL_DIR="${CLAUDE_PLUGIN_ROOT}/skills/process-comments/scripts"
-PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
-export PR_REVIEW_TMP="/tmp/claude-pr-review-$PR_NUM"
-
-# Extract unique file paths from open threads, then Read ALL these files in parallel
-python3 "$SKILL_DIR/extract_paths.py"
-```
-
-**Auto-pass detection:** For each open review thread, check if last `comments.nodes[].author.login == USER_LOGIN`. If user is last reply → mark as auto-passed (awaiting reviewer). **Only auto-pass if user is the LAST to reply.**
-
-**Image pre-download:** There is no `issue-comment-images` subcommand or formatter in github-curl — extracting embedded image URLs from comment bodies is plain text scanning, not a GitHub API call, so it does not belong in gh.py. Do it locally and download with auth. (This snippet avoids both `!=` and a literal `!`, since the Bash tool's own escaping of `!` would corrupt a markdown `![...]` pattern just as it corrupts `!=`; matching on file extension and on GitHub's known image hosts instead sidesteps that entirely.)
-
-```bash
-# Each bash block is its own shell; resolve and re-derive rather than inherit.
-GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/engine/gh.py"
-PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
-export PR_REVIEW_TMP="/tmp/claude-pr-review-$PR_NUM"
-
-python3 -c "
-import json, re
-comments = json.load(open('$PR_REVIEW_TMP/open-issue-comments.json'))
-pattern = re.compile(r'https?://\S+')
-image_hosts = ('user-images.githubusercontent.com', 'github.com/user-attachments')
-image_exts = ('.png', '.jpg', '.jpeg', '.gif', '.webp')
-urls = []
-for c in comments:
-    body = c.get('body') or ''
-    for url in pattern.findall(body):
-        url = url.rstrip('.,)')
-        if url.lower().endswith(image_exts) or any(host in url for host in image_hosts):
-            urls.append(url)
-for url in dict.fromkeys(urls):
-    print(url)
-"
-# For each URL printed above, in whatever block does the download, spell the
-# scratch directory out — /tmp/claude-pr-review-<PR number>, the number being the
-# one announced at Step 1 — because a fresh shell has no $PR_REVIEW_TMP:
-# curl -sL -H "Authorization: Bearer $GH_TOKEN" --connect-timeout 10 --max-time 30 -o "/tmp/claude-pr-review-<PR number>/img_N.png" "$URL"
+mkdir -p "/tmp/claude-pr-review-<PR number>"
+curl -sL -H "Authorization: Bearer $GH_TOKEN" --connect-timeout 10 --max-time 30 -o "/tmp/claude-pr-review-<PR number>/img_N.png" "<URL>"
 ```
 
 **If no open comments in ANY of the three categories (threads, issue comments, review body comments):** Tell the user "No open review comments found on this PR." and stop. (Already handled by the Step 1 triage — you should never reach here with 0 comments.)
@@ -452,7 +218,7 @@ Create a TaskCreate entry for each open comment with:
 - Thread ID (`PRRT_` for review threads), Comment ID (numeric, for issue comments), or Review node ID (`PRR_` for review body comments)
 - Image URLs (for issue comments with images)
 
-Display the summary tables from thread-summary, issue-comments-summary, and reviews-summary output. Mark auto-passed items clearly:
+Display one summary table built from the document's `items`. Mark auto-passed items clearly:
 
 ```markdown
 | #   | Type          | File            | Status                              | Comment                      |
@@ -525,16 +291,16 @@ For **each** open comment, follow this exact sequence:
 
 **Before doing ANYTHING else for this comment**, check: is the user the last person to reply?
 
-Resolved issue comments are already filtered out in Step 0 Phase 3 — they never appear in the TODO list. This check is only for review threads where the user replied last (awaiting reviewer).
+Resolved issue comments are already filtered out by the Step 0 triage — they never appear in the TODO list. This check is only for review threads where the user replied last (awaiting reviewer).
 
-For review threads: check the last entry in `comments.nodes[]` — if `author.login == USER_LOGIN`, this thread is **awaiting the reviewer's response**:
+For review threads: the item's `auto_passed` is true when the last reply is the PR author's — this thread is **awaiting the reviewer's response**:
 
 ```markdown
 ## Comment N/total — @author [review-thread] ⏭️ AUTO-PASSED
 
 **File:** `path/to/file.ext:line`
 **Reason:** You already replied — awaiting reviewer's response.
-**Your reply:** > "<your last reply text, truncated to 80 chars>"
+**Your reply:** > "<the item's last_reply, truncated to 80 chars>"
 
 _Skipping — no assessment needed._
 ```
@@ -578,7 +344,7 @@ Display the full comment with context:
 
 ### Attached images
 
-<For each image URL: download with curl -sL -H "Authorization: Bearer $GH_TOKEN" to "/tmp/claude-pr-review-<PR number>/img_N.png" — the scratch directory from Step 0, spelled out because a fresh shell has no $PR_REVIEW_TMP — then Read to display>
+<For each of the item's images: download with curl -sL -H "Authorization: Bearer $GH_TOKEN" to "/tmp/claude-pr-review-<PR number>/img_N.png" — the scratch directory from Step 0, spelled out — then Read to display>
 ```
 
 **Images are important context.** If the reviewer attached screenshots/diagrams, display them — they often show bugs or expected behavior that text alone doesn't convey.
@@ -620,7 +386,7 @@ Use the context already gathered (Full tier: Step 0.5 pre-read everything; Fast 
 
 1. **Check codebase patterns:** If the reviewer suggests a different approach, search the codebase for how other files handle this SAME concern. Use Grep to find 2-3 examples. **Skip if the pre-read files already answer the question.**
 2. **Check project norms:** Reference the CLAUDE.md/CONTRIBUTING.md already read in Step 0.5.
-3. **Check feature intent:** Reference the PR description already fetched in Step 0.
+3. **Check feature intent:** Reference the document's `description`, fetched in Step 0.
 4. **Verify reviewer claims:** If the reviewer claims properties, fields, types, or behaviors exist — **SEARCH the codebase to verify.** If you cannot find them, you CANNOT mark Technical accuracy as ✅. Ask the user: "I can't find [X] in the codebase. Where can I verify this?"
 
 **You must have evidence before you can assess.** If you skip this step, your assessment is uninformed and likely deferential.
@@ -875,37 +641,22 @@ Mark TODO completed. Move to next comment. No code change, no commit, no resolut
 
 Resolution depends on comment type:
 
-**For review threads** (type = `review-thread`):
+**For review threads** (type = `review-thread`), with the thread's `PRRT_` id:
 
-```bash
-# Each bash block is its own shell; resolve rather than inherit.
-GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/engine/gh.py"
-
-# Resolve using the thread's PRRT_ ID
-python3 "$GH" thread-resolve "$THREAD_ID" --format resolve-status
+```json
+{"command": "thread-resolve", "args": {"thread_id": "<PRRT_ id>", "format": "resolve-status"}}
 ```
 
-**For issue comments** (type = `issue-comment`):
+**For issue comments** (type = `issue-comment`), minimized by the comment's `node_id` (`IC_...`):
 
-```bash
-# Each bash block is its own shell; resolve rather than inherit.
-GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/engine/gh.py"
-
-# Resolve by minimizing the comment (uses node_id, e.g. IC_...)
-python3 "$GH" comment-resolve "$NODE_ID" --format error-check
+```json
+{"command": "comment-resolve", "args": {"node_id": "<node_id>", "format": "error-check"}}
 ```
 
-**For review body comments** (type = `review-body`):
+**For review body comments** (type = `review-body`), minimized by the review's node id (`PRR_...`):
 
-```bash
-# Each bash block is its own shell; resolve rather than inherit.
-GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/engine/gh.py"
-
-# Resolve by minimizing the review (uses the review's node_id, e.g. PRR_...)
-python3 "$GH" comment-resolve "$NODE_ID" --format error-check
+```json
+{"command": "comment-resolve", "args": {"node_id": "<node_id>", "format": "error-check"}}
 ```
 
 **If resolution fails** (permissions, invalid ID): Inform the user and suggest they resolve it manually in the GitHub UI.

@@ -20,6 +20,30 @@ review to check if the fixes introduced new issues. After EVERY pass where issue
 found but skipped, increment the pass counter and re-run. The loop runs until one of
 the two exit conditions is met.
 
+## Loop State: the `mcp__pr-review__loop` tool
+
+When `mcp__pr-review__loop` is in your tool list, the loop's state lives in it,
+not in your memory: the pass counter, the seen findings and the fix log survive a
+long run that way. Call it at each of these points, with `action` and its fields:
+
+| When | Call | It answers |
+| --- | --- | --- |
+| Step 1, once, after Step 1.5 | `{"action": "start", "test_command": "<TEST_COMMAND or empty>"}` | pass 0 |
+| Step 2, before every review | `{"action": "begin_pass"}` | the pass number, or `exit: max_passes` with the summary |
+| Step 4, after every review | `{"action": "findings", "keys": ["<file>::<one-line summary>", ...]}`, one key per finding, an empty list when the review found nothing | `exit: clean` with the summary, or which keys are `new` and which were `seen` |
+| Step 5, after each fix commit | `{"action": "fixed", "key": "<key>", "sha": "<short sha>", "description": "<fix>"}` | the fix count |
+| Step 6, after a revert | `{"action": "reverted", "key": "<key>", "sha": "<reverted sha>"}` | the sha it marked |
+| Step 7 | `{"action": "status"}` | passes, exit reason, fixes and reverts for the summary |
+
+Treat a `seen` key exactly as the algorithm treats `seen_issues`: SKIP it. When an
+answer carries `exit`, go to Step 7 with that reason and render the summary from
+the answer, not from memory. While the loop runs, a stop before either exit
+condition is refused once with the pass it stands at: go back to Step 2. Any
+prompt the user types, or an interrupted turn, ends that hold.
+
+When the tool is not listed, keep the same state yourself, as the algorithm below
+spells it out.
+
 ## Loop Algorithm (MANDATORY — follow exactly)
 
 ```

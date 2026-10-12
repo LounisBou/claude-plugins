@@ -61,6 +61,38 @@ language, while only the English one reaches the PR.
 
 ---
 
+## GitHub calls
+
+Every GitHub call below is written as the request the github plugin's
+`mcp__github__gh` tool takes: one JSON object holding `command` and `args`. Make
+it as a call of that tool, the placeholders filled in: `"<PR>"` and every other
+number (`line`, `start-line`, `review-id`) as a JSON number, text as a string. A
+body travels as `body` and a set of inline comments as `comments`, never as a
+file path: the tool writes them to files itself.
+
+A write made through the tool passes the session's permission check. Where this
+plugin's module loads, it also holds this skill's Iron Rules (no code change
+without "fix", no publication without "post now", no push): a refused call says
+which word of the user lifts it. Ask the user for that word, and never take
+another route around a refusal.
+
+**When `mcp__github__gh` is not in your tool list** (a session where plugin
+modules do not load, such as `claude -p`), send the same request to the same
+engine from Bash. Write the request object with the Write tool to
+`/tmp/claude-pr-review-request.json`, then run:
+
+```bash
+GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
+python3 "$GH_ROOT/engine/gh.py" --stdin-json < /tmp/claude-pr-review-request.json
+```
+
+`${CLAUDE_PLUGIN_ROOT}` names this plugin and reaches no sibling, so the resolver
+reads the platform's install record rather than assembling a path into the plugin
+cache. When the dependency is missing it prints an `error:` line and a `fix:`
+line: stop there. Never take this route while the tool is listed.
+
+---
+
 ## Workflow
 
 ```dot
@@ -79,7 +111,7 @@ digraph start_review {
     apply_fix [label="Apply the fix,\nrun the project's gate,\nstage + draft the commit"];
     rework [label="Rewrite the comment,\nshow both languages"];
     post [label="Keep the comment\nfor the pending review"];
-    post_now [label="Publish now\n(github-curl)"];
+    post_now [label="Publish now\n(mcp__github__gh)"];
     batch [label="\"post all\" / \"fix all\" / \"skip all\":\nhandle every remaining item"];
     next_item [label="Move to next item"];
     completion [label="Completion: write ONE review,\nleft PENDING, when anything was kept"];
@@ -149,15 +181,17 @@ Review agents report plausible findings, not verified ones. Before an item reach
 Every comment the user keeps goes into ONE review left PENDING on the PR. A pending
 review is invisible to the author until its owner submits it, so nothing here reaches
 the author before the user says so on GitHub. Read what already exists before the
-walkthrough starts:
+walkthrough starts. First the PR number of the current branch:
 
-```bash
-# Each bash block is its own shell; resolve rather than inherit.
-GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/engine/gh.py"
-PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
-[ -n "$PR_NUM" ] || { echo "no open pull request for this branch"; exit 1; }
-python3 "$GH" review-pending "$PR_NUM" --format pending-review-summary
+```json
+{"command": "pr-get", "args": {"format": "pr-number"}}
+```
+
+An empty answer means there is no open pull request for this branch: say so and
+stop. Then the pending review on it:
+
+```json
+{"command": "review-pending", "args": {"pr": "<PR>", "format": "pending-review-summary"}}
 ```
 
 `none` means the user has no pending review on this PR: the kept items open one at
@@ -368,26 +402,19 @@ use the top-level fallback (`pr-comment`) for this item and say so.
 
 1. **Post the English version. Always.** Never ask the user which language — see Language Rules.
 2. Post as an **inline comment on the cited file and line** where the anchor is inside the PR diff; fall back to a top-level PR comment when the line is outside the diff (a migration filename, a missing test) — and say which you used.
-3. Use the `github-curl` skill for the GitHub API — `gh api` fails in the sandbox, and so does hand-built `curl`: `github-curl`'s `gh.py` already covers both destinations, so never call `curl` directly here. It ships in the separate `github` plugin, which `${CLAUDE_PLUGIN_ROOT}` cannot reach, so resolve its root through the platform's install record rather than assembling a path into the plugin cache by hand. Each block below is its own shell, so each repeats the two resolution lines — deliberately, since an inherited `$GH` that is not actually set expands to the empty string and reports `can't find '__main__' module` instead of the `error:`/`fix:` pair the resolver would print. When the dependency is missing, stop there rather than posting by some other route.
+3. Publish through the github tool, as GitHub calls describes — never `gh api` or a
+   hand-built `curl`, which fail in the sandbox, and never by some other route when
+   the tool refuses. For the inline case, submit a review holding the one comment,
+   with the event `COMMENT` and no other:
 
-   For the inline case, write a one-element JSON array of `{"path": ..., "line": ..., "side": "RIGHT", "body": "..."}` to a file with `python3`'s `json.dump` (so markdown special characters are escaped correctly, not hand-quoted) and submit it as a review:
-
-```bash
-# Each bash block is its own shell; resolve rather than inherit.
-GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/engine/gh.py"
-
-python3 "$GH" review-submit <PR> --event COMMENT --comments-file <file>
+```json
+{"command": "review-submit", "args": {"pr": "<PR>", "event": "COMMENT", "comments": [{"path": "<path>", "line": "<line>", "side": "RIGHT", "body": "<the English comment>"}]}}
 ```
 
-   For the top-level fallback, write the body to its own file and use this instead:
+   For the top-level fallback:
 
-```bash
-# Each bash block is its own shell; resolve rather than inherit.
-GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/engine/gh.py"
-
-python3 "$GH" pr-comment <PR> --body-file <file>
+```json
+{"command": "pr-comment", "args": {"pr": "<PR>", "body": "<the English comment>"}}
 ```
 
 4. Confirm with the posted URL.
@@ -455,27 +482,19 @@ pending review is not publishing: the author sees nothing until the user submits
 GitHub, so it needs no command. When no item was kept, no review is opened: the summary
 drops both new sections and the review line.
 
-1. **Read the state again** with the Step 1.3 block. It prints `none`, or an id and a
-   count.
+1. **Read the state again** with the Step 1.3 `review-pending` call. It prints `none`,
+   or an id and a count.
 
-2. **When it prints `none`**, write the kept items to one file and open the review with
-   them. Build the file with `python3` and `json.dump`, never by hand, so that markdown
-   special characters are escaped correctly. It holds a JSON array with one object per
-   kept item: `path`, `line`, `side` set to `"RIGHT"`, and `body` — read back from the
-   item's `comment-<n>.md`. `line` is the line the comment anchors on, the last line of
-   the range when it covers several; `start_line`, present only for a range, is its first
-   line and must be below `line`; both are integers, and a single-line comment carries no
-   `start_line`. A range also adds `start_side` set to `"RIGHT"`. Write the array to
-   `pending-comments.json` under `/tmp/claude-pr-review-<PR>`.
+2. **When it prints `none`**, open the review with every kept item. `comments` is an
+   array with one object per kept item: `path`, `line`, `side` set to `"RIGHT"`, and
+   `body` — read back from the item's `comment-<n>.md`, word for word. `line` is the line
+   the comment anchors on, the last line of the range when it covers several;
+   `start_line`, present only for a range, is its first line and must be below `line`;
+   both are integers, and a single-line comment carries no `start_line`. A range also
+   adds `start_side` set to `"RIGHT"`.
 
-```bash
-# Each bash block is its own shell; resolve rather than inherit.
-GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/engine/gh.py"
-PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
-[ -n "$PR_NUM" ] || { echo "no open pull request for this branch"; exit 1; }
-PR_REVIEW_TMP=/tmp/claude-pr-review-$PR_NUM
-python3 "$GH" review-pending-create "$PR_NUM" --comments-file "$PR_REVIEW_TMP/pending-comments.json" --format error-check
+```json
+{"command": "review-pending-create", "args": {"pr": "<PR>", "comments": [{"path": "<path>", "line": "<line>", "side": "RIGHT", "body": "<comment-n.md>"}], "format": "error-check"}}
 ```
 
    On success this prints nothing and exits 0; the id and the count come from the read
@@ -483,24 +502,17 @@ python3 "$GH" review-pending-create "$PR_NUM" --comments-file "$PR_REVIEW_TMP/pe
 
 3. **When a review already exists**, add the kept items to it instead, one call per
    item, with the numeric `id` line the read printed, never the `node_id`. Each body is
-   already in its own file from the `post` that kept it — `comment-1.md`,
-   `comment-2.md` — and that is the file to pass, because a body never travels as an
-   argument. Add `--start-line` when the comment covers a range.
+   the one its `post` kept in `comment-<n>.md`, read back word for word. Add
+   `start-line` when the comment covers a range.
 
-```bash
-# Each bash block is its own shell; resolve rather than inherit.
-GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-GH="$GH_ROOT/engine/gh.py"
-PR_NUM=$(python3 "$GH" pr-get --format pr-number) || exit 1
-[ -n "$PR_NUM" ] || { echo "no open pull request for this branch"; exit 1; }
-PR_REVIEW_TMP=/tmp/claude-pr-review-$PR_NUM
-python3 "$GH" review-pending-add "$PR_NUM" --review-id <id> --path <path> --line <line> --body-file "$PR_REVIEW_TMP/comment-<n>.md" --format error-check
+```json
+{"command": "review-pending-add", "args": {"pr": "<PR>", "review-id": "<id>", "path": "<path>", "line": "<line>", "body": "<comment-n.md>", "format": "error-check"}}
 ```
 
    On success this prints nothing and exits 0; the id and the count come from the read
    in step 4. A non-zero exit prints the error: stop and report it.
 
-4. **Report from a read, never from the write.** Run the Step 1.3 block once more and
+4. **Report from a read, never from the write.** Make the Step 1.3 `review-pending` call once more and
    take the id, the `state` — it must say `PENDING` — the comment count and the
    path/line table from THAT output. What a write printed says what was sent, not what
    the PR now holds. The count to expect is the number of kept items when the review was

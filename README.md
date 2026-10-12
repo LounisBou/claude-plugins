@@ -61,23 +61,61 @@ than presented to you.
 
 ## The GitHub tool
 
-The skills talk to GitHub through `gh.py` — pull requests, review threads, comments,
-reviews, labels, reviewers, issues, search and image attachments, Python standard
-library only, no `gh` CLI. That tool is no longer carried here. It ships in its own
-plugin, `github@lounisbou`, declared under `dependencies` in
-`.claude-plugin/plugin.json` and installed along with this plugin rather than
-separately.
+The skills talk to GitHub through the `github@lounisbou` plugin — pull requests,
+review threads, comments, reviews, labels, reviewers, issues, search and image
+attachments, Python standard library only, no `gh` CLI. That tool is no longer
+carried here: the plugin is declared under `dependencies` in
+`.claude-plugin/plugin.json` and installed along with this one.
 
-The skills never hard-code where it lives. `${CLAUDE_PLUGIN_ROOT}` names this
-plugin's own directory and cannot reach a sibling, and the plugin cache is not a
-path to assemble by hand — installed versions are sometimes git SHAs rather than
-versions. `scripts/resolve_github.py` reads the platform's own install record and
-prints the sibling's root; every skill resolves through it and stops on an
-`error:`/`fix:` pair when the dependency is absent.
+Each call in a skill is written as the JSON request that plugin's
+`mcp__github__gh` tool takes, `{"command": ..., "args": {...}}`, and made as a call
+of that tool. A write made that way passes the session's permission check, which a
+shell call of the engine does not.
 
-Its documentation — the full subcommand and formatter surface, the body-file rule,
-the exit codes — lives at
-[github.com/LounisBou/claude-github](https://github.com/LounisBou/claude-github).
+Where the tool is not listed (a session where plugin modules do not load, such as
+`claude -p`), the skill sends the same request to the same engine from Bash:
+`gh.py --stdin-json`, the request in a file. The engine's root comes from
+`scripts/resolve_github.py`, which reads the platform's own install record — never a
+path assembled into the plugin cache, whose directory names are sometimes git SHAs
+— and stops on an `error:`/`fix:` pair when the dependency is absent.
+
+Its documentation — the full subcommand and formatter surface, the exit codes —
+lives at [github.com/LounisBou/claude-github](https://github.com/LounisBou/claude-github).
+
+## The hooks module
+
+`hooks/` holds a module the host loads beside the skills. It adds no step the
+skills cannot do without it: under `claude -p` or an older host it does not load,
+and every skill keeps its own route.
+
+- **The Iron Rules, held.** While `start-review` or `process-comments` runs, a code
+  change waits for the user's own `fix` (process-comments: `1` or `3`, or an
+  alias carrying `fix`), a publication on the PR for `post now`, a resolve in
+  process-comments for `1` or `4`, and `git push` for `push`. A refused call tells
+  the model which word lifts it. The walkthrough's own files under
+  `/tmp/claude-pr-review-*` are never refused. A review is never submitted with
+  an event other than `COMMENT`.
+- **Never a trap.** `end review` typed by the user, an interrupted turn (Esc), a
+  `/clear` and the skill's own closing line each end those rules at once.
+  `auto-fix-loop` is autonomous and runs under none of them.
+- **`mcp__pr-review__open_comments`.** process-comments' triage in one call: the
+  PR, its comments, reviews and open threads read through `mcp__github__gh`, then
+  `skills/process-comments/scripts/triage.py` — the same script the Bash route
+  runs — answering the open items, the counts, the tier and the line to announce.
+- **`mcp__pr-review__loop` and a Stop gate.** auto-fix-loop's pass counter, seen
+  findings and fix log, held outside the model's memory. While a loop runs and
+  neither exit condition (a clean review, pass 5) is met, a stop is refused once,
+  naming the pass. Any prompt the user types, or an interrupted turn, ends that hold.
+- **The band.** A line above the prompt while a skill holds the session: which one,
+  the comments kept, the prepared commits waiting for `commit` or `drop`, the pass.
+- **`/pr-review:doctor` and `/pr-review:install`** answer with `install.sh`'s output
+  and the remedy for its exit code, with no model turn; the preflight runs once per
+  session and each skill reads that it passed.
+
+The matcher reads words, not intent. It refuses consent given in other words
+(`go ahead`, `yes`, `please apply it`), as the skills themselves do, and it grants
+on a word inside a negation (`don't fix this one`). `hooks/tests/policy.test.ts`
+pins each of those cases.
 
 ## Tests
 
@@ -87,13 +125,20 @@ bash tests/run-tests.sh
 
 No network and no GitHub account. The tool's own behaviour is tested in the
 `claude-github` repository, where it lives; what runs here is the manifests, the
-preflight, the resolver, the skill documents, and a contract test that reads the
-real installed parser and fails if a skill names a subcommand or formatter that
-does not exist. Point `CLAUDE_GITHUB_ROOT` at a `claude-github` checkout to run
+preflight, the resolver, the triage script, the skill documents, and a contract
+test that maps every request a skill makes through the real installed engine and
+fails if it names a subcommand, an argument or a formatter that does not exist. Point `CLAUDE_GITHUB_ROOT` at a `claude-github` checkout to run
 that contract test without the plugin installed:
 
 ```
 CLAUDE_GITHUB_ROOT=~/dev/claude-github bash tests/run-tests.sh
+```
+
+The hooks module has its own tests, run by the host against its engine:
+
+```
+claude plugin test .
+claude plugin validate .
 ```
 
 ## Licence
