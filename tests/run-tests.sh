@@ -5936,6 +5936,7 @@ check "a corrective round or an escaped defect grades a row as a failure" "class
   "$(rcal demo --from-record "$RR")"
 : > "$TR"
 check_status "no trial and no record row is a refusal" 1 rcal demo
+check "and with nothing left out, it says there was no trial and no record row" "ERROR: calibrate: no trial and no record row for demo" "$(rcal demo 2>&1)"
 check_status "a record that does not exist is a refusal" 1 rcal demo --from-record "$WORK/no-such-record.jsonl"
 
 # Tables by task: a pair is weighed per task, compared with the best measured pair, and its
@@ -6538,6 +6539,182 @@ printf '{"slug":"bare","repo":"%s","profile":"x/y","tasks":[]}' "$BR" > "$WORK/b
 check "a manifest with no test command is refused" "ERROR: bench: project bare has no test_command or test_globs in its manifest" \
   "$(ORCHESTRATOR_STATE_DIR="$BS" python3 "$ROUTING" bench bare --grid b-model/medium --max-usd 1 2>&1)"
 
+echo "== routing: task control =="
+
+# A task is proved passable before it is benched: `ready` runs the merged commit's own tests on the
+# merged tree. Here ok-1's base fails its test and its merge fixes it, bad-1's base passes and its
+# merge breaks it, slow-1's merge adds a test that never ends, and lost-1's merged commit is no
+# commit: a control run on the base, or on anything but the merged tree, reads each one wrong.
+KR="$WORK/controlrepo"; mkdir -p "$KR/tests"; git -C "$KR" init -q
+kcommit() { printf '%s\n' "$1" > "$KR/tests/t.sh"; gc -C "$KR" add -A; gc -C "$KR" commit -qm "$2"; git -C "$KR" rev-parse HEAD; }
+K0=$(kcommit 'echo "FAIL the base is broken"; exit 1' broken)
+K1=$(kcommit 'exit 0' fixed)
+K2=$(kcommit 'for i in 1 2 3 4 5 6 7; do echo "FAIL case $i"; done; exit 1' regressed)
+K3=$(kcommit 'sleep 31339' hangs)
+KT="$WORK/ctl-tmp"; mkdir -p "$KT"
+KS="$WORK/ctlstate"; KP="$KS/routing/projects/ctl"; mkdir -p "$KP"; KM="$KP/manifest.json"
+printf '{"deep":"a-model","standard":"b-model","light":"c-model"}' > "$KS/models.json"
+jq -n --arg repo "$KR" --arg k0 "$K0" --arg k1 "$K1" --arg k2 "$K2" --arg k3 "$K3" '
+  def task($id; $base; $merged): {id: $id, class: "behaviour-phase", base: $base, merged: $merged,
+                                  brief: "briefs/x.md", status: "draft"};
+  {slug: "ctl", repo: $repo, profile: "x/y", test_globs: ["tests/*"],
+   test_command: "for t in tests/*.sh; do bash \"$t\" || exit 1; done",
+   tasks: [task("ok-1"; $k0; $k1), task("bad-1"; $k1; $k2), task("slow-1"; $k1; $k3),
+           task("draft-1"; $k0; $k1), task("draft-2"; $k0; $k1),
+           task("lost-1"; $k0; "0000000000000000000000000000000000000000")]}' > "$KM"
+rk() { ORCHESTRATOR_STATE_DIR="$KS" TMPDIR="$KT" python3 "$ROUTING" "$@"; }
+ktask() { jq -r --arg id "$1" ".tasks[]|select(.id==\$id)|$2" "$KM"; }
+
+out=$(rk ready ctl ok-1 2>"$WORK/ctl.err"); code=$?
+check "ready proves a task whose merged tree passes, and keeps the control it ran" "0|ready|0|true|number" \
+  "$code|$(ktask ok-1 .status)|$(ktask ok-1 .control.exit)|$(ktask ok-1 '.control.at|test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")')|$(ktask ok-1 '.control.duration_s|type')"
+check "and says so, with the time the tests took" "1" "$(printf '%s\n' "$out" | grep -c '^ready: ok-1 (control passed in [0-9.]*s)$')"
+check "a passing control keeps no failure lines" "0|false|false" "$(ktask ok-1 .control.exit)|$(ktask ok-1 '.control|has("tests_failed")')|$(ktask ok-1 '.control|has("tests_tail")')"
+
+# ok-1 was proved by the call above: put it back to a draft, so that only this call can leave it ready.
+jq '(.tasks[]|select(.id=="ok-1")) |= (.status="draft" | del(.control, .void))' "$KM" > "$WORK/ctl.tmp" && mv "$WORK/ctl.tmp" "$KM"
+out=$(rk ready ctl bad-1 ok-1 2>"$WORK/ctl.err"); code=$?
+check "ready voids a task whose merged tree fails its own tests, proves the next one, and exits 1" "1|void|ready" \
+  "$code|$(ktask bad-1 .status)|$(ktask ok-1 .status)"
+check "the void carries its reason and the failure the control saw, as a failed trial does" "control: the merged commit's own tests fail (exit 1)|1|7|FAIL case 1|true" \
+  "$(ktask bad-1 .void)|$(ktask bad-1 .control.exit)|$(ktask bad-1 '.control.tests_failed|length')|$(ktask bad-1 '.control.tests_failed[0]')|$(ktask bad-1 '.control.tests_tail|contains("FAIL case 7")')"
+check "each task has its line, the void one with its reason" "1|1" \
+  "$(printf '%s\n' "$out" | grep -c "^void: bad-1 control: the merged commit's own tests fail (exit 1)\$")|$(printf '%s\n' "$out" | grep -c '^ready: ok-1 (control passed in ')"
+check "stderr shows the first five failing lines of a voided task, then names the voided tasks last" "5|ERROR: ready: voided bad-1" \
+  "$(grep -c '^FAIL case' "$WORK/ctl.err")|$(tail -1 "$WORK/ctl.err")"
+check "a control leaves no tree behind" "0" "$(ls "$KT" | wc -l | tr -d ' ')"
+
+out=$(ORCHESTRATOR_TRIAL_TIMEOUT=1 rk ready ctl slow-1 2>"$WORK/ctl.err"); code=$?
+# The kill is a signal: give the group a moment to be reaped before counting survivors.
+for _ in 1 2 3 4 5 6 7 8 9 10; do ps -axo command | grep -q '[s]leep 31339' || break; sleep 0.3; done
+check "a control that never ends is voided as a timeout, with no exit code" "1|void|control: the merged commit's own tests time out|null" \
+  "$code|$(ktask slow-1 .status)|$(ktask slow-1 .void)|$(ktask slow-1 '.control.exit|tostring')"
+check "and leaves no process and no tree behind" "0|0" "$(ps -axo command | grep -c '[s]leep 31339')|$(ls "$KT" | wc -l | tr -d ' ')"
+pkill -f 'sleep 31339' 2>/dev/null || true
+
+# A merged commit that cannot be read is not the task's fault: nothing is voided.
+out=$(rk ready ctl lost-1 2>&1); code=$?
+check "a merged commit that cannot be read stops ready, and the task is left as it was" "1|1|draft|false" \
+  "$code|$(printf '%s\n' "$out" | grep -c '^ERROR: ready: the merged commit of task lost-1 cannot be read')|$(ktask lost-1 .status)|$(ktask lost-1 'has("control")')"
+
+# Refusals come before any run.
+cp "$KM" "$WORK/ctl.before"
+out=$(rk ready ctl draft-1 nope-9 2>&1); code=$?
+check "ready refuses an unknown task before running any, and writes nothing" "1|ERROR: ready: no task nope-9 in ctl|false|same" \
+  "$code|$out|$(ktask draft-1 'has("control")')|$(cmp -s "$KM" "$WORK/ctl.before" && echo same || echo changed)"
+mkdir -p "$KS/routing/projects/notests" "$KS/routing/projects/noglobs"
+jq 'del(.test_command) | .slug="notests"' "$KM" > "$KS/routing/projects/notests/manifest.json"
+jq 'del(.test_globs) | .slug="noglobs"' "$KM" > "$KS/routing/projects/noglobs/manifest.json"
+for slug in notests noglobs; do
+  out=$(rk ready "$slug" draft-1 2>&1); code=$?
+  check "ready dies before any run on a manifest with no test command or no test globs: $slug" "1|ERROR: bench: project $slug has no test_command or test_globs in its manifest|draft|false" \
+    "$code|$out|$(jq -r '.tasks[]|select(.id=="draft-1")|.status' "$KS/routing/projects/$slug/manifest.json")|$(jq -r '.tasks[]|select(.id=="draft-1")|has("control")' "$KS/routing/projects/$slug/manifest.json")"
+done
+
+# The manifest is written after each task: a run killed midway keeps the tasks proved before it.
+jq '(.tasks[]|select(.id=="bad-1" or .id=="slow-1")) |= (.status="draft" | del(.control, .void))' "$KM" > "$WORK/ctl.tmp" && mv "$WORK/ctl.tmp" "$KM"
+ORCHESTRATOR_STATE_DIR="$KS" ORCHESTRATOR_TRIAL_TIMEOUT=60 TMPDIR="$KT" python3 "$ROUTING" ready ctl bad-1 slow-1 >/dev/null 2>&1 &
+kpid=$!
+for _ in $(seq 1 50); do [ "$(ktask bad-1 .status)" = void ] && break; sleep 0.2; done
+kill -9 "$kpid" 2>/dev/null; { wait "$kpid"; } 2>/dev/null
+for _ in 1 2 3 4 5 6 7 8 9 10; do pkill -f 'sleep 31339' 2>/dev/null; ps -axo command | grep -q '[s]leep 31339' || break; sleep 0.3; done
+check "a run killed midway keeps the task proved before it, and the one it was proving is untouched" "void|draft|false" \
+  "$(ktask bad-1 .status)|$(ktask slow-1 .status)|$(ktask slow-1 'has("control")')"
+rm -rf "${KT:?}"/*
+
+# void: a task whose merged commit passes but whose tests assert what the brief never states.
+check_status "void wants a reason" 2 rk void ctl ok-1
+check "and a reason that says something" "ERROR: void: --reason must not be empty" "$(rk void ctl ok-1 --reason '  ' 2>&1)"
+check "void of an unknown task is refused, naming it" "ERROR: void: no task nope-9 in ctl" "$(rk void ctl nope-9 --reason why 2>&1)"
+at=$(ktask ok-1 .control.at)
+out=$(rk void ctl ok-1 draft-1 --reason "the tests assert what the brief never states" 2>&1); code=$?
+check "void marks each task with its reason, prints it for each, and runs no control" "0|void|void|the tests assert what the brief never states|$at|false" \
+  "$code|$(ktask ok-1 .status)|$(ktask draft-1 .status)|$(ktask ok-1 .void)|$(ktask ok-1 .control.at)|$(ktask draft-1 'has("control")')"
+check "one line each" "void: ok-1 the tests assert what the brief never states|void: draft-1 the tests assert what the brief never states" \
+  "$(printf '%s\n' "$out" | paste -sd'|' -)"
+rk ready ctl ok-1 >/dev/null 2>&1
+check "a voided task whose merged tree passes returns through ready, its void field gone" "ready|false" \
+  "$(ktask ok-1 .status)|$(ktask ok-1 'has("void")')"
+rk ready ctl bad-1 >/dev/null 2>&1
+check "and one whose merged tree fails stays void" "void" "$(ktask bad-1 .status)"
+
+# The bench names why it skips a task: a draft keeps its wording, a void task is named void.
+out=$(ORCHESTRATOR_HOST_CLI="$ROOT/tests/fixtures/routing/host-stub.sh" rk bench ctl --grid b-model/medium --max-usd 0 2>&1 >/dev/null)
+check "the bench skips a void task and says it is void, and a draft keeps its wording" "1|1|0" \
+  "$(printf '%s\n' "$out" | grep -c 'bench: task bad-1 is void, skipped')|$(printf '%s\n' "$out" | grep -c 'bench: task draft-2 is still a draft, skipped')|$(printf '%s\n' "$out" | grep -c 'bench: task ok-1 is')"
+
+# What a table counts: the trials of ready tasks, those naming no task (record rows), and those
+# naming a task the manifest does not know.
+check "counted keeps a trial of a ready task, one naming no task and one naming an unknown task; the others come back by task" "['a', None, 'x']|[('d', 1), ('v', 2)]" \
+  "$(rcall '(lambda r: "%s|%s" % ([t.get("task") for t in r[0]], sorted(r[1].items())))(m.counted({"tasks": [{"id": "a", "status": "ready"}, {"id": "v", "status": "void"}, {"id": "d", "status": "draft"}]}, [{"task": "a"}, {"task": "v"}, {"task": "d"}, {}, {"task": "x"}, {"task": "v"}]))')"
+check "counted of a manifest with no task keeps every trial" "3|{}" \
+  "$(rcall '(lambda r: "%d|%s" % (len(r[0]), r[1]))(m.counted({}, [{"task": "a"}, {"task": "b"}, {}]))')"
+
+QS="$WORK/countstate"; QP="$QS/routing/projects/cnt"; mkdir -p "$QP"
+printf '{"slug":"cnt","repo":"/nonexistent","profile":"x/y","tasks":[{"id":"t1","status":"ready"},{"id":"t2","status":"ready"},{"id":"t3","status":"ready"},{"id":"t4","status":"void"},{"id":"t5","status":"draft"}]}' > "$QP/manifest.json"
+qtrial() { # task status [times]: a trial of b-model/medium; an empty task names none
+  local i tf=""; [ -n "$1" ] && tf="\"task\":\"$1\","
+  for i in $(seq "${3:-1}"); do
+    printf '{%s"class":"behaviour-phase","pair":"b-model/medium","rep":1,"models":{"b-model-1":0.3},"cost_usd":0.3,"status":"%s"}\n' "$tf" "$2" >> "$QP/trials.jsonl"
+  done; }
+: > "$QP/trials.jsonl"
+for t in t1 t2 t3; do qtrial "$t" pass 2; done
+qtrial t4 fail 2; qtrial t5 fail; qtrial "" pass; qtrial t9 pass
+rcnt() { ORCHESTRATOR_STATE_DIR="$QS" python3 "$ROUTING" calibrate cnt "$@"; }
+rcnt >/dev/null 2>"$WORK/cnt.err"
+qrung() { jq -r '.entries["behaviour-phase"].ladder[0]|"\(.n)|\(.tasks)|\(.per_task|keys|join(","))"' "$QS/routing/tables/project-cnt.json"; }
+check "calibrate leaves the trials of a voided and of a draft task out of the figures, and keeps the rest" "8|4|record,t1,t2,t3,t9" "$(qrung)"
+check "and says what it left out, once, with the ids sorted" "1|1" \
+  "$(grep -c 'cnt: excluded 3 trial(s) of task(s) not ready: t4 t5$' "$WORK/cnt.err")|$(grep -c 'excluded' "$WORK/cnt.err")"
+# Made ready again, t4 and t5 bring their trials back (their failures are now passes, so the class
+# keeps its entry and the ladder can be read).
+jq '(.tasks[]|select(.id=="t4" or .id=="t5")).status="ready"' "$QP/manifest.json" > "$WORK/cnt.tmp" && mv "$WORK/cnt.tmp" "$QP/manifest.json"
+sed 's/"status":"fail"/"status":"pass"/' "$QP/trials.jsonl" > "$WORK/cnt.tmp" && mv "$WORK/cnt.tmp" "$QP/trials.jsonl"
+rcnt >/dev/null 2>"$WORK/cnt.err"
+check "a task made ready again brings its trials back, and nothing is said when nothing is left out" "11|6|0" \
+  "$(qrung | cut -d'|' -f1,2)|$(grep -c 'excluded' "$WORK/cnt.err")"
+# Every trial on a voided task: only the record rows are left to calibrate on.
+printf '{"slug":"cnt2","repo":"/nonexistent","profile":"x/y","tasks":[{"id":"t1","status":"void"}]}' > "$WORK/cnt2.json"
+mkdir -p "$QS/routing/projects/cnt2"; cp "$WORK/cnt2.json" "$QS/routing/projects/cnt2/manifest.json"
+for i in 1 2 3; do printf '{"task":"t1","class":"n-bis","pair":"c-model/low","rep":1,"models":{"c-model-1":0.1},"cost_usd":0.1,"status":"pass"}\n' >> "$QS/routing/projects/cnt2/trials.jsonl"; done
+RR2="$WORK/cnt-rec.jsonl"; : > "$RR2"
+for i in 1 2 3 4 5 6; do printf '{"id":%d,"class":"n-bis","model":"c-model","effort":"low","rounds":1,"state":"closed","cost_usd":0.02,"sessions":["s"],"cost_incomplete":false}\n' "$i" >> "$RR2"; done
+check "trials all left out, the record rows still calibrate" "class=n-bis pair=c-model/low pass_rate=1.0 n=6 expected_usd=0.02 p_best=1.0 size=unknown" \
+  "$(ORCHESTRATOR_STATE_DIR="$QS" python3 "$ROUTING" calibrate cnt2 --from-record "$RR2" 2>/dev/null)"
+check_status "and with no record row either, calibrate has nothing to read" 1 env ORCHESTRATOR_STATE_DIR="$QS" python3 "$ROUTING" calibrate cnt2
+# Every trial left out and no record row either: the table those trials built goes with them, or
+# pick would go on serving the entry the exclusion exists to remove.
+rcnt2() { ORCHESTRATOR_STATE_DIR="$QS" python3 "$ROUTING" calibrate cnt2 "$@"; }
+Q2TAB="$QS/routing/tables/project-cnt2.json"
+rcnt2 --from-record "$RR2" >/dev/null 2>&1
+q2had=$([ -f "$Q2TAB" ] && echo table || echo none)
+rcnt2 >/dev/null 2>"$WORK/cnt2.err"; code=$?
+check "calibrate with every trial left out and no record row removes the project's table, naming how many trials it left out" \
+  "table|1|ERROR: calibrate: no counted trial for cnt2 (3 excluded); its table removed|none" \
+  "$q2had|$code|$(tail -1 "$WORK/cnt2.err")|$([ -f "$Q2TAB" ] && echo table || echo none)"
+rm -f "$Q2TAB"
+rcnt2 >/dev/null 2>"$WORK/cnt2.err"; code=$?
+check "and with no table to remove it says only that no trial was counted" \
+  "1|ERROR: calibrate: no counted trial for cnt2 (3 excluded)" "$code|$(tail -1 "$WORK/cnt2.err")"
+
+GQ="$WORK/gcountstate"
+gcmk() { mkdir -p "$GQ/routing/projects/$1"; printf '{"slug":"%s","repo":"/x/%s","profile":"php/laravel-app","tasks":%s}' "$1" "$1" "$2" > "$GQ/routing/projects/$1/manifest.json"; : > "$GQ/routing/projects/$1/trials.jsonl"; }
+gctrial() { # slug task status [times]
+  local i; for i in $(seq "${4:-1}"); do
+    printf '{"task":"%s","class":"behaviour-phase","pair":"b-model/medium","rep":1,"models":{"b-model-1":0.3},"cost_usd":0.3,"status":"%s"}\n' "$2" "$3" >> "$GQ/routing/projects/$1/trials.jsonl"
+  done; }
+gcmk g1 '[{"id":"t1","status":"ready"},{"id":"t2","status":"ready"},{"id":"t3","status":"ready"},{"id":"t4","status":"void"}]'
+gcmk g2 '[{"id":"t1","status":"ready"},{"id":"t2","status":"ready"},{"id":"t3","status":"ready"}]'
+gcmk g3 '[{"id":"t1","status":"void"}]'
+for s in g1 g2; do for t in t1 t2 t3; do gctrial $s $t pass 2; done; done
+gctrial g1 t4 fail 2; gctrial g3 t1 pass 2
+out=$(ORCHESTRATOR_STATE_DIR="$GQ" python3 "$ROUTING" generalize 2>"$WORK/gcount.err")
+check "generalize leaves the trials of a voided task out of the pooled figures" "12|6" \
+  "$(jq -r '.entries["behaviour-phase"].ladder[]|select(.pair=="b-model/medium")|"\(.n)|\(.tasks)"' "$GQ/routing/tables/global.json")"
+check "and says which project left what out, one line per project that did" "g1: excluded 2 trial(s) of task(s) not ready: t4|g3: excluded 2 trial(s) of task(s) not ready: t1" \
+  "$(grep 'excluded' "$WORK/gcount.err" | sed 's/^WARNING: //' | paste -sd'|' -)"
+check "a project with no trial left is no project of the fold" "global projects=2 classes=1" "$(printf '%s\n' "$out" | grep '^global')"
+
 echo "== routing: generalize =="
 
 GS="$WORK/gstate"
@@ -6712,6 +6889,8 @@ check "the skill puts a search exploration, summary in the brief, before a phase
   "$(spells "$MR" 'beyond every measured size')|$(carries "$MR" 'read-only search exploration')"
 check "the calibration reference states pick's options and its lines" "yes|yes|yes" \
   "$(spells "$MRC" '--files <n> --lines <n>')|$(spells "$MRC" 'size=large beyond=<scope>')|$(spells "$MRC" 'nbis=<pair>')"
+check "the calibration reference says ready runs the merged commit's tests, what void is for, and that a table counts only ready tasks" "yes|yes|yes|yes|yes" \
+  "$(spells "$MRC" '`ready` proves each task passable before it is benched')|$(spells "$MRC" '`void <slug> <task-id>... --reason <text>`')|$(spells "$MRC" 'whose tests assert behaviour the brief never')|$(spells "$MRC" '**Ready tasks only.**')|$(spells "$MRC" 'excluded <n> trial(s) of task(s) not ready: <ids>')"
 check "the dispatch log holds the correction round's notch and the size rule" "yes|yes" \
   "$(spells "$ROOT/docs/agent-dispatches.md" 'A correction round runs one effort notch above its phase')|$(spells "$ROOT/docs/agent-dispatches.md" 'A table measured on small work does not serve a large phase')"
 check "the calibration reference walks the paired bench: the two stages, the prune rule, the band of the second repetition, re-admission" "yes|yes|yes|yes|yes" \

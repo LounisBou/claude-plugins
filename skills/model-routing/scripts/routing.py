@@ -610,6 +610,30 @@ def read_trials(path):
     return out
 
 
+def counted(m, trials):
+    """The trials a table may count, and the number left out per task. A trial of a task the
+    manifest holds as anything but ready (void, or still a draft) measures no pair: nothing
+    could pass that task. A trial naming no task (a record row) or a task the manifest does not
+    know is kept: the manifest says nothing against it.
+    """
+    status = {t.get("id"): t.get("status") for t in m.get("tasks") or []}
+    kept, left = [], {}
+    for t in trials:
+        tid = t.get("task")
+        if tid and tid in status and status[tid] != "ready":
+            left[tid] = left.get(tid, 0) + 1
+        else:
+            kept.append(t)
+    return kept, left
+
+
+def note_excluded(slug, left):
+    """What `counted` left out of a project, said once per command and project."""
+    if left:
+        warn("%s: excluded %d trial(s) of task(s) not ready: %s"
+             % (slug, sum(left.values()), " ".join(sorted(left))))
+
+
 def record_trials(record):
     """A closed pair row graded by the record's own signals: one round and no escaped
     defect is a pass. Rows without a complete measured cost are left out.
@@ -858,12 +882,23 @@ def cmd_calibrate(argv):
     p.add_argument("slug")
     p.add_argument("--from-record", dest="records", action="append", default=[])
     a = p.parse_args(argv)
-    trials = read_trials(os.path.join(ROUTING_DIR, "projects", a.slug, "trials.jsonl"))
+    m = read_json(manifest_path(a.slug), {}) or {}
+    trials, left = counted(m, read_trials(os.path.join(ROUTING_DIR, "projects", a.slug, "trials.jsonl")))
+    note_excluded(a.slug, left)
     for rec in a.records:
         trials += record_trials(rec)
     if not trials:
-        die("calibrate: no trial and no record row for %s" % a.slug)
-    sizes = task_sizes(read_json(manifest_path(a.slug), {}) or {})
+        if not left:
+            die("calibrate: no trial and no record row for %s" % a.slug)
+        # Nothing is left to count: the table written while those trials counted would go on
+        # serving the entry their exclusion removes, so it goes too.
+        try:
+            os.unlink(table_path("project:" + a.slug))
+            removed = "; its table removed"
+        except FileNotFoundError:
+            removed = ""
+        die("calibrate: no counted trial for %s (%d excluded)%s" % (a.slug, sum(left.values()), removed))
+    sizes = task_sizes(m)
     table, lines = build_table("project:" + a.slug, trials, sizes, read_aliases())
     write_json(table_path("project:" + a.slug), table)
     print("\n".join(lines))
@@ -957,18 +992,68 @@ def cmd_harvest(argv):
 
 
 def cmd_ready(argv):
+    """Prove each task passable, in the order given: the merged commit's own tests run on the
+    merged tree, and a task they fail is void. The manifest is written after each task, so a
+    run killed midway keeps the tasks proved before it.
+    """
     if len(argv) < 2:
         die("ready: a project and at least one task id are required")
     m = load_manifest(argv[0])
-    ids = {t["id"] for t in m["tasks"]}
-    for tid in argv[1:]:
-        if tid not in ids:
+    need_tests(m)
+    by_id = {t["id"]: t for t in m["tasks"]}
+    ids = list(dict.fromkeys(argv[1:]))
+    for tid in ids:
+        if tid not in by_id:
             die("ready: no task %s in %s" % (tid, argv[0]))
-    for t in m["tasks"]:
-        if t["id"] in argv[1:]:
+    voided = []
+    for tid in ids:
+        t = by_id[tid]
+        try:
+            c = t["control"] = control(m, t, tempfile.gettempdir())
+        except subprocess.CalledProcessError as exc:
+            die("ready: the merged commit of task %s cannot be read: %s"
+                % (tid, (exc.stderr or b"").decode("utf-8", errors="replace").strip() or exc))
+        if c["exit"] == 0:
             t["status"] = "ready"
-    write_json(manifest_path(argv[0]), m)
-    print("ready: %s" % " ".join(argv[1:]))
+            t.pop("void", None)
+            print("ready: %s (control passed in %ss)" % (tid, c["duration_s"]))
+        else:
+            t["status"] = "void"
+            t["void"] = ("control: the merged commit's own tests time out" if c["exit"] is None
+                         else "control: the merged commit's own tests fail (exit %d)" % c["exit"])
+            print("void: %s %s" % (tid, t["void"]))
+            for line in c["tests_failed"][:5]:
+                print(line, file=sys.stderr)
+            voided.append(tid)
+        write_json(manifest_path(argv[0]), m)
+    if voided:
+        die("ready: voided %s" % " ".join(voided))
+
+
+def cmd_void(argv):
+    """Set tasks aside with a reason, no control run: a task whose merged commit passes but whose
+    tests assert what the brief never states. A voided task returns only through `ready`, which
+    proves it again.
+    """
+    p = argparse.ArgumentParser(prog="void")
+    p.add_argument("slug")
+    p.add_argument("tasks", nargs="+")
+    p.add_argument("--reason", required=True)
+    a = p.parse_args(argv)
+    reason = a.reason.strip()
+    if not reason:
+        die("void: --reason must not be empty")
+    m = load_manifest(a.slug)
+    by_id = {t["id"]: t for t in m["tasks"]}
+    ids = list(dict.fromkeys(a.tasks))
+    for tid in ids:
+        if tid not in by_id:
+            die("void: no task %s in %s" % (tid, a.slug))
+    for tid in ids:
+        by_id[tid].update(status="void", void=reason)
+    write_json(manifest_path(a.slug), m)
+    for tid in ids:
+        print("void: %s %s" % (tid, reason))
 
 
 # --- bench: one trial -----------------------------------------------------------------
@@ -1099,6 +1184,33 @@ def overlay_hidden_tests(repo, base, merged, d, globs):
             fh.write(blob.stdout)
 
 
+def control(m, task, root):
+    """The merged commit's own tests, run on the merged tree and on nothing else - never the
+    base, never an agent's diff. A task whose reference solution fails its own tests can be
+    passed by no pair: it says nothing about any of them. `exit` is None when the tests time
+    out; a run that did not pass keeps the failing lines and the tail of the output, as a
+    failed trial does. A merged commit that cannot be archived raises: that is no verdict on
+    the task.
+    """
+    at = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    d = isolate(m["repo"], task["merged"], root)
+    try:
+        started = time.time()
+        try:
+            code, out, err = run_group(["bash", "-c", m["test_command"]], TRIAL_TIMEOUT, d)
+        except subprocess.TimeoutExpired:
+            code, out, err = None, "", ""
+        took = round(time.time() - started, 1)
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    res = {"at": at, "exit": code, "duration_s": took}
+    if code != 0:
+        tests = out + err
+        failed = [line[:FAIL_LINE_CHARS] for line in tests.splitlines() if FAIL_WORD.search(line)]
+        res.update(tests_failed=failed[:FAIL_LINES], tests_tail=tests[-RECORDED_CHARS:])
+    return res
+
+
 def judge(brief, agent_diff, ref_diff, tests_out, d):
     """The verdict with the scores and reasons the rubric's JSON gives, and the judge's cost
     (the ceiling it ran under when its cost could not be read).
@@ -1208,9 +1320,14 @@ def append_trial(slug, trial):
         fh.write(("\n" if torn else "") + json.dumps(trial, sort_keys=True) + "\n")
 
 
-def runnable(m, tid):
+def need_tests(m):
+    """A manifest that names no test command or no test globs can grade no trial and prove no task."""
     if not m.get("test_command") or not m.get("test_globs"):
         die("bench: project %s has no test_command or test_globs in its manifest" % m["slug"])
+
+
+def runnable(m, tid):
+    need_tests(m)
     task = next((t for t in m["tasks"] if t["id"] == tid), None)
     if task is None:
         die("trial: no task %s in %s" % (tid, m["slug"]))
@@ -1352,8 +1469,7 @@ def cmd_bench(argv):
     p.add_argument("--class", dest="cls")
     a = p.parse_args(argv)
     m = load_manifest(a.slug)
-    if not m.get("test_command") or not m.get("test_globs"):
-        die("bench: project %s has no test_command or test_globs in its manifest" % m["slug"])
+    need_tests(m)
     aliases = read_aliases()
     # One model is one pair: the grid is read through the aliases once, so a trial recorded under
     # the identifier an alias resolves to is the alias's, and a model named twice runs once.
@@ -1476,7 +1592,7 @@ def cmd_bench(argv):
         if t["status"] == "ready":
             by_class.setdefault(t["class"], []).append(t["id"])
         else:
-            warn("bench: task %s is still a draft, skipped" % t["id"])
+            warn("bench: task %s is %s, skipped" % (t["id"], "void" if t["status"] == "void" else "still a draft"))
     for cls, tasks in sorted(by_class.items()):
         state["pruned"] += bench_class(cls, tasks)
     print("bench: spent=%.2f trials=%d unmeasured=%d pruned=%d"
@@ -1489,7 +1605,9 @@ def all_projects():
     out = {}
     for path in sorted(glob.glob(os.path.join(ROUTING_DIR, "projects", "*", "manifest.json"))):
         m = read_json(path, {})
-        trials = read_trials(os.path.join(os.path.dirname(path), "trials.jsonl"))
+        trials, left = counted(m, read_trials(os.path.join(os.path.dirname(path), "trials.jsonl")))
+        if m.get("slug"):
+            note_excluded(m["slug"], left)
         if trials and m.get("slug"):
             out[m["slug"]] = (m.get("profile") or "unknown/unknown", trials, task_sizes(m))
     return out
@@ -1631,7 +1749,7 @@ def cmd_show(argv):
 
 
 COMMANDS = {"cost": cmd_cost, "profile": cmd_profile, "pick": cmd_pick, "calibrate": cmd_calibrate,
-            "harvest": cmd_harvest, "ready": cmd_ready, "trial": cmd_trial,
+            "harvest": cmd_harvest, "ready": cmd_ready, "void": cmd_void, "trial": cmd_trial,
             "bench": cmd_bench, "generalize": cmd_generalize, "show": cmd_show,
             "export": cmd_export}
 

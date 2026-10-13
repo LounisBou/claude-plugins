@@ -31,12 +31,35 @@ A drafted brief is marked `draft`, and `bench` refuses a task whose brief still 
 brief as the agent will: it must state the work without leaking the answer — a file list or a
 test the body spelled out in prose is yours to cut. Then `ready <slug> <task-id>...` it.
 
+`ready` proves each task passable before it is benched. It runs the manifest's `test_command`
+on the tree of the task's merged commit (the reference solution: never the base, never an
+agent's work), under the trial timeout, and a task whose own merged commit fails its tests can
+be passed by no pair. Exit 0 marks the task `ready` and prints `ready: <id> (control passed in
+<s>s)`. A failure or a timeout marks it `void`, with `void` holding `control: the merged
+commit's own tests fail (exit <n>)` or `control: the merged commit's own tests time out`, and
+prints `void: <id> <reason>`, then the first five failing lines on stderr. What the control
+saw stays on the task as `control`: `at`, `exit` (`null` on a timeout), `duration_s` and, when
+it did not pass, `tests_failed` and `tests_tail` as a failed trial keeps them. The tasks are
+proved in the order given and the manifest is written after each, so a run killed midway keeps
+the tasks proved before it; `ready` exits 1 when it voided any, its last line `ready: voided
+<id>...`. A manifest with no `test_command` or no `test_globs` (section 3) or an unknown task
+stops it before any run, and a merged commit the clone cannot read stops it at that task,
+which is left as it was: that is no verdict on the task.
+
+`void <slug> <task-id>... --reason <text>` sets tasks aside by hand, with no control run. It
+is for a task whose merged commit passes but whose tests assert behaviour the brief never
+states, which no pair can pass either. The reason is required and non-empty; it is written on
+the task (`void`) and printed as `void: <id> <reason>`. A voided task returns only through
+`ready`, which proves it again and drops its `void` field when it passes. `bench` skips a task
+that is not ready (`bench: task <id> is still a draft, skipped`, or `bench: task <id> is void,
+skipped`), and a table counts only the trials of ready tasks (section 5).
+
 ## 3. Set the test command and the test globs
 
 The manifest's `test_command` is what grades a trial mechanically, and its `test_globs` say
 which files of the merged diff are tests. Those files are copied over the agent's tree after
 it finishes — tests it never saw — and the test files the merge deleted are removed, before
-the command runs in the trial's directory. A manifest without either is refused by `bench`.
+the command runs in the trial's directory. A manifest without either is refused by `bench` and by `ready`.
 Both are set by `harvest --test-command` and `--test-glob`, or in the manifest.
 
 ## 4. Run the bench, on the operator's cap
@@ -131,6 +154,13 @@ stay out of the selection until it re-enters.
 `tables/project-<slug>.json`, and prints one line per class: `class=<c> pair=<p>
 pass_rate=<r> n=<n> expected_usd=<e> p_best=<p> size=<s>`, or `class=<c> no eligible pair
 (<reason>)`.
+
+**Ready tasks only.** A trial of a task the manifest holds as `void`, or still as a `draft`,
+is left out before any figure and before `--from-record` adds its rows: nothing could pass
+that task, so it would cap every pair under the bar. When `calibrate` leaves any out it says so
+once on stderr, `<slug>: excluded <n> trial(s) of task(s) not ready: <ids>`, the ids sorted. A
+trial that names no task (a record row) or a task the manifest does not name is kept. Nothing
+is erased: a task made ready again brings its trials back.
 
 **What enters.** A trial whose main model — the identifier it spent most on — is not its
 pair's model is off-model. A pair naming a full identifier (a dash and a last segment that is
@@ -229,7 +259,9 @@ floor any more.
 
 `generalize` pools the trials of every project sharing a profile — the
 `<language>/<kind>` `routing.py profile <repo>` prints, or the manifest's own — and runs the
-same selection on the pooled figures, each task named by its project. A pair qualifies in a
+same selection on the pooled figures, each task named by its project. It reads each project's
+trials as `calibrate` does, ready tasks only, and says what it left out with the same stderr
+line, once per project; a project with no trial left is no project of the fold. A pair qualifies in a
 fold when it is covered in at least two of the fold's projects having the class (one, for a
 fold of a single project), and its pooled trials are those of the projects where it is
 covered. A pair is held back when, in a project where it is covered, it is not equivalent to
