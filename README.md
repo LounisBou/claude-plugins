@@ -89,6 +89,12 @@ unwired and nothing is purged, yet the run looks like success. The order is ther
   `~/.claude/claude-orchestrator/models.json` (the installer creates it empty) to the
   host's family aliases, which it resolves to each family's latest model — never to a
   versioned identifier, which goes stale silently (the launcher warns when it finds one).
+  The map is the last fallback, not the default: `routing.py pick` reads, class by class,
+  the project's measured table, its profile's, the global one, the shipped defaults, and
+  only then the tier table, through the map. Every class no table measures is decided by
+  the map. Measured tables live in the state directory, never in the plugin, so a fresh
+  install routes everything through the map until a project is calibrated (see « Calibrating
+  a new project » in `skills/model-routing/SKILL.md`).
   With a tier unbound, the orchestrator picks the model, writes the choice and its reason in
   the brief, and tells you at the spawn. You bind the map yourself: a session of the
   orchestration is denied any write of it unless your last typed prompt names it or a tier.

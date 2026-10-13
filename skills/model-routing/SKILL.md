@@ -45,7 +45,20 @@ phase, run a read-only search exploration at the `search` class's pair and write
 (the files, the contracts, the decisions) into the brief: the pair is a guess, so give it a
 map.
 
+**The order `pick` reads, class by class:** the project's table, its profile's table, the global table (all three measured, in `<state dir>/routing/tables/`), the shipped profile then global defaults (`defaults/`, in tier form, read through the map), and last the tier table below, the map binding the tier the class falls to. `models.json` is the last fallback, not the default: it decides every class no table measures. A new project with no table of its own gets, for each class, the first of its profile's and the global table that measures it, and the tier map for the rest. Measured tables stay in the operator's state directory: `defaults/` ships only its README until the operator commits an `export`, so on a fresh install the same project falls to the tier map.
+
 `routing.py profile <checkout>` prints the inferred `<language>/<kind>`; a `profile` in the project's manifest overrides it, and `pick` takes the override first. A line `pair=host-default` means the class's tier is unbound: the paragraph on unbound tiers above applies.
+
+## Calibrating a new project
+
+No command or wrapper does it: the operator runs `routing.py` subcommands, in this order. Everything lands under `<state dir>/routing/`; `references/calibration.md` has the detail of each step.
+
+1. `harvest <repo> --class <class> --pr <n> [--pr <n>]... [--test-command <cmd>] [--test-glob <glob>]... [--budget-usd <x>]`: needs merged pull requests whose merge commit is in the local clone. Drafts one task per pull request in `projects/<slug>/manifest.json`, its brief in `projects/<slug>/briefs/pr-<n>.md`. Read each brief and cut what leaks the answer.
+2. `ready <slug> <task-id>...`: the control run. Needs the manifest's `test_command` and `test_globs`. Runs the tests on each task's merged commit and marks it `ready`, or `void` when its own reference fails.
+3. `bench <slug> --max-usd <n>`: the spend cap, given by the operator and required; `--budget-usd` caps each trial. Needs ready tasks and the `deep` tier bound (the judge). Runs the grid of pairs on the ready tasks and appends each trial to `projects/<slug>/trials.jsonl`.
+4. `calibrate <slug>`: writes the project's table, `tables/project-<slug>.json`, which `pick` reads first.
+5. `generalize`: no argument. Pools every project's trials into `tables/profile-<language>-<kind>.json` (two projects of a profile or more) and `tables/global.json`.
+6. `export [--to <dir>]`, on the operator's word only: writes the profile and global tables in tier form into the plugin's `defaults/`, the only step that ships anything.
 
 ## The table
 
