@@ -5716,6 +5716,10 @@ check "a transcript path that does not exist is a refusal, never a cost of zero"
 rcost --session s-1 --alias a-model >/dev/null
 check "the alias records the identifier it resolved to" "a-model-1" \
   "$(jq -r '.["a-model"]' "$RSTATE/routing/aliases.json")"
+# A session of other models says nothing about an alias none of its identifiers carries: the
+# costliest one is not that alias's identifier, and folding pairs on it would merge two models.
+check "an alias no model of the session carries is recorded as nothing, the others kept" "0|false|a-model-1" \
+  "$(rcost --session s-1 --alias b-model >/dev/null 2>&1; echo $?)|$(jq -r 'has("b-model")' "$RSTATE/routing/aliases.json")|$(jq -r '.["a-model"]' "$RSTATE/routing/aliases.json")"
 
 echo "== routing: pick =="
 
@@ -6127,6 +6131,59 @@ jq 'del(.entries[].ladder[].p_equiv)' "$TTAB" > "$WORK/nopeq/routing/tables/proj
 check "a table written without p_equiv still reads in show, output unchanged" "$(ORCHESTRATOR_STATE_DIR="$TS" python3 "$ROUTING" show --detail tasks 2>&1)" \
   "$(ORCHESTRATOR_STATE_DIR="$WORK/nopeq" python3 "$ROUTING" show --detail tasks 2>&1)"
 
+# One model, one pair. A pair that names the identifier an alias resolved to counts under the
+# alias: canonical_pair folds the name, stats_of reads each trial through it, and an older
+# release of the family is another model and stays apart.
+check "canonical_pair: the identifier's pair becomes the alias's, the alias's pair stays, an alias that maps to itself yields to the other alias" "b/low|b/low|b/low" \
+  "$(rcall 'm.canonical_pair("b-model-1/low", {"b": "b-model-1"})')|$(rcall 'm.canonical_pair("b/low", {"b": "b-model-1"})')|$(rcall 'm.canonical_pair("b-model-1/low", {"b-model-1": "b-model-1", "b": "b-model-1"})')"
+check "canonical_pair: an older release is another model, a pair no alias names is unchanged" "b-model-0/low|c-model-1/high" \
+  "$(rcall 'm.canonical_pair("b-model-0/low", {"b": "b-model-1"})')|$(rcall 'm.canonical_pair("c-model-1/high", {"b": "b-model-1"})')"
+check "canonical_pair: two aliases on one identifier, the first in name order, whatever order the file lists them in" "a/low|b/low" \
+  "$(rcall 'm.canonical_pair("b-model-1/low", {"z": "b-model-1", "a": "b-model-1", "m": "b-model-1"})')|$(rcall 'm.canonical_pair("b-model-1/low", {"m": "b-model-1", "b": "b-model-1"})')"
+check "canonical_pair: the effort is kept whatever it is, and no aliases leaves the pair as it is" "b/max|b-model-1/low" \
+  "$(rcall 'm.canonical_pair("b-model-1/max", {"b": "b-model-1"})')|$(rcall 'm.canonical_pair("b-model-1/low", {})')"
+AS="$WORK/aliasstate"; mkdir -p "$AS/routing/projects/alias"
+AT="$AS/routing/projects/alias/trials.jsonl"; : > "$AT"
+ATAB="$AS/routing/tables/project-alias.json"
+printf '{"slug":"alias","repo":"/nonexistent","profile":"x/y","tasks":[]}' > "$AS/routing/projects/alias/manifest.json"
+printf '{"b":"b-model-1"}' > "$AS/routing/aliases.json"
+at() { # task pair status cost main-model
+  printf '{"task":"%s","class":"behaviour-phase","pair":"%s","rep":1,"models":{"%s":%s},"cost_usd":%s,"status":"%s"}\n' \
+    "$1" "$2" "$5" "$4" "$4" "$3" >> "$AT"; }
+for t in t1 t2 t3; do
+  at "$t" b/medium pass 0.10 b-model-1; at "$t" b-model-1/medium pass 0.10 b-model-1
+  at "$t" b-model-0/medium pass 0.20 b-model-0
+done
+# One trial of the identifier's pair spent its money on another family: off-model, whatever name its pair has.
+at t1 b-model-1/medium pass 0.90 c-model-1
+ORCHESTRATOR_STATE_DIR="$AS" python3 "$ROUTING" calibrate alias >/dev/null 2>&1
+check "trials under the alias and under the identifier it resolves to are one rung, n the sum; the older release keeps its own" "b/medium,b-model-0/medium" \
+  "$(jq -r '[.entries["behaviour-phase"].ladder[].pair]|join(",")' "$ATAB")"
+check "the folded rung weighs both names' trials: n, tasks and the per-task cells add up" "6|3|[2,2]" \
+  "$(jq -r '.entries["behaviour-phase"].ladder[]|select(.pair=="b/medium")|"\(.n)|\(.tasks)|\(.per_task.t1|tostring)"' "$ATAB")"
+check "an off-model trial under the identifier's pair is still counted in off_model, under the folded rung, and not in n" "1|6|0.1" \
+  "$(jq -r '.entries["behaviour-phase"].ladder[]|select(.pair=="b/medium")|"\(.off_model)|\(.n)|\(.cost_usd)"' "$ATAB")"
+check "the older release is a rung of three trials of its own" "3|0" \
+  "$(jq -r '.entries["behaviour-phase"].ladder[]|select(.pair=="b-model-0/medium")|"\(.n)|\(.off_model)"' "$ATAB")"
+check "generalize folds the same way: the pooled rung is the alias's and holds all six trials" "b/medium,b-model-0/medium|6" \
+  "$(ORCHESTRATOR_STATE_DIR="$AS" python3 "$ROUTING" generalize >/dev/null 2>&1; jq -r '[.entries["behaviour-phase"].ladder[].pair]|join(",")' "$AS/routing/tables/global.json")|$(jq -r '.entries["behaviour-phase"].ladder[]|select(.pair=="b/medium")|.n' "$AS/routing/tables/global.json")"
+check "without an aliases file nothing folds: the identifier's pair is a rung of its own" "b-model-0/medium,b-model-1/medium,b/medium" \
+  "$(rm "$AS/routing/aliases.json"; ORCHESTRATOR_STATE_DIR="$AS" python3 "$ROUTING" calibrate alias >/dev/null 2>&1; jq -r '[.entries["behaviour-phase"].ladder[].pair]|sort|join(",")' "$ATAB")"
+# note_alias records an alias only for an identifier that carries it.
+NS="$WORK/notestate"; mkdir -p "$NS/routing"
+rnote() { # alias, models as JSON: what aliases.json holds after the call, "none" when there is no file, "failed:<status>" when the call itself dies
+  local status
+  ORCHESTRATOR_STATE_DIR="$NS" "$py" -c 'import importlib.util,json,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); m.note_alias(sys.argv[2], json.loads(sys.argv[3]))' "$ROUTING" "$1" "$2" 2>/dev/null
+  status=$?
+  if [ "$status" -ne 0 ]; then echo "failed:$status"; return; fi
+  if [ -f "$NS/routing/aliases.json" ]; then jq -c . "$NS/routing/aliases.json"; else echo none; fi; }
+check "note_alias: no identifier carries the alias, nothing is written" "none" "$(rnote b '{"c-model-1": 2.0}')"
+printf '{"b":"b-model-1"}' > "$NS/routing/aliases.json"
+check "and a recorded alias is left as it was" '{"b":"b-model-1"}' "$(rnote b '{"c-model-1": 2.0}')"
+rm "$NS/routing/aliases.json"
+check "note_alias: the identifier that carries the alias is written, though another model cost more" '{"b":"b-model-1"}' \
+  "$(rnote b '{"b-model-1": 1.0, "c-model-1": 2.0}')"
+
 echo "== routing: bench =="
 
 # A project whose merged change makes hello.sh greet, with a test the merge added.
@@ -6404,6 +6461,26 @@ check "a restart re-runs no trial, takes the same decisions and counts the same 
 out=$(STUB_COSTS="c-model=0.05" STUB_FADE="c-model:2:$FADE" rb4 --grid c-model/medium,b-model/medium --max-usd 100 --reps 1 --concurrency 1 2>/dev/null)
 check "the one pruned pair runs stage B and gives the entry: graded on all four tasks, and the last line counts nothing pruned" "4|4|bench: spent=0.72 trials=8 unmeasured=0 pruned=0" \
   "$(tasks_of b-model/medium)|$(tasks_of c-model/medium)|$(last_line "$out")"
+# One model, one pair. The grid is read through aliases.json: a trial recorded under the
+# identifier an alias resolves to is the alias's, whatever name the grid gives the model.
+[ -f "$BS/routing/aliases.json" ] && cp "$BS/routing/aliases.json" "$WORK/aliases.bench.bak"
+printf '{"b-model":"b-model-1"}' > "$BS/routing/aliases.json"
+: > "$B4T"
+rb4 --grid b-model/medium --max-usd 100 --reps 1 --concurrency 1 >/dev/null 2>&1
+jq -c '.pair="b-model-1/medium"' "$B4T" > "$WORK/b4t.tmp" && mv "$WORK/b4t.tmp" "$B4T"
+before=$(wc -l < "$B4T" | tr -d ' ')
+out=$(rb4 --grid b-model/medium --max-usd 100 --reps 1 --concurrency 1 2>/dev/null)
+check "a grid naming the alias reuses the trials recorded under the identifier: none re-run, the last line counts none" \
+  "$before|bench: spent=0.00 trials=0 unmeasured=0 pruned=0" "$(wc -l < "$B4T" | tr -d ' ')|$(last_line "$out")"
+: > "$B4T"
+out=$(rb4 --grid b-model-1/medium --max-usd 100 --reps 1 --concurrency 1 2>/dev/null)
+check "a grid naming the identifier runs the alias and records every new trial under the alias" "4|b-model/medium" \
+  "$(wc -l < "$B4T" | tr -d ' ')|$(jq -rs 'map(.pair)|unique|join(",")' "$B4T")"
+: > "$B4T"
+out=$(rb4 --grid b-model-1/medium,b-model/medium --max-usd 100 --reps 1 --concurrency 1 2>/dev/null)
+check "a grid naming one model twice, by identifier and by alias, runs it once" "4|bench: spent=0.48 trials=4 unmeasured=0 pruned=0" \
+  "$(wc -l < "$B4T" | tr -d ' ')|$(last_line "$out")"
+if [ -f "$WORK/aliases.bench.bak" ]; then cp "$WORK/aliases.bench.bak" "$BS/routing/aliases.json"; else rm -f "$BS/routing/aliases.json"; fi
 : > "$BT"
 out=$(rb --grid b-model/medium,c-model/medium --max-usd 0.15 --concurrency 1)
 check "the cap stops new trials and says what is left" "1" "$(printf '%s\n' "$out" | tail -1 | grep -c '^bench: spent=0.24 trials=2 unmeasured=2 pruned=0$')"
@@ -6642,6 +6719,8 @@ check "the calibration reference walks the paired bench: the two stages, the pru
 check "and its last line carries pruned=, and no screening, cost band or bench floor is left" "yes|no|no|no" \
   "$(spells "$MRC" 'unmeasured=<n> pruned=<n>')|$(carries "$MRC" 'screening')|$(spells "$MRC" '1.5 times the cheapest')|$(spells "$MRC" 'reads its floors from')"
 check "the calibration reference lists p_equiv among the rung's fields" "yes" "$(spells "$MRC" '`p_best` (covered pairs only), `p_equiv` (covered pairs only)')"
+check "the calibration reference says one model is one pair, an older release a pair of its own, and an alias is recorded only for a model that carries it" "yes|yes|yes" \
+  "$(spells "$MRC" 'trial whose pair names the identifier an alias resolves to in `aliases.json` counts under the')|$(spells "$MRC" 'older release of the family has no alias and stays a pair of its own')|$(spells "$MRC" 'when one of the models it reports carries the alias, updates')"
 check "the dispatch log holds the paired bench" "yes" "$(spells "$ROOT/docs/agent-dispatches.md" 'The bench runs every pair on the same tasks')"
 check "the routing skill and the brief say a pair, not a tier" "yes|yes" \
   "$(spells "$MR" 'must choose the model/effort pair')|$(spells "$ROOT/skills/orchestrator/references/briefs.md" 'then choose the model/effort pair the work needs')"

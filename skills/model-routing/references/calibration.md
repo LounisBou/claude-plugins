@@ -84,8 +84,9 @@ model identifiers the host reports with their cost, `cost_usd` (the host's own p
 figure, so no price file is needed), tokens, duration, the mechanical result, the judge's
 verdict, scores (`judge_scores`) and reasons (`judge_reasons`), and its cost kept apart, and the subscription gauge before and after, read from the
 file `ORCHESTRATOR_QUOTA_FILE` names, or `null`. Every trial also records `model`, the
-identifier its alias ran on, and updates which identifier the alias resolves to. The spec runs
-each family on its latest release, and an alias can lag behind it on a host: when the trial's
+identifier its alias ran on, and, when one of the models it reports carries the alias, updates
+which identifier the alias resolves to. The spec runs each family on its latest release, and an
+alias can lag behind it on a host: when the trial's
 identifier is an older release of the family than one the host has reported (in any trial, or
 in the alias record) or the map names, `bench` and `trial` warn once per family and run,
 naming both identifiers. The trial still counts; whether to rebench on the newer release is the
@@ -138,7 +139,14 @@ bracketed suffix on the reported one (`[1m]`) ignored: `b-model-1-1` is another 
 naming an alias is on-model when the main model carries it as a dash segment (`b-model` in
 `b-model-1`). Anything else (an alias resolved to another family, a fallback) measured another
 model. It is counted in its rung's `off_model` and kept out of every other figure. A trial
-that reports no model (a record row, an old trial) is not checked.
+that reports no model (a record row, an old trial) is not checked. One model is one pair: a
+trial whose pair names the identifier an alias resolves to in `aliases.json` counts under the
+alias (`b-model-1/medium` under `b-model/medium` once `b-model` maps to `b-model-1`, the first
+alias in name order if several do), the on-model check still reading the pair as recorded; an
+older release of the family has no alias and stays a pair of its own. A grid that names that
+identifier runs and records under the alias too, so a bench cannot pin one release behind an
+alias that lags. `bench` reads its grid the same way, so a trial recorded under the identifier
+is reused when the grid names the alias.
 
 **Per task.** A class's tasks are every task with at least one graded trial. Per pair:
 `per_task`, each task's `[passes, graded]`; `tasks`, the tasks it was graded on; `n`, its
@@ -243,8 +251,8 @@ followed by its ladder, cheapest first, one line per rung: `  rung pair=<p> task
 pass_rate=<r> p_best=<p> median_usd=<m> ci=<lo>..<hi> expected_usd=<e> off_model=<k>`, with
 ` equivalent` and ` chosen` at the end where they hold; a figure an older table lacks reads
 `-`. Every `cost` run on a record row and every trial updates which identifier an alias
-resolves to. A stale entry is still used; the operator decides whether a bench run is worth
-refreshing it.
+resolves to, when one of the models it reports carries the alias. A stale entry is still used;
+the operator decides whether a bench run is worth refreshing it.
 
 ## 8. Export the shipped defaults
 

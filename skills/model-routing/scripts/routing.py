@@ -183,13 +183,16 @@ def resolve_alias(alias, models):
 
 
 def note_alias(alias, models):
-    """Record which identifier an alias resolved to. A stale table entry is read against this."""
-    pick = resolve_alias(alias, models)
-    if not pick:
+    """Record which identifier an alias resolved to, when one of `models` carries it. A session
+    that ran other models says nothing about the alias: the costliest of them is not its
+    identifier, and recording it would fold the trials of two models under one pair. A stale
+    table entry is read against this.
+    """
+    if not alias or not any(carries_alias(m, alias) for m in models or {}):
         return
     path = os.path.join(ROUTING_DIR, "aliases.json")
     data = read_json(path, {})
-    data[alias] = pick
+    data[alias] = resolve_alias(alias, models)
     write_json(path, data)
 
 
@@ -625,18 +628,39 @@ def record_trials(record):
     return out
 
 
-def stats_of(trials):
+def read_aliases():
+    """aliases.json as a mapping; empty when the file is absent or holds anything else."""
+    data = read_json(os.path.join(ROUTING_DIR, "aliases.json"), {})
+    return data if isinstance(data, dict) else {}
+
+
+def canonical_pair(pair, aliases):
+    """The pair one model's trials are counted under: a pair naming the identifier an alias
+    resolved to is that alias's (`b-model-1/low` is `b/low` once aliases.json maps `b` to
+    `b-model-1`), so one model is one pair. With several aliases on the identifier, the first in
+    name order. A pair no alias resolves to stays as it is: an older release of the family is
+    another model, and an alias that maps to itself yields to the others.
+    """
+    family, sep, effort = pair.partition("/")
+    names = sorted(a for a, ident in aliases.items() if ident == family and a != family)
+    return "%s/%s" % (names[0], effort) if sep and names else pair
+
+
+def stats_of(trials, aliases):
     """Per pair: the graded trials (`n`, `passes`, and `per_task`, each task's [passes, graded],
     a trial with no task filed under "record") and the cost of every trial, errors included -
     an error is paid for, it just says nothing about the pair's reliability. A trial whose cost
     could not be read holds the ceiling it was launched with, not what it cost: it stays out of
     the pair's costs. A trial that ran on another model than its pair's (an alias resolved to
-    an older release, a fallback) measures that model: it is only counted in `off_model`.
+    an older release, a fallback) measures that model: it is only counted in `off_model`. A
+    trial counts under its canonical pair, the name its model has in `aliases`; whether it ran
+    on its model is still read from the pair it was recorded under.
     """
     stats = {}
     for t in trials:
-        s = stats.setdefault(t["pair"], {"n": 0, "passes": 0, "costs": [], "models": set(),
-                                         "per_task": {}, "off_model": 0})
+        s = stats.setdefault(canonical_pair(t["pair"], aliases),
+                             {"n": 0, "passes": 0, "costs": [], "models": set(),
+                              "per_task": {}, "off_model": 0})
         if not on_model(t["pair"], t.get("models") or {}):
             s["off_model"] += 1
             continue
@@ -817,11 +841,11 @@ def entry_line(cls, entry, note):
                entry["p_best"], entry["size"]))
 
 
-def build_table(scope, trials, sizes):
+def build_table(scope, trials, sizes, aliases):
     """The same trials give the same file: every random figure is seeded by its class and pair."""
     entries, lines = {}, []
     for cls in sorted({t["class"] for t in trials}):
-        entry, note = select_entry(cls, stats_of([t for t in trials if t["class"] == cls]),
+        entry, note = select_entry(cls, stats_of([t for t in trials if t["class"] == cls], aliases),
                                    cls in STRICT_CLASSES, sizes)
         if entry:
             entries[cls] = entry
@@ -840,7 +864,7 @@ def cmd_calibrate(argv):
     if not trials:
         die("calibrate: no trial and no record row for %s" % a.slug)
     sizes = task_sizes(read_json(manifest_path(a.slug), {}) or {})
-    table, lines = build_table("project:" + a.slug, trials, sizes)
+    table, lines = build_table("project:" + a.slug, trials, sizes, read_aliases())
     write_json(table_path("project:" + a.slug), table)
     print("\n".join(lines))
 
@@ -1330,9 +1354,12 @@ def cmd_bench(argv):
     m = load_manifest(a.slug)
     if not m.get("test_command") or not m.get("test_globs"):
         die("bench: project %s has no test_command or test_globs in its manifest" % m["slug"])
-    pairs = grid_of(a)
+    aliases = read_aliases()
+    # One model is one pair: the grid is read through the aliases once, so a trial recorded under
+    # the identifier an alias resolves to is the alias's, and a model named twice runs once.
+    pairs = list(dict.fromkeys(canonical_pair(pr, aliases) for pr in grid_of(a)))
     judge_pair("bench")
-    done = {(t["task"], t["pair"], t.get("rep", 1)): t
+    done = {(t["task"], canonical_pair(t["pair"], aliases), t.get("rep", 1)): t
             for t in read_trials(os.path.join(ROUTING_DIR, "projects", a.slug, "trials.jsonl"))}
     state = {"spent": 0.0, "trials": 0, "errors": {}, "dropped": set(), "warned": set(),
              "unmeasured": 0, "pruned": 0}
@@ -1406,7 +1433,7 @@ def cmd_bench(argv):
 
         def class_stats():
             return stats_of([t for (tid, pr, _), t in done.items()
-                             if tid in tasks and t["class"] == cls and pr not in out])
+                             if tid in tasks and t["class"] == cls and pr not in out], aliases)
 
         def selected():
             return select_entry(cls, class_stats(), cls in STRICT_CLASSES, {})
@@ -1468,7 +1495,7 @@ def all_projects():
     return out
 
 
-def fold(scope, projects):
+def fold(scope, projects, aliases):
     """Pool the projects' trials, class by class. A pair qualifies when it is covered in at
     least two of the fold's projects having the class (one, for a fold of one project); its
     pooled trials are those of the projects where it is covered, each task named by its
@@ -1487,21 +1514,22 @@ def fold(scope, projects):
             mine = [t for t in trials if t["class"] == cls]
             if not mine:
                 continue
-            ladder, _, _ = compare(cls, stats_of(mine), delta)
+            ladder, _, _ = compare(cls, stats_of(mine, aliases), delta)
             for r in ladder:
                 if r["covered"]:
                     where.setdefault(r["pair"], []).append(slug)
                     if not r["equivalent"]:
                         held.add(r["pair"])
             for t in mine:
-                pooled_trials.append((slug, dict(t, task="%s:%s" % (slug, t["task"]) if t.get("task") else None)))
+                pooled_trials.append((slug, canonical_pair(t["pair"], aliases),
+                                      dict(t, task="%s:%s" % (slug, t["task"]) if t.get("task") else None)))
             sizes.update(("%s:%s" % (slug, tid), b) for tid, b in task_size.items())
         pooled = {}
-        for pair in sorted({t["pair"] for _, t in pooled_trials}):
+        for pair in sorted({pair for _, pair, _ in pooled_trials}):
             qualifies = len(where.get(pair, [])) >= need
-            own = [t for slug, t in pooled_trials
-                   if t["pair"] == pair and (not qualifies or slug in where[pair])]
-            pooled[pair] = dict(stats_of(own)[pair], covered=qualifies, held_back=pair in held)
+            own = [t for slug, p, t in pooled_trials
+                   if p == pair and (not qualifies or slug in where[pair])]
+            pooled[pair] = dict(stats_of(own, aliases)[pair], covered=qualifies, held_back=pair in held)
         entry, _ = select_entry(cls, pooled, cls in STRICT_CLASSES, sizes)
         if entry:
             entries[cls] = entry
@@ -1514,6 +1542,7 @@ def cmd_generalize(argv):
     projects = all_projects()
     if not projects:
         die("generalize: no project has trials")
+    aliases = read_aliases()
     profiles = {}
     for slug, (profile, _, _) in projects.items():
         profiles.setdefault(profile, []).append(slug)
@@ -1522,10 +1551,10 @@ def cmd_generalize(argv):
         # repositories that share nothing. They count toward the global table only.
         if len(slugs) < 2 or profile.startswith("unknown/"):
             continue
-        table = fold("profile:" + profile, {s: projects[s] for s in slugs})
+        table = fold("profile:" + profile, {s: projects[s] for s in slugs}, aliases)
         write_json(table_path("profile:" + profile), table)
         print("profile=%s projects=%d classes=%d" % (profile, len(slugs), len(table["entries"])))
-    table = fold("global", projects)
+    table = fold("global", projects, aliases)
     write_json(table_path("global"), table)
     print("global projects=%d classes=%d" % (len(projects), len(table["entries"])))
 
