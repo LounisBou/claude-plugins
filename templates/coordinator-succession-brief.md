@@ -14,6 +14,10 @@ once your predecessor is gone.
    the flags sent, and the sessions already announced to). That list is yours as it stands:
    « Announcing newcomers » compares against it from here on, so you do not re-send the start
    message to a session it already names.
+   Then the round file `{{ROUND_FILE}}` (« none » when no round is open): the open decision round, every question received
+   with its sender and status. Copy it to `decision-round.md` in your own scratch directory
+   and carry the round on from its first question not yet sent, grouped by sender as the
+   rulebook says; nothing in it is dropped, and the end line counts it whole.
 2. **Find yourself.** `ListAgents` — your exact name and reference; the launcher
    `{{ITERM_AGENT_SH}}`, its `list` — your tty, the row marked `self`.
 3. **Take over.** Message `{{PREDECESSOR}}` « takeover confirmed » and wait for its « handed

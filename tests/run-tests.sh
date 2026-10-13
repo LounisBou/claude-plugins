@@ -2988,6 +2988,22 @@ check "the coordinator's announcement routes operator questions through it, fact
   "$(spells "$COORDCMD" "I am the operator's single question interface")|$(spells "$COORDCMD" 'Asking me the facts is optional')|$(spells "$COORDCMD" 'you still speak to the operator directly')"
 check "the successor's announcement keeps operator questions coming to it" "yes" \
   "$(spells "$COORDTPL" 'question meant for the operator still comes to me')"
+# The operator's second order: by default, without his asking, the coordinator runs every
+# relayed question through the whole decision round — a round file as its ledger, the end line
+# counting it. Every question reaches him: written to the ledger before anything else, never
+# dropped or merged. The questions come grouped by the orchestrator that sent them, each group
+# opened by that orchestrator's own account of its work, every message naming the sender and
+# the coordinator, since he runs several coordinators.
+check "the coordinator runs every relayed question as a decision round by default, with its file and end line" "yes|yes|yes|yes" \
+  "$(spells "$COORDSKILL" 'goes through a decision round, by default**: the whole method of `/orchestrator:decide`, run')|$(spells "$COORDSKILL" 'without his asking and without his typing that command, even for a single question')|$(spells "$COORDSKILL" '`decision-round.md` in your scratch directory: number, the sender'"'"'s exact `ListAgents`')|$(spells "$COORDSKILL" '« The round is complete: N/N. »')"
+check "every relayed question reaches the operator: in the ledger first, none dropped or merged" "yes|yes|yes" \
+  "$(spells "$COORDSKILL" 'A question received is written, before anything else is done, to')|$(spells "$COORDSKILL" 'The round file is the ledger: nothing received is dropped, merged or')|$(spells "$COORDSKILL" 'one found settled is not dropped by you: ask its sender, and only its')"
+check "the round groups its questions by the orchestrator that sent them" "yes|yes|yes" \
+  "$(spells "$COORDSKILL" 'all the questions of one orchestrator together, consecutive, in the sender'"'"'s own order')|$(spells "$COORDSKILL" 'question arriving mid-round from an orchestrator whose group is not done joins that')|$(spells "$COORDSKILL" '« `<sender'"'"'s exact name>` — 3 questions »')"
+check "the round names the coordinator and each sender, and opens each group with the sender's own context" "yes|yes|yes|yes|yes" \
+  "$(spells "$COORDSKILL" 'line naming you and the senders it covers, and the count')|$(spells "$COORDSKILL" 'line naming who asks: « Question i of N — from `<sender'"'"'s exact name>`, relayed by `<your')|$(spells "$COORDSKILL" 'context block of three to five plain sentences: what that orchestrator works on')|$(spells "$COORDSKILL" 'you ask the sender for it before presenting the group, and you never invent it')|$(spells "$COORDCMD" 'With your questions, send three to five sentences')"
+check "the round is mirrored in the successor's brief, the design and the decision round" "yes|yes|yes|yes" \
+  "$(spells "$COORDTPL" 'Then the round file `{{ROUND_FILE}}`')|$(spells "$ROOT/docs/design.md" 'runs every relayed question through the whole decision round of `commands/decide.md`')|$(spells "$ROOT/docs/design.md" 'the questions come grouped by the orchestrator that sent them')|$(spells "$ROOT/commands/decide.md" 'round of its own where your questions come together')"
 check "the orchestrator sends operator questions to a running coordinator, else asks directly" "yes|yes|yes" \
   "$(spells "$ROOT/skills/orchestrator/SKILL.md" '**While a coordinator runs, every question for the operator goes to it, never to him**')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'skills/coordinator/scripts/coordinator.sh lookup')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'no coordinator runs, and you ask him directly')"
 check "a decision round goes through a running coordinator" "yes|1" \
@@ -3034,10 +3050,10 @@ check "the coordinator's successor closes a hand-started predecessor, with the e
 check "the coordinator calls end_session when its successor asks" "yes" \
   "$(spells "$COORDSKILL" 'mcp__orchestrator__end_session » (the host refused it the close), you call it and end the')"
 COORDFILLED="$WORK/coordinator-brief-filled.md"
-mkdir -p "$WORK/coord-fill/coordinator"; : > "$WORK/coord-fill/coordinator/notes.md"
+mkdir -p "$WORK/coord-fill/coordinator" "$WORK/coord-fill/scratch"; : > "$WORK/coord-fill/coordinator/notes.md"; : > "$WORK/coord-fill/scratch/decision-round.md"
 if [ -f "$COORDTPL" ]; then
   sed -E -e 's#\{\{PREDECESSOR\}\}#Coord : ops [a1b2c3]#g' -e 's#\{\{PREDECESSOR_TTY\}\}#/dev/ttys950#g' -e 's#\{\{SUBJECT\}\}#ops#g' \
-    -e "s#\{\{STATE_DIR\}\}#$WORK/coord-fill#g" -e "s#\{\{NOTES_FILE\}\}#$WORK/coord-fill/coordinator/notes.md#g" \
+    -e "s#\{\{STATE_DIR\}\}#$WORK/coord-fill#g" -e "s#\{\{NOTES_FILE\}\}#$WORK/coord-fill/coordinator/notes.md#g" -e "s#\{\{ROUND_FILE\}\}#$WORK/coord-fill/scratch/decision-round.md#g" \
     -e "s#\{\{COORDINATOR_SH\}\}#$ROOT/skills/coordinator/scripts/coordinator.sh#g" -e "s#\{\{ITERM_AGENT_SH\}\}#$AGENT#g" \
     -e 's#\{\{[A-Z_]+\}\}#$WORK#g' "$COORDTPL" > "$COORDFILLED"
 fi

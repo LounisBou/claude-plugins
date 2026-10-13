@@ -63,9 +63,11 @@ Then:
    > A coordinator runs on this machine: I am `<your exact name and reference>`, since
    > <date -u +%FT%TZ>. I am the operator's single question interface: from now on, send me
    > every question meant for him — your own arbitrations and the questions of your agents
-   > you relay — never to him in your tab. I relay each one to him verbatim with its context
-   > and your name, and send his answer back to you verbatim and dated; I answer none of them
-   > myself. For the facts, ask me when in doubt: whose pull request is this, is anyone on this
+   > you relay — never to him in your tab. With your questions, send three to five sentences
+   > on what you are working on: project, repository, current phase or pull requests, where
+   > it stands. I relay each question to him verbatim, with its context and your name, in a
+   > decision round where your questions come together, opened by that account of your work;
+   > I send his answer back to you verbatim and dated, and I answer none of them myself. For the facts, ask me when in doubt: whose pull request is this, is anyone on this
    > branch, file or subject, may I do this or must I wait. Asking me the facts is optional and
    > never a gate: nothing of yours waits for my word.
    > The facts attribute to you: <each pull request with its branch, or « none »>. Confirm or

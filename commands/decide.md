@@ -20,8 +20,10 @@ is over.
 `${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh lookup`. A name printed, and
 the round not opened by the user typing this command in this session: every question, in
 the shape of step 2, goes to that coordinator with `SendMessage` instead of to him, one per
-message — it is his single question interface and relays each one verbatim — and the answer
-it sends back, verbatim and dated, is his ruling, recorded as step 4 says. Nothing printed,
+message, the wave's questions sent together with three to five sentences on what you are
+working on — it is his single question interface, and runs them, verbatim, in a decision
+round of its own where your questions come together — and the answer it sends back,
+verbatim and dated, is his ruling, recorded as step 4 says. Nothing printed,
 or the user typed the command here: ask him here.
 
 ## 1. Collect first, then announce the count
