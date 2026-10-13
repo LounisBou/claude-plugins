@@ -6910,6 +6910,33 @@ check "the README calls the map the last fallback, states pick's order and point
 check "the routing skill and the brief say a pair, not a tier" "yes|yes" \
   "$(spells "$MR" 'must choose the model/effort pair')|$(spells "$ROOT/skills/orchestrator/references/briefs.md" 'then choose the model/effort pair the work needs')"
 
+
+echo "== command: calibrate =="
+# The operator's ruling: one command chains harvest, ready, bench and calibrate on a spend cap
+# he gives, and stops before generalize and export.
+CALCMD="$ROOT/commands/calibrate.md"
+check "the calibrate command exists with its description, its hint and a narrow tool list" "yes|1|1|1|0" \
+  "$([ -f "$CALCMD" ] && echo yes || echo no)|$(sed -n '1,5p' "$CALCMD" 2>/dev/null | grep -c '^description: ')|$(sed -n '1,5p' "$CALCMD" 2>/dev/null | grep -c '^argument-hint: .*--max-usd <cap>')|$(sed -n '1,5p' "$CALCMD" 2>/dev/null | grep -c '^allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/model-routing/scripts/routing\.py:\*)')|$(sed -n '1,5p' "$CALCMD" 2>/dev/null | grep '^allowed-tools: ' | grep -cE 'Write|Edit|Bash\((gh|git|python3)')"
+cal_order() {  # the line of each step's invocation, in the order the command runs them
+  local s n
+  for s in 'harvest <checkout>' 'ready <slug>' 'bench <slug> --max-usd <cap>' 'calibrate <slug>'; do
+    n=$(grep -nF -- "routing.py $s" "$1" | head -1 | cut -d: -f1)
+    printf '%s ' "${n:-0}"
+  done
+}
+check "the calibrate command runs harvest, ready, bench on the cap and calibrate, in that order" "yes" \
+  "$(read -r a b c d <<< "$(cal_order "$CALCMD")"; [ "$a" -gt 0 ] && [ "$a" -lt "$b" ] && [ "$b" -lt "$c" ] && [ "$c" -lt "$d" ] && echo yes || echo no)"
+check "the calibrate command refuses without a cap and never picks one" "yes" \
+  "$(spells "$CALCMD" '**No cap given, the command refuses and asks the operator for one: it never picks a cap itself**')"
+check "the calibrate command stops at the first failure and checks the judge's tier and the manifest's tests" "yes|yes|yes" \
+  "$(spells "$CALCMD" 'A non-zero exit is a failure')|$(spells "$CALCMD" '`bench` refuses a run with the `deep` tier unbound')|$(spells "$CALCMD" 'because `ready` and `bench` both refuse such a manifest')"
+check "the calibrate command runs neither generalize nor export, and leaves them to the operator" "0|yes" \
+  "$(grep -cE 'routing\.py (generalize|export)' "$CALCMD")|$(spells "$CALCMD" '**`generalize` and `export` are not run by this command.**')"
+check "the README, the routing skill and the calibration reference name the calibrate command" "yes|yes|yes" \
+  "$(spells "$ROOT/README.md" '| `/orchestrator:calibrate` |')|$(spells "$MR" '`/orchestrator:calibrate <checkout> --max-usd <cap> --class <class> --pr <n>...` does it')|$(spells "$MRC" '`/orchestrator:calibrate` runs sections 1 to 5')"
+check "the routing skill no longer says no command does the calibration" "no" \
+  "$(spells "$MR" 'No command or wrapper does it')"
+
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

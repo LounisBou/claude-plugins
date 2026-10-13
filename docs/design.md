@@ -85,6 +85,7 @@ commands/succeed.md                  runs the orchestrator succession
 commands/agents.md                   each running implementer's progress
 commands/progress.md                 where the build stands
 commands/decide.md                   the decision round, one arbitration at a time
+commands/calibrate.md                calibrates a project's routing table on the operator's spend cap; generalize and export left to him
 commands/audit.md                    launches an audit of the method on the operator's word
 commands/coordinator.md              starts the machine's coordinator on the operator's word, announced to every orchestrator
 commands/coordinator-end.md          ends the coordinator on the operator's word; the record cleared
