@@ -173,13 +173,11 @@ says. A configuration change the tooling needs is not the operator's chore eithe
 to the session that owns that configuration, as a request carrying the measurement behind
 it; that session's own protocol decides whether the operator hears of it.
 
-**While a coordinator runs, every question for the operator goes to it, never to him** — his
-order. Before asking him, run
-`${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh lookup`. A name printed: send
-it the question (your arbitration, or an agent's relayed verbatim) with its context by
-`SendMessage`; its answer, verbatim and dated, is his. Asking it the facts is optional.
-Nothing printed: no coordinator runs, and you ask him directly. A pause it relays:
-its bullet in `references/lifecycle.md`.
+**While a coordinator runs, every question for the operator goes to it** — his order —
+and the hooks module carries it: ask here, in the shape of `/orchestrator:decide` step 2, and
+end the turn on `waiting: operator — blocks: <what it blocks>`; never send it yourself. His
+answer comes back verbatim and dated, through it or in this tab. A pause it relays: its bullet
+in `references/lifecycle.md`.
 
 **When the orchestrator's own session lacks what the role needs — a PATH, a credential the
 sandbox will not open, a tool the launch did not carry — the repair is a successor, not a

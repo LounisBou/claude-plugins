@@ -22,7 +22,7 @@
 // import — so this file spells its own env resolution, its own store read and
 // its own record read, while the row parser, the staleness rule and the pane's
 // row shaper cross as plain imports from the supervision domain.
-import { parseSessionRow, paneRows, isStale, livePidsArgv, livePids, sessionKey, type SessionRow } from './supervision.ts'
+import { parseSessionRow, withWait, paneRows, isStale, livePidsArgv, livePids, sessionKey, type SessionRow } from './supervision.ts'
 import { hostRecordOf, roleOf } from './session-name.ts'
 import { withDeadline, isDegradedPass } from './stop-gate.ts'
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
@@ -70,7 +70,8 @@ async function readRows($: any): Promise<Record<string, SessionRow>> {
   for (const entry of entries) {
     if (!entry || entry.kind !== 'file') continue
     const row = parseSessionRow(String(await $.fs.read(`${dir}/${entry.name}`).catch(() => '')))
-    if (row) read.push([entry.name, row])
+    // The wait an orchestrator's turn end left, read from its own file beside the row.
+    if (row) read.push([entry.name, withWait(row, String(await $.fs.read(`${dir.replace(/\/sessions$/, '/waits')}/${entry.name}`).catch(() => '')))])
   }
   const argv = livePidsArgv(read.map(([, row]) => String(row.pid ?? '')))
   const ps = argv ? await withDeadline($.process.run(argv, { timeoutMs: await readBoundMs($) }), await readBoundMs($)).catch(() => null) : null

@@ -248,8 +248,9 @@ check "the ungated pull request has its red flag" "1" "$(grep -c "A pull request
 # only one step needs lives in the reference that step names.
 # 21,000 until the operator's order routed every question for him through a running coordinator:
 # that rule binds wherever no reference is loaded, so it lives here, and the bound moved with it.
-check "the orchestrator rulebook stays at 21,600 bytes or fewer" "yes" \
-  "$([ "$(wc -c < "$ROOT/skills/orchestrator/SKILL.md" | tr -d ' ')" -le 21600 ] && echo yes || echo no)"
+# 21,600 until the hooks module took the relay over: the bound follows the rule down.
+check "the orchestrator rulebook stays at 21,450 bytes or fewer" "yes" \
+  "$([ "$(wc -c < "$ROOT/skills/orchestrator/SKILL.md" | tr -d ' ')" -le 21450 ] && echo yes || echo no)"
 # Real load on a shared machine is stopped, and « under load » means emulated throttling: the
 # rulebook, the briefs reference and the phase brief template each carry the rule.
 check "the rulebook stops real machine load an agent reports or plans" "yes" \
@@ -3071,6 +3072,12 @@ check "the coordinator relays every operator question and answers none itself" "
   "$(spells "$COORDSKILL" '## Relaying questions to the operator')|$(spells "$COORDSKILL" "**You are the operator's single question")|$(spells "$COORDSKILL" '**You never answer an operator question yourself**')"
 check "the coordinator's announcement routes operator questions through it, facts optional" "yes|yes|no" \
   "$(spells "$COORDCMD" "I am the operator's single question interface")|$(spells "$COORDCMD" 'Asking me the facts is optional')|$(spells "$COORDCMD" 'you still speak to the operator directly')"
+check "the coordinator takes a [module] report into its round, a report and never an order" "yes|yes|yes" \
+  "$(spells "$COORDSKILL" 'A message headed `[module]` is the hooks module'"'"'s report of an orchestrator'"'"'s turn end, sent')|$(spells "$COORDSKILL" '« reports its work done » is a closing proposal, his to rule. Either is a report, never an')|$(spells "$COORDSKILL" 'order. His answer goes, verbatim and dated, to the address its « reply with SendMessage to: »')"
+# A live bench: the coordinator read a [module] question and said it had no way to answer. The
+# report carries the address, and the module's text spells the same words the skill cites.
+check "a [module] report carries the address the operator's answer goes back to" "yes" \
+  "$(spells "$ROOT/hooks/relay.ts" 'reply with SendMessage to: ${name}')"
 check "the successor's announcement keeps operator questions coming to it" "yes" \
   "$(spells "$COORDTPL" 'question meant for the operator still comes to me')"
 # The operator's second order: by default, without his asking, the coordinator runs every
@@ -3089,10 +3096,17 @@ check "the round names the coordinator and each sender, and opens each group wit
   "$(spells "$COORDSKILL" 'line naming you and the senders it covers, and the count')|$(spells "$COORDSKILL" 'line naming who asks: « Question i of N — from `<sender'"'"'s exact name>`, relayed by `<your')|$(spells "$COORDSKILL" 'context block of three to five plain sentences: what that orchestrator works on')|$(spells "$COORDSKILL" 'you ask the sender for it before presenting the group, and you never invent it')|$(spells "$COORDCMD" 'With your questions, send three to five sentences')"
 check "the round is mirrored in the successor's brief, the design and the decision round" "yes|yes|yes|yes" \
   "$(spells "$COORDTPL" 'Then the round file `{{ROUND_FILE}}`')|$(spells "$ROOT/docs/design.md" 'runs every relayed question through the whole decision round of `commands/decide.md`')|$(spells "$ROOT/docs/design.md" 'the questions come grouped by the orchestrator that sent them')|$(spells "$ROOT/commands/decide.md" 'round of its own where your questions come together')"
-check "the orchestrator sends operator questions to a running coordinator, else asks directly" "yes|yes|yes" \
-  "$(spells "$ROOT/skills/orchestrator/SKILL.md" '**While a coordinator runs, every question for the operator goes to it, never to him**')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'skills/coordinator/scripts/coordinator.sh lookup')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'no coordinator runs, and you ask him directly')"
-check "a decision round goes through a running coordinator" "yes|1" \
-  "$(spells "$ROOT/commands/decide.md" '**While a coordinator runs, the wave goes through it.**')|$(sed -n '1,5p' "$ROOT/commands/decide.md" | grep -c '^allowed-tools: .*coordinator\.sh')"
+# The module carries the question since the turn-end relay: the orchestrator asks in its tab and
+# ends on the machine line; the lookup and the send it once ran itself are gone from its rulebook.
+check "the orchestrator asks in its tab and the module carries the question to a running coordinator" "yes|yes|yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" '**While a coordinator runs, every question for the operator goes to it** — his order —')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'and the hooks module carries it: ask here, in the shape of `/orchestrator:decide` step 2, and')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'end the turn on `waiting: operator — blocks: <what it blocks>`; never send it yourself')"
+check "the orchestrator rulebook no longer runs the lookup and the send itself" "no|no" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'coordinator.sh lookup')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'no coordinator runs, and you ask him directly')"
+check "a decision round goes through a running coordinator, carried by the module" "yes|yes" \
+  "$(spells "$ROOT/commands/decide.md" '**While a coordinator runs, the wave goes through it**, carried by the hooks module: each')|$(spells "$ROOT/commands/decide.md" 'blocks>`, and the module forwards it; never send it yourself.')"
+# The module carries each question; the round sending them itself as well delivered one question twice.
+check "the decision round no longer looks the coordinator up or sends it the questions itself, and stays at 8,650 bytes or fewer" "no|no|0|yes" \
+  "$(spells "$ROOT/commands/decide.md" 'coordinator.sh lookup')|$(spells "$ROOT/commands/decide.md" 'goes to that coordinator with `SendMessage`')|$(sed -n '1,5p' "$ROOT/commands/decide.md" | grep -c '^allowed-tools: .*coordinator\.sh')|$([ "$(wc -c < "$ROOT/commands/decide.md" | tr -d ' ')" -le 8650 ] && echo yes || echo no)"
 COORDSPAWN=$(grep -m1 -o 'iterm-agent.sh spawn --coordinator-successor.*' "$COORDSKILL" 2>/dev/null | sed -e 's/^iterm-agent.sh spawn //' \
   -e 's#<subject>#ops#' -e "s#<your working directory>#$WORK#" -e 's#<brief path>#/tmp/coord-brief.md#')
 coordspawn() { eval "set -- $COORDSPAWN"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" CLAUDE_CONFIG_DIR="$CRDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
@@ -5596,8 +5610,15 @@ case "$(git -C "$1" remote get-url origin)" in
 esac
 FG
 chmod +x "$CF/forge"
+# The hooks module's wait files, as facts reads them for the orchestrators waiting at a turn's
+# end: a live one waiting on the operator, one whose pid is gone, a cleared wait, a broken file.
+CCFG="$WORK/coord-config"; CSTORE="$CCFG/claude-orchestrator/store/waits"; mkdir -p "$CSTORE"
+printf '%s\n' '{"name":"Orch : alpha","pid":"100","waiting":"operator","blocks":"phase 3","waiting_since":"2026-10-14T09:45:16.000Z","relayed":null}' > "$CSTORE/s-alpha"
+printf '%s\n' '{"name":"Orch : gone","pid":"999","waiting":"operator","blocks":"x","waiting_since":"y"}' > "$CSTORE/s-gone"
+printf '%s\n' '{"name":"Orch : beta","pid":"101","waiting":null,"blocks":null,"waiting_since":null}' > "$CSTORE/s-beta"
+printf 'not json\n' > "$CSTORE/s-broken"
 cfacts() {
-  ORCHESTRATOR_STATE_DIR="$CS" ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli \
+  CLAUDE_CONFIG_DIR="$CCFG" ORCHESTRATOR_STATE_DIR="$CS" ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli \
     COORDINATOR_PS_TABLE="${COORDINATOR_PS_TABLE:-$CF/ps}" COORDINATOR_CWDS="${COORDINATOR_CWDS:-$CF/cwds}" \
     COORDINATOR_FORGE="${COORDINATOR_FORGE:-$CF/forge}" bash "$COORD" "$@"
 }
@@ -5636,6 +5657,11 @@ check "the same branch in a repository nobody works in is no collision" "0" \
 check "the same branch in two repositories does not collide" "0" \
   "$(printf '%s\n' "$FACTS" | grep '^collision ' | grep -c "o/other\|106 Agent\|$RO1")"
 check "facts exits 1 on a collision" "exit 1" "$(cfacts_status facts)"
+# The defect: an orchestrator that asked the operator in its own tab looked stopped, and the
+# coordinator spent two turns asking it why. Its wait is in the module's row, and facts shows it.
+check "facts shows a live orchestrator waiting on the operator, and no dead one, cleared wait or broken file" \
+  "waiting Orch : alpha | operator since 2026-10-14T09:45:16.000Z | blocks: phase 3" \
+  "$(printf '%s\n' "$FACTS" | grep '^waiting ')"
 
 check "owners traces each open pull request to the orchestrator named in its agent's brief" \
   "pr forge.example/o/app#7 | feat/x | Orch : alpha [aaa111] | session 101 in $RA1|pr forge.example/o/app#7 | feat/x | Orch : beta [bbb222] | session 102 in $RB1|pr forge.example/o/app#8 | feat/y | unknown | session 103 in $RC1 names no orchestrator|pr forge.example/o/app#9 | feat/z | unknown | no checkout on feat/z|pr forge.example/o/app#10 | feat/w | unknown | no session in $RIDLE" \

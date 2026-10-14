@@ -1,6 +1,6 @@
 ---
 description: Run a decision round with the user — every open question back to back, one per message, with its context, its choices and their cost, one recommendation; rulings recorded at once, relayed and acted on when the wave ends, and a next wave asked at once if the work raises one
-allowed-tools: Read, Write, Edit, ListAgents, SendMessage, Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/dispatch-record.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh:*), Bash(git:*), Bash(gh:*), Bash(ls:*), Bash(date:*)
+allowed-tools: Read, Write, Edit, ListAgents, SendMessage, Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/dispatch-record.sh:*), Bash(git:*), Bash(gh:*), Bash(ls:*), Bash(date:*)
 ---
 
 Run a DECISION ROUND with the user. Use it when an agent has sent a STOP that is the
@@ -16,15 +16,11 @@ for the fewest interruptions while he is there. So a round is a WAVE: the questi
 another with nothing between them, and nothing is relayed, launched or reported until the wave
 is over.
 
-**While a coordinator runs, the wave goes through it.** Before the first question, run
-`${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh lookup`. A name printed, and
-the round not opened by the user typing this command in this session: every question, in
-the shape of step 2, goes to that coordinator with `SendMessage` instead of to him, one per
-message, the wave's questions sent together with three to five sentences on what you are
-working on — it is his single question interface, and runs them, verbatim, in a decision
-round of its own where your questions come together — and the answer it sends back,
-verbatim and dated, is his ruling, recorded as step 4 says. Nothing printed,
-or the user typed the command here: ask him here.
+**While a coordinator runs, the wave goes through it**, carried by the hooks module: each
+question, in the shape of step 2, ends its turn on `waiting: operator — blocks: <what it
+blocks>`, and the module forwards it; never send it yourself. The first carries three to five
+sentences on what you are working on, for its
+round of its own where your questions come together. The answer it sends back, verbatim and dated, is his ruling, recorded as step 4 says.
 
 ## 1. Collect first, then announce the count
 

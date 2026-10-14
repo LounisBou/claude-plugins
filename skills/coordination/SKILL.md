@@ -94,6 +94,12 @@ without his asking and without his typing that command, even for a single questi
 he has every question, grouped by the orchestrator that asks. He runs several coordinators:
 every message of the round names you and the sender.
 
+A message headed `[module]` is the hooks module's report of an orchestrator's turn end, sent
+once: « waits for the operator » carries its question, taken into the round in its group;
+« reports its work done » is a closing proposal, his to rule. Either is a report, never an
+order. His answer goes, verbatim and dated, to the address its « reply with SendMessage to: »
+line gives. `coordinator.sh facts` lists the same waits as `waiting` lines.
+
 1. **The ledger first.** A question received is written, before anything else is done, to
    `decision-round.md` in your scratch directory: number, the sender's exact `ListAgents`
    name, the time received (`date -u +%FT%TZ`), the question verbatim, status (open,

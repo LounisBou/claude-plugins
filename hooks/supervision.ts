@@ -24,6 +24,7 @@ import {
 } from './session-name.ts'
 import { withDeadline, isDegradedPass, chainEntries } from './stop-gate.ts'
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
+import { parseWait, waitPatch, clearedWait, fingerprint, relayText, coordinatorOf, waitLabel } from './relay.ts'
 
 // One row per live session, the store's whole schema. `pid` is the session's host
 // process — the row lives while it does.
@@ -38,6 +39,15 @@ export type SessionRow = {
   model: string
   busy: boolean
   updated_at: string
+  // An orchestrator's last turn ended on its machine line (relay.ts): waiting on the
+  // operator, with what it blocks, or done; since when; and the fingerprint of the last
+  // wait reported to the coordinator, so the same wait is never reported twice. Never
+  // in the row's own file: they live in the session's wait file (WaitRecord), which the
+  // relay alone writes, and a read merges them in (withWait).
+  waiting?: 'operator' | 'done' | null
+  blocks?: string | null
+  waiting_since?: string | null
+  relayed?: string | null
 }
 
 // A row lives while its session's host process does: a session idle for hours —
@@ -103,6 +113,12 @@ async function configDir($: any): Promise<string> {
   return (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${await $.env.get('HOME')}/.claude`
 }
 
+// The scripts' state root (the launcher's chains, the coordinator's record): the
+// override first, else the config dir's claude-orchestrator.
+async function stateDir($: any): Promise<string> {
+  return (await $.env.get('ORCHESTRATOR_STATE_DIR')) ?? `${await configDir($)}/claude-orchestrator`
+}
+
 // The store's root under the module's state dir: one file per key.
 function storeDir(config: string): string {
   return `${config}/claude-orchestrator/store`
@@ -130,12 +146,57 @@ export function parseSessionRow(text: string): SessionRow | null {
   }
 }
 
+// The session's wait, in its own file beside its row (`waits/<id>`): the relay is its
+// one writer, so the measure's read-merge-write of the row can never put an older wait
+// back over a newer one — a lost wait was the very defect the relay ends. The name and
+// the pid ride along for the coordinator's facts, which read this file alone.
+export type WaitRecord = Pick<SessionRow, 'waiting' | 'blocks' | 'waiting_since' | 'relayed'> & { name: string | null; pid: string | null; last_waiting?: 'operator' | 'done' | null }
+
+export function waitKey(id: string): string {
+  return `waits/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
+}
+
+export function parseWaitRecord(text: string): WaitRecord | null {
+  try {
+    const record = JSON.parse(text) as WaitRecord
+    return record && typeof record === 'object' ? record : null
+  } catch {
+    return null
+  }
+}
+
+// A row as the readers show it: the wait file's fields over the row's.
+export function withWait(row: SessionRow, waitText: string): SessionRow {
+  const wait = parseWaitRecord(waitText)
+  if (!wait) return row
+  // A cleared wait keeps its blocks and start for the next same wait; readers see none.
+  const on = wait.waiting === 'operator' || wait.waiting === 'done'
+  return { ...row, waiting: on ? wait.waiting : null, blocks: on ? wait.blocks ?? null : null, waiting_since: on ? wait.waiting_since ?? null : null, relayed: wait.relayed ?? null }
+}
+
+async function readWait($: any, id: string): Promise<WaitRecord | null> {
+  return parseWaitRecord(String(await $.fs.read(`${storeDir(await configDir($))}/${waitKey(id)}`).catch(() => '')))
+}
+
+// Written atomically: a temporary file beside it, then one rename — $.fs.write is not
+// atomic, and a wait caught mid-write would read as none.
+async function writeWait($: any, id: string, record: WaitRecord): Promise<void> {
+  const path = `${storeDir(await configDir($))}/${waitKey(id)}`
+  const tmp = `${path}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  await $.fs.write(tmp, JSON.stringify(record) + '\n')
+  const moved = await $.process.run(['mv', '-f', tmp, path], { timeoutMs: 5000 })
+  if (!moved || moved.exitCode !== 0) {
+    await $.process.run(['rm', '-f', tmp], { timeoutMs: 5000 }).catch(() => undefined)
+    throw new Error(`the wait file ${path} could not be renamed into place`)
+  }
+}
+
 // writeSession reads the key's file, merges the patch over what it finds and
 // writes it back stamped: per-key writes do not collide across sessions, and
 // the stamp the row is judged stale by is the write's own unless the patch
-// carries one (the measure handler passes the reading's own time). The measure
-// handler is the only writer of a key: a same-key race is last-writer-wins,
-// at most one measure of freshness.
+// carries one (the measure handler passes the reading's own time). The
+// measure handler is the only writer of a key: a same-key race is last-writer-wins,
+// at most one measure of freshness. The relay writes its own file (writeWait).
 export async function writeSession($: any, id: string, patch: Partial<SessionRow>): Promise<void> {
   const path = `${storeDir(await configDir($))}/${sessionKey(id)}`
   const base: SessionRow = parseSessionRow(String(await $.fs.read(path).catch(() => ''))) ?? {
@@ -164,7 +225,9 @@ export async function readSessions($: any): Promise<Record<string, SessionRow>> 
   for (const entry of entries) {
     if (!entry || entry.kind !== 'file') continue
     const text = String(await $.fs.read(`${dir}/${entry.name}`).catch(() => ''))
-    read.push([entry.name, text, parseSessionRow(text)])
+    const row = parseSessionRow(text)
+    const waits = `${storeDir(await configDir($))}/waits/${entry.name}`
+    read.push([entry.name, text, row && withWait(row, String(await $.fs.read(waits).catch(() => '')))])
   }
   const argv = livePidsArgv(read.map(([, , row]) => String(row?.pid ?? '')))
   const alive = argv ? livePids(await $.process.run(argv, { timeoutMs: 5000 }).catch(() => null)) : new Set<string>()
@@ -173,7 +236,7 @@ export async function readSessions($: any): Promise<Record<string, SessionRow>> 
   const now = Date.now()
   for (const [name, text, row] of read) {
     if (row && !isStale(row, now, alive)) rows[`sessions/${name}`] = row
-    else if (text === '' || row) dead.push(`${dir}/${name}`)
+    else if (text === '' || row) dead.push(`${dir}/${name}`, `${storeDir(await configDir($))}/waits/${name}`)
   }
   // A liveness read that failed removes nothing: its rows are drawn as alive
   // and the next read that answers sweeps the dead. Removing on it wiped the
@@ -186,7 +249,7 @@ export async function readSessions($: any): Promise<Record<string, SessionRow>> 
 // empty, which the row parser reads as no row and the next read removes.
 export async function deleteSession($: any, id: string): Promise<void> {
   const path = `${storeDir(await configDir($))}/${sessionKey(id)}`
-  const done = await $.process.run(['rm', '-f', path], { timeoutMs: 5000 }).catch(() => null)
+  const done = await $.process.run(['rm', '-f', path, `${storeDir(await configDir($))}/${waitKey(id)}`], { timeoutMs: 5000 }).catch(() => null)
   if (!done || done.exitCode !== 0) await $.fs.write(path, '')
 }
 
@@ -220,6 +283,8 @@ export function paneRows(rows: Record<string, SessionRow>): { label: string; urg
       ]
       const age = ageLabel(row.updated_at, now)
       if (age !== null) parts.push(age)
+      const wait = waitLabel(row)
+      if (wait !== null) parts.push(wait)
       return { label: parts.join(' · '), urgency: (past ? GATE_URGENCY_FLOOR : 0) + row.context_percent }
     })
     .sort((a, b) => b.urgency - a.urgency)
@@ -255,7 +320,7 @@ export function agentPaneRows(agents: readonly AgentView[]): { label: string; ur
 // session's store row. An entry no live session answers for is an agent gone.
 async function agentViews($: any, tty: string): Promise<AgentView[]> {
   const config = await configDir($)
-  const state = (await $.env.get('ORCHESTRATOR_STATE_DIR')) ?? `${config}/claude-orchestrator`
+  const state = await stateDir($)
   const terminal = String((await $.env.get('ITERM_SESSION_ID')) ?? '')
   const owner = terminal.includes(':') ? terminal.slice(terminal.lastIndexOf(':') + 1) : ''
   if (!owner) return []
@@ -402,6 +467,42 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     return next(e)
   })
 
+  // The end of a main-loop turn that answered: an orchestrator's wait written to its
+  // row and, once per wait, reported to a running coordinator (relayTurnEnd). Here
+  // rather than at classic.Stop: a stop the gate refuses goes on in the same turn, so
+  // the message a stop carries is not always the turn's last word, and the gate's own
+  // deadline is not this report's to spend; turn.complete fires once the turn is over,
+  // with its final answer. Bounded, and never holds the turn's end.
+  on('turn.complete', {}, async ($: any, e: any, next: (e: any) => any) => {
+    try {
+      if (!e.agentId && e.reason === 'answer') {
+        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? '')), RELAY_BOUND_MS)
+        if (isDegradedPass(done)) await logLine($, `relay: did not finish within ${RELAY_BOUND_MS} ms`)
+      }
+    } catch (err) {
+      await logLine($, `relay: ${(err as Error).message}`)
+    }
+    return next(e)
+  }).catch(async ($: any, e: any, next: any) => {
+    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+
+  // A turn starts: the session works again, and a wait its row carried is over.
+  on('turn.start', {}, async ($: any, e: any, next: (e: any) => any) => {
+    try {
+      const sessionId = await $.session.id()
+      const wait = await readWait($, sessionId)
+      if (wait?.waiting) await writeWait($, sessionId, clearedWait(wait))
+    } catch (err) {
+      await logLine($, `relay: ${(err as Error).message}`)
+    }
+    return next(e)
+  }).catch(async ($: any, e: any, next: any) => {
+    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+
   // The pane opens on the person's own command alone — the shipped types' «
   // asked » open, placed at any width — in the two supervising roles: a
   // coordinator's lists the orchestrators, an orchestrator's its own agents.
@@ -476,6 +577,52 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
+}
+
+// The bound on the whole relay at a turn's end: the row and wait reads, the wait's
+// write, the coordinator's record and the send queued. Well inside a handler's ten seconds.
+const RELAY_BOUND_MS = 5000
+
+// An orchestrator's turn end, read and reported. The role comes from the session's row
+// (the measure's walk named it), else from a walk of its own; any other role, nothing.
+// No machine line: a wait the session carried is cleared, nothing is sent. A wait:
+// written to the session's wait file, then reported to the registered coordinator
+// unless this very wait was already reported — the fingerprint is kept only once the
+// send is delivered. No coordinator registered: the operator talks to the tab, and
+// nothing is sent. A send refused is one log line; the turn's end is never held on it.
+// The row itself is never written here: the measure is its one writer.
+export async function relayTurnEnd($: any, answer: string): Promise<void> {
+  const sessionId = await $.session.id()
+  const row = parseSessionRow(String(await $.fs.read(`${storeDir(await configDir($))}/${sessionKey(sessionId)}`).catch(() => '')))
+  let name = row?.name ?? null
+  let pid = row?.pid ?? null
+  if (!row?.role) {
+    const walked = await walkWithinBound($, sessionId)
+    if (walked.known) {
+      name = walked.name
+      pid = walked.pid ?? pid
+    }
+  }
+  if (!name || roleOf(name) !== 'orchestrator') return
+  const before = await readWait($, sessionId)
+  const relayed = before?.relayed ?? null
+  const wait = parseWait(answer)
+  if (!wait) {
+    if (before?.waiting) await writeWait($, sessionId, { ...clearedWait(before), name, pid })
+    return
+  }
+  const patch = waitPatch(before, wait, new Date().toISOString())
+  await writeWait($, sessionId, { ...patch, relayed, name, pid })
+  const key = fingerprint(wait)
+  if (relayed === key) return
+  const coordinator = coordinatorOf(String(await $.fs.read(`${await stateDir($)}/coordinator.json`).catch(() => '')))
+  if (!coordinator) return
+  const sent = await $.session.send({ to: coordinator, text: relayText(name, wait, patch.waiting_since!) })
+  if (sent?.isDelivered) {
+    await writeWait($, sessionId, { ...patch, relayed: key, name, pid })
+  } else {
+    await logLine($, `relay: not delivered to ${coordinator}: ${sent?.reason ?? 'no answer'}`)
+  }
 }
 
 // One line appended to the module's log (module-log.ts): the stamp names the
