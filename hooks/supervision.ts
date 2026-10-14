@@ -28,6 +28,10 @@ import {
   parseWait, parseStatus, waitPatch, clearedWait, fingerprint, relayText, gateText, coordinatorOf, chainOwnerTty, waitLabel,
   type WaitKind,
 } from './relay.ts'
+import {
+  remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
+  remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, machineLabel, ROW_MARKER, REMOTE_STALE_AFTER_MS, type RemoteRow,
+} from './remote-row.ts'
 
 // One row per live session, the store's whole schema. `pid` is the session's host
 // process — the row lives while it does.
@@ -53,6 +57,8 @@ export type SessionRow = {
   blocks?: string | null
   waiting_since?: string | null
   relayed?: string | null
+  // A row received from an orchestrator on another machine (remote-row.ts): its machine.
+  machine?: string | null
 }
 
 // A row lives while its session's host process does: a session idle for hours —
@@ -60,7 +66,7 @@ export type SessionRow = {
 // ended without its end event (a crash, a kill) is gone the moment its pid is.
 // A row written before rows carried a pid falls back to the old rule: no
 // measure for an hour, no row.
-const STALE_AFTER_MS = 60 * 60 * 1000
+export const STALE_AFTER_MS = 60 * 60 * 1000
 
 // The rule above as a function, pure and exported: the commands read the same
 // store through their own $ (the fence forbids sharing the reader) and judge
@@ -167,6 +173,12 @@ export function gateKey(id: string): string {
   return `gates/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
 }
 
+// What an orchestrator last sent its coordinator of its row (`rows/<id>`, remote-row.ts):
+// the send path is its one writer.
+export function rowKey(id: string): string {
+  return `rows/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
+}
+
 export function parseWaitRecord(text: string): WaitRecord | null {
   try {
     const record = JSON.parse(text) as WaitRecord
@@ -192,13 +204,16 @@ async function readWait($: any, id: string): Promise<WaitRecord | null> {
 // Written atomically: a temporary file beside it, then one rename — $.fs.write is not
 // atomic, and a wait caught mid-write would read as none.
 async function writeWait($: any, id: string, record: WaitRecord): Promise<void> {
-  const path = `${storeDir(await configDir($))}/${waitKey(id)}`
+  await writeAtomic($, `${storeDir(await configDir($))}/${waitKey(id)}`, JSON.stringify(record) + '\n')
+}
+
+async function writeAtomic($: any, path: string, text: string): Promise<void> {
   const tmp = `${path}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  await $.fs.write(tmp, JSON.stringify(record) + '\n')
+  await $.fs.write(tmp, text)
   const moved = await $.process.run(['mv', '-f', tmp, path], { timeoutMs: 5000 })
   if (!moved || moved.exitCode !== 0) {
     await $.process.run(['rm', '-f', tmp], { timeoutMs: 5000 }).catch(() => undefined)
-    throw new Error(`the wait file ${path} could not be renamed into place`)
+    throw new Error(`the file ${path} could not be renamed into place`)
   }
 }
 
@@ -247,7 +262,7 @@ export async function readSessions($: any): Promise<Record<string, SessionRow>> 
   const now = Date.now()
   for (const [name, text, row] of read) {
     if (row && !isStale(row, now, alive)) rows[`sessions/${name}`] = row
-    else if (text === '' || row) dead.push(`${dir}/${name}`, `${storeDir(await configDir($))}/waits/${name}`, `${storeDir(await configDir($))}/gates/${name}`)
+    else if (text === '' || row) dead.push(`${dir}/${name}`, `${storeDir(await configDir($))}/waits/${name}`, `${storeDir(await configDir($))}/gates/${name}`, `${storeDir(await configDir($))}/rows/${name}`)
   }
   // A liveness read that failed removes nothing: its rows are drawn as alive
   // and the next read that answers sweeps the dead. Removing on it wiped the
@@ -261,7 +276,7 @@ export async function readSessions($: any): Promise<Record<string, SessionRow>> 
 export async function deleteSession($: any, id: string): Promise<void> {
   const path = `${storeDir(await configDir($))}/${sessionKey(id)}`
   const store = storeDir(await configDir($))
-  const done = await $.process.run(['rm', '-f', path, `${store}/${waitKey(id)}`, `${store}/${gateKey(id)}`], { timeoutMs: 5000 }).catch(() => null)
+  const done = await $.process.run(['rm', '-f', path, `${store}/${waitKey(id)}`, `${store}/${gateKey(id)}`, `${store}/${rowKey(id)}`], { timeoutMs: 5000 }).catch(() => null)
   if (!done || done.exitCode !== 0) await $.fs.write(path, '')
 }
 
@@ -291,6 +306,7 @@ export function paneRows(rows: Record<string, SessionRow>): { label: string; urg
       const parts = [
         row.name ?? 'unnamed',
         row.role ?? 'no role',
+        ...(row.machine ? [`remote ${row.machine}`] : []),
         `${row.context_percent}%${past ? ' past the gate' : ''}`,
       ]
       const age = ageLabel(row.updated_at, now)
@@ -452,6 +468,11 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           busy: false,
           updated_at: reading.updated_at,
         })
+        // An orchestrator's row to a coordinator on another machine, when it is news.
+        if (walked.known && roleOf(walked.name) === 'orchestrator') {
+          const sent = await withDeadline(sendRow($, sessionId), RELAY_BOUND_MS)
+          if (isDegradedPass(sent)) await logLine($, `row: did not finish within ${RELAY_BOUND_MS} ms`)
+        }
         // An agent's measure past its gate: its orchestrator told once per crossing.
         if (walked.known && walked.tty && roleOf(walked.name) === 'agent') {
           const done = await withDeadline(reportGate($, sessionId, walked.name!, walked.tty, reading), RELAY_BOUND_MS)
@@ -497,6 +518,9 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       if (!e.agentId && e.reason === 'answer') {
         const done = await withDeadline(relayTurnEnd($, String(e.answer ?? '')), RELAY_BOUND_MS)
         if (isDegradedPass(done)) await logLine($, `relay: did not finish within ${RELAY_BOUND_MS} ms`)
+        // The wait just written is what the pane shows: the row follows it, when it is news.
+        const sent = await withDeadline(sendRow($, await $.session.id()), RELAY_BOUND_MS)
+        if (isDegradedPass(sent)) await logLine($, `row: did not finish within ${RELAY_BOUND_MS} ms`)
       }
     } catch (err) {
       await logLine($, `relay: ${(err as Error).message}`)
@@ -515,6 +539,27 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       if (wait?.waiting) await writeWait($, sessionId, clearedWait(wait))
     } catch (err) {
       await logLine($, `relay: ${(err as Error).message}`)
+    }
+    return next(e)
+  }).catch(async ($: any, e: any, next: any) => {
+    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+
+  // A peer's delivery, read before it is queued. A marked row (remote-row.ts) is written to
+  // the store and consumed: no model reads it, on either side. A coordinator's message
+  // teaches this machine its address, for the relay and the row when the coordinator runs
+  // elsewhere. Anything else passes through untouched.
+  on('session.receive', {}, async ($: any, e: any, next: (e: any) => any) => {
+    try {
+      if (!e.agentId && isPeerOrigin(e.origin) && typeof e.text === 'string') {
+        const delivery = deliveryOf(e.text)
+        if (isMarked(delivery.body)) return await receiveRow($, delivery.body)
+        const learnt = learntOf(delivery, Date.now())
+        if (learnt) await learnCoordinator($, learnt)
+      }
+    } catch (err) {
+      await logLine($, `receive: ${(err as Error).message}`)
     }
     return next(e)
   }).catch(async ($: any, e: any, next: any) => {
@@ -569,7 +614,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       let rows: { label: string; urgency: number }[] = []
       let none = 'type /orchestrator:supervision to open the pane again'
       if (opened?.role === 'coordinator') {
-        rows = paneRows(Object.fromEntries(Object.entries(await readSessions($)).filter(([, row]) => row.role === 'orchestrator')))
+        const merged = withRemote(await readSessions($), await readRemoteRows($), Date.now(), REMOTE_STALE_AFTER_MS)
+        rows = paneRows(Object.fromEntries(Object.entries(merged).filter(([, row]) => row.role === 'orchestrator')))
         none = 'no live orchestrator'
       } else if (opened?.role === 'orchestrator') {
         // Bounded like every side read: an agent list that cannot be read in
@@ -639,7 +685,7 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
   const key = fingerprint(wait)
   if (relayed === key) return
   const to = role === 'orchestrator'
-    ? coordinatorOf(String(await $.fs.read(`${await stateDir($)}/coordinator.json`).catch(() => '')))
+    ? (await coordinatorAddress($))?.to ?? null
     : tty ? await orchestratorOn($, tty) : null
   if (!to) {
     if (role === 'agent') await logLine($, `relay: no orchestrator found for ${name} on ${tty ?? 'an unknown tty'}`)
@@ -652,6 +698,85 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
   } else {
     await logLine($, `relay: not delivered to ${to}: ${sent?.reason ?? 'no answer'}`)
   }
+}
+
+// Where an orchestrator's reports go: the coordinator registered on this machine first
+// (coordinator.sh's record), else the one a peer delivery taught this machine — its
+// address as the envelope gave it, else its name. Null when neither names one.
+export async function coordinatorAddress($: any): Promise<{ to: string; name: string; local: boolean } | null> {
+  const local = coordinatorOf(String(await $.fs.read(`${await stateDir($)}/coordinator.json`).catch(() => '')))
+  if (local) return { to: local, name: local, local: true }
+  const learnt = parseLearnt(String(await $.fs.read(`${storeDir(await configDir($))}/coordinator-learnt`).catch(() => '')))
+  return learnt ? { to: learnt.from ?? learnt.name, name: learnt.name, local: false } : null
+}
+
+async function learnCoordinator($: any, learnt: { name: string; from: string | null; at: string }): Promise<void> {
+  const path = `${storeDir(await configDir($))}/coordinator-learnt`
+  const known = parseLearnt(String(await $.fs.read(path).catch(() => '')))
+  if (known && known.name === learnt.name && known.from === learnt.from) return
+  await writeAtomic($, path, JSON.stringify(learnt) + '\n')
+}
+
+// The host name, read once per module load: the machine label a row carries.
+let machine: string | null = null
+async function machineOf($: any): Promise<string> {
+  if (machine === null) {
+    const run = await $.process.run(['hostname', '-s'], { timeoutMs: 2000 }).catch(() => null)
+    machine = machineLabel(run?.exitCode === 0 ? String(run.stdout ?? '') : '')
+  }
+  return machine
+}
+
+// An orchestrator's row, sent to a coordinator on another machine when it is news
+// (remote-row.ts): a coordinator on this machine reads the store itself, and none known
+// is nobody to send to. What was sent is kept only once delivered; a failure is one log
+// line, tried again at the next measure or turn end.
+export async function sendRow($: any, sessionId: string): Promise<void> {
+  const store = storeDir(await configDir($))
+  const read = parseSessionRow(String(await $.fs.read(`${store}/${sessionKey(sessionId)}`).catch(() => '')))
+  if (read?.role !== 'orchestrator') return
+  const to = await coordinatorAddress($)
+  if (!to || to.local) return
+  const row = remoteRowOf(withWait(read, String(await $.fs.read(`${store}/${waitKey(sessionId)}`).catch(() => ''))), await machineOf($))
+  if (!row) return
+  const now = Date.now()
+  const path = `${store}/${rowKey(sessionId)}`
+  if (!rowIsNews(row, parseRowSent(String(await $.fs.read(path).catch(() => ''))), now)) return
+  let sent = await $.session.send({ to: to.to, text: rowText(row) })
+  if (!sent?.isDelivered && to.to !== to.name) sent = await $.session.send({ to: to.name, text: rowText(row) })
+  if (sent?.isDelivered) await writeAtomic($, path, JSON.stringify(rowSent(row, now)) + '\n')
+  else await logLine($, `row: not delivered to ${to.name}: ${sent?.reason ?? 'no answer'}`)
+}
+
+// A marked delivery: consumed whatever it holds — the marker is the module's own, never a
+// message for the model — and written as a remote row only when it passes every check.
+async function receiveRow($: any, body: string): Promise<{ consumed: string }> {
+  const row = parseRemoteRow(body)
+  if (!row) {
+    await logLine($, `receive: a marked row was refused (${body.length} characters)`)
+    return { consumed: 'orchestrator: a malformed supervision row, refused' }
+  }
+  await writeAtomic($, `${storeDir(await configDir($))}/${remoteKey(row.name)}`, JSON.stringify(row) + '\n')
+  return { consumed: 'orchestrator: a supervision row, stored' }
+}
+
+// The rows received from other machines, each checked again as it is read; a stale or
+// unreadable one is removed as it is met, so the directory never outgrows the live set.
+const REMOTE_READ_CAP = 64
+export async function readRemoteRows($: any): Promise<RemoteRow[]> {
+  const dir = `${storeDir(await configDir($))}/remote`
+  const entries: { name: string; kind: string }[] = await $.fs.list(dir).catch(() => [])
+  const rows: RemoteRow[] = []
+  const dead: string[] = []
+  const now = Date.now()
+  for (const entry of entries.slice(0, REMOTE_READ_CAP)) {
+    if (!entry || entry.kind !== 'file' || entry.name.includes('.tmp-')) continue
+    const row = parseRemoteRow(`${ROW_MARKER}${String(await $.fs.read(`${dir}/${entry.name}`).catch(() => ''))}`)
+    if (row && !isRemoteStale(row, now, REMOTE_STALE_AFTER_MS)) rows.push(row)
+    else dead.push(`${dir}/${entry.name}`)
+  }
+  if (dead.length > 0) await $.process.run(['rm', '-f', ...dead], { timeoutMs: 5000 }).catch(() => undefined)
+  return rows
 }
 
 // The orchestrator an agent on `tty` reports to: the chain that names the tty

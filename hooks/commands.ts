@@ -23,6 +23,7 @@
 // its own record read, while the row parser, the staleness rule and the pane's
 // row shaper cross as plain imports from the supervision domain.
 import { parseSessionRow, withWait, paneRows, isStale, livePidsArgv, livePids, sessionKey, type SessionRow } from './supervision.ts'
+import { parseRemoteRow, withRemote, ROW_MARKER, REMOTE_STALE_AFTER_MS, type RemoteRow } from './remote-row.ts'
 import { hostRecordOf, roleOf } from './session-name.ts'
 import { withDeadline, isDegradedPass } from './stop-gate.ts'
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
@@ -81,6 +82,21 @@ async function readRows($: any): Promise<Record<string, SessionRow>> {
   const now = Date.now()
   for (const [name, row] of read) {
     if (!isStale(row, now, alive)) rows[`sessions/${name}`] = row
+  }
+  return rows
+}
+
+// The rows an orchestrator on another machine sent this coordinator (remote-row.ts), this
+// file's own read of the store's remote directory, each checked again; the supervision
+// domain's reader removes the stale ones, this one only skips them.
+async function readRemote($: any): Promise<RemoteRow[]> {
+  const dir = `${await configDir($)}/claude-orchestrator/store/remote`
+  const entries: { name: string; kind: string }[] = await $.fs.list(dir).catch(() => [])
+  const rows: RemoteRow[] = []
+  for (const entry of entries.slice(0, 64)) {
+    if (!entry || entry.kind !== 'file' || entry.name.includes('.tmp-')) continue
+    const row = parseRemoteRow(`${ROW_MARKER}${String(await $.fs.read(`${dir}/${entry.name}`).catch(() => ''))}`)
+    if (row) rows.push(row)
   }
   return rows
 }
@@ -290,7 +306,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // the host's own commands of a bare name. The engine validates neither key
   // nor field; the wiring tests pin the exact objects.
   on('command.run', { command: 'orchestrator:status' }, async ($: any) => {
-    return { text: statusText(await readRows($)) }
+    return { text: statusText(withRemote(await readRows($), await readRemote($), Date.now(), REMOTE_STALE_AFTER_MS)) }
   }).catch(async ($: any, e: any, next: any) => {
     // A command whose reader failed is skipped; the net lets the markdown
     // command run as it always did, and the failure is said.

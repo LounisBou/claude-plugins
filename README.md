@@ -20,7 +20,7 @@ session can read without depending on a particular status bar.
 | `/orchestrator:install` | Creates the state directory, unwires any tap a previous install left in front of your status line, and prunes what the tap left behind. Idempotent; refuses a host older than 2.1.287. |
 | `/orchestrator:uninstall` | Restores the previous status line and removes the state directory. |
 | `/orchestrator:status` | Live sessions and their context fill, the ones past the gate flagged. |
-| `/orchestrator:supervision` | Opens the supervision pane, kept on screen with each session's fill and redrawn every 20 seconds while open: the orchestrators in a coordinator session (`Coord :`), its own agents in an orchestrator session (`Orch :`). Only when typed: no session opens it on its own; typed again, it closes it. |
+| `/orchestrator:supervision` | Opens the supervision pane, kept on screen with each session's fill and redrawn every 20 seconds while open: the orchestrators in a coordinator session (`Coord :`) — those on another machine too, labelled `remote <machine>`: their module sends the row silently, only when the wait or a 5 % band of the fill changes, and the coordinator's module stores it without a model turn — its own agents in an orchestrator session (`Orch :`). Only when typed: no session opens it on its own; typed again, it closes it. |
 | `/orchestrator:succeed` | Runs the orchestrator succession. |
 | module gate `prompt.submit` | The context gate enforced in-process by the hooks module: at or past 300,000 tokens (30 %) on a window of 1,000,000 tokens or more, the common case, and 80 % of a smaller window (`ORCHESTRATOR_CONTEXT_GATE`, `ORCHESTRATOR_CONTEXT_GATE_TOKENS`, `ORCHESTRATOR_LARGE_WINDOW`), every prompt of an orchestration session (named `Orch :`, `Agent :`, `Audit :` or `Coord :`) carries the line fitted to its role — succeed, or finish the unit and stop; unmeasured, it says so once. A session with no role name — started by hand and never renamed — gets neither line. A change of the model answering a session is said to the model in front of its next prompt, in every session. |
 | module gate `tool.call` (Bash) | The push guard enforced in-process by the hooks module, in sessions the launcher spawned only: a `git push` that forces is refused unless its lease is pinned (`--force-with-lease=<branch>:<sha>`); the operator's own sessions are untouched. |
@@ -129,7 +129,7 @@ Past the gate —
 the context gate puts the role's line in front of every prompt of an
 orchestration session, and a band above the prompt shows the fill;
 `/orchestrator:status` answers the same figures for every session on the
-machine. Measured beats estimated: in observed runs, agents' self-estimates
+machine, and for the orchestrators on other machines whose rows reached it. Measured beats estimated: in observed runs, agents' self-estimates
 ran 13 points above the gauge.
 
 ## The method in five lines
