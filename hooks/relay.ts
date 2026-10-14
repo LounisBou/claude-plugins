@@ -1,23 +1,28 @@
 // hooks/relay.ts
 // The end of an orchestrator's turn, read by the module: the machine line the stop
 // gate already requires says whether the turn waits on the operator or reports its
-// work done. The wait lands in the session's store row (supervision.ts), where the
+// work done. An agent's turn ends the same way on its status line, reported to its
+// orchestrator instead, and its gate crossing too (supervision.ts). The wait lands in the session's store row (supervision.ts), where the
 // pane, /orchestrator:status and the coordinator's facts read it, and a running
 // coordinator is sent one report of it: the question as the answer carried it, or
 // the closing proposal. Without this, an orchestrator that asked the operator in its
 // own tab looked stopped from outside, and the coordinator spent two full turns
 // asking it why. Pure on purpose: the handler holds the $ (the engine fences it to
 // the file that received it) and passes its reads in here.
-import { MACHINE_LINE, machineLine } from './stop-gate.ts'
+import { MACHINE_LINE, machineLine, chainEntries } from './stop-gate.ts'
 import type { SessionRow } from './supervision.ts'
 
 // The question a report carries is cut past this many characters, and the cut is said:
 // a coordinator's round needs the question, not a whole turn's narrative.
 export const RELAY_CAP = 4000
 
+// An orchestrator waits on the operator or is done; an agent of one (parseStatus) has
+// delivered, is blocked or asks, `blocks` then its status line's own words.
 export type Wait =
   | { kind: 'operator'; blocks: string; question: string }
   | { kind: 'done'; question: string }
+  | { kind: 'delivered' | 'blocked' | 'question'; blocks: string; question: string }
+export type WaitKind = Wait['kind']
 
 // The turn's answer read for its machine line, the stop gate's own regex over the stop
 // gate's own normalisation: a wait on the operator with what it blocks, or done. The
@@ -30,15 +35,28 @@ export function parseWait(answer: string): Wait | null {
   return matched[1] ? { kind: 'operator', blocks: matched[1].trim(), question } : { kind: 'done', question }
 }
 
+// An agent's last line, its brief's own: `status: done|blocked|question — <one line>`,
+// read over the stop gate's normalisation. The text above it is its report or question.
+const STATUS_LINE = /^status:\s*(done|blocked|question)\b\s*(?:(?:—|–|--|-|:)\s*(.*))?$/i
+const STATUS_KIND = { done: 'delivered', blocked: 'blocked', question: 'question' } as const
+
+export function parseStatus(answer: string): Wait | null {
+  const matched = STATUS_LINE.exec(machineLine(answer))
+  if (!matched) return null
+  const lines = answer.replace(/\s+$/, '').split('\n')
+  const kind = STATUS_KIND[matched[1].toLowerCase() as keyof typeof STATUS_KIND]
+  return { kind, blocks: (matched[2] ?? '').trim(), question: lines.slice(0, -1).join('\n').trim() }
+}
+
 // The wait as its file last held it: the current wait, or the one a turn's start
 // cleared (`last_waiting`, its blocks and start kept beside it).
-export type PriorWait = { waiting?: 'operator' | 'done' | null; last_waiting?: 'operator' | 'done' | null; blocks?: string | null; waiting_since?: string | null }
+export type PriorWait = { waiting?: WaitKind | null; last_waiting?: WaitKind | null; blocks?: string | null; waiting_since?: string | null }
 
 // The wait fields for this turn's wait: `waiting_since` is kept while the same wait
 // lasts (same kind, same blocks) — across the turns between, which clear it only for
 // display — and starts now on a new one.
 export function waitPatch(prior: PriorWait | null, wait: Wait, now: string): Pick<SessionRow, 'waiting' | 'blocks' | 'waiting_since'> {
-  const blocks = wait.kind === 'operator' ? wait.blocks : null
+  const blocks = 'blocks' in wait ? wait.blocks : null
   const kind = prior?.waiting ?? prior?.last_waiting ?? null
   const same = kind === wait.kind && (prior?.blocks ?? null) === blocks && typeof prior?.waiting_since === 'string'
   return { waiting: wait.kind, blocks, waiting_since: same ? prior!.waiting_since! : now }
@@ -46,14 +64,14 @@ export function waitPatch(prior: PriorWait | null, wait: Wait, now: string): Pic
 
 // A wait cleared — the session works again, or its turn ended without one: nothing is
 // waited on, and the wait it was is kept so that the same wait asked again keeps its start.
-export function clearedWait<T extends PriorWait>(prior: T): T & { waiting: null; last_waiting: 'operator' | 'done' | null } {
+export function clearedWait<T extends PriorWait>(prior: T): T & { waiting: null; last_waiting: WaitKind | null } {
   return { ...prior, waiting: null, last_waiting: prior.waiting ?? prior.last_waiting ?? null }
 }
 
 // The deduplication key: the same wait (kind, blocks and question) is reported once,
 // a new question is reported. FNV-1a over the text, enough to tell two waits apart.
 export function fingerprint(wait: Wait): string {
-  const text = `${wait.kind}\n${wait.kind === 'operator' ? wait.blocks : ''}\n${wait.question}`
+  const text = `${wait.kind}\n${'blocks' in wait ? wait.blocks : ''}\n${wait.question}`
   let hash = 0x811c9dc5
   for (let i = 0; i < text.length; i++) {
     hash ^= text.charCodeAt(i)
@@ -62,18 +80,38 @@ export function fingerprint(wait: Wait): string {
   return `${text.length}-${hash.toString(16)}`
 }
 
-// The report sent to the coordinator: a header naming the session and its wait, the
-// address the operator's answer goes back to, then, for the operator, the question as
-// the answer carried it. A report, never an order:
-// it carries no approval, no merge and no undraft.
-export function relayText(name: string, wait: Wait, since: string): string {
+// The report sent up: to the coordinator for an orchestrator, to its orchestrator for an
+// agent. A header naming the session and its state, the address the answer goes back to,
+// then the text the turn carried, cut past the cap and said. A report, never an order:
+// it carries no approval, no merge, no undraft and no stand-down.
+export function relayText(name: string, wait: Wait, since: string, context: string | null = null): string {
   const reply = `reply with SendMessage to: ${name}`
   if (wait.kind === 'done') return `[module] ${name} reports its work done and proposes to be closed\n${reply}`
-  const header = `[module] ${name} waits for the operator since ${since} — blocks: ${wait.blocks}\n${reply}`
-  if (!wait.question) return header
+  const header = wait.kind === 'operator' ? `[module] ${name} waits for the operator since ${since} — blocks: ${wait.blocks}`
+    : wait.kind === 'delivered' ? `[module] ${name} reports its delivery; verify on the artifact${context ? ` — context ${context}` : ''}`
+    : `[module] ${name} ${wait.kind === 'blocked' ? 'is blocked' : 'asks'}`
+  const said = 'blocks' in wait && wait.kind !== 'operator' && wait.blocks ? ` — ${wait.blocks}` : ''
+  if (!wait.question) return `${header}${said}\n${reply}`
   const cut = wait.question.length > RELAY_CAP
   const question = cut ? `${wait.question.slice(0, RELAY_CAP)}\n[cut at ${RELAY_CAP} of ${wait.question.length} characters]` : wait.question
-  return `${header}\n\n${question}`
+  return `${header}${said}\n${reply}\n\n${question}`
+}
+
+// An agent's measure crossing the gate its session runs under, the one line sent to its
+// orchestrator once per crossing: the figures, never an instruction.
+export function gateText(name: string, tokens: number, percent: number): string {
+  return `[module] ${name} context ${tokens.toLocaleString('en-US')} (${percent}%) — at the gate`
+}
+
+// The orchestrator's tty an agent's tty belongs to: the launcher's chains, one file per
+// orchestrator tty, each entry an agent's tty. A chain outlives its tab and a tty is
+// recycled, so of the chains naming this tty the one written last wins — the spawn that
+// put this agent there appended to it. Null when no chain names it.
+export function chainOwnerTty(chains: readonly { name: string; mtimeMs: number; text: string }[], tty: string): string | null {
+  const named = chains.filter(c => c.name.endsWith('.jsonl') && chainEntries(c.text).some(e => e.tty === tty))
+  if (named.length === 0) return null
+  const last = named.reduce((a, b) => (b.mtimeMs > a.mtimeMs ? b : a))
+  return `/dev/${last.name.slice(0, -'.jsonl'.length)}`
 }
 
 // The coordinator's name out of its record (coordinator.sh's <state>/coordinator.json),

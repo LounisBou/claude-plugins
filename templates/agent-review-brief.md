@@ -54,9 +54,9 @@ End the report with one machine line and nothing after it: `norms-check: tool {{
 ## 6. Communication
 
 - Your orchestrator is the session **`{{ORCHESTRATOR_NAME}}`** — its exact `ListAgents` name and reference — and no other.
-- A question for the operator is sent to the orchestrator, never left only in your tab; it relays the question to the operator verbatim and sends the answer back verbatim.
+- A question (one for the operator included) or a blocker: end your turn on it: write it, then one last line, plain text: `status: question|blocked|done — <one line>`. The hooks module sends it to the orchestrator; never send it yourself too. The orchestrator relays a question for the operator verbatim, and his answer back verbatim.
 - Report on start (after the state verification), once with the consolidated report, then answer the orchestrator's questions until it stands you down.
-- Report your measured context only as it nears the gate — 300,000 tokens (30 %) on a window of 1,000,000 tokens or more, the common case, and 80 % of a smaller window — or when the orchestrator asks: read your own measure file — the one JSON line the hooks module rewrites on every turn, your session id's file under `claude-orchestrator/measure/` in the host's configuration directory (`<config dir>/claude-orchestrator/measure/<session id>.json`: `printenv CLAUDE_CODE_SESSION_ID` prints the id, `printenv CLAUDE_CONFIG_DIR` the directory, `~/.claude` when it prints nothing) — and paste its `context_percent` and `context_tokens` figures, `context_tokens` on a window of 1,000,000 tokens or more. If it is not there, say so and give no figure: an estimate presented as a measurement is worse than an admitted gap.
+- The hooks module reports your measured context to the orchestrator at the gate: never read or estimate it yourself.
 
 ## 7. Resource envelope
 

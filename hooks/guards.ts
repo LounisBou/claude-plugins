@@ -58,7 +58,7 @@ export function roleLine(role: string, root = ''): string {
   // plugin's checkout names a file the model cannot open.
   switch (role) {
     case 'orchestrator': return 'Succeed at the next quiet boundary — run /orchestrator:succeed: spawn the successor in the operator\'s decision mode, then tell the user; do not ask.'
-    case 'agent': return 'Finish the unit in progress, report to your orchestrator with your measured context, and stop; no new phase is dispatched to you.'
+    case 'agent': return 'Finish the unit in progress, end your turn on your status line, and stop; no new phase is dispatched to you.'
     case 'auditor': return `Report not written, or nothing the operator gave you after it: write the one report with what you have read, and stop. Work he gave you after the report still in hand: succeed — ${auditorBrief(root)}; tell him before you hand over.`
     case 'coordinator': return `With no relay in flight, succeed as ${pluginFile(root, 'skills/coordination/SKILL.md')} « Your context » says, then tell the operator.`
     default: return ''

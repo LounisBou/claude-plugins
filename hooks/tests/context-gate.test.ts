@@ -6,7 +6,7 @@ import { logLineOf, blockOf } from './fakes.ts'
 
 test('each role gets its own line, verbatim from the shell gate', () => {
   expect(roleLine('orchestrator')).toBe('Succeed at the next quiet boundary — run /orchestrator:succeed: spawn the successor in the operator\'s decision mode, then tell the user; do not ask.')
-  expect(roleLine('agent')).toBe('Finish the unit in progress, report to your orchestrator with your measured context, and stop; no new phase is dispatched to you.')
+  expect(roleLine('agent')).toBe('Finish the unit in progress, end your turn on your status line, and stop; no new phase is dispatched to you.')
   expect(roleLine('coordinator')).toContain('skills/coordination/SKILL.md')
   expect(roleLine('coordinator', '/plugins/orch-root')).toContain('/plugins/orch-root/skills/coordination/SKILL.md')
   expect(roleLine('auditor')).toContain('auditor-succession-brief.md')

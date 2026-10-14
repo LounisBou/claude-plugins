@@ -24,7 +24,10 @@ import {
 } from './session-name.ts'
 import { withDeadline, isDegradedPass, chainEntries } from './stop-gate.ts'
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
-import { parseWait, waitPatch, clearedWait, fingerprint, relayText, coordinatorOf, waitLabel } from './relay.ts'
+import {
+  parseWait, parseStatus, waitPatch, clearedWait, fingerprint, relayText, gateText, coordinatorOf, chainOwnerTty, waitLabel,
+  type WaitKind,
+} from './relay.ts'
 
 // One row per live session, the store's whole schema. `pid` is the session's host
 // process — the row lives while it does.
@@ -32,6 +35,8 @@ export type SessionRow = {
   role: 'orchestrator' | 'agent' | 'auditor' | 'coordinator' | null
   name: string | null
   pid?: string | null
+  // The session's tty, the walk's: an agent's orchestrator is the chain naming it.
+  tty?: string | null
   repo: string | null
   context_percent: number
   context_tokens: number
@@ -40,11 +45,11 @@ export type SessionRow = {
   busy: boolean
   updated_at: string
   // An orchestrator's last turn ended on its machine line (relay.ts): waiting on the
-  // operator, with what it blocks, or done; since when; and the fingerprint of the last
-  // wait reported to the coordinator, so the same wait is never reported twice. Never
+  // operator, with what it blocks, or done — an agent's, on its status line; since when;
+  // and the fingerprint of the last one reported up, so none is reported twice. Never
   // in the row's own file: they live in the session's wait file (WaitRecord), which the
   // relay alone writes, and a read merges them in (withWait).
-  waiting?: 'operator' | 'done' | null
+  waiting?: WaitKind | null
   blocks?: string | null
   waiting_since?: string | null
   relayed?: string | null
@@ -150,10 +155,16 @@ export function parseSessionRow(text: string): SessionRow | null {
 // one writer, so the measure's read-merge-write of the row can never put an older wait
 // back over a newer one — a lost wait was the very defect the relay ends. The name and
 // the pid ride along for the coordinator's facts, which read this file alone.
-export type WaitRecord = Pick<SessionRow, 'waiting' | 'blocks' | 'waiting_since' | 'relayed'> & { name: string | null; pid: string | null; last_waiting?: 'operator' | 'done' | null }
+export type WaitRecord = Pick<SessionRow, 'waiting' | 'blocks' | 'waiting_since' | 'relayed'> & { name: string | null; pid: string | null; last_waiting?: WaitKind | null }
 
 export function waitKey(id: string): string {
   return `waits/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
+}
+
+// An agent's gate crossing reported (`gates/<id>`, « reported » or empty): the measure
+// handler is its one writer, so it never races the relay's wait file.
+export function gateKey(id: string): string {
+  return `gates/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
 }
 
 export function parseWaitRecord(text: string): WaitRecord | null {
@@ -236,7 +247,7 @@ export async function readSessions($: any): Promise<Record<string, SessionRow>> 
   const now = Date.now()
   for (const [name, text, row] of read) {
     if (row && !isStale(row, now, alive)) rows[`sessions/${name}`] = row
-    else if (text === '' || row) dead.push(`${dir}/${name}`, `${storeDir(await configDir($))}/waits/${name}`)
+    else if (text === '' || row) dead.push(`${dir}/${name}`, `${storeDir(await configDir($))}/waits/${name}`, `${storeDir(await configDir($))}/gates/${name}`)
   }
   // A liveness read that failed removes nothing: its rows are drawn as alive
   // and the next read that answers sweeps the dead. Removing on it wiped the
@@ -249,7 +260,8 @@ export async function readSessions($: any): Promise<Record<string, SessionRow>> 
 // empty, which the row parser reads as no row and the next read removes.
 export async function deleteSession($: any, id: string): Promise<void> {
   const path = `${storeDir(await configDir($))}/${sessionKey(id)}`
-  const done = await $.process.run(['rm', '-f', path, `${storeDir(await configDir($))}/${waitKey(id)}`], { timeoutMs: 5000 }).catch(() => null)
+  const store = storeDir(await configDir($))
+  const done = await $.process.run(['rm', '-f', path, `${store}/${waitKey(id)}`, `${store}/${gateKey(id)}`], { timeoutMs: 5000 }).catch(() => null)
   if (!done || done.exitCode !== 0) await $.fs.write(path, '')
 }
 
@@ -431,6 +443,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           // A walk that did not finish leaves the row's name, role and pid as they were.
           ...(walked.known ? { role: roleOf(walked.name), name: walked.name } : {}),
           ...(walked.pid ? { pid: walked.pid } : {}),
+          ...(walked.tty ? { tty: walked.tty } : {}),
           repo: isDegradedPass(origin) ? null : origin,
           context_percent: reading.context_percent,
           context_tokens: reading.context_tokens,
@@ -439,10 +452,15 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           busy: false,
           updated_at: reading.updated_at,
         })
+        // An agent's measure past its gate: its orchestrator told once per crossing.
+        if (walked.known && walked.tty && roleOf(walked.name) === 'agent') {
+          const done = await withDeadline(reportGate($, sessionId, walked.name!, walked.tty, reading), RELAY_BOUND_MS)
+          if (isDegradedPass(done)) await logLine($, `gate: did not finish within ${RELAY_BOUND_MS} ms`)
+        }
       }
     } catch (err) {
-      // A row that cannot be written never blocks the measure: the next one
-      // writes it.
+      // A row that cannot be written, or a gate report that failed, never blocks the
+      // measure: the next one writes it.
       await logLine($, (err as Error).message)
     }
     return next(e)
@@ -468,7 +486,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   })
 
   // The end of a main-loop turn that answered: an orchestrator's wait written to its
-  // row and, once per wait, reported to a running coordinator (relayTurnEnd). Here
+  // row and, once per wait, reported to a running coordinator — an agent's state to its
+  // orchestrator (relayTurnEnd). Here
   // rather than at classic.Stop: a stop the gate refuses goes on in the same turn, so
   // the message a stop carries is not always the turn's last word, and the gate's own
   // deadline is not this report's to spend; turn.complete fires once the turn is over,
@@ -583,30 +602,34 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
 // write, the coordinator's record and the send queued. Well inside a handler's ten seconds.
 const RELAY_BOUND_MS = 5000
 
-// An orchestrator's turn end, read and reported. The role comes from the session's row
-// (the measure's walk named it), else from a walk of its own; any other role, nothing.
-// No machine line: a wait the session carried is cleared, nothing is sent. A wait:
-// written to the session's wait file, then reported to the registered coordinator
-// unless this very wait was already reported — the fingerprint is kept only once the
-// send is delivered. No coordinator registered: the operator talks to the tab, and
-// nothing is sent. A send refused is one log line; the turn's end is never held on it.
-// The row itself is never written here: the measure is its one writer.
+// A turn's end, read and reported. The role comes from the session's row (the measure's
+// walk named it), else from a walk of its own. An orchestrator's machine line goes to the
+// registered coordinator; an agent's status line to its orchestrator, found in the
+// launcher's chains (orchestratorOn), never in the turn's text; any other role, nothing.
+// No line: a wait the session carried is cleared, nothing is sent. A line: written to the
+// session's wait file, then reported unless this very one was already — the fingerprint
+// is kept only once the send is delivered. Nobody to send to: nothing is sent. A send
+// refused is one log line; the turn's end is never held on it. The row itself is never
+// written here: the measure is its one writer.
 export async function relayTurnEnd($: any, answer: string): Promise<void> {
   const sessionId = await $.session.id()
   const row = parseSessionRow(String(await $.fs.read(`${storeDir(await configDir($))}/${sessionKey(sessionId)}`).catch(() => '')))
   let name = row?.name ?? null
   let pid = row?.pid ?? null
-  if (!row?.role) {
+  let tty = row?.tty ?? null
+  if (!row?.role || (row.role === 'agent' && !tty)) {
     const walked = await walkWithinBound($, sessionId)
     if (walked.known) {
       name = walked.name
       pid = walked.pid ?? pid
+      tty = walked.tty ?? tty
     }
   }
-  if (!name || roleOf(name) !== 'orchestrator') return
+  const role = roleOf(name)
+  if (!name || (role !== 'orchestrator' && role !== 'agent')) return
   const before = await readWait($, sessionId)
   const relayed = before?.relayed ?? null
-  const wait = parseWait(answer)
+  const wait = role === 'orchestrator' ? parseWait(answer) : parseStatus(answer)
   if (!wait) {
     if (before?.waiting) await writeWait($, sessionId, { ...clearedWait(before), name, pid })
     return
@@ -615,13 +638,79 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
   await writeWait($, sessionId, { ...patch, relayed, name, pid })
   const key = fingerprint(wait)
   if (relayed === key) return
-  const coordinator = coordinatorOf(String(await $.fs.read(`${await stateDir($)}/coordinator.json`).catch(() => '')))
-  if (!coordinator) return
-  const sent = await $.session.send({ to: coordinator, text: relayText(name, wait, patch.waiting_since!) })
+  const to = role === 'orchestrator'
+    ? coordinatorOf(String(await $.fs.read(`${await stateDir($)}/coordinator.json`).catch(() => '')))
+    : tty ? await orchestratorOn($, tty) : null
+  if (!to) {
+    if (role === 'agent') await logLine($, `relay: no orchestrator found for ${name} on ${tty ?? 'an unknown tty'}`)
+    return
+  }
+  const context = row && row.context_tokens > 0 ? `${row.context_tokens.toLocaleString('en-US')} (${row.context_percent}%)` : null
+  const sent = await $.session.send({ to, text: relayText(name, wait, patch.waiting_since!, context) })
   if (sent?.isDelivered) {
     await writeWait($, sessionId, { ...patch, relayed: key, name, pid })
   } else {
-    await logLine($, `relay: not delivered to ${coordinator}: ${sent?.reason ?? 'no answer'}`)
+    await logLine($, `relay: not delivered to ${to}: ${sent?.reason ?? 'no answer'}`)
+  }
+}
+
+// The orchestrator an agent on `tty` reports to: the chain that names the tty
+// (chainOwnerTty), then the live orchestrator row measured on that chain's tty, the
+// latest if two. Null when no chain names it or no orchestrator sits there.
+export async function orchestratorOn($: any, tty: string): Promise<string | null> {
+  const dir = `${await stateDir($)}/chains`
+  const listed: readonly { name: string; kind: string; mtimeMs?: number }[] = await $.fs.list(dir).catch(() => [])
+  const chains = []
+  for (const entry of listed) {
+    if (entry.kind !== 'file' || !entry.name.endsWith('.jsonl')) continue
+    chains.push({ name: entry.name, mtimeMs: entry.mtimeMs ?? 0, text: String(await $.fs.read(`${dir}/${entry.name}`).catch(() => '')) })
+  }
+  const owner = chainOwnerTty(chains, tty)
+  if (!owner) return null
+  const rows = `${storeDir(await configDir($))}/sessions`
+  let found: SessionRow | null = null
+  for (const entry of await $.fs.list(rows).catch(() => [])) {
+    const row = parseSessionRow(String(await $.fs.read(`${rows}/${entry.name}`).catch(() => '')))
+    if (row?.role === 'orchestrator' && row.tty === owner && row.name && (!found || row.updated_at > found.updated_at)) found = row
+  }
+  return found?.name ?? null
+}
+
+// An agent's measure against the gate its session runs under (the gauge's thresholds,
+// read from this session's environment): past it and not yet reported, its orchestrator
+// is sent the figures once; back under it, the mark is cleared for the next crossing.
+export async function reportGate($: any, sessionId: string, name: string, tty: string,
+  reading: { context_tokens: number; context_percent: number; context_window: number }): Promise<void> {
+  const path = `${storeDir(await configDir($))}/${gateKey(sessionId)}`
+  const past = tripGate(reading.context_percent, reading.context_tokens, reading.context_window, await gateEnv($)).tripped
+  const reported = String(await $.fs.read(path).catch(() => '')).trim() === 'reported'
+  if (past === reported) return
+  if (!past) {
+    await $.fs.write(path, '')
+    return
+  }
+  const to = await orchestratorOn($, tty)
+  if (!to) {
+    await logLine($, `gate: no orchestrator found for ${name} on ${tty}`)
+    return
+  }
+  const sent = await $.session.send({ to, text: gateText(name, reading.context_tokens, reading.context_percent) })
+  if (sent?.isDelivered) await $.fs.write(path, 'reported\n')
+  else await logLine($, `gate: not delivered to ${to}: ${sent?.reason ?? 'no answer'}`)
+}
+
+// The gate's thresholds from the environment, the gauge's own reading spelled again here
+// (the $ fence): a value that is no positive number stays undefined, and tripGate applies
+// the default itself.
+async function gateEnv($: any): Promise<{ gate?: number; gateTokens?: number; largeWindow?: number }> {
+  const threshold = (raw: string | undefined) => {
+    const n = raw === undefined ? NaN : Number(raw)
+    return Number.isFinite(n) && n > 0 ? n : undefined
+  }
+  return {
+    gate: threshold(await $.env.get('ORCHESTRATOR_CONTEXT_GATE')),
+    gateTokens: threshold(await $.env.get('ORCHESTRATOR_CONTEXT_GATE_TOKENS')),
+    largeWindow: threshold(await $.env.get('ORCHESTRATOR_LARGE_WINDOW')),
   }
 }
 

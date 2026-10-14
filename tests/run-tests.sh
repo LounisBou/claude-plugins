@@ -197,20 +197,23 @@ check "the review report still ends with the norms-check line" "yes" \
 # would cut the reviewer's words out of them.
 check "the comments brief exempts each per-thread assessment from the 3-line cap" "yes" \
   "$(spells "$ROOT/templates/agent-comments-brief.md" "except the per-thread assessments: each is sent in full, the reviewer's words included")"
-# The cap asks for context_tokens in the final report; the gauge line must not forbid it there.
-check "the phase, comments and rotation briefs report context_tokens in the final report" "yes|yes|yes" \
-  "$(for t in phase comments rotation; do spells "$ROOT/templates/agent-$t-brief.md" 'your context_tokens in the final report'; done | paste -sd'|' -)"
-check "the phase, comments and rotation gauge lines report the context in the final report" "yes|yes|yes" \
-  "$(for t in phase comments rotation; do spells "$ROOT/templates/agent-$t-brief.md" 'when the orchestrator asks, and in the final report'; done | paste -sd'|' -)"
-# The cadence pins hold the when; these hold the what and the guard. The context source an
-# agent reads is its own measure file, named in prose — never a self-estimate, which ran 13
-# points high — and a file that is not there yields no figure at all, not an estimate.
-check "all four agent briefs name the agent's own measure file as its context source, and refuse a figure when it is missing" "yes|yes|yes|yes|yes|yes|yes|yes" \
-  "$(for t in phase comments review rotation; do spells "$ROOT/templates/agent-$t-brief.md" "your own measure file — the one JSON line the hooks module rewrites on every turn, your session id's file under \`claude-orchestrator/measure/\` in the host's configuration directory"; done | paste -sd'|' -)|$(for t in phase comments review rotation; do spells "$ROOT/templates/agent-$t-brief.md" 'If it is not there, say so and give no figure: an estimate presented as a measurement is worse than an admitted gap'; done | paste -sd'|' -)"
-# The session id is the host's variable, which the agent reads itself: a brief that only says
-# « your session id » left it to guess or to list the directory and read another's file.
-check "every brief that reads a measure file says how to find the session id and the directory" "yes|yes|yes|yes|yes" \
-  "$(for t in agent-phase agent-comments agent-review agent-rotation orchestrator-succession; do spells "$ROOT/templates/$t-brief.md" '`printenv CLAUDE_CODE_SESSION_ID` prints the id, `printenv CLAUDE_CONFIG_DIR` the directory'; done | paste -sd'|' -)"
+# The hooks module reports an agent's turn end and its gate crossing (hooks/relay.ts): the
+# briefs ask for the status line it reads and no longer for a context read by hand, which
+# cost every agent a lookup and a paragraph of brief. A brief that still asked would have the
+# agent send the same report twice, once itself and once through the module.
+AGENT_STATUS='`status: question|blocked|done — <one line>`. The hooks module sends it to the orchestrator; never send it yourself too.'
+check "all four agent briefs end a reporting turn on the status line the module relays" "yes|yes|yes|yes" \
+  "$(for t in phase comments review rotation; do spells "$ROOT/templates/agent-$t-brief.md" "$AGENT_STATUS"; done | paste -sd'|' -)"
+check "all four agent briefs leave the measured context to the module and read no measure file" "yes|yes|yes|yes|no|no|no|no" \
+  "$(for t in phase comments review rotation; do spells "$ROOT/templates/agent-$t-brief.md" 'The hooks module reports your measured context to the orchestrator at the gate'; done | paste -sd'|' -)|$(for t in phase comments review rotation; do spells "$ROOT/templates/agent-$t-brief.md" 'printenv CLAUDE_CODE_SESSION_ID'; done | paste -sd'|' -)"
+check "the delivering briefs no longer ask for context_tokens in the final report" "no|no|no" \
+  "$(for t in phase comments rotation; do spells "$ROOT/templates/agent-$t-brief.md" 'context_tokens'; done | paste -sd'|' -)"
+# The trim is a ceiling: each brief stays at most the size it reached when the module took
+# the context and the turn-end reports over.
+check "the agent briefs stay within their trimmed sizes" "yes|yes|yes|yes" \
+  "$(for pair in phase:8267 comments:5952 review:7783 rotation:2501; do [ "$(wc -c < "$ROOT/templates/agent-${pair%%:*}-brief.md" | tr -d ' ')" -le "${pair##*:}" ] && echo yes || echo no; done | paste -sd'|' -)"
+check "the orchestrator succession brief still says how to find its session id and directory" "yes" \
+  "$(spells "$ROOT/templates/orchestrator-succession-brief.md" '`printenv CLAUDE_CODE_SESSION_ID` prints the id, `printenv CLAUDE_CONFIG_DIR` the directory')"
 # review.md asks for each finding's proposed fix; the one-line finding keeps it as its last field.
 check "the review brief's finding line ends with the proposed fix" "yes" \
   "$(spells "$ROOT/templates/agent-review-brief.md" '`[severity] file:line — the claim — the evidence in a few words — proposed fix`')"
@@ -249,8 +252,9 @@ check "the ungated pull request has its red flag" "1" "$(grep -c "A pull request
 # 21,000 until the operator's order routed every question for him through a running coordinator:
 # that rule binds wherever no reference is loaded, so it lives here, and the bound moved with it.
 # 21,600 until the hooks module took the relay over: the bound follows the rule down.
-check "the orchestrator rulebook stays at 21,450 bytes or fewer" "yes" \
-  "$([ "$(wc -c < "$ROOT/skills/orchestrator/SKILL.md" | tr -d ' ')" -le 21450 ] && echo yes || echo no)"
+# 21,450 until the module reported an agent's turn end and gate crossing too.
+check "the orchestrator rulebook stays at 21,446 bytes or fewer" "yes" \
+  "$([ "$(wc -c < "$ROOT/skills/orchestrator/SKILL.md" | tr -d ' ')" -le 21446 ] && echo yes || echo no)"
 # Real load on a shared machine is stopped, and « under load » means emulated throttling: the
 # rulebook, the briefs reference and the phase brief template each carry the rule.
 check "the rulebook stops real machine load an agent reports or plans" "yes" \
