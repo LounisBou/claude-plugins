@@ -2,7 +2,7 @@
 // The tools, the Stop gate, the commands and the preflight, wired to the engine.
 import { expect, test } from 'claude-code/testing'
 import { act } from '../loop.ts'
-import { PASSED_NOTE } from '../commands.ts'
+import { INSTALL_TIMEOUT_MS, PASSED_NOTE } from '../commands.ts'
 
 const composer = { kind: 'composer' } as const
 const ok = { exitCode: 0, stdout: '', stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
@@ -82,25 +82,34 @@ test("another plugin's skill is left alone", async ($, on) => {
 
 // ── doctor and install ───────────────────────────────────────────────────────
 
-test('doctor answers with install.sh output and the remedy for its exit code, no turn', async ($, on) => {
-  const runs: string[][] = []
+test('doctor answers with install.sh --check output and the remedy for its exit code, no turn', async ($, on) => {
+  const runs: any[] = []
   on('process.run', (_$: any, e: any) => {
-    runs.push(e.argv)
-    return { value: { ...ok, exitCode: 12, stderr: 'error: no GitHub token available\nfix:   gh auth login' } }
+    runs.push(e)
+    return { value: { ...ok, exitCode: 12, stderr: 'error: no GitHub token available\nfix:   /pr-review:install' } }
   })
   on('command.run', () => ({ text: 'MARKDOWN RAN' }))
   const out: any = await $.command.run({ command: 'pr-review:doctor', args: '' } as any)
   expect(out.text).toContain('no GitHub token available')
-  expect(out.text).toContain('exit 12: no GitHub token: gh auth login')
-  expect(runs[0][1].endsWith('/install.sh')).toBe(true)
+  expect(out.text).toContain('exit 12: no GitHub token: run /pr-review:install')
+  expect(runs[0].argv[1].endsWith('/install.sh')).toBe(true)
+  // doctor changes nothing: the login step is skipped.
+  expect(runs[0].argv[2]).toBe('--check')
 })
 
-test('install answers the same way on success', async ($, on) => {
-  on('process.run', () => ({ value: { ...ok, stdout: 'pr-review: all dependencies satisfied.' } }))
+test('install runs the login step and waits for the browser', async ($, on) => {
+  const runs: any[] = []
+  on('process.run', (_$: any, e: any) => {
+    runs.push(e)
+    return { value: { ...ok, stdout: 'pr-review: all dependencies satisfied.' } }
+  })
   on('command.run', () => ({ text: 'MARKDOWN RAN' }))
   const out: any = await $.command.run({ command: 'pr-review:install', args: '' } as any)
   expect(out.text).toContain('all dependencies satisfied')
   expect(out.text).toContain('exit 0: everything satisfied')
+  expect(runs[0].argv.length).toBe(2)
+  expect(runs[0].argv[1].endsWith('/install.sh')).toBe(true)
+  expect(runs[0].init?.timeoutMs).toBe(INSTALL_TIMEOUT_MS)
 })
 
 test('a doctor that cannot run install.sh falls back to the markdown command', async ($, on) => {

@@ -711,7 +711,7 @@ Confirm: "All PR comments have been addressed."
 
 | Error                         | Solution                                                      |
 | ----------------------------- | ------------------------------------------------------------- |
-| `No GitHub token`             | Run `gh auth login` to authenticate                           |
+| `No GitHub token`             | Run `/pr-review:install` to sign in to GitHub                 |
 | `No git remote origin`        | Ensure you're in a git repository                             |
 | PR not found / empty PR_NUM   | Ensure you're on a branch with an open PR                     |
 | `API rate limit exceeded`     | Wait for reset                                                |

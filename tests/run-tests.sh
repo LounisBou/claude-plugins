@@ -57,7 +57,7 @@ check "github-curl is gone" "absent" \
 check "manifest declares the dependency" "github@lounisbou" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dependencies"][0])' "$ROOT/.claude-plugin/plugin.json")"
 
-check "manifest version" "0.4.0" \
+check "manifest version" "0.5.0" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$ROOT/.claude-plugin/plugin.json")"
 
 # The marketplace entry is a second copy of the same facts, read by the host that
@@ -242,6 +242,183 @@ check_status "missing token exits 12" 12 \
 check_status "GH_TOKEN set exits 0" 0 \
   env HOME="$WORK" PR_REVIEW_SETTINGS="$WORK/cfg/settings.json" PR_REVIEW_SKIP_PLUGINS=1 GH_TOKEN="dummy-token-12345" \
     sh -c "cd '$WORK/repo' && bash '$ROOT/scripts/preflight.sh'"
+
+echo "== install: the GitHub login through gh =="
+
+# Every external command install.sh may run is a fake on a PATH built from
+# scratch: the host's own gh and brew must stay out of reach, so nothing is
+# installed for real and no browser opens. The fakes log their arguments.
+# FAKE_SECRET stands for the token gh would hold; it must never reach output.
+FAKE_SECRET="fake-token-not-real-7f3a9c"
+PY_REAL=$(python3 -c 'import sys; print(sys.executable)')
+TPL="$WORK/auth-tpl"
+mkdir -p "$TPL/gh_2.99.0_linux_amd64/bin"
+
+cat > "$TPL/gh" <<'FAKE'
+#!/bin/sh
+echo "gh $*" >> "$FAKE_LOG"
+case "$1 $2" in
+  "auth token")
+    [ -f "$FAKE_STATE/token" ] && { cat "$FAKE_STATE/token"; exit 0; }
+    exit 1 ;;
+  "auth login")
+    case " $* " in *" --help "*) echo "  -c, --clipboard   Copy one-time OAuth device code to clipboard"; exit 0 ;; esac
+    echo "! First copy your one-time code: ABCD-1234" >&2
+    [ -n "${FAKE_LOGIN_FAILS:-}" ] || printf '%s' "$FAKE_SECRET" > "$FAKE_STATE/token"
+    exit 0 ;;
+esac
+exit 0
+FAKE
+cat > "$TPL/brew" <<'FAKE'
+#!/bin/sh
+echo "brew $*" >> "$FAKE_LOG"
+[ "$1 $2" = "install gh" ] && cp "$FAKE_TPL/gh" "$FAKE_BIN/gh"
+exit 0
+FAKE
+cat > "$TPL/uname" <<'FAKE'
+#!/bin/sh
+case "$1" in -m) echo "$FAKE_ARCH" ;; *) echo "$FAKE_OS" ;; esac
+FAKE
+cat > "$TPL/curl" <<'FAKE'
+#!/bin/sh
+echo "curl $*" >> "$FAKE_LOG"
+case "$*" in *url_effective*) echo "https://github.com/cli/cli/releases/tag/v2.99.0"; exit 0 ;; esac
+out=""; prev=""; url=""
+for a in "$@"; do [ "$prev" = "-o" ] && out="$a"; prev="$a"; url="$a"; done
+case "$url" in
+  *_checksums.txt) cp "${FAKE_SUMS:-$FAKE_TPL/checksums.txt}" "$out" ;;
+  *) cp "$FAKE_TPL/gh.tar.gz" "$out" ;;
+esac
+FAKE
+chmod +x "$TPL/gh" "$TPL/brew" "$TPL/uname" "$TPL/curl"
+cp "$TPL/gh" "$TPL/gh_2.99.0_linux_amd64/bin/gh"
+tar -czf "$TPL/gh.tar.gz" -C "$TPL" gh_2.99.0_linux_amd64
+# The release's checksum list, in its own format: one that matches the archive,
+# and one whose line for it is wrong.
+SUM=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$TPL/gh.tar.gz")
+printf '%s  gh_2.99.0_linux_arm64.tar.gz\n%s  gh_2.99.0_linux_amd64.tar.gz\n' "$(printf '%064d' 1)" "$SUM" > "$TPL/checksums.txt"
+printf '%s  gh_2.99.0_linux_amd64.tar.gz\n' "$(printf '%064d' 0)" > "$TPL/checksums-bad.txt"
+
+# auth_case <name> <os> <fakes...>: a fresh bin, home and state for one case.
+# The real tools the scripts need are linked in one by one; the fakes are
+# copies, never written through a link.
+auth_case() {
+  A="$WORK/auth/$1"; AOS="$2"; shift 2
+  rm -rf "$A" && mkdir -p "$A/bin" "$A/home" "$A/state"
+  : > "$A/log"
+  for tool in bash sh git tar mktemp cp mkdir chmod rm grep cat dirname head; do
+    ln -s "$(command -v "$tool")" "$A/bin/$tool"
+  done
+  # The checksum tool the machine has: sha256sum, or shasum where it is missing.
+  for tool in sha256sum shasum; do
+    command -v "$tool" >/dev/null 2>&1 && ln -s "$(command -v "$tool")" "$A/bin/$tool"
+  done
+  # The interpreter itself: a version manager's shim needs tools this PATH lacks.
+  ln -s "$PY_REAL" "$A/bin/python3"
+  # curl is always the fake: the preflight only asks that one exists.
+  for fake in uname curl "$@"; do rm -f "$A/bin/$fake" && cp "$TPL/$fake" "$A/bin/$fake"; done
+}
+# auth_run <script args...>: run in the GitHub clone with nothing inherited.
+auth_run() {
+  env -i HOME="$A/home" PATH="$A/bin" FAKE_LOG="$A/log" FAKE_STATE="$A/state" FAKE_TPL="$TPL" \
+    FAKE_BIN="$A/bin" FAKE_OS="$AOS" FAKE_ARCH=x86_64 FAKE_SECRET="$FAKE_SECRET" \
+    PR_REVIEW_SKIP_PLUGINS=1 ${AUTH_EXTRA:-} \
+    /bin/sh -c "cd '$WORK/repo' && bash \"\$@\"" sh "$@" > "$A/out" 2>&1
+  echo $? > "$A/code"
+}
+LOGIN_LINE="gh auth login --hostname github.com --git-protocol https --web --clipboard"
+leaked=0
+leak_check() { grep -q "$FAKE_SECRET" "$A/out" && leaked=$((leaked + 1)); }
+
+# 1. macOS, gh missing, no token: Homebrew installs gh, then the browser login.
+auth_case mac-no-gh Darwin brew
+auth_run "$ROOT/install.sh"; leak_check
+check "missing gh on macOS: install.sh exits 0" "0" "$(cat "$A/code")"
+check "missing gh on macOS: brew install gh is run" "1" "$(grep -cx 'brew install gh' "$A/log")"
+check "missing gh on macOS: then gh auth login --web" "1" "$(grep -cx "$LOGIN_LINE" "$A/log")"
+
+# 2. gh present, no token: no install, the login.
+auth_case mac-no-token Darwin brew gh
+auth_run "$ROOT/install.sh"; leak_check
+check "no token: install.sh exits 0" "0" "$(cat "$A/code")"
+check "no token: nothing installed" "0" "$(grep -c '^brew' "$A/log")"
+check "no token: gh auth login --web is run" "1" "$(grep -cx "$LOGIN_LINE" "$A/log")"
+
+# 3. gh holds a token: nothing runs but the question.
+auth_case mac-token Darwin brew gh
+printf '%s' "$FAKE_SECRET" > "$A/state/token"
+auth_run "$ROOT/install.sh"; leak_check
+check "token present: install.sh exits 0" "0" "$(cat "$A/code")"
+check "token present: no install and no login" "0" "$(grep -cE '^brew|auth login' "$A/log")"
+
+# 4. GH_TOKEN in the environment: gh is not even asked.
+auth_case env-token Darwin brew
+AUTH_EXTRA="GH_TOKEN=$FAKE_SECRET" auth_run "$ROOT/install.sh"; leak_check
+check "GH_TOKEN set: install.sh exits 0 and runs nothing" "0 0" "$(cat "$A/code") $(wc -l < "$A/log" | tr -d ' ')"
+
+# 5. macOS with neither gh nor Homebrew: a mapped refusal naming the remedy.
+auth_case mac-no-brew Darwin
+auth_run "$ROOT/install.sh"; leak_check
+check "no Homebrew: exits 11" "11" "$(cat "$A/code")"
+check "no Homebrew: error and fix lines, the fix names brew.sh" "1 1" \
+  "$(grep -c '^error: gh is not installed' "$A/out") $(grep -c '^fix: .*brew\.sh' "$A/out")"
+
+# 6. Linux, gh missing: the official release binary into ~/.local/bin, no root.
+auth_case linux-no-gh Linux
+auth_run "$ROOT/install.sh"; leak_check
+check "missing gh on Linux: install.sh exits 0" "0" "$(cat "$A/code")"
+check "missing gh on Linux: the release archive for this machine is fetched" "1" \
+  "$(grep -c 'releases/download/v2.99.0/gh_2.99.0_linux_amd64.tar.gz' "$A/log")"
+check "missing gh on Linux: gh lands in ~/.local/bin" "executable" \
+  "$([ -x "$A/home/.local/bin/gh" ] && echo executable || echo missing)"
+check "missing gh on Linux: then gh auth login --web" "1" "$(grep -cx "$LOGIN_LINE" "$A/log")"
+check "missing gh on Linux: the release checksum list is fetched from the same tag" "1" \
+  "$(grep -c 'releases/download/v2.99.0/gh_2.99.0_checksums.txt' "$A/log")"
+
+# 6b. An archive that does not match its checksum line is refused, and nothing
+# lands in ~/.local/bin.
+auth_case linux-bad-sum Linux
+AUTH_EXTRA="FAKE_SUMS=$TPL/checksums-bad.txt" auth_run "$ROOT/install.sh"; leak_check
+check "a checksum mismatch exits 11 with an error line" "11 1" \
+  "$(cat "$A/code") $(grep -c '^error: .*does not match its release checksum' "$A/out")"
+check "a checksum mismatch installs nothing" "absent 0" \
+  "$([ -e "$A/home/.local/bin/gh" ] && echo present || echo absent) $(grep -c 'auth login --hostname' "$A/log")"
+
+# 6c. A checksum list with no line for the archive is a refusal too.
+printf '%s  gh_2.99.0_linux_arm64.tar.gz\n' "$(printf '%064d' 1)" > "$WORK/sums-missing.txt"
+auth_case linux-no-sum Linux
+AUTH_EXTRA="FAKE_SUMS=$WORK/sums-missing.txt" auth_run "$ROOT/install.sh"; leak_check
+check "a missing checksum line exits 11 and installs nothing" "11 absent" \
+  "$(cat "$A/code") $([ -e "$A/home/.local/bin/gh" ] && echo present || echo absent)"
+
+# 7. The login does not complete: exit 12 and the one command that retries it.
+auth_case login-fails Darwin gh
+AUTH_EXTRA="FAKE_LOGIN_FAILS=1" auth_run "$ROOT/install.sh"; leak_check
+check "an unfinished login exits 12 with the retry command" "12 1" \
+  "$(cat "$A/code") $(grep -cx 'fix:   /pr-review:install' "$A/out")"
+
+# 8. doctor's --check changes nothing: no install, no login, just the verdict.
+auth_case check-only Darwin brew gh
+auth_run "$ROOT/install.sh" --check; leak_check
+check "install.sh --check exits 12 without a login" "12 0" \
+  "$(cat "$A/code") $(grep -cE '^brew|auth login' "$A/log")"
+
+# 9. A skill's preflight with no token says the one command that fixes it.
+auth_case preflight-no-token Darwin gh
+auth_run "$ROOT/scripts/preflight.sh"; leak_check
+check "preflight without a token exits 12 naming /pr-review:install" "12 1 1" \
+  "$(cat "$A/code") $(grep -c '^error: no GitHub token available' "$A/out") $(grep -cx 'fix:   /pr-review:install' "$A/out")"
+
+# 10. The preflight finds the gh that install.sh unpacked into ~/.local/bin.
+auth_case preflight-local-gh Linux
+mkdir -p "$A/home/.local/bin" && cp "$TPL/gh" "$A/home/.local/bin/gh"
+printf '%s' "$FAKE_SECRET" > "$A/state/token"
+auth_run "$ROOT/scripts/preflight.sh"; leak_check
+check "preflight reads the token through ~/.local/bin/gh" "0" "$(cat "$A/code")"
+
+check "the token never appears in any output" "0" "$leaked"
+check "no case printed a traceback" "" \
+  "$(grep -lE 'Traceback|line [0-9]+:' "$WORK"/auth/*/out 2>/dev/null)"
 
 echo "== skill documents =="
 

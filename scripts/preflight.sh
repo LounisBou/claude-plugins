@@ -84,9 +84,15 @@ PY
 fi
 
 # ── GitHub token ──────────────────────────────────────────────
-if [ "${PR_REVIEW_SKIP_AUTH:-0}" != "1" ]; then
-  token="${GH_TOKEN:-$(gh auth token 2>/dev/null || echo "")}"
-  [ -n "$token" ] || die "no GitHub token available" "gh auth login" 12
+# Only the exit code of `gh auth token` is read: the token goes to /dev/null and
+# never into a variable. gh is looked for on PATH, then in ~/.local/bin, where
+# /pr-review:install unpacks it on Linux. The remedy is that one command: it
+# installs gh when it is missing and opens the GitHub login in the browser.
+if [ "${PR_REVIEW_SKIP_AUTH:-0}" != "1" ] && [ -z "${GH_TOKEN:-}" ]; then
+  gh_bin=$(command -v gh 2>/dev/null || true)
+  [ -n "$gh_bin" ] || { [ -x "$HOME/.local/bin/gh" ] && gh_bin="$HOME/.local/bin/gh"; }
+  { [ -n "$gh_bin" ] && "$gh_bin" auth token --hostname github.com >/dev/null 2>&1; } \
+    || die "no GitHub token available" "/pr-review:install" 12
 fi
 
 exit 0

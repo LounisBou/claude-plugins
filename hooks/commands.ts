@@ -1,6 +1,8 @@
 // hooks/commands.ts
 // /pr-review:doctor and /pr-review:install answered without a model turn, and
-// the preflight run once per session instead of once per skill start.
+// the preflight run once per session instead of once per skill start. install
+// runs install.sh in full: it installs gh when missing and waits for the GitHub
+// login in the browser. doctor runs it with --check, which changes nothing.
 //
 // The markdown commands stay the commands' public face and their fallback: a
 // handler that fails passes the run on, and the markdown spends a turn running
@@ -12,8 +14,8 @@ import { preflight } from './state.ts'
 export const REMEDIES: Record<number, string> = {
   0: 'everything satisfied',
   10: 'an upstream plugin is missing or installed but disabled: install it, then enable it in /plugin',
-  11: 'a system tool is missing: install python3 (3.9+) or curl',
-  12: 'no GitHub token: gh auth login',
+  11: 'a system tool is missing: install the one named above (python3 3.9+, curl, gh)',
+  12: 'no GitHub token: run /pr-review:install, which opens the GitHub login in the browser',
   13: 'not a GitHub repository clone: run from one, or check the origin remote',
 }
 
@@ -32,19 +34,25 @@ export function failedText(run: { exitCode: number; stdout: string; stderr: stri
     + '```\n' + report(run) + '\n```\n'
 }
 
-async function install($: any): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  return $.process.run(['bash', $.plugin.root + '/install.sh'], { timeoutMs: 60_000 })
+// The login waits on the user in the browser, and installing gh with Homebrew
+// takes a few minutes before it: the longest run the host allows.
+export const INSTALL_TIMEOUT_MS = 600_000
+export const CHECK_TIMEOUT_MS = 60_000
+
+async function install($: any, check: boolean): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  const argv = ['bash', $.plugin.root + '/install.sh', ...(check ? ['--check'] : [])]
+  return $.process.run(argv, { timeoutMs: check ? CHECK_TIMEOUT_MS : INSTALL_TIMEOUT_MS })
 }
 
-async function answer($: any): Promise<{ text: string }> {
-  const run = await install($)
+async function answer($: any, check: boolean): Promise<{ text: string }> {
+  const run = await install($, check)
   if (run.exitCode === 0) preflight.hasPassed = true
   return { text: report(run) }
 }
 
 export function register(on: any): void {
-  on('command.run', { command: 'pr-review:doctor' }, async ($: any) => answer($))
+  on('command.run', { command: 'pr-review:doctor' }, async ($: any) => answer($, true))
     .catch(async (_$: any, e: any, next: any) => next(e))
-  on('command.run', { command: 'pr-review:install' }, async ($: any) => answer($))
+  on('command.run', { command: 'pr-review:install' }, async ($: any) => answer($, false))
     .catch(async (_$: any, e: any, next: any) => next(e))
 }

@@ -34,10 +34,19 @@ Add the marketplace, install the plugin, then check it:
 /pr-review:install
 ```
 
-`/pr-review:install` writes nothing. It is a diagnostic: it verifies the two plugin
-dependencies — `pr-review-toolkit@claude-plugins-official` and `github@lounisbou` —
-plus python3 3.9+, curl, a GitHub token and a GitHub `origin` remote. Run
-`/pr-review:doctor` any time to repeat it.
+`/pr-review:install` first gives the machine a GitHub login. When `GH_TOKEN` is not
+set it relies on `gh`: a missing `gh` is installed (Homebrew on macOS; on Linux the
+official release binary, unpacked into `~/.local/bin` with no root), then, when `gh`
+holds no token, `gh auth login --web` opens the browser on GitHub's device page with
+the one-time code on the clipboard. The token stays where `gh` keeps it, the system
+credential store; the plugin never prints, logs or writes it. Each step is skipped
+when already satisfied, so running it again is harmless.
+
+It then verifies the two plugin dependencies — `pr-review-toolkit@claude-plugins-official`
+and `github@lounisbou` — plus python3 3.9+, curl, the GitHub token and a GitHub
+`origin` remote. `/pr-review:doctor` repeats that verification any time and changes
+nothing. A skill that starts with no token says the one command that fixes it:
+`/pr-review:install`.
 
 ## The skills
 
@@ -109,7 +118,7 @@ and every skill keeps its own route.
 - **The band.** A line above the prompt while a skill holds the session: which one,
   the comments kept, the prepared commits waiting for `commit` or `drop`, the pass.
 - **`/pr-review:doctor` and `/pr-review:install`** answer with `install.sh`'s output
-  and the remedy for its exit code, with no model turn; the preflight runs once per
+  (`--check` for doctor) and the remedy for its exit code, with no model turn; the preflight runs once per
   session and each skill reads that it passed.
 
 The matcher reads words, not intent. It refuses consent given in other words
