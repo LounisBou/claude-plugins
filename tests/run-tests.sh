@@ -57,7 +57,7 @@ check "github-curl is gone" "absent" \
 check "manifest declares the dependency" "github@lounisbou" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dependencies"][0])' "$ROOT/.claude-plugin/plugin.json")"
 
-check "manifest version" "0.5.0" \
+check "manifest version" "0.5.1" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$ROOT/.claude-plugin/plugin.json")"
 
 # The marketplace entry is a second copy of the same facts, read by the host that
@@ -620,6 +620,24 @@ check "install.sh writes nothing" "$before" "$(find "$WORK/cfg" -type f | sort)"
 printf '%s' '{"enabledPlugins":{"pr-review-toolkit@claude-plugins-official":false,"github@lounisbou":true}}' \
   > "$WORK/cfg/settings.json"
 check_status "install.sh fails when a dependency is disabled" 10 inst
+
+# Installing needs no git repository: install and doctor run from any directory.
+# The repository check belongs to the skills, whose preflight runs at their start.
+printf '%s' '{"enabledPlugins":{"pr-review-toolkit@claude-plugins-official":true,"github@lounisbou":true}}' \
+  > "$WORK/cfg/settings.json"
+outside() {
+  env HOME="$WORK" PR_REVIEW_SETTINGS="$WORK/cfg/settings.json" PR_REVIEW_SKIP_AUTH=1 \
+    sh -c "cd '$WORK/norepo' && /bin/bash \"\$@\"" sh "$@"
+}
+check_status "install.sh outside a git repository exits 0" 0 outside "$ROOT/install.sh"
+check_status "install.sh --check outside a git repository exits 0" 0 outside "$ROOT/install.sh" --check
+check "install.sh outside a git repository never mentions the origin remote" "0" \
+  "$(outside "$ROOT/install.sh" 2>&1 | grep -c 'origin')"
+output=$(outside "$ROOT/scripts/preflight.sh" 2>&1)
+check "a skill's preflight outside a git repository still refuses with exit 13" "13" \
+  "$(outside "$ROOT/scripts/preflight.sh" >/dev/null 2>&1; echo $?)"
+check "a skill's preflight outside a git repository prints its error and fix pair" "1 1" \
+  "$(printf '%s\n' "$output" | grep -c '^error: no git remote named origin') $(printf '%s\n' "$output" | grep -c '^fix:   run this from a GitHub repository clone')"
 
 check "both commands declare a description" "2" \
   "$(grep -l '^description:' "$ROOT"/commands/*.md 2>/dev/null | wc -l | tr -d ' ')"

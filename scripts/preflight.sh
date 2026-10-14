@@ -7,6 +7,9 @@ set -u
 USER_SETTINGS="${PR_REVIEW_SETTINGS:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json}"
 PROJECT_DIR=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
 
+deps_only=0
+[ "${1:-}" = "--deps-only" ] && deps_only=1
+
 die() {
   printf 'error: %s\n' "$1" >&2
   printf 'fix:   %s\n' "$2" >&2
@@ -24,12 +27,17 @@ PY
 command -v curl >/dev/null 2>&1 || die "curl not found on PATH" "install curl" 11
 
 # ── Repository ────────────────────────────────────────────────
-remote=$(git remote get-url origin 2>/dev/null || echo "")
-[ -n "$remote" ] || die "no git remote named origin" "run this from a GitHub repository clone" 13
-case "$remote" in
-  *github.com*) : ;;
-  *) die "origin is not a github.com remote: $remote" "run this from a GitHub repository clone" 13 ;;
-esac
+# The skills work on a project, so they need a GitHub clone when they start.
+# Installing does not: install.sh passes --deps-only, and /pr-review:install or
+# /pr-review:doctor run from any directory.
+if [ "$deps_only" -eq 0 ]; then
+  remote=$(git remote get-url origin 2>/dev/null || echo "")
+  [ -n "$remote" ] || die "no git remote named origin" "run this from a GitHub repository clone" 13
+  case "$remote" in
+    *github.com*) : ;;
+    *) die "origin is not a github.com remote: $remote" "run this from a GitHub repository clone" 13 ;;
+  esac
+fi
 
 # ── Plugin dependencies ───────────────────────────────────────
 # The authority is enabledPlugins, not the presence of files under

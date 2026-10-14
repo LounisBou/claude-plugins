@@ -43,9 +43,9 @@ credential store; the plugin never prints, logs or writes it. Each step is skipp
 when already satisfied, so running it again is harmless.
 
 It then verifies the two plugin dependencies — `pr-review-toolkit@claude-plugins-official`
-and `github@lounisbou` — plus python3 3.9+, curl, the GitHub token and a GitHub
-`origin` remote. `/pr-review:doctor` repeats that verification any time and changes
-nothing. A skill that starts with no token says the one command that fixes it:
+and `github@lounisbou` — plus python3 3.9+, curl and the GitHub token, from any directory: installing needs
+no git repository. Each skill checks for a GitHub `origin` remote when it starts.
+`/pr-review:doctor` repeats that verification any time and changes nothing. A skill that starts with no token says the one command that fixes it:
 `/pr-review:install`.
 
 ## The skills

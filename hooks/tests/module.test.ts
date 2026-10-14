@@ -112,6 +112,21 @@ test('install runs the login step and waits for the browser', async ($, on) => {
   expect(runs[0].init?.timeoutMs).toBe(INSTALL_TIMEOUT_MS)
 })
 
+test('a passing install does not stand for a skill preflight, which still checks the repository', async ($, on) => {
+  const runs: string[][] = []
+  on('process.run', (_$: any, e: any) => {
+    runs.push(e.argv)
+    return { value: ok }
+  })
+  on('command.run', () => ({ text: 'MARKDOWN RAN' }))
+  on('skill.prompt', () => ({ text: 'SKILL TEXT' }))
+  await $.command.run({ command: 'pr-review:install', args: '' } as any)
+  await $.skill.prompt({ skill: 'pr-review:start-review', text: '' })
+  expect(runs.length).toBe(2)
+  expect(runs[1][1].endsWith('/scripts/preflight.sh')).toBe(true)
+  expect(runs[1].length).toBe(2)
+})
+
 test('a doctor that cannot run install.sh falls back to the markdown command', async ($, on) => {
   on('process.run', () => ({ deny: 'bash: not found' }))
   on('command.run', () => ({ text: 'MARKDOWN RAN' }))

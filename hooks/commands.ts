@@ -8,9 +8,9 @@
 // handler that fails passes the run on, and the markdown spends a turn running
 // install.sh as it always did. The preflight is the same scripts/preflight.sh
 // the skills run, so the two routes cannot disagree on what is missing.
-import { preflight } from './state.ts'
 
-// install.sh's exit codes, the remedy row commands/doctor.md prints.
+// The exit codes of install.sh and of a skill's preflight, the remedy rows
+// commands/doctor.md prints. 13 comes only from a skill's preflight.
 export const REMEDIES: Record<number, string> = {
   0: 'everything satisfied',
   10: 'an upstream plugin is missing or installed but disabled: install it, then enable it in /plugin',
@@ -44,9 +44,10 @@ async function install($: any, check: boolean): Promise<{ exitCode: number; stdo
   return $.process.run(argv, { timeoutMs: check ? CHECK_TIMEOUT_MS : INSTALL_TIMEOUT_MS })
 }
 
+// A passing install does not stand for a skill's preflight: install checks only
+// what installing needs, and never the repository a skill will work on.
 async function answer($: any, check: boolean): Promise<{ text: string }> {
   const run = await install($, check)
-  if (run.exitCode === 0) preflight.hasPassed = true
   return { text: report(run) }
 }
 

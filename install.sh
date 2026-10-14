@@ -162,7 +162,7 @@ fi
 # would report success for a failed check — in the one script whose whole job
 # is to report that failure.
 if [ "$code" -eq 0 ]; then
-  bash "$ROOT/scripts/preflight.sh"
+  bash "$ROOT/scripts/preflight.sh" --deps-only
   code=$?
 fi
 

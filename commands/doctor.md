@@ -16,7 +16,7 @@ Read the exit code and tell the user which class of problem it names:
 | `10` | an upstream plugin is missing **or installed but disabled** | install it, then enable it in `/plugin` |
 | `11` | a system tool is missing | install the one named (python3 3.9+, curl, gh) |
 | `12` | no GitHub token | `/pr-review:install`, which opens the GitHub login in the browser |
-| `13` | not a GitHub repository clone | run from one, or check the `origin` remote |
+| `13` | not a GitHub repository clone (a skill's preflight only; install and doctor never check the repository) | run the skill from one, or check the `origin` remote |
 
 The script writes nothing and changes nothing.
 
