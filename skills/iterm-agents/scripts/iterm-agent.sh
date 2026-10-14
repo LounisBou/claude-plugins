@@ -18,6 +18,9 @@
 #   iterm-agent.sh spawn --dir <path> --coordinator-successor --title "Coord : <subject>" (--prompt <text> | --prompt-file <path>)
 #     the coordinator's own successor: first place of the caller's window, its model,
 #     remote control on, no chain
+#   iterm-agent.sh spawn --dir <path> --wake --title "Orch : <subject>" --model <id> [--effort <level>] (--prompt <text> | --prompt-file <path>)
+#     a paused orchestrator relaunched: its recorded name, model and effort, immediately right
+#     of the caller, remote control on, no chain
 #   iterm-agent.sh verify --tty /dev/ttysNNN
 #   iterm-agent.sh resolve-tier <deep|standard|light>
 #   iterm-agent.sh close --tty /dev/ttysNNN [--expect-title <substring>] [--keep-checkout]

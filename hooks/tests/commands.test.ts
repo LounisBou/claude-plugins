@@ -9,7 +9,7 @@
 // file's own subject under test through a fake $, the same convention as the
 // pane's; the engine entry at the bottom runs the real chain once.
 import { expect, test, mock } from 'claude-code/testing'
-import { statusText, agentsText, progressLines, parseDispatchRow, register as registerCommands } from '../commands.ts'
+import { statusText, agentsText, progressLines, parseDispatchRow, parseSleeping, sleepingText, register as registerCommands } from '../commands.ts'
 import type { SessionRow } from '../supervision.ts'
 import { logLineOf } from './fakes.ts'
 
@@ -216,8 +216,42 @@ test('the module hooks the three markdown names and registers on nothing else', 
   expect(registrations.map(r => [r.event, r.matcher])).toEqual([
     ['command.run', { command: 'orchestrator:status' }],
     ['command.run', { command: 'orchestrator:progress' }],
+    ['command.run', { command: 'orchestrator:sleeping' }],
     ['command.run', { command: 'orchestrator:agents' }],
   ])
+})
+
+test('sleeping lists each sleeping orchestrator, or says none, or says the record is unreadable', () => {
+  const records = parseSleeping(JSON.stringify([
+    { name: 'Orch : alpha', brief: '/p/briefs/succession-brief.md', dir: '/p', model: 'a-model', effort: '', slept: '2026-10-13T10:00:00Z', prs: ['forge/o/app#7 feat/x'], checkouts: ['/w/a1'] },
+    { name: 'Orch : beta', brief: '/q/b.md', dir: '/q', model: 'a-model', effort: 'high', slept: '2026-10-13T11:00:00Z', prs: [], checkouts: [] },
+  ]))
+  expect(sleepingText(records, '/s/sleeping.json')).toBe([
+    'Sleeping orchestrators (2) — name · slept since · directory · open pull requests · brief:',
+    '  Orch : alpha · 2026-10-13T10:00:00Z · /p · forge/o/app#7 feat/x · /p/briefs/succession-brief.md',
+    '  Orch : beta · 2026-10-13T11:00:00Z · /q · none · /q/b.md',
+  ].join('\n'))
+  expect(sleepingText(parseSleeping('[]'), '/s/sleeping.json')).toBe('Sleeping orchestrators: none.')
+  expect(sleepingText(parseSleeping('not json'), '/s/sleeping.json')).toBe('The sleeping record /s/sleeping.json cannot be read: repair or remove it.')
+  expect(parseSleeping('{"name":"Orch : x"}')).toBeNull()
+})
+
+test('sleeping answers the list from the state directory, and passes drop on to the markdown command', async () => {
+  const { registrations } = mounted()
+  const sleeping = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:sleeping')!
+  const fx = fakeDollar()
+  fx.env.ORCHESTRATOR_STATE_DIR = `${HOME}/state`
+  fx.files.set(`${HOME}/state/sleeping.json`, JSON.stringify([{ name: 'Orch : alpha', brief: '/p/b.md', dir: '/p', slept: '2026-10-13T10:00:00Z', prs: [] }]))
+  const passed = (x: unknown) => ({ passed: x })
+  expect(await sleeping.handler(fx.dollar, { command: 'orchestrator:sleeping', args: '' }, passed)).toEqual({ text: [
+    'Sleeping orchestrators (1) — name · slept since · directory · open pull requests · brief:',
+    '  Orch : alpha · 2026-10-13T10:00:00Z · /p · none · /p/b.md',
+  ].join('\n') })
+  const drop = { command: 'orchestrator:sleeping', args: 'drop Orch : alpha' }
+  expect(await sleeping.handler(fx.dollar, drop, passed)).toEqual({ passed: drop })
+  // No record at all: nobody sleeps, said as that.
+  const bare = fakeDollar()
+  expect(await sleeping.handler(bare.dollar, { command: 'orchestrator:sleeping', args: '' }, passed)).toEqual({ text: 'Sleeping orchestrators: none.' })
 })
 
 test('status answers the store read through its own fs calls, dropping the stale row', async () => {

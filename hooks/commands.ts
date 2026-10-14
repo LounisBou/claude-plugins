@@ -1,6 +1,6 @@
 // hooks/commands.ts
-// The three commands the plugin's markdown files declare — status, progress,
-// agents — answered here without a model turn: the markdown body fills a prompt
+// The commands the plugin's markdown files declare — status, progress, agents,
+// and sleeping's list — answered here without a model turn: the markdown body fills a prompt
 // and spends a turn gathering what it asks for, while these handlers read the
 // store the supervision domain keeps and the dispatch records the launcher's
 // own tool registers, and answer { text } on the spot.
@@ -223,6 +223,48 @@ async function progressText($: any): Promise<string> {
   return progressLines(groups, goals).join('\n')
 }
 
+// One sleeping orchestrator, as coordinator.sh's sleep writes it into <state>/sleeping.json.
+export type SleepingRecord = { name: string; slept: string; dir: string; prs: string[]; brief: string }
+
+// The record parsed, or null when it is no array: an unreadable record is said, never read
+// as « none sleeping », since an orchestrator read as absent is one the operator loses.
+export function parseSleeping(text: string): SleepingRecord[] | null {
+  if (text.trim() === '') return []
+  try {
+    const all = JSON.parse(text)
+    if (!Array.isArray(all)) return null
+    return all.filter(r => r && typeof r === 'object' && typeof r.name === 'string').map(r => ({
+      name: r.name,
+      slept: typeof r.slept === 'string' ? r.slept : '',
+      dir: typeof r.dir === 'string' ? r.dir : '',
+      prs: Array.isArray(r.prs) ? r.prs.map(String) : [],
+      brief: typeof r.brief === 'string' ? r.brief : '',
+    }))
+  } catch {
+    return null
+  }
+}
+
+// What /orchestrator:sleeping says with no argument: one line per sleeping orchestrator —
+// name, slept since, directory, open pull requests, brief — in the order they went to sleep.
+export function sleepingText(records: SleepingRecord[] | null, path: string): string {
+  if (records === null) return `The sleeping record ${path} cannot be read: repair or remove it.`
+  if (records.length === 0) return 'Sleeping orchestrators: none.'
+  return [
+    `Sleeping orchestrators (${records.length}) — name · slept since · directory · open pull requests · brief:`,
+    ...records.map(r => `  ${[r.name, r.slept, r.dir, r.prs.length > 0 ? r.prs.join(', ') : 'none', r.brief].join(' · ')}`),
+  ].join('\n')
+}
+
+async function readSleeping($: any): Promise<string> {
+  const path = `${await stateDir($)}/sleeping.json`
+  const exists = await withDeadline(Promise.resolve($.fs.exists(path)).catch(() => false), await readBoundMs($))
+  if (exists !== true) return sleepingText([], path)
+  const read = await withDeadline($.fs.read(path), await readBoundMs($))
+  if (isDegradedPass(read)) throw new Error(`the sleeping record ${path} did not answer in time`)
+  return sleepingText(parseSleeping(String(read)), path)
+}
+
 // The goals line of one goals.md, goals.py's own (`goals met=m/n ruled_out=k open=… unplanned=…`),
 // or null when there is no file, or its reading failed or ran out of time.
 async function goalsLine($: any, goalsFile: string, bound: number): Promise<string | null> {
@@ -257,6 +299,16 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
 
   on('command.run', { command: 'orchestrator:progress' }, async ($: any) => {
     return { text: await progressText($) }
+  }).catch(async ($: any, e: any, next: any) => {
+    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+
+  // The list alone is answered here; `drop <name>` asks the operator to confirm, which
+  // takes a model turn, so any argument passes the run on to the markdown command.
+  on('command.run', { command: 'orchestrator:sleeping' }, async ($: any, e: any, next: any) => {
+    if (String(e?.args ?? '').trim() !== '') return next(e)
+    return { text: await readSleeping($) }
   }).catch(async ($: any, e: any, next: any) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)

@@ -14,6 +14,9 @@ once your predecessor is gone.
    the flags sent, and the sessions already announced to). That list is yours as it stands:
    « Announcing newcomers » compares against it from here on, so you do not re-send the start
    message to a session it already names.
+   Then run `{{COORDINATOR_SH}}` with `sleeping`: the orchestrators paused on the operator's word. That
+   record is yours as it stands, outlives every succession, and nothing in it is woken or
+   dropped but on his word.
    Then the round file `{{ROUND_FILE}}` (« none » when no round is open): the open decision round, every question received
    with its sender and status. Copy it to `decision-round.md` in your own scratch directory
    and carry the round on from its first question not yet sent, grouped by sender as the

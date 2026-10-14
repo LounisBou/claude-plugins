@@ -2957,6 +2957,22 @@ check "rotate refuses the coordinator's tab before it spawns anything" "0|1|1" \
   "$(printf '%s' "$CRDROT" | grep -c '^launch=')|$(printf '%s' "$CRDROT" | grep -c "rotate: refused: /dev/ttys950 is the coordinator's tab ('Coord : ops')")|$(crdrot --old-tty /dev/ttys950 >/dev/null 2>&1; echo $?)"
 check "--force rotates it, and says so" "1|1" \
   "$(crdrot --old-tty /dev/ttys950 --force | tail -1 | grep -c '^close=/dev/ttys950')|$(crdrot --old-tty /dev/ttys950 --force | grep -c "^rotate: forced: /dev/ttys950 is the coordinator's tab")"
+# A paused orchestrator is relaunched with --wake: its recorded name, model and effort, right
+# of the caller, in no chain, under remote control. Nothing is guessed: no model, no wake.
+WKOUT=$(crd --wake --title 'Orch : alpha' --model a-model --effort high)
+WKLAUNCH=$(printf '%s' "$WKOUT" | sed -n 's/^launch=//p')
+check "a wake runs under its recorded name, model and effort, under remote control" "1|1|1|1" \
+  "$(printf '%s' "$WKLAUNCH" | grep -c -- "--name 'Orch : alpha'")|$(printf '%s' "$WKLAUNCH" | grep -c -- '--model a-model --effort high')|$(printf '%s' "$WKLAUNCH" | grep -c -- "--remote-control 'Orch : alpha'")|$(printf '%s' "$WKOUT" | grep -c '^wake=yes$')"
+check "a wake lands right of its caller and joins no chain" "1|1|1" \
+  "$(printf '%s' "$WKOUT" | grep -c '^side=right$')|$(printf '%s' "$WKOUT" | grep -c '^anchor=self$')|$(printf '%s' "$WKOUT" | grep -c '^chain=none$')"
+check "a wake without the recorded model, or under another title, is refused" "1|1|1" \
+  "$(crd --wake --title 'Orch : alpha' | grep -c 'a wake never guesses the model')|$(crd --wake --title 'Agent : alpha' --model m | grep -c -- '--wake needs the recorded name')|$(crd --wake --title 'Orch : alpha [abc123]' --model m >/dev/null 2>&1; echo $?)"
+for WKFLAG in --successor --auditor '--right-of self' --title-free '--tier deep' --inherit-model --resident --no-remote-control; do
+  # shellcheck disable=SC2086 # the flag and its value are two words on purpose
+  check "a wake refuses $WKFLAG" "1|1" "$(crd --wake --title 'Orch : x' --model m $WKFLAG >/dev/null 2>&1; echo $?)|$(crd --wake --title 'Orch : x' --model m $WKFLAG | grep -c "is not a wake's")"
+done
+check "a wake beside --coordinator-successor is refused" "1" "$(crd --wake --coordinator-successor --title 'Orch : x' --model m >/dev/null 2>&1; echo $?)"
+check "rotate refuses --wake" "1" "$(crdrot --old-tty /dev/ttys901 --wake | grep -c -- '--wake is not a rotation')"
 check "an agent's tab still rotates without --force" "1" "$(crdrot --old-tty /dev/ttys901 | tail -1 | grep -c '^close=/dev/ttys901')"
 # The first coordinator is opened by hand and names itself through a rename, which never
 # reaches argv: named only in the host registry, or only in the coordinator's own record,
@@ -5749,6 +5765,78 @@ check "without ORCHESTRATOR_HOST_CLI the host's name is the launcher's default" 
   "$(env -u ORCHESTRATOR_HOST_CLI ORCHESTRATOR_WORKSPACES="$CWS" COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$CT/coordinator/scripts/coordinator.sh" facts 2>/dev/null | grep -c '^session ')"
 check "the script never spells the host's name" "0" "$(grep -v 'CLAUDE_CONFIG_DIR' "$COORD" | grep -ci 'claude')"
 check "an unknown subcommand is refused" "exit 1" "$(coord_status bogus)"
+
+# The sleeping orchestrators: paused on the operator's word, their tab closed by the
+# coordinator, their record kept apart from the coordinator's own so it outlives a
+# succession. sleep refuses what a wake could not start on; wake-done and drop remove one
+# record under the registration's lock; drop moves the brief, never deletes it, and touches
+# no pull request, branch or checkout.
+SLS="$WORK/sleep-state"; SLP="$WORK/sleep-proj"; mkdir -p "$SLS" "$SLP/briefs"
+echo brief > "$SLP/briefs/succession-brief.md"
+slc() { ORCHESTRATOR_STATE_DIR="$SLS" bash "$COORD" "$@"; }
+slc_status() { slc "$@" >/dev/null 2>&1; echo "exit $?"; }
+SLREC="$SLS/sleeping.json"
+check "sleep records a paused orchestrator and says so" "sleeping Orch : alpha" \
+  "$(slc sleep --name 'Orch : alpha' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model a-model --effort high --pr 'forge.example/o/app#9 feat/z' --checkout "$SLP" 2>&1)"
+check "the record holds every field a wake needs, the time stamped in UTC" \
+  "Orch : alpha|$SLP/briefs/succession-brief.md|$SLP|a-model|high|forge.example/o/app#9 feat/z|$SLP|1" \
+  "$(jq -r '.[0] | [.name,.brief,.dir,.model,.effort,(.prs|join(",")),(.checkouts|join(",")),(.slept|test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")|if . then 1 else 0 end)] | map(tostring) | join("|")' "$SLREC" 2>/dev/null)"
+check "sleep leaves no lock behind" "0" "$([ -e "$SLS/coordinator.lock" ] && echo 1 || echo 0)"
+check "an orchestrator already sleeping is refused" "exit 1|coordinator: sleep: refused: Orch : alpha is already sleeping" \
+  "$(slc_status sleep --name 'Orch : alpha' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model m)|$(slc sleep --name 'Orch : alpha' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model m 2>&1)"
+check "sleep refuses a name with its reference, an agent's name, a missing brief, a relative directory, no model, an unknown effort" \
+  "exit 1|exit 1|exit 1|exit 1|exit 1|exit 1" \
+  "$(slc_status sleep --name 'Orch : b [abc123]' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model m)|$(slc_status sleep --name 'Agent : b' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model m)|$(slc_status sleep --name 'Orch : b' --brief "$SLP/briefs/gone.md" --dir "$SLP" --model m)|$(slc_status sleep --name 'Orch : b' --brief "$SLP/briefs/succession-brief.md" --dir sleep-proj --model m)|$(slc_status sleep --name 'Orch : b' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP")|$(slc_status sleep --name 'Orch : b' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model m --effort huge)"
+check "a refused sleep records nothing" "1" "$(jq length "$SLREC")"
+slc sleep --name 'Orch : beta' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model a-model >/dev/null 2>&1
+check "sleeping lists each one with its directory, pull requests, checkouts, brief, model and effort" \
+  "sleeping Orch : alpha | since * | $SLP | prs forge.example/o/app#9 feat/z | checkouts $SLP | brief $SLP/briefs/succession-brief.md | model a-model | effort high|sleeping Orch : beta | since * | $SLP | prs none | checkouts none | brief $SLP/briefs/succession-brief.md | model a-model | effort default" \
+  "$(slc sleeping | sed -E 's/since [^ ]+/since */' | tr '\n' '|' | sed 's/|$//')"
+check "wake-done removes the woken one's record alone" "woken Orch : beta|Orch : alpha" \
+  "$(slc wake-done --name 'Orch : beta' 2>&1)|$(jq -r 'map(.name)|join(",")' "$SLREC")"
+check "wake-done and drop refuse a name that does not sleep" "exit 1|exit 1|coordinator: drop: refused: Orch : beta is not sleeping (coordinator.sh sleeping lists who is)" \
+  "$(slc_status wake-done --name 'Orch : beta')|$(slc_status drop --name 'Orch : beta')|$(slc drop --name 'Orch : beta' 2>&1)"
+mkdir "$SLS/coordinator.lock" && echo "$$ registration" > "$SLS/coordinator.lock/holder"
+check "a drop that cannot take the lock is refused and drops nothing" "exit 1|1|1" \
+  "$(slc_status drop --name 'Orch : alpha')|$(jq length "$SLREC")|$([ -f "$SLP/briefs/succession-brief.md" ] && echo 1 || echo 0)"
+rm -rf "$SLS/coordinator.lock"
+SLDROP=$(slc drop --name 'Orch : alpha' 2>&1)
+check "drop removes the record, moves the brief under abandoned/ beside it, and names what it left untouched" \
+  "dropped Orch : alpha|brief moved to $SLP/briefs/abandoned/*-succession-brief.md|left untouched: forge.example/o/app#9 feat/z, $SLP|0|0|1" \
+  "$(printf '%s' "$SLDROP" | sed -E 's#abandoned/[0-9TZ]+-#abandoned/*-#' | tr '\n' '|')|$(jq length "$SLREC")|$([ -f "$SLP/briefs/succession-brief.md" ] && echo 1 || echo 0)|$(ls "$SLP/briefs/abandoned" | grep -c 'succession-brief.md$')"
+check "sleeping prints nothing when none sleeps" "|exit 0" "$(slc sleeping)|$(slc_status sleeping)"
+echo 'not json' > "$SLREC"
+check "an unreadable sleeping record is said, never read as none" "exit 1|exit 1" "$(slc_status sleeping)|$(slc_status sleep --name 'Orch : c' --brief "$SLP/briefs/abandoned/$(ls "$SLP/briefs/abandoned" | head -1)" --dir "$SLP" --model m)"
+# owners: a pull request whose chain breaks on a sleeping orchestrator's absence is its own.
+echo x > "$SLP/briefs/b2.md"
+printf '[{"name":"Orch : gamma","brief":"%s","dir":"%s","model":"m","effort":"","slept":"2026-10-13T10:00:00Z","prs":["forge.example/o/app#9 feat/z","forge.example/o/app#7 feat/x"],"checkouts":[]}]\n' "$SLP/briefs/b2.md" "$SLP" > "$SLREC"
+SLOWN=$(ORCHESTRATOR_STATE_DIR="$SLS" ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$COORD" owners 2>/dev/null)
+check "owners gives a sleeping orchestrator's unknown pull request to it, and leaves a live session's alone" \
+  "pr forge.example/o/app#9 | feat/z | Orch : gamma | sleeping since 2026-10-13T10:00:00Z|2|pr forge.example/o/app#10 | feat/w | unknown | no session in $RIDLE" \
+  "$(printf '%s\n' "$SLOWN" | grep '#9 ')|$(printf '%s\n' "$SLOWN" | grep -c '#7 .*session 10[12] ')|$(printf '%s\n' "$SLOWN" | grep '#10 ')"
+# The pause's rules, in the prose that carries them: the operator's word only, the
+# coordinator closes, the orchestrator spawns no successor at a pause, a woken one skips the
+# handshake with a predecessor already gone, and a drop keeps the brief and touches nothing
+# of the operator's. Read flattened, so a rewrap does not hide a sentence.
+flat_has() { tr '\n' ' ' < "$1" | sed -E 's/ > / /g; s/[[:space:]]+/ /g' | grep -qF -- "$2" && echo yes || echo no; }
+SLCMD="$ROOT/commands/sleeping.md"
+check "pause, wake and drop are the operator's word only, never the coordinator's or a peer's" "yes|yes" \
+  "$(flat_has "$COORDSKILL" "**Pause, wake and drop are the operator's word only**")|$(flat_has "$COORDSKILL" "Never your own initiative, never a peer's request, never to make room.")"
+check "the coordinator closes a paused orchestrator, which spawns no successor and closes nothing" "yes|yes|yes" \
+  "$(flat_has "$COORDSKILL" "**You close it**, as a successor closes its predecessor")|$(flat_has "$COORDSKILL" "Spawn no successor and do not close yourself: I close your tab.")|$(flat_has "$ORCH_REFS/lifecycle.md" "You spawn NO successor and you do not close yourself")"
+check "a pause refused or failing is told to the operator, and that orchestrator is not closed" "yes" \
+  "$(flat_has "$COORDSKILL" "an orchestrator not proved paused-ready is never closed")"
+check "a sleeping orchestrator is not missing, and its record outlives the coordinator" "yes|yes|yes" \
+  "$(flat_has "$COORDSKILL" "its absence from \`ListAgents\` is its sleep, never a death")|$(flat_has "$COORDTPL" "outlives every succession, and nothing in it is woken or dropped but on his word")|$(flat_has "$COORDEND" "the sleeping record is kept")"
+check "a woken orchestrator skips the handshake with a predecessor already gone" "yes|yes" \
+  "$(flat_has "$SUCC" "**Woken from a pause**")|$(flat_has "$SUCC" "step 4 is void — no « takeover confirmed », nothing to close")"
+check "the rulebook points a pause at the lifecycle, inside its one coordinator paragraph" "yes" \
+  "$(flat_has "$ROOT/skills/orchestrator/SKILL.md" "A pause it relays: its bullet in \`references/lifecycle.md\`.")"
+check "the sleeping command lists, asks one confirmation before a drop, and leaves the operator's things alone" "yes|yes|yes|yes" \
+  "$(flat_has "$SLCMD" "The hooks module answers it on the spot, with no model turn")|$(flat_has "$SLCMD" "**Ask one confirmation**, naming what is left behind")|$(flat_has "$SLCMD" "It does NOT touch the pull requests, their branches or the checkouts: closing those is the operator's.")|$(flat_has "$SLCMD" "moved, never deleted, so a slip loses nothing")"
+check "the drop runs only on his yes, after the turn ends" "1" \
+  "$([ "$(grep -n 'END THE TURN' "$SLCMD" | head -1 | cut -d: -f1)" -lt "$(grep -n 'coordinator.sh drop --name' "$SLCMD" | head -1 | cut -d: -f1)" ] 2>/dev/null && echo 1 || echo 0)"
+check "the README lists the sleeping command" "yes" "$(spells "$ROOT/README.md" '| `/orchestrator:sleeping` |')"
 
 echo "== routing: cost =="
 

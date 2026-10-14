@@ -108,6 +108,11 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --i
     #   under remote control, and takes and hands NO chain (chain=none): an auditor has none,
     #   and written into one it would anchor the orchestrator's next agent. --tier, --model,
     #   --effort and --no-remote-control are refused there; a typed `Audit :` title still is, off --auditor.
+    # --wake: a paused orchestrator relaunched on the operator's word, its predecessor already
+    #   gone. Needs --title "Orch : <subject>" and --model <id>, the ones recorded at its pause;
+    #   --effort as recorded. Lands immediately right of you, joins no chain (chain=none) and
+    #   comes up under remote control under its name. Refuses --successor, --auditor, an
+    #   anchor, --title-free, --tier, --inherit-model, --resident and --no-remote-control.
 
 $SCRIPT verify --tty /dev/ttysNNN
     # succeeds with the pid when the host CLI runs on that tty; exit 1 otherwise

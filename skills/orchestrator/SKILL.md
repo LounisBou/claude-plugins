@@ -174,11 +174,12 @@ to the session that owns that configuration, as a request carrying the measureme
 it; that session's own protocol decides whether the operator hears of it.
 
 **While a coordinator runs, every question for the operator goes to it, never to him** — his
-order: one interface for his questions. Before asking him, run
+order. Before asking him, run
 `${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh lookup`. A name printed: send
 it the question (your arbitration, or an agent's relayed verbatim) with its context by
-`SendMessage`; its answer back, verbatim and dated, is his. Asking it the facts stays
-optional. Nothing printed: no coordinator runs, and you ask him directly.
+`SendMessage`; its answer, verbatim and dated, is his. Asking it the facts is optional.
+Nothing printed: no coordinator runs, and you ask him directly. A pause it relays:
+its bullet in `references/lifecycle.md`.
 
 **When the orchestrator's own session lacks what the role needs — a PATH, a credential the
 sandbox will not open, a tool the launch did not carry — the repair is a successor, not a

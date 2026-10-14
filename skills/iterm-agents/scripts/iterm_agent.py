@@ -1218,7 +1218,8 @@ def chain_owned(entries, owner):
     return [e for e in entries if e.get("owner") == owner]
 
 
-def chain_effect(successor, auditor, coordinator_successor=False, auditor_successor=False):
+def chain_effect(successor, auditor, coordinator_successor=False, auditor_successor=False,
+                 wake=False):
     """What a spawn does to its caller's chain: `append`, `transfer` or `none`.
 
     An agent joins the chain, so the next agent lands after it. A successor takes the
@@ -1229,8 +1230,9 @@ def chain_effect(successor, auditor, coordinator_successor=False, auditor_succes
     successor is the same kind of nobody's-agent: it takes over no orchestrator's build, so
     it joins none of them. An auditor's successor is the auditor again: it has no chain to
     take, and written into one it would be the anchor the orchestrator's next agent lands
-    after."""
-    if auditor_successor:
+    after. A woken orchestrator is nobody's agent either: its caller only relaunched it, and
+    its own agents, stood down before it slept, left no chain to take."""
+    if auditor_successor or wake:
         return "none"
     if successor:
         return "transfer"
@@ -1846,6 +1848,7 @@ def cmd_spawn(argv):
     p.add_argument("--coordinator-successor", dest="coordinator_successor",
                     action="store_true", default=False)
     p.add_argument("--resident", action="store_true", default=False)
+    p.add_argument("--wake", action="store_true", default=False)
     p.add_argument("--mcp", action="append", default=[])
     p.add_argument("--account-connectors", dest="account_connectors",
                     action="store_true", default=False)
@@ -1892,6 +1895,28 @@ def cmd_spawn(argv):
         die("spawn: refused: a \"Coord :\" title is the coordinator's; spawn it with "
             "--coordinator-successor, which places it at the first place of your window, "
             "keeps it out of every chain and brings it up under remote control on your model")
+    if args.wake:
+        # A paused orchestrator relaunched on the operator's word: under its own recorded
+        # name, on its recorded model and effort, immediately right of its caller, in no
+        # chain, under remote control like any orchestrator. It succeeds a session already
+        # gone, so it takes no successor's chain and derives no name from its caller.
+        for flag, given in (("--successor", args.successor), ("--auditor", args.auditor),
+                            ("--coordinator-successor", args.coordinator_successor),
+                            ("--left-of", args.left_of), ("--right-of", args.right_of),
+                            ("--title-free", args.title_free), ("--tier", args.tier),
+                            ("--inherit-model", args.inherit), ("--resident", args.resident),
+                            ("--no-remote-control", not args.remote_control)):
+            if given:
+                die("spawn: refused: %s is not a wake's: a woken orchestrator runs under its "
+                    "recorded name, model and effort, lands immediately right of you, joins "
+                    "no chain and comes up under remote control" % flag)
+        if (not args.title.startswith("Orch : ") or not TITLE_SHAPE.match(args.title)
+                or re.search(r" \[[0-9A-Za-z]+\]\Z", args.title)):
+            die('spawn: refused: --wake needs the recorded name, --title "Orch : <subject>" '
+                "without its reference, got '%s'" % args.title)
+        if not args.model:
+            die("spawn: refused: --wake needs the recorded model, --model <id>: a wake never "
+                "guesses the model its orchestrator ran on")
     if args.auditor:
         # An auditor is placed, named, modelled and reached ONE way (§52): immediately left
         # of its caller, `Audit : <subject>`, the caller's model, remote control on. Each of
@@ -2043,6 +2068,8 @@ def cmd_spawn(argv):
         # takes nothing with it (§52) — the operator's layout: the auditor beside its
         # orchestrator on the left, agents and successor on the right.
         side, anchor = "left", "self"
+    elif args.wake:
+        side, anchor = "right", "self"
     elif args.coordinator_successor:
         # The coordinator's successor is placed at the FIRST place of the caller's window,
         # not immediately beside it: unlike an auditor or a successor, no other tab anchors
@@ -2050,7 +2077,7 @@ def cmd_spawn(argv):
         # against a neighbour tab.
         side, anchor = "left", "leftmost"
     effect = chain_effect(args.successor, args.auditor, args.coordinator_successor,
-                          auditor_successor)
+                          auditor_successor, args.wake)
     if auditor_successor:
         for flag, given in (("--tier", args.tier), ("--model", args.model),
                             ("--effort", args.effort),
@@ -2141,7 +2168,7 @@ def cmd_spawn(argv):
                        else write_prompt_file(prompt, title))
 
     remote_control = title if ((args.successor and args.remote_control) or args.auditor
-                                or args.coordinator_successor) else ""
+                                or args.coordinator_successor or args.wake) else ""
     launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control,
                            mcp_file, args.account_connectors, gate_tokens, effort)
 
@@ -2158,6 +2185,7 @@ def cmd_spawn(argv):
         print("successor=%s" % ("yes" if args.successor else "no"))
         print("auditor=%s" % ("yes" if args.auditor else "no"))
         print("coordinator_successor=%s" % ("yes" if args.coordinator_successor else "no"))
+        print("wake=%s" % ("yes" if args.wake else "no"))
         print("chain=%s" % effect)
         print("resident=%s" % ("yes" if args.resident else "no"))
         print("name=%s" % title)
@@ -2628,7 +2656,7 @@ def cmd_rotate(argv):
     # A rotation replaces an agent with a titled agent; none of these are that. A successor
     # is spawned with `spawn --successor`, not smuggled through the replacement a rotation
     # makes, and neither is an auditor or the coordinator's own successor.
-    for flag in ("--successor", "--auditor", "--coordinator-successor", "--title-free",
+    for flag in ("--successor", "--auditor", "--coordinator-successor", "--wake", "--title-free",
                  "--no-remote-control"):
         if flag in rest:
             die("rotate: refused: %s is not a rotation's (a rotation replaces an agent with "

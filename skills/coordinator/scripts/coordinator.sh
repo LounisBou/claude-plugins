@@ -7,6 +7,15 @@
 #   coordinator.sh facts     the sessions, checkouts and heavy runs of every repository a session
 #                            works in, then the collisions among them
 #   coordinator.sh owners    each open pull request of those repositories, traced to its orchestrator
+#   coordinator.sh sleep --name "Orch : <subject>" --brief <path> --dir <path> --model <id>
+#                        [--effort <level>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
+#                            records a paused orchestrator as sleeping, once its tab is closed;
+#                            prints "sleeping <name>"
+#   coordinator.sh sleeping  one line per sleeping orchestrator; nothing when none sleeps
+#   coordinator.sh wake-done --name "Orch : <subject>"   removes the record of one woken, its
+#                            spawn verified; prints "woken <name>"
+#   coordinator.sh drop --name "Orch : <subject>"        abandons one for good: removes its record
+#                            and moves its brief into an abandoned/ directory beside it
 #
 # facts prints, one per line:
 #   session <pid> | <tty> | <title> | <orchestrator> | <repository> | <branch> | <directory>
@@ -20,6 +29,13 @@
 #   unread <source>: <why>     a source not read: the process table, the host's name, lsof,
 #                              a pid's directory, a tree git failed on, a brief, the checkouts,
 #                              the forge
+# sleeping prints, one per sleeping orchestrator, in the order they went to sleep:
+#   sleeping <name> | since <UTC time> | <directory> | prs <repository>#<n> <branch>, ... or none
+#     | checkouts <path>, ... or none | brief <path> | model <id> | effort <level or default>
+# drop prints "dropped <name>", then "brief moved to <path>" (or "brief <path> was already
+# gone"), then "left untouched: <each pull request and checkout, or none>" — the pull requests,
+# their branches and the checkouts are the operator's to close, never this script's.
+#
 # owners prints one line per open pull request and session found on its branch:
 #   pr <repository>#<n> | <branch> | <orchestrator> | session <pid> in <directory>
 #   pr <repository>#<n> | <branch> | unknown | session <pid> in <directory> names no orchestrator
@@ -30,6 +46,8 @@
 #   pr <repository>#<n> | <branch> | unknown | no session in <checkout>..., beside a session in <checkout>...
 #   pr <repository>#<n> | <branch> | unknown | sessions <pid>, <pid> in <directory> name different orchestrators: <o>, <o>
 #   pr <repository>#<n> | <branch> | unknown | head branch in a fork, owned by <owner>
+# except that an « unknown » pull request a sleeping orchestrator's record lists is its:
+#   pr <repository>#<n> | <branch> | <name> | sleeping since <UTC time>
 #
 # The chain an owner is read along: the pull request's head branch, the checkouts on it, the
 # host sessions working there, and the orchestrator each one names — itself when its title
@@ -52,6 +70,12 @@
 # own resolution. A registration goes through the lock directory <state>/coordinator.lock,
 # waited for five seconds at most, then refused with the lock's path and its holder's pid; a
 # lock is never broken automatically.
+#
+# The sleeping orchestrators: <state>/sleeping.json, an array of {"name","brief","dir","model",
+# "effort","slept","prs","checkouts"}, written in one rename under the same lock as a
+# registration — sleep, wake-done and drop each take it — and kept apart from the
+# coordinator's own record, so it outlives a coordinator's succession and its end alike. A
+# sleeping orchestrator is the operator's to wake or drop: nothing here acts on its own.
 #
 # Liveness: a session is alive when `iterm-agent.sh verify --tty <tty>` finds the host CLI
 # on its tty; COORDINATOR_VERIFY names another command to run in its place, called as
@@ -77,6 +101,7 @@ command -v jq >/dev/null 2>&1 || die "jq is required"
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 STATE="${ORCHESTRATOR_STATE_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claude-orchestrator}"
 RECORD="$STATE/coordinator.json"
+SLEEPING="$STATE/sleeping.json"
 LOCK="$STATE/coordinator.lock"
 LAUNCHER="$here/../../iterm-agents/scripts/iterm-agent.sh"
 LAUNCHER_PY="$here/../../iterm-agents/scripts/iterm_agent.py"
@@ -188,6 +213,118 @@ cmd_lookup() {
     else
         say "stale record: ${name:-an unreadable record} on ${tty:-no tty}"
     fi
+}
+
+# --- The sleeping orchestrators. ---------------------------------------------------------
+
+# The launcher's own shape for an orchestrator's title: the name a wake spawns it under, so a
+# record the launcher would refuse at the wake is refused here, at the pause.
+ORCH_NAME_SHAPE='^Orch : [^ ](.{0,23}[^ ])?$'
+
+# sleeping_read: the record's array on stdout, [] when there is none; an unreadable record
+# dies, since a sleeping orchestrator read as absent is one the operator loses.
+sleeping_read() {
+    [ -e "$SLEEPING" ] || { echo '[]'; return 0; }
+    jq -c 'if type == "array" then . else error("not an array") end' "$SLEEPING" 2>/dev/null \
+        || die "the sleeping record $SLEEPING cannot be read: remove or repair it"
+}
+
+# name_option <subcommand> <args...>: the one --name the subcommand takes.
+name_option() {
+    local sub="$1" name=""; shift
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --name) name="${2:-}"; shift 2 || die "$sub: --name needs a value" ;;
+            *) die "$sub: unknown option $1" ;;
+        esac
+    done
+    [ -n "$name" ] || die "$sub: usage: $sub --name \"Orch : <subject>\""
+    printf '%s' "$name"
+}
+
+cmd_sleep() {
+    local name="" brief="" dir="" model="" effort="" prs='[]' checkouts='[]'
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --name) name="${2:-}"; shift 2 || die "sleep: --name needs a value" ;;
+            --brief) brief="${2:-}"; shift 2 || die "sleep: --brief needs a value" ;;
+            --dir) dir="${2:-}"; shift 2 || die "sleep: --dir needs a value" ;;
+            --model) model="${2:-}"; shift 2 || die "sleep: --model needs a value" ;;
+            --effort) effort="${2:-}"; shift 2 || die "sleep: --effort needs a value" ;;
+            --pr) [ -n "${2:-}" ] || die "sleep: --pr needs a value"
+                  prs=$(jq -c --arg v "$2" '. + [$v]' <<< "$prs"); shift 2 ;;
+            --checkout) [ -n "${2:-}" ] || die "sleep: --checkout needs a value"
+                  checkouts=$(jq -c --arg v "$2" '. + [$v]' <<< "$checkouts"); shift 2 ;;
+            *) die "sleep: unknown option $1" ;;
+        esac
+    done
+    [ -n "$name" ] && [ -n "$brief" ] && [ -n "$dir" ] && [ -n "$model" ] \
+        || die 'sleep: usage: sleep --name "Orch : <subject>" --brief <path> --dir <path> --model <id> [--effort <level>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...'
+    printf '%s' "$name" | grep -qE "$ORCH_NAME_SHAPE" && ! printf '%s' "$name" | grep -qE ' \[[0-9A-Za-z]+\]$' \
+        || die "sleep: refused: the name reads \"Orch : <subject>\", without its reference, the subject at most 25 characters, got '$name'"
+    case "$brief" in /*) ;; *) die "sleep: refused: the brief's path must be absolute, got $brief" ;; esac
+    [ -f "$brief" ] && [ -r "$brief" ] || die "sleep: refused: the brief $brief cannot be read: a wake starts on it"
+    case "$dir" in /*) ;; *) die "sleep: refused: the directory must be absolute, got $dir" ;; esac
+    [ -d "$dir" ] || die "sleep: refused: the directory $dir does not exist: a wake starts in it"
+    case "$effort" in ""|low|medium|high|xhigh|max) ;; *) die "sleep: refused: unknown effort $effort (low, medium, high, xhigh or max)" ;; esac
+    lock sleep
+    local all
+    all=$(sleeping_read) || exit 1
+    jq -e --arg n "$name" 'any(.[]; .name == $n)' <<< "$all" >/dev/null \
+        && die "sleep: refused: $name is already sleeping"
+    all=$(jq -c --arg n "$name" --arg b "$brief" --arg d "$dir" --arg m "$model" --arg e "$effort" \
+        --arg s "$(now)" --argjson p "$prs" --argjson c "$checkouts" \
+        '. + [{name:$n, brief:$b, dir:$d, model:$m, effort:$e, slept:$s, prs:$p, checkouts:$c}]' <<< "$all") \
+        || die "sleep: cannot build the record"
+    write_atomic "$SLEEPING" "$all"
+    echo "sleeping $name"
+}
+
+cmd_sleeping() {
+    [ $# -eq 0 ] || die "sleeping: unexpected argument $1"
+    local all
+    all=$(sleeping_read) || exit 1
+    jq -r '.[] | "sleeping \(.name) | since \(.slept) | \(.dir) | prs \(if (.prs | length) > 0 then (.prs | join(", ")) else "none" end) | checkouts \(if (.checkouts | length) > 0 then (.checkouts | join(", ")) else "none" end) | brief \(.brief) | model \(.model) | effort \(if .effort == "" then "default" else .effort end)"' <<< "$all"
+}
+
+# remove_sleeping <name> <subcommand>: the array without that name, or a refusal when it
+# does not sleep. Called under the lock.
+remove_sleeping() {
+    local all
+    all=$(sleeping_read) || exit 1
+    jq -e --arg n "$1" 'any(.[]; .name == $n)' <<< "$all" >/dev/null \
+        || die "$2: refused: $1 is not sleeping (coordinator.sh sleeping lists who is)"
+    jq -c --arg n "$1" 'map(select(.name != $n))' <<< "$all"
+}
+
+cmd_wake_done() {
+    local name rest
+    name=$(name_option wake-done "$@") || exit 1
+    lock wake
+    rest=$(remove_sleeping "$name" wake-done) || exit 1
+    write_atomic "$SLEEPING" "$rest"
+    echo "woken $name"
+}
+
+cmd_drop() {
+    local name all one rest brief dest left
+    name=$(name_option drop "$@") || exit 1
+    lock drop
+    all=$(sleeping_read) || exit 1
+    rest=$(remove_sleeping "$name" drop) || exit 1
+    one=$(jq -c --arg n "$name" 'first(.[] | select(.name == $n))' <<< "$all")
+    brief=$(jq -r '.brief' <<< "$one")
+    # The brief is moved, never deleted: a drop typed by a slip loses nothing.
+    if [ -f "$brief" ]; then
+        dest="$(dirname "$brief")/abandoned/$(date -u +%Y%m%dT%H%M%SZ)-$(basename "$brief")"
+        mkdir -p "$(dirname "$dest")" 2>/dev/null && mv "$brief" "$dest" \
+            || die "drop: cannot move the brief $brief into $(dirname "$dest"): nothing was dropped"
+    fi
+    write_atomic "$SLEEPING" "$rest"
+    echo "dropped $name"
+    if [ -n "${dest:-}" ]; then echo "brief moved to $dest"; else echo "brief $brief was already gone"; fi
+    left=$(jq -r '[.prs[], .checkouts[]] | if length > 0 then join(", ") else "none" end' <<< "$one")
+    echo "left untouched: $left"
 }
 
 # --- The facts. Every table below is tab-separated, one row per line, in $T. -------------
@@ -448,12 +585,21 @@ cmd_facts() {
 cmd_owners() {
     [ $# -eq 0 ] || die "owners: unexpected argument $1"
     read_facts
-    owners_table | awk -F'\t' '{ print "pr " $1 "#" $2 " | " $3 " | " $4 " | " $5 }'
+    # A sleeping orchestrator has no session, so the chain breaks on each of its pull
+    # requests: the ones its record lists are its own, never « unknown » and never chased.
+    local asleep
+    asleep=$(sleeping_read 2>"$T/sleeping.err") || { unread "sleeping: $(sed 's/^coordinator: //' "$T/sleeping.err" | head -1)"; asleep='[]'; }
+    jq -r '.[] | .name as $n | .slept as $s | .prs[] | [(split(" ")[0]), $n, $s] | @tsv' <<< "$asleep" > "$T/asleep"
+    owners_table | awk -F'\t' '
+        FILENAME == ARGV[1] { who[$1] = $2; since[$1] = $3; next }
+        { k = $1 "#" $2
+          if ($4 == "unknown" && (k in who)) { if (!(k in said)) { said[k] = 1; print "pr " k " | " $3 " | " who[k] " | sleeping since " since[k] } }
+          else print "pr " k " | " $3 " | " $4 " | " $5 }' "$T/asleep" -
     finish
 }
 
 cmd="${1:-}"
-[ -n "$cmd" ] || die "usage: coordinator.sh {register|clear|lookup|facts|owners} ... (see header)"
+[ -n "$cmd" ] || die "usage: coordinator.sh {register|clear|lookup|facts|owners|sleep|sleeping|wake-done|drop} ... (see header)"
 shift
 case "$cmd" in
     register) cmd_register "$@" ;;
@@ -461,5 +607,9 @@ case "$cmd" in
     lookup) cmd_lookup "$@" ;;
     facts) cmd_facts "$@" ;;
     owners) cmd_owners "$@" ;;
-    *) die "unknown subcommand: $cmd (expected register, clear, lookup, facts or owners)" ;;
+    sleep) cmd_sleep "$@" ;;
+    sleeping) cmd_sleeping "$@" ;;
+    wake-done) cmd_wake_done "$@" ;;
+    drop) cmd_drop "$@" ;;
+    *) die "unknown subcommand: $cmd (expected register, clear, lookup, facts, owners, sleep, sleeping, wake-done or drop)" ;;
 esac

@@ -27,7 +27,8 @@ machine nor the coordinator's own context is the word to end: at its gate it suc
 
    `lookup` printing nothing is the proof. Then `rm <state dir>/coordinator/notes.md` and
    `ls` the directory.
-4. **Tell the operator** in one line: the coordinator has ended, who was told, and that the
-   tab is his to close. Then stop; you never close your own tab.
+4. **Tell the operator** in one line: the coordinator has ended, who was told, that the
+   tab is his to close, and which orchestrators `coordinator.sh sleeping` still lists: the
+   sleeping record is kept, for the next coordinator to wake them on his word. Then stop; you never close your own tab.
 
 $ARGUMENTS
