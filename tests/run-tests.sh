@@ -461,6 +461,8 @@ check "the rulebook, the prerequisites, decide and the routing skill carry the g
 
 # Every subcommand registers its record under the session, by absolute path, once. The
 # state directory is the hook's: the hook reads the same file for the same session id.
+# The E2E line every passing `ready` below gives: a test the reviewer can replay.
+E2EOK='E2E: tests/e2e/breadcrumb.spec.ts — npx playwright test tests/e2e/breadcrumb.spec.ts — passed'
 RS="$WORK/rec-state"; RD="$WORK/rec-dir"; mkdir -p "$RD"
 bash "$REC" goals "$RD/dispatch.jsonl" init --spec none >/dev/null
 RR="$RD/dispatch.jsonl"
@@ -474,7 +476,7 @@ check "open registers the record by its absolute path" "$RDREAL/dispatch.jsonl" 
 rec_with s-round round dispatch.jsonl 1
 rec_with s-review review dispatch.jsonl 1 --head abcdef1234 --norms none
 rec_with s-fixed fixed dispatch.jsonl 1 --head abcdef1234
-rec_with s-ready ready dispatch.jsonl 1 --head abcdef1234 >/dev/null
+rec_with s-ready ready dispatch.jsonl 1 --head abcdef1234 --e2e "$E2EOK" >/dev/null
 rec_with s-escaped escaped dispatch.jsonl 1
 rec_with s-summary summary dispatch.jsonl >/dev/null
 rec_with s-close close dispatch.jsonl 1 --verdict ok
@@ -630,33 +632,33 @@ check_status "a summary of nothing is not an error" 0 bash "$REC" summary "$WORK
 # anything else this file no longer refuses.
 G="$WORK/gate.jsonl"
 g1=$(bash "$REC" open "$G" --class behaviour-phase --tier standard --label "gate")
-check_status "ready refuses a row that does not say whether it changes a frontend surface" 1 bash "$REC" ready "$G" "$g1" --head aaa1111
+check_status "ready refuses a row that does not say whether it changes a frontend surface" 1 bash "$REC" ready "$G" "$g1" --head aaa1111 --e2e "$E2EOK"
 check "and names the subcommand that records it" "1" \
-  "$(bash "$REC" ready "$G" "$g1" --head aaa1111 2>&1 | grep -c 'ready: row 1 does not say whether its pull request changes a frontend surface: record it with `surface`')"
+  "$(bash "$REC" ready "$G" "$g1" --head aaa1111 --e2e "$E2EOK" 2>&1 | grep -c 'ready: row 1 does not say whether its pull request changes a frontend surface: record it with `surface`')"
 bash "$REC" surface "$G" "$g1" --none >/dev/null
-check_status "ready warns, it does not refuse, a row no review has touched" 0 bash "$REC" ready "$G" "$g1" --head aaa1111
+check_status "ready warns, it does not refuse, a row no review has touched" 0 bash "$REC" ready "$G" "$g1" --head aaa1111 --e2e "$E2EOK"
 check "and names what is missing" "1" \
-  "$(bash "$REC" ready "$G" "$g1" --head aaa1111 2>&1 | grep -c 'no review recorded on row')"
+  "$(bash "$REC" ready "$G" "$g1" --head aaa1111 --e2e "$E2EOK" 2>&1 | grep -c 'no review recorded on row')"
 check "ready still prints its reading of the row" "1" \
-  "$(bash "$REC" ready "$G" "$g1" --head aaa1111 2>/dev/null | grep -c 'ready: row 1 has no review recorded yet; head aaa1111 is unverified')"
+  "$(bash "$REC" ready "$G" "$g1" --head aaa1111 --e2e "$E2EOK" 2>/dev/null | grep -c 'ready: row 1 has no review recorded yet; head aaa1111 is unverified')"
 
 bash "$REC" review "$G" "$g1" --head aaa1111 --norms tool >/dev/null
 check "a review records the head it read and its norms check" "aaa1111|tool" \
   "$(jq -r --argjson i "$g1" 'select(.id==$i)|[.review.head,.review.norms]|join("|")' "$G")"
 check "a review counts as a round" "1" "$(jq -r --argjson i "$g1" 'select(.id==$i)|.rounds' "$G")"
-check_status "ready passes at the head that review read" 0 bash "$REC" ready "$G" "$g1" --head aaa1111
+check_status "ready passes at the head that review read" 0 bash "$REC" ready "$G" "$g1" --head aaa1111 --e2e "$E2EOK"
 
 # The head moves on every corrective round, and the review that read the previous one says
 # nothing about this one. This is the case the orchestrator talked itself past.
-check_status "ready refuses a head no review has read" 1 bash "$REC" ready "$G" "$g1" --head bbb2222
+check_status "ready refuses a head no review has read" 1 bash "$REC" ready "$G" "$g1" --head bbb2222 --e2e "$E2EOK"
 check "and names both heads" "1" \
-  "$(bash "$REC" ready "$G" "$g1" --head bbb2222 2>&1 | grep -c 'last review read aaa1111, head is bbb2222')"
+  "$(bash "$REC" ready "$G" "$g1" --head bbb2222 --e2e "$E2EOK" 2>&1 | grep -c 'last review read aaa1111, head is bbb2222')"
 
 bash "$REC" review "$G" "$g1" --head bbb2222 --norms none >/dev/null
 check "the row keeps the LAST review, and the round is counted" "bbb2222|none|2" \
   "$(jq -r --argjson i "$g1" 'select(.id==$i)|[.review.head,.review.norms,.rounds]|join("|")' "$G")"
 check "a review adds no row" "1" "$(wc -l < "$G" | tr -d ' ')"
-check_status "a project shipping no norms tool still passes the gate" 0 bash "$REC" ready "$G" "$g1" --head bbb2222
+check_status "a project shipping no norms tool still passes the gate" 0 bash "$REC" ready "$G" "$g1" --head bbb2222 --e2e "$E2EOK"
 
 # `workspace.sh` prints short SHAs where a host API gives all forty: the same commit must not
 # be refused for how it was spelled. Either side may abbreviate the other, from seven
@@ -665,14 +667,14 @@ full=0123456789abcdef0123456789abcdef01234567
 g2=$(bash "$REC" open "$G" --class behaviour-phase --tier standard --label "abbreviated")
 bash "$REC" surface "$G" "$g2" --none >/dev/null
 bash "$REC" review "$G" "$g2" --head 0123456 --norms tool >/dev/null
-check_status "a short recorded head accepts the full head of the same commit" 0 bash "$REC" ready "$G" "$g2" --head "$full"
+check_status "a short recorded head accepts the full head of the same commit" 0 bash "$REC" ready "$G" "$g2" --head "$full" --e2e "$E2EOK"
 bash "$REC" review "$G" "$g2" --head "$full" --norms tool >/dev/null
-check_status "a full recorded head accepts the short head of the same commit" 0 bash "$REC" ready "$G" "$g2" --head 0123456
-check_status "two heads sharing no prefix are refused" 1 bash "$REC" ready "$G" "$g2" --head fedcba9876543210fedcba9876543210fedcba98
+check_status "a full recorded head accepts the short head of the same commit" 0 bash "$REC" ready "$G" "$g2" --head 0123456 --e2e "$E2EOK"
+check_status "two heads sharing no prefix are refused" 1 bash "$REC" ready "$G" "$g2" --head fedcba9876543210fedcba9876543210fedcba98 --e2e "$E2EOK"
 check "and are named" "1" \
-  "$(bash "$REC" ready "$G" "$g2" --head fedcba9 2>&1 | grep -c "last review read $full, head is fedcba9")"
-check_status "a six-character head identifies nothing" 1 bash "$REC" ready "$G" "$g2" --head 012345
-check "and says so" "1" "$(bash "$REC" ready "$G" "$g2" --head 012345 2>&1 | grep -c 'ready: head 012345 is too short')"
+  "$(bash "$REC" ready "$G" "$g2" --head fedcba9 --e2e "$E2EOK" 2>&1 | grep -c "last review read $full, head is fedcba9")"
+check_status "a six-character head identifies nothing" 1 bash "$REC" ready "$G" "$g2" --head 012345 --e2e "$E2EOK"
+check "and says so" "1" "$(bash "$REC" ready "$G" "$g2" --head 012345 --e2e "$E2EOK" 2>&1 | grep -c 'ready: head 012345 is too short')"
 
 # The operator's process: ONE review round, the orchestrator's triage, ONE correction round
 # the orchestrator verifies on the artifact, done. The correction moves the head, and the
@@ -696,14 +698,14 @@ check "the review starts the row fresh" "ccc3333|tool||2" \
 bash "$REC" fixed "$G" "$g3" --head ddd4444 >/dev/null
 check "fixed records the head the orchestrator verified, and counts the round" "ccc3333|ddd4444|3" \
   "$(jq -r --argjson i "$g3" 'select(.id==$i)|[.review.head,.review.fixed.head,.rounds]|join("|")' "$G")"
-check_status "ready passes at the fixed head" 0 bash "$REC" ready "$G" "$g3" --head ddd4444
+check_status "ready passes at the fixed head" 0 bash "$REC" ready "$G" "$g3" --head ddd4444 --e2e "$E2EOK"
 check "and says which reading it rests on" "1" \
-  "$(bash "$REC" ready "$G" "$g3" --head ddd4444 2>&1 | grep -c 'ready: row 3 reviewed at ccc3333, corrected and verified at ddd4444')"
-check_status "the fixed head accepts its full spelling" 0 bash "$REC" ready "$G" "$g3" --head ddd4444abcdef
-check_status "ready still passes at the reviewed head" 0 bash "$REC" ready "$G" "$g3" --head ccc3333
-check_status "ready refuses a head neither reviewed nor fixed" 1 bash "$REC" ready "$G" "$g3" --head eee5555
+  "$(bash "$REC" ready "$G" "$g3" --head ddd4444 --e2e "$E2EOK" 2>&1 | grep -c 'ready: row 3 reviewed at ccc3333, corrected and verified at ddd4444')"
+check_status "the fixed head accepts its full spelling" 0 bash "$REC" ready "$G" "$g3" --head ddd4444abcdef --e2e "$E2EOK"
+check_status "ready still passes at the reviewed head" 0 bash "$REC" ready "$G" "$g3" --head ccc3333 --e2e "$E2EOK"
+check_status "ready refuses a head neither reviewed nor fixed" 1 bash "$REC" ready "$G" "$g3" --head eee5555 --e2e "$E2EOK"
 check "and names all three heads" "1" \
-  "$(bash "$REC" ready "$G" "$g3" --head eee5555 2>&1 | grep -c 'last review read ccc3333, its correction ddd4444, head is eee5555')"
+  "$(bash "$REC" ready "$G" "$g3" --head eee5555 --e2e "$E2EOK" 2>&1 | grep -c 'last review read ccc3333, its correction ddd4444, head is eee5555')"
 sout=$(bash "$REC" fixed "$G" "$g3" --head eee5555 2>&1); scode=$?
 check "a second correction round warns, it does not refuse" "0" "$scode"
 check "and names the one it already had" "1" "$(printf '%s\n' "$sout" | grep -c 'fixed: row 3 already has its correction round at ddd4444')"
@@ -724,12 +726,12 @@ check_status "review without --norms is an error" 1 bash "$REC" review "$G" "$g1
 check_status "ready without --head is an error" 1 bash "$REC" ready "$G" "$g1"
 check "and says the head is required" "1" "$(bash "$REC" ready "$G" "$g1" 2>&1 | grep -c 'ready: --head is required')"
 check_status "review on an unknown row is an error" 1 bash "$REC" review "$G" 99 --head aaa1111 --norms tool
-check_status "ready on an unknown row is an error" 1 bash "$REC" ready "$G" 99 --head aaa1111
-check "and names the row it did not find" "1" "$(bash "$REC" ready "$G" 99 --head aaa1111 2>&1 | grep -c 'ready: no row with id 99')"
+check_status "ready on an unknown row is an error" 1 bash "$REC" ready "$G" 99 --head aaa1111 --e2e "$E2EOK"
+check "and names the row it did not find" "1" "$(bash "$REC" ready "$G" 99 --head aaa1111 --e2e "$E2EOK" 2>&1 | grep -c 'ready: no row with id 99')"
 check_status "review on an unknown option is an error" 1 bash "$REC" review "$G" "$g1" --head ccc333 --norms tool --force
 check_status "an unknown subcommand is an error" 1 bash "$REC" bogus "$G"
 check "and names the subcommands it expects" "1" \
-  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, fixed, surface, audit, ready, close, escaped, cost, summary or goals)')"
+  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, fixed, surface, audit, ready, exempt, close, escaped, cost, summary or goals)')"
 
 # The screenshots. Five front-office pull requests were declared ready without one image,
 # under a rule written three times in prose. A `--ui` row reads its pull request's
@@ -754,29 +756,29 @@ srec review "$S" "$s1" --head aaa1111 --norms tool >/dev/null
 srec surface "$S" "$s1" --ui acme/front#11 >/dev/null
 check "surface records the kind and the pull request" "ui|acme/front#11" \
   "$(jq -r --argjson i "$s1" 'select(.id==$i)|[.surface.kind,.surface.pr]|join("|")' "$S")"
-check_status "ready refuses a frontend pull request with no image in its description" 1 srec ready "$S" "$s1" --head aaa1111
+check_status "ready refuses a frontend pull request with no image in its description" 1 srec ready "$S" "$s1" --head aaa1111 --e2e "$E2EOK"
 check "and says why" "1" \
-  "$(srec ready "$S" "$s1" --head aaa1111 2>&1 | grep -c 'ready: acme/front#11 changes a frontend surface and its description carries no screenshot: not ready')"
+  "$(srec ready "$S" "$s1" --head aaa1111 --e2e "$E2EOK" 2>&1 | grep -c 'ready: acme/front#11 changes a frontend surface and its description carries no screenshot: not ready')"
 srec surface "$S" "$s1" --ui acme/front#12 >/dev/null
 srec audit "$S" "$s1" --head aaa1111 --images 1 >/dev/null
-check_status "a markdown image passes" 0 srec ready "$S" "$s1" --head aaa1111
+check_status "a markdown image passes" 0 srec ready "$S" "$s1" --head aaa1111 --e2e "$E2EOK"
 check "and is counted on the ready line" "1" \
-  "$(srec ready "$S" "$s1" --head aaa1111 2>/dev/null | grep -c 'norms check tool; 1 screenshot(s) on acme/front#12')"
+  "$(srec ready "$S" "$s1" --head aaa1111 --e2e "$E2EOK" 2>/dev/null | grep -c 'norms check tool; 1 screenshot(s) on acme/front#12')"
 srec surface "$S" "$s1" --ui acme/front#13 >/dev/null
-check_status "an uploaded HTML image passes" 0 srec ready "$S" "$s1" --head aaa1111
+check_status "an uploaded HTML image passes" 0 srec ready "$S" "$s1" --head aaa1111 --e2e "$E2EOK"
 srec review "$S" "$s1" --head bbb2222 --norms tool >/dev/null
 check "a new review round keeps the surface" "ui|acme/front#13" \
   "$(jq -r --argjson i "$s1" 'select(.id==$i)|[.surface.kind,.surface.pr]|join("|")' "$S")"
 srec surface "$S" "$s1" --ui acme/front#99 >/dev/null
-check_status "a description that cannot be read is not ready" 1 srec ready "$S" "$s1" --head bbb2222
+check_status "a description that cannot be read is not ready" 1 srec ready "$S" "$s1" --head bbb2222 --e2e "$E2EOK"
 check "and says the screenshots are unverified" "1" \
-  "$(srec ready "$S" "$s1" --head bbb2222 2>&1 | grep -c 'could not read the description of acme/front#99: its screenshots are unverified')"
+  "$(srec ready "$S" "$s1" --head bbb2222 --e2e "$E2EOK" 2>&1 | grep -c 'could not read the description of acme/front#99: its screenshots are unverified')"
 srec surface "$S" "$s1" --minor "a label wording, nothing moves on screen" >/dev/null
 check "a minor ruling passes and prints its reason for the operator" "1" \
-  "$(srec ready "$S" "$s1" --head bbb2222 2>/dev/null | grep -c 'frontend change ruled minor: a label wording, nothing moves on screen - tell the operator this reason with the ready')"
+  "$(srec ready "$S" "$s1" --head bbb2222 --e2e "$E2EOK" 2>/dev/null | grep -c 'frontend change ruled minor: a label wording, nothing moves on screen - tell the operator this reason with the ready')"
 s2=$(srec open "$S" --class behaviour-phase --tier standard --label "no review yet")
 srec surface "$S" "$s2" --ui acme/front#11 >/dev/null
-check_status "the no-review warning does not let a frontend pull request with no image by" 1 srec ready "$S" "$s2" --head aaa1111
+check_status "the no-review warning does not let a frontend pull request with no image by" 1 srec ready "$S" "$s2" --head aaa1111 --e2e "$E2EOK"
 check_status "surface without a kind is an error" 1 bash "$REC" surface "$S" "$s1"
 check_status "surface with two kinds is an error" 1 bash "$REC" surface "$S" "$s1" --none --minor x
 check_status "--ui needs <owner/repo>#<number>" 1 bash "$REC" surface "$S" "$s1" --ui 1520
@@ -793,61 +795,61 @@ A="$WORK/audit.jsonl"
 a1=$(srec open "$A" --class behaviour-phase --tier standard --label "audit")
 srec surface "$A" "$a1" --ui acme/front#14 >/dev/null
 srec review "$A" "$a1" --head aaa1111 --norms tool >/dev/null
-check_status "ready refuses a --ui row with no audit recorded" 1 srec ready "$A" "$a1" --head aaa1111
+check_status "ready refuses a --ui row with no audit recorded" 1 srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK"
 check "and names the subcommand that records it" "1" \
-  "$(srec ready "$A" "$a1" --head aaa1111 2>&1 | grep -c 'ready: no audit of the images on acme/front#14 is recorded: open each one, audit it, and record it with `audit <record> 1 --head <sha> --images <n>`')"
+  "$(srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK" 2>&1 | grep -c 'ready: no audit of the images on acme/front#14 is recorded: open each one, audit it, and record it with `audit <record> 1 --head <sha> --images <n>`')"
 srec audit "$A" "$a1" --head aaa1111 --images 1 >/dev/null
 check "audit records the head, the images and no defect" "aaa1111|1|0" \
   "$(jq -r --argjson i "$a1" 'select(.id==$i)|[.audit.head,.audit.images,(.audit.defects|length)]|join("|")' "$A")"
 check "an audit is not a round" "1" "$(jq -r --argjson i "$a1" 'select(.id==$i)|.rounds' "$A")"
-check_status "ready refuses an audit that opened fewer images than the description carries" 1 srec ready "$A" "$a1" --head aaa1111
+check_status "ready refuses an audit that opened fewer images than the description carries" 1 srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK"
 check "and names both counts" "1" \
-  "$(srec ready "$A" "$a1" --head aaa1111 2>&1 | grep -c 'ready: the audit opened 1 image(s), the description of acme/front#14 carries 2: audit every image')"
+  "$(srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK" 2>&1 | grep -c 'ready: the audit opened 1 image(s), the description of acme/front#14 carries 2: audit every image')"
 srec audit "$A" "$a1" --head aaa1111 --images 2 --defect "map button: icon off-centre, style unlike its neighbours" --defect "after: stray text in the search field" >/dev/null
 check "a defect is recorded per --defect" "2" "$(jq -r --argjson i "$a1" 'select(.id==$i)|.audit.defects|length' "$A")"
-check_status "ready refuses an audit that recorded a defect" 1 srec ready "$A" "$a1" --head aaa1111
+check_status "ready refuses an audit that recorded a defect" 1 srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK"
 check "and names every defect" "1" \
-  "$(srec ready "$A" "$a1" --head aaa1111 2>&1 | grep -c 'ready: the audit of acme/front#14 recorded 2 defect(s): map button: icon off-centre, style unlike its neighbours; after: stray text in the search field. Fix each one, retake the capture, and audit again: not ready')"
+  "$(srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK" 2>&1 | grep -c 'ready: the audit of acme/front#14 recorded 2 defect(s): map button: icon off-centre, style unlike its neighbours; after: stray text in the search field. Fix each one, retake the capture, and audit again: not ready')"
 srec audit "$A" "$a1" --head aaa1111 --images 2 >/dev/null
 check "a new audit replaces the last, defects included" "aaa1111|2|0" \
   "$(jq -r --argjson i "$a1" 'select(.id==$i)|[.audit.head,.audit.images,(.audit.defects|length)]|join("|")' "$A")"
-check_status "ready passes a clean audit of every image at the reviewed head" 0 srec ready "$A" "$a1" --head aaa1111
+check_status "ready passes a clean audit of every image at the reviewed head" 0 srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK"
 check "and says the images were audited clean" "1" \
-  "$(srec ready "$A" "$a1" --head aaa1111 2>/dev/null | grep -c 'norms check tool; 2 screenshot(s) on acme/front#14, audited clean at aaa1111')"
+  "$(srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK" 2>/dev/null | grep -c 'norms check tool; 2 screenshot(s) on acme/front#14, audited clean at aaa1111')"
 srec audit "$A" "$a1" --head aaa1111 --images 3 >/dev/null
-check_status "an audit that opened more images than the description carries passes" 0 srec ready "$A" "$a1" --head aaa1111
+check_status "an audit that opened more images than the description carries passes" 0 srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK"
 srec fixed "$A" "$a1" --head bbb2222 >/dev/null
-check_status "an audit at the reviewed head still passes at the fixed head" 0 srec ready "$A" "$a1" --head bbb2222
+check_status "an audit at the reviewed head still passes at the fixed head" 0 srec ready "$A" "$a1" --head bbb2222 --e2e "$E2EOK"
 srec audit "$A" "$a1" --head bbb2222 --images 2 >/dev/null
-check_status "an audit at the fixed head passes there" 0 srec ready "$A" "$a1" --head bbb2222
-check_status "an audit at the fixed head passes at the reviewed head too" 0 srec ready "$A" "$a1" --head aaa1111
+check_status "an audit at the fixed head passes there" 0 srec ready "$A" "$a1" --head bbb2222 --e2e "$E2EOK"
+check_status "an audit at the fixed head passes at the reviewed head too" 0 srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK"
 srec audit "$A" "$a1" --head bbb2222abcdef --images 2 >/dev/null
-check_status "an audit head spelled in full accepts the short head" 0 srec ready "$A" "$a1" --head bbb2222
+check_status "an audit head spelled in full accepts the short head" 0 srec ready "$A" "$a1" --head bbb2222 --e2e "$E2EOK"
 srec review "$A" "$a1" --head ccc3333 --norms tool >/dev/null
 check "a new review round keeps the audit" "bbb2222abcdef|2" \
   "$(jq -r --argjson i "$a1" 'select(.id==$i)|[.audit.head,.audit.images]|join("|")' "$A")"
-check_status "ready refuses an audit at a head it does not accept" 1 srec ready "$A" "$a1" --head ccc3333
+check_status "ready refuses an audit at a head it does not accept" 1 srec ready "$A" "$a1" --head ccc3333 --e2e "$E2EOK"
 check "and names both heads" "1" \
-  "$(srec ready "$A" "$a1" --head ccc3333 2>&1 | grep -c 'ready: the images on acme/front#14 were audited at bbb2222abcdef, head is ccc3333: audit them again at the head in front of you')"
+  "$(srec ready "$A" "$a1" --head ccc3333 --e2e "$E2EOK" 2>&1 | grep -c 'ready: the images on acme/front#14 were audited at bbb2222abcdef, head is ccc3333: audit them again at the head in front of you')"
 srec audit "$A" "$a1" --head ccc3333 --images 2 >/dev/null
-check_status "an audit at the new head passes" 0 srec ready "$A" "$a1" --head ccc3333
+check_status "an audit at the new head passes" 0 srec ready "$A" "$a1" --head ccc3333 --e2e "$E2EOK"
 a2=$(srec open "$A" --class behaviour-phase --tier standard --label "audit, no review")
 srec surface "$A" "$a2" --ui acme/front#14 >/dev/null
-check_status "the no-review warning does not let a --ui row with no audit by" 1 srec ready "$A" "$a2" --head ddd4444
+check_status "the no-review warning does not let a --ui row with no audit by" 1 srec ready "$A" "$a2" --head ddd4444 --e2e "$E2EOK"
 srec audit "$A" "$a2" --head eee5555 --images 2 >/dev/null
-check_status "with no review, an audit at another head is refused" 1 srec ready "$A" "$a2" --head ddd4444
+check_status "with no review, an audit at another head is refused" 1 srec ready "$A" "$a2" --head ddd4444 --e2e "$E2EOK"
 srec audit "$A" "$a2" --head ddd4444 --images 2 --defect "reset button on its own row" >/dev/null
-check_status "with no review, a defect is still refused" 1 srec ready "$A" "$a2" --head ddd4444
+check_status "with no review, a defect is still refused" 1 srec ready "$A" "$a2" --head ddd4444 --e2e "$E2EOK"
 srec audit "$A" "$a2" --head ddd4444 --images 2 >/dev/null
-check_status "with no review, a clean audit at the head in front lets the warning speak" 0 srec ready "$A" "$a2" --head ddd4444
+check_status "with no review, a clean audit at the head in front lets the warning speak" 0 srec ready "$A" "$a2" --head ddd4444 --e2e "$E2EOK"
 a3=$(srec open "$A" --class behaviour-phase --tier standard --label "minor")
 srec review "$A" "$a3" --head aaa1111 --norms tool >/dev/null
 srec surface "$A" "$a3" --minor "a label wording" >/dev/null
-check_status "a --minor row needs no audit" 0 srec ready "$A" "$a3" --head aaa1111
+check_status "a --minor row needs no audit" 0 srec ready "$A" "$a3" --head aaa1111 --e2e "$E2EOK"
 srec surface "$A" "$a3" --none >/dev/null
-check_status "a --none row needs no audit" 0 srec ready "$A" "$a3" --head aaa1111
+check_status "a --none row needs no audit" 0 srec ready "$A" "$a3" --head aaa1111 --e2e "$E2EOK"
 srec audit "$A" "$a3" --head aaa1111 --images 1 --defect "an unrelated defect" >/dev/null
-check_status "a --none row is not held to an audit's defect" 0 srec ready "$A" "$a3" --head aaa1111
+check_status "a --none row is not held to an audit's defect" 0 srec ready "$A" "$a3" --head aaa1111 --e2e "$E2EOK"
 check_status "audit without --head is an error" 1 bash "$REC" audit "$A" "$a1" --images 2
 check_status "audit with a head too short to identify a commit is an error" 1 bash "$REC" audit "$A" "$a1" --head abc123 --images 2
 check_status "audit without --images is an error" 1 bash "$REC" audit "$A" "$a1" --head aaa1111
@@ -858,6 +860,73 @@ check_status "audit on an unknown row is an error" 1 bash "$REC" audit "$A" 99 -
 check_status "audit on an unknown option is an error" 1 bash "$REC" audit "$A" "$a1" --head aaa1111 --images 2 --clean
 check "a refused audit leaves the last one in place" "ccc3333|2|0" \
   "$(jq -r --argjson i "$a1" 'select(.id==$i)|[.audit.head,.audit.images,(.audit.defects|length)]|join("|")' "$A")"
+# The E2E line. A frontend pull request was merged and deployed and did not work there: its
+# only proof was a browser pass the implementer reported, nothing a reviewer could replay, and
+# nobody said « no E2E test ». `ready` takes the report's E2E line, never the pull request's
+# description; silence is refused; `E2E: none — <reason>` passes only with the operator's
+# dated validation of that pull request, or his dated exemption of the whole session.
+E="$WORK/e2e/dispatch.jsonl"; mkdir -p "$WORK/e2e"
+bash "$REC" goals "$E" init --spec none >/dev/null
+e1=$(bash "$REC" open "$E" --class behaviour-phase --tier standard --label "e2e")
+bash "$REC" surface "$E" "$e1" --none >/dev/null
+bash "$REC" review "$E" "$e1" --head aaa1111 --norms tool >/dev/null
+E2ENONE='E2E: none — a one-line config default, no environment worth bringing up'
+check_status "ready refuses a row with no E2E line" 1 bash "$REC" ready "$E" "$e1" --head aaa1111
+check "and says silence is not ready" "1" \
+  "$(bash "$REC" ready "$E" "$e1" --head aaa1111 2>&1 | grep -c 'ready: row 1 gives no E2E line: pass the implementer.s report line, `--e2e "E2E: <test path(s)> — <command> — passed"` or `--e2e "E2E: none — <reason>"`; silence is not ready')"
+check_status "an empty E2E line is refused" 1 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e ""
+check_status "a line not starting E2E: is refused" 1 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "tests passed"
+check "and says what it must start with" "1" \
+  "$(bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "tests passed" 2>&1 | grep -c 'ready: the E2E line must start with `E2E:` and say something, got: tests passed')"
+check_status "a bare E2E: is refused" 1 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "E2E:  "
+check_status "a test line passes" 0 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2EOK"
+check "and the ready line states it for the operator" "1" \
+  "$(bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2EOK" 2>/dev/null | grep -cF "norms check tool; no frontend surface; $E2EOK")"
+check "the E2E line is recorded on the row" "$E2EOK|test|aaa1111" \
+  "$(jq -r --argjson i "$e1" 'select(.id==$i)|[.e2e.line,.e2e.kind,.e2e.head]|join("|")' "$E")"
+check_status "a waiver beside a test line is refused" 1 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2EOK" --e2e-waiver "ok 2026-10-13"
+check_status "E2E: none without the operator's validation is refused" 1 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2ENONE"
+check "and says to tell him and record his validation" "1" \
+  "$(bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2ENONE" 2>&1 | grep -cF "ready: row 1 has no E2E test and the operator has not validated it ready without one: tell him « $E2ENONE », then record his validation with --e2e-waiver")"
+e2=$(bash "$REC" open "$E" --class n-bis --tier light --label "no review"); bash "$REC" surface "$E" "$e2" --none >/dev/null
+check_status "with no review, a test line lets the warning speak" 0 bash "$REC" ready "$E" "$e2" --head aaa1111 --e2e "$E2EOK"
+check_status "the no-review warning does not let silence by" 1 bash "$REC" ready "$E" "$e2" --head aaa1111
+check_status "the no-review warning does not let an unvalidated E2E: none by" 1 bash "$REC" ready "$E" "$e2" --head aaa1111 --e2e "$E2ENONE"
+check_status "E2E: none without its reason is refused" 1 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "E2E: none" --e2e-waiver "ok 2026-10-13"
+check_status "an undated waiver is refused" 1 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2ENONE" --e2e-waiver "fine by me"
+check_status "E2E: none with his dated validation passes" 0 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2ENONE" --e2e-waiver "ready without E2E, ok - 2026-10-13"
+check "and the ready line carries his words" "1" \
+  "$(bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2ENONE" --e2e-waiver "ready without E2E, ok - 2026-10-13" 2>/dev/null | grep -cF "$E2ENONE (the operator validated it ready without E2E: ready without E2E, ok - 2026-10-13)")"
+check "the waiver is recorded on the row" "none|ready without E2E, ok - 2026-10-13" \
+  "$(jq -r --argjson i "$e1" 'select(.id==$i)|[.e2e.kind,.e2e.waiver]|join("|")' "$E")"
+check_status "exempt without his words is an error" 1 bash "$REC" exempt "$E"
+check_status "an undated exemption is refused" 1 bash "$REC" exempt "$E" --e2e "no E2E this session"
+check "and nothing is recorded" "no" "$([ -e "$E.e2e-exempt" ] && echo yes || echo no)"
+bash "$REC" exempt "$E" --e2e "no E2E tests for this session's PRs - 2026-10-13" >/dev/null
+check "the exemption is recorded once beside the record" "no E2E tests for this session's PRs - 2026-10-13" "$(jq -r .words "$E.e2e-exempt")"
+check_status "with the session exempted, E2E: none passes with no waiver" 0 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2ENONE"
+check "and the ready line names the exemption" "1" \
+  "$(bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2ENONE" 2>/dev/null | grep -cF "(this session's pull requests exempted from E2E by the operator: no E2E tests for this session's PRs - 2026-10-13)")"
+check_status "an exemption does not excuse silence" 1 bash "$REC" ready "$E" "$e1" --head aaa1111
+check "the exemption is not a row" "2" "$(wc -l < "$E" | tr -d ' ')"
+check_status "ready with an unknown option is an error" 1 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2EOK" --force
+# The E2E rule in prose, where every brief, phase brief, review and review brief reads it: a
+# backend test against a container, a frontend Playwright test committed, the `E2E: none —
+# <reason>` line, silence not ready, nothing in the pull request's description, and the
+# operator's validation or session exemption before `none` is ready.
+BR="$ORCH_REFS/briefs.md"; PB="$ROOT/templates/agent-phase-brief.md"; RB="$ROOT/templates/agent-review-brief.md"; RV="$ORCH_REFS/review.md"
+check "briefs.md carries the E2E rule for every phase" "yes|yes|yes|yes|yes|yes|yes" \
+  "$(spells "$BR" "**Every pull request carries an E2E test the reviewer can replay, as far as one can be written — in every phase, not only the last.**")|$(spells "$BR" "Backend: the test runs against the service brought up in a container (docker, or the project's compose).")|$(spells "$BR" "Frontend: a Playwright test committed in the project's test tree")|$(spells "$BR" '`E2E: none — <reason>`, said plainly')|$(spells "$BR" "Silence is not allowed: a report with neither a test nor that line is not ready.")|$(spells "$BR" "Nothing about E2E goes in the description")|$(spells "$BR" "The exception is his exemption of every pull request of your session: then you decide alone, without telling him.")"
+check "briefs.md holds a pull request without E2E to the operator's validation" "yes|yes" \
+  "$(spells "$BR" "A pull request with no E2E test is not ready on your word: tell the operator « no E2E test — <reason> »")|$(spells "$BR" "it is ready once he has validated it ready without one.")"
+check "the phase brief orders the E2E test and its report line" "yes|yes|yes|yes|yes" \
+  "$(spells "$PB" "a backend change is tested against the service brought up in a container (docker, or the project's compose)")|$(spells "$PB" "a frontend change by a Playwright test committed in the project's test tree")|$(spells "$PB" '`E2E: none — <reason>`. Silence is not allowed: a report with neither is not ready.')|$(spells "$PB" "your E2E line (\`E2E: …\`, §4)")|$(spells "$PB" "its codified sections and nothing more: nothing about E2E.")"
+check "the review brief replays the test or judges the reason, and flags silence" "yes|yes|yes|yes" \
+  "$(spells "$RB" "its E2E line, from the implementer's report, never from the pull request's description")|$(spells "$RB" 'you replay that command (a targeted run, §5)')|$(spells "$RB" 'With `E2E: none — <reason>`, you judge the reason')|$(spells "$RB" "A report with no E2E line is a finding.")"
+check "review.md item 14 holds the E2E gate and the operator's validation" "yes|yes|yes|yes|yes" \
+  "$(spells "$RV" "14. **Every pull request carries an E2E test the reviewer replays, or says plainly it has none.**")|$(spells "$RV" "a backend test against the service brought up in a container, a frontend one a Playwright test committed in the project's test tree")|$(spells "$RV" "a report with no E2E line is a finding, and the pull request is not ready: silence is not allowed.")|$(spells "$RV" "A pull request with \`E2E: none\` is not ready on your word")|$(spells "$RV" 'you tell the operator « ready », with its E2E line')"
+check "design.md mirrors the E2E gate under the ready gate" "yes" \
+  "$(spells "$ROOT/docs/design.md" '`E2E: none` passes only with the operator'"'"'s validation of that pull request ready without one (`--e2e-waiver`')"
 unset SURFACE_BODIES
 check "the review reference records the surface before ready" "1" \
   "$(grep -c 'dispatch-record.sh surface <record> <id> --ui <owner/repo>#<n>' "$ROOT/skills/orchestrator/references/review.md")"

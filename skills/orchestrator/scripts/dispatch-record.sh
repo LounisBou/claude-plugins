@@ -7,7 +7,8 @@
 #   dispatch-record.sh fixed   <record> <id> --head <sha>   (the one correction round, verified)
 #   dispatch-record.sh surface <record> <id> (--ui <owner/repo>#<n> | --minor <reason> | --none)
 #   dispatch-record.sh audit   <record> <id> --head <sha> --images <n> [--defect "<text>"]...
-#   dispatch-record.sh ready   <record> <id> --head <sha>
+#   dispatch-record.sh ready   <record> <id> --head <sha> --e2e "<the E2E line>" [--e2e-waiver "<his words, dated>"]
+#   dispatch-record.sh exempt  <record> --e2e "<his words, dated>"   (the operator exempts this session's pull requests from E2E)
 #   dispatch-record.sh close   <record> <id> --verdict <text>
 #   dispatch-record.sh escaped <record> <id>      (a defect got past this row's review)
 #   dispatch-record.sh cost    <record> <id> --session <session id> [--recount]   (adds that session's measured cost)
@@ -67,6 +68,19 @@
 # images audited again. `--minor` and `--none` rows are not held to it. Whether the audit was
 # honest stays the orchestrator's; the record makes it a step nobody can skip by forgetting.
 #
+# `ready` carries a fifth: a pull request says how it was proved end to end. A frontend pull
+# request was once merged and deployed and did not work there; its only proof was a browser
+# pass the implementer reported, nothing a reviewer could replay, and neither the report nor
+# the « ready » said there was no E2E test. So `ready` takes the implementer's E2E line
+# (`--e2e`), never the pull request's description, which holds its codified sections and
+# nothing about E2E. A line that does not start with `E2E:` is refused: silence is not ready.
+# `E2E: <test path(s)> — <command> — passed` passes. `E2E: none — <reason>` passes only with
+# the operator's validation of that pull request ready without one (`--e2e-waiver`, his words
+# and their date), or with his exemption of every pull request of this session, recorded once
+# beside the record by `exempt`; then the orchestrator decides alone. Whether the reason holds
+# is the review's and his, not the script's. The line is recorded on the row and printed for
+# the operator.
+#
 # A pair row names the model alias and the effort it ran on, and `cost` adds each session's
 # measured cost to it - the corrective rounds of a dispatch are part of what it cost. A
 # session whose model has no price marks the row `cost_incomplete`, and the summary's
@@ -101,7 +115,7 @@ warn() { echo "WARNING: $*" >&2; }
 command -v jq >/dev/null 2>&1 || die "jq is required"
 
 cmd="${1:-}"; record="${2:-}"
-[ -n "$cmd" ] || die "usage: dispatch-record.sh {open|round|review|fixed|surface|audit|ready|close|escaped|cost|summary|goals} <record> [...] (see header)"
+[ -n "$cmd" ] || die "usage: dispatch-record.sh {open|round|review|fixed|surface|audit|ready|exempt|close|escaped|cost|summary|goals} <record> [...] (see header)"
 [ -n "$record" ] || die "$cmd: a record path is required"
 
 # The stop gate's state root — the one the module's gate (hooks/guards.ts over
@@ -114,6 +128,9 @@ ROUTING="$(cd "$(dirname "$0")/../../model-routing/scripts" && pwd)/routing.py"
 EFFORTS="low medium high xhigh max"
 GOALS_PY="$(cd "$(dirname "$0")" && pwd)/goals.py"
 GOALS_FILE="$(dirname "$record")/goals.md"
+E2E_EXEMPT_FILE="$record.e2e-exempt"
+# A waiver or an exemption is the operator's words with their date, or it is nobody's.
+DATED_RE='[0-9]{4}-[0-9]{2}-[0-9]{2}'
 # `goals` registers a record that has no row yet: its goals are written before the first open.
 REGISTER_ABSENT=0
 
@@ -324,7 +341,16 @@ ready)
     # project's own method may still make this one refuse.
     id="${3:-}"; [ -n "$id" ] || die "ready: a row id is required"
     require_row ready "$id"
-    shift 3; head=$(head_option ready "$@") || exit 1
+    shift 3; head=""; e2e=""; e2e_given=0; waiver=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --head) head="${2:-}"; shift 2 ;;
+            --e2e) e2e="${2:-}"; e2e_given=1; shift 2 ;;
+            --e2e-waiver) waiver="${2:-}"; shift 2 ;;
+            *) die "ready: unknown option $1" ;;
+        esac
+    done
+    [ -n "$head" ] || die "ready: --head is required"
     # The surface first, before any reading of the heads: a pull request with no screenshot
     # is not ready whatever was reviewed, and the no-review warning below must not let it by.
     kind=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].surface.kind // ""' "$record")
@@ -357,6 +383,37 @@ ready)
         minor) surface_line="frontend change ruled minor: $(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].surface.reason' "$record") - tell the operator this reason with the ready" ;;
         none) surface_line="no frontend surface" ;;
     esac
+    # The E2E line, on every row, after the surface and before the heads, so that neither the
+    # no-review warning nor a reviewed head lets a pull request through on silence.
+    E2E_SHAPE="\`--e2e \"E2E: <test path(s)> — <command> — passed\"\` or \`--e2e \"E2E: none — <reason>\"\`"
+    [ "$e2e_given" = 1 ] || die "ready: row $id gives no E2E line: pass the implementer's report line, $E2E_SHAPE; silence is not ready"
+    [[ "$e2e" =~ ^E2E:[[:space:]]*[^[:space:]] ]] || die "ready: the E2E line must start with \`E2E:\` and say something, got: ${e2e:-nothing}; $E2E_SHAPE"
+    e2e_kind=test; exempt_words=""
+    shopt -s nocasematch
+    if [[ "$e2e" =~ ^E2E:[[:space:]]*none([^[:alnum:]]|$) ]]; then
+        e2e_kind=none
+        [[ "$e2e" =~ ^E2E:[[:space:]]*none[[:space:]]*[—–:-][[:space:]]*[^[:space:]] ]] \
+            || { shopt -u nocasematch; die "ready: \`E2E: none\` needs its reason: \`E2E: none — <reason>\`"; }
+    fi
+    shopt -u nocasematch
+    if [ "$e2e_kind" = none ]; then
+        [ ! -f "$E2E_EXEMPT_FILE" ] || exempt_words=$(jq -r '.words // ""' "$E2E_EXEMPT_FILE" 2>/dev/null)
+        if [ -n "$waiver" ]; then
+            [[ "$waiver" =~ $DATED_RE ]] || die "ready: --e2e-waiver takes the operator's words with their date (YYYY-MM-DD), got: $waiver"
+            e2e_line="$e2e (the operator validated it ready without E2E: $waiver)"
+        elif [ -n "$exempt_words" ]; then
+            e2e_line="$e2e (this session's pull requests exempted from E2E by the operator: $exempt_words)"
+        else
+            die "ready: row $id has no E2E test and the operator has not validated it ready without one: tell him « $e2e », then record his validation with --e2e-waiver \"<his words, dated>\": not ready"
+        fi
+    else
+        [ -z "$waiver" ] || die "ready: --e2e-waiver is for a pull request with no E2E test, and this line names one: $e2e"
+        e2e_line="$e2e"
+    fi
+    rewrite 'if .id==$i then .e2e={line:$l,kind:$k,waiver:$w,exempt:$x,head:$h,at:$a} else . end' "$id" \
+        --arg l "$e2e" --arg k "$e2e_kind" --arg w "$waiver" --arg x "$exempt_words" --arg h "$head" \
+        --arg a "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    surface_line="$surface_line; $e2e_line"
     reviewed=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].review.head // ""' "$record")
     norms=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].review.norms // ""' "$record")
     fixed=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].review.fixed.head // ""' "$record")
@@ -376,6 +433,24 @@ ready)
     else
         die "ready: last review read $reviewed, head is $head: the head in front of you has not been read"
     fi
+    ;;
+exempt)
+    # The operator's exemption of every pull request of this session from E2E tests, in his
+    # words and their date, recorded once beside the record; `ready` then accepts
+    # `E2E: none — <reason>` without a waiver per pull request. Recording it again replaces it.
+    shift 2; words=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --e2e) words="${2:-}"; shift 2 ;;
+            *) die "exempt: unknown option $1" ;;
+        esac
+    done
+    [ -n "$words" ] || die "exempt: --e2e \"<the operator's words, dated>\" is required"
+    [[ "$words" =~ $DATED_RE ]] || die "exempt: --e2e takes the operator's words with their date (YYYY-MM-DD), got: $words"
+    [ -f "$record" ] || die "exempt: no such record: $record"
+    jq -nc --arg w "$words" --arg a "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '{words:$w,at:$a}' > "$E2E_EXEMPT_FILE" \
+        || die "exempt: could not write $E2E_EXEMPT_FILE"
+    echo "exempt: every pull request of this session's record is exempted from E2E: $words"
     ;;
 close)
     id="${3:-}"; [ -n "$id" ] || die "close: a row id is required"
@@ -525,5 +600,5 @@ goals)
     python3 "$GOALS_PY" "$sub" "$GOALS_FILE" "$@"
     exit $?
     ;;
-*) die "unknown subcommand: $cmd (expected open, round, review, fixed, surface, audit, ready, close, escaped, cost, summary or goals)" ;;
+*) die "unknown subcommand: $cmd (expected open, round, review, fixed, surface, audit, ready, exempt, close, escaped, cost, summary or goals)" ;;
 esac
