@@ -10,7 +10,8 @@
 // is handed `--tokens` and `--window`: the orchestrator's measure file is read
 // only where the session has no figure yet, or where the module does not load.
 import {
-  READS, TOOL, TOOL_COMMANDS, TOOL_NAME, TOOL_TIMEOUT_MS, argsOf, measuredGateArgs, toolArgv, toolText,
+  READS, TOOL, TOOL_COMMANDS, TOOL_NAME, TOOL_TIMEOUT_MS, argsOf, chosenPython, measuredGateArgs, pythonFile, toolArgv,
+  toolText,
 } from './core.ts'
 
 /*
@@ -50,6 +51,19 @@ async function measured($: any, args: string[]): Promise<string[]> {
   }
 }
 
+// The interpreter that runs this plugin's CLI, chosen as the fixed launcher chooses it: BUGS_BOT_PYTHON
+// when set, else the one bin/setup remembered in the bugs home, else python3 from the PATH.
+async function python($: any): Promise<string> {
+  const chosen = await $.env.get('BUGS_BOT_PYTHON')
+  if (chosen) return chosen
+  const file = pythonFile(await $.env.get('BUGS_BOT_HOME'), await $.env.get('HOME'))
+  try {
+    return chosenPython((await $.fs.exists(file)) ? String(await $.fs.read(file)) : null)
+  } catch {
+    return chosenPython(null)
+  }
+}
+
 export function register(on: any): void {
   on('session.start', async ($: any, e: any, next: any) => {
     await $.tool.register({
@@ -84,9 +98,9 @@ export function register(on: any): void {
     const refused = await permit($, command, raw)
     if (refused) return { deny: refused }
     const args = command === 'gate' ? await measured($, raw) : raw
-    const python = (await $.env.get('BUGS_BOT_PYTHON')) || 'python3'
+    const interpreter = await python($)
     try {
-      const r = await $.process.run(toolArgv(python, $.plugin.root, command, args), { timeoutMs: TOOL_TIMEOUT_MS })
+      const r = await $.process.run(toolArgv(interpreter, $.plugin.root, command, args), { timeoutMs: TOOL_TIMEOUT_MS })
       return { result: toolText(r.stdout, r.stderr, r.exitCode), isError: r.exitCode !== 0 }
     } catch (err: any) {
       return { result: `bugs-bot ${command} could not run: ${String(err?.message ?? err)}`, isError: true }

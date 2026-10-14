@@ -13,7 +13,7 @@ REPO_ROOT = HERE.parent
 sys.path.insert(0, str(REPO_ROOT))
 sys.path.insert(0, str(HERE))
 
-from bugs_bot import cli  # noqa: E402
+from bugs_bot import cli, install  # noqa: E402
 from bugs_bot.project import PROJECT_FILE  # noqa: E402
 from bugs_bot.registry import Registry  # noqa: E402
 from bugs_bot.store import Machine  # noqa: E402
@@ -109,3 +109,35 @@ def reports(home: Path) -> list[Path]:
     """Return the report directories, hidden temp ones included."""
     inbox = home / "inbox"
     return sorted(inbox.iterdir()) if inbox.exists() else []
+
+
+class FakePm2:
+    """The fake PM2 every test runs instead of the machine's: its state, as ``tests/fake_pm2.py`` keeps it."""
+
+    def __init__(self, directory: Path) -> None:
+        directory.mkdir()
+        self.state_path = directory / "state.json"
+        self.program = directory / "pm2"
+        self.program.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{HERE / "fake_pm2.py"}" "{self.state_path}" "$@"\n')
+        self.program.chmod(0o755)
+
+    @property
+    def state(self) -> dict:
+        return json.loads(self.state_path.read_text()) if self.state_path.exists() else {"apps": [], "saved": None, "calls": []}
+
+    def register(self, script: str, cwd: str) -> None:
+        """Record a ``bugs-bot-pull`` as an earlier ``pm2 start`` left it."""
+        state = self.state
+        state["apps"].append({"name": "bugs-bot-pull", "script": script, "cwd": cwd, "restarts": 0})
+        self.state_path.write_text(json.dumps(state))
+
+    def verbs(self) -> list[str]:
+        return [" ".join(call["argv"][:1]) for call in self.state["calls"]]
+
+
+@pytest.fixture(autouse=True)
+def fake_pm2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakePm2:
+    """Never reach the machine's PM2: ``install`` runs this fake."""
+    fake = FakePm2(tmp_path / "fakepm2")
+    monkeypatch.setattr(install, "PM2_COMMAND", str(fake.program))
+    return fake

@@ -11,7 +11,7 @@ from bugs_bot.cli import build_parser
 
 CORE = (REPO_ROOT / "hooks" / "core.ts").read_text()
 # The commands an agent never runs through the tool: the machine's, and the 55-minute wait.
-OUTSIDE_THE_TOOL = {"pull", "init", "remove", "doctor", "wait"}
+OUTSIDE_THE_TOOL = {"pull", "init", "remove", "doctor", "install", "token", "wait"}
 
 
 def ts_list(name: str) -> list[str]:

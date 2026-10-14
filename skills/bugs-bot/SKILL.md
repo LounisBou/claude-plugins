@@ -21,7 +21,7 @@ ONE Pull process per machine, under PM2, runs `pull --watch`: Telegram long poll
 
 ## Commands
 
-Run as the plain `bugs-bot <command>` (the fixed launcher `/bugs-bot:doctor` installs runs the newest installed version; the one allow rule `Bash(bugs-bot:*)` covers every command). Where the plugin's module is loaded, the tool `mcp__bugs-bot__bugs` runs the same commands (all but `pull`, `init`, `remove`, `doctor` and `wait`) with the arguments as a JSON list, `{"command": "reply", "args": ["<id>", "<text>", "--mention"]}`: no shell reads a text, and the allow rule above stands for it too. Every command but `pull`, `init` and `doctor` works on one project: `--project <id>`, else the project whose `.bugs-bot.json` is in the current directory or a parent.
+Run as the plain `bugs-bot <command>` (the fixed launcher `/bugs-bot:install` installs runs the newest installed version; the one allow rule `Bash(bugs-bot:*)` covers every command). Where the plugin's module is loaded, the tool `mcp__bugs-bot__bugs` runs the same commands (all but `pull`, `init`, `remove`, `doctor`, `install`, `token` and `wait`) with the arguments as a JSON list, `{"command": "reply", "args": ["<id>", "<text>", "--mention"]}`: no shell reads a text, and the allow rule above stands for it too. Every command but `pull`, `init`, `doctor`, `install` and `token` works on one project: `--project <id>`, else the project whose `.bugs-bot.json` is in the current directory or a parent.
 
 | Command | Does |
 | --- | --- |
@@ -40,7 +40,7 @@ Run as the plain `bugs-bot <command>` (the fixed launcher `/bugs-bot:doctor` ins
 | `person-note <report-id\|author_id> "<text>"` | Add a dated note to that person's card, created on the first one. |
 | `person-lang <report-id\|author_id> <code>` | Set the language that person is written to in (two lower-case letters). `pull` records it from the platform when the person first writes (Telegram's `language_code`, Slack's `locale`) and never overwrites it; this is the correction when they write in another language. |
 | `deployed <commit>` | Runs the project's deploy check in its repository, the commit in `BUGS_BOT_COMMIT`: `deployed=yes` (exit 0), `deployed=no` (exit 1), or, with no deploy check, `deployed=unknown: the launcher's word decides` (exit 2). The commit must be a hexadecimal hash. |
-| `init`, `remove`, `doctor` | Set a project up, unregister it (its data and file are kept), check the machine: see `/bugs-bot:init`, `/bugs-bot:remove`, `/bugs-bot:doctor`. |
+| `install`, `init`, `remove`, `doctor`, `token` | Set the machine up once, set a project up, unregister it (its data and file are kept), check the machine, set a platform's token: see `/bugs-bot:install`, `/bugs-bot:init`, `/bugs-bot:remove`, `/bugs-bot:doctor`. |
 
 The agent's own commands — `wait`, `triage <id> bug|question`, `pending`, `overdue`, `escalated <id>`, `gate [--set N] [--measure]`, `handover write|read`, `agent-prompt --launcher` — are described in `agent/AGENT.md` and below. `wait` prints `edited <id>` while a person's edit of a message of report `<id>` has not been shown: the agent runs `show <id>` and takes the new text as what the person says now.
 
@@ -131,5 +131,5 @@ The 2026-10-02 case, four « vérifier » texts that all opened « Laura Avant d
 ## Setup by the operator
 
 1. Telegram: in @BotFather, `/setprivacy` → the bot → Disable, then remove and re-add it to the group — or make it an administrator of the group. Slack: one app with the bot token scopes the README lists, invited into each project's channel (`/invite @<app>`).
-2. `/bugs-bot:doctor` once per machine (it installs the `bugs-bot` launcher and says what is missing, the allow rule `Bash(bugs-bot:*)` included).
-3. In the project's repository: `/bugs-bot:init` (it asks you to post one message in the new Telegram group, or lists the Slack channels the app is in), then `/bugs-bot:start`.
+2. `/bugs-bot:install` once per machine (Python, the `bugs-bot` launcher, the one Pull under PM2; it prints the allow rule `Bash(bugs-bot:*)` to add). `/bugs-bot:doctor` checks, and changes nothing.
+3. In the project's repository: `/bugs-bot:init` (the platform's token the first time, typed in your own terminal; it asks you to post one message in the new Telegram group, or lists the Slack channels the app is in), then `/bugs-bot:start`.

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 import urllib.error
 import urllib.request
@@ -96,6 +97,18 @@ def channel_for(kind: str, env: Mapping[str, str], transport: Transport, clock: 
         raise BugsError(f"unknown channel: {kind}")
     _, read_token, build = _KINDS[kind]
     return build(read_token(env), transport, env, clock)
+
+
+def token_spec(kind: str) -> tuple[str, re.Pattern[str]]:
+    """Return ``kind``'s ``.env`` variable and its token's shape, for ``token --set``.
+
+    Raises:
+        BugsError: On an unknown kind.
+    """
+    if kind not in _KINDS:
+        raise BugsError(f"unknown channel: {kind}")
+    cls = _KINDS[kind][0]
+    return cls.TOKEN_VAR, cls.TOKEN_SHAPE
 
 
 def token_problem(kind: str, env: Mapping[str, str]) -> str | None:

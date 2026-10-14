@@ -2,7 +2,15 @@
 """Entry point: put the repository root on ``sys.path``, then run the CLI."""
 
 import sys
-from pathlib import Path
+
+if sys.version_info < (3, 10):
+    sys.stderr.write(
+        "bugs-bot: Python 3.10 or newer is needed, and %s is %d.%d: run /bugs-bot:install, which finds or "
+        "installs one and remembers it\n" % (sys.executable, sys.version_info[0], sys.version_info[1])
+    )
+    sys.exit(1)
+
+from pathlib import Path  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 

@@ -34,13 +34,17 @@ def api_root(env: Mapping[str, str]) -> str:
     return checked_root(env, "BUGS_BOT_API_ROOT", DEFAULT_API_ROOT)
 
 
+# The ``.env`` variable that holds the bot token.
+TOKEN_VAR = "TELEGRAM_BOT_TOKEN"
+
+
 def read_token(env: Mapping[str, str]) -> str:
     """Read ``TELEGRAM_BOT_TOKEN`` from the ``.env`` file, nowhere else.
 
     Raises:
         BugsError: If the file or the variable is missing.
     """
-    return read_secret(env, "TELEGRAM_BOT_TOKEN")
+    return read_secret(env, TOKEN_VAR)
 
 
 def utf16_len(text: str) -> int:
@@ -129,6 +133,8 @@ class TelegramChannel:
     exclusive = True  # Telegram hands a bot's updates to one getUpdates consumer
     # A bot token's shape (digits, a colon, a secret): masked in any text, even when it is not the token in use.
     TOKEN_SHAPE = re.compile(r"\d{3,}:[A-Za-z0-9_-]{10,}")
+    # The ``.env`` variable its token is read from (``token --set`` writes it there).
+    TOKEN_VAR = TOKEN_VAR
 
     def __init__(self, token: str, transport: Transport, root: str = DEFAULT_API_ROOT) -> None:
         self._api = Api(token, transport, root)

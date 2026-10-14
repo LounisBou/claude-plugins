@@ -1,6 +1,6 @@
 """bugs-bot: relay a project's bug reports from its group (Telegram or Slack) to the session that launched the agent.
 
-Machine-wide: ``pull [--every S | --watch]``, ``plugin-path <name>``. Per project (``--project <p>``, else the project whose
+Machine-wide: ``install``, ``doctor``, ``token --channel <kind> [--set]``, ``pull [--every S | --watch]``, ``plugin-path <name>``. Per project (``--project <p>``, else the project whose
 ``.bugs-bot.json`` is in the current directory or a parent): ``list``, ``show <id>``,
 ``reply <id> "<text>" [--mention] [--awaits | --follow-up] [--image <path>…]``, ``edit <id> "<text>" [--reply N] [--mention] [--awaits]``, ``delete <id> [--reply N]``, ``taken <id>``,
 ``fixed <id>``, ``done <id>``; and for the project's agent session: ``wait``, ``triage <id> bug|question``,
@@ -32,6 +32,7 @@ from bugs_bot.followup import cmd_escalated
 from bugs_bot.gate import cmd_gate
 from bugs_bot.plugin_path import plugin_path
 from bugs_bot.handover import last_archive, read_note, write_note
+from bugs_bot.install import cmd_install
 from bugs_bot.init import InitArgs, cmd_init, cmd_remove, init_kind, repo_root
 from bugs_bot.people import cmd_backfill_authors, cmd_person, cmd_person_lang, cmd_person_note
 from bugs_bot.project import find_project_file, load_project, resolve_project
@@ -47,6 +48,7 @@ from bugs_bot.reports import (
     cmd_taken,
 )
 from bugs_bot.store import Machine, bugs_home
+from bugs_bot.tokens import cmd_token
 from bugs_bot.watch import cmd_pull_once, pull_loop, watch_loop
 
 
@@ -133,7 +135,15 @@ def main(
                 ps_output = read_ps()
             except BugsError as exc:
                 ps_output = exc  # a failed check, not an exit: the other checks still tell their story
-            return cmd_doctor(env, ps_output, args.install_launcher, transport, read_pm2())
+            return cmd_doctor(env, ps_output, transport, read_pm2())
+        if args.command == "install":
+            try:
+                ps_output = read_ps()
+            except BugsError as exc:
+                ps_output = exc
+            return cmd_install(env, ps_output)
+        if args.command == "token":
+            return cmd_token(env, args.channel, args.set)
         if args.command == "init":
             repo = Path(args.repo).resolve() if args.repo else repo_root(Path.cwd())
             given = InitArgs(

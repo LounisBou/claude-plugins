@@ -5,6 +5,41 @@ All notable changes are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.0 — 2026-10-14
+
+### Added
+
+- `bin/setup`: finds a Python 3.10 or newer already on the machine (`BUGS_BOT_PYTHON`, the one remembered
+  before, `python3.14` … `python3.10` and `python3` on the `PATH`, pyenv's versions, Homebrew's prefixes,
+  `uv python find`) and remembers it in `~/.bugs-bot/python`. Only when none is found does it install `uv`
+  with its standalone installer into `~/.local/bin` (no root, no shell profile edited), then
+  `uv python install 3.12`. The system Python is never changed; no virtual environment.
+- `doctor`'s `interpreter` check: the remembered interpreter (or `BUGS_BOT_PYTHON`) exists.
+- `/bugs-bot:install` (`bugs-bot install`), once per machine: Python through `bin/setup`, the fixed
+  launcher, then exactly one `bugs-bot-pull` under PM2 and `pm2 save`. Run again, it restarts that one on
+  the new launcher; a record on a versioned path or in another directory is replaced; a Pull running
+  outside PM2 is reported, never doubled. It asks nothing (no platform, no token) and prints the allow
+  rule `Bash(bugs-bot:*)` for the operator to add.
+- `bugs-bot token --channel <kind> [--set]`: says whether the platform's token is in `~/.bugs-bot/.env`;
+  `--set`, only when it is missing, reads it from a hidden prompt (or standard input) and writes it once,
+  at mode 0600. The token never travels on a command line and is never printed.
+
+### Changed
+
+- `/bugs-bot:doctor` only checks and changes nothing: `--install-launcher` is gone, and each machine-level
+  failure (Python, interpreter, launcher, Pull) points to `/bugs-bot:install`.
+- `/bugs-bot:init` asks for the platform's token the first time this machine serves it: the operator runs
+  `bugs-bot token --channel <kind> --set` in his own terminal. The README splits « Install (once per
+  machine) » from « Per project ».
+- The fixed launcher, and through it PM2's Pull, runs the remembered interpreter when `BUGS_BOT_PYTHON`
+  is not set; so do `/bugs-bot:start` and the `bugs` tool. `doctor`'s PM2 remedy no longer asks for
+  `BUGS_BOT_PYTHON`.
+
+### Fixed
+
+- On a new machine whose `python3` is older than 3.10, bugs-bot failed at start. The CLI now says that
+  Python 3.10 or newer is needed and to run `/bugs-bot:install`, which finds or installs one.
+
 ## 0.3.0 — 2026-10-12
 
 ### Added

@@ -12,7 +12,8 @@
 // markdown could open a second agent, so the outcome is said as it stands.
 import {
   ITERM_SCRIPT, MIN_ORCHESTRATOR, PROJECT_FILE, SPAWN_TIMEOUT_MS, STEP_TIMEOUT_MS,
-  isAgentRow, isTty, lastLine, parentsOf, peersOf, projectFacts, selfOf, sitsRightOfSelf, versionAtLeast,
+  chosenPython, isAgentRow, isTty, lastLine, parentsOf, peersOf, projectFacts, pythonFile, selfOf, sitsRightOfSelf,
+  versionAtLeast,
 } from './core.ts'
 
 export const START_COMMAND = 'bugs-bot:start'
@@ -24,8 +25,17 @@ async function run($: any, argv: string[], cwd: string, timeoutMs = STEP_TIMEOUT
   return $.process.run(argv, { cwd, timeoutMs })
 }
 
+// The interpreter that runs this plugin's CLI, chosen as the fixed launcher chooses it: BUGS_BOT_PYTHON
+// when set, else the one bin/setup remembered in the bugs home, else python3 from the PATH.
 async function python($: any): Promise<string> {
-  return (await $.env.get('BUGS_BOT_PYTHON')) || 'python3'
+  const chosen = await $.env.get('BUGS_BOT_PYTHON')
+  if (chosen) return chosen
+  const file = pythonFile(await $.env.get('BUGS_BOT_HOME'), await $.env.get('HOME'))
+  try {
+    return chosenPython((await $.fs.exists(file)) ? String(await $.fs.read(file)) : null)
+  } catch {
+    return chosenPython(null)
+  }
 }
 
 async function bugsHome($: any): Promise<string> {

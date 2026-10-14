@@ -35,6 +35,21 @@ test('a text with quotes and apostrophes reaches the CLI as one argument, intact
   expect(runs[0].argv.slice(2)).toEqual(['reply', '20261002-101112-45', text, '--mention', '--awaits'])
 })
 
+test('the interpreter bin/setup remembered runs the CLI', async ($, on) => {
+  const remembered = '/home/op/.local/share/uv/python/cpython-3.12/bin/python3.12'
+  const { runs } = mount(on, { verdicts: shellGrant, files: { '/home/op/.bugs-bot/python': `${remembered}\n` } })
+  await begin($)
+  await $.tool.call({ tool: TOOL, command: 'list', args: [] })
+  expect(runs[0].argv[0]).toBe(remembered)
+})
+
+test('BUGS_BOT_PYTHON wins over the remembered interpreter', async ($, on) => {
+  const { runs } = mount(on, { verdicts: shellGrant, env: { BUGS_BOT_PYTHON: '/opt/py311/bin/python3' }, files: { '/home/op/.bugs-bot/python': '/elsewhere/python3\n' } })
+  await begin($)
+  await $.tool.call({ tool: TOOL, command: 'list', args: [] })
+  expect(runs[0].argv[0]).toBe('/opt/py311/bin/python3')
+})
+
 test('an exit other than 0 is said with its code, the CLI\'s line kept', async ($, on) => {
   mount(on, { verdicts: shellGrant, run: () => ({ exitCode: 2, stdout: 'deployed=unknown: the launcher\'s word decides\n', stderr: '' }) })
   await begin($)

@@ -5,7 +5,7 @@
 // it (its SIGINT/SIGTERM interrupt the held request). No `cron_restart`: PM2's cron fires twice
 // around a boundary (10:59:59 then 11:00:00, measured 2026-10-02) and its second tick killed the
 // run the first had just started.
-// PM2 runs the version-independent launcher (`/bugs-bot:doctor` installs it), never a path inside the
+// PM2 runs the version-independent launcher (`/bugs-bot:install` installs it, then starts this app), never a path inside the
 // plugin's versioned cache directory: `pm2 save` records the script, and a plugin update removes the
 // old version's directory. A restart then runs the newest installed version.
 const path = require('path');
@@ -22,8 +22,10 @@ module.exports = {
     interpreter: 'none',
     // PM2 otherwise records the directory of the shell that ran `pm2 start`, which may be deleted later.
     cwd: os.homedir(),
-    // Set BUGS_BOT_PYTHON to a pyenv interpreter itself, not its shim: the shim needs a shell
-    // environment PM2 lacks. The launcher runs it; without it, the python3 found on PM2's PATH (3.10 or newer).
+    // The launcher runs the interpreter `/bugs-bot:install` remembered in ~/.bugs-bot/python (found on
+    // the machine, or installed with uv when none was), read at each start: no PM2 env is needed for it.
+    // BUGS_BOT_PYTHON, when set at `pm2 start`, still wins: a pyenv interpreter itself, not its shim
+    // (the shim needs a shell environment PM2 lacks).
     env: process.env.BUGS_BOT_PYTHON ? { BUGS_BOT_PYTHON: process.env.BUGS_BOT_PYTHON } : {},
     autorestart: true,
     // A loop that dies at start (a broken interpreter) must not spin: wait before each restart.

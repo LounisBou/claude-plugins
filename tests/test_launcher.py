@@ -6,6 +6,7 @@ import json
 import os
 import stat
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -226,3 +227,52 @@ def test_a_missing_record_falls_back_to_the_newest_directory(launcher, claude_di
     fake_version(claude_dir, "0.10.0")
 
     assert launch(launcher, claude_dir).stdout.split() == ["0.10.0"]
+
+
+def logging_python(path: Path, log: Path) -> Path:
+    """An interpreter that notes each run in ``log``, then runs the real one."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f'#!/bin/sh\necho "$0" >> "{log}"\nexec "{sys.executable}" "$@"\n')
+    path.chmod(0o755)
+    return path
+
+
+def test_the_interpreter_setup_remembered_is_what_the_launcher_runs(launcher, claude_dir):
+    fake_version(claude_dir, "0.1.0")
+    log = claude_dir.parent / "runs.log"
+    remembered = logging_python(claude_dir.parent / "uvpy" / "python3.12", log)
+    bugs_home = claude_dir.parent / "nohome" / ".bugs-bot"
+    bugs_home.mkdir(parents=True)
+    (bugs_home / "python").write_text(f"{remembered}\n")
+
+    result = launch(launcher, claude_dir, "list")
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "0.1.0 list"
+    assert str(remembered) in log.read_text().splitlines()
+
+
+def test_bugs_bot_python_wins_over_the_remembered_interpreter(launcher, claude_dir):
+    fake_version(claude_dir, "0.1.0")
+    log = claude_dir.parent / "runs.log"
+    chosen = logging_python(claude_dir.parent / "chosen" / "python3", log)
+    bugs_home = claude_dir.parent / "nohome" / ".bugs-bot"
+    bugs_home.mkdir(parents=True)
+    (bugs_home / "python").write_text(f"{claude_dir.parent / 'missing' / 'python3'}\n")
+    env = {"PATH": os.environ["PATH"], "HOME": str(claude_dir.parent / "nohome"), "BUGS_BOT_CLAUDE_DIR": str(claude_dir), "BUGS_BOT_PYTHON": str(chosen)}
+
+    result = subprocess.run([str(launcher), "list"], capture_output=True, text=True, env=env, check=False)
+
+    assert result.returncode == 0, result.stderr
+    assert set(log.read_text().splitlines()) == {str(chosen)}
+
+
+def test_the_cli_on_a_python_older_than_3_10_says_to_run_doctor_instead_of_crashing():
+    entry = Path(__file__).resolve().parent.parent / "bin" / "bugs-bot"
+    code = f"import sys; sys.version_info = (3, 9, 6, 'final', 0); exec(compile(open({str(entry)!r}).read(), 'bugs-bot', 'exec'))"
+
+    result = subprocess.run([sys.executable, "-c", code, "list"], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 1
+    assert "Python 3.10 or newer is needed" in result.stderr and "is 3.9: run /bugs-bot:install" in result.stderr
+    assert "Traceback" not in result.stderr

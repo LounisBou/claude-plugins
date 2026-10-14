@@ -63,6 +63,14 @@ test('the CLI that runs is this plugin\'s own, through the chosen interpreter', 
   expect(runs[0].argv.slice(2)).toEqual(['plugin-path', 'orchestrator'])
 })
 
+test('without BUGS_BOT_PYTHON, the interpreter bin/setup remembered in the bugs home runs the CLI', async ($, on) => {
+  const remembered = '/home/op/.local/share/uv/python/cpython-3.12/bin/python3.12'
+  const { runs } = mount(on, { files: { ...files(), '/srv/bugs/python': `${remembered}\n` }, run: machine(), env: { BUGS_BOT_HOME: '/srv/bugs' } })
+  await begin($)
+  await $.command.run({ command: 'bugs-bot:start', args: '' })
+  expect(runs[0].argv[0]).toBe(remembered)
+})
+
 test('a tab spawned elsewhere is moved right of the launcher, and listed again', async ($, on) => {
   const { runs } = mount(on, {
     files: files(),

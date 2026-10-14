@@ -10,8 +10,9 @@ import pytest
 from conftest import REPO_ROOT
 
 COMMANDS = sorted((REPO_ROOT / "commands").glob("*.md"))
-# The one invocation that is not `bugs-bot ...`: the first doctor run, before the launcher exists.
-BOOTSTRAP = "python3 ${CLAUDE_PLUGIN_ROOT}/bin/bugs-bot doctor"
+# The one invocation that is not `bugs-bot ...`: install, before the launcher and a suitable interpreter exist;
+# the setup finds or installs one, then runs install through it.
+BOOTSTRAP = "sh ${CLAUDE_PLUGIN_ROOT}/bin/setup install"
 BOOTSTRAP_RULE = f"{BOOTSTRAP}:*"
 # start's one other: the iTerm launcher written out in full.
 ITERM_LAUNCHER = "$SCRIPT "
@@ -46,13 +47,13 @@ def rules_of(allowed_tools: str) -> list[str]:
 
 
 def test_the_four_commands_exist():
-    assert {p.stem for p in COMMANDS} >= {"init", "start", "remove", "doctor"}
+    assert {p.stem for p in COMMANDS} >= {"init", "start", "remove", "doctor", "install"}
 
 
 @pytest.mark.parametrize("path", COMMANDS, ids=lambda p: p.stem)
 def test_a_command_may_only_use_the_rules_it_needs(path: Path):
     text = path.read_text()
-    allowed = ALLOWED_RULES | ({BOOTSTRAP_RULE} if path.stem == "doctor" else set())
+    allowed = ALLOWED_RULES | ({BOOTSTRAP_RULE} if path.stem == "install" else set())
     # a git rule is justified only by a git command line in the file
     if any(line.startswith("git ") for line in code_lines(text)):
         allowed |= {"git:*"} if path.stem == "init" else set()
@@ -69,7 +70,7 @@ def test_every_command_line_is_one_plain_bugs_bot_invocation(path: Path):
     assert text.startswith("---\ndescription: ")
 
     for line in code_lines(text):
-        starts = {"doctor": ("bugs-bot ", BOOTSTRAP + " "), "start": ("bugs-bot ", ITERM_LAUNCHER)}.get(path.stem, ("bugs-bot ",))
+        starts = {"install": (BOOTSTRAP,), "start": ("bugs-bot ", ITERM_LAUNCHER)}.get(path.stem, ("bugs-bot ",))
         assert line.startswith(starts), f"{path.name}: {line!r} is not a bugs-bot command"
         for token in FORBIDDEN:
             assert token not in line, f"{path.name}: {line!r} carries {token!r}"
@@ -77,8 +78,8 @@ def test_every_command_line_is_one_plain_bugs_bot_invocation(path: Path):
 
 
 def test_the_guard_reads_what_it_guards():
-    assert len(COMMANDS) == 4
-    assert all(code_lines(p.read_text()) for p in COMMANDS if p.stem in {"init", "doctor", "start"})
+    assert len(COMMANDS) == 5
+    assert all(code_lines(p.read_text()) for p in COMMANDS if p.stem in {"init", "doctor", "start", "install"})
 
 
 @pytest.mark.parametrize("phrase", [
@@ -129,3 +130,21 @@ def test_the_skill_names_both_tokens_and_sets_up_both_channels():
     assert "SLACK_BOT_TOKEN" in text and "TELEGRAM_BOT_TOKEN" in text
     assert "Slack" in setup and "/invite" in setup
     assert "chat.update" in text
+
+
+def test_init_asks_for_a_platforms_token_only_when_it_is_missing_and_never_in_the_session():
+    text = (REPO_ROOT / "commands" / "init.md").read_text()
+
+    assert "bugs-bot token --channel <platform>" in code_lines(text)
+    assert "Exit 0: it is there; ask nothing about it" in text
+    assert "`bugs-bot token --channel <platform> --set` himself in a\n   terminal of his own" in text
+    assert "Never ask him to paste the token here" in text
+
+
+def test_install_asks_nothing_and_doctor_changes_nothing():
+    install = (REPO_ROOT / "commands" / "install.md").read_text()
+    doctor = (REPO_ROOT / "commands" / "doctor.md").read_text()
+
+    assert "It asks nothing" in install and "Bash(bugs-bot:*)" in install
+    assert code_lines(doctor) == ["bugs-bot doctor"]
+    assert "/bugs-bot:install" in doctor

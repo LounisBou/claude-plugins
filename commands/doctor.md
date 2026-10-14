@@ -1,40 +1,37 @@
 ---
-description: Check this machine's bugs-bot setup and install the fixed `bugs-bot` launcher
-allowed-tools: Bash(python3 ${CLAUDE_PLUGIN_ROOT}/bin/bugs-bot doctor:*), Bash(bugs-bot:*)
+description: Check this machine's bugs-bot setup; it changes nothing
+allowed-tools: Bash(bugs-bot:*)
 ---
 
-Check the setup and report the verdict.
+Check the setup and report the verdict. Doctor only reads: it installs, starts
+and writes nothing. Whatever is missing at the machine level is set up by
+`/bugs-bot:install`; a project's token and group by `/bugs-bot:init`.
 
-1. If `bugs-bot` is not yet on the PATH (the first run), the launcher does not
-   exist: run it through the plugin itself, which also installs the launcher:
+1. If `bugs-bot` is not on the PATH, this machine was never installed: say so,
+   point the operator to `/bugs-bot:install`, and stop. Otherwise run:
 
    ```
-   python3 ${CLAUDE_PLUGIN_ROOT}/bin/bugs-bot doctor --install-launcher
+   bugs-bot doctor
    ```
 
-   Later runs are `bugs-bot doctor`. An installed launcher whose text differs (an update changed it) is
-   replaced by `bugs-bot doctor --install-launcher`, not by a plain `bugs-bot doctor`.
 2. Report each line as printed (`ok` or `FAIL`, the check and its detail), then
    what to do about each failure:
-   - `python`: Python 3.10 or newer is needed.
-   - `token`: `TELEGRAM_BOT_TOKEN` goes in `~/.bugs-bot/.env`; never print it.
-   - `slack token`: `SLACK_BOT_TOKEN` (`xoxb-…`) goes in the same file; never print it.
+   - `python`, `interpreter`, `launcher`, `pull`: `/bugs-bot:install`. It finds or
+     installs a Python 3.10+, installs the launcher, and leaves exactly one
+     `bugs-bot-pull` under PM2 (a record on a versioned path or in a throwaway
+     directory is replaced). When `pull` names two processes, say which pids:
+     the operator stops the one PM2 does not run.
+   - `token`: `TELEGRAM_BOT_TOKEN` is missing from `~/.bugs-bot/.env`:
+     `/bugs-bot:init` asks for it the first time a project uses Telegram (the
+     operator runs `bugs-bot token --channel telegram --set` in his own terminal).
+     Never print it.
+   - `slack token`: `SLACK_BOT_TOKEN` (`xoxb-…`), the same way, with
+     `--channel slack`. Never print it.
    - `telegram bot` / `slack bot`: the platform refused the token (Telegram's
-     `getMe`, Slack's `auth.test`): the operator puts a valid one in the file.
+     `getMe`, Slack's `auth.test`): the operator replaces it in the file.
    - `registry`: the file `~/.bugs-bot/projects.json` is damaged; say so, do not
      edit it.
-   - `pull`: exactly one Pull process must run, under PM2; none or two is a fault. When it says PM2
-     recorded a versioned path, print its remedy as given: the operator runs `bugs-bot doctor
-     --install-launcher`, then `pm2 delete bugs-bot-pull`, then `pm2 start` of the plugin's
-     `pm2.config.js` with `BUGS_BOT_PYTHON` set to a Python 3.10+, then `pm2 save`. When it says PM2
-     recorded a working directory (not the home directory: the shell that ran `pm2 start` was in a
-     directory that may be deleted), print its remedy as given: the operator runs `cd ~`, then
-     `pm2 delete bugs-bot-pull`, then the same `pm2 start` and `pm2 save`. When it names both the
-     path and the directory, one remedy covers both: `bugs-bot doctor --install-launcher` first, then
-     those steps.
    - `orchestrator`: install the orchestrator plugin, 0.49 or later (`/plugin marketplace update lounisbou`, `/plugin update orchestrator@lounisbou`, then restart); `/bugs-bot:start` needs it, and `gate --measure` reads the measure file 0.49 writes.
-   - `launcher`: run the first-run line above; a launcher that differs is replaced by
-     `bugs-bot doctor --install-launcher`.
    - `allow rule`: the operator adds `Bash(bugs-bot:*)` himself, through
      `/permissions → Allow → Bash(bugs-bot:*)`. A session cannot change its own
      permissions, and doctor never edits a settings file: print the line for him.

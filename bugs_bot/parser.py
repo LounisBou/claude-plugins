@@ -6,6 +6,7 @@ import argparse
 
 from bugs_bot.agent import KINDS as REPORT_KINDS, WAIT_INTERVAL, WAIT_TIMEOUT
 from bugs_bot.channels import KINDS
+from bugs_bot.project import DEFAULT_CHANNEL
 from bugs_bot.watch import POLL_TIMEOUT
 
 
@@ -60,8 +61,11 @@ def build_parser(description: str) -> argparse.ArgumentParser:
     plugin_path = sub.add_parser("plugin-path", help="print where a plugin of the lounisbou marketplace is installed")
     plugin_path.add_argument("name", help="the plugin's name, such as orchestrator")
 
-    doctor = sub.add_parser("doctor", help="check the setup of this machine")
-    doctor.add_argument("--install-launcher", action="store_true", help="install the fixed launcher first")
+    sub.add_parser("doctor", help="check the setup of this machine; nothing is changed")
+    sub.add_parser("install", help="set this machine up once: the fixed launcher, the single Pull under PM2")
+    token = sub.add_parser("token", help="whether a platform's bot token is in the .env file; --set asks for it once")
+    token.add_argument("--channel", choices=KINDS, default=DEFAULT_CHANNEL, help=f"the platform (default {DEFAULT_CHANNEL})")
+    token.add_argument("--set", action="store_true", help="when missing, read it (hidden prompt, or stdin) and write it")
     sub.add_parser("remove", parents=[project], help="unregister a project (its data and project file are kept)")
     sub.add_parser("list", parents=[project], help="list reports with status new")
     sub.add_parser("show", parents=[project], help="print a report").add_argument("id")
