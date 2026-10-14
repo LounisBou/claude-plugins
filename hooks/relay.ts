@@ -68,10 +68,14 @@ export function clearedWait<T extends PriorWait>(prior: T): T & { waiting: null;
   return { ...prior, waiting: null, last_waiting: prior.waiting ?? prior.last_waiting ?? null }
 }
 
-// The deduplication key: the same wait (kind, blocks and question) is reported once,
-// a new question is reported. FNV-1a over the text, enough to tell two waits apart.
+// The deduplication key: a wait is its kind and its line, reported once however the turns
+// it spans read above that line; a new line is a new wait. A delivery, or a line saying
+// nothing, keeps the turn's text in the key: a second delivery is news. FNV-1a over the
+// text, enough to tell two waits apart.
 export function fingerprint(wait: Wait): string {
-  const text = `${wait.kind}\n${'blocks' in wait ? wait.blocks : ''}\n${wait.question}`
+  const blocks = 'blocks' in wait ? wait.blocks : ''
+  const said = wait.kind === 'delivered' || !blocks ? wait.question : ''
+  const text = `${wait.kind}\n${blocks}\n${said}`
   let hash = 0x811c9dc5
   for (let i = 0; i < text.length; i++) {
     hash ^= text.charCodeAt(i)

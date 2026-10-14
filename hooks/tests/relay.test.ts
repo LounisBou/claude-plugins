@@ -39,12 +39,14 @@ test('the row fields: the wait since now, kept while the same wait lasts', () =>
   expect(waitPatch(row, other, '2026-10-14T10:05:00.000Z').waiting_since).toBe('2026-10-14T10:05:00.000Z')
 })
 
-test('the fingerprint tells a new question from the same wait', () => {
+test('the fingerprint is the wait and its line, never the progress written above it', () => {
   const a = parseWait(answerOf(QUESTION, 'waiting: operator — blocks: phase 3'))!
-  const b = parseWait(answerOf(QUESTION, 'waiting: operator — blocks: phase 3'))!
-  const c = parseWait(answerOf('Another question?', 'waiting: operator — blocks: phase 3'))!
+  const b = parseWait(answerOf('The review of #12 has started.', 'waiting: operator — blocks: phase 3'))!
+  const c = parseWait(answerOf(QUESTION, 'waiting: operator — blocks: phase 4'))!
   expect(fingerprint(a)).toBe(fingerprint(b))
   expect(fingerprint(a)).not.toBe(fingerprint(c))
+  expect(fingerprint({ kind: 'delivered', blocks: 'PR #12', question: 'head abc' }))
+    .not.toBe(fingerprint({ kind: 'delivered', blocks: 'PR #12', question: 'head def' }))
 })
 
 test('the report: a header naming the session and its wait, then the question, cut past the cap and said', () => {
@@ -165,15 +167,16 @@ test('an operator wait lands in the row and is sent to the coordinator once', as
   expect(fx.sent[0].text).toBe(`[module] Orch : belt waits for the operator since ${row.waiting_since} — blocks: phase 3\nreply with SendMessage to: Orch : belt\n\n${QUESTION}`)
 })
 
-test('the same wait is never sent twice; a new question is', async () => {
+test('the same wait is never sent twice, whatever progress the turns between report; a new line is', async () => {
   const chains = mounted()
   const fx = fake()
   const same = turnEnd(answerOf(QUESTION, 'waiting: operator — blocks: phase 3'))
   await drive(chains, 'turn.complete', fx.dollar, same)
   await drive(chains, 'turn.start', fx.dollar, { text: '' })
   await drive(chains, 'turn.complete', fx.dollar, same)
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('The review of #12 has started.', 'waiting: operator — blocks: phase 3')))
   expect(fx.sent.length).toBe(1)
-  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('A new question?', 'waiting: operator — blocks: phase 3')))
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('A new question?', 'waiting: operator — blocks: phase 4')))
   expect(fx.sent.length).toBe(2)
   expect(fx.sent[1].text).toContain('A new question?')
 })
