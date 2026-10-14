@@ -474,7 +474,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         await logLine($, `stop gate: the session's name cannot be read on ${tty}`)
         return next(e)
       }
-      if (!name.startsWith('Orch :')) return next(e)
+      if (roleOf(name) !== 'orchestrator') return next(e)
       const state = await stateDir($)
       const root = $.plugin.root   // never $.env: the module's environment has no CLAUDE_PLUGIN_ROOT
       let swept = false

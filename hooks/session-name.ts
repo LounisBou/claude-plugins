@@ -33,13 +33,14 @@ export type ReadBlock = (path: string, index: number) => Promise<Uint8Array>
 export type ReadRecord = (pid: string) => Promise<string | null>
 export type HostNames = () => Promise<readonly string[]>
 
+// The prefix names the role, with or without the space before the colon: a session the
+// operator renamed « Orch: x » by hand is an orchestrator all the same.
+const ROLES = { Orch: 'orchestrator', Agent: 'agent', Audit: 'auditor', Coord: 'coordinator' } as const
+
 export function roleOf(name: string | null): 'orchestrator' | 'agent' | 'auditor' | 'coordinator' | null {
   if (!name) return null
-  if (name.startsWith('Orch :')) return 'orchestrator'
-  if (name.startsWith('Agent :')) return 'agent'
-  if (name.startsWith('Audit :')) return 'auditor'
-  if (name.startsWith('Coord :')) return 'coordinator'
-  return null
+  const prefix = /^(Orch|Agent|Audit|Coord) ?:/.exec(name)?.[1]
+  return prefix ? ROLES[prefix as keyof typeof ROLES] : null
 }
 
 export function isTitle(line: string): boolean {
