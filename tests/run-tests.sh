@@ -388,6 +388,9 @@ check "an existing test's assertion is never edited to pass: brief rule, templat
 check "a TODO item of a pull request description is a task-list checkbox" "1" \
   "$(grep -c 'a TODO item is a task-list checkbox, `- \[ \] <step>`, never a bare `- ` bullet' "$ROOT/skills/orchestrator/references/briefs.md")"
 
+check "a TODO item stands alone and is one action: brief rule, its own briefs, phase template" "yes|yes|yes|yes" \
+  "$(spells "$ORCH_REFS/briefs.md" '**A TODO item stands alone and is one action**: written in full — the file, the value before and after, the host or environment — never by reference to another item')|$(spells "$ORCH_REFS/briefs.md" 'an edit and the step that applies it (reload, restart, deploy, migrate) are two checkboxes, never joined by « then » or « and run »')|$(spells "$ORCH_REFS/briefs.md" 'a brief names each TODO step the same way, in full, never by reference to another pull request or item')|$(spells "$ROOT/templates/agent-phase-brief.md" 'Each TODO item stands alone and is one action: written in full, never « the same edit », and an edit and its reload or restart are two checkboxes.')"
+
 echo "== dispatch record =="
 
 # The routing rule says a tier drop that costs a second corrective round is reverted for

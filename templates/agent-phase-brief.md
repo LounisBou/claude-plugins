@@ -70,7 +70,7 @@ Non-goals:
 ## 7. Delivery
 
 - Draft PR, title `{{PR_TITLE}}`, base `{{BASE_BRANCH}}`.
-- Description: {{PR_DESCRIPTION_SHAPE}} — its codified sections and nothing more: nothing about E2E.
+- Description: {{PR_DESCRIPTION_SHAPE}} — its codified sections and nothing more: nothing about E2E. Each TODO item stands alone and is one action: written in full, never « the same edit », and an edit and its reload or restart are two checkboxes.
 - Figures (counts, sizes, timings) are written once, on the final head.
 - The delivery ends at the push: the suite green locally on the final head, pushed, the pull request opened, then the final report, then the stand-down. You never watch the pull request's checks, never poll them and never wait for the merge: the orchestrator owns the CI watch, and a check that fails after your delivery is corrected by a fresh session. A project whose method opts into auto-merge says here how the pull request is delivered.
 - Final report with the pull request number, the head sha and the suite's result on that head; you are then stood down.
