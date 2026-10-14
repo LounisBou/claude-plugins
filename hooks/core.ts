@@ -115,8 +115,9 @@ export function ignoreVerdict(mode: 'local' | 'committed', docsGiven: boolean, d
 // ── The preflight ────────────────────────────────────────────────────────────
 
 // scripts/preflight.sh's two checks and its exact lines: every required plugin
-// set to true in the merged enabledPlugins, then a repository on a branch.
-export function preflightLines(enabledPlugins: unknown, repo: { inside: boolean; branch: string }): string[] {
+// set to true in the merged enabledPlugins, then a repository on a branch. A
+// null repo is --deps-only: install and doctor need nothing from the project.
+export function preflightLines(enabledPlugins: unknown, repo: { inside: boolean; branch: string } | null): string[] {
   const enabled = enabledPlugins && typeof enabledPlugins === 'object' ? enabledPlugins as Record<string, unknown> : {}
   const lines: string[] = []
   for (const dep of REQUIRED_PLUGINS) {
@@ -124,7 +125,7 @@ export function preflightLines(enabledPlugins: unknown, repo: { inside: boolean;
     lines.push(`error: required plugin not installed or not enabled: ${dep}`)
     lines.push(`fix:   /plugin install ${dep}   then enable it in /plugin`)
   }
-  if (lines.length > 0) return lines
+  if (lines.length > 0 || repo === null) return lines
   if (!repo.inside || repo.branch === '') {
     return ['error: not a git repository with a current branch', 'fix:   run this from inside a git repository, on a branch']
   }
@@ -132,9 +133,9 @@ export function preflightLines(enabledPlugins: unknown, repo: { inside: boolean;
 }
 
 // What /implement:install and /implement:doctor print.
-export function doctorText(lines: readonly string[], branch: string): string {
+export function doctorText(lines: readonly string[]): string {
   if (lines.length > 0) return lines.join('\n')
-  return `ready: ${REQUIRED_PLUGINS.join(', ')} enabled, git repository on ${branch}`
+  return `ready: ${REQUIRED_PLUGINS.join(', ')} enabled`
 }
 
 export const PREFLIGHT_PASSED = 'Preflight: passed'

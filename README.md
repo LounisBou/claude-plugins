@@ -18,8 +18,10 @@ stops before doing anything and prints the command that fixes it.
 /implement:install
 ```
 
-`/implement:install` writes nothing. Run `/implement:doctor` any time to repeat
-the check.
+`/implement:install` writes nothing and checks only the dependency, so it runs
+from any directory. Run `/implement:doctor` any time to repeat the check. The
+git repository is checked by each of the five commands below when it starts:
+outside one, it stops with an `error:`/`fix:` pair.
 
 One thing the target repository has to provide: in the default mode,
 `docs/features` and `ROADMAP.md` must be ignored there, see `.implement.json`

@@ -86,7 +86,14 @@ describe('the preflight', () => {
   const repo = { inside: true, branch: 'main' }
   test('enabled and in a repository on a branch passes', () => {
     expect(preflightLines({ 'superpowers@claude-plugins-official': true }, repo)).toEqual([])
-    expect(doctorText([], 'main')).toBe('ready: superpowers@claude-plugins-official enabled, git repository on main')
+    expect(doctorText([])).toBe('ready: superpowers@claude-plugins-official enabled')
+  })
+  test('the dependency-only form passes outside a repository and still names a missing plugin', () => {
+    expect(preflightLines({ 'superpowers@claude-plugins-official': true }, null)).toEqual([])
+    expect(preflightLines({}, null)).toEqual([
+      'error: required plugin not installed or not enabled: superpowers@claude-plugins-official',
+      'fix:   /plugin install superpowers@claude-plugins-official   then enable it in /plugin',
+    ])
   })
   test('disabled, absent or unreadable names the plugin and its fix', () => {
     const lines = [

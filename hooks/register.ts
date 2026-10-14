@@ -54,12 +54,14 @@ async function readText($: any, path: string): Promise<string | null> {
   }
 }
 
-// The preflight, scripts/preflight.sh's checks over the merged settings.
-async function preflight($: any): Promise<{ lines: string[]; branch: string }> {
+// The preflight, scripts/preflight.sh's checks over the merged settings. With
+// depsOnly, its --deps-only form: the repository is not looked at.
+async function preflight($: any, depsOnly = false): Promise<string[]> {
   const settings = await $.settings.read()
+  if (depsOnly) return preflightLines(settings?.enabledPlugins, null)
   const inside = (await git($, ['rev-parse', '--is-inside-work-tree'])).code === 0
   const branch = inside ? (await git($, ['branch', '--show-current'])).out : ''
-  return { lines: preflightLines(settings?.enabledPlugins, { inside, branch }), branch }
+  return preflightLines(settings?.enabledPlugins, { inside, branch })
 }
 
 // Everything the skills' derivation blocks compute, read once.
@@ -161,10 +163,10 @@ export function register(on: any) {
   }).catch(async () => ({ deny: 'the implement state tool failed; derive the state with the bash blocks of the skill' }))
 
   // /implement:install and /implement:doctor, answered without a model turn.
+  // They check the dependency only; the skills check the repository.
   for (const command of ['implement:install', 'implement:doctor']) {
     on('command.run', { command }, async ($: any) => {
-      const { lines, branch } = await preflight($)
-      return { text: doctorText(lines, branch) }
+      return { text: doctorText(await preflight($, true)) }
     }).catch(async ($: any, e: any, next: any) => next(e))
   }
 
@@ -179,7 +181,7 @@ export function register(on: any) {
     const skill = skillOf(String(e.skill ?? ''))
     if (skill === null) return next(e)
     await writeGuard($, armedBy(await readGuard($), skill))
-    const { lines } = await preflight($)
+    const lines = await preflight($)
     const reads = skill === 'phase' || skill === 'check' || skill === 'close'
     const line = lines.length === 0 && reads ? stateLine(await snapshot($)) : null
     if (skill === 'phase') await refreshBand($)

@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 # Refuse to run when the dependency is missing or the repository is absent, so
 # no skill degrades silently.
+#
+# --deps-only checks the dependency alone: installing the plugin needs nothing
+# from the working directory. The skills, which work on a project, call it with
+# no argument and get the repository check as well.
 set -u
+
+DEPS_ONLY=0
+[ "${1:-}" = "--deps-only" ] && DEPS_ONLY=1
 
 # Scopes in increasing precedence: user, project, local. PREFLIGHT_SETTINGS, when
 # set, replaces all of them with one file (test override).
@@ -60,7 +67,7 @@ if [ -n "$missing" ]; then
 fi
 
 # ── Repository ────────────────────────────────────────────────
-if [ "${PREFLIGHT_SKIP_GIT:-0}" != "1" ]; then
+if [ "$DEPS_ONLY" != "1" ] && [ "${PREFLIGHT_SKIP_GIT:-0}" != "1" ]; then
   git rev-parse --is-inside-work-tree >/dev/null 2>&1 && [ -n "$(git branch --show-current 2>/dev/null)" ] \
     || die "not a git repository with a current branch" "run this from inside a git repository, on a branch" 13
 fi

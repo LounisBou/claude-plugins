@@ -38,14 +38,16 @@ check_status() {
 echo "== manifests =="
 MAN="$ROOT/.claude-plugin/plugin.json"; MKT="$ROOT/.claude-plugin/marketplace.json"
 check "plugin is named implement" "implement" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$MAN")"
-check "manifest version" "0.2.0" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$MAN")"
-check "marketplace and manifest agree on the version" "0.2.0 0.2.0" \
+check "manifest version" "0.3.0" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$MAN")"
+check "marketplace and manifest agree on the version" "0.3.0 0.3.0" \
   "$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["metadata"]["version"], m["plugins"][0]["version"])' "$MKT")"
 check "descriptions are identical" "True" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["description"]==json.load(open(sys.argv[2]))["plugins"][0]["description"])' "$MAN" "$MKT")"
 check "the only dependency is superpowers" "['superpowers@claude-plugins-official']" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dependencies"])' "$MAN")"
 check "both commands run the preflight" "2" "$(grep -l 'scripts/preflight.sh' "$ROOT"/commands/*.md | wc -l | tr -d ' ')"
+check "both commands check the dependency only" "2" "$(grep -l 'scripts/preflight.sh" --deps-only$' "$ROOT"/commands/*.md | wc -l | tr -d ' ')"
+check "no command description asks for a git repository" "0" "$(grep -il '^description:.*git repository' "$ROOT"/commands/*.md | wc -l | tr -d ' ')"
 
 echo "== preflight =="
 PF="$ROOT/scripts/preflight.sh"
@@ -64,6 +66,13 @@ check "malformed settings is one error line and no traceback" "1 0" \
   "$(out=$(pf 2>&1 >/dev/null); printf '%s %s' "$(printf '%s\n' "$out" | grep -c '^error:')" "$(printf '%s\n' "$out" | grep -c Traceback)")"
 settings '{"enabledPlugins":{"superpowers@claude-plugins-official":true}}'
 check_status "outside a git repository exits 13" 13 env HOME="$WORK" PREFLIGHT_SETTINGS="$WORK/cfg/settings.json" bash -c "cd '$WORK' && bash '$PF'"
+check "outside a git repository, a skill's preflight prints its error and fix" \
+  "error: not a git repository with a current branch⏎fix:   run this from inside a git repository, on a branch" \
+  "$(env HOME="$WORK" PREFLIGHT_SETTINGS="$WORK/cfg/settings.json" bash -c "cd '$WORK' && bash '$PF'" 2>&1 >/dev/null | tr '\n' '⏎' | sed 's/⏎$//')"
+check_status "outside a git repository, --deps-only (install, doctor) passes" 0 env HOME="$WORK" PREFLIGHT_SETTINGS="$WORK/cfg/settings.json" bash -c "cd '$WORK' && bash '$PF' --deps-only"
+settings '{"enabledPlugins":{}}'
+check_status "outside a git repository, --deps-only still exits 10 on a missing dependency" 10 env HOME="$WORK" PREFLIGHT_SETTINGS="$WORK/cfg/settings.json" bash -c "cd '$WORK' && bash '$PF' --deps-only"
+settings '{"enabledPlugins":{"superpowers@claude-plugins-official":true}}'
 
 # Scopes: user (CLAUDE_CONFIG_DIR), project, local. Later wins.
 SP='{"enabledPlugins":{"superpowers@claude-plugins-official":true}}'

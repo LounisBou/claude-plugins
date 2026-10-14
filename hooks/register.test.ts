@@ -82,8 +82,19 @@ test('install and doctor answer from the merged settings without a model turn', 
   await world(on, { enabled: { 'superpowers@claude-plugins-official': true } })
   await start($)
   expect((await $.command.run({ command: 'implement:doctor', args: '' })).text)
-    .toBe('ready: superpowers@claude-plugins-official enabled, git repository on feat/demo')
+    .toBe('ready: superpowers@claude-plugins-official enabled')
   expect((await $.command.run({ command: 'implement:install', args: '' })).text).toContain('ready:')
+})
+
+test('install and doctor pass outside a git repository, where a skill refuses', async ($, on) => {
+  await world(on, { inside: false })
+  await start($)
+  for (const command of ['implement:install', 'implement:doctor']) {
+    expect((await $.command.run({ command, args: '' })).text).toBe('ready: superpowers@claude-plugins-official enabled')
+  }
+  const { text } = await skill($, 'feature')
+  expect(text).toContain('error: not a git repository with a current branch')
+  expect(text).toContain('fix:   run this from inside a git repository, on a branch')
 })
 
 test('doctor names a disabled dependency with its fix', async ($, on) => {
