@@ -2981,6 +2981,48 @@ for WKFLAG in --successor --auditor '--right-of self' --title-free '--tier deep'
 done
 check "a wake beside --coordinator-successor is refused" "1" "$(crd --wake --coordinator-successor --title 'Orch : x' --model m >/dev/null 2>&1; echo $?)"
 check "rotate refuses --wake" "1" "$(crdrot --old-tty /dev/ttys901 --wake | grep -c -- '--wake is not a rotation')"
+# A new orchestrator opened on the operator's order: by a coordinator or an orchestrator only,
+# read by the caller's name, right of it, in no chain, under remote control, on the deep tier
+# unless told. An agent, an auditor or a session with no name never opens one.
+OPSTATE="$WORK/opstate"; mkdir -p "$OPSTATE/chains"; OPPS="$WORK/ps-open.txt"
+opn() { local caller="$1"; shift
+  if [ "$caller" = - ]; then printf '/dev/ttys900 /opt/x/claude\n' > "$OPPS"
+  else printf '/dev/ttys900 /opt/x/claude --name %s\n' "$caller" > "$OPPS"; fi
+  ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="${OPST:-$OPSTATE}" CLAUDE_CONFIG_DIR="$CRDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
+  ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-crd ORCHESTRATOR_PS_TABLE="$OPPS" ORCHESTRATOR_TIER_DEEP=deep-model \
+  bash "$AGENT" spawn --dir "$WORK" --prompt p "$@" 2>&1; }
+OPOUT=$(opn 'Coord : ops' --open --title 'Orch : sync logs')
+OPLAUNCH=$(printf '%s' "$OPOUT" | sed -n 's/^launch=//p')
+check "an opening by the coordinator runs under its title, on the deep tier, under remote control" "1|1|1|1" \
+  "$(printf '%s' "$OPLAUNCH" | grep -c -- "--name 'Orch : sync logs'")|$(printf '%s' "$OPLAUNCH" | grep -c -- '--model deep-model')|$(printf '%s' "$OPLAUNCH" | grep -c -- "--remote-control 'Orch : sync logs'")|$(printf '%s' "$OPOUT" | grep -c '^open=yes$')"
+check "an opened orchestrator lands right of its caller and joins no chain" "1|1|1" \
+  "$(printf '%s' "$OPOUT" | grep -c '^side=right$')|$(printf '%s' "$OPOUT" | grep -c '^anchor=self$')|$(printf '%s' "$OPOUT" | grep -c '^chain=none$')"
+check "an orchestrator opens one too, and a model it names wins over the tier" "1|1" \
+  "$(opn 'Orch : gateway' --open --title 'Orch : x' | grep -c '^open=yes$')|$(opn 'Orch : gateway' --open --title 'Orch : x' --model a-model | sed -n 's/^launch=//p' | grep -c -- '--model a-model')"
+check "an agent, an auditor or a session with no name never opens one" "1|1|1|1" \
+  "$(opn 'Agent : x' --open --title 'Orch : x' >/dev/null 2>&1; echo $?)|$(opn 'Agent : x' --open --title 'Orch : x' | grep -c 'an agent never opens an orchestrator')|$(opn 'Audit : x' --open --title 'Orch : x' | grep -c 'an agent never opens an orchestrator')|$(opn - --open --title 'Orch : x' | grep -c "this session reads 'no name'")"
+OPREC="$WORK/opstate-rec"; mkdir -p "$OPREC/chains"
+printf '{"name":"Coord : hand","tty":"/dev/ttys900"}\n' > "$OPREC/coordinator.json"
+check "a coordinator opened by hand, named only by its own record, opens one" "1" \
+  "$(OPST="$OPREC" opn - --open --title 'Orch : x' | grep -c '^open=yes$')"
+check "an opening needs an orchestrator's title, with no reference" "1|1" \
+  "$(opn 'Coord : ops' --open --title 'Agent : x' | grep -c -- "--open needs the new orchestrator's name")|$(opn 'Coord : ops' --open --title 'Orch : x [abc123]' >/dev/null 2>&1; echo $?)"
+for OPFLAG in --successor --auditor --wake '--right-of self' '--left-of /dev/ttys555' --title-free --resident --no-remote-control; do
+  # shellcheck disable=SC2086 # the flag and its value are two words on purpose
+  check "an opening refuses $OPFLAG" "1|0" "$(opn 'Coord : ops' --open --title 'Orch : x' $OPFLAG >/dev/null 2>&1; echo $?)|$(opn 'Coord : ops' --open --title 'Orch : x' $OPFLAG | grep -c '^launch=')"
+done
+check "rotate refuses --open" "1" "$(crdrot --old-tty /dev/ttys901 --open | grep -c -- '--open is not a rotation')"
+check "a tier the opening names wins over the deep default" "1" \
+  "$(ORCHESTRATOR_TIER_STANDARD=std-model opn 'Coord : ops' --open --title 'Orch : x' --tier standard | sed -n 's/^launch=//p' | grep -c -- '--model std-model')"
+# Outside a dry run the caller is read from the real process table: the suite's two
+# stand-ins would let any session name itself the coordinator. The directory does not
+# exist, so a launcher that let the stand-ins through still stops short of a tab.
+check "outside a dry run, an opening refuses the suite's stand-ins for the caller" "1|1" \
+  "$(env -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_STATE_DIR="$OPSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$OPPS" bash "$AGENT" spawn --open --title 'Orch : x' --dir "$WORK/no-such-dir" --prompt p 2>&1 | grep -c 'are for tests and dry runs')|$(env -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_STATE_DIR="$OPSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 bash "$AGENT" spawn --open --title 'Orch : x' --dir "$WORK/no-such-dir" --prompt p 2>&1 | grep -c 'are for tests and dry runs')"
+check "the coordination skill opens on his order, by the bare command, and relays it to another machine" "yes|yes|yes|yes|yes" \
+  "$(spells "$ROOT/skills/coordination/SKILL.md" 'operator told you to open, pause or wake')|$(spells "$ROOT/skills/coordination/SKILL.md" 'spawn --open --title "Orch : <subject>"')|$(spells "$ROOT/skills/coordination/SKILL.md" 'answer that he should do it himself')|$(spells "$ROOT/skills/coordination/SKILL.md" 'Run it alone, never chained to another command')|$(spells "$ROOT/skills/coordination/SKILL.md" 'Never ask a session to change')"
+check "an orchestrator runs a relayed opening and never edits its own permissions" "yes|yes|yes" \
+  "$(spells "$ORCH_REFS/lifecycle.md" "**An opening, on the operator's word.**")|$(spells "$ORCH_REFS/lifecycle.md" 'iterm-agent.sh spawn --open --title "Orch : <subject>"')|$(spells "$ORCH_REFS/lifecycle.md" 'You never edit your own permissions')"
 check "an agent's tab still rotates without --force" "1" "$(crdrot --old-tty /dev/ttys901 | tail -1 | grep -c '^close=/dev/ttys901')"
 # The first coordinator is opened by hand and names itself through a rename, which never
 # reaches argv: named only in the host registry, or only in the coordinator's own record,
@@ -5250,6 +5292,37 @@ for f in hooks-module.log hooks-module.log.1 hooks-module.log.lock; do
   printf 'line\n' > "$H/.claude/claude-orchestrator/$f"
 done
 uninst "$H" >/dev/null 2>&1
+# --allow-open writes the one rule that lets the launcher's opening through the host's
+# review, on the operator's flag only and once; without it nothing is written.
+OPSUFFIX='/skills/iterm-agents/scripts/iterm-agent.sh spawn --open *)'
+OPRULE="Bash($(cd "$ROOT" && pwd)$OPSUFFIX"
+HO="$WORK/homeopen"; mkdir -p "$HO/.claude"; stub_venv "$HO"
+printf '{"permissions":{"allow":["Bash(ls)"]}}\n' > "$HO/.claude/settings.json"
+check "without --allow-open the rule is never written, and the installer says who allows it" "0|1" \
+  "$(inst "$HO" >/dev/null 2>&1; jq --arg r "$OPRULE" '[.permissions.allow[] | select(. == $r)] | length' "$HO/.claude/settings.json")|$(inst "$HO" 2>&1 | grep -c 'the operator allows it with ./install.sh --allow-open')"
+check "a dry run with --allow-open says it and writes nothing" "1|0" \
+  "$(inst "$HO" --dry-run --allow-open 2>&1 | grep -c 'dry-run. the opening of an orchestrator allowed')|$(jq --arg r "$OPRULE" '[.permissions.allow[] | select(. == $r)] | length' "$HO/.claude/settings.json")"
+check "with --allow-open the rule is written once, beside the rules already there" "[\"Bash(ls)\",\"$OPRULE\"]" \
+  "$(inst "$HO" --allow-open >/dev/null 2>&1; inst "$HO" --allow-open >/dev/null 2>&1; jq -c '.permissions.allow' "$HO/.claude/settings.json")"
+check "a run after it says it is allowed, and a plain run no longer asks for it" "1|0" \
+  "$(inst "$HO" --allow-open 2>&1 | grep -c 'is already allowed')|$(inst "$HO" 2>&1 | grep -c 'allows it with')"
+HO2="$WORK/homeopen2"; mkdir -p "$HO2/.claude"; stub_venv "$HO2"
+check "with no settings.json yet, --allow-open creates it with the rule alone" "[\"$OPRULE\"]" \
+  "$(inst "$HO2" --allow-open >/dev/null 2>&1; jq -c '.permissions.allow' "$HO2/.claude/settings.json" 2>/dev/null)"
+check "an unknown option is refused before anything is done" "2" "$(inst "$HO" --bogus >/dev/null 2>&1; echo $?)"
+# A rule granted an earlier version, beside this one in the same cache directory, follows
+# the plugin to this path at a plain install; a rule for a launcher elsewhere is left alone.
+HO3="$WORK/homeopen3"; mkdir -p "$HO3/.claude"; stub_venv "$HO3"
+OPOLD="Bash($(dirname "$(cd "$ROOT" && pwd)")/0.0.1-old$OPSUFFIX"; OPELSE="Bash(/elsewhere/x$OPSUFFIX"
+jq -n --arg a "$OPOLD" --arg b "$OPELSE" '{permissions: {allow: ["Bash(ls)", $a, $b]}}' > "$HO3/.claude/settings.json"
+check "a rule granted an earlier version names this one after a plain install, one of it, the rest untouched" \
+  "$(jq -nc --arg b "$OPELSE" --arg r "$OPRULE" '["Bash(ls)", $b, $r]')" \
+  "$(inst "$HO3" >/dev/null 2>&1; jq -c '.permissions.allow' "$HO3/.claude/settings.json")"
+HO4="$WORK/homeopen4"; mkdir -p "$HO4/.claude"; stub_venv "$HO4"
+printf '{"permissions":{"allow":"Bash(ls)"}}\n' > "$HO4/.claude/settings.json"
+check "permissions.allow that is not a list is said, left as it is, and the install still ends well" "1|\"Bash(ls)\"|0" \
+  "$(inst "$HO4" --allow-open 2>&1 | grep -c 'permissions.allow in settings.json is not a list')|$(jq -c '.permissions.allow' "$HO4/.claude/settings.json")|$(inst "$HO4" --allow-open >/dev/null 2>&1; echo $?)"
+
 check "uninstall removes the state directory, the module's rotated log and lock with it" "gone|absent|absent" \
   "$([ -d "$H/.claude/claude-orchestrator" ] && echo kept || echo gone)|$([ -e "$H/.claude/claude-orchestrator/hooks-module.log.1" ] && echo present || echo absent)|$([ -e "$H/.claude/claude-orchestrator/hooks-module.log.lock" ] && echo present || echo absent)"
 

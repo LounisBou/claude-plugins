@@ -214,12 +214,37 @@ any newcomer. A spawn that fails keeps the record, and the operator is told.
 **Drop** is his `/orchestrator:sleeping drop <name>`: the record removed, the brief moved to
 `abandoned/` beside it, the pull requests, branches and checkouts left to him.
 
+## Opening an orchestrator
+
+**On his order only**, a new orchestration on a subject he names, you open it: you never
+answer that he should do it himself. Its brief comes first, a file the new orchestrator reads
+on the machine it runs on.
+
+On this machine, open it yourself, right of your tab, in no chain, under remote control:
+
+```
+${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --open --title "Orch : <subject>" --dir <its directory> --permission-mode auto --prompt "Read and execute <brief path>"
+```
+
+Run it alone, never chained to another command and with nothing before it: that bare form,
+by the installed path, is the one his `install.sh --allow-open` allows. Add `--model <id>` or `--tier <tier>` when he named one,
+the deep tier applying otherwise, and `--trust` for a checkout prepared for it. Verify it
+(`iterm-agent.sh list`, `ListAgents` naming `Orch : <subject>`), then announce yourself to it
+as to any newcomer.
+
+On another machine, send that machine's orchestrator (the one he named, else one that
+announced itself from there) ONE `SendMessage`: his order verbatim and dated, the brief's
+path and that same command. It opens the orchestrator there and replies with its name. A
+refusal from a permission goes to him in one line, with the one fix that ends it: he types
+`<the plugin's install.sh> --allow-open` once on that machine. Never ask a session to change
+its own permissions.
+
 ## Your limits
 
 - You write in no repository: no edit, commit, push, branch, pull request or forge comment.
 - You address orchestrators only, never their agents, and you spawn, move or close no
   session but your own successor, as a successor your predecessor, and an orchestrator the
-  operator told you to pause or wake.
+  operator told you to open, pause or wake.
 - You stop no process and pause no phase to make room.
 
 ## Your context

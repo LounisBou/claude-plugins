@@ -1219,7 +1219,7 @@ def chain_owned(entries, owner):
 
 
 def chain_effect(successor, auditor, coordinator_successor=False, auditor_successor=False,
-                 wake=False):
+                 wake=False, open_=False):
     """What a spawn does to its caller's chain: `append`, `transfer` or `none`.
 
     An agent joins the chain, so the next agent lands after it. A successor takes the
@@ -1231,8 +1231,9 @@ def chain_effect(successor, auditor, coordinator_successor=False, auditor_succes
     it joins none of them. An auditor's successor is the auditor again: it has no chain to
     take, and written into one it would be the anchor the orchestrator's next agent lands
     after. A woken orchestrator is nobody's agent either: its caller only relaunched it, and
-    its own agents, stood down before it slept, left no chain to take."""
-    if auditor_successor or wake:
+    its own agents, stood down before it slept, left no chain to take. Nor is an orchestrator
+    opened on the operator's order: it starts a build of its own."""
+    if auditor_successor or wake or open_:
         return "none"
     if successor:
         return "transfer"
@@ -1849,6 +1850,7 @@ def cmd_spawn(argv):
                     action="store_true", default=False)
     p.add_argument("--resident", action="store_true", default=False)
     p.add_argument("--wake", action="store_true", default=False)
+    p.add_argument("--open", dest="open_", action="store_true", default=False)
     p.add_argument("--mcp", action="append", default=[])
     p.add_argument("--account-connectors", dest="account_connectors",
                     action="store_true", default=False)
@@ -1917,6 +1919,42 @@ def cmd_spawn(argv):
         if not args.model:
             die("spawn: refused: --wake needs the recorded model, --model <id>: a wake never "
                 "guesses the model its orchestrator ran on")
+    if args.open_:
+        # A new orchestrator opened on the operator's order, by the coordinator or by an
+        # orchestrator the coordinator relayed that order to on another machine: under its own
+        # name, right of its caller, in no chain, under remote control like any orchestrator.
+        # Only a coordinator or an orchestrator opens one: an agent never does. The caller is
+        # read from the real process table: the two stand-ins the suite sets would let any
+        # session name itself the coordinator, so outside a dry run they refuse the opening.
+        if not DRY_RUN and (os.environ.get("ORCHESTRATOR_SELF_TTY")
+                            or os.environ.get("ORCHESTRATOR_PS_TABLE")):
+            die("spawn: refused: --open reads its caller from the real process table, and "
+                "ORCHESTRATOR_SELF_TTY or ORCHESTRATOR_PS_TABLE would stand in for it: both "
+                "are for tests and dry runs")
+        for flag, given in (("--successor", args.successor), ("--auditor", args.auditor),
+                            ("--coordinator-successor", args.coordinator_successor),
+                            ("--wake", args.wake), ("--left-of", args.left_of),
+                            ("--right-of", args.right_of), ("--title-free", args.title_free),
+                            ("--resident", args.resident), ("--brief", args.brief),
+                            ("--orchestrator", args.orchestrator),
+                            ("--no-remote-control", not args.remote_control)):
+            if given:
+                die("spawn: refused: %s is not an opening's: an opened orchestrator runs under "
+                    "its own name, lands immediately right of you, joins no chain, reads its "
+                    "brief from its prompt and comes up under remote control" % flag)
+        if (not args.title.startswith("Orch : ") or not TITLE_SHAPE.match(args.title)
+                or re.search(r" \[[0-9A-Za-z]+\]\Z", args.title)):
+            die('spawn: refused: --open needs the new orchestrator\'s name, --title '
+                '"Orch : <subject>" without a reference, got \'%s\'' % args.title)
+        caller = session_name_on(self_tty() or "") or ""
+        if caller == UNREADABLE_NAME:
+            caller = ""
+        if not caller:
+            caller = registered_coord_on(self_tty() or "") or ""
+        if not (caller.startswith("Orch : ") or caller.startswith(COORD_ROLE)):
+            die("spawn: refused: --open is a coordinator's or an orchestrator's, and this "
+                "session reads '%s': an agent never opens an orchestrator"
+                % (caller[:40] or "no name"))
     if args.auditor:
         # An auditor is placed, named, modelled and reached ONE way (§52): immediately left
         # of its caller, `Audit : <subject>`, the caller's model, remote control on. Each of
@@ -2011,6 +2049,10 @@ def cmd_spawn(argv):
     if args.tier:
         model, map_effort = resolve_tier_pair(args.tier)
         effort = args.effort or map_effort
+    elif args.open_ and not args.model and not args.inherit:
+        # An orchestrator's class is the deep tier: its judgment is re-read by nobody.
+        model, map_effort = resolve_tier_pair("deep")
+        effort = args.effort or map_effort
     if args.inherit or args.auditor or args.coordinator_successor:
         # An auditor, and the coordinator's own successor, read with the judgment of the
         # session that spawns them: the caller's model, like a successor's, whether or not
@@ -2068,7 +2110,7 @@ def cmd_spawn(argv):
         # takes nothing with it (§52) — the operator's layout: the auditor beside its
         # orchestrator on the left, agents and successor on the right.
         side, anchor = "left", "self"
-    elif args.wake:
+    elif args.wake or args.open_:
         side, anchor = "right", "self"
     elif args.coordinator_successor:
         # The coordinator's successor is placed at the FIRST place of the caller's window,
@@ -2077,7 +2119,7 @@ def cmd_spawn(argv):
         # against a neighbour tab.
         side, anchor = "left", "leftmost"
     effect = chain_effect(args.successor, args.auditor, args.coordinator_successor,
-                          auditor_successor, args.wake)
+                          auditor_successor, args.wake, args.open_)
     if auditor_successor:
         for flag, given in (("--tier", args.tier), ("--model", args.model),
                             ("--effort", args.effort),
@@ -2168,7 +2210,8 @@ def cmd_spawn(argv):
                        else write_prompt_file(prompt, title))
 
     remote_control = title if ((args.successor and args.remote_control) or args.auditor
-                                or args.coordinator_successor or args.wake) else ""
+                                or args.coordinator_successor or args.wake
+                                or args.open_) else ""
     launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control,
                            mcp_file, args.account_connectors, gate_tokens, effort)
 
@@ -2186,6 +2229,7 @@ def cmd_spawn(argv):
         print("auditor=%s" % ("yes" if args.auditor else "no"))
         print("coordinator_successor=%s" % ("yes" if args.coordinator_successor else "no"))
         print("wake=%s" % ("yes" if args.wake else "no"))
+        print("open=%s" % ("yes" if args.open_ else "no"))
         print("chain=%s" % effect)
         print("resident=%s" % ("yes" if args.resident else "no"))
         print("name=%s" % title)
@@ -2656,8 +2700,8 @@ def cmd_rotate(argv):
     # A rotation replaces an agent with a titled agent; none of these are that. A successor
     # is spawned with `spawn --successor`, not smuggled through the replacement a rotation
     # makes, and neither is an auditor or the coordinator's own successor.
-    for flag in ("--successor", "--auditor", "--coordinator-successor", "--wake", "--title-free",
-                 "--no-remote-control"):
+    for flag in ("--successor", "--auditor", "--coordinator-successor", "--wake", "--open",
+                 "--title-free", "--no-remote-control"):
         if flag in rest:
             die("rotate: refused: %s is not a rotation's (a rotation replaces an agent with "
                 "a titled agent; a successor is spawned with spawn --successor)" % flag)

@@ -6,8 +6,10 @@
 # status line already free of the tap is left alone, and settings.json is backed up
 # before any change.
 #
-#   ./install.sh              install / update
-#   ./install.sh --dry-run    print what would happen, change nothing
+#   ./install.sh                install / update
+#   ./install.sh --dry-run      print what would happen, change nothing
+#   ./install.sh --allow-open   also allow the launcher's opening of an orchestrator
+#                               (`spawn --open`) in settings.json: the operator's own word
 
 set -euo pipefail
 
@@ -20,8 +22,25 @@ SETTINGS="$CONFIG_DIR/settings.json"
 BACKUP_DIR="$CONFIG_DIR/backups/claude-orchestrator-$(date +%Y%m%d-%H%M%S)"
 HOST_FLOOR="2.1.287"
 
-DRY=0
-[ "${1:-}" = "--dry-run" ] && DRY=1
+DRY=0; ALLOW_OPEN=0
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY=1 ;;
+    --allow-open) ALLOW_OPEN=1 ;;
+    *) echo "  unknown option: $arg (expected --dry-run, --allow-open)" >&2; exit 2 ;;
+  esac
+done
+# The one rule --allow-open writes: this installed launcher's opening of an orchestrator,
+# named by its own path with nothing before it, as the coordination skill types it. Another
+# script of the same name, a launch with its environment changed, a launch chained to other
+# commands and any other spawn still go to the host's own review. A rule written for an
+# earlier version of this plugin, beside this one under the same cache directory, is the
+# operator's grant for that launcher, and it follows the plugin to this version.
+OPEN_SUFFIX="/skills/iterm-agents/scripts/iterm-agent.sh spawn --open *)"
+OPEN_RULE="Bash($SRC$OPEN_SUFFIX"
+OPEN_PREFIX="Bash($(dirname "$SRC")/"
+OPEN_EARLIER='type == "string" and startswith($p) and endswith($s)
+  and (.[($p | length):(length - ($s | length))] | test("^[^/ ]+$"))'
 
 say()  { printf '  %s\n' "$*"; }
 step() { printf '\n%s\n' "$*"; }
@@ -270,6 +289,45 @@ say "iTerm2 must have its API enabled (Preferences > General > Magic > Enable Py
 step "settings.json"
 
 unwrap_statusline
+
+# An orchestrator opened on the operator's order, on any machine, by the coordinator or by
+# the orchestrator it relays that order to: the host's review refuses a launch another
+# session asked for, and only the operator may lift that, here by passing --allow-open
+# himself. Without it no rule is added; with it, the rule once, never twice. A rule he
+# granted an earlier version is moved to this one, its reach unchanged.
+open_state=absent
+if [ -f "$SETTINGS" ]; then
+  if ! jq -e . "$SETTINGS" >/dev/null 2>&1; then
+    open_state=unreadable
+  elif ! jq -e '(.permissions.allow // []) | type == "array"' "$SETTINGS" >/dev/null 2>&1; then
+    open_state=notalist
+  elif jq -e --arg r "$OPEN_RULE" '(.permissions.allow // []) | any(.[]; . == $r)' "$SETTINGS" >/dev/null 2>&1; then
+    open_state=current
+  elif jq -e --arg p "$OPEN_PREFIX" --arg s "$OPEN_SUFFIX" \
+      "(.permissions.allow // []) | any(.[]; $OPEN_EARLIER)" "$SETTINGS" >/dev/null 2>&1; then
+    open_state=earlier
+  fi
+fi
+case "$open_state" in
+  current)
+    say "the opening of an orchestrator is already allowed: $OPEN_RULE" ;;
+  earlier)
+    apply_settings "the opening of an orchestrator, allowed for an earlier version, now names this one: $OPEN_RULE" \
+      --arg r "$OPEN_RULE" --arg p "$OPEN_PREFIX" --arg s "$OPEN_SUFFIX" \
+      ".permissions.allow = ([.permissions.allow[] | select(($OPEN_EARLIER) | not)] + [\$r])" ;;
+  unreadable)
+    if [ "$ALLOW_OPEN" = "1" ]; then say "settings.json does not parse: the opening rule is not written"; fi ;;
+  notalist)
+    if [ "$ALLOW_OPEN" = "1" ]; then say "permissions.allow in settings.json is not a list: the opening rule is not written"; fi ;;
+  absent)
+    if [ "$ALLOW_OPEN" = "1" ]; then
+      [ -f "$SETTINGS" ] || run "printf '{}\\n' > '$SETTINGS'"
+      apply_settings "the opening of an orchestrator allowed: $OPEN_RULE" \
+        --arg r "$OPEN_RULE" '.permissions.allow = ((.permissions.allow // []) + [$r])'
+    else
+      say "the opening of an orchestrator is not allowed here: the operator allows it with ./install.sh --allow-open"
+    fi ;;
+esac
 
 # --- the old pipeline's files -------------------------------------------------
 
