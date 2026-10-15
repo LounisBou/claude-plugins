@@ -130,7 +130,7 @@ These bind where no reference is loaded — a message sent, a report read, a rep
 
 - **Nothing outward-facing is published without the operator's approval, and a fix needs no words.** Any text under the operator's name in front of a colleague: the orchestrator may draft it, never authorise it; the operator approves each text, nobody else. The rest of the rule is in `references/review.md`, « Review rounds run in disposable sessions »: read it before drafting a reply.
 
-When you hand over to a successor: Until the takeover confirmation arrives, the predecessor starts nothing new — it only hands over; an operator's question gets one line pointing to the successor. On it, « handed over » is its last message, and the turn ends there.
+When you hand over to a successor: until its takeover confirmation, start nothing new; an operator's question gets one line pointing to it. Then « handed over » is your last message, sent with `SendMessage` to it (a line in your tab reaches no one); your turn ends.
 
 ## Thresholds
 

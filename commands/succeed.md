@@ -12,7 +12,9 @@ Preconditions, verify each before acting:
 - the project state file is current — status lives once, there;
 - the standing succession brief exists; otherwise instantiate
   `${CLAUDE_PLUGIN_ROOT}/templates/orchestrator-succession-brief.md` into the
-  project's briefs directory, filling every `{{PLACEHOLDER}}`;
+  project's briefs directory, filling every `{{PLACEHOLDER}}` —
+  never a brief written by hand: one dropped the template's step 4, the successor's close
+  of this session, and the predecessor stayed open (`brief-lint.sh` now refuses it);
 - its « Live state » section is filled now, from the state file's live part (the section is
   the hand-over copy of it; status still lives once, in the state file). The brief is standing:
   after its first use the five fields hold the last handover's text, not placeholders, so the
@@ -42,8 +44,10 @@ Then:
    and hands it the chain (spec §34).
 4. Answer nothing new. Wait for the successor's "takeover confirmed"; answer
    its questions about state only. On the confirmation, send it « handed over » as your
-   LAST message — nothing of yours is left to write — and end the turn: that message is
-   what it closes your tab on.
+   LAST message, with `SendMessage` to the name it confirmed from:
+   a line written in your own tab reaches no one, and the successor waits on it.
+   Nothing of yours is left to write; end the turn: that message is what it closes
+   your tab on.
 5. Never close your own tab: the successor closes it on your « handed over » message — or,
    five minutes after "takeover confirmed" without it, on a reading of your tab's screen —
    its brief says so (template step 4), and you do not run this command without that step

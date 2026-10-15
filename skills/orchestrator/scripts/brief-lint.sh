@@ -22,6 +22,9 @@
 # Check 11 holds an orchestrator succession brief (first line `# Orchestrator succession
 # brief`) to 10,000 characters.
 #
+# Check 12 refuses a succession brief, from the template or written by hand, that does not
+# have its reader close the predecessor's tab.
+#
 # What it CANNOT check: whether the scope is right, whether the contracts are the ones the
 # next phase consumes, whether the tier fits the work. Those stay the orchestrator's, and
 # a green lint is not an approved brief.
@@ -297,6 +300,20 @@ if head -n 1 "$brief" 2>/dev/null | grep -q '^# Orchestrator succession brief'; 
     chars=$(LC_ALL=C tr -d '\200-\277' < "$brief" | wc -c | tr -d ' ')
     [ "$chars" -le "$succession_limit" ] \
         || say 1 "succession brief is $chars characters, over the limit of $succession_limit: keep Live state to what is live and the rest as pointers"
+fi
+
+# 12. A succession brief carries the close of the predecessor: the operator's standing order
+#     is that the successor ALWAYS closes it, on its « handed over » or, five minutes without
+#     it, on a reading of its screen. A brief written by hand instead of from the template
+#     dropped that step, and the predecessor stayed open a day after the takeover. The class
+#     is not read from the first line, which a brief written by hand does not carry: it is a
+#     brief whose reader confirms the takeover to its own predecessor. A brief whose reader is
+#     the one handed over from (an audit brief) names no predecessor of its own and is not
+#     held. The step is read as the launcher's close, by tty and with the title it expects,
+#     on one line, as every succession template writes it.
+if grep -qi 'takeover confirmed' "$brief" 2>/dev/null && grep -qi 'your predecessor' "$brief" 2>/dev/null; then
+    grep -qE -- 'close --tty .*--expect-title' "$brief" 2>/dev/null \
+        || say 1 "succession brief without the predecessor's close: the successor closes its predecessor's tab with the launcher's close --tty and --expect-title, on its \"handed over\" or after five minutes on a reading of its screen; instantiate the template, never write the brief by hand"
 fi
 
 if [ "$findings" = 0 ]; then

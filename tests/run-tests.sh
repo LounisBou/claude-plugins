@@ -4394,6 +4394,36 @@ check "a succession brief over 10,000 characters is a finding naming the count a
 SUCCOTHER="$WORK/not-a-succession.md"
 { cat "$B/good.md"; head -c 10000 /dev/zero | tr '\0' 'x'; printf '\n'; } > "$SUCCOTHER"
 check "the size limit binds a succession brief only" "0" "$(bash "$LINT" "$SUCCOTHER" >/dev/null 2>&1; echo $?)"
+# A succession brief written by hand dropped the template's step 4, and the predecessor stayed
+# open a day after the takeover: a brief whose reader confirms the takeover to its predecessor
+# carries the launcher's close, and a brief whose reader is the one handed over from is not held.
+SUCCHAND="$WORK/succession-by-hand.md"
+cat > "$SUCCHAND" <<'BRIEF'
+# Handover: you are Orch : scratch
+
+You succeed the session Orch: scratch.
+
+## Your first moves
+
+1. Send the coordinator one line with your new name.
+2. Reply to your predecessor with exactly « takeover confirmed ».
+3. Then end your turn on `waiting: done`.
+BRIEF
+check "a succession brief without the predecessor's close is a finding naming the step and the template" "1|1|1" \
+  "$(bash "$LINT" "$SUCCHAND" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$SUCCHAND" 2>&1 | grep -c "succession brief without the predecessor's close")|$(bash "$LINT" "$SUCCHAND" 2>&1 | grep -c 'instantiate the template')"
+SUCCHANDCLOSE="$WORK/succession-by-hand-close.md"
+{ cat "$SUCCHAND"; printf '4. On its handed over, close its tab: `iterm-agent.sh list`, then close --tty <its tty> --expect-title "Orch: scratch".\n'; } > "$SUCCHANDCLOSE"
+check "the same brief with the close lints clean" "0" "$(bash "$LINT" "$SUCCHANDCLOSE" >/dev/null 2>&1; echo $?)"
+SUCCHANDNOTITLE="$WORK/succession-by-hand-no-title.md"
+{ cat "$SUCCHAND"; printf '4. On its handed over, close its tab: close --tty <its tty>.\n'; } > "$SUCCHANDNOTITLE"
+check "a close with no expected title is still the finding" "1" "$(bash "$LINT" "$SUCCHANDNOTITLE" >/dev/null 2>&1; echo $?)"
+SUCCFROM="$WORK/handed-over-from.md"
+printf '# scratch: audit\n\nWait for « takeover confirmed », answer it with « handed over » as your last message.\n' > "$SUCCFROM"
+check "a brief whose reader is handed over from is not held to the close" "0" "$(bash "$LINT" "$SUCCFROM" >/dev/null 2>&1; echo $?)"
+check "succeed.md has the brief from the template, never by hand, and « handed over » sent with SendMessage" "yes|yes|yes" \
+  "$(spells "$ROOT/commands/succeed.md" 'never a brief written by hand')|$(spells "$ROOT/commands/succeed.md" 'with `SendMessage` to the name it confirmed from')|$(spells "$ROOT/commands/succeed.md" 'a line written in your own tab reaches no one')"
+check "the skill sends « handed over » with SendMessage, not as a line in the predecessor's own tab" "yes|yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'is your last message, sent with `SendMessage` to it')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'a line in your tab reaches no one')"
 check "the README's hooks table names the Stop hook" "yes" "$(spells "$ROOT/README.md" 'hook `Stop`')"
 check "the eval selection says its two stop-gate cases grade the staged spawn line and do not run the hook" "2" \
   "$(grep -E '^\| 5[12] \|' "$ROOT/evals/SELECTION.md" | grep -c 'under staging; it does not run the hook')"
