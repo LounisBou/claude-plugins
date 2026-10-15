@@ -23,6 +23,10 @@
 # would stop on the guard before the real checks finish) and the failing names are classified
 # when it returns: none left, the rest of the green path; some left, `red` naming only those. A
 # pull request that is no draft, or no longer one, keeps the path above exactly.
+# A green carries evidence: one check at least passed. A head whose checks all ended skipped, or
+# failed as a draft guard — a draft whose every real job depends on its guard, or jobs each
+# conditioned out — had nothing run, and says `no-checks` with the count skipped, never green.
+# The count leaves the guards out, so a draft whose only checks are its guards says `skipped=0`.
 # Green with auto-merge enabled is not the end: the merge is coming, and nobody re-arms a watch after it,
 # so the pull request is read again at the interval, bounded, until it merges.
 #
@@ -37,12 +41,15 @@
 #
 # stdout, one line, and the exit code the caller reads without opening the log:
 #   ci-watch: green <pr> <head>                                 0  every workflow run of the head completed and
-#                                                                  every check passed; with auto-merge: no merge
-#                                                                  within the bound
+#                                                                  every check passed, one at least; with
+#                                                                  auto-merge: no merge within the bound
 #   ci-watch: red <pr> <head> <failing check names>             1
 #                                                                  (a cancelled check is one, though the watch
 #                                                                  exits 0 over it)
 #   ci-watch: no-checks <pr> <head>                             2  none registered within the bound
+#   ci-watch: no-checks <pr> <head> skipped=<n>                 2  every check done and none passed: each one
+#                                                                  skipped or a draft guard; with auto-merge: no
+#                                                                  merge within the bound
 #   ci-watch: moved <pr> <old head> <new head>                  3  re-arm on the new head
 #   ci-watch: closed <pr> CLOSED                                4  closed without merge
 #   ci-watch: closed <pr> MERGED                                4  merged, with --no-base only
@@ -330,6 +337,10 @@ if [ "$watch" -eq 0 ]; then
     why=$(first_line < "$err"); rm -f "$err"
     { [ "$code" -eq 0 ] && [ -n "$buckets" ]; } || unread "gh pr checks failed: ${why:-no answer}"
     names=$(awk -F'\t' '$1 == "cancel" { print $2 }' <<< "$buckets" | paste -sd, - | sed 's/,/, /g')
+    # Nor is a head where no check passed: every one skipped, or failed as a draft guard the
+    # draft settled, means nothing ran, and that is said as no checks.
+    passed=$(awk -F'\t' '$1 == "pass" { n++ } END { print n + 0 }' <<< "$buckets")
+    skipped=$(awk -F'\t' '$1 == "skipping" { n++ } END { print n + 0 }' <<< "$buckets")
     if [ -z "$names" ]; then
         if [ "$base" = 1 ] && [ "$auto" = auto ]; then
             # Auto-merge will merge: wait for it, bounded, and follow the base branch.
@@ -342,6 +353,7 @@ if [ "$watch" -eq 0 ]; then
                 [ "$auto" = auto ] || break
             done
         fi
+        [ "$passed" -gt 0 ] || { say "no-checks $pr $head skipped=$skipped"; exit 2; }
         say "green $pr $head"; exit 0
     fi
 else

@@ -4078,6 +4078,10 @@ check "a watch that exits 0 over cancelled checks is a red naming them, exit 1" 
   "$(CW_BUCKETS="build:cancel\ntest:cancel\ndocs:skipping\nlint:cancel\npages:skipping\nunit:pass\na:skipping\nb:skipping\nc:skipping\nd:skipping\nsmoke:pass\ne2e:cancel\ne:skipping\nf:skipping" cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
 check "a watch that exits 0 over passing and skipped checks only is green, exit 0" "ci-watch: green 7 $HA|0" \
   "$(CW_BUCKETS="unit:pass\ndocs:skipping\nsmoke:pass" cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
+# A green carries evidence: a head whose every check was skipped had nothing run, and says so
+# as no checks with the count skipped, never green.
+check "a watch that exits 0 over skipped checks only is no green: no-checks with the count, exit 2" "ci-watch: no-checks 7 $HA skipped=3|2" \
+  "$(CW_BUCKETS="unit:skipping\ndocs:skipping\nsmoke:skipping" cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
 # A slower workflow's checks are not registered yet when a faster one's are done: the watch
 # exits 0 over the checks it knows, so the head's workflow runs are read before any green, and
 # a run still going is watched to its end, then the checks are watched again.
@@ -4179,6 +4183,10 @@ check "green with auto-merge, then red on the base branch: exit 6" "ci-watch: ba
   "$(CW_MERGE="$HM main" CW_RUNS="101:CI" CW_RUN_CODES="101 1" CW_JOBS="test:failure" cw "OPEN $HA\nOPEN $HA auto\nMERGED $HA" "2" 0 "" 7 --interval 1)"
 check "green with auto-merge, not merged within the bound: green, exit 0" "ci-watch: green 7 $HA|0" \
   "$(CW_MERGE_WAIT=1 cw "OPEN $HA\nOPEN $HA auto" "2" 0 "" 7 --interval 1)"
+check "every check skipped with auto-merge, not merged within the bound: no-checks, exit 2" "ci-watch: no-checks 7 $HA skipped=1|2" \
+  "$(CW_MERGE_WAIT=1 CW_BUCKETS="docs:skipping" cw "OPEN $HA\nOPEN $HA auto" "2" 0 "" 7 --interval 1)"
+check "every check skipped with auto-merge, then merged: the base branch followed" "ci-watch: base-green 7 $HM|0" \
+  "$(CW_MERGE="$HM main" CW_RUNS="101:CI" CW_BUCKETS="docs:skipping" cw "OPEN $HA\nOPEN $HA auto\nMERGED $HA" "2" 0 "" 7 --interval 1)"
 check "green with auto-merge, then the head moves: exit 3" "ci-watch: moved 7 $HA $HB|3" \
   "$(cw "OPEN $HA\nOPEN $HA auto\nOPEN $HB auto" "2" 0 "" 7 --interval 1)"
 check "green with auto-merge, then closed without merge: exit 4" "ci-watch: closed 7 CLOSED|4" \
@@ -4221,6 +4229,12 @@ CWD="OPEN $HA draft"
 printf '[%s]\n' "$C_WIP" > "$CW/checks-link"
 check "a draft whose only failure is a draft guard is no red: green, exit 0" "ci-watch: green 7 $HA|0" \
   "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 1 "wip-check / wip-check" 7 --interval 1)"
+# Measured on another project: four guard checks failed and every real job, depending on the
+# guard, was skipped. The guard settled, nothing had run, and the watch said green.
+check "a draft whose guard fails and whose every other check is skipped: no-checks, exit 2" "ci-watch: no-checks 7 $HA skipped=5|2" \
+  "$(rm -rf "$CWS/draft-guard"; CW_BUCKETS="code-style:skipping\nsecurity-check:skipping\ntests:skipping\nMigrations:skipping\nbuild:skipping\nwip-check / wip-check:fail\nwip-check / wip-check:fail\nwip-check / wip-check:fail\nwip-check / wip-check:fail" cw "$CWD" "2" 1 "wip-check / wip-check" 7 --interval 1)"
+check "a draft whose guard fails, one real check passing beside skipped ones: green, exit 0" "ci-watch: green 7 $HA|0" \
+  "$(rm -rf "$CWS/draft-guard"; CW_BUCKETS="lint:pass\ntests:skipping\nwip-check / wip-check:fail" cw "$CWD" "2" 1 "wip-check / wip-check" 7 --interval 1)"
 printf '[%s, %s]\n' "$C_WIP" "$C_TESTS" > "$CW/checks-link"
 check "and with a real failure too: red, naming only the real one" "ci-watch: red 7 $HA tests|1" \
   "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 1 "wip-check / wip-check\ntests" 7 --repo acme/thing --interval 1)"
@@ -4256,7 +4270,7 @@ check "the standing rules say an agent never waits on CI" "yes|no" \
 check "the orchestrator skill arms one background watch per pull request" "yes|yes|yes" \
   "$(spells "$ORCH_REFS/review.md" 'start `ci-watch.sh <n>`')|$(spells "$ORCH_REFS/review.md" 'with `run_in_background` and a timeout of 7 200 000 ms: one per pull request, never two')|$(spells "$ORCH_REFS/review.md" 'Moved: re-arm on the new head')"
 check "and reads each ending: red, no checks, closed, unread" "yes|yes|yes|yes" \
-  "$(spells "$ORCH_REFS/review.md" 'dispatch the correction at once, to a fresh session')|$(spells "$ORCH_REFS/review.md" 'No checks: ready on the suite')|$(spells "$ORCH_REFS/review.md" 'Closed: stop the work on it')|$(spells "$ORCH_REFS/review.md" 'Unread, or the timeout: re-arm once, then report')"
+  "$(spells "$ORCH_REFS/review.md" 'dispatch the correction at once, to a fresh session')|$(spells "$ORCH_REFS/review.md" 'No checks, none registered or none passed (each one skipped, `skipped=<n>`, never a green): ready on the suite')|$(spells "$ORCH_REFS/review.md" 'Closed: stop the work on it')|$(spells "$ORCH_REFS/review.md" 'Unread, or the timeout: re-arm once, then report')"
 check "a merged pull request's base branch run is followed, and a red one never left standing" "yes|yes|yes|yes" \
   "$(spells "$ORCH_REFS/review.md" "Merged: the same watch follows the base branch's run")|$(spells "$ORCH_REFS/review.md" 'a red base branch is never left standing')|$(spells "$ORCH_REFS/review.md" 'fixed at once in its own pull request, dispatched to a fresh session')|$(spells "$ORCH_REFS/review.md" 'Base-no-run with `filtered=0`: nothing')"
 check "a filter that matches nothing is reported as a misnamed workflow" "yes" \
