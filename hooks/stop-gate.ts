@@ -544,7 +544,8 @@ const decodeName = (text: string): string => {
 // synchronous network call the module world refuses. ci-watch has already watched
 // them: it appends `name\tbucket\telapsed\tlink` snapshots to
 // `<state>/ci-watch/<slug>-pr<n>.log`, truncated at each watch's start, and that file
-// is the state the check reads. Two consequences it lives with, said here: the log
+// is the state the check reads: the logs whose owner file names this session alone.
+// Two consequences it lives with, said here: the log
 // names no head sha, so the tell a head is told once for is the log's first line
 // (logTell) — a new watch truncates the log, a new first line, and the telling starts
 // over — and the refusal names the pull request without the sha it sat at.
@@ -582,15 +583,6 @@ export function parseCiWatchLog(text: string): Record<string, string> {
 export function watchNumberOf(name: string): string | null {
   if (/-pr\d+-base\.log$/.test(name)) return null
   const m = /-pr(\d+)\.log$/.exec(name)
-  return m ? m[1] : null
-}
-
-// The slug part of a log name — the repository the watch was named for. ci-watch's
-// own log_file() spells it `owner/name` with every character outside its kept set
-// turned to `_`, or `here` when the watch was armed in the checkout itself (no
-// --repo): the scope of check 2 is decided on it.
-export function watchSlug(name: string): string | null {
-  const m = /^(.+)-pr\d+(?:-base)?\.log$/.exec(name)
   return m ? m[1] : null
 }
 

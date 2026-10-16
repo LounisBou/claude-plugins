@@ -4088,7 +4088,10 @@ CWSCRIPT="$ROOT/skills/orchestrator/scripts/ci-watch.sh"
 # cw <view lines> <reg lines> <watch code> <failing> [args...]: the script's stdout|exit code
 cw() {
   local view="$1" reg="$2" code="$3" failing="$4" out rc
+  local -a sid=()
   shift 4
+  # CW_SESSION sets the arming session's id; without it the variable is unset for the watch.
+  [ -z "${CW_SESSION:-}" ] || sid=(CLAUDE_CODE_SESSION_ID="$CW_SESSION")
   rm -f "$CW"/gh-calls "$CW"/view "$CW"/reg "$CW"/failing "$CW"/watch-code "$CW"/view-n "$CW"/reg-n \
     "$CW"/merge "$CW"/runs "$CW"/runs-n "$CW"/run-codes "$CW"/jobs "$CW"/newest "$CW"/newest-n "$CW"/buckets \
     "$CW"/watch-n "$CW"/head-runs "$CW"/head-runs-n
@@ -4103,7 +4106,7 @@ cw() {
   [ -z "$reg" ] || printf '%b\n' "$reg" > "$CW/reg"
   [ -z "$failing" ] || printf '%b\n' "$failing" > "$CW/failing"
   printf '%b\n' "$code" > "$CW/watch-code"
-  out=$(env PATH="$CWB:$PATH" ORCHESTRATOR_STATE_DIR="$CWS" CI_WATCH_REGISTER_WAIT="${CW_WAIT:-2}" \
+  out=$(env -u CLAUDE_CODE_SESSION_ID ${sid[@]+"${sid[@]}"} PATH="$CWB:$PATH" ORCHESTRATOR_STATE_DIR="$CWS" CI_WATCH_REGISTER_WAIT="${CW_WAIT:-2}" \
     CI_WATCH_BASE_WAIT="${CW_BASE_WAIT:-2}" CI_WATCH_MERGE_WAIT="${CW_MERGE_WAIT:-4}" CI_WATCH_BASE_WORKFLOWS="${CW_BASE_WORKFLOWS:-}" bash "$CWSCRIPT" "$@" 2>/dev/null); rc=$?
   printf '%s|%s' "$out" "$rc"
 }
@@ -4298,6 +4301,19 @@ check "and its report never says green" "0" \
 rm -f "$CW/checks-link"
 check "a draft whose failing checks cannot be classified: unread, exit 5" "ci-watch: unread 7 draft_guard|5" \
   "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 1 "wip-check / wip-check" 7 --interval 1 | sed 's/\(draft_guard\).*|/\1|/')"
+
+# The owner file: the session that armed a watch, beside its log, is the key the stop gate tells a
+# session its own watches by. A watch armed by no session leaves no owner file behind.
+OWN="$CWS/ci-watch/here-pr7.log.session"
+rm -rf "$CWS/ci-watch"
+check "a watch armed by a session writes its owner file: the session's id, on one line" "sess-42|1" \
+  "$(CW_SESSION=sess-42 cw "OPEN $HA" "2" 0 "" 7 --interval 1 >/dev/null; echo "$(cat "$OWN")|$(wc -l < "$OWN" | tr -d ' ')")"
+check "a watch armed by no session removes the owner file an earlier watch left" "present|absent" \
+  "$(CW_SESSION=sess-42 cw "OPEN $HA" "2" 0 "" 7 --interval 1 >/dev/null; echo "$([ -e "$OWN" ] && echo present || echo absent)|$(cw "OPEN $HA" "2" 0 "" 7 --interval 1 >/dev/null; [ -e "$OWN" ] && echo present || echo absent)")"
+mkdir -p "$OWN"
+check "an owner file that cannot be written is unread, exit 5" "ci-watch: unread 7 cannot write $OWN|5" \
+  "$(CW_SESSION=sess-42 cw "OPEN $HA" "2" 0 "" 7 --interval 1)"
+rm -rf "$OWN"
 
 echo "== stop gate: the prose and the pins that survive the module =="
 # The hook's own cases — the wake decision, the once-per-tell CI record, the deadline race,

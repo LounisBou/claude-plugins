@@ -389,7 +389,8 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[]; ran: string
         if (p === `${HOME}/.claude/sessions/77.json` && setup.hostRecord !== undefined) return setup.hostRecord
         if (p === `${S.root}/stop-gate/a1b2c3.goals` && setup.goalsShown !== undefined) return setup.goalsShown
         if (p.startsWith(`${S.ci}/`)) {
-          if (setup.failLogRead) throw new Error('EIO: the log cannot be read')
+          // The owner file is read before its log: the log's own read is the one that fails.
+          if (setup.failLogRead && !p.endsWith('.session')) throw new Error('EIO: the log cannot be read')
           return setup.ciLogs?.[p.slice(S.ci.length + 1)]?.text ?? ''
         }
         throw new Error(`unread: ${p}`)
@@ -613,7 +614,7 @@ test('a checkout left of the project holds a done stop, read from the event\'s c
 test('a pending ci-watch log holds the stop once and records the telling', async () => {
   const { handlers } = mounted()
   const message = { last_assistant_message: 'waiting: operator — blocks: the report' }
-  const first = fakeDollar({ ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\ntest\tfail\t30\tu\n' } } })
+  const first = fakeDollar({ ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\ntest\tfail\t30\tu\n' }, 'here-pr160.log.session': { mtimeMs: 1728000000000, text: 'a1b2c3\n' } } })
   const held = await stop(handlers['classic.Stop'], first.dollar, stopEvent(message))
   expect((held.answer as any).block).toContain('#160')
   expect((held.answer as any).block).toContain('run_in_background')
@@ -622,7 +623,7 @@ test('a pending ci-watch log holds the stop once and records the telling', async
   expect(first.ran.filter(l => l.startsWith('gh')).length).toBe(0)
   // Told once: the next stop passes and leaves the record as it is.
   const second = fakeDollar({
-    ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\ntest\tfail\t30\tu\n' } },
+    ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\ntest\tfail\t30\tu\n' }, 'here-pr160.log.session': { mtimeMs: 1728000000000, text: 'a1b2c3\n' } },
     heads: first.wrote[HEADS],
   })
   const passed = await stop(handlers['classic.Stop'], second.dollar, stopEvent(message))
@@ -632,12 +633,39 @@ test('a pending ci-watch log holds the stop once and records the telling', async
 test('a pull request waited on in the background is not told', async () => {
   const { handlers } = mounted()
   const { dollar, wrote } = fakeDollar({
-    ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\n' } },
+    ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\n' }, 'here-pr160.log.session': { mtimeMs: 1728000000000, text: 'a1b2c3\n' } },
     ps: `  900   1 /bin/bash ${CI_WATCH} 160\n`,
   })
   const outcome = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'waiting: operator — blocks: the report' }))
   expect(outcome.answer).toBe(outcome.passed)
   // Nothing recorded for a watched pull request, so a watch that dies is still told once.
+  expect(wrote[HEADS]).toBe('')
+})
+
+test('a pending watch another session armed is neither told nor recorded', async () => {
+  const { handlers } = mounted()
+  const { dollar, written, wrote } = fakeDollar({
+    ciLogs: {
+      'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\n' },
+      'here-pr160.log.session': { mtimeMs: 1728000000000, text: 'zz9999\n' },
+    },
+  })
+  const e = stopEvent(PASSING)
+  const { answer } = await stop(handlers['classic.Stop'], dollar, e)
+  expect(answer).toBe(e)
+  expect(written.some(l => l.includes('#160'))).toBe(false)
+  expect(wrote[HEADS]).toBe('')
+})
+
+test('a pending watch with no owner file is neither told nor recorded', async () => {
+  const { handlers } = mounted()
+  const { dollar, written, wrote } = fakeDollar({
+    ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\n' } },
+  })
+  const e = stopEvent(PASSING)
+  const { answer } = await stop(handlers['classic.Stop'], dollar, e)
+  expect(answer).toBe(e)
+  expect(written.some(l => l.includes('#160'))).toBe(false)
   expect(wrote[HEADS]).toBe('')
 })
 
@@ -787,23 +815,26 @@ test('a failing check named beyond latin-1 is told once for its tell', async () 
   // One pending check beside the failing one: the record keeps the pending state and
   // the failing SET, and the next stop compares that set — where the codec shows.
   const log = 'build\tpending\t9\tu\n🚀 deploy\tfail\t30\tu\n'
-  const first = fakeDollar({ ciLogs: { 'here-pr161.log': { mtimeMs: 1728000000000, text: log } } })
+  const first = fakeDollar({ ciLogs: { 'here-pr161.log': { mtimeMs: 1728000000000, text: log }, 'here-pr161.log.session': { mtimeMs: 1728000000000, text: 'a1b2c3\n' } } })
   const held = await stop(handlers['classic.Stop'], first.dollar, stopEvent(message))
   expect((held.answer as any).block).toContain('🚀 deploy')
   // The record carries the name as its UTF-8 bytes; the next stop at the same tell
   // decodes the same set back and does not refuse again — the once-per-tell law.
   const second = fakeDollar({
-    ciLogs: { 'here-pr161.log': { mtimeMs: 1728000000000, text: log } }, heads: first.wrote[HEADS],
+    ciLogs: { 'here-pr161.log': { mtimeMs: 1728000000000, text: log }, 'here-pr161.log.session': { mtimeMs: 1728000000000, text: 'a1b2c3\n' } }, heads: first.wrote[HEADS],
   })
   const passed = await stop(handlers['classic.Stop'], second.dollar, stopEvent(message))
   expect(passed.answer).toBe(passed.passed)
 })
 
-test("another repository's watch never refuses this stop", async () => {
+test("another session's watch never refuses this stop", async () => {
   const { handlers } = mounted()
   const { dollar, written } = fakeDollar({
     origin: 'git@github.com:me/belt.git',
-    ciLogs: { 'other_repo-pr99.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\n' } },
+    ciLogs: {
+      'other_repo-pr99.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\n' },
+      'other_repo-pr99.log.session': { mtimeMs: 1728000000000, text: 'zz9999\n' },
+    },
   })
   const e = stopEvent(PASSING)
   const { answer } = await stop(handlers['classic.Stop'], dollar, e)
@@ -811,13 +842,14 @@ test("another repository's watch never refuses this stop", async () => {
   expect(written.filter(l => l.includes('#99')).length).toBe(0)
 })
 
-test("this repository's slug-named watch is told beside the checkout's own", async () => {
+test("this session's watches are told whatever repository they name", async () => {
   const { handlers } = mounted()
   const { dollar } = fakeDollar({
     origin: 'git@github.com:me/belt.git',
     ciLogs: {
-      'me_belt-pr160.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\n' },
-      'here-pr161.log': { mtimeMs: 1728000000000, text: 'test\tfail\t30\tu\n' },
+      'far_repo-pr160.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\n' },
+      'far_repo-pr160.log.session': { mtimeMs: 1728000000000, text: 'a1b2c3\n' },
+      'here-pr161.log': { mtimeMs: 1728000000000, text: 'test\tfail\t30\tu\n' }, 'here-pr161.log.session': { mtimeMs: 1728000000000, text: 'a1b2c3\n' },
     },
   })
   const held = await stop(handlers['classic.Stop'], dollar, stopEvent(PASSING))
@@ -839,7 +871,7 @@ test('ignored-checks says its malformed lines and still filters the well-formed 
   const { dollar, written } = fakeDollar({
     origin: 'git@github.com:me/belt.git',
     ignoredText: 'me/belt build\nno-slash-name\n',
-    ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tfail\t30\tu\n' } },
+    ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tfail\t30\tu\n' }, 'here-pr160.log.session': { mtimeMs: 1728000000000, text: 'a1b2c3\n' } },
   })
   const e = stopEvent(PASSING)
   const { answer } = await stop(handlers['classic.Stop'], dollar, e)
@@ -851,7 +883,7 @@ test('a repository that cannot be read filters nothing and is said', async () =>
   const { handlers } = mounted()
   const { dollar, written } = fakeDollar({
     ignoredText: 'me/belt build\n',
-    ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tfail\t30\tu\n' } },
+    ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tfail\t30\tu\n' }, 'here-pr160.log.session': { mtimeMs: 1728000000000, text: 'a1b2c3\n' } },
   })
   const held = await stop(handlers['classic.Stop'], dollar, stopEvent(PASSING))
   expect((held.answer as any).block).toContain('1 failing (build)')
@@ -862,7 +894,7 @@ test('an ignored-checks file that cannot be read is said, and filters nothing', 
   const { handlers } = mounted()
   const { dollar, written } = fakeDollar({
     failIgnoredRead: true,
-    ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tfail\t30\tu\n' } },
+    ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tfail\t30\tu\n' }, 'here-pr160.log.session': { mtimeMs: 1728000000000, text: 'a1b2c3\n' } },
   })
   const held = await stop(handlers['classic.Stop'], dollar, stopEvent(PASSING))
   expect((held.answer as any).block).toContain('1 failing (build)')
@@ -883,7 +915,7 @@ test('a heads record that cannot be written lets the stop pass and is said', asy
   const { handlers } = mounted()
   const { dollar, written } = fakeDollar({
     hangHeadsWrite: true, env: { ORCHESTRATOR_STOP_GATE_DEADLINE: '0.05' },
-    ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\n' } },
+    ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\n' }, 'here-pr160.log.session': { mtimeMs: 1728000000000, text: 'a1b2c3\n' } },
   })
   const e = stopEvent(PASSING)
   const { answer } = await stop(handlers['classic.Stop'], dollar, e)
@@ -895,7 +927,7 @@ test('a ci-watch log that cannot be read lets the stop pass and is said', async 
   const { handlers } = mounted()
   const { dollar, written } = fakeDollar({
     failLogRead: true,
-    ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\n' } },
+    ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\n' }, 'here-pr160.log.session': { mtimeMs: 1728000000000, text: 'a1b2c3\n' } },
   })
   const e = stopEvent(PASSING)
   const { answer } = await stop(handlers['classic.Stop'], dollar, e)
@@ -927,7 +959,7 @@ test('the state root follows ORCHESTRATOR_STATE_DIR, the module\'s own log stayi
   const message = { last_assistant_message: 'waiting: operator — blocks: the report' }
   const watched = fakeDollar({
     env: { ORCHESTRATOR_STATE_DIR: OVER },
-    ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\n' } },
+    ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\n' }, 'here-pr160.log.session': { mtimeMs: 1728000000000, text: 'a1b2c3\n' } },
   })
   const held = await stop(handlers['classic.Stop'], watched.dollar, stopEvent(message))
   expect((held.answer as any).block).toContain('#160')
@@ -1123,7 +1155,7 @@ test('a ci-watch this session started, still running, will wake it; a stranger\'
 test('a failing set is told once per watch, whatever the log\'s mtime does while the watch appends', async () => {
   const { handlers } = mounted()
   const message = { last_assistant_message: 'waiting: operator — blocks: the report' }
-  const at = (mtimeMs: number, text: string) => ({ 'here-pr160.log': { mtimeMs, text } })
+  const at = (mtimeMs: number, text: string) => ({ 'here-pr160.log': { mtimeMs, text }, 'here-pr160.log.session': { mtimeMs, text: 'a1b2c3\n' } })
   const first = fakeDollar({ ciLogs: at(1, 'build\tpending\t9\tu\ntest\tfail\t30\tu\n') })
   expect(((await stop(handlers['classic.Stop'], first.dollar, stopEvent(message))).answer as any).block).toContain('1 failing (test)')
   // Ten seconds on the watch appended a snapshot: a new mtime, the same failing set.

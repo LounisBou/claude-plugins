@@ -26,7 +26,7 @@ import { detectForces } from './tokenizer.ts'
 import {
   refuse, withDeadline, isDegradedPass, type DegradedPass,
   listing, chainEntries, ownAgents, hostStatusOf, pullRequestOf, openRows, projectCheckouts,
-  headsPath, readHeads, writeHeads, parseCiWatchLog, watchNumberOf, watchSlug, watchedNumbers,
+  headsPath, readHeads, writeHeads, parseCiWatchLog, watchNumberOf, watchedNumbers,
   checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownWatches, logTell,
   noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, presentGoals, goalsShownPath, type GoalsReading,
 } from './stop-gate.ts'
@@ -571,29 +571,23 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         await sweepAtStop?.()
         return next(e)
       }
-      // The universe of check 2 is the session's repository alone (stop_gate.py:546-548
-      // told only the operator's own OPEN pull requests of the repository the stop's cwd
-      // works in): a log is kept when its slug — the repository ci-watch named it for,
-      // `owner/name` sanitized the way its log_file() sanitizes, or `here` for a watch
-      // armed in the checkout itself without --repo — is this repository's or `here`.
-      // Another repository's dead watch never refuses this stop; a repository that
-      // cannot be read keeps `here` alone, the name ci-watch itself falls back to. One
-      // widening stays, declared: a dead watch of THIS repository's closed or merged
-      // pull request is still told once per tell — the shell gate read `--state open`
-      // live at the stop and a log name carries no state — and a `here` log is
-      // ambiguous by ci-watch's own naming, whichever checkout armed it.
+      // The universe of check 2 is this session's own watches: ci-watch wrote beside each
+      // log its owner file, `<log>.session`, holding the id of the session that armed the
+      // watch. A log is kept when its owner file, trimmed, is this session's id. A log with
+      // no owner file was armed by no session, and an owner file that cannot be read is the
+      // same: neither is this session's to be told of, and neither is said. The repository
+      // a watch names decides nothing: a session's own watch is told whatever repository it
+      // names, another session's never is. One widening stays, declared: a dead watch of
+      // this session's closed or merged pull request is still told once per tell — the
+      // shell gate read `--state open` live at the stop and a log name carries no state.
       let resolvedRepo: { name: string | null; why: string } | null = null
       const repository = async () => (resolvedRepo ??= await repositoryOf($, String(e.cwd ?? ''), until))
-      const slugOf = (name: string) => name.replace(/[^A-Za-z0-9._-]/g, '_')
       const logs = []
       for (const entry of watches) {
         const number = watchNumberOf(entry.name)
         if (!number || entry.kind !== 'file') continue
-        const watched = watchSlug(entry.name)
-        if (watched !== 'here') {
-          const repo = await repository()
-          if (watched !== (repo.name ? slugOf(repo.name) : null)) continue
-        }
+        const owner = String(await quietly($, () => $.fs.read(`${state}/ci-watch/${entry.name}.session`), until, '')).trim()
+        if (owner !== sessionId) continue
         const text = await mustReadText($, `${state}/ci-watch/${entry.name}`, `the ci-watch log ${entry.name}`, until)
         const buckets = parseCiWatchLog(text)
         logs.push({ number, tell: logTell(text), checks: Object.entries(buckets).map(([name, bucket]) => ({ name, bucket })) })

@@ -139,8 +139,10 @@ sound ») and in any language; a fact does not.
 
 Runs only when Check 1 let the stop pass.
 
-**Trigger.** The operator's own open pull requests of the session's repository (`gh pr list
---state open --author @me --limit 200` in `cwd`) whose head differs from the head this hook last reported for this session. The
+**Trigger.** The pull requests this session armed a ci-watch for: the logs under
+`<state dir>/ci-watch/` whose owner file (`<log>.session`, written by `ci-watch.sh`) names this
+session, whatever repository they name. A pull request whose head differs from the head this
+hook last reported for this session. The
 hook keeps, per session, the head it last reported for each pull request
 (`<state dir>/stop-gate/<session_id>.heads`). A pull request whose head has not moved
 costs no further call.
