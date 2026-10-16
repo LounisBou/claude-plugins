@@ -7,8 +7,10 @@
 // coordinator is sent one report of it: the question as the answer carried it, or
 // the closing proposal. Without this, an orchestrator that asked the operator in its
 // own tab looked stopped from outside, and the coordinator spent two full turns
-// asking it why. Pure on purpose: the handler holds the $ (the engine fences it to
-// the file that received it) and passes its reads in here.
+// asking it why. When the operator answers that question in the orchestrator's own tab,
+// the coordinator is sent one withdrawal and the fingerprint is forgotten, so the same
+// question asked again is relayed again. Pure on purpose: the handler holds the $ (the
+// engine fences it to the file that received it) and passes its reads in here.
 import { MACHINE_LINE, machineLine, chainEntries } from './stop-gate.ts'
 import type { SessionRow } from './supervision.ts'
 
@@ -99,6 +101,27 @@ export function relayText(name: string, wait: Wait, since: string, context: stri
   const cut = wait.question.length > RELAY_CAP
   const question = cut ? `${wait.question.slice(0, RELAY_CAP)}\n[cut at ${RELAY_CAP} of ${wait.question.length} characters]` : wait.question
   return `${header}${said}\n${reply}\n\n${question}`
+}
+
+// The wait file as the withdrawal reads it: the wait, and the fingerprint last delivered.
+export type RelayedWait = PriorWait & { relayed?: string | null }
+
+// The question the coordinator holds, if any: an operator wait (the current one, or the
+// one a turn's start cleared) whose own fingerprint was delivered. Its blocks and start
+// are what the coordinator's round file carries in the question's header.
+export function heldQuestion(prior: RelayedWait | null): { blocks: string; since: string | null } | null {
+  const kind = prior?.waiting ?? prior?.last_waiting ?? null
+  const blocks = prior?.blocks
+  if (kind !== 'operator' || typeof blocks !== 'string' || blocks === '') return null
+  if (prior!.relayed !== fingerprint({ kind: 'operator', blocks, question: '' })) return null
+  return { blocks, since: prior!.waiting_since ?? null }
+}
+
+// The report that the operator answered in the orchestrator's own tab: a report, never an
+// order, and nothing is to be sent back.
+export function withdrawalText(name: string, blocks: string, since: string | null): string {
+  return `[module] ${name} withdraws its question for the operator since ${since ?? '?'} — blocks: ${blocks}\n`
+    + `the operator answered it in ${name}'s own tab: nothing to send back`
 }
 
 // An agent's measure crossing the gate its session runs under, the one line sent to its

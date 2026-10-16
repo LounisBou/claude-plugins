@@ -4,7 +4,7 @@
 // coordinator per wait, none twice, none without a coordinator, none from a session
 // that is no orchestrator, and a send that fails never holding the turn's end.
 import { expect, test } from 'claude-code/testing'
-import { parseWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel, RELAY_CAP } from '../relay.ts'
+import { parseWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel, heldQuestion, withdrawalText, RELAY_CAP } from '../relay.ts'
 import { parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
 import { logLineOf } from './fakes.ts'
@@ -76,6 +76,25 @@ test('the pane and status label carry the wait', () => {
   expect(paneRows({ a: row })[0].label).toContain(`waiting for the operator since ${hhmm} — blocks: phase 3`)
   expect(waitLabel({ ...row, waiting: 'done' })).toBe(`done since ${hhmm}, proposes to be closed`)
   expect(waitLabel({ ...row, waiting: null })).toBeNull()
+})
+
+test('a held question is the operator wait whose own fingerprint was relayed', () => {
+  const key = fingerprint({ kind: 'operator', blocks: 'phase 3', question: '' })
+  const held = { waiting: 'operator' as const, blocks: 'phase 3', waiting_since: 'T', relayed: key }
+  expect(heldQuestion(held)).toEqual({ blocks: 'phase 3', since: 'T' })
+  expect(heldQuestion({ ...held, waiting: null, last_waiting: 'operator' })).toEqual({ blocks: 'phase 3', since: 'T' })
+  expect(heldQuestion({ ...held, waiting_since: null })).toEqual({ blocks: 'phase 3', since: null })
+  expect(heldQuestion({ ...held, relayed: fingerprint({ kind: 'operator', blocks: 'phase 4', question: '' }) })).toBeNull()
+  expect(heldQuestion({ ...held, relayed: null })).toBeNull()
+  expect(heldQuestion({ ...held, waiting: 'done' })).toBeNull()
+  expect(heldQuestion({ ...held, blocks: '' })).toBeNull()
+  expect(heldQuestion(null)).toBeNull()
+})
+
+test('the withdrawal names the sender, the question and where it was answered', () => {
+  expect(withdrawalText('Orch : belt', 'phase 3', '2026-10-14T10:00:00.000Z')).toBe(
+    "[module] Orch : belt withdraws its question for the operator since 2026-10-14T10:00:00.000Z — blocks: phase 3\nthe operator answered it in Orch : belt's own tab: nothing to send back")
+  expect(withdrawalText('Orch : belt', 'phase 3', null)).toContain('since ? — blocks: phase 3')
 })
 
 // --- the wiring over a faked $ ------------------------------------------------------------
@@ -277,4 +296,127 @@ test('two turns ending on the same wait keep the first waiting_since, the turn b
   expect(fx.row().waiting_since).toBe(first)
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, 'waiting: operator — blocks: phase 4')))
   expect(fx.row().waiting_since).not.toBe(first)
+})
+
+// --- the operator answers in the orchestrator's own tab ---------------------------------------
+
+const QUESTION_LINE = 'waiting: operator — blocks: phase 3'
+const typed = (kind: string, text = 'yes') => ({ text, origin: { kind } })
+
+async function relayedQuestion(over: Parameters<typeof fake>[0] = {}) {
+  const chains = mounted()
+  const fx = fake(over)
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+  fx.sent.length = 0
+  return { chains, fx }
+}
+
+for (const kind of ['composer', 'bridge']) {
+  test(`a ${kind} prompt in an orchestrator holding a question withdraws it and forgets the fingerprint`, async () => {
+    const { chains, fx } = await relayedQuestion()
+    const since = fx.row().waiting_since
+    const e = typed(kind)
+    expect(await drive(chains, 'prompt.submit', fx.dollar, e)).toBe(e)
+    expect(fx.sent.length).toBe(1)
+    expect(fx.sent[0].to).toBe('Coord : ops [abc]')
+    expect(fx.sent[0].text).toBe(withdrawalText('Orch : belt', 'phase 3', since))
+    expect(fx.row().relayed ?? null).toBeNull()
+    await drive(chains, 'prompt.submit', fx.dollar, typed(kind, 'and more'))
+    expect(fx.sent.length).toBe(1)
+  })
+}
+
+test('the withdrawal holds when a turn start cleared the wait first', async () => {
+  const { chains, fx } = await relayedQuestion()
+  await drive(chains, 'turn.start', fx.dollar, { text: 'yes' })
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
+  expect(fx.sent.length).toBe(1)
+})
+
+for (const [label, setup, kind] of [
+  ['another prompt kind', {}, 'peer'],
+  ['an agent session', { name: 'Agent : belt-p3', role: 'agent' as const }, 'composer'],
+  ['no coordinator', { coordinator: null }, 'composer'],
+] as const) {
+  test(`nothing is withdrawn for ${label}`, async () => {
+    const { chains, fx } = await relayedQuestion(setup)
+    const before = fx.files.get(WAIT)
+    const e = typed(kind)
+    expect(await drive(chains, 'prompt.submit', fx.dollar, e)).toBe(e)
+    expect(fx.sent.length).toBe(0)
+    expect(fx.files.get(WAIT)).toBe(before)
+  })
+}
+
+for (const text of ['/orchestrator:status', '  /x']) {
+  test(`a composer prompt that is a slash command (${JSON.stringify(text)}) withdraws nothing`, async () => {
+    const { chains, fx } = await relayedQuestion()
+    const before = fx.files.get(WAIT)
+    const e = typed('composer', text)
+    expect(await drive(chains, 'prompt.submit', fx.dollar, e)).toBe(e)
+    expect(fx.sent.length).toBe(0)
+    expect(fx.files.get(WAIT)).toBe(before)
+    expect(fx.row().relayed).toBeTruthy()
+  })
+}
+
+test('no held question: nothing is withdrawn', async () => {
+  const chains = mounted()
+  const fx = fake()
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Everything merged.', 'waiting: done')))
+  fx.sent.length = 0
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
+  expect(fx.sent.length).toBe(0)
+})
+
+test('a refused withdrawal is one log line, keeps the fingerprint and is tried again', async () => {
+  const { chains, fx } = await relayedQuestion()
+  const key = fx.row().relayed
+  const send = fx.dollar.session.send
+  fx.dollar.session.send = async () => ({ isDelivered: false, reason: 'nobody by that name' })
+  const e = typed('composer')
+  expect(await drive(chains, 'prompt.submit', fx.dollar, e)).toBe(e)
+  expect(fx.logged.filter(l => l.includes('withdraw: not delivered to Coord : ops [abc]: nobody by that name')).length).toBe(1)
+  expect(fx.row().relayed).toBe(key)
+  fx.dollar.session.send = send
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
+  expect(fx.sent.length).toBe(1)
+})
+
+test('a wait rewritten while the withdrawal was being sent is left as it was written', async () => {
+  const { chains, fx } = await relayedQuestion()
+  const other = fingerprint({ kind: 'operator', blocks: 'phase 4', question: '' })
+  const send = fx.dollar.session.send
+  fx.dollar.session.send = async (args: { to: unknown; text: string }) => {
+    const sent = await send(args)
+    fx.files.set(WAIT, JSON.stringify({ ...JSON.parse(fx.files.get(WAIT)!), relayed: other }) + '\n')
+    return sent
+  }
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
+  expect(fx.sent.length).toBe(1)
+  expect(JSON.parse(fx.files.get(WAIT)!).relayed).toBe(other)
+})
+
+test('the write-back forgets the fingerprint and keeps every other field of the wait', async () => {
+  const { chains, fx } = await relayedQuestion()
+  const before = JSON.parse(fx.files.get(WAIT)!)
+  const fields = ['waiting', 'last_waiting', 'blocks', 'waiting_since', 'name', 'pid']
+  const kept = (wait: Record<string, unknown>) => Object.fromEntries(fields.map(f => [f, wait[f] ?? null]))
+  expect(kept(before).waiting).toBe('operator')
+  expect(kept(before).name).toBe('Orch : belt')
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
+  const after = JSON.parse(fx.files.get(WAIT)!)
+  expect(after.relayed).toBeNull()
+  expect(kept(after)).toEqual(kept(before))
+})
+
+test('after a withdrawal, the same question asked again is relayed again', async () => {
+  const { chains, fx } = await relayedQuestion()
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
+  await drive(chains, 'turn.start', fx.dollar, { text: 'yes' })
+  fx.sent.length = 0
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+  expect(fx.sent.length).toBe(1)
+  expect(fx.sent[0].text).toContain('waits for the operator')
 })

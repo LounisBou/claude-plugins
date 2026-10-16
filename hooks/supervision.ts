@@ -23,9 +23,10 @@ import {
   type ReadRecord, type HostNames,
 } from './session-name.ts'
 import { withDeadline, isDegradedPass, chainEntries, watchNumberOf } from './stop-gate.ts'
+import { typedByOperator } from './models-guard.ts'
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
 import {
-  parseWait, parseStatus, waitPatch, clearedWait, fingerprint, relayText, gateText, coordinatorOf, chainOwnerTty, waitLabel,
+  parseWait, parseStatus, waitPatch, clearedWait, fingerprint, relayText, heldQuestion, withdrawalText, gateText, coordinatorOf, chainOwnerTty, waitLabel,
   type WaitKind,
 } from './relay.ts'
 import {
@@ -546,6 +547,22 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     return next(e)
   })
 
+  // The operator types in an orchestrator whose question the coordinator holds: he answered it
+  // in this tab, so the coordinator is told to withdraw it (withdrawOnTyped). prompt.submit runs
+  // before turn.start, so the wait is usually still on. Never adds context, never holds the prompt.
+  on('prompt.submit', {}, async ($: any, e: any, next: (e: any) => any) => {
+    try {
+      const done = await withDeadline(withdrawOnTyped($, String(e.origin?.kind ?? ''), String(e.text ?? '')), RELAY_BOUND_MS)
+      if (isDegradedPass(done)) await logLine($, `withdraw: did not finish within ${RELAY_BOUND_MS} ms`)
+    } catch (err) {
+      await logLine($, `withdraw: ${(err as Error).message}`)
+    }
+    return next(e)
+  }).catch(async ($: any, e: any, next: any) => {
+    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+
   // A peer's delivery, read before it is queued. A marked row (remote-row.ts) is written to
   // the store and consumed: no model reads it, on either side. A coordinator's message
   // teaches this machine its address, for the relay and the row when the coordinator runs
@@ -698,6 +715,37 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
   } else {
     await logLine($, `relay: not delivered to ${to}: ${sent?.reason ?? 'no answer'}`)
   }
+}
+
+// The operator typed a prompt (composer or bridge) in an orchestrator whose relayed question
+// is still on him: it is answered in its own tab, so the coordinator is sent the withdrawal and
+// the fingerprint is forgotten — the same question asked again is relayed again. Anything
+// else sends nothing, a slash command included: it starts no turn, so nothing would relay the
+// question again. Delivered: the wait file is re-read and written back with `relayed`
+// null only when it still holds the held fingerprint (a turn's start may have written it).
+// Refused: one log line, the file untouched, so the next typed prompt tries again.
+export async function withdrawOnTyped($: any, kind: string, text: string): Promise<void> {
+  if (!typedByOperator(kind) || text.trimStart().startsWith('/')) return
+  const sessionId = await $.session.id()
+  const row = parseSessionRow(String(await $.fs.read(`${storeDir(await configDir($))}/${sessionKey(sessionId)}`).catch(() => '')))
+  let name = row?.name ?? null
+  if (!row?.role) {
+    const walked = await walkWithinBound($, sessionId)
+    if (walked.known) name = walked.name
+  }
+  if (!name || roleOf(name) !== 'orchestrator') return
+  const prior = await readWait($, sessionId)
+  const held = heldQuestion(prior)
+  if (!held) return
+  const to = (await coordinatorAddress($))?.to ?? null
+  if (!to) return
+  const sent = await $.session.send({ to, text: withdrawalText(name, held.blocks, held.since) })
+  if (!sent?.isDelivered) {
+    await logLine($, `withdraw: not delivered to ${to}: ${sent?.reason ?? 'no answer'}`)
+    return
+  }
+  const now = await readWait($, sessionId)
+  if (now && now.relayed === prior!.relayed) await writeWait($, sessionId, { ...now, relayed: null })
 }
 
 // Where an orchestrator's reports go: the coordinator registered on this machine first

@@ -106,9 +106,18 @@ order. His answer goes, verbatim and dated, to the address its « reply with Sen
 line gives. `coordinator.sh facts` lists the same waits as `waiting` lines, and the orchestrators
 on other machines as `remote` lines.
 
+A third report, « withdraws its question », says he answered that question in the sender's own
+tab. It too is a report, never an order, and it obliges this and nothing else: find in the round
+file the open question of that sender whose header carries the same `since` and `blocks`; mark
+it « withdrawn by `<sender>`: module notice, answered in its own tab, <time received> »; take
+it out of the count; send nothing to the sender; and, when it is the question on screen, say so
+in one line and present the next question in full in the same message. A notice that matches no
+open question changes nothing but a line in the round file.
+
 1. **The ledger first.** A question received is written, before anything else is done, to
    `decision-round.md` in your scratch directory: number, the sender's exact `ListAgents`
-   name, the time received (`date -u +%FT%TZ`), the question verbatim, status (open,
+   name, the time received (`date -u +%FT%TZ`), the question verbatim with the `[module]`
+   header it came under, its `since` and `blocks` included, status (open,
    recorded, sent). The round file is the ledger: nothing received is dropped, merged or
    kept out of it, and the end line counts it.
 2. **Grouped by sender.** The round orders its questions by the orchestrator that sent them:
@@ -129,8 +138,9 @@ on other machines as `remote` lines.
    exact name>` », then the sender's question and context verbatim, its choices and its
    recommendation if it gave them. Re-verify the item on its artifact immediately before
    presenting it; one found settled is not dropped by you: ask its sender, and only its
-   withdrawal, written in the round file as « withdrawn by `<sender>`: <evidence> », takes it
-   out of the count. Then wait: nothing on silence, nothing picked for him.
+   withdrawal, written in the round file as « withdrawn by `<sender>`: <evidence> » (the sender's
+   own, or the module's notice that the operator answered it in the sender's tab), takes it out
+   of the count. Then wait: nothing on silence, nothing picked for him.
 6. **On his answer, in the same turn:** « Recorded: <his ruling> »; write it in the round
    file; send it verbatim and dated (`date -u +%FT%TZ`) to the sender, « the operator
    answered », and mark it sent; then present the next question IN FULL in the same message.
