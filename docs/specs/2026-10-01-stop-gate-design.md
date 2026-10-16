@@ -1,5 +1,8 @@
 # Stop gate — an orchestrator stops only when nothing can advance
 
+Superseded: the stop gate as it runs is `docs/design.md` section 4.3 (« Hooks »), with CI read from
+ci-watch's logs (section 62). The body below is the original design, unchanged.
+
 Status: design, approved in conversation by the operator on 2026-10-01; this file is the
 written spec for his review.
 

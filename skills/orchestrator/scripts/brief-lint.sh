@@ -73,6 +73,9 @@ done < <(grep -noE '\$\{[A-Z][A-Z0-9_]*[:-]*[^}]*\}|\$[A-Z][A-Z0-9_]{2,}' "$brie
 #    A prompt the next session cannot open by path does not exist. The one exception is a
 #    path the brief tells its session to create — an audit's report — named with
 #    --expect-created by the writer, exactly: every other absent path is still a finding.
+#    A slash command is no path: a backticked word of the form /<plugin>:<command>, with
+#    or without arguments after a space (/orchestrator:status, /implement:phase 3), is
+#    skipped. Every other backticked word starting with / is checked as before.
 is_expected() {
     local e
     for e in ${expected[@]+"${expected[@]}"}; do [ "$e" = "$1" ] && return 0; done
@@ -81,6 +84,7 @@ is_expected() {
 while IFS= read -r line; do
     n=${line%%:*}; p=${line#*:}
     [ -n "${p:-}" ] || continue
+    [[ "$p" =~ ^/[A-Za-z0-9_-]+:[A-Za-z0-9_-]+( .*)?$ ]] && continue
     [ -e "$p" ] || is_expected "$p" || say "$n" "path does not exist: $p"
 done < <(grep -noE '`/[^`]+`' "$brief" 2>/dev/null | sed 's/`//g' || true)
 

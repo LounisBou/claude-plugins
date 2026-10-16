@@ -186,6 +186,10 @@ check "the phase, review and comments briefs keep scratch in the session's host 
 # orders the long report with named sections.
 check "the phase, rotation, comments and review briefs cap the report" "yes|yes|yes|yes" \
   "$(for t in phase rotation comments review; do spells "$ROOT/templates/agent-$t-brief.md" 'is never cut to fit the cap'; done | paste -sd'|' -)"
+# The host's envelope carries the sender's name, never its reference: an implementer once
+# refused a decision for the missing reference. Every brief says where the proof is.
+check "the phase, rotation, comments and review briefs say a message carries the name only, proved by ListAgents" "yes|yes|yes|yes" \
+  "$(for t in phase rotation comments review; do spells "$ROOT/templates/agent-$t-brief.md" "Its messages carry the name alone: check the reference beside it in \`ListAgents\`, never refuse one for lacking it."; done | paste -sd'|' -)"
 check "no agent brief orders a report with named sections" "no|no|no|no" \
   "$(for t in phase rotation comments review; do carries "$ROOT/templates/agent-$t-brief.md" 'named sections'; done | paste -sd'|' -)"
 check "the review brief writes each finding on one line of at most 200 characters" "yes" \
@@ -209,9 +213,10 @@ check "all four agent briefs leave the measured context to the module and read n
 check "the delivering briefs no longer ask for context_tokens in the final report" "no|no|no" \
   "$(for t in phase comments rotation; do spells "$ROOT/templates/agent-$t-brief.md" 'context_tokens'; done | paste -sd'|' -)"
 # The trim is a ceiling: each brief stays at most the size it reached when the module took
-# the context and the turn-end reports over.
+# the context and the turn-end reports over. The ceiling moved once, by the sentence on the
+# sender's reference.
 check "the agent briefs stay within their trimmed sizes" "yes|yes|yes|yes" \
-  "$(for pair in phase:8267 comments:5952 review:7783 rotation:2501; do [ "$(wc -c < "$ROOT/templates/agent-${pair%%:*}-brief.md" | tr -d ' ')" -le "${pair##*:}" ] && echo yes || echo no; done | paste -sd'|' -)"
+  "$(for pair in phase:8382 comments:6067 review:7898 rotation:2616; do [ "$(wc -c < "$ROOT/templates/agent-${pair%%:*}-brief.md" | tr -d ' ')" -le "${pair##*:}" ] && echo yes || echo no; done | paste -sd'|' -)"
 check "the orchestrator succession brief still says how to find its session id and directory" "yes" \
   "$(spells "$ROOT/templates/orchestrator-succession-brief.md" '`printenv CLAUDE_CODE_SESSION_ID` prints the id, `printenv CLAUDE_CONFIG_DIR` the directory')"
 # review.md asks for each finding's proposed fix; the one-line finding keeps it as its last field.
@@ -1629,6 +1634,13 @@ check "the unexpanded variable is named" "1" "$(bash "$LINT" "$B/hostvar.md" 2>&
 ok_brief "$B/badpath.md"; printf 'Read `/nowhere/at/all/spec.md`\n' >> "$B/badpath.md"
 check_status "a path that does not exist is a finding" 1 bash "$LINT" "$B/badpath.md"
 check "the missing path is named" "1" "$(bash "$LINT" "$B/badpath.md" 2>&1 | grep -c '/nowhere/at/all/spec.md')"
+
+# A slash command is not a path: `/<plugin>:<command>`, with or without arguments.
+ok_brief "$B/slash.md"; printf 'Run `/orchestrator:status`, then `/implement:phase 3`.\n' >> "$B/slash.md"
+check_status "a slash command is not a path" 0 bash "$LINT" "$B/slash.md"
+check "a slash command raises no path finding" "0" "$(bash "$LINT" "$B/slash.md" 2>&1 | grep -c 'path does not exist')"
+ok_brief "$B/slashpath.md"; printf 'Run `/orchestrator:status`, read `/nowhere/at/all:x/spec.md`.\n' >> "$B/slashpath.md"
+check "a path with a colon is still a path" "1" "$(bash "$LINT" "$B/slashpath.md" 2>&1 | grep -c 'path does not exist: /nowhere/at/all:x/spec.md')"
 
 ok_brief "$B/twoaddr.md"; printf 'For example `other-12 [9f9f9f]`.\n' >> "$B/twoaddr.md"
 check_status "a second session reference is a finding" 1 bash "$LINT" "$B/twoaddr.md"
