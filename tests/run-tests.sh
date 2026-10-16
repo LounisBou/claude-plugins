@@ -6004,6 +6004,60 @@ check "the drop runs only on his yes, after the turn ends" "1" \
   "$([ "$(grep -n 'END THE TURN' "$SLCMD" | head -1 | cut -d: -f1)" -lt "$(grep -n 'coordinator.sh drop --name' "$SLCMD" | head -1 | cut -d: -f1)" ] 2>/dev/null && echo 1 || echo 0)"
 check "the README lists the sleeping command" "yes" "$(spells "$ROOT/README.md" '| `/orchestrator:sleeping` |')"
 
+# Remote rows: the rows the hooks module received from orchestrators on other machines, read
+# beside the same local sessions. A fresh row is listed in each wait form; a stale one, one a
+# local session names and a temporary file are passed over; a malformed file is unread (exit 2).
+# Its pull requests join owners where the chain gives « unknown », and count as one more
+# orchestrator on a collision; a repository this machine did not read is said so.
+CRCFG="$WORK/coord-remote-config"; RREM="$CRCFG/claude-orchestrator/store/remote"
+mkdir -p "$RREM" "$CRCFG/claude-orchestrator/store/waits"
+RNOW=$(date -u +%Y-%m-%dT%H:%M:%S.000Z); ROLD=2020-01-01T00:00:00.000Z
+cat > "$RREM/Orch___far" <<EOF
+{"name":"Orch : far","role":"orchestrator","context_tokens":120000,"context_percent":12,"window":1000000,"waiting":"operator","blocks":"phase 3","waiting_since":"$RNOW","updated_at":"$RNOW","machine":"bench-mac","repo":"o/app","prs":["o/app#7","o/app#9","o/app#99"]}
+EOF
+cat > "$RREM/Orch___near" <<EOF
+{"name":"Orch : near","role":"orchestrator","context_tokens":300000,"context_percent":30,"window":1000000,"waiting":"done","blocks":null,"waiting_since":"$RNOW","updated_at":"$RNOW","machine":"lab-mini","repo":null,"prs":[]}
+EOF
+cat > "$RREM/Orch___quiet" <<EOF
+{"name":"Orch : quiet","role":"orchestrator","context_tokens":0,"context_percent":0,"window":1000000,"waiting":null,"blocks":null,"waiting_since":null,"updated_at":"$RNOW","machine":"lab-mini","repo":"o/app","prs":["o/app#10","o/gone#5"]}
+EOF
+cat > "$RREM/Orch___twin" <<EOF
+{"name":"Orch : twin","role":"orchestrator","context_tokens":0,"context_percent":0,"window":1000000,"waiting":null,"blocks":null,"waiting_since":null,"updated_at":"$RNOW","machine":"lab-mini","repo":null,"prs":["o/gone#5"]}
+EOF
+cat > "$RREM/Orch___zeta" <<EOF
+{"name":"Orch : zeta","role":"orchestrator","context_tokens":0,"context_percent":0,"window":1000000,"waiting":null,"blocks":null,"waiting_since":null,"updated_at":"$RNOW","machine":"lab-mini","repo":"o/app","prs":["o/app#99"]}
+EOF
+cat > "$RREM/Orch___old" <<EOF
+{"name":"Orch : old","role":"orchestrator","context_tokens":0,"context_percent":0,"window":1000000,"waiting":"operator","blocks":"x","waiting_since":"$ROLD","updated_at":"$ROLD","machine":"lab-mini","repo":"o/app","prs":["o/app#8"]}
+EOF
+cat > "$RREM/Orch___alpha" <<EOF
+{"name":"Orch : alpha","role":"orchestrator","context_tokens":0,"context_percent":0,"window":1000000,"waiting":null,"blocks":null,"waiting_since":null,"updated_at":"$RNOW","machine":"lab-mini","repo":"o/app","prs":["o/app#8"]}
+EOF
+printf 'not json\n' > "$RREM/Orch___bad"
+printf 'half a row' > "$RREM/Orch___far.tmp-1"
+crem() {
+  CLAUDE_CONFIG_DIR="$CRCFG" ORCHESTRATOR_STATE_DIR="$CS" ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli \
+    COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$COORD" "$@"
+}
+crem_status() { crem "$@" >/dev/null 2>&1; echo "exit $?"; }
+RFACTS=$(crem facts 2>/dev/null)
+ROWNERS=$(crem owners 2>/dev/null)
+check "facts lists each fresh remote row in its wait form: operator, done, working" \
+  "remote Orch : far | on bench-mac | updated $RNOW | context 120000 (12%) | repository o/app | prs o/app#7, o/app#9, o/app#99 | operator since $RNOW | blocks: phase 3|remote Orch : near | on lab-mini | updated $RNOW | context 300000 (30%) | repository none | prs none | done since $RNOW|remote Orch : quiet | on lab-mini | updated $RNOW | context 0 (0%) | repository o/app | prs o/app#10, o/gone#5 | working|remote Orch : twin | on lab-mini | updated $RNOW | context 0 (0%) | repository none | prs o/gone#5 | working|remote Orch : zeta | on lab-mini | updated $RNOW | context 0 (0%) | repository o/app | prs o/app#99 | working" \
+  "$(printf '%s\n' "$RFACTS" | grep '^remote ' | tr '\n' '|' | sed 's/|$//')"
+check "a stale remote row, a local session's name, and a temporary file are not listed" "0|0|1" \
+  "$(printf '%s\n' "$RFACTS" | grep -c '^remote Orch : old ')|$(printf '%s\n' "$RFACTS" | grep -c '^remote Orch : alpha ')|$(printf '%s\n' "$RFACTS" | grep -c '^remote Orch : far ')"
+check "a malformed remote row is unread, and facts and owners exit 2" "unread remote $RREM/Orch___bad: not a JSON row|exit 2|exit 2" \
+  "$(printf '%s\n' "$RFACTS" | grep '^unread ')|$(crem_status facts)|$(crem_status owners)"
+check "a remote row listing a pull request a local session is on is a collision, and so is two remote rows on one pull request of an unread repository" \
+  "collision pr | forge.example/o/app#7 | feat/x | Orch : alpha [aaa111], Orch : beta [bbb222], Orch : far|collision pr | o/gone#5 | - | Orch : quiet, Orch : twin" \
+  "$(printf '%s\n' "$RFACTS" | grep '^collision pr ' | tr '\n' '|' | sed 's/|$//')"
+check "owners names the orchestrator of an unknown pull request a remote row lists, and says a pull request in an unread repository is not read" \
+  "pr forge.example/o/app#9 | feat/z | Orch : far | remote on bench-mac, updated $RNOW|pr forge.example/o/app#10 | feat/w | Orch : quiet | remote on lab-mini, updated $RNOW|pr o/gone#5 | - | Orch : quiet | remote on lab-mini, updated $RNOW, not read on the forge here|pr o/gone#5 | - | Orch : twin | remote on lab-mini, updated $RNOW, not read on the forge here" \
+  "$(printf '%s\n' "$ROWNERS" | grep 'remote on' | tr '\n' '|' | sed 's/|$//')"
+check "a remote pull request absent from its repository's open list is not printed by owners, nor counted in a collision" "0|0" \
+  "$(printf '%s\n' "$ROWNERS" | grep -c '#99')|$(printf '%s\n' "$RFACTS" | grep '^collision ' | grep -c '#99')"
+
 echo "== routing: cost =="
 
 ROUTING="$ROOT/skills/model-routing/scripts/routing.py"

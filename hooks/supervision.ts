@@ -22,7 +22,7 @@ import {
   roleOf, walkName, hostBasenames, hostRecordOf, blockArgv, bytesOfBase64,
   type ReadRecord, type HostNames,
 } from './session-name.ts'
-import { withDeadline, isDegradedPass, chainEntries } from './stop-gate.ts'
+import { withDeadline, isDegradedPass, chainEntries, watchNumberOf } from './stop-gate.ts'
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
 import {
   parseWait, parseStatus, waitPatch, clearedWait, fingerprint, relayText, gateText, coordinatorOf, chainOwnerTty, waitLabel,
@@ -30,7 +30,7 @@ import {
 } from './relay.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
-  remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, machineLabel, ROW_MARKER, REMOTE_STALE_AFTER_MS, type RemoteRow,
+  remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, machineLabel, prsInFlight, ROW_MARKER, REMOTE_STALE_AFTER_MS, type RemoteRow,
 } from './remote-row.ts'
 
 // One row per live session, the store's whole schema. `pid` is the session's host
@@ -727,6 +727,30 @@ async function machineOf($: any): Promise<string> {
   return machine
 }
 
+// The pull requests in flight of one session, read from the state dir's ci-watch directory.
+// Every file name listed (at most CI_WATCH_LIST_CAP) is kept, so a base log is seen wherever it
+// sits in the listing; the owner files read are those of at most CI_WATCH_READ_CAP watches
+// still in flight, the newest first. A directory that cannot be read means no pull request,
+// never a failure.
+const CI_WATCH_LIST_CAP = 4096
+const CI_WATCH_READ_CAP = 256
+async function prsOf($: any, sessionId: string, repo: string | null): Promise<string[]> {
+  const dir = `${await stateDir($)}/ci-watch`
+  const entries: { name: string; kind: string; mtimeMs?: number }[] = await $.fs.list(dir).catch(() => [])
+  const files = entries.slice(0, CI_WATCH_LIST_CAP).filter(entry => entry?.kind === 'file')
+  const names = files.map(entry => entry.name)
+  const listed = new Set(names)
+  const watches = files
+    .filter(entry => watchNumberOf(entry.name) !== null && !listed.has(entry.name.replace(/\.log$/, '-base.log')))
+    .sort((a, b) => (b.mtimeMs ?? 0) - (a.mtimeMs ?? 0))
+    .slice(0, CI_WATCH_READ_CAP)
+  const owners = new Map<string, string>()
+  for (const entry of watches) {
+    owners.set(entry.name, String(await $.fs.read(`${dir}/${entry.name}.session`).catch(() => '')).trim())
+  }
+  return prsInFlight(names, owners, sessionId, repo)
+}
+
 // An orchestrator's row, sent to a coordinator on another machine when it is news
 // (remote-row.ts): a coordinator on this machine reads the store itself, and none known
 // is nobody to send to. What was sent is kept only once delivered; a failure is one log
@@ -737,7 +761,8 @@ export async function sendRow($: any, sessionId: string): Promise<void> {
   if (read?.role !== 'orchestrator') return
   const to = await coordinatorAddress($)
   if (!to || to.local) return
-  const row = remoteRowOf(withWait(read, String(await $.fs.read(`${store}/${waitKey(sessionId)}`).catch(() => ''))), await machineOf($))
+  const prs = await prsOf($, sessionId, read.repo)
+  const row = remoteRowOf(withWait(read, String(await $.fs.read(`${store}/${waitKey(sessionId)}`).catch(() => ''))), await machineOf($), prs)
   if (!row) return
   const now = Date.now()
   const path = `${store}/${rowKey(sessionId)}`

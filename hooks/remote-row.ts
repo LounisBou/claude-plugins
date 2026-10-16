@@ -8,6 +8,7 @@
 // crossing a band — plus one refresh per bound so the age stays honest. Pure on purpose:
 // the handlers hold the $ (supervision.ts) and pass their reads in here.
 import { roleOf } from './session-name.ts'
+import { watchNumberOf } from './stop-gate.ts'
 import type { SessionRow } from './supervision.ts'
 import type { WaitKind } from './relay.ts'
 
@@ -35,9 +36,21 @@ const BLOCKS_CAP = 200
 const MACHINE_CAP = 64
 const STAMP_CAP = 40
 const NUMBER_CAP = 100_000_000
+const REPO_CAP = 140
+const PR_CAP = 150
 
-// The row as it travels: the pane's own fields and the machine it was measured on —
-// no path, no repository, no model, no pid, no environment value.
+// The pull requests a row lists, at most this many: the sender cuts to it, the receiver
+// refuses a row past it.
+export const PRS_CAP = 20
+
+// A repository as the store row holds it (`owner/name`), and a pull request in flight
+// (`owner/name#<n>`): the receiver's shape, which the sender also checks before it sends.
+const REPO_SHAPE = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/
+const PR_SHAPE = /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+#[1-9][0-9]{0,8}$/
+
+// The row as it travels: the pane's own fields, the machine it was measured on, and the
+// repository and the pull requests in flight its orchestrator watches — no path, no model,
+// no pid, no environment value.
 export type RemoteRow = {
   name: string
   role: 'orchestrator'
@@ -49,12 +62,17 @@ export type RemoteRow = {
   waiting_since: string | null
   updated_at: string
   machine: string
+  repo: string | null
+  prs: string[]
 }
 
-const FIELDS = ['name', 'role', 'context_tokens', 'context_percent', 'window', 'waiting', 'blocks', 'waiting_since', 'updated_at', 'machine'] as const
+// The ten fields 0.58 and 0.59 sent, still accepted as no repository and no pull request.
+const OLD_FIELDS = ['name', 'role', 'context_tokens', 'context_percent', 'window', 'waiting', 'blocks', 'waiting_since', 'updated_at', 'machine'] as const
+const FIELDS = [...OLD_FIELDS, 'repo', 'prs'] as const
 
-// What was last sent (`rows/<id>`, beside the wait file): the deduplication key.
-export type RowSent = { band: number; waiting: string | null; blocks: string | null; sent_at: string }
+// What was last sent (`rows/<id>`, beside the wait file): the deduplication key. A record
+// written before the repository and the pull requests were carried has neither field.
+export type RowSent = { band: number; waiting: string | null; blocks: string | null; repo?: string | null; prs?: string[]; sent_at: string }
 
 // A machine label as the pane shows it: the host name's own letters, cut, never empty.
 export function machineLabel(raw: string): string {
@@ -62,12 +80,14 @@ export function machineLabel(raw: string): string {
   return label || 'unknown'
 }
 
-// The row out of the session's store row (its wait merged in): null for any session that
-// is no named orchestrator — only an orchestrator's row travels.
-export function remoteRowOf(row: SessionRow | null, machine: string): RemoteRow | null {
+// The row out of the session's store row (its wait merged in) and the pull requests in
+// flight (prsInFlight): null for any session that is no named orchestrator — only an
+// orchestrator's row travels. The repository is the store row's own, or none when it is not
+// the receiver's shape.
+export function remoteRowOf(row: SessionRow | null, machine: string, prs: readonly string[] = []): RemoteRow | null {
   if (!row || row.role !== 'orchestrator' || !row.name || roleOf(row.name) !== 'orchestrator') return null
   const on = row.waiting === 'operator' || row.waiting === 'done'
-  return {
+  const out: RemoteRow = {
     name: row.name.slice(0, NAME_CAP),
     role: 'orchestrator',
     context_tokens: clampInt(row.context_tokens),
@@ -78,7 +98,21 @@ export function remoteRowOf(row: SessionRow | null, machine: string): RemoteRow 
     waiting_since: on && row.waiting_since ? String(row.waiting_since).slice(0, STAMP_CAP) : null,
     updated_at: String(row.updated_at).slice(0, STAMP_CAP),
     machine: machineLabel(machine),
+    repo: repoShaped(row.repo) ? row.repo : null,
+    prs: prs.filter(prShaped).slice(0, PRS_CAP),
   }
+  // The receiver refuses a line past its cap whole, so the pull requests are dropped from the
+  // end of the sorted list until the line fits: the row is sent, with fewer of them.
+  while (out.prs.length > 0 && rowText(out).length > ROW_TEXT_CAP) out.prs.pop()
+  return out
+}
+
+function repoShaped(repo: unknown): repo is string {
+  return typeof repo === 'string' && repo.length <= REPO_CAP && REPO_SHAPE.test(repo)
+}
+
+function prShaped(pr: unknown): pr is string {
+  return typeof pr === 'string' && pr.length <= PR_CAP && PR_SHAPE.test(pr)
 }
 
 function clampInt(n: unknown): number {
@@ -86,12 +120,43 @@ function clampInt(n: unknown): number {
   return Math.max(0, Math.min(NUMBER_CAP, v))
 }
 
-// Whether this row is news against what was last sent: a new wait (kind or blocks), the
-// fill in another band, or the refresh bound passed. Nothing sent yet: news.
+// The pull requests in flight of one session, from the ci-watch directory's listing: each
+// `<slug>-pr<n>.log` whose owner file (its text, trimmed, in `owners`) names the session,
+// unless its `<slug>-pr<n>-base.log` is listed too (the watch found the pull request
+// merged). A slug is `owner_name` with the repository's own characters; `here` is the
+// repository argument, and none leaves the pull request out. Unique, sorted, cut to the cap.
+export function prsInFlight(names: readonly string[], owners: ReadonlyMap<string, string>, sessionId: string, repo: string | null): string[] {
+  const listed = new Set(names)
+  const found = new Set<string>()
+  for (const name of names) {
+    const n = watchNumberOf(name)
+    if (n === null || owners.get(name) !== sessionId) continue
+    const slug = name.slice(0, name.length - `-pr${n}.log`.length)
+    if (listed.has(`${slug}-pr${n}-base.log`)) continue
+    const pr = prOf(slug, n, repo)
+    if (pr !== null) found.add(pr)
+  }
+  return [...found].sort().slice(0, PRS_CAP)
+}
+
+// A slug and a number as `owner/name#<n>`, or null when the slug names no repository: the
+// owner is what precedes the first underscore, the name what follows it, underscores and all.
+function prOf(slug: string, n: string, repo: string | null): string | null {
+  let address: string | null = null
+  if (slug === 'here') address = repo
+  else if (slug.indexOf('_') > 0) address = slug.replace('_', '/')
+  const pr = address === null ? null : `${address}#${n}`
+  return prShaped(pr) ? pr : null
+}
+
+// Whether this row is news against what was last sent: a new wait (kind or blocks), a new
+// repository or pull request list, the fill in another band, or the refresh bound passed.
+// Nothing sent yet: news; a record that carries neither repository nor pull requests: news once.
 export function rowIsNews(row: RemoteRow, last: RowSent | null, now: number): boolean {
   if (!last) return true
   if (last.band !== bandOf(row.context_percent)) return true
   if ((last.waiting ?? null) !== row.waiting || (last.blocks ?? null) !== row.blocks) return true
+  if (last.prs === undefined || (last.repo ?? null) !== row.repo || JSON.stringify(last.prs) !== JSON.stringify(row.prs)) return true
   const at = Date.parse(last.sent_at)
   return !Number.isFinite(at) || now - at >= ROW_REFRESH_MS
 }
@@ -101,7 +166,10 @@ export function bandOf(percent: number): number {
 }
 
 export function rowSent(row: RemoteRow, now: number): RowSent {
-  return { band: bandOf(row.context_percent), waiting: row.waiting, blocks: row.blocks, sent_at: new Date(now).toISOString() }
+  return {
+    band: bandOf(row.context_percent), waiting: row.waiting, blocks: row.blocks,
+    repo: row.repo, prs: row.prs, sent_at: new Date(now).toISOString(),
+  }
 }
 
 export function parseRowSent(text: string): RowSent | null {
@@ -144,8 +212,10 @@ export function isMarked(body: string): boolean {
   return body.trimStart().startsWith(ROW_MARKER)
 }
 
-// The receiver's whole check: the marker, the cap, the exact field set, each field's type
-// and bounds, an orchestrator's name. Anything else is null.
+// The receiver's whole check: the marker, the cap, the exact field set (the twelve, or the
+// ten of 0.58 and 0.59 read as no repository and no pull request — one of the two new
+// fields alone is refused), each field's type and bounds, an orchestrator's name. Anything
+// else is null.
 export function parseRemoteRow(body: string): RemoteRow | null {
   const text = body.trim()
   if (!text.startsWith(ROW_MARKER) || text.length > ROW_TEXT_CAP) return null
@@ -158,7 +228,8 @@ export function parseRemoteRow(body: string): RemoteRow | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const o = raw as Record<string, unknown>
   const keys = Object.keys(o)
-  if (keys.length !== FIELDS.length || !FIELDS.every(f => keys.includes(f))) return null
+  const carriesPrs = sameKeys(keys, FIELDS)
+  if (!carriesPrs && !sameKeys(keys, OLD_FIELDS)) return null
   const str = (v: unknown, cap: number) => typeof v === 'string' && v.length > 0 && v.length <= cap
   const num = (v: unknown, max: number) => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= max
   const stamp = (v: unknown) => str(v, STAMP_CAP) && Number.isFinite(Date.parse(v as string))
@@ -173,8 +244,20 @@ export function parseRemoteRow(body: string): RemoteRow | null {
     if (o.blocks !== null && !str(o.blocks, BLOCKS_CAP)) return null
     if (o.waiting_since !== null && !stamp(o.waiting_since)) return null
   }
+  if (carriesPrs) {
+    if (o.repo !== null && !repoShaped(o.repo)) return null
+    if (!Array.isArray(o.prs) || o.prs.length > PRS_CAP || !o.prs.every(prShaped)) return null
+  }
   if (/[\u0000-\u001f]/.test(String(o.name) + String(o.blocks ?? ''))) return null
-  return o as unknown as RemoteRow
+  return {
+    ...(o as unknown as RemoteRow),
+    repo: carriesPrs ? o.repo as string | null : null,
+    prs: carriesPrs ? o.prs as string[] : [],
+  }
+}
+
+function sameKeys(keys: readonly string[], fields: readonly string[]): boolean {
+  return keys.length === fields.length && fields.every(f => keys.includes(f))
 }
 
 // A remote row's file under the store: `remote/<the name, sanitised>`.

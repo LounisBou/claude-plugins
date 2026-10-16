@@ -26,13 +26,18 @@
 #   waiting <orchestrator> | done since <UTC time>
 #     (an orchestrator whose last turn ended on its machine line, read from the wait file the
 #     hooks module keeps for its live session; the module also sends you that question once)
+#   remote <orchestrator> | on <machine> | updated <UTC time> | context <tokens> (<percent>%) | repository <owner/name or none> | prs <owner/name#n>, ... or none | <wait>
+#     (an orchestrator on another machine, its row as the hooks module received it; <wait> is
+#     « operator since <UTC time or ?> | blocks: <what it blocks> », « done since <UTC time or ?> »
+#     or « working »; a row is kept while updated within 24 hours and no local session names it)
 #   collision checkouts | <repository> | <branch> | <path>, <path>...
 #   collision sessions | <repository> | <branch> | <pid> <title>, <pid> <title>...
 #   collision heavy | <pid>, <pid>...
 #   collision pr | <repository>#<n> | <branch> | <orchestrator>, <orchestrator>...
+#     (a remote row listing the pull request counts as one more orchestrator on it)
 #   unread <source>: <why>     a source not read: the process table, the host's name, lsof,
 #                              a pid's directory, a tree git failed on, a brief, the checkouts,
-#                              the forge
+#                              the forge, a remote row that is no JSON row
 # sleeping prints, one per sleeping orchestrator, in the order they went to sleep:
 #   sleeping <name> | since <UTC time> | <directory> | prs <repository>#<n> <branch>, ... or none
 #     | checkouts <path>, ... or none | brief <path> | model <id> | effort <level or default>
@@ -50,8 +55,13 @@
 #   pr <repository>#<n> | <branch> | unknown | no session in <checkout>..., beside a session in <checkout>...
 #   pr <repository>#<n> | <branch> | unknown | sessions <pid>, <pid> in <directory> name different orchestrators: <o>, <o>
 #   pr <repository>#<n> | <branch> | unknown | head branch in a fork, owned by <owner>
-# except that an « unknown » pull request a sleeping orchestrator's record lists is its:
+# except that an « unknown » pull request a remote row lists is that row's orchestrator, and
+# one a sleeping orchestrator's record lists is its:
+#   pr <repository>#<n> | <branch> | <orchestrator> | remote on <machine>, updated <UTC time>
 #   pr <repository>#<n> | <branch> | <name> | sleeping since <UTC time>
+# A remote row's pull request in a repository this machine did not read keeps the branch « - »,
+# and says so; one absent from its repository's open list is not printed (it is no longer open):
+#   pr <owner/name>#<n> | - | <orchestrator> | remote on <machine>, updated <UTC time>, not read on the forge here
 #
 # The chain an owner is read along: the pull request's head branch, the checkouts on it, the
 # host sessions working there, and the orchestrator each one names — itself when its title
@@ -67,7 +77,9 @@
 # (`lsof`, or COORDINATOR_CWDS, lines `<pid> <path>`), the checkouts (`workspace.sh list`),
 # and the open pull requests (`gh pr list` in the repository, or COORDINATOR_FORGE, called
 # as `<command> <repository directory>` and printing `<number> <head branch> <head>` lines,
-# <head> `same` for a branch of the repository itself, `fork:<owner>` for a fork's).
+# <head> `same` for a branch of the repository itself, `fork:<owner>` for a fork's), and the
+# remote rows (`store/remote` under the config dir: one JSON row per file, written by the hooks
+# module as it receives them from orchestrators on other machines; read here, never written).
 #
 # State: <state>/coordinator.json {"name","tty","started"}; <state> is ORCHESTRATOR_STATE_DIR,
 # else the plugin's directory under CLAUDE_CONFIG_DIR, else under ~/.claude, the launcher's
@@ -105,6 +117,9 @@ command -v jq >/dev/null 2>&1 || die "jq is required"
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 STATE="${ORCHESTRATOR_STATE_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claude-orchestrator}"
 RECORD="$STATE/coordinator.json"
+# Mirrors REMOTE_STALE_AFTER_MS in hooks/remote-row.ts: a remote row is kept for a day after its
+# updated_at, and the module deletes it past that bound.
+REMOTE_STALE_AFTER_S=86400
 SLEEPING="$STATE/sleeping.json"
 LOCK="$STATE/coordinator.lock"
 LAUNCHER="$here/../../iterm-agents/scripts/iterm-agent.sh"
@@ -399,7 +414,7 @@ brief_orchestrator() {
 read_facts() {
     T=$(mktemp -d "${TMPDIR:-/tmp}/coordinator-XXXXXX") || die "cannot make a temporary directory"
     trap 'unlock; rm -rf "$T"' EXIT
-    : > "$T/unread"; : > "$T/sessions"; : > "$T/places"; : > "$T/heavy"; : > "$T/prs"
+    : > "$T/unread"; : > "$T/sessions"; : > "$T/places"; : > "$T/heavy"; : > "$T/prs"; : > "$T/read_repos"
     # With no host name no process is a session, and an empty list reads as « no collision ».
     local hostname
     hostname=$(host_cli 2>"$T/host.err") || { unread "sessions: $(sed 's/^coordinator: //' "$T/host.err" | head -1)"; hostname=""; }
@@ -518,8 +533,70 @@ read_facts() {
             unread "forge $repo: $(head -1 "$T/forge.err")"
             continue
         fi
+        printf '%s\n' "$repo" >> "$T/read_repos"
         printf '%s\n' "$out" | awk -v r="$repo" 'NF >= 2 { print r "\t" $1 "\t" $2 "\t" (NF >= 3 ? $3 : "-") }' >> "$T/prs"
     done < "$T/places"
+    remote_rows
+}
+
+# remote_rows: the rows the hooks module received from orchestrators on other machines, one
+# JSON row per file in its remote directory (under the config dir, beside the waits). A file
+# name holding `.tmp-` is skipped, and a file that is no JSON row is unread. A row is kept
+# while its updated_at is at most 24 hours old (the module's REMOTE_STALE_AFTER_MS) and no
+# local session names it as title or orchestrator (local wins, as the module's pane does); a
+# stale row is skipped silently, since the module deletes it and this script never does. Each
+# kept row is one line of $T/remote; the pull requests it lists go to $T/remote_prs, matched to
+# a repository read here by its address without the host, and kept only when that repository's
+# open list has them. A pull request in a repository not read here keeps branch « - ».
+remote_rows() {
+    local store="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claude-orchestrator/store/remote"
+    local now file row name at
+    : > "$T/remote"; : > "$T/remote_prs"
+    [ -d "$store" ] || return 0
+    now=$(date -u +%s)
+    { awk -F'\t' '{ print $3; print $4 }' "$T/sessions"; } > "$T/names"
+    while IFS= read -r file; do
+        case "$(basename "$file")" in *.tmp-*) continue ;; esac
+        row=$(jq -r 'if type == "object" and (.name | type == "string") and (.updated_at | type == "string")
+            then [.name, (.machine // ""), .updated_at, (.context_tokens // 0), (.context_percent // 0), (.repo // ""),
+                  ((.prs // []) | join(" ")), (.waiting // ""), (.blocks // ""), (.waiting_since // ""),
+                  ((.updated_at | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601?) // "")] | @tsv
+            else error("not a JSON row") end' "$file" 2>/dev/null) \
+            || { unread "remote $file: not a JSON row"; continue; }
+        name=$(printf '%s' "$row" | cut -f1)
+        at=$(printf '%s' "$row" | cut -f11)
+        [ -n "$at" ] || continue
+        [ $((now - at)) -le "$REMOTE_STALE_AFTER_S" ] || continue
+        grep -qxF -- "$name" "$T/names" && continue
+        printf '%s\n' "$row" >> "$T/remote"
+    done < <(find "$store" -maxdepth 1 -type f | sort)
+    awk -F'\t' '
+        function owner_name(a) { sub(/^[^\/]+\//, "", a); return a }
+        FILENAME == ARGV[1] { if (!(owner_name($0) in on)) on[owner_name($0)] = $0; next }
+        FILENAME == ARGV[2] { open[$1 "\t" $2] = $3; next }
+        {   n = split($7, list, " ")
+            for (i = 1; i <= n; i++) {
+                h = index(list[i], "#"); r = substr(list[i], 1, h - 1); num = substr(list[i], h + 1)
+                if (r in on) {
+                    if (!((on[r] "\t" num) in open)) continue
+                    key = on[r]; branch = open[on[r] "\t" num]
+                } else { key = r; branch = "-" }
+                print key "\t" num "\t" branch "\t" $1 "\t" $2 "\t" $3
+            }
+        }' "$T/read_repos" "$T/prs" "$T/remote" > "$T/remote_prs"
+}
+
+# remote_lines: one line per kept remote row, after the waiting lines.
+remote_lines() {
+    awk -F'\t' '{
+        since = ($10 == "") ? "?" : $10
+        if ($8 == "operator") wait = "operator since " since " | blocks: " $9
+        else if ($8 == "done") wait = "done since " since
+        else wait = "working"
+        repo = ($6 == "") ? "none" : $6
+        prs = $7; gsub(/ /, ", ", prs); if (prs == "") prs = "none"
+        print "remote " $1 " | on " $2 " | updated " $3 " | context " $4 " (" $5 "%) | repository " repo " | prs " prs " | " wait
+    }' "$T/remote"
 }
 
 # owners_table: repository, number, branch, orchestrator, evidence — one row per pull
@@ -552,11 +629,26 @@ owners_table() {
 }
 
 # pr_collisions: a pull request of ours whose branch sessions of two orchestrators are on,
-# read from the sessions themselves, so an « unknown » owner never hides it.
+# read from the sessions themselves, so an « unknown » owner never hides it. A remote row
+# listing a pull request counts as one more orchestrator on it; a pull request of a repository
+# not read here has no branch, so only the remote rows count on it. Names are counted once.
 pr_collisions() {
     awk -F'\t' '
-        FILENAME == ARGV[1] { if ($4 != "unknown") { k = $5 "\t" $6; if (!((k, $4) in seen)) { seen[k, $4] = 1; c[k]++; l[k] = (k in l) ? l[k] ", " $4 : $4 } } next }
-        $4 == "same" { k = $1 "\t" $3; if (c[k] > 1) print "collision pr | " $1 "#" $2 " | " $3 " | " l[k] }' "$T/sessions" "$T/prs" | sort
+        FILENAME == ARGV[1] { if ($4 != "unknown") { b = $5 "\t" $6; sb[b, ++ns[b]] = $4 } next }
+        FILENAME == ARGV[2] { if ($4 == "same") for (i = 1; i <= ns[$1 "\t" $3]; i++) print $1 "#" $2 "\t" $3 "\t" sb[$1 "\t" $3, i]; next }
+        { print $1 "#" $2 "\t" $3 "\t" $4 }' "$T/sessions" "$T/prs" "$T/remote_prs" \
+    | sort -u \
+    | awk -F'\t' '
+        function flush() { if (n > 1) print "collision pr | " cur " | " br " | " list; n = 0; list = "" }
+        $1 != cur { flush(); cur = $1; br = $2 }
+        { n++; list = (n > 1) ? list ", " $3 : $3 }
+        END { flush() }' | sort
+}
+
+# remote_pr_lines: the pull requests a remote row lists in a repository not read here, one line
+# each: its owner and name, branch « - », the orchestrator and the row's machine and stamp.
+remote_pr_lines() {
+    awk -F'\t' '$3 == "-" { print "pr " $1 "#" $2 " | - | " $4 " | remote on " $5 ", updated " $6 ", not read on the forge here" }' "$T/remote_prs"
 }
 
 # waiting_rows: the orchestrators waiting at the end of their turn, from the hooks module's
@@ -588,6 +680,7 @@ cmd_facts() {
         'root != "" && index($1, root "/") == 1 { print "checkout " $1 " | " $2 " | " $3 }' "$T/places"
     awk -F'\t' '{ print "heavy " $1 " | " $2 " | " $3 }' "$T/heavy"
     waiting_rows
+    remote_lines
 
     {
         awk -F'\t' '$3 != "HEAD" && $3 != "-" { k = $2 "\t" $3; c[k]++; l[k] = (k in l) ? l[k] ", " $1 : $1 }
@@ -610,11 +703,16 @@ cmd_owners() {
     local asleep
     asleep=$(sleeping_read 2>"$T/sleeping.err") || { unread "sleeping: $(sed 's/^coordinator: //' "$T/sleeping.err" | head -1)"; asleep='[]'; }
     jq -r '.[] | .name as $n | .slept as $s | .prs[] | [(split(" ")[0]), $n, $s] | @tsv' <<< "$asleep" > "$T/asleep"
+    # A remote row listing an « unknown » pull request names its orchestrator, before a sleeping
+    # record would; a pull request the remote rows list in a repository not read here comes last.
     owners_table | awk -F'\t' '
         FILENAME == ARGV[1] { who[$1] = $2; since[$1] = $3; next }
+        FILENAME == ARGV[2] { if ($3 != "-") { k = $1 "#" $2; c = ++rc[k]; rl[k, c] = "pr " k " | " $3 " | " $4 " | remote on " $5 ", updated " $6 } next }
         { k = $1 "#" $2
-          if ($4 == "unknown" && (k in who)) { if (!(k in said)) { said[k] = 1; print "pr " k " | " $3 " | " who[k] " | sleeping since " since[k] } }
-          else print "pr " k " | " $3 " | " $4 " | " $5 }' "$T/asleep" -
+          if ($4 == "unknown" && (k in rc)) { if (!(k in said)) { said[k] = 1; for (j = 1; j <= rc[k]; j++) print rl[k, j] } }
+          else if ($4 == "unknown" && (k in who)) { if (!(k in said)) { said[k] = 1; print "pr " k " | " $3 " | " who[k] " | sleeping since " since[k] } }
+          else print "pr " k " | " $3 " | " $4 " | " $5 }' "$T/asleep" "$T/remote_prs" -
+    remote_pr_lines
     finish
 }
 

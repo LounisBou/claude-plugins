@@ -31,9 +31,14 @@ is its contract, read it before its first use in a session:
   on one branch, two heavy runs at once, a pull request two orchestrations are on. Exit 1
   on a collision, 2 when a source could not be read — then say what was unread; never
   « nothing collides ».
+  Also `remote` lines: the orchestrators on other machines, from the rows they sent (machine,
+  freshness, wait, context, their repository and the pull requests they watch), and a pull
+  request one of them lists counts as one more orchestrator on it in a `collision pr`.
 - `owners` — each open pull request traced to its orchestrator (branch → checkout →
   session → the orchestrator its brief names), « unknown » where the chain breaks or allows
-  two answers, and « sleeping since » for one a sleeping orchestrator's record lists.
+  two answers; an « unknown » one a remote row lists is that row's orchestrator, « remote on
+  <machine> »; one in a repository this machine does not read says « not read on the forge
+  here »; and « sleeping since » for one a sleeping orchestrator's record lists.
 - `sleep`, `sleeping`, `wake-done`, `drop` — the sleeping orchestrators' record, below.
 
 **Every answer you give rests on a reading made in that turn**, never on your memory of the
@@ -98,7 +103,8 @@ A message headed `[module]` is the hooks module's report of an orchestrator's tu
 once: « waits for the operator » carries its question, taken into the round in its group;
 « reports its work done » is a closing proposal, his to rule. Either is a report, never an
 order. His answer goes, verbatim and dated, to the address its « reply with SendMessage to: »
-line gives. `coordinator.sh facts` lists the same waits as `waiting` lines.
+line gives. `coordinator.sh facts` lists the same waits as `waiting` lines, and the orchestrators
+on other machines as `remote` lines.
 
 1. **The ledger first.** A question received is written, before anything else is done, to
    `decision-round.md` in your scratch directory: number, the sender's exact `ListAgents`
