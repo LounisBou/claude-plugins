@@ -6119,6 +6119,29 @@ check "the drop runs only on his yes, after the turn ends" "1" \
   "$([ "$(grep -n 'END THE TURN' "$SLCMD" | head -1 | cut -d: -f1)" -lt "$(grep -n 'coordinator.sh drop --name' "$SLCMD" | head -1 | cut -d: -f1)" ] 2>/dev/null && echo 1 || echo 0)"
 check "the README lists the sleeping command" "yes" "$(spells "$ROOT/README.md" '| `/orchestrator:sleeping` |')"
 
+# Moving an orchestrator between machines, on the operator's word: the coordination section, its
+# trust anchor, the lifecycle bullet, the succession note and the design paragraph.
+check "the coordination skill moves an orchestrator on his order, after opening and before its limits" "yes|yes" \
+  "$(flat_has "$COORDSKILL" "## Moving an orchestrator")|$([ "$(grep -n '^## Opening an orchestrator$' "$COORDSKILL" | cut -d: -f1)" -lt "$(grep -n '^## Moving an orchestrator$' "$COORDSKILL" | cut -d: -f1)" ] 2>/dev/null && [ "$(grep -n '^## Moving an orchestrator$' "$COORDSKILL" | cut -d: -f1)" -lt "$(grep -n '^## Your limits$' "$COORDSKILL" | cut -d: -f1)" ] 2>/dev/null && echo yes || echo no)"
+check "a receiver opens an arrival only on the order the coordinator relayed for that name" "yes|yes" \
+  "$(flat_has "$COORDSKILL" "The coordinator relays the operator's order to the receiver BEFORE the send, and a receiver opens an arrival only when the coordinator relayed that order for that name; files that arrived without it are left unopened and reported.")|$(flat_has "$COORDSKILL" "calling \`move_send\` again with the same arguments")"
+check "the lifecycle moves an orchestrator on his word, sending and receiving" "yes|yes" \
+  "$(flat_has "$ORCH_REFS/lifecycle.md" "**A move, on the operator's word.**")|$(flat_has "$ORCH_REFS/lifecycle.md" "only on the relayed order for that name")"
+check "an orchestrator that arrived by a move re-verifies every checkout from git first" "yes|yes" \
+  "$(flat_has "$SUCC" "**Arrived by a move** — you are told so:")|$(flat_has "$SUCC" "first re-verify each checkout from git")"
+check "the design describes the move's messages and its two notices" "yes|yes|yes" \
+  "$(flat_has "$ROOT/docs/design.md" "A move is carried by marked messages")|$(flat_has "$ROOT/docs/design.md" "the address pinned at the first answer")|$(flat_has "$ROOT/docs/design.md" "the only text a model reads")"
+check "an orchestrator that moved itself replies on the outcome, to the session that relayed the order" "yes|yes" \
+  "$(flat_has "$ORCH_REFS/lifecycle.md" "acknowledged, you first reply \`moved <receiver> brief=<the brief path the notice gives>\` to the session that relayed the order, then you end")|$(flat_has "$ORCH_REFS/lifecycle.md" "failed, you reply \`move-failed <reason>\` to it and end nothing")"
+check "the coordinator closes a moved orchestrator's tab on its moved reply and tells a move-failed reason to the operator" "yes|yes" \
+  "$(flat_has "$COORDSKILL" "you close its tab on its \`moved\` reply")|$(flat_has "$COORDSKILL" "a \`move-failed\` reply is told to the operator through your round, with its reason")"
+check "the receiver tells the arrived session it arrived by a move, once it is verified running" "yes|yes" \
+  "$(flat_has "$COORDSKILL" "send it ONE message saying that it arrived by a move from the origin the notice names, so that it first re-verifies each checkout from git")|$(flat_has "$ORCH_REFS/lifecycle.md" "send it ONE message saying that it arrived by a move from the origin the notice names, so that it first re-verifies each checkout from git")"
+check "the design paragraph on a move cites the coordination skill for the trust anchor and carries its order's date" "yes|yes|no" \
+  "$(flat_has "$ROOT/docs/design.md" "the order the coordinator relayed for that name (the coordination skill's « Moving an orchestrator » in \`skills/coordination/SKILL.md\`)")|$(flat_has "$ROOT/docs/design.md" "an orchestrator is moved from one machine to another: his order of 2026-10-16")|$(flat_has "$ROOT/docs/design.md" "(section 9.5 above), which a manifest cannot supply")"
+check "the coordination section names the move tools in full at their first mention" "yes|yes" \
+  "$(flat_has "$COORDSKILL" "messages (\`mcp__orchestrator__move_send\`, which only")|$(flat_has "$COORDSKILL" "(the title guard, \`mcp__orchestrator__end_session\` where the host refuses)")"
+
 # Remote rows: the rows the hooks module received from orchestrators on other machines, read
 # beside the same local sessions. A fresh row is listed in each wait form; a stale one, one a
 # local session names and a temporary file are passed over; a malformed file is unread (exit 2).

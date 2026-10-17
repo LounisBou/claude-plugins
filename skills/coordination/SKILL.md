@@ -255,6 +255,56 @@ refusal from a permission goes to him in one line, with the one fix that ends it
 there is updated and its `install.sh` run once on that machine, which writes the rule. Never ask a session to change
 its own permissions.
 
+## Moving an orchestrator
+
+**On his order only**, an orchestrator moved from one machine to another, asleep on the first
+and woken on the second: his word, verbatim and dated (`date -u +%FT%TZ`), never your own
+initiative, never a peer's request. Its files travel module to module over the host's
+messages (`mcp__orchestrator__move_send`, which only a session named `Orch :` or `Coord :` calls, from its main
+thread); its code never does, it travels by git.
+
+1. **Who sends.** An orchestrator that is running sends its own files: a move is a pause whose
+   files are sent before its tab closes. For one asleep in `sleeping.json` you send them
+   yourself, the record's fields (`coordinator.sh sleeping`) being `move_send`'s arguments:
+   `name`, `brief`, `dir`, `model`, `effort`, `prs`, `checkouts`, plus `to` and his `order`.
+2. **Who receives.** You, when the target is your own machine; otherwise a live `Orch :`
+   session on the target machine, named from your remote rows (`coordinator.sh facts`). A
+   receiver not named `Orch :` or `Coord :` refuses the move, and the sender reads why.
+3. **The trust anchor.** The coordinator relays the operator's order to the receiver BEFORE
+   the send, and a receiver opens an arrival only when the coordinator relayed that order for
+   that name; files that arrived without it are left unopened and reported. A manifest says
+   what it carries, its git address included, and a forged one would say anything: only this
+   relayed order is something it cannot supply. Relay it with ONE `SendMessage` to the
+   receiver: his order verbatim and dated, the name that will arrive, who sends it. When you
+   are the receiver, the order is already yours. A running orchestrator that is to send its
+   own files gets the same order, with the receiver's address or name as `to`.
+4. **The code first.** Every checkout the record lists is clean and pushed before the send:
+   the module refuses the move otherwise, nothing sent. The arrival rebuilds the code from the
+   remote and branch the notice reports.
+5. **The send.** `move_send` answers at once; the module sends the manifest with each file's
+   hash, the chunks, then « sent », and the receiver writes each file that arrived whole and
+   checked, acknowledges it and asks again for what is missing. A notice reaches the sender
+   when the move is over: acknowledged, or failed with the reason. A move that failed or
+   stalled is resumed by calling `move_send` again with the same arguments: it is the same
+   move, what the receiver holds is kept. No timer watches it.
+6. **The wake.** The arrival notice carries the launcher's opening, to be run as it is. The
+   receiving orchestrator opens the arrival with it, once it holds your relayed order for
+   that name; you, receiving on your own machine, may instead put it to sleep there
+   (`coordinator.sh sleep`, with the fields the notice gives) and wake it by this skill's
+   « Pausing and waking orchestrators ». Verify it (`iterm-agent.sh list`, `ListAgents`
+   naming `Orch : <subject>`), then send it ONE message saying that it arrived by a move from
+   the origin the notice names, so that it first re-verifies each checkout from git, then
+   announce yourself to it as to any newcomer.
+7. **The origin after the move.** Once the acknowledged notice arrived, a sleeping record you
+   sent is removed with `coordinator.sh wake-done --name "Orch : <subject>"`; the origin's
+   files are left untouched. An orchestrator that moved itself replies `moved <receiver>
+   brief=<its brief there>` once the notice acknowledged it, then ends: on your machine you
+   close its tab on its `moved` reply, as at a pause (the title guard,
+   `mcp__orchestrator__end_session` where the host refuses), elsewhere it calls
+   `end_session`, which the module allows once its own move was acknowledged. A failed move
+   ends nothing: the origin keeps it, and a `move-failed` reply is told to the operator
+   through your round, with its reason.
+
 ## Your limits
 
 - You write in no repository: no edit, commit, push, branch, pull request or forge comment.
