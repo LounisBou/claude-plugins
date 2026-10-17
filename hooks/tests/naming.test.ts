@@ -166,13 +166,13 @@ test('a resume that fails is said in the log, never thrown at the turn', async (
   expect(logged.some(line => line.includes('the resume under "Orch : belt" failed: the session is gone'))).toBe(true)
 })
 
-test('a session the launcher opened neither sees the tools nor renames or ends itself', async () => {
+test('a session the launcher opened sees the end tool alone, and neither renames nor ends itself without a move', async () => {
   const { handlers } = mounted()
   const fx = fakeDollar()
   fx.dollar.env.get = async (name: string) => (name === 'ORCHESTRATOR_SPAWNED' ? '1' : name === 'HOME' ? '/tmp/h' : undefined)
   const e = {}
   expect(await handlers['session.start'](fx.dollar, e, (x: unknown) => x)).toBe(e)
-  expect(fx.registered).toEqual([])
+  expect(fx.registered.map((spec: any) => spec.name)).toEqual([END_TOOL])
   const answer = await handlers['tool.call'](fx.dollar, { name: 'Coord : norms check' })
   expect(answer.isError).toBe(true)
   expect((await handlers['tool.call:end'](fx.dollar, {})).isError).toBe(true)

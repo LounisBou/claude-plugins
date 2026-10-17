@@ -1,15 +1,17 @@
 // hooks/register.ts
 // Entry point of the hooks module: mounts the domains. Each domain lands in
 // its own task; the gauge arrived first, the guards second, the store third,
-// the commands fourth, the naming fifth. The gauge stays before the
+// the commands fourth, the naming fifth, the moving sixth. The gauge stays before the
 // supervision: a chain answers in registration order, and the store's row
 // reads the figure through the gauge's own module memory — mounted after it,
-// the row would carry one measure behind.
+// the row would carry one measure behind. The moving comes after the supervision, whose receive
+// handler passes a marked move message on and leaves the moving to consume it.
 import { register as registerGauge } from './gauge.ts'
 import { register as registerGuards } from './guards.ts'
 import { register as registerSupervision } from './supervision.ts'
 import { register as registerCommands } from './commands.ts'
 import { register as registerNaming } from './naming.ts'
+import { register as registerMoving } from './moving.ts'
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
 
 export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
@@ -26,6 +28,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   registerSupervision(on)
   registerCommands(on)
   registerNaming(on)
+  registerMoving(on)
 }
 
 // One line appended to the module's log (module-log.ts) — each file spells its

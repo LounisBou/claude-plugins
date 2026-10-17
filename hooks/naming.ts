@@ -9,6 +9,7 @@
 // turn's completion runs the rename — the same transcript entry a typed /rename
 // writes, the one every name walk reads.
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
+import { endsAfterMove } from './moving.ts'
 
 // The tool's short name: the model calls it as mcp__orchestrator__rename_session.
 export const RENAME_TOOL = 'rename_session'
@@ -16,8 +17,9 @@ export const RENAME_TOOL = 'rename_session'
 // The end: the successor closes its predecessor's tab, and where the host
 // refuses that close — a tab the plugin did not open — it asks the predecessor
 // to end its own session instead, which no refusal reaches: the run is the
-// module's. A session the launcher opened is always closable by its successor
-// and never sees this tool.
+// module's. A session the launcher opened is closable by its successor, and sees this
+// tool only for the one case where it may end itself: its own move to another machine
+// was acknowledged (moving.ts).
 export const END_TOOL = 'end_session'
 
 // The names a session takes for itself: the two roles a session the operator
@@ -75,26 +77,31 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // its schema, never behind the tool search: a model that must search for it
   // first would hand the operator the /rename line instead.
   // A session the launcher opened — an agent, a review session, a successor —
-  // carries the name it was launched with, and never sees the tool: a review
+  // carries the name it was launched with, and never sees the rename tool: a review
   // session's subagent once renamed its agent « Coord : norms check… », a
-  // second coordinator every listing then counted.
+  // second coordinator every listing then counted. It sees the end tool alone, which
+  // it may use only once its own move was acknowledged.
   on('session.start', {}, async ($: any, e: any, next: (e: any) => any) => {
     try {
-      if (await $.env.get('ORCHESTRATOR_SPAWNED')) return next(e)
-      await $.tool.register({
-        name: RENAME_TOOL,
-        isDeferred: false,
-        description: 'Renames this session to its role name, "Orch : <subject>" or "Coord : <subject>" (subject at most 25 characters). The name is taken when the current turn ends.',
-        inputSchema: {
-          type: 'object',
-          properties: { name: { type: 'string', description: 'The full name, e.g. "Orch : <subject>"' } },
-          required: ['name'],
-        },
-      })
+      const spawned = Boolean(await $.env.get('ORCHESTRATOR_SPAWNED'))
+      if (!spawned) {
+        await $.tool.register({
+          name: RENAME_TOOL,
+          isDeferred: false,
+          description: 'Renames this session to its role name, "Orch : <subject>" or "Coord : <subject>" (subject at most 25 characters). The name is taken when the current turn ends.',
+          inputSchema: {
+            type: 'object',
+            properties: { name: { type: 'string', description: 'The full name, e.g. "Orch : <subject>"' } },
+            required: ['name'],
+          },
+        })
+      }
       await $.tool.register({
         name: END_TOOL,
         isDeferred: false,
-        description: 'Ends this session when the current turn ends. Only for an orchestrator or a coordinator that has handed over and whose successor asks it to end its session.',
+        description: spawned
+          ? 'Ends this session when the current turn ends. Only for an orchestrator whose move to another machine was acknowledged by the receiving module.'
+          : 'Ends this session when the current turn ends. Only for an orchestrator or a coordinator that has handed over and whose successor asks it to end its session.',
         inputSchema: { type: 'object', properties: {} },
       })
     } catch (err) {
@@ -137,7 +144,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
 
   on('tool.call', { tool: `mcp__orchestrator__${END_TOOL}` }, async ($: any, e: any) => {
     if (e.agentId) return { result: MAIN_THREAD_ONLY, isError: true }
-    if (await $.env.get('ORCHESTRATOR_SPAWNED')) {
+    if (await $.env.get('ORCHESTRATOR_SPAWNED') && !endsAfterMove()) {
       return { result: 'this session was opened by the launcher; its successor closes its tab', isError: true }
     }
     ending = true
