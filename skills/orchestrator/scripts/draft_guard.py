@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """draft_guard.py: which failing checks of a draft pull request are draft guards.
 
-    draft_guard.py <owner/repo> <pr>
+    draft_guard.py <owner/repo> <pr> [--dependents]
 
 Some repositories run a job that fails on purpose while a pull request is a draft (a draft
 guard). A failing check of a DRAFT pull request is one when the job that produced it tests
@@ -13,6 +13,12 @@ As a command: reads `isDraft`, then prints the failing check names (bucket `fail
 that are NOT draft guards, one per line; a pull request that is not a draft prints every
 failing name. Exit 0, or 5 with one line on stderr when `gh` fails.
 
+With `--dependents`: on a draft, prints instead the names of the passed checks (bucket `pass`)
+whose job needs a job that is one of the draft's guards, one per line; on a pull request that
+is no draft, nothing. Same exit codes. `ci-watch.sh` reads it to say green on a draft only when
+a job behind its guard ran and passed: a check that does not depend on the guard (a secret
+scanner, say) passes whether or not the real jobs ran.
+
 As a module: `guards(repo, checks, cache_dir, gh)` returns the names of the failing checks
 (bucket `fail`) of a draft pull request that are draft guards. `checks` is what
 `gh pr checks --json name,bucket,link` returns; `gh` is a callable taking the argument list
@@ -23,6 +29,14 @@ sha, the job named by the check's first segment (`a / b` reads `a`), and, when t
 sha and its job named by the second segment. A job is a guard when its own block, the called
 job's block for a reusable one, contains `pull_request.draft`. Anything unread, unmatched or
 unparseable is NOT a guard: the default is the red reported, never a red lost.
+
+As a module too: `dependents(repo, checks, guard_names, cache_dir, gh)` returns the names of the
+checks in bucket `pass` whose job, in the workflow file of the run's head sha, lists in its
+`needs` (`needs: a`, `needs: [a, b]`, or a block list) the job of a check named in
+`guard_names` (the failing names `guards` classified), in the same file; the check's first
+segment names the job, as above. Here the default is the other way round, since a green is at
+stake: anything unread, unmatched or unparseable is NOT a dependent, the green withheld, never
+invented.
 
 The workflow files are read without a YAML library (the plugin ships no dependency): `jobs:`
 at the left margin, then one key per job at the first indentation below it, a job's block
@@ -145,14 +159,44 @@ def field(block, name):
     return None
 
 
+def find_job_id(jobs, wanted):
+    """The id of the job whose id, or whose `name:`, is `wanted`; None when no job is."""
+    if wanted in jobs:
+        return wanted
+    for job_id, block in jobs.items():
+        if field(block, "name") == wanted:
+            return job_id
+    return None
+
+
 def find_job(jobs, wanted):
     """The block of the job whose id, or whose `name:`, is `wanted`; None when no job is."""
-    if wanted in jobs:
-        return jobs[wanted]
-    for block in jobs.values():
-        if field(block, "name") == wanted:
-            return block
-    return None
+    job_id = find_job_id(jobs, wanted)
+    return None if job_id is None else jobs[job_id]
+
+
+def needs_of(block):
+    """The job ids a job block lists in `needs`: `needs: a`, `needs: [a, b]`, or a block list.
+    A flow list spread over several lines is not read: it lists nothing."""
+    value = field(block, "needs")
+    if value is None:
+        return []
+    if value.startswith("["):
+        if not value.endswith("]"):
+            return []
+        return [_unquote(item) for item in value[1:-1].split(",") if item.strip()]
+    if value:
+        return [_unquote(value)]
+    child = next(_indent(l) for l in block[1:] if l.strip())
+    at = next(n for n, l in enumerate(block) if n and _indent(l) == child and re.match(r"^\s*needs\s*:", l))
+    found = []
+    for line in block[at + 1:]:
+        if not line.strip():
+            continue
+        if _indent(line) < child or not line.lstrip().startswith("-"):
+            break
+        found.append(_unquote(line.lstrip()[1:]))
+    return found
 
 
 def tests_draft(block):
@@ -259,16 +303,23 @@ def read_file(repo, path, sha, gh):
         raise Unread("%s at %s: no readable content" % (path, sha))
 
 
-def guards(repo, checks, cache_dir, gh):
-    """The names of the failing checks (bucket `fail`) of a draft pull request that are draft
-    guards. Anything unread, unmatched or unparseable is not one."""
-    found = set()
+def _reader(repo, gh):
+    """A function reading a workflow file at a sha, once per call of the caller."""
     texts = {}
 
     def read_once(path, sha):
         if (path, sha) not in texts:
             texts[(path, sha)] = read_file(repo, path, sha, gh)
         return texts[(path, sha)]
+
+    return read_once
+
+
+def guards(repo, checks, cache_dir, gh):
+    """The names of the failing checks (bucket `fail`) of a draft pull request that are draft
+    guards. Anything unread, unmatched or unparseable is not one."""
+    found = set()
+    read_once = _reader(repo, gh)
 
     for check in checks if isinstance(checks, list) else []:
         try:
@@ -292,6 +343,41 @@ def guards(repo, checks, cache_dir, gh):
     return found
 
 
+def dependents(repo, checks, guard_names, cache_dir, gh):
+    """The names of the checks in bucket `pass` whose job needs the job of a guard of the same
+    workflow file at the same sha. Anything unread, unmatched or unparseable is not one."""
+    wanted = set(guard_names)
+    read_once = _reader(repo, gh)
+    guard_jobs, passed = set(), []
+    for check in checks if isinstance(checks, list) else []:
+        try:
+            bucket, name, run = check.get("bucket"), check.get("name"), run_of(check.get("link"))
+            if bucket not in ("fail", "pass") or not name or not run:
+                continue
+            if bucket == "fail" and name not in wanted:
+                continue
+            path, sha = read_run(repo, run, cache_dir, gh)
+            jobs = jobs_of(read_once(path, sha))
+            job_id = find_job_id(jobs, name.split(SEGMENT_SEPARATOR)[0].strip())
+            if job_id is None:
+                continue
+            if bucket == "fail":
+                guard_jobs.add((path, sha, job_id))
+            else:
+                passed.append((name, path, sha, jobs[job_id]))
+        except Exception:  # unread, unmatched, unparseable: not a dependent
+            continue
+    found = []
+    for name, path, sha, block in passed:
+        try:
+            needs = needs_of(block)
+        except Exception:
+            continue
+        if name not in found and any((path, sha, job_id) in guard_jobs for job_id in needs):
+            found.append(name)
+    return found
+
+
 # --- the command -----------------------------------------------------------------------------
 
 def failing_names(checks):
@@ -299,10 +385,11 @@ def failing_names(checks):
 
 
 def main(argv):
-    if len(argv) != 2 or "/" not in argv[0] or not argv[1].isdigit():
-        print("usage: draft_guard.py <owner/repo> <pr>", file=sys.stderr)
+    behind = argv[2:] == ["--dependents"]
+    if len(argv) != (3 if behind else 2) or "/" not in argv[0] or not argv[1].isdigit():
+        print("usage: draft_guard.py <owner/repo> <pr> [--dependents]", file=sys.stderr)
         return 5
-    repo, pr = argv
+    repo, pr = argv[:2]
     try:
         draft = json.loads(run_gh(["pr", "view", pr, "-R", repo, "--json", "isDraft"]))["isDraft"]
         checks = json.loads(run_gh(["pr", "checks", pr, "-R", repo, "--json", "name,bucket,link"],
@@ -314,9 +401,12 @@ def main(argv):
         print("draft_guard: gh answered with something else than the expected JSON", file=sys.stderr)
         return 5
     dropped = guards(repo, checks, CACHE_DIR, lambda a: run_gh(a)) if draft is True else set()
-    for name in failing_names(checks):
-        if name not in dropped:
-            print(name)
+    if behind:
+        names = dependents(repo, checks, dropped, CACHE_DIR, lambda a: run_gh(a)) if draft is True else []
+    else:
+        names = [name for name in failing_names(checks) if name not in dropped]
+    for name in names:
+        print(name)
     return 0
 
 

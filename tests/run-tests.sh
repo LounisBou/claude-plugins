@@ -4005,6 +4005,91 @@ dg true "[$(dg_check gate 562 4)]" >/dev/null
 check "the same check name and workflow path at another head is classified on its own file" "gate|0" \
   "$(dg true "[$(dg_check gate 563 5)]")"
 
+# The checks behind a guard: a passed check whose job lists the guard in its `needs` (the three
+# forms), as opposed to one whose job does not and to one that is no job of the workflow at all.
+IFS= read -r -d '' WF_NEEDS <<'EOF'
+name: CI
+on: pull_request
+jobs:
+  wip-check:
+    uses: ./.github/workflows/wip-check.yml
+  other:
+    runs-on: u
+  build:
+    needs: wip-check
+    runs-on: u
+  lint:
+    needs: [other, wip-check]
+    runs-on: u
+  deploy:
+    runs-on: u
+    needs:
+      - other
+      - wip-check   # the guard
+    steps:
+      - run: make deploy
+  docs:
+    needs: other
+    runs-on: u
+EOF
+DGSHA_N=1111000000000000000000000000000000000008   # run 570: jobs behind the guard
+dg_run 570 .github/workflows/ci.yml "$DGSHA_N"
+dg_file .github/workflows/ci.yml "$DGSHA_N" "$WF_NEEDS"
+dg_file .github/workflows/wip-check.yml "$DGSHA_N" "$WF_WIP"
+dg_pass() { printf '{"name": "%s", "bucket": "pass", "link": "%s"}' "$1" "$(dg_link "$2" "$3")"; }
+C_WIP_N=$(dg_check "wip-check / wip-check" 570 9100)
+C_BUILD_N=$(dg_pass build 570 9101); C_LINT_N=$(dg_pass lint 570 9102); C_DEPLOY_N=$(dg_pass deploy 570 9103)
+C_DOCS_N=$(dg_pass docs 570 9104)
+C_EXT_P='{"name": "secrets", "bucket": "pass", "link": "https://ci.example.com/scan/4"}'
+C_NOREAD_P=$(dg_pass build 558 9105)
+dg_dep_raw() { env PATH="$DGB:$PATH" ORCHESTRATOR_STATE_DIR="$DGS" "$py" "$DGSCRIPT" acme/thing 7 --dependents 2>"$DG/stderr"; }
+dg_dep() {  # <draft: true|false> <checks, a JSON array>: the names printed joined by `, `, then the exit code
+  local out rc
+  printf '{"isDraft": %s}\n' "$1" > "$DG/view"; printf '%s\n' "$2" > "$DG/checks"
+  out=$(dg_dep_raw); rc=$?
+  printf '%s|%s' "$(printf '%s' "$out" | paste -sd, - | sed 's/,/, /g')" "$rc"
+}
+dg_reset
+check "--dependents: the passed jobs that need the guard, in the three forms of \`needs\`" "build, lint, deploy|0" \
+  "$(dg_dep true "[$C_WIP_N, $C_BUILD_N, $C_LINT_N, $C_DEPLOY_N]")"
+dg_reset
+check "--dependents: a passed job that does not need the guard is not one" "|0" \
+  "$(dg_dep true "[$C_WIP_N, $C_DOCS_N]")"
+dg_reset
+check "--dependents: a passed check with no run behind its link is not one" "|0" \
+  "$(dg_dep true "[$C_WIP_N, $C_EXT_P]")"
+dg_reset
+check "--dependents: beside a job that needs the guard, the others are left out" "build|0" \
+  "$(dg_dep true "[$C_WIP_N, $C_DOCS_N, $C_EXT_P, $C_BUILD_N]")"
+dg_reset
+check "--dependents: a passed check whose workflow file cannot be read is not one" "|0" \
+  "$(dg_dep true "[$C_NOREAD, $C_NOREAD_P]")"
+dg_reset
+check "--dependents on a pull request that is no draft: nothing printed, no run read" "|0|0" \
+  "$(dg_dep false "[$C_WIP_N, $C_BUILD_N]")|$(dg_apis)"
+dg_reset
+printf '[%s]\n' "$C_BUILD_N" > "$DG/checks"
+dg_out=$(dg_dep_raw); dg_rc=$?
+check "--dependents with gh failing: exit 5, nothing on stdout, one line on stderr" "|5|1" \
+  "$dg_out|$dg_rc|$(grep -c . "$DG/stderr")"
+dg_reset
+check "dependents() runs on an injected gh and answers the names behind the guards" "build, deploy, lint" \
+  "$(DGA="$DGA" DGCHECKS="[$C_WIP_N, $C_BUILD_N, $C_LINT_N, $C_DEPLOY_N, $C_DOCS_N, $C_EXT_P]" PYTHONPATH="$ROOT/skills/orchestrator/scripts" "$py" - "$DGS/stub" <<'PYEOF'
+import json, os, sys
+import draft_guard
+
+def gh(argv):
+    if argv[0] != "api":
+        raise RuntimeError("only api is stubbed")
+    path = os.path.join(os.environ["DGA"], argv[1].translate(str.maketrans("/?=@", "____")))
+    with open(path) as fh:
+        return fh.read()
+
+checks = json.loads(os.environ["DGCHECKS"])
+print(", ".join(sorted(draft_guard.dependents("acme/thing", checks, ["wip-check / wip-check"], sys.argv[1], gh))))
+PYEOF
+)"
+
 echo "== ci-watch =="
 # The one way to wait on CI: a script an orchestrator starts in the background, that exits on
 # the end of the checks with one line and a code. A fake `gh` on PATH answers from files:
@@ -4283,7 +4368,9 @@ check "an unknown argument: exit 5" "5" "$(cw "OPEN $HA" "2" 0 "" 7 --bogus | se
 # failing names are classified by draft_guard.py; a pull request that is no draft keeps its path.
 # The view file's `draft` token is what `gh pr view --json isDraft` answers from.
 CWD="OPEN $HA draft"
-printf '[%s]\n' "$C_WIP" > "$CW/checks-link"
+# On a draft, green needs a passed check whose job needs the guard (`draft_guard.py --dependents`),
+# so the passed checks of these cases (build, lint) are jobs behind the guard of run 570.
+printf '[%s, %s, %s]\n' "$C_WIP_N" "$C_BUILD_N" "$C_LINT_N" > "$CW/checks-link"
 check "a draft whose only failure is a draft guard is no red: green, exit 0" "ci-watch: green 7 $HA|0" \
   "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 1 "wip-check / wip-check" 7 --interval 1)"
 # Measured on another project: four guard checks failed and every real job, depending on the
@@ -4292,6 +4379,17 @@ check "a draft whose guard fails and whose every other check is skipped: no-chec
   "$(rm -rf "$CWS/draft-guard"; CW_BUCKETS="code-style:skipping\nsecurity-check:skipping\ntests:skipping\nMigrations:skipping\nbuild:skipping\nwip-check / wip-check:fail\nwip-check / wip-check:fail\nwip-check / wip-check:fail\nwip-check / wip-check:fail" cw "$CWD" "2" 1 "wip-check / wip-check" 7 --interval 1)"
 check "a draft whose guard fails, one real check passing beside skipped ones: green, exit 0" "ci-watch: green 7 $HA|0" \
   "$(rm -rf "$CWS/draft-guard"; CW_BUCKETS="lint:pass\ntests:skipping\nwip-check / wip-check:fail" cw "$CWD" "2" 1 "wip-check / wip-check" 7 --interval 1)"
+# Measured again on that project: an outside check (a secret scanner) depends on no guard and
+# passed, so the guard settled, one check had passed, and the watch said green with no job run.
+printf '[%s, %s, %s]\n' "$C_WIP_N" "$C_DOCS_N" "$C_EXT_P" > "$CW/checks-link"
+check "a draft whose guard fails, whose jobs are skipped and whose outside check passes: no-checks, exit 2" "ci-watch: no-checks 7 $HA skipped=1|2" \
+  "$(rm -rf "$CWS/draft-guard"; CW_BUCKETS="secrets:pass\ndocs:skipping\nwip-check / wip-check:fail" cw "$CWD" "2" 1 "wip-check / wip-check" 7 --interval 1)"
+printf '[%s, %s, %s]\n' "$C_WIP_N" "$C_BUILD_N" "$C_EXT_P" > "$CW/checks-link"
+check "the same with a job behind the guard passed beside the outside check: green, exit 0" "ci-watch: green 7 $HA|0" \
+  "$(rm -rf "$CWS/draft-guard"; CW_BUCKETS="secrets:pass\nbuild:pass\nwip-check / wip-check:fail" cw "$CWD" "2" 1 "wip-check / wip-check" 7 --interval 1)"
+check "a draft with no guard among its checks and one passed: green as before, no run read" "ci-watch: green 7 $HA|0|0" \
+  "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 0 "" 7 --interval 1)|$(grep -c '^api' "$CW/gh-calls")"
+printf '[%s, %s, %s]\n' "$C_WIP_N" "$C_BUILD_N" "$C_LINT_N" > "$CW/checks-link"
 printf '[%s, %s]\n' "$C_WIP" "$C_TESTS" > "$CW/checks-link"
 check "and with a real failure too: red, naming only the real one" "ci-watch: red 7 $HA tests|1" \
   "$(rm -rf "$CWS/draft-guard"; cw "$CWD" "2" 1 "wip-check / wip-check\ntests" 7 --repo acme/thing --interval 1)"

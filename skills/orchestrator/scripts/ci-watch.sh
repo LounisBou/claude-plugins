@@ -28,6 +28,9 @@
 # failed as a draft guard — a draft whose every real job depends on its guard, or jobs each
 # conditioned out — had nothing run, and says `no-checks` with the count skipped, never green.
 # The count leaves the guards out, so a draft whose only checks are its guards says `skipped=0`.
+# On a draft the watch settled on its guards, a check that depends on no guard (a secret scanner)
+# is no evidence either: only a passed check whose job needs a guard counts (`draft_guard.py
+# --dependents`), else `no-checks` with the count skipped.
 # Green with auto-merge enabled is not the end: the merge is coming, and nobody re-arms a watch after it,
 # so the pull request is read again at the interval, bounded, until it merges.
 #
@@ -106,6 +109,8 @@ fi
 
 first_line() { head -n 1 | tr -d '\r'; }
 
+settled=""
+
 # The pull request's `state`, `head`, `auto` (`auto` when auto-merge is enabled) and `draft`
 # (`draft` while it is a draft), one read.
 read_pr() {
@@ -128,17 +133,17 @@ read_pr() {
 # guard before the real checks finish.
 fail_fast() { failfast=(); [ "$draft" = draft ] || failfast=(--fail-fast); }
 
-# Sets `real` to the failing check names of a draft pull request that are no draft guard, one per
-# line, from draft_guard.py; the repository is the one given, else the one of the checkout. Not
-# run in a subshell: `unread` must end the script.
-real_failures() {
+# Sets `guard_out` to the output of draft_guard.py run with the arguments given after the pull
+# request; the repository is the one given, else the one of the checkout. Not run in a subshell:
+# `unread` must end the script.
+run_draft_guard() {
     local err name
     if [ ${#repo[@]} -gt 0 ]; then name="${repo[1]}"; else
         name=$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null)
         [ -n "$name" ] || unread "gh repo view failed: no repository read"
     fi
     err=$(mktemp "${TMPDIR:-/tmp}/ci-watch.XXXXXX") || unread "cannot create a temporary file"
-    real=$(python3 "$(dirname "${BASH_SOURCE[0]}")/draft_guard.py" "$name" "$pr" 2>"$err")
+    guard_out=$(python3 "$(dirname "${BASH_SOURCE[0]}")/draft_guard.py" "$name" "$pr" "$@" 2>"$err")
     if [ $? -ne 0 ]; then
         local why; why=$(first_line < "$err"); rm -f "$err"
         unread "${why:-draft_guard.py failed}"
@@ -146,9 +151,14 @@ real_failures() {
     rm -f "$err"
 }
 
+# Sets `real` to the failing check names of a draft pull request that are no draft guard, one per
+# line.
+real_failures() { run_draft_guard; real="$guard_out"; }
+
 # After a watch that exited non-zero on a draft: when at least one check fails and every failing
 # one is a draft guard, the watch counts as a pass (`watch` 0) and the green path goes on. A watch
 # that failed with no failing check (an API error) is no pass: it takes the path of a non-draft.
+# `settled` records that a draft was settled on its guards: its green then needs a job behind one.
 settle_draft() {
     [ "$watch" -ne 0 ] && [ "$draft" = draft ] || return 0
     real_failures
@@ -156,7 +166,7 @@ settle_draft() {
     local failing
     failing=$(gh pr checks "$pr" ${repo[@]+"${repo[@]}"} --json name,bucket \
         --jq '.[] | select(.bucket == "fail" or .bucket == "cancel") | .name' 2>/dev/null)
-    [ -z "$failing" ] || watch=0
+    [ -z "$failing" ] || { watch=0; settled=1; }
 }
 
 # Sets `log` to the log file of this pull request, `<suffix>` naming which watch writes it.
@@ -350,6 +360,12 @@ if [ "$watch" -eq 0 ]; then
     # draft settled, means nothing ran, and that is said as no checks.
     passed=$(awk -F'\t' '$1 == "pass" { n++ } END { print n + 0 }' <<< "$buckets")
     skipped=$(awk -F'\t' '$1 == "skipping" { n++ } END { print n + 0 }' <<< "$buckets")
+    if [ -n "$settled" ] && [ "$draft" = draft ]; then
+        # A draft settled on its guards: a check that needs none of them proves nothing ran.
+        run_draft_guard --dependents
+        passed=$(BEHIND="$guard_out" awk -F'\t' 'BEGIN { k = split(ENVIRON["BEHIND"], a, "\n"); for (i = 1; i <= k; i++) if (a[i] != "") w[a[i]] = 1 }
+            $1 == "pass" && ($2 in w) { n++ } END { print n + 0 }' <<< "$buckets")
+    fi
     if [ -z "$names" ]; then
         if [ "$base" = 1 ] && [ "$auto" = auto ]; then
             # Auto-merge will merge: wait for it, bounded, and follow the base branch.
