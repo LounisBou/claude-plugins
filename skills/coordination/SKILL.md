@@ -243,7 +243,7 @@ ${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --open --
 ```
 
 Run it alone, never chained to another command and with nothing before it: that bare form,
-by the installed path, is the one his `install.sh --allow-open` allows. Add `--model <id>` or `--tier <tier>` when he named one,
+by the installed path, is the one every `install.sh` run allows in `settings.json`. Add `--model <id>` or `--tier <tier>` when he named one,
 the deep tier applying otherwise, and `--trust` for a checkout prepared for it. Verify it
 (`iterm-agent.sh list`, `ListAgents` naming `Orch : <subject>`), then announce yourself to it
 as to any newcomer.
@@ -251,8 +251,8 @@ as to any newcomer.
 On another machine, send that machine's orchestrator (the one he named, else one that
 announced itself from there) ONE `SendMessage`: his order verbatim and dated, the brief's
 path and that same command. It opens the orchestrator there and replies with its name. A
-refusal from a permission goes to him in one line, with the one fix that ends it: he types
-`<the plugin's install.sh> --allow-open` once on that machine. Never ask a session to change
+refusal from a permission goes to him in one line, with the one fix that ends it: the plugin
+there is updated and its `install.sh` run once on that machine, which writes the rule. Never ask a session to change
 its own permissions.
 
 ## Your limits

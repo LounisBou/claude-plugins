@@ -5320,23 +5320,28 @@ for f in hooks-module.log hooks-module.log.1 hooks-module.log.lock; do
   printf 'line\n' > "$H/.claude/claude-orchestrator/$f"
 done
 uninst "$H" >/dev/null 2>&1
-# --allow-open writes the one rule that lets the launcher's opening through the host's
-# review, on the operator's flag only and once; without it nothing is written.
+# A plain install writes the one rule that lets the launcher's opening through the host's
+# review, once, on the operator's standing ruling; --allow-open stays accepted for the
+# earlier instructions that still name it.
 OPSUFFIX='/skills/iterm-agents/scripts/iterm-agent.sh spawn --open *)'
 OPRULE="Bash($(cd "$ROOT" && pwd)$OPSUFFIX"
 HO="$WORK/homeopen"; mkdir -p "$HO/.claude"; stub_venv "$HO"
 printf '{"permissions":{"allow":["Bash(ls)"]}}\n' > "$HO/.claude/settings.json"
-check "without --allow-open the rule is never written, and the installer says who allows it" "0|1" \
+check "a dry run says the rule it would write and writes nothing" "1|0" \
+  "$(inst "$HO" --dry-run 2>&1 | grep -c 'dry-run. the opening of an orchestrator allowed')|$(jq --arg r "$OPRULE" '[.permissions.allow[] | select(. == $r)] | length' "$HO/.claude/settings.json")"
+check "a plain install writes the rule, and no run asks the operator for a flag" "1|0" \
   "$(inst "$HO" >/dev/null 2>&1; jq --arg r "$OPRULE" '[.permissions.allow[] | select(. == $r)] | length' "$HO/.claude/settings.json")|$(inst "$HO" 2>&1 | grep -c 'the operator allows it with ./install.sh --allow-open')"
-check "a dry run with --allow-open says it and writes nothing" "1|0" \
-  "$(inst "$HO" --dry-run --allow-open 2>&1 | grep -c 'dry-run. the opening of an orchestrator allowed')|$(jq --arg r "$OPRULE" '[.permissions.allow[] | select(. == $r)] | length' "$HO/.claude/settings.json")"
-check "with --allow-open the rule is written once, beside the rules already there" "[\"Bash(ls)\",\"$OPRULE\"]" \
-  "$(inst "$HO" --allow-open >/dev/null 2>&1; inst "$HO" --allow-open >/dev/null 2>&1; jq -c '.permissions.allow' "$HO/.claude/settings.json")"
-check "a run after it says it is allowed, and a plain run no longer asks for it" "1|0" \
-  "$(inst "$HO" --allow-open 2>&1 | grep -c 'is already allowed')|$(inst "$HO" 2>&1 | grep -c 'allows it with')"
+check "a plain install writes the rule once, beside the rules already there" "[\"Bash(ls)\",\"$OPRULE\"]" \
+  "$(inst "$HO" >/dev/null 2>&1; inst "$HO" >/dev/null 2>&1; jq -c '.permissions.allow' "$HO/.claude/settings.json")"
+check "a run after it says it is allowed, and no run asks for the flag" "1|0" \
+  "$(inst "$HO" 2>&1 | grep -c 'is already allowed')|$(inst "$HO" 2>&1 | grep -c 'allows it with')"
 HO2="$WORK/homeopen2"; mkdir -p "$HO2/.claude"; stub_venv "$HO2"
-check "with no settings.json yet, --allow-open creates it with the rule alone" "[\"$OPRULE\"]" \
-  "$(inst "$HO2" --allow-open >/dev/null 2>&1; jq -c '.permissions.allow' "$HO2/.claude/settings.json" 2>/dev/null)"
+check "with no settings.json yet, a plain install creates it with the rule alone" "[\"$OPRULE\"]" \
+  "$(inst "$HO2" >/dev/null 2>&1; jq -c '.permissions.allow' "$HO2/.claude/settings.json" 2>/dev/null)"
+HO5="$WORK/homeopen5"; mkdir -p "$HO5/.claude"; stub_venv "$HO5"
+printf '{"permissions":{"allow":["Bash(ls)"]}}\n' > "$HO5/.claude/settings.json"
+check "--allow-open is still accepted and leaves the same permissions.allow as a plain install" "0|$(jq -c '.permissions.allow' "$HO/.claude/settings.json")" \
+  "$(inst "$HO5" --allow-open >/dev/null 2>&1; echo $?)|$(jq -c '.permissions.allow' "$HO5/.claude/settings.json")"
 check "an unknown option is refused before anything is done" "2" "$(inst "$HO" --bogus >/dev/null 2>&1; echo $?)"
 # A rule granted an earlier version, beside this one in the same cache directory, follows
 # the plugin to this path at a plain install; a rule for a launcher elsewhere is left alone.
@@ -5349,7 +5354,7 @@ check "a rule granted an earlier version names this one after a plain install, o
 HO4="$WORK/homeopen4"; mkdir -p "$HO4/.claude"; stub_venv "$HO4"
 printf '{"permissions":{"allow":"Bash(ls)"}}\n' > "$HO4/.claude/settings.json"
 check "permissions.allow that is not a list is said, left as it is, and the install still ends well" "1|\"Bash(ls)\"|0" \
-  "$(inst "$HO4" --allow-open 2>&1 | grep -c 'permissions.allow in settings.json is not a list')|$(jq -c '.permissions.allow' "$HO4/.claude/settings.json")|$(inst "$HO4" --allow-open >/dev/null 2>&1; echo $?)"
+  "$(inst "$HO4" 2>&1 | grep -c 'permissions.allow in settings.json is not a list')|$(jq -c '.permissions.allow' "$HO4/.claude/settings.json")|$(inst "$HO4" >/dev/null 2>&1; echo $?)"
 
 check "uninstall removes the state directory, the module's rotated log and lock with it" "gone|absent|absent" \
   "$([ -d "$H/.claude/claude-orchestrator" ] && echo kept || echo gone)|$([ -e "$H/.claude/claude-orchestrator/hooks-module.log.1" ] && echo present || echo absent)|$([ -e "$H/.claude/claude-orchestrator/hooks-module.log.lock" ] && echo present || echo absent)"

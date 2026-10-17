@@ -24,8 +24,8 @@
 #   iterm-agent.sh spawn --open --title "Orch : <subject>" --dir <path> [--tier <t> | --model <id> | --inherit-model] [--effort <level>] (--prompt <text> | --prompt-file <path>)
 #     a new orchestrator opened on the operator's order, by a coordinator or an orchestrator
 #     only: immediately right of the caller, the deep tier unless told, remote control on,
-#     no chain. `--open` comes right after `spawn`: that is the form the operator's rule
-#     (`install.sh --allow-open`) names
+#     no chain. `--open` comes right after `spawn`: that is the form the rule every
+#     `install.sh` run writes names
 #   iterm-agent.sh verify --tty /dev/ttysNNN
 #   iterm-agent.sh resolve-tier <deep|standard|light>
 #   iterm-agent.sh close --tty /dev/ttysNNN [--expect-title <substring>] [--keep-checkout]
