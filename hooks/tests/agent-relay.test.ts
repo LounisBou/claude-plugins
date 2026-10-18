@@ -58,7 +58,20 @@ test('the owner is the chain naming the tty, the one written last when two do', 
 
 // --- the wiring over a faked $ ------------------------------------------------------------
 
-type Over = { name?: string; role?: string; chain?: boolean; send?: 'reject' | 'refuse'; gateTokens?: string }
+// `walk` serves the process table of the agent's tab and of a headless run started from its
+// shell, and writes no row, so the session under test is named by its own walk: `agent`,
+// the agent's host process itself; `underneath`, the run — its id the one under test, the
+// agent's record carrying another.
+type Over = { name?: string; role?: string; chain?: boolean; send?: 'reject' | 'refuse'; gateTokens?: string; walk?: 'agent' | 'underneath' }
+
+// The tab and the run: the agent's host process (501) on ttys005, launched with its
+// --name; its shell (850) and the run (900) on no tty. The module's shell is a child of
+// its session's host process, on no tty either.
+const UNDERNEATH: Record<string, { ppid: string; tty: string }> = {
+  '501': { ppid: '400', tty: 'ttys005' },
+  '850': { ppid: '501', tty: '??' },
+  '900': { ppid: '850', tty: '??' },
+}
 
 function fake(over: Over = {}) {
   const files = new Map<string, string>()
@@ -69,10 +82,15 @@ function fake(over: Over = {}) {
   const env: Record<string, string> = { HOME, ORCHESTRATOR_HOST_CLI: 'hostcli' }
   if (over.gateTokens) env.ORCHESTRATOR_CONTEXT_GATE_TOKENS = over.gateTokens
   const name = over.name ?? AGENT
-  files.set(ROW, JSON.stringify({
+  if (!over.walk) files.set(ROW, JSON.stringify({
     role: over.role ?? 'agent', name, pid: '501', tty: '/dev/ttys005', repo: null,
     context_percent: 12, context_tokens: 120000, window: 1000000, model: 'a-model', busy: false, updated_at: '2026-10-14T09:00:00.000Z',
   }) + '\n')
+  if (over.walk) {
+    files.set(`${HOME}/.claude/sessions/501.json`, JSON.stringify({ sessionId: over.walk === 'agent' ? 's-one' : 's-agent', kind: 'interactive', entrypoint: 'cli', name, status: 'busy' }))
+    files.set(`${HOME}/.claude/sessions/900.json`, JSON.stringify({ sessionId: over.walk === 'agent' ? 's-run' : 's-one', kind: 'interactive', entrypoint: 'sdk-cli', name: 'probe-cwd-17', status: 'busy' }))
+  }
+  const seed = over.walk === 'underneath' ? '900 ??' : over.walk === 'agent' ? '501 ??' : '123 ttys005'
   // The orchestrator: its row on its own tty, and the launcher's chain naming the agent's.
   files.set(`${STATE}/store/sessions/s-orch`, JSON.stringify({
     role: 'orchestrator', name: ORCH, pid: '400', tty: '/dev/ttys001', repo: null,
@@ -122,7 +140,10 @@ function fake(over: Over = {}) {
           return { exitCode: 0, stdout: '', stderr: '' }
         }
         // The walk: the session's own tty, and its host process on it by name.
-        if (argv[0] === 'sh' && argv[2] === 'ps -o ppid=,tty= -p $$') return { exitCode: 0, stdout: '123 ttys005\n', stderr: '' }
+        if (argv[0] === 'sh' && argv[2] === 'ps -o ppid=,tty= -p $$') return { exitCode: 0, stdout: `${seed}\n`, stderr: '' }
+        if (argv[0] === 'ps' && argv[1] === '-p' && UNDERNEATH[argv[2]]) {
+          return { exitCode: 0, stdout: `${UNDERNEATH[argv[2]].ppid} ${UNDERNEATH[argv[2]].tty}\n`, stderr: '' }
+        }
         if (argv[0] === 'ps' && argv[1] === '-t') return { exitCode: 0, stdout: `  501 hostcli --name ${name}\n`, stderr: '' }
         return { exitCode: 1, stdout: '', stderr: '' }
       },
@@ -310,4 +331,36 @@ test('a refused report of a turn without a status line writes no key', async () 
   await drive(chains, 'turn.complete', fx.dollar, turnEnd('Working.'))
   expect(fx.logged.some(l => l.includes('relay: not delivered'))).toBe(true)
   expect(fx.files.has(WAIT) ? JSON.parse(fx.files.get(WAIT)!).relayed ?? null : null).toBeNull()
+})
+
+// --- a run launched underneath the agent -------------------------------------------------
+
+test("a run launched from the agent's shell sends no notice in its name, the agent still does", async () => {
+  const chains = mounted()
+  const run = fake({ walk: 'underneath' })
+  await drive(chains, 'turn.complete', run.dollar, turnEnd('PR #12, head abc, 40 passed.\nstatus: done — PR #12'))
+  await drive(chains, 'turn.complete', run.dollar, turnEnd('ok'))
+  expect(run.sent).toEqual([])
+  expect(run.files.has(WAIT)).toBe(false)
+  const agent = fake({ walk: 'agent' })
+  await drive(chains, 'turn.complete', agent.dollar, turnEnd('Working on the second task.'))
+  expect(agent.sent).toEqual([{ to: ORCH, text: `[module] ${AGENT} ended a turn without its status line` }])
+})
+
+test("a run launched from the agent's shell writes no row and reports no gate in its name", async () => {
+  const chains = mounted()
+  const run = fake({ walk: 'underneath' })
+  run.usage.context.tokens = 400000
+  run.usage.context.percent = 40
+  await drive(chains, 'session.measure', run.dollar, {})
+  const row = JSON.parse(run.files.get(ROW)!)
+  expect([row.role, row.name, row.pid, row.tty]).toEqual([null, null, undefined, undefined])
+  expect(run.sent).toEqual([])
+  expect(run.files.has(GATE)).toBe(false)
+  const agent = fake({ walk: 'agent' })
+  agent.usage.context.tokens = 400000
+  agent.usage.context.percent = 40
+  await drive(chains, 'session.measure', agent.dollar, {})
+  expect(JSON.parse(agent.files.get(ROW)!).name).toBe(AGENT)
+  expect(agent.sent).toEqual([{ to: ORCH, text: `[module] ${AGENT} context 400,000 (40%) — at the gate` }])
 })

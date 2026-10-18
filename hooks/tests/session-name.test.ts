@@ -208,3 +208,102 @@ test("a session's name is its record's, else its launch name, else none — a re
   // No record at all (a host that keeps none): the transcript's last rename.
   expect((await walk(TTY_ROWS, {})).name).toBe('Orch : from-transcript')
 })
+
+// --- a session launched underneath another -------------------------------------------------
+
+// An agent's tab and a headless run started from its shell, as the host lays them out: the
+// agent's host process (501) on ttys005, recorded under the agent's id and launched with its
+// --name; its shell (850) and the run (900) on no tty, the run recorded under its own id.
+// The module's shell is a child of its session's host process, on no tty either.
+const UNDERNEATH: Record<string, { ppid: string; tty: string; command: string }> = {
+  '400': { ppid: '1', tty: 'ttys005', command: '-zsh' },
+  '501': { ppid: '400', tty: 'ttys005', command: 'hostcli --name Agent : belt' },
+  '850': { ppid: '501', tty: '??', command: '/bin/zsh -c hostcli -p reply' },
+  '900': { ppid: '850', tty: '??', command: 'hostcli -p reply' },
+}
+const runUnder = (session: string) => async (argv: readonly string[]) => {
+  if (argv[0] === 'sh') return { exitCode: 0, stdout: `${session} ??\n` }
+  if (argv[0] === 'ps' && argv[1] === '-p') {
+    const at = UNDERNEATH[argv[2]]
+    return at ? { exitCode: 0, stdout: `${at.ppid} ${at.tty}\n` } : { exitCode: 1, stdout: '' }
+  }
+  if (argv[0] === 'ps' && argv[1] === '-t') {
+    const rows = Object.entries(UNDERNEATH).filter(([, at]) => at.tty === argv[2])
+    return { exitCode: 0, stdout: rows.map(([pid, at]) => `  ${pid} ${at.command}\n`).join('') }
+  }
+  return { exitCode: 1, stdout: '' }
+}
+
+test("a run launched from a session's shell speaks for no one; the session itself still does", async () => {
+  const transcript = '{"type":"custom-title","customTitle":"Agent : from-transcript"}\n'
+  const size = async () => transcript.length
+  const block = async () => new TextEncoder().encode(transcript)
+  const walk = (session: string, id: string, records: Record<string, string>) =>
+    walkName(runUnder(session), size, block, 't.jsonl', async pid => records[pid] ?? null, async () => ['hostcli'], id)
+  const records = (agent: object) => ({
+    '501': JSON.stringify({ sessionId: 's-agent', kind: 'interactive', entrypoint: 'cli', status: 'busy', ...agent }),
+    '900': JSON.stringify({ sessionId: 's-run', kind: 'interactive', entrypoint: 'sdk-cli', name: 'probe-cwd-17', status: 'busy' }),
+  })
+  const headless = { tty: null, name: null, pid: null, known: false }
+  // The run climbs past its own process to the agent's tty: the record there carries
+  // another id, so neither its name, nor the launch --name, nor a transcript names the run.
+  expect(await walk('900', 's-run', records({ name: 'Agent : belt' }))).toEqual(headless)
+  expect(await walk('900', 's-run', records({}))).toEqual(headless)
+  // The agent, given the same process table, is named as before.
+  expect(await walk('501', 's-agent', records({ name: 'Agent : belt' })))
+    .toEqual({ tty: '/dev/ttys005', name: 'Agent : belt', pid: '501', known: true })
+  expect((await walk('501', 's-agent', records({}))).name).toBe('Agent : belt')
+})
+
+test('the host on a tty, asked for a session id no record carries, is none', async () => {
+  const records: Record<string, string> = { '501': JSON.stringify({ sessionId: 's-agent', name: 'Agent : belt', status: 'busy' }) }
+  const read = async (pid: string) => records[pid] ?? null
+  const names = async () => ['hostcli']
+  expect(await hostOn(runUnder('900'), read, names, '/dev/ttys005', 's-run')).toBeNull()
+  expect((await hostOn(runUnder('900'), read, names, '/dev/ttys005', 's-agent'))?.pid).toBe('501')
+  // Asked for no session (another session's tty, read for its own sake): its recorded host.
+  expect((await hostOn(runUnder('900'), read, names, '/dev/ttys005'))?.pid).toBe('501')
+})
+
+// --- what a record answers -----------------------------------------------------------------
+
+test('a record with no session id still names its tty, the tty being foreign only when every record carries another id', async () => {
+  const names = async () => ['hostcli']
+  const record = (fields: object) => JSON.stringify({ status: 'idle', ...fields })
+  const rows = '  400 -zsh\n  501 hostcli --resume x\n'
+  const anon = { '501': record({ name: 'Orch : anon' }) }
+  const read = (records: Record<string, string>) => async (pid: string) => records[pid] ?? null
+  // The host writes its record without a session id: the record is the tty's only one, so it answers.
+  expect((await hostOn(runRows(rows), read(anon), names, '/dev/ttys001', 's-1'))?.record?.name).toBe('Orch : anon')
+  const walked = await walkName(runRows(rows), async () => 0, async () => new Uint8Array(0), 't.jsonl', read(anon), names, 's-1')
+  expect(walked).toEqual({ tty: '/dev/ttys001', name: 'Orch : anon', pid: '501', known: true })
+  // Beside a record that carries another id, the one with none still answers.
+  const mixed = { '501': record({ sessionId: 's-other', name: 'Agent : other' }), '502': record({ name: 'Orch : anon' }) }
+  expect((await hostOn(runRows('  501 hostcli\n  502 hostcli\n'), read(mixed), names, '/dev/ttys001', 's-1'))?.pid).toBe('502')
+})
+
+test("a tty with two records answers the one that carries the session's id", async () => {
+  const names = async () => ['hostcli']
+  const records: Record<string, string> = {
+    '501': JSON.stringify({ sessionId: 's-other', name: 'Agent : other', status: 'busy' }),
+    '502': JSON.stringify({ sessionId: 's-1', name: 'Orch : mine', status: 'busy' }),
+  }
+  const read = async (pid: string) => records[pid] ?? null
+  const rows = '  501 hostcli\n  502 hostcli\n'
+  expect((await hostOn(runRows(rows), read, names, '/dev/ttys001', 's-1'))?.pid).toBe('502')
+  const walked = await walkName(runRows(rows), async () => 0, async () => new Uint8Array(0), 't.jsonl', read, names, 's-1')
+  expect(walked).toEqual({ tty: '/dev/ttys001', name: 'Orch : mine', pid: '502', known: true })
+})
+
+test('a tty whose records all carry other ids is foreign: no host, no name', async () => {
+  const names = async () => ['hostcli']
+  const records: Record<string, string> = {
+    '501': JSON.stringify({ sessionId: 's-a', name: 'Agent : a', status: 'busy' }),
+    '502': JSON.stringify({ sessionId: 's-b', name: 'Agent : b', status: 'busy' }),
+  }
+  const read = async (pid: string) => records[pid] ?? null
+  const rows = '  501 hostcli\n  502 hostcli\n'
+  expect(await hostOn(runRows(rows), read, names, '/dev/ttys001', 's-1')).toBeNull()
+  const walked = await walkName(runRows(rows), async () => 0, async () => new Uint8Array(0), 't.jsonl', read, names, 's-1')
+  expect(walked).toEqual({ tty: null, name: null, pid: null, known: false })
+})
