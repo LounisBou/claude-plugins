@@ -45,19 +45,17 @@ CYAN=$'\033[0;36m'
 MAGENTA=$'\033[0;35m'
 RESET=$'\033[0m'
 
-# Ten-step gradient: deep green → deep red.
-LEVEL_1=$'\033[38;5;22m'
-LEVEL_2=$'\033[38;5;28m'
-LEVEL_3=$'\033[38;5;34m'
-LEVEL_4=$'\033[38;5;100m'
-LEVEL_5=$'\033[38;5;142m'
-LEVEL_6=$'\033[38;5;178m'
-LEVEL_7=$'\033[38;5;172m'
-LEVEL_8=$'\033[38;5;166m'
-LEVEL_9=$'\033[38;5;160m'
-LEVEL_10=$'\033[38;5;124m'
+# Orange between yellow and red. 256-colour 208 (#ff8700) is bright enough
+# on a dark background and saturated enough to stay legible on a light one.
+ORANGE=$'\033[38;5;208m'
 
-separator="${GRAY} │ ${RESET}"
+# Dark yellow for 41-70 %. The basic yellow (0;33) is nearly invisible on a
+# light background, and a bright yellow is worse. 256-colour 136 (#af8700) reads
+# on white and on near-black alike, and stays clearly apart from the orange.
+AMBER=$'\033[38;5;136m'
+ITALIC=$'\033[3m'
+
+separator=" │ "
 
 # A single jq call: each fork costs ~5 ms and the status line is rendered
 # continuously. The field separator is 0x1F (unit separator) and deliberately
@@ -94,19 +92,14 @@ IFS="$US" read -r h5_pct h5_reset d7_pct d7_reset pr_num pr_state model_name \
 
 is_number() { case "$1" in ''|*[!0-9]*) return 1 ;; *) return 0 ;; esac; }
 
-# Gradient color matching an integer percentage.
+# Level colour for an integer percentage: the default foreground up to 40
+# (prints nothing), dark yellow to 70, orange to 79, red from 80.
 usage_color() {
   local p=$1
-  if   [ "$p" -le 10 ]; then printf '%s' "$LEVEL_1"
-  elif [ "$p" -le 20 ]; then printf '%s' "$LEVEL_2"
-  elif [ "$p" -le 30 ]; then printf '%s' "$LEVEL_3"
-  elif [ "$p" -le 40 ]; then printf '%s' "$LEVEL_4"
-  elif [ "$p" -le 50 ]; then printf '%s' "$LEVEL_5"
-  elif [ "$p" -le 60 ]; then printf '%s' "$LEVEL_6"
-  elif [ "$p" -le 70 ]; then printf '%s' "$LEVEL_7"
-  elif [ "$p" -le 80 ]; then printf '%s' "$LEVEL_8"
-  elif [ "$p" -le 90 ]; then printf '%s' "$LEVEL_9"
-  else printf '%s' "$LEVEL_10"
+  if   [ "$p" -le 40 ]; then :
+  elif [ "$p" -le 70 ]; then printf '%s' "$AMBER"
+  elif [ "$p" -le 79 ]; then printf '%s' "$ORANGE"
+  else printf '%s' "$RED"
   fi
 }
 
@@ -153,7 +146,7 @@ fmt_countdown() {
 # $1 label, $2 percentage (float), $3 reset epoch,
 # $4 time|date (format used when RESET_COUNTDOWN=0)
 window_text() {
-  local label=$1 pct=${2%%.*} epoch=$3 mode=$4 bar="" tail="" reset
+  local label=$1 pct=${2%%.*} epoch=$3 mode=$4 bar="" tail="" reset color mark="" end=""
 
   is_number "$pct" || return 1
   [ "$show_bar" = "1" ] && bar=$(make_bar "$pct")
@@ -166,7 +159,10 @@ window_text() {
     [ -n "$reset" ] && tail=" → ${reset}"
   fi
 
-  printf '%s%s: %s%%%s%s%s' "$(usage_color "$pct")" "$label" "$pct" "$bar" "$tail" "$RESET"
+  color=$(usage_color "$pct")
+  [ -n "$color" ] && end=$RESET
+  [ "$pct" -ge 80 ] && mark="⚠ "
+  printf '%s%s%s: %s%%%s%s%s' "$color" "$mark" "$label" "$pct" "$bar" "$tail" "$end"
 }
 
 # Concatenates with the separator. No nameref: macOS ships bash 3.2.
@@ -234,7 +230,7 @@ fi
 if [ "$show_sname" = "1" ] && [ -n "$session_name" ]; then
   sname=$session_name
   [ "${#sname}" -gt 24 ] && sname="${sname:0:24}…"
-  line1=$(join_sep "$line1" "${GRAY}${sname}${RESET}")
+  line1=$(join_sep "$line1" "${ITALIC}${sname}${RESET}")
 fi
 
 # --- line 2: metrics --------------------------------------------------------
@@ -281,7 +277,9 @@ if [ "$show_ctx" = "1" ]; then
     if [ "$cpct" -ge 80 ]; then
       line2=$(join_sep "$line2" "${RED}⚠ ${ctx_text}${RESET}")
     else
-      line2=$(join_sep "$line2" "$(usage_color "$cpct")${ctx_text}${RESET}")
+      color=$(usage_color "$cpct")
+      end=""; [ -n "$color" ] && end=$RESET
+      line2=$(join_sep "$line2" "${color}${ctx_text}${end}")
     fi
   fi
 fi

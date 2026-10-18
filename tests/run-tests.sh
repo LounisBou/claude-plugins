@@ -3,7 +3,8 @@
 #
 # Each case builds a stdin payload and an isolated settings file
 # (STATUSBAR_CONFIG), then compares the ANSI-stripped output against an
-# expected value. Reset epochs are derived from `now` so countdowns are
+# expected value. The readable levels section reads the raw colour sequences
+# instead. Reset epochs are derived from `now` so countdowns are
 # deterministic.
 
 set -u
@@ -84,13 +85,90 @@ check "context >= 80 raises the warning" "$ALL_ON" \
   "{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"context_window\":{\"used_percentage\":83.6},
     \"rate_limits\":{\"five_hour\":{\"used_percentage\":100,\"resets_at\":$IN_2H}}}" \
 "plain
-⚠ ctx: 83% │ 5h: 100% ▓▓▓▓▓▓▓▓▓▓ → 2h13"
+⚠ ctx: 83% │ ⚠ 5h: 100% ▓▓▓▓▓▓▓▓▓▓ → 2h13"
 
 check "0% fills no block" "$ALL_ON" \
   "{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},
     \"rate_limits\":{\"five_hour\":{\"used_percentage\":0,\"resets_at\":$IN_2H}}}" \
 "plain
 5h: 0% ░░░░░░░░░░ → 2h13"
+
+echo "== readable levels =="
+
+ESC=$'\033'
+L_YELLOW="${ESC}[38;5;136m"
+L_ORANGE="${ESC}[38;5;208m"
+L_RED="${ESC}[0;31m"
+
+# line2_of <payload> -> raw second line (colour sequences kept)
+CTX_LEVEL=$(config_with SHOW_CONTEXT=1 SHOW_USAGE=0)
+
+line2_of() { printf '%s' "$1" | STATUSBAR_CONFIG="${2:-$ALL_ON}" bash "$SCRIPT" | sed -n 2p; }
+
+# check_level <name> <payload> <expected prefix; empty = no colour sequence at all>
+check_level() {
+  local name="$1" line="$2" prefix="$3" ok=0
+  if [ -z "$prefix" ]; then
+    case "$line" in *"$ESC"*) ok=0 ;; *) ok=1 ;; esac
+  else
+    case "$line" in "$prefix"*) ok=1 ;; esac
+  fi
+  if [ "$ok" = 1 ]; then
+    printf '  ok   %s\n' "$name"; pass=$((pass + 1))
+  else
+    printf '  FAIL %s\n' "$name"; printf '       actual: %q\n' "$line"; fail=$((fail + 1))
+  fi
+}
+
+for lvl in "0:" "40:" "41:$L_YELLOW" "70:$L_YELLOW" "71:$L_ORANGE" "79:$L_ORANGE" "80:${L_RED}⚠ " ; do
+  p=${lvl%%:*}; want=${lvl#*:}
+  payload="{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"context_window\":{\"used_percentage\":$p}}"
+  actual=$(line2_of "$payload" "$CTX_LEVEL")
+  check_level "context at $p%" "$actual" "$want"
+  case "$want" in "${L_RED}"*) qwant="${L_RED}⚠ 5h: $p%" ;; "") qwant="" ;; *) qwant="${want}5h: $p%" ;; esac
+  payload="{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":$p,\"resets_at\":$IN_2H}}}"
+  actual=$(line2_of "$payload")
+  check_level "quota at $p%" "$actual" "$qwant"
+done
+
+# The whole raw second line with the context and both quotas shown: every
+# sequence, its reset, the bar and the reset tail inside the coloured zone.
+R="${ESC}[0m"
+for lvl in "75:${L_ORANGE}:8:" "85:${L_RED}:9:⚠ "; do
+  IFS=: read -r p col filled mark <<<"$lvl"
+  bar=$(printf '%*s' "$filled" '' | sed 's/ /▓/g')$(printf '%*s' "$((10 - filled))" '' | sed 's/ /░/g')
+  want="${col}${mark}ctx: ${p}%${R} │ ${col}${mark}5h: ${p}% ${bar} → 2h13${R} │ ${col}${mark}7d: ${p}% ${bar} → 3d${R}"
+  payload="{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"context_window\":{\"used_percentage\":$p},\"rate_limits\":{\"five_hour\":{\"used_percentage\":$p,\"resets_at\":$IN_2H},\"seven_day\":{\"used_percentage\":$p,\"resets_at\":$IN_3D}}}"
+  actual=$(line2_of "$payload")
+  if [ "$actual" = "$want" ]; then
+    printf '  ok   %s\n' "whole line 2 at $p%"; pass=$((pass + 1))
+  else
+    printf '  FAIL %s\n' "whole line 2 at $p%"
+    printf '       want:   %q\n       actual: %q\n' "$want" "$actual"; fail=$((fail + 1))
+  fi
+done
+
+check "quota at 80 carries the warning" "$ALL_ON" \
+  "{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":80,\"resets_at\":$IN_2H}}}" \
+"plain
+⚠ 5h: 80% ▓▓▓▓▓▓▓▓░░ → 2h13"
+
+check "quota at 79 carries no warning" "$ALL_ON" \
+  "{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":79,\"resets_at\":$IN_2H}}}" \
+"plain
+5h: 79% ▓▓▓▓▓▓▓▓░░ → 2h13"
+
+# The separator and the session name are drawn in the default foreground.
+raw1=$(printf '%s' "{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"model\":{\"display_name\":\"a-model\"},\"session_name\":\"my session\"}" \
+  | STATUSBAR_CONFIG="$ALL_ON" bash "$SCRIPT" | sed -n 1p)
+case "$raw1" in
+  *"${ESC}[0;90m"*) printf '  FAIL %s\n' "separator and session name avoid the grey 0;90"; fail=$((fail + 1)) ;;
+  *) printf '  ok   %s\n' "separator and session name avoid the grey 0;90"; pass=$((pass + 1)) ;;
+esac
+case "$raw1" in
+  *"${ESC}[3mmy session"*) printf '  ok   %s\n' "session name is italic"; pass=$((pass + 1)) ;;
+  *) printf '  FAIL %s\n' "session name is italic"; fail=$((fail + 1)) ;;
+esac
 
 echo "== context tokens against the gate =="
 

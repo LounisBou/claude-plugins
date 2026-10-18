@@ -26,13 +26,14 @@ ctx: 26% │ 5h: 47% ▓▓▓▓▓░░░░░ → 2h13 │ 7d: 50% ▓▓�
   upstream), gray `{n}` for stashes (hidden at 0). A single call:
   `git status --porcelain=v2 --branch --show-stash` (replacing the current two
   calls, rev-parse + branch).
-- Session name (`session_name`) in gray, truncated at 24 characters + `…`,
-  hidden when absent.
+- Session name (`session_name`) in italic, default foreground, truncated at 24
+  characters + `…`, hidden when absent.
 
 ## Line 2
 
-- `ctx: N%` first (`context_window.used_percentage`) — existing gradient; at
-  ≥ 80% (the auto-compaction threshold): red `⚠ ctx: N%`. Hidden when absent.
+- `ctx: N%` first (`context_window.used_percentage`) — default foreground up
+  to 40%, dark yellow (256-colour 136) 41–70, orange 71–79; at ≥ 80% (the
+  auto-compaction threshold): red `⚠ ctx: N%`. Hidden when absent.
 - Countdown instead of clock times: `→ 2h13` / `→ 47m` (5h), `→ 3d` rounded to
   the nearest day, or `→ 5h12` when under 24 h (7d). `RESET_COUNTDOWN=0`
   restores the previous time/date format.
