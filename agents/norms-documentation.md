@@ -11,6 +11,7 @@ description: |
   assistant: "I'll use the norms-documentation agent to check if project conventions require comments here."
   </example>
 model: sonnet
+tools: Read, Grep, Glob, Bash
 color: green
 ---
 

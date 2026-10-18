@@ -11,6 +11,7 @@ description: |
   assistant: "I'll use the norms-variable-naming agent to check for naming violations."
   </example>
 model: haiku
+tools: Read, Grep, Glob, Bash
 color: red
 ---
 

@@ -11,6 +11,7 @@ description: |
   assistant: "I'll use the norms-import-organization agent to validate import organization."
   </example>
 model: haiku
+tools: Read, Grep, Glob, Bash
 color: purple
 ---
 

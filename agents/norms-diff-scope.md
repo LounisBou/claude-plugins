@@ -10,6 +10,7 @@ description: |
   assistant: "I'll use the norms-diff-scope agent to check for scope violations."
   </example>
 model: sonnet
+tools: Read, Grep, Glob, Bash
 color: orange
 ---
 

@@ -10,6 +10,7 @@ description: |
   assistant: "I'll use the norms-pattern-conformity agent to compare against existing services."
   </example>
 model: sonnet
+tools: Read, Grep, Glob, Bash
 color: blue
 ---
 

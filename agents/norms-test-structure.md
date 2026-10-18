@@ -11,6 +11,7 @@ description: |
   assistant: "I'll use the norms-test-structure agent to check test structure against project conventions."
   </example>
 model: haiku
+tools: Read, Grep, Glob, Bash
 color: yellow
 ---
 

@@ -10,6 +10,7 @@ description: |
   assistant: "I'll use the norms-magic-values agent to detect hardcoded values."
   </example>
 model: haiku
+tools: Read, Grep, Glob, Bash
 color: cyan
 ---
 

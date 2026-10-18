@@ -10,6 +10,7 @@ description: |
   assistant: "I'll use the norms-test-coverage agent to analyze coverage gaps."
   </example>
 model: sonnet
+tools: Read, Grep, Glob, Bash
 color: magenta
 ---
 
