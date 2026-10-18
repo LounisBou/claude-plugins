@@ -7451,6 +7451,8 @@ check "the README, the routing skill and the calibration reference name the cali
   "$(spells "$ROOT/README.md" '| `/orchestrator:calibrate` |')|$(spells "$MR" '`/orchestrator:calibrate <checkout> --max-usd <cap> --class <class> --pr <n>...` does it')|$(spells "$MRC" '`/orchestrator:calibrate` runs sections 1 to 5')"
 check "the routing skill no longer says no command does the calibration" "no" \
   "$(spells "$MR" 'No command or wrapper does it')"
+check "the rulebook no longer orders a routine idle-notice subscription after each message" "0|yes" \
+  "$(grep -c 'notify_when_idle' "$ROOT/skills/orchestrator/SKILL.md")|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'once re-instantiated, your first message re-announces your new address to every running agent')"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"

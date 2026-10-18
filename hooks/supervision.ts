@@ -26,7 +26,7 @@ import { withDeadline, isDegradedPass, chainEntries, watchNumberOf } from './sto
 import { typedByOperator } from './models-guard.ts'
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
 import {
-  parseWait, parseStatus, waitPatch, clearedWait, fingerprint, relayText, heldQuestion, withdrawalText, gateText, coordinatorOf, chainOwnerTty, waitLabel,
+  parseWait, parseStatus, waitPatch, clearedWait, fingerprint, relayText, heldQuestion, withdrawalText, gateText, noStatusText, NO_STATUS_KEY, coordinatorOf, chainOwnerTty, waitLabel,
   type WaitKind,
 } from './relay.ts'
 import {
@@ -669,7 +669,8 @@ const RELAY_BOUND_MS = 5000
 // walk named it), else from a walk of its own. An orchestrator's machine line goes to the
 // registered coordinator; an agent's status line to its orchestrator, found in the
 // launcher's chains (orchestratorOn), never in the turn's text; any other role, nothing.
-// No line: a wait the session carried is cleared, nothing is sent. A line: written to the
+// No line: a wait the session carried is cleared; an orchestrator sends nothing, an agent's
+// orchestrator is sent one report, unless it was already (key `no-status`). A line: written to the
 // session's wait file, then reported unless this very one was already — the fingerprint
 // is kept only once the send is delivered. Nobody to send to: nothing is sent. A send
 // refused is one log line; the turn's end is never held on it. The row itself is never
@@ -693,13 +694,15 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
   const before = await readWait($, sessionId)
   const relayed = before?.relayed ?? null
   const wait = role === 'orchestrator' ? parseWait(answer) : parseStatus(answer)
-  if (!wait) {
+  if (!wait && role === 'orchestrator') {
     if (before?.waiting) await writeWait($, sessionId, { ...clearedWait(before), name, pid })
     return
   }
-  const patch = waitPatch(before, wait, new Date().toISOString())
-  await writeWait($, sessionId, { ...patch, relayed, name, pid })
-  const key = fingerprint(wait)
+  const patch = wait
+    ? waitPatch(before, wait, new Date().toISOString())
+    : before?.waiting ? clearedWait(before) : null
+  if (patch) await writeWait($, sessionId, { ...patch, relayed, name, pid })
+  const key = wait ? fingerprint(wait) : NO_STATUS_KEY
   if (relayed === key) return
   const to = role === 'orchestrator'
     ? (await coordinatorAddress($))?.to ?? null
@@ -709,9 +712,10 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
     return
   }
   const context = row && row.context_tokens > 0 ? `${row.context_tokens.toLocaleString('en-US')} (${row.context_percent}%)` : null
-  const sent = await $.session.send({ to, text: relayText(name, wait, patch.waiting_since!, context) })
+  const text = wait ? relayText(name, wait, patch!.waiting_since!, context) : noStatusText(name, context)
+  const sent = await $.session.send({ to, text })
   if (sent?.isDelivered) {
-    await writeWait($, sessionId, { ...patch, relayed: key, name, pid })
+    await writeWait($, sessionId, { ...(patch ?? before ?? {}), relayed: key, name, pid })
   } else {
     await logLine($, `relay: not delivered to ${to}: ${sent?.reason ?? 'no answer'}`)
   }

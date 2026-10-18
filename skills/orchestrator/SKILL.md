@@ -104,7 +104,7 @@ plan → brief → launch → verify → review → terminate → replace. The r
 1. **Plan.** **Before planning phases or dispatching one, read `references/briefs.md`, « Prerequisites and phase rules »**: the spec's goals in `goals.md`, contracts exact, one kind of change per phase, a checkout per phase.
 2. **Brief.** **Before writing a brief, read `references/briefs.md`** — the prompt recipe, the standing rules every prompt carries, the lint before the spawn, the tier the dispatch names.
 3. **Launch.** **Before spawning, dispatching a phase to a running agent, standing down, closing, rotating or handing over, read `references/lifecycle.md`.** You spawn the agent yourself, in the same move as its brief.
-4. **Verify.** The spawn on the artifact, then the host's idle notice; the context an agent reports against the gate below — all of it under step 3's instruction to read `references/lifecycle.md`.
+4. **Verify.** The spawn on the artifact, then the module's reports; the context an agent reports against the gate below — all of it under step 3's instruction to read `references/lifecycle.md`.
 5. **Review.** **Before dispatching a review or comments round, before a verdict on a delivery, before you record a review or correction round, or tell the operator a pull request is ready, and before the rebase and push once ready, read `references/review.md`** — review on evidence, the disposable review session, the cost of a round, the rebase once ready. The thresholds below bound it.
 6. **Terminate.** **Before standing down or closing, read `references/lifecycle.md`**: an implementer is stood down at the verification of its delivery, a review or comments session once its round is judged.
 7. **Replace.** At the gate, the agent rotates; you hand over to a successor — both under step 3's instruction to read `references/lifecycle.md`.
@@ -113,7 +113,7 @@ plan → brief → launch → verify → review → terminate → replace. The r
 
 These bind where no reference is loaded — a message sent, a report read, a report to the operator, a re-instantiation — so they live here.
 
-**On your side**: after every message that expects work back, subscribe to the agent's idle notice (`SendMessage` with `notify_when_idle: true`), so an agent idling on an unanswered message surfaces in minutes, not hours; and once re-instantiated, your first message re-announces your new address to every running agent before you read anything else, and your succession brief carries both addresses.
+**On your side**: once re-instantiated, your first message re-announces your new address to every running agent before you read anything else, and your succession brief carries both addresses.
 
 **Control.** The module reports an agent's question, blocker, delivery and gate crossing; act on each. An agent reporting « waiting » has stalled: check its working tree yourself. Read HOW an agent works, not only what it reports: a report or plan naming real load on a shared machine (CPU burners, N parallel browsers or suites, a stress tool) is stopped at once, its processes killed, and the work redone under emulated throttling. An agent's question for the operator, a scope beyond its brief included: relay it verbatim with its context (routed as « The operator decides; the orchestrator runs » says) and send his answer back verbatim, never your own.
 

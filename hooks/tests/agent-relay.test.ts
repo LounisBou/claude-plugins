@@ -5,7 +5,7 @@
 // in the turn's text, the gate sent once per crossing, nothing from a session that is no
 // agent, and a send that fails logged without holding the turn.
 import { expect, test } from 'claude-code/testing'
-import { parseStatus, relayText, gateText, chainOwnerTty, RELAY_CAP } from '../relay.ts'
+import { parseStatus, relayText, gateText, noStatusText, NO_STATUS_KEY, chainOwnerTty, RELAY_CAP } from '../relay.ts'
 import { register } from '../register.ts'
 import { logLineOf } from './fakes.ts'
 
@@ -177,15 +177,17 @@ test('each state is sent once to the orchestrator, a repeat sends nothing, a new
   expect(JSON.parse(fx.files.get(WAIT)!).waiting).toBe('delivered')
 })
 
-test('a turn with no status line sends nothing and clears the state', async () => {
+test('a turn with no status line reports it once and clears the state', async () => {
   const chains = mounted()
   const fx = fake()
   await drive(chains, 'turn.complete', fx.dollar, turnEnd('Working on the second task.'))
-  expect(fx.sent.length).toBe(0)
+  expect(fx.sent.length).toBe(1)
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
   await drive(chains, 'turn.complete', fx.dollar, turnEnd('Back at it.'))
   expect(JSON.parse(fx.files.get(WAIT)!).waiting).toBeNull()
-  expect(fx.sent.length).toBe(1)
+  expect(fx.sent.length).toBe(3)
+  expect(fx.sent[0].text).toBe(NO_STATUS)
+  expect(fx.sent[2].text).toBe(NO_STATUS)
 })
 
 test('the orchestrator comes from the chain, never from the text', async () => {
@@ -268,4 +270,44 @@ test('a gate send that fails is logged and tried again on the next measure', asy
   await drive(chains, 'session.measure', fx.dollar, {})
   expect(fx.logged.some(l => l.includes('gate: not delivered to Orch : belt'))).toBe(true)
   expect(fx.files.has(GATE)).toBe(false)
+})
+
+// --- a turn that ends without its status line ---------------------------------------------
+
+const NO_STATUS = `[module] ${AGENT} ended a turn without its status line — context 120,000 (12%)`
+
+test('the report of a turn without a status line: the name, the context when known', () => {
+  expect(NO_STATUS_KEY).toBe('no-status')
+  expect(noStatusText(AGENT, '120,000 (12%)')).toBe(NO_STATUS)
+  expect(noStatusText(AGENT, null)).toBe(`[module] ${AGENT} ended a turn without its status line`)
+})
+
+test('a turn without a status line is reported once, a status turn between two re-arms it', async () => {
+  const chains = mounted()
+  const fx = fake()
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Working on the second task.'))
+  expect(fx.sent).toEqual([{ to: ORCH, text: NO_STATUS }])
+  expect(JSON.parse(fx.files.get(WAIT)!).relayed).toBe(NO_STATUS_KEY)
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Still working.'))
+  expect(fx.sent.length).toBe(1)
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  expect(fx.sent.length).toBe(2)
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Back at it.'))
+  expect(fx.sent.length).toBe(3)
+  expect(fx.sent[2]).toEqual({ to: ORCH, text: NO_STATUS })
+})
+
+test('an orchestrator turn without a machine line sends nothing', async () => {
+  const chains = mounted()
+  const fx = fake({ name: 'Orch : other', role: 'orchestrator' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Reviewing the pull request.'))
+  expect(fx.sent.length).toBe(0)
+})
+
+test('a refused report of a turn without a status line writes no key', async () => {
+  const chains = mounted()
+  const fx = fake({ send: 'refuse' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Working.'))
+  expect(fx.logged.some(l => l.includes('relay: not delivered'))).toBe(true)
+  expect(fx.files.has(WAIT) ? JSON.parse(fx.files.get(WAIT)!).relayed ?? null : null).toBeNull()
 })

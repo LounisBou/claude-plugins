@@ -130,6 +130,16 @@ export function gateText(name: string, tokens: number, percent: number): string 
   return `[module] ${name} context ${tokens.toLocaleString('en-US')} (${percent}%) — at the gate`
 }
 
+// The deduplication key of an agent's turn that ended without its status line, kept in the
+// wait file's `relayed` like a status line's fingerprint.
+export const NO_STATUS_KEY = 'no-status'
+
+// The one line sent to the orchestrator when an agent ends a turn without its status line:
+// the figure when it is known, never an instruction.
+export function noStatusText(name: string, context: string | null): string {
+  return `[module] ${name} ended a turn without its status line${context ? ` — context ${context}` : ''}`
+}
+
 // The orchestrator's tty an agent's tty belongs to: the launcher's chains, one file per
 // orchestrator tty, each entry an agent's tty. A chain outlives its tab and a tty is
 // recycled, so of the chains naming this tty the one written last wins — the spawn that

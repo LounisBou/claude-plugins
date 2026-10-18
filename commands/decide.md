@@ -109,7 +109,7 @@ context, appended to the round. Never re-argue a ruled question inside another o
 
 1. Relay every ruling marked « to relay » to the agent whose STOP it answers —
    `SendMessage`, the ruling verbatim, dated (`date -u +%FT%TZ`, pasted), « the operator
-   ruled » — and subscribe to its idle notice.
+   ruled ».
 2. Draw the consequences and launch the work that depended on the rulings: briefs amended,
    directives corrected in the same move, agents relaunched, sessions spawned.
 3. Collect again (step 1): the questions the consequences raise, the STOPs the held agents'
