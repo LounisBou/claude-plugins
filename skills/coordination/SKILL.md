@@ -244,7 +244,9 @@ ${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --open --
 
 Run it alone, never chained to another command and with nothing before it: that bare form,
 by the installed path, is the one every `install.sh` run allows in `settings.json`. Add `--model <id>` or `--tier <tier>` when he named one,
-the deep tier applying otherwise, and `--trust` for a checkout prepared for it. Verify it
+the deep tier applying otherwise, and `--trust` for a checkout prepared for it. The orchestrator
+opens without the tools no session has called; `--keep-tool <name>` and `--drop-tool <name>`
+change that set for this one (`iterm-agent.sh tools` lists what exists and what each costs). Verify it
 (`iterm-agent.sh list`, `ListAgents` naming `Orch : <subject>`), then announce yourself to it
 as to any newcomer.
 

@@ -2,7 +2,7 @@
 
 Read before typing any `iterm-agent.sh` command, and again when one fails, hangs or says on stderr that a fallback served it. SKILL.md carries when to spawn, close, move or rotate and in what order; the conditions that come with an option stay beside it here.
 
-- Quick reference — `list`, `spawn`, `verify`, `screen`, `close`, `move`, `rotate`, `trust prune`, the dry run
+- Quick reference — `list`, `spawn`, `verify`, `screen`, `close`, `move`, `rotate`, `trust prune`, `tools`, the dry run
 - How the launcher builds a tab — trust, servers, focus, the launch file, the shell, the anchor's window, titles, hidden panes, the environment
 - When iTerm2 does not answer — the cause named, the two rungs, what the fallback cannot do
 
@@ -19,7 +19,8 @@ $SCRIPT list
     # default)` when neither gives one), then `self` on YOUR OWN tab.
 
 $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --inherit-model] [--effort <low|medium|high|xhigh|max>] [--permission-mode auto] \
-    --title "Agent : <subject>" --brief <brief-path> --orchestrator "<name [ref]>" [--right-of self | --successor] [--mcp <name>] [--gate-tokens <N>]
+    --title "Agent : <subject>" --brief <brief-path> --orchestrator "<name [ref]>" [--right-of self | --successor] [--mcp <name>] [--gate-tokens <N>] \
+    [--keep-tool <name>] [--drop-tool <name>] [--keep-synced-skills]
     # --brief lints the brief (skills/orchestrator/scripts/brief-lint.sh) before any tab
     # exists; a finding no longer refuses the spawn — it is printed on stderr as a warning
     # and the launch goes on. It builds the startup prompt itself either way, exactly
@@ -64,6 +65,26 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --i
     # and says that below it the window's percentage gate holds (a --prompt or --prompt-file
     # spawn gets the export, not that line); a brief that says 300,000 is not rewritten. A successor does not inherit
     # the predecessor's gate: it carries one only if the option is given. `rotate` forwards it.
+    # --keep-tool <name> / --drop-tool <name>: the session's tools are CHOSEN too (§65). Every
+    # launched session is started with `--disallowedTools` naming the tools no session has
+    # called: Artifact, SendFeedback, Workflow, ScheduleWakeup and ReportFindings, and, for any
+    # title but `Orch :` and `Coord :`, the three that move an orchestrator between machines
+    # (mcp__orchestrator__move_send, move_probe, end_session). --keep-tool removes a name from
+    # that set (a brief that asks for a page keeps Artifact); --drop-tool adds any tool name or
+    # permission pattern to it. Both repeat, take one name each, and are honoured by every path
+    # that builds a launch: a plain spawn, --successor, --wake, --open, --auditor and the
+    # other special spawns, and `rotate`, which forwards them. Refused before a tab exists:
+    # an empty name, and one name given to both options. A kept name the default never removed
+    # is harmless. `tools` lists what exists. The dry run prints `tools_removed=` with the set.
+    # The same launch carries the host's cuts in its one --settings: an `Agent :` session
+    # loses the away recap and the silent-turn reminder, and every launched session loses the
+    # token countdown, and the account's synced skills (`anthropic-skills:*`) are hidden
+    # for it through `syncClaudeAiSkills: false` in that same --settings, which moves nothing
+    # on disk; --keep-synced-skills leaves them in, for a brief that invokes one (§65).
+    # The key must NEVER go into a settings file: in the user's settings the host moves
+    # ~/.claude/skills/synced to the trash at its next launch, where in --settings it moves nothing.
+    # The host's `enableArtifact` switch is never passed: it also drops
+    # the « Scratchpad directory » line the agent briefs rely on.
     # An agent comes up with remote control off; only a successor comes up under it (§39).
     # The spawn then reads the mode the session came up in, on its own transcript, and
     # refuses a session that came up in another one — closing the tab it just made and
@@ -142,16 +163,42 @@ $SCRIPT move --tty /dev/ttysNNN (--right-of self | --right-of /dev/ttysMMM | --l
     # --force is the operator's hand and the layout repair.
 
 $SCRIPT rotate --dir <workdir> --old-tty <tty> [--trust] [--tier <tier>] [--expect-title <s>] \
-    [--title <t>] [--prompt <text> | --prompt-file <path>] [--right-of self | --left-of <tty>] [--mcp <name>] [--gate-tokens <N>]
+    [--title <t>] [--prompt <text> | --prompt-file <path>] [--right-of self | --left-of <tty>] [--mcp <name>] [--gate-tokens <N>] \
+    [--keep-tool <name>] [--drop-tool <name>] [--keep-synced-skills]
     # spawns the replacement FIRST and verifies it is running, then closes the old tab
     # every argument it does not consume reaches the spawn, `--trust` and `--mcp <name>`
     # included: an agent that needed a server is replaced by one that still has it.
     # One of --prompt, --prompt-file or --brief is required here too — a promptless
     # rotation is refused the same way a promptless spawn is, before the replacement's
     # tab exists and with the old session untouched. --no-verify is refused: the old tab
-    # is closed only on a replacement verified running.
+    # is closed only on a replacement verified running. --keep-tool, --drop-tool and
+    # --keep-synced-skills are forwarded like --mcp, and only those given to `rotate`: the
+    # replacement is opened with the default set, not the original's, so a rotation of an
+    # agent that was given Artifact or the synced skills gives them again.
 
 $SCRIPT trust prune [--apply]      # entries of the trust record whose directory is gone; --apply removes them
+
+$SCRIPT tools [--transcript <path>]
+    # loaded    | Artifact | 55250 | 12238 | Orch,Coord,Audit,Agent
+    # loaded    | mcp__orchestrator__move_send | 2013 | 446 | Audit,Agent
+    # loaded    | SendFeedback | ? | ? | Orch,Coord,Audit,Agent     ← the reader's own session lacks it
+    # deferred  | CronCreate | 10 | 2 | -
+    # skills    | superpowers:brainstorming | 330 | 73 | -
+    # agent-types | Explore | 520 | 115 | -
+    # skills    | anthropic-skills:pdf | 290 | 64 | Orch,Coord,Audit,Agent
+    # mcp       | context7 | 644 | 143 | -
+    # What a session on this machine is given, and what each item costs on EVERY call, read
+    # from a transcript; nothing is launched. By default the caller's own, found by
+    # CLAUDE_CODE_SESSION_ID under the host's projects directory; --transcript reads another
+    # (a session launched without the defaults shows the whole set). One row per item, fields
+    # separated by ` | `: kind (loaded: the schema is sent on every call; deferred: only the
+    # name, until a search loads the schema; skills; agent-types; mcp), name, characters,
+    # tokens (characters × 0.2215, the ratio measured on tool schemas), and the roles whose
+    # default removes it, `-` when none. Every name of the default removed sets is listed even
+    # when the transcript lacks it, with `?` for what it cannot say. The `mcp` rows are the
+    # catalogue's servers (<state dir>/mcp.json): the default set first, then what `--mcp
+    # <name>` adds; their size is the transcript's server instructions, else `?`. Refused: no
+    # session id and no --transcript, no transcript for the id, a missing file.
 ```
 
 `ORCHESTRATOR_DRY_RUN=1` makes `spawn`, `close` and `move` print what they would ask the app for — the launch, the prompt file, the anchor — touching no terminal. It is the test suite's door, and yours when a launch looks wrong; `rotate` walks its whole order through it.
@@ -165,6 +212,7 @@ $SCRIPT trust prune [--apply]      # entries of the trust record whose directory
 - **A window's tab list is a cached copy.** Read a reorder back through the object you already held and it looks like a reorder that never happened — or reports the position the tab used to have. Re-fetch the app after any mutation.
 - **The tab is born in the anchor's window, whichever window is in front.** The anchor is now searched across every window, and an anchor that is not there is refused before a tab exists (`spawn: no session found on <tty>`). A spawn with no anchor still appends to the window in front: that is one more reason to always name one.
 - **The title is the session's name, and the launcher holds it to the shape.** `--title` is passed to the host as the session's name (shown in its prompt, its resume picker, the terminal title, and applied with a variant when a live session already holds it), so it reads `Orch : <subject>` for an orchestrator and its successor or `Agent : <subject>` for anything an orchestrator spawns — an implementer, a review session, a comments agent, a probe, the subject saying which and at most 25 characters — and anything else, the spelled-out roles of the older convention and the old bare `agent` included, is refused before a tab exists. `--title-free` is the escape and the dry run says when it is on.
+- **The tools a session is given are chosen, and the default is lean (§65).** The host sends every loaded tool's schema on every call; five tools no session has called and, for an agent or an auditor, the three that move an orchestrator weigh about 19,400 tokens per call. The launch names them in `--disallowedTools`, placed before the strict flag and the server file so the pair stays closed by `--permission-mode` (the option takes several values, like `--mcp-config`, and is never last). `--keep-tool` and `--drop-tool` change the set for one spawn; `tools` shows what exists and what each costs. The account's synced skills (`anthropic-skills:*`, never invoked) are hidden the same way, through the host's `syncClaudeAiSkills: false` in the launch's own `--settings`, which hides them for that session and moves nothing on disk (the same key in the operator's user settings would move the synced directory to the trash); `--keep-synced-skills` leaves them in. Artifact is removed by name, never by the host's `enableArtifact` setting, which also drops the « Scratchpad directory » line from the session's environment.
 - **The first character of a title is an activity glyph, and it flips on its own** — one shape while the session works, another once it idles. `--expect-title` compares titles with that glyph stripped from both sides.
 - **A pane behind a maximized sibling is still a session, and it is listed as `hidden`.** The host extension's « Chat / Diff / Code Review » bar opens each view as a sibling pane of the agent's tab and maximizes the one shown, so an agent with a review open is hidden and its tab shows the review. The tool reads hidden panes like visible ones; `close --tty` closes that SESSION alone and leaves the review pane and the tab.
 - **The app's API must be enabled** (Preferences > General > Magic > Enable Python API), and the first connection asks macOS for permission once. `move` needs no Accessibility grant any more, does not bring the app to the front, and flickers no focus: the menu-driven version did all three.

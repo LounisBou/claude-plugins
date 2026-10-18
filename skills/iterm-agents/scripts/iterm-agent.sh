@@ -8,6 +8,10 @@
 #                        (--prompt <text> | --prompt-file <path> | --brief <path> --orchestrator <name>)
 #                        [--left-of <tty> | --right-of <tty> | --right-of self | --successor] [--no-verify]
 #                        [--gate-tokens <positive integer>] [--resident]
+#                        [--keep-tool <name>] [--drop-tool <name>] [--keep-synced-skills]
+#     --keep-tool / --drop-tool: take a tool out of, or add one to, the set the launch removes
+#     from the session (§65). Both repeat; an empty name, or one name on both, is refused.
+#     --keep-synced-skills: leave the account's synced skills in; the launch hides them otherwise.
 #     --resident marks an agent meant to stay idle while a background command of its own
 #     waits: the stop gate never counts it as idle. It is still closed when its purpose ends.
 #     --gate-tokens sets THIS session's context gate, in tokens: the launch exports
@@ -26,6 +30,8 @@
 #     only: immediately right of the caller, the deep tier unless told, remote control on,
 #     no chain. `--open` comes right after `spawn`: that is the form the rule every
 #     `install.sh` run writes names
+#   iterm-agent.sh tools [--transcript <path>]
+#     what a session is given and what each item costs per call, from a transcript
 #   iterm-agent.sh verify --tty /dev/ttysNNN
 #   iterm-agent.sh resolve-tier <deep|standard|light>
 #   iterm-agent.sh close --tty /dev/ttysNNN [--expect-title <substring>] [--keep-checkout]

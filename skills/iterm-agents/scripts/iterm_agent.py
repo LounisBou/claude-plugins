@@ -111,6 +111,35 @@ AUDIT_ROLE = "Audit :"
 # outside --auditor.
 COORD_TITLE_SHAPE = re.compile(r"^Coord : \S(.{0,23}\S)?\Z")
 COORD_ROLE = "Coord :"
+# The four roles a title names, in the order a listing shows them. A title that reads none
+# of them (a probe's, a hand-named tab) has no role and gets the narrowest tool set.
+ROLE_WORDS = ("Orch", "Coord", "Audit", "Agent")
+ROLE_PREFIX = re.compile(r"^(%s) :" % "|".join(ROLE_WORDS))
+# What a session is not given, whatever its role: tools no session has ever called, each
+# one a schema the host sends on EVERY call (§65). Artifact is removed by name and never
+# through the host's `enableArtifact` setting, which also drops the « Scratchpad
+# directory » line every agent brief relies on.
+LEAN_REMOVED = ("Artifact", "SendFeedback", "Workflow", "ScheduleWakeup", "ReportFindings")
+# The module registers these in every session, and only a session that moves an orchestrator
+# between machines calls them: an orchestrator, or the coordinator that orders the move.
+MOVE_TOOLS = ("mcp__orchestrator__move_send", "mcp__orchestrator__move_probe",
+              "mcp__orchestrator__end_session")
+MOVE_ROLES = ("Orch", "Coord")
+# The host's own switches for what it adds to a session's context on its own. The first is
+# internal and undocumented, the second too: a probe proves each on the host version that
+# ships with a change to this list, and a launcher test keeps the keys passed.
+TOTAL_TOKENS_ENV = "CLAUDE_CODE_TOTAL_TOKENS_REMINDER"
+SILENT_TURN_ENV = "CLAUDE_CODE_SILENT_TURN_REMINDER"
+# The skills the account syncs from the web app are listed under this prefix, thirteen of
+# them on this machine, about 2.1 thousand tokens on every call, and no session has invoked
+# one. The host's `syncClaudeAiSkills: false`, passed in a launch's own --settings, hides
+# them for that invocation only and moves nothing: the same key in the operator's user
+# settings would move the synced directory to the trash.
+SYNCED_SKILLS_PREFIX = "anthropic-skills:"
+SYNCED_SKILLS_SETTING = "syncClaudeAiSkills"
+# Tokens per character of a tool schema, measured on this host: 19,429 tokens for the 87,706
+# characters the first probe removed (the P0/P1 pair of the token analysis, 2026-10-18).
+TOKENS_PER_CHAR = 0.2215
 
 
 def die(msg):
@@ -1646,8 +1675,45 @@ def write_prompt_file(prompt, title):
     return path
 
 
+def title_role(title):
+    """`Orch`, `Coord`, `Audit` or `Agent` when the title names one, else empty."""
+    found = ROLE_PREFIX.match(title)
+    return found.group(1) if found else ""
+
+
+def default_removed(role):
+    """The tools a session of this role is not given unless its spawn keeps them. Only an
+    orchestrator and the coordinator keep the three that move an orchestrator."""
+    return LEAN_REMOVED + (() if role in MOVE_ROLES else MOVE_TOOLS)
+
+
+def removed_tools(title, keep=(), drop=()):
+    """The default set for this title's role, less what the spawn keeps, plus what it drops;
+    each name once, in the order they were first given."""
+    names = [n for n in default_removed(title_role(title)) if n not in keep]
+    for name in drop:
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def host_cuts(role):
+    """The settings that stop the host adding to a session what nobody reads there. An agent
+    is read by its orchestrator alone, so it loses the away recap and the silent-turn
+    reminder too; every other role is read by the operator, who keeps both, and only the
+    token countdown goes (its figure is not the gate the module measures)."""
+    env = {TOTAL_TOKENS_ENV: "off"}
+    cuts = {}
+    if role == "Agent":
+        cuts["awaySummaryEnabled"] = False
+        env[SILENT_TURN_ENV] = "0"
+    cuts["env"] = env
+    return cuts
+
+
 def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_file="",
-                  account_connectors=False, gate_tokens=0, effort=""):
+                  account_connectors=False, gate_tokens=0, effort="", keep_tools=(),
+                  drop_tools=(), keep_synced_skills=False):
     """The command iTerm2 runs in the new tab. It is HANDED to the app, never typed, so
     its length and its bytes stop being a hazard. No model argument at all when neither a
     tier nor an explicit identifier says which: the host's own default is the right
@@ -1676,6 +1742,13 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
     # Right after the model, which it qualifies; none typed leaves the host's own default.
     if effort:
         cli += ["--effort", shq(effort)]
+    # The lean tool set (§65). `--disallowedTools` takes several values like `--mcp-config`,
+    # so whatever follows it is read as another tool name: it goes before another option and
+    # never last, ahead of the strict flag and the server file so that pair stays closed by
+    # `--permission-mode`.
+    removed = removed_tools(title, keep_tools, drop_tools)
+    if removed:
+        cli += ["--disallowedTools"] + [shq(name) for name in removed]
     # The launch is strict by DEFAULT, and hands the session a configuration file of its
     # own when it has servers to load (§42). Strict alone would leave an agent with no
     # server of any scope — not the project's, but not the operator's or the account's
@@ -1705,8 +1778,10 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
     # the way every launch pre-answered it before the catalogue existed.
     if account_connectors:
         settings["enableAllProjectMcpServers"] = True
-    if settings:
-        cli += ["--settings", shq(json.dumps(settings, separators=(",", ":")))]
+    if not keep_synced_skills:
+        settings[SYNCED_SKILLS_SETTING] = False
+    settings.update(host_cuts(title_role(title)))
+    cli += ["--settings", shq(json.dumps(settings, separators=(",", ":")))]
     # The prompt goes BEFORE the options that follow it, and --name is the LAST of them or
     # next to last. `ps` shows a command line with the shell's quoting gone, so whatever
     # follows --name runs into the name: with the prompt there, every spawned session's
@@ -1855,9 +1930,25 @@ def cmd_spawn(argv):
     p.add_argument("--account-connectors", dest="account_connectors",
                     action="store_true", default=False)
     p.add_argument("--gate-tokens", dest="gate_tokens", default=None)
+    p.add_argument("--keep-tool", dest="keep_tool", action="append", default=[])
+    p.add_argument("--drop-tool", dest="drop_tool", action="append", default=[])
+    p.add_argument("--keep-synced-skills", dest="keep_synced_skills", action="store_true",
+                   default=False)
     args, unknown = p.parse_known_args(argv)
     if unknown:
         die("spawn: unknown option %s" % unknown[0])
+    # A name is read without its surrounding whitespace: padded, it would match no tool of the
+    # host and be kept or dropped as another name, without a word.
+    args.keep_tool = [name.strip() for name in args.keep_tool]
+    args.drop_tool = [name.strip() for name in args.drop_tool]
+    # First of the refusals, before anything is read or made: a name that is empty would be
+    # passed to the host as an empty argument, and the same name on both sides has no answer.
+    for flag, names in (("--keep-tool", args.keep_tool), ("--drop-tool", args.drop_tool)):
+        if any(not name for name in names):
+            die("spawn: refused: %s needs a tool name, and got an empty one" % flag)
+    both = [name for name in args.keep_tool if name in args.drop_tool]
+    if both:
+        die("spawn: refused: '%s' is given to both --keep-tool and --drop-tool" % both[0])
     gate_tokens = 0
     if args.gate_tokens is not None:
         if not re.fullmatch(r"[0-9]+", args.gate_tokens) or int(args.gate_tokens) < 1:
@@ -2213,7 +2304,8 @@ def cmd_spawn(argv):
                                 or args.coordinator_successor or args.wake
                                 or args.open_) else ""
     launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control,
-                           mcp_file, args.account_connectors, gate_tokens, effort)
+                           mcp_file, args.account_connectors, gate_tokens, effort,
+                           args.keep_tool, args.drop_tool, args.keep_synced_skills)
 
     if DRY_RUN:
         print("launch=%s" % launch)
@@ -2237,6 +2329,9 @@ def cmd_spawn(argv):
         print("mcp=%s" % (",".join(servers) or "none"))
         print("mcp_file=%s" % (mcp_file or "none"))
         print("account_connectors=%s" % ("yes" if args.account_connectors else "no"))
+        print("synced_skills=%s" % ("kept" if args.keep_synced_skills else "removed"))
+        print("tools_removed=%s" % (",".join(removed_tools(title, args.keep_tool,
+                                                           args.drop_tool)) or "none"))
         print("remote_control=%s" % ("yes" if remote_control else "no"))
         print("mode_check=skipped")
         print("program=%s -l <launch-file>" % LOGIN_SHELL)
@@ -2746,6 +2841,133 @@ def cmd_resolve_tier(argv):
     print(resolve_tier(argv[0]))
 
 
+def transcript_of_session(sid):
+    """The transcript the host keeps for a session id, or None: one directory per checkout,
+    and the file is named by the id, so the id alone finds it wherever the session ran."""
+    if not re.fullmatch(r"[0-9A-Za-z._-]+", sid):
+        return None
+    hits = glob.glob(os.path.join(PROJECTS_DIR, "*", sid + ".jsonl"))
+    return max(hits, key=os.path.getmtime) if hits else None
+
+
+def read_offered(path):
+    """What the host gave the session at start, read from its transcript: the schemas it
+    sends on every call (`loaded`), the names it lists until one is searched for
+    (`deferred`), and the skill, agent-type and server-instruction lines it adds to the
+    context. Each item is its name and its size in characters.
+
+    The first snapshot that carries tools is the session's own: a later one is the same
+    session after a tool changed. Anything the transcript lacks is simply absent."""
+    offered = {"loaded": {}, "deferred": {}, "skills": {}, "agent-types": {}, "mcp": {}}
+    kinds = ("prompt_snapshot", "deferred_tools", "skill_listing", "agent_listing_delta",
+             "mcp_instructions_delta")
+    with open(path, errors="replace") as fh:
+        for line in fh:
+            if not any(kind in line for kind in kinds):
+                continue
+            try:
+                entry = json.loads(line)
+            except Exception:
+                continue
+            att = entry.get("attachment") if isinstance(entry, dict) else None
+            if not isinstance(att, dict):
+                continue
+            kind = att.get("type")
+            if kind == "prompt_snapshot" and att.get("tools") and not offered["loaded"]:
+                for tool in att["tools"]:
+                    if isinstance(tool, dict) and tool.get("name"):
+                        offered["loaded"][tool["name"]] = len(json.dumps(tool, ensure_ascii=False))
+            elif kind == "deferred_tools_delta":
+                for name in att.get("addedNames") or []:
+                    offered["deferred"][name] = len(name)
+                for name in att.get("removedNames") or []:
+                    offered["deferred"].pop(name, None)
+            elif kind == "skill_listing" and not offered["skills"]:
+                # A name may itself hold a colon (`plugin:skill`); the line's own separator is
+                # a colon followed by a space.
+                for found in re.finditer(r"^- (\S+?): .*?(?=^- \S+?: |\Z)",
+                                         att.get("content") or "", re.S | re.M):
+                    offered["skills"][found.group(1)] = len(found.group(0))
+            elif kind == "agent_listing_delta":
+                for item in att.get("addedLines") or []:
+                    found = re.match(r"- (\S+?): ", item)
+                    if found:
+                        offered["agent-types"][found.group(1)] = len(item)
+            elif kind == "mcp_instructions_delta":
+                for block in att.get("addedBlocks") or []:
+                    found = re.match(r"## (.+)", block)
+                    if found:
+                        offered["mcp"][found.group(1).strip()] = len(block)
+    return offered
+
+
+def tool_rows(offered, catalogue):
+    """The listing, one `kind | name | characters | tokens | roles` row per item. A `?` is a
+    figure this transcript cannot give: a name the default removes from at least one role
+    (the five unused tools from every role, the three that move an orchestrator from every
+    role but `Orch` and `Coord`) is listed even when the reader's own session lacks it (a
+    lean caller never received it), and a catalogue server has no size unless this session
+    loaded it. The last field names the roles whose default removes the item, `-` when none
+    does."""
+    removed = {role: set(default_removed(role)) for role in ROLE_WORDS}
+
+    def roles(name):
+        if name.startswith(SYNCED_SKILLS_PREFIX):
+            return ",".join(ROLE_WORDS)
+        return ",".join(role for role in ROLE_WORDS if name in removed[role]) or "-"
+
+    def row(kind, name, chars):
+        if chars is None:
+            size, tokens = "?", "?"
+        else:
+            size, tokens = str(chars), str(int(round(chars * TOKENS_PER_CHAR)))
+        return " | ".join([kind, name, size, tokens, roles(name) if kind != "mcp" else "-"])
+
+    rows = []
+    for kind in ("loaded", "deferred", "skills", "agent-types"):
+        items = dict(offered[kind])
+        if kind == "loaded":
+            every = set().union(*removed.values()) | set(MOVE_TOOLS)
+            missing = sorted(every - set(offered["loaded"]) - set(offered["deferred"]))
+        else:
+            missing = []
+        rows += [row(kind, name, chars) for name, chars in
+                 sorted(items.items(), key=lambda item: (-item[1], item[0]))]
+        rows += [row(kind, name, None) for name in missing]
+    if catalogue:
+        # The catalogue's order, the default set first: what a spawn gets with no `--mcp`,
+        # then what `--mcp <name>` adds.
+        order = list(catalogue["default"]) + [n for n in catalogue["servers"]
+                                              if n not in catalogue["default"]]
+        rows += [row("mcp", name, offered["mcp"].get(name)) for name in order]
+    return rows
+
+
+def cmd_tools(argv):
+    """`tools [--transcript <path>]`: what a session on this machine is given and what each
+    item costs on every call, read from a transcript and nothing launched (§65). By default
+    the caller's own, found through the session id the host sets in its environment."""
+    p = argparse.ArgumentParser(prog="tools", add_help=False)
+    p.add_argument("--transcript", default="")
+    args, unknown = p.parse_known_args(argv)
+    if unknown:
+        die("tools: unknown option %s" % unknown[0])
+    path = args.transcript
+    if not path:
+        sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+        if not sid:
+            die("tools: no transcript to read: CLAUDE_CODE_SESSION_ID is unset; pass "
+                "--transcript <path>")
+        path = transcript_of_session(sid)
+        if not path:
+            die("tools: no transcript for session %s under %s; pass --transcript <path>"
+                % (sid, PROJECTS_DIR))
+    if not os.path.isfile(path):
+        die("tools: transcript not found: %s" % path)
+    for line in tool_rows(read_offered(path), read_catalogue()):
+        print(line)
+
+
 def cmd_trust(argv):
     """`trust prune [--apply]`: the record's entries whose directory no longer exists.
 
@@ -2785,13 +3007,13 @@ def cmd_trust(argv):
 COMMANDS = {
     "list": cmd_list, "spawn": cmd_spawn, "verify": cmd_verify, "close": cmd_close,
     "move": cmd_move, "rotate": cmd_rotate, "resolve-tier": cmd_resolve_tier,
-    "screen": cmd_screen, "trust": cmd_trust,
+    "screen": cmd_screen, "trust": cmd_trust, "tools": cmd_tools,
 }
 
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
-        die("usage: iterm-agent.sh {list|spawn|verify|screen|resolve-tier|close|move|rotate|trust} [options] (see header)")
+        die("usage: iterm-agent.sh {list|spawn|verify|screen|resolve-tier|close|move|rotate|trust|tools} [options] (see header)")
     COMMANDS[sys.argv[1]](sys.argv[2:])
 
 

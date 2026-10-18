@@ -83,7 +83,7 @@ echo "== repository policy =="
 policy_hits() {
   ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=.claude --exclude-dir=.superpowers --exclude-dir=plans --exclude-dir=types \
       --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh --exclude=tsconfig.json \
-    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|\.claude\.json|claude-code/|LounisBou/claude-statusbar|LounisBou/claude-plugins-marketplace|/tmp/claude-' || true )
+    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|\.claude\.json|claude-code/|LounisBou/claude-statusbar|LounisBou/claude-plugins-marketplace|/tmp/claude-|CLAUDE_CODE_TOTAL_TOKENS_REMINDER|CLAUDE_CODE_SILENT_TURN_REMINDER|syncClaudeAiSkills' || true )
 }
 check "no vendor or product name in prose" "" "$(policy_hits)"
 
@@ -2253,7 +2253,7 @@ code=$?
 check "dry-run spawn under LC_ALL=C exits 0" "0" "$code"
 cmd=${out#*launch=}; cmd=${cmd%%$'\n'*}
 file=${out#*prompt_file=}; file=${file%%$'\n'*}
-check "the launch stays short whatever the prompt" "short" "$([ "${#cmd}" -lt 500 ] && echo short || echo "${#cmd} chars typed")"
+check "the launch stays short whatever the prompt" "short" "$([ "${#cmd}" -lt 1000 ] && echo short || echo "${#cmd} chars typed")"
 check "the launch reads the prompt from its file" "1" "$(printf '%s' "$cmd" | grep -c '"\$(cat ')"
 # The dry run names the file and writes none; the writer is driven directly for the bytes.
 check "the prompt file holds the prompt byte for byte" "$prompt" \
@@ -2482,7 +2482,7 @@ check "--account-connectors still hands over the chosen servers' file, unchanged
 check "--account-connectors pre-answers the project's own server dialog" "1" \
   "$(mcpd --account-connectors | sed -n 's/^launch=//p' | grep -Fc -- '"enableAllProjectMcpServers":true')"
 check "--account-connectors merges into the one --settings JSON already on the launch" "1" \
-  "$(mcpd --account-connectors | sed -n 's/^launch=//p' | grep -Fc -- "--settings '{\"remoteControlAtStartup\":false,\"enableAllProjectMcpServers\":true}'")"
+  "$(mcpd --account-connectors | sed -n 's/^launch=//p' | grep -Fc -- "--settings '{\"remoteControlAtStartup\":false,\"enableAllProjectMcpServers\":true,\"syncClaudeAiSkills\":false,\"awaySummaryEnabled\":false,\"env\":{\"CLAUDE_CODE_TOTAL_TOKENS_REMINDER\":\"off\",\"CLAUDE_CODE_SILENT_TURN_REMINDER\":\"0\"}}'")"
 check "the dry run says the option is on, and off by default" "1|1" \
   "$(mcpd --account-connectors | grep -c '^account_connectors=yes$')|$(mcpd | grep -c '^account_connectors=no$')"
 # No catalogue at all: still drops strict and still pre-answers, and still writes no file —
@@ -2520,11 +2520,11 @@ check "a plain spawn never carries remote control" "0" \
 # up with the setting that turns that default off; only a successor carries the flag
 # instead, never both.
 check "a plain spawn carries the setting off, and no --remote-control" "1|0" \
-  "$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- '--settings '\''{\"remoteControlAtStartup\":false}'\''')|$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- '--remote-control')"
+  "$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -Fc -- "--settings '{\"remoteControlAtStartup\":false,\"syncClaudeAiSkills\":false,\"awaySummaryEnabled\":false,\"env\":{\"CLAUDE_CODE_TOTAL_TOKENS_REMINDER\":\"off\",\"CLAUDE_CODE_SILENT_TURN_REMINDER\":\"0\"}}'")|$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- '--remote-control')"
 check "a successor carries the flag, and not the setting" "1|0" \
-  "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- "--remote-control 'Orch : f'")|$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- '--settings')"
+  "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- "--remote-control 'Orch : f'")|$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- 'remoteControlAtStartup')"
 check "--successor --no-remote-control carries the setting" "1" \
-  "$(succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -c -- '--settings '\''{\"remoteControlAtStartup\":false}'\''')"
+  "$(succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -Fc -- "--settings '{\"remoteControlAtStartup\":false,\"syncClaudeAiSkills\":false,\"env\":{\"CLAUDE_CODE_TOTAL_TOKENS_REMINDER\":\"off\"}}'")"
 check "a caller launched without a name cannot derive one" "1|1" \
   "$(succ "$PSNONAME" --successor >/dev/null 2>&1; echo $?)|$(succ "$PSNONAME" --successor | grep -c "needs the caller's session name")"
 # The derived name is held to the SAME shape as a typed one (§42), which retires the
@@ -2677,7 +2677,7 @@ AUDOUT=$(aud --auditor --title 'Audit : tm')
 AUDLAUNCH=$(printf '%s' "$AUDOUT" | sed -n 's/^launch=//p')
 check "an auditor is named by its title and comes up under remote control under it" "1|1" \
   "$(printf '%s' "$AUDLAUNCH" | grep -c -- "--name 'Audit : tm'")|$(printf '%s' "$AUDLAUNCH" | grep -c -- "--remote-control 'Audit : tm'")"
-check "and without the setting that turns remote control off" "0" "$(printf '%s' "$AUDLAUNCH" | grep -c -- '--settings')"
+check "and without the setting that turns remote control off" "0" "$(printf '%s' "$AUDLAUNCH" | grep -c -- 'remoteControlAtStartup')"
 check "an auditor runs on the caller's model with no flag to ask for it" "1" "$(printf '%s' "$AUDLAUNCH" | grep -c -- '--model aud-model')"
 check "an auditor anchors on self, past no agent, and the dry run says what it is" "1|1|1" \
   "$(printf '%s' "$AUDOUT" | grep -c '^anchor=self$')|$(printf '%s' "$AUDOUT" | grep -c '^auditor=yes$')|$(printf '%s' "$AUDOUT" | grep -c '^successor=no$')"
@@ -2721,7 +2721,7 @@ audsucc() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" CLAUDE_CON
 AUDSUCCOUT=$(audsucc --successor --inherit-model --permission-mode auto)
 AUDSUCCLAUNCH=$(printf '%s' "$AUDSUCCOUT" | sed -n 's/^launch=//p')
 check "an auditor's successor takes the caller's name and comes up under remote control under it" "1|1|0" \
-  "$(printf '%s' "$AUDSUCCLAUNCH" | grep -c -- "--name 'Audit : tm'")|$(printf '%s' "$AUDSUCCLAUNCH" | grep -c -- "--remote-control 'Audit : tm'")|$(printf '%s' "$AUDSUCCLAUNCH" | grep -c -- '--settings')"
+  "$(printf '%s' "$AUDSUCCLAUNCH" | grep -c -- "--name 'Audit : tm'")|$(printf '%s' "$AUDSUCCLAUNCH" | grep -c -- "--remote-control 'Audit : tm'")|$(printf '%s' "$AUDSUCCLAUNCH" | grep -c -- 'remoteControlAtStartup')"
 check "it runs on the caller's model, with the flag or without" "1|1" \
   "$(printf '%s' "$AUDSUCCLAUNCH" | grep -c -- '--model aud-model')|$(audsucc --successor | sed -n 's/^launch=//p' | grep -c -- '--model aud-model')"
 check "it lands immediately right of the caller, past no agent of any chain" "right|1" \
@@ -2939,7 +2939,7 @@ CRDOUT=$(crd --coordinator-successor --title 'Coord : ops')
 CRDLAUNCH=$(printf '%s' "$CRDOUT" | sed -n 's/^launch=//p')
 check "the coordinator's successor is named by its title and comes up under remote control under it" "1|1" \
   "$(printf '%s' "$CRDLAUNCH" | grep -c -- "--name 'Coord : ops'")|$(printf '%s' "$CRDLAUNCH" | grep -c -- "--remote-control 'Coord : ops'")"
-check "and without the setting that turns remote control off" "0" "$(printf '%s' "$CRDLAUNCH" | grep -c -- '--settings')"
+check "and without the setting that turns remote control off" "0" "$(printf '%s' "$CRDLAUNCH" | grep -c -- 'remoteControlAtStartup')"
 check "the coordinator's successor runs on the caller's model with no flag to ask for it" "1" "$(printf '%s' "$CRDLAUNCH" | grep -c -- '--model crd-model')"
 check "it lands at the first place of the caller's window, joins no chain, and the dry run says what it is" "1|1|1|1" \
   "$(printf '%s' "$CRDOUT" | grep -c '^anchor=leftmost$')|$(printf '%s' "$CRDOUT" | grep -c '^side=left$')|$(printf '%s' "$CRDOUT" | grep -c '^coordinator_successor=yes$')|$(printf '%s' "$CRDOUT" | grep -c '^chain=none$')"
@@ -7453,6 +7453,161 @@ check "the routing skill no longer says no command does the calibration" "no" \
   "$(spells "$MR" 'No command or wrapper does it')"
 check "the rulebook no longer orders a routine idle-notice subscription after each message" "0|yes" \
   "$(grep -c 'notify_when_idle' "$ROOT/skills/orchestrator/SKILL.md")|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'once re-instantiated, your first message re-announces your new address to every running agent')"
+
+# §65: a launched session is given a lean tool set, by role, and the spawn can change it.
+# `--disallowedTools` takes several values like `--mcp-config`, so it sits before another
+# option; the roles read their title.
+LEANSTATE="$WORK/leanstate"; mkdir -p "$LEANSTATE/chains"
+lean() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$LEANSTATE" bash "$AGENT" spawn --dir "$WORK" --prompt p "$@" 2>&1; }
+leanl() { lean "$@" | sed -n 's/^launch=//p'; }
+# The words between --disallowedTools and the next option, one line.
+leanset() { perl -ne 'print "$1\n" if / --disallowedTools (.*?) --(?:strict-mcp-config|mcp-config|permission-mode) /'; }
+leansettings() { sed -n "s/.* --settings '\([^']*\)'.*/\1/p"; }
+LEANBASE="Artifact SendFeedback Workflow ScheduleWakeup ReportFindings"
+LEANMOVE="mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session"
+check "an agent loses the five unused tools and the three that move an orchestrator" "$LEANBASE $LEANMOVE" \
+  "$(leanl --title 'Agent : x' | leanset)"
+check "an orchestrator loses the five and keeps the three" "$LEANBASE" \
+  "$(leanl --title 'Orch : x' | leanset)"
+check "a title of no role is read as an agent's: it loses all eight" "$LEANBASE $LEANMOVE" \
+  "$(leanl --title-free --title probe | leanset)"
+check "an auditor loses all eight" "$LEANBASE $LEANMOVE" \
+  "$(audl --auditor --title 'Audit : tm' | leanset)"
+check "the coordinator's successor keeps the three" "$LEANBASE" \
+  "$(crdl --coordinator-successor --title 'Coord : ops' | leanset)"
+check "a successor keeps the three, as an orchestrator does" "$LEANBASE" \
+  "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | leanset)"
+check "a woken orchestrator and an opened one keep the three" "$LEANBASE|$LEANBASE" \
+  "$(crdl --wake --title 'Orch : alpha' --model a-model | leanset)|$(opn 'Coord : ops' --open --title 'Orch : sync logs' | sed -n 's/^launch=//p' | leanset)"
+check "the removed set is the dry run's too, and Artifact is never switched off by the host's own setting" "1|0" \
+  "$(lean --title 'Orch : x' | grep -c '^tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings$')|$(leanl --title 'Agent : x' | grep -c enableArtifact)"
+check "the removed set is followed by another option and comes before --permission-mode: never last, never next to the prompt" "1|1|0" \
+  "$(leanl --title 'Agent : x' | grep -c -- '--disallowedTools [^-].* --permission-mode ')|$(leanl --title 'Agent : x' | leanset | grep -c .)|$(leanl --title 'Agent : x' | grep -c -- '--disallowedTools [^-]* "\$(cat ')"
+check "with a server file the removed set comes first and the pair is still closed by the mode" "1" \
+  "$(mcpd | sed -n 's/^launch=//p' | grep -c -- '--disallowedTools Artifact .* --strict-mcp-config --mcp-config [^ ]* --permission-mode ')"
+check "with the account's connectors the removed set is followed by the mode" "1" \
+  "$(mcpd --account-connectors --mcp none | sed -n 's/^launch=//p' | grep -c -- '--disallowedTools Artifact .* ReportFindings .* --permission-mode ')"
+
+# The two options.
+check "--keep-tool Artifact takes it out of the removed set" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE" \
+  "$(leanl --title 'Agent : x' --keep-tool Artifact | leanset)"
+check "--drop-tool adds any name, once, after the defaults" "$LEANBASE $LEANMOVE 'Bash(git push:*)'" \
+  "$(leanl --title 'Agent : x' --drop-tool 'Bash(git push:*)' --drop-tool Artifact | leanset)"
+check "--drop-tool given the same name twice removes it once, on the launch line and in the dry run" "$LEANBASE $LEANMOVE WebSearch|1" \
+  "$(leanl --title 'Agent : x' --drop-tool WebSearch --drop-tool WebSearch | leanset)|$(lean --title 'Agent : x' --drop-tool WebSearch --drop-tool WebSearch | sed -n 's/^tools_removed=//p' | tr ',' '\n' | grep -c '^WebSearch$')"
+check "--keep-tool of a name the default keeps is harmless, and the options repeat" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE WebSearch" \
+  "$(leanl --title 'Agent : x' --keep-tool Artifact --keep-tool Bash --drop-tool WebSearch | leanset)"
+check "--drop-tool on a name the role keeps removes it" "$LEANBASE mcp__orchestrator__end_session" \
+  "$(leanl --title 'Orch : x' --drop-tool mcp__orchestrator__end_session | leanset)"
+check "a spawn that keeps every default removes no tool, and the option is then left out" "0|none" \
+  "$(leanl --title 'Orch : x' --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings | grep -c -- '--disallowedTools')|$(lean --title 'Orch : x' --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings | sed -n 's/^tools_removed=//p')"
+check "an empty name is refused for either option, before any tab exists" "1|1|1|1" \
+  "$(lean --title 'Agent : x' --keep-tool '' >/dev/null 2>&1; echo $?)|$(lean --title 'Agent : x' --drop-tool '  ' >/dev/null 2>&1; echo $?)|$(lean --title 'Agent : x' --keep-tool '' | grep -c -- '--keep-tool needs a tool name')|$(lean --title 'Agent : x' --drop-tool '' | grep -c -- '--drop-tool needs a tool name')"
+check "the same name on both options is refused, and the refusal names it" "1|1" \
+  "$(lean --title 'Agent : x' --keep-tool Artifact --drop-tool Artifact >/dev/null 2>&1; echo $?)|$(lean --title 'Agent : x' --keep-tool Artifact --drop-tool Artifact | grep -c "'Artifact' is given to both --keep-tool and --drop-tool")"
+check "a name with surrounding whitespace is read without it, for either option, and a padded repeat is one name" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE|$LEANBASE $LEANMOVE WebSearch|$LEANBASE $LEANMOVE WebSearch" \
+  "$(leanl --title 'Agent : x' --keep-tool 'Artifact ' | leanset)|$(leanl --title 'Agent : x' --drop-tool $'\tWebSearch ' | leanset)|$(leanl --title 'Agent : x' --drop-tool 'WebSearch ' --drop-tool ' WebSearch' | leanset)"
+check "the same name on both options is refused whatever its padding" "1|1" \
+  "$(lean --title 'Agent : x' --keep-tool 'Artifact ' --drop-tool Artifact >/dev/null 2>&1; echo $?)|$(lean --title 'Agent : x' --keep-tool Artifact --drop-tool ' Artifact' | grep -c "'Artifact' is given to both --keep-tool and --drop-tool")"
+check "every launch path honours them: successor, wake, open, auditor, coordinator-successor" "1|1|1|1|1" \
+  "$(succ "$PSTAB" --successor --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings$')|$(crdl --wake --title 'Orch : alpha' --model a-model --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(opn 'Coord : ops' --open --title 'Orch : sync logs' --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback ')|$(audl --auditor --title 'Audit : tm' --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(crdl --coordinator-successor --title 'Coord : ops' --keep-tool Artifact --drop-tool WebSearch | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings WebSearch$')"
+LEANPS="$WORK/ps-lean.txt"
+printf '/dev/ttys901 /opt/x/claude --name Agent : x\n' > "$LEANPS"
+leanrot() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$LEANSTATE" ORCHESTRATOR_PS_TABLE="$LEANPS" \
+  bash "$AGENT" rotate --dir "$WORK" --title "Agent : rotated" --prompt p "$@" 2>&1; }
+check "rotate passes both options to the replacement it launches" "1|1" \
+  "$(leanrot --old-tty /dev/ttys901 --keep-tool Artifact --drop-tool WebSearch | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings .* WebSearch$')|$(leanrot --old-tty /dev/ttys901 --keep-tool Artifact | sed -n 's/^launch=//p' | grep -c -- '--name .Agent : rotated.')"
+check "rotate refuses an empty name and the same name on both, before it spawns anything" "1|1" \
+  "$(leanrot --old-tty /dev/ttys901 --keep-tool '' >/dev/null 2>&1; echo $?)|$(leanrot --old-tty /dev/ttys901 --keep-tool X --drop-tool X >/dev/null 2>&1; echo $?)"
+check "rotate reads a padded name without its padding" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE" \
+  "$(leanrot --old-tty /dev/ttys901 --keep-tool 'Artifact ' | sed -n 's/^launch=//p' | leanset)"
+
+# The host cuts, in the one --settings the launch carries. A cut a probe did not prove is not
+# listed here (§65).
+check "an agent's settings cut the synced skills, the recap, the countdown and the silent-turn reminder" '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' \
+  "$(leanl --title 'Agent : x' | leansettings)"
+check "an orchestrator's settings cut the synced skills and the countdown only" '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' \
+  "$(leanl --title 'Orch : x' | leansettings)"
+check "a successor, an auditor and the coordinator's successor carry the two cuts and no setting for remote control" '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}|{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}|{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' \
+  "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | leansettings)|$(audl --auditor --title 'Audit : tm' | leansettings)|$(crdl --coordinator-successor --title 'Coord : ops' | leansettings)"
+check "the settings key for the host's own artifact switch is never passed, whatever the role" "0|0|0" \
+  "$(leanl --title 'Agent : x' --keep-tool Artifact | grep -c enableArtifact)|$(leanl --title 'Orch : x' | grep -c enableArtifact)|$(audl --auditor --title 'Audit : tm' | grep -c enableArtifact)"
+check "--account-connectors still merges into the same JSON, before the cuts" '{"remoteControlAtStartup":false,"enableAllProjectMcpServers":true,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' \
+  "$(mcpd --account-connectors | sed -n 's/^launch=//p' | leansettings)"
+
+check "--keep-synced-skills leaves the synced skills in, for any role, and the dry run says which" '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}|{"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}|kept|removed' \
+  "$(leanl --title 'Agent : x' --keep-synced-skills | leansettings)|$(audl --auditor --title 'Audit : tm' --keep-synced-skills | leansettings)|$(lean --title 'Agent : x' --keep-synced-skills | sed -n 's/^synced_skills=//p')|$(lean --title 'Agent : x' | sed -n 's/^synced_skills=//p')"
+# The launch line first: a rotation that refused the option prints none, and a count of
+# zero on an empty output would pass.
+check "rotate forwards --keep-synced-skills to the replacement" "1|0" \
+  "$(leanrot --old-tty /dev/ttys901 --keep-synced-skills | grep -c '^launch=')|$(leanrot --old-tty /dev/ttys901 --keep-synced-skills | sed -n 's/^launch=//p' | grep -c syncClaudeAiSkills)"
+
+# The synced-skills key hides them for ONE invocation when it travels in that session's own
+# --settings; in the operator's user settings the same key makes the host move the synced
+# directory to the trash. So the launcher writes it nowhere but the launch line.
+LEANCFG="$WORK/leancfg"; mkdir -p "$LEANCFG"
+printf '{"model":"a-model"}\n' > "$LEANCFG/settings.json"; printf '{"x":1}\n' > "$LEANCFG/settings.local.json"
+LEANSUM=$(cat "$LEANCFG"/settings*.json | cksum)
+LEANRUN=$(CLAUDE_CONFIG_DIR="$LEANCFG" HOME="$LEANCFG" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$LEANSTATE" bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' --prompt p 2>&1)
+check "the key appears once in a spawn's output, inside the --settings of the launch" "1|1" \
+  "$(printf '%s\n' "$LEANRUN" | grep -c syncClaudeAiSkills)|$(printf '%s\n' "$LEANRUN" | sed -n 's/^launch=//p' | grep -c -- "--settings '[^']*syncClaudeAiSkills\":false")"
+check "and no settings file is written by it, the config directory and the state directory included" "$LEANSUM|0" \
+  "$(cat "$LEANCFG"/settings*.json | cksum)|$(grep -rl syncClaudeAiSkills "$LEANCFG" "$LEANSTATE" 2>/dev/null | wc -l | tr -d ' ')"
+check "no script, hook, command or template of the plugin writes the key but the launcher's launch line" "skills/iterm-agents/scripts/iterm_agent.py" \
+  "$(cd "$ROOT" && grep -rl --exclude-dir=__pycache__ syncClaudeAiSkills skills hooks commands templates install.sh .claude-plugin 2>/dev/null | grep -v '\.md$' | sort | tr '\n' ' ' | sed 's/ $//')"
+
+# `tools`: what a session on this machine is given, from a transcript.
+TOOLSPROJ="$WORK/toolsproj"; mkdir -p "$TOOLSPROJ/-w-x"
+TOOLSTR="$TOOLSPROJ/-w-x/s-tools.jsonl"
+"$py" - "$TOOLSTR" <<'PYEOF'
+import json, sys
+def att(**a):
+    return json.dumps({"type": "attachment", "attachment": a}, ensure_ascii=False)
+tools = [{"name": "Bash", "description": "run", "schema": {}},
+         {"name": "Artifact", "description": "x" * 200, "schema": {}},
+         {"name": "mcp__orchestrator__move_send", "description": "move", "schema": {}}]
+lines = [
+    att(type="prompt_snapshot", systemPrompt=["s"]),
+    att(type="prompt_snapshot", systemPrompt=["s"], tools=tools),
+    att(type="deferred_tools_delta", addedNames=["CronCreate", "Workflow"], removedNames=[]),
+    att(type="skill_listing", content="- alpha: first skill\n- plug:beta: second: skill\nwith two lines\n- anthropic-skills:pdf: pdf work\n", names=["alpha", "plug:beta", "anthropic-skills:pdf"]),
+    att(type="agent_listing_delta", addedTypes=["Explore"], addedLines=["- Explore: read-only search agent"]),
+    att(type="mcp_instructions_delta", addedNames=["a"], addedBlocks=["## a\nServer a instructions."]),
+]
+open(sys.argv[1], "w").write("\n".join(lines) + "\n")
+PYEOF
+toolsx() { ORCHESTRATOR_STATE_DIR="$WORK/toolsstate" ORCHESTRATOR_MCP_CATALOGUE="$CAT" ORCHESTRATOR_PROJECTS_DIR="$TOOLSPROJ" bash "$AGENT" tools "$@" 2>&1; }
+TOOLSOUT=$(toolsx --transcript "$TOOLSTR")
+BASHCHARS=$("$py" -c "import json; print(len(json.dumps({'name': 'Bash', 'description': 'run', 'schema': {}})))")
+ARTCHARS=$("$py" -c "import json; print(len(json.dumps({'name': 'Artifact', 'description': 'x' * 200, 'schema': {}})))")
+check "a loaded tool is one row: kind, name, characters, tokens at 0.2215 each, and the roles that lose it" "loaded | Bash | $BASHCHARS | $("$py" -c "print(int(round($BASHCHARS * 0.2215)))") | -" \
+  "$(printf '%s\n' "$TOOLSOUT" | grep '^loaded | Bash ')"
+check "the heaviest loaded tool comes first, with every role that loses it" "loaded | Artifact | $ARTCHARS | $("$py" -c "print(int(round($ARTCHARS * 0.2215)))") | Orch,Coord,Audit,Agent" \
+  "$(printf '%s\n' "$TOOLSOUT" | grep '^loaded' | head -1)"
+check "a move tool names the two roles whose default removes it" "1" \
+  "$(printf '%s\n' "$TOOLSOUT" | grep -c '^loaded | mcp__orchestrator__move_send | [0-9]* | [0-9]* | Audit,Agent$')"
+check "a removed name the transcript lacks is listed with ? for what it cannot say" "loaded | SendFeedback | ? | ? | Orch,Coord,Audit,Agent|loaded | mcp__orchestrator__end_session | ? | ? | Audit,Agent" \
+  "$(printf '%s\n' "$TOOLSOUT" | grep '^loaded | SendFeedback ')|$(printf '%s\n' "$TOOLSOUT" | grep '^loaded | mcp__orchestrator__end_session ')"
+check "a removed name that is deferred stays a deferred row, with its roles, and is not listed twice" "deferred | Workflow | 8 | 2 | Orch,Coord,Audit,Agent|0" \
+  "$(printf '%s\n' "$TOOLSOUT" | grep '^deferred | Workflow ')|$(printf '%s\n' "$TOOLSOUT" | grep -c '^loaded | Workflow ')"
+check "a deferred name that is not removed shows no role" "deferred | CronCreate | 10 | 2 | -" \
+  "$(printf '%s\n' "$TOOLSOUT" | grep '^deferred | CronCreate ')"
+check "a skill is one row whatever its prefix, with the lines of its description" "1|1" \
+  "$(printf '%s\n' "$TOOLSOUT" | grep -c '^skills | plug:beta | 42 | 9 | -$')|$(printf '%s\n' "$TOOLSOUT" | grep -c '^skills | alpha | 21 | 5 | -$')"
+check "a synced skill names every role: the launch removes them all" "1" \
+  "$(printf '%s\n' "$TOOLSOUT" | grep -c '^skills | anthropic-skills:pdf | [0-9]* | [0-9]* | Orch,Coord,Audit,Agent$')"
+check "an agent type is one row" "1" "$(printf '%s\n' "$TOOLSOUT" | grep -c '^agent-types | Explore | 33 | 7 | -$')"
+check "the catalogue's servers are listed, the default first; the size is the transcript's or ?" "mcp | a | 27 | 6 | -|mcp | b | ? | ? | -" \
+  "$(printf '%s\n' "$TOOLSOUT" | grep '^mcp | a ')|$(printf '%s\n' "$TOOLSOUT" | grep '^mcp | b ')"
+check "every row has five fields" "0" "$(printf '%s\n' "$TOOLSOUT" | awk -F' [|] ' 'NF != 5' | wc -l | tr -d ' ')"
+check "no catalogue lists no server and says nothing" "0" \
+  "$(ORCHESTRATOR_STATE_DIR="$WORK/toolsstate" ORCHESTRATOR_MCP_CATALOGUE="$NOCAT" bash "$AGENT" tools --transcript "$TOOLSTR" 2>&1 | grep -c '^mcp')"
+check "the caller's own transcript is found by the session id the host sets" "$TOOLSOUT" \
+  "$(CLAUDE_CODE_SESSION_ID=s-tools toolsx)"
+check "no session id and no --transcript is refused, naming both ways out" "1|1" \
+  "$(env -u CLAUDE_CODE_SESSION_ID ORCHESTRATOR_STATE_DIR="$WORK/toolsstate" bash "$AGENT" tools >/dev/null 2>&1; echo $?)|$(env -u CLAUDE_CODE_SESSION_ID ORCHESTRATOR_STATE_DIR="$WORK/toolsstate" bash "$AGENT" tools 2>&1 | grep -c 'CLAUDE_CODE_SESSION_ID is unset; pass --transcript <path>')"
+check "a session with no transcript and a missing file are each refused" "1|1" \
+  "$(CLAUDE_CODE_SESSION_ID=s-none toolsx | grep -c 'tools: no transcript for session s-none')|$(toolsx --transcript "$WORK/absent.jsonl" | grep -c 'tools: transcript not found')"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"

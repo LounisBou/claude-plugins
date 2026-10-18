@@ -10,7 +10,7 @@ user-invocable: false
 
 `${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh` drives iTerm2 through the app's own API so an orchestrator can spawn, verify, close, move and rotate implementer sessions without the user touching the keyboard. The launch is HANDED to the app, never typed into a shell. Closing a tab KILLS its session — treat close as destructive and follow the safety order below. **Spawning is the orchestrator's act, not the user's**: the brief is written, the session is spawned in the same move, and the spawn is verified on the process, never on the script's word.
 
-Its commands are `list`, `spawn`, `verify`, `screen`, `close`, `move`, `rotate`, `resolve-tier` and `trust prune`. **Before typing any of them, read `references/commands.md`** — each command's synopsis, flags and refusals, and how the launcher builds a tab; **when one fails, hangs or says on stderr that a fallback served it, read its « When iTerm2 does not answer »**.
+Its commands are `list`, `spawn`, `verify`, `screen`, `close`, `move`, `rotate`, `resolve-tier`, `trust prune` and `tools`. **Before typing any of them, read `references/commands.md`** — each command's synopsis, flags and refusals, and how the launcher builds a tab; **when one fails, hangs or says on stderr that a fallback served it, read its « When iTerm2 does not answer »**.
 
 ## Reading the tabs
 
@@ -50,6 +50,17 @@ So **always name an anchor**, and name the one you actually know:
 5. Rely on that verification and on the module's reports, not on a first message. An agent idle before its work is reported is inspected, not waited for: `verify` for the process, `list` for the tab, and `screen --tty` for what that tab is showing right now — how you tell an agent stopped on a question from one at work.
 
 **A tier nobody bound is not an error.** `spawn` then types no model argument and the host applies its default, so a half-filled map never silently routes deep work to a cheap model — it routes it to whatever the operator's host already runs. Read the map with `resolve-tier` before dispatching a wave, not after it comes back wrong. When the tier the work needs is unbound, the orchestrator picks the model it judges fit (`--model <name>`, or the host's default on purpose), writes the choice and its reason in the brief, and tells the operator in one line at the spawn (`orchestrator:model-routing`).
+
+## The tools a session is given
+
+Every session the launcher opens loses the tools no session has called, because the host sends each loaded tool's schema on every call: `Artifact`, `SendFeedback`, `Workflow`, `ScheduleWakeup` and `ReportFindings`, and, for every title but `Orch :` and `Coord :`, the three the module registers to move an orchestrator between machines. The set is removed at launch; the dry run prints it as `tools_removed=`.
+
+- `--keep-tool <name>` gives one back for this spawn: a brief that asks for a page keeps `Artifact` (`--keep-tool Artifact`).
+- `--drop-tool <name>` removes any other tool or permission pattern for this spawn. Both repeat; an empty name, or one name given to both, is refused before a tab exists; `rotate` forwards them, so a replacement keeps a tool only when `rotate` is given the option again.
+- `--keep-synced-skills` leaves the account's synced skills (`anthropic-skills:*`, hidden from every launched session by default) in the session, for a brief that invokes one.
+- `tools` lists what a session on this machine is given and what each item costs per call, read from a transcript (yours by default, `--transcript <path>` for another), with the roles whose default removes it.
+
+An `Agent :` session also comes up without the away recap and the silent-turn reminder, and every launched session without the host's token countdown (the gate is the module's, not that figure). Read `references/commands.md` for the synopses and refusals.
 
 ## Tab hygiene
 
