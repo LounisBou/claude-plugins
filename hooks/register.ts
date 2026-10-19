@@ -6,7 +6,7 @@
 // is read as written, the tool call goes through.
 import {
   IDLE, armedBy, agentDecision, bandOf, bandSegments, bashDecision, codenameOf, doctorText, editDecision,
-  githubDecision, ignoreVerdict, OUTWARD, UNREAD, shellActions, isVerdict, markRow, modeOf, nextRow, onTurnEnd, onTyped, parseState,
+  ignoreVerdict, shellActions, isVerdict, markRow, modeOf, nextRow, onTurnEnd, onTyped, parseState,
   preflightLines, silencesAttribution, skillOf, skillText, stateLine, typedByUser,
   type Band, type Guard, type Snapshot,
 } from './core.ts'
@@ -121,14 +121,6 @@ async function serveState($: any, e: any): Promise<{ result: string; isError?: t
   return { result: JSON.stringify({ path, row: marked.row, next }, null, 2) }
 }
 
-// The refusal when what is armed could not be read: outward actions only.
-function unreadBash(command: string): { deny: string } | null {
-  return shellActions(command).some(a => OUTWARD.includes(a)) ? { deny: UNREAD } : null
-}
-function unreadGithub(command: string): { deny: string } | null {
-  return command === 'pr-create' || command === 'pr-merge' ? { deny: UNREAD } : null
-}
-
 // A Bash line after which the band has something new to draw: a commit, or a
 // write naming the state file.
 function touchesState(command: string): boolean {
@@ -211,9 +203,7 @@ export function register(on: any) {
   })
 
   // The guards. Each judges before next. A guard that could not read what is
-  // armed lets the call through, except an outward action (a push, a merge, a
-  // pull request): that one is refused with the reason, and the user keeps
-  // his own shell for it. A failure after next replays what already ran.
+  // armed lets the call through. A failure after next replays what already ran.
   on('tool.call', { tool: 'Bash' }, async ($: any, e: any, next: any) => {
     const g = await readGuard($)
     const deny = bashDecision(g, String(e.command ?? ''))
@@ -221,12 +211,7 @@ export function register(on: any) {
     const out = await next(e)
     if (g.outer === 'phase' && touchesState(String(e.command ?? ''))) await refreshBand($)
     return out
-  }).catch(($: any, e: any, next: any) => next.called ? next(e) : unreadBash(String(e.command ?? '')) ?? next(e))
-
-  on('tool.call', { tool: 'mcp__github__gh' }, async ($: any, e: any, next: any) => {
-    const deny = githubDecision(await readGuard($), String(e.command ?? ''))
-    return deny ? { deny } : next(e)
-  }).catch(($: any, e: any, next: any) => next.called ? next(e) : unreadGithub(String(e.command ?? '')) ?? next(e))
+  }).catch(($: any, e: any, next: any) => next(e))
 
   on('tool.call', { tool: 'Agent' }, async ($: any, e: any, next: any) => {
     const deny = agentDecision(await readGuard($), e.subagent_type)

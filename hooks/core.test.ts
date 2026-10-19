@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'claude-code/testing'
 import {
   IDLE, armedBy, agentDecision, bandLine, bandOf, bandSegments, bashDecision, checkDeny, codenameOf, doctorText, editDecision,
-  githubDecision, ignoreVerdict, isVerdict, markRow, modeOf, nextRow, onTurnEnd, onTyped, parseState,
+  ignoreVerdict, isVerdict, markRow, modeOf, nextRow, onTurnEnd, onTyped, parseState,
   preflightLines, shellActions, silencesAttribution, simpleCommands, skillOf, skillText, stateLine,
   COMMITTED_IGNORED, GUARD_SKIPPED, LOCAL_NOT_IGNORED, PREFLIGHT_PASSED, type Guard, type Snapshot,
 } from './core.ts'
@@ -137,19 +137,24 @@ describe('the shell reader', () => {
   })
 
   test('the guarded commands are found wherever a command starts', () => {
-    expect(shellActions('git push origin feat/x')).toEqual(['push'])
-    expect(shellActions('git -C /repo push')).toEqual(['push'])
-    expect(shellActions('git -c user.name=x --no-pager merge main')).toEqual(['merge'])
-    expect(shellActions('cd /repo && git push')).toEqual(['push'])
-    expect(shellActions('FOO=1 rtk git push')).toEqual(['push'])
-    expect(shellActions('/usr/bin/git push')).toEqual(['push'])
-    expect(shellActions('bash -c "git push origin x"')).toEqual(['push'])
-    expect(shellActions('echo "$(git push)"')).toEqual(['push'])
-    expect(shellActions('x=`git merge y`')).toEqual(['merge'])
-    expect(shellActions('gh pr create --fill')).toEqual(['pr-create'])
-    expect(shellActions('gh -R o/r pr merge 12 --squash')).toEqual(['pr-merge'])
+    expect(shellActions('git commit -m x')).toEqual(['commit'])
+    expect(shellActions('git -C /repo commit -m x')).toEqual(['commit'])
+    expect(shellActions('git -c user.name=x --no-pager commit -m x')).toEqual(['commit'])
+    expect(shellActions('cd /repo && git commit -m x')).toEqual(['commit'])
+    expect(shellActions('FOO=1 rtk git commit -m x')).toEqual(['commit'])
+    expect(shellActions('/usr/bin/git commit -m x')).toEqual(['commit'])
+    expect(shellActions('bash -c "git commit -m x"')).toEqual(['commit'])
+    expect(shellActions('echo "$(git commit -m x)"')).toEqual(['commit'])
+    expect(shellActions('x=`git commit -m y`')).toEqual(['commit'])
+    expect(shellActions('git add -A')).toEqual(['stage'])
     expect(shellActions('git add -A; git commit -m x')).toEqual(['stage', 'commit'])
-    expect(shellActions('cat <<EOF\nhi\nEOF\ngit push')).toEqual(['push'])
+    expect(shellActions('cat <<EOF\nhi\nEOF\ngit commit -m x')).toEqual(['commit'])
+  })
+
+  test('a push, a merge and a pull request are no action a guard reads', () => {
+    for (const command of ['git push', 'git push --force origin main', 'git merge main', 'gh pr create --fill', 'gh -R o/r pr merge 12 --squash', 'gh pr ready']) {
+      expect(shellActions(command)).toEqual([])
+    }
   })
 
   // The false positives: text that names a guarded command without running it.
@@ -173,44 +178,35 @@ describe('the guards', () => {
   const close = armedBy(IDLE, 'close')
   const checking = armedBy(IDLE, 'check')
 
-  test('phase and close refuse a push, a merge and a pull request', () => {
+  test('phase and close let a push, a merge and a pull request through', () => {
+    const outward = ['git push', 'git push -u origin feat/x', 'git push --force origin main', 'git push --force-with-lease',
+      'git merge main', 'gh pr create --fill', 'gh pr create --draft', 'gh pr ready 3', 'gh pr merge 3']
     for (const g of [phase, close]) {
-      for (const command of ['git push', 'git merge main', 'gh pr create', 'gh pr merge 3']) {
-        expect(bashDecision(g, command)).toContain('stops at the branch')
-      }
-      expect(githubDecision(g, 'pr-create')).toContain('stops at the branch')
-      expect(githubDecision(g, 'pr-merge')).toContain('stops at the branch')
-      expect(githubDecision(g, 'pr-get')).toBeNull()
+      for (const command of outward) expect(bashDecision(g, command)).toBeNull()
     }
-    expect(bashDecision(phase, 'git push')).toContain('implement:phase')
-    expect(bashDecision(close, 'git push')).toContain('implement:close')
   })
 
   test('nothing is refused while no skill is armed, or after feature or prepare took over', () => {
     for (const g of [IDLE, armedBy(phase, 'feature'), armedBy(phase, 'prepare')]) {
       expect(bashDecision(g, 'git push')).toBeNull()
-      expect(githubDecision(g, 'pr-create')).toBeNull()
       expect(agentDecision(g, 'general-purpose')).toBeNull()
       expect(editDecision(g, 'Edit')).toBeNull()
     }
   })
 
-  test('the user\'s own words release the refusal they name', () => {
-    expect(bashDecision(onTyped(phase, 'ok, push the branch'), 'git push')).toBeNull()
-    expect(bashDecision(onTyped(phase, 'ok, push the branch'), 'git merge main')).toContain('stops at the branch')
-    expect(bashDecision(onTyped(phase, 'merge it into main'), 'git merge main')).toBeNull()
-    expect(githubDecision(onTyped(close, 'open the PR'), 'pr-create')).toBeNull()
+  test('the user\'s own words release the subagent refusal', () => {
     expect(agentDecision(onTyped(phase, 'use a subagent for the tests'), 'general-purpose')).toBeNull()
     // Asked in the prompt that starts the skill, before the skill is armed.
-    expect(bashDecision(armedBy(onTyped(IDLE, 'run implement:close, then push'), 'close'), 'git push')).toBeNull()
+    expect(agentDecision(armedBy(onTyped(IDLE, 'run implement:phase, with an agent'), 'phase'), 'general-purpose')).toBeNull()
     // A later prompt that names nothing arms it again.
-    expect(bashDecision(onTyped(onTyped(phase, 'push it'), 'continue'), 'git push')).toContain('stops at the branch')
+    expect(agentDecision(onTyped(onTyped(phase, 'use an agent'), 'continue'), 'general-purpose')).toContain('writes the work itself')
   })
 
   test('an aborted turn releases everything, an answered one keeps a phase armed', () => {
     expect(onTurnEnd(phase, true)).toEqual(IDLE)
     expect(onTurnEnd(phase, false).outer).toBe('phase')
-    expect(bashDecision(onTurnEnd(phase, false), 'git push')).toContain('stops at the branch')
+    expect(agentDecision(onTurnEnd(phase, false), 'general-purpose')).toContain('writes the work itself')
+    expect(agentDecision(onTurnEnd(phase, true), 'general-purpose')).toBeNull()
   })
 
   test('a phase dispatches read-only search subagents only', () => {
@@ -234,7 +230,7 @@ describe('the guards', () => {
     expect(editDecision(nested, 'Write')).not.toBeNull()
     const after: Guard = { ...nested, checking: false }
     expect(editDecision(after, 'Write')).toBeNull()
-    expect(bashDecision(after, 'git push')).toContain('stops at the branch')
+    expect(agentDecision(after, 'general-purpose')).toContain('writes the work itself')
   })
 
   test('the user\'s words end a check, the slash command that starts it does not', () => {

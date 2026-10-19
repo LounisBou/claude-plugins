@@ -25,14 +25,14 @@ the user in the user's language; write every artifact in English.
 ## The Iron Rule
 
 ```
-NEVER push, open a pull request, merge or delete a branch
+NEVER delete a branch
 NEVER close while a phase is not done, or while the tree is dirty
 NEVER touch a version file when the bump type is none
 ```
 
-With this plugin's hooks module loaded, the push, the merge and the pull request are
-also refused at the call, until the user asks for one in a prompt, interrupts the
-turn, or runs `/implement:release-guard`.
+This skill's own steps end at the branch. A push, a pull request (draft or ready) or a
+merge that the user's or the project's own instructions call for is carried out
+without asking, and is never refused here.
 
 ---
 
@@ -159,7 +159,7 @@ git diff --stat "$BASE"..HEAD
 
 The summary states, in the user's language: the branch, every commit since the base,
 the version if one was written, and each gate command with its exit code. It ends on
-one sentence, said once: push, pull request and review are yours.
+one sentence, said once: this skill's steps end at the branch, and a push, a pull request or a merge that your instructions call for is carried out without asking.
 
 ---
 
@@ -208,8 +208,8 @@ of the repository and stay in it.
 | A bump is asked and no version file exists | the five names looked for, in order, then wait |
 | The gate is red on the run that follows the version write | `version written in <file>, gate red: <the first failing line>` — status `NEEDS_DECISION` |
 
-Each stop says its line once and waits. Nothing outward-facing is done here, on any
-answer.
+Each stop says its line once and waits. No answer to a stop turns it into an outward
+action that no instruction calls for.
 
 ---
 
@@ -243,5 +243,5 @@ status:    DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_DECISION
 5. Summary: branch, commits since the base, version, gate codes, the closing sentence
 6. local mode: delete the feature directory, the parents it empties and its roadmap
    line. committed: keep all
-7. Push nothing, merge nothing, open nothing
+7. The steps end at the branch; a push, a pull request or a merge the instructions call for is carried out without asking
 ```

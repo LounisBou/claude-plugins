@@ -36,7 +36,8 @@ below.
 - **`/implement:check`** — verify a delivery against the plan and the design, on
   any commit range.
 - **`/implement:close`** — the full project gate, the version bump, the final
-  summary; push, pull request and review are yours.
+  summary; its steps end at the branch, and a push, a pull request or a merge that
+  your instructions call for is carried out without asking.
 - **`/implement:prepare`** — plan a future feature onto `ROADMAP.md` without
   touching a branch, so it coexists with a feature in progress on another one.
 
@@ -59,20 +60,18 @@ it fails.
   `IMPLEMENTATION.md` and its next phase) and `mark` (one row, its sha resolved
   from `HEAD`). The skills use it in place of their derivation blocks when it is
   listed.
-- **The Iron Rules are held at the call.** While `implement:phase` or
-  `implement:close` is armed, a `git push`, a `git merge`, `gh pr create`,
-  `gh pr merge` and the github tool's `pr-create` and `pr-merge` are refused;
-  while `implement:phase` is armed, so is a subagent other than `Explore`; while
-  `implement:check` runs, an edit, a `git add` and a `git commit` are refused
-  until its verdict line is written. No commit trailer is asked for while
+- **Two Iron Rules are held at the call.** While `implement:phase` is armed, a
+  subagent other than `Explore` is refused; while `implement:check` runs, an
+  edit, a `git add` and a `git commit` are refused until its verdict line is
+  written. A push, a merge or a pull request is never refused, whether or not
+  the module can read what is armed. No commit trailer is asked for while
   `feature`, `phase` or `close` is armed.
 - **A band above the prompt** shows the phase run: phase N of M, its status, the
   sha it started from, and the head.
 
 A guard stays armed across turns, so a phase stopped on a question resumes
 under the same rules. It is released by another implement skill starting, the
-user naming the action in a prompt (`push`, `merge`, `pull request`, `PR`,
-`agent`), an interrupted turn, the conversation ending or being cleared, and
+user naming the action in a prompt (`agent`, `commit`, `stage`), an interrupted turn, the conversation ending or being cleared, and
 `/implement:release-guard`. A shell line is read word by word: a guarded command
 named inside quotes, a comment or a here-document is not a call.
 

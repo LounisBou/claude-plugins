@@ -178,7 +178,7 @@ left, say that `implement:close` is next.
 | A gate still red after two fixes | `gate red after two fixes: <command> exit <code>` — status `BLOCKED` |
 | A second `FAIL` on the same sub-phase | `check failed twice on <sub-phase>: <the failing rows>` — status `BLOCKED` |
 | The plan does not settle a scope question | the question in one line, then wait — status `NEEDS_DECISION` |
-| An outward-facing or irreversible action is needed | name it and wait; it is never taken here |
+| An outward-facing or irreversible action is needed that no instruction calls for | name it and wait; it is not taken on the skill's own account |
 
 Each stop asks once, in one line, and waits. No progress narration between
 sub-phases, and no question whose answer is already in the plan.
@@ -210,18 +210,21 @@ check. `NEEDS_DECISION` on a scope question the plan does not answer.
 
 ```
 NEVER dispatch a subagent to write code, tests or commits: the work is written here
-NEVER push, open a pull request or merge: the cycle stops at the branch
 NEVER report an exit code that was not read, or skip the gate because the change looks small
 NEVER mark a phase done while its check is red or its gate is untested
 ```
 
 Read-only search subagents are the one exception, and they read; they do not write.
 
-With this plugin's hooks module loaded, the first two lines are also held at the
-call: a push, a merge, a pull request and a subagent other than `Explore` are
-refused there, from this skill's start until another implement skill starts, the
-user asks for the action in a prompt, interrupts the turn, or runs
-`/implement:release-guard`. A refusal is a stop to report, never a wall to go around.
+With this plugin's hooks module loaded, the first line is also held at the call: a
+subagent other than `Explore` is refused there, from this skill's start until another
+implement skill starts, the user asks for a subagent in a prompt, interrupts the turn,
+or runs `/implement:release-guard`. A refusal is a stop to report, never a wall to go
+around.
+
+This skill's own steps end at the branch. A push, a pull request (draft or ready) or a
+merge that the user's or the project's own instructions call for is carried out
+without asking, and is never refused here.
 
 ---
 

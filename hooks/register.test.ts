@@ -68,6 +68,7 @@ const typed = ($: any, text: string) => $.prompt.submit({ text, wait: false, ori
 const turnEnd = ($: any, isAborted: boolean) =>
   $.turn.complete({ answer: '', durationMs: 1, isAborted, turnId: 't', reason: isAborted ? 'aborted' : 'answer' })
 const bash = ($: any, command: string) => $.tool.call({ tool: 'Bash', command })
+const agent = ($: any, type: string) => $.tool.call({ tool: 'Agent', subagent_type: type, prompt: 'p', description: 'x' } as any)
 const refused = (out: any) => typeof out?.deny === 'string' && out.deny.length > 0
 
 test('the state tool is registered in the tool list from the first turn', async ($, on) => {
@@ -164,22 +165,25 @@ test('a permission rule that denies the state tool is honoured', async ($, on) =
   expect(Object.keys(writes)).toEqual([])
 })
 
-test('a phase run refuses a push and lets every other command through', async ($, on) => {
+test('a phase run lets every outward command through', async ($, on) => {
   const { ran } = await world(on)
   await start($)
   await skill($, 'phase')
-  expect(refused(await bash($, 'git push origin feat/demo'))).toBe(true)
-  expect((await bash($, 'git commit -m "never git push here"')).result).toBe('ran')
-  expect((await bash($, 'bash tests/run-tests.sh')).result).toBe('ran')
-  expect(ran.map(e => e.command)).toEqual(['git commit -m "never git push here"', 'bash tests/run-tests.sh'])
+  const commands = ['git push origin feat/demo', 'git push --force origin main', 'git merge other', 'gh pr create --draft', 'gh pr merge 3',
+    'git commit -m "never git push here"', 'bash tests/run-tests.sh']
+  for (const command of commands) expect((await bash($, command)).result).toBe('ran')
+  expect(ran.map(e => e.command)).toEqual(commands)
 })
 
-test('the github tool\'s pull request writes are refused, its reads are not', async ($, on) => {
+test('the github tool\'s pull request writes and reads all run', async ($, on) => {
   await world(on)
   await start($)
-  await skill($, 'close')
-  expect(refused(await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-create' } as any))).toBe(true)
-  expect((await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-get' } as any)).result).toBe('ran')
+  for (const name of ['phase', 'close']) {
+    await skill($, name)
+    for (const command of ['pr-create', 'pr-merge', 'pr-ready', 'pr-get']) {
+      expect((await $.tool.call({ tool: 'mcp__github__gh', command } as any)).result).toBe('ran')
+    }
+  }
 })
 
 test('a phase dispatches Explore only', async ($, on) => {
@@ -196,36 +200,37 @@ test('the guard stays armed across turns and releases on the user\'s words', asy
   await skill($, 'phase')
   await turnEnd($, false)                     // stopped on a question
   await typed($, 'go on with the next phase')
-  expect(refused(await bash($, 'git push'))).toBe(true)
-  await typed($, 'good, push the branch now')
-  expect((await bash($, 'git push')).result).toBe('ran')
+  expect(refused(await agent($, 'general-purpose'))).toBe(true)
+  await typed($, 'good, use a subagent now')
+  expect((await agent($, 'general-purpose')).result).toBe('ran')
 })
 
 test('an aborted turn releases the guard', async ($, on) => {
   await world(on)
   await start($)
   await skill($, 'phase')
+  expect(refused(await agent($, 'general-purpose'))).toBe(true)
   await turnEnd($, true)
-  expect((await bash($, 'git push')).result).toBe('ran')
+  expect((await agent($, 'general-purpose')).result).toBe('ran')
 })
 
 test('/implement:release-guard releases the guard without a model turn', async ($, on) => {
   await world(on)
   await start($)
-  await skill($, 'close')
+  await skill($, 'phase')
+  expect(refused(await agent($, 'general-purpose'))).toBe(true)
   const { text } = await $.command.run({ command: 'implement:release-guard', args: '' })
   expect(text).toContain('released')
-  expect((await bash($, 'gh pr create --fill')).result).toBe('ran')
+  expect((await agent($, 'general-purpose')).result).toBe('ran')
 })
 
 test('nothing is guarded before a skill, nor after feature took over', async ($, on) => {
   await world(on)
   await start($)
-  expect((await bash($, 'git push')).result).toBe('ran')
+  expect((await agent($, 'general-purpose')).result).toBe('ran')
   await skill($, 'phase')
   await skill($, 'feature')
-  expect((await bash($, 'git push')).result).toBe('ran')
-  expect((await $.tool.call({ tool: 'Agent', subagent_type: 'general-purpose', prompt: 'p', description: 'x' } as any)).result).toBe('ran')
+  expect((await agent($, 'general-purpose')).result).toBe('ran')
 })
 
 test('a check refuses edits until its verdict, then the phase writes again', async ($, on) => {
@@ -242,7 +247,7 @@ test('a check refuses edits until its verdict, then the phase writes again', asy
   for await (const _ of stream) { /* drained */ }
   await stream
   expect((await $.tool.call({ tool: 'Edit', file_path: 'a.ts', old_string: 'a', new_string: 'b' } as any)).result).toBe('ran')
-  expect(refused(await bash($, 'git push'))).toBe(true)   // the phase is still armed
+  expect(refused(await agent($, 'general-purpose'))).toBe(true)   // the phase is still armed
 })
 
 test('a check alone ends with its turn', async ($, on) => {
@@ -262,12 +267,17 @@ test('the commit trailer is empty while a phase runs, the engine\'s otherwise', 
   expect((await $.attribution.text({ kind: 'commit', text: 'Co-Authored-By: x' })).text).toBe('')
 })
 
-test('a guard that cannot read its state refuses only an outward action', async ($, on) => {
+test('a guard that cannot read its state refuses nothing', async ($, on) => {
   await world(on)
   on('state.get', () => ({ deny: 'no state' }))
   await start($)
-  expect((await bash($, 'ls')).result).toBe('ran')
-  expect(refused(await bash($, 'git push'))).toBe(true)
+  for (const command of ['ls', 'git push', 'git push --force origin main', 'git merge other', 'gh pr create --fill', 'gh pr merge 3']) {
+    expect((await bash($, command)).result).toBe('ran')
+  }
+  for (const command of ['pr-create', 'pr-merge']) {
+    expect((await $.tool.call({ tool: 'mcp__github__gh', command } as any)).result).toBe('ran')
+  }
+  expect((await agent($, 'general-purpose')).result).toBe('ran')
   expect((await $.tool.call({ tool: 'Edit', file_path: 'a.ts', old_string: 'a', new_string: 'b' } as any)).result).toBe('ran')
 })
 

@@ -304,9 +304,8 @@ export function simpleCommands(src: string, depth = 0): string[][] {
   return out
 }
 
-// What a line does that a guard reads: an outward action, or a write to the
-// index or the history.
-export type Action = 'push' | 'merge' | 'pr-create' | 'pr-merge' | 'stage' | 'commit'
+// What a line does that a guard reads: a write to the index or the history.
+export type Action = 'stage' | 'commit'
 
 const PREFIXES = new Set(['sudo', 'command', 'builtin', 'exec', 'nohup', 'time', 'rtk', 'nice', 'env', 'xargs',
   'then', 'do', 'else', 'elif', 'if', 'while', 'until', '!', '{', '}'])
@@ -337,19 +336,10 @@ function actionsOf(words: readonly string[], depth: number): Action[] {
     let k = 1
     while (k < w.length && w[k].startsWith('-')) k += GIT_OPTIONS_WITH_VALUE.has(w[k]) ? 2 : 1
     switch (w[k]) {
-      case 'push': return ['push']
-      case 'merge': return ['merge']
       case 'add': return ['stage']
       case 'commit': return ['commit']
       default: return []
     }
-  }
-  if (head === 'gh') {
-    let k = 1
-    while (k < w.length && w[k].startsWith('-')) k += w[k] === '-R' || w[k] === '--repo' ? 2 : 1
-    if (w[k] !== 'pr') return []
-    if (w[k + 1] === 'create' || w[k + 1] === 'new') return ['pr-create']
-    if (w[k + 1] === 'merge') return ['pr-merge']
   }
   return []
 }
@@ -370,8 +360,9 @@ export function shellActions(command: string, depth = 0): Action[] {
 export type Guard = { outer: 'feature' | 'prepare' | 'phase' | 'close' | null; checking: boolean; typed: string }
 export const IDLE: Guard = { outer: null, checking: false, typed: '' }
 
-// The user's last prompt is kept across the start: a prompt that asks for the
-// push and names the skill in one breath arms the skill after it was read.
+// The user's last prompt is kept across the start: a prompt that asks for a
+// subagent and names the skill in one breath arms the skill after it was read,
+// and the subagent guard still finds the request.
 export function armedBy(g: Guard, skill: SkillName): Guard {
   if (skill === 'check') return { ...g, checking: true }
   return { outer: skill, checking: false, typed: g.typed }
@@ -404,12 +395,8 @@ export function isVerdict(answer: string): boolean {
 }
 
 // The user's own words that release one refusal: the action named in plain
-// words or by its command.
+// words.
 const ASKED: Record<Action | 'agent', RegExp> = {
-  'push': /\bpush/i,
-  'merge': /\bmerg/i,
-  'pr-create': /\b(pull request|PR|pr-create)s?\b/i,
-  'pr-merge': /\bmerg/i,
   'stage': /\b(stage|commit)/i,
   'commit': /\bcommit/i,
   'agent': /\b(sub-?)?agents?\b/i,
@@ -418,17 +405,9 @@ export function userAsked(what: Action | 'agent', typed: string): boolean {
   return ASKED[what].test(typed)
 }
 
-const LABEL: Record<Action, string> = {
-  'push': 'git push', 'merge': 'git merge', 'pr-create': 'opening a pull request',
-  'pr-merge': 'merging a pull request', 'stage': 'git add', 'commit': 'git commit',
-}
-export const OUTWARD: readonly Action[] = ['push', 'merge', 'pr-create', 'pr-merge']
+const LABEL: Record<Action, string> = { 'stage': 'git add', 'commit': 'git commit' }
 const RELEASE = 'The user releases it by asking for it in a prompt, or with /implement:release-guard.'
-export const UNREAD = 'The implement guard could not read whether a phase or a close is running, so this outward action is refused. The user can run it himself, or release the guard with /implement:release-guard.'
 
-export function outwardDeny(skill: 'phase' | 'close', action: Action): string {
-  return `implement:${skill} stops at the branch: ${LABEL[action]} is the user's to do, refused by the implement plugin. Name it in your report and wait. ${RELEASE}`
-}
 export function checkDeny(what: string): string {
   return `implement:check edits, stages and commits nothing: ${what} refused by the implement plugin. Name the defect as a FAIL row; the repair belongs to the caller once the verdict line (PASS, or FAIL: <rows>) is written under the table. ${RELEASE}`
 }
@@ -436,7 +415,6 @@ export function agentDeny(type: string): string {
   return `implement:phase writes the work itself: a subagent only searches (subagent_type Explore). ${type} refused by the implement plugin: do the work inline, or name the need and wait. ${RELEASE}`
 }
 
-const OUTWARD_SKILLS = new Set(['phase', 'close'])
 export const READ_ONLY_AGENTS = new Set(['Explore'])
 
 export function bashDecision(g: Guard, command: string): string | null {
@@ -445,19 +423,7 @@ export function bashDecision(g: Guard, command: string): string | null {
     const write = actions.find(a => a === 'stage' || a === 'commit')
     if (write) return checkDeny(LABEL[write])
   }
-  if (g.outer !== null && OUTWARD_SKILLS.has(g.outer)) {
-    const out = actions.find(a => OUTWARD.includes(a) && !userAsked(a, g.typed))
-    if (out) return outwardDeny(g.outer as 'phase' | 'close', out)
-  }
   return null
-}
-
-// The github plugin's tool, by its own subcommand names.
-export function githubDecision(g: Guard, command: string): string | null {
-  if (g.outer === null || !OUTWARD_SKILLS.has(g.outer)) return null
-  const action: Action | null = command === 'pr-create' ? 'pr-create' : command === 'pr-merge' ? 'pr-merge' : null
-  if (action === null || userAsked(action, g.typed)) return null
-  return outwardDeny(g.outer as 'phase' | 'close', action)
 }
 
 export function agentDecision(g: Guard, subagentType: unknown): string | null {
