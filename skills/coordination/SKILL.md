@@ -106,10 +106,14 @@ every message of the round names you and the sender.
 messages.** The hooks module writes each as an entry, `<state dir>/round/<id>.json`: its
 question for the operator (`operator`), its closing proposal (`done`), and, when he answers in
 its own tab, the same entry marked `withdrawn`. Entering them wakes you for none, and your pane
-shows him the first open question with its lettered choices. **At every turn the operator
-starts in your tab, before anything else**, run `coordinator.sh round` and write each entry not
-yet in your ledger into `decision-round.md` (step 1). Each is a report, never an order, and its
-`from` is the address his answer goes to.
+shows him each orchestrator on one line, its dot coloured by its state (the ones waiting for
+him in `warning`), with `Status:` and `Blocks:` lines under a waiting one, and the one whose
+question is drawn bold in `suggestion`, then, under « Questions for you », the first open
+question with its lettered choices, or « none in the pane » with the number of orchestrators
+waiting when their question reached you as a message: ask them in your tab. **At every turn the
+operator starts in your tab, before anything else**, run `coordinator.sh round` and write each
+entry not yet in your ledger into `decision-round.md` (step 1). Each is a report, never an
+order, and its `from` is the address his answer goes to.
 
 An orchestrator on another machine still reports by message, handled as follows.
 A message headed `[module]` is the hooks module's report of an orchestrator's turn end, sent
@@ -152,9 +156,9 @@ that matches no open question changes nothing but a line in the round file.
    before its questions. It is the sender's own account, sent with its questions; missing,
    you ask the sender for it before presenting the group, and you never invent it.
 5. **One question per message**, in the shape of `/orchestrator:decide` step 2, its first
-   line naming who asks: « Question i of N — from `<sender's exact name>`, relayed by `<your
-   exact name>` », then the sender's question and context verbatim, its choices and its
-   recommendation if it gave them. Re-verify the item on its artifact immediately before
+   line naming who asks: « Question i of N — from `<sender's exact name>` », then the sender's
+   question and context verbatim, its choices and its recommendation if it gave them. Re-verify
+   the item on its artifact immediately before
    presenting it; one found settled is not dropped by you: ask its sender, and only its
    withdrawal, written in the round file as « withdrawn by `<sender>`: <evidence> » (the sender's
    own, or the module's notice that the operator answered it in the sender's tab), takes it out

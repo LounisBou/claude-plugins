@@ -168,15 +168,25 @@ export function coordinatorOf(recordText: string): string | null {
   }
 }
 
-// The wait as the pane and /orchestrator:status show it, its start in the machine's
-// local time; null when the row waits on nothing.
-export function waitLabel(row: SessionRow): string | null {
+// The wait in its two parts, the one definition every surface reads: the status words, with
+// their start in the machine's local time, and for a wait on the operator what it blocks
+// (« unsaid » when the row carries none; null for a proposal to close). Null when the row
+// waits on nothing.
+export function waitParts(row: SessionRow): { status: string; blocks: string | null } | null {
   if (row.waiting !== 'operator' && row.waiting !== 'done') return null
   const at = new Date(String(row.waiting_since ?? ''))
   const since = Number.isFinite(at.getTime())
     ? ` since ${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
     : ''
   return row.waiting === 'done'
-    ? `done${since}, proposes to be closed`
-    : `waiting for the operator${since} — blocks: ${row.blocks ?? 'unsaid'}`
+    ? { status: `done${since}, proposes to be closed`, blocks: null }
+    : { status: `waiting for the operator${since}`, blocks: row.blocks ?? 'unsaid' }
+}
+
+// The wait as the pane and /orchestrator:status show it on one line; null when the row waits
+// on nothing.
+export function waitLabel(row: SessionRow): string | null {
+  const parts = waitParts(row)
+  if (parts === null) return null
+  return parts.blocks === null ? parts.status : `${parts.status} — blocks: ${parts.blocks}`
 }

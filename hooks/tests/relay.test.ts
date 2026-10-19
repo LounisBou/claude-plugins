@@ -5,7 +5,7 @@
 // twice, none without a coordinator, none from a session that is no orchestrator, and a
 // write or a send that fails never holding the turn's end.
 import { expect, test } from 'claude-code/testing'
-import { parseWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel, heldQuestion, withdrawalText, RELAY_CAP } from '../relay.ts'
+import { parseWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel, waitParts, heldQuestion, withdrawalText, RELAY_CAP } from '../relay.ts'
 import { roundEntry, type RoundEntry } from '../round.ts'
 import { parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
@@ -80,6 +80,19 @@ test('the pane and status label carry the wait', () => {
   expect(paneRows({ a: row })[0].label).toContain(`waiting for the operator since ${hhmm} — blocks: phase 3`)
   expect(waitLabel({ ...row, waiting: 'done' })).toBe(`done since ${hhmm}, proposes to be closed`)
   expect(waitLabel({ ...row, waiting: null })).toBeNull()
+})
+
+test('the wait is split at its source: the status words and what it blocks, joined back by the label', () => {
+  const since = '2026-10-14T10:07:00.000Z'
+  const at = new Date(since)
+  const hhmm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
+  const row = { role: 'orchestrator', name: 'Orch : belt', repo: null, context_percent: 20, context_tokens: 1, window: 100, model: 'a-model',
+    busy: false, updated_at: new Date().toISOString(), waiting: 'operator', blocks: 'phase 3', waiting_since: since } as SessionRow
+  expect(waitParts(row)).toEqual({ status: `waiting for the operator since ${hhmm}`, blocks: 'phase 3' })
+  expect(waitParts({ ...row, blocks: null })).toEqual({ status: `waiting for the operator since ${hhmm}`, blocks: 'unsaid' })
+  expect(waitParts({ ...row, waiting: 'done' })).toEqual({ status: `done since ${hhmm}, proposes to be closed`, blocks: null })
+  expect(waitParts({ ...row, waiting: null })).toBeNull()
+  expect(waitParts({ ...row, waiting_since: null })).toEqual({ status: 'waiting for the operator', blocks: 'phase 3' })
 })
 
 test('a held question is the operator wait whose own fingerprint was relayed', () => {
