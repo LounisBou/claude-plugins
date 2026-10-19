@@ -285,7 +285,12 @@ test('the band draws the phase run, and nothing outside one', async ($, on) => {
   await start($)
   await skill($, 'phase')
   const ui = await $.ui.mount({ ...BAND_SITE } as any)
-  expect(await ui.find({ type: 'Text', text: 'implement:phase demo · phase 02/03 doing: the core · base 9f31a0c · head fedcba9' })).toBeDefined()
+  const pieces = await ui.findAll({ type: 'Text' })
+  expect(pieces.map(t => t.text).join('')).toBe('implement:phase demo · phase 02/03 doing: the core · base 9f31a0c · head fedcba9')
+  const piece = (text: string) => pieces.find(t => t.text.startsWith(text))!.props
+  expect(piece('implement:phase demo').bold).toBe(true)
+  expect(piece('doing').color).toBe('warning')
+  expect(piece('head fedcba9').dimColor).toBe(true)
   await ui.unmount()
   await $.command.run({ command: 'implement:release-guard', args: '' })
   const quiet = await $.ui.mount({ ...BAND_SITE } as any)

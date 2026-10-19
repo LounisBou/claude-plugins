@@ -5,7 +5,7 @@
 // plugin does without the module: the markdown command runs, the skill text
 // is read as written, the tool call goes through.
 import {
-  IDLE, armedBy, agentDecision, bandLine, bandOf, bashDecision, codenameOf, doctorText, editDecision,
+  IDLE, armedBy, agentDecision, bandOf, bandSegments, bashDecision, codenameOf, doctorText, editDecision,
   githubDecision, ignoreVerdict, OUTWARD, UNREAD, shellActions, isVerdict, markRow, modeOf, nextRow, onTurnEnd, onTyped, parseState,
   preflightLines, silencesAttribution, skillOf, skillText, stateLine, typedByUser,
   type Band, type Guard, type Snapshot,
@@ -254,6 +254,10 @@ export function register(on: any) {
     const { value: band } = await $.state.get(BAND)
     if (g.outer !== 'phase' || !band) return next(e)
     const { Box, Text } = $.ui.resolve(e)
-    return Box({ key: 'implement', children: [Text({ key: 'line', dimColor: true, children: [bandLine(band, e.props?.bodyColumns ?? 80)] })] })
+    const pieces = bandSegments(band, e.props?.bodyColumns ?? 80)
+    return Box({
+      key: 'implement',
+      children: pieces.map((p, i) => Text({ key: `p${i}`, color: p.color, bold: p.bold, dimColor: p.dim, children: [p.text] })),
+    })
   }).catch(async ($: any, e: any, next: any) => next(e))
 }

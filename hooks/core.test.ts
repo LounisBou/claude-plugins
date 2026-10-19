@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 import {
-  IDLE, armedBy, agentDecision, bandLine, bandOf, bashDecision, checkDeny, codenameOf, doctorText, editDecision,
+  IDLE, armedBy, agentDecision, bandLine, bandOf, bandSegments, bashDecision, checkDeny, codenameOf, doctorText, editDecision,
   githubDecision, ignoreVerdict, isVerdict, markRow, modeOf, nextRow, onTurnEnd, onTyped, parseState,
   preflightLines, shellActions, silencesAttribution, simpleCommands, skillOf, skillText, stateLine,
   COMMITTED_IGNORED, GUARD_SKIPPED, LOCAL_NOT_IGNORED, PREFLIGHT_PASSED, type Guard, type Snapshot,
@@ -283,5 +283,55 @@ describe('the band', () => {
   test('every phase done says what comes next', () => {
     const done = parseState(FIXTURE.replace('| doing | 9f31a0c |', '| done | 9f31a0c |').replace('| todo |  |', '| done | 1234abc |'))
     expect(bandLine(bandOf({ ...s, state: done, next: null })!, 200)).toContain('all 03 phases done, implement:close is next')
+  })
+})
+
+describe('the band pieces', () => {
+  const s: Snapshot = {
+    branch: 'feat/demo', codename: 'demo', docs: 'docs/features/demo', mode: 'local', guard: 'ok', head: 'fedcba9',
+    clean: true, stateFile: 'present', state: parseState(FIXTURE), next: nextRow(parseState(FIXTURE).rows),
+  }
+  const styled = (segs: ReturnType<typeof bandSegments>) => segs.map(p => `${p.text}|${p.color ?? ''}|${p.bold ? 'b' : ''}|${p.dim ? 'd' : ''}`)
+  test('the name is bold, doing is warning, the sha is dim, the rest is plain', () => {
+    expect(styled(bandSegments(bandOf(s)!, 200))).toEqual([
+      'implement:phase demo||b|', ' · phase 02/03 |||', 'doing|warning||', ': the core · base 9f31a0c · |||', 'head fedcba9|||d',
+    ])
+  })
+  test('another status is plain', () => {
+    expect(bandSegments({ ...bandOf(s)!, status: 'todo' }, 200).find(p => p.text === 'todo')?.color).toBeUndefined()
+  })
+  test('every phase done is drawn in success', () => {
+    const segs = bandSegments({ ...bandOf(s)!, status: 'done', phase: '03' }, 200)
+    expect(segs.find(p => p.text.startsWith('all 03'))?.color).toBe('success')
+  })
+  test('the title gives way first and the sha stays', () => {
+    const b = bandOf(s)!
+    const full = bandLine(b, 200)
+    const line = bandLine(b, full.length - 4)
+    expect(line.length).toBe(full.length - 4)
+    expect(line).toBe('implement:phase demo · phase 02/03 doing: the… · base 9f31a0c · head fedcba9')
+    expect(line.endsWith('head fedcba9')).toBe(true)
+  })
+  test('only a title down to … lets the end of the line go', () => {
+    const b = bandOf(s)!
+    const w = 'implement:phase demo · phase 02/03 doing: … · head fedcba9'.length
+    expect(bandLine(b, w)).toBe('implement:phase demo · phase 02/03 doing: … · head fedcba9')
+    expect(bandLine(b, w - 3).endsWith('…')).toBe(true)
+    expect(bandLine(b, w - 3).length).toBe(w - 3)
+  })
+  test('base gives way before the sha when the title is already down to …', () => {
+    const b = { ...bandOf(s)!, title: 'a title long enough to be shortened on a narrow terminal', milestone: '9f31a0c', head: '1768fa1' }
+    const line = bandLine(b, 60)
+    expect(line.length).toBeLessThanOrEqual(60)
+    expect(line).toContain('head 1768fa1')
+    expect(line).not.toContain('base')
+    expect(line.startsWith('implement:phase demo · phase 02/03 doing: ')).toBe(true)
+  })
+  test('the title gets back the room base frees', () => {
+    const b = bandOf(s)!
+    const withoutBase = 'implement:phase demo · phase 02/03 doing: … · head fedcba9'.length
+    const line = bandLine(b, withoutBase + 3)
+    expect(line).toBe('implement:phase demo · phase 02/03 doing: the… · head fedcba9')
+    expect(line.length).toBe(withoutBase + 3)
   })
 })
