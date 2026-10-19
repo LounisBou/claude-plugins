@@ -28,28 +28,35 @@ function redraw($: any): void {
   }
 }
 
-// The band's one line, or null when nothing holds the session.
-async function bandLine($: any): Promise<string | null> {
+// A piece of the band: its words and, when it has one, the theme colour it takes.
+type Piece = { text: string; color?: string }
+
+// The band's pieces, or null when nothing holds the session. The first is the head.
+async function bandPieces($: any): Promise<Piece[] | null> {
   if (loop.isActive) {
     const fixes = loop.fixes.filter((f) => !f.reverted).length
-    return `pr-review · auto-fix-loop · pass ${loop.pass}/${MAX_PASSES} · ${fixes} fix${fixes === 1 ? '' : 'es'} committed`
+    return [
+      { text: 'pr-review · auto-fix-loop' },
+      { text: `pass ${loop.pass}/${MAX_PASSES}` },
+      { text: `${fixes} fix${fixes === 1 ? '' : 'es'} committed` },
+    ]
   }
   const skill = walkthrough.skill
   if (skill !== 'start-review' && skill !== 'process-comments') return null
-  const parts = [`pr-review · ${skill}`]
+  const pieces: Piece[] = [{ text: `pr-review · ${skill}` }]
   if (walkthrough.scratchDir) {
     try {
       const names = (await $.fs.list(walkthrough.scratchDir)).map((entry: any) => String(entry.name))
       const kept = names.filter((n: string) => /^comment-\d+\.md$/.test(n)).length
       const prepared = names.filter((n: string) => /^commit-\d+\.msg$/.test(n)).length
-      if (skill === 'start-review') parts.push(`kept ${kept}`)
-      if (prepared > 0) parts.push(`prepared commits ${prepared} (say commit or drop)`)
+      if (skill === 'start-review') pieces.push({ text: `kept ${kept}`, color: 'success' })
+      if (prepared > 0) pieces.push({ text: `prepared commits ${prepared} (say commit or drop)`, color: 'warning' })
     } catch {
       // The directory is gone (a drop all, a reboot): nothing to count.
     }
   }
-  parts.push('"end review" lifts its rules')
-  return parts.join(' · ')
+  pieces.push({ text: '"end review" to lift' })
+  return pieces
 }
 
 export function register(on: any): void {
@@ -80,13 +87,18 @@ export function register(on: any): void {
 
   on('ui.render', { component: 'AbovePrompt' }, async ($: any, e: any, next: any) => {
     if (e.props?.hasSurvey) return next(e)
-    const line = await bandLine($)
-    if (line === null) return next(e)
+    const pieces = await bandPieces($)
+    if (pieces === null) return next(e)
     const below = await next(e)
     const { Box, Text } = $.ui.resolve(e)
+    const children: any[] = []
+    pieces.forEach((piece, i) => {
+      if (i > 0) children.push(' · ')
+      children.push(Text({ bold: i === 0, color: piece.color, children: [piece.text] }))
+    })
     return Box({
       flexDirection: 'column',
-      children: [Text({ key: 'pr-review-band', dimColor: true, children: [line] }), ...(below ? [below] : [])],
+      children: [Text({ key: 'pr-review-band', children }), ...(below ? [below] : [])],
     })
   }).catch(async (_$: any, e: any, next: any) => (next.called ? next(e) : next(e)))
 }

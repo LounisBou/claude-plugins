@@ -178,3 +178,58 @@ for (const surface of ['terminal', 'desktop'] as const) {
     expect(await ui.find({ type: 'Text', text: 'another band' })).toBeTruthy()
   })
 }
+
+// ── the band's colours ───────────────────────────────────────────────────────
+
+async function mountBand($: any, surface: 'terminal' | 'desktop') {
+  return $.ui.mount({ plugin: 'pr-review', surface, component: 'AbovePrompt', props: BAND, viewport: { columns: 60, rows: 40 } } as any)
+}
+
+for (const surface of ['terminal', 'desktop'] as const) {
+  test(`${surface}: the band's head is bold, the count green, the commit yellow, the rest plain`, async ($, on) => {
+    engine(on)
+    below(on)
+    on('fs.list', () => ({ value: [{ name: 'comment-1.md' }, { name: 'comment-2.md' }, { name: 'commit-1.msg' }] }))
+    await $.skill.prompt({ skill: 'pr-review:start-review', text: '' })
+    await $.tool.call({ tool: 'Write', file_path: '/tmp/claude-pr-review-4/comment-2.md', content: 'x' } as any)
+    const ui: any = await mountBand($, surface)
+    const head: any = await ui.find({ type: 'Text', text: /^pr-review · start-review$/ })
+    expect(head?.props.bold).toBe(true)
+    const kept: any = await ui.find({ type: 'Text', text: /^kept 2$/ })
+    expect(kept?.props.color).toBe('success')
+    const prepared: any = await ui.find({ type: 'Text', text: /^prepared commits 1 \(say commit or drop\)$/ })
+    expect(prepared?.props.color).toBe('warning')
+    const lift: any = await ui.find({ type: 'Text', text: /^"end review" to lift$/ })
+    expect(lift).toBeTruthy()
+    expect(lift.props.color).toBeUndefined()
+    expect(lift.props.dimColor).toBeFalsy()
+    expect(await ui.findAll({ type: 'Text', text: 'lifts its rules' })).toEqual([])
+    for (const t of await ui.findAll({ type: 'Text' })) expect(t.props.dimColor).toBeFalsy()
+  })
+
+  test(`${surface}: the process-comments band has no kept count`, async ($, on) => {
+    engine(on)
+    below(on)
+    on('fs.list', () => ({ value: [{ name: 'comment-1.md' }] }))
+    await $.skill.prompt({ skill: 'pr-review:process-comments', text: '' })
+    await $.tool.call({ tool: 'Write', file_path: '/tmp/claude-pr-review-4/comment-1.md', content: 'x' } as any)
+    const ui: any = await mountBand($, surface)
+    expect(((await ui.find({ type: 'Text', text: /^pr-review · process-comments$/ })) as any)?.props.bold).toBe(true)
+    expect(await ui.findAll({ type: 'Text', text: 'kept' })).toEqual([])
+    expect(await ui.find({ type: 'Text', text: /^"end review" to lift$/ })).toBeTruthy()
+  })
+
+  test(`${surface}: the auto-fix-loop band has a bold head and a plain body`, async ($, on) => {
+    engine(on)
+    below(on)
+    await $.skill.prompt({ skill: 'pr-review:auto-fix-loop', text: '' })
+    await $.tool.call({ tool: 'mcp__pr-review__loop', action: 'start', test_command: 'npm test' } as any)
+    const ui: any = await mountBand($, surface)
+    const head: any = await ui.find({ type: 'Text', text: /^pr-review · auto-fix-loop$/ })
+    expect(head?.props.bold).toBe(true)
+    const body: any = await ui.find({ type: 'Text', text: /^0 fixes committed$/ })
+    expect(body).toBeTruthy()
+    expect(body.props.color).toBeUndefined()
+    for (const t of await ui.findAll({ type: 'Text' })) expect(t.props.dimColor).toBeFalsy()
+  })
+}
