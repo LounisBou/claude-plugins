@@ -1,10 +1,12 @@
 // hooks/tests/relay.test.ts
 // An orchestrator's end of turn read by the module (relay.ts, wired in supervision.ts):
-// the machine line parsed into the row's wait fields, one report to a running
-// coordinator per wait, none twice, none without a coordinator, none from a session
-// that is no orchestrator, and a send that fails never holding the turn's end.
+// the machine line parsed into the row's wait fields, one entry in the round of a
+// coordinator on this machine per wait, one report to a coordinator on another, none
+// twice, none without a coordinator, none from a session that is no orchestrator, and a
+// write or a send that fails never holding the turn's end.
 import { expect, test } from 'claude-code/testing'
 import { parseWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel, heldQuestion, withdrawalText, RELAY_CAP } from '../relay.ts'
+import { roundEntry, type RoundEntry } from '../round.ts'
 import { parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
 import { logLineOf } from './fakes.ts'
@@ -13,6 +15,8 @@ const HOME = '/tmp/h'
 const ROW = `${HOME}/.claude/claude-orchestrator/store/sessions/s-one`
 const WAIT = `${HOME}/.claude/claude-orchestrator/store/waits/s-one`
 const RECORD = `${HOME}/.claude/claude-orchestrator/coordinator.json`
+const LEARNT = `${HOME}/.claude/claude-orchestrator/store/coordinator-learnt`
+const ROUND = `${HOME}/.claude/claude-orchestrator/round`
 const QUESTION = 'Question 1 of 1 — merge the scraper pull request now?\n_Context._ It is green.'
 
 function answerOf(question: string, line: string): string {
@@ -99,7 +103,9 @@ test('the withdrawal names the sender, the question and where it was answered', 
 
 // --- the wiring over a faked $ ------------------------------------------------------------
 
-function fake(over: { name?: string; role?: SessionRow['role']; coordinator?: string | null; send?: 'reject' | 'refuse' } = {}) {
+// The coordinator is registered on this machine unless `remote`, where it is the one a peer
+// delivery taught (coordinator-learnt). `roundWrite: 'fail'` refuses every rename into the round.
+function fake(over: { name?: string; role?: SessionRow['role']; coordinator?: string | null; remote?: boolean; send?: 'reject' | 'refuse'; roundWrite?: 'fail' } = {}) {
   const files = new Map<string, string>()
   const sent: { to: unknown; text: string }[] = []
   const logged: string[] = []
@@ -107,7 +113,8 @@ function fake(over: { name?: string; role?: SessionRow['role']; coordinator?: st
     role: over.role === undefined ? 'orchestrator' : over.role, name: over.name ?? 'Orch : belt', pid: '501', repo: null,
     context_percent: 20, context_tokens: 1, window: 100, model: 'a-model', busy: false, updated_at: '2026-10-14T09:00:00.000Z',
   }) + '\n')
-  if (over.coordinator !== null) files.set(RECORD, JSON.stringify({ name: over.coordinator ?? 'Coord : ops [abc]', tty: '/dev/ttys9' }))
+  if (over.coordinator !== null && over.remote) files.set(LEARNT, JSON.stringify({ name: over.coordinator ?? 'Coord : ops [abc]', from: null, at: 'T' }) + '\n')
+  else if (over.coordinator !== null) files.set(RECORD, JSON.stringify({ name: over.coordinator ?? 'Coord : ops [abc]', tty: '/dev/ttys9' }))
   const dollar = {
     session: {
       id: async () => 's-one',
@@ -135,6 +142,7 @@ function fake(over: { name?: string; role?: SessionRow['role']; coordinator?: st
       run: async (argv: readonly string[]) => {
         const line = logLineOf(argv)
         if (line !== null) logged.push(line)
+        if (argv[0] === 'mv' && over.roundWrite === 'fail' && String(argv[3]).startsWith(`${ROUND}/`)) return { exitCode: 1, stdout: '', stderr: 'refused' }
         if (argv[0] === 'mv' && files.has(argv[2])) {
           files.set(argv[3], files.get(argv[2])!)
           files.delete(argv[2])
@@ -151,6 +159,18 @@ function fake(over: { name?: string; role?: SessionRow['role']; coordinator?: st
     prompt: { submit: async () => undefined },
   }
   return { dollar, files, sent, logged, row: () => withWait(parseSessionRow(files.get(ROW) ?? '')!, files.get(WAIT) ?? '') }
+}
+
+// The round's entries as the files hold them, in the order their files were first written; a
+// file that does not parse is no entry.
+function entries(fx: ReturnType<typeof fake>): RoundEntry[] {
+  return [...fx.files.entries()].filter(([p]) => p.startsWith(`${ROUND}/`)).flatMap(([, text]) => {
+    try {
+      return [JSON.parse(text) as RoundEntry]
+    } catch {
+      return []
+    }
+  })
 }
 
 function mounted(): Record<string, Function[]> {
@@ -170,7 +190,7 @@ async function drive(chains: Record<string, Function[]>, event: string, dollar: 
 
 const turnEnd = (answer: string) => ({ answer, reason: 'answer', isAborted: false, durationMs: 1, turnId: 't' })
 
-test('an operator wait lands in the row and is sent to the coordinator once', async () => {
+test('an operator wait lands in the row and is entered once in the round of the coordinator on this machine', async () => {
   const chains = mounted()
   const fx = fake()
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, 'waiting: operator — blocks: phase 3')))
@@ -181,9 +201,14 @@ test('an operator wait lands in the row and is sent to the coordinator once', as
   expect(row.updated_at).toBe('2026-10-14T09:00:00.000Z')
   expect(parseSessionRow(fx.files.get(ROW)!)!.waiting).toBeUndefined()
   expect([...fx.files.keys()].some(p => p.includes('.tmp-'))).toBe(false)
-  expect(fx.sent.length).toBe(1)
-  expect(fx.sent[0].to).toBe('Coord : ops [abc]')
-  expect(fx.sent[0].text).toBe(`[module] Orch : belt waits for the operator since ${row.waiting_since} — blocks: phase 3\nreply with SendMessage to: Orch : belt\n\n${QUESTION}`)
+  expect(fx.sent.length).toBe(0)
+  const [entry] = entries(fx)
+  expect(entries(fx).length).toBe(1)
+  const wait = parseWait(answerOf(QUESTION, 'waiting: operator — blocks: phase 3'))!
+  expect(entry).toEqual(roundEntry('s-one', 'Orch : belt', wait, row.waiting_since!, entry.at))
+  expect(fx.files.has(`${ROUND}/${entry.id}.json`)).toBe(true)
+  expect(Number.isFinite(Date.parse(entry.at))).toBe(true)
+  expect(row.relayed).toBe(fingerprint(wait))
 })
 
 test('the same wait is never sent twice, whatever progress the turns between report; a new line is', async () => {
@@ -194,10 +219,11 @@ test('the same wait is never sent twice, whatever progress the turns between rep
   await drive(chains, 'turn.start', fx.dollar, { text: '' })
   await drive(chains, 'turn.complete', fx.dollar, same)
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('The review of #12 has started.', 'waiting: operator — blocks: phase 3')))
-  expect(fx.sent.length).toBe(1)
+  expect(entries(fx).length).toBe(1)
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('A new question?', 'waiting: operator — blocks: phase 4')))
-  expect(fx.sent.length).toBe(2)
-  expect(fx.sent[1].text).toContain('A new question?')
+  expect(entries(fx).length).toBe(2)
+  expect(entries(fx)[1].question).toContain('A new question?')
+  expect(fx.sent.length).toBe(0)
 })
 
 test('done is one closing proposal', async () => {
@@ -205,7 +231,8 @@ test('done is one closing proposal', async () => {
   const fx = fake()
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Everything merged.', 'waiting: done')))
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Everything merged.', 'waiting: done')))
-  expect(fx.sent.map(s => s.text)).toEqual(['[module] Orch : belt reports its work done and proposes to be closed\nreply with SendMessage to: Orch : belt'])
+  expect(entries(fx).map(e => [e.kind, e.from, e.blocks, e.question, e.status])).toEqual([['done', 'Orch : belt', null, 'Everything merged.', 'open']])
+  expect(fx.sent.length).toBe(0)
   expect(fx.row()!.waiting).toBe('done')
 })
 
@@ -227,6 +254,7 @@ test('no coordinator registered: the row is written, nothing is sent', async () 
   const fx = fake({ coordinator: null })
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, 'waiting: operator — blocks: phase 3')))
   expect(fx.sent.length).toBe(0)
+  expect(entries(fx)).toEqual([])
   expect(fx.row()!.waiting).toBe('operator')
 })
 
@@ -237,6 +265,7 @@ for (const [name, role] of [['Coord : ops', 'coordinator'], ['Agent : belt-p3', 
     const before = fx.files.get(ROW)
     await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, 'waiting: operator — blocks: phase 3')))
     expect(fx.sent.length).toBe(0)
+    expect(entries(fx)).toEqual([])
     expect(fx.files.get(ROW)).toBe(before)
     expect(fx.files.has(WAIT)).toBe(false)
   })
@@ -254,7 +283,7 @@ test("a subagent's turn and an interrupted one are not read", async () => {
 for (const failure of ['reject', 'refuse'] as const) {
   test(`a send that fails (${failure}) is logged, never holds the turn's end, and is tried again on the same wait`, async () => {
     const chains = mounted()
-    const fx = fake({ send: failure })
+    const fx = fake({ send: failure, remote: true })
     const e = turnEnd(answerOf(QUESTION, 'waiting: operator — blocks: phase 3'))
     const answer = await drive(chains, 'turn.complete', fx.dollar, e)
     expect(answer).toBe(e)
@@ -317,20 +346,34 @@ for (const kind of ['composer', 'bridge']) {
     const since = fx.row().waiting_since
     const e = typed(kind)
     expect(await drive(chains, 'prompt.submit', fx.dollar, e)).toBe(e)
-    expect(fx.sent.length).toBe(1)
-    expect(fx.sent[0].to).toBe('Coord : ops [abc]')
-    expect(fx.sent[0].text).toBe(withdrawalText('Orch : belt', 'phase 3', since))
+    expect(fx.sent.length).toBe(0)
+    const [entry] = entries(fx)
+    expect([entry.status, entry.since, entry.blocks, entry.answer?.text, entry.answer?.by]).toEqual(['withdrawn', since, 'phase 3', "answered in the sender's own tab", 'tab'])
+    expect(Number.isFinite(Date.parse(entry.answer!.at))).toBe(true)
     expect(fx.row().relayed ?? null).toBeNull()
     await drive(chains, 'prompt.submit', fx.dollar, typed(kind, 'and more'))
-    expect(fx.sent.length).toBe(1)
+    expect(entries(fx)).toEqual([entry])
   })
 }
+
+test('a withdrawal that finds no open entry says so in the log and still forgets the fingerprint', async () => {
+  const { chains, fx } = await relayedQuestion()
+  const since = fx.row().waiting_since
+  const matched = await relayedQuestion()
+  await drive(matched.chains, 'prompt.submit', matched.fx.dollar, typed('composer'))
+  expect(matched.fx.logged.filter(l => l.includes('round: no open entry matched')).length).toBe(0)
+  for (const path of [...fx.files.keys()].filter(p => p.startsWith(`${ROUND}/`))) fx.files.delete(path)
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
+  expect(fx.logged.filter(l => l.includes(`round: no open entry matched for Orch : belt since ${since}`)).length).toBe(1)
+  expect(entries(fx)).toEqual([])
+  expect(fx.row().relayed ?? null).toBeNull()
+})
 
 test('the withdrawal holds when a turn start cleared the wait first', async () => {
   const { chains, fx } = await relayedQuestion()
   await drive(chains, 'turn.start', fx.dollar, { text: 'yes' })
   await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
-  expect(fx.sent.length).toBe(1)
+  expect(entries(fx)[0].status).toBe('withdrawn')
 })
 
 for (const [label, setup, kind] of [
@@ -341,9 +384,11 @@ for (const [label, setup, kind] of [
   test(`nothing is withdrawn for ${label}`, async () => {
     const { chains, fx } = await relayedQuestion(setup)
     const before = fx.files.get(WAIT)
+    const written = entries(fx)
     const e = typed(kind)
     expect(await drive(chains, 'prompt.submit', fx.dollar, e)).toBe(e)
     expect(fx.sent.length).toBe(0)
+    expect(entries(fx)).toEqual(written)
     expect(fx.files.get(WAIT)).toBe(before)
   })
 }
@@ -352,9 +397,11 @@ for (const text of ['/orchestrator:status', '  /x']) {
   test(`a composer prompt that is a slash command (${JSON.stringify(text)}) withdraws nothing`, async () => {
     const { chains, fx } = await relayedQuestion()
     const before = fx.files.get(WAIT)
+    const written = entries(fx)
     const e = typed('composer', text)
     expect(await drive(chains, 'prompt.submit', fx.dollar, e)).toBe(e)
     expect(fx.sent.length).toBe(0)
+    expect(entries(fx)).toEqual(written)
     expect(fx.files.get(WAIT)).toBe(before)
     expect(fx.row().relayed).toBeTruthy()
   })
@@ -371,7 +418,7 @@ test('no held question: nothing is withdrawn', async () => {
 })
 
 test('a refused withdrawal is one log line, keeps the fingerprint and is tried again', async () => {
-  const { chains, fx } = await relayedQuestion()
+  const { chains, fx } = await relayedQuestion({ remote: true })
   const key = fx.row().relayed
   const send = fx.dollar.session.send
   fx.dollar.session.send = async () => ({ isDelivered: false, reason: 'nobody by that name' })
@@ -385,7 +432,7 @@ test('a refused withdrawal is one log line, keeps the fingerprint and is tried a
 })
 
 test('a wait rewritten while the withdrawal was being sent is left as it was written', async () => {
-  const { chains, fx } = await relayedQuestion()
+  const { chains, fx } = await relayedQuestion({ remote: true })
   const other = fingerprint({ kind: 'operator', blocks: 'phase 4', question: '' })
   const send = fx.dollar.session.send
   fx.dollar.session.send = async (args: { to: unknown; text: string }) => {
@@ -417,6 +464,66 @@ test('after a withdrawal, the same question asked again is relayed again', async
   await drive(chains, 'turn.start', fx.dollar, { text: 'yes' })
   fx.sent.length = 0
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
-  expect(fx.sent.length).toBe(1)
-  expect(fx.sent[0].text).toContain('waits for the operator')
+  expect(entries(fx).length).toBe(1)
+  expect(entries(fx)[0].status).toBe('open')
+  expect(fx.sent.length).toBe(0)
+})
+
+// --- a coordinator on this machine reads the round; one elsewhere is sent the message ---------
+
+test('a coordinator on another machine is sent the wait as a message, and nothing enters a round', async () => {
+  const chains = mounted()
+  const fx = fake({ remote: true })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+  const row = fx.row()
+  const report = fx.sent.filter(s => s.text.startsWith('[module]'))
+  expect(report.length).toBe(1)
+  expect(report[0].to).toBe('Coord : ops [abc]')
+  expect(report[0].text).toBe(`[module] Orch : belt waits for the operator since ${row.waiting_since} — blocks: phase 3\nreply with SendMessage to: Orch : belt\n\n${QUESTION}`)
+  expect(entries(fx)).toEqual([])
+  expect(row.relayed).toBe(fingerprint(parseWait(answerOf(QUESTION, QUESTION_LINE))!))
+})
+
+test('a coordinator on another machine is sent the withdrawal as a message', async () => {
+  const { chains, fx } = await relayedQuestion({ remote: true })
+  const since = fx.row().waiting_since
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
+  expect(fx.sent.map(s => [s.to, s.text])).toEqual([['Coord : ops [abc]', withdrawalText('Orch : belt', 'phase 3', since)]])
+  expect(fx.row().relayed ?? null).toBeNull()
+  expect(entries(fx)).toEqual([])
+})
+
+test('a round entry that cannot be written is logged, never holds the turn\'s end, and is tried again on the same wait', async () => {
+  const chains = mounted()
+  const over: { roundWrite?: 'fail' } = { roundWrite: 'fail' }
+  const fx = fake(over)
+  const e = turnEnd(answerOf(QUESTION, QUESTION_LINE))
+  expect(await drive(chains, 'turn.complete', fx.dollar, e)).toBe(e)
+  expect(fx.logged.some(l => l.includes('| supervision |') && l.includes('relay:') && l.includes('/round/'))).toBe(true)
+  expect(entries(fx)).toEqual([])
+  expect(fx.row().relayed ?? null).toBeNull()
+  expect(fx.sent.length).toBe(0)
+  delete over.roundWrite
+  await drive(chains, 'turn.complete', fx.dollar, e)
+  expect(entries(fx).length).toBe(1)
+  expect(fx.row().relayed).toBe(fingerprint(parseWait(e.answer)!))
+})
+
+test('the withdrawal marks only the open question of that sender with the same since and blocks', async () => {
+  const { chains, fx } = await relayedQuestion()
+  const [held] = entries(fx)
+  const others: RoundEntry[] = [
+    { ...held, id: 'other-session', session: 's-two', from: 'Orch : other' },
+    { ...held, id: 'other-since', since: '2026-10-14T07:00:00.000Z' },
+    { ...held, id: 'other-blocks', blocks: 'phase 4' },
+    { ...held, id: 'already-closed', status: 'closed' },
+  ]
+  for (const other of others) fx.files.set(`${ROUND}/${other.id}.json`, JSON.stringify(other) + '\n')
+  fx.files.set(`${ROUND}/broken.json`, '{"id": "broken", "status": "op')
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
+  const after = new Map(entries(fx).map(e => [e.id, e]))
+  expect(after.get(held.id)!.status).toBe('withdrawn')
+  for (const other of others) expect(after.get(other.id)).toEqual(other)
+  expect(fx.files.get(`${ROUND}/broken.json`)).toBe('{"id": "broken", "status": "op')
+  expect(fx.sent.length).toBe(0)
 })

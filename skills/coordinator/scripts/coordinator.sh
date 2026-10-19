@@ -16,6 +16,9 @@
 #                            spawn verified; prints "woken <name>"
 #   coordinator.sh drop --name "Orch : <subject>"        abandons one for good: removes its record
 #                            and moves its brief into an abandoned/ directory beside it
+#   coordinator.sh round     the round's entries still to be ruled: the open ones, then the withdrawn
+#   coordinator.sh round-close <id> --answer "<text>"   closes one entry with the answer relayed;
+#                            prints "closed <id>"
 #
 # facts prints, one per line:
 #   session <pid> | <tty> | <title> | <orchestrator> | <repository> | <branch> | <directory>
@@ -25,7 +28,7 @@
 #   waiting <orchestrator> | operator since <UTC time> | blocks: <what it blocks>
 #   waiting <orchestrator> | done since <UTC time>
 #     (an orchestrator whose last turn ended on its machine line, read from the wait file the
-#     hooks module keeps for its live session; the module also sends you that question once)
+#     hooks module keeps for its live session; the module also enters that wait in the round once)
 #   remote <orchestrator> | on <machine> | updated <UTC time> | context <tokens> (<percent>%) | repository <owner/name or none> | prs <owner/name#n>, ... or none | <wait>
 #     (an orchestrator on another machine, its row as the hooks module received it; <wait> is
 #     « operator since <UTC time or ?> | blocks: <what it blocks> », « done since <UTC time or ?> »
@@ -41,6 +44,15 @@
 # sleeping prints, one per sleeping orchestrator, in the order they went to sleep:
 #   sleeping <name> | since <UTC time> | <directory> | prs <repository>#<n> <branch>, ... or none
 #     | checkouts <path>, ... or none | brief <path> | model <id> | effort <level or default>
+# round prints, for each entry whose status is open, then for each withdrawn one, a line
+#   round <id> | <operator or done> | from <sender> | since <UTC time> | blocks: <what it blocks, or -> | <status>
+# followed by the question's lines, each indented by four spaces. The entries are read from
+# <state>/round/<id>.json, one JSON entry per file, written whole by the hooks module at the end
+# of a turn of an orchestrator on this machine (hooks/round.ts); a file that does not parse is
+# skipped. Each set is in the round's order: grouped by sender, the groups by their earliest
+# wait, each in the order its waits began.
+# round-close rewrites the entry with status closed and the answer {text, by "coordinator", at},
+# in one rename, and refuses an id with no entry.
 # drop prints "dropped <name>", then "brief moved to <path>" (or "brief <path> was already
 # gone"), then "left untouched: <each pull request and checkout, or none>" — the pull requests,
 # their branches and the checkouts are the operator's to close, never this script's.
@@ -666,6 +678,72 @@ waiting_rows() {
                          else print "waiting " $2 " | done since " $4 }' <(awk '{ print $1 }' "$T/ps") -
 }
 
+# --- The round. ----------------------------------------------------------------------------
+
+ROUND="$STATE/round"
+
+# round_entries: every entry file of the round that parses as one entry, one compact JSON per
+# line. Each file is read whole and alone, so one that does not parse costs only itself.
+round_entries() {
+    [ -d "$ROUND" ] || return 0
+    local f
+    for f in "$ROUND"/*.json; do
+        [ -f "$f" ] || continue
+        jq -s -c 'select(length == 1) | .[0] | select(type == "object" and (.id | type) == "string"
+            and (.from | type) == "string" and (.since | type) == "string" and (.status | type) == "string"
+            and (.kind | type) == "string" and (.question | type) == "string")' "$f" 2>/dev/null
+    done
+}
+
+# live_sessions: the sessions files of the hooks module's store (under the config dir, as
+# waiting_rows resolves it), as a JSON array of file names. The module names a file after the
+# session id with every character outside A-Za-z0-9._- replaced by an underscore.
+live_sessions() {
+    local store="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claude-orchestrator/store/sessions"
+    [ -d "$store" ] || { echo '[]'; return 0; }
+    find "$store" -type f -exec basename {} \; 2>/dev/null | jq -R -s -c 'split("\n") | map(select(. != ""))'
+}
+
+cmd_round() {
+    [ $# -eq 0 ] || die "round: unexpected argument $1"
+    # An entry whose sender's sessions file is absent keeps its place, and its header says the
+    # sender is gone: the session ended with its question still open.
+    round_entries | jq -s -r --argjson live "$(live_sessions)" '
+        # The round order (hooks/round.ts openEntries): grouped by sender, the groups by their
+        # earliest wait, each in the order its waits began.
+        def ordered: (sort_by(.since) | reduce .[] as $e ({}; if has($e.from) then . else .[$e.from] = $e.since end)) as $first
+            | sort_by([$first[.from], .from, .since, .id]);
+        # The sender is gone when its sessions file is absent; an entry naming no session is not judged.
+        def gone: .session | if type == "string" and . != "" then gsub("[^A-Za-z0-9._-]"; "_") as $key | $live | any(. == $key) | not else false end;
+        ((map(select(.status == "open")) | ordered) + (map(select(.status == "withdrawn")) | ordered))[]
+        | (if gone then " | sender gone" else "" end) as $gone
+        | "round \(.id) | \(.kind) | from \(.from) | since \(.since) | blocks: \(.blocks // "-") | \(.status)\($gone)",
+          (.question | select(. != "") | split("\n")[] | "    " + .)'
+}
+
+cmd_round_close() {
+    local id="${1:-}" answer="" has_answer=0
+    [ -n "$id" ] && shift || die 'round-close: usage: round-close <id> --answer "<text>"'
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --answer) [ $# -ge 2 ] || die "round-close: --answer needs a value"; answer="$2"; has_answer=1; shift 2 ;;
+            *) die "round-close: unknown option $1" ;;
+        esac
+    done
+    [ "$has_answer" = 1 ] || die 'round-close: usage: round-close <id> --answer "<text>"'
+    # An id names a file of the round, never a path: the module's ids are sanitised the same way.
+    printf '%s' "$id" | grep -qE '^[A-Za-z0-9._-]+$' && [ "$id" != . ] && [ "$id" != .. ] \
+        || die "round-close: no entry $id in $ROUND"
+    local path="$ROUND/$id.json" closed tmp
+    closed=$(jq -c --arg id "$id" --arg text "$answer" --arg at "$(now)" \
+        'select(type == "object" and .id == $id) | .status = "closed" | .answer = {text: $text, by: "coordinator", at: $at}' \
+        "$path" 2>/dev/null) && [ -n "$closed" ] || die "round-close: no entry $id in $ROUND"
+    # As the module writes it: a temporary file beside it, then one rename.
+    tmp=$(mktemp "$path.tmp-XXXXXX") || die "round-close: cannot write into $ROUND"
+    printf '%s\n' "$closed" > "$tmp" && mv -f "$tmp" "$path" || { rm -f "$tmp"; die "round-close: cannot write $path"; }
+    echo "closed $id"
+}
+
 finish() {
     cat "$T/unread"
     if [ -s "$T/unread" ]; then exit 2; fi
@@ -717,7 +795,7 @@ cmd_owners() {
 }
 
 cmd="${1:-}"
-[ -n "$cmd" ] || die "usage: coordinator.sh {register|clear|lookup|facts|owners|sleep|sleeping|wake-done|drop} ... (see header)"
+[ -n "$cmd" ] || die "usage: coordinator.sh {register|clear|lookup|facts|owners|sleep|sleeping|wake-done|drop|round|round-close} ... (see header)"
 shift
 case "$cmd" in
     register) cmd_register "$@" ;;
@@ -729,5 +807,7 @@ case "$cmd" in
     sleeping) cmd_sleeping "$@" ;;
     wake-done) cmd_wake_done "$@" ;;
     drop) cmd_drop "$@" ;;
-    *) die "unknown subcommand: $cmd (expected register, clear, lookup, facts, owners, sleep, sleeping, wake-done or drop)" ;;
+    round) cmd_round "$@" ;;
+    round-close) cmd_round_close "$@" ;;
+    *) die "unknown subcommand: $cmd (expected register, clear, lookup, facts, owners, sleep, sleeping, wake-done, drop, round or round-close)" ;;
 esac

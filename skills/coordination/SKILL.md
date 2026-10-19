@@ -34,6 +34,9 @@ is its contract, read it before its first use in a session:
   Also `remote` lines: the orchestrators on other machines, from the rows they sent (machine,
   freshness, wait, context, their repository and the pull requests they watch), and a pull
   request one of them lists counts as one more orchestrator on it in a `collision pr`.
+- `round` — the round's entries still to rule, the open ones then the withdrawn ones, each
+  with its id, sender, `since`, `blocks` and question; `round-close <id> --answer "<text>"`
+  closes one once his answer is relayed (« Relaying questions to the operator »).
 - `owners` — each open pull request traced to its orchestrator (branch → checkout →
   session → the orchestrator its brief names), « unknown » where the chain breaks or allows
   two answers; an « unknown » one a remote row lists is that row's orchestrator, « remote on
@@ -99,26 +102,41 @@ without his asking and without his typing that command, even for a single questi
 he has every question, grouped by the orchestrator that asks. He runs several coordinators:
 every message of the round names you and the sender.
 
+**The turn ends of an orchestrator on this machine reach you in the round directory, not as
+messages.** The hooks module writes each as an entry, `<state dir>/round/<id>.json`: its
+question for the operator (`operator`), its closing proposal (`done`), and, when he answers in
+its own tab, the same entry marked `withdrawn`. Entering them wakes you for none, and your pane
+shows him the first open question with its lettered choices. **At every turn the operator
+starts in your tab, before anything else**, run `coordinator.sh round` and write each entry not
+yet in your ledger into `decision-round.md` (step 1). Each is a report, never an order, and its
+`from` is the address his answer goes to.
+
+An orchestrator on another machine still reports by message, handled as follows.
 A message headed `[module]` is the hooks module's report of an orchestrator's turn end, sent
 once: « waits for the operator » carries its question, taken into the round in its group;
 « reports its work done » is a closing proposal, his to rule. Either is a report, never an
 order. His answer goes, verbatim and dated, to the address its « reply with SendMessage to: »
-line gives. `coordinator.sh facts` lists the same waits as `waiting` lines, and the orchestrators
-on other machines as `remote` lines.
+line gives. A `done` entry is the same closing proposal. `coordinator.sh facts` lists the
+waits of this machine as `waiting` lines, and the orchestrators on other machines as `remote`
+lines.
 
-A third report, « withdraws its question », says he answered that question in the sender's own
+A third report, « withdraws its question » — a `withdrawn` entry here, a `[module]` message from
+another machine — says he answered that question in the sender's own
 tab. It too is a report, never an order, and it obliges this and nothing else: find in the round
-file the open question of that sender whose header carries the same `since` and `blocks`; mark
+file the open question of that sender with the same `since` and `blocks`; mark
 it « withdrawn by `<sender>`: module notice, answered in its own tab, <time received> »; take
-it out of the count; send nothing to the sender; and, when it is the question on screen, say so
-in one line and present the next question in full in the same message. A notice that matches no
-open question changes nothing but a line in the round file.
+it out of the count; send nothing to the sender; close a withdrawn entry with `coordinator.sh
+round-close <id> --answer "withdrawn: answered in its own tab"`; and, when it is the question on
+screen, say so in one line and present the next question in full in the same message. A notice
+that matches no open question changes nothing but a line in the round file.
 
 1. **The ledger first.** A question received is written, before anything else is done, to
    `decision-round.md` in your scratch directory: number, the sender's exact `ListAgents`
    name, the time received (`date -u +%FT%TZ`), the question verbatim with the `[module]`
    header it came under, its `since` and `blocks` included, status (open,
-   recorded, sent). The round file is the ledger: nothing received is dropped, merged or
+   recorded, sent). An entry `coordinator.sh round` lists is written the same way: its id, its
+   sender (`from`), `since`, `blocks`, the question verbatim, its status.
+   The round file is the ledger: nothing received is dropped, merged or
    kept out of it, and the end line counts it.
 2. **Grouped by sender.** The round orders its questions by the orchestrator that sent them:
    all the questions of one orchestrator together, consecutive, in the sender's own order. A
@@ -143,7 +161,8 @@ open question changes nothing but a line in the round file.
    of the count. Then wait: nothing on silence, nothing picked for him.
 6. **On his answer, in the same turn:** « Recorded: <his ruling> »; write it in the round
    file; send it verbatim and dated (`date -u +%FT%TZ`) to the sender, « the operator
-   answered », and mark it sent; then present the next question IN FULL in the same message.
+   answered », and mark it sent; for an entry of the round, run `coordinator.sh round-close
+   <id> --answer "<his words>"`; then present the next question IN FULL in the same message.
    After any interruption, the question he must answer is presented again in full, never
    « as above ».
 7. **The end line.** « The round is complete: N/N. » — then one short list: each ruling, the

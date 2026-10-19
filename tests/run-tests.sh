@@ -6196,6 +6196,86 @@ check "owners names the orchestrator of an unknown pull request a remote row lis
 check "a remote pull request absent from its repository's open list is not printed by owners, nor counted in a collision" "0|0" \
   "$(printf '%s\n' "$ROWNERS" | grep -c '#99')|$(printf '%s\n' "$RFACTS" | grep '^collision ' | grep -c '#99')"
 
+# The round: the hooks module writes one entry per wait of an orchestrator on this machine
+# under <state>/round/ (hooks/round.ts), and the coordinator reads it with `round` and closes
+# an entry with `round-close`. The entries' shapes are the module's own; a file that does not
+# parse is skipped, never repaired.
+CROUND="$CS/round"
+mkdir -p "$CROUND"
+# The sender's sessions file is read under the config dir, as the waits are: the entries below
+# have live senders, one file each, so a line carries no « sender gone ». The config dir is this
+# section's own, put back as it was after it.
+RCFG_HAD="${CLAUDE_CONFIG_DIR+set}"; RCFG_WAS="${CLAUDE_CONFIG_DIR-}"
+export CLAUDE_CONFIG_DIR="$WORK/coord-config"
+mkdir -p "$CLAUDE_CONFIG_DIR/claude-orchestrator/store/sessions"
+round_entry() {  # <id> <from> <since> <status> <kind> <question>
+  jq -n --arg id "$1" --arg from "$2" --arg since "$3" --arg status "$4" --arg kind "$5" --arg q "$6" \
+    '{id:$id, from:$from, session:("s-" + $id), kind:$kind, since:$since, blocks:(if $kind == "operator" then "phase 3" else null end),
+      question:$q, choices:[], recommendation:null, status:$status, at:$since, answer:null}' > "$CROUND/$1.json"
+  : > "$CLAUDE_CONFIG_DIR/claude-orchestrator/store/sessions/s-$1"
+}
+round_entry b-late "Orch : b" 2026-10-18T10:05:00.000Z open operator 'Merge #12 now?
+- **A** : merge it
+- **B** : wait'
+round_entry a-one "Orch : a" 2026-10-18T10:03:00.000Z open operator 'Rename the pane?'
+round_entry b-early "Orch : b" 2026-10-18T10:01:00.000Z open operator 'Ship it?'
+round_entry a-gone "Orch : a" 2026-10-18T09:00:00.000Z withdrawn operator 'Close the tab?'
+round_entry c-done "Orch : c" 2026-10-18T10:04:00.000Z open done 'Everything merged.'
+round_entry d-shut "Orch : d" 2026-10-18T08:00:00.000Z closed operator 'Old question?'
+printf '{"id": "half' > "$CROUND/broken.json"
+cp "$CROUND/a-one.json" "$CROUND/a-one.json.tmp-123-abcdef"
+check "round prints the open entries grouped by sender, the groups by their first wait, then the withdrawn ones" \
+  "round b-early | operator | from Orch : b | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open
+    Ship it?
+round b-late | operator | from Orch : b | since 2026-10-18T10:05:00.000Z | blocks: phase 3 | open
+    Merge #12 now?
+    - **A** : merge it
+    - **B** : wait
+round a-one | operator | from Orch : a | since 2026-10-18T10:03:00.000Z | blocks: phase 3 | open
+    Rename the pane?
+round c-done | done | from Orch : c | since 2026-10-18T10:04:00.000Z | blocks: - | open
+    Everything merged.
+round a-gone | operator | from Orch : a | since 2026-10-18T09:00:00.000Z | blocks: phase 3 | withdrawn
+    Close the tab?" \
+  "$(coord round 2>&1)"
+check "round exits 0, and an empty or missing round directory prints nothing" "exit 0||" \
+  "$(coord_status round)|$(ORCHESTRATOR_STATE_DIR="$WORK/coord-no-round" bash "$COORD" round 2>&1)|$(mkdir -p "$WORK/coord-empty-round/round" && ORCHESTRATOR_STATE_DIR="$WORK/coord-empty-round" bash "$COORD" round 2>&1)"
+out=$(coord round-close b-early --answer 'A, ship it — on 2026-10-18' 2>&1); code=$?
+check "round-close says what it closed" "closed b-early|exit 0" "$out|exit $code"
+check "round-close writes the status and the operator's answer, by the coordinator, stamped in UTC" \
+  "closed|A, ship it — on 2026-10-18|coordinator|1|Ship it?|Orch : b" \
+  "$(jq -r '[.status, .answer.text, .answer.by, (.answer.at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$") | if . then 1 else 0 end), .question, .from] | join("|")' "$CROUND/b-early.json")"
+check "round-close leaves no temporary file, and round no longer lists the closed entry but still the others" "0|0|1" \
+  "$(find "$CROUND" -name 'b-early.json.tmp-*' | wc -l | tr -d ' ')|$(coord round | grep -c '^round b-early ')|$(coord round | grep -c '^round b-late ')"
+check "a withdrawn entry is closed the same way" "closed a-gone|closed" \
+  "$(coord round-close a-gone --answer 'withdrawn: answered in its own tab' 2>&1)|$(jq -r .status "$CROUND/a-gone.json")"
+check "round-close refuses an unknown id, a path, an unreadable entry and a missing answer, writing nothing" \
+  "exit 1|exit 1|exit 1|exit 1|exit 1|{\"id\": \"half" \
+  "$(coord_status round-close nobody --answer x)|$(coord_status round-close ../coordinator --answer x)|$(coord_status round-close broken --answer x)|$(coord_status round-close a-one)|$(coord_status round-close)|$(cat "$CROUND/broken.json")"
+check "the refusal of an unknown id names it" "coordinator: round-close: no entry nobody in $CROUND" \
+  "$(coord round-close nobody --answer x 2>&1 >/dev/null)"
+
+# A sender that has ended leaves its question in the round: it is still printed, and its header
+# says the sender is gone, so the coordinator does not relay a question nobody can answer.
+GSTATE="$WORK/coord-gone"; GCFG="$WORK/coord-gone-config"
+mkdir -p "$GSTATE/round" "$GCFG/claude-orchestrator/store/sessions"
+for gone in "live:s-live" "ended:s-ended" "odd:s odd/1"; do
+  jq -n --arg id "${gone%%:*}" --arg session "${gone#*:}" \
+    '{id:$id, from:("Orch : " + $id), session:$session, kind:"operator", since:"2026-10-18T10:0\(if $id == "live" then 1 elif $id == "ended" then 2 else 3 end):00.000Z",
+      blocks:"phase 3", question:"Ship it?", choices:[], recommendation:null, status:"open", at:"T", answer:null}' > "$GSTATE/round/${gone%%:*}.json"
+done
+: > "$GCFG/claude-orchestrator/store/sessions/s-live"
+: > "$GCFG/claude-orchestrator/store/sessions/s_odd_1"
+check "round says the sender is gone on the header of an entry whose sessions file is absent, and still prints the entry" \
+  "round live | operator | from Orch : live | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open
+    Ship it?
+round ended | operator | from Orch : ended | since 2026-10-18T10:02:00.000Z | blocks: phase 3 | open | sender gone
+    Ship it?
+round odd | operator | from Orch : odd | since 2026-10-18T10:03:00.000Z | blocks: phase 3 | open
+    Ship it?" \
+  "$(ORCHESTRATOR_STATE_DIR="$GSTATE" CLAUDE_CONFIG_DIR="$GCFG" bash "$COORD" round 2>&1)"
+if [ -n "$RCFG_HAD" ]; then export CLAUDE_CONFIG_DIR="$RCFG_WAS"; else unset CLAUDE_CONFIG_DIR; fi
+
 echo "== routing: cost =="
 
 ROUTING="$ROOT/skills/model-routing/scripts/routing.py"

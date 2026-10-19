@@ -58,10 +58,11 @@ a settled item is never asked.
   stays open after it.
   Plain words. An identifier appears only beside the words that explain it — a bare
   « R63 » or « B-312 » in a question is a defect of the question.
-- _The choices._ Two to four, lettered, each carrying its COST and its GAIN in one line,
-  and each a materially different piece of work — never shades of one option.
-- _Recommendation._ Exactly one, with its reason in one sentence. Put it first among the
-  choices only if the tool you present with requires it; otherwise name it here.
+- _The choices._ Two to four, one per line as `- **A** : <text>`, each with its COST and
+  GAIN, each a materially different piece of work — never shades of one option.
+- _Recommendation._ Exactly one, a line holding one italic word and the choice letter,
+  `_Recommendation_ : A`, the word in the user's language, its reason in one sentence;
+  first if your tool needs it.
 - Close with « You decide: A or B? » (the letters offered), then the machine line, plain
   text, as the message's last line: `waiting: operator — blocks: <the question>` — the
   stop gate refuses a turn that ends on a bare question. END THE TURN. Nothing else in

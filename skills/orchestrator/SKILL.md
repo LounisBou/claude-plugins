@@ -175,7 +175,10 @@ it; that session's own protocol decides whether the operator hears of it.
 
 **While a coordinator runs, every question for the operator goes to it** — his order —
 and the hooks module carries it: ask here, in the shape of `/orchestrator:decide` step 2, and
-end the turn on `waiting: operator — blocks: <what it blocks>`; never send it yourself. His
+end the turn on `waiting: operator — blocks: <what it blocks>`; never send it yourself. Its
+choices go one per line as `- **A** : <text>`, its recommendation on a line holding one italic
+word and the choice letter, `_Recommendation_ : A`, the word in his language, for the
+coordinator's pane. His
 answer comes back verbatim and dated, through it or in this tab. A pause it relays: its bullet
 in `references/lifecycle.md`.
 
