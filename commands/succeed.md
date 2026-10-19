@@ -42,16 +42,21 @@ Then:
    across every succession; the map binds agents, never the orchestrator (spec §27).
    `--successor` places it immediately right of this tab, between it and the first agent,
    and hands it the chain (spec §34).
-4. Answer nothing new. Wait for the successor's "takeover confirmed"; answer
+4. **Name the successor to your agents.** Once the spawn is verified and the successor's name and
+   reference are read in `ListAgents`, send each running agent of your own ONE message giving
+   the successor's exact name and reference and saying that the successor's messages are its own
+   from now on. An agent takes no word from a session it was never told of, and the successor
+   cannot vouch for itself.
+5. Answer nothing new. Wait for the successor's "takeover confirmed"; answer
    its questions about state only. On the confirmation, send it « handed over » as your
    LAST message, with `SendMessage` to the name it confirmed from:
    a line written in your own tab reaches no one, and the successor waits on it.
    Nothing of yours is left to write; end the turn: that message is what it closes
    your tab on.
-5. Never close your own tab: the successor closes it on your « handed over » message — or,
+6. Never close your own tab: the successor closes it on your « handed over » message — or,
    five minutes after "takeover confirmed" without it, on a reading of your tab's screen —
    its brief says so (template step 4), and you do not run this command without that step
    in the brief.
-6. Do not ask the user whether to succeed. At the gate you succeed, then you tell them.
+7. Do not ask the user whether to succeed. At the gate you succeed, then you tell them.
 
 $ARGUMENTS

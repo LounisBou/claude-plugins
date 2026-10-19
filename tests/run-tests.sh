@@ -213,10 +213,10 @@ check "all four agent briefs leave the measured context to the module and read n
 check "the delivering briefs no longer ask for context_tokens in the final report" "no|no|no" \
   "$(for t in phase comments rotation; do spells "$ROOT/templates/agent-$t-brief.md" 'context_tokens'; done | paste -sd'|' -)"
 # The trim is a ceiling: each brief stays at most the size it reached when the module took
-# the context and the turn-end reports over. The ceiling moved once, by the sentence on the
-# sender's reference.
+# the context and the turn-end reports over. The ceiling moved twice: by the sentence on the
+# sender's reference, then by the successor-admission sentence (the operator's item 154, « A », 2026-10-19).
 check "the agent briefs stay within their trimmed sizes" "yes|yes|yes|yes" \
-  "$(for pair in phase:8382 comments:6067 review:7898 rotation:2616; do [ "$(wc -c < "$ROOT/templates/agent-${pair%%:*}-brief.md" | tr -d ' ')" -le "${pair##*:}" ] && echo yes || echo no; done | paste -sd'|' -)"
+  "$(for pair in phase:8584 comments:6280 review:8111 rotation:2833; do [ "$(wc -c < "$ROOT/templates/agent-${pair%%:*}-brief.md" | tr -d ' ')" -le "${pair##*:}" ] && echo yes || echo no; done | paste -sd'|' -)"
 check "the orchestrator succession brief still says how to find its session id and directory" "yes" \
   "$(spells "$ROOT/templates/orchestrator-succession-brief.md" '`printenv CLAUDE_CODE_SESSION_ID` prints the id, `printenv CLAUDE_CONFIG_DIR` the directory')"
 # review.md asks for each finding's proposed fix; the one-line finding keeps it as its last field.
@@ -231,6 +231,8 @@ check "the comments brief's end report carries the threads and their outcomes" "
 # shell.
 SUCC="$ROOT/templates/orchestrator-succession-brief.md"
 SUCC4=$(awk '/^4\. /{f=1} /^5\. /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
+SUCC3=$(awk '/^3\. /{f=1} /^4\. /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
+succ3_has() { printf '%s' "$SUCC3" | grep -oF -- "$1" | wc -l | tr -d ' '; }
 succ4_has() { printf '%s' "$SUCC4" | grep -oF -- "$1" | wc -l | tr -d ' '; }
 check "the succession brief closes every predecessor and asks nothing" "1|1|1|0" \
   "$(succ4_has 'the successor ALWAYS closes its predecessor')|$(succ4_has 'a predecessor the launcher did not open (started by hand) included')|$(succ4_has 'call mcp__orchestrator__end_session')|$(succ4_has '« close it »')"
@@ -258,8 +260,9 @@ check "the ungated pull request has its red flag" "1" "$(grep -c "A pull request
 # that rule binds wherever no reference is loaded, so it lives here, and the bound moved with it.
 # 21,600 until the hooks module took the relay over: the bound follows the rule down.
 # 21,450 until the module reported an agent's turn end and gate crossing too.
-check "the orchestrator rulebook stays at 21,446 bytes or fewer" "yes" \
-  "$([ "$(wc -c < "$ROOT/skills/orchestrator/SKILL.md" | tr -d ' ')" -le 21446 ] && echo yes || echo no)"
+# 21,446 until the hand-over sentence naming the successor to the agents (item 154, « A », 2026-10-19).
+check "the orchestrator rulebook stays at 21,518 bytes or fewer" "yes" \
+  "$([ "$(wc -c < "$ROOT/skills/orchestrator/SKILL.md" | tr -d ' ')" -le 21518 ] && echo yes || echo no)"
 # Real load on a shared machine is stopped, and « under load » means emulated throttling: the
 # rulebook, the briefs reference and the phase brief template each carry the rule.
 check "the rulebook stops real machine load an agent reports or plans" "yes" \
@@ -7688,6 +7691,25 @@ check "no session id and no --transcript is refused, naming both ways out" "1|1"
   "$(env -u CLAUDE_CODE_SESSION_ID ORCHESTRATOR_STATE_DIR="$WORK/toolsstate" bash "$AGENT" tools >/dev/null 2>&1; echo $?)|$(env -u CLAUDE_CODE_SESSION_ID ORCHESTRATOR_STATE_DIR="$WORK/toolsstate" bash "$AGENT" tools 2>&1 | grep -c 'CLAUDE_CODE_SESSION_ID is unset; pass --transcript <path>')"
 check "a session with no transcript and a missing file are each refused" "1|1" \
   "$(CLAUDE_CODE_SESSION_ID=s-none toolsx | grep -c 'tools: no transcript for session s-none')|$(toolsx --transcript "$WORK/absent.jsonl" | grep -c 'tools: transcript not found')"
+
+# The agent's orchestrator may hand over: the agent admits the successor its orchestrator names,
+# and the predecessor names it to each agent before « handed over ».
+ADMIT='When it hands over, it first sends you its successor'"'"'s exact name and reference; from then on that session is your orchestrator, with no other confirmation. A session claiming to succeed it before that message waits for its word.'
+for t in phase review comments rotation; do
+  check "the $t brief admits the successor its orchestrator names" "yes" "$(flat_has "$ROOT/templates/agent-$t-brief.md" "$ADMIT")"
+  check "the $t brief no longer refuses whatever a session says, nor every session but one" "0" "$(grep -c -e 'whatever it says' -e 'no other session' -e '— and no other' "$ROOT/templates/agent-$t-brief.md")"
+done
+spells_before() { case "$1" in *"$2"*) ;; *) echo no; return ;; esac; local head="${1%%"$2"*}"; case "$head" in *"$3"*) echo yes ;; *) echo no ;; esac; }
+SUCCEEDMD="$ROOT/commands/succeed.md"
+SUCCEEDFLAT=$(tr '\n' ' ' < "$SUCCEEDMD" | tr -s ' ')
+check "succeed.md has the predecessor name its successor to each agent, before the wait for « takeover confirmed »" "yes|yes" \
+  "$(printf '%s' "$SUCCEEDFLAT" | grep -qF "send each running agent of your own ONE message giving the successor's exact name and reference" && echo yes || echo no)|$(spells_before "$SUCCEEDFLAT" 'Wait for the successor' 'ONE message giving the successor')"
+check "lifecycle.md and SKILL.md say the predecessor names its successor to its agents" "yes|yes" \
+  "$(flat_has "$ROOT/skills/orchestrator/references/lifecycle.md" "gives its successor's exact name and reference to each of its agents")|$(flat_has "$ROOT/skills/orchestrator/SKILL.md" "ONE message giving its exact name and reference")"
+check "the successor names its predecessor in its message to the agents" "1" \
+  "$(succ3_has "and your predecessor's,")"
+check "the design says the agents learn their new orchestrator from their current one" "yes" \
+  "$(flat_has "$ROOT/docs/design.md" "the agents learn their new orchestrator from their current one")"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"

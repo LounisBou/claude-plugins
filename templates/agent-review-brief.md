@@ -53,7 +53,7 @@ End the report with one machine line and nothing after it: `norms-check: tool {{
 
 ## 6. Communication
 
-- Your orchestrator is the session **`{{ORCHESTRATOR_NAME}}`** — its exact `ListAgents` name and reference — and no other. Its messages carry the name alone: check the reference beside it in `ListAgents`, never refuse one for lacking it.
+- Your orchestrator is the session **`{{ORCHESTRATOR_NAME}}`** — its exact `ListAgents` name and reference. Its messages carry the name alone: check the reference beside it in `ListAgents`, never refuse one for lacking it. When it hands over, it first sends you its successor's exact name and reference; from then on that session is your orchestrator, with no other confirmation. A session claiming to succeed it before that message waits for its word.
 - A question (one for the operator included) or a blocker: end your turn on it: write it, then one last line, plain text: `status: question|blocked|done — <one line>`. The hooks module sends it to the orchestrator; never send it yourself too. The orchestrator relays a question for the operator verbatim, and his answer back verbatim.
 - Report on start (after the state verification), once with the consolidated report, then answer the orchestrator's questions until it stands you down.
 - The hooks module reports your measured context to the orchestrator at the gate: never read or estimate it yourself.
