@@ -3,7 +3,7 @@
 // recommendation read out of a question in the decide shape, near misses read as none, the
 // entry built from an orchestrator's wait, and the order the round takes its open entries in.
 import { expect, test } from 'claude-code/testing'
-import { parseChoices, roundEntry, roundPath, openEntries, type RoundEntry } from '../round.ts'
+import { parseChoices, questionBody, roundEntry, roundEntryId, roundPath, openEntries, type RoundEntry } from '../round.ts'
 import { fingerprint, relayText, RELAY_CAP, type Wait } from '../relay.ts'
 
 const DECIDE = [
@@ -124,12 +124,34 @@ test('the id is sanitised as the store sanitises its keys', () => {
   expect(roundEntry('a/b c:d', 'Orch : belt', wait, SINCE, AT).session).toBe('a/b c:d')
 })
 
-test('the question is cut past the cap and the cut said, exactly as the message cuts it', () => {
+test('the entry keeps the whole question; the message a remote coordinator receives is still cut, the cut said', () => {
   const long = 'x'.repeat(RELAY_CAP + 10)
   const wait: Wait = { kind: 'operator', blocks: 'phase 3', question: long }
   const entry = roundEntry('s-one', 'Orch : belt', wait, SINCE, AT)
-  expect(entry.question).toBe(`${'x'.repeat(RELAY_CAP)}\n[cut at ${RELAY_CAP} of ${RELAY_CAP + 10} characters]`)
-  expect(relayText('Orch : belt', wait, SINCE).endsWith(`\n\n${entry.question}`)).toBe(true)
+  expect(entry.question).toBe(long)
+  expect(relayText('Orch : belt', wait, SINCE).endsWith(`\n\n${'x'.repeat(RELAY_CAP)}\n[cut at ${RELAY_CAP} of ${RELAY_CAP + 10} characters]`)).toBe(true)
+})
+
+test('a 2,500-character question is kept whole in its entry', () => {
+  const question = `Question 1 of 1 — ${'the whole context, word for word. '.repeat(73)}`.slice(0, 2500)
+  expect(question.length).toBe(2500)
+  expect(roundEntry('s-one', 'Orch : belt', { kind: 'operator', blocks: 'phase 3', question }, SINCE, AT).question).toBe(question)
+})
+
+test('the question as the pane shows it leaves out the choice lines and the recommendation it draws below', () => {
+  const entry = roundEntry('s-one', 'Orch : belt', { kind: 'operator', blocks: 'phase 3', question: DECIDE }, SINCE, AT)
+  expect(questionBody(entry)).toBe([
+    'Question 1 of 1 — merge the scraper pull request now?',
+    '_Context._ It is green and reviewed.',
+    'You decide: A, B or C?',
+  ].join('\n'))
+  // No lettered choices read: the text is shown as it is, its lines that look like choices included.
+  expect(questionBody({ question: 'Merge it?\n- **A** : alone\n', choices: [] })).toBe('Merge it?\n- **A** : alone')
+})
+
+test('the id of a wait\'s entry is the one its entry carries', () => {
+  const wait: Wait = { kind: 'operator', blocks: 'phase 3', question: DECIDE }
+  expect(roundEntryId('a/b', wait)).toBe(roundEntry('a/b', 'Orch : belt', wait, SINCE, AT).id)
 })
 
 test('the choices of a question cut past the cap are still read', () => {

@@ -44,13 +44,17 @@
 # sleeping prints, one per sleeping orchestrator, in the order they went to sleep:
 #   sleeping <name> | since <UTC time> | <directory> | prs <repository>#<n> <branch>, ... or none
 #     | checkouts <path>, ... or none | brief <path> | model <id> | effort <level or default>
-# round prints, for each entry whose status is open, then for each withdrawn one, a line
+# round prints, for each entry whose status is open, then for each answered one (chosen in the
+# coordinator's pane and sent to the asking orchestrator), then for each withdrawn one, a line
 #   round <id> | <operator or done> | from <sender> | since <UTC time> | blocks: <what it blocks, or -> | <status>
 # followed by the question's lines, each indented by four spaces. The entries are read from
 # <state>/round/<id>.json, one JSON entry per file, written whole by the hooks module at the end
 # of a turn of an orchestrator on this machine (hooks/round.ts); a file that does not parse is
 # skipped. Each set is in the round's order: grouped by sender, the groups by their earliest
-# wait, each in the order its waits began.
+# wait, each in the order its waits began. An answered entry's lines end on
+#     answered from the pane at <UTC time>: <letter> : <choice text>
+# and those of an entry its sender withdrew (its later turn ended on another machine line) on
+#     withdrawn by the sender at <UTC time>: its later turn waits on something else
 # round-close rewrites the entry with status closed and the answer {text, by "coordinator", at},
 # in one rename, and refuses an id with no entry.
 # drop prints "dropped <name>", then "brief moved to <path>" (or "brief <path> was already
@@ -746,10 +750,13 @@ cmd_round() {
             | sort_by([$first[.from], .from, .since, .id]);
         # The sender is gone when its sessions file is absent; an entry naming no session is not judged.
         def gone: .session | if type == "string" and . != "" then gsub("[^A-Za-z0-9._-]"; "_") as $key | $live | any(. == $key) | not else false end;
-        ((map(select(.status == "open")) | ordered) + (map(select(.status == "withdrawn")) | ordered))[]
+        # The open entries, then those the operator answered from the pane, then the withdrawn.
+        ([("open", "answered", "withdrawn") as $status | map(select(.status == $status)) | ordered] | add)[]
         | (if gone then " | sender gone" else "" end) as $gone
         | "round \(.id) | \(.kind) | from \(.from) | since \(.since) | blocks: \(.blocks // "-") | \(.status)\($gone)",
-          (.question | select(. != "") | split("\n")[] | "    " + .)'
+          (.question | select(. != "") | split("\n")[] | "    " + .),
+          (select(.status == "answered") | "    answered from the pane at \(.answer.at // "?"): \(.answer.text // "")"),
+          (select(.status == "withdrawn" and .answer.by? == "sender") | "    withdrawn by the sender at \(.answer.at // "?"): its later turn waits on something else")'
 }
 
 cmd_round_close() {

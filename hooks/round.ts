@@ -3,14 +3,18 @@
 // orchestrator ended its turn on, under the state directory's round/ (roundPath), written
 // whole and renamed into place by the relay (supervision.ts) in place of a message, so a
 // question waits in the round without costing the coordinator's model a turn. The pane of
-// the coordinator draws the first open question with its lettered choices; the coordinator
+// the coordinator draws the first open question whole, with its lettered choices the operator
+// answers from (the entry then `answered` by the pane, his choice sent); the coordinator
 // reads the round with `coordinator.sh round` when the operator speaks to it, and closes an
 // entry with `coordinator.sh round-close`. A file that does not parse is skipped by every
 // reader, never repaired. Pure on purpose, like relay.ts: the handler holds the $.
-import { cutQuestion, fingerprint, type Wait } from './relay.ts'
+import { fingerprint, type Wait } from './relay.ts'
 
 export type RoundChoice = { letter: string; text: string }   // letter: one of 'A' to 'E'
-export type RoundAnswer = { text: string; by: 'pane' | 'coordinator' | 'tab'; at: string }
+// Who settled the entry: the operator from the pane (`answered`), the coordinator
+// (`round-close`, `closed`), the operator in the sender's own tab or the sender's later turn
+// waiting on something else (`withdrawn`).
+export type RoundAnswer = { text: string; by: 'pane' | 'coordinator' | 'tab' | 'sender'; at: string }
 export type RoundEntry = {
   id: string                    // `${sanitised session id}-${fingerprint(wait)}`, sanitised as supervision.ts sanitises store ids
   from: string                  // the sender's name, the address its answer goes back to (what relayText puts after « reply with SendMessage to: »)
@@ -18,7 +22,7 @@ export type RoundEntry = {
   kind: 'operator' | 'done'
   since: string                 // the wait's waiting_since, ISO
   blocks: string | null         // null for 'done'
-  question: string              // the turn's text above the machine line, cut past RELAY_CAP and the cut said, exactly as relayText cuts it
+  question: string              // the turn's whole text above the machine line: the pane shows it whole (relayText cuts the message a remote coordinator receives)
   choices: RoundChoice[]        // empty, or 2 to 5 entries
   recommendation: string | null // a letter present in choices, or null
   status: 'open' | 'answered' | 'withdrawn' | 'closed'
@@ -52,21 +56,51 @@ export function parseChoices(question: string): { choices: RoundChoice[]; recomm
   return { choices, recommendation: named !== null && choices.some(choice => choice.letter === named) ? named : null }
 }
 
-// The entry of an orchestrator's wait, open and unanswered. Its id is the session's and the
-// wait's own fingerprint, so the same wait entered again lands on the same file. The choices
-// are read from the whole question, so a question cut past the cap keeps them.
+// The question as the pane shows it above its choices: the whole text, less the choice lines
+// and the recommendation's line when the choices were read, since the pane draws them below.
+export function questionBody(entry: Pick<RoundEntry, 'question' | 'choices'>): string {
+  if (entry.choices.length === 0) return entry.question.trim()
+  return entry.question.split('\n').filter(line => !CHOICE.test(line) && !RECOMMENDATION.test(line)).join('\n').trim()
+}
+
+// The question's text as the pane draws it: the emphasis markers around a span — `**x**`,
+// `__x__`, `*x*`, `_x_` and backticks — dropped, the words kept; a marker inside a word
+// (snake_case) or before a space (a `* ` list item) is no emphasis. Each span stays on its
+// line. The entry itself keeps the text verbatim.
+export function plainText(text: string): string {
+  return text
+    .replace(/`([^`\n]+)`/g, '$1')
+    .replace(/(\*\*|__)(?=\S)([^\n]*?\S)\1/g, '$2')
+    .replace(/(^|[^\w*])\*(?=[^\s*])([^\n*]*?[^\s*])\*(?![\w*])/gm, '$1$2')
+    .replace(/(^|[^\w])_(?=[^\s_])([^\n_]*?[^\s_])_(?!\w)/gm, '$1$2')
+}
+
+// The fingerprint of the wait an entry was written for, as the sender's wait file keeps it.
+export function entryFingerprint(entry: Pick<RoundEntry, 'kind' | 'blocks' | 'question'>): string {
+  return fingerprint(entry.kind === 'operator'
+    ? { kind: 'operator', blocks: entry.blocks ?? '', question: entry.question }
+    : { kind: 'done', question: entry.question })
+}
+
+// The id of a wait's entry: the session's and the wait's own fingerprint, so the same wait
+// entered again lands on the same file. The store's own sanitising (supervision.ts
+// sessionKey): an id is never trusted as a path.
+export function roundEntryId(sessionId: string, wait: Wait): string {
+  return `${sessionId.replace(/[^A-Za-z0-9._-]/g, '_')}-${fingerprint(wait)}`
+}
+
+// The entry of an orchestrator's wait, open and unanswered, its question whole.
 export function roundEntry(sessionId: string, from: string, wait: Wait, since: string, at: string): RoundEntry {
   if (wait.kind !== 'operator' && wait.kind !== 'done') throw new Error(`a ${wait.kind} wait is no round entry`)
   const { choices, recommendation } = parseChoices(wait.question)
   return {
-    // The store's own sanitising (supervision.ts sessionKey): an id is never trusted as a path.
-    id: `${sessionId.replace(/[^A-Za-z0-9._-]/g, '_')}-${fingerprint(wait)}`,
+    id: roundEntryId(sessionId, wait),
     from,
     session: sessionId,
     kind: wait.kind,
     since,
     blocks: wait.kind === 'operator' ? wait.blocks : null,
-    question: cutQuestion(wait.question),
+    question: wait.question,
     choices,
     recommendation,
     status: 'open',

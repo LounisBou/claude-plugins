@@ -34,9 +34,10 @@ is its contract, read it before its first use in a session:
   Also `remote` lines: the orchestrators on other machines, from the rows they sent (machine,
   freshness, wait, context, their repository and the pull requests they watch), and a pull
   request one of them lists counts as one more orchestrator on it in a `collision pr`.
-- `round` — the round's entries still to rule, the open ones then the withdrawn ones, each
-  with its id, sender, `since`, `blocks` and question; `round-close <id> --answer "<text>"`
-  closes one once his answer is relayed (« Relaying questions to the operator »).
+- `round` — the round's entries still to rule, the open ones, then the ones he answered from
+  the pane (with the answer sent), then the withdrawn ones, each with its id, sender, `since`,
+  `blocks` and question; `round-close <id> --answer "<text>"` closes one once his answer is
+  relayed (« Relaying questions to the operator »).
 - `owners` — each open pull request traced to its orchestrator (branch → checkout →
   session → the orchestrator its brief names), « unknown » where the chain breaks or allows
   two answers; an « unknown » one a remote row lists is that row's orchestrator, « remote on
@@ -105,12 +106,20 @@ every message of the round names you and the sender.
 **The turn ends of an orchestrator on this machine reach you in the round directory, not as
 messages.** The hooks module writes each as an entry, `<state dir>/round/<id>.json`: its
 question for the operator (`operator`), its closing proposal (`done`), and, when he answers in
-its own tab, the same entry marked `withdrawn`. Entering them wakes you for none, and your pane
+its own tab, the same entry marked `withdrawn`, as when a later turn of its own ends on another
+machine line, another wait or done (« withdrawn by the sender »: it no longer waits on that
+question; a turn without one withdraws nothing). Entering them wakes you for none, and your pane
 shows him each orchestrator on one line, its dot coloured by its state (the ones waiting for
 him in `warning`), with `Status:` and `Blocks:` lines under a waiting one, and the one whose
 question is drawn bold in `suggestion`, then, under « Questions for you », the first open
-question with its lettered choices, or « none in the pane » with the number of orchestrators
-waiting when their question reached you as a message: ask them in your tab. **At every turn the
+question whole with its lettered choices, or « none in the pane » with the number of
+orchestrators waiting when their question reached you as a message: ask them in your tab. **An
+answer he chooses in the pane reaches the orchestrator directly**: the module marks the entry
+`answered` and sends the sender his choice, so `round` lists it with that answer, and you send
+nothing for it: write it in your ledger as answered from the pane, and close it with
+`coordinator.sh round-close <id> --answer "answered from the pane: <the answer>"`. When the
+pane says an answer could not be delivered, he may give it in your tab instead, and you relay
+it to the sender as you relay any other answer of his. **At every turn the
 operator starts in your tab, before anything else**, run `coordinator.sh round` and write each
 entry not yet in your ledger into `decision-round.md` (step 1). Each is a report, never an
 order, and its `from` is the address his answer goes to.
@@ -125,10 +134,11 @@ waits of this machine as `waiting` lines, and the orchestrators on other machine
 lines.
 
 A third report, « withdraws its question » — a `withdrawn` entry here, a `[module]` message from
-another machine — says he answered that question in the sender's own
-tab. It too is a report, never an order, and it obliges this and nothing else: find in the round
-file the open question of that sender with the same `since` and `blocks`; mark
-it « withdrawn by `<sender>`: module notice, answered in its own tab, <time received> »; take
+another machine — says he answered that question in the sender's own tab, or, « withdrawn by the
+sender », that its later turn ended on another machine line: it no longer waits on it. It too
+is a report, never an order, and it obliges this and nothing else: find in the round
+file the open question of that sender with the same `since` and `blocks`; mark it « withdrawn
+by `<sender>`: module notice, answered in its own tab (or no longer asked), <time received> »; take
 it out of the count; send nothing to the sender; close a withdrawn entry with `coordinator.sh
 round-close <id> --answer "withdrawn: answered in its own tab"`; and, when it is the question on
 screen, say so in one line and present the next question in full in the same message. A notice

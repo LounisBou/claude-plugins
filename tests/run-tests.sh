@@ -6350,6 +6350,34 @@ round ended | operator | from Orch : ended | since 2026-10-18T10:02:00.000Z | bl
 round odd | operator | from Orch : odd | since 2026-10-18T10:03:00.000Z | blocks: phase 3 | open
     Ship it?" \
   "$(ORCHESTRATOR_STATE_DIR="$GSTATE" CLAUDE_CONFIG_DIR="$GCFG" bash "$COORD" round 2>&1)"
+# An entry the operator answered from the coordinator's pane is printed after the open ones and
+# before the withdrawn ones, each set in the round's order, with the answer the pane recorded.
+ASTATE="$WORK/coord-answered"; ACFG="$WORK/coord-answered-config"
+mkdir -p "$ASTATE/round" "$ACFG/claude-orchestrator/store/sessions"
+for spec in "w1:withdrawn:1" "x1:answered:2" "o1:open:3" "x2:answered:4" "o2:open:5"; do
+  IFS=: read -r aid astatus amin <<< "$spec"
+  jq -n --arg id "$aid" --arg status "$astatus" --arg since "2026-10-20T10:0${amin}:00.000Z" \
+    '{id:$id, from:"Orch : a", session:"s-a", kind:"operator", since:$since, blocks:"phase 3", question:("Ask " + $id + "?"),
+      choices:[], recommendation:null, status:$status, at:$since,
+      answer:(if $status == "answered" then {text:"A : ship it", by:"pane", at:"2026-10-20T10:09:00.000Z"}
+              elif $status == "withdrawn" then {text:"", by:"sender", at:"2026-10-20T10:09:00.000Z"} else null end)}' > "$ASTATE/round/$aid.json"
+done
+: > "$ACFG/claude-orchestrator/store/sessions/s-a"
+check "round prints the open entries, then the answered ones with their answer, then the withdrawn ones, a sender's own withdrawal said" \
+  "round o1 | operator | from Orch : a | since 2026-10-20T10:03:00.000Z | blocks: phase 3 | open
+    Ask o1?
+round o2 | operator | from Orch : a | since 2026-10-20T10:05:00.000Z | blocks: phase 3 | open
+    Ask o2?
+round x1 | operator | from Orch : a | since 2026-10-20T10:02:00.000Z | blocks: phase 3 | answered
+    Ask x1?
+    answered from the pane at 2026-10-20T10:09:00.000Z: A : ship it
+round x2 | operator | from Orch : a | since 2026-10-20T10:04:00.000Z | blocks: phase 3 | answered
+    Ask x2?
+    answered from the pane at 2026-10-20T10:09:00.000Z: A : ship it
+round w1 | operator | from Orch : a | since 2026-10-20T10:01:00.000Z | blocks: phase 3 | withdrawn
+    Ask w1?
+    withdrawn by the sender at 2026-10-20T10:09:00.000Z: its later turn waits on something else" \
+  "$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" bash "$COORD" round 2>&1)"
 if [ -n "$RCFG_HAD" ]; then export CLAUDE_CONFIG_DIR="$RCFG_WAS"; else unset CLAUDE_CONFIG_DIR; fi
 
 echo "== routing: cost =="

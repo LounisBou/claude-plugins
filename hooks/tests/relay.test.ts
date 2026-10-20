@@ -7,7 +7,7 @@
 import { expect, test } from 'claude-code/testing'
 import { parseWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel, waitParts, heldQuestion, withdrawalText, RELAY_CAP } from '../relay.ts'
 import { roundEntry, type RoundEntry } from '../round.ts'
-import { parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
+import { answerFromPane, parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
 import { logLineOf } from './fakes.ts'
 
@@ -117,8 +117,9 @@ test('the withdrawal names the sender, the question and where it was answered', 
 // --- the wiring over a faked $ ------------------------------------------------------------
 
 // The coordinator is registered on this machine unless `remote`, where it is the one a peer
-// delivery taught (coordinator-learnt). `roundWrite: 'fail'` refuses every rename into the round.
-function fake(over: { name?: string; role?: SessionRow['role']; coordinator?: string | null; remote?: boolean; send?: 'reject' | 'refuse'; roundWrite?: 'fail' } = {}) {
+// delivery taught (coordinator-learnt). `roundWrite: 'fail'` refuses every rename into the round,
+// `refuseInto` the renames into that one file.
+function fake(over: { name?: string; role?: SessionRow['role']; coordinator?: string | null; remote?: boolean; send?: 'reject' | 'refuse'; roundWrite?: 'fail'; refuseInto?: string } = {}) {
   const files = new Map<string, string>()
   const sent: { to: unknown; text: string }[] = []
   const logged: string[] = []
@@ -156,6 +157,7 @@ function fake(over: { name?: string; role?: SessionRow['role']; coordinator?: st
         const line = logLineOf(argv)
         if (line !== null) logged.push(line)
         if (argv[0] === 'mv' && over.roundWrite === 'fail' && String(argv[3]).startsWith(`${ROUND}/`)) return { exitCode: 1, stdout: '', stderr: 'refused' }
+        if (argv[0] === 'mv' && over.refuseInto !== undefined && argv[3] === over.refuseInto) return { exitCode: 1, stdout: '', stderr: 'refused' }
         if (argv[0] === 'mv' && files.has(argv[2])) {
           files.set(argv[3], files.get(argv[2])!)
           files.delete(argv[2])
@@ -539,4 +541,112 @@ test('the withdrawal marks only the open question of that sender with the same s
   for (const other of others) expect(after.get(other.id)).toEqual(other)
   expect(fx.files.get(`${ROUND}/broken.json`)).toBe('{"id": "broken", "status": "op')
   expect(fx.sent.length).toBe(0)
+})
+
+// --- an entry its sender no longer waits on ---------------------------------------------------
+
+test('a later turn on another wait withdraws the sender\'s own open entry; the same wait keeps it open', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const first = turnEnd(answerOf(QUESTION, 'waiting: operator — blocks: phase 3'))
+  await drive(chains, 'turn.complete', fx.dollar, first)
+  const [asked] = entries(fx)
+  const other: RoundEntry = { ...asked, id: 'other-session', session: 's-two', from: 'Orch : other' }
+  const settled: RoundEntry = { ...asked, id: 'already-closed', status: 'closed' }
+  for (const kept of [other, settled]) fx.files.set(`${ROUND}/${kept.id}.json`, JSON.stringify(kept) + '\n')
+  // The same wait again: still what it waits on.
+  await drive(chains, 'turn.complete', fx.dollar, first)
+  expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('open')
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('A new question?', 'waiting: operator — blocks: phase 4')))
+  const after = new Map(entries(fx).map(e => [e.id, e]))
+  const stale = after.get(asked.id)!
+  expect(stale.status).toBe('withdrawn')
+  expect(stale.answer!.text).toBe('')
+  expect(stale.answer!.by).toBe('sender')
+  expect(Number.isFinite(Date.parse(stale.answer!.at))).toBe(true)
+  expect(after.get(other.id)).toEqual(other)
+  expect(after.get(settled.id)).toEqual(settled)
+  expect(entries(fx).filter(e => e.session === 's-one' && e.status === 'open').map(e => e.blocks)).toEqual(['phase 4'])
+  expect([...fx.files.keys()].some(p => p.includes('.tmp-'))).toBe(false)
+})
+
+test('a later turn that ends on no machine line leaves the sender\'s open entries as they are', async () => {
+  const chains = mounted()
+  const fx = fake()
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, 'waiting: operator — blocks: phase 3')))
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Working on phase 3.'))
+  expect(entries(fx).map(e => [e.status, e.answer])).toEqual([['open', null]])
+  expect(fx.logged.some(l => l.includes('round: withdrawn by the sender'))).toBe(false)
+})
+
+for (const [label, line] of [['another operator wait', 'waiting: operator — blocks: phase 4'], ['done', 'waiting: done']] as const) {
+  test(`a later turn on ${label} withdraws the sender's open entry, one log line each`, async () => {
+    const chains = mounted()
+    const fx = fake()
+    await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+    const [asked] = entries(fx)
+    await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Something else.', line)))
+    expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('withdrawn')
+    expect(fx.logged.filter(l => l.includes(`round: withdrawn by the sender: ${asked.id}`)).length).toBe(1)
+  })
+}
+
+test('an entry withdrawn by its sender\'s later turn, its fingerprint forgotten: the same line asked again is entered again', async () => {
+  const chains = mounted()
+  const fx = fake()
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+  const [asked] = entries(fx)
+  // The later wait withdraws the first, and its own entry cannot be written: nothing else
+  // replaces the first wait's fingerprint.
+  const later = turnEnd(answerOf('A new question?', 'waiting: operator — blocks: phase 4'))
+  const laterId = roundEntry('s-one', 'Orch : belt', parseWait(later.answer)!, 'T', 'T').id
+  const over = fake({ refuseInto: `${ROUND}/${laterId}.json` })
+  over.files.clear()
+  for (const [p, text] of fx.files) over.files.set(p, text)
+  await drive(chains, 'turn.complete', over.dollar, later)
+  expect(entries(over).find(e => e.id === asked.id)!.status).toBe('withdrawn')
+  expect(over.row().relayed ?? null).toBeNull()
+  await drive(chains, 'turn.complete', over.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+  expect(entries(over).find(e => e.id === asked.id)!.status).toBe('open')
+})
+
+test('a stale entry that cannot be written is one log line, and the wait and its new entry are written all the same', async () => {
+  const chains = mounted()
+  const first = fake()
+  await drive(chains, 'turn.complete', first.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+  const [asked] = entries(first)
+  const fx = fake({ refuseInto: `${ROUND}/${asked.id}.json` })
+  fx.files.clear()
+  for (const [p, text] of first.files) fx.files.set(p, text)
+  const later = turnEnd(answerOf('A new question?', 'waiting: operator — blocks: phase 4'))
+  expect(await drive(chains, 'turn.complete', fx.dollar, later)).toBe(later)
+  expect(fx.logged.filter(l => l.includes(`round: the file ${ROUND}/${asked.id}.json could not be renamed into place`)).length).toBe(1)
+  expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('open')
+  expect(entries(fx).filter(e => e.blocks === 'phase 4').map(e => e.status)).toEqual(['open'])
+  expect(fx.row().blocks).toBe('phase 4')
+  expect(fx.row().relayed).toBe(fingerprint(parseWait(later.answer)!))
+})
+
+// --- an entry the operator answered from the coordinator's pane --------------------------------
+
+test('after an answer from the pane, the same question asked again is entered again', async () => {
+  const { chains, fx } = await relayedQuestion()
+  const [asked] = entries(fx)
+  const pane = { opened: null, ticker: null, other: new Set<string>(), undelivered: new Map(), answering: new Set<string>() }
+  await answerFromPane({ ...fx.dollar, ui: { invalidate: () => undefined } }, pane, asked, { letter: 'A', text: 'merge it' })
+  expect(entries(fx)[0].status).toBe('answered')
+  expect(fx.row().relayed ?? null).toBeNull()
+  await drive(chains, 'turn.start', fx.dollar, { text: 'A : merge it' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+  expect(entries(fx).map(e => [e.id, e.status])).toEqual([[asked.id, 'open']])
+})
+
+test('an answer from the pane leaves a wait file that holds another fingerprint as it is', async () => {
+  const { fx } = await relayedQuestion()
+  const [asked] = entries(fx)
+  const other = fingerprint({ kind: 'operator', blocks: 'phase 9', question: '' })
+  fx.files.set(WAIT, JSON.stringify({ ...JSON.parse(fx.files.get(WAIT)!), relayed: other }) + '\n')
+  const pane = { opened: null, ticker: null, other: new Set<string>(), undelivered: new Map(), answering: new Set<string>() }
+  await answerFromPane({ ...fx.dollar, ui: { invalidate: () => undefined } }, pane, asked, { letter: 'A', text: 'merge it' })
+  expect(fx.row().relayed).toBe(other)
 })

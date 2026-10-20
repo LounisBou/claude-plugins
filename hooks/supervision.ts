@@ -32,7 +32,7 @@ import {
   parseWait, parseStatus, waitPatch, clearedWait, fingerprint, relayText, heldQuestion, withdrawalText, gateText, noStatusText, NO_STATUS_KEY, coordinatorOf, chainOwnerTty, waitLabel, waitParts,
   type WaitKind,
 } from './relay.ts'
-import { roundEntry, roundPath, openEntries, type RoundEntry } from './round.ts'
+import { entryFingerprint, roundEntry, roundEntryId, roundPath, openEntries, plainText, questionBody, type RoundChoice, type RoundEntry } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
   remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, machineLabel, prsInFlight, ROW_MARKER, REMOTE_STALE_AFTER_MS, type RemoteRow,
@@ -130,6 +130,11 @@ const PANE_REFRESH_MS = 20000
 // The width of the column a choice's letter sits in: the letter and a gap, so the choice text
 // starts where it did when the letter and the text were one line.
 const ROUND_LETTER_COLUMN = 3
+
+// The pane's last option under a question's choices: no state changes, the operator types his
+// answer in a tab. Its hotkey is no choice's letter (A to E).
+const OTHER_KEY = 'other'
+const OTHER_HOTKEY = 'o'
 
 // The width of the label column a wait's lines sit in (« Status: », « Blocks: »): the longer
 // label and a gap, so what a long blocks text wraps under is its own first character.
@@ -358,17 +363,16 @@ export function paneRows(rows: Record<string, SessionRow>): PaneRow[] {
 
 // The round's first open question as a coordinator's pane draws it, under the orchestrator
 // rows: a header with its rank among the open questions, its sender and what it blocks, then
-// one line per lettered choice, the recommended one marked and drawn bold, or the line that
-// says it is answered in words. A choice line carries its letter apart from its text, so the
-// pane gives the letter a column of its own and a text that wraps continues under the text.
-// A done proposal is no question. Nothing open: no line.
+// one line per lettered choice, the recommended one marked and drawn bold. A question without
+// lettered choices is its header alone: the pane draws its text and the « other answer »
+// option under it. A done proposal is no question. Nothing open: no line.
 export type RoundLine = { letter: string | null; text: string; bold: boolean }
 export function roundLines(entries: readonly RoundEntry[]): RoundLine[] {
   const questions = openEntries(entries).filter(entry => entry.kind === 'operator')
   if (questions.length === 0) return []
   const first = questions[0]
   const header = { letter: null, text: `Question 1 of ${questions.length} — from ${first.from} — blocks: ${first.blocks}`, bold: false }
-  if (first.choices.length === 0) return [header, { letter: null, text: 'no lettered choices: answer in this tab', bold: false }]
+  if (first.choices.length === 0) return [header]
   return [header, ...first.choices.map(choice => {
     const recommended = choice.letter === first.recommendation
     return { letter: choice.letter, text: `${choice.text}${recommended ? '  (recommended)' : ''}`, bold: recommended }
@@ -480,10 +484,16 @@ Promise<{ tty: string | null; name: string | null; pid: string | null; known: bo
 }
 
 // The pane as the module remembers it: what it was opened to list, and its clock, started by
-// the open and cancelled by any close.
-type PaneMemory = {
+// the open and cancelled by any close. A coordinator's pane also keeps the questions whose
+// « other answer » was pressed (their ids: the hint is drawn under them), the answers chosen
+// in it that were not delivered, said on their question until its sender is gone, and the
+// entries whose answer is in flight, so a second press on one does nothing.
+export type PaneMemory = {
   opened: { role: 'coordinator' | 'orchestrator'; tty: string | null } | null
   ticker: { cancel(): void } | null
+  other: Set<string>
+  undelivered: Map<string, { entry: RoundEntry; reason: string }>
+  answering: Set<string>
 }
 
 // The pane opened, by the command or by the module: the role it lists, its title, its clock.
@@ -523,7 +533,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // Module memory: the role the pane was opened in, the tty its agents are read
   // from — the render lists what the open asked for — and the open pane's clock.
   // A reload forgets it, and the pane then asks to be opened again.
-  const pane: PaneMemory = { opened: null, ticker: null }
+  const pane: PaneMemory = { opened: null, ticker: null, other: new Set(), undelivered: new Map(), answering: new Set() }
   const stopTicker = () => {
     pane.ticker?.cancel()
     pane.ticker = null
@@ -734,6 +744,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       let blocks: PaneRow[] = []
       let round: RoundLine[] = []
       let speaker: string | null = null
+      let asking: RoundEntry | null = null
+      let failed: { entry: RoundEntry; reason: string }[] = []
       let none = 'type /orchestrator:supervision to open the pane again'
       const coordinator = pane.opened?.role === 'coordinator'
       if (coordinator) {
@@ -748,6 +760,10 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         // The orchestrator whose question is drawn, by its session: two may share a name.
         const first = openEntries(drawn).find(entry => entry.kind === 'operator')
         speaker = first ? sessionKey(first.session) : null
+        asking = first ?? null
+        // An answer not delivered is said until a render finds its sender gone.
+        for (const [id, notice] of pane.undelivered) if (!(sessionKey(notice.entry.session) in local)) pane.undelivered.delete(id)
+        failed = [...pane.undelivered.values()]
       } else if (pane.opened?.role === 'orchestrator') {
         // Bounded like every side read: an agent list that cannot be read in
         // time draws as none, never a held render.
@@ -798,14 +814,16 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         })
       }
       const listed = blocks.length === 0 ? [el.Text({ children: none })] : blocks.map(block)
-      // The round's first question under its own title, a line apart; a choice is a row: its
-      // letter in a column of its own, its text in the rest, so a long text wraps under the text.
+      // The round's first question under its own title, a line apart.
       const waiting = blocks.filter(row => row.waiting === 'operator').length
       const says = waiting === 0
         ? 'none'
         : `none in the pane — ${waiting} orchestrator${waiting === 1 ? ' waits' : 's wait'} for you: ask the coordinator`
-      const question = (line: RoundLine, index: number) => {
-        if (line.letter === null) return el.Text(index === 0 ? { bold: true, children: line.text } : { children: line.text })
+      // The question whole under its header, then its lettered choices — each a row, its letter
+      // in a column of its own and its text in the rest, so a long text wraps under the text —
+      // then the letters as Buttons the operator presses (a click, or the letter once the pane
+      // holds the keys), the « other answer » option, and the footer that says how keys reach it.
+      const choice = (line: RoundLine) => {
         const style = line.bold ? { bold: true, color: 'success' } : {}
         return el.Box({
           flexDirection: 'row',
@@ -815,12 +833,43 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           ],
         })
       }
+      const letters = (entry: RoundEntry) => el.Box({
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        columnGap: 1,
+        children: entry.choices.map(pick => el.Button({
+          key: `choice:${pick.letter}`,
+          label: pick.letter,
+          hotkey: pick.letter.toLowerCase(),
+          onPress: () => answerFromPane($, pane, entry, pick),
+        })),
+      })
+      const body = asking ? plainText(questionBody(asking)) : ''
+      const shown = asking === null ? [] : [
+        el.Text({ bold: true, children: round[0].text }),
+        ...(body !== '' ? [el.Text({ children: body })] : []),
+        ...round.slice(1).map(choice),
+        ...(asking.choices.length > 0 ? [letters(asking)] : []),
+        el.Button({
+          key: OTHER_KEY,
+          label: 'Other answer: in the session',
+          hotkey: OTHER_HOTKEY,
+          onPress: () => {
+            pane.other.add(asking!.id)
+            $.ui.invalidate('ui.render')
+          },
+        }),
+        ...(pane.other.has(asking.id) ? [el.Text({ color: 'suggestion', children: `type your answer in this tab, or in ${asking.from}'s tab` })] : []),
+        el.Text({ dimColor: true, children: 'click an option, or ctrl+x tab then its key · Esc: back to the prompt' }),
+      ]
+      const notices = failed.map(notice => el.Text({ color: 'error', children: `not delivered: ${notice.reason} — the answer to ${notice.entry.from} (blocks: ${notice.entry.blocks})` }))
       const asked = el.Box({
         flexDirection: 'column',
         marginTop: 1,
         children: [
           el.Text({ bold: true, color: 'suggestion', children: 'Questions for you' }),
-          ...(round.length === 0 ? [el.Text({ children: says })] : round.map(question)),
+          ...notices,
+          ...(asking === null ? [el.Text({ children: says })] : shown),
         ],
       })
       return el.Box({ flexDirection: 'column', children: [el.Text({ bold: true, children: 'Orchestrators' }), ...listed, asked] })
@@ -866,9 +915,11 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
   }
   const role = roleOf(name)
   if (!name || (role !== 'orchestrator' && role !== 'agent')) return
+  const wait = role === 'orchestrator' ? parseWait(answer) : parseStatus(answer)
+  // Withdrawn before the wait is read: a fingerprint the withdrawal forgot stays forgotten.
+  if (role === 'orchestrator' && wait) await withdrawStale($, sessionId, roundEntryId(sessionId, wait))
   const before = await readWait($, sessionId)
   const relayed = before?.relayed ?? null
-  const wait = role === 'orchestrator' ? parseWait(answer) : parseStatus(answer)
   if (!wait && role === 'orchestrator') {
     if (before?.waiting) await writeWait($, sessionId, { ...clearedWait(before), name, pid })
     return
@@ -954,6 +1005,76 @@ async function withdrawEntry($: any, sessionId: string, name: string, held: { bl
     await writeAtomic($, path, JSON.stringify({ ...entry, status: 'withdrawn', answer }) + '\n')
   }
   if (matched === 0) await logLine($, `round: no open entry matched for ${name} since ${held.since ?? '?'}`)
+}
+
+// A choice pressed in the coordinator's pane: the entry, read again so a question settled
+// meanwhile is left as it is, becomes answered by the pane, written whole and renamed into
+// place, and the asking orchestrator is sent the operator's choice. Its fingerprint is
+// forgotten, so the same question asked again is entered again. A send not delivered, or one
+// that throws, keeps the entry answered, is one log line, and the pane says it on that
+// question until its sender is gone. A press on an entry whose answer is in flight does
+// nothing. The pane is drawn again: the next open question comes up.
+export async function answerFromPane($: any, pane: PaneMemory, asked: RoundEntry, choice: RoundChoice): Promise<void> {
+  if (pane.answering.has(asked.id)) return
+  pane.answering.add(asked.id)
+  try {
+    const path = roundPath(await stateDir($), asked.id)
+    const entry = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
+    if (!entry || entry.status !== 'open') return
+    const at = new Date().toISOString()
+    const text = `${choice.letter} : ${choice.text}`
+    await writeAtomic($, path, JSON.stringify({ ...entry, status: 'answered', answer: { text, by: 'pane', at } }) + '\n')
+    pane.other.delete(entry.id)
+    await forgetRelayed($, entry)
+    let reason: string | null = null
+    try {
+      const sent = await $.session.send({ to: entry.from, text: paneAnswerText(entry, text, at) })
+      if (!sent?.isDelivered) reason = sent?.reason ?? 'no answer'
+    } catch (err) {
+      reason = (err as Error).message
+    }
+    if (reason !== null) {
+      pane.undelivered.set(entry.id, { entry, reason })
+      await logLine($, `round: the pane's answer was not delivered to ${entry.from}: ${reason}`)
+    }
+  } catch (err) {
+    await logLine($, `round: ${(err as Error).message}`)
+  } finally {
+    pane.answering.delete(asked.id)
+    $.ui.invalidate('ui.render')
+  }
+}
+
+// A settled entry's fingerprint forgotten in its sender's wait file, so the same question asked
+// again is entered again: the file is re-read and written back with `relayed` null only when it
+// still holds that entry's own fingerprint (a later wait may have replaced it).
+async function forgetRelayed($: any, entry: RoundEntry): Promise<void> {
+  const now = await readWait($, entry.session)
+  if (now && now.relayed === entryFingerprint(entry)) await writeWait($, entry.session, { ...now, relayed: null })
+}
+
+// The message the asking orchestrator receives: a report of the operator's choice, never more.
+export function paneAnswerText(entry: RoundEntry, answer: string, at: string): string {
+  return `[module] The operator answered from the coordinator's pane at ${at} — ${answer} (question since ${entry.since}, blocks: ${entry.blocks})`
+}
+
+// An orchestrator's turn ended on a machine line other than the wait an open entry of its own
+// holds: that entry is no longer what it waits on, so it is withdrawn by the sender, leaves the
+// pane and its count, and its fingerprint is forgotten. A turn with no machine line says nothing
+// of its wait and withdraws nothing. `current` is the id of the entry this turn's wait has. Each
+// withdrawal is one log line; one that cannot be written is one too, and the relay goes on.
+async function withdrawStale($: any, sessionId: string, current: string): Promise<void> {
+  for (const { path, entry } of await readRound($)) {
+    if (entry.session !== sessionId || entry.status !== 'open' || entry.id === current) continue
+    try {
+      const answer = { text: '', by: 'sender' as const, at: new Date().toISOString() }
+      await writeAtomic($, path, JSON.stringify({ ...entry, status: 'withdrawn', answer }) + '\n')
+      await logLine($, `round: withdrawn by the sender: ${entry.id}`)
+      await forgetRelayed($, entry)
+    } catch (err) {
+      await logLine($, `round: ${(err as Error).message}`)
+    }
+  }
 }
 
 // Every entry of the round on this machine, each with the file it was read from. A file that
