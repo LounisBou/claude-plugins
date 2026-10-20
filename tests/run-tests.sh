@@ -81,7 +81,7 @@ echo "== repository policy =="
 # name deletes the whole line whatever it said, so this check would report a clean
 # repository without ever reading a single file.
 policy_hits() {
-  ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=.claude --exclude-dir=.superpowers --exclude-dir=plans --exclude-dir=types \
+  ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=__pycache__ --exclude-dir=.claude --exclude-dir=.superpowers --exclude-dir=plans --exclude-dir=types \
       --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh --exclude=tsconfig.json \
     | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|\.claude\.json|claude-code/|LounisBou/claude-statusbar|LounisBou/claude-plugins-marketplace|/tmp/claude-|CLAUDE_CODE_TOTAL_TOKENS_REMINDER|CLAUDE_CODE_SILENT_TURN_REMINDER|CLAUDE_CODE_AUTO_COMPACT_WINDOW|syncClaudeAiSkills' || true )
 }
@@ -97,20 +97,20 @@ rm -f "$PROBE"
 check "the policy guard can see a violation" "1" "$seen"
 
 # The tiers exist so no model family name has to appear here.
-hits=$(grep -rniIE '\b(opus|sonnet|haiku)\b' "$ROOT" --exclude-dir=.git --exclude-dir=.claude --exclude-dir=.superpowers --exclude-dir=plans --exclude-dir=types \
+hits=$(grep -rniIE '\b(opus|sonnet|haiku)\b' "$ROOT" --exclude-dir=.git --exclude-dir=__pycache__ --exclude-dir=.claude --exclude-dir=.superpowers --exclude-dir=plans --exclude-dir=types \
   --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh --exclude=tsconfig.json || true)
 check "no model family name in the plugin" "" "$hits"
 
 # Nothing tied to one machine or one project enters the generic plugin: no absolute home
 # path, no real session reference (the documented example is the six-hex placeholder
 # a1b2c3), no path into a downstream project's tree.
-hits=$(grep -rnIE '/Users/|/home/[a-z]|\[[0-9a-f]{6}\]|docs/reference/|BUGS\.md|IMPLEMENTATION\.md' "$ROOT" --exclude-dir=.git --exclude=.git --exclude-dir=.claude --exclude-dir=.superpowers --exclude=plan.md --exclude=run-tests.sh --exclude-dir=types --exclude=tsconfig.json \
+hits=$(grep -rnIE '/Users/|/home/[a-z]|\[[0-9a-f]{6}\]|docs/reference/|BUGS\.md|IMPLEMENTATION\.md' "$ROOT" --exclude-dir=.git --exclude-dir=__pycache__ --exclude=.git --exclude-dir=.claude --exclude-dir=.superpowers --exclude=plan.md --exclude=run-tests.sh --exclude-dir=types --exclude=tsconfig.json \
   | grep -vE '\[a1b2c3\]' || true)
 check "nothing project- or machine-specific in the plugin" "" "$hits"
 
 # The namespace is the plugin's name, `orchestrator`: commands and skills are reached as
 # /orchestrator:* and orchestrator:*. The former prefix must not come back in prose.
-hits=$(grep -rnI 'claude-orchestrator:' "$ROOT" --exclude-dir=.git --exclude-dir=.superpowers --exclude=run-tests.sh || true)
+hits=$(grep -rnI 'claude-orchestrator:' "$ROOT" --exclude-dir=.git --exclude-dir=__pycache__ --exclude-dir=.superpowers --exclude=run-tests.sh || true)
 check "the old command namespace is gone" "" "$hits"
 
 # The operator manages the usage budget (ruling of 2026-10-10): no orchestrator or agent
@@ -123,7 +123,7 @@ check "the old command namespace is gone" "" "$hits"
 BUDGET_TERMS='five_hour|seven_day|budget|rate_limits|quota|5-hour|7-day|five-hour|seven-day|usage limit'
 BUDGET_ACTIONS='stop|throttl|drop|downgrad|lower|pause|slow|propos|fall back|cheaper tier|lighter tier|switch|reduc|cheapest|ration|defer|cut back'
 budget_hits() { # <root>
-  ( cd "$1" && grep -rnIiE "$BUDGET_TERMS" skills commands templates hooks README.md docs/design.md 2>/dev/null \
+  ( cd "$1" && grep -rnIiE --exclude-dir=__pycache__ "$BUDGET_TERMS" skills commands templates hooks README.md docs/design.md 2>/dev/null \
     | sed -E 's/--max-budget-usd|--budget-usd|budget_usd|quota_before|quota_after|ORCHESTRATOR_QUOTA_FILE//g' \
     | grep -iE "$BUDGET_TERMS" | grep -iE "$BUDGET_ACTIONS" || true )
 }
@@ -3098,8 +3098,22 @@ check "the launcher's skill and command reference document move --leftmost" "yes
   "$(spells "$ITERMSKILL" '--leftmost')|$(spells "$ITERMCMDS" '--leftmost')"
 # One exception, the operator's order: the rulebook and the decision round route a question for
 # him through a running coordinator. They name it in that one paragraph and nowhere else.
+coordinator_named_in() { # <root>
+  ( cd "$1" && grep -rln -i --exclude-dir=__pycache__ 'coordinat' skills/orchestrator skills/iterm-agents/SKILL.md skills/iterm-agents/references templates/agent-*.md templates/orchestrator-succession-brief.md commands/succeed.md commands/audit.md | grep -v '^skills/orchestrator/SKILL.md$' )
+}
 check "no orchestrator, launcher or brief-template text names the coordinator" "" \
-  "$(cd "$ROOT" && grep -rln -i 'coordinat' skills/orchestrator skills/iterm-agents/SKILL.md skills/iterm-agents/references templates/agent-*.md templates/orchestrator-succession-brief.md commands/succeed.md commands/audit.md | grep -v '^skills/orchestrator/SKILL.md$')"
+  "$(coordinator_named_in "$ROOT")"
+# A byte-compiled script left under __pycache__ by an earlier run is not text of the plugin:
+# the verdict is the same whether or not one lies in the tree.
+PYC="$WORK/pycache-trap"
+mkdir -p "$PYC/skills" "$PYC/templates" "$PYC/commands"
+cp -R "$ROOT/skills/orchestrator" "$ROOT/skills/iterm-agents" "$PYC/skills/"
+cp "$ROOT"/templates/agent-*.md "$ROOT/templates/orchestrator-succession-brief.md" "$PYC/templates/"
+cp "$ROOT/commands/succeed.md" "$ROOT/commands/audit.md" "$PYC/commands/"
+mkdir -p "$PYC/skills/orchestrator/scripts/__pycache__"
+printf 'x\0coordinat\0' > "$PYC/skills/orchestrator/scripts/__pycache__/draft_guard.cpython-311.pyc"
+check "a stray __pycache__ does not change the coordinator check" "" "$(coordinator_named_in "$PYC")"
+rm -rf "$PYC"
 coord_outside_routing() {
   awk 'BEGIN { RS = "" } { p = $0; gsub(/(^|\n)allowed-tools:[^\n]*/, "", p) }
     tolower(p) ~ /coordinat/ && p !~ /^\*\*While a coordinator runs/ { print FILENAME }' "$@"
