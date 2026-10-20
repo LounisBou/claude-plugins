@@ -136,7 +136,7 @@ When you hand over to a successor: once it runs, send each agent ONE message giv
 
 They hold at every step of the loop, whatever a reference adds.
 
-**The gate is 300,000 tokens (30 %) on a window of 1,000,000 tokens or more, the common case, and 80 % of a smaller window.** It holds every session alike, rotation and succession; the module enforces it and reports an agent past it (« Where the rest lives »); every other statement points here. A session launched with `--gate-tokens` has its own.
+**The gate is 300,000 tokens (30 %) on a window of 1,000,000 tokens or more, the common case, and 80 % of a smaller window.** The module enforces it and reports an agent past it (« Where the rest lives »); others point here. A launched agent compacts at 300,000 tokens, and its launch sets its gate at 240,000; `--gate-tokens` sets a session's own.
 
 The fill is the module's measurement, never an estimate — `/orchestrator:status` answers it. Two gates on it:
 

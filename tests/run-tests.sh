@@ -83,7 +83,7 @@ echo "== repository policy =="
 policy_hits() {
   ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=.claude --exclude-dir=.superpowers --exclude-dir=plans --exclude-dir=types \
       --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh --exclude=tsconfig.json \
-    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|\.claude\.json|claude-code/|LounisBou/claude-statusbar|LounisBou/claude-plugins-marketplace|/tmp/claude-|CLAUDE_CODE_TOTAL_TOKENS_REMINDER|CLAUDE_CODE_SILENT_TURN_REMINDER|syncClaudeAiSkills' || true )
+    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|\.claude\.json|claude-code/|LounisBou/claude-statusbar|LounisBou/claude-plugins-marketplace|/tmp/claude-|CLAUDE_CODE_TOTAL_TOKENS_REMINDER|CLAUDE_CODE_SILENT_TURN_REMINDER|CLAUDE_CODE_AUTO_COMPACT_WINDOW|syncClaudeAiSkills' || true )
 }
 check "no vendor or product name in prose" "" "$(policy_hits)"
 
@@ -2485,7 +2485,7 @@ check "--account-connectors still hands over the chosen servers' file, unchanged
 check "--account-connectors pre-answers the project's own server dialog" "1" \
   "$(mcpd --account-connectors | sed -n 's/^launch=//p' | grep -Fc -- '"enableAllProjectMcpServers":true')"
 check "--account-connectors merges into the one --settings JSON already on the launch" "1" \
-  "$(mcpd --account-connectors | sed -n 's/^launch=//p' | grep -Fc -- "--settings '{\"remoteControlAtStartup\":false,\"enableAllProjectMcpServers\":true,\"syncClaudeAiSkills\":false,\"awaySummaryEnabled\":false,\"env\":{\"CLAUDE_CODE_TOTAL_TOKENS_REMINDER\":\"off\",\"CLAUDE_CODE_SILENT_TURN_REMINDER\":\"0\"}}'")"
+  "$(mcpd --account-connectors | sed -n 's/^launch=//p' | grep -Fc -- "--settings '{\"remoteControlAtStartup\":false,\"enableAllProjectMcpServers\":true,\"syncClaudeAiSkills\":false,\"awaySummaryEnabled\":false,\"env\":{\"CLAUDE_CODE_TOTAL_TOKENS_REMINDER\":\"off\",\"CLAUDE_CODE_SILENT_TURN_REMINDER\":\"0\",\"CLAUDE_CODE_AUTO_COMPACT_WINDOW\":\"300000\"}}'")"
 check "the dry run says the option is on, and off by default" "1|1" \
   "$(mcpd --account-connectors | grep -c '^account_connectors=yes$')|$(mcpd | grep -c '^account_connectors=no$')"
 # No catalogue at all: still drops strict and still pre-answers, and still writes no file —
@@ -2523,7 +2523,7 @@ check "a plain spawn never carries remote control" "0" \
 # up with the setting that turns that default off; only a successor carries the flag
 # instead, never both.
 check "a plain spawn carries the setting off, and no --remote-control" "1|0" \
-  "$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -Fc -- "--settings '{\"remoteControlAtStartup\":false,\"syncClaudeAiSkills\":false,\"awaySummaryEnabled\":false,\"env\":{\"CLAUDE_CODE_TOTAL_TOKENS_REMINDER\":\"off\",\"CLAUDE_CODE_SILENT_TURN_REMINDER\":\"0\"}}'")|$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- '--remote-control')"
+  "$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -Fc -- "--settings '{\"remoteControlAtStartup\":false,\"syncClaudeAiSkills\":false,\"awaySummaryEnabled\":false,\"env\":{\"CLAUDE_CODE_TOTAL_TOKENS_REMINDER\":\"off\",\"CLAUDE_CODE_SILENT_TURN_REMINDER\":\"0\",\"CLAUDE_CODE_AUTO_COMPACT_WINDOW\":\"300000\"}}'")|$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- '--remote-control')"
 check "a successor carries the flag, and not the setting" "1|0" \
   "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- "--remote-control 'Orch : f'")|$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- 'remoteControlAtStartup')"
 check "--successor --no-remote-control carries the setting" "1" \
@@ -3457,11 +3457,16 @@ check "a relative brief path resolves absolute in the prompt" "1" \
 
 # `--gate-tokens <N>` sets ONE session's context gate at launch: the launch exports the
 # variable beside ORCHESTRATOR_SPAWNED, so the hooks and the status line the host starts
-# inherit it. Without the option nothing is exported and the 300,000 default holds.
+# inherit it. Without the option an agent's launch exports 240,000; any other role exports
+# nothing and the 300,000 default holds.
 gspawn() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : gate" "$@" 2>&1; }
 out=$(gspawn --prompt p --gate-tokens 200000)
 check "--gate-tokens exports the gate in the launch" "1" "$(printf '%s\n' "$out" | grep -c '^launch=.*export ORCHESTRATOR_CONTEXT_GATE_TOKENS=200000 && ')"
-check "without --gate-tokens nothing is exported" "0" "$(gspawn --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE_TOKENS')"
+check "without --gate-tokens an agent's launch exports the 240000 gate" "1" "$(gspawn --prompt p | grep -c '^launch=.*export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && ')"
+check "--gate-tokens on an agent wins over the 240000 default" "1|0" \
+  "$(gspawn --prompt p --gate-tokens 150000 | grep -c '^launch=.*export ORCHESTRATOR_CONTEXT_GATE_TOKENS=150000 && ')|$(gspawn --prompt p --gate-tokens 150000 | grep -c 'GATE_TOKENS=240000')"
+check "an orchestrator's, an auditor's and a coordinator's launch export no gate" "0|0|0" \
+  "$(gspawn --title 'Orch : gate' --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE_TOKENS')|$(gspawn --title 'Audit : gate' --auditor --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE_TOKENS')|$(gspawn --title 'Coord : gate' --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE_TOKENS')"
 for bad in 0 -5 abc 1.5 ""; do
   badout=$(gspawn --prompt p --gate-tokens "$bad"); badcode=$?
   check "--gate-tokens '$bad' is refused, nothing launched" "1|0|1" \
@@ -7708,18 +7713,22 @@ check "rotate reads a padded name without its padding" "SendFeedback Workflow Sc
 
 # The host cuts, in the one --settings the launch carries. A cut a probe did not prove is not
 # listed here (§65).
-check "an agent's settings cut the synced skills, the recap, the countdown and the silent-turn reminder" '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' \
+check "an agent's settings cut the synced skills, the recap, the countdown and the silent-turn reminder" '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0","CLAUDE_CODE_AUTO_COMPACT_WINDOW":"300000"}}' \
   "$(leanl --title 'Agent : x' | leansettings)"
+check "an agent's settings carry the 300000 compaction window, and no switch for the 1M window" "1|0" \
+  "$(leanl --title 'Agent : x' | leansettings | grep -Fc '"CLAUDE_CODE_AUTO_COMPACT_WINDOW":"300000"')|$(leanl --title 'Agent : x' | grep -c 'DISABLE_1M_CONTEXT')"
+check "an orchestrator, a successor, an auditor and both coordinator launches carry no compaction window" "0|0|0|0|0" \
+  "$(leanl --title 'Orch : x' | grep -c 'AUTO_COMPACT_WINDOW')|$(succ "$PSTAB" --successor | grep -c 'AUTO_COMPACT_WINDOW')|$(audl --auditor --title 'Audit : tm' | grep -c 'AUTO_COMPACT_WINDOW')|$(crdl --coordinator-successor --title 'Coord : ops' | grep -c 'AUTO_COMPACT_WINDOW')|$(leanl --title 'Coord : ops' | grep -c 'AUTO_COMPACT_WINDOW')"
 check "an orchestrator's settings cut the synced skills and the countdown only" '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' \
   "$(leanl --title 'Orch : x' | leansettings)"
 check "a successor, an auditor and the coordinator's successor carry the two cuts and no setting for remote control" '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}|{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}|{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' \
   "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | leansettings)|$(audl --auditor --title 'Audit : tm' | leansettings)|$(crdl --coordinator-successor --title 'Coord : ops' | leansettings)"
 check "the settings key for the host's own artifact switch is never passed, whatever the role" "0|0|0" \
   "$(leanl --title 'Agent : x' --keep-tool Artifact | grep -c enableArtifact)|$(leanl --title 'Orch : x' | grep -c enableArtifact)|$(audl --auditor --title 'Audit : tm' | grep -c enableArtifact)"
-check "--account-connectors still merges into the same JSON, before the cuts" '{"remoteControlAtStartup":false,"enableAllProjectMcpServers":true,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' \
+check "--account-connectors still merges into the same JSON, before the cuts" '{"remoteControlAtStartup":false,"enableAllProjectMcpServers":true,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0","CLAUDE_CODE_AUTO_COMPACT_WINDOW":"300000"}}' \
   "$(mcpd --account-connectors | sed -n 's/^launch=//p' | leansettings)"
 
-check "--keep-synced-skills leaves the synced skills in, for any role, and the dry run says which" '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}|{"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}|kept|removed' \
+check "--keep-synced-skills leaves the synced skills in, for any role, and the dry run says which" '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0","CLAUDE_CODE_AUTO_COMPACT_WINDOW":"300000"}}|{"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}|kept|removed' \
   "$(leanl --title 'Agent : x' --keep-synced-skills | leansettings)|$(audl --auditor --title 'Audit : tm' --keep-synced-skills | leansettings)|$(lean --title 'Agent : x' --keep-synced-skills | sed -n 's/^synced_skills=//p')|$(lean --title 'Agent : x' | sed -n 's/^synced_skills=//p')"
 # The launch line first: a rotation that refused the option prints none, and a count of
 # zero on an empty output would pass.

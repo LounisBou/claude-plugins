@@ -14,6 +14,13 @@ test('the gate trips at 300,000 tokens on a window of 1,000,000 or more', () => 
   expect(tripGate(31, 310000, 1200000).tripped).toBe(true)
 })
 
+test('a 300,000 window, an agent compacting there, trips at 240,000 and a 1,000,000 window still at 300,000', () => {
+  expect(tripGate(79, 239999, 300000).tripped).toBe(false)
+  expect(tripGate(80, 240000, 300000).tripped).toBe(true)
+  expect(tripGate(29, 299999, 1000000).tripped).toBe(false)
+  expect(tripGate(30, 300000, 1000000).tripped).toBe(true)
+})
+
 test('below the large window only the percent rules', () => {
   expect(tripGate(50, 300000, 400000).tripped).toBe(false)
 })
