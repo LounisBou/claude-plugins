@@ -4911,6 +4911,21 @@ check "a pid the host registered is the host, whatever its argv" "host" "$(hostp
 check "a shell on the tty is not the host" "none" "$(hostp /opt/homebrew/bin/claude "$WORK/ps-shell.txt")"
 check "verify reads a bare host row under an absolute HOST_CLI" "0" \
   "$(ORCHESTRATOR_HOST_CLI=/opt/homebrew/bin/claude ORCHESTRATOR_PS_TABLE="$WORK/ps-bare.txt" bash "$AGENT" verify --tty /dev/ttys901 >/dev/null 2>&1; echo $?)"
+# --pid narrows verify to one process, and counts EVERY host CLI on the tty: a session that
+# runs a nested host CLI shows two, and the recorded one is not always the first.
+printf '/dev/ttys901 5100 a-host --name outer\n/dev/ttys901 5101 a-host --nested\n' > "$WORK/ps-two.txt"
+vpid() { ORCHESTRATOR_HOST_CLI=a-host ORCHESTRATOR_PS_TABLE="$WORK/ps-two.txt" CLAUDE_CONFIG_DIR="$WORK/hostcfg" \
+  bash "$AGENT" verify --tty /dev/ttys901 "$@"; }
+vpid_status() { vpid "$@" >/dev/null 2>&1; echo "exit $?"; }
+check "verify --pid answers for the first host CLI on the tty" "a-host running on /dev/ttys901 (pid 5100)|exit 0" \
+  "$(vpid --pid 5100 2>&1)|$(vpid_status --pid 5100)"
+check "verify --pid answers for a host CLI that is not the first" "a-host running on /dev/ttys901 (pid 5101)|exit 0" \
+  "$(vpid --pid 5101 2>&1)|$(vpid_status --pid 5101)"
+check "verify --pid of a pid the tty does not run is not running, and silent" "|exit 1" \
+  "$(vpid --pid 9999 2>&1)|$(vpid_status --pid 9999)"
+check "verify without --pid names the first host CLI" "a-host running on /dev/ttys901 (pid 5100)" "$(vpid 2>&1)"
+check "a --pid that is no number is a usage error, not « not running »" "exit 2|1" \
+  "$(vpid_status --pid abc)|$(vpid --pid abc 2>&1 >/dev/null | grep -c 'invalid int value')"
 check "the close note claims no more than the table showed" "1|0" \
   "$(ipy "print(ia.close_note('/dev/ttys901', None))" | grep -c 'no process matching claude was found on /dev/ttys901')|$(ipy "print(ia.close_note('/dev/ttys901', None))" | grep -c 'was running')"
 
@@ -5784,6 +5799,64 @@ live
 check "lookup of a dead coordinator prints nothing" "|exit 0" "$(coord lookup 2>/dev/null)|$(coord_status lookup)"
 check "and names the stale record on the error stream" "coordinator: stale record: Coord : six [fff666] on /dev/ttys106" \
   "$(coord lookup 2>&1 >/dev/null)"
+coord clear
+
+# A tty is a claim about a moment: once the recorded session is gone, another host CLI can
+# take the tty. The record names the process, and only that process keeps it alive. This
+# stub reads a file of `<tty> <pid>` lines: with --tty alone it prints the pid there, with
+# --pid it answers only for that pid.
+CPIDS="$WORK/coord-pids"
+cat > "$WORK/coord-verify-pid" <<'EOF'
+#!/bin/bash
+tty=$2; pid=""
+[ "$3" = --pid ] && pid=$4
+line=$(awk -v t="$tty" '$1 == t { print $2; exit }' "$COORD_PIDS")
+[ -n "$line" ] || exit 1
+[ -z "$pid" ] || [ "$pid" = "$line" ] || exit 1
+echo "running on $tty (pid $line)"
+EOF
+chmod +x "$WORK/coord-verify-pid"
+cpid() { ORCHESTRATOR_STATE_DIR="$CS" COORD_PIDS="$CPIDS" COORDINATOR_VERIFY="$WORK/coord-verify-pid" bash "$COORD" "$@"; }
+cpid_status() { cpid "$@" >/dev/null 2>&1; echo "exit $?"; }
+printf '/dev/ttys120 4001\n' > "$CPIDS"
+cpid register --name "Coord : pid [p00001]" --tty /dev/ttys120 >/dev/null 2>&1
+check "register records the pid of the host CLI on the tty" "4001" "$(jq -r .pid "$CREC")"
+check "the same pid still running keeps the record alive" "Coord : pid [p00001]|exit 1" \
+  "$(cpid lookup 2>/dev/null)|$(cpid_status register --name "Coord : two [p00002]" --tty /dev/ttys121)"
+printf '/dev/ttys120 4002\n' > "$CPIDS"
+check "another pid on the recorded tty reads as a stale record" \
+  "|coordinator: stale record: Coord : pid [p00001] on /dev/ttys120" \
+  "$(cpid lookup 2>/dev/null)|$(cpid lookup 2>&1 >/dev/null)"
+out=$(cpid register --name "Coord : next [p00003]" --tty /dev/ttys121 2>"$WORK/coord.err")
+check "register replaces a record whose tty was reused" \
+  "registered Coord : next [p00003]|coordinator: replaced a stale record: Coord : pid [p00001]" \
+  "$out|$(cat "$WORK/coord.err")"
+# A record written before the pid was kept is read by its tty alone.
+jq -n '{name:"Coord : old [p00004]", tty:"/dev/ttys122", started:"2026-01-01T00:00:00Z"}' > "$CREC"
+printf '/dev/ttys122 4003\n' > "$CPIDS"
+check "a record with no pid keeps the tty-only reading" "Coord : old [p00004]" "$(cpid lookup 2>/dev/null)"
+printf '' > "$CPIDS"
+check "and is stale once nothing runs on its tty" "|coordinator: stale record: Coord : old [p00004] on /dev/ttys122" \
+  "$(cpid lookup 2>/dev/null)|$(cpid lookup 2>&1 >/dev/null)"
+coord clear
+# A tty that runs a host CLI but gives no pid is recorded without one, and the register says so.
+live /dev/ttys123
+out=$(coord register --name "Coord : nopid [p00005]" --tty /dev/ttys123 2>"$WORK/coord.err")
+check "a register that finds no pid on the tty records none and says so in one line" \
+  "registered Coord : nopid [p00005]|null|coordinator: no process id found on /dev/ttys123: the record is written without one" \
+  "$out|$(jq -r '.pid' "$CREC")|$(cat "$WORK/coord.err")"
+coord clear
+# Against the real launcher: the « (pid N) » that register parses is the text verify prints.
+creal() { ORCHESTRATOR_STATE_DIR="$CS" ORCHESTRATOR_HOST_CLI=a-host ORCHESTRATOR_PS_TABLE="$WORK/ps-two.txt" \
+  CLAUDE_CONFIG_DIR="$WORK/hostcfg" bash "$COORD" "$@"; }
+creal register --name "Coord : real [p00006]" --tty /dev/ttys901 >/dev/null 2>&1
+check "register records the pid the real launcher's verify prints" "5100" "$(jq -r .pid "$CREC")"
+check "and the record is alive for that pid" "Coord : real [p00006]" "$(creal lookup 2>/dev/null)"
+jq '.pid = 5101' "$CREC" > "$WORK/coord-rec2" && cp "$WORK/coord-rec2" "$CREC"
+check "a recorded pid that is the tty's second host CLI is alive" "Coord : real [p00006]" "$(creal lookup 2>/dev/null)"
+jq '.pid = 9999' "$CREC" > "$WORK/coord-rec2" && cp "$WORK/coord-rec2" "$CREC"
+check "a recorded pid the real launcher does not find on the tty is stale" \
+  "|coordinator: stale record: Coord : real [p00006] on /dev/ttys901" "$(creal lookup 2>/dev/null)|$(creal lookup 2>&1 >/dev/null)"
 coord clear
 
 # Liveness: an error of the check is no « dead ». Its own « not running », exit 1 and

@@ -93,7 +93,7 @@
 # remote rows (`store/remote` under the config dir: one JSON row per file, written by the hooks
 # module as it receives them from orchestrators on other machines; read here, never written).
 #
-# State: <state>/coordinator.json {"name","tty","started"}; <state> is ORCHESTRATOR_STATE_DIR,
+# State: <state>/coordinator.json {"name","tty","started","pid"}; <state> is ORCHESTRATOR_STATE_DIR,
 # else the plugin's directory under CLAUDE_CONFIG_DIR, else under ~/.claude, the launcher's
 # own resolution. A registration goes through the lock directory <state>/coordinator.lock,
 # waited for five seconds at most, then refused with the lock's path and its holder's pid; a
@@ -105,10 +105,14 @@
 # coordinator's own record, so it outlives a coordinator's succession and its end alike. A
 # sleeping orchestrator is the operator's to wake or drop: nothing here acts on its own.
 #
-# Liveness: a session is alive when `iterm-agent.sh verify --tty <tty>` finds the host CLI
-# on its tty; COORDINATOR_VERIFY names another command to run in its place, called as
-# `<command> --tty <tty>` and read the same way, exit 0 alive; exit 1 with nothing on stderr
-# is its « not running », and any other answer is an error, never « dead ».
+# Liveness: a session is alive when `iterm-agent.sh verify --tty <tty> --pid <pid>` finds that
+# process as the host CLI on its tty, so another host CLI on a reused tty reads as dead. The
+# record's pid is the host CLI's on the tty at registration, read from the « (pid N) » of
+# `verify --tty <tty>`; a record with no pid, written before it was kept, is read by its tty
+# alone. COORDINATOR_VERIFY names another command to run in its place, called as
+# `<command> --tty <tty>` (printing « ... (pid N) » when it runs) or `<command> --tty <tty>
+# --pid <pid>` (exit 0 only when that pid runs there), read the same way: exit 0 alive; exit 1
+# with nothing on stderr is its « not running », and any other answer is an error, never « dead ».
 #
 # Exit codes: 0; 1 on a refusal or a usage error, and from `facts` when it prints a
 # collision; 2 from `facts` and `owners` when a source could not be read, so an answer that
@@ -134,29 +138,52 @@ RECORD="$STATE/coordinator.json"
 REMOTE_STALE_AFTER_S=86400
 SLEEPING="$STATE/sleeping.json"
 LOCK="$STATE/coordinator.lock"
+T_ERR=$(mktemp "${TMPDIR:-/tmp}/coordinator-err-XXXXXX") || { echo "coordinator: cannot make a temporary file" >&2; exit 1; }
+VERIFIED=""
 LAUNCHER="$here/../../iterm-agents/scripts/iterm-agent.sh"
 LAUNCHER_PY="$here/../../iterm-agents/scripts/iterm_agent.py"
 WORKSPACE="$here/../../orchestrator/scripts/workspace.sh"
 
 now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
-# alive <tty>: the host CLI runs on that tty, read from the process table by the launcher.
-# Only the check's own « not running », exit 1 and silent, reads as dead; a check that
-# cannot run or fails dies, since a live coordinator read as dead has its record taken.
-alive() {
-    local err rc
+# verify <tty> [<pid>]: asks the launcher (or COORDINATOR_VERIFY) whether the host CLI runs on
+# that tty, and with a pid whether that very process is it; its stdout goes to $VERIFIED.
+# Only the check's own « not running », exit 1 and silent, returns 1; a check that cannot run
+# or fails dies, since a live coordinator read as dead has its record taken.
+verify() {
+    local err rc out args=(--tty "$1")
+    [ -z "${2:-}" ] || args+=(--pid "$2")
     if [ -n "${COORDINATOR_VERIFY:-}" ]; then
         [ -f "$COORDINATOR_VERIFY" ] && [ -x "$COORDINATOR_VERIFY" ] \
             || die "the liveness command $COORDINATOR_VERIFY is missing or not executable"
-        err=$("$COORDINATOR_VERIFY" --tty "$1" 2>&1 >/dev/null </dev/null)
+        out=$("$COORDINATOR_VERIFY" "${args[@]}" 2>"$T_ERR" </dev/null)
     else
         [ -f "$LAUNCHER" ] || die "the launcher $LAUNCHER is missing"
-        err=$(bash "$LAUNCHER" verify --tty "$1" 2>&1 >/dev/null </dev/null)
+        out=$(bash "$LAUNCHER" verify "${args[@]}" 2>"$T_ERR" </dev/null)
     fi
     rc=$?
+    err=$(cat "$T_ERR")
+    VERIFIED="$out"
     [ "$rc" = 0 ] && return 0
     [ "$rc" = 1 ] && [ -z "$err" ] && return 1
     die "the liveness check failed on $1: ${err:-exit $rc}"
+}
+
+# alive <tty> [<pid>]: the host CLI runs on that tty, and when the record named a process,
+# that same process does: another host CLI on a reused tty is not the recorded session. A
+# record with no pid, written before the pid was kept, is read by its tty alone.
+alive() { verify "$1" "${2:-}"; }
+
+# tty_pid <tty>: the pid of the host CLI on that tty, read from the check's « (pid N) »;
+# empty when nothing runs there or the check names no pid. A tty that runs a host CLI whose
+# check names no pid is said on stderr, in one line, since the record written from it is
+# read by its tty alone.
+tty_pid() {
+    local pid
+    verify "$1" || return 0
+    pid=$(printf '%s' "$VERIFIED" | sed -n 's/.*(pid \([0-9][0-9]*\)).*/\1/p' | head -1)
+    [ -n "$pid" ] || say "no process id found on $1: the record is written without one"
+    printf '%s' "$pid"
 }
 
 # lock <operation>: take the lock directory or refuse after five seconds. mkdir is the one
@@ -166,7 +193,7 @@ alive() {
 # a lock left by a dead holder is named for removal, never broken here.
 held=0
 unlock() { [ "$held" = 1 ] && { rm -f "$LOCK/holder"; rmdir "$LOCK" 2>/dev/null; }; held=0; }
-trap unlock EXIT
+trap 'unlock; rm -f "$T_ERR"' EXIT
 trap 'exit 1' INT TERM HUP
 lock() {
     mkdir -p "$STATE" 2>/dev/null || die "cannot create the state directory $STATE"
@@ -213,16 +240,19 @@ cmd_register() {
     [ -n "$name" ] && [ -n "$tty" ] || die "register: usage: register --name \"<name [ref]>\" --tty /dev/ttysNNN"
     lock registration
     if [ -f "$RECORD" ]; then
-        local old_name old_tty
+        local old_name old_tty old_pid
         old_name=$(jq -r '.name // ""' "$RECORD" 2>/dev/null)
         old_tty=$(jq -r '.tty // ""' "$RECORD" 2>/dev/null)
-        if [ -n "$old_tty" ] && alive "$old_tty"; then
+        old_pid=$(jq -r '.pid // ""' "$RECORD" 2>/dev/null)
+        if [ -n "$old_tty" ] && alive "$old_tty" "$old_pid"; then
             die "refused: a live coordinator is recorded: $old_name on $old_tty"
         fi
         say "replaced a stale record: ${old_name:-an unreadable record}"
     fi
-    local record
-    record=$(jq -n --arg n "$name" --arg t "$tty" --arg s "$(now)" '{name:$n, tty:$t, started:$s}') \
+    local record pid
+    pid=$(tty_pid "$tty")
+    record=$(jq -n --arg n "$name" --arg t "$tty" --arg s "$(now)" --arg p "$pid" \
+        '{name:$n, tty:$t, started:$s} + (if $p == "" then {} else {pid:($p | tonumber)} end)') \
         || die "register: cannot build the record"
     write_atomic "$RECORD" "$record"
     echo "registered $name"
@@ -236,10 +266,11 @@ cmd_clear() {
 cmd_lookup() {
     [ $# -eq 0 ] || die "lookup: unexpected argument $1"
     [ -f "$RECORD" ] || return 0
-    local name tty
+    local name tty pid
     name=$(jq -r '.name // ""' "$RECORD" 2>/dev/null)
     tty=$(jq -r '.tty // ""' "$RECORD" 2>/dev/null)
-    if [ -n "$name" ] && [ -n "$tty" ] && alive "$tty"; then
+    pid=$(jq -r '.pid // ""' "$RECORD" 2>/dev/null)
+    if [ -n "$name" ] && [ -n "$tty" ] && alive "$tty" "$pid"; then
         echo "$name"
     else
         say "stale record: ${name:-an unreadable record} on ${tty:-no tty}"
@@ -425,7 +456,7 @@ brief_orchestrator() {
 # pull requests, for the repositories a session works in.
 read_facts() {
     T=$(mktemp -d "${TMPDIR:-/tmp}/coordinator-XXXXXX") || die "cannot make a temporary directory"
-    trap 'unlock; rm -rf "$T"' EXIT
+    trap 'unlock; rm -rf "$T"; rm -f "$T_ERR"' EXIT
     : > "$T/unread"; : > "$T/sessions"; : > "$T/places"; : > "$T/heavy"; : > "$T/prs"; : > "$T/read_repos"
     # With no host name no process is a session, and an empty list reads as « no collision ».
     local hostname

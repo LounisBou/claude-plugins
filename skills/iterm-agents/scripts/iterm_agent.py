@@ -684,14 +684,18 @@ def is_host_process(pid, command, names=None):
     return os.path.basename(words[0]) in (names if names is not None else host_cli_names())
 
 
-def host_cli_on(tty):
-    """What the host CLI on a tty is — its pid, or its command line where the suite's table
-    carries no pid — or None when it is not there. Truthy means « still running »."""
+def host_clis_on(tty):
+    """Every host CLI on a tty, in table order: each one's pid, or its command line where the
+    suite's table carries no pid. A session that runs a nested host CLI shows two."""
     names = host_cli_names()
-    for pid, command in ps_rows(tty):
-        if is_host_process(pid, command, names):
-            return pid or command
-    return None
+    return [pid or command for pid, command in ps_rows(tty) if is_host_process(pid, command, names)]
+
+
+def host_cli_on(tty):
+    """What the first host CLI on a tty is — its pid, or its command line where the suite's
+    table carries no pid — or None when it is not there. Truthy means « still running »."""
+    every = host_clis_on(tty)
+    return every[0] if every else None
 
 
 def wait_gone(tty, timeout=None):
@@ -2502,10 +2506,17 @@ def cmd_screen(argv):
 def cmd_verify(argv):
     p = argparse.ArgumentParser(prog="verify", add_help=False)
     p.add_argument("--tty", dest="tty")
+    p.add_argument("--pid", dest="pid", type=int)
     args, _ = p.parse_known_args(argv)
     if not args.tty:
         die("verify: --tty is required")
-    pid = cli_pid_on_tty(args.tty)
+    every = host_clis_on(args.tty)
+    # With --pid, only that process counts, whichever host CLI of the tty it is: another one
+    # on a reused tty is « not running ».
+    if args.pid is None:
+        pid = every[0] if every else None
+    else:
+        pid = str(args.pid) if str(args.pid) in every else None
     if not pid:
         sys.exit(1)
     print("%s running on %s (pid %s)" % (HOST_CLI, args.tty, pid))

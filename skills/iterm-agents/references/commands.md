@@ -135,8 +135,10 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --i
     #   comes up under remote control under its name. Refuses --successor, --auditor, an
     #   anchor, --title-free, --tier, --inherit-model, --resident and --no-remote-control.
 
-$SCRIPT verify --tty /dev/ttysNNN
-    # succeeds with the pid when the host CLI runs on that tty; exit 1 otherwise
+$SCRIPT verify --tty /dev/ttysNNN [--pid <pid>]
+    # succeeds with the pid when the host CLI runs on that tty; exit 1 otherwise. With --pid
+    # (an integer; anything else is a usage error) it succeeds only when that very process
+    # is one of the host CLIs on the tty, and exit 1 means no host CLI there or only others.
 
 $SCRIPT screen --tty /dev/ttysNNN [--lines 40]
     # the last N lines, trailing blanks dropped: a tall terminal is blank at the top and

@@ -32,7 +32,7 @@
 #     `install.sh` run writes names
 #   iterm-agent.sh tools [--transcript <path>]
 #     what a session is given and what each item costs per call, from a transcript
-#   iterm-agent.sh verify --tty /dev/ttysNNN
+#   iterm-agent.sh verify --tty /dev/ttysNNN [--pid <pid>]
 #   iterm-agent.sh resolve-tier <deep|standard|light>
 #   iterm-agent.sh close --tty /dev/ttysNNN [--expect-title <substring>] [--keep-checkout]
 #   iterm-agent.sh move --tty /dev/ttysNNN (--left-of <tty> | --right-of <tty> | --right-of self | --leftmost)
