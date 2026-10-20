@@ -25,6 +25,10 @@
 # Check 12 refuses a succession brief, from the template or written by hand, that does not
 # have its reader close the predecessor's tab.
 #
+# Check 13 refuses a pull request title the brief imposes (`title \`...\``) of more than 60
+# characters. The operator's writing rule caps a pull request title at 60, and a brief that
+# imposes a longer one makes its implementer choose between the brief and the rule.
+#
 # What it CANNOT check: whether the scope is right, whether the contracts are the ones the
 # next phase consumes, whether the tier fits the work. Those stay the orchestrator's, and
 # a green lint is not an approved brief.
@@ -319,6 +323,20 @@ if grep -qi 'takeover confirmed' "$brief" 2>/dev/null && grep -qi 'your predeces
     grep -qE -- 'close --tty .*--expect-title' "$brief" 2>/dev/null \
         || say 1 "succession brief without the predecessor's close: the successor closes its predecessor's tab with the launcher's close --tty and --expect-title, on its \"handed over\" or after five minutes on a reading of its screen; instantiate the template, never write the brief by hand"
 fi
+
+# 13. A pull request title the brief imposes, written as title `...`, is held to the writing
+#     rule's 60 characters: the implementer would otherwise have to break the rule or the
+#     brief. Characters, not bytes, counted as check 11 does. A title that is still a
+#     placeholder is check 1's.
+title_limit=60
+while IFS=: read -r n text; do
+    [ -n "${n:-}" ] || continue
+    title=${text#title \`}; title=${title%\`}
+    [[ "$title" =~ ^\{\{[A-Za-z0-9_]+\}\}$ ]] && continue
+    len=$(printf '%s' "$title" | LC_ALL=C tr -d '\200-\277' | wc -c | tr -d ' ')
+    [ "$len" -le "$title_limit" ] \
+        || say "$n" "pull request title is $len characters, over the limit of $title_limit: shorten the title the brief imposes"
+done < <(grep -noE 'title `[^`]+`' "$brief" 2>/dev/null || true)
 
 if [ "$findings" = 0 ]; then
     echo "brief-lint: $brief: 0 findings"

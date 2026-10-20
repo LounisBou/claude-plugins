@@ -216,7 +216,7 @@ check "the delivering briefs no longer ask for context_tokens in the final repor
 # the context and the turn-end reports over. The ceiling moved twice: by the sentence on the
 # sender's reference, then by the successor-admission sentence (the operator's item 154, « A », 2026-10-19).
 check "the agent briefs stay within their trimmed sizes" "yes|yes|yes|yes" \
-  "$(for pair in phase:8584 comments:6280 review:8111 rotation:2833; do [ "$(wc -c < "$ROOT/templates/agent-${pair%%:*}-brief.md" | tr -d ' ')" -le "${pair##*:}" ] && echo yes || echo no; done | paste -sd'|' -)"
+  "$(for pair in phase:8608 comments:6280 review:8111 rotation:2833; do [ "$(wc -c < "$ROOT/templates/agent-${pair%%:*}-brief.md" | tr -d ' ')" -le "${pair##*:}" ] && echo yes || echo no; done | paste -sd'|' -)"
 check "the orchestrator succession brief still says how to find its session id and directory" "yes" \
   "$(spells "$ROOT/templates/orchestrator-succession-brief.md" '`printenv CLAUDE_CODE_SESSION_ID` prints the id, `printenv CLAUDE_CONFIG_DIR` the directory')"
 # review.md asks for each finding's proposed fix; the one-line finding keeps it as its last field.
@@ -1828,6 +1828,21 @@ printf 'End the report with `norms-check: tool <head>`.\nThe phase brief opens w
 check_status "a review brief quoting the implementer line gets no implementer finding" 0 bash "$LINT" "$B/review-quotes.md"
 printf '# memo\nThe brief said "You are the implementer for this phase." inline, and You are the REVIEW agent too.\n' > "$B/memo.md"
 check_status "a memo quoting role lines inline is no agent brief" 0 bash "$LINT" "$B/memo.md"
+
+# A pull request title the brief imposes is held to the operator's writing rule, 60
+# characters: a longer one makes the implementer choose between the brief and the rule.
+title_of() { printf 'x%.0s' $(seq 1 "$1"); }
+ok_brief "$B/title-61.md"; printf -- '- Draft PR, title `%s`, base `main`.\n' "$(title_of 61)" >> "$B/title-61.md"
+check_status "a 61-character imposed title is a finding" 1 bash "$LINT" "$B/title-61.md"
+check "it is one finding, naming the length and the limit" "1" "$(bash "$LINT" "$B/title-61.md" 2>&1 | grep -c 'title is 61 characters, over the limit of 60')"
+ok_brief "$B/title-60.md"; printf -- '- Draft PR, title `%s`, base `main`.\n' "$(title_of 60)" >> "$B/title-60.md"
+check_status "a 60-character imposed title is not a finding" 0 bash "$LINT" "$B/title-60.md"
+ok_brief "$B/title-none.md"; printf -- '- Draft PR, base `main`.\n' >> "$B/title-none.md"
+check "a brief with no imposed title raises no title finding" "0" "$(bash "$LINT" "$B/title-none.md" 2>&1 | grep -c 'pull request title')"
+ok_brief "$B/title-placeholder.md"; printf -- '- Draft PR, title `{{PR_TITLE}}`, base `main`.\n' >> "$B/title-placeholder.md"
+check "an unfilled title placeholder is check 1's, not a title finding" "0" "$(bash "$LINT" "$B/title-placeholder.md" 2>&1 | grep -c 'pull request title')"
+
+check "the phase brief template says the imposed title is at most 60 characters" "1" "$(grep -c 'title `{{PR_TITLE}}` (at most 60 characters)' "$ROOT/templates/agent-phase-brief.md")"
 
 # The templates name no gauge script any more — the module's measure file replaced it,
 # named in prose as a path under the configuration directory. What the lint must still say
