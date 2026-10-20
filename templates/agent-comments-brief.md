@@ -46,7 +46,7 @@ You are the COMMENTS agent for this round. You assess every open review thread w
   Where something must be said that the code cannot say, propose the text and stop: publishing it needs the
   OPERATOR's approval, which the orchestrator cannot give on their behalf.
 - Resolve a thread only when the orchestrator's answer says so.
-- **Never push.** Commits stay local until the orchestrator has read the working tree and says « push ». Then a plain push of `{{BRANCH}}`.
+- **Never push.** Commits stay local until the orchestrator has read the working tree and says « push ». A push runs as one bare command, `git push -u origin {{BRANCH}}`, never chained to another command (`&&`, `;`, `cd … &&`): a chained push falls outside the permission rules and is refused.
 - Every command runs synchronously in the tool call that waits for it; long runs are wrapped in a timeout and piped to `tail` in the same call. Never end a turn « waiting for » a run.
 
 ## 5. Forbidden

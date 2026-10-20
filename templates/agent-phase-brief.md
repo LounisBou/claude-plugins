@@ -56,6 +56,7 @@ Non-goals:
 - Tests policy: {{TESTS_POLICY}}
 - No writing or reviewing delegates; read-only search subagents only.
 - No force-push, no merge, no configuration change, no branch outside `{{BRANCH}}` without STOP-and-ask.
+- A push runs as one bare command, `git push -u origin {{BRANCH}}`, never chained to another command (`&&`, `;`, `cd … &&`): a chained push falls outside the permission rules and is refused.
 {{EXTRA_FORBIDDEN}}
 
 ## 6. Communication
