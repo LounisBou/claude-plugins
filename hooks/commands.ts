@@ -22,7 +22,7 @@
 // import — so this file spells its own env resolution, its own store read and
 // its own record read, while the row parser, the staleness rule and the pane's
 // row shaper cross as plain imports from the supervision domain.
-import { parseSessionRow, withWait, paneRows, isStale, livePidsArgv, livePids, sessionKey, type SessionRow } from './supervision.ts'
+import { parseSessionRow, withWait, paneRows, type PaneRow, isStale, livePidsArgv, livePids, sessionKey, type SessionRow } from './supervision.ts'
 import { parseRemoteRow, withRemote, ROW_MARKER, REMOTE_STALE_AFTER_MS, type RemoteRow } from './remote-row.ts'
 import { hostRecordOf, roleOf } from './session-name.ts'
 import { withDeadline, isDegradedPass } from './stop-gate.ts'
@@ -101,14 +101,38 @@ async function readRemote($: any): Promise<RemoteRow[]> {
   return rows
 }
 
-// What /orchestrator:status says: the pane's own rows as text, the urgent
-// first — the sessions past the rotation gate lead, each side by fill — one
-// line each under a header naming the columns, the same label the supervision
-// pane draws beside this store.
+// One line of the sessions table: the four columns, and what follows them unaligned
+// (the gate words, the wait a row carries).
+type SessionLine = { name: string; role: string; context: string; measured: string; note: string }
+
+// The sessions as a table under a header line, the columns padded to their widest cell and the
+// context right-aligned, so the fills compare at a glance. Two spaces indent every line.
+function sessionTable(lines: readonly SessionLine[]): string[] {
+  const head: SessionLine = { name: 'name', role: 'role', context: 'context', measured: 'last measured', note: '' }
+  const all = [head, ...lines]
+  const width = (pick: (line: SessionLine) => string) => Math.max(...all.map(line => pick(line).length))
+  const [nameW, roleW, contextW, measuredW] = [width(l => l.name), width(l => l.role), width(l => l.context), width(l => l.measured)]
+  return all.map(line => `  ${[
+    line.name.padEnd(nameW), line.role.padEnd(roleW), line.context.padStart(contextW), line.measured.padEnd(measuredW),
+  ].join('  ')}${line.note === '' ? '' : `  ${line.note}`}`.trimEnd())
+}
+
+// A pane row as a table line: the gate words and the wait follow the aligned columns.
+function lineOfRow(row: PaneRow): SessionLine {
+  return {
+    name: row.name, role: row.head, context: row.percent, measured: row.age ?? '',
+    note: [row.past ? 'past the gate' : null, row.wait].filter(part => part !== null).join(' · '),
+  }
+}
+
+// What /orchestrator:status says: the pane's own rows as a table, the urgent
+// first — the sessions past the rotation gate lead, each side by fill — under a
+// header line naming the columns, the same rows the supervision pane draws
+// beside this store.
 export function statusText(rows: Record<string, SessionRow>): string {
-  const labels = paneRows(rows).map(row => row.label)
-  if (labels.length === 0) return 'Live sessions: none measured yet.'
-  return [`Live sessions (${labels.length}), most urgent first — name · role · context · last measured:`, ...labels.map(label => `  ${label}`)].join('\n')
+  const lines = paneRows(rows).map(lineOfRow)
+  if (lines.length === 0) return 'Live sessions: none measured yet.'
+  return [`Live sessions (${lines.length}), most urgent first:`, ...sessionTable(lines)].join('\n')
 }
 
 // What /orchestrator:agents says: the same rows cut to the implementer agents
@@ -126,12 +150,12 @@ export function agentsText(rows: Record<string, SessionRow>, unmeasured: readonl
   for (const [key, row] of Object.entries(rows)) {
     if (row.role === 'agent') agents[key] = row
   }
-  const labels = [
-    ...paneRows(agents).map(row => row.label),
-    ...unmeasured.map(agent => [agent.name, 'agent', agent.status ?? 'status unknown', 'not measured yet'].join(' · ')),
+  const lines = [
+    ...paneRows(agents).map(lineOfRow),
+    ...unmeasured.map(agent => ({ name: agent.name, role: 'agent', context: agent.status ?? 'status unknown', measured: 'not measured yet', note: '' })),
   ]
-  if (labels.length === 0) return 'Implementer agents: none running.'
-  return [`Implementer agents (${labels.length}), most urgent first — name · role · context · last measured:`, ...labels.map(label => `  ${label}`)].join('\n')
+  if (lines.length === 0) return 'Implementer agents: none running.'
+  return [`Implementer agents (${lines.length}), most urgent first:`, ...sessionTable(lines)].join('\n')
 }
 
 // The live agents the store has no row for: the host's records of its sessions
@@ -262,15 +286,17 @@ export function parseSleeping(text: string): SleepingRecord[] | null {
   }
 }
 
-// What /orchestrator:sleeping says with no argument: one line per sleeping orchestrator —
-// name, slept since, directory, open pull requests, brief — in the order they went to sleep.
+// What /orchestrator:sleeping says with no argument: each sleeping orchestrator in the order
+// they went to sleep, one field per line — name, slept since, directory, open pull requests,
+// brief — indented, the labels bold and aligned, a blank line between two records.
 export function sleepingText(records: SleepingRecord[] | null, path: string): string {
   if (records === null) return `The sleeping record ${path} cannot be read: repair or remove it.`
   if (records.length === 0) return 'Sleeping orchestrators: none.'
-  return [
-    `Sleeping orchestrators (${records.length}) — name · slept since · directory · open pull requests · brief:`,
-    ...records.map(r => `  ${[r.name, r.slept, r.dir, r.prs.length > 0 ? r.prs.join(', ') : 'none', r.brief].join(' · ')}`),
-  ].join('\n')
+  const labels = ['name', 'slept since', 'directory', 'open pull requests', 'brief']
+  const width = Math.max(...labels.map(label => label.length))
+  const block = (r: SleepingRecord) => [r.name, r.slept, r.dir, r.prs.length > 0 ? r.prs.join(', ') : 'none', r.brief]
+    .map((value, i) => `  **${labels[i]}**${' '.repeat(width - labels[i].length)}  ${value}`)
+  return [`Sleeping orchestrators (${records.length}):`, ...records.flatMap((r, i) => [...(i > 0 ? [''] : []), ...block(r)])].join('\n')
 }
 
 async function readSleeping($: any): Promise<string> {

@@ -55,6 +55,10 @@ export async function writeMeasure(
 // time; below the gate no rotation line exists, and the quiet band stays one row.
 export type BandDescription = {
   label: string
+  // The label's pieces: the percentage is the one drawn bold.
+  lead: string
+  percent: string
+  figures: string
   past: boolean
   note: string | null
 }
@@ -63,8 +67,10 @@ export function bandTree(reading: MeasureReading | null,
   env: { gate?: number; gateTokens?: number; largeWindow?: number } = {}): BandDescription | null {
   if (!reading) return null
   const past = tripGate(reading.context_percent, reading.context_tokens, reading.context_window, env).tripped
-  const label = `context ${reading.context_percent}% · ${reading.context_tokens.toLocaleString('en-US')}/${reading.context_window.toLocaleString('en-US')}`
-  return { label, past, note: past ? 'rotation gate — succeed at the next quiet boundary' : null }
+  const lead = 'context '
+  const percent = `${reading.context_percent}%`
+  const figures = ` · ${reading.context_tokens.toLocaleString('en-US')}/${reading.context_window.toLocaleString('en-US')}`
+  return { label: `${lead}${percent}${figures}`, lead, percent, figures, past, note: past ? 'rotation gate — succeed at the next quiet boundary' : null }
 }
 
 export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
@@ -165,7 +171,11 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       return el.Box({
         flexDirection: 'column',
         children: [
-          el.Text({ color: tree.past ? 'warning' : 'subtle', children: tree.label }),
+          // Below the gate the line is the default text colour with the percentage bold;
+          // past it the whole line is warning and bold.
+          tree.past
+            ? el.Text({ color: 'warning', bold: true, children: tree.label })
+            : el.Text({ children: [el.Text({ children: tree.lead }), el.Text({ bold: true, children: tree.percent }), el.Text({ children: tree.figures })] }),
           ...(tree.note ? [el.Text({ color: 'warning', children: tree.note })] : []),
         ],
       })

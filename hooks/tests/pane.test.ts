@@ -368,7 +368,9 @@ test('an orchestrator\'s pane lists the agents its own tab spawned, read from th
   fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ sessionId: 's-agent', name: 'Agent : belt-p3', status: 'busy' }))
   fx.files.set(`${SESSIONS}/s-agent`, JSON.stringify(row({ role: 'agent', name: 'Agent : belt-p3', context_percent: 40 })) + '\n')
   await handlers['command.run'](fx.dollar, supervisionRun)
-  const text = JSON.stringify(await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))
+  // The row is the name (bold) and the rest in two pieces: read as the text they draw together.
+  const tree = await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
+  const text = tree.props.children.map((kid: any) => pieces(kid).map((p: any) => p.text).join('')).join('\n')
   expect(text).toContain('Agent : belt-p3 · busy · 40%')
   expect(text.match(/Agent : belt-p3/g)?.length).toBe(1)
   expect(fx.ran).toContain('ps -t ttys009 -o pid=')
@@ -855,14 +857,14 @@ test('no question: the section says none, or counts the orchestrators waiting wh
   expect(pieces(one.props.children[2])[1].text).toBe('none in the pane — 1 orchestrator waits for you: ask the coordinator')
 })
 
-test('an orchestrator\'s own pane keeps its flat subtle rows, with no title', async () => {
+test('an orchestrator\'s own pane says no agent running in the default text colour, with no title', async () => {
   const fx = fakeDollar({ launchName: 'Orch : phase-3' })
   fx.env.ITERM_SESSION_ID = 'w0t1p0:OWNER-1'
   const tree = await coordinatorRender(fx)
-  expect(tree.props.children.map((kid: any) => [kid.props.color, kid.props.children])).toEqual([['subtle', 'no agent running']])
+  expect(tree.props.children.map((kid: any) => [kid.props.color, kid.props.children])).toEqual([[undefined, 'no agent running']])
 })
 
-test('an orchestrator\'s own pane draws an agent past the gate in warning and the other in subtle, with no title', async () => {
+test('an orchestrator\'s own pane draws an agent past the gate in warning and the other in the default text colour, each name bold, with no title', async () => {
   const fx = fakeDollar({ launchName: 'Orch : phase-3' })
   fx.env.ITERM_SESSION_ID = 'w0t1p0:OWNER-1'
   fx.files.set(`${HOME}/.claude/claude-orchestrator/chains/ttys001.jsonl`, [
@@ -878,10 +880,13 @@ test('an orchestrator\'s own pane draws an agent past the gate in warning and th
   fx.files.set(`${SESSIONS}/s-past`, JSON.stringify(row({ role: 'agent', name: 'Agent : past', context_percent: 35, context_tokens: 350000, window: 1000000 })) + '\n')
   fx.files.set(`${SESSIONS}/s-under`, JSON.stringify(row({ role: 'agent', name: 'Agent : under', context_percent: 20 })) + '\n')
   const tree = await coordinatorRender(fx)
-  expect(tree.props.children.map((kid: any) => [kid.props.color, kid.props.children])).toEqual([
-    ['warning', expect.stringMatching(/^Agent : past · busy · 35% past the gate · /)],
-    ['subtle', expect.stringMatching(/^Agent : under · busy · 20% · /)],
-  ])
+  const [past, under] = tree.props.children.map((kid: any) => pieces(kid))
+  expect(past.map((p: any) => p.text).join('')).toMatch(/^Agent : past · busy · 35% past the gate · /)
+  expect(past.every((p: any) => p.color === 'warning')).toBe(true)
+  expect(past.filter((p: any) => p.bold).map((p: any) => p.text)).toEqual(['Agent : past'])
+  expect(under.map((p: any) => p.text).join('')).toMatch(/^Agent : under · busy · 20% · /)
+  expect(under.some((p: any) => p.color !== undefined)).toBe(false)
+  expect(under.filter((p: any) => p.bold).map((p: any) => p.text)).toEqual(['Agent : under'])
 })
 
 // --- answering from the coordinator's pane ------------------------------------------------------

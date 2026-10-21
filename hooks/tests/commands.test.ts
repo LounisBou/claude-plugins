@@ -50,6 +50,33 @@ test('status lists the live sessions, the urgent first, or says none', () => {
   expect(statusText({})).toBe('Live sessions: none measured yet.')
 })
 
+test('status aligns its columns under one header, the context right-aligned, a long name and a short one together', () => {
+  const text = statusText({
+    'sessions/long': row({ name: 'Agent : a-long-session-name', context_percent: 85 }),
+    'sessions/short': row({ role: 'orchestrator', name: 'Orch : x', context_percent: 5 }),
+  })
+  expect(text.split('\n')).toEqual([
+    'Live sessions (2), most urgent first:',
+    '  name                         role          context  last measured',
+    '  Agent : a-long-session-name  agent             85%  now            past the gate',
+    '  Orch : x                     orchestrator       5%  now',
+  ])
+})
+
+test('agents shares the columns of status, its unmeasured agents kept', () => {
+  const rows = {
+    'sessions/long': row({ name: 'Agent : a-long-session-name', context_percent: 85 }),
+    'sessions/short': row({ name: 'Agent : x', context_percent: 5 }),
+  }
+  expect(agentsText(rows, [{ name: 'Agent : waiting', status: null }]).split('\n')).toEqual([
+    'Implementer agents (3), most urgent first:',
+    '  name                         role          context  last measured',
+    '  Agent : a-long-session-name  agent             85%  now               past the gate',
+    '  Agent : x                    agent              5%  now',
+    '  Agent : waiting              agent  status unknown  not measured yet',
+  ])
+})
+
 test('agents keeps the implementer agents alone and says so when none runs', () => {
   const text = agentsText({
     'sessions/agent': row({ role: 'agent', name: 'Agent : belt-p3' }),
@@ -226,10 +253,21 @@ test('sleeping lists each sleeping orchestrator, or says none, or says the recor
     { name: 'Orch : alpha', brief: '/p/briefs/succession-brief.md', dir: '/p', model: 'a-model', effort: '', slept: '2026-10-13T10:00:00Z', prs: ['forge/o/app#7 feat/x'], checkouts: ['/w/a1'] },
     { name: 'Orch : beta', brief: '/q/b.md', dir: '/q', model: 'a-model', effort: 'high', slept: '2026-10-13T11:00:00Z', prs: [], checkouts: [] },
   ]))
+  // One field per line, indented, the labels bold and padded to the longest; a blank line
+  // between two records.
   expect(sleepingText(records, '/s/sleeping.json')).toBe([
-    'Sleeping orchestrators (2) — name · slept since · directory · open pull requests · brief:',
-    '  Orch : alpha · 2026-10-13T10:00:00Z · /p · forge/o/app#7 feat/x · /p/briefs/succession-brief.md',
-    '  Orch : beta · 2026-10-13T11:00:00Z · /q · none · /q/b.md',
+    'Sleeping orchestrators (2):',
+    '  **name**                Orch : alpha',
+    '  **slept since**         2026-10-13T10:00:00Z',
+    '  **directory**           /p',
+    '  **open pull requests**  forge/o/app#7 feat/x',
+    '  **brief**               /p/briefs/succession-brief.md',
+    '',
+    '  **name**                Orch : beta',
+    '  **slept since**         2026-10-13T11:00:00Z',
+    '  **directory**           /q',
+    '  **open pull requests**  none',
+    '  **brief**               /q/b.md',
   ].join('\n'))
   expect(sleepingText(parseSleeping('[]'), '/s/sleeping.json')).toBe('Sleeping orchestrators: none.')
   expect(sleepingText(parseSleeping('not json'), '/s/sleeping.json')).toBe('The sleeping record /s/sleeping.json cannot be read: repair or remove it.')
@@ -244,8 +282,12 @@ test('sleeping answers the list from the state directory, and passes drop on to 
   fx.files.set(`${HOME}/state/sleeping.json`, JSON.stringify([{ name: 'Orch : alpha', brief: '/p/b.md', dir: '/p', slept: '2026-10-13T10:00:00Z', prs: [] }]))
   const passed = (x: unknown) => ({ passed: x })
   expect(await sleeping.handler(fx.dollar, { command: 'orchestrator:sleeping', args: '' }, passed)).toEqual({ text: [
-    'Sleeping orchestrators (1) — name · slept since · directory · open pull requests · brief:',
-    '  Orch : alpha · 2026-10-13T10:00:00Z · /p · none · /p/b.md',
+    'Sleeping orchestrators (1):',
+    '  **name**                Orch : alpha',
+    '  **slept since**         2026-10-13T10:00:00Z',
+    '  **directory**           /p',
+    '  **open pull requests**  none',
+    '  **brief**               /p/b.md',
   ].join('\n') })
   const drop = { command: 'orchestrator:sleeping', args: 'drop Orch : alpha' }
   expect(await sleeping.handler(fx.dollar, drop, passed)).toEqual({ passed: drop })
@@ -262,7 +304,11 @@ test('status answers the store read through its own fs calls, dropping the stale
   fx.files.set(`${SESSIONS}/gone`, JSON.stringify(row({ name: 'Agent : gone', updated_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString() })) + '\n')
   fx.files.set(`${SESSIONS}/torn`, 'caught mid-write')
   const answer = await status.handler(fx.dollar, { command: 'orchestrator:status', args: '' })
-  expect(answer).toEqual({ text: 'Live sessions (1), most urgent first — name · role · context · last measured:\n  Agent : hot · agent · 85% past the gate · now' })
+  expect(answer).toEqual({ text: [
+    'Live sessions (1), most urgent first:',
+    '  name         role   context  last measured',
+    '  Agent : hot  agent      85%  now            past the gate',
+  ].join('\n') })
   // An absent store is no failure: nothing was ever written.
   const bare = fakeDollar()
   expect(await status.handler(bare.dollar, { command: 'orchestrator:status', args: '' })).toEqual({ text: 'Live sessions: none measured yet.' })
@@ -275,7 +321,11 @@ test('agents answers the agent rows alone', async () => {
   fx.files.set(`${SESSIONS}/agent`, JSON.stringify(row({ role: 'agent', name: 'Agent : belt-p3' })) + '\n')
   fx.files.set(`${SESSIONS}/coord`, JSON.stringify(row({ role: 'coordinator', name: 'Coord : main' })) + '\n')
   const answer = await agents.handler(fx.dollar, { command: 'orchestrator:agents', args: '' })
-  expect(answer).toEqual({ text: 'Implementer agents (1), most urgent first — name · role · context · last measured:\n  Agent : belt-p3 · agent · 30% · now' })
+  expect(answer).toEqual({ text: [
+    'Implementer agents (1), most urgent first:',
+    '  name             role   context  last measured',
+    '  Agent : belt-p3  agent      30%  now',
+  ].join('\n') })
   const bare = fakeDollar()
   expect(await agents.handler(bare.dollar, { command: 'orchestrator:agents', args: '' })).toEqual({ text: 'Implementer agents: none running.' })
 })
@@ -298,16 +348,18 @@ test('agents lists a live agent no measure has written yet, beside the measured 
   fx.alive = ['101', '102', '103', '105']
   const answer = await agents.handler(fx.dollar, { command: 'orchestrator:agents', args: '' })
   expect(answer).toEqual({ text: [
-    'Implementer agents (2), most urgent first — name · role · context · last measured:',
-    '  Agent : belt-p3 · agent · 30% · now',
-    '  Agent : alert lists · agent · busy · not measured yet',
+    'Implementer agents (2), most urgent first:',
+    '  name                 role   context  last measured',
+    '  Agent : belt-p3      agent      30%  now',
+    '  Agent : alert lists  agent     busy  not measured yet',
   ].join('\n') })
   // The same agent alone, before its first measure: never « none running ».
   fx.files.delete(`${SESSIONS}/s-measured`)
   fx.alive = ['102']
   expect(await agents.handler(fx.dollar, { command: 'orchestrator:agents', args: '' })).toEqual({ text: [
-    'Implementer agents (1), most urgent first — name · role · context · last measured:',
-    '  Agent : alert lists · agent · busy · not measured yet',
+    'Implementer agents (1), most urgent first:',
+    '  name                 role   context  last measured',
+    '  Agent : alert lists  agent     busy  not measured yet',
   ].join('\n') })
 })
 
@@ -319,15 +371,17 @@ test('status keeps the live rows beside a dead pid, and every row when ps fails'
   fx.files.set(`${SESSIONS}/dead`, JSON.stringify({ ...row({ name: 'Agent : dead' }), pid: '99999' }) + '\n')
   fx.alive = ['501']
   expect(await status.handler(fx.dollar, { command: 'orchestrator:status', args: '' })).toEqual({ text: [
-    'Live sessions (1), most urgent first — name · role · context · last measured:',
-    '  Agent : live · agent · 30% · now',
+    'Live sessions (1), most urgent first:',
+    '  name          role   context  last measured',
+    '  Agent : live  agent      30%  now',
   ].join('\n') })
   // A ps that fails knows of no death: both rows stay listed, neither hidden.
   fx.psFails = true
   expect(await status.handler(fx.dollar, { command: 'orchestrator:status', args: '' })).toEqual({ text: [
-    'Live sessions (2), most urgent first — name · role · context · last measured:',
-    '  Agent : live · agent · 30% · now',
-    '  Agent : dead · agent · 30% · now',
+    'Live sessions (2), most urgent first:',
+    '  name          role   context  last measured',
+    '  Agent : live  agent      30%  now',
+    '  Agent : dead  agent      30%  now',
   ].join('\n') })
 })
 
@@ -339,8 +393,9 @@ test('agents still lists an agent in its first turn when ps fails', async () => 
   fx.alive = ['102']
   fx.psFails = true
   expect(await agents.handler(fx.dollar, { command: 'orchestrator:agents', args: '' })).toEqual({ text: [
-    'Implementer agents (1), most urgent first — name · role · context · last measured:',
-    '  Agent : first turn · agent · busy · not measured yet',
+    'Implementer agents (1), most urgent first:',
+    '  name                role   context  last measured',
+    '  Agent : first turn  agent     busy  not measured yet',
   ].join('\n') })
 })
 

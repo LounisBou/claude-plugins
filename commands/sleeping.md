@@ -11,8 +11,8 @@ its tab closed, its succession brief kept, its record in `<state dir>/sleeping.j
 Usage: `/orchestrator:sleeping` lists them; `/orchestrator:sleeping drop <name>` abandons one
 for good.
 
-**The list.** The hooks module answers it on the spot, with no model turn: one line per
-sleeping orchestrator — name, slept since, directory, open pull requests, brief. The step below
+**The list.** The hooks module answers it on the spot, with no model turn: each
+sleeping orchestrator as one field per line — name, slept since, directory, open pull requests, brief — the labels aligned. The step below
 runs only when that answer fails, and the host then runs this body as a prompt:
 `${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh sleeping`, its lines shown as
 printed, or « Sleeping orchestrators: none. » when it prints nothing.

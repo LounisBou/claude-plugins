@@ -114,3 +114,57 @@ test('a session end that cannot purge the measure file is said, and blocks nothi
   expect(written[0]).toContain('| gauge |')
   expect(written[0]).toContain('EIO')
 })
+
+// The band's drawing for a fill, through the registered render hook: every text piece with
+// the colour and weight it is drawn with, so a test reads what the operator sees.
+async function drawnBand(percent: number, tokens: number, window = 100000) {
+  const handlers: Record<string, Function> = {}
+  registerGauge((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
+    handlers[args[0]] = args[args.length - 1] as Function
+    return { catch: () => undefined }
+  })
+  const $ = {
+    session: {
+      usage: async () => ({ context: { tokens, window, percent } }),
+      model: async () => 'a-model',
+      id: async () => 's1',
+      surfaces: async () => ['terminal'],
+    },
+    fs: { write: async () => undefined },
+    env: { get: async (name: string) => (name === 'HOME' ? '/tmp/h' : undefined) },
+    ui: {
+      toast: () => undefined,
+      invalidate: () => undefined,
+      resolve: (_e: unknown) => ({
+        Box: (props: { flexDirection?: string; children?: unknown[] }) => ({ type: 'Box', props }),
+        Text: (props: { color?: string; bold?: boolean; children?: unknown }) => ({ type: 'Text', props }),
+      }),
+    },
+  }
+  await handlers['session.measure']($, {}, (e: unknown) => e)
+  const tree: any = await handlers['ui.render']($, { surface: 'terminal', component: 'AbovePrompt', requestId: 'r', props: { hasSurvey: false } }, (e: unknown) => ({ passed: e }))
+  const pieces = (node: any): { text: string; color?: string; bold: boolean }[] => {
+    if (typeof node === 'string') return [{ text: node, bold: false }]
+    const kids = [node.props.children].flat().filter((kid: unknown) => kid !== undefined)
+    if (node.type === 'Text' && kids.every((kid: unknown) => typeof kid === 'string')) {
+      return [{ text: kids.join(''), color: node.props.color, bold: node.props.bold === true }]
+    }
+    return kids.flatMap(pieces)
+  }
+  return tree.props.children.map((line: any) => pieces(line))
+}
+
+test('below the gate the band line is the default text colour with the percentage in bold', async () => {
+  const [line, ...rest] = await drawnBand(42, 42000)
+  expect(rest).toEqual([])
+  expect(line.map((p: any) => p.text).join('')).toBe('context 42% · 42,000/100,000')
+  expect(line.some((p: any) => p.color !== undefined)).toBe(false)
+  expect(line.filter((p: any) => p.bold).map((p: any) => p.text)).toEqual(['42%'])
+})
+
+test('past the gate the band line stays warning and bold, the gate line below it unchanged', async () => {
+  const [line, gate] = await drawnBand(84, 84000)
+  expect(line.map((p: any) => p.text).join('')).toBe('context 84% · 84,000/100,000')
+  expect(line.every((p: any) => p.color === 'warning' && p.bold)).toBe(true)
+  expect(gate).toEqual([{ text: 'rotation gate — succeed at the next quiet boundary', color: 'warning', bold: false }])
+})

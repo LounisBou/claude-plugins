@@ -325,6 +325,8 @@ export type PaneRow = {
   name: string
   head: string
   fill: string
+  // The fill alone, « 42% »: the figure the commands' tables align.
+  percent: string
   past: boolean
   age: string | null
   wait: string | null
@@ -345,7 +347,8 @@ export function paneRows(rows: Record<string, SessionRow>): PaneRow[] {
       const past = tripGate(row.context_percent, row.context_tokens, row.window).tripped
       const name = row.name ?? 'unnamed'
       const head = [row.role ?? 'no role', ...(row.machine ? [`remote ${row.machine}`] : [])].join(' · ')
-      const fill = `${row.context_percent}%${past ? ' past the gate' : ''}`
+      const percent = `${row.context_percent}%`
+      const fill = `${percent}${past ? ' past the gate' : ''}`
       const age = ageLabel(row.updated_at, now)
       const wait = waitLabel(row)
       const split = waitParts(row)
@@ -354,7 +357,7 @@ export function paneRows(rows: Record<string, SessionRow>): PaneRow[] {
       if (wait !== null) parts.push(wait)
       return {
         label: parts.join(' · '), urgency: (past ? GATE_URGENCY_FLOOR : 0) + row.context_percent,
-        key, name, head, fill, past, age, wait, status: split?.status ?? null, blocked: split?.blocks ?? null,
+        key, name, head, fill, percent, past, age, wait, status: split?.status ?? null, blocked: split?.blocks ?? null,
         waiting: wait !== null ? row.waiting ?? null : null,
       }
     })
@@ -387,17 +390,20 @@ export type AgentView = { name: string | null; status: 'idle' | 'busy' | null; r
 // The orchestrator's pane rows: its agents under the store rows' own law — past
 // the gate first, then the fill descending, an unmeasured agent last. The label
 // carries the name, the status, the fill against the gate and the reading's age.
-export function agentPaneRows(agents: readonly AgentView[]): { label: string; urgency: number }[] {
+export function agentPaneRows(agents: readonly AgentView[]): { label: string; name: string; rest: string; urgency: number }[] {
   const now = Date.now()
   return agents
     .map(agent => {
-      const parts = [agent.name ?? agent.row?.name ?? 'unnamed', agent.status ?? 'status unknown']
-      if (!agent.row) return { label: [...parts, 'not measured yet'].join(' · '), urgency: -1 }
+      const name = agent.name ?? agent.row?.name ?? 'unnamed'
+      // The label cut in two, the name the pane draws bold and what follows it.
+      const row = (parts: string[], urgency: number) => ({ label: [name, ...parts].join(' · '), name, rest: ` · ${parts.join(' · ')}`, urgency })
+      const parts = [agent.status ?? 'status unknown']
+      if (!agent.row) return row([...parts, 'not measured yet'], -1)
       const past = tripGate(agent.row.context_percent, agent.row.context_tokens, agent.row.window).tripped
       parts.push(`${agent.row.context_percent}%${past ? ' past the gate' : ''}`)
       const age = ageLabel(agent.row.updated_at, now)
       if (age !== null) parts.push(age)
-      return { label: parts.join(' · '), urgency: (past ? GATE_URGENCY_FLOOR : 0) + agent.row.context_percent }
+      return row(parts, (past ? GATE_URGENCY_FLOOR : 0) + agent.row.context_percent)
     })
     .sort((a, b) => b.urgency - a.urgency)
 }
@@ -740,7 +746,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     try {
       // The store at draw time: the gauge's invalidate after every measure and
       // the pane's own clock re-raise this render. Display only.
-      let rows: { label: string; urgency: number }[] = []
+      let rows: { label: string; name: string; rest: string; urgency: number }[] = []
       let blocks: PaneRow[] = []
       let round: RoundLine[] = []
       let speaker: string | null = null
@@ -776,8 +782,13 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         return el.Box({
           flexDirection: 'column',
           children: rows.length === 0
-            ? [el.Text({ color: 'subtle', children: none })]
-            : rows.map(row => el.Text({ color: row.urgency >= GATE_URGENCY_FLOOR ? 'warning' : 'subtle', children: row.label })),
+            ? [el.Text({ children: none })]
+            // The default text colour with the name bold; a row past the gate is warning, each
+            // piece carrying the colour itself.
+            : rows.map(row => {
+              const tint = row.urgency >= GATE_URGENCY_FLOOR ? { color: 'warning' } : {}
+              return el.Text({ children: [el.Text({ ...tint, bold: true, children: row.name }), el.Text({ ...tint, children: row.rest })] })
+            }),
         })
       }
       // Each orchestrator is a block: one line, a dot in its state's colour, its bold name and
