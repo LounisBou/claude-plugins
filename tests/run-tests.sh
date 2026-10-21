@@ -6368,6 +6368,34 @@ check "round-close refuses an unknown id, a path, an unreadable entry and a miss
 check "the refusal of an unknown id names it" "coordinator: round-close: no entry nobody in $CROUND" \
   "$(coord round-close nobody --answer x 2>&1 >/dev/null)"
 
+# round-archive moves the closed entries into round/archive/ and nothing else; the archive is
+# read by no one, so an entry planted there with the status open is neither printed nor counted.
+AROUND="$WORK/coord-archive"
+mkdir -p "$AROUND/round"
+arch_entry() {  # <id> <status>
+  jq -n --arg id "$1" --arg status "$2" \
+    '{id:$id, from:"Orch : z", session:("s-" + $id), kind:"operator", since:"2026-10-18T10:00:00.000Z", blocks:"x",
+      question:("Question " + $id), choices:[], recommendation:null, status:$status, at:"2026-10-18T10:00:00.000Z", answer:null}' > "$AROUND/round/$1.json"
+}
+arch_entry z-closed-1 closed; arch_entry z-closed-2 closed; arch_entry z-open open
+arch_entry z-answered answered; arch_entry z-withdrawn withdrawn
+printf '{"id": "half' > "$AROUND/round/z-broken.json"
+acoord() { ORCHESTRATOR_STATE_DIR="$AROUND" CLAUDE_CONFIG_DIR="$CLAUDE_CONFIG_DIR" bash "$COORD" "$@"; }
+check "round-archive prints the count of the entries it moved" "archived 2|exit 0" \
+  "$(acoord round-archive 2>&1)|exit $?"
+check "round-archive moves the closed entries only, and leaves the others and the broken file" \
+  "z-closed-1.json z-closed-2.json|z-answered.json z-broken.json z-open.json z-withdrawn.json" \
+  "$(ls "$AROUND/round/archive" | tr '\n' ' ' | sed 's/ $//')|$(find "$AROUND/round" -maxdepth 1 -type f -name '*.json' -exec basename {} \; | sort | tr '\n' ' ' | sed 's/ $//')"
+check "a second round-archive finds nothing to move" "archived 0" "$(acoord round-archive 2>&1)"
+check "round-archive on a missing round directory moves nothing" "archived 0|exit 0" \
+  "$(ORCHESTRATOR_STATE_DIR="$WORK/coord-no-round" bash "$COORD" round-archive 2>&1)|exit $?"
+check "round-archive refuses an argument and moves nothing" "exit 1|0" \
+  "$(ORCHESTRATOR_STATE_DIR="$AROUND" bash "$COORD" round-archive now >/dev/null 2>&1; echo "exit $?")|$(find "$AROUND/round/archive" -type f | wc -l | tr -d ' ' | awk '{ print $1 - 2 }')"
+arch_entry z-hidden open; mv "$AROUND/round/z-hidden.json" "$AROUND/round/archive/z-hidden.json"
+check "round prints nothing from the archive, even an entry there with the status open" "0|1" \
+  "$(acoord round | grep -c 'z-hidden\|z-closed')|$(acoord round | grep -c '^round z-open ')"
+check "round-close does not find an archived entry" "exit 1" "$(ORCHESTRATOR_STATE_DIR="$AROUND" bash "$COORD" round-close z-hidden --answer x >/dev/null 2>&1; echo "exit $?")"
+
 # A sender that has ended leaves its question in the round: it is still printed, and its header
 # says the sender is gone, so the coordinator does not relay a question nobody can answer.
 GSTATE="$WORK/coord-gone"; GCFG="$WORK/coord-gone-config"

@@ -542,6 +542,21 @@ test('no open question: nothing is drawn below the rows, and an orchestrator\'s 
   expect(JSON.stringify(await coordinatorRender(orch))).not.toContain('Question 1 of')
 })
 
+test('the archive under the round is read by nothing: an open entry planted there is neither read nor drawn', async () => {
+  const fx = fakeDollar({ launchName: 'Coord : main' })
+  fx.files.set(`${SESSIONS}/live`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : live', context_percent: 30 })) + '\n')
+  const hidden = entry('Orch : live', '2026-10-18T10:03:00.000Z', { session: 'live' })
+  fx.files.set(`${ROUND}/archive/${hidden.id}.json`, JSON.stringify(hidden) + '\n')
+  expect(await readRound(fx.dollar)).toEqual([])
+  expect(JSON.stringify(await coordinatorRender(fx))).not.toContain('Question 1 of')
+  // The same entry directly under the round is drawn: only its place kept it out.
+  const control = fakeDollar({ launchName: 'Coord : main' })
+  control.files.set(`${SESSIONS}/live`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : live', context_percent: 30 })) + '\n')
+  control.files.set(`${ROUND}/${hidden.id}.json`, JSON.stringify(hidden) + '\n')
+  expect((await readRound(control.dollar)).length).toBe(1)
+  expect(JSON.stringify(await coordinatorRender(control))).toContain('Question 1 of 1')
+})
+
 test('a question whose sender has ended is not drawn, nor counted: only the live sessions\' questions are', async () => {
   const fx = fakeDollar({ launchName: 'Coord : main' })
   fx.files.set(`${SESSIONS}/live`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : live', context_percent: 30 })) + '\n')

@@ -19,6 +19,8 @@
 #   coordinator.sh round     the round's entries still to be ruled: the open ones, then the withdrawn
 #   coordinator.sh round-close <id> --answer "<text>"   closes one entry with the answer relayed;
 #                            prints "closed <id>"
+#   coordinator.sh round-archive   moves every closed entry into round/archive/; prints
+#                            "archived <n>"
 #
 # facts prints, one per line:
 #   session <pid> | <tty> | <title> | <orchestrator> | <repository> | <branch> | <directory>
@@ -57,6 +59,10 @@
 #     withdrawn by the sender at <UTC time>: its later turn waits on something else
 # round-close rewrites the entry with status closed and the answer {text, by "coordinator", at},
 # in one rename, and refuses an id with no entry.
+# round-archive moves each entry file of <state>/round/ whose status is closed into
+# <state>/round/archive/ (created when absent), each in one rename; open, answered and withdrawn
+# entries stay, and so does a file that does not parse. Nothing reads the archive: round and
+# round-close see only the files directly under round/.
 # drop prints "dropped <name>", then "brief moved to <path>" (or "brief <path> was already
 # gone"), then "left untouched: <each pull request and checkout, or none>" — the pull requests,
 # their branches and the checkouts are the operator's to close, never this script's.
@@ -724,10 +730,15 @@ round_entries() {
     local f
     for f in "$ROUND"/*.json; do
         [ -f "$f" ] || continue
-        jq -s -c 'select(length == 1) | .[0] | select(type == "object" and (.id | type) == "string"
-            and (.from | type) == "string" and (.since | type) == "string" and (.status | type) == "string"
-            and (.kind | type) == "string" and (.question | type) == "string")' "$f" 2>/dev/null
+        round_entries_of "$f"
     done
+}
+
+# round_entries_of: the entry one file holds, as one compact JSON line, nothing when it does not parse.
+round_entries_of() {
+    jq -s -c 'select(length == 1) | .[0] | select(type == "object" and (.id | type) == "string"
+            and (.from | type) == "string" and (.since | type) == "string" and (.status | type) == "string"
+            and (.kind | type) == "string" and (.question | type) == "string")' "$1" 2>/dev/null
 }
 
 # live_sessions: the sessions files of the hooks module's store (under the config dir, as
@@ -782,6 +793,21 @@ cmd_round_close() {
     echo "closed $id"
 }
 
+cmd_round_archive() {
+    [ $# -eq 0 ] || die "round-archive: unexpected argument $1"
+    local n=0 f
+    if [ -d "$ROUND" ]; then
+        for f in "$ROUND"/*.json; do
+            [ -f "$f" ] || continue
+            round_entries_of "$f" | jq -e 'select(.status == "closed")' >/dev/null 2>&1 || continue
+            mkdir -p "$ROUND/archive" || die "round-archive: cannot create $ROUND/archive"
+            mv -f "$f" "$ROUND/archive/${f##*/}" || die "round-archive: cannot move $f"
+            n=$((n + 1))
+        done
+    fi
+    echo "archived $n"
+}
+
 finish() {
     cat "$T/unread"
     if [ -s "$T/unread" ]; then exit 2; fi
@@ -833,7 +859,7 @@ cmd_owners() {
 }
 
 cmd="${1:-}"
-[ -n "$cmd" ] || die "usage: coordinator.sh {register|clear|lookup|facts|owners|sleep|sleeping|wake-done|drop|round|round-close} ... (see header)"
+[ -n "$cmd" ] || die "usage: coordinator.sh {register|clear|lookup|facts|owners|sleep|sleeping|wake-done|drop|round|round-close|round-archive} ... (see header)"
 shift
 case "$cmd" in
     register) cmd_register "$@" ;;
@@ -847,5 +873,6 @@ case "$cmd" in
     drop) cmd_drop "$@" ;;
     round) cmd_round "$@" ;;
     round-close) cmd_round_close "$@" ;;
-    *) die "unknown subcommand: $cmd (expected register, clear, lookup, facts, owners, sleep, sleeping, wake-done, drop, round or round-close)" ;;
+    round-archive) cmd_round_archive "$@" ;;
+    *) die "unknown subcommand: $cmd (expected register, clear, lookup, facts, owners, sleep, sleeping, wake-done, drop, round, round-close or round-archive)" ;;
 esac

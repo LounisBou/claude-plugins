@@ -356,7 +356,7 @@ own session's row included. At the gate —
 with no question awaiting his answer, succeed yourself without asking and tell the operator
 after; an open round passes to the successor with its round file:
 
-1. Copy `${CLAUDE_PLUGIN_ROOT}/templates/coordinator-succession-brief.md` to
+1. Run `${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh round-archive`: it moves the closed entries of the round into `round/archive/`, which nothing reads. Then copy `${CLAUDE_PLUGIN_ROOT}/templates/coordinator-succession-brief.md` to
    `<state dir>/coordinator/succession-brief.md` (one at a time: the successor's own succession overwrites it), fill every placeholder — the round file's path included — and lint it with
    `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <brief path>`.
 2. Spawn the successor at the first place of your window:
