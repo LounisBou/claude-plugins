@@ -78,6 +78,7 @@ templates/orchestrator-succession-brief.md
 templates/agent-audit-brief.md       one audit of the method: the stock, the net balance, proposals, then stop or, with work the operator gave it after the report still in hand, succeed
 templates/coordinator-succession-brief.md  the coordinator's successor: close the predecessor, then register
 templates/auditor-succession-brief.md  the auditor's successor, for an auditor kept on past its report: close the predecessor
+agents/lens.md                       read-only reader for one review lens: findings only, tools limited to Read, Grep, Glob, Bash
 commands/install.md                  unwires the tap, creates the state directory
 commands/uninstall.md                restores the previous status line, removes the state directory
 commands/status.md                   live sessions and their measured context fill
@@ -496,7 +497,7 @@ The orchestrator's core loop — plan, brief, launch, verify, review, terminate,
 
 ### 9.2 The review round
 
-One review session per round, spawned from `agent-review-brief.md` in a copy pinned at the head under review (section 37), its readers sized by the orchestrator, from its own reading to several lenses, the project's own norms tool among them, and reporting once. The orchestrator verifies every finding on the artifact, keeps only what must necessarily be fixed and names every dropped item with its reason, dispatches one correction round, and verifies it itself. The round lands on the dispatch record, and `ready` refuses a head no round read (sections 55, 58). The rules are `skills/orchestrator/references/review.md` and `SKILL.md`, « Thresholds »; review comments on a pull request go to a comments session, `references/review.md`, « Review rounds run in disposable sessions ».
+One review session per round, spawned from `agent-review-brief.md` in a copy pinned at the head under review (section 37), its readers sized by the orchestrator, from its own reading to several lenses (sub-agents of the type `orchestrator:lens`), the project's own norms tool among them, and reporting once. The orchestrator verifies every finding on the artifact, keeps only what must necessarily be fixed and names every dropped item with its reason, dispatches one correction round, and verifies it itself. The round lands on the dispatch record, and `ready` refuses a head no round read (sections 55, 58). The rules are `skills/orchestrator/references/review.md` and `SKILL.md`, « Thresholds »; review comments on a pull request go to a comments session, `references/review.md`, « Review rounds run in disposable sessions ».
 
 A pull request stays in draft. Ready, from the orchestrator's side, is implemented, reviewed, corrected, verified, `ready` green and rebased; then it tells the operator « ready ». Merging a pull request and taking it out of draft are the operator's, on his clear and explicit request, and in no list of what the orchestrator decides and moves on (sections 23, 58).
 

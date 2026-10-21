@@ -73,7 +73,7 @@ The floor `pick` lands on when nothing is measured: the class's tier, through th
 | A conversion phase (move, rename, extract) | `conversion-phase` | `standard` | « nothing observable changed »: the suite judges |
 | An N-bis corrective on a findings list | `n-bis` | `standard` | you, on the artifact: the diff, the decisive tests |
 | A review collector, a comments agent | `review-collector`, `comments` | `standard` | you verify every finding |
-| The review lenses | `review-lens` | `standard` | the collector, then you |
+| The review lenses, dispatched as the subagent type `orchestrator:lens` | `review-lens` | `standard` | the collector, then you |
 | Read-only search subagents | `search` | `light` | they locate; they never judge |
 
 The tabs you launch and the subagents launched inside a session read this one table: say the lenses' pair in the review brief.

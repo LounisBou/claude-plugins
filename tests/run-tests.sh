@@ -214,9 +214,10 @@ check "the delivering briefs no longer ask for context_tokens in the final repor
   "$(for t in phase comments rotation; do spells "$ROOT/templates/agent-$t-brief.md" 'context_tokens'; done | paste -sd'|' -)"
 # The trim is a ceiling: each brief stays at most the size it reached when the module took
 # the context and the turn-end reports over. The ceiling moved twice: by the sentence on the
-# sender's reference, then by the successor-admission sentence (the operator's item 154, « A », 2026-10-19).
+# sender's reference, then by the successor-admission sentence (the operator's item 154, « A », 2026-10-19),
+# then, for the review brief, by the name of the lens subagent type.
 check "the agent briefs stay within their trimmed sizes" "yes|yes|yes|yes" \
-  "$(for pair in phase:8801 comments:6436 review:8111 rotation:2833; do [ "$(wc -c < "$ROOT/templates/agent-${pair%%:*}-brief.md" | tr -d ' ')" -le "${pair##*:}" ] && echo yes || echo no; done | paste -sd'|' -)"
+  "$(for pair in phase:8801 comments:6436 review:8143 rotation:2833; do [ "$(wc -c < "$ROOT/templates/agent-${pair%%:*}-brief.md" | tr -d ' ')" -le "${pair##*:}" ] && echo yes || echo no; done | paste -sd'|' -)"
 # A chained push (`&&`, `;`, `cd … &&`) falls outside the permission rules and is refused.
 check "the phase and comments briefs say a push runs as one bare command" "yes|yes" \
   "$(for t in phase comments; do spells "$ROOT/templates/agent-$t-brief.md" 'A push runs as one bare command, `git push -u origin {{BRANCH}}`, never chained to another command (`&&`, `;`, `cd … &&`): a chained push falls outside the permission rules and is refused.'; done | paste -sd'|' -)"
@@ -7880,6 +7881,19 @@ check "the successor names its predecessor in its message to the agents" "1" \
   "$(succ3_has "and your predecessor's,")"
 check "the design says the agents learn their new orchestrator from their current one" "yes" \
   "$(flat_has "$ROOT/docs/design.md" "the agents learn their new orchestrator from their current one")"
+
+# The review lenses run as a dedicated read-only subagent type: a lens needs to read and to run
+# git, and a type that lists only those tools starts about 35,000 tokens lighter than the
+# general-purpose one that carries every tool of the session. It names no model, so the tier the
+# review brief gives is the one it runs at.
+LENS="$ROOT/agents/lens.md"
+check "the lens agent lists exactly four read tools and names no model" "yes|1|0" \
+  "$([ -f "$LENS" ] && echo yes || echo no)|$(grep -cx 'tools: Read, Grep, Glob, Bash' "$LENS" 2>/dev/null)|$(grep -c '^model:' "$LENS" 2>/dev/null)"
+check "the lens agent is named lens" "1" "$(grep -cx 'name: lens' "$LENS" 2>/dev/null)"
+check "the review brief dispatches each lens as the subagent type orchestrator:lens" "yes" \
+  "$(spells "$ROOT/templates/agent-review-brief.md" 'one read-only sub-agent of the type `orchestrator:lens` per lens')"
+check "the routing table, the review reference and the design name the lens type" "yes|yes|yes" \
+  "$(flat_has "$ROOT/skills/model-routing/SKILL.md" '`orchestrator:lens`')|$(flat_has "$ROOT/skills/orchestrator/references/review.md" '`orchestrator:lens`')|$(flat_has "$ROOT/docs/design.md" '`orchestrator:lens`')"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"

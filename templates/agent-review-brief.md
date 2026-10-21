@@ -21,7 +21,7 @@ You are the REVIEW agent for this round. You read; you never implement. You read
 
 ## 3. Lenses
 
-The orchestrator sized this round by the work, its volume, its scope and its criticality: {{ROUND_SIZE}}, because {{ROUND_SIZE_REASON}}. For a single reading, the lens list and the tier below read `none` and you read the delivery yourself. Where it names lenses, dispatch one read-only sub-agent per lens at the **{{LENS_TIER}}** tier, each with the diff range `{{BASE_BRANCH}}..{{HEAD}}`, the spec section and the norms file, and the instruction to report findings only with file, line and evidence:
+The orchestrator sized this round by the work, its volume, its scope and its criticality: {{ROUND_SIZE}}, because {{ROUND_SIZE_REASON}}. For a single reading, the lens list and the tier below read `none` and you read the delivery yourself. Where it names lenses, dispatch one read-only sub-agent of the type `orchestrator:lens` per lens at the **{{LENS_TIER}}** tier, each with the diff range `{{BASE_BRANCH}}..{{HEAD}}`, the spec section and the norms file, and the instruction to report findings only with file, line and evidence:
 
 {{LENSES}}
 
