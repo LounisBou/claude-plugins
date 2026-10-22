@@ -2546,7 +2546,7 @@ check "a plain spawn carries the setting off, and no --remote-control" "1|0" \
 check "a successor carries the flag, and not the setting" "1|0" \
   "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- "--remote-control 'Orch : f'")|$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- 'remoteControlAtStartup')"
 check "--successor --no-remote-control carries the setting" "1" \
-  "$(succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -Fc -- "--settings '{\"remoteControlAtStartup\":false,\"syncClaudeAiSkills\":false,\"env\":{\"CLAUDE_CODE_TOTAL_TOKENS_REMINDER\":\"off\"}}'")"
+  "$(succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -Fc -- "--settings '{\"remoteControlAtStartup\":false,\"syncClaudeAiSkills\":false,\"env\":{\"CLAUDE_CODE_TOTAL_TOKENS_REMINDER\":\"off\",\"CLAUDE_CODE_AUTO_COMPACT_WINDOW\":\"400000\"}}'")"
 check "a caller launched without a name cannot derive one" "1|1" \
   "$(succ "$PSNONAME" --successor >/dev/null 2>&1; echo $?)|$(succ "$PSNONAME" --successor | grep -c "needs the caller's session name")"
 # The derived name is held to the SAME shape as a typed one (§42), which retires the
@@ -7778,11 +7778,15 @@ check "an agent's settings cut the synced skills, the recap, the countdown and t
   "$(leanl --title 'Agent : x' | leansettings)"
 check "an agent's settings carry the 300000 compaction window, and no switch for the 1M window" "1|0" \
   "$(leanl --title 'Agent : x' | leansettings | grep -Fc '"CLAUDE_CODE_AUTO_COMPACT_WINDOW":"300000"')|$(leanl --title 'Agent : x' | grep -c 'DISABLE_1M_CONTEXT')"
-check "an orchestrator, a successor, an auditor and both coordinator launches carry no compaction window" "0|0|0|0|0" \
-  "$(leanl --title 'Orch : x' | grep -c 'AUTO_COMPACT_WINDOW')|$(succ "$PSTAB" --successor | grep -c 'AUTO_COMPACT_WINDOW')|$(audl --auditor --title 'Audit : tm' | grep -c 'AUTO_COMPACT_WINDOW')|$(crdl --coordinator-successor --title 'Coord : ops' | grep -c 'AUTO_COMPACT_WINDOW')|$(leanl --title 'Coord : ops' | grep -c 'AUTO_COMPACT_WINDOW')"
-check "an orchestrator's settings cut the synced skills and the countdown only" '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' \
+check "an orchestrator, a successor and a coordinator's successor carry the 400000 compaction window, an auditor none" "1|1|0|1" \
+  "$(leanl --title 'Orch : x' | grep -Fc '"CLAUDE_CODE_AUTO_COMPACT_WINDOW":"400000"')|$(succ "$PSTAB" --successor | grep -Fc '"CLAUDE_CODE_AUTO_COMPACT_WINDOW":"400000"')|$(audl --auditor --title 'Audit : tm' | grep -c 'AUTO_COMPACT_WINDOW')|$(crdl --coordinator-successor --title 'Coord : ops' | grep -Fc '"CLAUDE_CODE_AUTO_COMPACT_WINDOW":"400000"')"
+check "an orchestrator exports a 75 percent gate, an agent and an auditor none" "1|0|0" \
+  "$(gspawn --title 'Orch : gate' --prompt p | grep -c '^launch=.*export ORCHESTRATOR_CONTEXT_GATE=75 && ')|$(gspawn --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')|$(gspawn --title 'Audit : gate' --auditor --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')"
+check "a successor and a coordinator's successor export the 75 percent gate" "1|1" \
+  "$(succ "$PSTAB" --successor | grep -c '^launch=.*export ORCHESTRATOR_CONTEXT_GATE=75 && ')|$(crdl --coordinator-successor --title 'Coord : ops' | grep -c 'export ORCHESTRATOR_CONTEXT_GATE=75 && ')"
+check "an orchestrator's settings cut the synced skills and the countdown, and compact at 400000" '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_AUTO_COMPACT_WINDOW":"400000"}}' \
   "$(leanl --title 'Orch : x' | leansettings)"
-check "a successor, an auditor and the coordinator's successor carry the two cuts and no setting for remote control" '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}|{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}|{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' \
+check "a successor, an auditor and the coordinator's successor carry the cuts and no setting for remote control" '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_AUTO_COMPACT_WINDOW":"400000"}}|{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}|{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_AUTO_COMPACT_WINDOW":"400000"}}' \
   "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | leansettings)|$(audl --auditor --title 'Audit : tm' | leansettings)|$(crdl --coordinator-successor --title 'Coord : ops' | leansettings)"
 check "the settings key for the host's own artifact switch is never passed, whatever the role" "0|0|0" \
   "$(leanl --title 'Agent : x' --keep-tool Artifact | grep -c enableArtifact)|$(leanl --title 'Orch : x' | grep -c enableArtifact)|$(audl --auditor --title 'Audit : tm' | grep -c enableArtifact)"

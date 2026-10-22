@@ -164,3 +164,17 @@ test('a measure line without its figures reads as unmeasured', () => {
   expect(parseMeasure('{"context_tokens":null,"context_window":1000,"context_percent":1}')).toBeNull()
   expect(parseMeasure('null')).toBeNull()
 })
+
+test('an orchestrator launched with a 75 percent gate trips at 300,000 tokens on either reading', () => {
+  const env = { gate: 75 }
+  expect(tripGate(29, 299999, 1000000, env).tripped).toBe(false)
+  expect(tripGate(30, 300000, 1000000, env).tripped).toBe(true)
+  expect(tripGate(74, 299999, 400000, env).tripped).toBe(false)
+  expect(tripGate(75, 300000, 400000, env).tripped).toBe(true)
+  expect(tripGate(75, 300000, 400000, env).words).toBe('75% (gate 75%)')
+})
+
+test('the 75 percent gate falls before the compaction near 367,000 tokens', () => {
+  expect(tripGate(75, 300000, 400000, { gate: 75 }).tripped).toBe(true)
+  expect(tripGate(88, 350000, 400000, { gate: 75 }).tripped).toBe(true)
+})
