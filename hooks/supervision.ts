@@ -127,14 +127,14 @@ const PANE_OPENED = { plugin: 'orchestrator', key: 'paneOpened' } as const
 // others' fills, their ages — froze at its own last turn.
 const PANE_REFRESH_MS = 20000
 
-// The width of the column a choice's letter sits in: the letter and a gap, so the choice text
-// starts where it did when the letter and the text were one line.
-const ROUND_LETTER_COLUMN = 3
-
-// The pane's last option under a question's choices: no state changes, the operator types his
-// answer in a tab. Its hotkey is no choice's letter (A to E).
+// The pane's last option under a question's choices where the surface draws no text field
+// (mobile): no state changes, the operator types his answer in a tab. Its hotkey is no
+// choice's letter (A to E).
 const OTHER_KEY = 'other'
 const OTHER_HOTKEY = 'o'
+
+// Where the surface draws a text field, the last option is that field: its text answers the entry.
+const OTHER_LABEL = 'Other answer'
 
 // The width of the label column a wait's lines sit in (« Status: », « Blocks: »): the longer
 // label and a gap, so what a long blocks text wraps under is its own first character.
@@ -540,6 +540,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // from — the render lists what the open asked for — and the open pane's clock.
   // A reload forgets it, and the pane then asks to be opened again.
   const pane: PaneMemory = { opened: null, ticker: null, other: new Set(), undelivered: new Map(), answering: new Set() }
+  // The entry whose recommended choice was last asked the focus: once per entry, never at a redraw.
+  let focusedFor: string | null = null
   const stopTicker = () => {
     pane.ticker?.cancel()
     pane.ticker = null
@@ -833,48 +835,65 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       const says = waiting === 0
         ? 'none'
         : `none in the pane — ${waiting} orchestrator${waiting === 1 ? ' waits' : 's wait'} for you: ask the coordinator`
-      // The question whole under its header, then its lettered choices — each a row, its letter
-      // in a column of its own and its text in the rest, so a long text wraps under the text —
-      // then the letters as Buttons the operator presses (a click, or the letter once the pane
-      // holds the keys), the « other answer » option, and the footer that says how keys reach it.
-      const choice = (line: RoundLine) => {
-        const style = line.bold ? { bold: true, color: 'success' } : {}
-        return el.Box({
-          flexDirection: 'row',
-          children: [
-            el.Box({ width: ROUND_LETTER_COLUMN, flexShrink: 0, children: [el.Text(line.bold ? { bold: true, color: 'success', children: line.letter } : { bold: true, color: 'suggestion', children: line.letter })] }),
-            el.Box({ flexGrow: 1, flexShrink: 1, children: [el.Text({ ...style, children: line.text })] }),
-          ],
+      // The question whole under its header, then one Button per choice — its letter and whole
+      // text as the label, so a long text wraps inside it, the letter its hotkey — then the
+      // « other answer » (a text field, or on a surface with none a Button saying to type it in
+      // a tab) and the footer that says how keys reach the selector.
+      const focusKey = (entry: RoundEntry) => {
+        const pick = entry.choices.find(c => c.letter === entry.recommendation) ?? entry.choices[0]
+        return pick ? `choice:${pick.letter}` : null
+      }
+      const choice = (entry: RoundEntry, line: RoundLine, focus: string | null) => {
+        const label = `${line.letter}  ${line.text}`
+        const key = `choice:${line.letter}`
+        return el.Button({
+          key,
+          label,
+          hotkey: line.letter!.toLowerCase(),
+          // The ring starts on the focused choice when the pane takes the keys.
+          ...(key === focus ? { autoFocus: true } : {}),
+          ...(line.bold ? { children: [el.Text({ bold: true, color: 'success', children: label })] } : {}),
+          onPress: () => answerFromPane($, pane, entry, { letter: line.letter!, text: entry.choices.find(c => c.letter === line.letter)!.text }),
         })
       }
-      const letters = (entry: RoundEntry) => el.Box({
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        columnGap: 1,
-        children: entry.choices.map(pick => el.Button({
-          key: `choice:${pick.letter}`,
-          label: pick.letter,
-          hotkey: pick.letter.toLowerCase(),
-          onPress: () => answerFromPane($, pane, entry, pick),
-        })),
-      })
       const body = asking ? plainText(questionBody(asking)) : ''
+      const focus = asking === null ? null : focusKey(asking)
+      if (asking !== null && focus !== null && focusedFor !== asking.id) {
+        // Once per entry, for a pane already holding the keys; never awaited, so the draw never
+        // waits on itself, and a refusal (the pane holds no keys yet) is not an error.
+        focusedFor = asking.id
+        try {
+          Promise.resolve($.ui.focus({ requestId: PANE_ID, key: focus })).catch(() => undefined)
+        } catch {
+          // A host without the call: the autoFocus mark still starts the ring.
+        }
+      }
+      const otherAnswer = (entry: RoundEntry) => typeof el.Input === 'function'
+        ? [el.Input({
+          key: `answer:${entry.id}`,
+          label: OTHER_LABEL,
+          placeholder: 'type another answer',
+          submitLabel: 'send',
+          onSubmit: (value: string) => answerFromPaneText($, pane, entry, value),
+        })]
+        : [
+          el.Button({
+            key: OTHER_KEY,
+            label: 'Other answer: in the session',
+            hotkey: OTHER_HOTKEY,
+            onPress: () => {
+              pane.other.add(entry.id)
+              $.ui.invalidate('ui.render')
+            },
+          }),
+          ...(pane.other.has(entry.id) ? [el.Text({ color: 'suggestion', children: `type your answer in this tab, or in ${entry.from}'s tab` })] : []),
+        ]
       const shown = asking === null ? [] : [
         el.Text({ bold: true, children: round[0].text }),
         ...(body !== '' ? [el.Text({ children: body })] : []),
-        ...round.slice(1).map(choice),
-        ...(asking.choices.length > 0 ? [letters(asking)] : []),
-        el.Button({
-          key: OTHER_KEY,
-          label: 'Other answer: in the session',
-          hotkey: OTHER_HOTKEY,
-          onPress: () => {
-            pane.other.add(asking!.id)
-            $.ui.invalidate('ui.render')
-          },
-        }),
-        ...(pane.other.has(asking.id) ? [el.Text({ color: 'suggestion', children: `type your answer in this tab, or in ${asking.from}'s tab` })] : []),
-        el.Text({ dimColor: true, children: 'click an option, or ctrl+x tab then its key · Esc: back to the prompt' }),
+        ...round.slice(1).map(line => choice(asking!, line, focus)),
+        ...otherAnswer(asking),
+        el.Text({ dimColor: true, children: 'ctrl+x tab: give the pane the keys · arrows or Tab: move · Enter: choose · a letter: pick it · Esc: back to the prompt' }),
       ]
       const notices = failed.map(notice => el.Text({ color: 'error', children: `not delivered: ${notice.reason} — the answer to ${notice.entry.from} (blocks: ${notice.entry.blocks})` }))
       const asked = el.Box({
@@ -1096,6 +1115,20 @@ async function withdrawEntry($: any, sessionId: string, name: string, held: { bl
 // question until its sender is gone. A press on an entry whose answer is in flight does
 // nothing. The pane is drawn again: the next open question comes up.
 export async function answerFromPane($: any, pane: PaneMemory, asked: RoundEntry, choice: RoundChoice): Promise<void> {
+  return answerEntryFromPane($, pane, asked, `${choice.letter} : ${choice.text}`)
+}
+
+// The text typed in the pane's « other answer » field answers the entry as a choice does; a
+// text empty once trimmed does nothing.
+export async function answerFromPaneText($: any, pane: PaneMemory, asked: RoundEntry, typed: string): Promise<void> {
+  const text = typed.trim()
+  if (text === '') return
+  return answerEntryFromPane($, pane, asked, text)
+}
+
+// The one sequence both answers share: the entry written answered by the pane with `text`, its
+// fingerprint forgotten, the text sent to its sender.
+async function answerEntryFromPane($: any, pane: PaneMemory, asked: RoundEntry, text: string): Promise<void> {
   if (pane.answering.has(asked.id)) return
   pane.answering.add(asked.id)
   try {
@@ -1103,7 +1136,6 @@ export async function answerFromPane($: any, pane: PaneMemory, asked: RoundEntry
     const entry = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
     if (!entry || entry.status !== 'open') return
     const at = new Date().toISOString()
-    const text = `${choice.letter} : ${choice.text}`
     await writeAtomic($, path, JSON.stringify({ ...entry, status: 'answered', answer: { text, by: 'pane', at } }) + '\n')
     pane.other.delete(entry.id)
     await forgetRelayed($, entry)

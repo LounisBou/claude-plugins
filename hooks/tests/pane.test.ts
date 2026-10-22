@@ -130,6 +130,7 @@ type Fx = {
   env: Record<string, string>
   timers: { ms: number; fn: () => void; cancelled: boolean }[]
   invalidated: string[]
+  focused: { requestId: string; key: string }[]
   state: Map<string, unknown>
 }
 
@@ -147,6 +148,7 @@ function fakeDollar(over: {
   const env: Record<string, string> = { HOME, ORCHESTRATOR_HOST_CLI: 'hostcli' }
   const timers: { ms: number; fn: () => void; cancelled: boolean }[] = []
   const invalidated: string[] = []
+  const focused: { requestId: string; key: string }[] = []
   // The host's $.state for the session: it outlives the module's own variables.
   const state = new Map<string, unknown>()
   const dollar = {
@@ -248,14 +250,20 @@ function fakeDollar(over: {
       panes: async () => [...open].map(id => ({ id, title: '' })),
       toast: () => undefined,
       invalidate: (what: string) => { invalidated.push(what) },
-      resolve: (_e: unknown) => ({
+      focus: async (args: { requestId: string; key: string }) => {
+        focused.push(args)
+        return {}
+      },
+      // The mobile table has no Input, as the reference says.
+      resolve: (e: { surface?: string }) => ({
         Box: (props: { flexDirection?: string; children?: unknown[] }) => ({ type: 'Box', props }),
         Text: (props: { color?: string; bold?: boolean; children?: string }) => ({ type: 'Text', props }),
         Button: (props: { key?: string; label?: string; hotkey?: string; onPress: () => void }) => ({ type: 'Button', props }),
+        ...(e.surface === 'mobile' ? {} : { Input: (props: { key: string; label?: string; onSubmit: (value: string) => void }) => ({ type: 'Input', props }) }),
       }),
     },
   }
-  return { dollar, files, ran, written, opened, closed, env, timers, invalidated, state }
+  return { dollar, files, ran, written, opened, closed, env, timers, invalidated, focused, state }
 }
 
 function mounted(register: (on: any) => void): {
@@ -493,39 +501,17 @@ test('a coordinator\'s pane draws the round\'s first question under the orchestr
   expect(round.type).toBe('Box')
   expect(round.props.marginTop).toBe(1)
   const kids = round.props.children
-  expect(kids.slice(1, 6).map((t: any) => t.type === 'Text' ? [t.props.children, t.props.bold === true] : [t.props.children.map((cell: any) => cell.props.children[0].props.children), t.props.children[1].props.children[0].props.bold === true])).toEqual([
+  expect(kids.slice(1, 3).map((t: any) => [t.props.children, t.props.bold === true])).toEqual([
     ['Question 1 of 1 — from Orch : low — blocks: phase 3', true],
     ['Merge it?', false],
-    [['A', 'merge it now — the release goes out today'], false],
-    [['B', 'wait for the next review — a day lost  (recommended)'], true],
-    [['C', 'close it — the work is dropped'], false],
   ])
-  expect(kids.slice(6).map((t: any) => t.type === 'Box' ? t.props.children.map((b: any) => `${b.type} ${b.props.label}`) : `${t.type} ${t.props.label ?? t.props.children}`)).toEqual([
-    ['Button A', 'Button B', 'Button C'],
-    'Button Other answer: in the session',
-    'Text click an option, or ctrl+x tab then its key · Esc: back to the prompt',
+  expect(kids.slice(3).map((t: any) => t.type === 'Text' ? `Text ${t.props.children}` : `${t.type} ${t.props.label}`)).toEqual([
+    'Button A  merge it now — the release goes out today',
+    'Button B  wait for the next review — a day lost  (recommended)',
+    'Button C  close it — the work is dropped',
+    'Input Other answer',
+    'Text ctrl+x tab: give the pane the keys · arrows or Tab: move · Enter: choose · a letter: pick it · Esc: back to the prompt',
   ])
-})
-
-test('a choice is a row whose letter has a column of its own, so a long text wraps under the text', async () => {
-  const fx = fakeDollar({ launchName: 'Coord : main' })
-  fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : low', context_percent: 30 })) + '\n')
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
-  fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
-  const [, , round] = (await coordinatorRender(fx)).props.children
-  const [, header, body, ...rest] = round.props.children
-  const choices = rest.slice(0, CHOICES.length)
-  expect(body.props.children).toBe('Merge it?')
-  expect(header.type).toBe('Text')
-  for (const choice of choices) {
-    expect(choice.type).toBe('Box')
-    expect(choice.props.flexDirection).toBe('row')
-    const [letter, text] = choice.props.children
-    expect(letter.props).toMatchObject({ width: 3, flexShrink: 0 })
-    expect(text.props).toMatchObject({ flexGrow: 1, flexShrink: 1 })
-    expect(letter.props.children[0].type).toBe('Text')
-    expect(text.props.children[0].type).toBe('Text')
-  }
 })
 
 test('no open question: nothing is drawn below the rows, and an orchestrator\'s pane never draws the round', async () => {
@@ -842,9 +828,13 @@ test('the questions section is titled in bold suggestion, with an open question 
   expect(pieces(body)).toEqual([{ text: 'Merge it?', bold: false }])
   expect(pieces(title)).toEqual([{ text: 'Questions for you', color: 'suggestion', bold: true }])
   expect(pieces(header)).toEqual([{ text: 'Question 1 of 1 — from Orch : low — blocks: phase 3', bold: true }])
-  expect(pieces(a)).toEqual([{ text: 'A', color: 'suggestion', bold: true }, { text: 'merge it now — the release goes out today', bold: false }])
-  expect(pieces(b)).toEqual([{ text: 'B', color: 'success', bold: true }, { text: 'wait for the next review — a day lost  (recommended)', color: 'success', bold: true }])
-  expect(pieces(c)[0]).toEqual({ text: 'C', color: 'suggestion', bold: true })
+  expect([a, b, c].map(choice => [choice.type, choice.props.label])).toEqual([
+    ['Button', 'A  merge it now — the release goes out today'],
+    ['Button', 'B  wait for the next review — a day lost  (recommended)'],
+    ['Button', 'C  close it — the work is dropped'],
+  ])
+  expect(pieces(b.props.children[0])).toEqual([{ text: 'B  wait for the next review — a day lost  (recommended)', color: 'success', bold: true }])
+  expect(a.props.children).toBeUndefined()
 })
 
 test('no question: the section says none, or counts the orchestrators waiting when the round holds none', async () => {
@@ -904,7 +894,7 @@ const button = (tree: any, key: string) => findAll(tree, n => n.type === 'Button
 const texts = (tree: any) => findAll(tree, n => n.type === 'Text' && typeof n.props.children === 'string').map(n => n.props.children as string)
 
 // A coordinator with one live orchestrator asking, its send recorded (or refused), its pane drawn.
-async function askingPane(asked: RoundEntry[], over: { refuse?: string; throws?: string } = {}) {
+async function askingPane(asked: RoundEntry[], over: { refuse?: string; throws?: string; surface?: string } = {}) {
   const fx = fakeDollar({ launchName: 'Coord : main' })
   fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : low', context_percent: 30 })) + '\n')
   for (const e of asked) fx.files.set(`${ROUND}/${e.id}.json`, JSON.stringify(e) + '\n')
@@ -916,7 +906,7 @@ async function askingPane(asked: RoundEntry[], over: { refuse?: string; throws?:
   }
   const { handlers } = mounted(registerSupervision)
   await handlers['command.run'](fx.dollar, supervisionRun)
-  const render = () => handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
+  const render = () => handlers['ui.render'](fx.dollar, { ...renderEvent, surface: over.surface ?? 'terminal' }, (x: unknown) => ({ passed: x }))
   const stored = (id: string) => JSON.parse(String(fx.files.get(`${ROUND}/${id}.json`))) as RoundEntry
   return { fx, sent, render, stored }
 }
@@ -933,31 +923,14 @@ test('a 2,500-character question is drawn whole in the pane, above its choices',
   expect(drawn.indexOf(LONG)).toBeGreaterThan(drawn.indexOf('Question 1 of 1 — from Orch : low — blocks: phase 3'))
 })
 
-test('a message without lettered choices shows its text and the other answer, never a bare blocks line', async () => {
+test('a message without lettered choices shows its text and the Other answer field, no choice Button, never a bare blocks line', async () => {
   const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', question: LONG })
   const { render } = await askingPane([asked])
   const tree = await render()
   expect(texts(tree)).toContain(LONG)
-  expect(button(tree, 'other').props).toMatchObject({ label: 'Other answer: in the session', hotkey: 'o' })
-  expect(findAll(tree, n => n.type === 'Button').length).toBe(1)
+  expect(input(tree).props).toMatchObject({ label: 'Other answer' })
+  expect(findAll(tree, n => n.type === 'Button').length).toBe(0)
   expect(JSON.stringify(tree)).not.toContain('no lettered choices')
-})
-
-test('under the choice lines, each choice is a Button of its letter, hotkey its lowercase letter, then the other answer and the footer', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
-  const { render } = await askingPane([asked])
-  const tree = await render()
-  const pressable = findAll(tree, n => n.type === 'Button')
-  expect(pressable.map(n => [n.props.key, n.props.label, n.props.hotkey])).toEqual([
-    ['choice:A', 'A', 'a'], ['choice:B', 'B', 'b'], ['choice:C', 'C', 'c'], ['other', 'Other answer: in the session', 'o'],
-  ])
-  const [, , round] = tree.props.children
-  const kids = round.props.children
-  const row = kids.findIndex((kid: any) => findAll(kid, n => n.type === 'Button' && n.props.key === 'choice:A').length > 0)
-  expect(kids.slice(row - CHOICES.length, row).map((kid: any) => kid.props.flexDirection)).toEqual(['row', 'row', 'row'])
-  expect(kids[row].props).toMatchObject({ flexDirection: 'row', flexWrap: 'wrap' })
-  expect(kids[row + 1]).toBe(button(tree, 'other'))
-  expect(kids[kids.length - 1].props).toMatchObject({ dimColor: true, children: 'click an option, or ctrl+x tab then its key · Esc: back to the prompt' })
 })
 
 test('a press on a choice answers the entry from the pane, sends the asking orchestrator the choice once, and draws the next question', async () => {
@@ -988,19 +961,6 @@ test('a press on a drawing whose entry was settled meanwhile writes and sends no
   await button(drawn, 'choice:A').props.onPress()
   expect(stored(asked.id).status).toBe('closed')
   expect(sent).toEqual([])
-})
-
-test('a press on the other answer changes nothing, sends nothing, and says where to type', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
-  const { fx, sent, render } = await askingPane([asked])
-  const before = fx.files.get(`${ROUND}/${asked.id}.json`)
-  await button(await render(), 'other').props.onPress()
-  expect(fx.files.get(`${ROUND}/${asked.id}.json`)).toBe(before)
-  expect(sent).toEqual([])
-  expect(fx.invalidated).toContain('ui.render')
-  const drawn = texts(await render())
-  expect(drawn).toContain("type your answer in this tab, or in Orch : low's tab")
-  expect(drawn.indexOf("type your answer in this tab, or in Orch : low's tab")).toBeGreaterThan(drawn.indexOf('Question 1 of 1 — from Orch : low — blocks: phase 3'))
 })
 
 test('an answer not delivered keeps the entry answered, is logged, and is said until a render finds the sender gone', async () => {
@@ -1074,4 +1034,136 @@ test('a question without choices never hides one that has them, and the count is
   expect(lines.map(l => l.letter)).toEqual([null, 'A', 'B', 'C'])
   // Without any choiced entry, the round's own order.
   expect(roundLines(entries.filter(e => e.choices.length === 0))[0].text).toContain('from Orch : a')
+})
+
+// --- the selector ---------------------------------------------------------------------------
+
+const input = (tree: any) => findAll(tree, n => n.type === 'Input')[0]
+
+test('each choice is one Button carrying its full text, hotkey its lowercase letter, and no separate letter row', async () => {
+  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const { render } = await askingPane([asked])
+  const tree = await render()
+  const buttons = findAll(tree, n => n.type === 'Button' && String(n.props.key).startsWith('choice:'))
+  expect(buttons.map(n => [n.props.key, n.props.label, n.props.hotkey])).toEqual([
+    ['choice:A', 'A  merge it now — the release goes out today', 'a'],
+    ['choice:B', 'B  wait for the next review — a day lost  (recommended)', 'b'],
+    ['choice:C', 'C  close it — the work is dropped', 'c'],
+  ])
+  expect(findAll(tree, n => n.type === 'Box' && n.props.flexWrap === 'wrap')).toEqual([])
+  expect(findAll(tree, n => n.type === 'Button' && n.props.label === 'B').length).toBe(0)
+  // The recommended choice keeps its look inside its Button.
+  expect(findAll(button(tree, 'choice:B'), n => n.type === 'Text').map(n => [n.props.bold, n.props.color])).toEqual([[true, 'success']])
+})
+
+test('the first draw of an entry requests the focus on the recommended choice, a redraw nothing more', async () => {
+  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const { fx, render } = await askingPane([asked])
+  const tree = await render()
+  expect(fx.focused).toEqual([{ requestId: 'supervision', key: 'choice:B' }])
+  await render()
+  expect(fx.focused.length).toBe(1)
+  // For a pane that does not hold the keys yet, the ring starts on the same Button.
+  expect(button(tree, 'choice:B').props.autoFocus).toBe(true)
+  expect(findAll(tree, n => n.type === 'Button' && n.props.autoFocus === true).length).toBe(1)
+})
+
+test('without a recommendation the focus goes to the first choice, and a new entry asks it again', async () => {
+  const first = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const second = entry('Orch : low', '2026-10-18T10:05:00.000Z', { session: 'low', blocks: 'phase 4', choices: CHOICES, recommendation: 'C' })
+  const { fx, render } = await askingPane([first, second])
+  const tree = await render()
+  expect(fx.focused).toEqual([{ requestId: 'supervision', key: 'choice:A' }])
+  expect(button(tree, 'choice:A').props.autoFocus).toBe(true)
+  await button(tree, 'choice:A').props.onPress()
+  await render()
+  expect(fx.focused).toEqual([{ requestId: 'supervision', key: 'choice:A' }, { requestId: 'supervision', key: 'choice:C' }])
+})
+
+test('a refused or failing focus request never blocks the draw', async () => {
+  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const { fx, render } = await askingPane([asked])
+  fx.dollar.ui.focus = async () => { throw new Error('refused') }
+  expect(button(await render(), 'choice:A')).toBeDefined()
+})
+
+test('the Other answer field comes last, labelled, and replaces the in-session Button', async () => {
+  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const { render } = await askingPane([asked])
+  const tree = await render()
+  expect(input(tree).props).toMatchObject({ label: 'Other answer' })
+  expect(typeof input(tree).props.submitLabel).toBe('string')
+  expect(button(tree, 'other')).toBeUndefined()
+  expect(JSON.stringify(tree)).not.toContain('in the session')
+  const kids = tree.props.children[2].props.children
+  expect(kids[kids.length - 2]).toBe(input(tree))
+  expect(kids[kids.length - 1].props.dimColor).toBe(true)
+})
+
+test('the footer says how keys reach the selector', async () => {
+  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const { render } = await askingPane([asked])
+  const footer = texts(await render()).at(-1)!
+  for (const part of ['ctrl+x tab', 'arrows or Tab', 'Enter', 'a letter', 'Esc']) expect(footer).toContain(part)
+})
+
+test('a submitted text answers the entry from the pane and is sent to its sender', async () => {
+  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const next = entry('Orch : low', '2026-10-18T10:05:00.000Z', { session: 'low', blocks: 'phase 4', question: 'Rename it?' })
+  const { fx, sent, render, stored } = await askingPane([asked, next])
+  await input(await render()).props.onSubmit('  some text  ')
+  const answered = stored(asked.id)
+  expect(answered.status).toBe('answered')
+  expect(answered.answer).toEqual({ text: 'some text', by: 'pane', at: answered.answer!.at })
+  expect(sent).toEqual([{
+    to: 'Orch : low',
+    text: `[module] The operator answered from the coordinator's pane at ${answered.answer!.at} — some text (question since 2026-10-18T10:03:00.000Z, blocks: phase 3)`,
+  }])
+  expect([...fx.files.keys()].some(p => p.includes('.tmp-'))).toBe(false)
+  expect(texts(await render())).toContain('Rename it?')
+})
+
+test('an empty or blank submit writes and sends nothing', async () => {
+  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const { fx, sent, render, stored } = await askingPane([asked])
+  const before = fx.files.get(`${ROUND}/${asked.id}.json`)
+  const field = input(await render())
+  await field.props.onSubmit('')
+  await field.props.onSubmit('  \n ')
+  expect(fx.files.get(`${ROUND}/${asked.id}.json`)).toBe(before)
+  expect(stored(asked.id).status).toBe('open')
+  expect(sent).toEqual([])
+})
+
+test('a submitted text not delivered keeps the entry answered and leaves its notice', async () => {
+  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const { fx, render, stored } = await askingPane([asked], { refuse: 'nobody by that name' })
+  await input(await render()).props.onSubmit('some text')
+  expect(stored(asked.id).status).toBe('answered')
+  expect(fx.written.filter(l => l.includes("round: the pane's answer was not delivered to Orch : low: nobody by that name")).length).toBe(1)
+  expect(texts(await render()).some(t => t.startsWith('not delivered: nobody by that name'))).toBe(true)
+})
+
+test('a submit on an entry settled meanwhile writes and sends nothing', async () => {
+  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const { fx, sent, render, stored } = await askingPane([asked])
+  const drawn = await render()
+  fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify({ ...asked, status: 'closed' }) + '\n')
+  await input(drawn).props.onSubmit('some text')
+  expect(stored(asked.id).status).toBe('closed')
+  expect(sent).toEqual([])
+})
+
+test('where the pane has no field (mobile) the in-session Button and its line stay, and no Input is drawn', async () => {
+  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const { fx, sent, render } = await askingPane([asked], { surface: 'mobile' })
+  const tree = await render()
+  expect(input(tree)).toBeUndefined()
+  expect(button(tree, 'other').props).toMatchObject({ label: 'Other answer: in the session', hotkey: 'o' })
+  const before = fx.files.get(`${ROUND}/${asked.id}.json`)
+  await button(tree, 'other').props.onPress()
+  expect(fx.files.get(`${ROUND}/${asked.id}.json`)).toBe(before)
+  expect(sent).toEqual([])
+  expect(fx.invalidated).toContain('ui.render')
+  expect(texts(await render())).toContain("type your answer in this tab, or in Orch : low's tab")
 })
