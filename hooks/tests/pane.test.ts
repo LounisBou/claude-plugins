@@ -466,7 +466,10 @@ test('the first question is the round\'s order\'s, done proposals and closed ent
     entry('Orch : e', '2026-10-18T08:30:00.000Z', { status: 'withdrawn' }),
   ]
   expect(roundLines(entries)).toEqual([
-    { letter: null, text: 'Question 1 of 2 — from Orch : b — blocks: the merge', bold: false },
+    { letter: null, text: 'Question 1 of 2 — from Orch : a — blocks: phase 3', bold: false },
+    { letter: 'A', text: 'merge it now — the release goes out today', bold: false },
+    { letter: 'B', text: 'wait for the next review — a day lost  (recommended)', bold: true },
+    { letter: 'C', text: 'close it — the work is dropped', bold: false },
   ])
   expect(roundLines(entries.slice(2))).toEqual([])
   expect(roundLines([])).toEqual([])
@@ -1058,4 +1061,17 @@ test('the question\'s body is drawn without its emphasis markers, its stored tex
   const { render, stored } = await askingPane([asked])
   expect(texts(await render())).toContain('Question 1 of 1 — merge it?\nContext. The review is green, see pr-219 and snake_case_name.\n* a list item')
   expect(stored(asked.id).question).toBe(question)
+})
+
+test('a question without choices never hides one that has them, and the count is the total', () => {
+  const entries = [
+    entry('Orch : a', '2026-10-18T10:01:00.000Z', { blocks: 'the note' }),
+    entry('Orch : b', '2026-10-18T10:02:00.000Z', { choices: CHOICES, recommendation: 'B', blocks: 'the merge' }),
+    entry('Orch : c', '2026-10-18T10:03:00.000Z', { blocks: 'the other note' }),
+  ]
+  const lines = roundLines(entries)
+  expect(lines[0]).toEqual({ letter: null, text: 'Question 1 of 3 — from Orch : b — blocks: the merge', bold: false })
+  expect(lines.map(l => l.letter)).toEqual([null, 'A', 'B', 'C'])
+  // Without any choiced entry, the round's own order.
+  expect(roundLines(entries.filter(e => e.choices.length === 0))[0].text).toContain('from Orch : a')
 })

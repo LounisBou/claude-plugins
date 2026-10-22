@@ -347,6 +347,13 @@ test('two turns ending on the same wait keep the first waiting_since, the turn b
 const QUESTION_LINE = 'waiting: operator — blocks: phase 3'
 const typed = (kind: string, text = 'yes') => ({ text, origin: { kind } })
 
+// The operator types in the tab, the turn starts, then ends on `answer`.
+async function typedTurn(chains: Record<string, Function[]>, fx: ReturnType<typeof fake>, answer: string, kind = 'composer') {
+  await drive(chains, 'prompt.submit', fx.dollar, typed(kind))
+  await drive(chains, 'turn.start', fx.dollar, { text: 'yes' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answer))
+}
+
 async function relayedQuestion(over: Parameters<typeof fake>[0] = {}) {
   const chains = mounted()
   const fx = fake(over)
@@ -356,17 +363,20 @@ async function relayedQuestion(over: Parameters<typeof fake>[0] = {}) {
 }
 
 for (const kind of ['composer', 'bridge']) {
-  test(`a ${kind} prompt in an orchestrator holding a question withdraws it and forgets the fingerprint`, async () => {
+  test(`a ${kind} prompt in an orchestrator holding a question withdraws it at the turn's end and forgets the fingerprint`, async () => {
     const { chains, fx } = await relayedQuestion()
     const since = fx.row().waiting_since
     const e = typed(kind)
     expect(await drive(chains, 'prompt.submit', fx.dollar, e)).toBe(e)
     expect(fx.sent.length).toBe(0)
+    expect(entries(fx)[0].status).toBe('open')
+    await drive(chains, 'turn.start', fx.dollar, { text: 'yes' })
+    await drive(chains, 'turn.complete', fx.dollar, turnEnd('Working.'))
     const [entry] = entries(fx)
     expect([entry.status, entry.since, entry.blocks, entry.answer?.text, entry.answer?.by]).toEqual(['withdrawn', since, 'phase 3', "answered in the sender's own tab", 'tab'])
     expect(Number.isFinite(Date.parse(entry.answer!.at))).toBe(true)
     expect(fx.row().relayed ?? null).toBeNull()
-    await drive(chains, 'prompt.submit', fx.dollar, typed(kind, 'and more'))
+    await typedTurn(chains, fx, 'Working.', kind)
     expect(entries(fx)).toEqual([entry])
   })
 }
@@ -375,10 +385,10 @@ test('a withdrawal that finds no open entry says so in the log and still forgets
   const { chains, fx } = await relayedQuestion()
   const since = fx.row().waiting_since
   const matched = await relayedQuestion()
-  await drive(matched.chains, 'prompt.submit', matched.fx.dollar, typed('composer'))
+  await typedTurn(matched.chains, matched.fx, 'Working.')
   expect(matched.fx.logged.filter(l => l.includes('round: no open entry matched')).length).toBe(0)
   for (const path of [...fx.files.keys()].filter(p => p.startsWith(`${ROUND}/`))) fx.files.delete(path)
-  await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
+  await typedTurn(chains, fx, 'Working.')
   expect(fx.logged.filter(l => l.includes(`round: no open entry matched for Orch : belt since ${since}`)).length).toBe(1)
   expect(entries(fx)).toEqual([])
   expect(fx.row().relayed ?? null).toBeNull()
@@ -387,7 +397,7 @@ test('a withdrawal that finds no open entry says so in the log and still forgets
 test('the withdrawal holds when a turn start cleared the wait first', async () => {
   const { chains, fx } = await relayedQuestion()
   await drive(chains, 'turn.start', fx.dollar, { text: 'yes' })
-  await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
+  await typedTurn(chains, fx, 'Working.')
   expect(entries(fx)[0].status).toBe('withdrawn')
 })
 
@@ -432,18 +442,17 @@ test('no held question: nothing is withdrawn', async () => {
   expect(fx.sent.length).toBe(0)
 })
 
-test('a refused withdrawal is one log line, keeps the fingerprint and is tried again', async () => {
+test('a refused withdrawal is one log line at the turn\'s end, keeps the fingerprint and is tried again', async () => {
   const { chains, fx } = await relayedQuestion({ remote: true })
   const key = fx.row().relayed
   const send = fx.dollar.session.send
   fx.dollar.session.send = async () => ({ isDelivered: false, reason: 'nobody by that name' })
-  const e = typed('composer')
-  expect(await drive(chains, 'prompt.submit', fx.dollar, e)).toBe(e)
+  await typedTurn(chains, fx, 'Working.')
   expect(fx.logged.filter(l => l.includes('withdraw: not delivered to Coord : ops [abc]: nobody by that name')).length).toBe(1)
   expect(fx.row().relayed).toBe(key)
   fx.dollar.session.send = send
-  await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
-  expect(fx.sent.length).toBe(1)
+  await typedTurn(chains, fx, 'Working.')
+  expect(fx.sent.filter(m => m.text.startsWith('[module]')).length).toBe(1)
 })
 
 test('a wait rewritten while the withdrawal was being sent is left as it was written', async () => {
@@ -455,21 +464,22 @@ test('a wait rewritten while the withdrawal was being sent is left as it was wri
     fx.files.set(WAIT, JSON.stringify({ ...JSON.parse(fx.files.get(WAIT)!), relayed: other }) + '\n')
     return sent
   }
-  await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
-  expect(fx.sent.length).toBe(1)
+  await typedTurn(chains, fx, 'Working.')
+  expect(fx.sent.filter(m => m.text.startsWith('[module]')).length).toBe(1)
   expect(JSON.parse(fx.files.get(WAIT)!).relayed).toBe(other)
 })
 
 test('the write-back forgets the fingerprint and keeps every other field of the wait', async () => {
   const { chains, fx } = await relayedQuestion()
   const before = JSON.parse(fx.files.get(WAIT)!)
-  const fields = ['waiting', 'last_waiting', 'blocks', 'waiting_since', 'name', 'pid']
+  const fields = ['blocks', 'waiting_since', 'name', 'pid']
   const kept = (wait: Record<string, unknown>) => Object.fromEntries(fields.map(f => [f, wait[f] ?? null]))
-  expect(kept(before).waiting).toBe('operator')
+  expect(before.waiting).toBe('operator')
   expect(kept(before).name).toBe('Orch : belt')
-  await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
+  await typedTurn(chains, fx, 'Working.')
   const after = JSON.parse(fx.files.get(WAIT)!)
   expect(after.relayed).toBeNull()
+  expect([after.waiting, after.last_waiting, after.typed ?? null]).toEqual([null, 'operator', null])
   expect(kept(after)).toEqual(kept(before))
 })
 
@@ -499,11 +509,14 @@ test('a coordinator on another machine is sent the wait as a message, and nothin
   expect(row.relayed).toBe(fingerprint(parseWait(answerOf(QUESTION, QUESTION_LINE))!))
 })
 
-test('a coordinator on another machine is sent the withdrawal as a message', async () => {
+test('a coordinator on another machine is sent the withdrawal as a message at the turn\'s end', async () => {
   const { chains, fx } = await relayedQuestion({ remote: true })
   const since = fx.row().waiting_since
   await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
-  expect(fx.sent.map(s => [s.to, s.text])).toEqual([['Coord : ops [abc]', withdrawalText('Orch : belt', 'phase 3', since)]])
+  expect(fx.sent.length).toBe(0)
+  await drive(chains, 'turn.start', fx.dollar, { text: 'yes' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Working.'))
+  expect(fx.sent.filter(m => m.text.startsWith('[module]')).map(s => [s.to, s.text])).toEqual([['Coord : ops [abc]', withdrawalText('Orch : belt', 'phase 3', since)]])
   expect(fx.row().relayed ?? null).toBeNull()
   expect(entries(fx)).toEqual([])
 })
@@ -535,7 +548,7 @@ test('the withdrawal marks only the open question of that sender with the same s
   ]
   for (const other of others) fx.files.set(`${ROUND}/${other.id}.json`, JSON.stringify(other) + '\n')
   fx.files.set(`${ROUND}/broken.json`, '{"id": "broken", "status": "op')
-  await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
+  await typedTurn(chains, fx, 'Working.')
   const after = new Map(entries(fx).map(e => [e.id, e]))
   expect(after.get(held.id)!.status).toBe('withdrawn')
   for (const other of others) expect(after.get(other.id)).toEqual(other)
@@ -545,7 +558,7 @@ test('the withdrawal marks only the open question of that sender with the same s
 
 // --- an entry its sender no longer waits on ---------------------------------------------------
 
-test('a later turn on another wait withdraws the sender\'s own open entry; the same wait keeps it open', async () => {
+test('a typed turn on another wait withdraws the sender\'s own open entry; the same wait keeps it open', async () => {
   const chains = mounted()
   const fx = fake()
   const first = turnEnd(answerOf(QUESTION, 'waiting: operator — blocks: phase 3'))
@@ -554,20 +567,32 @@ test('a later turn on another wait withdraws the sender\'s own open entry; the s
   const other: RoundEntry = { ...asked, id: 'other-session', session: 's-two', from: 'Orch : other' }
   const settled: RoundEntry = { ...asked, id: 'already-closed', status: 'closed' }
   for (const kept of [other, settled]) fx.files.set(`${ROUND}/${kept.id}.json`, JSON.stringify(kept) + '\n')
-  // The same wait again: still what it waits on.
+  // The same wait again, typed in or not: still what it waits on.
   await drive(chains, 'turn.complete', fx.dollar, first)
+  await typedTurn(chains, fx, first.answer)
   expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('open')
-  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('A new question?', 'waiting: operator — blocks: phase 4')))
+  await typedTurn(chains, fx, answerOf('A new question?', 'waiting: operator — blocks: phase 4'))
   const after = new Map(entries(fx).map(e => [e.id, e]))
   const stale = after.get(asked.id)!
   expect(stale.status).toBe('withdrawn')
-  expect(stale.answer!.text).toBe('')
-  expect(stale.answer!.by).toBe('sender')
+  expect(stale.answer!.text).toBe("answered in the sender's own tab")
+  expect(stale.answer!.by).toBe('tab')
   expect(Number.isFinite(Date.parse(stale.answer!.at))).toBe(true)
   expect(after.get(other.id)).toEqual(other)
   expect(after.get(settled.id)).toEqual(settled)
   expect(entries(fx).filter(e => e.session === 's-one' && e.status === 'open').map(e => e.blocks)).toEqual(['phase 4'])
   expect([...fx.files.keys()].some(p => p.includes('.tmp-'))).toBe(false)
+})
+
+test('the same turn, not typed in, leaves the entry open and adds the new one beside it', async () => {
+  const chains = mounted()
+  const fx = fake()
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, 'waiting: operator — blocks: phase 3')))
+  const [asked] = entries(fx)
+  await drive(chains, 'turn.start', fx.dollar, { text: '[module] a peer message' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('A new question?', 'waiting: operator — blocks: phase 4')))
+  expect(entries(fx).map(e => [e.blocks, e.status])).toEqual([['phase 3', 'open'], ['phase 4', 'open']])
+  expect(entries(fx)[0]).toEqual(asked)
 })
 
 test('a later turn that ends on no machine line leaves the sender\'s open entries as they are', async () => {
@@ -580,18 +605,21 @@ test('a later turn that ends on no machine line leaves the sender\'s open entrie
 })
 
 for (const [label, line] of [['another operator wait', 'waiting: operator — blocks: phase 4'], ['done', 'waiting: done']] as const) {
-  test(`a later turn on ${label} withdraws the sender's open entry, one log line each`, async () => {
-    const chains = mounted()
-    const fx = fake()
-    await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+  test(`a typed turn on ${label} withdraws the held entry by the tab and the sender's other open entry by the sender, one log line`, async () => {
+    const { chains, fx } = await relayedQuestion()
     const [asked] = entries(fx)
-    await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Something else.', line)))
-    expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('withdrawn')
-    expect(fx.logged.filter(l => l.includes(`round: withdrawn by the sender: ${asked.id}`)).length).toBe(1)
+    const older: RoundEntry = { ...asked, id: 'older', blocks: 'phase 2', since: '2026-10-14T07:00:00.000Z' }
+    fx.files.set(`${ROUND}/older.json`, JSON.stringify(older) + '\n')
+    await typedTurn(chains, fx, answerOf('Something else.', line))
+    const after = new Map(entries(fx).map(e => [e.id, e]))
+    expect([after.get(asked.id)!.status, after.get(asked.id)!.answer?.by]).toEqual(['withdrawn', 'tab'])
+    expect([after.get('older')!.status, after.get('older')!.answer?.by]).toEqual(['withdrawn', 'sender'])
+    expect(fx.logged.filter(l => l.includes('round: withdrawn by the sender: older')).length).toBe(1)
+    expect(fx.logged.some(l => l.includes(`round: withdrawn by the sender: ${asked.id}`))).toBe(false)
   })
 }
 
-test('an entry withdrawn by its sender\'s later turn, its fingerprint forgotten: the same line asked again is entered again', async () => {
+test('an entry withdrawn by a typed turn, its fingerprint forgotten: the same line asked again is entered again', async () => {
   const chains = mounted()
   const fx = fake()
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
@@ -603,7 +631,7 @@ test('an entry withdrawn by its sender\'s later turn, its fingerprint forgotten:
   const over = fake({ refuseInto: `${ROUND}/${laterId}.json` })
   over.files.clear()
   for (const [p, text] of fx.files) over.files.set(p, text)
-  await drive(chains, 'turn.complete', over.dollar, later)
+  await typedTurn(chains, over, later.answer)
   expect(entries(over).find(e => e.id === asked.id)!.status).toBe('withdrawn')
   expect(over.row().relayed ?? null).toBeNull()
   await drive(chains, 'turn.complete', over.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
@@ -619,8 +647,11 @@ test('a stale entry that cannot be written is one log line, and the wait and its
   fx.files.clear()
   for (const [p, text] of first.files) fx.files.set(p, text)
   const later = turnEnd(answerOf('A new question?', 'waiting: operator — blocks: phase 4'))
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
+  await drive(chains, 'turn.start', fx.dollar, { text: 'yes' })
   expect(await drive(chains, 'turn.complete', fx.dollar, later)).toBe(later)
   expect(fx.logged.filter(l => l.includes(`round: the file ${ROUND}/${asked.id}.json could not be renamed into place`)).length).toBe(1)
+  expect(fx.logged.filter(l => l.includes(`withdraw: the file ${ROUND}/${asked.id}.json could not be renamed into place`)).length).toBe(1)
   expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('open')
   expect(entries(fx).filter(e => e.blocks === 'phase 4').map(e => e.status)).toEqual(['open'])
   expect(fx.row().blocks).toBe('phase 4')
@@ -641,6 +672,17 @@ test('after an answer from the pane, the same question asked again is entered ag
   expect(entries(fx).map(e => [e.id, e.status])).toEqual([[asked.id, 'open']])
 })
 
+test('an answer from the pane drops the mark of a typed prompt from the wait file', async () => {
+  const { chains, fx } = await relayedQuestion()
+  const [asked] = entries(fx)
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer', 'what is the status of the build?'))
+  expect(JSON.parse(fx.files.get(WAIT)!).typed).toBeTruthy()
+  const pane = { opened: null, ticker: null, other: new Set<string>(), undelivered: new Map(), answering: new Set<string>() }
+  await answerFromPane({ ...fx.dollar, ui: { invalidate: () => undefined } }, pane, asked, { letter: 'A', text: 'merge it' })
+  expect(JSON.parse(fx.files.get(WAIT)!).typed ?? null).toBeNull()
+})
+
+
 test('an answer from the pane leaves a wait file that holds another fingerprint as it is', async () => {
   const { fx } = await relayedQuestion()
   const [asked] = entries(fx)
@@ -649,4 +691,135 @@ test('an answer from the pane leaves a wait file that holds another fingerprint 
   const pane = { opened: null, ticker: null, other: new Set<string>(), undelivered: new Map(), answering: new Set<string>() }
   await answerFromPane({ ...fx.dollar, ui: { invalidate: () => undefined } }, pane, asked, { letter: 'A', text: 'merge it' })
   expect(fx.row().relayed).toBe(other)
+})
+
+// --- a question stays until it is answered ------------------------------------------------------
+
+const CHOICED = 'Which way?\n- **A** : merge it now\n- **B** : wait a day\n_Recommendation_ : A'
+const NOTE = 'The review of #12 has started.'
+
+test('a prompt typed while a question is held only marks it; a turn ending on the same wait leaves it open', async () => {
+  const { chains, fx } = await relayedQuestion()
+  const key = fx.row().relayed
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer', 'what is the status of the build?'))
+  expect(entries(fx).map(e => e.status)).toEqual(['open'])
+  expect(fx.row().relayed).toBe(key)
+  await drive(chains, 'turn.start', fx.dollar, { text: 'what is the status of the build?' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(NOTE, QUESTION_LINE)))
+  expect(entries(fx).map(e => [e.status, e.answer])).toEqual([['open', null]])
+  expect(fx.row().relayed).toBe(key)
+  expect(JSON.parse(fx.files.get(WAIT)!).typed ?? null).toBeNull()
+  // The mark was this turn's alone: a later turn on another line, not typed in, withdraws nothing.
+  await drive(chains, 'turn.start', fx.dollar, { text: 'go on' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Done.', 'waiting: done')))
+  expect(entries(fx).map(e => [e.blocks, e.status])).toEqual([['phase 3', 'open'], [null, 'open']])
+})
+
+for (const [label, line] of [['another operator wait', 'waiting: operator — blocks: phase 4'], ['done', 'waiting: done'], ['no machine line', '']] as const) {
+  test(`a prompt typed in, then a turn ending on ${label}, withdraws the held question by the tab`, async () => {
+    const { chains, fx } = await relayedQuestion()
+    const since = fx.row().waiting_since
+    await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
+    await drive(chains, 'turn.start', fx.dollar, { text: 'yes' })
+    await drive(chains, 'turn.complete', fx.dollar, turnEnd(line ? answerOf('Something else.', line) : 'Working.'))
+    const held = entries(fx).find(e => e.blocks === 'phase 3')!
+    expect([held.status, held.since, held.answer?.text, held.answer?.by]).toEqual(['withdrawn', since, "answered in the sender's own tab", 'tab'])
+    expect(fx.sent.length).toBe(0)
+    expect(JSON.parse(fx.files.get(WAIT)!).typed ?? null).toBeNull()
+    await drive(chains, 'turn.start', fx.dollar, { text: 'yes' })
+    await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+    expect(entries(fx).find(e => e.blocks === 'phase 3')!.status).toBe('open')
+  })
+}
+
+test('a mark left by a turn that ended without an answer does not make a later untyped turn withdraw', async () => {
+  const { chains, fx } = await relayedQuestion()
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer', 'what is the status of the build?'))
+  await drive(chains, 'turn.start', fx.dollar, { text: 'what is the status of the build?' })
+  await drive(chains, 'turn.complete', fx.dollar, { ...turnEnd(''), reason: 'interrupt', isAborted: true })
+  expect(JSON.parse(fx.files.get(WAIT)!).typed ?? null).toBeNull()
+  await drive(chains, 'turn.start', fx.dollar, { text: '[module] a peer message' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Done.', 'waiting: done')))
+  expect(entries(fx).map(e => [e.blocks, e.status])).toEqual([['phase 3', 'open'], [null, 'open']])
+})
+
+
+test('a question left open after an untyped turn ended on done is withdrawn by the tab once the operator types in', async () => {
+  const { chains, fx } = await relayedQuestion()
+  const since = fx.row().waiting_since
+  await drive(chains, 'turn.start', fx.dollar, { text: '[module] a peer message' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Done.', 'waiting: done')))
+  expect(entries(fx).find(e => e.blocks === 'phase 3')!.status).toBe('open')
+  await typedTurn(chains, fx, answerOf('Done.', 'waiting: done'))
+  const held = entries(fx).find(e => e.blocks === 'phase 3')!
+  expect([held.status, held.since, held.answer?.text, held.answer?.by]).toEqual(['withdrawn', since, "answered in the sender's own tab", 'tab'])
+  expect(JSON.parse(fx.files.get(WAIT)!).typed ?? null).toBeNull()
+})
+
+
+test('a coordinator on another machine is sent the withdrawal at the turn\'s end, not at the prompt', async () => {
+  const { chains, fx } = await relayedQuestion({ remote: true })
+  const since = fx.row().waiting_since
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
+  await drive(chains, 'turn.start', fx.dollar, { text: 'yes' })
+  expect(fx.sent.length).toBe(0)
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(NOTE, QUESTION_LINE)))
+  expect(fx.sent.length).toBe(0)
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Something else.', 'waiting: operator — blocks: phase 4')))
+  const [withdrawal, report] = fx.sent
+  expect([withdrawal.to, withdrawal.text]).toEqual(['Coord : ops [abc]', withdrawalText('Orch : belt', 'phase 3', since)])
+  expect(report.text).toContain('blocks: phase 4')
+})
+
+for (const [label, line] of [['another operator wait', 'waiting: operator — blocks: phase 4'], ['done', 'waiting: done']] as const) {
+  test(`a turn the operator did not start, ending on ${label}, leaves every open entry open`, async () => {
+    const { chains, fx } = await relayedQuestion()
+    const [asked] = entries(fx)
+    await drive(chains, 'turn.start', fx.dollar, { text: '[module] a peer message' })
+    await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Something else.', line)))
+    expect(entries(fx).find(e => e.id === asked.id)).toEqual(asked)
+    expect(fx.logged.some(l => l.includes('round: withdrawn by the sender'))).toBe(false)
+    expect(entries(fx).length).toBe(2)
+  })
+}
+
+test('a turn the operator typed in withdraws the session\'s other open entries by the sender', async () => {
+  const { chains, fx } = await relayedQuestion()
+  const [held] = entries(fx)
+  const older: RoundEntry = { ...held, id: 'older', blocks: 'phase 2', since: '2026-10-14T07:00:00.000Z' }
+  fx.files.set(`${ROUND}/older.json`, JSON.stringify(older) + '\n')
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
+  await drive(chains, 'turn.start', fx.dollar, { text: 'yes' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Something else.', 'waiting: operator — blocks: phase 4')))
+  const after = new Map(entries(fx).map(e => [e.id, e]))
+  expect([after.get(held.id)!.status, after.get(held.id)!.answer?.by]).toEqual(['withdrawn', 'tab'])
+  expect([after.get('older')!.status, after.get('older')!.answer?.by]).toEqual(['withdrawn', 'sender'])
+})
+
+test('a text without choices, under the same wait, keeps the entry\'s question, choices and recommendation', async () => {
+  const chains = mounted()
+  const fx = fake()
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(CHOICED, QUESTION_LINE)))
+  const [asked] = entries(fx)
+  expect(asked.choices.map(c => c.letter)).toEqual(['A', 'B'])
+  // The fingerprint forgotten (a failed write, a pane answer elsewhere): the note must not replace the entry.
+  fx.files.set(WAIT, JSON.stringify({ ...JSON.parse(fx.files.get(WAIT)!), relayed: null }) + '\n')
+  await drive(chains, 'turn.start', fx.dollar, { text: 'go on' })
+  const written = [...fx.files.keys()].filter(p => p.startsWith(`${ROUND}/`))
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(NOTE, QUESTION_LINE)))
+  expect(entries(fx)).toEqual([asked])
+  expect([...fx.files.keys()].filter(p => p.startsWith(`${ROUND}/`))).toEqual(written)
+  expect(fx.row().relayed).toBe(fingerprint(parseWait(answerOf(NOTE, QUESTION_LINE))!))
+})
+
+test('a text that carries choices replaces the entry\'s question', async () => {
+  const chains = mounted()
+  const fx = fake()
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(CHOICED, QUESTION_LINE)))
+  fx.files.set(WAIT, JSON.stringify({ ...JSON.parse(fx.files.get(WAIT)!), relayed: null }) + '\n')
+  const again = 'Which now?\n- **A** : ship\n- **B** : hold\n- **C** : drop'
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(again, QUESTION_LINE)))
+  const [now] = entries(fx)
+  expect([entries(fx).length, now.status, now.choices.map(c => c.letter), now.recommendation]).toEqual([1, 'open', ['A', 'B', 'C'], null])
 })

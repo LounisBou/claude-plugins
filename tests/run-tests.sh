@@ -6442,7 +6442,7 @@ round x2 | operator | from Orch : a | since 2026-10-20T10:04:00.000Z | blocks: p
     answered from the pane at 2026-10-20T10:09:00.000Z: A : ship it
 round w1 | operator | from Orch : a | since 2026-10-20T10:01:00.000Z | blocks: phase 3 | withdrawn
     Ask w1?
-    withdrawn by the sender at 2026-10-20T10:09:00.000Z: its later turn waits on something else" \
+    withdrawn by the sender at 2026-10-20T10:09:00.000Z: a later turn the operator typed in waits on something else" \
   "$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" bash "$COORD" round 2>&1)"
 if [ -n "$RCFG_HAD" ]; then export CLAUDE_CONFIG_DIR="$RCFG_WAS"; else unset CLAUDE_CONFIG_DIR; fi
 

@@ -55,8 +55,8 @@
 # skipped. Each set is in the round's order: grouped by sender, the groups by their earliest
 # wait, each in the order its waits began. An answered entry's lines end on
 #     answered from the pane at <UTC time>: <letter> : <choice text>
-# and those of an entry its sender withdrew (its later turn ended on another machine line) on
-#     withdrawn by the sender at <UTC time>: its later turn waits on something else
+# and those of an entry its sender withdrew (a later turn the operator typed in ended on another machine line) on
+#     withdrawn by the sender at <UTC time>: a later turn the operator typed in waits on something else
 # round-close rewrites the entry with status closed and the answer {text, by "coordinator", at},
 # in one rename, and refuses an id with no entry.
 # round-archive moves each entry file of <state>/round/ whose status is closed into
@@ -767,7 +767,7 @@ cmd_round() {
         | "round \(.id) | \(.kind) | from \(.from) | since \(.since) | blocks: \(.blocks // "-") | \(.status)\($gone)",
           (.question | select(. != "") | split("\n")[] | "    " + .),
           (select(.status == "answered") | "    answered from the pane at \(.answer.at // "?"): \(.answer.text // "")"),
-          (select(.status == "withdrawn" and .answer.by? == "sender") | "    withdrawn by the sender at \(.answer.at // "?"): its later turn waits on something else")'
+          (select(.status == "withdrawn" and .answer.by? == "sender") | "    withdrawn by the sender at \(.answer.at // "?"): a later turn the operator typed in waits on something else")'
 }
 
 cmd_round_close() {

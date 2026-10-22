@@ -123,3 +123,11 @@ export function openEntries(entries: readonly RoundEntry[]): RoundEntry[] {
   for (const entry of [...open].sort(bySince)) groups.set(entry.from, [...(groups.get(entry.from) ?? []), entry])
   return [...groups.values()].flat()
 }
+
+// The open operator questions in the order the pane draws them: those that carry choices
+// first, in the round's order among themselves, then those without. A question the operator can
+// only answer in its session never hides one he can answer from the pane.
+export function paneQuestions(entries: readonly RoundEntry[]): RoundEntry[] {
+  const questions = openEntries(entries).filter(entry => entry.kind === 'operator')
+  return [...questions.filter(entry => entry.choices.length > 0), ...questions.filter(entry => entry.choices.length === 0)]
+}

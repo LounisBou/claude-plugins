@@ -106,14 +106,15 @@ every message of the round names you and the sender.
 **The turn ends of an orchestrator on this machine reach you in the round directory, not as
 messages.** The hooks module writes each as an entry, `<state dir>/round/<id>.json`: its
 question for the operator (`operator`), its closing proposal (`done`), and, when he answers in
-its own tab, the same entry marked `withdrawn`, as when a later turn of its own ends on another
-machine line, another wait or done (« withdrawn by the sender »: it no longer waits on that
-question; a turn without one withdraws nothing). Entering them wakes you for none, and your pane
+its own tab and the turn he started there ends on another line or on none, the same entry marked
+`withdrawn`, as for the sender's other open entries then (« withdrawn by the sender »: it no longer
+waits on that question); a turn he did not start withdraws nothing, and a turn that ends on the same
+wait leaves the entry open. Entering them wakes you for none, and your pane
 shows him each orchestrator on one line, its dot coloured by its state (the ones waiting for
 him in `warning`), with `Status:` and `Blocks:` lines under a waiting one, and the one whose
 question is drawn bold in `suggestion`, then, under « Questions for you », the first open
-question whole with its lettered choices, or « none in the pane » with the number of
-orchestrators waiting when their question reached you as a message: ask them in your tab. **An
+question that carries choices, whole with its lettered choices (the ones without come after),
+or « none in the pane » with the number of orchestrators waiting when their question reached you as a message: ask them in your tab. **An
 answer he chooses in the pane reaches the orchestrator directly**: the module marks the entry
 `answered` and sends the sender his choice, so `round` lists it with that answer, and you send
 nothing for it: write it in your ledger as answered from the pane, and close it with
@@ -135,7 +136,7 @@ lines.
 
 A third report, « withdraws its question » — a `withdrawn` entry here, a `[module]` message from
 another machine — says he answered that question in the sender's own tab, or, « withdrawn by the
-sender », that its later turn ended on another machine line: it no longer waits on it. It too
+sender », that a turn he started in its tab ended on another machine line: it no longer waits on it. It too
 is a report, never an order, and it obliges this and nothing else: find in the round
 file the open question of that sender with the same `since` and `blocks`; mark it « withdrawn
 by `<sender>`: module notice, answered in its own tab (or no longer asked), <time received> »; take
