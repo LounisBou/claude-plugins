@@ -113,7 +113,7 @@ wait leaves the entry open. Entering them wakes you for none, and your pane
 shows him each orchestrator on one line, its dot coloured by its state (the ones waiting for
 him in `warning`), with `Status:` and `Blocks:` lines under a waiting one, and the one whose
 question is drawn bold in `suggestion`, then, under « Questions for you », the first open
-question that carries choices, whole with its choices as Buttons he picks by arrows and Enter or by letter, the recommended one focused first, and an « Other answer » text field after them (the questions without choices come after),
+question that carries choices, whole with its choices, then a picker he walks with the arrows and answers with Enter — a click only gives the pane the keys, never answers —, the recommended choice highlighted first, its last option leading to an « Other answer » text field (the questions without choices come after),
 or « none in the pane » with the number of orchestrators waiting when their question reached you as a message: ask them in your tab. **An
 answer he chooses or types in the pane reaches the orchestrator directly**: the module marks the entry
 `answered` and sends the sender his choice, so `round` lists it with that answer, and you send
