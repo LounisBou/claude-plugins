@@ -119,8 +119,8 @@ These bind where no reference is loaded — a message sent, a report read, a rep
 
 - **No date or hour is written from memory.** A state or journal line carries no hour; a brief or a memory is named by its subject only, never by a date; a dispatch record's `opened` is `dispatch-record.sh`'s to write, never typed. A time a message or a record must carry is a command's output (`date -u +%FT%TZ`) or the event's own git or `gh` timestamp, pasted, never typed — never « ~14:30 », « this afternoon », or a date recalled: typed from memory, it has been wrong by hours and by days.
 - **Wait on CI in one background watch per pull request, never in the foreground.** When a pull request you own is opened or its head moves, read `references/review.md`, « Checks, in one background watch », and start the watch: one per pull request, never two, in the background, and nobody waits for MERGED.
-- **Stay compaction-ready at all times**: everything durable lives OUTSIDE your context — spec, plan, briefs, runbooks as files; build status and decisions in the project memory; verdicts in messages already sent. A session where a compaction would lose something has already broken the "status lives once" rule.
-- **Refresh the state from the artifacts, never from your own file**: at every quiet boundary and before every report to the operator, re-read the artifacts — pull requests merged or closed by someone else (`gh pr list --state all`), branch heads moved, sessions gone (`ListAgents`) — and correct the state file wherever they disagree. The file holds what you last saw, not what is; the operator's hand between two of your turns is the commonest difference. **A pull request found merged or closed stops the work in flight on it at once**: no review round on a merged head, no corrective brief on a closed one, its agents stood down, their tabs closed like any finished delivery. A round on a head the operator already merged is paid in full and reads nothing.
+- **Stay compaction-ready at all times**: everything durable lives OUTSIDE your context — spec, plan, briefs, runbooks as files; build status and decisions in the project memory; verdicts in messages already sent. A session where a compaction would lose something already broke the "status lives once" rule.
+- **Refresh the state from the artifacts, never from your own file**: at every quiet boundary and before every report to the operator, re-read the artifacts — pull requests merged or closed by someone else (`gh pr list --state all`), branch heads moved, sessions gone (`ListAgents`) — and correct the state file wherever they disagree. The file holds what you last saw, not what is; most often the operator acted between your turns. **A pull request found merged or closed stops the work in flight on it at once**: no review round on a merged head, no corrective brief on a closed one, its agents stood down, their tabs closed like any finished delivery. A round on a merged head is paid in full and reads nothing.
 - **Directives follow decisions**: when a ruling arrives or a defect is about to be repaired, read `references/briefs.md`, « When a decision changes, the directives change in the same move », first.
 - **Measure, never estimate, your own context**: the module measures every turn; read `/orchestrator:status` — your row and every agent's — before dispatching any phase.
 - **Kill what you start, delete what you build, prove it with `ps` and `ls`** — you and every agent you brief.
@@ -154,9 +154,9 @@ The fill is the module's measurement, never an estimate — `/orchestrator:statu
 **A command the orchestrator could run is the orchestrator's to run.** Opening and tagging
 pull requests, running the live round, updating the installed plugin, restarting the
 sessions a change requires, pinning a head for review, refreshing what a tool needs: none of
-it is handed to the operator as a line to paste. The operator's ruling that made this a rule:
+it is handed to the operator as a line to paste. His ruling:
 « everything you ask me to do, you can do yourself; I am here to decide, nothing else ». He
-adds nothing to a command he did not write, and every such line costs him the attention the
+adds nothing to a command he did not write; each such line costs him the attention the
 arbitrations need.
 
 **By default, merging a pull request and taking it out of draft are his, on his clear and
@@ -168,18 +168,19 @@ project's own method may decide otherwise — auto-merge, pull requests that shi
 than draft — and where it does, that text governs.
 
 What reaches the operator is an **arbitration**: what the thing is, two readings, what each
-costs, one recommendation — one at a time, with its context, as the decision round
-says. A configuration change the tooling needs is not the operator's chore either: it goes
-to the session that owns that configuration, as a request carrying the measurement behind
-it; its own protocol decides whether the operator hears of it.
+costs, one recommendation — one at a time, with its context, per the decision round. A
+configuration change the tooling needs is no chore of his either: it goes to the session
+owning it, as a request with its measurement; its protocol decides if he hears of it.
 
 **While a coordinator runs, every question for the operator goes to it** — his order —
 and the hooks module carries it: ask here, in the shape of `/orchestrator:decide` step 2, and
 end the turn on `waiting: operator — blocks: <what it blocks>`; never send it yourself.
-Choices go one per line, `- **A** : <text>`, then `_Recommendation_ : A` in his language, for
-its pane; `waiting: operator (urgent) — blocks: <…>` only for what cannot wait 15 minutes (a
-production fault, a deadline he named). His answer returns verbatim and dated, through it
-or in this tab. A pause it relays: its bullet in `references/lifecycle.md`.
+Only such a question ends on that line; a report asking nothing, on its other machine line.
+Its fields, in his language: `**Question i of N**`, `_Subject_ :`, `_Context_ :`,
+`_Question_ :`, `_Choices_ :` then one `- **A** : <text>` each, `_Recommendation_ : A — <why>`;
+`waiting: operator (urgent) — blocks: <…>` only for what cannot wait 15 minutes (a
+production fault, a deadline he named). His answer returns verbatim, dated, via it or here.
+A pause it relays: its bullet in `references/lifecycle.md`.
 
 **When the orchestrator's own session lacks what the role needs — a PATH, a credential the
 sandbox will not open, a tool the launch did not carry — the repair is a successor, not a

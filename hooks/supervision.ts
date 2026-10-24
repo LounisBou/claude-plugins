@@ -32,7 +32,7 @@ import {
   parseWait, parseStatus, waitPatch, clearedWait, fingerprint, relayText, heldQuestion, withdrawalText, gateText, noStatusText, NO_STATUS_KEY, coordinatorOf, chainOwnerTty, waitLabel, waitParts,
   type WaitKind,
 } from './relay.ts'
-import { entryFingerprint, roundEntry, roundEntryId, roundPath, paneQuestions, plainText, questionBody, isDue, dueText, type RoundChoice, type RoundEntry } from './round.ts'
+import { entryFingerprint, roundEntry, roundEntryId, roundPath, paneQuestions, plainText, questionBody, questionShape, isDue, dueText, type QuestionField, type RoundChoice, type RoundEntry } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
   remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, machineLabel, prsInFlight, ROW_MARKER, REMOTE_STALE_AFTER_MS, type RemoteRow,
@@ -155,6 +155,45 @@ const answerKey = (id: string) => `answer:${id}`
 // The width of the label column a wait's lines sit in (« Status: », « Blocks: »): the longer
 // label and a gap, so what a long blocks text wraps under is its own first character.
 const WAIT_LABEL_COLUMN = 8
+
+// The columns the scroll track takes on the pane's right edge, the track and a gap; the content
+// keeps clear of them. Drawn only once the body is known to scroll.
+const TRACK_COLUMNS = 2
+
+// The cells of the track drawn on the body's right edge over a tree taller than its window: one
+// per window row, true where the thumb is, its length the window's share of the tree and its
+// place the window's. Null when the tree fits.
+export function scrollTrack(offset: number, bodyRows: number, contentRows: number): boolean[] | null {
+  if (bodyRows < 1 || contentRows <= bodyRows) return null
+  const thumb = Math.max(1, Math.round((bodyRows * bodyRows) / contentRows))
+  const travel = Math.min(1, Math.max(0, offset / (contentRows - bodyRows)))
+  const start = Math.round(travel * (bodyRows - thumb))
+  return Array.from({ length: bodyRows }, (_, row) => row >= start && row < start + thumb)
+}
+
+// A line cut into rows of at most `width` cells at its spaces, a word longer than a row cut
+// where the row ends: the key line pinned to the window's bottom takes as many rows as this
+// gives, so it is drawn whole over the rows it covers.
+export function wrapWords(text: string, width: number): string[] {
+  const rows: string[] = []
+  let row = ''
+  for (let word of text.split(' ')) {
+    while (word.length > width) {
+      if (row !== '') rows.push(row)
+      rows.push(word.slice(0, width))
+      word = word.slice(width)
+      row = ''
+    }
+    if (row === '') row = word
+    else if (row.length + 1 + word.length <= width) row = `${row} ${word}`
+    else {
+      rows.push(row)
+      row = word
+    }
+  }
+  if (row !== '' || rows.length === 0) rows.push(row)
+  return rows
+}
 
 // The config dir, this file's own resolution: $ never crosses an import, so
 // each domain that needs it spells the same two env reads itself.
@@ -380,17 +419,20 @@ export function paneRows(rows: Record<string, SessionRow>): PaneRow[] {
     .sort((a, b) => b.urgency - a.urgency)
 }
 
-// The round's first open question as a coordinator's pane draws it, under the orchestrator
-// rows: a header with its rank among the open questions, its sender and what it blocks, then
-// one line per lettered choice, the recommended one marked and drawn bold. A question without
-// lettered choices is its header alone: the pane draws its text and the « other answer »
-// option under it. A done proposal is no question. Nothing open: no line.
+// The round's first open question as a coordinator's pane draws it, above the orchestrator
+// rows: a header naming its sender and the sender's own numbering (« Orch : x — Question 5 of
+// 6 »; the name alone when the sender gave none: the pane adds no numbering of its own, the
+// section's title counts the questions), then one line per lettered choice, the recommended one
+// marked and drawn bold. A question without lettered choices is its header alone: the pane draws
+// its text and the « other answer » option under it. A done proposal is no question. Nothing
+// open: no line.
 export type RoundLine = { letter: string | null; text: string; bold: boolean }
 export function roundLines(entries: readonly RoundEntry[]): RoundLine[] {
   const questions = paneQuestions(entries)
   if (questions.length === 0) return []
   const first = questions[0]
-  const header = { letter: null, text: `Question 1 of ${questions.length} — from ${first.from} — blocks: ${first.blocks}`, bold: false }
+  const number = questionShape(first.question, first.choices)?.number ?? null
+  const header = { letter: null, text: number === null ? first.from : `${first.from} — ${number}`, bold: false }
   if (first.choices.length === 0) return [header]
   return [header, ...first.choices.map(choice => {
     const recommended = choice.letter === first.recommendation
@@ -518,13 +560,19 @@ export type PaneMemory = {
   writing: string | null
   undelivered: Map<string, { entry: RoundEntry; reason: string }>
   answering: Set<string>
+  // The content last drawn, as the module counts its rows, and the tree's height as the
+  // person's last move measured it, with the content it measured.
+  drawn?: string
+  measure?: { contentRows: number; drawn: string }
 }
 
 // The pane opened, by the command or by the module: the role it lists, its title, its clock,
 // and, for a coordinator's, its record.
 async function openPane($: any, pane: PaneMemory, role: 'coordinator' | 'orchestrator', tty: string | null, pid: string | null): Promise<void> {
   pane.opened = { role, tty }
-  await $.ui.open({ id: PANE_ID, title: PANE_TITLES[role] })
+  // With the keys, so the picker answers at once: the host grants them only over an empty
+  // prompt, never taking text the operator is typing.
+  await $.ui.open({ id: PANE_ID, title: PANE_TITLES[role], focus: true })
   pane.ticker?.cancel()
   pane.ticker = $.clock.every(PANE_REFRESH_MS, () => $.ui.invalidate('ui.render'))
   if (role === 'coordinator') await recordPaneOpen($, pid).catch((err: unknown) => logLine($, `pane: ${(err as Error).message}`))
@@ -935,6 +983,16 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     return next(e)
   })
 
+  // The body's window moving at the person's wheel or keys: the host's measure of the tree is
+  // kept for the track, with the content it measured. A plugin's own move never reaches here.
+  on('ui.scroll', { component: 'Pane', requestId: PANE_ID }, async ($: any, e: any, next: (e: any) => any) => {
+    if (pane.drawn) pane.measure = { contentRows: e.contentRows, drawn: pane.drawn }
+    return next(e)
+  }).catch(async ($: any, e: any, next: any) => {
+    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+
   // The pane's ring leaving the text field, for the picker or off the pane: the field goes
   // with it, so that Tab from a choice never reaches it, until « Other answer » is picked again.
   on('ui.focus', { component: 'Pane', requestId: PANE_ID }, async ($: any, e: any, next: (e: any) => any) => {
@@ -962,6 +1020,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       let speaker: string | null = null
       let asking: RoundEntry | null = null
       let failed: { entry: RoundEntry; reason: string }[] = []
+      let pending = 0
       let none = 'type /orchestrator:supervision to open the pane again'
       const coordinator = pane.opened?.role === 'coordinator'
       if (coordinator) {
@@ -973,6 +1032,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         // session with a live row are drawn, and counted.
         const drawn = (await readRound($)).map(read => read.entry).filter(entry => sessionKey(entry.session) in local)
         round = roundLines(drawn)
+        pending = paneQuestions(drawn).length
         // The orchestrator whose question is drawn, by its session: two may share a name.
         const first = paneQuestions(drawn)[0]
         speaker = first ? sessionKey(first.session) : null
@@ -1035,18 +1095,20 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         })
       }
       const listed = blocks.length === 0 ? [el.Text({ children: none })] : blocks.map(block)
-      // The round's first question under its own title, a line apart.
+      // The round's first question under its own title, drawn first so its choices are in view
+      // in a short pane, a line above the orchestrators.
       const waiting = blocks.filter(row => row.waiting === 'operator').length
       const says = waiting === 0
         ? 'none'
         : `none in the pane — ${waiting} orchestrator${waiting === 1 ? ' waits' : 's wait'} for you: ask the coordinator`
-      // The question whole under its header, then its choices, the « other answer » and the
-      // footer that says how keys reach them. Where the surface draws a picker, the choices are
-      // one Select: it holds the arrows while it has the ring, where a focused pane taller than
-      // its body scrolls on them, and a click only gives it the ring — a stray click answers
-      // nothing. Its last option leads to the text field. A picker's option is one line, cut at
-      // the pane's width, so each choice's whole text is drawn above it. Elsewhere (mobile, a tap
-      // the only way) one Button per choice.
+      // The question under its header, then its choices a blank line apart, the « other answer »
+      // and the key line that says how keys reach them. Where the surface draws a picker, the
+      // choices are one Select: it holds the arrows while it has the ring, where a focused pane
+      // taller than its body scrolls on them, and a click only gives it the ring — a stray click
+      // answers nothing. Its last option leads to the text field. A picker's option is one line,
+      // cut at the pane's width, so each choice's whole text is drawn once above it and the
+      // options carry their letter alone. Elsewhere (mobile, a tap the only way) one Button per
+      // choice.
       const picker = typeof el.Select === 'function'
       const pickKey = (entry: RoundEntry) => `choices:${entry.id}`
       const firstPick = (entry: RoundEntry) => (entry.choices.find(c => c.letter === entry.recommendation) ?? entry.choices[0])?.letter ?? null
@@ -1056,7 +1118,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         return picker ? pickKey(entry) : `choice:${pick}`
       }
       const choice = (entry: RoundEntry, line: RoundLine, focus: string | null) => {
-        const label = `${line.letter}  ${line.text}`
+        const label = `${line.letter}) ${line.text}`
         const key = `choice:${line.letter}`
         return el.Button({
           key,
@@ -1070,13 +1132,16 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       }
       const choiceText = (line: RoundLine) => el.Text({
         ...(line.bold ? { bold: true, color: 'success' } : {}),
-        children: `${line.letter}  ${line.text}`,
+        children: `${line.letter}) ${line.text}`,
       })
+      // One blank line between two choices, so each reads apart.
+      const spaced = (items: unknown[]) => el.Box({ flexDirection: 'column', gap: 1, children: items })
       const choices = (entry: RoundEntry) => el.Select({
         key: pickKey(entry),
-        label: 'Answer',
+        // A prompt to choose, its value the choice the ring starts on: never an answer sent.
+        label: 'Choose',
         options: [
-          ...round.slice(1).map(line => ({ value: line.letter!, label: `${line.letter}  ${line.text}` })),
+          ...entry.choices.map(c => ({ value: c.letter, label: c.letter === entry.recommendation ? `${c.letter} (recommended)` : c.letter })),
           { value: OTHER_VALUE, label: `${OTHER_LABEL}: type it below` },
         ],
         value: firstPick(entry)!,
@@ -1090,7 +1155,13 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           return Promise.resolve($.ui.focus({ requestId: PANE_ID, key: answerKey(entry.id) })).catch(() => undefined)
         },
       })
-      const body = asking ? plainText(questionBody(asking)) : ''
+      // A question in the decide shape draws its fields as the sender labelled them, and nothing
+      // else of its turn; one in an older shape draws its body whole.
+      const shape = asking ? questionShape(asking.question, asking.choices) : null
+      const fieldText = (field: QuestionField) => field.text === ''
+        ? `${field.label}${field.separator.trimEnd()}`
+        : `${field.label}${field.separator}${plainText(field.text)}`
+      const body = asking && shape === null ? plainText(questionBody(asking)) : ''
       const focus = asking === null ? null : focusKey(asking)
       if (asking !== null && focus !== null && focusedFor !== asking.id) {
         // Once per entry: the ring to its first choice for a pane already holding the keys, and
@@ -1138,26 +1209,88 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           }),
           ...(pane.other.has(entry.id) ? [el.Text({ color: 'suggestion', children: `type your answer in this tab, or in ${entry.from}'s tab` })] : []),
         ]
+      // The key line, in the default colour: once the pane holds the keys, how to give them is
+      // no longer said.
+      const keyLine = asking === null ? null : picker
+        ? `${e.props?.isFocused ? '' : 'ctrl+x tab or a click: give the pane the keys · '}arrows: move · Enter: choose · Esc: back to the prompt`
+        : 'ctrl+x tab: give the pane the keys · arrows or Tab: move · Enter: choose · a letter: pick it · Esc: back to the prompt'
+      // The body's window and the tree's height: a track on the right edge and the key line
+      // pinned to the window's top once the tree is taller, each drawn at the window's own rows
+      // (the offset), so both stay in view wherever it is. At the top, not the bottom: the host
+      // keeps the held picker in view by bringing it to the window's bottom edge, where a pinned
+      // line would cover it.
+      const scroll: { offset: number; bodyRows: number } | undefined = e.props?.scroll
+      const columns: number = e.props?.bodyColumns ?? 0
+      const width = columns - TRACK_COLUMNS
+      const recommended = shape?.recommendation ?? null
+      const choosing = asking !== null && asking.choices.length > 0
+      // The tree's rows as drawn at the track's width, line by line: the host tells the height
+      // only at the person's own `ui.scroll` (never at a plugin's), so until a move measured
+      // this very content, the count is the module's.
+      const lines: string[] = asking === null ? ['Questions for you', says] : [
+        'Questions for you', round[0].text,
+        ...(shape !== null ? shape.fields.flatMap(field => fieldText(field).split('\n')) : []),
+        ...(body !== '' ? body.split('\n') : []),
+        ...round.slice(1).flatMap((line, i) => [...(i > 0 ? [''] : []), `${line.letter}) ${line.text}`]),
+        ...(recommended !== null ? ['', fieldText(recommended)] : []),
+        ...(choosing && picker ? ['', `Choose: ${firstPick(asking)}`, ...(e.props?.isFocused ? asking.choices.map(c => c.letter).concat([OTHER_LABEL]) : [])] : []),
+        ...(typeof el.Input === 'function' && (!picker || !choosing || pane.writing === asking.id) ? [`${OTHER_LABEL}: `] : []),
+        ...(typeof el.Input !== 'function' ? ['Other answer: in the session', ...(pane.other.has(asking.id) ? [`type your answer in this tab, or in ${asking.from}'s tab`] : [])] : []),
+      ]
+      if (failed.length > 0) lines.push('not delivered: ' + failed.map(notice => `${notice.reason} — the answer to ${notice.entry.from} (blocks: ${notice.entry.blocks})`).join(' · '))
+      lines.push('', 'Orchestrators', ...(blocks.length === 0 ? [none] : blocks.flatMap(row => [
+        `● ${row.name} · ${row.head} · ${row.fill}${row.age !== null ? ` · ${row.age}` : ''}`,
+        ...(row.status !== null ? [`  Status: ${row.status}`] : []),
+        // The blocks text wraps in its own column: one row counted for each of its rows.
+        ...(row.blocked !== null ? wrapWords(row.blocked, Math.max(1, width - 2 - WAIT_LABEL_COLUMN)).map(() => '') : []),
+      ])))
+      const drawnKey = JSON.stringify([lines, columns, scroll?.bodyRows ?? null, keyLine])
+      pane.drawn = drawnKey
+      const measured = pane.measure && pane.measure.drawn === drawnKey ? pane.measure.contentRows : null
+      const pinnedRows = keyLine !== null && width > 0 ? wrapWords(keyLine, width) : []
+      const counted = width > 0 ? lines.reduce((sum, line) => sum + wrapWords(line, width).length, 0) + pinnedRows.length : 0
+      const track = scroll && width > 0 ? scrollTrack(scroll.offset, scroll.bodyRows, measured ?? counted) : null
+      const pinned = track !== null && pinnedRows.length > 0 ? pinnedRows : null
       const shown = asking === null ? [] : [
         el.Text({ bold: true, children: round[0].text }),
+        ...(shape !== null ? shape.fields.map(field => el.Text({ children: fieldText(field) })) : []),
         ...(body !== '' ? [el.Text({ children: body })] : []),
-        ...(asking.choices.length === 0 ? [] : picker ? [...round.slice(1).map(choiceText), choices(asking)] : round.slice(1).map(line => choice(asking!, line, focus))),
+        ...(choosing ? [spaced(picker ? round.slice(1).map(choiceText) : round.slice(1).map(line => choice(asking!, line, focus)))] : []),
+        ...(recommended !== null ? [el.Box({ marginTop: 1, children: [el.Text({ children: fieldText(recommended) })] })] : []),
+        ...(choosing && picker ? [el.Box({ marginTop: 1, children: [choices(asking)] })] : []),
         ...otherAnswer(asking),
-        el.Text({ dimColor: true, children: picker
-          ? 'ctrl+x tab or a click: give the pane the keys · arrows: move · Enter: choose · Esc: back to the prompt'
-          : 'ctrl+x tab: give the pane the keys · arrows or Tab: move · Enter: choose · a letter: pick it · Esc: back to the prompt' }),
       ]
-      const notices = failed.map(notice => el.Text({ color: 'error', children: `not delivered: ${notice.reason} — the answer to ${notice.entry.from} (blocks: ${notice.entry.blocks})` }))
+      // An answer not delivered is one line at the section's foot, every one of them in it, so a
+      // notice never stands between the title and the next question.
+      const notices = failed.length === 0 ? [] : [el.Text({
+        color: 'error',
+        children: `not delivered: ${failed.map(notice => `${notice.reason} — the answer to ${notice.entry.from} (blocks: ${notice.entry.blocks})`).join(' · ')}`,
+      })]
       const asked = el.Box({
         flexDirection: 'column',
-        marginTop: 1,
+        marginBottom: 1,
         children: [
-          el.Text({ bold: true, color: 'suggestion', children: 'Questions for you' }),
-          ...notices,
+          el.Text({ bold: true, color: 'suggestion', children: pending === 0 ? 'Questions for you' : `Questions for you — ${pending} pending` }),
           ...(asking === null ? [el.Text({ children: says })] : shown),
+          ...notices,
         ],
       })
-      return el.Box({ flexDirection: 'column', children: [el.Text({ bold: true, children: 'Orchestrators' }), ...listed, asked] })
+      const overlays = track === null || !scroll ? [] : [
+        el.Box({
+          position: 'absolute', top: scroll.offset, right: 0, width: 1, flexDirection: 'column',
+          children: track.map(thumb => el.Text(thumb ? { color: 'suggestion', children: '█' } : { dimColor: true, children: '│' })),
+        }),
+        ...(pinned === null ? [] : [el.Box({
+          position: 'absolute', top: scroll.offset, left: 0, width, flexDirection: 'column',
+          children: pinned.map(row => el.Text({ children: row.padEnd(width) })),
+        })]),
+      ]
+      return el.Box({
+        flexDirection: 'column',
+        ...(track !== null ? { paddingRight: TRACK_COLUMNS } : {}),
+        ...(pinned !== null ? { paddingTop: pinned.length } : {}),
+        children: [asked, el.Text({ bold: true, children: 'Orchestrators' }), ...listed, ...(pinned === null && keyLine !== null ? [el.Text({ children: keyLine })] : []), ...overlays],
+      })
     } catch (err) {
       // A pane that fails to draw never blocks the render: the engine draws its own.
       await logLine($, (err as Error).message)

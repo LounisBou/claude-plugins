@@ -3,7 +3,7 @@
 // recommendation read out of a question in the decide shape, near misses read as none, the
 // entry built from an orchestrator's wait, and the order the round takes its open entries in.
 import { expect, test } from 'claude-code/testing'
-import { parseChoices, questionBody, roundEntry, roundEntryId, roundPath, openEntries, isDue, DUE_AFTER_MS, type RoundEntry } from '../round.ts'
+import { parseChoices, questionBody, questionShape, roundEntry, roundEntryId, roundPath, openEntries, isDue, DUE_AFTER_MS, type RoundEntry } from '../round.ts'
 import { fingerprint, parseWait, relayText, RELAY_CAP, type Wait } from '../relay.ts'
 
 const DECIDE = [
@@ -168,6 +168,77 @@ test('the question as the pane shows it leaves out the choice lines and the reco
   ].join('\n'))
   // No lettered choices read: the text is shown as it is, its lines that look like choices included.
   expect(questionBody({ question: 'Merge it?\n- **A** : alone\n', choices: [] })).toBe('Merge it?\n- **A** : alone')
+})
+
+// The shape `/orchestrator:decide` step 2 writes, in the operator's language: a bold line
+// holding the sender's own numbering, labelled fields, the choices, the recommendation. The
+// fixture is French on purpose: it checks that labels are read by their shape, accents and
+// all, never by an English word list.
+const SHAPED = [
+  'Décision notée : B, la vague continue.',
+  '',
+  '**Question 5 sur 6**',
+  '_Sujet_ : la numérotation des questions du pane',
+  '_Contexte_ : le pane affiche « 1 sur 1 » et « 5 sur 6 ».',
+  'Deux numéros pour une seule question.',
+  '_Question_ : laquelle garder ?',
+  '_Propositions_ :',
+  '- **A** : celle de l\'orchestrateur — elle suit sa vague',
+  '- **B** : celle du pane — elle compte la file',
+  '_Recommandation de l\'orchestrateur_ : A — une seule numérotation, la sienne',
+  '',
+  'Tu décides : A ou B ?',
+].join('\n')
+
+test('a question in the decide shape gives its number, its fields as labelled and its recommendation, nothing else', () => {
+  const { choices, recommendation } = parseChoices(SHAPED)
+  expect(choices.map(c => c.letter)).toEqual(['A', 'B'])
+  expect(recommendation).toBe('A')
+  expect(questionShape(SHAPED, choices)).toEqual({
+    number: 'Question 5 sur 6',
+    fields: [
+      { label: 'Sujet', separator: ' : ', text: 'la numérotation des questions du pane' },
+      { label: 'Contexte', separator: ' : ', text: 'le pane affiche « 1 sur 1 » et « 5 sur 6 ».\nDeux numéros pour une seule question.' },
+      { label: 'Question', separator: ' : ', text: 'laquelle garder ?' },
+      { label: 'Propositions', separator: ' : ', text: '' },
+    ],
+    recommendation: { label: 'Recommandation de l\'orchestrateur', separator: ' : ', text: 'A — une seule numérotation, la sienne' },
+  })
+})
+
+test('the fields are read by their shape in any language, the separator as written', () => {
+  const english = '**Question 2 of 3**\n_Subject_: the merge\n_Question_: merge it?\n- **A** : yes\n- **B** : no\n_Recommendation_: B'
+  const shape = questionShape(english, parseChoices(english).choices)!
+  expect(shape.number).toBe('Question 2 of 3')
+  expect(shape.fields.map(f => `${f.label}${f.separator}${f.text}`)).toEqual(['Subject: the merge', 'Question: merge it?'])
+  expect(shape.recommendation).toEqual({ label: 'Recommendation', separator: ': ', text: 'B' })
+})
+
+test('without a bold numbering line the shape has no number, and a bold line without two numbers is none', () => {
+  const plain = '_Sujet_ : x\n_Question_ : y ?'
+  expect(questionShape(plain, [])!.number).toBeNull()
+  expect(questionShape(`**Important**\n${plain}`, [])!.number).toBeNull()
+  expect(questionShape(plain, [])!.fields.map(f => f.label)).toEqual(['Sujet', 'Question'])
+})
+
+test('a field after the choices that names no choice letter is no recommendation, and nothing after the recommendation is read', () => {
+  const question = '_Question_ : y ?\n- **A** : one\n- **B** : two\n_Note_ : a cheap one\n_Recommandation_ : B\n_Autre_ : A'
+  const shape = questionShape(question, parseChoices(question).choices)!
+  expect(shape.fields.map(f => f.label)).toEqual(['Question'])
+  expect(shape.recommendation).toEqual({ label: 'Recommandation', separator: ' : ', text: 'B' })
+})
+
+test('a question in today\'s shape has no labelled field before its choices: it is no shaped question', () => {
+  expect(questionShape(DECIDE, parseChoices(DECIDE).choices)).toBeNull()
+  expect(questionShape('Merge it?', [])).toBeNull()
+  expect(questionShape('Question 1 of 1 — **merge** it?\n_Context._ The review is green.', [])).toBeNull()
+})
+
+test('a recommendation label of several words is read by parseChoices too, and dropped from the old body', () => {
+  const question = 'Merge it?\n- **A** : one\n- **B** : two\n_Recommandation de l\'orchestrateur_ : B — the reason'
+  const read = parseChoices(question)
+  expect(read.recommendation).toBe('B')
+  expect(questionBody({ question, choices: read.choices })).toBe('Merge it?')
 })
 
 test('the id of a wait\'s entry is the one its entry carries', () => {

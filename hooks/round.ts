@@ -35,10 +35,10 @@ export type RoundEntry = {
 // of that shape lettered past E is read too, so a sixth choice spoils the list instead of
 // leaving the first five looking whole.
 const CHOICE = /^\s*[-*]\s+\*\*([A-Z])\*\*\s*(?:[:.)]|—|–|-)\s*(.+?)\s*$/
-// The recommendation's line, read by its shape: one italic word, `_Recommendation_ : A`, then a
-// lone choice letter that ends the line or is followed by punctuation. The label's word is the
-// operator's language.
-const RECOMMENDATION = /^\s*_[^_\s]+\.?_\s*(?::\s*)?\**([A-E])\**\s*(?:$|[.,;:—–-](?:\s|$))/
+// The recommendation's line, read by its shape: an italic label, `_Recommendation_ : A`, then a
+// lone choice letter that ends the line or is followed by punctuation. The label's words are the
+// operator's language, one or several.
+const RECOMMENDATION = /^\s*_[^_\n]*[^_\s]_\s*(?::\s*)?\**([A-E])\**\s*(?:$|[.,;:—–-](?:\s|$))/
 const LETTERS = 'ABCDE'
 
 // The lettered choices of a question and its recommendation. The choices are kept only
@@ -62,6 +62,62 @@ export function parseChoices(question: string): { choices: RoundChoice[]; recomm
 export function questionBody(entry: Pick<RoundEntry, 'question' | 'choices'>): string {
   if (entry.choices.length === 0) return entry.question.trim()
   return entry.question.split('\n').filter(line => !CHOICE.test(line) && !RECOMMENDATION.test(line)).join('\n').trim()
+}
+
+// A field of a question in the decide shape, `_<label>_ : <text>`, the label in the operator's
+// language and read by its shape alone. The colon may have spaces around it or none: one with a
+// space before it is drawn « label : text », one without « label: text ».
+const FIELD = /^\s*_([^_\n]*[^_\s])_(\s*:\s*)(.*?)\s*$/
+// The sender's own numbering: a line wholly bold holding two numbers, `**Question 5 of 6**`.
+const NUMBER = /^\s*\*\*([^*\n]*\d+\D+\d+[^*\n]*)\*\*\s*$/
+// A field after the choices whose text starts with a lone choice letter: the recommendation.
+const NAMES_LETTER = /^\**([A-E])\**(?:$|[\s.,;:—–-])/
+
+export type QuestionField = { label: string; separator: string; text: string }
+export type QuestionShape = { number: string | null; fields: QuestionField[]; recommendation: QuestionField | null }
+
+// A question in the decide shape as the pane draws it: the sender's numbering, its labelled
+// fields in the order written (a field runs on until a blank line, the next field or a choice;
+// an empty one is a heading) and its recommendation, the first field after the choices that
+// names one of them. Nothing else of the turn is kept: what comes before the numbering line (the
+// previous answer's record), lines no field holds, anything after the recommendation. A question
+// with no labelled field before its choices is in an older shape: null, and the pane draws its
+// body whole (questionBody).
+export function questionShape(question: string, choices: readonly RoundChoice[]): QuestionShape | null {
+  const lines = question.split('\n')
+  const header = lines.findIndex(line => NUMBER.test(line))
+  const choiceAt = (line: string) => choices.length > 0 && CHOICE.test(line)
+  const lastChoice = lines.reduce((last, line, i) => (i > header && choiceAt(line) ? i : last), -1)
+  const fields: QuestionField[] = []
+  let recommendation: QuestionField | null = null
+  let current: QuestionField | null = null
+  for (let i = header + 1; i < lines.length; i++) {
+    const line = lines[i]
+    if (choiceAt(line)) {
+      current = null
+      continue
+    }
+    const field = FIELD.exec(line)
+    if (field) {
+      const read = { label: field[1].trim(), separator: /^\s/.test(field[2]) ? ' : ' : ': ', text: field[3] }
+      if (lastChoice >= 0 && i > lastChoice) {
+        const letter = NAMES_LETTER.exec(read.text)?.[1]
+        if (letter && choices.some(choice => choice.letter === letter)) {
+          recommendation = read
+          break
+        }
+        current = null
+        continue
+      }
+      fields.push(read)
+      current = read
+      continue
+    }
+    if (line.trim() === '') current = null
+    else if (current) current.text = current.text === '' ? line.trim() : `${current.text}\n${line.trim()}`
+  }
+  if (fields.length === 0) return null
+  return { number: header >= 0 ? NUMBER.exec(lines[header])![1].trim() : null, fields, recommendation }
 }
 
 // The question's text as the pane draws it: the emphasis markers around a span — `**x**`,
@@ -129,9 +185,12 @@ export function openEntries(entries: readonly RoundEntry[]): RoundEntry[] {
 
 // The open operator questions in the order the pane draws them: those that carry choices
 // first, in the round's order among themselves, then those without. A question the operator can
-// only answer in its session never hides one he can answer from the pane.
+// only answer in its session never hides one he can answer from the pane. A wait that asks
+// nothing, with no lettered choice and no labelled field, is no question: its sender's row
+// shows what it blocks, and the operator answers it in that tab.
 export function paneQuestions(entries: readonly RoundEntry[]): RoundEntry[] {
-  const questions = openEntries(entries).filter(entry => entry.kind === 'operator')
+  const questions = openEntries(entries)
+    .filter(entry => entry.kind === 'operator' && (entry.choices.length > 0 || questionShape(entry.question, entry.choices) !== null))
   return [...questions.filter(entry => entry.choices.length > 0), ...questions.filter(entry => entry.choices.length === 0)]
 }
 

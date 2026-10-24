@@ -52,18 +52,19 @@ presenting it: the collection may be an hour old. Found settled, it is written b
 « already done: <evidence> », dropped from the count (N in the header drops with it),
 reported in one line, and the next question is presented instead: a settled item is never asked.
 
-- **Question i of N — the question as a sentence, naming the thing on the screen or in
-  the data**, never a bare identifier.
-- _Context._ Two to six sentences: what the thing is, where the user meets it, what
-  happens today, what the plan or the agent says, why this is the user's to decide, which goal of `goals.md` it serves, and what
-  stays open after it.
-  Plain words. An identifier appears only beside the words that explain it — a bare
-  « R63 » in a question is its defect.
-- _The choices._ Two to four, one per line as `- **A** : <text>`, each with its COST and
-  GAIN, each a materially different piece of work — never shades of one option.
-- _Recommendation._ Exactly one, a line holding one italic word and the choice letter,
-  `_Recommendation_ : A`, the word in the user's language, its reason in one sentence;
-  first if your tool needs it.
+One field per line, its label italic before a colon, in the user's language: the
+operator's pane draws these fields alone.
+
+- `**Question i of N**`, alone on its line: the only numbering shown.
+- `_Subject_ :` the thing on the screen or in the data.
+- `_Context_ :` two to six sentences: what the thing is, where the user meets it, what
+  happens today, what the plan or the agent says, why this is the user's to decide, which
+  goal of `goals.md` it serves, what stays open after it. Plain words: an identifier only
+  beside the words that explain it.
+- `_Question_ :` the question as a sentence.
+- `_Choices_ :`, then two to four, one per line as `- **A** : <text>`, each with its COST
+  and GAIN, each a materially different piece of work — never shades of one option.
+- `_Recommendation_ : A — <its reason in one sentence>`: exactly one, after the choices.
 - Close with « You decide: A or B? » (the letters offered), then the machine line, plain
   text, as the message's last line: `waiting: operator — blocks: <the question>` — the
   stop gate refuses a turn that ends on a bare question. END THE TURN. Nothing else in

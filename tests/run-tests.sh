@@ -3197,6 +3197,9 @@ check "the round is mirrored in the successor's brief, the design and the decisi
 # ends on the machine line; the lookup and the send it once ran itself are gone from its rulebook.
 check "the orchestrator asks in its tab and the module carries the question to a running coordinator" "yes|yes|yes" \
   "$(spells "$ROOT/skills/orchestrator/SKILL.md" '**While a coordinator runs, every question for the operator goes to it** — his order —')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'and the hooks module carries it: ask here, in the shape of `/orchestrator:decide` step 2, and')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'end the turn on `waiting: operator — blocks: <what it blocks>`; never send it yourself')"
+# A report that asks nothing, ended on the operator's wait, was drawn in the pane as a question.
+check "the orchestrator ends on the operator's wait only for a question in the decide shape, and the coordinator still records one that asks nothing" "yes|yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Only such a question ends on that line; a report asking nothing, on its other machine line.')|$(spells "$COORDSKILL" 'row alone showing the wait: record it all the same, and present it once due.')"
 check "the orchestrator rulebook no longer runs the lookup and the send itself" "no|no" \
   "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'coordinator.sh lookup')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'no coordinator runs, and you ask him directly')"
 check "a decision round goes through a running coordinator, carried by the module" "yes|yes" \

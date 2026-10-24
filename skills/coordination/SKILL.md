@@ -110,11 +110,17 @@ its own tab and the turn he started there ends on another line or on none, the s
 `withdrawn`, as for the sender's other open entries then (« withdrawn by the sender »: it no longer
 waits on that question); a turn he did not start withdraws nothing, and a turn that ends on the same
 wait leaves the entry open. Entering them wakes you for none, and your pane
-shows him each orchestrator on one line, its dot coloured by its state (the ones waiting for
-him in `warning`), with `Status:` and `Blocks:` lines under a waiting one, and the one whose
-question is drawn bold in `suggestion`, then, under « Questions for you », the first open
-question that carries choices, whole with its choices, then a picker he walks with the arrows and answers with Enter — a click only gives the pane the keys, never answers —, the recommended choice highlighted first, its last option leading to an « Other answer » text field (the questions without choices come after),
-or « none in the pane » with the number of orchestrators waiting when their question reached you as a message: ask them in your tab. **An
+shows him, first, « Questions for you — N pending » and the first open question that carries
+choices: « <sender> — <its own Question x of y> », its labelled fields as the sender wrote them,
+each choice once and a blank line apart, its recommendation, then a « Choose » picker whose
+options are the letters alone; he walks it with the arrows and answers with Enter — a click
+only gives the pane the keys, never answers —, the recommended letter first, its last option
+leading to an « Other answer » text field (the questions without choices come after, and an
+answer not delivered on one line at the section's foot). The pane opens with the keys; a key
+line and, when it scrolls, a position track stay in view. Below, each orchestrator on one
+line, its dot coloured by its state (the ones waiting for him in `warning`), with `Status:`
+and `Blocks:` lines under a waiting one, the one whose question is drawn bold in `suggestion`.
+With no such question it reads « none in the pane » with the number of orchestrators waiting when their question reached you as a message: ask them in your tab. **An
 answer he chooses or types in the pane reaches the orchestrator directly**: the module marks the entry
 `answered` and sends the sender his choice, so `round` lists it with that answer, and you send
 nothing for it: write it in your ledger as answered from the pane, and close it with
@@ -130,7 +136,9 @@ duplicate its questions in your tab; you ask one only when it is truly urgent or
 unanswered in the pane. So an entry of the round is the pane's: record it in your ledger, but
 present it in your decision round only once `coordinator.sh round` marks it `due` — its sender
 ended on `waiting: operator (urgent) — blocks: …`, it has stayed open 15 minutes, or your pane
-is closed. A closing proposal, which the pane cannot rule, and a question that reached you by
+is closed. One with no choice and no labelled field asks nothing the pane draws, its sender's
+row alone showing the wait: record it all the same, and present it once due. A closing
+proposal, which the pane cannot rule, and a question that reached you by
 message, you present as before. The module wakes you once for each entry that falls due
 (« [module] … now due in this tab »): run `round` and present the due ones. An entry answered
 in the pane before it is due is never presented: close it as answered from the pane. One you
