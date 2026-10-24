@@ -122,9 +122,9 @@ const GATE_URGENCY_FLOOR = 1000
 // $.state (types/index.d.ts), so a reload of the module does not open it again.
 const PANE_OPENED = { plugin: 'orchestrator', key: 'paneOpened' } as const
 
-// How often a coordinator's session reads its round for questions just due: the operator's
-// order of 2026-10-24 that one left unanswered in the pane be asked in the tab, not at his
-// next word. A one-shot clock, armed again by each reading.
+// How often a coordinator's session reads its round for questions just due, urgent or with
+// the pane closed meanwhile, rather than at the operator's next word. A one-shot clock, armed
+// again by each reading.
 const ROUND_WAKE_MS = 30000
 
 // How often an open pane redraws on its own. A render is raised by a measure of

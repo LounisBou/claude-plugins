@@ -194,20 +194,15 @@ export function paneQuestions(entries: readonly RoundEntry[]): RoundEntry[] {
   return [...questions.filter(entry => entry.choices.length > 0), ...questions.filter(entry => entry.choices.length === 0)]
 }
 
-// How long an open question stays the pane's alone, the operator's order of 2026-10-24 that no
-// question be asked twice by default: past it, the coordinator asks it in its tab too.
-export const DUE_AFTER_MS = 15 * 60 * 1000
-
-// An open question is due in the coordinator's tab when its sender marked it urgent, when no
-// pane of the coordinator is open to show it, or once open DUE_AFTER_MS; a start that does not
-// parse cannot be judged young, and is due. `coordinator.sh round` marks the same entries
-// `due`. A closing proposal is no question: the pane cannot rule it, and the tab always
-// presents it.
-export function isDue(entry: RoundEntry, now: number, paneOpen: boolean): boolean {
+// An open question is due in the coordinator's tab when its sender marked it urgent, or when no
+// pane of the coordinator is open to show it, the operator's ruling of 2026-10-24: whether he
+// keeps the pane open decides where a question goes, and an open pane shows it for as long as
+// it waits. `coordinator.sh round` marks the same entries `due`. A closing proposal is no
+// question: the pane cannot rule it, and the tab always presents it. `now` is kept for the
+// callers, the rule reading no age.
+export function isDue(entry: RoundEntry, _now: number, paneOpen: boolean): boolean {
   if (entry.status !== 'open' || entry.kind !== 'operator') return false
-  if (entry.urgent || !paneOpen) return true
-  const since = Date.parse(entry.since)
-  return !Number.isFinite(since) || now - since >= DUE_AFTER_MS
+  return entry.urgent === true || !paneOpen
 }
 
 // The coordinator's wake for the questions just due: a report, never an order — it names them,

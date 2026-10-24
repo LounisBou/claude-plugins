@@ -169,7 +169,7 @@ than draft — and where it does, that text governs.
 
 What reaches the operator is an **arbitration**: what the thing is, two readings, what each
 costs, one recommendation — one at a time, with its context, per the decision round. A
-configuration change the tooling needs is no chore of his either: it goes to the session
+configuration change the tooling needs is no chore of his: it goes to the session
 owning it, as a request with its measurement; its protocol decides if he hears of it.
 
 **While a coordinator runs, every question for the operator goes to it** — his order —
@@ -178,8 +178,8 @@ end the turn on `waiting: operator — blocks: <what it blocks>`; never send it 
 Only such a question ends on that line; a report asking nothing, on its other machine line.
 Its fields, in his language: `**Question i of N**`, `_Subject_ :`, `_Context_ :`,
 `_Question_ :`, `_Choices_ :` then one `- **A** : <text>` each, `_Recommendation_ : A — <why>`;
-`waiting: operator (urgent) — blocks: <…>` only for what cannot wait 15 minutes (a
-production fault, a deadline he named). His answer returns verbatim, dated, via it or here.
+`waiting: operator (urgent) — blocks: <…>` only for a production fault, a detected
+regression, a decision under a real deadline. His answer returns verbatim, dated, via it or here.
 A pause it relays: its bullet in `references/lifecycle.md`.
 
 **When the orchestrator's own session lacks what the role needs — a PATH, a credential the

@@ -1399,10 +1399,10 @@ async function wakingCoordinator(asked: RoundEntry[], over: { paneClosed?: boole
   return { fx, handlers, tick }
 }
 
-test('a due question wakes the coordinator once: urgent at once, otherwise at 15 minutes in the pane, never one answered', async () => {
+test('a due question wakes the coordinator once: with the pane open only an urgent one, however old the others, never one answered', async () => {
   const urgent = entry('Orch : a', minutesAgo(1), { session: 'sa', urgent: true })
-  const old = entry('Orch : b', minutesAgo(16), { session: 'sb' })
-  const young = entry('Orch : c', minutesAgo(14), { session: 'sc' })
+  const old = entry('Orch : b', minutesAgo(90), { session: 'sb' })
+  const young = entry('Orch : c', minutesAgo(1), { session: 'sc' })
   const answered = entry('Orch : d', minutesAgo(30), { session: 'sd', status: 'answered', urgent: true })
   const done = entry('Orch : e', minutesAgo(30), { session: 'se', kind: 'done', blocks: null })
   const { fx, handlers, tick } = await wakingCoordinator([urgent, old, young, answered, done])
@@ -1411,12 +1411,13 @@ test('a due question wakes the coordinator once: urgent at once, otherwise at 15
   expect(fx.later.filter(t => t.ms === 30000).length).toBe(1)
   await tick()
   expect(fx.submitted.length).toBe(1)
-  for (const asked of [urgent, old]) expect(fx.submitted[0]).toContain(asked.from)
-  for (const quiet of [young, answered, done]) expect(fx.submitted[0]).not.toContain(quiet.from)
+  expect(fx.submitted[0]).toContain(urgent.from)
+  for (const quiet of [old, young, answered, done]) expect(fx.submitted[0]).not.toContain(quiet.from)
   expect(fx.submitted[0]).toContain('coordinator.sh round')
   await tick()
   expect(fx.submitted.length).toBe(1)
-  fx.files.set(`${ROUND}/${young.id}.json`, JSON.stringify({ ...young, since: minutesAgo(15) }) + '\n')
+  // A plain wait asked again urgent, on the same id, is due at the next reading.
+  fx.files.set(`${ROUND}/${young.id}.json`, JSON.stringify({ ...young, urgent: true }) + '\n')
   await tick()
   expect(fx.submitted.length).toBe(2)
   expect(fx.submitted[1]).toContain(young.from)
@@ -1426,6 +1427,29 @@ test('a due question wakes the coordinator once: urgent at once, otherwise at 15
   await reloaded['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
   await tick()
   expect(fx.submitted.length).toBe(2)
+})
+
+test('questions recorded while no pane is open, one already presented in the tab, are all drawn when the pane opens', async () => {
+  const presented = entry('Orch : a', minutesAgo(5), { session: 'sa', question: '_Question_ : Ship the first?', choices: CHOICES })
+  const { fx, handlers, tick } = await wakingCoordinator([presented], { paneClosed: true })
+  await tick()
+  expect(fx.submitted.length).toBe(1)
+  expect(fx.submitted[0]).toContain(presented.from)
+  const later = entry('Orch : b', minutesAgo(1), { session: 'sb', question: '_Question_ : Ship the second?' })
+  fx.files.set(`${ROUND}/${later.id}.json`, JSON.stringify(later) + '\n')
+  fx.files.set(`${SESSIONS}/${later.session}`, JSON.stringify(row({ role: 'orchestrator', name: later.from })) + '\n')
+  expect(fx.files.has(PANE_FILE)).toBe(false)
+  await handlers['command.run'](fx.dollar, supervisionRun)
+  expect(fx.files.has(PANE_FILE)).toBe(true)
+  const tree = await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
+  expect(tree.props.children[0].props.children[0].props.children).toBe('Questions for you — 2 pending')
+  expect(JSON.stringify(tree)).toContain('Ship the first?')
+  expect(JSON.parse(String(fx.files.get(`${ROUND}/${presented.id}.json`))).status).toBe('open')
+  // The pane draws one question at a time: answering the first brings the never-presented one.
+  await pick(tree, 'A')
+  const next = await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
+  expect(JSON.stringify(next)).toContain('Questions for you — 1 pending')
+  expect(JSON.stringify(next)).toContain('Ship the second?')
 })
 
 test('with the pane closed every open question is due at once; one answered in the pane before it is due wakes nothing', async () => {

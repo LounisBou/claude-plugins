@@ -65,7 +65,8 @@ LONG='merge it now — the release goes out today, the changelog is written, the
 # a round, and the pane opened by its command. The `questions` round holds two questions (the
 # first with a long choice and a recommendation, the second with none); the `report` round
 # holds a question with choices, a labelled one without, and a report that asks nothing, its
-# sender's row waiting on the operator.
+# sender's row waiting on the operator; the `aged` round holds the `questions` round's two
+# questions, neither urgent, both asked two hours ago.
 start() {
   local rows="$1" round="${2:-questions}"
   tmux kill-session -t "$SESSION" 2>/dev/null
@@ -92,6 +93,8 @@ start() {
   done
   if [ "$round" = report ]; then
     report_round "$now"
+  elif [ "$round" = aged ]; then
+    questions_round "$(jq -nr 'now - 7200 | strftime("%Y-%m-%dT%H:%M:%S.000Z")')"
   else
     questions_round "$now"
   fi
@@ -291,6 +294,41 @@ check "Enter answers the question with choices, its sender reached by no session
 check "the labelled question without choices is drawn as a question, the report still out" "Orch : beta — Question 1 of 1|1|1|1|0" "$(pane | grep -m1 '^Orch : beta')|$(pane | grep -c '^Questions for you — 1 pending')|$(pane | grep -c '^Question : which page goes first')|$(pane | grep -c '^Other answer')|$(pane | grep -c 'Takeover done')"
 notice=$(line_of 'not delivered:')
 check "the notice is one line at the section's foot, below the question, above the orchestrators" "1|1|1" "$(pane | grep -c 'not delivered:')|$([ -n "$notice" ] && [ "$notice" -gt "$(line_of 'Question : which page')" ] && echo 1)|$([ -n "$notice" ] && [ "$notice" -lt "$(line_of 'Orchestrators')" ] && echo 1)"
+
+# The pane's state routes each question: with the pane open no question but an urgent one is
+# due, however old, so the coordinator is not woken; with the pane closed every open one is,
+# at once; and one recorded while it is closed is drawn when it opens again. The wake is a
+# prompt the module submits to the coordinator's session: interrupted as soon as it shows, it
+# is the one model turn of this script. The module reads the round every 30 seconds.
+WOKEN="$SANDBOX/state/round-woken.json"
+woken() { jq -r 'sort | join(",")' "$WOKEN" 2>/dev/null; }
+echo "== the pane's state routes each question (160x50)"
+start 50 aged
+sleep 35
+record "35 seconds with the pane open"
+check "pane open: two questions two hours old wake the coordinator for neither" "|0" "$(woken)|$(screen | grep -c 'now due in this tab')"
+press Escape
+tmux send-keys -t "$SESSION" '/orchestrator:supervision'
+sleep 1
+tmux send-keys -t "$SESSION" Enter
+sleep 2
+check "the command closes the pane, and its record goes with it" "0|0" "$(screen | grep -c 'Questions for you')|$([ -f "$SANDBOX/state/pane.json" ] && echo 1 || echo 0)"
+wait_for 'now due in this tab' 40
+record "the pane closed"
+check "pane closed: the coordinator is woken at once for every open question" "1|s-alpha-q1,s-beta-q2" "$([ "$(screen | grep -c 'now due in this tab')" -ge 1 ] && echo 1)|$(woken)"
+press Escape
+jq -n --arg now "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" '{
+  id: "s-alpha-q4", from: "Orch : alpha", session: "s-alpha", kind: "operator", since: $now, blocks: "the tag",
+  question: "_Question_ : tag the release while the pane is closed?\n- **A** : tag it\n- **B** : wait",
+  choices: [{letter:"A",text:"tag it"},{letter:"B",text:"wait"}], recommendation: null, status: "open", at: $now, answer: null
+}' > "$SANDBOX/state/round/s-alpha-q4.json"
+sleep 1
+tmux send-keys -t "$SESSION" '/orchestrator:supervision'
+sleep 1
+tmux send-keys -t "$SESSION" Enter
+wait_for 'Questions for you' 15
+record "the pane open again"
+check "reopened, the pane draws every pending question, those presented in the tab included" "1|1|open,open" "$(pane | grep -c '^Questions for you — 3 pending')|$(pane | grep -c '^Question : merge the release')|$(statuses)"
 
 echo "pane-e2e: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

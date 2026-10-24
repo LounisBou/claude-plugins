@@ -135,15 +135,21 @@ order, and its `from` is the address his answer goes to.
 duplicate its questions in your tab; you ask one only when it is truly urgent or left
 unanswered in the pane. So an entry of the round is the pane's: record it in your ledger, but
 present it in your decision round only once `coordinator.sh round` marks it `due` — its sender
-ended on `waiting: operator (urgent) — blocks: …`, it has stayed open 15 minutes, or your pane
-is closed. One with no choice and no labelled field asks nothing the pane draws, its sender's
+ended on `waiting: operator (urgent) — blocks: …`, or your pane is closed. Whether he keeps the
+pane open decides (his ruling of 2026-10-24): open, it holds every other question however long
+it waits; closed, every open one is due at once, and on reopening it draws every pending one,
+those you presented meanwhile included. One with no choice and no labelled field asks nothing the pane draws, its sender's
 row alone showing the wait: record it all the same, and present it once due. A closing
 proposal, which the pane cannot rule, and a question that reached you by
 message, you present as before. The module wakes you once for each entry that falls due
 (« [module] … now due in this tab »): run `round` and present the due ones. An entry answered
 in the pane before it is due is never presented: close it as answered from the pane. One you
 presented and he then answered in the pane, or answered in your tab while the pane still
-showed it, is closed once, by one `round-close`, and never presented again.
+showed it, is closed once, by one `round-close`, and never presented again. When he tells you to
+focus on one subject and present nothing else, present none of the other due questions until
+he lifts that hold: they stay open, in the pane and in the round; an urgent one you signal in
+one line, sender and what it blocks, without leaving the subject. When he asks to take them
+all, `/orchestrator:coordinator-decide` runs one round over every orchestrator's questions.
 
 An orchestrator on another machine still reports by message, handled as follows.
 A message headed `[module]` is the hooks module's report of an orchestrator's turn end, sent

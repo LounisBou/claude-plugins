@@ -3208,10 +3208,17 @@ check "a decision round goes through a running coordinator, carried by the modul
 check "the decision round no longer looks the coordinator up or sends it the questions itself, and stays at 8,650 bytes or fewer" "no|no|0|yes" \
   "$(spells "$ROOT/commands/decide.md" 'coordinator.sh lookup')|$(spells "$ROOT/commands/decide.md" 'goes to that coordinator with `SendMessage`')|$(sed -n '1,5p' "$ROOT/commands/decide.md" | grep -c '^allowed-tools: .*coordinator\.sh')|$([ "$(wc -c < "$ROOT/commands/decide.md" | tr -d ' ')" -le 8650 ] && echo yes || echo no)"
 # The operator's order of 2026-10-24: a question the pane shows is asked in the coordinator's tab
-# only once due — urgent, unanswered 15 minutes, or no pane open — and never twice.
+# only once due — urgent, or no pane open — and never twice; whether the pane is open decides.
+# A hold on his word keeps the other questions open, and the urgent ones still signalled.
 check "the rulebooks say a question the pane shows is not asked twice, when it falls due, and how a wait is marked urgent" \
-  "yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes" \
-  "$(spells "$COORDSKILL" '**A question the pane shows is not asked twice.**')|$(spells "$COORDSKILL" 'ended on `waiting: operator (urgent) — blocks: …`, it has stayed open 15 minutes, or your pane')|$(spells "$COORDSKILL" '(« [module] … now due in this tab »)')|$(spells "$COORDSKILL" 'showed it, is closed once, by one `round-close`, and never presented again.')|$(spells "$ROOT/commands/decide.md" 'again only when urgent, unanswered there 15 minutes, or no pane is open')|$(spells "$ROOT/commands/decide.md" 'end on `waiting: operator (urgent) — blocks: …` only for what cannot wait that long.')|$(spells "$ROOT/commands/decide.md" '« already done: <evidence> », dropped from the count (N in the header drops with it),')|$(spells "$ROOT/commands/decide.md" 'a settled item is never asked.')|$(spells "$ROOT/skills/orchestrator/SKILL.md" '`waiting: operator (urgent) — blocks: <…>` only for what cannot wait 15 minutes')|$(spells "$ROOT/docs/design.md" 'A question the pane shows is not asked twice, on the operator')|$(spells "$ROOT/docs/design.md" 'submits to its own session one « [module] … now due in this tab »')"
+  "yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes" \
+  "$(spells "$COORDSKILL" '**A question the pane shows is not asked twice.**')|$(spells "$COORDSKILL" 'ended on `waiting: operator (urgent) — blocks: …`, or your pane is closed. Whether he keeps the')|$(spells "$COORDSKILL" 'he lifts that hold: they stay open, in the pane and in the round; an urgent one you signal in')|$(spells "$ROOT/commands/decide.md" 'compaction, in asking order: the urgent first (a production fault, a detected')|$(spells "$COORDSKILL" '(« [module] … now due in this tab »)')|$(spells "$COORDSKILL" 'showed it, is closed once, by one `round-close`, and never presented again.')|$(spells "$ROOT/commands/decide.md" 'again only when urgent or no pane is open (his order of 2026-10-24: no question asked')|$(spells "$ROOT/commands/decide.md" 'end on `waiting: operator (urgent) — blocks: …` only for')|$(spells "$ROOT/commands/decide.md" '« already done: <evidence> », dropped from the count (N in the header drops with it),')|$(spells "$ROOT/commands/decide.md" 'a settled item is never asked.')|$(spells "$ROOT/skills/orchestrator/SKILL.md" '`waiting: operator (urgent) — blocks: <…>` only for a production fault, a detected')|$(spells "$ROOT/docs/design.md" 'A question the pane shows is not asked twice, on the operator')|$(spells "$ROOT/docs/design.md" 'submits to its own session one « [module] … now due in this tab »')"
+# The coordinator's own decision round takes every orchestrator's open questions in the order
+# `round --by-urgency` prints, points at decide.md for the round's shape, and relays each ruling.
+CDECIDE="$ROOT/commands/coordinator-decide.md"
+check "coordinator-decide reads round --by-urgency, follows decide.md's shape, relays each ruling verbatim, and is listed" \
+  "yes|yes|yes|yes|1|yes" \
+  "$(spells "$CDECIDE" '--by-urgency`: its open `operator` entries are the round')|$(spells "$CDECIDE" "The round's shape is \`/orchestrator:decide\`'s, read from \`commands/decide.md\`")|$(spells "$CDECIDE" 'verbatim and dated (`date -u +%FT%TZ`, pasted) to the sender')|$(spells "$CDECIDE" 'the urgent first, then by `since`, the')|$(sed -n '1,5p' "$CDECIDE" | grep -c '^allowed-tools: .*coordinator\.sh.*SendMessage')|$(spells "$ROOT/README.md" '| `/orchestrator:coordinator-decide` |')"
 COORDSPAWN=$(grep -m1 -o 'iterm-agent.sh spawn --coordinator-successor.*' "$COORDSKILL" 2>/dev/null | sed -e 's/^iterm-agent.sh spawn //' \
   -e 's#<subject>#ops#' -e "s#<your working directory>#$WORK#" -e 's#<brief path>#/tmp/coord-brief.md#')
 coordspawn() { eval "set -- $COORDSPAWN"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" CLAUDE_CONFIG_DIR="$CRDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
@@ -6460,11 +6467,10 @@ round w1 | operator | from Orch : a | since 2026-10-20T10:01:00.000Z | blocks: p
     withdrawn by the sender at 2026-10-20T10:09:00.000Z: a later turn the operator typed in waits on something else" \
   "$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>&1)"
 # An open question the pane can show is the pane's: `round` marks it due, for the coordinator to
-# present in its tab, only when its sender marked it urgent, once it has stayed open 15
-# minutes, read against COORDINATOR_NOW (the clock a test pins), never against the real clock
-# here, or when no pane of the coordinator is open: its record, <state>/pane.json, names a pid
-# the process table (COORDINATOR_PS_TABLE here) holds. Answered and withdrawn entries, and a
-# closing proposal, which the pane cannot rule, are never due.
+# present in its tab, only when its sender marked it urgent, however long the others have
+# waited, or when no pane of the coordinator is open: its record, <state>/pane.json, names a
+# pid the process table (COORDINATOR_PS_TABLE here) holds. Answered and withdrawn entries, and
+# a closing proposal, which the pane cannot rule, are never due.
 DSTATE="$WORK/coord-due"; DCFG="$WORK/coord-due-config"
 mkdir -p "$DSTATE/round" "$DCFG/claude-orchestrator/store/sessions"
 for spec in "u1:open:2026-10-24T11:59:00.000Z:true" "p15:open:2026-10-24T11:45:00.000Z:false" \
@@ -6484,10 +6490,10 @@ done
 printf '4242 1 ttys004 hostcli\n' > "$WORK/coord-due-ps"
 printf '{"session":"s-coord","pid":"4242","at":"2026-10-24T09:00:00.000Z"}\n' > "$DSTATE/pane.json"
 dround() { ORCHESTRATOR_STATE_DIR="$DSTATE" CLAUDE_CONFIG_DIR="$DCFG" COORDINATOR_NOW=2026-10-24T12:00:00Z COORDINATOR_PS_TABLE="$WORK/coord-due-ps" bash "$COORD" round 2>&1; }
-check "round marks due an urgent entry and one open 15 minutes or more, and no other" \
-  "round pold | operator | from Orch : d | since 2026-10-24T09:00:00.000Z | blocks: phase 3 | open | due
+check "with the pane open round marks due an urgent entry alone, however old the others" \
+  "round pold | operator | from Orch : d | since 2026-10-24T09:00:00.000Z | blocks: phase 3 | open
 round zdone | done | from Orch : d | since 2026-10-24T09:30:00.000Z | blocks: - | open
-round p15 | operator | from Orch : d | since 2026-10-24T11:45:00.000Z | blocks: phase 3 | open | due
+round p15 | operator | from Orch : d | since 2026-10-24T11:45:00.000Z | blocks: phase 3 | open
 round p14 | operator | from Orch : d | since 2026-10-24T11:45:01.000Z | blocks: phase 3 | open
 round u1 | operator | from Orch : d | since 2026-10-24T11:59:00.000Z | blocks: phase 3 | open | due
 round xu | operator | from Orch : d | since 2026-10-24T11:58:00.000Z | blocks: phase 3 | answered
@@ -6503,6 +6509,50 @@ check "an entry answered in the pane is never due, and once closed with round-cl
   "$(dround | grep -c '^round xu .* | due')|$(ORCHESTRATOR_STATE_DIR="$DSTATE" bash "$COORD" round-close xu --answer 'answered from the pane: A : ship it' 2>&1)|$(dround | grep -c '^round xu ')|$(dround | grep -c 'Ask xu?')"
 check "round refuses a pinned clock that is no UTC time" "exit 1|coordinator: round: COORDINATOR_NOW is no UTC time: soon" \
   "$(ORCHESTRATOR_STATE_DIR="$DSTATE" COORDINATOR_NOW=soon bash "$COORD" round >/dev/null 2>&1; echo "exit $?")|$(ORCHESTRATOR_STATE_DIR="$DSTATE" COORDINATOR_NOW=soon bash "$COORD" round 2>&1)"
+# round --by-urgency lists the same lines, due marked the same, each set ordered urgent first,
+# then by start, across senders: the order a decision round over every orchestrator asks in.
+USTATE="$WORK/coord-urgency"; UCFG="$WORK/coord-urgency-config"
+mkdir -p "$USTATE/round" "$UCFG/claude-orchestrator/store/sessions"
+for spec in "a0:a:open:10:00:false" "b1:b:open:10:01:true" "b2:b:open:10:02:false" "a3:a:open:10:03:true" \
+    "a4:a:answered:10:04:true" "b5:b:answered:10:05:false" "b6:b:open:10:06:false" "a7:a:open:10:06:false" \
+    "a8:a:withdrawn:10:08:true"; do
+  IFS=: read -r uid ufrom ustatus uh um uurgent <<< "$spec"
+  jq -n --arg id "$uid" --arg from "Orch : $ufrom" --arg status "$ustatus" --arg since "2026-10-24T$uh:$um:00.000Z" --argjson urgent "$uurgent" \
+    '{id:$id, from:$from, session:("s-" + ($from | ascii_downcase | gsub("[^a-z]"; ""))), kind:"operator", since:$since,
+      blocks:"phase 3", question:("Ask " + $id + "?"), choices:[], recommendation:null, status:$status, at:$since,
+      answer:(if $status == "answered" then {text:"A : ship it", by:"pane", at:"2026-10-24T11:00:00.000Z"} else null end)}
+     + (if $urgent then {urgent:true} else {} end)' > "$USTATE/round/$uid.json"
+done
+: > "$UCFG/claude-orchestrator/store/sessions/s-orcha"; : > "$UCFG/claude-orchestrator/store/sessions/s-orchb"
+printf '{"session":"s-coord","pid":"4242","at":"2026-10-24T09:00:00.000Z"}\n' > "$USTATE/pane.json"
+uround() { ORCHESTRATOR_STATE_DIR="$USTATE" CLAUDE_CONFIG_DIR="$UCFG" COORDINATOR_PS_TABLE="$WORK/coord-due-ps" bash "$COORD" round "$@" 2>&1; }
+check "round --by-urgency orders each set urgent first, then by start, across senders, due marked as without it" \
+  "round b1 | operator | from Orch : b | since 2026-10-24T10:01:00.000Z | blocks: phase 3 | open | due
+round a3 | operator | from Orch : a | since 2026-10-24T10:03:00.000Z | blocks: phase 3 | open | due
+round a0 | operator | from Orch : a | since 2026-10-24T10:00:00.000Z | blocks: phase 3 | open
+round b2 | operator | from Orch : b | since 2026-10-24T10:02:00.000Z | blocks: phase 3 | open
+round a7 | operator | from Orch : a | since 2026-10-24T10:06:00.000Z | blocks: phase 3 | open
+round b6 | operator | from Orch : b | since 2026-10-24T10:06:00.000Z | blocks: phase 3 | open
+round a4 | operator | from Orch : a | since 2026-10-24T10:04:00.000Z | blocks: phase 3 | answered
+round b5 | operator | from Orch : b | since 2026-10-24T10:05:00.000Z | blocks: phase 3 | answered
+round a8 | operator | from Orch : a | since 2026-10-24T10:08:00.000Z | blocks: phase 3 | withdrawn" \
+  "$(uround --by-urgency | grep '^round ')"
+# Two entries started at the same instant (a7, b6) are ordered by id, whoever wrote first; a
+# withdrawn entry is listed last and never due.
+check "round --by-urgency with no pane open reads the same order, every open entry due" \
+  "round b1 | operator | from Orch : b | since 2026-10-24T10:01:00.000Z | blocks: phase 3 | open | due
+round a3 | operator | from Orch : a | since 2026-10-24T10:03:00.000Z | blocks: phase 3 | open | due
+round a0 | operator | from Orch : a | since 2026-10-24T10:00:00.000Z | blocks: phase 3 | open | due
+round b2 | operator | from Orch : b | since 2026-10-24T10:02:00.000Z | blocks: phase 3 | open | due
+round a7 | operator | from Orch : a | since 2026-10-24T10:06:00.000Z | blocks: phase 3 | open | due
+round b6 | operator | from Orch : b | since 2026-10-24T10:06:00.000Z | blocks: phase 3 | open | due
+round a4 | operator | from Orch : a | since 2026-10-24T10:04:00.000Z | blocks: phase 3 | answered
+round b5 | operator | from Orch : b | since 2026-10-24T10:05:00.000Z | blocks: phase 3 | answered
+round a8 | operator | from Orch : a | since 2026-10-24T10:08:00.000Z | blocks: phase 3 | withdrawn" \
+  "$(mv "$USTATE/pane.json" "$WORK/coord-urgency-pane"; uround --by-urgency | grep '^round '; mv "$WORK/coord-urgency-pane" "$USTATE/pane.json")"
+check "round without the flag keeps the round's order, its lines those of --by-urgency, and refuses another argument" \
+  "a0 a3 a7 b1 b2 b6 a4 b5 a8|same lines|exit 1|coordinator: round: unexpected argument --soon" \
+  "$(uround | grep '^round ' | cut -d' ' -f2 | tr '\n' ' ' | sed 's/ $//')|$([ "$(uround | sort)" = "$(uround --by-urgency | sort)" ] && echo 'same lines')|$(uround --soon >/dev/null 2>&1; echo "exit $?")|$(uround --soon)"
 if [ -n "$RCFG_HAD" ]; then export CLAUDE_CONFIG_DIR="$RCFG_WAS"; else unset CLAUDE_CONFIG_DIR; fi
 
 echo "== routing: cost =="

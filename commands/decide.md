@@ -11,8 +11,7 @@ theirs, and you never ask two things in one message.
 
 **The operator's time is the scarce thing.** His words: ask every pending question one after
 the other, so that he loses as little time as possible; then draw the consequences and launch
-the work; and if a second wave of questions is needed, chain it. The goal is the most answers
-for the fewest interruptions while he is there. So a round is a WAVE: the questions follow one
+the work; and if a second wave of questions is needed, chain it. So a round is a WAVE: the questions follow one
 another with nothing between them, and nothing is relayed, launched or reported until the wave
 is over.
 
@@ -21,8 +20,9 @@ question, in the shape of step 2, ends its turn on `waiting: operator — blocks
 blocks>`, and the module forwards it; never send it yourself. The first says in three to five
 sentences what you work on, for its
 round of its own where your questions come together. Its pane shows each one, its tab asking
-again only when urgent, unanswered there 15 minutes, or no pane is open (his order of
-2026-10-24: no question asked twice); end on `waiting: operator (urgent) — blocks: …` only for what cannot wait that long.
+again only when urgent or no pane is open (his order of 2026-10-24: no question asked
+twice); end on `waiting: operator (urgent) — blocks: …` only for
+what step 1 calls urgent.
 Its answer, verbatim and dated, is his ruling, recorded as step 4 says.
 
 ## 1. Collect first, then announce the count
@@ -34,13 +34,13 @@ review that need an owner. Then verify each item STILL OPEN on its own artifact 
 request's state and merge, the branch head, the file, the agent's last message — and the
 premise its question assumes: how the project ships, which branch or environment is the
 target, what that target already holds. A state file or a register says what was true when
-written; the user's own merge or close most often settles a question behind it. Collect wide: add the questions the next steps will need from him in
-any case — a choice the next phase's brief must name, a premise its plan assumes — so that
-he answers them now, while he is there. Every goal
+written; the user's own merge or close most often settles a question behind it. Collect wide: add the questions the next steps will need from him — a choice the next phase's brief must name, a premise its plan assumes — so that
+he answers them now. Every goal
 `dispatch-record.sh goals <record> status` lists as `unplanned=` is a question of the wave:
 plan it, or rule it out? Write the list to `decision-round.md` in the session's scratch
 directory — number, title, where it comes from, status — so the round survives a
-compaction. An item found settled is written there as « already done: <evidence> »,
+compaction, in asking order: the urgent first (a production fault, a detected
+regression, a decision under a real deadline), then the oldest first. An item found settled is written there as « already done: <evidence> »,
 dropped from the count, and not asked. Announce it in one line, the goals line from the same `goals status`:
 « N questions, back to back. Goals: m/n met, open: G3, G4. » A question that arises mid-round is appended as N + 1, announced in one line, and
 taken in order; the count in the header moves with it.
@@ -97,8 +97,7 @@ question before it is presented.
 ## 5. Re-present after any interruption
 
 If ANYTHING else was shown to the user between a question and its answer — a status line
-you had to write, a notice the host printed — re-present the question IN FULL, in step 2's
-whole shape, never « as above » or a pointer. A question the user must scroll back to find is a question answered
+you had to write, a notice the host printed — re-present the question IN FULL, in step 2's whole shape, never « as above » or a pointer. A question the user must scroll back to find is a question answered
 wrong.
 
 ## 6. A ruling is not reopened
