@@ -208,6 +208,13 @@ test('a busy agent passes, the blocks line passes, the done line asks for the fa
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: done' })).toBe('read-what-is-left')
 })
 
+test('a wait its sender marked urgent passes the gate as the plain one does', () => {
+  expect(checkWake({ agents: [], resident: false, delivered: [], message: 'x\nwaiting: operator (urgent) — blocks: the production fault' }))
+    .toEqual({ blocks: 'the production fault' })
+  expect(checkWake({ agents: [], resident: false, delivered: [], message: 'Waiting: Operator (URGENT) - blocks: x' }))
+    .toEqual({ blocks: 'x' })
+})
+
 test('the done line holds the stop on what is left and on open rows', () => {
   expect(checkWakeDone({ agents: [], checkouts: [], deferred: [] })).toBeNull()
   expect(checkWakeDone({

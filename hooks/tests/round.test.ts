@@ -3,8 +3,8 @@
 // recommendation read out of a question in the decide shape, near misses read as none, the
 // entry built from an orchestrator's wait, and the order the round takes its open entries in.
 import { expect, test } from 'claude-code/testing'
-import { parseChoices, questionBody, roundEntry, roundEntryId, roundPath, openEntries, type RoundEntry } from '../round.ts'
-import { fingerprint, relayText, RELAY_CAP, type Wait } from '../relay.ts'
+import { parseChoices, questionBody, roundEntry, roundEntryId, roundPath, openEntries, isDue, DUE_AFTER_MS, type RoundEntry } from '../round.ts'
+import { fingerprint, parseWait, relayText, RELAY_CAP, type Wait } from '../relay.ts'
 
 const DECIDE = [
   'Question 1 of 1 — merge the scraper pull request now?',
@@ -106,6 +106,27 @@ test('an operator wait becomes an open entry: its sender, its question, its choi
     at: AT,
     answer: null,
   })
+})
+
+test('an urgent wait becomes an urgent entry, a plain one does not, and both land on the same id', () => {
+  const urgent = roundEntry('s-one', 'Orch : belt', parseWait('Prod is down.\nwaiting: operator (urgent) — blocks: x')!, SINCE, AT)
+  const plain = roundEntry('s-one', 'Orch : belt', parseWait('Prod is down.\nwaiting: operator — blocks: x')!, SINCE, AT)
+  expect(urgent.urgent).toBe(true)
+  expect(plain.urgent).toBeUndefined()
+  expect(urgent.id).toBe(plain.id)
+})
+
+test('an open question is due when urgent, open 15 minutes or more, or with no pane to show it; nothing else is', () => {
+  const now = Date.parse('2026-10-24T12:00:00.000Z')
+  const at = (since: string, over: Partial<RoundEntry> = {}) => ({ ...roundEntry('s-one', 'Orch : belt', { kind: 'operator', blocks: 'x', question: 'q' }, since, AT), ...over })
+  expect(isDue(at('2026-10-24T11:59:00.000Z', { urgent: true }), now, true)).toBe(true)
+  expect(isDue(at('2026-10-24T11:45:00.000Z'), now, true)).toBe(true)
+  expect(isDue(at('2026-10-24T11:45:01.000Z'), now, true)).toBe(false)
+  expect(isDue(at('2026-10-24T11:59:00.000Z'), now, false)).toBe(true)
+  expect(isDue(at('not a time'), now, true)).toBe(true)
+  expect(isDue(at('2026-10-24T09:00:00.000Z', { status: 'answered', urgent: true }), now, false)).toBe(false)
+  expect(isDue(at('2026-10-24T09:00:00.000Z', { kind: 'done', blocks: null }), now, false)).toBe(false)
+  expect(DUE_AFTER_MS).toBe(15 * 60 * 1000)
 })
 
 test('done is an entry with nothing blocked', () => {

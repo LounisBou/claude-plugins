@@ -103,8 +103,10 @@ function notDoneReasons(left: readonly string[], deferred: readonly string[],
 
 // The machine line once normalised: the dash between « operator » and « blocks: » may
 // be any a model reaches for, and the spacing around it is free. A hyphen inside the
-// reason is the reason's own and is kept.
-export const MACHINE_LINE = /^waiting:\s*(?:operator\s*(?:—|–|--|-)\s*blocks:\s*(.+)|(done))$/i
+// reason is the reason's own and is kept. A sender may mark its wait `(urgent)` after
+// « operator » (URGENT_LINE tells it): the gate holds both forms alike.
+export const MACHINE_LINE = /^waiting:\s*(?:operator\s*(?:\(urgent\)\s*)?(?:—|–|--|-)\s*blocks:\s*(.+)|(done))$/i
+export const URGENT_LINE = /^waiting:\s*operator\s*\(urgent\)/i
 // The predecessor's last word in a succession (succeed.md): the line itself, nothing else.
 const HANDED_OVER = /^handed over$/i
 const LOOKS_DECLARED = /\bblocks\b\W*\w/i

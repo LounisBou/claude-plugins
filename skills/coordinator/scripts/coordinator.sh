@@ -48,8 +48,12 @@
 #     | checkouts <path>, ... or none | brief <path> | model <id> | effort <level or default>
 # round prints, for each entry whose status is open, then for each answered one (chosen in the
 # coordinator's pane and sent to the asking orchestrator), then for each withdrawn one, a line
-#   round <id> | <operator or done> | from <sender> | since <UTC time> | blocks: <what it blocks, or -> | <status>
-# followed by the question's lines, each indented by four spaces. The entries are read from
+#   round <id> | <operator or done> | from <sender> | since <UTC time> | blocks: <what it blocks, or -> | <status>[ | due][ | sender gone]
+# followed by the question's lines, each indented by four spaces. « due » marks an open question
+# the coordinator presents in its tab: its sender marked it urgent, no pane of the coordinator
+# is open (<state>/pane.json, written by the hooks module while it is, names a pid that is not
+# running, or is absent), or it has stayed open 15 minutes, read against COORDINATOR_NOW when
+# the suite pins it (a UTC time), else the clock; any other open question is the pane's alone. The entries are read from
 # <state>/round/<id>.json, one JSON entry per file, written whole by the hooks module at the end
 # of a turn of an orchestrator on this machine (hooks/round.ts); a file that does not parse is
 # skipped. Each set is in the round's order: grouped by sender, the groups by their earliest
@@ -750,21 +754,53 @@ live_sessions() {
     find "$store" -type f -exec basename {} \; 2>/dev/null | jq -R -s -c 'split("\n") | map(select(. != ""))'
 }
 
+# DUE_AFTER: how long, in seconds, an open question stays the pane's alone before the
+# coordinator presents it in its tab: the operator's order of 2026-10-24, no question asked
+# twice by default.
+DUE_AFTER=900
+
+# pane_open: whether the coordinator's pane is open, from the record the hooks module keeps at
+# <state>/pane.json while it is ({"session","pid","at"}): open while that pid is in the process
+# table (COORDINATOR_PS_TABLE when the suite gives one). A record absent, unreadable or naming
+# no pid is no open pane.
+pane_open() {
+    local pid
+    pid=$(jq -r 'select(type == "object") | .pid // empty | tostring' "$STATE/pane.json" 2>/dev/null) || return 1
+    printf '%s' "$pid" | grep -qE '^[0-9]+$' || return 1
+    if [ -n "${COORDINATOR_PS_TABLE:-}" ]; then
+        awk -v pid="$pid" '$1 == pid { found = 1 } END { exit found ? 0 : 1 }' "$COORDINATOR_PS_TABLE" 2>/dev/null
+    else
+        ps -p "$pid" -o pid= >/dev/null 2>&1
+    fi
+}
+
 cmd_round() {
     [ $# -eq 0 ] || die "round: unexpected argument $1"
+    local clock pane=false
+    pane_open && pane=true
+    # The clock the age is read against: COORDINATOR_NOW when a test pins it.
+    clock=$(jq -n --arg now "${COORDINATOR_NOW:-}" 'if $now == "" then now | floor else $now | sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601 end' 2>/dev/null) \
+        || die "round: COORDINATOR_NOW is no UTC time: ${COORDINATOR_NOW:-}"
     # An entry whose sender's sessions file is absent keeps its place, and its header says the
     # sender is gone: the session ended with its question still open.
-    round_entries | jq -s -r --argjson live "$(live_sessions)" '
+    round_entries | jq -s -r --argjson live "$(live_sessions)" --argjson clock "$clock" --argjson after "$DUE_AFTER" --argjson pane "$pane" '
         # The round order (hooks/round.ts openEntries): grouped by sender, the groups by their
         # earliest wait, each in the order its waits began.
         def ordered: (sort_by(.since) | reduce .[] as $e ({}; if has($e.from) then . else .[$e.from] = $e.since end)) as $first
             | sort_by([$first[.from], .from, .since, .id]);
         # The sender is gone when its sessions file is absent; an entry naming no session is not judged.
         def gone: .session | if type == "string" and . != "" then gsub("[^A-Za-z0-9._-]"; "_") as $key | $live | any(. == $key) | not else false end;
+        # An open question is due in the tab of the coordinator when its sender marked it urgent, when
+        # no pane of the coordinator is open, or once it has stayed open DUE_AFTER seconds; a
+        # start that does not parse cannot be judged young, and is due (hooks/round.ts isDue).
+        def age: (.since | sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch null) as $at
+            | if $at == null then null else $clock - $at end;
+        def due: .status == "open" and .kind == "operator" and (.urgent == true or ($pane | not) or (age | . == null or . >= $after));
         # The open entries, then those the operator answered from the pane, then the withdrawn.
         ([("open", "answered", "withdrawn") as $status | map(select(.status == $status)) | ordered] | add)[]
         | (if gone then " | sender gone" else "" end) as $gone
-        | "round \(.id) | \(.kind) | from \(.from) | since \(.since) | blocks: \(.blocks // "-") | \(.status)\($gone)",
+        | (if due then " | due" else "" end) as $due
+        | "round \(.id) | \(.kind) | from \(.from) | since \(.since) | blocks: \(.blocks // "-") | \(.status)\($due)\($gone)",
           (.question | select(. != "") | split("\n")[] | "    " + .),
           (select(.status == "answered") | "    answered from the pane at \(.answer.at // "?"): \(.answer.text // "")"),
           (select(.status == "withdrawn" and .answer.by? == "sender") | "    withdrawn by the sender at \(.answer.at // "?"): a later turn the operator typed in waits on something else")'

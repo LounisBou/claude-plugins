@@ -168,19 +168,18 @@ project's own method may decide otherwise — auto-merge, pull requests that shi
 than draft — and where it does, that text governs.
 
 What reaches the operator is an **arbitration**: what the thing is, two readings, what each
-costs, one recommendation — one at a time, with its context, as the decision round already
+costs, one recommendation — one at a time, with its context, as the decision round
 says. A configuration change the tooling needs is not the operator's chore either: it goes
 to the session that owns that configuration, as a request carrying the measurement behind
-it; that session's own protocol decides whether the operator hears of it.
+it; its own protocol decides whether the operator hears of it.
 
 **While a coordinator runs, every question for the operator goes to it** — his order —
 and the hooks module carries it: ask here, in the shape of `/orchestrator:decide` step 2, and
-end the turn on `waiting: operator — blocks: <what it blocks>`; never send it yourself. Its
-choices go one per line as `- **A** : <text>`, its recommendation on a line holding one italic
-word and the choice letter, `_Recommendation_ : A`, the word in his language, for the
-coordinator's pane. His
-answer comes back verbatim and dated, through it or in this tab. A pause it relays: its bullet
-in `references/lifecycle.md`.
+end the turn on `waiting: operator — blocks: <what it blocks>`; never send it yourself.
+Choices go one per line, `- **A** : <text>`, then `_Recommendation_ : A` in his language, for
+its pane; `waiting: operator (urgent) — blocks: <…>` only for what cannot wait 15 minutes (a
+production fault, a deadline he named). His answer returns verbatim and dated, through it
+or in this tab. A pause it relays: its bullet in `references/lifecycle.md`.
 
 **When the orchestrator's own session lacks what the role needs — a PATH, a credential the
 sandbox will not open, a tool the launch did not carry — the repair is a successor, not a
