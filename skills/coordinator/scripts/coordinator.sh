@@ -61,8 +61,11 @@
 # wait, each in the order its waits began. round --by-urgency prints the same lines, each set
 # ordered urgent entries first, then by start, across senders. An answered entry's lines end on
 #     answered from the pane at <UTC time>: <letter> : <choice text>
-# and those of an entry its sender withdrew (a later turn the operator typed in ended on another machine line) on
-#     withdrawn by the sender at <UTC time>: a later turn the operator typed in waits on something else
+# and those of an entry its sender withdrew on
+#     withdrawn by the sender at <UTC time>: <why>
+# the reason the module wrote (superseded by <id>, the sender's session ended, handed over to its
+# successor), or, when it wrote none (a later turn the operator typed in ended on another machine
+# line), « a later turn the operator typed in waits on something else ».
 # round-close rewrites the entry with status closed and the answer {text, by "coordinator", at},
 # in one rename, and refuses an id with no entry.
 # round-archive moves each entry file of <state>/round/ whose status is closed into
@@ -804,7 +807,7 @@ cmd_round() {
         | "round \(.id) | \(.kind) | from \(.from) | since \(.since) | blocks: \(.blocks // "-") | \(.status)\($due)\($gone)",
           (.question | select(. != "") | split("\n")[] | "    " + .),
           (select(.status == "answered") | "    answered from the pane at \(.answer.at // "?"): \(.answer.text // "")"),
-          (select(.status == "withdrawn" and .answer.by? == "sender") | "    withdrawn by the sender at \(.answer.at // "?"): a later turn the operator typed in waits on something else")'
+          (select(.status == "withdrawn" and .answer.by? == "sender") | "    withdrawn by the sender at \(.answer.at // "?"): \(if (.answer.text | type) == "string" and .answer.text != "" then .answer.text else "a later turn the operator typed in waits on something else" end)")'
 }
 
 cmd_round_close() {

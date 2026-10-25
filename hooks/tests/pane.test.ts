@@ -9,7 +9,7 @@
 // measure's side reads bounded so a walk that cannot answer in time costs the row
 // its name, never the measure.
 import { expect, test } from 'claude-code/testing'
-import { agentPaneRows, paneRows, readRound, roundLines, scrollTrack, wrapWords, register as registerSupervision, registerWake, registerPaneTool, SUPERVISION_TOOL, PANE_MAIN_THREAD_ONLY, type SessionRow } from '../supervision.ts'
+import { agentPaneRows, answerFromPane, paneRows, readRound, roundLines, scrollTrack, wrapWords, register as registerSupervision, registerWake, registerPaneTool, SUPERVISION_TOOL, PANE_MAIN_THREAD_ONLY, type SessionRow } from '../supervision.ts'
 import type { RoundEntry } from '../round.ts'
 import { hostRecordOf } from '../session-name.ts'
 import { register as registerAll } from '../register.ts'
@@ -1036,8 +1036,8 @@ async function askingPane(asked: RoundEntry[], over: { refuse?: string; throws?:
   const fx = fakeDollar({ launchName: 'Coord : main' })
   fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : low', context_percent: 30 })) + '\n')
   for (const e of asked) fx.files.set(`${ROUND}/${e.id}.json`, JSON.stringify(e) + '\n')
-  const sent: { to: string; text: string }[] = []
-  fx.dollar.session.send = async (args: { to: string; text: string }) => {
+  const sent: { to: unknown; text: string }[] = []
+  fx.dollar.session.send = async (args: { to: unknown; text: string }) => {
     sent.push(args)
     if (over.throws) throw new Error(over.throws)
     return over.refuse ? { isDelivered: false, reason: over.refuse } : { isDelivered: true }
@@ -1087,7 +1087,7 @@ test('a pick of a choice answers the entry from the pane, sends the asking orche
   expect(Number.isFinite(Date.parse(answered.answer!.at))).toBe(true)
   expect([...fx.files.keys()].some(p => p.includes('.tmp-'))).toBe(false)
   expect(sent).toEqual([{
-    to: 'Orch : low',
+    to: { sessionId: 'low' },
     text: `[module] The operator answered from the coordinator's pane at ${answered.answer!.at} — B : wait for the next review — a day lost (question since 2026-10-18T10:03:00.000Z, blocks: phase 3)`,
   }])
   expect(fx.invalidated).toContain('ui.render')
@@ -1118,6 +1118,54 @@ test('an answer not delivered keeps the entry answered, is logged, and is said u
   fx.files.delete(`${SESSIONS}/low`)
   expect(texts(await render()).some(t => t.startsWith('not delivered:'))).toBe(false)
   fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : low', context_percent: 30 })) + '\n')
+  expect(texts(await render()).some(t => t.startsWith('not delivered:'))).toBe(false)
+})
+
+test('two live sessions share the sender\'s name: the answer goes to the entry\'s own session', async () => {
+  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low-2', choices: CHOICES })
+  const { fx, sent, render } = await askingPane([asked])
+  fx.files.set(`${SESSIONS}/low-2`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : low', context_percent: 20 })) + '\n')
+  await pick(await render(), 'A')
+  expect(sent.map(s => s.to)).toEqual([{ sessionId: 'low-2' }])
+})
+
+test('an entry whose session has no live row on this machine is answered by its sender\'s name', async () => {
+  const asked = entry('Orch : far', '2026-10-18T10:03:00.000Z', { session: 'session_far', choices: CHOICES })
+  const { fx, sent } = await askingPane([asked])
+  const pane = { opened: null, ticker: null, other: new Set<string>(), writing: null, undelivered: new Map(), answering: new Set<string>() }
+  await answerFromPane(fx.dollar, pane, asked, CHOICES[0])
+  expect(sent.map(s => s.to)).toEqual(['Orch : far'])
+})
+
+test('an entry recorded before entries carried a session is answered by its sender\'s name', async () => {
+  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: '', choices: CHOICES })
+  const { fx, sent } = await askingPane([asked])
+  const pane = { opened: null, ticker: null, other: new Set<string>(), writing: null, undelivered: new Map(), answering: new Set<string>() }
+  await answerFromPane(fx.dollar, pane, asked, CHOICES[0])
+  expect(sent.map(s => s.to)).toEqual(['Orch : low'])
+})
+
+for (const [label, settled] of [
+  ['withdrawn', { status: 'withdrawn', answer: { text: 'superseded by x', by: 'sender', at: '2026-10-18T10:09:00.000Z' } }],
+  ['closed', { status: 'closed', answer: { text: 'done', by: 'coordinator', at: '2026-10-18T10:09:00.000Z' } }],
+  ['answered again', { status: 'answered', answer: { text: 'B', by: 'pane', at: '2026-10-18T10:09:00.000Z' } }],
+] as const) {
+  test(`an answer not delivered is no longer said once its entry is ${label}`, async () => {
+    const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+    const { fx, render, stored } = await askingPane([asked], { refuse: 'two agents are named Orch : low' })
+    await pick(await render(), 'A')
+    expect(texts(await render()).some(t => t.startsWith('not delivered:'))).toBe(true)
+    fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify({ ...stored(asked.id), ...settled }) + '\n')
+    expect(texts(await render()).some(t => t.startsWith('not delivered:'))).toBe(false)
+  })
+}
+
+test('an answer not delivered is no longer said once its entry\'s file is gone', async () => {
+  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const { fx, render } = await askingPane([asked], { refuse: 'two agents are named Orch : low' })
+  await pick(await render(), 'A')
+  expect(texts(await render()).some(t => t.startsWith('not delivered:'))).toBe(true)
+  fx.files.delete(`${ROUND}/${asked.id}.json`)
   expect(texts(await render()).some(t => t.startsWith('not delivered:'))).toBe(false)
 })
 
@@ -1385,7 +1433,7 @@ test('a submitted text answers the entry from the pane and is sent to its sender
   expect(answered.status).toBe('answered')
   expect(answered.answer).toEqual({ text: 'some text', by: 'pane', at: answered.answer!.at })
   expect(sent).toEqual([{
-    to: 'Orch : low',
+    to: { sessionId: 'low' },
     text: `[module] The operator answered from the coordinator's pane at ${answered.answer!.at} — some text (question since 2026-10-18T10:03:00.000Z, blocks: phase 3)`,
   }])
   expect([...fx.files.keys()].some(p => p.includes('.tmp-'))).toBe(false)

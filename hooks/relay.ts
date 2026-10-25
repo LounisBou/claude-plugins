@@ -46,6 +46,12 @@ export function parseWait(answer: string): Wait | null {
   return URGENT_LINE.test(line) ? { ...wait, urgent: true } : wait
 }
 
+// A predecessor's last word in a succession, « handed over » (succeed.md), read as the stop gate
+// reads it: the text's last line alone, its markup dropped. Its successor took the work over.
+export function handsOver(text: string): boolean {
+  return /^handed over$/i.test(machineLine(text))
+}
+
 // An agent's last line, its brief's own: `status: done|blocked|question — <one line>`,
 // read over the stop gate's normalisation. The text above it is its report or question.
 const STATUS_LINE = /^status:\s*(done|blocked|question)\b\s*(?:(?:—|–|--|-|:)\s*(.*))?$/i

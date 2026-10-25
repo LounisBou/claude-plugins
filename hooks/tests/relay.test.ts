@@ -619,15 +619,45 @@ test('a typed turn on another wait withdraws the sender\'s own open entry; the s
   expect([...fx.files.keys()].some(p => p.includes('.tmp-'))).toBe(false)
 })
 
-test('the same turn, not typed in, leaves the entry open and adds the new one beside it', async () => {
+test('a later operator wait, not typed in, supersedes the sender\'s open entry and adds the new one', async () => {
   const chains = mounted()
   const fx = fake()
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, 'waiting: operator — blocks: phase 3')))
   const [asked] = entries(fx)
   await drive(chains, 'turn.start', fx.dollar, { text: '[module] a peer message' })
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('A new question?', 'waiting: operator — blocks: phase 4')))
-  expect(entries(fx).map(e => [e.blocks, e.status])).toEqual([['phase 3', 'open'], ['phase 4', 'open']])
-  expect(entries(fx)[0]).toEqual(asked)
+  expect(entries(fx).map(e => [e.blocks, e.status])).toEqual([['phase 3', 'withdrawn'], ['phase 4', 'open']])
+  expect([entries(fx)[0].answer?.text, entries(fx)[0].answer?.by]).toEqual([`superseded by ${entries(fx)[1].id}`, 'sender'])
+})
+
+test('a new operator wait supersedes every older open entry of its session, one presented in the tab included, and no other session\'s', async () => {
+  const chains = mounted()
+  const fx = fake()
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, 'waiting: operator — blocks: phase 3')))
+  const [asked] = entries(fx)
+  const woken: RoundEntry = { ...asked, id: 'woken', blocks: 'phase 2', since: '2026-10-14T07:00:00.000Z' }
+  const done: RoundEntry = { ...asked, id: 'done', kind: 'done', blocks: null, since: '2026-10-14T06:00:00.000Z' }
+  const other: RoundEntry = { ...asked, id: 'other-session', session: 's-two', from: 'Orch : other' }
+  for (const kept of [woken, done, other]) fx.files.set(`${ROUND}/${kept.id}.json`, JSON.stringify(kept) + '\n')
+  fx.files.set(`${HOME}/.claude/claude-orchestrator/round-woken.json`, JSON.stringify(['woken']) + '\n')
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('A new question?', 'waiting: operator — blocks: phase 4')))
+  const after = new Map(entries(fx).map(e => [e.id, e]))
+  const fresh = entries(fx).find(e => e.blocks === 'phase 4')!
+  expect(fresh.status).toBe('open')
+  for (const id of [asked.id, 'woken', 'done']) {
+    expect([after.get(id)!.status, after.get(id)!.answer?.text, after.get(id)!.answer?.by]).toEqual(['withdrawn', `superseded by ${fresh.id}`, 'sender'])
+    expect(fx.logged.filter(l => l.includes(`round: withdrawn by the sender: ${id}`)).length).toBe(1)
+  }
+  expect(after.get(other.id)).toEqual(other)
+  expect(fx.row().relayed).toBe(fingerprint(parseWait(answerOf('A new question?', 'waiting: operator — blocks: phase 4'))!))
+})
+
+test('a done wait supersedes nothing', async () => {
+  const chains = mounted()
+  const fx = fake()
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, 'waiting: operator — blocks: phase 3')))
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('All merged.', 'waiting: done')))
+  expect(entries(fx).map(e => [e.kind, e.status])).toEqual([['operator', 'open'], ['done', 'open']])
 })
 
 test('a later turn that ends on no machine line leaves the sender\'s open entries as they are', async () => {
@@ -807,7 +837,7 @@ test('a coordinator on another machine is sent the withdrawal at the turn\'s end
   expect(report.text).toContain('blocks: phase 4')
 })
 
-for (const [label, line] of [['another operator wait', 'waiting: operator — blocks: phase 4'], ['done', 'waiting: done']] as const) {
+for (const [label, line] of [['done', 'waiting: done']] as const) {
   test(`a turn the operator did not start, ending on ${label}, leaves every open entry open`, async () => {
     const { chains, fx } = await relayedQuestion()
     const [asked] = entries(fx)
@@ -858,3 +888,117 @@ test('a text that carries choices replaces the entry\'s question', async () => {
   const [now] = entries(fx)
   expect([entries(fx).length, now.status, now.choices.map(c => c.letter), now.recommendation]).toEqual([1, 'open', ['A', 'B', 'C'], null])
 })
+
+// --- a sender that is gone or handed over ----------------------------------------------------
+
+// A sender with one open question in the round, beside another session's and a settled one.
+async function senderWithEntries() {
+  const chains = mounted()
+  const fx = fake()
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+  const [asked] = entries(fx)
+  const other: RoundEntry = { ...asked, id: 'other-session', session: 's-two', from: 'Orch : other' }
+  const settled: RoundEntry = { ...asked, id: 'already-closed', status: 'closed', answer: { text: 'x', by: 'coordinator', at: 'T' } }
+  for (const kept of [other, settled]) fx.files.set(`${ROUND}/${kept.id}.json`, JSON.stringify(kept) + '\n')
+  return { chains, fx, asked, other, settled }
+}
+
+function expectWithdrawn(fx: ReturnType<typeof fake>, asked: RoundEntry, other: RoundEntry, settled: RoundEntry, why: string) {
+  const after = new Map(entries(fx).map(e => [e.id, e]))
+  expect([after.get(asked.id)!.status, after.get(asked.id)!.answer?.text, after.get(asked.id)!.answer?.by]).toEqual(['withdrawn', why, 'sender'])
+  expect(fx.logged.filter(l => l.includes(`round: withdrawn by the sender: ${asked.id}`)).length).toBe(1)
+  expect(after.get(other.id)).toEqual(other)
+  expect(after.get(settled.id)).toEqual(settled)
+}
+
+test('the sender\'s session ending withdraws its open entries, and no other session\'s', async () => {
+  const { chains, fx, asked, other, settled } = await senderWithEntries()
+  await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
+  expectWithdrawn(fx, asked, other, settled, "the sender's session ended")
+})
+
+test('the sender\'s row is deleted before the withdrawal runs, and a withdrawal that hangs does not hold the end past what the host leaves', async () => {
+  const { chains, fx, asked } = await senderWithEntries()
+  let rowThere: boolean | null = null
+  const list = fx.dollar.fs.list
+  fx.dollar.fs.list = async (dir: string) => {
+    if (dir !== ROUND) return list(dir)
+    rowThere = fx.files.has(ROW)
+    return new Promise<never>(() => undefined)
+  }
+  const ended = { sessionId: 's-one', reason: 'exit' }
+  const budget = { ms: 1500, remainingMs: 20 }
+  const run = async (i: number, ev: any): Promise<any> =>
+    i >= chains['session.end'].length ? ev : chains['session.end'][i](fx.dollar, ev, Object.assign((x: any) => run(i + 1, x), { budget }))
+  expect(await run(0, ended)).toBe(ended)
+  expect(rowThere).toBe(false)
+  expect(fx.files.has(ROW)).toBe(false)
+  expect(fx.logged.some(l => l.includes('round: did not finish within 20 ms'))).toBe(true)
+  expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('open')
+})
+
+for (const text of ['handed over', '**Handed over.**']) {
+  test(`the sender's own message ${JSON.stringify(text)} to its successor withdraws its open entries, the message sent all the same`, async () => {
+    const { chains, fx, asked, other, settled } = await senderWithEntries()
+    const send = { to: 'Orch : belt-2', text, origin: { kind: 'model' } }
+    expect(await drive(chains, 'session.send', fx.dollar, send)).toBe(send)
+    expectWithdrawn(fx, asked, other, settled, 'handed over to its successor')
+  })
+}
+
+test('a refused hand-over leaves the sender\'s open entries open', async () => {
+  const { chains, fx, asked } = await senderWithEntries()
+  const send = { to: 'Orch : belt-2', text: 'handed over', origin: { kind: 'model' } }
+  const refused = { isDelivered: false, reason: 'nobody by that name' }
+  expect(await chains['session.send'][0](fx.dollar, send, async () => refused)).toBe(refused)
+  expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('open')
+  expect(fx.logged.some(l => l.includes('withdrawn by the sender'))).toBe(false)
+})
+
+test('another session\'s end, and another session\'s hand-over, leave this sender\'s open entries open', async () => {
+  const { chains, fx, asked } = await senderWithEntries()
+  await drive(chains, 'session.end', fx.dollar, { sessionId: 's-two', reason: 'exit' })
+  expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('open')
+  const id = fx.dollar.session.id
+  fx.dollar.session.id = async () => 's-two'
+  await drive(chains, 'session.send', fx.dollar, { to: 'Orch : belt-2', text: 'handed over', origin: { kind: 'model' } })
+  fx.dollar.session.id = id
+  expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('open')
+})
+
+test('a turn whose last line is « handed over » withdraws the sender\'s open entries', async () => {
+  const { chains, fx, asked, other, settled } = await senderWithEntries()
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Takeover confirmed by the successor.\n\nhanded over'))
+  expectWithdrawn(fx, asked, other, settled, 'handed over to its successor')
+})
+
+test('a non-orchestrator\'s turn ending on « handed over » withdraws nothing', async () => {
+  const chains = mounted()
+  const ask = fake()
+  await drive(chains, 'turn.complete', ask.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+  const [asked] = entries(ask)
+  const agent = fake({ name: 'Agent : belt-p3', role: 'agent' })
+  agent.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
+  await drive(chains, 'turn.complete', agent.dollar, turnEnd('Takeover confirmed by the successor.\n\nhanded over'))
+  expect(entries(agent).find(e => e.id === asked.id)!.status).toBe('open')
+  expect(agent.logged.some(l => l.includes('withdrawn by the sender'))).toBe(false)
+})
+
+test('a turn whose last line is a wait after « handed over » withdraws nothing on that account', async () => {
+  const { chains, fx, asked } = await senderWithEntries()
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(`handed over\n\n${QUESTION}\n\n${QUESTION_LINE}`))
+  expect(entries(fx).some(e => e.answer?.text === 'handed over to its successor')).toBe(false)
+  expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('open')
+})
+
+for (const [label, send] of [
+  ['another message of the model', { to: 'Orch : belt-2', text: 'not handed over yet', origin: { kind: 'model' } }],
+  ['a plugin\'s send', { to: 'Orch : belt-2', text: 'handed over', origin: { kind: 'plugin', name: 'other' } }],
+  ['a subagent\'s send', { to: 'Orch : belt-2', text: 'handed over', origin: { kind: 'model' }, agentId: 'a-1' }],
+] as const) {
+  test(`${label} withdraws nothing`, async () => {
+    const { chains, fx, asked } = await senderWithEntries()
+    await drive(chains, 'session.send', fx.dollar, send)
+    expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('open')
+  })
+}

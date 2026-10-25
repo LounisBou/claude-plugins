@@ -110,8 +110,9 @@ messages.** The hooks module writes each as an entry, `<state dir>/round/<id>.js
 question for the operator (`operator`), its closing proposal (`done`), and, when he answers in
 its own tab and the turn he started there ends on another line or on none, the same entry marked
 `withdrawn`, as for the sender's other open entries then (« withdrawn by the sender »: it no longer
-waits on that question); a turn he did not start withdraws nothing, and a turn that ends on the same
-wait leaves the entry open. Entering them wakes you for none, and your pane
+waits on that question); a new question of the same session withdraws its older open entries
+(« superseded by <id> »), its session ending or its « handed over » to a successor withdraws them
+all, and a turn that ends on the same wait leaves the entry open. Entering them wakes you for none, and your pane
 shows him, first, « Questions for you — N pending » and the first open question that carries
 choices: « <sender> — <its own Question x of y> », its labelled fields as the sender wrote them,
 each choice once and a blank line apart, its recommendation, then a « Choose » picker whose

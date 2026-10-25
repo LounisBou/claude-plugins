@@ -6501,6 +6501,23 @@ round w1 | operator | from Orch : a | since 2026-10-20T10:01:00.000Z | blocks: p
     Ask w1?
     withdrawn by the sender at 2026-10-20T10:09:00.000Z: a later turn the operator typed in waits on something else" \
   "$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>&1)"
+# A sender's withdrawal that says why (superseded, ended, handed over) is said with its reason; one
+# that says nothing keeps the sentence above.
+for spec in "w2:superseded by s-a-o2" "w3:handed over to its successor"; do
+  IFS=: read -r wid wwhy <<< "$spec"
+  jq -n --arg id "$wid" --arg why "$wwhy" '{id:$id, from:"Orch : a", session:"s-a", kind:"operator", since:"2026-10-20T10:00:00.000Z",
+    blocks:"phase 3", question:("Ask " + $id + "?"), choices:[], recommendation:null, status:"withdrawn", at:"2026-10-20T10:00:00.000Z",
+    answer:{text:$why, by:"sender", at:"2026-10-20T10:09:00.000Z"}}' > "$ASTATE/round/$wid.json"
+done
+check "round says a sender's withdrawal with its reason, and shows no withdrawn entry as open" \
+  "round w2 | operator | from Orch : a | since 2026-10-20T10:00:00.000Z | blocks: phase 3 | withdrawn
+    Ask w2?
+    withdrawn by the sender at 2026-10-20T10:09:00.000Z: superseded by s-a-o2
+round w3 | operator | from Orch : a | since 2026-10-20T10:00:00.000Z | blocks: phase 3 | withdrawn
+    Ask w3?
+    withdrawn by the sender at 2026-10-20T10:09:00.000Z: handed over to its successor|0" \
+  "$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>&1 | grep -A2 '^round w[23] ')|$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>&1 | grep -c '^round w[123] .*| open')"
+rm -f "$ASTATE/round/w2.json" "$ASTATE/round/w3.json"
 # An open question the pane can show is the pane's: `round` marks it due, for the coordinator to
 # present in its tab, only when its sender marked it urgent, however long the others have
 # waited, or when no pane of the coordinator is open: its record, <state>/pane.json, names a

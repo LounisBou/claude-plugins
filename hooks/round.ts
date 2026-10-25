@@ -12,13 +12,14 @@ import { fingerprint, type Wait } from './relay.ts'
 
 export type RoundChoice = { letter: string; text: string }   // letter: one of 'A' to 'E'
 // Who settled the entry: the operator from the pane (`answered`), the coordinator
-// (`round-close`, `closed`), the operator in the sender's own tab or the sender's later turn
-// waiting on something else (`withdrawn`).
+// (`round-close`, `closed`), the operator in the sender's own tab or the sender itself — a later
+// turn waiting on something else, a newer question, its session's end or its hand-over
+// (`withdrawn`).
 export type RoundAnswer = { text: string; by: 'pane' | 'coordinator' | 'tab' | 'sender'; at: string }
 export type RoundEntry = {
   id: string                    // `${sanitised session id}-${fingerprint(wait)}`, its wait unmarked, sanitised as supervision.ts sanitises store ids
-  from: string                  // the sender's name, the address its answer goes back to (what relayText puts after « reply with SendMessage to: »)
-  session: string               // the sender's session id
+  from: string                  // the sender's name (what relayText puts after « reply with SendMessage to: »), the answer's address when `session` is not live here
+  session: string               // the sender's session id, as its $.session.id() answers: the answer's address, `{ sessionId }`, one session even when two share the name
   kind: 'operator' | 'done'
   since: string                 // the wait's waiting_since, ISO
   blocks: string | null         // null for 'done'
