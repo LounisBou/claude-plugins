@@ -1,4 +1,5 @@
 ---
+name: orchestrator-calibrate
 description: Calibrate a project's routing table on the operator's spend cap — harvest, ready, bench, calibrate, in order, stopping at the first failure; generalize and export are left to him
 argument-hint: <checkout or slug> --max-usd <cap> --class <class> --pr <n> [--pr <n>]... [--test-command <cmd>] [--test-glob <glob>]... [--budget-usd <x>]
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/model-routing/scripts/routing.py:*), Bash(ls:*), Read

@@ -169,7 +169,7 @@ test('the question as the pane shows it leaves out the choice lines and the reco
   expect(questionBody({ question: 'Merge it?\n- **A** : alone\n', choices: [] })).toBe('Merge it?\n- **A** : alone')
 })
 
-// The shape `/orchestrator:decide` step 2 writes, in the operator's language: a bold line
+// The shape `/orchestrator-decide` step 2 writes, in the operator's language: a bold line
 // holding the sender's own numbering, labelled fields, the choices, the recommendation. The
 // fixture is French on purpose: it checks that labels are read by their shape, accents and
 // all, never by an English word list.

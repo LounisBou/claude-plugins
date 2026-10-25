@@ -1,4 +1,5 @@
 ---
+name: orchestrator-audit
 description: Launch an audit of the method, on the operator's word — a session in its own tab that weighs what the method costs against what it yields, writes one report of proposals, and stops
 argument-hint: <subject> [--since <date>]
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh:*), Bash(git:*), Bash(ls:*), Bash(date:*), Read, Write
@@ -7,7 +8,7 @@ allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agen
 Run on the operator's word only: he types this command, in the session whose tab the
 auditor should sit beside. Nothing of the audit stays with this session once it is launched.
 
-Usage: `/orchestrator:audit <subject> [--since <date>]`. The subject is at most 25
+Usage: `/orchestrator-audit <subject> [--since <date>]`. The subject is at most 25
 characters: it becomes the title `Audit : <subject>`.
 
 1. **Fill the brief.** Copy `${CLAUDE_PLUGIN_ROOT}/templates/agent-audit-brief.md` into the

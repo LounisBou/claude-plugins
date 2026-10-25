@@ -18,8 +18,10 @@ carried to them, and what is his carried to him). **You are the operator's singl
 interface**: while you run, every question meant for him comes to you, never to him in an
 orchestrator's tab, and you relay it (« Relaying questions to the operator » below).
 
-The operator starts you with `/orchestrator:coordinator <subject>` and ends you with
-`/orchestrator:coordinator-end`; both carry their own steps. **His word comes first**: an
+The operator starts you with `/coordinator <subject>` and ends you with
+`/coordinator-end`; both carry their own steps. When the operator says to start, launch or
+open the supervision, call `mcp__orchestrator__supervision` with `open`; to end, stop or
+close it, with `close`. **His word comes first**: an
 explicit instruction of his on the very point replaces this skill; say the contradiction in
 one line and carry it out.
 
@@ -47,13 +49,13 @@ is its contract, read it before its first use in a session:
 
 **Every answer you give rests on a reading made in that turn**, never on your memory of the
 last one: a checkout changes branch, a suite starts, a pull request merges between two of
-your turns. Read the live state with `/orchestrator:status` — every live session, its role
+your turns. Read the live state with `/orchestrator-status` — every live session, its role
 and its context fill, answered on the spot. Your only file is
 `<state dir>/coordinator/notes.md` (the state directory is the script's own): the pull
 requests each orchestrator holds — what `owners` attributed to it at your start, overridden
 by its confirmation or correction — the flags you sent, and the sessions you have announced
 to; it holds only what no command answers. After a compaction, read the live state with
-`/orchestrator:status`, then re-read the notes.
+`/orchestrator-status`, then re-read the notes.
 
 ## At your start
 
@@ -98,7 +100,7 @@ hold an answer back to make someone wait.
 The operator's order: he has one interface for questions, and it is you. While you run,
 every orchestrator sends you each question meant for him — its own arbitrations, and its
 agents' questions it relays — instead of asking him in its own tab. **Every relayed question
-goes through a decision round, by default**: the whole method of `/orchestrator:decide`, run
+goes through a decision round, by default**: the whole method of `/orchestrator-decide`, run
 without his asking and without his typing that command, even for a single question, so that
 he has every question, grouped by the orchestrator that asks. He runs several coordinators:
 every message of the round names you and the sender.
@@ -149,7 +151,7 @@ showed it, is closed once, by one `round-close`, and never presented again. When
 focus on one subject and present nothing else, present none of the other due questions until
 he lifts that hold: they stay open, in the pane and in the round; an urgent one you signal in
 one line, sender and what it blocks, without leaving the subject. When he asks to take them
-all, `/orchestrator:coordinator-decide` runs one round over every orchestrator's questions.
+all, `/coordinator-decide` runs one round over every orchestrator's questions.
 
 An orchestrator on another machine still reports by message, handled as follows.
 A message headed `[module]` is the hooks module's report of an orchestrator's turn end, sent
@@ -192,7 +194,7 @@ that matches no open question changes nothing but a line in the round file.
    repository, current phase or pull requests, where it stands — so that he recalls the frame
    before its questions. It is the sender's own account, sent with its questions; missing,
    you ask the sender for it before presenting the group, and you never invent it.
-5. **One question per message**, in the shape of `/orchestrator:decide` step 2, its first
+5. **One question per message**, in the shape of `/orchestrator-decide` step 2, its first
    line naming who asks: « Question i of N — from `<sender's exact name>` », then the sender's
    question and context verbatim, its choices and its recommendation if it gave them. Re-verify
    the item on its artifact immediately before
@@ -287,7 +289,7 @@ Verify it — `iterm-agent.sh list`, `verify --tty`, `ListAgents` naming `Orch :
 then `coordinator.sh wake-done --name "Orch : <subject>"`, and announce yourself to it as to
 any newcomer. A spawn that fails keeps the record, and the operator is told.
 
-**Drop** is his `/orchestrator:sleeping drop <name>`: the record removed, the brief moved to
+**Drop** is his `/orchestrator-sleeping drop <name>`: the record removed, the brief moved to
 `abandoned/` beside it, the pull requests, branches and checkouts left to him.
 
 ## Opening an orchestrator
@@ -377,7 +379,7 @@ thread); its code never does, it travels by git.
 
 ## Your context
 
-The module measures it every turn; read the live state with `/orchestrator:status`, your
+The module measures it every turn; read the live state with `/orchestrator-status`, your
 own session's row included. At the gate —
 300,000 tokens (30 %) on a window of 1,000,000 tokens or more, the common case, and 80 % of a smaller window —
 with no question awaiting his answer, succeed yourself without asking and tell the operator

@@ -57,7 +57,7 @@ echo "== preflight =="
 [ "$(uname -s)" = "Darwin" ] || { echo "  not macOS: nothing to drive, skipping"; exit 0; }
 bash "$AGENT" list >/dev/null 2>&1
 check "the tooling can read the app" "0" "$?"
-bash "$AGENT" list >/dev/null 2>&1 || { echo "  cannot reach the app (API enabled? /orchestrator:install run?)"; exit 1; }
+bash "$AGENT" list >/dev/null 2>&1 || { echo "  cannot reach the app (API enabled? /orchestrator-install run?)"; exit 1; }
 tier=${ORCHESTRATOR_E2E_TIER:-light}
 bound=$(bash "$AGENT" resolve-tier "$tier")
 check "the probe tier is bound in the operator's map" "bound" "$([ -n "$bound" ] && echo bound || echo "unbound: fill models.json or set ORCHESTRATOR_E2E_TIER")"
@@ -210,7 +210,7 @@ if [ -n "$me" ]; then
   aud_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --auditor --title "Audit : e2e probe" --trust \
         --prompt "Do nothing." 2>&1)
   AUD=$(printf '%s' "$aud_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
-  if [ -z "$AUD" ] && printf '%s' "$aud_out" | grep -q 'orchestrator:install'; then
+  if [ -z "$AUD" ] && printf '%s' "$aud_out" | grep -q '/orchestrator-install'; then
     echo "  skip the auditor: no model on record for this session"
   else
     check "an auditor spawn returns a tty" "yes" \

@@ -1,4 +1,5 @@
 ---
+name: orchestrator-succeed
 description: Hand the orchestration over to a fresh successor session
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh:*), Read, Write, Edit, ListAgents, SendMessage
 ---

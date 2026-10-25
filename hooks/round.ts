@@ -31,7 +31,7 @@ export type RoundEntry = {
   urgent?: true                 // the sender marked its wait `(urgent)`: `coordinator.sh round` makes it due at once
 }
 
-// A choice as `/orchestrator:decide` step 2 writes it, one per line: `- **A** : <text>`. A line
+// A choice as `/orchestrator-decide` step 2 writes it, one per line: `- **A** : <text>`. A line
 // of that shape lettered past E is read too, so a sixth choice spoils the list instead of
 // leaving the first five looking whole.
 const CHOICE = /^\s*[-*]\s+\*\*([A-Z])\*\*\s*(?:[:.)]|—|–|-)\s*(.+?)\s*$/

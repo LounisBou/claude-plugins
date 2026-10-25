@@ -37,7 +37,7 @@ async function configDir($: any): Promise<string> {
 // The records registry's root, the shell pipeline's own contract (dispatch-record.sh:59,
 // the writer that survives it): the state override first, else the config dir's
 // claude-orchestrator. The writer resolves the same rule, so the reader resolves what it
-// wrote or the override silences /orchestrator:progress forever. Spelled at the call site
+// wrote or the override silences /orchestrator-progress forever. Spelled at the call site
 // beside the config read it extends — $ never crosses an import — while this file's own
 // artifacts, the store and the log, stay config-dir-bound: no surviving script shares them.
 async function stateDir($: any): Promise<string> {
@@ -125,7 +125,7 @@ function lineOfRow(row: PaneRow): SessionLine {
   }
 }
 
-// What /orchestrator:status says: the pane's own rows as a table, the urgent
+// What /orchestrator-status says: the pane's own rows as a table, the urgent
 // first — the sessions past the rotation gate lead, each side by fill — under a
 // header line naming the columns, the same rows the supervision pane draws
 // beside this store.
@@ -135,7 +135,7 @@ export function statusText(rows: Record<string, SessionRow>): string {
   return [`Live sessions (${lines.length}), most urgent first:`, ...sessionTable(lines)].join('\n')
 }
 
-// What /orchestrator:agents says: the same rows cut to the implementer agents
+// What /orchestrator-agents says: the same rows cut to the implementer agents
 // alone — the role the dispatching domains spawn — shaped and sorted the same
 // way, so a coordinator's or an auditor's own fill never crowds the agents out.
 //
@@ -210,7 +210,7 @@ export function parseDispatchRow(line: string): DispatchRow | null {
   }
 }
 
-// What /orchestrator:progress says, one record file per group: the rows still
+// What /orchestrator-progress says, one record file per group: the rows still
 // open first — in flight, deferred, decisions pending; a successor reads them
 // as work, never as history — then the tally the record's own summary shapes
 // (dispatches, closed, rounds to the one decimal). An empty label keeps its
@@ -286,7 +286,7 @@ export function parseSleeping(text: string): SleepingRecord[] | null {
   }
 }
 
-// What /orchestrator:sleeping says with no argument: each sleeping orchestrator in the order
+// What /orchestrator-sleeping says with no argument: each sleeping orchestrator in the order
 // they went to sleep, one field per line — name, slept since, directory, open pull requests,
 // brief — indented, the labels bold and aligned, a blank line between two records.
 export function sleepingText(records: SleepingRecord[] | null, path: string): string {
@@ -326,12 +326,14 @@ async function goalsLine($: any, goalsFile: string, bound: number): Promise<stri
 }
 
 export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
-  // The matcher names the invocation spelling the markdown commands carry —
-  // the envelope's own command field, the key a matcher narrows on — so each
-  // hook answers its command's run alone, never another plugin's and never
-  // the host's own commands of a bare name. The engine validates neither key
-  // nor field; the wiring tests pin the exact objects.
-  on('command.run', { command: 'orchestrator:status' }, async ($: any) => {
+  // The matcher names the spelling the host hands the hook for a markdown command
+  // carrying `name: <short>` — `orchestrator:<short>`, whichever of `/<short>`,
+  // `/orchestrator:<file>` or `/orchestrator:<short>` was typed (measured live),
+  // the file's stem never — in the envelope's own command field, the key a
+  // matcher narrows on, so each hook answers its command's run alone, never
+  // another plugin's and never the host's own commands of a bare name. The engine
+  // validates neither key nor field; the wiring tests pin the exact objects.
+  on('command.run', { command: 'orchestrator:orchestrator-status' }, async ($: any) => {
     return { text: statusText(withRemote(await readRows($), await readRemote($), Date.now(), REMOTE_STALE_AFTER_MS)) }
   }).catch(async ($: any, e: any, next: any) => {
     // A command whose reader failed is skipped; the net lets the markdown
@@ -340,7 +342,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     return next(e)
   })
 
-  on('command.run', { command: 'orchestrator:progress' }, async ($: any) => {
+  on('command.run', { command: 'orchestrator:orchestrator-progress' }, async ($: any) => {
     return { text: await progressText($) }
   }).catch(async ($: any, e: any, next: any) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
@@ -349,7 +351,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
 
   // The list alone is answered here; `drop <name>` asks the operator to confirm, which
   // takes a model turn, so any argument passes the run on to the markdown command.
-  on('command.run', { command: 'orchestrator:sleeping' }, async ($: any, e: any, next: any) => {
+  on('command.run', { command: 'orchestrator:orchestrator-sleeping' }, async ($: any, e: any, next: any) => {
     if (String(e?.args ?? '').trim() !== '') return next(e)
     return { text: await readSleeping($) }
   }).catch(async ($: any, e: any, next: any) => {
@@ -357,7 +359,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     return next(e)
   })
 
-  on('command.run', { command: 'orchestrator:agents' }, async ($: any) => {
+  on('command.run', { command: 'orchestrator:orchestrator-agents' }, async ($: any) => {
     const rows = await readRows($)
     return { text: agentsText(rows, await unmeasuredAgents($, rows)) }
   }).catch(async ($: any, e: any, next: any) => {

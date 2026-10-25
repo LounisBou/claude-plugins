@@ -1,4 +1,5 @@
 ---
+name: coordinator-decide
 description: Run, in the coordinator's tab, one decision round over the open questions of every orchestrator — the urgent first, then the oldest, across senders — each ruling relayed verbatim to the orchestrator that asked
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh:*), Bash(date:*), Read, Write, Edit, ListAgents, SendMessage
 ---
@@ -7,7 +8,7 @@ Run a DECISION ROUND as the COORDINATOR described in `orchestrator:coordination`
 open questions of every orchestrator in its round. Load that skill first. This runs only in
 the coordinator's session: anywhere else, say so in one line and stop.
 
-The round's shape is `/orchestrator:decide`'s, read from `commands/decide.md` and followed as
+The round's shape is `/orchestrator-decide`'s, read from `commands/decide.md` and followed as
 written: one question per message, in its step 2 shape, with its context, its choices and
 one recommendation; nothing on silence; a question re-presented in full after any
 interruption; a ruling never reopened. The coordination skill's rules for relayed questions

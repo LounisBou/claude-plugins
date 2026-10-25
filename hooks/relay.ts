@@ -3,7 +3,7 @@
 // gate already requires says whether the turn waits on the operator or reports its
 // work done. An agent's turn ends the same way on its status line, reported to its
 // orchestrator instead, and its gate crossing too (supervision.ts). The wait lands in the session's store row (supervision.ts), where the
-// pane, /orchestrator:status and the coordinator's facts read it, and once in the
+// pane, /orchestrator-status and the coordinator's facts read it, and once in the
 // coordinator's hands: an entry of its round when it runs on this machine (round.ts), one
 // report sent when it runs on another — the question as the answer carried it, or
 // the closing proposal. Without this, an orchestrator that asked the operator in its
@@ -192,7 +192,7 @@ export function waitParts(row: SessionRow): { status: string; blocks: string | n
     : { status: `waiting for the operator${since}`, blocks: row.blocks ?? 'unsaid' }
 }
 
-// The wait as the pane and /orchestrator:status show it on one line; null when the row waits
+// The wait as the pane and /orchestrator-status show it on one line; null when the row waits
 // on nothing.
 export function waitLabel(row: SessionRow): string | null {
   const parts = waitParts(row)

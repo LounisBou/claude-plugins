@@ -8,7 +8,7 @@ is how those tables are made, in the order the operator runs the steps. Every co
 and everything it writes lives under `<state dir>/routing/`: measured tables name model
 identifiers, so they never enter the plugin.
 
-`/orchestrator:calibrate` runs sections 1 to 5 for one project, in order, on the operator's
+`/orchestrator-calibrate` runs sections 1 to 5 for one project, in order, on the operator's
 spend cap: `harvest`, the brief review, `ready`, `bench --max-usd <cap>` and `calibrate`. It
 refuses without a cap and never picks one, stops at the first failure, and runs neither
 `generalize` nor `export` (sections 6 and 8): those stay the operator's to ask for.

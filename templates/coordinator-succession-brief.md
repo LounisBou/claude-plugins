@@ -74,7 +74,7 @@ once your predecessor is gone.
   tab unless `--force`; your own successor is spawned the same way, in the rulebook's order.
 - State directory: `{{STATE_DIR}}` — the record and the notes.
 - Your context: the module measures it every turn — read the live state with
-  /orchestrator:status, your own session's row included; if your session's row
+  /orchestrator-status, your own session's row included; if your session's row
   is not there yet, say so and give no figure rather than estimating — a row is
   written after a session's turns, and a first read can precede the first of
   them; at the gate —

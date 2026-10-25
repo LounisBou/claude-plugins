@@ -1,4 +1,5 @@
 ---
+name: orchestrator-sleeping
 description: List the sleeping orchestrators — those paused on the operator's word — or abandon one for good
 argument-hint: [drop <name>]
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh:*), Bash(date:*), Read
@@ -8,7 +9,7 @@ The operator's command. An orchestrator is sleeping when the coordinator paused 
 its tab closed, its succession brief kept, its record in `<state dir>/sleeping.json`
 (`orchestrator:coordination`, « Pausing and waking orchestrators »).
 
-Usage: `/orchestrator:sleeping` lists them; `/orchestrator:sleeping drop <name>` abandons one
+Usage: `/orchestrator-sleeping` lists them; `/orchestrator-sleeping drop <name>` abandons one
 for good.
 
 **The list.** The hooks module answers it on the spot, with no model turn: each

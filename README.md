@@ -17,24 +17,27 @@ session can read without depending on a particular status bar.
 | skill `coordination` | The coordinator's role, outside every orchestration on one machine: answers from the facts, flags collisions to both sides, gates nothing, relays to the operator what is his. The orchestrator's and the auditor's skills say nothing of it. |
 | `templates/` | Phase brief, rotation resume brief, orchestrator succession brief, review-agent brief, comments-agent brief, audit brief, with the sections the rulebook makes mandatory. |
 | script `rhythm.sh` | An audit's net balance read from git alone: merges per week by conventional-commit type, and lines added and removed under product globs against instrument globs. |
-| `/orchestrator:install` | Creates the state directory, unwires any tap a previous install left in front of your status line, and prunes what the tap left behind. Idempotent; refuses a host older than 2.1.287. |
-| `/orchestrator:uninstall` | Restores the previous status line and removes the state directory. |
-| `/orchestrator:status` | Live sessions and their context fill, the ones past the gate flagged. |
-| `/orchestrator:supervision` | Opens the supervision pane, kept on screen with each session's fill and redrawn every 20 seconds while open: the orchestrators in a coordinator session (`Coord :`) — those on another machine too, labelled `remote <machine>`: their module sends the row silently, only when the wait or a 5 % band of the fill changes, and the coordinator's module stores it without a model turn — its own agents in an orchestrator session (`Orch :`). In a coordinator it also opens by itself, once, at the end of its first turn, and shows under the rows the first open question of its round that carries choices (those without come after), with its lettered choices; otherwise only when typed. Typed again, it closes it. |
-| `/orchestrator:succeed` | Runs the orchestrator succession. |
+| `/orchestrator-install` | Creates the state directory, unwires any tap a previous install left in front of your status line, and prunes what the tap left behind. Idempotent; refuses a host older than 2.1.287. |
+| `/orchestrator-uninstall` | Restores the previous status line and removes the state directory. |
+| `/orchestrator-status` | Live sessions and their context fill, the ones past the gate flagged. |
+| `/coordinator-supervision`, `/orchestrator-supervision` | Opens the supervision pane, kept on screen with each session's fill and redrawn every 20 seconds while open: the orchestrators in a coordinator session (`Coord :`) — those on another machine too, labelled `remote <machine>`: their module sends the row silently, only when the wait or a 5 % band of the fill changes, and the coordinator's module stores it without a model turn — its own agents in an orchestrator session (`Orch :`). In a coordinator it also opens by itself, once, at the end of its first turn, and shows under the rows the first open question of its round that carries choices (those without come after), with its lettered choices; otherwise only when typed, or when the operator asks in plain words to open or close the supervision, through the module's `supervision` tool. Typed again, it closes it. |
+| `/orchestrator-succeed` | Runs the orchestrator succession. |
 | module gate `prompt.submit` | The context gate enforced in-process by the hooks module: at or past 300,000 tokens (30 %) on a window of 1,000,000 tokens or more, the common case, and 80 % of a smaller window (`ORCHESTRATOR_CONTEXT_GATE`, `ORCHESTRATOR_CONTEXT_GATE_TOKENS`, `ORCHESTRATOR_LARGE_WINDOW`), every prompt of an orchestration session (named `Orch :`, `Agent :`, `Audit :` or `Coord :`) carries the line fitted to its role — succeed, or finish the unit and stop; unmeasured, it says so once. A session with no role name — started by hand and never renamed — gets neither line. A change of the model answering a session is said to the model in front of its next prompt, in every session. |
 | module gate `tool.call` (Bash) | The push guard enforced in-process by the hooks module, in sessions the launcher spawned only: a `git push` that forces is refused unless its lease is pinned (`--force-with-lease=<branch>:<sha>`); the operator's own sessions are untouched. |
 | module gate `tool.call` (Write, Edit, MultiEdit, Bash) | The tier map's guard: in a session of the orchestration (its name gives it a role), a write of `models.json` in the state directory is denied with the rule that the map is the operator's, unless the last prompt he typed in that session names the map or a tier. Reads pass. |
 | hook `Stop` | The stop gate enforced in-process by the hooks module, in an orchestrator's session only (its name, launched or renamed, starts with `Orch :`): the stop is refused, at most once per turn, unless something will wake the orchestrator — a busy agent of its own, a `ci-watch.sh` it started still running, a blocking question declared on the message's last line (`waiting: operator — blocks: <what it blocks>`, honoured before an idle agent's stand-down is asked), or `waiting: done` with nothing left (no checkout, no agent, no open dispatch-record row, and every goal of the spec in the `goals.md` beside each registered record met with evidence on disk or ruled out in the operator's words; the first such done over a new content of the file shows him the table once) — or it has handed over: its last line `handed over`, or `waiting: done` once its successor's spawn succeeded or its `end_session` was accepted. Short of a declared blocking question, an idle agent of its own whose pull request is open or merged refuses the stop until it is stood down. Then each watched pull request of the session's repository whose ci-watch log shows checks pending or failing refuses the stop with the real state, once per watch (keyed on its log's first line): pending once, failing once per failing set — one with a `ci-watch.sh` process alive for it excepted, since that watch will wake the orchestrator. When its checks let the stop pass, it also runs `workspace.sh sweep` within what is left of its deadline, at most once per ten minutes, and logs each deletion. Its own failures let the stop pass and are logged in the module's log. |
-| `/orchestrator:agents` | The running implementer agents with their measured context, the most urgent first, answered by the hooks module without a model turn; the ask of each agent and its verification on the artifact are the command body's steps, run by hand or when that answer fails. |
-| `/orchestrator:progress` | The goals line of each record's `goals.md` (`goals met=m/n … open=…`), the dispatch rows still open and the record's tally, answered by the hooks module without a model turn; the full report — done, in flight, remaining, decisions pending, the orchestrator's own context — is the command body's steps, run by hand or when that answer fails. |
-| `/orchestrator:decide` | Runs a decision round with the user: every open question back to back, one per message — context, choices with their cost, one recommendation — each ruling recorded at once; the rulings are relayed and the work launched when the wave ends, and a second wave is chained at once if the work raises new questions. |
-| `/orchestrator:audit` | Launches, on the operator's word, an audit of the method: a session in a tab titled `Audit : <subject>`, beside the caller, on its model and under remote control, in no chain. It reads the stock — what the method has in place, what it costs, what it has yielded — and the net balance of product against instruments, then writes one report of at most five proposals, each « remove X » or « restore Y » with its expected gain and the figure that will check it. It tells the operator and stops: it orders nothing, applies nothing and messages no session. The operator decides, and closes its tab. |
-| `/orchestrator:coordinator` | Starts, on the operator's word and in a session he opened, the machine's coordinator, for when he runs several orchestrations at once: a session outside every one of them, in the leftmost tab, titled `Coord : <subject>`. It tells each orchestrator it exists and may be asked, and asks each once to confirm the pull requests the facts give it. It reads the sessions, checkouts, heavy runs and open pull requests now, answers « whose pull request is this », « is anyone on this branch or file », « may I or must I wait » from them, flags a collision to both sides, relays to the operator what is his, carries his orders to all, and gates nothing. At the gate it hands over to its own successor. |
-| `/orchestrator:coordinator-end` | Ends the coordinator on the operator's word only: every orchestrator is told, and the record is cleared, proved by a lookup that prints nothing. |
-| `/orchestrator:coordinator-decide` | Runs, in the coordinator's tab, one decision round over the open questions of every orchestrator in its round, the urgent first, then the oldest, across senders; each ruling goes verbatim to the orchestrator that asked. |
-| `/orchestrator:sleeping` | The orchestrators the coordinator paused on the operator's word: name, slept since, directory, open pull requests, brief. `drop <name>` abandons one for good after one confirmation; its brief moves to `abandoned/`, its pull requests, branches and checkouts are left to the operator. |
-| `/orchestrator:calibrate` | Calibrates a project's routing table on the operator's spend cap: `harvest`, `ready`, `bench --max-usd <cap>` and `calibrate`, in order, stopping at the first failure and reporting it. It refuses without a cap and never picks one, stops before anything runs when the `deep` tier (the judge) is unbound, and stops after `harvest` when the manifest has no test command or no test globs. Before the bench it states what it will spend at most and on what grid; after `calibrate` it shows the table and stops: `generalize` and `export` are the operator's to ask for. |
+| `/orchestrator-agents` | The running implementer agents with their measured context, the most urgent first, answered by the hooks module without a model turn; the ask of each agent and its verification on the artifact are the command body's steps, run by hand or when that answer fails. |
+| `/orchestrator-progress` | The goals line of each record's `goals.md` (`goals met=m/n … open=…`), the dispatch rows still open and the record's tally, answered by the hooks module without a model turn; the full report — done, in flight, remaining, decisions pending, the orchestrator's own context — is the command body's steps, run by hand or when that answer fails. |
+| `/orchestrator-decide` | Runs a decision round with the user: every open question back to back, one per message — context, choices with their cost, one recommendation — each ruling recorded at once; the rulings are relayed and the work launched when the wave ends, and a second wave is chained at once if the work raises new questions. |
+| `/orchestrator-audit` | Launches, on the operator's word, an audit of the method: a session in a tab titled `Audit : <subject>`, beside the caller, on its model and under remote control, in no chain. It reads the stock — what the method has in place, what it costs, what it has yielded — and the net balance of product against instruments, then writes one report of at most five proposals, each « remove X » or « restore Y » with its expected gain and the figure that will check it. It tells the operator and stops: it orders nothing, applies nothing and messages no session. The operator decides, and closes its tab. |
+| `/coordinator` | Starts, on the operator's word and in a session he opened, the machine's coordinator, for when he runs several orchestrations at once: a session outside every one of them, in the leftmost tab, titled `Coord : <subject>`. It tells each orchestrator it exists and may be asked, and asks each once to confirm the pull requests the facts give it. It reads the sessions, checkouts, heavy runs and open pull requests now, answers « whose pull request is this », « is anyone on this branch or file », « may I or must I wait » from them, flags a collision to both sides, relays to the operator what is his, carries his orders to all, and gates nothing. At the gate it hands over to its own successor. |
+| `/coordinator-end` | Ends the coordinator on the operator's word only: every orchestrator is told, and the record is cleared, proved by a lookup that prints nothing. |
+| `/coordinator-decide` | Runs, in the coordinator's tab, one decision round over the open questions of every orchestrator in its round, the urgent first, then the oldest, across senders; each ruling goes verbatim to the orchestrator that asked. |
+| `/orchestrator-sleeping` | The orchestrators the coordinator paused on the operator's word: name, slept since, directory, open pull requests, brief. `drop <name>` abandons one for good after one confirmation; its brief moves to `abandoned/`, its pull requests, branches and checkouts are left to the operator. |
+| `/orchestrator-calibrate` | Calibrates a project's routing table on the operator's spend cap: `harvest`, `ready`, `bench --max-usd <cap>` and `calibrate`, in order, stopping at the first failure and reporting it. It refuses without a cap and never picks one, stops before anything runs when the `deep` tier (the judge) is unbound, and stops after `harvest` when the manifest has no test command or no test globs. Before the bench it states what it will spend at most and on what grid; after `calibrate` it shows the table and stops: `generalize` and `export` are the operator's to ask for. |
+
+Each command is listed under its short name; the prefixed forms, `/orchestrator:<file>`
+(`/orchestrator:status`) and `/orchestrator:<short name>`, reach the same command.
 
 ## Tests
 
@@ -48,7 +51,7 @@ purpose, because it costs tokens and needs the app running.
 ```
 /plugin marketplace add LounisBou/claude-plugins-marketplace
 /plugin install orchestrator@lounisbou
-/orchestrator:install
+/orchestrator-install
 ```
 
 The last step creates the state directory, unwires any tap a previous install
@@ -61,7 +64,7 @@ This release was tested against the host at 2.1.295.
 ## Upgrade from 0.48
 
 A slash command runs the `install.sh` of the plugin version the session loaded. Run
-`/orchestrator:install` before 0.49.0 is delivered and restarted into, and the 0.48
+`/orchestrator-install` before 0.49.0 is delivered and restarted into, and the 0.48
 installer runs instead: it finds its tap "already wired" and keeps it, so nothing is
 unwired and nothing is purged, yet the run looks like success. The order is therefore:
 
@@ -77,7 +80,7 @@ unwired and nothing is purged, yet the run looks like success. The order is ther
    ```
 
 5. Restart the session, so the slash command resolves to the 0.49.0 installer.
-6. Run `/orchestrator:install`. It takes the tap off the status line and keeps the
+6. Run `/orchestrator-install`. It takes the tap off the status line and keeps the
    command that followed it exactly as written, `$HOME` or `~` spelling included. It then
    removes the old pipeline's files and the measure files of sessions that ended over a
    week ago.
@@ -106,7 +109,7 @@ unwired and nothing is purged, yet the run looks like success. The order is ther
   the elementary ones under `default`. An agent gets that set plus what its spawn line
   adds; an empty catalogue means every session launches with no server at all.
 - for `iterm-agents` only: macOS, iTerm2 with its API enabled (Preferences > General >
-  Magic), and the environment `/orchestrator:install` builds under the state directory
+  Magic), and the environment `/orchestrator-install` builds under the state directory
   (~19 MB). One macOS approval, on the first connection. Tab placement needs no
   Accessibility grant and brings nothing to the front: the app reorders its own tabs
 
@@ -129,7 +132,7 @@ Past the gate —
 300,000 tokens (30 %) on a window of 1,000,000 tokens or more, the common case, and 80 % of a smaller window —
 the context gate puts the role's line in front of every prompt of an
 orchestration session, and a band above the prompt shows the fill;
-`/orchestrator:status` answers the same figures for every session on the
+`/orchestrator-status` answers the same figures for every session on the
 machine, and for the orchestrators on other machines whose rows reached it. Measured beats estimated: in observed runs, agents' self-estimates
 ran 13 points above the gauge.
 
@@ -153,7 +156,7 @@ layout after the fact.
 ## Uninstall
 
 ```
-/orchestrator:uninstall     # or ./uninstall.sh
+/orchestrator-uninstall     # or ./uninstall.sh
 ```
 
 ## License

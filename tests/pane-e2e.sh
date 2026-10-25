@@ -62,7 +62,7 @@ trap cleanup EXIT
 LONG='merge it now — the release goes out today, the changelog is written, the tag is pushed and every reader of the notes sees the new pane at once'
 
 # A fresh host on a fresh fixture: orchestrator rows kept alive by a process of the script's,
-# a round, and the pane opened by its command. The `questions` round holds two questions (the
+# a round, and the pane opened by the coordinator's short name. The `questions` round holds two questions (the
 # first with a long choice and a recommendation, the second with none); the `report` round
 # holds a question with choices, a labelled one without, and a report that asks nothing, its
 # sender's row waiting on the operator; the `aged` round holds the `questions` round's two
@@ -103,7 +103,7 @@ start() {
     env CLAUDE_CONFIG_DIR="$SANDBOX/config" ORCHESTRATOR_STATE_DIR="$SANDBOX/state" \
     "$HOST" --name "Coord : e2e" --settings "$SANDBOX/settings.json" --plugin-dir "$ROOT"
   wait_for 'Coord : e2e' 30
-  tmux send-keys -t "$SESSION" '/orchestrator:supervision'
+  tmux send-keys -t "$SESSION" '/coordinator-supervision'
   sleep 1
   tmux send-keys -t "$SESSION" Enter
   wait_for 'Questions for you' 15
@@ -308,11 +308,11 @@ sleep 35
 record "35 seconds with the pane open"
 check "pane open: two questions two hours old wake the coordinator for neither" "|0" "$(woken)|$(screen | grep -c 'now due in this tab')"
 press Escape
-tmux send-keys -t "$SESSION" '/orchestrator:supervision'
+tmux send-keys -t "$SESSION" '/orchestrator-supervision'
 sleep 1
 tmux send-keys -t "$SESSION" Enter
 sleep 2
-check "the command closes the pane, and its record goes with it" "0|0" "$(screen | grep -c 'Questions for you')|$([ -f "$SANDBOX/state/pane.json" ] && echo 1 || echo 0)"
+check "the other role's short name closes the pane the coordinator's opened, and its record goes with it" "0|0" "$(screen | grep -c 'Questions for you')|$([ -f "$SANDBOX/state/pane.json" ] && echo 1 || echo 0)"
 wait_for 'now due in this tab' 40
 record "the pane closed"
 check "pane closed: the coordinator is woken at once for every open question" "1|s-alpha-q1,s-beta-q2" "$([ "$(screen | grep -c 'now due in this tab')" -ge 1 ] && echo 1)|$(woken)"
@@ -328,7 +328,7 @@ sleep 1
 tmux send-keys -t "$SESSION" Enter
 wait_for 'Questions for you' 15
 record "the pane open again"
-check "reopened, the pane draws every pending question, those presented in the tab included" "1|1|open,open" "$(pane | grep -c '^Questions for you — 3 pending')|$(pane | grep -c '^Question : merge the release')|$(statuses)"
+check "reopened by the file's own prefixed name, the pane draws every pending question, those presented in the tab included" "1|1|open,open" "$(pane | grep -c '^Questions for you — 3 pending')|$(pane | grep -c '^Question : merge the release')|$(statuses)"
 
 echo "pane-e2e: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

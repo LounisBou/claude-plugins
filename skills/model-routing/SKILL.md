@@ -51,7 +51,7 @@ map.
 
 ## Calibrating a new project
 
-`/orchestrator:calibrate <checkout> --max-usd <cap> --class <class> --pr <n>...` does it: it runs steps 1 to 4 below in order, stops at the first failure, and leaves 5 and 6 to the operator. It refuses to run without his cap and never picks one. Run by hand, these are the `routing.py` subcommands, in this order. Everything lands under `<state dir>/routing/`; `references/calibration.md` has the detail of each step.
+`/orchestrator-calibrate <checkout> --max-usd <cap> --class <class> --pr <n>...` does it: it runs steps 1 to 4 below in order, stops at the first failure, and leaves 5 and 6 to the operator. It refuses to run without his cap and never picks one. Run by hand, these are the `routing.py` subcommands, in this order. Everything lands under `<state dir>/routing/`; `references/calibration.md` has the detail of each step.
 
 1. `harvest <repo> --class <class> --pr <n> [--pr <n>]... [--test-command <cmd>] [--test-glob <glob>]... [--budget-usd <x>]`: needs merged pull requests whose merge commit is in the local clone. Drafts one task per pull request in `projects/<slug>/manifest.json`, its brief in `projects/<slug>/briefs/pr-<n>.md`. Read each brief and cut what leaks the answer.
 2. `ready <slug> <task-id>...`: the control run. Needs the manifest's `test_command` and `test_globs`. Runs the tests on each task's merged commit and marks it `ready`, or `void` when its own reference fails.

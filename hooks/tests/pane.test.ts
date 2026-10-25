@@ -9,7 +9,7 @@
 // measure's side reads bounded so a walk that cannot answer in time costs the row
 // its name, never the measure.
 import { expect, test } from 'claude-code/testing'
-import { agentPaneRows, paneRows, readRound, roundLines, scrollTrack, wrapWords, register as registerSupervision, registerWake, type SessionRow } from '../supervision.ts'
+import { agentPaneRows, paneRows, readRound, roundLines, scrollTrack, wrapWords, register as registerSupervision, registerWake, registerPaneTool, SUPERVISION_TOOL, PANE_MAIN_THREAD_ONLY, type SessionRow } from '../supervision.ts'
 import type { RoundEntry } from '../round.ts'
 import { hostRecordOf } from '../session-name.ts'
 import { register as registerAll } from '../register.ts'
@@ -135,6 +135,7 @@ type Fx = {
   later: { ms: number; fn: () => unknown; cancelled: boolean }[]
   state: Map<string, unknown>
   submitted: string[]
+  tools: { name: string; isDeferred?: boolean; inputSchema?: unknown }[]
 }
 
 function fakeDollar(over: {
@@ -156,6 +157,8 @@ function fakeDollar(over: {
   const later: { ms: number; fn: () => unknown; cancelled: boolean }[] = []
   // What the module submitted to its own session: the wake of a coordinator.
   const submitted: string[] = []
+  // The tools the module registered at a start.
+  const tools: { name: string; isDeferred?: boolean; inputSchema?: unknown }[] = []
   // The host's $.state for the session: it outlives the module's own variables.
   const state = new Map<string, unknown>()
   const dollar = {
@@ -175,6 +178,7 @@ function fakeDollar(over: {
     env: { get: async (name: string) => env[name] },
     plugin: { name: 'orchestrator', root: '/plugins/orch-root' },
     prompt: { submit: async (args: { text: string }) => { submitted.push(args.text) } },
+    tool: { register: async (spec: { name: string }) => { tools.push(spec) } },
     fs: {
       read: async (p: string) => {
         if (!files.has(p)) throw new Error(`ENOENT: ${p}`)
@@ -292,7 +296,7 @@ function fakeDollar(over: {
       }),
     },
   }
-  return { dollar, files, ran, written, opened, closed, env, timers, invalidated, focused, scrolled, later, state, submitted }
+  return { dollar, files, ran, written, opened, closed, env, timers, invalidated, focused, scrolled, later, state, submitted, tools }
 }
 
 function mounted(register: (on: any) => void): {
@@ -342,14 +346,42 @@ test('no start opens the pane, whatever the role', async () => {
   }
 })
 
-test('/orchestrator:supervision opens the pane in a coordinator or an orchestrator session alone', async () => {
+// Every command.run registration, in order: the supervision answers to two commands.
+function commandRuns(register: (on: any) => void): { matcher: object | undefined; handler: Function }[] {
+  const runs: { matcher: object | undefined; handler: Function }[] = []
+  register((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
+    if (args[0] === 'command.run') runs.push({ matcher: args.length === 3 ? args[1] : undefined, handler: args[args.length - 1] as Function })
+    return { catch: () => undefined }
+  })
+  return runs
+}
+
+// Measured live: the host hands a command carrying `name: <short>` to the hook as
+// `<plugin>:<short>`, typed as `/<short>`, `/<plugin>:<file>` or `/<plugin>:<short>` alike;
+// the file's own stem never reaches the matcher.
+test('the supervision answers to its two short names, one pane whichever was typed', async () => {
+  const runs = commandRuns(registerSupervision)
+  expect(runs.map(run => run.matcher)).toEqual([
+    { command: 'orchestrator:orchestrator-supervision' },
+    { command: 'orchestrator:coordinator-supervision' },
+  ])
+  const [orchestratorForm, coordinatorForm] = runs.map(run => run.handler)
+  for (const [opener, closer] of [[orchestratorForm, coordinatorForm], [coordinatorForm, orchestratorForm]]) {
+    const coord = fakeDollar({ launchName: 'Coord : main' })
+    expect((await opener(coord.dollar, { command: 'orchestrator:orchestrator-supervision', args: '' })).text).toContain('pane opened')
+    expect(await closer(coord.dollar, { command: 'orchestrator:coordinator-supervision', args: '' })).toEqual({ text: 'Supervision pane closed.' })
+    expect(coord.opened.length).toBe(1)
+    expect(coord.closed).toEqual([{ id: 'supervision' }])
+  }
+})
+
+test('/orchestrator-supervision opens the pane in a coordinator or an orchestrator session alone', async () => {
   const { handlers, matchers } = mounted(registerSupervision)
-  expect(matchers['command.run']).toEqual({ command: 'orchestrator:supervision' })
   expect(matchers['ui.render']).toEqual({ component: 'Pane', requestId: 'supervision' })
-  const run = { command: 'orchestrator:supervision', args: '' }
+  const run = { command: 'orchestrator:orchestrator-supervision', args: '' }
 
   const coord = fakeDollar({ launchName: 'Coord : main' })
-  expect(await handlers['command.run'](coord.dollar, run)).toEqual({ text: 'Supervision pane opened; type /orchestrator:supervision again, or click its ✕, to close it.' })
+  expect(await handlers['command.run'](coord.dollar, run)).toEqual({ text: 'Supervision pane opened; type /coordinator-supervision again, or click its ✕, to close it.' })
   expect(coord.opened).toEqual([{ id: 'supervision', title: 'Orchestrators', focus: true }])
   // Typed again, the command closes the pane it opened.
   expect(await handlers['command.run'](coord.dollar, run)).toEqual({ text: 'Supervision pane closed.' })
@@ -357,19 +389,88 @@ test('/orchestrator:supervision opens the pane in a coordinator or an orchestrat
   expect(coord.opened.length).toBe(1)
 
   const orch = fakeDollar({ launchName: 'Orch : phase-3' })
-  await handlers['command.run'](orch.dollar, run)
+  expect(await handlers['command.run'](orch.dollar, run)).toEqual({ text: 'Supervision pane opened; type /orchestrator-supervision again, or click its ✕, to close it.' })
   expect(orch.opened).toEqual([{ id: 'supervision', title: 'Agents', focus: true }])
 
   for (const launchName of ['Agent : belt-p3', 'Audit : belt', null]) {
     const fx = fakeDollar({ launchName })
     const answer = await handlers['command.run'](fx.dollar, run)
     expect(answer.text).toContain('coordinator session (« Coord : … »), listing the orchestrators, or in an orchestrator session')
+    expect(answer.text).toContain('/orchestrator-status lists the sessions here')
     expect(fx.opened).toEqual([])
   }
 })
 
+// --- the tool on the operator's plain words ---------------------------------------------------
+
+const toolCall = (action: string, over: object = {}) => ({ tool: `mcp__orchestrator__${SUPERVISION_TOOL}`, action, ...over })
+
+test('the supervision tool is registered at every start, loaded with its schema, and opens nothing', async () => {
+  const { handlers } = mounted(registerPaneTool)
+  for (const launchName of ['Coord : main', 'Agent : belt-p3']) {
+    const fx = fakeDollar({ launchName })
+    await handlers['session.start'](fx.dollar, startEvent, (x: unknown) => x)
+    expect(fx.tools.map(spec => [spec.name, spec.isDeferred])).toEqual([['supervision', false]])
+    expect(JSON.stringify(fx.tools[0].inputSchema)).toContain('"enum":["open","close"]')
+    expect(fx.opened).toEqual([])
+  }
+  const { matchers } = mounted(registerSupervision)
+  expect(matchers['tool.call']).toEqual({ tool: 'mcp__orchestrator__supervision' })
+})
+
+test('the supervision tool opens and closes the pane the commands toggle, by the word it is given', async () => {
+  const { handlers } = mounted(registerSupervision)
+  for (const [launchName, title] of [['Coord : main', 'Orchestrators'], ['Orch : phase-3', 'Agents']]) {
+    const fx = fakeDollar({ launchName })
+    expect(await handlers['tool.call'](fx.dollar, toolCall('close'))).toEqual({ result: 'The supervision pane is not open.' })
+    expect(await handlers['tool.call'](fx.dollar, toolCall('open'))).toEqual({ result: 'Supervision pane opened.' })
+    expect(fx.opened).toEqual([{ id: 'supervision', title, focus: true }])
+    // Not a toggle: open again leaves it open.
+    expect(await handlers['tool.call'](fx.dollar, toolCall('open'))).toEqual({ result: 'The supervision pane is already open.' })
+    expect(fx.opened.length).toBe(1)
+    expect(await handlers['tool.call'](fx.dollar, toolCall('close'))).toEqual({ result: 'Supervision pane closed.' })
+    expect(fx.closed).toEqual([{ id: 'supervision' }])
+    // The pane is his from then on, as after the command.
+    expect(fx.state.get('orchestrator/paneOpened')).toBe(true)
+  }
+  // One pane: opened by the tool, the command closes it, and the reverse.
+  const fx = fakeDollar({ launchName: 'Coord : main' })
+  await handlers['tool.call'](fx.dollar, toolCall('open'))
+  expect(await handlers['command.run'](fx.dollar, supervisionRun)).toEqual({ text: 'Supervision pane closed.' })
+  await handlers['command.run'](fx.dollar, supervisionRun)
+  expect(await handlers['tool.call'](fx.dollar, toolCall('close'))).toEqual({ result: 'Supervision pane closed.' })
+  expect(fx.opened.length).toBe(2)
+  expect(fx.closed.length).toBe(2)
+})
+
+test('the supervision tool is refused to a subagent, outside the two roles, and on any other word', async () => {
+  const { handlers } = mounted(registerSupervision)
+  const coord = fakeDollar({ launchName: 'Coord : main' })
+  expect(await handlers['tool.call'](coord.dollar, toolCall('open', { agentId: 'a-1' }))).toEqual({ result: PANE_MAIN_THREAD_ONLY, isError: true })
+  expect(await handlers['tool.call'](coord.dollar, toolCall('toggle'))).toEqual({ result: 'action is "open" or "close"', isError: true })
+  expect(coord.opened).toEqual([])
+  for (const launchName of ['Agent : belt-p3', 'Audit : belt', null]) {
+    const fx = fakeDollar({ launchName })
+    const answer = await handlers['tool.call'](fx.dollar, toolCall('open'))
+    expect(answer.isError).toBe(true)
+    expect(answer.result).toContain('a coordinator session (« Coord : … ») or an orchestrator session (« Orch : … ») alone')
+    expect(fx.opened).toEqual([])
+    expect(fx.state.get('orchestrator/paneOpened')).toBeUndefined()
+  }
+})
+
+test('the supervision tool says when the host holds the pane undrawn', async () => {
+  const { handlers } = mounted(registerSupervision)
+  const fx = fakeDollar({ launchName: 'Orch : phase-3' })
+  fx.dollar.ui.open = async (pane: { id: string }) => {
+    fx.opened.push(pane)
+    return { isPlaced: false, reason: 'no-surface' }
+  }
+  expect(await handlers['tool.call'](fx.dollar, toolCall('open'))).toEqual({ result: 'Supervision pane opened, not drawn yet: no-surface.' })
+})
+
 const renderEvent = { surface: 'terminal', component: 'Pane', requestId: 'supervision', props: {} }
-const supervisionRun = { command: 'orchestrator:supervision', args: '' }
+const supervisionRun = { command: 'orchestrator:orchestrator-supervision', args: '' }
 
 test('a coordinator\'s pane lists the live orchestrators alone, the urgent first and warned', async () => {
   const { handlers } = mounted(registerSupervision)
@@ -424,7 +525,7 @@ test('an orchestrator\'s pane lists the agents its own tab spawned, read from th
 test('a pane the module no longer remembers opening asks to be opened again', async () => {
   const { handlers } = mounted(registerSupervision)
   const text = JSON.stringify(await handlers['ui.render'](fakeDollar().dollar, renderEvent, (x: unknown) => ({ passed: x })))
-  expect(text).toContain('type /orchestrator:supervision to open the pane again')
+  expect(text).toContain('type /coordinator-supervision or /orchestrator-supervision to open the pane again')
 })
 
 test('a name walk that cannot answer in time costs the row its name, never the measure', async () => {

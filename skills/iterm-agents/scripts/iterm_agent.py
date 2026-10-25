@@ -407,7 +407,7 @@ def need_iterm2():
     except ImportError:
         die(
             "the iterm2 module is not available. Create the plugin's environment with\n"
-            "  /orchestrator:install\n"
+            "  /orchestrator-install\n"
             "or install it yourself: python3 -m venv "
             + os.path.join(STATE_DIR, "venv")
             + " && "
@@ -839,7 +839,7 @@ def api_ready():
         import iterm2  # noqa: F401
     except ImportError:
         raise Unreachable(
-            "the iterm2 module is not installed for %s; run /orchestrator:install"
+            "the iterm2 module is not installed for %s; run /orchestrator-install"
             % sys.executable)
     if not _api_probe.get("ok"):
         ok, reason = app_responsive()

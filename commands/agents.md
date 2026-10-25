@@ -1,4 +1,5 @@
 ---
+name: orchestrator-agents
 description: Each running implementer agent's progress, with its measured context
 allowed-tools: Bash(ls:*), Bash(jq:*), Bash(cat:*), Bash(date:*), Bash(git:*), Bash(gh:*), ListAgents, SendMessage, Read
 ---

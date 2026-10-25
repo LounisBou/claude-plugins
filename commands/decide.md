@@ -1,4 +1,5 @@
 ---
+name: orchestrator-decide
 description: Run a decision round with the user — every open question back to back, one per message, with its context, its choices and their cost, one recommendation; rulings recorded at once, relayed and acted on when the wave ends, and a next wave asked at once if the work raises one
 allowed-tools: Read, Write, Edit, ListAgents, SendMessage, Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/dispatch-record.sh:*), Bash(git:*), Bash(gh:*), Bash(ls:*), Bash(date:*)
 ---
@@ -6,13 +7,13 @@ allowed-tools: Read, Write, Edit, ListAgents, SendMessage, Bash(${CLAUDE_PLUGIN_
 Run a DECISION ROUND with the user. Use it when an agent has sent a STOP that is the
 user's to decide, when an entry in the project's register or plan carries a proposed
 owner or a proposed reading, when a review returned an arbitration, or when the user
-says « one question at a time ». The user arbitrates scope; you decide nothing that is
-theirs, and you never ask two things in one message.
+says « one question at a time ». The user arbitrates scope; you decide nothing of
+theirs and never ask two things in one message.
 
 **The operator's time is the scarce thing.** His words: ask every pending question one after
 the other, so that he loses as little time as possible; then draw the consequences and launch
 the work; and if a second wave of questions is needed, chain it. So a round is a WAVE: the questions follow one
-another with nothing between them, and nothing is relayed, launched or reported until the wave
+another, nothing between them, and nothing is relayed, launched or reported until the wave
 is over.
 
 **While a coordinator runs, the wave goes through it**, carried by the hooks module: each
@@ -27,7 +28,7 @@ Its answer, verbatim and dated, is his ruling, recorded as step 4 says.
 
 ## 1. Collect first, then announce the count
 
-Read every pending arbitration before asking the first question: the agents' STOPs
+Read every pending arbitration before the first question: the agents' STOPs
 (their messages — never answered from your own judgment), the entries marked proposed
 or to ratify in the project's state file, register and plan, the findings of the last
 review that need an owner. Then verify each item STILL OPEN on its own artifact — the pull

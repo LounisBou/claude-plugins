@@ -120,7 +120,7 @@ test('progress names the open rows and the tally, or says no record stands', () 
 
 test('progress leads with the goals line of each record that has a goals.md, and nothing for one without', async () => {
   const { registrations } = mounted()
-  const progress = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:progress')!
+  const progress = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-progress')!
   const fx = fakeDollar()
   const withGoals = `${HOME}/belt/dispatch.jsonl`
   const without = `${HOME}/legacy/dispatch.jsonl`
@@ -128,7 +128,7 @@ test('progress leads with the goals line of each record that has a goals.md, and
   fx.files.set(`${HOME}/belt/goals.md`, '# Goals\nspec: none\n')
   fx.files.set(without, '{"id":1,"label":"b","rounds":0,"state":"closed"}\n')
   fx.files.set(`${RECORDS}/s-one`, `${withGoals}\n${without}\n`)
-  const answer = await progress.handler(fx.dollar, { command: 'orchestrator:progress', args: '' })
+  const answer = await progress.handler(fx.dollar, { command: 'orchestrator:orchestrator-progress', args: '' })
   expect(answer).toEqual({ text: ['goals met=3/5 ruled_out=1 open=G3 unplanned=none', 'dispatches=2 closed=2 rounds_avg=0'].join('\n') })
 })
 
@@ -236,15 +236,17 @@ function mounted(): { registrations: { event: string; matcher: object | undefine
 test('the module hooks the three markdown names and registers on nothing else', () => {
   // The stored-matcher convention: the engine validates neither key nor field,
   // so the exact invocation spellings live here. The names are the markdown
-  // commands' own — a registered copy is refused (a built-in's name, a colon
+  // commands' own `name:` — the host hands every typed form (`/orchestrator-status`,
+  // `/orchestrator:status`, `/orchestrator:orchestrator-status`) to the hook as
+  // `orchestrator:<name>`, measured live, so the file's stem never matches — a registered copy is refused (a built-in's name, a colon
   // outside the charset), so no session event registers anything and the
   // markdown entries stay the commands' only typeahead rows.
   const { registrations } = mounted()
   expect(registrations.map(r => [r.event, r.matcher])).toEqual([
-    ['command.run', { command: 'orchestrator:status' }],
-    ['command.run', { command: 'orchestrator:progress' }],
-    ['command.run', { command: 'orchestrator:sleeping' }],
-    ['command.run', { command: 'orchestrator:agents' }],
+    ['command.run', { command: 'orchestrator:orchestrator-status' }],
+    ['command.run', { command: 'orchestrator:orchestrator-progress' }],
+    ['command.run', { command: 'orchestrator:orchestrator-sleeping' }],
+    ['command.run', { command: 'orchestrator:orchestrator-agents' }],
   ])
 })
 
@@ -276,12 +278,12 @@ test('sleeping lists each sleeping orchestrator, or says none, or says the recor
 
 test('sleeping answers the list from the state directory, and passes drop on to the markdown command', async () => {
   const { registrations } = mounted()
-  const sleeping = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:sleeping')!
+  const sleeping = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-sleeping')!
   const fx = fakeDollar()
   fx.env.ORCHESTRATOR_STATE_DIR = `${HOME}/state`
   fx.files.set(`${HOME}/state/sleeping.json`, JSON.stringify([{ name: 'Orch : alpha', brief: '/p/b.md', dir: '/p', slept: '2026-10-13T10:00:00Z', prs: [] }]))
   const passed = (x: unknown) => ({ passed: x })
-  expect(await sleeping.handler(fx.dollar, { command: 'orchestrator:sleeping', args: '' }, passed)).toEqual({ text: [
+  expect(await sleeping.handler(fx.dollar, { command: 'orchestrator:orchestrator-sleeping', args: '' }, passed)).toEqual({ text: [
     'Sleeping orchestrators (1):',
     '  **name**                Orch : alpha',
     '  **slept since**         2026-10-13T10:00:00Z',
@@ -289,21 +291,21 @@ test('sleeping answers the list from the state directory, and passes drop on to 
     '  **open pull requests**  none',
     '  **brief**               /p/b.md',
   ].join('\n') })
-  const drop = { command: 'orchestrator:sleeping', args: 'drop Orch : alpha' }
+  const drop = { command: 'orchestrator:orchestrator-sleeping', args: 'drop Orch : alpha' }
   expect(await sleeping.handler(fx.dollar, drop, passed)).toEqual({ passed: drop })
   // No record at all: nobody sleeps, said as that.
   const bare = fakeDollar()
-  expect(await sleeping.handler(bare.dollar, { command: 'orchestrator:sleeping', args: '' }, passed)).toEqual({ text: 'Sleeping orchestrators: none.' })
+  expect(await sleeping.handler(bare.dollar, { command: 'orchestrator:orchestrator-sleeping', args: '' }, passed)).toEqual({ text: 'Sleeping orchestrators: none.' })
 })
 
 test('status answers the store read through its own fs calls, dropping the stale row', async () => {
   const { registrations } = mounted()
-  const status = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:status')!
+  const status = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-status')!
   const fx = fakeDollar()
   fx.files.set(`${SESSIONS}/hot`, JSON.stringify(row({ name: 'Agent : hot', context_percent: 85 })) + '\n')
   fx.files.set(`${SESSIONS}/gone`, JSON.stringify(row({ name: 'Agent : gone', updated_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString() })) + '\n')
   fx.files.set(`${SESSIONS}/torn`, 'caught mid-write')
-  const answer = await status.handler(fx.dollar, { command: 'orchestrator:status', args: '' })
+  const answer = await status.handler(fx.dollar, { command: 'orchestrator:orchestrator-status', args: '' })
   expect(answer).toEqual({ text: [
     'Live sessions (1), most urgent first:',
     '  name         role   context  last measured',
@@ -311,28 +313,28 @@ test('status answers the store read through its own fs calls, dropping the stale
   ].join('\n') })
   // An absent store is no failure: nothing was ever written.
   const bare = fakeDollar()
-  expect(await status.handler(bare.dollar, { command: 'orchestrator:status', args: '' })).toEqual({ text: 'Live sessions: none measured yet.' })
+  expect(await status.handler(bare.dollar, { command: 'orchestrator:orchestrator-status', args: '' })).toEqual({ text: 'Live sessions: none measured yet.' })
 })
 
 test('agents answers the agent rows alone', async () => {
   const { registrations } = mounted()
-  const agents = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:agents')!
+  const agents = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-agents')!
   const fx = fakeDollar()
   fx.files.set(`${SESSIONS}/agent`, JSON.stringify(row({ role: 'agent', name: 'Agent : belt-p3' })) + '\n')
   fx.files.set(`${SESSIONS}/coord`, JSON.stringify(row({ role: 'coordinator', name: 'Coord : main' })) + '\n')
-  const answer = await agents.handler(fx.dollar, { command: 'orchestrator:agents', args: '' })
+  const answer = await agents.handler(fx.dollar, { command: 'orchestrator:orchestrator-agents', args: '' })
   expect(answer).toEqual({ text: [
     'Implementer agents (1), most urgent first:',
     '  name             role   context  last measured',
     '  Agent : belt-p3  agent      30%  now',
   ].join('\n') })
   const bare = fakeDollar()
-  expect(await agents.handler(bare.dollar, { command: 'orchestrator:agents', args: '' })).toEqual({ text: 'Implementer agents: none running.' })
+  expect(await agents.handler(bare.dollar, { command: 'orchestrator:orchestrator-agents', args: '' })).toEqual({ text: 'Implementer agents: none running.' })
 })
 
 test('agents lists a live agent no measure has written yet, beside the measured ones', async () => {
   const { registrations } = mounted()
-  const agents = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:agents')!
+  const agents = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-agents')!
   const fx = fakeDollar()
   const HOSTS = `${HOME}/.claude/sessions`
   fx.files.set(`${SESSIONS}/s-measured`, JSON.stringify(row({ role: 'agent', name: 'Agent : belt-p3' })) + '\n')
@@ -346,7 +348,7 @@ test('agents lists a live agent no measure has written yet, beside the measured 
   fx.files.set(`${HOSTS}/105.json`, 'caught mid-write')
   fx.files.set(`${HOSTS}/notes.txt`, 'not a record')
   fx.alive = ['101', '102', '103', '105']
-  const answer = await agents.handler(fx.dollar, { command: 'orchestrator:agents', args: '' })
+  const answer = await agents.handler(fx.dollar, { command: 'orchestrator:orchestrator-agents', args: '' })
   expect(answer).toEqual({ text: [
     'Implementer agents (2), most urgent first:',
     '  name                 role   context  last measured',
@@ -356,7 +358,7 @@ test('agents lists a live agent no measure has written yet, beside the measured 
   // The same agent alone, before its first measure: never « none running ».
   fx.files.delete(`${SESSIONS}/s-measured`)
   fx.alive = ['102']
-  expect(await agents.handler(fx.dollar, { command: 'orchestrator:agents', args: '' })).toEqual({ text: [
+  expect(await agents.handler(fx.dollar, { command: 'orchestrator:orchestrator-agents', args: '' })).toEqual({ text: [
     'Implementer agents (1), most urgent first:',
     '  name                 role   context  last measured',
     '  Agent : alert lists  agent     busy  not measured yet',
@@ -365,19 +367,19 @@ test('agents lists a live agent no measure has written yet, beside the measured 
 
 test('status keeps the live rows beside a dead pid, and every row when ps fails', async () => {
   const { registrations } = mounted()
-  const status = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:status')!
+  const status = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-status')!
   const fx = fakeDollar()
   fx.files.set(`${SESSIONS}/live`, JSON.stringify({ ...row({ name: 'Agent : live' }), pid: '501' }) + '\n')
   fx.files.set(`${SESSIONS}/dead`, JSON.stringify({ ...row({ name: 'Agent : dead' }), pid: '99999' }) + '\n')
   fx.alive = ['501']
-  expect(await status.handler(fx.dollar, { command: 'orchestrator:status', args: '' })).toEqual({ text: [
+  expect(await status.handler(fx.dollar, { command: 'orchestrator:orchestrator-status', args: '' })).toEqual({ text: [
     'Live sessions (1), most urgent first:',
     '  name          role   context  last measured',
     '  Agent : live  agent      30%  now',
   ].join('\n') })
   // A ps that fails knows of no death: both rows stay listed, neither hidden.
   fx.psFails = true
-  expect(await status.handler(fx.dollar, { command: 'orchestrator:status', args: '' })).toEqual({ text: [
+  expect(await status.handler(fx.dollar, { command: 'orchestrator:orchestrator-status', args: '' })).toEqual({ text: [
     'Live sessions (2), most urgent first:',
     '  name          role   context  last measured',
     '  Agent : live  agent      30%  now',
@@ -387,12 +389,12 @@ test('status keeps the live rows beside a dead pid, and every row when ps fails'
 
 test('agents still lists an agent in its first turn when ps fails', async () => {
   const { registrations } = mounted()
-  const agents = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:agents')!
+  const agents = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-agents')!
   const fx = fakeDollar()
   fx.files.set(`${HOME}/.claude/sessions/102.json`, JSON.stringify({ sessionId: 's-first-turn', name: 'Agent : first turn', status: 'busy' }))
   fx.alive = ['102']
   fx.psFails = true
-  expect(await agents.handler(fx.dollar, { command: 'orchestrator:agents', args: '' })).toEqual({ text: [
+  expect(await agents.handler(fx.dollar, { command: 'orchestrator:orchestrator-agents', args: '' })).toEqual({ text: [
     'Implementer agents (1), most urgent first:',
     '  name                role   context  last measured',
     '  Agent : first turn  agent     busy  not measured yet',
@@ -401,7 +403,7 @@ test('agents still lists an agent in its first turn when ps fails', async () => 
 
 test('progress answers the records this session registered, under the side-read bound', async () => {
   const { registrations } = mounted()
-  const progress = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:progress')!
+  const progress = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-progress')!
   const fx = fakeDollar()
   fx.env.ORCHESTRATOR_SIDE_READ_MS = '50'
   const record = `${HOME}/belt/dispatch.jsonl`
@@ -411,7 +413,7 @@ test('progress answers the records this session registered, under the side-read 
     '',
   ].join('\n'))
   fx.files.set(`${RECORDS}/s-one`, `${record}\n`)
-  const answer = await progress.handler(fx.dollar, { command: 'orchestrator:progress', args: '' })
+  const answer = await progress.handler(fx.dollar, { command: 'orchestrator:orchestrator-progress', args: '' })
   expect(answer).toEqual({
     text: [
       'open=2 label=Add the retry knob',
@@ -420,17 +422,17 @@ test('progress answers the records this session registered, under the side-read 
   })
   // No registry file: no record this session touched, said as that and nothing else.
   const bare = fakeDollar()
-  expect(await progress.handler(bare.dollar, { command: 'orchestrator:progress', args: '' })).toEqual({ text: 'no dispatch record registered' })
+  expect(await progress.handler(bare.dollar, { command: 'orchestrator:orchestrator-progress', args: '' })).toEqual({ text: 'no dispatch record registered' })
 })
 
 test('the registry is read under the state override, and under the config dir without it', async () => {
   // The registry's writer — the launcher's dispatch tool — resolves ORCHESTRATOR_STATE_DIR
   // before the config dir, the resolution the shell pipeline always had; the module's
-  // reader resolves the same root or the override silences /orchestrator:progress forever
+  // reader resolves the same root or the override silences /orchestrator-progress forever
   // (the reviewed boundary this wiring closes). The module's own artifacts — the store,
   // the log — stay config-dir-bound: no surviving script shares them.
   const { registrations } = mounted()
-  const progress = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:progress')!
+  const progress = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-progress')!
   const record = `${HOME}/belt/dispatch.jsonl`
   const rows = [
     '{"id":1,"opened":"2026-10-07T10:00:00Z","class":"feature","tier":"deep","label":"Belt the parser","rounds":1,"state":"closed","verdict":"approved","cascade":false}',
@@ -443,19 +445,19 @@ test('the registry is read under the state override, and under the config dir wi
   over.env.ORCHESTRATOR_STATE_DIR = `${HOME}/elsewhere`
   over.files.set(record, rows)
   over.files.set(`${HOME}/elsewhere/records/s-one`, `${record}\n`)
-  expect(await progress.handler(over.dollar, { command: 'orchestrator:progress', args: '' })).toEqual(expected)
+  expect(await progress.handler(over.dollar, { command: 'orchestrator:orchestrator-progress', args: '' })).toEqual(expected)
   // ...and a registry the config dir still holds answers nothing under it.
   const orphaned = fakeDollar()
   orphaned.env.ORCHESTRATOR_STATE_DIR = `${HOME}/elsewhere`
   orphaned.files.set(record, rows)
   orphaned.files.set(`${RECORDS}/s-one`, `${record}\n`)
-  expect(await progress.handler(orphaned.dollar, { command: 'orchestrator:progress', args: '' })).toEqual({ text: 'no dispatch record registered' })
+  expect(await progress.handler(orphaned.dollar, { command: 'orchestrator:orchestrator-progress', args: '' })).toEqual({ text: 'no dispatch record registered' })
   // The override absent: the config dir's own registry answers, the branch every plain
   // install walks.
   const plain = fakeDollar()
   plain.files.set(record, rows)
   plain.files.set(`${RECORDS}/s-one`, `${record}\n`)
-  expect(await progress.handler(plain.dollar, { command: 'orchestrator:progress', args: '' })).toEqual(expected)
+  expect(await progress.handler(plain.dollar, { command: 'orchestrator:orchestrator-progress', args: '' })).toEqual(expected)
 })
 
 test('a handler that cannot read falls back to the markdown command and is said', async () => {
@@ -483,9 +485,9 @@ test('a handler that cannot read falls back to the markdown command and is said'
       },
     }
   })
-  const progress = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:progress')!
+  const progress = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-progress')!
   const fx = fakeDollar({ failSession: true })
-  const e = { command: 'orchestrator:progress', args: '' }
+  const e = { command: 'orchestrator:orchestrator-progress', args: '' }
   let answered: unknown = null
   await assertRejects(progress.handler(fx.dollar, e))
   // The real next is a function the engine decorates (called, error), so the
@@ -515,8 +517,17 @@ async function assertRejects(work: Promise<unknown>): Promise<void> {
 // the run reaches the module's hook through the real chain — the matcher
 // selects it, it answers { text } without calling next, and no bottom is
 // needed: no model turn, no markdown body, the answer is the handler's own.
-test('/orchestrator:status answers through the engine without a model turn', async ($, on) => {
-  mock.env(on, { CLAUDE_CONFIG_DIR: '/tmp/h' })
-  const answer = await $.command.run({ command: 'orchestrator:status', args: '' })
-  expect(answer).toEqual({ text: 'Live sessions: none measured yet.' })
-})
+const ENGINE_ANSWERS: [command: string, text: string][] = [
+  ['orchestrator-status', 'Live sessions: none measured yet.'],
+  ['orchestrator-agents', 'Implementer agents: none running.'],
+  ['orchestrator-sleeping', 'Sleeping orchestrators: none.'],
+  ['orchestrator-progress', 'no dispatch record registered'],
+]
+for (const [command, text] of ENGINE_ANSWERS) {
+  test(`/${command} answers through the engine without a model turn`, async ($, on) => {
+    mock.env(on, { CLAUDE_CONFIG_DIR: '/tmp/h' })
+    on('session.id', () => ({ value: 's-engine' }))
+    const answer = await $.command.run({ command: `orchestrator:${command}`, args: '' })
+    expect(answer).toEqual({ text })
+  })
+}

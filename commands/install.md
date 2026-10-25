@@ -1,4 +1,5 @@
 ---
+name: orchestrator-install
 description: Create the state directory, unwire any tap a previous install left, and check the host's version
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/install.sh:*), Read
 ---

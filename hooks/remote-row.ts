@@ -1,6 +1,6 @@
 // hooks/remote-row.ts
 // An orchestrator's store row, carried to a coordinator on another machine. The pane
-// and /orchestrator:status read the local store alone, so an orchestrator whose session
+// and /orchestrator-status read the local store alone, so an orchestrator whose session
 // runs elsewhere never showed. Its module sends the row as one marked line, and the
 // coordinator's module takes that line out of the delivery before any model reads it:
 // the row lands in the coordinator's store (`remote/<name>`), and no turn on either side
