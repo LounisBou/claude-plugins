@@ -114,14 +114,18 @@ waits on that question); a new question of the same session withdraws its older 
 (« superseded by <id> »), its session ending or its « handed over » to a successor withdraws them
 all, and a turn that ends on the same wait leaves the entry open. Entering them wakes you for none, and your pane
 shows him, first, « Questions for you — N pending » and the first open question that carries
-choices: « <sender> — <its own Question x of y> », its labelled fields as the sender wrote them,
-each choice once and a blank line apart, its recommendation, then a « Choose » picker whose
+choices, in a card titled « <sender> · <its own Question x / y> »: its labelled fields as the
+sender wrote them, each choice once and a blank line apart, its letter a badge, the recommended
+one marked ★, its recommendation, then a « Choose » picker whose
 options are the letters alone; he walks it with the arrows and answers with Enter — a click
 only gives the pane the keys, never answers —, the recommended letter first, its last option
 leading to an « Other answer » text field (the questions without choices come after, and an
-answer not delivered on one line at the section's foot). The pane opens with the keys; a key
-line and, when it scrolls, a position track stay in view. Below, each orchestrator on one
-line, its dot coloured by its state (the ones waiting for him in `warning`), with `Status:`
+answer not delivered on one line at the section's foot). An entry that asks several questions
+is presented one at a time, the next one named under the card, and its answers reach the sender
+together, each after its number. Every `<repo>#<n>` drawn is a link to that pull request when
+the repository's owner is known. The pane opens with the keys; a key
+line and, when it scrolls, a position track stay in view. Below a rule, each orchestrator on one
+line, a blank line between two, its dot coloured by its state (the ones waiting for him in `warning`), with `Status:`
 and `Blocks:` lines under a waiting one, the one whose question is drawn bold in `suggestion`.
 With no such question it reads « none in the pane » with the number of orchestrators waiting when their question reached you as a message: ask them in your tab. **An
 answer he chooses or types in the pane reaches the orchestrator directly**: the module marks the entry

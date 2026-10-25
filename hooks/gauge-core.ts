@@ -1,6 +1,7 @@
 // hooks/gauge-core.ts
 // The measurement rules, pure: the same numbers the shell gate read, with no host
 // API in reach so the boundaries stay testable.
+import { moduleDirOf } from './module-log.ts'
 
 export type MeasureReading = {
   context_tokens: number; context_window: number; context_percent: number
@@ -27,8 +28,9 @@ export function tripGate(
 // The module sandbox exposes no process global: the config dir is resolved
 // through the host's env surface by the caller that holds $ (gauge.ts), then
 // handed in — the pure half stays testable, the impure half stays in one place.
-export function measureFilePath(config: string, sessionId: string): string {
-  return `${config}/claude-orchestrator/measure/${sessionId}.json`
+// `override` is ORCHESTRATOR_MODULE_DIR as the caller read it (module-log.ts, moduleDirOf).
+export function measureFilePath(config: string, sessionId: string, override?: string | null): string {
+  return `${moduleDirOf(config, override)}/measure/${sessionId}.json`
 }
 
 export function parseMeasure(line: string): MeasureReading | null {

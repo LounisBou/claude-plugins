@@ -109,8 +109,9 @@
 # and the open pull requests (`gh pr list` in the repository, or COORDINATOR_FORGE, called
 # as `<command> <repository directory>` and printing `<number> <head branch> <head>` lines,
 # <head> `same` for a branch of the repository itself, `fork:<owner>` for a fork's), and the
-# remote rows (`store/remote` under the config dir: one JSON row per file, written by the hooks
-# module as it receives them from orchestrators on other machines; read here, never written).
+# remote rows (`store/remote` under the module's directory, MODULE below: one JSON row per file,
+# written by the hooks module as it receives them from orchestrators on other machines; read
+# here, never written).
 #
 # State: <state>/coordinator.json {"name","tty","started","pid"}; <state> is ORCHESTRATOR_STATE_DIR,
 # else the plugin's directory under CLAUDE_CONFIG_DIR, else under ~/.claude, the launcher's
@@ -151,6 +152,8 @@ command -v jq >/dev/null 2>&1 || die "jq is required"
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 STATE="${ORCHESTRATOR_STATE_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claude-orchestrator}"
+# The hooks module's own files (its store): ORCHESTRATOR_MODULE_DIR when set, as the module reads it.
+MODULE="${ORCHESTRATOR_MODULE_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claude-orchestrator}"
 RECORD="$STATE/coordinator.json"
 # Mirrors REMOTE_STALE_AFTER_MS in hooks/remote-row.ts: a remote row is kept for a day after its
 # updated_at, and the module deletes it past that bound.
@@ -602,7 +605,7 @@ read_facts() {
 }
 
 # remote_rows: the rows the hooks module received from orchestrators on other machines, one
-# JSON row per file in its remote directory (under the config dir, beside the waits). A file
+# JSON row per file in its remote directory (under the module's directory, beside the waits). A file
 # name holding `.tmp-` is skipped, and a file that is no JSON row is unread. A row is kept
 # while its updated_at is at most 24 hours old (the module's REMOTE_STALE_AFTER_MS) and no
 # local session names it as title or orchestrator (local wins, as the module's pane does); a
@@ -611,7 +614,7 @@ read_facts() {
 # a repository read here by its address without the host, and kept only when that repository's
 # open list has them. A pull request in a repository not read here keeps branch « - ».
 remote_rows() {
-    local store="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claude-orchestrator/store/remote"
+    local store="$MODULE/store/remote"
     local now file row name at
     : > "$T/remote"; : > "$T/remote_prs"
     [ -d "$store" ] || return 0
@@ -714,11 +717,11 @@ remote_pr_lines() {
 }
 
 # waiting_rows: the orchestrators waiting at the end of their turn, from the hooks module's
-# store (its waits directory under the config dir, one JSON wait per orchestrator session,
+# store (its waits directory under the module's directory, one JSON wait per orchestrator session,
 # written by the module's relay alone), each kept while its pid is in the process table
 # read above. Display only: a file unread is no line.
 waiting_rows() {
-    local store="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claude-orchestrator/store/waits"
+    local store="$MODULE/store/waits"
     [ -d "$store" ] || return 0
     find "$store" -type f -exec cat {} + 2>/dev/null \
         | jq -R -r 'fromjson? | select(.waiting == "operator" or .waiting == "done")
@@ -750,11 +753,11 @@ round_entries_of() {
             and (.kind | type) == "string" and (.question | type) == "string")' "$1" 2>/dev/null
 }
 
-# live_sessions: the sessions files of the hooks module's store (under the config dir, as
+# live_sessions: the sessions files of the hooks module's store (under the module's directory, as
 # waiting_rows resolves it), as a JSON array of file names. The module names a file after the
 # session id with every character outside A-Za-z0-9._- replaced by an underscore.
 live_sessions() {
-    local store="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claude-orchestrator/store/sessions"
+    local store="$MODULE/store/sessions"
     [ -d "$store" ] || { echo '[]'; return 0; }
     find "$store" -type f -exec basename {} \; 2>/dev/null | jq -R -s -c 'split("\n") | map(select(. != ""))'
 }

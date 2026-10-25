@@ -26,7 +26,7 @@ import { parseSessionRow, withWait, paneRows, type PaneRow, isStale, livePidsArg
 import { parseRemoteRow, withRemote, ROW_MARKER, REMOTE_STALE_AFTER_MS, type RemoteRow } from './remote-row.ts'
 import { hostRecordOf, roleOf } from './session-name.ts'
 import { withDeadline, isDegradedPass } from './stop-gate.ts'
-import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
+import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
 
 // The config dir, this file's own resolution: $ never crosses an import, so
 // each domain that needs it spells the same two env reads itself.
@@ -39,7 +39,8 @@ async function configDir($: any): Promise<string> {
 // claude-orchestrator. The writer resolves the same rule, so the reader resolves what it
 // wrote or the override silences /orchestrator-progress forever. Spelled at the call site
 // beside the config read it extends — $ never crosses an import — while this file's own
-// artifacts, the store and the log, stay config-dir-bound: no surviving script shares them.
+// artifacts, the store and the log, stay under the module's own directory (module-log.ts,
+// moduleDirOf): no surviving script shares them.
 async function stateDir($: any): Promise<string> {
   return (await $.env.get('ORCHESTRATOR_STATE_DIR')) ?? `${await configDir($)}/claude-orchestrator`
 }
@@ -60,7 +61,7 @@ async function readBoundMs($: any): Promise<number> {
 // unreadable (a line caught mid-write parses to no row). An absent store is no
 // failure — nothing was ever written — and answers as no sessions.
 async function readRows($: any): Promise<Record<string, SessionRow>> {
-  const dir = `${await configDir($)}/claude-orchestrator/store/sessions`
+  const dir = `${moduleDirOf(await configDir($), await $.env.get('ORCHESTRATOR_MODULE_DIR'))}/store/sessions`
   let entries: { name: string; kind: string }[]
   try {
     entries = await $.fs.list(dir)
@@ -90,7 +91,7 @@ async function readRows($: any): Promise<Record<string, SessionRow>> {
 // file's own read of the store's remote directory, each checked again; the supervision
 // domain's reader removes the stale ones, this one only skips them.
 async function readRemote($: any): Promise<RemoteRow[]> {
-  const dir = `${await configDir($)}/claude-orchestrator/store/remote`
+  const dir = `${moduleDirOf(await configDir($), await $.env.get('ORCHESTRATOR_MODULE_DIR'))}/store/remote`
   const entries: { name: string; kind: string }[] = await $.fs.list(dir).catch(() => [])
   const rows: RemoteRow[] = []
   for (const entry of entries.slice(0, 64)) {
@@ -373,6 +374,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
 async function logLine($: any, message: string): Promise<void> {
   try {
     const config = await configDir($)
-    await $.process.run(logArgv($.plugin.root, config, 'commands', message), { timeoutMs: LOG_TIMEOUT_MS })
+    await $.process.run(logArgv($.plugin.root, config, 'commands', message, undefined, await $.env.get('ORCHESTRATOR_MODULE_DIR')), { timeoutMs: LOG_TIMEOUT_MS })
   } catch { /* the log itself never blocks the command that failed */ }
 }

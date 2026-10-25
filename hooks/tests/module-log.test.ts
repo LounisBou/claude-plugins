@@ -4,7 +4,7 @@
 // generation, the lock) is run for real by tests/run-tests.sh — the plugin test
 // harness spawns no process.
 import { expect, test } from 'claude-code/testing'
-import { logArgv, logPath, LOG_CAP } from '../module-log.ts'
+import { logArgv, logPath, moduleDirOf, LOG_CAP } from '../module-log.ts'
 
 test('a log line is the append script, the shared log, one stamped line and the cap', () => {
   const at = new Date('2026-10-11T12:00:00.000Z')
@@ -13,6 +13,15 @@ test('a log line is the append script, the shared log, one stamped line and the 
     '2026-10-11T12:00:00.000Z | guards | stop gate: x', String(LOG_CAP),
   ])
   expect(logPath('/c')).toBe('/c/claude-orchestrator/hooks-module.log')
+})
+
+test('the module directory override moves the log, and an empty one is no override', () => {
+  const at = new Date('2026-10-11T12:00:00.000Z')
+  expect(moduleDirOf('/c')).toBe('/c/claude-orchestrator')
+  expect(moduleDirOf('/c', '')).toBe('/c/claude-orchestrator')
+  expect(moduleDirOf('/c', '/sandbox/module')).toBe('/sandbox/module')
+  expect(logPath('/c', '/sandbox/module')).toBe('/sandbox/module/hooks-module.log')
+  expect(logArgv('/r', '/c', 'gauge', 'x', at, '/sandbox/module')[2]).toBe('/sandbox/module/hooks-module.log')
 })
 
 test('the log and its one previous generation fit what one host read can take', () => {

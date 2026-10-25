@@ -7,7 +7,7 @@
 // reads it, keeps it under the store, writes each file that arrived whole and checked, and
 // answers; the sending half reads the answers. Only two texts ever reach a model: the arrival
 // notice, on the receiver, and the notice of the outcome, on the sender.
-import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
+import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
 import { roleOf, walkName, hostBasenames, blockArgv, bytesOfBase64, type ReadRecord, type HostNames } from './session-name.ts'
 import { withDeadline, isDegradedPass } from './stop-gate.ts'
 import { machineLabel, deliveryOf, isPeerOrigin, type Delivery } from './remote-row.ts'
@@ -156,7 +156,7 @@ async function configDir($: Dollar): Promise<string> {
 }
 
 async function movesDir($: Dollar): Promise<string> {
-  return `${await configDir($)}/claude-orchestrator/store/moves`
+  return `${moduleDirOf(await configDir($), await $.env.get('ORCHESTRATOR_MODULE_DIR'))}/store/moves`
 }
 
 // --- the session's own name --------------------------------------------------------------
@@ -860,6 +860,6 @@ async function writeAtomic($: Dollar, path: string, text: string): Promise<void>
 // The module's log: the config dir resolved here, the stamp names this half. Never throws.
 async function logLine($: Dollar, message: string): Promise<void> {
   try {
-    await $.process.run(logArgv($.plugin.root, await configDir($), 'moving', message), { timeoutMs: LOG_TIMEOUT_MS })
+    await $.process.run(logArgv($.plugin.root, await configDir($), 'moving', message, undefined, await $.env.get('ORCHESTRATOR_MODULE_DIR')), { timeoutMs: LOG_TIMEOUT_MS })
   } catch { /* the log itself never blocks the handler that failed */ }
 }

@@ -46,7 +46,13 @@ const LETTERS = 'ABCDE'
 // when they read A, B, … in that order, two to five of them: anything else is no choice
 // the pane could offer, and the question is answered in words. The recommendation is the
 // first line that names one, kept only when its letter is among the kept choices.
+// An entry holding several numbered questions (questionParts) records its first one's: the
+// pane reads every question's own from the text (entryQuestions).
 export function parseChoices(question: string): { choices: RoundChoice[]; recommendation: string | null } {
+  return readChoices(questionParts(question)[0])
+}
+
+function readChoices(question: string): { choices: RoundChoice[]; recommendation: string | null } {
   const lines = question.split('\n')
   const found = lines.flatMap(line => {
     const matched = CHOICE.exec(line)
@@ -69,10 +75,39 @@ export function questionBody(entry: Pick<RoundEntry, 'question' | 'choices'>): s
 // language and read by its shape alone. The colon may have spaces around it or none: one with a
 // space before it is drawn « label : text », one without « label: text ».
 const FIELD = /^\s*_([^_\n]*[^_\s])_(\s*:\s*)(.*?)\s*$/
-// The sender's own numbering: a line wholly bold holding two numbers, `**Question 5 of 6**`.
-const NUMBER = /^\s*\*\*([^*\n]*\d+\D+\d+[^*\n]*)\*\*\s*$/
+// The sender's own numbering: a line wholly bold holding two numbers, a word before the first and
+// a word or a slash between them, `**Question 5 of 6**`; `**Version 1.2**` is no numbering.
+const NUMBER = /^\s*\*\*([^*\n\d]*\p{L}[^*\n\d]*\d+[^*\n\d]*[\p{L}/][^*\n\d]*\d+[^*\n]*)\*\*\s*$/u
 // A field after the choices whose text starts with a lone choice letter: the recommendation.
 const NAMES_LETTER = /^\**([A-E])\**(?:$|[\s.,;:—–-])/
+
+// The questions of an entry, one text each: a turn may ask several in the decide shape, each
+// under its own numbering line (`**Question 3 of 4**`, in the sender's language). Two such lines
+// or more split the text before each, the first question keeping what precedes its own (the
+// previous answer's record, which questionShape drops). One line or none: the text whole.
+export function questionParts(question: string): string[] {
+  const lines = question.split('\n')
+  const heads = lines.flatMap((line, i) => (NUMBER.test(line) ? [i] : []))
+  if (heads.length < 2) return [question]
+  return heads.map((head, k) => lines.slice(k === 0 ? 0 : head, heads[k + 1] ?? lines.length).join('\n').trimEnd())
+}
+
+// One question of an entry as the pane presents it: its own text, the sender's numbering, its
+// choices and its recommendation. An entry of one question keeps what it recorded; one of
+// several reads each question's from its own text.
+export type QuestionPart = { question: string; number: string | null; choices: RoundChoice[]; recommendation: string | null }
+export function entryQuestions(entry: Pick<RoundEntry, 'question' | 'choices' | 'recommendation'>): QuestionPart[] {
+  const parts = questionParts(entry.question)
+  const read = parts.length < 2
+    ? [{ question: entry.question, choices: entry.choices, recommendation: entry.recommendation }]
+    : parts.map(part => ({ question: part, ...readChoices(part) }))
+  return read.map(part => ({
+    question: part.question,
+    number: questionShape(part.question, part.choices)?.number ?? null,
+    choices: part.choices,
+    recommendation: part.recommendation,
+  }))
+}
 
 export type QuestionField = { label: string; separator: string; text: string }
 export type QuestionShape = { number: string | null; fields: QuestionField[]; recommendation: QuestionField | null }
@@ -126,11 +161,101 @@ export function questionShape(question: string, choices: readonly RoundChoice[])
 // (snake_case) or before a space (a `* ` list item) is no emphasis. Each span stays on its
 // line. The entry itself keeps the text verbatim.
 export function plainText(text: string): string {
-  return text
-    .replace(/`([^`\n]+)`/g, '$1')
-    .replace(/(\*\*|__)(?=\S)([^\n]*?\S)\1/g, '$2')
-    .replace(/(^|[^\w*])\*(?=[^\s*])([^\n*]*?[^\s*])\*(?![\w*])/gm, '$1$2')
-    .replace(/(^|[^\w])_(?=[^\s_])([^\n_]*?[^\s_])_(?!\w)/gm, '$1$2')
+  return textSpans(text).map(span => span.text).join('')
+}
+
+// The same text cut into the spans the pane draws, each mark it carried kept as a style: inline
+// code, bold, italic. Joined, the spans are plainText's text. The markers are found as plainText
+// always found them, then read as an opening and a closing mark around each span.
+export type TextSpan = { text: string; code?: true; bold?: true; italic?: true }
+const MARK = { code: ['\uE000', '\uE001'], bold: ['\uE002', '\uE003'], italic: ['\uE004', '\uE005'] } as const
+export function textSpans(text: string): TextSpan[] {
+  const marked = text
+    .replace(/`([^`\n]+)`/g, `${MARK.code[0]}$1${MARK.code[1]}`)
+    .replace(/(\*\*|__)(?=\S)([^\n]*?\S)\1/g, `${MARK.bold[0]}$2${MARK.bold[1]}`)
+    .replace(/(^|[^\w*])\*(?=[^\s*])([^\n*]*?[^\s*])\*(?![\w*])/gm, `$1${MARK.italic[0]}$2${MARK.italic[1]}`)
+    .replace(/(^|[^\w])_(?=[^\s_])([^\n_]*?[^\s_])_(?!\w)/gm, `$1${MARK.italic[0]}$2${MARK.italic[1]}`)
+  const spans: TextSpan[] = []
+  const on = { code: 0, bold: 0, italic: 0 }
+  let run = ''
+  const flush = () => {
+    if (run === '') return
+    spans.push({ text: run, ...(on.code ? { code: true as const } : {}), ...(on.bold ? { bold: true as const } : {}), ...(on.italic ? { italic: true as const } : {}) })
+    run = ''
+  }
+  for (const char of marked) {
+    const mark = (Object.keys(MARK) as (keyof typeof MARK)[]).find(name => MARK[name].includes(char as never))
+    if (!mark) {
+      run += char
+      continue
+    }
+    flush()
+    on[mark] += char === MARK[mark][0] ? 1 : -1
+  }
+  flush()
+  return spans
+}
+
+// The references to a pull request a text names, `<repository>#<number>`, one each wherever they
+// stand: glued to another by a slash, a comma or nothing, each is its own. `at` is where it
+// starts in the text. A sign `.` or `-` stuck before the repository's name is no part of it. An
+// owner written before the name, `other/infra#5`, is kept as `owner`.
+export type PrReference = { at: number; text: string; repo: string; number: number; owner?: string }
+export function prReferences(text: string): PrReference[] {
+  return [...text.matchAll(/(?:([A-Za-z0-9_.-]+)\/)?([A-Za-z0-9_.-]+)#(\d+)/g)].flatMap(found => {
+    const owner = found[1]?.replace(/^[.-]+/, '')
+    const repo = found[2].replace(/^[.-]+/, '')
+    if (repo === '') return []
+    const start = found.index! + found[0].length - `${repo}#${found[3]}`.length - (owner ? owner.length + 1 : 0)
+    return [{ at: start, text: text.slice(start, found.index! + found[0].length), repo, number: Number(found[3]), ...(owner ? { owner } : {}) }]
+  })
+}
+
+// The owner of each repository the module knows, by the repository's name: from the addresses
+// it holds (`owner/name`, a pull request's `owner/name#<n>` too). A name two owners hold is
+// ambiguous and has no owner: no guess. Anything else is no address and is skipped.
+export function repositoryOwners(addresses: readonly (string | null | undefined)[]): Map<string, string> {
+  const owners = new Map<string, string>()
+  const ambiguous = new Set<string>()
+  for (const address of addresses) {
+    const found = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)(?:#\d+)?$/.exec(address ?? '')
+    if (!found) continue
+    if (owners.has(found[2]) && owners.get(found[2]) !== found[1]) ambiguous.add(found[2])
+    else owners.set(found[2], found[1])
+  }
+  for (const name of ambiguous) owners.delete(name)
+  return owners
+}
+
+// A text cut at the references to a pull request it names: each reference with an owner, the one
+// written before it or else the one known for its repository, is a link of its own to the pull
+// request, the text around it plain. A name stuck to a word by a dot (`end.infra#195`) is read
+// by what follows the dot when the whole is no known repository. A reference with no owner
+// stays in the text.
+export type PrLink = { href: string; text: string }
+export function prPieces(text: string, owners: ReadonlyMap<string, string>): (string | PrLink)[] {
+  const pieces: (string | PrLink)[] = []
+  let at = 0
+  for (const found of prReferences(text)) {
+    let ref = found
+    if (ref.owner === undefined && !owners.has(ref.repo) && ref.repo.includes('.')) {
+      const cut = ref.repo.length - ref.repo.slice(ref.repo.lastIndexOf('.') + 1).length
+      ref = { ...ref, at: ref.at + cut, text: ref.text.slice(cut), repo: ref.repo.slice(cut) }
+    }
+    const owner = ref.owner ?? owners.get(ref.repo)
+    if (owner === undefined || ref.repo === '') continue
+    if (ref.at > at) pieces.push(text.slice(at, ref.at))
+    pieces.push({ href: `https://github.com/${owner}/${ref.repo}/pull/${ref.number}`, text: ref.text })
+    at = ref.at + ref.text.length
+  }
+  if (at < text.length || pieces.length === 0) pieces.push(text.slice(at))
+  return pieces
+}
+
+// The sender's numbering (`Question 3 of 4`, in its language) drawn as its two numbers with a
+// slash between them, the same in every language: `Question 3 / 4`.
+export function numberLabel(number: string): string {
+  return number.replace(/(\d+)\D+?(\d+)/, '$1 / $2')
 }
 
 // The fingerprint of the wait an entry was written for, as the sender's wait file keeps it.
@@ -188,11 +313,14 @@ export function openEntries(entries: readonly RoundEntry[]): RoundEntry[] {
 // first, in the round's order among themselves, then those without. A question the operator can
 // only answer in its session never hides one he can answer from the pane. A wait that asks
 // nothing, with no lettered choice and no labelled field, is no question: its sender's row
-// shows what it blocks, and the operator answers it in that tab.
+// shows what it blocks, and the operator answers it in that tab. An entry that asks several
+// questions is read by its first.
 export function paneQuestions(entries: readonly RoundEntry[]): RoundEntry[] {
-  const questions = openEntries(entries)
-    .filter(entry => entry.kind === 'operator' && (entry.choices.length > 0 || questionShape(entry.question, entry.choices) !== null))
-  return [...questions.filter(entry => entry.choices.length > 0), ...questions.filter(entry => entry.choices.length === 0)]
+  const read = openEntries(entries)
+    .filter(entry => entry.kind === 'operator')
+    .map(entry => ({ entry, first: entryQuestions(entry)[0] }))
+    .filter(({ first }) => first.choices.length > 0 || questionShape(first.question, first.choices) !== null)
+  return [...read.filter(({ first }) => first.choices.length > 0), ...read.filter(({ first }) => first.choices.length === 0)].map(({ entry }) => entry)
 }
 
 // An open question is due in the coordinator's tab when its sender marked it urgent, or when no

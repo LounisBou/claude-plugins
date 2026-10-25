@@ -44,8 +44,8 @@ async function configDir($: any): Promise<string> {
 // first, else the config dir's claude-orchestrator. Everything the root carries moves as
 // one — the chain files, the records registry, ci-watch's logs, the heads record, the
 // ignored-checks list, the sweep stamp — because those are the files the surviving scripts
-// still share. The module's own artifacts, the measure file and this file's log, stay
-// config-dir-bound: no surviving script shares them. Spelled at the call site, $ never
+// still share. The module's own artifacts, the measure file and this file's log, stay under
+// the module's own directory (module-log.ts, moduleDirOf): no surviving script shares them. Spelled at the call site, $ never
 // crossing an import.
 async function stateDir($: any): Promise<string> {
   return (await $.env.get('ORCHESTRATOR_STATE_DIR')) ?? `${await configDir($)}/claude-orchestrator`
@@ -324,7 +324,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // only), so the root is the engine's own $.plugin.root.
       const root = role === 'auditor' || role === 'coordinator' ? $.plugin.root : ''
       let raw: string | null = null
-      try { raw = await $.fs.read(measureFilePath(await configDir($), sessionId)) } catch { /* no file yet: unmeasured */ }
+      try { raw = await $.fs.read(measureFilePath(await configDir($), sessionId, await $.env.get('ORCHESTRATOR_MODULE_DIR'))) } catch { /* no file yet: unmeasured */ }
       const reading = parseMeasure(String(raw ?? ''))
       if (!reading) {
         if (!memo.saidUnmeasured && await transcriptHasAnswer($, memo.transcript ?? '')) {
@@ -646,7 +646,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
 async function logLine($: any, message: string): Promise<void> {
   try {
     const config = await configDir($)
-    await $.process.run(logArgv($.plugin.root, config, 'guards', message), { timeoutMs: LOG_TIMEOUT_MS })
+    await $.process.run(logArgv($.plugin.root, config, 'guards', message, undefined, await $.env.get('ORCHESTRATOR_MODULE_DIR')), { timeoutMs: LOG_TIMEOUT_MS })
   } catch { /* the log itself never blocks the handler that failed */ }
 }
 

@@ -271,6 +271,11 @@ check "the orchestrator rulebook stays at 21,518 bytes or fewer" "yes" \
 # rulebook, the briefs reference and the phase brief template each carry the rule.
 check "the rulebook stops real machine load an agent reports or plans" "yes" \
   "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'is stopped at once, its processes killed, and the work redone under emulated throttling')"
+# The pane draws each pull request reference of a blocks text as a link of its own, and a slash
+# glues two of them into a name it cannot resolve: the rulebook tells the orchestrator to split
+# them by a comma.
+check "the rulebook splits the references of a blocks text by commas, never a slash" "yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Split references in `blocks:` by `, `, never `/`.')"
 check "the standing rules read « under load » as emulated throttling" "yes" \
   "$(spells "$ORCH_REFS/briefs.md" '**« Under load » means emulated throttling, never real load on the machine.**')"
 check "the phase brief template reads « under load » as emulated throttling" "yes" \
@@ -6472,6 +6477,13 @@ round ended | operator | from Orch : ended | since 2026-10-18T10:02:00.000Z | bl
 round odd | operator | from Orch : odd | since 2026-10-18T10:03:00.000Z | blocks: phase 3 | open
     Ship it?" \
   "$(ORCHESTRATOR_STATE_DIR="$GSTATE" CLAUDE_CONFIG_DIR="$GCFG" COORDINATOR_NOW=$ROUND_NOW bash "$COORD" round 2>&1)"
+# ORCHESTRATOR_MODULE_DIR moves the module's store, as the hooks module reads it: the same
+# round reads its live senders there, and the config dir's store is not read.
+GMOD="$WORK/coord-gone-module"
+mkdir -p "$GMOD/store/sessions"
+: > "$GMOD/store/sessions/s-ended"
+check "with the module directory overridden, round reads the senders' sessions files there alone" "round live | operator | from Orch : live | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open | sender gone|round ended | operator | from Orch : ended | since 2026-10-18T10:02:00.000Z | blocks: phase 3 | open" \
+  "$(ORCHESTRATOR_STATE_DIR="$GSTATE" CLAUDE_CONFIG_DIR="$GCFG" ORCHESTRATOR_MODULE_DIR="$GMOD" COORDINATOR_NOW=$ROUND_NOW bash "$COORD" round 2>&1 | grep '^round \(live\|ended\) ' | paste -sd'|' -)"
 # An entry the operator answered from the coordinator's pane is printed after the open ones and
 # before the withdrawn ones, each set in the round's order, with the answer the pane recorded.
 ASTATE="$WORK/coord-answered"; ACFG="$WORK/coord-answered-config"

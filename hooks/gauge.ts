@@ -47,7 +47,7 @@ export async function writeMeasure(
 ): Promise<void> {
   // One JSON line; the trailing newline ends it, and a partial line reads as
   // unmeasured everywhere ($.fs.write is not atomic).
-  await $.fs.write(measureFilePath(await configDir($), sessionId), JSON.stringify(reading) + '\n')
+  await $.fs.write(measureFilePath(await configDir($), sessionId, await $.env.get('ORCHESTRATOR_MODULE_DIR')), JSON.stringify(reading) + '\n')
 }
 
 // What the band above the prompt says: a plain description, so the rules stay testable
@@ -138,7 +138,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     try {
       // $.fs offers no remove: an empty file reads as unmeasured everywhere, and
       // install.sh purges the stale ones.
-      await $.fs.write(measureFilePath(await configDir($), e.sessionId ?? await $.session.id()), '')
+      await $.fs.write(measureFilePath(await configDir($), e.sessionId ?? await $.session.id(), await $.env.get('ORCHESTRATOR_MODULE_DIR')), '')
     } catch (err) {
       // Never blocks the end; the failure is said — one line, the
       // every-handler-logs rule.
@@ -200,7 +200,7 @@ async function forget($: any, sessionId: string, mine = currentIn === sessionId)
   current = null
   currentIn = null
   $.ui.invalidate('ui.render')
-  if (mine) await $.fs.write(measureFilePath(await configDir($), sessionId), '')
+  if (mine) await $.fs.write(measureFilePath(await configDir($), sessionId, await $.env.get('ORCHESTRATOR_MODULE_DIR')), '')
 }
 
 // The gate's thresholds from the environment, guards.ts's own reading spelled again
@@ -223,6 +223,6 @@ async function gateEnv($: any): Promise<{ gate?: number; gateTokens?: number; la
 async function logLine($: any, message: string): Promise<void> {
   try {
     const config = await configDir($)
-    await $.process.run(logArgv($.plugin.root, config, 'gauge', message), { timeoutMs: LOG_TIMEOUT_MS })
+    await $.process.run(logArgv($.plugin.root, config, 'gauge', message, undefined, await $.env.get('ORCHESTRATOR_MODULE_DIR')), { timeoutMs: LOG_TIMEOUT_MS })
   } catch { /* the log itself never blocks the handler that failed */ }
 }

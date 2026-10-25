@@ -14,6 +14,8 @@ import type { RoundEntry } from '../round.ts'
 import { hostRecordOf } from '../session-name.ts'
 import { register as registerAll } from '../register.ts'
 import { logLineOf, blockOf } from './fakes.ts'
+import { drawScreen, textOf } from './screen.ts'
+import { TWO_QUESTIONS, GLUED_BLOCKS, FIRST_A, FIRST_B, SECOND_A, SECOND_B } from './fixtures.ts'
 
 const HOME = '/tmp/h'
 const SESSIONS = `${HOME}/.claude/claude-orchestrator/store/sessions`
@@ -289,6 +291,7 @@ function fakeDollar(over: {
         Box: (props: { flexDirection?: string; children?: unknown[] }) => ({ type: 'Box', props }),
         Text: (props: { color?: string; bold?: boolean; children?: string }) => ({ type: 'Text', props }),
         Button: (props: { key?: string; label?: string; hotkey?: string; onPress: () => void }) => ({ type: 'Button', props }),
+        Link: (props: { href: string; children?: string }) => ({ type: 'Link', props }),
         ...(e.surface === 'mobile' ? {} : {
           Input: (props: { key: string; label?: string; onSubmit: (value: string) => void }) => ({ type: 'Input', props }),
           Select: (props: { key: string; label?: string; options: { value: string; label?: string }[]; value?: string; onSelect: (value: string) => void }) => ({ type: 'Select', props }),
@@ -546,6 +549,23 @@ test('a name walk that cannot answer in time costs the row its name, never the m
   expect(stored.model).toBe('a-model')
 })
 
+test('with the module directory overridden, the measure and the pane use it, and nothing lands in the config dir', async () => {
+  // A harness driving a host on the machine's own config dir sets ORCHESTRATOR_MODULE_DIR: its
+  // rows and measures stay in its sandbox, and the operator's store never sees them.
+  const SANDBOX = '/sandbox/module'
+  const fx = fakeDollar({ launchName: 'Coord : main' })
+  fx.env.ORCHESTRATOR_MODULE_DIR = SANDBOX
+  await drive(composedChains(), 'session.measure', fx.dollar, {})
+  expect(fx.files.has(`${SANDBOX}/store/sessions/s-one`)).toBe(true)
+  expect(fx.files.has(`${SANDBOX}/measure/s-one.json`)).toBe(true)
+  expect([...fx.files.keys()].filter(p => p.startsWith(`${HOME}/.claude/claude-orchestrator/store`) || p.startsWith(`${HOME}/.claude/claude-orchestrator/measure`))).toEqual([])
+  fx.files.set(`${SANDBOX}/store/sessions/s-alpha`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : alpha', context_percent: 12 })) + '\n')
+  fx.files.set(`${SESSIONS}/s-real`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : real', context_percent: 40 })) + '\n')
+  const drawn = JSON.stringify(await coordinatorRender(fx))
+  expect(drawn).toContain('Orch : alpha')
+  expect(drawn).not.toContain('Orch : real')
+})
+
 test('an open pane redraws on its own clock while its session waits, and the clock stops with any close', async () => {
   // A render was raised only by this session's own measure: a coordinator waiting on
   // the others saw their rows frozen at its last turn. The open starts a clock that
@@ -634,18 +654,31 @@ test('a coordinator\'s pane draws the round\'s first question under the orchestr
   const [round, , rows] = tree.props.children
   expect(JSON.stringify(rows)).toContain('Orch : low')
   expect(round.type).toBe('Box')
-  expect(round.props.marginBottom).toBe(1)
-  const kids = round.props.children
-  expect(kids.slice(1, 3).map((t: any) => [t.props.children, t.props.bold === true])).toEqual([
-    ['Orch : low', true],
-    ['Question : Merge it?', false],
+  const card = round.props.children[1]
+  expect(card).toBe(cardOf(tree))
+  expect(card.props).toMatchObject({ borderStyle: 'round', borderColor: 'suggestion', flexDirection: 'column', gap: 1 })
+  expect(pieces(card.props.children[0])).toEqual([{ text: 'Orch : low', color: 'suggestion', bold: true }])
+  expect(drawScreen(card, 60)).toEqual([
+    '╭──────────────────────────────────────────────────────────╮',
+    '│                                                          │',
+    '│  Orch : low                                              │',
+    '│                                                          │',
+    '│  QUESTION                                                │',
+    '│    Merge it?                                             │',
+    '│                                                          │',
+    '│  CHOICES                                                 │',
+    '│    [A]  merge it now — the release goes out today        │',
+    '│                                                          │',
+    '│    [B]  wait for the next review — a day lost  ★         │',
+    '│                                                          │',
+    '│    [C]  close it — the work is dropped                   │',
+    '│                                                          │',
+    '│  Choose: B (recommended)                                 │',
+    '│                                                          │',
+    '│  Other answer: type another answer                       │',
+    '╰──────────────────────────────────────────────────────────╯',
   ])
-  const drawn = (t: any): string => t.type === 'Text' ? `Text ${t.props.children}` : t.type === 'Box' ? t.props.children.map(drawn).join(' | ') : `${t.type} ${t.props.label}`
-  expect(kids.slice(3).map(drawn)).toEqual([
-    'Text A) merge it now — the release goes out today | Text B) wait for the next review — a day lost  (recommended) | Text C) close it — the work is dropped',
-    'Select Choose',
-    'Input Other answer',
-  ])
+  expect(card.props.children.slice(-2).map((k: any) => k.type)).toEqual(['Select', 'Input'])
   expect(texts(tree).at(-1)).toBe('ctrl+x tab or a click: give the pane the keys · arrows: move · Enter: choose · Esc: back to the prompt')
 })
 
@@ -690,7 +723,21 @@ test('a question whose sender has ended is not drawn, nor counted: only the live
   const asked = entry('Orch : live', '2026-10-18T10:03:00.000Z', { session: 'live', choices: CHOICES, recommendation: 'B' })
   for (const e of [gone, asked]) fx.files.set(`${ROUND}/${e.id}.json`, JSON.stringify(e) + '\n')
   const [round] = (await coordinatorRender(fx)).props.children
-  expect(round.props.children.slice(0, 2).map((t: any) => t.props.children)).toEqual(['Questions for you — 1 pending', 'Orch : live'])
+  expect(texts(round)).toEqual([
+    'Questions for you — 1 pending',
+    'Orch : live',
+    'QUESTION',
+    'Merge it?',
+    'CHOICES',
+    '[A]',
+    'merge it now — the release goes out today',
+    '[B]',
+    'wait for the next review — a day lost',
+    '  ★',
+    '[C]',
+    'close it — the work is dropped',
+    '─'.repeat(40),
+  ])
   expect(JSON.stringify(round)).not.toContain('Orch : gone')
   // Every sender ended: nothing is drawn below the rows.
   fx.files.delete(`${SESSIONS}/live`)
@@ -857,8 +904,9 @@ test('an orchestrator waiting for the operator draws a warning dot, a Status lin
   expect(pieces(block.props.children[0])[0]).toEqual({ text: '●', color: 'warning', bold: false })
   const [, status, blocks] = block.props.children
   expect(status.props.paddingLeft).toBe(2)
+  expect(status.props.children[0].props).toMatchObject({ width: 8, flexShrink: 0 })
   const [label, words] = pieces(status)
-  expect(label).toEqual({ text: 'Status: ', bold: false })
+  expect(label).toEqual({ text: 'Status:', bold: false })
   expect(words.color).toBe('warning')
   expect(words.text).toMatch(/^waiting for the operator since \d\d:\d\d$/)
   expect(blocks.props.paddingLeft).toBe(2)
@@ -889,7 +937,7 @@ test('a done orchestrator draws a success dot and one Status line in success, wi
   expect(block.props.children.length).toBe(2)
   expect(pieces(block.props.children[0])[0]).toEqual({ text: '●', color: 'success', bold: false })
   const [label, words] = pieces(block.props.children[1])
-  expect(label.text).toBe('Status: ')
+  expect(label.text).toBe('Status:')
   expect(words.color).toBe('success')
   expect(words.text).toMatch(/^done since \d\d:\d\d, proposes to be closed$/)
 })
@@ -908,11 +956,11 @@ test('a remote orchestrator keeps its machine in its line', async () => {
   expect(text(pieces(tree.props.children[2].props.children[0]))).toBe('● Orch : r · orchestrator · remote mini · 30% · 3m')
 })
 
-test('no empty line separates two blocks', async () => {
+test('one blank line separates two blocks', async () => {
   const tree = await paneTree({ a: orch('Orch : a', { context_percent: 40 }), b: orch('Orch : b') })
   const [, , first, second] = tree.props.children
   expect(first.props.marginTop).toBeUndefined()
-  expect(second.props.marginTop).toBeUndefined()
+  expect(second.props.marginTop).toBe(1)
   expect(pieces(first.props.children[0])[2].text).toBe('Orch : a')
 })
 
@@ -958,19 +1006,22 @@ test('the questions section is titled in bold suggestion, with an open question 
   const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
   const tree = await paneTree({ low: orch('Orch : low') }, [asked])
   const section = tree.props.children[0]
-  expect(section.props.marginBottom).toBe(1)
-  const [title, header, body, list] = section.props.children
-  const [a, b, c] = list.props.children
-  expect(pieces(body)).toEqual([{ text: 'Question : Merge it?', bold: false }])
+  const [title, card] = section.props.children
   expect(pieces(title)).toEqual([{ text: 'Questions for you — 1 pending', color: 'suggestion', bold: true }])
-  expect(pieces(header)).toEqual([{ text: 'Orch : low', bold: true }])
-  expect([a, b, c].map(choice => [choice.type, choice.props.children])).toEqual([
-    ['Text', 'A) merge it now — the release goes out today'],
-    ['Text', 'B) wait for the next review — a day lost  (recommended)'],
-    ['Text', 'C) close it — the work is dropped'],
+  const [header, field, list] = card.props.children
+  expect(pieces(header)).toEqual([{ text: 'Orch : low', color: 'suggestion', bold: true }])
+  expect(pieces(field)).toEqual([{ text: 'QUESTION', color: 'suggestion', bold: true }, { text: 'Merge it?', bold: true }])
+  const [a, b, c] = findAll(list, n => n.type === 'Box' && n.props.flexDirection === 'row')
+  expect([a, b, c].map(choice => text(pieces(choice)))).toEqual([
+    '[A]merge it now — the release goes out today',
+    '[B]wait for the next review — a day lost  ★',
+    '[C]close it — the work is dropped',
   ])
-  expect(pieces(b)).toEqual([{ text: 'B) wait for the next review — a day lost  (recommended)', color: 'success', bold: true }])
-  expect([a, c].map(choice => [choice.props.bold, choice.props.color])).toEqual([[undefined, undefined], [undefined, undefined]])
+  expect(pieces(b).slice(1)).toEqual([
+    { text: 'wait for the next review — a day lost', color: 'success', bold: true },
+    { text: '  ★', color: 'success', bold: true },
+  ])
+  expect([a, c].map(choice => pieces(choice).slice(1).map(p => [p.bold, p.color]))).toEqual([[[false, undefined]], [[false, undefined]]])
 })
 
 test('no question: the section says none, or counts the orchestrators waiting when the round holds none', async () => {
@@ -978,6 +1029,7 @@ test('no question: the section says none, or counts the orchestrators waiting wh
   expect(pieces(none.props.children[0])).toEqual([
     { text: 'Questions for you', color: 'suggestion', bold: true },
     { text: 'none', bold: false },
+    { text: '─'.repeat(40), bold: false },
   ])
   const waits = { w1: orch('Orch : w1', { waiting: 'operator', waiting_since: SINCE }), w2: orch('Orch : w2', { waiting: 'operator', waiting_since: SINCE }), d: orch('Orch : d', { waiting: 'done', waiting_since: SINCE }) }
   const two = await paneTree(waits)
@@ -1030,6 +1082,11 @@ const button = (tree: any, key: string) => findAll(tree, n => n.type === 'Button
 const picker = (tree: any) => findAll(tree, n => n.type === 'Select')[0]
 const pick = (tree: any, value: string) => picker(tree).props.onSelect(value)
 const texts = (tree: any) => findAll(tree, n => n.type === 'Text' && typeof n.props.children === 'string').map(n => n.props.children as string)
+// The question's card: the bordered box the round's question is drawn in.
+const cardOf = (tree: any) => findAll(tree, n => n.type === 'Box' && n.props.borderStyle === 'round')[0]
+// A tree's rows as the terminal shows them, each cleared of the card's border and of the spaces
+// around its words.
+const shown = (tree: any, width = 200) => drawScreen(tree, width).map(line => line.replace(/^[│ ]+|[│ ]+$/g, ''))
 
 // A coordinator with one live orchestrator asking, its send recorded (or refused), its pane drawn.
 async function askingPane(asked: RoundEntry[], over: { refuse?: string; throws?: string; surface?: string } = {}) {
@@ -1070,7 +1127,8 @@ test('a message without lettered choices shows its text and the Other answer fie
   const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', question: `_Question_ : ${LONG}` })
   const { render } = await askingPane([asked])
   const tree = await render()
-  expect(texts(tree)).toContain(`Question : ${LONG}`)
+  expect(texts(tree)).toContain('QUESTION')
+  expect(texts(tree)).toContain(LONG)
   expect(input(tree).props).toMatchObject({ label: 'Other answer' })
   expect(findAll(tree, n => n.type === 'Button').length).toBe(0)
   expect(JSON.stringify(tree)).not.toContain('no lettered choices')
@@ -1093,7 +1151,7 @@ test('a pick of a choice answers the entry from the pane, sends the asking orche
   expect(fx.invalidated).toContain('ui.render')
   const after = await render()
   expect(texts(after)).toContain('Questions for you — 1 pending')
-  expect(texts(after)).toContain('Question : Rename it?')
+  expect(texts(after)).toContain('Rename it?')
 })
 
 test('a pick on a drawing whose entry was settled meanwhile writes and sends nothing', async () => {
@@ -1210,9 +1268,14 @@ test('the question\'s body is drawn without its emphasis markers, its stored tex
   const question = '_Question_ : **merge** it?\n_Context_ : The __review__ is *green*, _really_, see `pr-219` and snake_case_name.\n* a list item'
   const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', question })
   const { render, stored } = await askingPane([asked])
-  const drawn = texts(await render())
-  expect(drawn).toContain('Question : merge it?')
-  expect(drawn).toContain('Context : The review is green, really, see pr-219 and snake_case_name.\n* a list item')
+  const tree = await render()
+  const drawn = shown(tree)
+  expect(drawn).toContain('merge it?')
+  expect(drawn).toContain('The review is green, really, see pr-219 and snake_case_name.')
+  expect(drawn).toContain('* a list item')
+  // Bold kept bold, inline code in its colour, its backticks dropped.
+  expect(findAll(tree, n => n.type === 'Text' && n.props.children === 'merge').map(n => n.props.bold)).toEqual([true])
+  expect(findAll(tree, n => n.type === 'Text' && n.props.children === 'pr-219').map(n => n.props.color)).toEqual(['background'])
   expect(stored(asked.id).question).toBe(question)
 })
 
@@ -1238,7 +1301,7 @@ test('a wait that asks nothing, no field and no choice, is no question: neither 
   expect(roundLines([report])).toEqual([])
   const tree = await paneTree({ w: orch('Orch : w', { waiting: 'operator', waiting_since: SINCE, blocks: BLOCKS }) }, [report])
   const [section, , block] = tree.props.children
-  expect(texts(section)).toEqual(['Questions for you', 'none in the pane — 1 orchestrator waits for you: ask the coordinator'])
+  expect(texts(section)).toEqual(['Questions for you', 'none in the pane — 1 orchestrator waits for you: ask the coordinator', '─'.repeat(40)])
   expect(JSON.stringify(tree)).not.toContain('Takeover done')
   expect(JSON.stringify(tree)).not.toContain('pending')
   const [, status, blocks] = block.props.children
@@ -1258,7 +1321,7 @@ test('a labelled question without choices is still drawn and counted, beside a w
   const report = entry('Orch : w', '2026-10-18T10:05:00.000Z', { session: 'w', question: REPORT, blocks: BLOCKS })
   expect(roundLines([report, open])).toEqual([{ letter: null, text: 'Orch : w', bold: false }])
   const drawn = texts((await paneTree({ w: orch('Orch : w') }, [open, report])).props.children[0])
-  expect(drawn.slice(0, 3)).toEqual(['Questions for you — 1 pending', 'Orch : w', 'Question : Rename it?'])
+  expect(drawn).toEqual(['Questions for you — 1 pending', 'Orch : w', 'QUESTION', 'Rename it?', '─'.repeat(40)])
   expect(drawn.join('\n')).not.toContain('Takeover done')
 })
 
@@ -1288,12 +1351,14 @@ test('where the surface draws a picker the choices are one Select, its whole tex
     ],
   })
   // A picker's option is one line cut at the pane's width: each text is drawn whole above it,
-  // the recommended one in its own look.
-  const lines = findAll(tree, n => n.type === 'Text' && /^[A-C]\) /.test(String(n.props.children)))
-  expect(lines.map(n => [n.props.children, n.props.bold === true, n.props.color])).toEqual([
-    ['A) merge it now — the release goes out today', false, undefined],
-    ['B) wait for the next review — a day lost  (recommended)', true, 'success'],
-    ['C) close it — the work is dropped', false, undefined],
+  // its letter a badge, the recommended one in its own look with its star.
+  const badges = findAll(tree, n => n.type === 'Text' && /^\[[A-C]\]$/.test(String(n.props.children)))
+  expect(badges.map(n => [n.props.children, n.props.color])).toEqual([['[A]', 'suggestion'], ['[B]', 'success'], ['[C]', 'suggestion']])
+  const lines = findAll(tree, n => n.type === 'Box' && n.props.flexDirection === 'row' && n.props.children[0].props.width === 5)
+  expect(lines.map(n => [shown(n.props.children[1])[0], n.props.children[1].props.children[0].props.bold === true, n.props.children[1].props.children[0].props.color])).toEqual([
+    ['merge it now — the release goes out today', false, undefined],
+    ['wait for the next review — a day lost  ★', true, 'success'],
+    ['close it — the work is dropped', false, undefined],
   ])
 })
 
@@ -1304,9 +1369,9 @@ test('where the pane has no picker (mobile) each choice is one Button carrying i
   expect(picker(tree)).toBeUndefined()
   const buttons = findAll(tree, n => n.type === 'Button' && String(n.props.key).startsWith('choice:'))
   expect(buttons.map(n => [n.props.key, n.props.label, n.props.hotkey])).toEqual([
-    ['choice:A', 'A) merge it now — the release goes out today', 'a'],
-    ['choice:B', 'B) wait for the next review — a day lost  (recommended)', 'b'],
-    ['choice:C', 'C) close it — the work is dropped', 'c'],
+    ['choice:A', '[A] merge it now — the release goes out today', 'a'],
+    ['choice:B', '[B] wait for the next review — a day lost  ★', 'b'],
+    ['choice:C', '[C] close it — the work is dropped', 'c'],
   ])
   expect(findAll(tree, n => n.type === 'Box' && n.props.flexWrap === 'wrap')).toEqual([])
   expect(findAll(tree, n => n.type === 'Button' && n.props.label === 'B').length).toBe(0)
@@ -1405,11 +1470,11 @@ test('the Other answer field comes last, labelled, and replaces the in-session B
   expect(typeof input(tree).props.submitLabel).toBe('string')
   expect(button(tree, 'other')).toBeUndefined()
   expect(JSON.stringify(tree)).not.toContain('in the session')
-  const kids = tree.props.children[0].props.children
+  const kids = cardOf(tree).props.children
   expect(kids[kids.length - 1]).toBe(input(tree))
   const keys = tree.props.children.at(-1)
   expect(keys.props.children).toContain('Enter: choose')
-  expect(keys.props.dimColor).toBeUndefined()
+  expect(keys.props.dimColor).toBe(true)
 })
 
 test('the footer says how keys reach the selector, and names no letter where none answers', async () => {
@@ -1437,7 +1502,7 @@ test('a submitted text answers the entry from the pane and is sent to its sender
     text: `[module] The operator answered from the coordinator's pane at ${answered.answer!.at} — some text (question since 2026-10-18T10:03:00.000Z, blocks: phase 3)`,
   }])
   expect([...fx.files.keys()].some(p => p.includes('.tmp-'))).toBe(false)
-  expect(texts(await render())).toContain('Question : Rename it?')
+  expect(texts(await render())).toContain('Rename it?')
 })
 
 test('an empty or blank submit writes and sends nothing', async () => {
@@ -1755,32 +1820,57 @@ test('a question in the decide shape is one block: the sender and its own number
   const { render } = await askingPane([shapedEntry()])
   const tree = await render()
   const section = tree.props.children[0]
-  const drawn = texts(section)
-  expect(drawn.slice(0, 6)).toEqual([
-    'Questions for you — 1 pending',
-    'Orch : low — Question 5 of 6',
-    'Subject : the numbering of the pane\'s questions',
-    'Context : the pane shows « 1 of 1 » and « 5 of 6 ».',
-    'Question : which one stays?',
-    'Choices :',
+  const drawn = shown(section)
+  expect(drawn.slice(2, 21)).toEqual([
+    '',
+    'Orch : low · Question 5 / 6',
+    '',
+    'SUBJECT',
+    'the numbering of the pane\'s questions',
+    '',
+    'CONTEXT',
+    'the pane shows « 1 of 1 » and « 5 of 6 ».',
+    '',
+    'QUESTION',
+    'which one stays?',
+    '',
+    'CHOICES',
+    '[A]  the orchestrator\'s — it follows its wave  ★',
+    '',
+    '[B]  the pane\'s — it counts the queue',
+    '',
+    '★ Recommendation of the orchestrator : A — one numbering, its own',
+    '',
   ])
-  expect(drawn).toContain('Recommendation of the orchestrator : A — one numbering, its own')
   for (const gone of ['Recorded', 'You decide', 'blocks:', '1 of 1 —']) expect(drawn.some(t => t.startsWith(gone))).toBe(false)
   // One numbering: the sender's; the pane's own count is the title's alone.
-  expect(drawn.filter(t => / of \d/.test(t) && !t.startsWith('Context')).length).toBe(1)
+  expect(drawn.filter(t => /\d \/ \d/.test(t)).length).toBe(1)
+  // Each label upper-case in suggestion, its value indented under it: the context dim, the
+  // question bold.
+  const labels = findAll(cardOf(tree), n => n.type === 'Text' && /^[A-Z]+$/.test(String(n.props.children)))
+  expect(labels.map(n => [n.props.children, n.props.color, n.props.bold])).toEqual([
+    ['SUBJECT', 'suggestion', true], ['CONTEXT', 'suggestion', true], ['QUESTION', 'suggestion', true], ['CHOICES', 'suggestion', true],
+  ])
+  const value = (words: string) => findAll(cardOf(tree), n => n.type === 'Text' && n.props.children === words)[0].props
+  expect(value('the pane shows « 1 of 1 » and « 5 of 6 ».')).toMatchObject({ dimColor: true })
+  expect(value('which one stays?')).toMatchObject({ bold: true })
+  expect(findAll(cardOf(tree), n => n.type === 'Box' && n.props.paddingLeft === 2).length).toBe(4)
 })
 
 test('the choices are a blank line apart, and the recommendation and the picker each a blank line below what precedes', async () => {
   const { render } = await askingPane([shapedEntry()])
-  const kids = (await render()).props.children[0].props.children
-  const list = kids.find((k: any) => k.type === 'Box' && k.props.gap === 1)
+  const card = cardOf(await render())
+  expect(card.props.gap).toBe(1)
+  const list = findAll(card, n => n !== card && n.type === 'Box' && n.props.gap === 1)[0]
   expect(list.props.flexDirection).toBe('column')
-  expect(list.props.children.map((t: any) => t.props.children)).toEqual([
-    'A) the orchestrator\'s — it follows its wave  (recommended)',
-    'B) the pane\'s — it counts the queue',
+  expect(list.props.children.map((choice: any) => shown(choice)[0])).toEqual([
+    '[A]  the orchestrator\'s — it follows its wave  ★',
+    '[B]  the pane\'s — it counts the queue',
   ])
-  const after = kids.slice(kids.indexOf(list) + 1)
-  expect(after.map((k: any) => [k.props.marginTop, k.props.children[0].type])).toEqual([[1, 'Text'], [1, 'Select']])
+  const kids = card.props.children
+  expect(kids.slice(-2).map((k: any) => k.type)).toEqual(['Text', 'Select'])
+  expect(textOf(kids.at(-2))).toBe('★ Recommendation of the orchestrator : A — one numbering, its own')
+  expect(kids.at(-2).props.children[0].props).toMatchObject({ color: 'success', children: '★ ' })
 })
 
 test('each choice\'s text is drawn once: the picker\'s options carry their letter, the collapsed line a prompt to choose', async () => {
@@ -1813,15 +1903,15 @@ test('answers not delivered are one line at the section\'s foot, below the next 
   const notices = kids.filter((k: any) => k.type === 'Text' && String(k.props.children).startsWith('not delivered:'))
   expect(notices.length).toBe(1)
   expect(notices[0].props.children.split(' · ').length).toBe(2)
-  expect(kids.at(-1)).toBe(notices[0])
-  expect(kids[1].props.children).toBe('Orch : low')
+  expect(kids.at(-2)).toBe(notices[0])
+  expect(texts(kids[1])[0]).toBe('Orch : low')
 })
 
-test('once the pane holds the keys the key line no longer says how to give them, and it is never dim', async () => {
+test('once the pane holds the keys the key line no longer says how to give them, and it is dim', async () => {
   const { render } = await askingPane([shapedEntry()])
   const keys = (await render({ isFocused: true })).props.children.at(-1)
   expect(keys.props.children).toBe('arrows: move · Enter: choose · Esc: back to the prompt')
-  expect(keys.props.dimColor).toBeUndefined()
+  expect(keys.props.dimColor).toBe(true)
 })
 
 test('the track has one cell per window row, its thumb the window\'s share and place; none when the tree fits', () => {
@@ -1876,7 +1966,7 @@ test('over a tree taller than its window, the track and the key line are drawn a
   expect(rows).toBe(wrapWords('ctrl+x tab or a click: give the pane the keys · arrows: move · Enter: choose · Esc: back to the prompt', 48).length)
   expect(top.tree.props.paddingTop).toBe(rows)
   expect(top.keys.props).toMatchObject({ top: 0, left: 0, width: 48 })
-  expect(top.keys.props.children.every((t: any) => t.props.children.length === 48 && t.props.dimColor === undefined)).toBe(true)
+  expect(top.keys.props.children.every((t: any) => t.props.children.length === 48 && t.props.dimColor === true)).toBe(true)
   expect(top.keys.props.children.map((t: any) => t.props.children.trimEnd()).join(' ')).toContain('Enter: choose')
   // The key line is pinned: not drawn a second time in the flow.
   expect(texts(top.tree).filter(t => t.includes('Enter: choose')).length).toBe(1)
@@ -1895,12 +1985,192 @@ test('the pane opens asking the keys, so its picker answers at once over an empt
 })
 
 test('the rows the module counts are the rows the tree draws: a track exactly when they pass the window', async () => {
-  // At 200 columns nothing wraps. The section: its title, the header, four fields, A, a blank,
-  // B, a blank, the recommendation, a blank, the picker (13); its bottom margin (1); the
-  // orchestrators' title (1) and one row (1); the key line pinned above them (1): 17.
+  // At 200 columns nothing wraps. The title (1); the card: its border (2) and top padding (1),
+  // its header (1), three fields of two rows (6), the choices' label, A, a blank and B (4), the
+  // recommendation (1), the picker (1), a blank between each two (6); the rule and the blank
+  // above it (2); the orchestrators' title (1) and one row (1); the key line (1): 28.
   const { render } = await askingPane([shapedEntry()])
+  const rows = drawScreen(await render({ bodyColumns: 200 }), 198).length
+  expect(rows).toBe(28)
   const track = async (bodyRows: number) => (await render({ scroll: { offset: 0, bodyRows }, bodyColumns: 200 }))
     .props.children.filter((k: any) => k.props?.position === 'absolute').length
-  expect(await track(17)).toBe(0)
-  expect(await track(16)).toBe(2)
+  expect(await track(rows)).toBe(0)
+  expect(await track(rows - 1)).toBe(2)
+})
+
+// --- one question at a time -----------------------------------------------------------------
+
+const twoQuestions = (over: Partial<RoundEntry> = {}) => entry('Orch : low', '2026-10-25T10:03:00.000Z', { session: 'low', question: TWO_QUESTIONS, blocks: 'questions 3 and 4', ...over })
+
+test('an entry that asks two questions is one card per question, its title the sender and its number, the next one named below it', async () => {
+  const { render } = await askingPane([twoQuestions()])
+  const tree = await render()
+  const section = tree.props.children[0]
+  expect(texts(section)[0]).toBe('Questions for you — 2 pending')
+  expect(texts(cardOf(tree))[0]).toBe('Orch : low · Question 3 / 4')
+  expect(shown(cardOf(tree))).not.toContain('rythme de publication de la v2')
+  expect(picker(tree).props.options.map((o: any) => o.label)).toEqual(['A (recommended)', 'B', 'Other answer: type it below'])
+  const next = section.props.children[2]
+  expect(next.props).toMatchObject({ dimColor: true, children: 'next: Question 4 / 4 — rythme de publication de la v2' })
+})
+
+test('answering the first question moves to the next, sends nothing, and the last answer sends every one, each with its number', async () => {
+  const { sent, render, stored } = await askingPane([twoQuestions()])
+  const first = await render()
+  expect(picker(first).props.key).toBe(`choices:${twoQuestions().id}:1`)
+  await pick(first, 'A')
+  expect(sent).toEqual([])
+  expect(stored(twoQuestions().id).status).toBe('open')
+  const second = await render()
+  expect(texts(second)[0]).toBe('Questions for you — 1 pending')
+  expect(texts(cardOf(second))[0]).toBe('Orch : low · Question 4 / 4')
+  expect(picker(second).props.key).toBe(`choices:${twoQuestions().id}:2`)
+  expect(texts(second).some(t => t.startsWith('next:'))).toBe(false)
+  // A press landing late on the first question's picker answers nothing more.
+  await pick(first, 'B')
+  expect(sent).toEqual([])
+  await pick(second, 'B')
+  const answered = stored(twoQuestions().id)
+  expect(answered.status).toBe('answered')
+  expect(answered.answer!.text).toBe(`Question 3 sur 4: A : ${FIRST_A} · Question 4 sur 4: B : ${SECOND_B}`)
+  expect(sent.length).toBe(1)
+  expect(sent[0].text).toContain(`— Question 3 sur 4: A : ${FIRST_A} · Question 4 sur 4: B : ${SECOND_B} (question since`)
+  expect(texts(await render())[0]).toBe('Questions for you')
+})
+
+test('a typed answer to one question of several is kept with its number, and its field is the question\'s own', async () => {
+  const { sent, render, stored } = await askingPane([twoQuestions()])
+  await pick(await render(), 'other')
+  const typing = await render()
+  expect(input(typing).props.key).toBe(`answer:${twoQuestions().id}:1`)
+  await input(typing).props.onSubmit('  neither, keep 1.14  ')
+  const second = await render()
+  expect(input(second)).toBeUndefined()
+  await pick(second, 'A')
+  expect(stored(twoQuestions().id).answer!.text).toBe(`Question 3 sur 4: neither, keep 1.14 · Question 4 sur 4: A : ${SECOND_A}`)
+  expect(sent.length).toBe(1)
+})
+
+test('an entry whose sender withdrew it between two answers forgets the first, and its count goes with it', async () => {
+  const { fx, render } = await askingPane([twoQuestions()])
+  await pick(await render(), 'A')
+  fx.files.set(`${ROUND}/${twoQuestions().id}.json`, JSON.stringify({ ...twoQuestions(), status: 'withdrawn' }) + '\n')
+  expect(texts(await render())[0]).toBe('Questions for you')
+  // Asked again, it starts at its first question.
+  fx.files.set(`${ROUND}/${twoQuestions().id}.json`, JSON.stringify(twoQuestions()) + '\n')
+  expect(texts(cardOf(await render()))[0]).toBe('Orch : low · Question 3 / 4')
+})
+
+test('without a picker (mobile) the same card draws one Button per choice, and answers question by question', async () => {
+  const { sent, render, stored } = await askingPane([twoQuestions()], { surface: 'mobile' })
+  const tree = await render()
+  expect(cardOf(tree).props).toMatchObject({ borderStyle: 'round', borderColor: 'suggestion' })
+  expect(findAll(tree, n => n.type === 'Button' && String(n.props.key).startsWith('choice:')).map(n => n.props.label)).toEqual([
+    `[A] ${FIRST_A}  ★`,
+    `[B] ${FIRST_B}`,
+  ])
+  await button(tree, 'choice:A').props.onPress()
+  const second = await render()
+  expect(texts(cardOf(second))[0]).toBe('Orch : low · Question 4 / 4')
+  await button(second, 'choice:B').props.onPress()
+  expect(stored(twoQuestions().id).answer!.text).toBe(`Question 3 sur 4: A : ${FIRST_A} · Question 4 sur 4: B : ${SECOND_B}`)
+  expect(sent.length).toBe(1)
+})
+
+test('at 60 columns the rows the module counts for a two-question entry are the rows the tree draws', async () => {
+  const { render } = await askingPane([twoQuestions()])
+  for (const isFocused of [false, true]) {
+    const rows = drawScreen(await render({ bodyColumns: 60, isFocused }), 58, { focused: isFocused }).length
+    const track = async (bodyRows: number) => (await render({ scroll: { offset: 0, bodyRows }, bodyColumns: 60, isFocused }))
+      .props.children.filter((k: any) => k.props?.position === 'absolute' && k.props.right === 0).length
+    expect(await track(rows)).toBe(0)
+    expect(await track(rows - 1)).toBe(1)
+  }
+})
+
+// --- the references to a pull request --------------------------------------------------------
+
+const links = (tree: any) => findAll(tree, n => n.type === 'Link').map(n => [n.props.children, n.props.href])
+
+test('each pull request a blocks text names is a link of its own, a glued pair two links', async () => {
+  const tree = await paneTree({
+    w: orch('Orch : w', { waiting: 'operator', waiting_since: SINCE, blocks: GLUED_BLOCKS }),
+    i: orch('Orch : i', { repo: 'acme/infra' }),
+    g: orch('Orch : g', { repo: 'acme/geo-git-flow' }),
+  })
+  expect(links(tree)).toEqual([
+    ['infra#195', 'https://github.com/acme/infra/pull/195'],
+    ['infra#196', 'https://github.com/acme/infra/pull/196'],
+    ['geo-git-flow#21', 'https://github.com/acme/geo-git-flow/pull/21'],
+    ['geo-git-flow#22', 'https://github.com/acme/geo-git-flow/pull/22'],
+  ])
+  // The text reads as it was written, the slash between the two links plain.
+  const blocks = findAll(tree, n => n.type === 'Box' && n.props.flexDirection === 'row' && n.props.paddingLeft === 2).at(-1)
+  expect(textOf(blocks.props.children[1])).toBe(GLUED_BLOCKS)
+})
+
+test('a reference whose owner the module does not know stays plain text', async () => {
+  const tree = await paneTree({ w: orch('Orch : w', { waiting: 'operator', waiting_since: SINCE, blocks: GLUED_BLOCKS }), i: orch('Orch : i', { repo: 'acme/infra' }) })
+  expect(links(tree).map(([words]) => words)).toEqual(['infra#195', 'infra#196'])
+  expect(texts(tree).some(t => t.includes('geo-git-flow#21/geo-git-flow#22'))).toBe(true)
+  expect(links(await paneTree({ w: orch('Orch : w', { waiting: 'operator', waiting_since: SINCE, blocks: GLUED_BLOCKS }) }))).toEqual([])
+})
+
+test('a reference in a question\'s fields or choices is a link too, its owner this session\'s own repository', async () => {
+  const fx = fakeDollar({ launchName: 'Coord : main', origin: 'git@github.com:acme/speculoos.git' })
+  fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : low', context_percent: 30 })) + '\n')
+  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', {
+    session: 'low', question: '_Question_ : merge speculoos#53?\n- **A** : yes, then speculoos#54\n- **B** : no',
+    choices: [{ letter: 'A', text: 'yes, then speculoos#54' }, { letter: 'B', text: 'no' }],
+  })
+  fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
+  expect(links(await coordinatorRender(fx))).toEqual([
+    ['speculoos#53', 'https://github.com/acme/speculoos/pull/53'],
+    ['speculoos#54', 'https://github.com/acme/speculoos/pull/54'],
+  ])
+})
+
+// The host tells nothing of a surface's hyperlinks: where one is not drawn, it writes the URL after
+// the link's text. The module counts that case, the longer one, so its track is never short.
+const withUrls = (node: any): any => {
+  if (!node || typeof node !== 'object') return node
+  if (node.type === 'Link') return { type: 'Text', props: { children: `${textOf(node)} ${node.props.href}` } }
+  const kids = node.props.children
+  return { ...node, props: { ...node.props, ...(kids === undefined ? {} : { children: Array.isArray(kids) ? kids.map(withUrls) : withUrls(kids) }) } }
+}
+
+test('at 60 columns the rows counted for a text of links are the rows drawn where the URL is written after each', async () => {
+  const { fx, render } = await askingPane([])
+  for (const [key, value] of Object.entries({
+    w: orch('Orch : w', { waiting: 'operator', waiting_since: SINCE, blocks: GLUED_BLOCKS }),
+    i: orch('Orch : i', { repo: 'acme/infra' }),
+    g: orch('Orch : g', { repo: 'acme/geo-git-flow' }),
+  })) fx.files.set(`${SESSIONS}/${key}`, JSON.stringify(value) + '\n')
+  const rows = drawScreen(withUrls(await render({ bodyColumns: 60 })), 58).length
+  expect(rows).toBeGreaterThan(drawScreen(await render({ bodyColumns: 60 }), 58).length)
+  const track = async (bodyRows: number) => (await render({ scroll: { offset: 0, bodyRows }, bodyColumns: 60 }))
+    .props.children.filter((k: any) => k.props?.position === 'absolute' && k.props.right === 0).length
+  expect(await track(rows)).toBe(0)
+  expect(await track(rows - 1)).toBe(1)
+})
+
+test('the choices have a label of their own unless the sender labelled them, never both', async () => {
+  const labelled = await (await askingPane([twoQuestions()])).render()
+  expect(texts(cardOf(labelled))).toContain('CHOIX')
+  expect(texts(cardOf(labelled))).not.toContain('CHOICES')
+  const bare = await (await askingPane([entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })])).render()
+  expect(texts(cardOf(bare))).toContain('CHOICES')
+})
+
+test('a dim rule line, the pane\'s width wide, stands between the questions and the orchestrators', async () => {
+  for (const [props, width] of [[{}, 40], [{ bodyColumns: 60 }, 58]] as const) {
+    const { render } = await askingPane([entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })])
+    const tree = await render(props)
+    const [section, heading] = tree.props.children
+    const rule = section.props.children.at(-1)
+    expect(rule.props.marginTop).toBe(1)
+    expect(rule.props.children).toHaveLength(1)
+    expect(rule.props.children[0].props).toMatchObject({ dimColor: true, wrap: 'truncate-end', children: '─'.repeat(width) })
+    expect(texts(heading)).toEqual(['Orchestrators'])
+  }
 })

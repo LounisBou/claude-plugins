@@ -48,6 +48,7 @@ test('the measure file is one JSON line at the session path', async () => {
   await writeMeasure($, 's1',
     { context_tokens: 123, context_window: 1000, context_percent: 12, model: 'a-model', updated_at: 't' })
   expect(measureFilePath('/cfg', 's1')).toBe('/cfg/claude-orchestrator/measure/s1.json')
+  expect(measureFilePath('/cfg', 's1', '/sandbox/module')).toBe('/sandbox/module/measure/s1.json')
   expect(writes[0][0]).toBe('/cfg/claude-orchestrator/measure/s1.json')
   expect(writes[0][1]).toBe('{"context_tokens":123,"context_window":1000,"context_percent":12,"model":"a-model","updated_at":"t"}\n')
 })

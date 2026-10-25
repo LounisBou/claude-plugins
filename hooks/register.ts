@@ -40,6 +40,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
 async function logLine($: any, message: string): Promise<void> {
   try {
     const config = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${await $.env.get('HOME')}/.claude`
-    await $.process.run(logArgv($.plugin.root, config, 'register', message), { timeoutMs: LOG_TIMEOUT_MS })
+    await $.process.run(logArgv($.plugin.root, config, 'register', message, undefined, await $.env.get('ORCHESTRATOR_MODULE_DIR')), { timeoutMs: LOG_TIMEOUT_MS })
   } catch { /* the log itself never blocks the handler that failed */ }
 }

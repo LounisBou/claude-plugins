@@ -180,18 +180,19 @@ Only such a question ends on that line; a report asking nothing, on its other ma
 Its fields, in his language: `**Question i of N**`, `_Subject_ :`, `_Context_ :`,
 `_Question_ :`, `_Choices_ :` then one `- **A** : <text>` each, `_Recommendation_ : A — <why>`;
 `waiting: operator (urgent) — blocks: <…>` only for a production fault, a detected
-regression, a decision under a real deadline. His answer returns verbatim, dated, via it or here.
+regression, a real deadline. Split references in `blocks:` by `, `, never `/`.
+His answer returns verbatim, dated, via it or here.
 A pause it relays: its bullet in `references/lifecycle.md`.
 
 **When the orchestrator's own session lacks what the role needs — a PATH, a credential the
 sandbox will not open, a tool the launch did not carry — the repair is a successor, not a
-favour.** Spawn the successor through the current launcher with the environment the task
+favour.** Spawn it through the current launcher with the environment the task
 needs, hand over, close the old tab. Asking a peer, or the operator, to run what your session
 cannot is permission laundering.
 
 ## Where the rest lives
 
-- The hooks module (`docs/design.md` §3) owns the measured facts — each session's fill every turn, the band, the gate's line, `/orchestrator-status`'s rows — and the measure file (`claude-orchestrator/measure/` in the host's configuration directory), the one channel an outside process reads.
+- The hooks module (`docs/design.md` §3) owns the measured facts — each session's fill every turn, the band, the gate's line, `/orchestrator-status`'s rows — and the measure file (`claude-orchestrator/measure/` in the host's config dir), the one channel an outside process reads.
 - `references/briefs.md`: « Prerequisites and phase rules »; the directives rule (see « Carried at every step »), with its guard over your own directives.
 - `references/lifecycle.md`: « Boundaries that stay yours » (environment preparation, pipelining) and the tab-close rationalization.
 - `references/review.md`: « Depth vs scope, and the rationalizations observed ».
