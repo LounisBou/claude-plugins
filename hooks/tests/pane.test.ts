@@ -359,14 +359,16 @@ function commandRuns(register: (on: any) => void): { matcher: object | undefined
   return runs
 }
 
-// Measured live: the host hands a command carrying `name: <short>` to the hook as
-// `<plugin>:<short>`, typed as `/<short>`, `/<plugin>:<file>` or `/<plugin>:<short>` alike;
-// the file's own stem never reaches the matcher.
-test('the supervision answers to its two short names, one pane whichever was typed', async () => {
+// Measured live: the host hands the plugin's command as `orchestrator:<file>` and the
+// installer's user command as its bare short name; the 0.80.0 `orchestrator:<short>` forms stay.
+test('the supervision answers to every form of its two short names, one pane whichever was typed', async () => {
   const runs = commandRuns(registerSupervision)
   expect(runs.map(run => run.matcher)).toEqual([
     { command: 'orchestrator:orchestrator-supervision' },
     { command: 'orchestrator:coordinator-supervision' },
+    { command: 'orchestrator:supervision' },
+    { command: 'orchestrator-supervision' },
+    { command: 'coordinator-supervision' },
   ])
   const [orchestratorForm, coordinatorForm] = runs.map(run => run.handler)
   for (const [opener, closer] of [[orchestratorForm, coordinatorForm], [coordinatorForm, orchestratorForm]]) {
@@ -376,6 +378,29 @@ test('the supervision answers to its two short names, one pane whichever was typ
     expect(coord.opened.length).toBe(1)
     expect(coord.closed).toEqual([{ id: 'supervision' }])
   }
+})
+
+test('a bare short name toggles the pane when its user command is the plugin\'s copy, and runs as written otherwise', async () => {
+  const runs = commandRuns(registerSupervision)
+  const passed = (x: unknown) => ({ passed: x })
+  for (const command of ['coordinator-supervision', 'orchestrator-supervision']) {
+    const hook = runs.find(run => (run.matcher as any).command === command)!.handler
+    const e = { command, args: '' }
+    const marked = fakeDollar({ launchName: 'Coord : main' })
+    marked.files.set(`${HOME}/.claude/commands/${command}.md`, '---\ninstalled-by: claude-orchestrator\ndescription: Open or close the supervision pane\n---\n')
+    expect((await hook(marked.dollar, e, passed)).text).toContain('pane opened')
+    expect(marked.opened.length).toBe(1)
+    const foreign = fakeDollar({ launchName: 'Coord : main' })
+    foreign.files.set(`${HOME}/.claude/commands/${command}.md`, '---\ndescription: mine\n---\n')
+    expect(await hook(foreign.dollar, e, passed)).toEqual({ passed: e })
+    expect(foreign.opened).toEqual([])
+    const none = fakeDollar({ launchName: 'Coord : main' })
+    expect(await hook(none.dollar, e, passed)).toEqual({ passed: e })
+  }
+  // The plugin's own file, `/orchestrator:supervision`, needs no copy.
+  const plugin = runs.find(run => (run.matcher as any).command === 'orchestrator:supervision')!.handler
+  const orch = fakeDollar({ launchName: 'Orch : phase-3' })
+  expect((await plugin(orch.dollar, { command: 'orchestrator:supervision', args: '' }, passed)).text).toContain('pane opened')
 })
 
 test('/orchestrator-supervision opens the pane in a coordinator or an orchestrator session alone', async () => {

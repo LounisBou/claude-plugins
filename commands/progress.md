@@ -1,6 +1,5 @@
 ---
-name: orchestrator-progress
-description: Where the build stands — done, in flight, remaining, decisions pending — and the orchestrator's own context
+description: Where the build stands, and the orchestrator's context
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/dispatch-record.sh:*), Bash(git:*), Bash(gh:*), Bash(ls:*), Bash(jq:*), Bash(cat:*), Bash(date:*), ListAgents, Read, Edit
 ---
 

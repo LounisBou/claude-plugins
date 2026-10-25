@@ -1,6 +1,5 @@
 ---
-name: coordinator-end
-description: End the machine's coordinator, on the operator's word only — every orchestrator told, the record cleared and proved gone
+description: End the machine's coordinator, on the operator's word
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh:*), Bash(ls:*), Bash(rm:*), Bash(date:*), Read, ListAgents, SendMessage
 ---
 

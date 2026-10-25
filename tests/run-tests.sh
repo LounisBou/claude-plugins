@@ -3167,30 +3167,50 @@ check "no skill and no command of the plugin share a name" "" "$(name_collisions
 NCCMDS="$WORK/collision-commands"; mkdir -p "$NCCMDS"; cp "$ROOT"/commands/*.md "$NCCMDS"/; cp "$COORDCMD" "$NCCMDS/coordination.md"
 check "a command planted under a skill's name falls the check, and names it" "collision:coordination" \
   "$(name_collisions "$ROOT/skills" "$NCCMDS")"
-# The short names (the operator's ruling of 2026-10-24): every command answers to `/<name>`
-# by the `name:` of its frontmatter, the coordinator's `coordinator-…`, the others
-# `orchestrator-…`. The host hands a hook `orchestrator:<name>` whichever form was typed, so a
-# name lost silences the hook that matches it; and a command file the table does not know is
-# one whose short name nobody chose. The pane answers to both roles' names, one body twice.
+# The short names (the operator's rulings of 2026-10-24 and 2026-10-25): the plugin's commands
+# carry no `name:`, so the typeahead reads `/orchestrator:<file>` as it did, and the short names,
+# the coordinator's `coordinator-…`, the others `orchestrator-…`, come from `short-names.tsv`,
+# which the installer writes as user commands. A command file the table does not know is one
+# whose short name nobody chose. The pane answers to both roles' names, one body twice.
 COMMAND_NAMES='agents:orchestrator-agents audit:orchestrator-audit calibrate:orchestrator-calibrate coordinator:coordinator coordinator-decide:coordinator-decide coordinator-end:coordinator-end coordinator-supervision:coordinator-supervision decide:orchestrator-decide install:orchestrator-install progress:orchestrator-progress sleeping:orchestrator-sleeping status:orchestrator-status succeed:orchestrator-succeed supervision:orchestrator-supervision uninstall:orchestrator-uninstall'
-short_names_missing() {  # <commands dir>: one line per command without its short name, or unknown
+short_names_wrong() {  # <commands dir> <table>: one line per command named, unnamed or unknown
   local pair f stem
-  for pair in $COMMAND_NAMES; do
-    f="$1/${pair%%:*}.md"
-    [ "$(awk 'NR == 1 { next } /^---$/ { exit } { print }' "$f" 2>/dev/null | sed -n 's/^name: //p')" = "${pair#*:}" ] || echo "missing:${pair%%:*}"
-  done
   for f in "$1"/*.md; do
     stem=$(basename "$f" .md)
-    case " $COMMAND_NAMES " in *" $stem:"*) ;; *) echo "unknown:$stem" ;; esac
+    awk 'NR == 1 { next } /^---$/ { exit } { print }' "$f" | grep -q '^name: ' && echo "named:$stem"
+    awk -F '\t' -v s="$stem" '$2 == s { found = 1 } END { exit !found }' "$2" || echo "unknown:$stem"
+  done
+  for pair in $COMMAND_NAMES; do
+    awk -F '\t' -v s="${pair#*:}" -v f="${pair%%:*}" '$1 == s && $2 == f { found = 1 } END { exit !found }' "$2" \
+      || echo "missing:${pair%%:*}"
   done
 }
-check "every command carries its short name" "" "$(short_names_missing "$ROOT/commands")"
+check "no command carries a name, and the table gives each its short name" "" \
+  "$(short_names_wrong "$ROOT/commands" "$ROOT/short-names.tsv")"
 SNCMDS="$WORK/short-name-commands"; mkdir -p "$SNCMDS"; cp "$ROOT"/commands/*.md "$SNCMDS"/
-sed -i.bak '/^name: /d' "$SNCMDS/status.md"; rm -f "$SNCMDS"/*.bak; cp "$ROOT/commands/status.md" "$SNCMDS/stray.md"
-check "a command without its name, and one the table does not know, fail the check" "missing:status|unknown:stray" \
-  "$(short_names_missing "$SNCMDS" | paste -sd'|' -)"
+awk 'NR == 2 { print "name: orchestrator-status" } { print }' "$ROOT/commands/status.md" > "$SNCMDS/status.md"
+cp "$ROOT/commands/status.md" "$SNCMDS/stray.md"; grep -v '^orchestrator-agents' "$ROOT/short-names.tsv" > "$WORK/short-names.tsv"
+check "a command with a name, one the table does not know and one it lost fail the check" "unknown:agents|named:status|unknown:stray|missing:agents" \
+  "$(short_names_wrong "$SNCMDS" "$WORK/short-names.tsv" | paste -sd'|' -)"
 check "both supervision commands carry one body" "" \
-  "$(diff <(sed '/^name: /d' "$ROOT/commands/supervision.md") <(sed '/^name: /d' "$ROOT/commands/coordinator-supervision.md"))"
+  "$(diff "$ROOT/commands/supervision.md" "$ROOT/commands/coordinator-supervision.md")"
+# One short line each (the operator, 2026-10-25: ten to fifteen words at most, no more): the typeahead
+# draws a description beside its name and wraps a long one on two rows.
+long_descriptions() {  # <commands dir>: one line per command whose description is too long
+  local f d
+  for f in "$1"/*.md; do
+    d=$(awk 'NR == 1 { next } /^---$/ { exit } { print }' "$f" | sed -n 's/^description: //p')
+    [ -n "$d" ] || { echo "none:$(basename "$f" .md)"; continue; }
+    [ "$(printf '%s' "$d" | wc -w | tr -d ' ')" -le 15 ] && [ "$(printf '%s' "$d" | LC_ALL=en_US.UTF-8 wc -m | tr -d ' ')" -le 60 ] \
+      || echo "long:$(basename "$f" .md)"
+  done
+}
+check "every command's description is at most 15 words and 60 characters" "" "$(long_descriptions "$ROOT/commands")"
+LDCMDS="$WORK/long-descriptions"; mkdir -p "$LDCMDS"
+printf -- '---\ndescription: one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen\n---\n' > "$LDCMDS/words.md"
+printf -- '---\ndescription: %s\n---\n' "$(printf 'x%.0s' $(seq 1 61))" > "$LDCMDS/chars.md"
+printf -- '---\ndescription: Open the supervision pane\n---\n' > "$LDCMDS/short.md"
+check "sixteen words, or sixty-one characters, fail the check" "long:chars|long:words" "$(long_descriptions "$LDCMDS" | paste -sd'|' -)"
 check "both coordinator commands and the successor's brief load the coordination skill" "yes|yes|yes" \
   "$(spells "$COORDCMD" 'described in `orchestrator:coordination`')|$(spells "$COORDEND" 'described in `orchestrator:coordination`')|$(spells "$COORDTPL" '`orchestrator:coordination` FIRST')"
 check "each coordinator command carries its description and its allowed tools" "1|1|1|1" \
@@ -5463,9 +5483,9 @@ printf '#!/usr/bin/env bash\necho "a version I will not say"\n' > "$NBIN/claude"
 # Both scripts resolve CLAUDE_CONFIG_DIR before HOME: an operator's exported one would aim
 # every case below at his real configuration, and the uninstall at its removal. Each run
 # drops it, and the state override with it, so HOME alone decides where they act.
-inst() { env -u CLAUDE_CONFIG_DIR -u ORCHESTRATOR_STATE_DIR HOME="$1" ORCHESTRATOR_HOST_CLI="$HBIN/claude" bash "$ROOT/install.sh" "${@:2}"; }
-uninst() { env -u CLAUDE_CONFIG_DIR -u ORCHESTRATOR_STATE_DIR HOME="$1" bash "$ROOT/uninstall.sh" "${@:2}"; }
-instwith() { env -u CLAUDE_CONFIG_DIR -u ORCHESTRATOR_STATE_DIR HOME="$1" ORCHESTRATOR_HOST_CLI="$2" bash "$ROOT/install.sh"; }
+inst() { env -u CLAUDE_CONFIG_DIR -u ORCHESTRATOR_STATE_DIR -u ORCHESTRATOR_COMMANDS_DIR HOME="$1" ORCHESTRATOR_HOST_CLI="$HBIN/claude" bash "$ROOT/install.sh" "${@:2}"; }
+uninst() { env -u CLAUDE_CONFIG_DIR -u ORCHESTRATOR_STATE_DIR -u ORCHESTRATOR_COMMANDS_DIR HOME="$1" bash "$ROOT/uninstall.sh" "${@:2}"; }
+instwith() { env -u CLAUDE_CONFIG_DIR -u ORCHESTRATOR_STATE_DIR -u ORCHESTRATOR_COMMANDS_DIR HOME="$1" ORCHESTRATOR_HOST_CLI="$2" bash "$ROOT/install.sh"; }
 # The tab tooling's environment is planted, not built: a real build is network work the
 # suite must not wait on. The stand-in python answers the probe the installer makes.
 stub_venv() {
@@ -5713,6 +5733,85 @@ for spelling in '$HOME' '${HOME}' '~'; do
   check "a tap spelled $spelling is unwired, the follower keeps its spelling" \
     "$spelling/.claude/statusbar/statusline.sh" "$(jq -r '.statusLine.command' "$H7/.claude/settings.json")"
 done
+
+# The short names as user commands (the operator's ruling of 2026-10-25): the plugin's commands
+# read `/orchestrator:<file>` in the typeahead, and the installer writes `/coordinator`,
+# `/orchestrator-status` and the rest in the host's user commands directory. Each is a copy of
+# its plugin command with the plugin root spelled out (the host expands no plugin variable in a
+# user command, measured live) and a marker line, so an update rewrites its own files alone and
+# an operator's file of the same name is never touched.
+SNMARK='installed-by: claude-orchestrator'
+SNH="$WORK/home-short"; mkdir -p "$SNH/.claude"; stub_venv "$SNH"
+SND="$SNH/.claude/commands"
+snout=$(inst "$SNH" 2>&1)
+check "the installer writes one command per short name, each marked as the plugin's" "15|15|15" \
+  "$(ls "$SND" 2>/dev/null | wc -l | tr -d ' ')|$(grep -lx "$SNMARK" "$SND"/*.md 2>/dev/null | wc -l | tr -d ' ')|$(printf '%s\n' "$snout" | grep -c 'short command written: ')"
+check "each copy is its plugin command, the plugin root spelled out and the marker after the opening line" "" \
+  "$(diff <(sed "s#\${CLAUDE_PLUGIN_ROOT}#$ROOT#g" "$ROOT/commands/sleeping.md" | awk -v m="$SNMARK" 'NR == 2 { print m } { print }') "$SND/orchestrator-sleeping.md" 2>&1)"
+check "no copy keeps a plugin variable" "0" "$(cat "$SND"/*.md | grep -c 'CLAUDE_PLUGIN_ROOT')"
+check "every copy keeps its plugin command's description" "" \
+  "$(while IFS=$'\t' read -r short file; do diff <(sed -n 's/^description: //p' "$ROOT/commands/$file.md") <(sed -n 's/^description: //p' "$SND/$short.md") >/dev/null || echo "differs:$short"; done < "$ROOT/short-names.tsv")"
+check "every copy is its plugin command with the root spelled out and the marker after the opening line" "" \
+  "$(while IFS=$'\t' read -r short file; do diff <(sed "s#\${CLAUDE_PLUGIN_ROOT}#$ROOT#g" "$ROOT/commands/$file.md" | awk -v m="$SNMARK" 'NR == 2 { print m } { print }') "$SND/$short.md" >/dev/null || echo "differs:$short"; done < "$ROOT/short-names.tsv")"
+check "the pane's two short names carry one body, the file's own" "|" \
+  "$(diff <(sed 1,2d "$SND/coordinator-supervision.md") <(sed 1d "$ROOT/commands/coordinator-supervision.md"))|$(diff <(sed 1,2d "$SND/orchestrator-supervision.md") <(sed 1d "$ROOT/commands/supervision.md"))"
+# An update: a copy written by an earlier version names that version's root; it is rewritten.
+sed -i.bak "s#$ROOT#/old/plugin/root#g" "$SND/coordinator.md"; rm -f "$SND"/*.bak
+snout=$(inst "$SNH" 2>&1)
+check "an update rewrites a copy an earlier version wrote, and leaves the current ones" "0|1|14" \
+  "$(grep -c '/old/plugin/root' "$SND/coordinator.md")|$(printf '%s\n' "$snout" | grep -c 'short command rewritten: .*coordinator.md')|$(printf '%s\n' "$snout" | grep -c 'short command up to date: ')"
+# The operator's own file of the same name: kept as written, said, and skipped.
+printf -- '---\ndescription: my own coordinator\n---\nmine\n' > "$SND/coordinator.md"
+snout=$(inst "$SNH" 2>&1)
+check "an operator's file of the same name is never overwritten, and the installer says so" "mine|1" \
+  "$(tail -1 "$SND/coordinator.md")|$(printf '%s\n' "$snout" | grep -c "kept: $SND/coordinator.md is not this plugin's")"
+snout=$(uninst "$SNH" 2>&1)
+check "uninstall removes the plugin's copies alone, the operator's file kept" "coordinator.md|14" \
+  "$(ls "$SND")|$(printf '%s\n' "$snout" | grep -c 'short command removed: ')"
+SNDRY="$WORK/home-short-dry"; mkdir -p "$SNDRY/.claude"
+snout=$(inst "$SNDRY" --dry-run 2>&1)
+check "a dry run lists each short command and writes none" "none|15" \
+  "$([ -d "$SNDRY/.claude/commands" ] && echo written || echo none)|$(printf '%s\n' "$snout" | grep -c '\[dry-run\] short command written: ')"
+stub_venv "$SNDRY"; inst "$SNDRY" >/dev/null 2>&1
+snout=$(uninst "$SNDRY" --dry-run 2>&1)
+check "an uninstall dry run lists the copies and removes none" "15|15" \
+  "$(ls "$SNDRY/.claude/commands" | wc -l | tr -d ' ')|$(printf '%s\n' "$snout" | grep -c '\[dry-run\] short command removed: ')"
+# The module's own pass at each session start, `short-commands.sh sync`: a copy whose root
+# differs is rewritten, a current one untouched, a foreign one untouched, a missing one left
+# missing (the operator removed it), and the directory the override names is the one written.
+SNS="$WORK/short-sync"; mkdir -p "$SNS"
+ORCHESTRATOR_COMMANDS_DIR="$SNS" bash "$ROOT/short-commands.sh" install >/dev/null 2>&1
+sed -i.bak "s#$ROOT#/old/plugin/root#g" "$SNS/orchestrator-audit.md"; rm -f "$SNS"/*.bak
+printf -- '---\ndescription: my own status\n---\nmine\n' > "$SNS/orchestrator-status.md"
+rm -f "$SNS/orchestrator-decide.md"
+touch -t 202001010000 "$SNS/coordinator.md"
+snout=$(bash "$ROOT/short-commands.sh" sync --dir "$SNS" 2>&1)
+check "sync rewrites a copy whose root differs and says it" "0|  short command rewritten: $SNS/orchestrator-audit.md" \
+  "$(grep -c '/old/plugin/root' "$SNS/orchestrator-audit.md")|$snout"
+check "sync leaves a current copy, a foreign file and a removed one as they are" "202001010000|mine|absent" \
+  "$(date -r "$SNS/coordinator.md" +%Y%m%d%H%M)|$(tail -1 "$SNS/orchestrator-status.md")|$([ -f "$SNS/orchestrator-decide.md" ] && echo present || echo absent)"
+check "sync on a directory that does not exist writes nothing and succeeds" "0|none" \
+  "$(bash "$ROOT/short-commands.sh" sync --dir "$WORK/no-such-dir" >/dev/null 2>&1; echo $?)|$([ -d "$WORK/no-such-dir" ] && echo created || echo none)"
+
+# A text read before the installer ran cannot name a command the installer writes: the short
+# form does not exist on a fresh machine, the plugin's own `orchestrator:install` does.
+check "no first-run text names the short form of the install command" "0|0|0" \
+  "$(grep -c '/orchestrator-install' "$ROOT/skills/iterm-agents/scripts/iterm_agent.py")|$(grep -c '/orchestrator-install' "$ROOT/skills/iterm-agents/references/commands.md")|$(grep -cE 'Run `/orchestrator-install`|^\| `/orchestrator-install` \|' "$ROOT/README.md")"
+# A dangling symlink of the same name is the operator's too: `[ -e ]` is false on it, and the
+# writer would have replaced the link with a copy.
+SNL="$WORK/short-link"; mkdir -p "$SNL"; ln -s "$WORK/no-such-target" "$SNL/coordinator.md"
+snout=$(bash "$ROOT/short-commands.sh" install --dir "$SNL" 2>&1)
+check "a dangling symlink of the same name is kept as it is, and the installer says so" "link|$WORK/no-such-target|1" \
+  "$([ -L "$SNL/coordinator.md" ] && echo link || echo replaced)|$(readlink "$SNL/coordinator.md")|$(printf '%s\n' "$snout" | grep -c "kept: $SNL/coordinator.md is not this plugin's")"
+bash "$ROOT/short-commands.sh" sync --dir "$SNL" >/dev/null 2>&1
+bash "$ROOT/short-commands.sh" uninstall --dir "$SNL" >/dev/null 2>&1
+check "sync and uninstall leave a dangling symlink of the same name" "link" "$([ -L "$SNL/coordinator.md" ] && echo link || echo replaced)"
+# A commands directory the writer cannot write to: the run fails and leaves nothing behind.
+SNRO="$WORK/short-readonly"; mkdir -p "$SNRO"; chmod 555 "$SNRO"
+bash "$ROOT/short-commands.sh" install --dir "$SNRO" >/dev/null 2>&1; snrc=$?
+check "a commands directory that cannot be written fails the install and writes nothing" "1|0" \
+  "$snrc|$(ls -A "$SNRO" | wc -l | tr -d ' ')"
+chmod 755 "$SNRO"
 
 echo "== iterm-agents: the asyncio stderr filter (§29) =="
 

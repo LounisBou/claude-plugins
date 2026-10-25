@@ -218,7 +218,7 @@ $SCRIPT tools [--transcript <path>]
 - **The first character of a title is an activity glyph, and it flips on its own** — one shape while the session works, another once it idles. `--expect-title` compares titles with that glyph stripped from both sides.
 - **A pane behind a maximized sibling is still a session, and it is listed as `hidden`.** The host extension's « Chat / Diff / Code Review » bar opens each view as a sibling pane of the agent's tab and maximizes the one shown, so an agent with a review open is hidden and its tab shows the review. The tool reads hidden panes like visible ones; `close --tty` closes that SESSION alone and leaves the review pane and the tab.
 - **The app's API must be enabled** (Preferences > General > Magic > Enable Python API), and the first connection asks macOS for permission once. `move` needs no Accessibility grant any more, does not bring the app to the front, and flickers no focus: the menu-driven version did all three.
-- **The environment is the installer's, not yours.** `/orchestrator-install` builds it under the state directory; recent macOS refuses to install into a package-managed interpreter, and a plugin has no business writing into one it did not create. Without it the tooling refuses to run and says how to build it. `ORCHESTRATOR_PYTHON` overrides the choice.
+- **The environment is the installer's, not yours.** `/orchestrator:install` builds it under the state directory; recent macOS refuses to install into a package-managed interpreter, and a plugin has no business writing into one it did not create. Without it the tooling refuses to run and says how to build it. `ORCHESTRATOR_PYTHON` overrides the choice.
 
 ## When iTerm2 does not answer
 

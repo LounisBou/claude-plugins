@@ -1,5 +1,4 @@
 ---
-name: orchestrator-status
 description: Live sessions with their measured context fill
 allowed-tools: Bash(ls:*), Bash(jq:*), Bash(date:*), Bash(cat:*), ListAgents
 ---

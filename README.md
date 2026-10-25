@@ -17,8 +17,8 @@ session can read without depending on a particular status bar.
 | skill `coordination` | The coordinator's role, outside every orchestration on one machine: answers from the facts, flags collisions to both sides, gates nothing, relays to the operator what is his. The orchestrator's and the auditor's skills say nothing of it. |
 | `templates/` | Phase brief, rotation resume brief, orchestrator succession brief, review-agent brief, comments-agent brief, audit brief, with the sections the rulebook makes mandatory. |
 | script `rhythm.sh` | An audit's net balance read from git alone: merges per week by conventional-commit type, and lines added and removed under product globs against instrument globs. |
-| `/orchestrator-install` | Creates the state directory, unwires any tap a previous install left in front of your status line, and prunes what the tap left behind. Idempotent; refuses a host older than 2.1.287. |
-| `/orchestrator-uninstall` | Restores the previous status line and removes the state directory. |
+| `/orchestrator:install` | Creates the state directory, unwires any tap a previous install left in front of your status line, prunes what the tap left behind, and writes the short names as user commands. Idempotent; refuses a host older than 2.1.287. |
+| `/orchestrator-uninstall` | Restores the previous status line, removes the state directory and the short names' user commands. |
 | `/orchestrator-status` | Live sessions and their context fill, the ones past the gate flagged. |
 | `/coordinator-supervision`, `/orchestrator-supervision` | Opens the supervision pane, kept on screen with each session's fill and redrawn every 20 seconds while open: the orchestrators in a coordinator session (`Coord :`) — those on another machine too, labelled `remote <machine>`: their module sends the row silently, only when the wait or a 5 % band of the fill changes, and the coordinator's module stores it without a model turn — its own agents in an orchestrator session (`Orch :`). In a coordinator it also opens by itself, once, at the end of its first turn, and shows under the rows the first open question of its round that carries choices (those without come after), with its lettered choices; otherwise only when typed, or when the operator asks in plain words to open or close the supervision, through the module's `supervision` tool. Typed again, it closes it. |
 | `/orchestrator-succeed` | Runs the orchestrator succession. |
@@ -36,8 +36,11 @@ session can read without depending on a particular status bar.
 | `/orchestrator-sleeping` | The orchestrators the coordinator paused on the operator's word: name, slept since, directory, open pull requests, brief. `drop <name>` abandons one for good after one confirmation; its brief moves to `abandoned/`, its pull requests, branches and checkouts are left to the operator. |
 | `/orchestrator-calibrate` | Calibrates a project's routing table on the operator's spend cap: `harvest`, `ready`, `bench --max-usd <cap>` and `calibrate`, in order, stopping at the first failure and reporting it. It refuses without a cap and never picks one, stops before anything runs when the `deep` tier (the judge) is unbound, and stops after `harvest` when the manifest has no test command or no test globs. Before the bench it states what it will spend at most and on what grid; after `calibrate` it shows the table and stops: `generalize` and `export` are the operator's to ask for. |
 
-Each command is listed under its short name; the prefixed forms, `/orchestrator:<file>`
-(`/orchestrator:status`) and `/orchestrator:<short name>`, reach the same command.
+Each command is listed under its short name, which the installer writes as a user command
+(`/orchestrator-install` writes them, `/orchestrator-uninstall` removes them); the plugin's own
+form, `/orchestrator:<file>` (`/orchestrator:status`), reaches the same command. A file of
+yours with the same name is left alone, and a plugin update rewrites the copies at the next
+session start.
 
 ## Tests
 
@@ -51,11 +54,12 @@ purpose, because it costs tokens and needs the app running.
 ```
 /plugin marketplace add LounisBou/claude-plugins-marketplace
 /plugin install orchestrator@lounisbou
-/orchestrator-install
+/orchestrator:install
 ```
 
 The last step creates the state directory, unwires any tap a previous install
-left in front of your status line, and needs the host at 2.1.287 or later (the
+left in front of your status line, writes the short names (`/coordinator`,
+`/orchestrator-status` and the rest) as user commands, and needs the host at 2.1.287 or later (the
 hooks module's events). The gauge itself needs no wiring: the module measures
 every session in-process, and a session restart makes it take effect.
 
@@ -80,7 +84,7 @@ unwired and nothing is purged, yet the run looks like success. The order is ther
    ```
 
 5. Restart the session, so the slash command resolves to the 0.49.0 installer.
-6. Run `/orchestrator-install`. It takes the tap off the status line and keeps the
+6. Run `/orchestrator:install`. It takes the tap off the status line and keeps the
    command that followed it exactly as written, `$HOME` or `~` spelling included. It then
    removes the old pipeline's files and the measure files of sessions that ended over a
    week ago.

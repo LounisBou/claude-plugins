@@ -1,6 +1,5 @@
 ---
-name: coordinator-decide
-description: Run, in the coordinator's tab, one decision round over the open questions of every orchestrator — the urgent first, then the oldest, across senders — each ruling relayed verbatim to the orchestrator that asked
+description: Decide the open questions of every orchestrator
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh:*), Bash(date:*), Read, Write, Edit, ListAgents, SendMessage
 ---
 

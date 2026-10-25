@@ -36,7 +36,7 @@ import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, editsTheMap, bashW
 // The config dir, gauge.ts's own resolution: $ never crosses an import, so
 // each domain that needs it spells the same two env reads itself.
 async function configDir($: any): Promise<string> {
-  return (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${await $.env.get('HOME')}/.claude`
+  return (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`
 }
 
 // The stop gate's state root, the shell gate's own contract (stop-gate.sh:19, and the

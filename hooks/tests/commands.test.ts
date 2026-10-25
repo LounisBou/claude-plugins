@@ -233,21 +233,82 @@ function mounted(): { registrations: { event: string; matcher: object | undefine
   return { registrations }
 }
 
-test('the module hooks the three markdown names and registers on nothing else', () => {
-  // The stored-matcher convention: the engine validates neither key nor field,
-  // so the exact invocation spellings live here. The names are the markdown
-  // commands' own `name:` — the host hands every typed form (`/orchestrator-status`,
-  // `/orchestrator:status`, `/orchestrator:orchestrator-status`) to the hook as
-  // `orchestrator:<name>`, measured live, so the file's stem never matches — a registered copy is refused (a built-in's name, a colon
-  // outside the charset), so no session event registers anything and the
-  // markdown entries stay the commands' only typeahead rows.
+test('the module hooks every form of the four commands and registers on nothing else', () => {
+  // The stored-matcher convention: the engine validates neither key nor field, so the exact
+  // spellings live here. Measured live, the host hands the plugin's command (no `name:`) as
+  // `orchestrator:<file>` and the installer's user command as its bare short name; the 0.80.0
+  // `orchestrator:<short>` stays. A registered copy is refused (a built-in's name, a colon
+  // outside the charset), so no session event registers anything here.
   const { registrations } = mounted()
   expect(registrations.map(r => [r.event, r.matcher])).toEqual([
     ['command.run', { command: 'orchestrator:orchestrator-status' }],
+    ['command.run', { command: 'orchestrator:status' }],
+    ['command.run', { command: 'orchestrator-status' }],
     ['command.run', { command: 'orchestrator:orchestrator-progress' }],
+    ['command.run', { command: 'orchestrator:progress' }],
+    ['command.run', { command: 'orchestrator-progress' }],
     ['command.run', { command: 'orchestrator:orchestrator-sleeping' }],
+    ['command.run', { command: 'orchestrator:sleeping' }],
+    ['command.run', { command: 'orchestrator-sleeping' }],
     ['command.run', { command: 'orchestrator:orchestrator-agents' }],
+    ['command.run', { command: 'orchestrator:agents' }],
+    ['command.run', { command: 'orchestrator-agents' }],
   ])
+})
+
+// The installer's copy, as short-commands.sh writes it: the marker after the opening line.
+const MARKED = '---\ninstalled-by: claude-orchestrator\ndescription: Live sessions with their measured context fill\n---\nbody\n'
+const UNMARKED = '---\ndescription: my own status\n---\nmine\n'
+
+test('a bare short name is answered when its user command is the plugin\'s copy, and run as written otherwise', async () => {
+  const { registrations } = mounted()
+  const passed = (x: unknown) => ({ passed: x })
+  for (const [command, empty] of [
+    ['orchestrator-status', 'Live sessions: none measured yet.'],
+    ['orchestrator-agents', 'Implementer agents: none running.'],
+    ['orchestrator-sleeping', 'Sleeping orchestrators: none.'],
+    ['orchestrator-progress', 'no dispatch record registered'],
+  ]) {
+    const hook = registrations.find(r => (r.matcher as any)?.command === command)!
+    const e = { command, args: '' }
+    const marked = fakeDollar()
+    marked.files.set(`${HOME}/.claude/commands/${command}.md`, MARKED)
+    expect(await hook.handler(marked.dollar, e, passed)).toEqual({ text: empty })
+    // The operator's own command of that name, or none at all: the run goes on untouched.
+    const foreign = fakeDollar()
+    foreign.files.set(`${HOME}/.claude/commands/${command}.md`, UNMARKED)
+    expect(await hook.handler(foreign.dollar, e, passed)).toEqual({ passed: e })
+    expect(await hook.handler(fakeDollar().dollar, e, passed)).toEqual({ passed: e })
+  }
+  // The plugin's own command needs no copy.
+  const status = registrations.find(r => (r.matcher as any)?.command === 'orchestrator:status')!
+  expect(await status.handler(fakeDollar().dollar, { command: 'orchestrator:status', args: '' }, passed)).toEqual({ text: 'Live sessions: none measured yet.' })
+})
+
+test('the copy is read where the installer wrote it: the override, else the config dir', async () => {
+  const { registrations } = mounted()
+  const status = registrations.find(r => (r.matcher as any)?.command === 'orchestrator-status')!
+  const e = { command: 'orchestrator-status', args: '' }
+  const passed = (x: unknown) => ({ passed: x })
+  const over = fakeDollar()
+  over.env.ORCHESTRATOR_COMMANDS_DIR = '/w/project/.claude/commands'
+  over.files.set('/w/project/.claude/commands/orchestrator-status.md', MARKED)
+  over.files.set(`${HOME}/.claude/commands/orchestrator-status.md`, UNMARKED)
+  expect(await status.handler(over.dollar, e, passed)).toEqual({ text: 'Live sessions: none measured yet.' })
+  const config = fakeDollar()
+  config.env.CLAUDE_CONFIG_DIR = '/cfg'
+  config.files.set('/cfg/commands/orchestrator-status.md', MARKED)
+  expect(await status.handler(config.dollar, e, passed)).toEqual({ text: 'Live sessions: none measured yet.' })
+})
+
+test('an empty config dir is an unset one: the copy is read under the home directory\'s', async () => {
+  const { registrations } = mounted()
+  const status = registrations.find(r => (r.matcher as any)?.command === 'orchestrator-status')!
+  const e = { command: 'orchestrator-status', args: '' }
+  const empty = fakeDollar()
+  empty.env.CLAUDE_CONFIG_DIR = ''
+  empty.files.set(`${HOME}/.claude/commands/orchestrator-status.md`, MARKED)
+  expect(await status.handler(empty.dollar, e, (x: unknown) => ({ passed: x }))).toEqual({ text: 'Live sessions: none measured yet.' })
 })
 
 test('sleeping lists each sleeping orchestrator, or says none, or says the record is unreadable', () => {
@@ -529,5 +590,12 @@ for (const [command, text] of ENGINE_ANSWERS) {
     on('session.id', () => ({ value: 's-engine' }))
     const answer = await $.command.run({ command: `orchestrator:${command}`, args: '' })
     expect(answer).toEqual({ text })
+  })
+  // The plugin's own command, by its file's name: `/orchestrator:status` since 0.82.0.
+  const file = command.replace(/^orchestrator-/, '')
+  test(`/orchestrator:${file} answers through the engine without a model turn`, async ($, on) => {
+    mock.env(on, { CLAUDE_CONFIG_DIR: '/tmp/h' })
+    on('session.id', () => ({ value: 's-engine' }))
+    expect(await $.command.run({ command: `orchestrator:${file}`, args: '' })).toEqual({ text })
   })
 }

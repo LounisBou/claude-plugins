@@ -28,6 +28,7 @@ import {
 import { withDeadline, isDegradedPass, chainEntries, watchNumberOf } from './stop-gate.ts'
 import { typedByOperator } from './models-guard.ts'
 import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
+import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
   parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, heldQuestion, withdrawalText, gateText, noStatusText, NO_STATUS_KEY, coordinatorOf, chainOwnerTty, waitLabel, waitParts,
   type WaitKind,
@@ -112,8 +113,13 @@ export function livePids(result: unknown): Set<string> | null {
 const PANE_ID = 'supervision'
 const PANE_TITLES = { coordinator: 'Orchestrators', orchestrator: 'Agents' } as const
 
-// The two commands that toggle the pane, as the host hands them to command.run.
-export const SUPERVISION_COMMANDS = ['orchestrator:orchestrator-supervision', 'orchestrator:coordinator-supervision'] as const
+// The commands that toggle the pane, as the host hands them to command.run (short-names.ts):
+// the 0.80.0 forms of both roles' short names, the plugin's `supervision` file, and the bare
+// short names of the installer's user commands (`coordinator-supervision` is also its file).
+export const SUPERVISION_COMMANDS = [
+  'orchestrator:orchestrator-supervision', 'orchestrator:coordinator-supervision', 'orchestrator:supervision',
+  'orchestrator-supervision', 'coordinator-supervision',
+] as const
 
 // The tool that opens or closes the same pane on the operator's plain words, called by the
 // session's main thread; a subagent is refused it, as it is the rename.
@@ -246,7 +252,7 @@ export function wrapWords(text: string, width: number): string[] {
 // The config dir, this file's own resolution: $ never crosses an import, so
 // each domain that needs it spells the same two env reads itself.
 async function configDir($: any): Promise<string> {
-  return (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${await $.env.get('HOME')}/.claude`
+  return (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`
 }
 
 // The scripts' state root (the launcher's chains, the coordinator's record): the
@@ -1078,10 +1084,14 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // The pane opens on the person's own command alone — the shipped types' «
   // asked » open, placed at any width — in the two supervising roles: a
   // coordinator's lists the orchestrators, an orchestrator's its own agents.
-  // Anywhere else the command says so and opens nothing. Two commands answer, one per
-  // role's short name, the same toggle on the same pane: the host hands each as
-  // `orchestrator:<short>`, whichever form was typed (measured live).
-  for (const command of SUPERVISION_COMMANDS) on('command.run', { command }, async ($: any) => {
+  // Anywhere else the command says so and opens nothing. Every form of either role's
+  // command answers, the same toggle on the same pane; a bare short name only when its user
+  // command is this plugin's copy, the operator's own command of that name run as he wrote it.
+  for (const command of SUPERVISION_COMMANDS) on('command.run', { command }, async ($: any, e: any, next: any) => {
+    if (isBare(String(e?.command ?? ''))) {
+      const dir = commandsDirOf(await $.env.get('ORCHESTRATOR_COMMANDS_DIR'), await configDir($))
+      if (!isOwnCopy(String(await $.fs.read(`${dir}/${e.command}.md`).catch(() => '')))) return next(e)
+    }
     const { tty, name, pid } = await walkWithinBound($, await $.session.id())
     const role = roleOf(name)
     if (role !== 'coordinator' && role !== 'orchestrator') {

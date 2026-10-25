@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Takes the tap off the status line, keeping the command that followed it, and removes the
-# state directory.
+# Takes the tap off the status line, keeping the command that followed it, removes the state
+# directory and the short names' user commands this plugin wrote.
 #
 #   ./uninstall.sh            restore
 #   ./uninstall.sh --dry-run  print what would happen, change nothing
@@ -32,6 +32,9 @@ if [ -d "$STATE_DIR" ]; then
   elif [ "$DRY" = "1" ]; then say "[dry-run] rm -rf $STATE_DIR"
   else rm -rf "$STATE_DIR"; say "removed $STATE_DIR (measure files, the module's log with its rotation and lock, prompts, tier map)"; fi
 fi
+
+# The short names' copies this plugin wrote; an operator's file of the same name is kept.
+"$SRC/short-commands.sh" uninstall $([ "$DRY" = "1" ] && echo --dry-run)
 
 say "Done. Restart your session."
 exit 0

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Creates the state directory the module's artifacts live in and unwires the tap a
-# previous install may have left in front of the status line.
+# Creates the state directory the module's artifacts live in, unwires the tap a previous
+# install may have left in front of the status line, and writes the short names as user
+# commands (short-commands.sh).
 #
 # Idempotent: the tier map and server catalogue are created only when absent, a
 # status line already free of the tap is left alone, and settings.json is backed up
@@ -347,6 +348,14 @@ else
   done
   say "old pipeline files removed: $removed"
 fi
+
+# --- the short names -----------------------------------------------------------
+
+# `/coordinator`, `/orchestrator-status` and the rest, as user commands: the plugin's own read
+# `/orchestrator:<file>`. Each copy is marked as this plugin's; an operator's file of the same
+# name is kept and said.
+step "Short commands"
+"$SRC/short-commands.sh" install $([ "$DRY" = "1" ] && echo --dry-run)
 
 step "Done."
 say "Restart your session for the module to take effect."

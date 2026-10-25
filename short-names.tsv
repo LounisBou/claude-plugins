@@ -1,0 +1,15 @@
+coordinator	coordinator
+coordinator-end	coordinator-end
+coordinator-decide	coordinator-decide
+coordinator-supervision	coordinator-supervision
+orchestrator-agents	agents
+orchestrator-audit	audit
+orchestrator-calibrate	calibrate
+orchestrator-decide	decide
+orchestrator-install	install
+orchestrator-progress	progress
+orchestrator-sleeping	sleeping
+orchestrator-status	status
+orchestrator-succeed	succeed
+orchestrator-uninstall	uninstall
+orchestrator-supervision	supervision

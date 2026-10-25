@@ -27,11 +27,12 @@ import { parseRemoteRow, withRemote, ROW_MARKER, REMOTE_STALE_AFTER_MS, type Rem
 import { hostRecordOf, roleOf } from './session-name.ts'
 import { withDeadline, isDegradedPass } from './stop-gate.ts'
 import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
+import { commandForms, commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 
 // The config dir, this file's own resolution: $ never crosses an import, so
 // each domain that needs it spells the same two env reads itself.
 async function configDir($: any): Promise<string> {
-  return (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${await $.env.get('HOME')}/.claude`
+  return (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`
 }
 
 // The records registry's root, the shell pipeline's own contract (dispatch-record.sh:59,
@@ -327,46 +328,59 @@ async function goalsLine($: any, goalsFile: string, bound: number): Promise<stri
 }
 
 export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
-  // The matcher names the spelling the host hands the hook for a markdown command
-  // carrying `name: <short>` — `orchestrator:<short>`, whichever of `/<short>`,
-  // `/orchestrator:<file>` or `/orchestrator:<short>` was typed (measured live),
-  // the file's stem never — in the envelope's own command field, the key a
-  // matcher narrows on, so each hook answers its command's run alone, never
-  // another plugin's and never the host's own commands of a bare name. The engine
-  // validates neither key nor field; the wiring tests pin the exact objects.
-  on('command.run', { command: 'orchestrator:orchestrator-status' }, async ($: any) => {
-    return { text: statusText(withRemote(await readRows($), await readRemote($), Date.now(), REMOTE_STALE_AFTER_MS)) }
-  }).catch(async ($: any, e: any, next: any) => {
-    // A command whose reader failed is skipped; the net lets the markdown
-    // command run as it always did, and the failure is said.
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
-    return next(e)
-  })
+  // Each matcher names one form the host hands the hook (short-names.ts, measured live): the
+  // plugin's command as `orchestrator:<file>`, the 0.80.0 `orchestrator:<short>`, and the bare
+  // `<short>` of the user command the installer writes, answered only when that copy is this
+  // plugin's — the operator's own command of the same name runs as he wrote it. The envelope's
+  // own command field is the key a matcher narrows on, so each hook answers its command's run
+  // alone, never another plugin's and never the host's own commands. The engine validates
+  // neither key nor field; the wiring tests pin the exact objects.
+  for (const command of commandForms('status', 'orchestrator-status')) {
+    on('command.run', { command }, async ($: any, e: any, next: any) => {
+      if (!(await ownRun($, e))) return next(e)
+      return { text: statusText(withRemote(await readRows($), await readRemote($), Date.now(), REMOTE_STALE_AFTER_MS)) }
+    }).catch(fallBack)
+  }
 
-  on('command.run', { command: 'orchestrator:orchestrator-progress' }, async ($: any) => {
-    return { text: await progressText($) }
-  }).catch(async ($: any, e: any, next: any) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
-    return next(e)
-  })
+  for (const command of commandForms('progress', 'orchestrator-progress')) {
+    on('command.run', { command }, async ($: any, e: any, next: any) => {
+      if (!(await ownRun($, e))) return next(e)
+      return { text: await progressText($) }
+    }).catch(fallBack)
+  }
 
   // The list alone is answered here; `drop <name>` asks the operator to confirm, which
   // takes a model turn, so any argument passes the run on to the markdown command.
-  on('command.run', { command: 'orchestrator:orchestrator-sleeping' }, async ($: any, e: any, next: any) => {
-    if (String(e?.args ?? '').trim() !== '') return next(e)
-    return { text: await readSleeping($) }
-  }).catch(async ($: any, e: any, next: any) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
-    return next(e)
-  })
+  for (const command of commandForms('sleeping', 'orchestrator-sleeping')) {
+    on('command.run', { command }, async ($: any, e: any, next: any) => {
+      if (String(e?.args ?? '').trim() !== '' || !(await ownRun($, e))) return next(e)
+      return { text: await readSleeping($) }
+    }).catch(fallBack)
+  }
 
-  on('command.run', { command: 'orchestrator:orchestrator-agents' }, async ($: any) => {
-    const rows = await readRows($)
-    return { text: agentsText(rows, await unmeasuredAgents($, rows)) }
-  }).catch(async ($: any, e: any, next: any) => {
-    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
-    return next(e)
-  })
+  for (const command of commandForms('agents', 'orchestrator-agents')) {
+    on('command.run', { command }, async ($: any, e: any, next: any) => {
+      if (!(await ownRun($, e))) return next(e)
+      const rows = await readRows($)
+      return { text: agentsText(rows, await unmeasuredAgents($, rows)) }
+    }).catch(fallBack)
+  }
+}
+
+// A command whose reader failed is skipped; the net lets the markdown command run as it
+// always did, and the failure is said.
+async function fallBack($: any, e: any, next: any) {
+  await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+  return next(e)
+}
+
+// A prefixed run is the plugin's own command; a bare one is answered only when its user
+// command is this plugin's copy, read through this file's own $.fs.
+async function ownRun($: any, e: any): Promise<boolean> {
+  const command = String(e?.command ?? '')
+  if (!isBare(command)) return true
+  const dir = commandsDirOf(await $.env.get('ORCHESTRATOR_COMMANDS_DIR'), await configDir($))
+  return isOwnCopy(String(await $.fs.read(`${dir}/${command}.md`).catch(() => '')))
 }
 
 // One line appended to the module's log (module-log.ts): the stamp names the

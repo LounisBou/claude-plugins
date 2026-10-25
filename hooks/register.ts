@@ -1,8 +1,8 @@
 // hooks/register.ts
 // Entry point of the hooks module: mounts the domains. Each domain lands in
 // its own task; the gauge arrived first, the guards second, the store third,
-// the commands fourth, the naming fifth, the moving sixth; the round's wake and the pane's tool
-// ride with the supervision. The gauge stays before the
+// the commands fourth, the naming fifth, the moving sixth, the short commands' sync seventh;
+// the round's wake and the pane's tool ride with the supervision. The gauge stays before the
 // supervision: a chain answers in registration order, and the store's row
 // reads the figure through the gauge's own module memory — mounted after it,
 // the row would carry one measure behind. The moving comes after the supervision, whose receive
@@ -13,6 +13,7 @@ import { register as registerSupervision, registerWake, registerPaneTool } from 
 import { register as registerCommands } from './commands.ts'
 import { register as registerNaming } from './naming.ts'
 import { register as registerMoving } from './moving.ts'
+import { register as registerShortCommands } from './short-commands.ts'
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
 
 export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
@@ -32,6 +33,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   registerCommands(on)
   registerNaming(on)
   registerMoving(on)
+  registerShortCommands(on)
 }
 
 // One line appended to the module's log (module-log.ts) — each file spells its
@@ -39,7 +41,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
 // failed. Never throws, never blocks the mount it serves.
 async function logLine($: any, message: string): Promise<void> {
   try {
-    const config = (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${await $.env.get('HOME')}/.claude`
+    const config = (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`
     await $.process.run(logArgv($.plugin.root, config, 'register', message, undefined, await $.env.get('ORCHESTRATOR_MODULE_DIR')), { timeoutMs: LOG_TIMEOUT_MS })
   } catch { /* the log itself never blocks the handler that failed */ }
 }

@@ -37,7 +37,7 @@ export function driftAnnouncement(model: string, previous: string): string {
 // Exported for the guards: whatever reads the measure file from a handler resolves
 // the config dir through this same seam (the sandbox exposes no process global).
 export async function configDir($: any): Promise<string> {
-  return (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${await $.env.get('HOME')}/.claude`
+  return (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`
 }
 
 export async function writeMeasure(

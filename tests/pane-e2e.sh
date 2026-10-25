@@ -24,7 +24,9 @@
 # (FORCE_HYPERLINK), as the operator's does: a tmux pane says nothing of it, and a host that
 # cannot draw one prints its address after its text. Everything the module writes goes to the
 # sandbox: its state (ORCHESTRATOR_STATE_DIR) and its own files, the store's rows among them
-# (ORCHESTRATOR_MODULE_DIR), so the fixture's rows never reach the real store. What the host
+# (ORCHESTRATOR_MODULE_DIR), so the fixture's rows never reach the real store, and the short
+# names' copies are the work directory's project commands (ORCHESTRATOR_COMMANDS_DIR), so the
+# module's sync at the start never touches the host's user commands. What the host
 # itself keeps of a session it ran — its counters, its session record, its caches, the
 # transcript of the wake — is its own bookkeeping. Each run leaves two traces of it there, and the
 # script removes neither: the transcript directory of the sandbox's work path is removed at the
@@ -91,6 +93,7 @@ trap cleanup EXIT
 
 LONG='merge it now — the release goes out today, the changelog is written, the tag is pushed and every reader of the notes sees the new pane at once'
 ROWS="$SANDBOX/module/store/sessions"
+COMMANDS="$SANDBOX/work/.claude/commands"
 
 # A fresh host on a fresh fixture: orchestrator rows kept alive by a process of the script's,
 # a round, and the pane opened by the coordinator's short name. The `questions` round holds two
@@ -105,6 +108,10 @@ start() {
   tm kill-server 2>/dev/null
   rm -rf "$SANDBOX/module" "$SANDBOX/state" "$SANDBOX/work"
   mkdir -p "$ROWS" "$SANDBOX/state/round" "$SANDBOX/work"
+  # The short names, written by the installer's own writer as the work directory's project
+  # commands, never in the host's user commands: `/coordinator-supervision` below is the copy.
+  ORCHESTRATOR_COMMANDS_DIR="$COMMANDS" bash "$ROOT/short-commands.sh" install >/dev/null \
+    || { echo "refused: the short names could not be written to $COMMANDS" >&2; exit 1; }
   jq -n '{ tui: "fullscreen" }' > "$SANDBOX/settings.json"
   echo '{"name":"Coord : e2e"}' > "$SANDBOX/state/coordinator.json"
   [ -n "$ALIVE" ] && kill "$ALIVE" 2>/dev/null
@@ -127,7 +134,7 @@ start() {
   esac
   tm new-session -d -s "$SESSION" -x 160 -y "$rows" -c "$SANDBOX/work" \
     env -i HOME="$HOME" USER="$USER" PATH="$PATH" TERM=xterm-256color FORCE_HYPERLINK=1 \
-    ORCHESTRATOR_STATE_DIR="$SANDBOX/state" ORCHESTRATOR_MODULE_DIR="$SANDBOX/module" \
+    ORCHESTRATOR_STATE_DIR="$SANDBOX/state" ORCHESTRATOR_MODULE_DIR="$SANDBOX/module" ORCHESTRATOR_COMMANDS_DIR="$COMMANDS" \
     "$HOST" --setting-sources project --strict-mcp-config --settings "$SANDBOX/settings.json" \
     --plugin-dir "$ROOT" --name "Coord : e2e"
   wait_for 'Coord : e2e' 30
@@ -416,6 +423,45 @@ tm send-keys -t "$SESSION" Enter
 wait_for 'Questions for you' 15
 record "the pane open again"
 check "reopened by the file's own prefixed name, the pane draws every pending question, those presented in the tab included" "1|1|open,open" "$(pane | grep -c '^Questions for you — 3 pending')|$(flat | grep -c 'merge the release branch now?')|$(statuses)"
+
+# The short names as the installer writes them, here as project commands: the typeahead draws
+# one name per row and one row per description, and the copy of `/coordinator-supervision`
+# toggles the pane. The host also reads the operator's real ~/.claude/commands (HOME is kept
+# for its login), so the rows of the operator's own copies may be drawn too: the checks count
+# a wrapped description only on the rows of the sandbox's names, and need two rows at least,
+# so they hold whether or not the real copies exist. A row of the list starts with its name;
+# a description too long for its row continues on the next, indented under the descriptions'
+# column.
+typeahead() {
+  tm send-keys -t "$SESSION" -l "$1"
+  sleep 2
+  record "the typeahead after $1"
+  local drawn shown names
+  drawn=$(screen)
+  # Only the sandbox's rows count a wrap: the host, run with the real HOME, also lists the
+  # operator's own user commands, whose descriptions this script does not own.
+  names=$(ls "$COMMANDS" | sed 's/\.md$//' | tr '\n' ' ')
+  shown=$(printf '%s\n' "$drawn" | awk -v names="$names" '
+    /^  (❯ |  )\// { list = 1; print "name"; row = $0; sub(/^  (❯ |  )\//, "", row); split(row, w, " "); mine = index(" " names, " " w[1] " ") > 0; next }
+    list && /^                    +[^ ]/ { if (mine) print "wrap"; next }
+    { list = 0 }')
+  tm send-keys -t "$SESSION" C-u
+  sleep 0.5
+  printf '%s|%s|%s' "$([ "$(printf '%s\n' "$shown" | grep -c '^name$')" -ge 2 ] && echo rows)" \
+    "$(printf '%s\n' "$shown" | grep -c '^wrap$')" "$(printf '%s\n' "$drawn" | grep -cE ':[a-z-]+ \([a-z-]+\)')"
+}
+echo "== the short names as project commands (160x50)"
+start 50
+check "the copy the writer marked opened the pane, its marker read" "1|1" "$(pane | grep -c '^Questions for you')|$(grep -cx 'installed-by: claude-orchestrator' "$COMMANDS/coordinator-supervision.md")"
+press Escape
+tm send-keys -t "$SESSION" '/coordinator-supervision'
+sleep 1
+tm send-keys -t "$SESSION" Enter
+sleep 2
+record "the pane toggled closed"
+check "typed again, the project command closes the pane" "0|1" "$(screen | grep -c 'Questions for you')|$(screen | grep -c 'Supervision pane closed.')"
+check "after /orc, one name per row and one row per description" "rows|0|0" "$(typeahead '/orc')"
+check "after /coordinator, one name per row and one row per description" "rows|0|0" "$(typeahead '/coordinator')"
 
 echo "pane-e2e: $pass passed, $fail failed"
 [ "$fail" -eq 0 ]

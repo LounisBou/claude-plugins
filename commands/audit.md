@@ -1,6 +1,5 @@
 ---
-name: orchestrator-audit
-description: Launch an audit of the method, on the operator's word — a session in its own tab that weighs what the method costs against what it yields, writes one report of proposals, and stops
+description: Launch an audit of the method, on the operator's word
 argument-hint: <subject> [--since <date>]
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh:*), Bash(git:*), Bash(ls:*), Bash(date:*), Read, Write
 ---

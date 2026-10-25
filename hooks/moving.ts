@@ -152,7 +152,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
 // --- paths -------------------------------------------------------------------------------
 
 async function configDir($: Dollar): Promise<string> {
-  return (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${await $.env.get('HOME')}/.claude`
+  return (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`
 }
 
 async function movesDir($: Dollar): Promise<string> {

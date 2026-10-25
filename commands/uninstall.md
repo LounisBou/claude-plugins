@@ -1,6 +1,5 @@
 ---
-name: orchestrator-uninstall
-description: Remove the state directory the module and the scripts keep their files in
+description: Remove the state directory and the short commands
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/uninstall.sh:*), Read
 ---
 

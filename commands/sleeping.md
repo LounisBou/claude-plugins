@@ -1,6 +1,5 @@
 ---
-name: orchestrator-sleeping
-description: List the sleeping orchestrators — those paused on the operator's word — or abandon one for good
+description: List the sleeping orchestrators, or drop one
 argument-hint: [drop <name>]
 allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh:*), Bash(date:*), Read
 ---

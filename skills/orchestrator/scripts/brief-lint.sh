@@ -79,11 +79,10 @@ done < <(grep -noE '\$\{[A-Z][A-Z0-9_]*[:-]*[^}]*\}|\$[A-Z][A-Z0-9_]{2,}' "$brie
 #    --expect-created by the writer, exactly: every other absent path is still a finding.
 #    A slash command is no path: a backticked word of the form /<plugin>:<command>, with
 #    or without arguments after a space (/orchestrator:status, /implement:phase 3), is
-#    skipped, and so is one of this plugin's own commands under its short name, the `name:`
-#    its file carries (/orchestrator-status), read from the plugin's commands directory.
-#    Every other backticked word starting with / is checked as before.
-short_names=$(awk 'FNR == 1 { head = ($0 == "---"); next } head && /^---$/ { head = 0 } head && sub(/^name: /, "")' \
-    "$(dirname "$0")"/../../../commands/*.md 2>/dev/null | tr '\n' ' ')
+#    skipped, and so is one of this plugin's own commands under its short name
+#    (/orchestrator-status), read from the plugin's short-names.tsv, the table the installer
+#    writes them from. Every other backticked word starting with / is checked as before.
+short_names=$(cut -f1 "$(dirname "$0")"/../../../short-names.tsv 2>/dev/null | tr '\n' ' ')
 is_short_name() {
     [ -n "${1#/}" ] || return 1
     case " $short_names " in *" ${1#/} "*) return 0 ;; esac
