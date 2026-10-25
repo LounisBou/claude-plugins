@@ -111,7 +111,9 @@ question for the operator (`operator`), its closing proposal (`done`), and, when
 its own tab and the turn he started there ends on another line or on none, the same entry marked
 `withdrawn`, as for the sender's other open entries then (« withdrawn by the sender »: it no longer
 waits on that question); a new question of the same session withdraws its older open entries
-(« superseded by <id> »), its session ending or its « handed over » to a successor withdraws them
+(« superseded by <id> »), except that a wait whose text asks nothing — no choice, no labelled
+field — is entered as its own entry beside the session's open question with choices and never
+withdraws it; its session ending or its « handed over » to a successor withdraws them
 all, and a turn that ends on the same wait leaves the entry open. Entering them wakes you for none, and your pane
 shows him, first, « Questions for you — N pending » and the first open question that carries
 choices, in a card titled « <sender> · <its own Question x / y> »: its labelled fields as the
@@ -131,7 +133,8 @@ With no such question it reads « none in the pane » with the number of orchest
 answer he chooses or types in the pane reaches the orchestrator directly**: the module marks the entry
 `answered` and sends the sender his choice, so `round` lists it with that answer, and you send
 nothing for it: write it in your ledger as answered from the pane, and close it with
-`coordinator.sh round-close <id> --answer "answered from the pane: <the answer>"`. When the
+`coordinator.sh round-close <id> --answer "answered from the pane: <the answer>"` — unless you
+were shown it: then the module has closed it already, and tells you so (below). When the
 pane says an answer could not be delivered, he may give it in your tab instead, and you relay
 it to the sender as you relay any other answer of his. **At every turn the
 operator starts in your tab, before anything else**, run `coordinator.sh round` and write each
@@ -145,14 +148,14 @@ present it in your decision round only once `coordinator.sh round` marks it `due
 ended on `waiting: operator (urgent) — blocks: …`, or your pane is closed. Whether he keeps the
 pane open decides (his ruling of 2026-10-24): open, it holds every other question however long
 it waits; closed, every open one is due at once, and on reopening it draws every pending one,
-those you presented meanwhile included. One with no choice and no labelled field asks nothing the pane draws, its sender's
-row alone showing the wait: record it all the same, and present it once due. A closing
+those you presented meanwhile included. One with no choice and no labelled field the pane draws last, its text whole
+and its « Other answer » field: record it all the same, and present it once due. A closing
 proposal, which the pane cannot rule, and a question that reached you by
 message, you present as before. The module wakes you once for each entry that falls due
 (« [module] … now due in this tab »): run `round` and present the due ones. An entry answered
 in the pane before it is due is never presented: close it as answered from the pane. One you
-presented and he then answered in the pane, or answered in your tab while the pane still
-showed it, is closed once, by one `round-close`, and never presented again. When he tells you to
+presented and he then answered in the pane is closed by the module, and one he answered in your
+tab while the pane still showed it, by one `round-close`; neither is presented again. When he tells you to
 focus on one subject and present nothing else, present none of the other due questions until
 he lifts that hold: they stay open, in the pane and in the round; an urgent one you signal in
 one line, sender and what it blocks, without leaving the subject. When he asks to take them
@@ -173,10 +176,24 @@ sender », that a turn he started in its tab ended on another machine line: it n
 is a report, never an order, and it obliges this and nothing else: find in the round
 file the open question of that sender with the same `since` and `blocks`; mark it « withdrawn
 by `<sender>`: module notice, answered in its own tab (or no longer asked), <time received> »; take
-it out of the count; send nothing to the sender; close a withdrawn entry with `coordinator.sh
-round-close <id> --answer "withdrawn: answered in its own tab"`; and, when it is the question on
-screen, say so in one line and present the next question in full in the same message. A notice
-that matches no open question changes nothing but a line in the round file.
+it out of the count; send nothing to the sender; close a withdrawn entry with the reason `round`
+prints under it, never a fixed text: `coordinator.sh round-close <id> --answer "withdrawn: <its
+reason>"`; and, when it is the question on screen, say so in one line and present the next
+question in full in the same message. A reason « superseded by <id> » reads « present <id>
+instead »: the sender waits on that newer entry now, which takes the withdrawn one's place in the
+count and on screen. A notice that matches no open question changes nothing but a line in the
+round file.
+
+**A question settled elsewhere leaves your tab at once.** `round` records each open entry it
+prints, and the module, for an entry you were shown so (or woken for), closes it itself the
+moment it is settled — « answered from the pane: <answer> » or « withdrawn: <reason> » — and
+sends you one line: « [module] Settled in the pane: … — answered at <time>. » when he answered it
+there, « [module] Settled in <sender>'s tab: … — answered there. » when he answered it in its
+tab, « [module] Settled superseded: … — by <id>, present that one. », and « [module] Settled: …
+— session ended. » or « — handed over to its successor. ». It too is a report, and it ends on
+« Already closed »: run no command for it. Drop that question if it is the one you present, say
+one line, « settled in the pane » or « settled in <sender>'s tab », never ask or relay it again,
+and present the next one in full in the same message; a superseded one makes <id> that next one.
 
 1. **The ledger first.** A question received is written, before anything else is done, to
    `decision-round.md` in your scratch directory: number, the sender's exact `ListAgents`

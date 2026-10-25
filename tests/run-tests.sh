@@ -3255,7 +3255,7 @@ check "the orchestrator asks in its tab and the module carries the question to a
   "$(spells "$ROOT/skills/orchestrator/SKILL.md" '**While a coordinator runs, every question for the operator goes to it** — his order —')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'and the hooks module carries it: ask here, in the shape of `/orchestrator-decide` step 2, and')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'end the turn on `waiting: operator — blocks: <what it blocks>`; never send it yourself')"
 # A report that asks nothing, ended on the operator's wait, was drawn in the pane as a question.
 check "the orchestrator ends on the operator's wait only for a question in the decide shape, and the coordinator still records one that asks nothing" "yes|yes" \
-  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Only such a question ends on that line; a report asking nothing, on its other machine line.')|$(spells "$COORDSKILL" 'row alone showing the wait: record it all the same, and present it once due.')"
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Only such a question ends on that line; a report asking nothing, on its other machine line.')|$(spells "$COORDSKILL" 'and its « Other answer » field: record it all the same, and present it once due.')"
 check "the orchestrator rulebook no longer runs the lookup and the send itself" "no|no" \
   "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'coordinator.sh lookup')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'no coordinator runs, and you ask him directly')"
 check "a decision round goes through a running coordinator, carried by the module" "yes|yes" \
@@ -3268,7 +3268,7 @@ check "the decision round no longer looks the coordinator up or sends it the que
 # A hold on his word keeps the other questions open, and the urgent ones still signalled.
 check "the rulebooks say a question the pane shows is not asked twice, when it falls due, and how a wait is marked urgent" \
   "yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes" \
-  "$(spells "$COORDSKILL" '**A question the pane shows is not asked twice.**')|$(spells "$COORDSKILL" 'ended on `waiting: operator (urgent) — blocks: …`, or your pane is closed. Whether he keeps the')|$(spells "$COORDSKILL" 'he lifts that hold: they stay open, in the pane and in the round; an urgent one you signal in')|$(spells "$ROOT/commands/decide.md" 'compaction, in asking order: the urgent first (a production fault, a detected')|$(spells "$COORDSKILL" '(« [module] … now due in this tab »)')|$(spells "$COORDSKILL" 'showed it, is closed once, by one `round-close`, and never presented again.')|$(spells "$ROOT/commands/decide.md" 'again only when urgent or no pane is open (his order of 2026-10-24: no question asked')|$(spells "$ROOT/commands/decide.md" 'end on `waiting: operator (urgent) — blocks: …` only for')|$(spells "$ROOT/commands/decide.md" '« already done: <evidence> », dropped from the count (N in the header drops with it),')|$(spells "$ROOT/commands/decide.md" 'a settled item is never asked.')|$(spells "$ROOT/skills/orchestrator/SKILL.md" '`waiting: operator (urgent) — blocks: <…>` only for a production fault, a detected')|$(spells "$ROOT/docs/design.md" 'A question the pane shows is not asked twice, on the operator')|$(spells "$ROOT/docs/design.md" 'submits to its own session one « [module] … now due in this tab »')"
+  "$(spells "$COORDSKILL" '**A question the pane shows is not asked twice.**')|$(spells "$COORDSKILL" 'ended on `waiting: operator (urgent) — blocks: …`, or your pane is closed. Whether he keeps the')|$(spells "$COORDSKILL" 'he lifts that hold: they stay open, in the pane and in the round; an urgent one you signal in')|$(spells "$ROOT/commands/decide.md" 'compaction, in asking order: the urgent first (a production fault, a detected')|$(spells "$COORDSKILL" '(« [module] … now due in this tab »)')|$(spells "$COORDSKILL" 'tab while the pane still showed it, by one `round-close`; neither is presented again.')|$(spells "$ROOT/commands/decide.md" 'again only when urgent or no pane is open (his order of 2026-10-24: no question asked')|$(spells "$ROOT/commands/decide.md" 'end on `waiting: operator (urgent) — blocks: …` only for')|$(spells "$ROOT/commands/decide.md" '« already done: <evidence> », dropped from the count (N in the header drops with it),')|$(spells "$ROOT/commands/decide.md" 'a settled item is never asked.')|$(spells "$ROOT/skills/orchestrator/SKILL.md" '`waiting: operator (urgent) — blocks: <…>` only for a production fault, a detected')|$(spells "$ROOT/docs/design.md" 'A question the pane shows is not asked twice, on the operator')|$(spells "$ROOT/docs/design.md" 'submits to its own session one « [module] … now due in this tab »')"
 # The coordinator's own decision round takes every orchestrator's open questions in the order
 # `round --by-urgency` prints, points at decide.md for the round's shape, and relays each ruling.
 CDECIDE="$ROOT/commands/coordinator-decide.md"
@@ -6629,6 +6629,58 @@ round w3 | operator | from Orch : a | since 2026-10-20T10:00:00.000Z | blocks: p
     withdrawn by the sender at 2026-10-20T10:09:00.000Z: handed over to its successor|0" \
   "$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>&1 | grep -A2 '^round w[23] ')|$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>&1 | grep -c '^round w[123] .*| open')"
 rm -f "$ASTATE/round/w2.json" "$ASTATE/round/w3.json"
+# Every withdrawal's reason is printed on the entry, whoever recorded it: one the prompt typed in
+# the sender's tab withdrew printed nothing, and the coordinator closed a lost question with a
+# fixed text instead of its reason (the operator's report of 2026-10-25).
+for spec in "w4:tab:answered in the sender's own tab" "w5:pane:an older reason"; do
+  IFS=: read -r wid wby wwhy <<< "$spec"
+  jq -n --arg id "$wid" --arg by "$wby" --arg why "$wwhy" '{id:$id, from:"Orch : a", session:"s-a", kind:"operator", since:"2026-10-20T10:00:00.000Z",
+    blocks:"phase 3", question:("Ask " + $id + "?"), choices:[], recommendation:null, status:"withdrawn", at:"2026-10-20T10:00:00.000Z",
+    answer:{text:$why, by:$by, at:"2026-10-20T10:09:00.000Z"}}' > "$ASTATE/round/$wid.json"
+done
+check "round prints every withdrawn entry's reason, whoever withdrew it" \
+  "round w4 | operator | from Orch : a | since 2026-10-20T10:00:00.000Z | blocks: phase 3 | withdrawn
+    Ask w4?
+    withdrawn in the sender's tab at 2026-10-20T10:09:00.000Z: answered in the sender's own tab
+round w5 | operator | from Orch : a | since 2026-10-20T10:00:00.000Z | blocks: phase 3 | withdrawn
+    Ask w5?
+    withdrawn by pane at 2026-10-20T10:09:00.000Z: an older reason" \
+  "$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>&1 | grep -A2 '^round w[45] ')"
+rm -f "$ASTATE/round/w4.json" "$ASTATE/round/w5.json"
+# round records the open entries it printed, for the module to tell the coordinator at once when
+# one of them is settled in the pane or in the sender's tab: the coordinator once relayed a second
+# time an answer the pane had sent (the operator's report of 2026-10-25). The record keeps the
+# ids printed before while the round holds them, drops the others, and is written by one rename.
+printf '["gone-entry","w1"]\n' > "$ASTATE/round-listed.json"
+ROPEN=$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>/dev/null | sed -n 's/^round \([^ ]*\) .*| open.*/\1/p' | sort | paste -sd, -)
+check "round records the ids of the open entries it printed, keeps those printed before while the round holds them" \
+  "yes|$(printf '%s,w1' "$ROPEN" | tr ',' '\n' | sort | paste -sd, -)|0" \
+  "$([ -n "$ROPEN" ] && echo yes)|$(jq -r 'sort | join(",")' "$ASTATE/round-listed.json")|$(find "$ASTATE" -maxdepth 1 -name 'round-listed.json.tmp-*' | wc -l | tr -d ' ')"
+# One read of the round serves the print and the record: an entry opened while the print runs
+# was recorded as shown though never printed, and its settling later told a coordinator that
+# had never seen it. A jq shim writes such an entry while round prints.
+LATE_BIN="$WORK/late-jq"
+mkdir -p "$LATE_BIN"
+REAL_JQ=$(command -v jq)
+cat > "$LATE_BIN/jq" <<SHIM
+#!/bin/bash
+case "\$*" in
+  *'def ordered'*) [ -f "$ASTATE/round/late.json" ] || jq -n '{id:"late", from:"Orch : a", session:"s-a", kind:"operator", since:"2026-10-20T10:05:00.000Z",
+    blocks:"phase 9", question:"Late?", choices:[], recommendation:null, status:"open", at:"2026-10-20T10:05:00.000Z", answer:null}' > "$ASTATE/round/late.json" ;;
+esac
+exec "$REAL_JQ" "\$@"
+SHIM
+chmod +x "$LATE_BIN/jq"
+rm -f "$ASTATE/round-listed.json"
+LATE_OUT=$(PATH="$LATE_BIN:$PATH" ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>&1)
+check "an entry opened while round prints is neither printed nor recorded as shown" "yes|0|yes|no" \
+  "$([ -f "$ASTATE/round/late.json" ] && echo yes)|$(printf '%s\n' "$LATE_OUT" | grep -c '^round late ')|$([ -s "$ASTATE/round-listed.json" ] && echo yes)|$(jq -e 'index("late") != null' "$ASTATE/round-listed.json" >/dev/null 2>&1 && echo yes || echo no)"
+rm -f "$ASTATE/round/late.json" "$ASTATE/round-listed.json"
+rm -f "$ASTATE/round-listed.json"
+check "the coordinator drops a question settled elsewhere in one line, runs nothing for it and never asks it again" "yes|yes|yes|no" \
+  "$(spells "$COORDSKILL" '**A question settled elsewhere leaves your tab at once.**')|$(spells "$COORDSKILL" '« Already closed »: run no command for it. Drop that question if it is the one you present, say')|$(spells "$COORDSKILL" 'one line, « settled in the pane » or « settled in <sender>'"'"'s tab », never ask or relay it again,')|$(spells "$COORDSKILL" 'run the `round-close` the')"
+check "the coordinator closes a withdrawn entry with its recorded reason, and reads a supersede as the newer entry to present" "yes|yes|no" \
+  "$(spells "$COORDSKILL" '`coordinator.sh round-close <id> --answer "withdrawn: <its')|$(spells "$COORDSKILL" 'A reason « superseded by <id> » reads « present <id>')|$(spells "$COORDSKILL" '--answer "withdrawn: answered in its own tab"')"
 # An open question the pane can show is the pane's: `round` marks it due, for the coordinator to
 # present in its tab, only when its sender marked it urgent, however long the others have
 # waited, or when no pane of the coordinator is open: its record, <state>/pane.json, names a

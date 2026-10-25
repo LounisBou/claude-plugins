@@ -309,18 +309,34 @@ export function openEntries(entries: readonly RoundEntry[]): RoundEntry[] {
   return [...groups.values()].flat()
 }
 
+// A wait whose text asks nothing the pane could offer: no question of it carries a lettered
+// choice or a labelled field. A status report still waiting on an answer asked earlier, say.
+export function asksNothing(entry: Pick<RoundEntry, 'question' | 'choices' | 'recommendation'>): boolean {
+  return entryQuestions(entry).every(part => part.choices.length === 0 && questionShape(part.question, part.choices) === null)
+}
+
+// An operator question that carries lettered choices, in any of its questions: the one a later
+// wait asking nothing never withdraws. A closing proposal is none, whatever its text.
+export function carriesChoices(entry: RoundEntry): boolean {
+  return entry.kind === 'operator' && entryQuestions(entry).some(part => part.choices.length > 0)
+}
+
 // The open operator questions in the order the pane draws them: those that carry choices
-// first, in the round's order among themselves, then those without. A question the operator can
-// only answer in its session never hides one he can answer from the pane. A wait that asks
-// nothing, with no lettered choice and no labelled field, is no question: its sender's row
-// shows what it blocks, and the operator answers it in that tab. An entry that asks several
+// first, in the round's order among themselves, then those without, then the waits that ask
+// nothing. A question the operator can only answer in its session never hides one he can answer
+// from the pane. A wait that asks nothing, with no lettered choice and no labelled field, is
+// drawn too, its text whole and the field to answer it: an open wait missing from the pane left
+// the operator before an empty pane (his report of 2026-10-25). An entry that asks several
 // questions is read by its first.
 export function paneQuestions(entries: readonly RoundEntry[]): RoundEntry[] {
   const read = openEntries(entries)
     .filter(entry => entry.kind === 'operator')
-    .map(entry => ({ entry, first: entryQuestions(entry)[0] }))
-    .filter(({ first }) => first.choices.length > 0 || questionShape(first.question, first.choices) !== null)
-  return [...read.filter(({ first }) => first.choices.length > 0), ...read.filter(({ first }) => first.choices.length === 0)].map(({ entry }) => entry)
+    .map(entry => ({ entry, first: entryQuestions(entry)[0], silent: asksNothing(entry) }))
+  return [
+    ...read.filter(({ first }) => first.choices.length > 0),
+    ...read.filter(({ first, silent }) => first.choices.length === 0 && !silent),
+    ...read.filter(({ silent }) => silent),
+  ].map(({ entry }) => entry)
 }
 
 // An open question is due in the coordinator's tab when its sender marked it urgent, or when no

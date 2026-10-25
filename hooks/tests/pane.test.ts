@@ -10,7 +10,7 @@
 // its name, never the measure.
 import { expect, test } from 'claude-code/testing'
 import { agentPaneRows, answerFromPane, paneRows, readRound, roundLines, scrollTrack, wrapWords, register as registerSupervision, registerWake, registerPaneTool, SUPERVISION_TOOL, PANE_MAIN_THREAD_ONLY, type SessionRow } from '../supervision.ts'
-import type { RoundEntry } from '../round.ts'
+import { paneQuestions, type RoundEntry } from '../round.ts'
 import { hostRecordOf } from '../session-name.ts'
 import { register as registerAll } from '../register.ts'
 import { logLineOf, blockOf } from './fakes.ts'
@@ -600,7 +600,7 @@ test('an open pane redraws on its own clock while its session waits, and the clo
   const fx = fakeDollar({ launchName: 'Coord : main' })
   await handlers['command.run'](fx.dollar, supervisionRun)
   expect(fx.timers.length).toBe(1)
-  expect(fx.timers[0].ms).toBe(20000)
+  expect(fx.timers[0].ms).toBe(2000)
   fx.timers[0].fn()
   expect(fx.invalidated).toEqual(['ui.render'])
   await handlers['command.run'](fx.dollar, supervisionRun)
@@ -610,6 +610,77 @@ test('an open pane redraws on its own clock while its session waits, and the clo
   const e = { id: 'supervision', origin: { kind: 'person' } }
   expect(await handlers['ui.close'](fx.dollar, e, (x: unknown) => x)).toBe(e)
   expect(fx.timers[1].cancelled).toBe(true)
+})
+
+test('an open coordinator\'s pane redraws within one tick of a write in its round, and a tick that sees none draws nothing', async () => {
+  // A question settled in its sender's tab or closed by the coordinator stayed drawn up to the
+  // clock's 20 s. The clock now ticks every 2 s and stats the round's directory, a rename
+  // into it moving its mtime: a tick redraws only when it moved since the last draw, or when the
+  // last draw is 20 s old, so the ages and fills still move.
+  const { handlers } = mounted(registerSupervision)
+  const fx = coordinatorSession()
+  const roundDir = `${HOME}/.claude/claude-orchestrator/round`
+  let mtime = 1000
+  let stats = 0
+  const stat = fx.dollar.fs.stat
+  fx.dollar.fs.stat = async (p: string) => {
+    if (p !== roundDir) return stat(p)
+    stats++
+    return { kind: 'directory', size: 0, mtimeMs: mtime, isLink: false }
+  }
+  await handlers['command.run'](fx.dollar, supervisionRun)
+  expect(fx.timers.map(t => t.ms)).toEqual([2000])
+  await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
+  const tick = async () => {
+    fx.timers[0].fn()
+    for (let i = 0; i < 10; i++) await Promise.resolve()
+  }
+  await tick()
+  expect(fx.invalidated).toEqual([])
+  expect(stats).toBe(2)
+  mtime = 2000
+  await tick()
+  expect(fx.invalidated).toEqual(['ui.render'])
+  await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
+  await tick()
+  expect(fx.invalidated).toEqual(['ui.render'])
+  // No write for 20 s: the clock still redraws, its ages and fills moving.
+  for (let i = 0; i < 8; i++) await tick()
+  expect(fx.invalidated).toEqual(['ui.render'])
+  await tick()
+  expect(fx.invalidated).toEqual(['ui.render', 'ui.render'])
+})
+
+test('a coordinator\'s pane whose draw throws is not redrawn at every tick, its round absent or unmoved', async () => {
+  // The round's mtime last drawn was left unset when a draw threw before reading it: every tick
+  // then saw it moved, and the pane redrew every 2 s for as long as the draw kept failing.
+  const roundDir = `${HOME}/.claude/claude-orchestrator/round`
+  for (const mtime of [null, 1000]) {
+    const { handlers } = mounted(registerSupervision)
+    const fx = coordinatorSession()
+    const stat = fx.dollar.fs.stat
+    fx.dollar.fs.stat = async (p: string) => {
+      if (p !== roundDir) return stat(p)
+      if (mtime === null) throw new Error(`ENOENT: ${p}`)
+      return { kind: 'directory', size: 0, mtimeMs: mtime, isLink: false }
+    }
+    const read = fx.dollar.fs.read
+    fx.dollar.fs.read = (p: string) => {
+      if (p === `${SESSIONS}/s-one`) throw new Error('the store cannot be read')
+      return read(p)
+    }
+    await handlers['command.run'](fx.dollar, supervisionRun)
+    const tick = async () => {
+      fx.timers[0].fn()
+      for (let i = 0; i < 10; i++) await Promise.resolve()
+    }
+    await tick()
+    expect(fx.invalidated).toEqual(['ui.render'])
+    await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
+    for (let i = 0; i < 5; i++) await tick()
+    // A round present is redrawn once for the move the failed draw never recorded, then no more.
+    expect(fx.invalidated).toEqual(mtime === null ? ['ui.render'] : ['ui.render', 'ui.render'])
+  }
 })
 
 // --- the coordinator's round ------------------------------------------------------------------
@@ -796,7 +867,7 @@ test('a coordinator\'s pane opens by itself at the end of its first turn, as the
   const fx = coordinatorSession()
   expect(await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)).toBe(firstTurn)
   expect(fx.opened).toEqual([{ id: 'supervision', title: 'Orchestrators', focus: true }])
-  expect(fx.timers.map(t => t.ms)).toEqual([20000])
+  expect(fx.timers.map(t => t.ms)).toEqual([2000])
   await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
   expect(fx.opened.length).toBe(1)
   expect(fx.timers.length).toBe(1)
@@ -1321,14 +1392,17 @@ test('a question without choices never hides one that has them, and the count is
 const REPORT = 'Takeover done.\n\n| PR | state |\n|---|---|\n| speculoos#53 | ready |\n| speculoos#54 | ready |'
 const BLOCKS = 'line 239 (merge of speculoos#53) and the next ready PRs'
 
-test('a wait that asks nothing, no field and no choice, is no question: neither drawn under the questions nor counted, its row still shows what it blocks', async () => {
+test('a wait that asks nothing, no field and no choice, is drawn and counted: its text whole in a card, the Other answer field at once, its row still shows what it blocks', async () => {
   const report = entry('Orch : w', '2026-10-18T10:03:00.000Z', { session: 'w', question: REPORT, blocks: BLOCKS })
-  expect(roundLines([report])).toEqual([])
+  expect(roundLines([report])).toEqual([{ letter: null, text: 'Orch : w', bold: false }])
   const tree = await paneTree({ w: orch('Orch : w', { waiting: 'operator', waiting_since: SINCE, blocks: BLOCKS }) }, [report])
   const [section, , block] = tree.props.children
-  expect(texts(section)).toEqual(['Questions for you', 'none in the pane — 1 orchestrator waits for you: ask the coordinator', '─'.repeat(40)])
-  expect(JSON.stringify(tree)).not.toContain('Takeover done')
-  expect(JSON.stringify(tree)).not.toContain('pending')
+  expect(texts(section).slice(0, 2)).toEqual(['Questions for you — 1 pending', 'Orch : w'])
+  expect(texts(section).join('\n')).toContain('Takeover done.')
+  expect(texts(section).join('\n')).toContain('| speculoos#54 | ready |')
+  expect(input(section).props).toMatchObject({ label: 'Other answer' })
+  expect(findAll(section, n => n.type === 'Select').length).toBe(0)
+  expect(JSON.stringify(tree)).not.toContain('none in the pane')
   const [, status, blocks] = block.props.children
   expect(pieces(status)[1].text).toMatch(/^waiting for the operator since \d\d:\d\d$/)
   expect(pieces(blocks)).toEqual([{ text: 'Blocks:', bold: false }, { text: BLOCKS, bold: false }])
@@ -1346,8 +1420,36 @@ test('a labelled question without choices is still drawn and counted, beside a w
   const report = entry('Orch : w', '2026-10-18T10:05:00.000Z', { session: 'w', question: REPORT, blocks: BLOCKS })
   expect(roundLines([report, open])).toEqual([{ letter: null, text: 'Orch : w', bold: false }])
   const drawn = texts((await paneTree({ w: orch('Orch : w') }, [open, report])).props.children[0])
-  expect(drawn).toEqual(['Questions for you — 1 pending', 'Orch : w', 'QUESTION', 'Rename it?', '─'.repeat(40)])
+  expect(drawn).toEqual(['Questions for you — 2 pending', 'Orch : w', 'QUESTION', 'Rename it?', '─'.repeat(40)])
   expect(drawn.join('\n')).not.toContain('Takeover done')
+})
+
+test('the waits that ask nothing come last, after the labelled questions without choices, whatever their start', () => {
+  const report = entry('Orch : a', '2026-10-18T10:01:00.000Z', { question: REPORT })
+  const labelled = entry('Orch : b', '2026-10-18T10:02:00.000Z', { question: '_Question_ : Rename it?' })
+  const asked = entry('Orch : c', '2026-10-18T10:03:00.000Z', { choices: CHOICES })
+  expect(paneQuestions([report, labelled, asked]).map(e => e.from)).toEqual(['Orch : c', 'Orch : b', 'Orch : a'])
+})
+
+test('a wait that asks nothing comes after the questions with choices, and its submitted text answers it as a choice does', async () => {
+  const report = entry('Orch : low', '2026-10-18T10:01:00.000Z', { session: 'low', question: REPORT, blocks: BLOCKS })
+  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const { sent, render, stored } = await askingPane([report, asked])
+  const first = await render()
+  expect(texts(first)[0]).toBe('Questions for you — 2 pending')
+  expect(picker(first).props.key).toBe(`choices:${asked.id}`)
+  await pick(first, 'B')
+  const second = await render()
+  expect(texts(second)[0]).toBe('Questions for you — 1 pending')
+  expect(texts(second).join('\n')).toContain('Takeover done.')
+  await input(second).props.onSubmit('  merge speculoos#53  ')
+  const answered = stored(report.id)
+  expect([answered.status, answered.answer?.text, answered.answer?.by]).toEqual(['answered', 'merge speculoos#53', 'pane'])
+  expect(sent[1]).toEqual({
+    to: { sessionId: 'low' },
+    text: `[module] The operator answered from the coordinator's pane at ${answered.answer!.at} — merge speculoos#53 (question since 2026-10-18T10:01:00.000Z, blocks: ${BLOCKS})`,
+  })
+  expect(texts(await render())[0]).toBe('Questions for you')
 })
 
 // --- the selector ---------------------------------------------------------------------------
@@ -1530,6 +1632,40 @@ test('a submitted text answers the entry from the pane and is sent to its sender
   expect(texts(await render())).toContain('Rename it?')
 })
 
+// The operator's report of 2026-10-25: « A » from the pane at 21:10:00Z, then the same « A »
+// relayed again from the coordinator's tab, which had presented the question. An entry the
+// coordinator was shown, listed by its `round` or woken for, is settled in its tab at once.
+const LISTED = `${HOME}/.claude/claude-orchestrator/round-listed.json`
+const WOKEN = `${HOME}/.claude/claude-orchestrator/round-woken.json`
+for (const [label, file] of [['listed by its round', LISTED], ['woken for', WOKEN]] as const) {
+  test(`an answer from the pane to an entry the coordinator was ${label} is submitted to the coordinator once`, async () => {
+    const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+    const { fx, render, stored } = await askingPane([asked])
+    fx.files.set(file, JSON.stringify([asked.id]) + '\n')
+    const drawn = await render()
+    await pick(drawn, 'A')
+    const at = stored(asked.id).answer!.at
+    // Closed by the module in the same rename: the coordinator has no command to run.
+    expect([stored(asked.id).status, stored(asked.id).answer]).toEqual(['closed', { text: `answered from the pane: A : ${CHOICES[0].text}`, by: 'pane', at }])
+    expect(fx.submitted).toEqual([
+      `[module] Settled in the pane: Orch : low's question since 2026-10-18T10:03:00.000Z (entry ${asked.id}) — answered at ${at}. `
+      + 'Already closed: drop it, never ask or relay it again, present the next.',
+    ])
+    // A press landing late on the same picker settles nothing more.
+    await pick(drawn, 'A')
+    expect(fx.submitted.length).toBe(1)
+  })
+}
+
+test('an answer from the pane to an entry the coordinator was never shown submits nothing', async () => {
+  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const { fx, render, stored } = await askingPane([asked])
+  fx.files.set(LISTED, JSON.stringify(['another-entry']) + '\n')
+  await pick(await render(), 'A')
+  expect(stored(asked.id).status).toBe('answered')
+  expect(fx.submitted).toEqual([])
+})
+
 test('an empty or blank submit writes and sends nothing', async () => {
   const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
   const { fx, sent, render, stored } = await askingPane([asked])
@@ -1550,6 +1686,16 @@ test('a submitted text not delivered keeps the entry answered and leaves its not
   await input(await render()).props.onSubmit('some text')
   expect(stored(asked.id).status).toBe('answered')
   expect(fx.written.filter(l => l.includes("round: the pane's answer was not delivered to Orch : low: nobody by that name")).length).toBe(1)
+  expect(texts(await render()).some(t => t.startsWith('not delivered: nobody by that name'))).toBe(true)
+})
+
+test('a text not delivered to an entry the coordinator was shown closes it and still leaves its notice', async () => {
+  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const { fx, render, stored } = await askingPane([asked], { refuse: 'nobody by that name' })
+  fx.files.set(LISTED, JSON.stringify([asked.id]) + '\n')
+  await pick(await render(), 'other')
+  await input(await render()).props.onSubmit('some text')
+  expect(stored(asked.id).status).toBe('closed')
   expect(texts(await render()).some(t => t.startsWith('not delivered: nobody by that name'))).toBe(true)
 })
 

@@ -3,7 +3,7 @@
 // recommendation read out of a question in the decide shape, near misses read as none, the
 // entry built from an orchestrator's wait, and the order the round takes its open entries in.
 import { expect, test } from 'claude-code/testing'
-import { parseChoices, questionBody, questionShape, questionParts, entryQuestions, textSpans, plainText, prReferences, prPieces, repositoryOwners, numberLabel, roundEntry, roundEntryId, roundPath, openEntries, isDue, type RoundEntry } from '../round.ts'
+import { parseChoices, questionBody, questionShape, questionParts, entryQuestions, textSpans, plainText, prReferences, prPieces, repositoryOwners, numberLabel, roundEntry, roundEntryId, roundPath, openEntries, isDue, asksNothing, type RoundEntry } from '../round.ts'
 import { TWO_QUESTIONS, GLUED_BLOCKS, SHAPED, SHAPED_SUBJECT, SHAPED_CONTEXT, SHAPED_RECOMMENDATION, FIRST_B, SECOND_RECOMMENDATION_START } from './fixtures.ts'
 import { fingerprint, parseWait, relayText, RELAY_CAP, type Wait } from '../relay.ts'
 
@@ -306,6 +306,15 @@ test('the entry of two questions records the first one\'s choices, so the round 
   expect(entry.choices.map(c => c.letter)).toEqual(['A', 'B'])
   expect(entry.choices[0].text.startsWith('1.15.0, puis des 1.x.')).toBe(true)
   expect(entry.recommendation).toBe('A')
+})
+
+test('an entry of several questions asks nothing only when none of them carries a choice or a labelled field', () => {
+  // Its first question a bare line, its second the decide shape: the entry asks something.
+  const mixed = '**Question 1 of 2**\nShall I go on?\n\n**Question 2 of 2**\n_Question_ : which?\n- **A** : this\n- **B** : that'
+  expect(entryQuestions({ question: mixed, choices: [], recommendation: null })[0].choices).toEqual([])
+  expect(asksNothing({ question: mixed, choices: [], recommendation: null })).toBe(false)
+  const bare = '**Question 1 of 2**\nShall I go on?\n\n**Question 2 of 2**\nAnd tag it?'
+  expect(asksNothing({ question: bare, choices: [], recommendation: null })).toBe(true)
 })
 
 test('an entry of one question keeps the choices it recorded', () => {
