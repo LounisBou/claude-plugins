@@ -38,6 +38,7 @@ import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
   remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, machineLabel, prsInFlight, ROW_MARKER, REMOTE_STALE_AFTER_MS, type RemoteRow,
 } from './remote-row.ts'
+import { deckOf, deckText, deckIsNews, DECK_FILE, type Deck } from './deck.ts'
 
 // One row per live session, the store's whole schema. `pid` is the session's host
 // process — the row lives while it does.
@@ -1039,6 +1040,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // measure: the next one writes it.
       await logLine($, (err as Error).message)
     }
+    // The deck follows the row just written (writeDeck): a new fill is what its keys draw.
+    await refreshDeck($)
     return next(e)
   }).catch(async ($: any, e: any, next: any) => {
     // The registered net the plan's every-handler rule asks validate to see:
@@ -1058,19 +1061,24 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // The end is never held on the store's own failure; it is said.
       await logLine($, (err as Error).message)
     }
+    // What the host's end bound leaves, shared by the round and the deck after it.
+    let until = Date.now() + Math.min(RELAY_BOUND_MS, next.budget?.remainingMs ?? RELAY_BOUND_MS)
     try {
       // A question whose sender has ended has no one left to answer it. After the row is
       // gone, and bounded by what the host's own end bound leaves: a slow round never
       // starves the store's deletion.
       // Every write first, then the notices in what is left of it.
       const bound = Math.min(RELAY_BOUND_MS, next.budget?.remainingMs ?? RELAY_BOUND_MS)
-      const until = Date.now() + bound
+      until = Date.now() + bound
       const done = await withDeadline(withdrawStale($, sessionId, null, "the sender's session ended"), bound)
       if (isDegradedPass(done)) await logLine($, `round: did not finish within ${bound} ms`)
       else await tellSettled($, done, until)
     } catch (err) {
       await logLine($, `round: ${(err as Error).message}`)
     }
+    // The ended session leaves the deck, in what the round left of the bound.
+    const left = until - Date.now()
+    if (left > 0) await refreshDeck($, left)
     return next(e)
   }).catch(async ($: any, e: any, next: any) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
@@ -1108,6 +1116,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     } catch (err) {
       await logLine($, `pane: ${(err as Error).message}`)
     }
+    // The wait the relay just wrote, or cleared, is what the deck's keys show.
+    if (!e.agentId) await refreshDeck($)
     return next(e)
   }).catch(async ($: any, e: any, next: any) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
@@ -1119,7 +1129,10 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     try {
       const sessionId = await $.session.id()
       const wait = await readWait($, sessionId)
-      if (wait?.waiting) await writeWait($, sessionId, clearedWait(wait))
+      if (wait?.waiting) {
+        await writeWait($, sessionId, clearedWait(wait))
+        await refreshDeck($)
+      }
     } catch (err) {
       await logLine($, `relay: ${(err as Error).message}`)
     }
@@ -1173,7 +1186,12 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     try {
       if (!e.agentId && isPeerOrigin(e.origin) && typeof e.text === 'string') {
         const delivery = deliveryOf(e.text)
-        if (isMarked(delivery.body)) return await receiveRow($, delivery.body)
+        if (isMarked(delivery.body)) {
+          const received = await receiveRow($, delivery.body)
+          // A remote orchestrator's row is one of the deck's keys.
+          await refreshDeck($)
+          return received
+        }
         const learnt = learntOf(delivery, Date.now())
         if (learnt) await learnCoordinator($, learnt)
       }
@@ -2218,6 +2236,47 @@ export async function readRemoteRows($: any): Promise<RemoteRow[]> {
   }
   if (dead.length > 0) await $.process.run(['rm', '-f', ...dead], { timeoutMs: 5000 }).catch(() => undefined)
   return rows
+}
+
+// The machine's deck (deck.ts): the store, the remote rows, the round, the chains and the
+// sleepers read once and written to the state directory's deck.json, only when it is news.
+// Bounded by its callers and never a failure of theirs: a deck that cannot be written is one
+// log line, and the next change writes it.
+let lastDeck: { deck: Deck; at: number } | null = null
+export async function writeDeck($: any): Promise<void> {
+  const state = await stateDir($)
+  const local = await readSessions($)
+  const chainDir = `${state}/chains`
+  const listed: readonly { name: string; kind: string; mtimeMs?: number }[] = await $.fs.list(chainDir).catch(() => [])
+  const chains = []
+  for (const entry of listed) {
+    if (entry.kind !== 'file' || !entry.name.endsWith('.jsonl')) continue
+    chains.push({ name: entry.name, mtimeMs: entry.mtimeMs ?? 0, text: String(await $.fs.read(`${chainDir}/${entry.name}`).catch(() => '')) })
+  }
+  const prs = new Map<string, string[]>()
+  for (const [key, row] of Object.entries(local)) {
+    if (row.role === 'orchestrator') prs.set(key, await prsOf($, key.slice('sessions/'.length), row.repo))
+  }
+  const now = Date.now()
+  const deck = deckOf({
+    machine: await machineOf($), now, local, chains, prs,
+    remote: await readRemoteRows($),
+    round: (await readRound($)).map(read => read.entry),
+    sleepingText: String(await $.fs.read(`${state}/sleeping.json`).catch(() => '')),
+    gate: await gateEnv($),
+  })
+  if (!deckIsNews(deck, lastDeck, now)) return
+  await writeAtomic($, `${state}/${DECK_FILE}`, deckText(deck))
+  lastDeck = { deck, at: now }
+}
+
+async function refreshDeck($: any, bound = RELAY_BOUND_MS): Promise<void> {
+  try {
+    const done = await withDeadline(writeDeck($), bound)
+    if (isDegradedPass(done)) await logLine($, `deck: did not finish within ${bound} ms`)
+  } catch (err) {
+    await logLine($, `deck: ${(err as Error).message}`)
+  }
 }
 
 // The orchestrator an agent on `tty` reports to: the chain that names the tty

@@ -26,6 +26,7 @@ session can read without depending on a particular status bar.
 | module gate `tool.call` (Bash) | The push guard enforced in-process by the hooks module, in sessions the launcher spawned only: a `git push` that forces is refused unless its lease is pinned (`--force-with-lease=<branch>:<sha>`); the operator's own sessions are untouched. |
 | module gate `tool.call` (Write, Edit, MultiEdit, Bash) | The tier map's guard: in a session of the orchestration (its name gives it a role), a write of `models.json` in the state directory is denied with the rule that the map is the operator's, unless the last prompt he typed in that session names the map or a tier. Reads pass. |
 | hook `Stop` | The stop gate enforced in-process by the hooks module, in an orchestrator's session only (its name, launched or renamed, starts with `Orch :`): the stop is refused, at most once per turn, unless something will wake the orchestrator — a busy agent of its own, a `ci-watch.sh` it started still running, a blocking question declared on the message's last line (`waiting: operator — blocks: <what it blocks>`, honoured before an idle agent's stand-down is asked), or `waiting: done` with nothing left (no checkout, no agent, no open dispatch-record row, and every goal of the spec in the `goals.md` beside each registered record met with evidence on disk or ruled out in the operator's words; the first such done over a new content of the file shows him the table once) — or it has handed over: its last line `handed over`, or `waiting: done` once its successor's spawn succeeded or its `end_session` was accepted. Short of a declared blocking question, an idle agent of its own whose pull request is open or merged refuses the stop until it is stood down. Then each watched pull request of the session's repository whose ci-watch log shows checks pending or failing refuses the stop with the real state, once per watch (keyed on its log's first line): pending once, failing once per failing set — one with a `ci-watch.sh` process alive for it excepted, since that watch will wake the orchestrator. When its checks let the stop pass, it also runs `workspace.sh sweep` within what is left of its deadline, at most once per ten minutes, and logs each deletion. Its own failures let the stop pass and are logged in the module's log. |
+| `deck.json` | The machine's supervision as one versioned file for programs outside the host (D3vDeck, the Stream Deck plugin): the coordinator, the orchestrators local and remote with their pull requests in flight, each agent under the orchestrator its chain names, the fill against the gate, the waits, the round's open questions and the sleepers. Written by the hooks module in one rename under the state directory, on every change the pane would show and at least once a minute, so a reader can tell a live file from a frozen one. See « The deck file » below. |
 | `/orchestrator-agents` | The running implementer agents with their measured context, the most urgent first, answered by the hooks module without a model turn; the ask of each agent and its verification on the artifact are the command body's steps, run by hand or when that answer fails. |
 | `/orchestrator-progress` | The goals line of each record's `goals.md` (`goals met=m/n … open=…`), the dispatch rows still open and the record's tally, answered by the hooks module without a model turn; the full report — done, in flight, remaining, decisions pending, the orchestrator's own context — is the command body's steps, run by hand or when that answer fails. |
 | `/orchestrator-decide` | Runs a decision round with the user: every open question back to back, one per message — context, choices with their cost, one recommendation — each ruling recorded at once; the rulings are relayed and the work launched when the wave ends, and a second wave is chained at once if the work raises new questions. |
@@ -139,6 +140,30 @@ orchestration session, and a band above the prompt shows the fill;
 `/orchestrator-status` answers the same figures for every session on the
 machine, and for the orchestrators on other machines whose rows reached it. Measured beats estimated: in observed runs, agents' self-estimates
 ran 13 points above the gauge.
+
+## The deck file
+
+`~/.claude/claude-orchestrator/deck.json` is the one contract between the module and a
+program that draws the supervision elsewhere. Its shape is `hooks/deck.ts`'s `Deck`, and
+`version` changes on any change a reader must know of.
+
+```jsonc
+{
+  "version": 1, "generated_at": "…", "machine": "mbp",
+  "coordinator": { "key": "sessions/…", "name": "Coord : …", "tty": "/dev/ttys001", "repo": null,
+                   "context": { "percent": 12, "tokens": 120000, "window": 1000000, "past_gate": false },
+                   "waiting": null, "updated_at": "…" },
+  "orchestrators": [ { "…the same fields…", "machine": null, "prs": ["owner/repo#12"],
+                       "agents": [ { "…the same fields…" } ] } ],
+  "unattached_agents": [],
+  "sleeping": [ { "name": "Orch : …", "since": "…", "dir": "…", "prs": ["owner/repo#3 branch"] } ],
+  "round": { "open": 3, "urgent": 1, "oldest_since": "…" }
+}
+```
+
+A remote orchestrator has `machine` set and `tty` null: there is no tab to focus on this
+machine. `waiting.kind` is `operator` or `done`; `urgent` is true when the sender marked its
+open question so. Orchestrators come sorted by name.
 
 ## The method in five lines
 
