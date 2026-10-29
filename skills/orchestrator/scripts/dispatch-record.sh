@@ -27,6 +27,11 @@
 # lands rounds later where nobody attributes it. `summary` names the classes where the
 # drop did not pay, so the reversion is a reading rather than an impression.
 #
+# A green `ready` (head read, or corrected and verified) also prints one line naming the
+# command that puts the `Ready` label, `pr-readiness <n> ready on <owner/repo>`, the pull
+# request read from a `--ui` row; the orchestrator runs it with the github tool. This script
+# never calls the network.
+#
 # `review` and `ready` carry the second rule the record is asked to hold: a pull request is
 # ready only when a review session read ITS head (either side may abbreviate the other, from
 # 7 characters) and the project's own norms check ran there - or when the head is the one
@@ -414,6 +419,11 @@ ready)
         --arg l "$e2e" --arg k "$e2e_kind" --arg w "$waiver" --arg x "$exempt_words" --arg h "$head" \
         --arg a "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     surface_line="$surface_line; $e2e_line"
+    # The label is the orchestrator's to put, with the github tool, in the same move as its
+    # ready: this prints the command and calls nothing. The pull request is the one the row
+    # names (a `--ui` row); otherwise the placeholders stay for the orchestrator to fill.
+    label_cmd="pr-readiness <n> ready on <owner/repo>"
+    if [ "$kind" = ui ]; then label_cmd="pr-readiness ${pr##*#} ready on ${pr%#*}"; fi
     reviewed=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].review.head // ""' "$record")
     norms=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].review.norms // ""' "$record")
     fixed=$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].review.fixed.head // ""' "$record")
@@ -426,8 +436,10 @@ ready)
     # identify anything, and that refusal must stop the gate, not read as a mismatch.
     if same_commit "$reviewed" "$head"; then
         echo "ready: row $id reviewed at $head, norms check $norms; $surface_line"
+        echo "$label_cmd"
     elif [ -n "$fixed" ] && same_commit "$fixed" "$head"; then
         echo "ready: row $id reviewed at $reviewed, corrected and verified at $head, norms check $norms; $surface_line"
+        echo "$label_cmd"
     elif [ -n "$fixed" ]; then
         die "ready: last review read $reviewed, its correction $fixed, head is $head: the head in front of you has been neither read nor verified"
     else

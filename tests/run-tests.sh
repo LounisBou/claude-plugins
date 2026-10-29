@@ -220,7 +220,7 @@ check "the delivering briefs no longer ask for context_tokens in the final repor
 # sender's reference, then by the successor-admission sentence (the operator's item 154, « A », 2026-10-19),
 # then, for the review brief, by the name of the lens subagent type.
 check "the agent briefs stay within their trimmed sizes" "yes|yes|yes|yes" \
-  "$(for pair in phase:8801 comments:6436 review:8143 rotation:2833; do [ "$(wc -c < "$ROOT/templates/agent-${pair%%:*}-brief.md" | tr -d ' ')" -le "${pair##*:}" ] && echo yes || echo no; done | paste -sd'|' -)"
+  "$(for pair in phase:8973 comments:6436 review:8143 rotation:2833; do [ "$(wc -c < "$ROOT/templates/agent-${pair%%:*}-brief.md" | tr -d ' ')" -le "${pair##*:}" ] && echo yes || echo no; done | paste -sd'|' -)"
 # A chained push (`&&`, `;`, `cd … &&`) falls outside the permission rules and is refused.
 check "the phase and comments briefs say a push runs as one bare command" "yes|yes" \
   "$(for t in phase comments; do spells "$ROOT/templates/agent-$t-brief.md" 'A push runs as one bare command, `git push -u origin {{BRANCH}}`, never chained to another command (`&&`, `;`, `cd … &&`): a chained push falls outside the permission rules and is refused.'; done | paste -sd'|' -)"
@@ -267,9 +267,10 @@ check "the ungated pull request has its red flag" "1" "$(grep -c "A pull request
 # that rule binds wherever no reference is loaded, so it lives here, and the bound moved with it.
 # 21,600 until the hooks module took the relay over: the bound follows the rule down.
 # 21,450 until the module reported an agent's turn end and gate crossing too.
+# 21,518 until the label sentence (the operator's order of 2026-10-29).
 # 21,446 until the hand-over sentence naming the successor to the agents (item 154, « A », 2026-10-19).
-check "the orchestrator rulebook stays at 21,518 bytes or fewer" "yes" \
-  "$([ "$(wc -c < "$ROOT/skills/orchestrator/SKILL.md" | tr -d ' ')" -le 21518 ] && echo yes || echo no)"
+check "the orchestrator rulebook stays at 21,619 bytes or fewer" "yes" \
+  "$([ "$(wc -c < "$ROOT/skills/orchestrator/SKILL.md" | tr -d ' ')" -le 21619 ] && echo yes || echo no)"
 # Real load on a shared machine is stopped, and « under load » means emulated throttling: the
 # rulebook, the briefs reference and the phase brief template each carry the rule.
 check "the rulebook stops real machine load an agent reports or plans" "yes" \
@@ -1851,10 +1852,10 @@ check_status "a memo quoting role lines inline is no agent brief" 0 bash "$LINT"
 # A pull request title the brief imposes is held to the operator's writing rule, 60
 # characters: a longer one makes the implementer choose between the brief and the rule.
 title_of() { printf 'x%.0s' $(seq 1 "$1"); }
-ok_brief "$B/title-61.md"; printf -- '- Draft PR, title `%s`, base `main`.\n' "$(title_of 61)" >> "$B/title-61.md"
+ok_brief "$B/title-61.md"; printf -- '- Draft PR through `pr-create --draft`, title `%s`, base `main`.\n' "$(title_of 61)" >> "$B/title-61.md"
 check_status "a 61-character imposed title is a finding" 1 bash "$LINT" "$B/title-61.md"
 check "it is one finding, naming the length and the limit" "1" "$(bash "$LINT" "$B/title-61.md" 2>&1 | grep -c 'title is 61 characters, over the limit of 60')"
-ok_brief "$B/title-60.md"; printf -- '- Draft PR, title `%s`, base `main`.\n' "$(title_of 60)" >> "$B/title-60.md"
+ok_brief "$B/title-60.md"; printf -- '- Draft PR through `pr-create --draft`, title `%s`, base `main`.\n' "$(title_of 60)" >> "$B/title-60.md"
 check_status "a 60-character imposed title is not a finding" 0 bash "$LINT" "$B/title-60.md"
 ok_brief "$B/title-none.md"; printf -- '- Draft PR, base `main`.\n' >> "$B/title-none.md"
 check "a brief with no imposed title raises no title finding" "0" "$(bash "$LINT" "$B/title-none.md" 2>&1 | grep -c 'pull request title')"
@@ -8282,6 +8283,71 @@ check "the review brief dispatches each lens as the subagent type orchestrator:l
   "$(spells "$ROOT/templates/agent-review-brief.md" 'one read-only sub-agent of the type `orchestrator:lens` per lens')"
 check "the routing table, the review reference and the design name the lens type" "yes|yes|yes" \
   "$(flat_has "$ROOT/skills/model-routing/SKILL.md" '`orchestrator:lens`')|$(flat_has "$ROOT/skills/orchestrator/references/review.md" '`orchestrator:lens`')|$(flat_has "$ROOT/docs/design.md" '`orchestrator:lens`')"
+
+# A pull request carries Ready or Not Ready beside the draft. The implementer's opens Not
+# Ready (`pr-create --draft` labels it, or `pr-readiness <n> not-ready` after another way of
+# opening it); the orchestrator's « ready » puts Ready. brief-lint refuses an implementer
+# brief whose delivery opens a pull request without one of the two; `dispatch-record.sh
+# ready` prints the command to run and never calls the network. The github plugin's commands
+# are cited by name only: they do not exist on every machine, so nothing here calls them.
+LBL_LINT="$ROOT/skills/orchestrator/scripts/brief-lint.sh"
+LB="$WORK/label-briefs"; mkdir -p "$LB"
+ok_brief "$LB/none.md"
+check_status "an implementer brief that opens no pull request needs no label" 0 bash "$LBL_LINT" "$LB/none.md"
+ok_brief "$LB/bare.md"; printf -- '- Draft PR, title `x`, base `main`.\n' >> "$LB/bare.md"
+check_status "an implementer brief whose delivery opens a draft pull request with no label is a finding" 1 bash "$LBL_LINT" "$LB/bare.md"
+check "and the finding names the two ways" "1" \
+  "$(bash "$LBL_LINT" "$LB/bare.md" 2>&1 | grep -c 'Not Ready.*pr-create --draft.*pr-readiness')"
+ok_brief "$LB/create.md"; printf -- '- Draft PR through `pr-create --draft`, title `x`, base `main`.\n' >> "$LB/create.md"
+check_status "pr-create --draft passes" 0 bash "$LBL_LINT" "$LB/create.md"
+ok_brief "$LB/readiness.md"; printf -- '- Draft PR, then `pr-readiness 12 not-ready`.\n' >> "$LB/readiness.md"
+check_status "pr-readiness not-ready passes" 0 bash "$LBL_LINT" "$LB/readiness.md"
+printf '# review\n\nYou are the REVIEW agent.\n\nOpen the pull request {{PR}} and read it.\n' > "$LB/review.md"
+check "a review brief is not held to it" "0" "$(bash "$LBL_LINT" "$LB/review.md" 2>&1 | grep -c 'Not Ready')"
+PB_LABEL="$ROOT/templates/agent-phase-brief.md"
+check "the phase brief delivery opens the pull request through pr-create --draft, Not Ready, or pr-readiness not-ready" "yes|yes|yes" \
+  "$(spells "$PB_LABEL" 'opened with the github tool'"'"'s `pr-create --draft`')|$(spells "$PB_LABEL" '(it labels `Not Ready`;')|$(spells "$PB_LABEL" '`pr-readiness <n> not-ready`')"
+check "every agent brief template that opens a pull request says Not Ready or pr-create --draft" "0" \
+  "$(for t in "$ROOT"/templates/agent-*-brief.md; do grep -qiE 'draft (PR|pull request)' "$t" && ! grep -qE 'Not Ready|pr-create --draft' "$t" && echo "$t"; done | wc -l | tr -d ' ')"
+check "the filled phase brief lints to zero" "0" "$(sed -e 's/{{[A-Z_]*}}/x/g' -e '1s/.*/# scratch/' "$PB_LABEL" > "$LB/phase.md"; bash "$LBL_LINT" "$LB/phase.md" 2>&1 | grep -c 'Not Ready')"
+check "the lint header describes the check" "yes" "$(spells "$LBL_LINT" 'Check 14')"
+
+LR="$WORK/label-ready/dispatch.jsonl"; mkdir -p "$WORK/label-ready"
+bash "$REC" goals "$LR" init --spec none >/dev/null
+export SURFACE_BODIES="$WORK/surface-bodies"
+lr1=$(srec open "$LR" --class behaviour-phase --tier standard --label "ui")
+srec review "$LR" "$lr1" --head aaa1111 --norms tool >/dev/null
+srec surface "$LR" "$lr1" --ui acme/front#12 >/dev/null
+srec audit "$LR" "$lr1" --head aaa1111 --images 1 >/dev/null
+check "ready on a row that names its pull request prints the command to run" "1" \
+  "$(srec ready "$LR" "$lr1" --head aaa1111 --e2e "$E2EOK" 2>/dev/null | grep -c '^pr-readiness 12 ready on acme/front$')"
+lr2=$(srec open "$LR" --class behaviour-phase --tier standard --label "none")
+srec review "$LR" "$lr2" --head bbb2222 --norms tool >/dev/null
+srec surface "$LR" "$lr2" --none >/dev/null
+check "ready on a row that names none prints the command with the placeholders" "1" \
+  "$(srec ready "$LR" "$lr2" --head bbb2222 --e2e "$E2EOK" 2>/dev/null | grep -c '^pr-readiness <n> ready on <owner/repo>$')"
+check "a refused ready prints no label command" "0" \
+  "$(srec ready "$LR" "$lr2" --head ccc3333 --e2e "$E2EOK" 2>&1 | grep -c 'pr-readiness')"
+lr3=$(srec open "$LR" --class behaviour-phase --tier standard --label "none")
+srec review "$LR" "$lr3" --head ddd4444 --norms tool >/dev/null
+srec fixed "$LR" "$lr3" --head eee5555 >/dev/null
+srec surface "$LR" "$lr3" --none >/dev/null
+check "ready on a row corrected and verified at the head prints the command with the placeholders" "1" \
+  "$(srec ready "$LR" "$lr3" --head eee5555 --e2e "$E2EOK" 2>/dev/null | grep -c '^pr-readiness <n> ready on <owner/repo>$')"
+lr4=$(srec open "$LR" --class behaviour-phase --tier standard --label "none")
+srec surface "$LR" "$lr4" --none >/dev/null
+check_status "ready on a row with no review recorded warns and exits 0" 0 srec ready "$LR" "$lr4" --head fff6666 --e2e "$E2EOK"
+check "and it prints no label command" "0" \
+  "$(srec ready "$LR" "$lr4" --head fff6666 --e2e "$E2EOK" 2>&1 | grep -c 'pr-readiness')"
+unset SURFACE_BODIES
+check "dispatch-record.sh makes no label call itself" "0" "$(grep -c 'labels-ensure\|gh pr edit\|--add-label' "$REC")"
+
+check "review.md names pr-readiness at the ready step, and Not Ready when the head moves" "yes|yes|yes" \
+  "$(flat_has "$ORCH_REFS/review.md" '`pr-readiness <n> ready`')|$(flat_has "$ORCH_REFS/review.md" 'puts `Not Ready` back with `pr-readiness <n> not-ready` until `ready` is green again at the new head')|$(flat_has "$ORCH_REFS/review.md" 'beside what the project'"'"'s method does with the draft')"
+check "briefs.md carries the standing rule" "yes" \
+  "$(flat_has "$ORCH_REFS/briefs.md" 'Draft and `Not Ready` until the orchestrator'"'"'s ready; `Ready` comes only from it')"
+check "SKILL.md and the design carry it" "yes|yes" \
+  "$(flat_has "$ROOT/skills/orchestrator/SKILL.md" '`Ready` or `Not Ready` label')|$(flat_has "$ROOT/docs/design.md" '`Ready` or `Not Ready` label')"
 
 echo
 printf '%d passed, %d failed\n' "$pass" "$fail"

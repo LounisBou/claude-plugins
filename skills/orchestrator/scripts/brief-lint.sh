@@ -29,6 +29,10 @@
 # characters. The operator's writing rule caps a pull request title at 60, and a brief that
 # imposes a longer one makes its implementer choose between the brief and the rule.
 #
+# Check 14 refuses an implementer brief whose delivery opens a pull request without saying
+# how it comes out labelled `Not Ready`: through the github tool's `pr-create --draft`, or
+# `pr-readiness <n> not-ready` after another way of opening it.
+#
 # What it CANNOT check: whether the scope is right, whether the contracts are the ones the
 # next phase consumes, whether the tier fits the work. Those stay the orchestrator's, and
 # a green lint is not an approved brief.
@@ -346,6 +350,15 @@ while IFS=: read -r n text; do
     [ "$len" -le "$title_limit" ] \
         || say "$n" "pull request title is $len characters, over the limit of $title_limit: shorten the title the brief imposes"
 done < <(grep -noE 'title `[^`]+`' "$brief" 2>/dev/null || true)
+
+# 14. A pull request an implementer opens carries `Not Ready` beside the draft until the
+#     orchestrator's ready. A brief that orders a draft pull request without either way of
+#     labelling it leaves the label to chance. Only an implementer brief opens one.
+if is_class implementer \
+    && grep -qiE 'draft (PR|pull request)|open(s|ed)? (a|the) (draft )?(PR|pull request)' "$brief" 2>/dev/null; then
+    grep -qE 'pr-create --draft|pr-readiness [^ ]+ not-ready' "$brief" 2>/dev/null \
+        || say 1 "the delivery opens a pull request without its Not Ready label: open it through the github tool's \`pr-create --draft\`, or follow with \`pr-readiness <n> not-ready\`"
+fi
 
 if [ "$findings" = 0 ]; then
     echo "brief-lint: $brief: 0 findings"

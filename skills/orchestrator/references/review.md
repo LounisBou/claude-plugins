@@ -16,6 +16,8 @@ They hold at every step of the loop, whatever the rest of this file adds.
 
 **Ready is the operator's turn, and the pull request stays in draft.** Ready, from your side, is: implemented, nothing pending, no decision waiting, the pull request open in DRAFT, its review round and norms check done, its correction round made and verified, its E2E line settled (item 14), `ready` green at that head — and the branch rebased, conflicts resolved by you: on the main branch, and each pull request of a stack on the one below it. Then, and not before, you tell the operator « ready », with its E2E line: what is left is his review, taking it out of draft and approving the squash-merge, and by default none of the three is yours — a project's own method may decide otherwise, as « The operator decides; the orchestrator runs » says in SKILL.md.
 
+**The label follows the ready.** When you declare a pull request ready (its `ready` record green, the rebase done), put `Ready` on it with the github tool, `pr-readiness <n> ready`, in the same move and beside what the project's method does with the draft (left draft for the operator, or undrafted and merged under auto-merge); `dispatch-record.sh ready` prints that command. A head that moves after that — a rebase, a fixup, a correction — puts `Not Ready` back with `pr-readiness <n> not-ready` until `ready` is green again at the new head.
+
 ## Review on evidence
 
 For each delivery, run yourself (read-only):

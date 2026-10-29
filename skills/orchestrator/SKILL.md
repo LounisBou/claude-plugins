@@ -168,6 +168,9 @@ move »: you tell him « ready » and wait for his request. A
 project's own method may decide otherwise — auto-merge, pull requests that ship ready rather
 than draft — and where it does, that text governs.
 
+A `Ready` or `Not Ready` label sits beside the draft: `references/review.md`, « The label
+follows the ready ».
+
 What reaches the operator is an **arbitration**: what the thing is, two readings, what each
 costs, one recommendation — one at a time, with its context, per the decision round. A
 configuration change the tooling needs is no chore of his: it goes to the session
