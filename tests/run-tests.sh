@@ -1,6 +1,9 @@
 #!/bin/bash
 # Test suite. No network, no terminal automation, isolated HOME per case.
 #
+# Requires bash, git, jq, python3 and node (the deck's usage rule runs under node, through
+# the module's own transcript reader).
+#
 # Each case runs a script against a temporary state directory or a temporary
 # HOME and compares its output or its side effects with an expected value.
 
@@ -6809,6 +6812,52 @@ check "the alias records the identifier it resolved to" "a-model-1" \
 # costliest one is not that alias's identifier, and folding pairs on it would merge two models.
 check "an alias no model of the session carries is recorded as nothing, the others kept" "0|false|a-model-1" \
   "$(rcost --session s-1 --alias b-model >/dev/null 2>&1; echo $?)|$(jq -r 'has("b-model")' "$RSTATE/routing/aliases.json")|$(jq -r '.["a-model"]' "$RSTATE/routing/aliases.json")"
+
+echo "== deck: usage, routing.py's cost rule =="
+
+# The deck's usage (hooks/usage.ts) spells routing.py's cost rule again, in the module: the
+# two are held to the same tokens and the same cost on one transcript. The module side runs
+# under node, through the module's own reader (the shell it hands the host), in two reads cut
+# anywhere, mid-line and mid-character included.
+UFIX="$ROOT/tests/fixtures/usage"
+USTATE="$WORK/ustate"; mkdir -p "$USTATE/routing"
+cp "$UFIX/prices.json" "$USTATE/routing/prices.json"
+ucost_py() { ORCHESTRATOR_STATE_DIR="$USTATE" python3 "$ROUTING" cost --json "$1" 2>/dev/null \
+  | jq -r '"\(.tokens_in)|\(.tokens_out)|\(.cache_read)|\(.cache_write)|\(if .cost_usd == null then "null" else (.cost_usd * 1e9 | round) end)"'; }
+ucost_ts() { node --no-warnings "$ROOT/tests/usage-rule.ts" cost "$1" "$USTATE/routing/prices.json" ${2:+"$2"} 2>/dev/null \
+  | jq -r '"\(.tokens_in)|\(.tokens_out)|\(.cache_read)|\(.cache_write)|\(if .cost_usd == null then "null" else (.cost_usd * 1e9 | round) end)"'; }
+check "node runs the module's rule outside the host" "yes" "$(command -v node >/dev/null && echo yes || echo no)"
+check "the fixture's figures, as routing.py reads them" "60519|1202|72000|10200|75173500" "$(ucost_py "$UFIX/transcript.jsonl")"
+check "the module's rule reads the same tokens and the same cost" "$(ucost_py "$UFIX/transcript.jsonl")" "$(ucost_ts "$UFIX/transcript.jsonl")"
+usplit=""
+for cut in 1 57 120 121 122 3000 7785; do usplit="$usplit$(ucost_ts "$UFIX/transcript.jsonl" "$cut") "; done
+check "and the same wherever the first read ends" "$(for cut in 1 57 120 121 122 3000 7785; do printf '%s ' "$(ucost_py "$UFIX/transcript.jsonl")"; done)" "$usplit"
+check "a session of the routing fixture reads the same on both sides" \
+  "$(ORCHESTRATOR_STATE_DIR="$RSTATE" python3 "$ROUTING" cost --json "$RFIX/projects/-repo/s-1.jsonl" | jq -r '"\(.tokens_in)|\(.cost_usd * 1e9 | round)"')" \
+  "$(node --no-warnings "$ROOT/tests/usage-rule.ts" cost "$RFIX/projects/-repo/s-1.jsonl" "$RSTATE/routing/prices.json" | jq -r '"\(.tokens_in)|\(.cost_usd * 1e9 | round)"')"
+jq 'del(.["b-model"])' "$UFIX/prices.json" > "$USTATE/routing/prices.json"
+check "a model without a price: both costs null, the tokens still counted" "60519|1202|72000|10200|null" "$(ucost_py "$UFIX/transcript.jsonl")"
+check "and the module's rule says the same" "$(ucost_py "$UFIX/transcript.jsonl")" "$(ucost_ts "$UFIX/transcript.jsonl")"
+cp "$UFIX/prices.json" "$USTATE/routing/prices.json"
+# The line still being written is neither read nor counted: the next read starts on it.
+head -n 2 "$UFIX/transcript.jsonl" > "$WORK/partial.jsonl"
+printf '%s' '{"type":"assistant","message":{"model":"a-model","usage":{"input_tokens":5' >> "$WORK/partial.jsonl"
+check "a partial last line is left for the next read" "$(head -n 2 "$UFIX/transcript.jsonl" | wc -c | tr -d ' ')" \
+  "$(node --no-warnings "$ROOT/tests/usage-rule.ts" cost "$WORK/partial.jsonl" "$USTATE/routing/prices.json" | jq -r '.offset')"
+# The reader's own answer, as the module receives it: only the lines a usage may be read from,
+# the line still being written neither printed nor counted, then the bytes the complete lines
+# spanned after the separator (shown here as |).
+uread_a='{"type":"assistant","message":{"id":"r1","model":"a-model","usage":{"input_tokens":3}}}'
+uread_b='{"type":"user","usage":"assistant"}'
+uread_p='{"type":"assistant","message":{"id":"r2","model":"a-model","usage":{"input_tokens":4'
+{ printf '%s\n' "$uread_a" '{"type":"user","message":{"content":"x"}}' "$uread_b" '{"type":"progress","usage":1}' '{"type":"assistant","message":{"content":"x"}}'
+  printf '%s' "$uread_p"; } > "$WORK/reader.jsonl"
+usize=$(wc -c < "$WORK/reader.jsonl" | tr -d ' ')
+uread() { node --no-warnings "$ROOT/tests/usage-rule.ts" read "$WORK/reader.jsonl" "$1" "$2" | tr '\036' '|'; }
+check "the reader prints the usage lines and the complete lines' bytes, the partial one left" \
+  "$uread_a"$'\n'"$uread_b"$'\n'"|$(( usize - ${#uread_p} ))" "$(uread 0 "$usize")"
+check "a window starting past the first line counts from its own start" \
+  "$uread_b"$'\n'"|$(( usize - ${#uread_p} - ${#uread_a} - 1 ))" "$(uread $(( ${#uread_a} + 1 )) $(( usize - ${#uread_a} - 1 )))"
 
 echo "== routing: pick =="
 

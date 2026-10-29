@@ -26,7 +26,7 @@ session can read without depending on a particular status bar.
 | module gate `tool.call` (Bash) | The push guard enforced in-process by the hooks module, in sessions the launcher spawned only: a `git push` that forces is refused unless its lease is pinned (`--force-with-lease=<branch>:<sha>`); the operator's own sessions are untouched. |
 | module gate `tool.call` (Write, Edit, MultiEdit, Bash) | The tier map's guard: in a session of the orchestration (its name gives it a role), a write of `models.json` in the state directory is denied with the rule that the map is the operator's, unless the last prompt he typed in that session names the map or a tier. Reads pass. |
 | hook `Stop` | The stop gate enforced in-process by the hooks module, in an orchestrator's session only (its name, launched or renamed, starts with `Orch :`): the stop is refused, at most once per turn, unless something will wake the orchestrator — a busy agent of its own, a `ci-watch.sh` it started still running, a blocking question declared on the message's last line (`waiting: operator — blocks: <what it blocks>`, honoured before an idle agent's stand-down is asked), or `waiting: done` with nothing left (no checkout, no agent, no open dispatch-record row, and every goal of the spec in the `goals.md` beside each registered record met with evidence on disk or ruled out in the operator's words; the first such done over a new content of the file shows him the table once) — or it has handed over: its last line `handed over`, or `waiting: done` once its successor's spawn succeeded or its `end_session` was accepted. Short of a declared blocking question, an idle agent of its own whose pull request is open or merged refuses the stop until it is stood down. Then each watched pull request of the session's repository whose ci-watch log shows checks pending or failing refuses the stop with the real state, once per watch (keyed on its log's first line): pending once, failing once per failing set — one with a `ci-watch.sh` process alive for it excepted, since that watch will wake the orchestrator. When its checks let the stop pass, it also runs `workspace.sh sweep` within what is left of its deadline, at most once per ten minutes, and logs each deletion. Its own failures let the stop pass and are logged in the module's log. |
-| `deck.json` | The machine's supervision as one versioned file for programs outside the host (D3vDeck, the Stream Deck plugin): the coordinator, the orchestrators local and remote with their pull requests in flight, each agent under the orchestrator its chain names, the fill against the gate, the waits, the round's open questions and the sleepers. Written by the hooks module in one rename under the state directory, on every change the pane would show and at least once a minute, so a reader can tell a live file from a frozen one. See « The deck file » below. |
+| `deck.json` | The machine's supervision as one versioned file for programs outside the host (D3vDeck, the Stream Deck plugin): the coordinator, the orchestrators local and remote with their pull requests in flight, each agent under the orchestrator its chain names, the fill against the gate, the waits, the round's open questions and the sleepers, and each session's token use with its API-equivalent cost for the day and the week. Written by the hooks module in one rename under the state directory, on every change the pane would show and at least once a minute, so a reader can tell a live file from a frozen one. See « The deck file » below. |
 | `/orchestrator-agents` | The running implementer agents with their measured context, the most urgent first, answered by the hooks module without a model turn; the ask of each agent and its verification on the artifact are the command body's steps, run by hand or when that answer fails. |
 | `/orchestrator-progress` | The goals line of each record's `goals.md` (`goals met=m/n … open=…`), the dispatch rows still open and the record's tally, answered by the hooks module without a model turn; the full report — done, in flight, remaining, decisions pending, the orchestrator's own context — is the command body's steps, run by hand or when that answer fails. |
 | `/orchestrator-decide` | Runs a decision round with the user: every open question back to back, one per message — context, choices with their cost, one recommendation — each ruling recorded at once; the rulings are relayed and the work launched when the wave ends, and a second wave is chained at once if the work raises new questions. |
@@ -149,21 +149,54 @@ program that draws the supervision elsewhere. Its shape is `hooks/deck.ts`'s `De
 
 ```jsonc
 {
-  "version": 1, "generated_at": "…", "machine": "mbp",
+  "version": 2, "generated_at": "…", "machine": "mbp",
   "coordinator": { "key": "sessions/…", "name": "Coord : …", "tty": "/dev/ttys001", "repo": null,
                    "context": { "percent": 12, "tokens": 120000, "window": 1000000, "past_gate": false },
-                   "waiting": null, "updated_at": "…" },
+                   "waiting": null, "updated_at": "…",
+                   "usage": { "day":  { "from": "2026-10-28T23:00:00.000Z",
+                                        "tokens": { "input": 1200, "output": 34000, "cache_read": 5200000, "cache_write": 310000 },
+                                        "cost_usd": 4.71 },
+                              "week": { "from": "2026-10-25T23:00:00.000Z", "tokens": { "…": 0 }, "cost_usd": 22.9 },
+                              "at": "…" } },
   "orchestrators": [ { "…the same fields…", "machine": null, "prs": ["owner/repo#12"],
                        "agents": [ { "…the same fields…" } ] } ],
   "unattached_agents": [],
   "sleeping": [ { "name": "Orch : …", "since": "…", "dir": "…", "prs": ["owner/repo#3 branch"] } ],
-  "round": { "open": 3, "urgent": 1, "oldest_since": "…" }
+  "round": { "open": 3, "urgent": 1, "oldest_since": "…" },
+  "usage_totals": { "day": { "…the same fields…" }, "week": { "…" }, "at": "…" },
+  "usage_basis": { "currency": "USD", "prices": "api-list-equivalent", "timezone": "Europe/Paris" }
 }
 ```
 
 A remote orchestrator has `machine` set and `tty` null: there is no tab to focus on this
 machine. `waiting.kind` is `operator` or `done`; `urgent` is true when the sender marked its
 open question so. Orchestrators come sorted by name.
+
+`usage` is what a session spent, read from its transcript and its subagents' transcripts:
+
+- `day` starts at 00:00 Paris time of the current day, `week` at 00:00 Paris time on Monday
+  of the current ISO week; `from` is that start as an ISO UTC instant. A message counts in a
+  period by its transcript entry's timestamp.
+- `tokens` are counts of tokens, one usage per message: `input` the fresh input,
+  `output` the output, `cache_read` the cache reads, `cache_write` the cache writes (the
+  5-minute and the 1-hour ones together).
+- `cost_usd` is in US dollars at the API list prices of
+  `~/.claude/claude-orchestrator/routing/prices.json`, under `routing.py cost`'s rule (the
+  tiered price, the two cache-write durations priced apart). It is `null` when a message of
+  the period ran on a model that file has no price for; the tokens still count.
+- `at` is when the sums were read, an ISO UTC instant.
+
+The machine runs on a subscription and nothing is billed per token: `cost_usd` is what the
+same tokens would cost at API list prices, an equivalent, never a bill. `usage` is `null` for
+a remote orchestrator and for a local session whose transcript is not found.
+`usage_totals` sums the `usage` of every session the file lists, the coordinator included and
+the remote ones excluded, its `at` the file's `generated_at`; a total's `cost_usd` is `null`
+when any summed period's is. `usage_basis` names the currency, the price basis and the time
+zone of the periods. Each session reads its own transcripts, never another session's, from
+where its previous read stopped, so keeping the sums current costs the lines appended since;
+the read runs beside the hook that starts it, never in its way, and the file is written again
+when it completes. A session not read since a period began shows that period empty until its
+next read. A new `at` alone is no reason to write the file again.
 
 ## The method in five lines
 

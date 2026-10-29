@@ -38,7 +38,8 @@ import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
   remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, machineLabel, prsInFlight, ROW_MARKER, REMOTE_STALE_AFTER_MS, type RemoteRow,
 } from './remote-row.ts'
-import { deckOf, deckText, deckIsNews, DECK_FILE, type Deck } from './deck.ts'
+import { deckOf, deckText, deckIsNews, DECK_FILE, type Deck, type DeckUsage } from './deck.ts'
+import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, type Prices, type UsageBook } from './usage.ts'
 
 // One row per live session, the store's whole schema. `pid` is the session's host
 // process — the row lives while it does.
@@ -66,6 +67,10 @@ export type SessionRow = {
   relayed?: string | null
   // A row received from an orchestrator on another machine (remote-row.ts): its machine.
   machine?: string | null
+  // The session's own token use (usage.ts), published by its own read (readOwnUsage) and kept
+  // by the measure's merge: the deck takes every session's from here. Absent until the first
+  // read completes; null when its transcript is not found.
+  usage?: DeckUsage | null
 }
 
 // A row lives while its session's host process does: a session idle for hours —
@@ -363,14 +368,37 @@ async function writeAtomic($: any, path: string, text: string): Promise<void> {
 // measure handler is the only writer of a key: a same-key race is last-writer-wins,
 // at most one measure of freshness. The relay writes its own file (writeWait).
 export async function writeSession($: any, id: string, patch: Partial<SessionRow>): Promise<void> {
-  const path = `${await storeOf($)}/${sessionKey(id)}`
-  const base: SessionRow = parseSessionRow(String(await $.fs.read(path).catch(() => ''))) ?? {
-    role: null, name: null, repo: null,
-    context_percent: 0, context_tokens: 0, window: 0,
-    model: '', busy: false, updated_at: '',
-  }
-  const row: SessionRow = { ...base, ...patch, updated_at: patch.updated_at ?? new Date().toISOString() }
-  await $.fs.write(path, JSON.stringify(row) + '\n')
+  await onOwnRow(async () => {
+    const path = `${await storeOf($)}/${sessionKey(id)}`
+    const base: SessionRow = parseSessionRow(String(await $.fs.read(path).catch(() => ''))) ?? {
+      role: null, name: null, repo: null,
+      context_percent: 0, context_tokens: 0, window: 0,
+      model: '', busy: false, updated_at: '',
+    }
+    const row: SessionRow = { ...base, ...patch, updated_at: patch.updated_at ?? new Date().toISOString() }
+    await $.fs.write(path, JSON.stringify(row) + '\n')
+  })
+}
+
+// The row has two writers in its own session's process, the measure and the usage read
+// (publishUsage): their read-merge-writes run one after the other, so neither puts back a
+// field the other just wrote.
+let ownRowWrites: Promise<unknown> = Promise.resolve()
+function onOwnRow<T>(work: () => Promise<T>): Promise<T> {
+  const run = ownRowWrites.then(work, work)
+  ownRowWrites = run.catch(() => undefined)
+  return run
+}
+
+// The usage read's answer, into the session's own row: the row's stamp is the measure's and
+// stays; a row gone meanwhile (the session ended) is not written again, nor one that carries
+// no usage and gets none (the deck reads both as null).
+async function publishUsage($: any, id: string, usage: DeckUsage | null): Promise<void> {
+  await onOwnRow(async () => {
+    const path = `${await storeOf($)}/${sessionKey(id)}`
+    const row = parseSessionRow(String(await $.fs.read(path).catch(() => '')))
+    if (row && (usage || row.usage)) await $.fs.write(path, JSON.stringify({ ...row, usage }) + '\n')
+  })
 }
 
 // One row per live session: every file under the store's sessions directory,
@@ -2270,7 +2298,137 @@ export async function writeDeck($: any): Promise<void> {
   lastDeck = { deck, at: now }
 }
 
+// The session's own usage (usage.ts): its transcript and its subagents', never another
+// session's, booked in module memory across reads so each one reads only the bytes appended
+// since the last. The read runs detached from the hook that starts it (refreshDeck), one at a
+// time per process: no hook waits on it, the deck written meanwhile carries the rows as they
+// stand, and when the read completes it publishes the usage in the session's row and writes
+// the deck again. A hook arriving while one runs starts none: the next hook's read takes
+// whatever was appended meanwhile.
+type OwnBook = { id: string; main: string | null | undefined; missedAt: number; book: UsageBook }
+let ownBook: OwnBook | null = null
+let usageRead: Promise<void> | null = null
+const USAGE_READ_MS = 60 * 1000
+// A transcript not found is looked for again after this long, never on every read: a session's
+// first hook can run before the host has written its transcript.
+export const TRANSCRIPT_RETRY_MS = 60 * 1000
+const USAGE_ROLES: ReadonlySet<string> = new Set(['coordinator', 'orchestrator', 'agent'])
+
+// Starts the read when none runs, and answers the running one: its promise never rejects. A
+// hook never awaits it; a test does, with its own clock.
+export function refreshUsage($: any, clock: () => number = Date.now): Promise<void> {
+  if (!usageRead) {
+    usageRead = readOwnUsage($, clock)
+      .then(async published => { if (published) await writeDeck($) })
+      .catch(err => logLine($, `deck: usage: ${(err as Error).message}`))
+      .finally(() => { usageRead = null })
+  }
+  return usageRead
+}
+
+// One read: the session's row says whether the deck lists it (its role); its transcript is
+// found once, and a miss is looked for again at most once per TRANSCRIPT_RETRY_MS, so a read
+// in between never lists the projects directory. True when the row was written.
+async function readOwnUsage($: any, clock: () => number): Promise<boolean> {
+  const id = String(await $.session.id())
+  const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(id)}`).catch(() => '')))
+  if (!row || !USAGE_ROLES.has(String(row.role))) return false
+  if (!ownBook || ownBook.id !== id) ownBook = { id, main: undefined, missedAt: 0, book: newBook() }
+  const own = ownBook
+  if (own.main === null && clock() - own.missedAt >= TRANSCRIPT_RETRY_MS) own.main = undefined
+  if (own.main === undefined) {
+    own.main = (await transcriptPathOf($, id)) || null
+    if (!own.main) own.missedAt = clock()
+    if (!own.main) await logOnce($, `transcript ${id}`, 'missing', `deck: no transcript found for session ${id}: its usage is null`)
+  }
+  await publishUsage($, id, own.main ? await bookOwn($, own, own.main) : null)
+  return true
+}
+
+// The appended lines of the main transcript and of every subagent's, booked. A main
+// transcript that cannot be read (deleted, unreadable) is usage null: its book and its path
+// are dropped, and the next read looks for it again.
+async function bookOwn($: any, own: OwnBook, main: string): Promise<DeckUsage | null> {
+  const now = Date.now()
+  const { prices, text } = await readPrices($)
+  try {
+    const size = (await $.fs.stat(main)).size
+    if (typeof size !== 'number') throw new Error('no size')
+  } catch (err) {
+    await logOnce($, `main ${own.id}`, main, `deck: the transcript ${main} cannot be read (${(err as Error).message}): its usage is null`)
+    own.main = undefined
+    own.book = newBook()
+    return null
+  }
+  logged.delete(`main ${own.id}`)
+  const book = own.book
+  settle(book, now, prices, text)
+  const subagents = `${main.slice(0, -'.jsonl'.length)}/subagents`
+  const listed: readonly { name: string; kind: string }[] = await $.fs.list(subagents).catch(() => [])
+  const paths = [main, ...listed.filter(e => e.kind === 'file' && e.name.endsWith('.jsonl')).map(e => `${subagents}/${e.name}`).sort()]
+  for (const path of [...book.files.keys()]) if (!paths.includes(path)) forget(book, path)
+  for (const path of paths) {
+    try {
+      await readAppended($, book, path)
+      logged.delete(`file ${path}`)
+    } catch (err) {
+      const message = (err as Error).message
+      await logOnce($, `file ${path}`, message, `deck: usage of ${path}: ${message}`)
+    }
+  }
+  if (book.malformed > 0) await logOnce($, `malformed ${own.id}`, String(book.malformed), `deck: ${book.malformed} malformed lines dropped from the transcripts of session ${own.id}`)
+  return usageOf(book, now)
+}
+
+// routing/prices.json under the state directory. Missing or no JSON object: no prices, every
+// period's cost null and its tokens still counted, said once per text the file holds.
+async function readPrices($: any): Promise<{ prices: Prices; text: string }> {
+  const path = `${await stateDir($)}/routing/prices.json`
+  let text: string | null = null
+  try {
+    text = String(await $.fs.read(path))
+  } catch { /* missing: said below */ }
+  if (text === null) {
+    await logOnce($, 'prices', '', `deck: no ${path}: every cost is null`)
+    return { prices: {}, text: '' }
+  }
+  try {
+    const parsed = JSON.parse(text)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      logged.delete('prices')
+      return { prices: parsed, text }
+    }
+  } catch { /* said below */ }
+  await logOnce($, 'prices', text, `deck: ${path} is no JSON object: every cost is null`)
+  return { prices: {}, text }
+}
+
+// What the usage read last said per topic: a condition is logged when it starts or changes,
+// never again on every read while it lasts, and forgotten when it ends.
+const logged = new Map<string, string>()
+async function logOnce($: any, topic: string, fingerprint: string, message: string): Promise<void> {
+  if (logged.get(topic) === fingerprint) return
+  logged.set(topic, fingerprint)
+  await logLine($, message)
+}
+
+// The lines appended to one transcript since the book's offset; a file shorter than it was
+// rewritten and is read again from its first byte.
+async function readAppended($: any, book: UsageBook, path: string): Promise<void> {
+  const size = (await $.fs.stat(path)).size
+  if (typeof size !== 'number') throw new Error('no size')
+  if (size < (book.files.get(path)?.offset ?? 0)) rewind(book, path)
+  const offset = book.files.get(path)?.offset ?? 0
+  if (size === offset) return
+  const run = await $.process.run(appendedArgv(path, offset, size - offset), { timeoutMs: USAGE_READ_MS })
+  const read = run?.exitCode === 0 ? consumedOf(String(run.stdout ?? '')) : null
+  if (!read) throw new Error(`the reader exited ${run?.exitCode}`)
+  ingest(book, path, offset, read.text, read.consumed)
+}
+
 async function refreshDeck($: any, bound = RELAY_BOUND_MS): Promise<void> {
+  // Detached: the hook goes on, and the read writes the row and the deck again when it is done.
+  void refreshUsage($)
   try {
     const done = await withDeadline(writeDeck($), bound)
     if (isDegradedPass(done)) await logLine($, `deck: did not finish within ${bound} ms`)

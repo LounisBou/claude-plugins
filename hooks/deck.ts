@@ -11,8 +11,9 @@ import { chainOwnerTty } from './relay.ts'
 import type { RemoteRow } from './remote-row.ts'
 import type { RoundEntry } from './round.ts'
 import type { SessionRow } from './supervision.ts'
+import { periodStarts, USAGE_TIMEZONE } from './usage.ts'
 
-export const DECK_VERSION = 1
+export const DECK_VERSION = 2
 
 // The file's name under the state directory.
 export const DECK_FILE = 'deck.json'
@@ -23,6 +24,12 @@ export const DECK_REFRESH_MS = 60 * 1000
 
 export type DeckContext = { percent: number; tokens: number; window: number; past_gate: boolean }
 export type DeckWait = { kind: 'operator' | 'done'; blocks: string | null; since: string | null; urgent: boolean }
+// Token counts and their cost at API list prices in US dollars (usage.ts): an equivalent,
+// since the machine runs on a subscription. cost_usd is null when a message of the period
+// ran on a model routing/prices.json has no price for.
+export type DeckTokens = { input: number; output: number; cache_read: number; cache_write: number }
+export type DeckPeriod = { from: string; tokens: DeckTokens; cost_usd: number | null }   // from: the period's start, ISO UTC
+export type DeckUsage = { day: DeckPeriod; week: DeckPeriod; at: string }                // at: when the sums were read, ISO UTC
 export type DeckSession = {
   key: string                   // the store key, stable for the session's life
   name: string
@@ -31,6 +38,7 @@ export type DeckSession = {
   context: DeckContext
   waiting: DeckWait | null
   updated_at: string
+  usage: DeckUsage | null       // null for a remote session, or a local one whose transcript is not found
 }
 export type DeckAgent = DeckSession
 export type DeckOrchestrator = DeckSession & {
@@ -50,6 +58,9 @@ export type Deck = {
   unattached_agents: DeckAgent[]
   sleeping: DeckSleeping[]
   round: DeckRound
+  // Every listed session's usage summed, the remote ones excepted.
+  usage_totals: DeckUsage
+  usage_basis: { currency: 'USD'; prices: 'api-list-equivalent'; timezone: 'Europe/Paris' }
 }
 
 export type DeckInput = {
@@ -70,6 +81,7 @@ export type DeckInput = {
 export function deckOf(input: DeckInput): Deck {
   const urgentOf = new Map<string, boolean>()
   for (const entry of input.round) if (entry.status === 'open' && entry.urgent) urgentOf.set(entry.session, true)
+  const starts = periodStarts(input.now)
   const session = (key: string, row: SessionRow): DeckSession => ({
     key,
     name: row.name ?? 'unnamed',
@@ -80,6 +92,7 @@ export function deckOf(input: DeckInput): Deck {
       ? { kind: row.waiting, blocks: row.blocks ?? null, since: row.waiting_since ?? null, urgent: urgentOf.get(sessionIdOf(key)) ?? false }
       : null,
     updated_at: row.updated_at,
+    usage: row.machine ? null : rowUsageOf(row.usage, starts),
   })
 
   const entries = Object.entries(input.local)
@@ -95,7 +108,7 @@ export function deckOf(input: DeckInput): Deck {
     orchestrators.push({
       key: `remote/${row.name}`, name: row.name, tty: null, repo: row.repo, context: contextOf(row, input.gate),
       waiting: row.waiting ? { kind: row.waiting, blocks: row.blocks, since: row.waiting_since, urgent: false } : null,
-      updated_at: row.updated_at, machine: row.machine, prs: [...row.prs], agents: [],
+      updated_at: row.updated_at, usage: null, machine: row.machine, prs: [...row.prs], agents: [],
     })
   }
   orchestrators.sort((a, b) => a.name.localeCompare(b.name))
@@ -114,11 +127,17 @@ export function deckOf(input: DeckInput): Deck {
   }
 
   const open = input.round.filter(entry => entry.status === 'open' && entry.kind === 'operator')
+  const coordinator = coordinatorRow ? session(coordinatorRow[0], coordinatorRow[1]) : null
+  const listed = [
+    ...(coordinator ? [coordinator] : []),
+    ...orchestrators.flatMap(o => [o, ...o.agents]),
+    ...unattached,
+  ]
   return {
     version: DECK_VERSION,
     generated_at: new Date(input.now).toISOString(),
     machine: input.machine,
-    coordinator: coordinatorRow ? session(coordinatorRow[0], coordinatorRow[1]) : null,
+    coordinator,
     orchestrators,
     unattached_agents: unattached,
     sleeping: sleepingOf(input.sleepingText),
@@ -127,7 +146,39 @@ export function deckOf(input: DeckInput): Deck {
       urgent: open.filter(entry => entry.urgent).length,
       oldest_since: open.map(entry => entry.since).sort()[0] ?? null,
     },
+    usage_totals: totalsOf(listed.map(s => s.usage), starts, input.now),
+    usage_basis: { currency: 'USD', prices: 'api-list-equivalent', timezone: USAGE_TIMEZONE },
   }
+}
+
+// A session's usage as its row carries it (supervision.ts, readOwnUsage: each session reads
+// its own). A period that started before the deck's own was read before the boundary passed:
+// the session has not been read since, so nothing it did in the new period is counted yet,
+// and the period is the new one, empty, until its next read.
+function rowUsageOf(usage: DeckUsage | null | undefined, starts: { day: number; week: number }): DeckUsage | null {
+  if (!usage || typeof usage !== 'object' || !usage.day || !usage.week) return null
+  const current = (period: DeckPeriod, from: number): DeckPeriod => Date.parse(period.from) >= from ? period
+    : { from: new Date(from).toISOString(), tokens: { input: 0, output: 0, cache_read: 0, cache_write: 0 }, cost_usd: 0 }
+  return { day: current(usage.day, starts.day), week: current(usage.week, starts.week), at: usage.at }
+}
+
+// The listed sessions' usage summed, a session with none left out; a period's cost is null
+// when any summed one's is. The periods start where the deck's `now` puts them.
+function totalsOf(usages: readonly (DeckUsage | null)[], starts: { day: number; week: number }, now: number): DeckUsage {
+  const total = (from: number, pick: (u: DeckUsage) => DeckPeriod): DeckPeriod => {
+    const period: DeckPeriod = { from: new Date(from).toISOString(), tokens: { input: 0, output: 0, cache_read: 0, cache_write: 0 }, cost_usd: 0 }
+    for (const usage of usages) {
+      if (!usage) continue
+      const p = pick(usage)
+      period.tokens.input += p.tokens.input
+      period.tokens.output += p.tokens.output
+      period.tokens.cache_read += p.tokens.cache_read
+      period.tokens.cache_write += p.tokens.cache_write
+      period.cost_usd = period.cost_usd === null || p.cost_usd === null ? null : period.cost_usd + p.cost_usd
+    }
+    return period
+  }
+  return { day: total(starts.day, u => u.day), week: total(starts.week, u => u.week), at: new Date(now).toISOString() }
 }
 
 // The text the file holds: what a reader parses, one line.
@@ -137,10 +188,16 @@ export function deckText(deck: Deck): string {
 
 // Whether the deck is worth a write: its content changed, or the last write is old enough
 // that the stamp alone must move. `last` is what was written last, null when nothing was.
+// The usage stamps (the `at` of a session's usage and of the totals) move on every read, like
+// generated_at: neither is news, the sums they stamp are. Stripped by their path alone, so a
+// key of the same name anywhere else still counts.
 export function deckIsNews(deck: Deck, last: { deck: Deck; at: number } | null, now: number): boolean {
   if (!last) return true
   if (now - last.at >= DECK_REFRESH_MS) return true
-  return JSON.stringify({ ...deck, generated_at: '' }) !== JSON.stringify({ ...last.deck, generated_at: '' })
+  const unstamped = (key: string, value: any) =>
+    (key === 'usage' || key === 'usage_totals') && value && typeof value === 'object' ? { ...value, at: '' } : value
+  const content = (d: Deck) => JSON.stringify({ ...d, generated_at: '' }, unstamped)
+  return content(deck) !== content(last.deck)
 }
 
 function contextOf(row: { context_percent: number; context_tokens: number; window: number }, gate: DeckInput['gate']): DeckContext {
