@@ -831,7 +831,7 @@ async function closesItself($: any, id: string): Promise<boolean> {
 // left before `until`: a notice that does not fit, is refused or throws is one log line.
 async function tellSettled($: any, settled: readonly Settled[], until = Infinity): Promise<void> {
   if (settled.length === 0) return
-  let to: string
+  let to: CoordinatorTo
   try {
     const coordinator = await coordinatorAddress($)
     if (!coordinator?.local) return
@@ -844,10 +844,10 @@ async function tellSettled($: any, settled: readonly Settled[], until = Infinity
     try {
       // No bound given, the caller's own deadline holds the sends.
       const left = until - Date.now()
-      const send = () => $.session.send({ to, text: settledText(entry, answer) })
+      const send = () => sendToCoordinator($, to, settledText(entry, answer))
       const sent = left === Infinity ? await send() : left > 0 ? await withDeadline(send(), left) : null
-      if (!sent || isDegradedPass(sent)) await logLine($, `round: no time left to tell ${to} that ${entry.id} is settled`)
-      else if (!sent.isDelivered) await logLine($, `round: the settled notice of ${entry.id} was not delivered to ${to}: ${sent.reason ?? 'no answer'}`)
+      if (!sent || isDegradedPass(sent)) await logLine($, `round: no time left to tell ${addressLabel(to)} that ${entry.id} is settled`)
+      else if (!sent.isDelivered) await logLine($, `round: the settled notice of ${entry.id} was not delivered to ${addressLabel(to)}: ${sent.reason ?? 'no answer'}`)
     } catch (err) {
       await logLine($, `round: ${(err as Error).message}`)
     }
@@ -1523,11 +1523,16 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         } catch {
           // A host without the call: the autoFocus mark still starts the ring.
         }
-        // The window is moved once the picker is drawn: before, the key names nothing.
+        // The window is moved once the picker is drawn: before, the key names nothing. The host
+        // tells no `ui.scroll` for a plugin's own move and draws nothing after it, so the pane is
+        // drawn again once the move lands: the track and the key line sit at the window's offset
+        // read at draw time, and are left above the window until then.
         try {
           $.clock.after(SCROLL_AFTER_DRAW_MS, () => {
             try {
-              Promise.resolve($.ui.scroll({ to: { key: focus }, in: PANE_ID })).catch(() => undefined)
+              Promise.resolve($.ui.scroll({ to: { key: focus }, in: PANE_ID }))
+                .then(() => $.ui.invalidate('ui.render'))
+                .catch(() => undefined)
             } catch {
               // A host without the call: the window stays where it is.
             }
@@ -1872,11 +1877,11 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
   }
   const context = row && row.context_tokens > 0 ? `${row.context_tokens.toLocaleString('en-US')} (${row.context_percent}%)` : null
   const text = wait ? relayText(name, wait, patch!.waiting_since!, context) : noStatusText(name, context)
-  const sent = await $.session.send({ to, text })
+  const sent = role === 'orchestrator' ? await sendToCoordinator($, to, text) : await $.session.send({ to, text })
   if (sent?.isDelivered) {
     await writeWait($, sessionId, { ...(patch ?? before ?? {}), relayed: key, name, pid })
   } else {
-    await logLine($, `relay: not delivered to ${to}: ${sent?.reason ?? 'no answer'}`)
+    await logLine($, `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
   }
 }
 
@@ -1928,9 +1933,9 @@ async function withdrawHeld($: any, sessionId: string, name: string, held: { blo
     if (coordinator.local) {
       await tellSettled($, await withdrawEntry($, sessionId, name, held))
     } else {
-      const sent = await $.session.send({ to: coordinator.to, text: withdrawalText(name, held.blocks, held.since) })
+      const sent = await sendToCoordinator($, coordinator.to, withdrawalText(name, held.blocks, held.since))
       if (!sent?.isDelivered) {
-        await logLine($, `withdraw: not delivered to ${coordinator.to}: ${sent?.reason ?? 'no answer'}`)
+        await logLine($, `withdraw: not delivered to ${addressLabel(coordinator.to)}: ${sent?.reason ?? 'no answer'}`)
         return false
       }
     }
@@ -2164,12 +2169,60 @@ function parseRoundEntry(text: string): RoundEntry | null {
 
 // Where an orchestrator's reports go: the coordinator registered on this machine first
 // (coordinator.sh's record), else the one a peer delivery taught this machine — its
-// address as the envelope gave it, else its name. Null when neither names one.
-export async function coordinatorAddress($: any): Promise<{ to: string; name: string; local: boolean } | null> {
-  const local = coordinatorOf(String(await $.fs.read(`${await stateDir($)}/coordinator.json`).catch(() => '')))
-  if (local) return { to: local, name: local, local: true }
+// address as the envelope gave it, else its name. Null when neither names one. A name recorded
+// without its reference may be another session's too, one the host keeps for its remote control
+// say, and the host refuses a send to a name several carry: the coordinator on this machine is
+// then addressed by the session id the host's registry gives it.
+export type CoordinatorTo = string | { sessionId: string }
+export async function coordinatorAddress($: any): Promise<{ to: CoordinatorTo; name: string; local: boolean } | null> {
+  const recordText = String(await $.fs.read(`${await stateDir($)}/coordinator.json`).catch(() => ''))
+  const local = coordinatorOf(recordText)
+  if (local) return { to: REFERENCED.test(local) ? local : (await registeredSession($, local, recordText)) ?? local, name: local, local: true }
   const learnt = parseLearnt(String(await $.fs.read(`${await storeOf($)}/coordinator-learnt`).catch(() => '')))
   return learnt ? { to: learnt.from ?? learnt.name, name: learnt.name, local: false } : null
+}
+
+// A name that carries its session's reference, « Coord : ops [abc] »: no other session has it.
+const REFERENCED = / \[[^\]\s]+\]$/
+
+// The session id of the one session on this machine that the host's registry (its sessions
+// directory, one record per process) names so, the process the coordinator's record names when
+// several do; null when none or several, or when the registry cannot be read.
+async function registeredSession($: any, name: string, recordText: string): Promise<{ sessionId: string } | null> {
+  let pid: string | null = null
+  try {
+    const recorded = JSON.parse(recordText)?.pid
+    if (recorded !== undefined && recorded !== null && String(recorded) !== '') pid = String(recorded)
+  } catch { /* coordinatorOf read it already */ }
+  const dir = `${await configDir($)}/sessions`
+  const named: { pid: string; sessionId: string }[] = []
+  try {
+    for (const file of await $.fs.list(dir)) {
+      if (!file || file.kind !== 'file' || !file.name.endsWith('.json')) continue
+      try {
+        const record = JSON.parse(String(await $.fs.read(`${dir}/${file.name}`)))
+        if (record?.name === name && typeof record.sessionId === 'string' && record.sessionId !== '') named.push({ pid: String(record.pid ?? ''), sessionId: record.sessionId })
+      } catch { /* a record being written, or gone: not this one */ }
+    }
+  } catch {
+    return null
+  }
+  const chosen = named.length > 1 && pid !== null ? named.filter(record => record.pid === pid) : named
+  return chosen.length === 1 ? { sessionId: chosen[0].sessionId } : null
+}
+
+// A send to the coordinator. A name the host refuses as several sessions' is sent once more to
+// the one the refusal places on this machine, by its reference, when it names exactly one.
+async function sendToCoordinator($: any, to: CoordinatorTo, text: string): Promise<any> {
+  const sent = await $.session.send({ to, text })
+  if (sent?.isDelivered || typeof to !== 'string') return sent
+  const here = String(sent?.reason ?? '').split('\n').map(line => line.match(/^\s*(.+ \[[^\]\s]+\]) — .*\bon this machine\b/)?.[1]).filter(Boolean)
+  return here.length === 1 && here[0] !== to ? $.session.send({ to: here[0], text }) : sent
+}
+
+// A recipient as a log line names it.
+function addressLabel(to: CoordinatorTo): string {
+  return typeof to === 'string' ? to : `session ${to.sessionId}`
 }
 
 async function learnCoordinator($: any, learnt: { name: string; from: string | null; at: string }): Promise<void> {
@@ -2229,8 +2282,8 @@ export async function sendRow($: any, sessionId: string): Promise<void> {
   const now = Date.now()
   const path = `${store}/${rowKey(sessionId)}`
   if (!rowIsNews(row, parseRowSent(String(await $.fs.read(path).catch(() => ''))), now)) return
-  let sent = await $.session.send({ to: to.to, text: rowText(row) })
-  if (!sent?.isDelivered && to.to !== to.name) sent = await $.session.send({ to: to.name, text: rowText(row) })
+  let sent = await sendToCoordinator($, to.to, rowText(row))
+  if (!sent?.isDelivered && to.to !== to.name) sent = await sendToCoordinator($, to.name, rowText(row))
   if (sent?.isDelivered) await writeAtomic($, path, JSON.stringify(rowSent(row, now)) + '\n')
   else await logLine($, `row: not delivered to ${to.name}: ${sent?.reason ?? 'no answer'}`)
 }

@@ -3,6 +3,9 @@
 #
 #   tests/pane-e2e.sh [--screens <file>] [--keep]
 #
+# A failed check keeps the module's log: in `pane-e2e-module.log` beside the screens' file,
+# else its last lines printed under the failure.
+#
 # NOT part of `run-tests.sh`, like `e2e.sh`: it drives a host session in a detached tmux
 # server of its own. The host is the one logged in on this machine, on its subscription: the
 # script makes no credential, asks for none and writes none. It reads the host's banner before
@@ -63,7 +66,19 @@ done
 pass=0; fail=0; ALIVE=""
 check() {
   if [ "$2" = "$3" ]; then printf '  ok   %s\n' "$1"; pass=$((pass+1))
-  else printf '  FAIL %s\n       expected: %s\n       actual:   %s\n' "$1" "$2" "$3"; fail=$((fail+1)); fi
+  else printf '  FAIL %s\n       expected: %s\n       actual:   %s\n' "$1" "$2" "$3"; fail=$((fail+1)); keep_log "FAIL $1"; fi
+}
+# The module's log as it stands, kept past the sandbox so a fall can be read afterwards: each
+# section's start wipes it, and the end removes the sandbox. Appended under `$1` to the file
+# beside the screens, else its last lines printed.
+keep_log() {
+  local log="$SANDBOX/module/hooks-module.log"
+  if [ ! -s "$log" ]; then echo "       module log: empty or absent ($1)"
+  elif [ -n "$SCREENS" ]; then
+    { printf '== %s\n' "$1"; cat "$log"; printf '\n'; } >> "$MODULE_LOG"
+    echo "       module log kept in $MODULE_LOG"
+  else tail -n 30 "$log" | sed 's/^/       log: /'; fi
+  return 0
 }
 
 # The host's own configuration directory, read for the history's count and the transcript
@@ -81,6 +96,8 @@ cleanup() {
   [ -n "$ALIVE" ] && kill "$ALIVE" 2>/dev/null
   # The host writes until it is gone: removed sooner, part of it comes back.
   sleep 2
+  # The last section's log once its hosts are gone, with what they wrote after its checks.
+  [ "$fail" -gt 0 ] && keep_log "the module's log at the end"
   local transcripts
   transcripts=$(printf '%s' "$SANDBOX/work" | sed 's/[^A-Za-z0-9]/-/g')
   case "$transcripts" in *-orchestrator-*-work) rm -rf "${HOSTDIR:?}/projects/$transcripts" ;; esac
@@ -93,6 +110,8 @@ cleanup() {
 }
 trap cleanup EXIT
 [ -n "$SCREENS" ] && : > "$SCREENS"
+MODULE_LOG="$(dirname "${SCREENS:-.}")/pane-e2e-module.log"
+[ -n "$SCREENS" ] && : > "$MODULE_LOG"
 
 # The subscription, or nothing driven at all: the banner's first rows, read from the screen given
 # (`$1`), name the product and the plan (the plan escaped, so a name with a dot or a bracket
@@ -121,9 +140,10 @@ COMMANDS="$SANDBOX/work/.claude/commands"
 # nothing, its sender's row waiting on the operator; the `aged` round holds the `questions`
 # round's two questions, neither urgent, both asked two hours ago; the `pair` round holds one
 # entry that asks two questions, its sender's row in a known repository and waiting on two pull
-# requests glued by a slash.
+# requests glued by a slash. `$3` is the text whose showing says the pane is drawn: its title by
+# default, which a window too short for it never shows.
 start() {
-  local rows="$1" round="${2:-questions}"
+  local rows="$1" round="${2:-questions}" drawn="${3:-Questions for you}"
   tm kill-server 2>/dev/null
   rm -rf "$SANDBOX/module" "$SANDBOX/state" "$SANDBOX/work"
   mkdir -p "$ROWS" "$SANDBOX/state/round" "$SANDBOX/work"
@@ -167,7 +187,7 @@ start() {
   tm send-keys -t "$SESSION" '/coordinator-supervision'
   sleep 1
   tm send-keys -t "$SESSION" Enter
-  wait_for 'Questions for you' 15
+  wait_for "$drawn" 15
 }
 
 questions_round() {
@@ -349,7 +369,10 @@ press Enter
 check "Enter sends the typed answer" "start with the README" "$(jq -r .answer.text "$SANDBOX/state/round/s-beta-q2.json")"
 
 echo "== a pane shorter than its tree (160x14)"
-start 14
+# The window is moved to the picker after the first draw, and the pane drawn again once it has:
+# the screen is read once the picker shows and the key line is pinned above it, or after 5 s.
+start 14 questions 'Choose: '
+for ((i = 0; i < 20; i++)); do pane | head -2 | grep -qF 'Enter: choose' && break; sleep 0.25; done
 record "drawn"
 check "the first draw shows the picker" "1" "$(pane | grep -c '^Choose: ')"
 check "the pane opens with the keys, the recommended choice highlighted" "B (recommended)" "$(focused)"
@@ -417,6 +440,14 @@ check "the last answer sends both, each after its number" "Question 1 of 2: A : 
 # is the one model turn of this script. The module reads the round every 30 seconds.
 WOKEN="$SANDBOX/state/round-woken.json"
 woken() { jq -r 'sort | join(",")' "$WOKEN" 2>/dev/null; }
+# The module records the wake only once the host took its prompt (wakeForDue), with a rename it
+# runs as a process: the prompt is on the screen before the file holds it, so the file is waited
+# for on its own, never read at the moment the screen shows the wake.
+wait_woken() {
+  local i
+  for ((i = 0; i < $1 * 4; i++)); do [ -n "$(woken)" ] && return 0; sleep 0.25; done
+  return 1
+}
 echo "== the pane's state routes each question (160x50)"
 start 50 aged
 # The cost of the pane's clock, which stats the round every 2 s: the host's processor time over
@@ -435,6 +466,7 @@ tm send-keys -t "$SESSION" Enter
 sleep 2
 check "the other role's short name closes the pane the coordinator's opened, and its record goes with it" "0|0" "$(screen | grep -c 'Questions for you')|$([ -f "$SANDBOX/state/pane.json" ] && echo 1 || echo 0)"
 wait_for 'now due in this tab' 40
+wait_woken 10
 record "the pane closed"
 check "pane closed: the coordinator is woken at once for every open question" "1|s-alpha-q1,s-beta-q2" "$([ "$(screen | grep -c 'now due in this tab')" -ge 1 ] && echo 1)|$(woken)"
 press Escape

@@ -1175,6 +1175,47 @@ test('an entry the operator answered in the sender\'s own tab is closed and tell
   expect(fx.sent).toEqual([{ to: 'Coord : ops [abc]', text: `[module] Settled in Orch : belt's tab: Orch : belt's question since ${asked.since} (entry ${asked.id}) — answered there. ${DROP}` }])
 })
 
+// A coordinator recorded by its bare name shares it with another session the host lists (a
+// session of the same name kept by the host's remote control, say): the host refuses a send to
+// that name as ambiguous, and the settled notice would be lost. The registry's own record of the
+// session on this machine gives it unambiguously; without one, the refusal names it.
+const AMBIGUOUS = "2 agents are named 'Coord : e2e'. Re-send with the ref of the one you mean:\n"
+  + '  Coord : e2e [abc] — a session, on this machine, active 36s ago\n'
+  + '  Coord : e2e [xyz] — a session, on another machine (Remote Control), active 30m ago'
+async function ambiguousCoordinator(registry: Record<string, object>) {
+  const { chains, fx } = await relayedQuestion()
+  fx.files.set(RECORD, JSON.stringify({ name: 'Coord : e2e' }))
+  for (const [pid, record] of Object.entries(registry)) fx.files.set(`${HOME}/.claude/sessions/${pid}.json`, JSON.stringify(record))
+  const tried: unknown[] = []
+  fx.dollar.session.send = async (args: { to: unknown; text: string }) => {
+    tried.push(args.to)
+    if (args.to === 'Coord : e2e') return { isDelivered: false, reason: AMBIGUOUS }
+    fx.sent.push(args)
+    return { isDelivered: true }
+  }
+  const [asked] = entries(fx)
+  fx.files.set(LISTED, JSON.stringify([asked.id]) + '\n')
+  await typedTurn(chains, fx, 'Noted.\n\nwaiting: done')
+  return { fx, asked, tried }
+}
+
+test('a coordinator recorded by a name another session shares is sent the settled notice by its session id', async () => {
+  const { fx, asked, tried } = await ambiguousCoordinator({
+    4242: { pid: 4242, sessionId: 'coord-session', name: 'Coord : e2e', kind: 'interactive' },
+    4343: { pid: 4343, sessionId: 'other-session', name: 'Orch : belt', kind: 'interactive' },
+  })
+  expect(entries(fx)[0].status).toBe('closed')
+  expect(tried).toEqual([{ sessionId: 'coord-session' }])
+  expect(fx.sent).toEqual([{ to: { sessionId: 'coord-session' }, text: `[module] Settled in Orch : belt's tab: Orch : belt's question since ${asked.since} (entry ${asked.id}) — answered there. ${DROP}` }])
+})
+
+test('with no record of it in the registry, the refusal of an ambiguous name is sent again to the one on this machine', async () => {
+  const { fx, tried } = await ambiguousCoordinator({})
+  expect(tried).toEqual(['Coord : e2e', 'Coord : e2e [abc]'])
+  expect(fx.sent.map(s => s.to)).toEqual(['Coord : e2e [abc]'])
+  expect(fx.logged).toEqual([])
+})
+
 test('an entry withdrawn by a typed turn ending on another wait is answered in the tab too', async () => {
   const { chains, fx } = await relayedQuestion()
   const [asked] = entries(fx)

@@ -1579,6 +1579,18 @@ test('without a recommendation the picker starts on the first choice, and a new 
   expect(fx.focused).toEqual([{ requestId: 'supervision', key: `choices:${first.id}` }, { requestId: 'supervision', key: `choices:${second.id}` }])
 })
 
+test('the window the module moves itself is drawn again, so the track and the key line follow it', async () => {
+  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const { fx, render } = await askingPane([asked])
+  await render({ scroll: { offset: 0, bodyRows: 8 }, bodyColumns: 50 })
+  fx.invalidated.length = 0
+  // The host tells no `ui.scroll` for a plugin's own move: only a draw after it reads the new offset.
+  for (const timer of fx.later) timer.fn()
+  for (let i = 0; i < 10; i++) await Promise.resolve()
+  expect(fx.scrolled.length).toBe(1)
+  expect(fx.invalidated).toEqual(['ui.render'])
+})
+
 test('a refused or failing focus or scroll request never blocks the draw', async () => {
   const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
   const { fx, render } = await askingPane([asked])
