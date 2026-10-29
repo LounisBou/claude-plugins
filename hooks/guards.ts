@@ -27,7 +27,7 @@ import {
   refuse, withDeadline, isDegradedPass, type DegradedPass,
   listing, chainEntries, ownAgents, hostStatusOf, pullRequestOf, openRows, projectCheckouts,
   headsPath, readHeads, writeHeads, parseCiWatchLog, watchNumberOf, watchedNumbers,
-  checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownWatches, logTell,
+  checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownBackground, logTell,
   noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, presentGoals, goalsShownPath, type GoalsReading,
 } from './stop-gate.ts'
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
@@ -506,9 +506,10 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           delivered.push(`${agent.label} (pull request #${pr.number}, ${pr.state})`)
         }
       }
-      // The process table, read once for both checks: the ci-watches this session
-      // started (check 1: one still running will wake it) and the ones alive at all
-      // (check 2: a head waited on in the background is not told).
+      // The process table, read once for both checks: the commands and monitors this
+      // session started in the background (check 1: one still running will wake it, and
+      // names the line that fits) and the ci-watches alive at all (check 2: a head waited
+      // on in the background is not told).
       let table: ReturnType<typeof processTable> | null = null
       const processes = async () => {
         if (table === null) {
@@ -517,9 +518,13 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         }
         return table
       }
-      const watching = !agents.some(a => a.state === 'busy') && ownWatches(await processes(), pid).size > 0
+      const background = ownBackground(await processes(), pid)
+      // Without the host pid no process can be told as the session's own: a true tool line
+      // is accepted rather than refused as « nothing runs », which sends the turn back to a false operator wait.
+      const hostUnread = !pid
+      if (hostUnread) await logLine($, 'stop gate: host pid unread: the process table could not be tied to this session')
       const wake = checkWake({
-        agents, resident, delivered, watching,
+        agents, resident, delivered, background, hostUnread,
         awaiting: sessionId !== '' && awaitingIn(sessionId),
         message: String(e.last_assistant_message ?? ''),
         handedOver: (sessionId !== '' && handedOverIn === sessionId) || isEnding(),
@@ -528,6 +533,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         // The release the machine line grants, logged as the shell gate logged it — the
         // figures that say whether the gate earns its cost are read there.
         await logLine($, `stop gate: check1 blocks ${wake.blocks}`)
+      } else if (wake !== null && typeof wake === 'object' && 'tool' in wake) {
+        await logLine($, `stop gate: check1 tool ${wake.tool}`)
       } else if (wake === 'read-what-is-left') {
         // The done line: the facts are read only now, as the shell gate read them lazily.
         const top = await projectTop($, String(e.cwd ?? ''), until)

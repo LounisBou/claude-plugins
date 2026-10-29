@@ -485,7 +485,7 @@ check "the succession brief reads the goals by command and points at them" "yes|
 # Done is the spec's goals, said where each session reads it: the rulebook's machine line, the
 # prerequisites, the decision round's announcement, and the routing skill's map rule.
 check "the rulebook, the prerequisites, decide and the routing skill carry the goals and the map rule" "yes|yes|yes|yes|yes" \
-  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'or waiting: done: every goal in `goals.md` met or ruled out by him)')|$(spells "$ORCH_REFS/briefs.md" 'and a `goals.md` beside the dispatch record, every goal of the spec in a phase or ruled out by the operator')|$(spells "$ROOT/commands/decide.md" '« N questions, back to back. Goals: m/n met, open: G3, G4. »')|$(spells "$ROOT/skills/model-routing/SKILL.md" "A pair \`pick\` returns for one class or one project goes in the brief, the record and \`calibrate\`'s project table, never in \`models.json\`")|$(spells "$ORCH_REFS/briefs.md" 'A plan section that moves goal work after the build is a goal without a phase: put it to him.')"
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'every goal in `goals.md` met or ruled out by him → waiting: done.')|$(spells "$ORCH_REFS/briefs.md" 'and a `goals.md` beside the dispatch record, every goal of the spec in a phase or ruled out by the operator')|$(spells "$ROOT/commands/decide.md" '« N questions, back to back. Goals: m/n met, open: G3, G4. »')|$(spells "$ROOT/skills/model-routing/SKILL.md" "A pair \`pick\` returns for one class or one project goes in the brief, the record and \`calibrate\`'s project table, never in \`models.json\`")|$(spells "$ORCH_REFS/briefs.md" 'A plan section that moves goal work after the build is a goal without a phase: put it to him.')"
 
 # Every subcommand registers its record under the session, by absolute path, once. The
 # state directory is the hook's: the hook reads the same file for the same session id.
@@ -3258,7 +3258,7 @@ check "the orchestrator asks in its tab and the module carries the question to a
   "$(spells "$ROOT/skills/orchestrator/SKILL.md" '**While a coordinator runs, every question for the operator goes to it** — his order —')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'and the hooks module carries it: ask here, in the shape of `/orchestrator-decide` step 2, and')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'end the turn on `waiting: operator — blocks: <what it blocks>`; never send it yourself')"
 # A report that asks nothing, ended on the operator's wait, was drawn in the pane as a question.
 check "the orchestrator ends on the operator's wait only for a question in the decide shape, and the coordinator still records one that asks nothing" "yes|yes" \
-  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Only such a question ends on that line; a report asking nothing, on its other machine line.')|$(spells "$COORDSKILL" 'and its « Other answer » field: record it all the same, and present it once due.')"
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'Only such a question ends on that line; a report asking nothing, on its own line.')|$(spells "$COORDSKILL" 'and its « Other answer » field: record it all the same, and present it once due.')"
 check "the orchestrator rulebook no longer runs the lookup and the send itself" "no|no" \
   "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'coordinator.sh lookup')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'no coordinator runs, and you ask him directly')"
 check "a decision round goes through a running coordinator, carried by the module" "yes|yes" \
@@ -4587,6 +4587,17 @@ check "the coordinator's succession brief is named with no date" "yes|no" \
 # bodies run only when that answer fails, and each says so, with what the answer leaves out.
 check "the three hooked commands say the module answers them and their body is the fallback" "yes|yes|yes" \
   "$(for c in status agents progress; do spells "$ROOT/commands/$c.md" 'The hooks module answers this command on the spot, with no model turn'; done | paste -sd'|' -)"
+# The machine line has a third form, for a turn that waits on a command or monitor of its own:
+# a text that offers the wait on the operator and done must offer it too, or a turn waiting on
+# a monitor is told its only ways out are a false wait on the operator and a refused done.
+two_lines_only() {
+  find "$ROOT/skills" "$ROOT/commands" "$ROOT/templates" "$ROOT/evals" "$ROOT/hooks" "$ROOT/README.md" "$ROOT/docs/design.md" \
+    -type f \( -name '*.md' -o -name '*.ts' \) -not -path '*/tests/*' -not -path '*/graders/*' -print0 \
+    | xargs -0 grep -lF -- 'waiting: done' \
+    | xargs grep -lE -- 'waiting: operator( \(urgent\))? (—|-) blocks:' \
+    | xargs grep -LF -- 'waiting: tool' | sed "s#^$ROOT/##"
+}
+check "no text offers only the wait on the operator and done" "" "$(two_lines_only)"
 # The question of a decision round ends on the machine line: the stop gate refuses a turn
 # whose last line is a bare question.
 check "a decision round's question ends on the operator's machine line" "yes" \

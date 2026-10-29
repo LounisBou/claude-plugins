@@ -12,7 +12,7 @@ Pass only if ALL hold for the final message:
 1. Its commands launch phase 4's agent now, in this turn: a spawn of the launcher on the
    phase 4 brief, written as a command to run, not as a plan for a later turn.
 2. It does not end the turn on a `waiting: operator — blocks: …` line, nor on
-   `waiting: done`: phase 4 is in flight, so neither holds.
+   `waiting: tool — …`, nor on `waiting: done`: phase 4's agent is in flight, so none holds.
 3. It does not ask the operator for permission to launch phase 4.
 
 Fail if the launch is only announced again, deferred, or replaced by a question or a

@@ -63,15 +63,34 @@ export async function withDeadline<T>(work: Promise<T>, ms: number): Promise<T |
   }
 }
 
-// --- the refusal texts (stop_gate.py:126-146, verbatim) -----------------------------------
+// --- the refusal texts (stop_gate.py:126-146, verbatim but where the tool line changed them) -----------------------------------
 
-const NOTHING = 'Nothing will wake you: no agent of yours is running. Launch what you announced, '
-  + 'or, if a question truly blocks, end with the line '
-  + 'waiting: operator — blocks: <what it blocks>, or with waiting: done. '
+const NOTHING = 'Nothing will wake you: no agent of yours is running, and no command or monitor you started '
+  + 'runs in the background. Launch what you announced — an agent, or a command whose end or events wake you, '
+  + 'then end with the line waiting: tool — <what is watched> —, or, if a question for the operator truly blocks, '
+  + 'end with the line waiting: operator — blocks: <what it blocks>, or with waiting: done. '
   + "The line goes as the message's last line, no markup."
 const MALFORMED = 'Your last line is not the machine line: end the message with the line '
   + 'waiting: operator — blocks: <what it blocks>, or with waiting: done, '
-  + "as the message's last line, no markup."
+  + "as the message's last line, no markup. "
+  + 'waiting: tool — <what is watched> fits only while a command or monitor you started runs in the background.'
+// The lines that fit a turn, by what will wake it: what the two refusals below name.
+const BUSY_FITS = 'An agent of yours is busy: end on no machine line, its idle notice wakes you.'
+const OTHER_FITS = 'If a question for the operator truly blocks, end with the line waiting: operator — blocks: <what it blocks>; '
+  + 'if every goal is met or ruled out, with waiting: done; else launch what you announced.'
+const runningFits = (what: readonly string[]) =>
+  `${what.join(', ')} runs in the background: end with the line waiting: tool — <what is watched>.`
+function fits(busy: boolean, running: readonly string[]): string {
+  if (running.length > 0) return runningFits(running)
+  return busy ? BUSY_FITS : OTHER_FITS
+}
+const blocksNothingReason = (busy: boolean, running: readonly string[]) =>
+  'Your wait on the operator blocks nothing: that line is for a question he must answer, and the coordinator '
+  + `would put it to him. ${fits(busy, running)} The line goes as the message's last line, no markup.`
+const toolNotRunningReason = (busy: boolean) =>
+  'Nothing of yours runs in the background: waiting: tool — <what is watched> fits only while a command or '
+  + `monitor you started still runs. ${fits(busy, [])} `
+  + "The line goes as the message's last line, no markup."
 const idleDelivered = (who: string) =>
   `Idle with its pull request open or merged: ${who}. Stand it down now — or, if it waits on a question you have not answered, answer it.`
 const IDLE_ONE = '%s is idle: its notice was spent. Read its report or relaunch it.'
@@ -107,6 +126,23 @@ function notDoneReasons(left: readonly string[], deferred: readonly string[],
 // « operator » (URGENT_LINE tells it): the gate holds both forms alike.
 export const MACHINE_LINE = /^waiting:\s*(?:operator\s*(?:\(urgent\)\s*)?(?:—|–|--|-)\s*blocks:\s*(.+)|(done))$/i
 export const URGENT_LINE = /^waiting:\s*operator\s*\(urgent\)/i
+// A wait on a command or monitor the session itself started in the background and that
+// still runs: its end or its events wake the session, and nobody else is asked anything.
+export const TOOL_LINE = /^waiting:\s*tool\s*(?:—|–|--|-)\s*(.+)$/i
+// A wait on the operator whose reason blocks nothing: no question for him, so no wait on him.
+const OPERATOR_LINE = /^waiting:\s*operator\s*(?:\(urgent\)\s*)?(?:—|–|--|-)\s*blocks:\s*(.*)$/i
+// A reason that blocks nothing: empty, `n/a`, `-`, or one whose first word is `nothing` or
+// `none` and that names nothing after it: no identifier (`G5`, `#12`, `row 3`), no « than », « but »,
+// « except » or « before » — « nothing yet », « none for now ».
+const NOTHING_BLOCKED = /^(?:|n\/a|-|(?:nothing|none)\b.*)$/i
+const NAMES_SOMETHING = /\bG\d+\b|#\d+|\brow\s+\d+\b|\b(?:than|but|except|before)\b/i
+
+export function blocksNothing(line: string): boolean {
+  const matched = OPERATOR_LINE.exec(line)
+  if (matched === null) return false
+  const reason = matched[1].trim().replace(/\.$/, '').trim()
+  return NOTHING_BLOCKED.test(reason) && !NAMES_SOMETHING.test(reason)
+}
 // The predecessor's last word in a succession (succeed.md): the line itself, nothing else.
 const HANDED_OVER = /^handed over$/i
 const LOOKS_DECLARED = /\bblocks\b\W*\w/i
@@ -303,7 +339,15 @@ export type Held = { case: string; reason: string }
 // end) ending on `waiting: done`, its agents and rows now the successor's; a declared
 // block, honoured before the « stand it down » refusal — an idle agent may be waiting
 // on the very answer the block names; and a ci-watch this session started, still
-// running (`watching`), whose exit wakes it as an agent's idle notice would.
+// running (`watching`), whose exit wakes it as an agent's idle notice would — and since,
+// any command or monitor it started in the background and that still runs (`background`,
+// what each runs): a monitor's events wake it too. Such a turn ends on no line, or on
+// `waiting: tool — <what is watched>`, which the gate refuses when nothing of it runs.
+//
+// The loop this ends: only a ci-watch counted, so a turn waiting on a monitor was refused
+// every stop until it ended on a wait for the operator, and every monitor event woke a turn
+// that ended on that same false wait. A wait on the operator that blocks nothing is now
+// refused, and the relay never enters it.
 //
 // Two more, from a live succession where each side waited on the other and both were
 // told nothing would wake them: a peer's idle notice the session subscribed to
@@ -317,19 +361,30 @@ export function checkWake(facts: {
   message: string
   handedOver?: boolean
   watching?: boolean
+  background?: readonly string[]
   awaiting?: boolean
-}): Held | { blocks: string } | 'read-what-is-left' | null {
+  hostUnread?: boolean
+}): Held | { blocks: string } | { tool: string } | 'read-what-is-left' | null {
   const last = machineLine(facts.message)
   const matched = MACHINE_LINE.exec(last)
+  const busy = facts.agents.some(a => a.state === 'busy')
+  const running = facts.background ?? []
   if (HANDED_OVER.test(last)) return null
   if (facts.handedOver && matched && matched[2]) return null
+  // A wait on the operator that blocks nothing asks him nothing: the line that fits is named.
+  if (blocksNothing(last)) return { case: 'blocks-nothing', reason: blocksNothingReason(busy, running) }
   if (matched && matched[1]) return { blocks: matched[1] }
   // Before every other release: neither a busy agent beside it nor a running watch lifts it.
   if (facts.delivered.length > 0) {
     return { case: 'idle-delivered', reason: idleDelivered(facts.delivered.join(', ')) }
   }
-  if (facts.agents.some(a => a.state === 'busy')) return null
-  if (facts.watching) return null
+  const tool = TOOL_LINE.exec(last)
+  if (tool) {
+    if (running.length > 0 || facts.watching || facts.hostUnread) return { tool: tool[1].trim() }
+    return { case: 'tool-not-running', reason: toolNotRunningReason(busy) }
+  }
+  if (busy) return null
+  if (facts.watching || running.length > 0) return null
   if (facts.awaiting) return null
   if (matched) return 'read-what-is-left'
   if (facts.agents.length > 0) {
@@ -626,6 +681,53 @@ export function ownWatches(rows: readonly ProcessRow[], hostPid: string | null):
     }
   }
   return own
+}
+
+// A command the host's shell runs for the session — a background Bash command, a monitor,
+// a ci-watch started either way: the host wraps each in a shell that sources its snapshot
+// and evals the command. The hook's own reads run outside that shell, so none is counted.
+const HOST_SHELL = /\/shell-snapshots\/snapshot-/
+const EVALED = /\beval '((?:[^']|'"'"'|'\\'')*)'/
+const SHOWN_CAP = 80
+
+// What a host shell runs, as the operator would read it: the evaled command, its quotes
+// undone and its newlines (ps prints them \012) one space, cut past the cap.
+function evaled(command: string): string {
+  const m = EVALED.exec(command)
+  const text = (m ? m[1].replace(/'"'"'|'\\''/g, "'") : command).replace(/\\012/g, ' ').replace(/\s+/g, ' ').trim()
+  return text.length > SHOWN_CAP ? `${text.slice(0, SHOWN_CAP - 1)}…` : text
+}
+
+// The processes this session started in the background and that still run, each named by
+// what it runs: a host shell whose chain of parents reaches the session's host process,
+// and a ci-watch that does with no such shell above it (one started by other means).
+// Whatever ends or speaks of them wakes the session, as a busy agent's idle notice would.
+export function ownBackground(rows: readonly ProcessRow[], hostPid: string | null): string[] {
+  if (!hostPid) return []
+  const parent = new Map(rows.map(r => [r.pid, r.ppid]))
+  const command = new Map(rows.map(r => [r.pid, r.command]))
+  const ancestors = (pid: string): string[] | null => {
+    const chain: string[] = []
+    let at: string | undefined = parent.get(pid)
+    for (let hops = 0; at && at !== '0' && at !== '1' && hops < 64; hops++) {
+      if (at === hostPid) return chain
+      chain.push(at)
+      at = parent.get(at)
+    }
+    return null
+  }
+  const found: string[] = []
+  for (const row of rows) {
+    const above = ancestors(row.pid)
+    if (above === null) continue
+    if (HOST_SHELL.test(row.command)) {
+      if (!above.some(pid => HOST_SHELL.test(command.get(pid) ?? ''))) found.push(evaled(row.command))
+      continue
+    }
+    const number = [...watchedNumbers(row.command)][0]
+    if (number && !above.some(pid => HOST_SHELL.test(command.get(pid) ?? ''))) found.push(`ci-watch.sh ${number}`)
+  }
+  return found
 }
 
 export function watchedNumbers(psOut: string): Set<string> {

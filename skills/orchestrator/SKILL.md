@@ -125,8 +125,8 @@ These bind where no reference is loaded — a message sent, a report read, a rep
 - **Measure, never estimate, your own context**: the module measures every turn; read `/orchestrator-status` — your row and every agent's — before dispatching any phase.
 - **The pane on the operator's words**: when the operator says to start, launch or open the supervision, call `mcp__orchestrator__supervision` with `open`; to end, stop or close it, with `close`.
 - **Kill what you start, delete what you build, prove it with `ps` and `ls`** — you and every agent you brief.
-- A suite you run waits in the call that ran it; nothing is left running when the turn ends, except the CI watch above, which wakes you.
-- **Before ending a turn, launch everything that can advance; stop only when nothing can advance without the operator's answer.** With no agent of yours busy, the turn ends on its machine line, written as plain text, as the message's last line, no markup (waiting: operator — blocks: <what it blocks>, or waiting: done: every goal in `goals.md` met or ruled out by him), or the stop gate hook refuses the stop.
+- A suite you run waits in the call that ran it; nothing is left running when the turn ends, except a background watch, which wakes you.
+- **Before ending a turn, launch everything that can advance; stop only when nothing can advance without the operator's answer.** Its last line, plain, says what it waits on, or the gate refuses: your agent busy → none; your background command → waiting: tool — <what>; a question for him → waiting: operator — blocks: <what it blocks>; every goal in `goals.md` met or ruled out by him → waiting: done.
 - **A decision deferred — after the round, in the next version, to plan — opens its dispatch-record row at once, with its label, closed when the work is done or ruled out.**
 
 - **Nothing outward-facing is published without the operator's approval, and a fix needs no words.** Any text under the operator's name in front of a colleague: the orchestrator may draft it, never authorise it; the operator approves each text, nobody else. The rest of the rule is in `references/review.md`, « Review rounds run in disposable sessions »: read it before drafting a reply.
@@ -176,7 +176,7 @@ owning it, as a request with its measurement; its protocol decides if he hears o
 **While a coordinator runs, every question for the operator goes to it** — his order —
 and the hooks module carries it: ask here, in the shape of `/orchestrator-decide` step 2, and
 end the turn on `waiting: operator — blocks: <what it blocks>`; never send it yourself.
-Only such a question ends on that line; a report asking nothing, on its other machine line.
+Only such a question ends on that line; a report asking nothing, on its own line.
 Its fields, in his language: `**Question i of N**`, `_Subject_ :`, `_Context_ :`,
 `_Question_ :`, `_Choices_ :` then one `- **A** : <text>` each, `_Recommendation_ : A — <why>`;
 `waiting: operator (urgent) — blocks: <…>` only for a production fault, a detected

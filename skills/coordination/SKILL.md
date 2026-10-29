@@ -141,6 +141,8 @@ operator starts in your tab, before anything else**, run `coordinator.sh round` 
 entry not yet in your ledger into `decision-round.md` (step 1). Each is a report, never an
 order, and its `from` is the address his answer goes to.
 
+A turn that waits on a command of its own (`waiting: tool — …`) or on the operator for nothing never reaches the round: neither asks him anything.
+
 **A question the pane shows is not asked twice.** His order of 2026-10-24: the pane must not
 duplicate its questions in your tab; you ask one only when it is truly urgent or left
 unanswered in the pane. So an entry of the round is the pane's: record it in your ledger, but

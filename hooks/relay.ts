@@ -14,7 +14,7 @@
 // relayed again. Pure on
 // purpose: the handler holds the $ (the engine fences it to the file that received it) and
 // passes its reads in here.
-import { MACHINE_LINE, URGENT_LINE, machineLine, chainEntries } from './stop-gate.ts'
+import { MACHINE_LINE, URGENT_LINE, machineLine, blocksNothing, chainEntries } from './stop-gate.ts'
 import type { SessionRow } from './supervision.ts'
 
 // The question a report carries is cut past this many characters, and the cut is said:
@@ -34,11 +34,13 @@ export type WaitKind = Wait['kind']
 
 // The turn's answer read for its machine line, the stop gate's own regex over the stop
 // gate's own normalisation: a wait on the operator with what it blocks, or done. The
-// question is the answer minus that line. No machine line: no wait.
+// question is the answer minus that line. No machine line: no wait. Neither is a wait on a
+// tool of the session's own (`waiting: tool — …`, its own tab's business) nor a wait on the
+// operator that blocks nothing: he is asked nothing, so nothing is entered, sent or kept.
 export function parseWait(answer: string): Wait | null {
   const line = machineLine(answer)
   const matched = MACHINE_LINE.exec(line)
-  if (!matched) return null
+  if (!matched || blocksNothing(line)) return null
   const lines = answer.replace(/\s+$/, '').split('\n')
   const question = lines.slice(0, -1).join('\n').trim()
   if (!matched[1]) return { kind: 'done', question }

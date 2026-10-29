@@ -1278,3 +1278,47 @@ test('a coordinator on another machine is told nothing of a withdrawal in this r
   expect([entries(fx)[0].status, entries(fx)[0].answer?.text]).toEqual(['withdrawn', 'handed over to its successor'])
   expect(fx.sent.filter(s => s.text.startsWith('[module] Settled'))).toEqual([])
 })
+
+// --- what a turn truly waits on ------------------------------------------------------------
+
+// A turn that waits on a command of its own, or that declares a wait on the operator blocking
+// nothing, asks him nothing: neither is entered in the round, nor sent, nor kept as a wait.
+test('neither a tool wait nor an operator wait blocking nothing is a wait', () => {
+  expect(parseWait(answerOf('Deploys started.', 'waiting: tool — the deploy monitor'))).toBeNull()
+  for (const blocks of ['nothing', 'Nothing.', 'none', 'nothing yet', 'n/a', '-', '']) {
+    expect([blocks, parseWait(answerOf('Watching.', `waiting: operator — blocks: ${blocks}`))]).toEqual([blocks, null])
+  }
+  expect(parseWait(answerOf('Watching.', 'waiting: operator (urgent) — blocks: none'))).toBeNull()
+})
+
+for (const line of ['waiting: tool — the deploy monitor', 'waiting: operator — blocks: nothing']) {
+  test(`a turn ending on « ${line} » enters nothing, sends nothing, and clears the wait`, async () => {
+    const chains = mounted()
+    const local = fake()
+    await drive(chains, 'turn.complete', local.dollar, turnEnd(answerOf('Monitor event: deploy 1 done.', line)))
+    expect(entries(local).length).toBe(0)
+    expect(local.sent.length).toBe(0)
+    expect(local.row()!.waiting ?? null).toBeNull()
+    expect(local.row()!.blocks ?? null).toBeNull()
+    const remote = fake({ remote: true })
+    await drive(chains, 'turn.complete', remote.dollar, turnEnd(answerOf('Monitor event: deploy 1 done.', line)))
+    // The row the measure sends a remote coordinator may follow; no wait is reported in it.
+    expect(remote.sent.filter(s => /waits for the operator|reports its work done/.test(s.text))).toEqual([])
+    expect(remote.sent.every(s => !s.text.includes('the deploy monitor') && !s.text.includes('blocks: nothing'))).toBe(true)
+  })
+}
+
+// The loop: every monitor event woke a turn, each ended on a wait for the operator that blocked
+// nothing. Such turns, many in a row, leave a real question entered before them as it was.
+test('turns that wait on a tool, one per monitor event, leave the open question and its entry untouched', async () => {
+  const chains = mounted()
+  const fx = fake()
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, 'waiting: operator — blocks: phase 3')))
+  const [entry] = entries(fx)
+  for (let i = 0; i < 3; i++) {
+    await drive(chains, 'turn.start', fx.dollar, { text: '' })
+    await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(`Monitor event ${i}.`, i % 2 ? 'waiting: operator — blocks: nothing' : 'waiting: tool — the monitor')))
+  }
+  expect(entries(fx)).toEqual([entry])
+  expect(fx.sent.length).toBe(0)
+})

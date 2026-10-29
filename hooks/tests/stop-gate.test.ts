@@ -10,7 +10,7 @@ import {
   refuse, wakeDecision, withDeadline, isDegradedPass,
   machineLine, readHeads, writeHeads, headsPath, listing, ownAgents, hostStatusOf, openRows,
   projectCheckouts, watchedNumbers, parseCiWatchLog, watchNumberOf, pullRequestOf,
-  checkWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches,
+  checkWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground,
   noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths, presentGoals, goalsShownPath, GOALS_SHOW,
 } from '../stop-gate.ts'
 import { register as registerGuards } from '../guards.ts'
@@ -232,7 +232,8 @@ test('the remaining cases refuse each with their own text', () => {
   })
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: operater blocks x' })).toEqual({
     case: 'malformed-machine-line',
-    reason: 'Your last line is not the machine line: end the message with the line waiting: operator — blocks: <what it blocks>, or with waiting: done, as the message\'s last line, no markup.',
+    reason: 'Your last line is not the machine line: end the message with the line waiting: operator — blocks: <what it blocks>, or with waiting: done, as the message\'s last line, no markup. '
+      + 'waiting: tool — <what is watched> fits only while a command or monitor you started runs in the background.',
   })
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: your call?' })).toEqual({
     case: 'question-without-blocks',
@@ -241,7 +242,10 @@ test('the remaining cases refuse each with their own text', () => {
   expect(checkWake({ agents: [], resident: true, delivered: [], message: 'stopped.' })).toBeNull()
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'stopped.' })).toEqual({
     case: 'nothing-will-wake',
-    reason: 'Nothing will wake you: no agent of yours is running. Launch what you announced, or, if a question truly blocks, end with the line waiting: operator — blocks: <what it blocks>, or with waiting: done. The line goes as the message\'s last line, no markup.',
+    reason: 'Nothing will wake you: no agent of yours is running, and no command or monitor you started runs in the background. '
+      + 'Launch what you announced — an agent, or a command whose end or events wake you, then end with the line waiting: tool — <what is watched> —, '
+      + 'or, if a question for the operator truly blocks, end with the line waiting: operator — blocks: <what it blocks>, or with waiting: done. '
+      + 'The line goes as the message\'s last line, no markup.',
   })
 })
 
@@ -1338,4 +1342,99 @@ test('the stop re-fired this turn passes with goals open, nothing read', async (
   const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...DONE, stop_hook_active: true }))
   expect(out.answer).toBe(out.passed)
   expect(fx.ran.length).toBe(0)
+})
+
+// --- what a turn truly waits on ------------------------------------------------------------
+
+// An orchestrator whose turn waited on a monitor it had started, no agent busy, was refused
+// every stop until its last line read `waiting: operator — blocks: …` or `waiting: done`:
+// only a ci-watch counted as something running, so each monitor event woke a turn the gate
+// sent back, and every one of them ended on a wait for the operator that asked him nothing.
+const SNAPSHOT = '/bin/zsh -c source /h/.claude/shell-snapshots/snapshot-zsh-1-a.sh 2>/dev/null || true && '
+const shellOf = (command: string) => `${SNAPSHOT}eval '${command}' < /dev/null && pwd -P >| /tmp/x-cwd`
+const MONITOR_PS = `  800   501 ${shellOf('tail -f deploy.log | grep --line-buffered done')}\n  801   800 tail -f deploy.log\n`
+
+test('own background processes are the host shells under the host process, what each runs named', () => {
+  const rows = processTable([
+    '  501     1 hostcli',
+    `  800   501 ${shellOf('sleep 300')}`,
+    '  801   800 sleep 300',
+    `  810   501 ${shellOf(`python3 - <<'"'"'EOF'"'"'\\012print(1)\\012EOF`)}`,
+    `  820     1 ${shellOf('sleep 9')}`,
+    '  830   501 caffeinate -i -t 300',
+    '  840   501 ps -axo pid=,ppid=,command=',
+    `  850   501 /bin/zsh -c x`,
+    `  851   850 /bin/bash ${CI_WATCH} 160`,
+  ].join('\n') + '\n')
+  expect(ownBackground(rows, '501')).toEqual(['sleep 300', "python3 - <<'EOF' print(1) EOF", `ci-watch.sh 160`])
+  expect(ownBackground(rows, null)).toEqual([])
+})
+
+test('a stop that ends on no machine line while a background process of the session runs passes', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ ps: MONITOR_PS })
+  const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'Both deploys are running; the monitor will tell.' }))
+  expect(out.answer).toBe(out.passed)
+})
+
+test('waiting: tool passes while a background process of the session runs, and is refused when none does', async () => {
+  const { handlers } = mounted()
+  const message = { last_assistant_message: 'Deploys started.\nwaiting: tool — the deploy monitor' }
+  const watched = fakeDollar({ ps: MONITOR_PS })
+  const passed = await stop(handlers['classic.Stop'], watched.dollar, stopEvent(message))
+  expect(passed.answer).toBe(passed.passed)
+  expect(watched.written.some(l => l.endsWith('| stop gate: check1 tool the deploy monitor'))).toBe(true)
+  const idle = fakeDollar({ ps: `  820     1 ${shellOf('sleep 9')}\n` })
+  const held = ((await stop(handlers['classic.Stop'], idle.dollar, stopEvent(message))).answer as any).block
+  expect(held).toContain('Nothing of yours runs in the background')
+  expect(held).toContain('waiting: operator — blocks: <what it blocks>')
+  expect(held).toContain('waiting: done')
+})
+
+test('the tool line, decided over the facts', () => {
+  const base = { agents: [], resident: false, delivered: [] }
+  expect(checkWake({ ...base, message: 'x\n`waiting: tool — the deploy monitor`.', background: ['tail -f deploy.log'] })).toEqual({ tool: 'the deploy monitor' })
+  expect(checkWake({ ...base, message: 'Waiting: Tool - ci-watch 12', watching: true })).toEqual({ tool: 'ci-watch 12' })
+  expect((checkWake({ ...base, message: 'waiting: tool — the deploy monitor' }) as any).case).toBe('tool-not-running')
+  // A busy agent is what wakes it: the line fits nothing, and the text says the turn ends on none.
+  const busy = checkWake({ ...base, agents: [AGENT_BUSY], message: 'waiting: tool — the monitor' }) as any
+  expect(busy.case).toBe('tool-not-running')
+  expect(busy.reason).toContain('An agent of yours is busy: end on no machine line')
+  // A delivered idle agent is told first, as for every line but a blocking question.
+  expect((checkWake({ ...base, agents: [AGENT_IDLE], delivered: ['Agent : idle-p3 (pull request #1, OPEN)'], message: 'waiting: tool — x', background: ['sleep 9'] }) as any).case).toBe('idle-delivered')
+})
+
+test('a wait on the operator that blocks nothing is refused, the right line named', () => {
+  const base = { agents: [], resident: false, delivered: [] }
+  for (const blocks of ['nothing', 'Nothing.', 'none', 'NONE', 'nothing yet', 'nothing to ask', 'none for now', 'nothing.', 'n/a', 'N/A', '-', '']) {
+    const held = checkWake({ ...base, message: `Watching the deploys.\nwaiting: operator — blocks: ${blocks}` }) as any
+    expect([blocks, held.case]).toEqual([blocks, 'blocks-nothing'])
+    expect(held.reason).toContain('waiting: done')
+  }
+  const urgent = checkWake({ ...base, message: 'waiting: operator (urgent) — blocks: nothing.' }) as any
+  expect(urgent.case).toBe('blocks-nothing')
+  const running = checkWake({ ...base, message: 'waiting: operator — blocks: nothing', background: ['tail -f deploy.log'] }) as any
+  expect(running.reason).toContain('waiting: tool — <what is watched>')
+  expect(running.reason).toContain('tail -f deploy.log')
+  const busy = checkWake({ ...base, agents: [AGENT_BUSY], message: 'waiting: operator — blocks: none' }) as any
+  expect(busy.case).toBe('blocks-nothing')
+  expect(busy.reason).toContain('An agent of yours is busy: end on no machine line')
+  // What blocks something is still the operator's wait.
+  expect(checkWake({ ...base, message: 'waiting: operator — blocks: nothing else than the merge' })).toEqual({ blocks: 'nothing else than the merge' })
+  expect(checkWake({ ...base, message: 'waiting: operator — blocks: nothing but G5' })).toEqual({ blocks: 'nothing but G5' })
+  expect(checkWake({ ...base, message: 'waiting: operator — blocks: none, except row 3' })).toEqual({ blocks: 'none, except row 3' })
+  expect(checkWake({ ...base, message: 'waiting: operator — blocks: nothing before geonative-api#12' })).toEqual({ blocks: 'nothing before geonative-api#12' })
+})
+
+test('a true tool line is accepted when the host pid could not be read', () => {
+  const base = { agents: [], resident: false, delivered: [] }
+  expect(checkWake({ ...base, message: 'waiting: tool — the deploy monitor', hostUnread: true })).toEqual({ tool: 'the deploy monitor' })
+  // A read host pid still refuses a tool line with nothing running.
+  expect((checkWake({ ...base, message: 'waiting: tool — the deploy monitor' }) as any).case).toBe('tool-not-running')
+})
+
+test('the refusals offer the tool line only as what follows a launch, never as a line that fits now', () => {
+  const nothing = (checkWake({ agents: [], resident: false, delivered: [], message: 'stopped.' }) as any).reason
+  expect(nothing).toContain('no command or monitor you started runs in the background')
+  expect(nothing).toContain('waiting: tool — <what is watched>')
 })
