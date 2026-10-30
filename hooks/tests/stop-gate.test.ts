@@ -8,7 +8,7 @@
 import { expect, test } from 'claude-code/testing'
 import {
   refuse, wakeDecision, withDeadline, isDegradedPass,
-  machineLine, readHeads, writeHeads, headsPath, listing, ownAgents, hostStatusOf, openRows,
+  machineLine, deferredIds, deferredRows, readHeads, writeHeads, headsPath, listing, ownAgents, hostStatusOf, openRows,
   projectCheckouts, watchedNumbers, parseCiWatchLog, watchNumberOf, pullRequestOf,
   checkWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground,
   noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths, presentGoals, goalsShownPath, GOALS_SHOW,
@@ -46,7 +46,9 @@ test('a blocking question declared on the last line releases the stop', () => {
 test('an open dispatch row holds the stop and names the row', () => {
   const d = wakeDecision({ busyOwnAgents: [], blockingQuestion: null, openRows: ['r-12 (the report row)'] })
   expect(d.decision).toBe('block')
-  expect((d as { reason: string }).reason).toBe('Not done: row r-12 (the report row) is open. Dispatch it, close it, or say what blocks it.')
+  expect((d as { reason: string }).reason).toBe('Not done: row r-12 (the report row) is open. Dispatch it, close it, or say what blocks it'
+    + ' — or, if the operator deferred it, record his ruling with dispatch-record.sh defer <record> <id> --ruling "<his words, dated>" '
+    + 'and end on waiting: deferred — <ids>.')
 })
 
 test('a CI read that exceeds its time bound degrades to pass-and-log', async () => {
@@ -222,7 +224,9 @@ test('the done line holds the stop on what is left and on open rows', () => {
   })).toEqual({
     case: 'not-done',
     reason: 'Not done: /tmp/h/work/repo/belt, Agent : idle-p3 are still there. Finish them, or say what blocks them. '
-      + 'Not done: row r-12 (the report row) is open. Dispatch it, close it, or say what blocks it.',
+      + 'Not done: row r-12 (the report row) is open. Dispatch it, close it, or say what blocks it'
+      + ' — or, if the operator deferred it, record his ruling with dispatch-record.sh defer <record> <id> --ruling "<his words, dated>" '
+      + 'and end on waiting: deferred — <ids>.',
   })
 })
 
@@ -232,7 +236,8 @@ test('the remaining cases refuse each with their own text', () => {
   })
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: operater blocks x' })).toEqual({
     case: 'malformed-machine-line',
-    reason: 'Your last line is not the machine line: end the message with the line waiting: operator — blocks: <what it blocks>, or with waiting: done, as the message\'s last line, no markup. '
+    reason: 'Your last line is not the machine line: end the message with the line waiting: operator — blocks: <what it blocks>, or with waiting: done, '
+      + 'or, if the operator deferred it, his ruling recorded: waiting: deferred — <ids>, as the message\'s last line, no markup. '
       + 'waiting: tool — <what is watched> fits only while a command or monitor you started runs in the background.',
   })
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: your call?' })).toEqual({
@@ -1221,8 +1226,9 @@ const NO_ROWS = { records: [''] }
 test('the done branch names open goals and faults in their own texts, after what is left and the rows', () => {
   const open = checkWakeDone({ agents: [], checkouts: [], deferred: [], goalsOpen: ['G3', 'G4'] })
   expect(open?.reason).toBe('Not done against the spec: G3, G4 open. Dispatch the work that meets it and record its evidence '
-    + '(dispatch-record.sh goals <record> met <G> --evidence …), or put it to the operator: '
-    + 'waiting: operator — blocks: <G>: <what he must rule>.')
+    + '(dispatch-record.sh goals <record> met <G> --evidence …), or put it to the operator when he has not ruled: '
+    + 'waiting: operator — blocks: <G>: <what he must rule> — or, if he deferred it, record his ruling with '
+    + 'dispatch-record.sh goals <record> defer <G> --ruling "<his words, dated>" and end on waiting: deferred — <ids>.')
   const faulty = checkWakeDone({ agents: [], checkouts: [], deferred: [], goalsFaults: ['G1 met without evidence on disk: x does not exist', '4 rows, the spec\'s Goals list 5'] })
   expect(faulty?.reason).toBe("goals.md is not a record of the spec: G1 met without evidence on disk: x does not exist; 4 rows, the spec's Goals list 5.")
   const all = checkWakeDone({ agents: [], checkouts: ['/tmp/c'], deferred: ['r-1 (x)'], goalsOpen: ['G3'], goalsFaults: ['G4 ruled out without the operator\'s words'] })!
@@ -1437,4 +1443,167 @@ test('the refusals offer the tool line only as what follows a launch, never as a
   const nothing = (checkWake({ agents: [], resident: false, delivered: [], message: 'stopped.' }) as any).reason
   expect(nothing).toContain('no command or monitor you started runs in the background')
   expect(nothing).toContain('waiting: tool — <what is watched>')
+})
+
+// --- work the operator deferred: the ending « waiting: deferred — <ids> » ------------------
+
+// The operator ruled G5 and G6 « later, when I am on mini-tech »: the session had nothing left
+// to do, and the gate's only ending for open work was a question to him, which raised an alert
+// for a question that did not exist. A ruling that defers work is recorded (dispatch-record.sh
+// defer, goals … defer), and the ending that fits is its own machine line, never a question.
+const DEFERRED_ROW = '{"id":5,"label":"the mini-tech row","state":"open","deferred":"2026-10-29: later"}\n'
+const DEFERRED_GOALS = { exitCode: 1, stdout: goalsAnswer({ open: [], deferred: ['G5', 'G6'], unplanned: [], table: '| G5 | deferred |' }) }
+const DEFER_END = { last_assistant_message: 'All that can move has moved.\nwaiting: deferred — row 5, G5, G6' }
+
+test('the deferred line is read with its ids, whatever the dash and the markup', () => {
+  expect(deferredIds('waiting: deferred — G5, G6')).toBe('G5, G6')
+  expect(deferredIds(machineLine('**waiting: deferred - row 5, G5.**'))).toBe('row 5, G5')
+  expect(deferredIds('waiting: deferred')).toBeNull()
+  expect(deferredIds('waiting: done')).toBeNull()
+  expect(deferredIds('waiting: operator — blocks: deferred G5')).toBeNull()
+})
+
+test('open rows that carry a ruling are the deferred ones, still open', () => {
+  const texts = [DEFERRED_ROW + '{"id":6,"label":"live","state":"open"}\n{"id":7,"label":"old","state":"closed","deferred":"x"}\n']
+  expect(openRows(texts)).toEqual(['5 (the mini-tech row)', '6 (live)'])
+  expect(deferredRows(texts)).toEqual(['5 (the mini-tech row)'])
+})
+
+test('the gate reads the deferred line as one that needs the facts of what is left', () => {
+  const base = { agents: [], resident: false, delivered: [] }
+  expect(checkWake({ ...base, message: 'waiting: deferred — G5, G6' })).toBe('read-what-is-left')
+  // A busy agent of its own still wakes it, as with done.
+  expect(checkWake({ ...base, agents: [AGENT_BUSY], message: 'waiting: deferred — G5' })).toBeNull()
+})
+
+test('a deferred ending passes when every open row and goal is deferred, and nothing else is left', () => {
+  const left = { agents: [], checkouts: [], deferred: ['5 (the mini-tech row)'], deferredRows: ['5 (the mini-tech row)'], goalsOpen: [], goalsDeferred: ['G5', 'G6'], ending: 'deferred' as const }
+  expect(checkWakeDone(left)).toBeNull()
+})
+
+test('a deferred ending is refused while an open row or goal is not deferred, naming it', () => {
+  const left = { agents: [], checkouts: [], deferred: ['5 (a)', '6 (live)'], deferredRows: ['5 (a)'], goalsOpen: ['G4'], goalsDeferred: ['G5'], ending: 'deferred' as const }
+  const held = checkWakeDone(left)!
+  expect(held.reason).toContain('row 6 (live) is open')
+  expect(held.reason).not.toContain('row 5 (a)')
+  expect(held.reason).toContain('Not done against the spec: G4 open')
+  expect(held.reason).toContain('record his ruling with dispatch-record.sh defer')
+  expect(held.reason).toContain('goals <record> defer <G>')
+  expect(held.reason).toContain('end on waiting: deferred — <ids>')
+})
+
+test('a deferred ending with nothing deferred is refused: the done line fits', () => {
+  const held = checkWakeDone({ agents: [], checkouts: [], deferred: [], ending: 'deferred' })!
+  expect(held.reason).toContain('Nothing is deferred')
+  expect(held.reason).toContain('waiting: done')
+})
+
+test('a done ending is refused on deferred work, which names the deferred line', () => {
+  const held = checkWakeDone({ agents: [], checkouts: [], deferred: ['5 (a)'], deferredRows: ['5 (a)'], goalsDeferred: ['G5'] })!
+  expect(held.reason).toBe('Not done: row 5 (a), G5 deferred by the operator, still open. End on waiting: deferred — <ids>, not on waiting: done.')
+  // An open row that is not deferred keeps its own reason beside it.
+  const both = checkWakeDone({ agents: [], checkouts: [], deferred: ['5 (a)', '6 (b)'], deferredRows: ['5 (a)'] })!
+  expect(both.reason).toContain('row 6 (b) is open')
+  expect(both.reason).toContain('row 5 (a) deferred by the operator')
+})
+
+test('a faulty goals file refuses the deferred ending too', () => {
+  const held = checkWakeDone({ agents: [], checkouts: [], deferred: [], goalsDeferred: ['G5'], goalsFaults: ['G5 deferred without the operator\'s words'], ending: 'deferred' })!
+  expect(held.reason).toBe("goals.md is not a record of the spec: G5 deferred without the operator's words.")
+})
+
+test('the goals reading carries the goals the operator deferred', () => {
+  expect(parseGoalsCheck('/r/goals.md', DEFERRED_GOALS.stdout)?.deferred).toEqual(['G5', 'G6'])
+  expect(parseGoalsCheck('/r/goals.md', goalsAnswer())?.deferred).toEqual([])
+})
+
+test('the deferred line passes at the stop when every open row and goal is deferred', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ records: [DEFERRED_ROW], goals: DEFERRED_GOALS })
+  const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent(DEFER_END))
+  expect(out.answer).toBe(out.passed)
+})
+
+test('the deferred line is refused beside a row that is not deferred, and the done line beside a deferred one', async () => {
+  const { handlers } = mounted()
+  const live = fakeDollar({ records: [DEFERRED_ROW + '{"id":6,"label":"the live row","state":"open"}\n'], goals: DEFERRED_GOALS })
+  const held = await stop(handlers['classic.Stop'], live.dollar, stopEvent(DEFER_END))
+  expect((held.answer as any).block).toContain('row 6 (the live row) is open')
+  const done = fakeDollar({ records: [DEFERRED_ROW], goals: DEFERRED_GOALS })
+  const refused = await stop(handlers['classic.Stop'], done.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
+  expect((refused.answer as any).block).toContain('deferred by the operator')
+  expect((refused.answer as any).block).toContain('waiting: deferred')
+})
+
+// The ids after « waiting: deferred — » are compared with the deferred items: a line that names
+// nothing of what is put off, or not all of it, is no record of what the session ended on.
+test('a deferred ending passes only when its ids name every deferred item, rows by number, goals as G<n>', () => {
+  const left = { agents: [], checkouts: [], deferred: ['5 (a)'], deferredRows: ['5 (a)'], goalsDeferred: ['G5', 'G6'], ending: 'deferred' as const }
+  expect(checkWakeDone({ ...left, ids: '5, G5, G6' })).toBeNull()
+  expect(checkWakeDone({ ...left, ids: '5 G5 G6' })).toBeNull()
+  expect(checkWakeDone({ ...left, ids: 'row 5, g5, G6' })).toBeNull()
+  const none = checkWakeDone({ ...left, ids: 'nothing' })!
+  expect(none.case).toBe('not-done')
+  expect(none.reason).toContain('missing row 5, G5, G6')
+  expect(none.reason).toContain('unknown nothing')
+  const part = checkWakeDone({ ...left, ids: '5, G5, G9' })!
+  expect(part.reason).toContain('missing G6')
+  expect(part.reason).not.toContain('missing row 5')
+  expect(part.reason).toContain('unknown G9')
+})
+
+test('the deferred line that names nothing of what is deferred is refused at the stop', async () => {
+  const { handlers } = mounted()
+  const wrong = fakeDollar({ records: [DEFERRED_ROW], goals: DEFERRED_GOALS })
+  const held = await stop(handlers['classic.Stop'], wrong.dollar, stopEvent({ last_assistant_message: 'Nothing left.\nwaiting: deferred — nothing' }))
+  expect((held.answer as any).block).toContain('missing row 5, G5, G6')
+  expect((held.answer as any).block).toContain('unknown nothing')
+})
+
+// A deferred line with no ids is a machine line that lacks its ids, not a question that blocks nothing.
+test('waiting: deferred with no ids is a malformed machine line naming the form, at the gate', () => {
+  const base = { agents: [], resident: false, delivered: [] }
+  for (const message of ['waiting: deferred', 'Nothing left.\nwaiting: deferred —', '**waiting: deferred**']) {
+    const held = checkWake({ ...base, message }) as any
+    expect([message, held.case]).toEqual([message, 'malformed-machine-line'])
+    expect(held.reason).toContain('waiting: deferred — <ids>')
+    expect(held.reason).not.toContain('blocks nothing declared')
+  }
+})
+
+test('the deferred line with no ids is refused at the stop, naming the form', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ records: [DEFERRED_ROW], goals: DEFERRED_GOALS })
+  const held = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'Nothing left.\nwaiting: deferred' }))
+  expect((held.answer as any).block).toContain('waiting: deferred — <ids>')
+  expect((held.answer as any).block).not.toContain('blocks nothing declared')
+})
+
+// The message that sent a session to « waiting: operator » for goals the operator had deferred
+// must name the deferred ending beside the others.
+test('the malformed-line text and the lines that fit name the deferred ending', () => {
+  const base = { agents: [], resident: false, delivered: [] }
+  const NAMED = 'if the operator deferred it, his ruling recorded: waiting: deferred — <ids>'
+  expect((checkWake({ ...base, message: 'waiting: operater blocks x' }) as any).reason).toContain(NAMED)
+  expect((checkWake({ ...base, message: 'waiting: operator — blocks: nothing' }) as any).reason).toContain(NAMED)
+  expect((checkWake({ ...base, message: 'waiting: tool — the monitor' }) as any).reason).toContain(NAMED)
+  // While something runs, the line that fits is the tool line alone.
+  expect((checkWake({ ...base, message: 'waiting: operator — blocks: nothing', background: ['sleep 9'] }) as any).reason).not.toContain(NAMED)
+})
+
+// Only goals are deferred, no row: the guards path hands the gate the goals the operator put off
+// (goalsDeferred), or the deferred line is refused as « nothing is deferred » and the done line passes.
+test('goals alone deferred, no open row: the deferred line passes and the done line is refused, through the stop', async () => {
+  const { handlers } = mounted()
+  const GOALS_ONLY = { last_assistant_message: 'Nothing left to move.\nwaiting: deferred — G5, G6' }
+  const ended = fakeDollar({ ...NO_ROWS, goals: DEFERRED_GOALS })
+  const passed = await stop(handlers['classic.Stop'], ended.dollar, stopEvent(GOALS_ONLY))
+  expect(passed.answer).toBe(passed.passed)
+  const done = fakeDollar({ ...NO_ROWS, goals: DEFERRED_GOALS })
+  const refused = await stop(handlers['classic.Stop'], done.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
+  expect((refused.answer as any).block).toContain('G5, G6 deferred by the operator')
+  expect((refused.answer as any).block).toContain('waiting: deferred')
+  const unnamed = fakeDollar({ ...NO_ROWS, goals: DEFERRED_GOALS })
+  const short = await stop(handlers['classic.Stop'], unnamed.dollar, stopEvent({ last_assistant_message: 'waiting: deferred — G5' }))
+  expect((short.answer as any).block).toContain('missing G6')
 })

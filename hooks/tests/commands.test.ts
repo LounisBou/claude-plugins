@@ -118,6 +118,23 @@ test('progress names the open rows and the tally, or says no record stands', () 
     .toEqual(['goals met=3/5 ruled_out=1 open=G3 unplanned=none', 'dispatches=1 closed=1 rounds_avg=0'])
 })
 
+test('a deferred row is printed as deferred with the operator\'s ruling, never as open work', () => {
+  expect(parseDispatchRow('{"id":5,"label":"mini-tech","state":"open","rounds":0,"deferred":"2026-10-29: later"}')).toEqual({
+    id: 5, label: 'mini-tech', state: 'open', rounds: 0, deferred: '2026-10-29: later',
+  })
+  const lines = progressLines([[
+    { id: 5, label: 'mini-tech', state: 'open', rounds: 0, deferred: '2026-10-29: B, later' },
+    { id: 6, label: 'live', state: 'open', rounds: 0 },
+    { id: 7, label: '', state: 'open', rounds: 0, deferred: '2026-10-29: later' },
+  ]])
+  expect(lines).toEqual([
+    'deferred=5 label=mini-tech ruling=2026-10-29: B, later',
+    'open=6 label=live',
+    'deferred=7 label=no label ruling=2026-10-29: later',
+    'dispatches=3 closed=0 rounds_avg=0',
+  ])
+})
+
 test('progress leads with the goals line of each record that has a goals.md, and nothing for one without', async () => {
   const { registrations } = mounted()
   const progress = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-progress')!

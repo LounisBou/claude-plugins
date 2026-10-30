@@ -8,7 +8,9 @@ from the state file alone, never from memory of what was said.
 
 The hooks module answers this command on the spot, with no model turn: from the dispatch
 records this session registered, one `goals met=<m>/<n> ruled_out=<k> open=<ids> unplanned=<ids>` line
-per record with a `goals.md` beside it, one `open=<id> label=<label>` line per row still open,
+per record with a `goals.md` beside it, one `open=<id> label=<label>` line per row still open, or
+`deferred=<id> label=<label> ruling=<his words>` for a row the operator deferred (put off by his
+ruling, never work to dispatch),
 then the tally `dispatches=<n> closed=<n> rounds_avg=<n>`. It reads no pull request and
 corrects no state file. The steps below run only when that answer fails; a report to the
 user still follows them by hand, and correcting the state file from the artifacts is the

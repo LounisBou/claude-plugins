@@ -8,6 +8,7 @@
     goals.py plan     <goals.md> <G> --phase "<text>"
     goals.py met      <goals.md> <G> --evidence "<token>"...
     goals.py rule-out <goals.md> <G> --ruling "<the operator's words>"
+    goals.py defer    <goals.md> <G> --ruling "<the operator's words>"
     goals.py reopen   <goals.md> <G>
     goals.py check    <goals.md> [--json]
 
@@ -18,7 +19,8 @@ Why it exists: a build was declared done against its plan while three of its spe
 goals had been moved « after the build » by the plan itself. Nothing measured done against
 the spec, because the spec's goals lived nowhere a command could read. They live here now,
 once, with their status: `open`, `met` (with evidence a local read can verify) or
-`ruled-out` (with the operator's own words). The stop gate refuses `waiting: done` while a
+`ruled-out` (with the operator's own words), or `deferred` (open work the operator put off,
+with his words: the goal stays unmet, and the stop gate takes the ending `waiting: deferred`). The stop gate refuses `waiting: done` while a
 goal is open or a row does not hold.
 
 The file is Markdown: a header (`spec:`, `repo:`, `aim:`), then one table row per goal,
@@ -29,15 +31,16 @@ Grammar, checked here and nowhere else:
   to `repo:`) that exists, or `commit:<sha>` that git resolves in `repo:`. `pr:#<n>` and
   `run:<cmd>` may stand beside those, never alone: no network is read at a stop. Tokens are
   `;`-separated, and every path or commit token must verify.
-- `ruled-out` needs `operator: « <his words> »`, not empty.
+- `ruled-out` and `deferred` need `operator: « <his words> »`, not empty.
 - An `open` goal with an empty `plan` is in no phase: `unplanned`.
 - With `spec:` a path whose `## Goals` lists numbered items, the rows match those items one
   for one, each goal's text equal to one item's after whitespace is collapsed, and `aim:`
   appears verbatim in the spec. A spec that has moved skips that match, and says so.
 
-`check` exits 0 when every goal holds, 1 when one is held (open, or a fault), 2 when the file
-cannot be read. `--json` prints `{ok, open, unplanned, faults, notes, rows, met, ruled_out,
-table}` for the stop gate.
+`check` exits 0 when every goal holds, 1 when one is held (open, deferred, or a fault), 2 when
+the file cannot be read. `--json` prints `{ok, open, deferred, unplanned, faults, notes, rows,
+met, ruled_out, table}` for the stop gate; `open` lists the goals still to work, `deferred` the
+ones put off.
 """
 
 import json
@@ -46,7 +49,7 @@ import re
 import subprocess
 import sys
 
-STATUSES = ("open", "met", "ruled-out")
+STATUSES = ("open", "met", "ruled-out", "deferred")
 HEADER = "| id | status | goal (verbatim from the spec) | plan | evidence or ruling |"
 RULE = "|---|---|---|---|---|"
 COMMENT = "<!-- Evidence is the goal's OUTCOME on an artifact, never the tool that would produce it. -->"
@@ -239,15 +242,18 @@ def assess(path):
     head, rows = read(path)
     faults, notes = [], []
     open_ids = [r["id"] for r in rows if r["status"] == "open"]
+    deferred_ids = [r["id"] for r in rows if r["status"] == "deferred"]
     unplanned = [r["id"] for r in rows if r["status"] == "open" and not r["plan"].strip()]
     for r in rows:
         if r["status"] not in STATUSES:
-            faults.append(f"{r['id']} has no status of open, met or ruled-out: {r['status'] or 'empty'}")
+            faults.append(f"{r['id']} has no status of open, met, ruled-out or deferred: {r['status'] or 'empty'}")
         elif r["status"] == "met":
             for f in evidence_faults(r["evidence"], head["repo"]):
                 faults.append(f"{r['id']} met without evidence on disk: {f}")
         elif r["status"] == "ruled-out" and not ruling_of(r["evidence"]):
             faults.append(f"{r['id']} ruled out without the operator's words")
+        elif r["status"] == "deferred" and not ruling_of(r["evidence"]):
+            faults.append(f"{r['id']} deferred without the operator's words")
     if head["spec"] != "none":
         try:
             with open(os.path.expanduser(head["spec"]), encoding="utf-8") as f:
@@ -272,8 +278,8 @@ def assess(path):
     met = sum(1 for r in rows if r["status"] == "met")
     ruled = sum(1 for r in rows if r["status"] == "ruled-out")
     return {
-        "ok": not open_ids and not faults,
-        "open": open_ids, "unplanned": unplanned, "faults": faults, "notes": notes,
+        "ok": not open_ids and not deferred_ids and not faults,
+        "open": open_ids, "deferred": deferred_ids, "unplanned": unplanned, "faults": faults, "notes": notes,
         "rows": len(rows), "met": met, "ruled_out": ruled,
         "aim": head["aim"], "spec": head["spec"],
         "table": "\n".join([HEADER, RULE] + ["| " + " | ".join(escape(r[k]) for k in ("id", "status", "goal", "plan", "evidence")) + " |" for r in rows]),
@@ -281,8 +287,9 @@ def assess(path):
 
 
 def summary_line(a):
-    return (f"goals met={a['met']}/{a['rows']} ruled_out={a['ruled_out']} "
+    line = (f"goals met={a['met']}/{a['rows']} ruled_out={a['ruled_out']} "
             f"open={','.join(a['open']) or 'none'} unplanned={','.join(a['unplanned']) or 'none'}")
+    return f"{line} deferred={','.join(a['deferred'])}" if a["deferred"] else line
 
 
 # --- the commands --------------------------------------------------------------------------
@@ -425,16 +432,33 @@ def cmd_met(path, argv):
     edit(path, gid, change)
 
 
-def cmd_rule_out(path, argv):
-    gid, o = argv[0] if argv else die("rule-out: a goal id is required"), options(argv[1:], {"ruling": "one"})
-    words = (o["ruling"] or "").strip()
+def ruling_words(given, command):
+    """The operator's words out of --ruling, quotes dropped; dies when there are none."""
+    words = (given or "").strip()
     m = RULING.match(words)
     if m:
         words = m.group(1)
     words = collapse(words.strip().strip("«»\"'").strip())
     if not words:
-        die("rule-out: --ruling needs the operator's own words, verbatim and not empty")
+        die(f"{command}: --ruling needs the operator's own words, verbatim and not empty")
+    return words
+
+
+def cmd_rule_out(path, argv):
+    gid, o = argv[0] if argv else die("rule-out: a goal id is required"), options(argv[1:], {"ruling": "one"})
+    words = ruling_words(o["ruling"], "rule-out")
     edit(path, gid, lambda h, r: r.update(status="ruled-out", evidence=f"operator: « {words} »"))
+
+
+def cmd_defer(path, argv):
+    gid, o = argv[0] if argv else die("defer: a goal id is required"), options(argv[1:], {"ruling": "one"})
+    words = ruling_words(o["ruling"], "defer")
+
+    def change(head, row):
+        if row["status"] != "open":
+            die(f"defer: {gid} is {row['status']}, not open")
+        row.update(status="deferred", evidence=f"operator: « {words} »")
+    edit(path, gid, change)
 
 
 def cmd_reopen(path, argv):
@@ -459,6 +483,8 @@ def cmd_check(path, argv):
     else:
         if a["open"]:
             print(f"open: {', '.join(a['open'])}")
+        if a["deferred"]:
+            print(f"deferred: {', '.join(a['deferred'])}")
         for f in a["faults"]:
             print(f"fault: {f}")
         for n in a["notes"]:
@@ -469,7 +495,7 @@ def cmd_check(path, argv):
 
 COMMANDS = {
     "init": cmd_init, "status": cmd_status, "line": cmd_line, "unplanned": cmd_unplanned,
-    "plan": cmd_plan, "met": cmd_met, "rule-out": cmd_rule_out, "reopen": cmd_reopen, "check": cmd_check,
+    "plan": cmd_plan, "met": cmd_met, "rule-out": cmd_rule_out, "defer": cmd_defer, "reopen": cmd_reopen, "check": cmd_check,
 }
 
 

@@ -35,7 +35,8 @@ export type WaitKind = Wait['kind']
 // The turn's answer read for its machine line, the stop gate's own regex over the stop
 // gate's own normalisation: a wait on the operator with what it blocks, or done. The
 // question is the answer minus that line. No machine line: no wait. Neither is a wait on a
-// tool of the session's own (`waiting: tool — …`, its own tab's business) nor a wait on the
+// tool of the session's own (`waiting: tool — …`, its own tab's business), nor the ending on work
+// the operator deferred (`waiting: deferred — …`, his ruling recorded), nor a wait on the
 // operator that blocks nothing: he is asked nothing, so nothing is entered, sent or kept.
 export function parseWait(answer: string): Wait | null {
   const line = machineLine(answer)

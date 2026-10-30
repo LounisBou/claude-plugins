@@ -25,7 +25,7 @@ import {
   roleOf, walkName, hostBasenames, hostRecordOf, blockArgv, bytesOfBase64,
   type ReadRecord, type HostNames,
 } from './session-name.ts'
-import { withDeadline, isDegradedPass, chainEntries, watchNumberOf } from './stop-gate.ts'
+import { withDeadline, isDegradedPass, chainEntries, watchNumberOf, deferredIds, machineLine } from './stop-gate.ts'
 import { typedByOperator } from './models-guard.ts'
 import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
@@ -1805,6 +1805,9 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
   const role = roleOf(name)
   if (!name || (role !== 'orchestrator' && role !== 'agent')) return
   const wait = role === 'orchestrator' ? parseWait(answer) : parseStatus(answer)
+  // The ending of a turn whose open work the operator deferred (`waiting: deferred — <ids>`): no
+  // wait, nothing entered or sent, the wait cleared like a tool wait's.
+  const deferred = role === 'orchestrator' && deferredIds(machineLine(answer)) !== null
   // The mark of a prompt the operator typed while a question was held (withdrawOnTyped): it
   // belongs to this turn alone and is never written back. Withdrawn before the wait is read:
   // a fingerprint the withdrawal forgot stays forgotten.
@@ -1819,8 +1822,9 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
       forgotten = await withdrawHeld($, sessionId, name, typed)
       // He answered in this tab: a turn ending on another machine line, a wait or done, leaves
       // none of the session's other open entries waiting either.
-      if (wait) {
-        await tellSettled($, await withdrawStale($, sessionId, roundEntryId(sessionId, wait), TAB_ANSWER))
+      // A deferred ending is no wait, but it leaves none of them standing either.
+      if (wait || deferred) {
+        await tellSettled($, await withdrawStale($, sessionId, wait ? roundEntryId(sessionId, wait) : null, TAB_ANSWER))
         swept = true
       }
     }

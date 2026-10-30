@@ -33,6 +33,13 @@ test('the machine line parses into a wait: the operator with what it blocks, or 
   expect(parseWait('')).toBeNull()
 })
 
+// The ending of a turn whose open work the operator deferred asks him nothing: no wait at all,
+// so no round entry, no report and no alert (the stop gate takes it: stop-gate.test.ts).
+test('the deferred line is no wait', () => {
+  expect(parseWait(answerOf('Nothing left to move.', 'waiting: deferred — row 5, G5, G6'))).toBeNull()
+  expect(parseWait(answerOf('Nothing left to move.', '**waiting: deferred - G5**'))).toBeNull()
+})
+
 test('a wait its sender marked urgent parses as urgent; the plain form is not', () => {
   expect(parseWait(answerOf(QUESTION, 'waiting: operator (urgent) — blocks: x')))
     .toEqual({ kind: 'operator', blocks: 'x', question: QUESTION, urgent: true })
@@ -891,7 +898,7 @@ test('a prompt typed while a question is held only marks it; a turn ending on th
   expect(entries(fx).map(e => [e.blocks, e.status])).toEqual([['phase 3', 'open'], [null, 'open']])
 })
 
-for (const [label, line] of [['another operator wait', 'waiting: operator — blocks: phase 4'], ['done', 'waiting: done'], ['no machine line', '']] as const) {
+for (const [label, line] of [['another operator wait', 'waiting: operator — blocks: phase 4'], ['done', 'waiting: done'], ['deferred', 'waiting: deferred — G5, G6'], ['no machine line', '']] as const) {
   test(`a prompt typed in, then a turn ending on ${label}, withdraws the held question by the tab`, async () => {
     const { chains, fx } = await relayedQuestion()
     const since = fx.row().waiting_since
@@ -959,6 +966,30 @@ for (const [label, line] of [['done', 'waiting: done']] as const) {
     expect(entries(fx).length).toBe(2)
   })
 }
+
+test('a turn the operator did not start, ending on deferred, leaves every open entry open and enters none', async () => {
+  const { chains, fx } = await relayedQuestion()
+  const [asked] = entries(fx)
+  await drive(chains, 'turn.start', fx.dollar, { text: '[module] a peer message' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Nothing left to move.', 'waiting: deferred — G5, G6')))
+  expect(entries(fx)).toEqual([asked])
+  expect(fx.logged.some(l => l.includes('round: withdrawn by the sender'))).toBe(false)
+  expect(fx.row().waiting ?? null).toBeNull()
+})
+
+test('a turn the operator typed in, ending on deferred, withdraws the session\'s other open entries by the sender', async () => {
+  const { chains, fx } = await relayedQuestion()
+  const [held] = entries(fx)
+  const older: RoundEntry = { ...held, id: 'older', blocks: 'phase 2', since: '2026-10-14T07:00:00.000Z' }
+  fx.files.set(`${ROUND}/older.json`, JSON.stringify(older) + '\n')
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
+  await drive(chains, 'turn.start', fx.dollar, { text: 'yes' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Nothing left to move.', 'waiting: deferred — G5, G6')))
+  const after = new Map(entries(fx).map(e => [e.id, e]))
+  expect([after.get(held.id)!.status, after.get(held.id)!.answer?.by]).toEqual(['withdrawn', 'tab'])
+  expect([after.get('older')!.status, after.get('older')!.answer?.by]).toEqual(['withdrawn', 'sender'])
+  expect(after.size).toBe(2)
+})
 
 test('a turn the operator typed in withdraws the session\'s other open entries by the sender', async () => {
   const { chains, fx } = await relayedQuestion()
@@ -1291,7 +1322,7 @@ test('neither a tool wait nor an operator wait blocking nothing is a wait', () =
   expect(parseWait(answerOf('Watching.', 'waiting: operator (urgent) — blocks: none'))).toBeNull()
 })
 
-for (const line of ['waiting: tool — the deploy monitor', 'waiting: operator — blocks: nothing']) {
+for (const line of ['waiting: tool — the deploy monitor', 'waiting: operator — blocks: nothing', 'waiting: deferred — row 5, G5, G6']) {
   test(`a turn ending on « ${line} » enters nothing, sends nothing, and clears the wait`, async () => {
     const chains = mounted()
     const local = fake()

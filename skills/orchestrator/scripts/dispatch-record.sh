@@ -10,15 +10,20 @@
 #   dispatch-record.sh ready   <record> <id> --head <sha> --e2e "<the E2E line>" [--e2e-waiver "<his words, dated>"]
 #   dispatch-record.sh exempt  <record> --e2e "<his words, dated>"   (the operator exempts this session's pull requests from E2E)
 #   dispatch-record.sh close   <record> <id> --verdict <text>
+#   dispatch-record.sh defer   <record> <id> --ruling "<his words, dated>"   (the operator deferred this open row)
+#   dispatch-record.sh undefer <record> <id>
 #   dispatch-record.sh escaped <record> <id>      (a defect got past this row's review)
 #   dispatch-record.sh cost    <record> <id> --session <session id> [--recount]   (adds that session's measured cost)
 #   dispatch-record.sh summary <record> [--open]
 #   dispatch-record.sh goals   <record> init --spec <path>|none [--aim "<text>"] [--goal "<text>"]... [--replace]
 #   dispatch-record.sh goals   <record> status | plan <G> --phase "<text>" | met <G> --evidence "<token>"...
-#   dispatch-record.sh goals   <record> rule-out <G> --ruling "<his words>" | reopen <G> | check [--json]
+#   dispatch-record.sh goals   <record> rule-out <G> --ruling "<his words>" | defer <G> --ruling "<his words, dated>"
+#   dispatch-record.sh goals   <record> reopen <G> | check [--json]
 #
 # `open` prints the row id. `summary --open` prints only the open rows, for a takeover that
-# has no use for the statistics. The record is JSON lines: appendable, greppable, and read back
+# has no use for the statistics. A row (or a goal) the operator deferred stays open and carries
+# his ruling; the summary shows it as `deferred=` with that ruling, and the stop gate takes the
+# ending `waiting: deferred — <ids>` once every row and goal still open is one. The record is JSON lines: appendable, greppable, and read back
 # with the `jq` the rest of this plugin already needs.
 #
 # Why it exists: the routing rule says a tier drop that costs a second corrective round is
@@ -120,7 +125,7 @@ warn() { echo "WARNING: $*" >&2; }
 command -v jq >/dev/null 2>&1 || die "jq is required"
 
 cmd="${1:-}"; record="${2:-}"
-[ -n "$cmd" ] || die "usage: dispatch-record.sh {open|round|review|fixed|surface|audit|ready|exempt|close|escaped|cost|summary|goals} <record> [...] (see header)"
+[ -n "$cmd" ] || die "usage: dispatch-record.sh {open|round|review|fixed|surface|audit|ready|exempt|close|defer|undefer|escaped|cost|summary|goals} <record> [...] (see header)"
 [ -n "$record" ] || die "$cmd: a record path is required"
 
 # The stop gate's state root — the one the module's gate (hooks/guards.ts over
@@ -478,6 +483,28 @@ close)
     rewrite 'if .id==$i then .state="closed" | .verdict=$v | .closed=$c else . end' "$id" \
         --arg v "$verdict" --arg c "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     ;;
+defer)
+    # The operator ruled « later » on an open row: the row stays open, with his words, so the
+    # gate takes the deferred ending for it. Without his words it is nobody's ruling.
+    id="${3:-}"; [ -n "$id" ] || die "defer: a row id is required"
+    require_row defer "$id"
+    [ "$(jq -sr --argjson i "$id" '[.[]|select(.id==$i)][0].state' "$record")" = open ] \
+        || die "defer: row $id is not open"
+    shift 3; ruling=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --ruling) ruling="${2:-}"; shift 2 ;;
+            *) die "defer: unknown option $1" ;;
+        esac
+    done
+    [ -n "${ruling//[[:space:]]/}" ] || die "defer: --ruling \"<the operator's words, dated>\" is required"
+    rewrite 'if .id==$i then .deferred=$w else . end' "$id" --arg w "$ruling"
+    ;;
+undefer)
+    id="${3:-}"; [ -n "$id" ] || die "undefer: a row id is required"
+    require_row undefer "$id"
+    rewrite 'if .id==$i then del(.deferred) else . end' "$id"
+    ;;
 escaped)
     # An approval a later round contradicts. It is the only evidence available here of the
     # failure mode the published work warns about: a strong judge keeps false positives low
@@ -540,6 +567,9 @@ cost)
     echo "cost: row $id +$usd (session $session)"
     ;;
 summary)
+    # A deferred row is still open work, but the operator's ruling is what it waits on.
+    OPEN_ROWS='.[] | select(.state == "open")
+        | if .deferred then "deferred=\(.id) label=\(.label) ruling=\(.deferred)" else "open=\(.id) label=\(.label)" end'
     only_open=0
     case "${3:-}" in
         "") ;;
@@ -548,7 +578,7 @@ summary)
     esac
     [ -f "$record" ] || { echo "dispatch-record: no record at $record"; exit 0; }
     if [ "$only_open" = 1 ]; then
-        jq -sr '.[] | select(.state == "open") | "open=\(.id) label=\(.label)"' "$record"
+        jq -sr "$OPEN_ROWS" "$record"
         exit $?
     fi
     # Every group is keyed by the row's pair when it has one and by its tier otherwise, so
@@ -601,16 +631,16 @@ summary)
     ' "$record"
     # The rows still open are work: deferred, in flight, or lost. A successor reads them as
     # such, never as history.
-    jq -sr '.[] | select(.state == "open") | "open=\(.id) label=\(.label)"' "$record"
+    jq -sr "$OPEN_ROWS" "$record"
     ;;
 goals)
-    sub="${3:-}"; [ -n "$sub" ] || die "goals: a subcommand is required (init, status, plan, met, rule-out, reopen or check)"
-    case "$sub" in init|status|plan|met|rule-out|reopen|check) ;; *) die "goals: unknown subcommand: $sub (expected init, status, plan, met, rule-out, reopen or check)" ;; esac
+    sub="${3:-}"; [ -n "$sub" ] || die "goals: a subcommand is required (init, status, plan, met, rule-out, defer, reopen or check)"
+    case "$sub" in init|status|plan|met|rule-out|defer|reopen|check) ;; *) die "goals: unknown subcommand: $sub (expected init, status, plan, met, rule-out, defer, reopen or check)" ;; esac
     shift 3
     REGISTER_ABSENT=1
     [ "$sub" != init ] || mkdir -p "$(dirname "$record")"
     python3 "$GOALS_PY" "$sub" "$GOALS_FILE" "$@"
     exit $?
     ;;
-*) die "unknown subcommand: $cmd (expected open, round, review, fixed, surface, audit, ready, exempt, close, escaped, cost, summary or goals)" ;;
+*) die "unknown subcommand: $cmd (expected open, round, review, fixed, surface, audit, ready, exempt, close, defer, undefer, escaped, cost, summary or goals)" ;;
 esac

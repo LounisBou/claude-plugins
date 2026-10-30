@@ -192,29 +192,33 @@ async function unmeasuredAgents($: any, rows: Record<string, SessionRow>): Promi
 }
 
 // One row of a dispatch record, the launcher's own schema cut to what the text
-// needs: the identity, the label, the state and the rounds it cost. A line
+// needs: the identity, the label, the state, the rounds it cost and, on an open row the
+// operator put off, his ruling (`deferred`). A line
 // that is no row (torn by a write in flight, or holding no numeric id) is no
 // row — the measure-file doctrine the whole store already reads by.
-export type DispatchRow = { id: number; label: string; state: string; rounds: number }
+export type DispatchRow = { id: number; label: string; state: string; rounds: number; deferred?: string }
 
 export function parseDispatchRow(line: string): DispatchRow | null {
   try {
     const row = JSON.parse(line) as Partial<DispatchRow>
     if (!row || typeof row !== 'object' || typeof row.id !== 'number') return null
-    return {
+    const parsed: DispatchRow = {
       id: row.id,
       label: typeof row.label === 'string' ? row.label : '',
       state: typeof row.state === 'string' ? row.state : '',
       rounds: typeof row.rounds === 'number' ? row.rounds : 0,
     }
+    if (typeof row.deferred === 'string' && row.deferred.trim() !== '') parsed.deferred = row.deferred
+    return parsed
   } catch {
     return null
   }
 }
 
 // What /orchestrator-progress says, one record file per group: the rows still
-// open first — in flight, deferred, decisions pending; a successor reads them
-// as work, never as history — then the tally the record's own summary shapes
+// open first — in flight, decisions pending; a successor reads them as work, never as
+// history — and a row the operator deferred as `deferred=<id> … ruling=<his words>`, as
+// `dispatch-record.sh summary --open` prints it, never as work to dispatch — then the tally the record's own summary shapes
 // (dispatches, closed, rounds to the one decimal). An empty label keeps its
 // row and is named for what it is; no group at all is said as that.
 //
@@ -225,7 +229,10 @@ export function progressLines(groups: readonly DispatchRow[][], goals: readonly 
   if (rows.length === 0) return goals.length > 0 ? [...goals, 'no dispatch yet'] : ['no dispatch record registered']
   const lines = [...goals, ...rows
     .filter(row => row.state === 'open')
-    .map(row => `open=${row.id} label=${row.label === '' ? 'no label' : row.label}`)]
+    .map(row => {
+      const label = row.label === '' ? 'no label' : row.label
+      return row.deferred ? `deferred=${row.id} label=${label} ruling=${row.deferred}` : `open=${row.id} label=${label}`
+    })]
   const closed = rows.filter(row => row.state === 'closed').length
   const avg = Math.round((rows.reduce((sum, row) => sum + row.rounds, 0) / rows.length) * 10) / 10
   lines.push(`dispatches=${rows.length} closed=${closed} rounds_avg=${avg}`)

@@ -72,12 +72,17 @@ const NOTHING = 'Nothing will wake you: no agent of yours is running, and no com
   + "The line goes as the message's last line, no markup."
 const MALFORMED = 'Your last line is not the machine line: end the message with the line '
   + 'waiting: operator — blocks: <what it blocks>, or with waiting: done, '
+  + 'or, if the operator deferred it, his ruling recorded: waiting: deferred — <ids>, '
   + "as the message's last line, no markup. "
   + 'waiting: tool — <what is watched> fits only while a command or monitor you started runs in the background.'
+const DEFERRED_MALFORMED = 'Your last line is not the machine line: a deferred ending names what is deferred. '
+  + 'End the message with the line waiting: deferred — <ids> (rows by their number, goals as G<n>), '
+  + "as the message's last line, no markup."
 // The lines that fit a turn, by what will wake it: what the two refusals below name.
 const BUSY_FITS = 'An agent of yours is busy: end on no machine line, its idle notice wakes you.'
 const OTHER_FITS = 'If a question for the operator truly blocks, end with the line waiting: operator — blocks: <what it blocks>; '
-  + 'if every goal is met or ruled out, with waiting: done; else launch what you announced.'
+  + 'if every goal is met or ruled out, with waiting: done; '
+  + 'if the operator deferred it, his ruling recorded: waiting: deferred — <ids>; else launch what you announced.'
 const runningFits = (what: readonly string[]) =>
   `${what.join(', ')} runs in the background: end with the line waiting: tool — <what is watched>.`
 function fits(busy: boolean, running: readonly string[]): string {
@@ -98,13 +103,22 @@ const IDLE_MANY = '%s are idle: their notices were spent. Read their reports or 
 const QUESTION = 'Your question blocks nothing declared: advance everything that can advance; its answer will come in a later turn.'
 const NOT_DONE_ONE = 'Not done: %s is still there. Finish it, or say what blocks it.'
 const NOT_DONE_MANY = 'Not done: %s are still there. Finish them, or say what blocks them.'
-const ROW_ONE = 'Not done: row %s is open. Dispatch it, close it, or say what blocks it.'
-const ROW_MANY = 'Not done: rows %s are open. Dispatch them, close them, or say what blocks them.'
+// The deferral path beside the others: work the operator put off is recorded with his ruling
+// and ended on its own machine line, never put to him again as a question.
+const DEFER_ROW = 'record his ruling with dispatch-record.sh defer <record> <id> --ruling "<his words, dated>" '
+  + 'and end on waiting: deferred — <ids>'
+const ROW_ONE = `Not done: row %s is open. Dispatch it, close it, or say what blocks it — or, if the operator deferred it, ${DEFER_ROW}.`
+const ROW_MANY = `Not done: rows %s are open. Dispatch them, close them, or say what blocks them — or, if the operator deferred them, ${DEFER_ROW}.`
 // The spec's goals (goals.md beside a registered record, read by goals.py check): done is
 // measured against what the spec set out to reach, not against the plan alone.
 const GOALS_OPEN = 'Not done against the spec: %s open. Dispatch the work that meets it and record its evidence '
-  + '(dispatch-record.sh goals <record> met <G> --evidence …), or put it to the operator: '
-  + 'waiting: operator — blocks: <G>: <what he must rule>.'
+  + '(dispatch-record.sh goals <record> met <G> --evidence …), or put it to the operator when he has not ruled: '
+  + 'waiting: operator — blocks: <G>: <what he must rule> — or, if he deferred it, record his ruling with '
+  + 'dispatch-record.sh goals <record> defer <G> --ruling "<his words, dated>" and end on waiting: deferred — <ids>.'
+const DEFERRED_STILL = 'Not done: %s deferred by the operator, still open. End on waiting: deferred — <ids>, not on waiting: done.'
+const IDS_WRONG = 'waiting: deferred — <ids> must name every deferred item (rows by their number, goals as G<n>): %s.'
+const NOTHING_DEFERRED = 'Nothing is deferred: no open row or goal carries the operator\'s ruling. '
+  + 'If everything is finished, end on waiting: done.'
 const GOALS_FAULT = 'goals.md is not a record of the spec: %s.'
 // The presentation pass: the first done over a goals file's content shows the operator the
 // table, because whether a piece of evidence that exists is enough is his to judge.
@@ -125,6 +139,16 @@ function notDoneReasons(left: readonly string[], deferred: readonly string[],
 // reason is the reason's own and is kept. A sender may mark its wait `(urgent)` after
 // « operator » (URGENT_LINE tells it): the gate holds both forms alike.
 export const MACHINE_LINE = /^waiting:\s*(?:operator\s*(?:\(urgent\)\s*)?(?:—|–|--|-)\s*blocks:\s*(.+)|(done))$/i
+// The ending of a turn whose only open work is work the operator deferred: his ruling is
+// recorded on each row and goal (dispatch-record.sh defer, goals … defer) and the line lists
+// them. It asks him nothing, so the relay never enters it.
+const DEFERRED_LINE = /^waiting:\s*deferred\s*(?:—|–|--|-)\s*(.+)$/i
+// The deferred line's first words, with or without its ids: without them it is malformed.
+const DEFERRED_WORD = /^waiting:\s*deferred\b/i
+export function deferredIds(line: string): string | null {
+  const matched = DEFERRED_LINE.exec(line)
+  return matched ? matched[1].trim() : null
+}
 export const URGENT_LINE = /^waiting:\s*operator\s*\(urgent\)/i
 // A wait on a command or monitor the session itself started in the background and that
 // still runs: its end or its events wake the session, and nobody else is asked anything.
@@ -293,13 +317,22 @@ export function pullRequestOf(branch: string | null, answer: string | null): { n
 // open_rows() ported over the already-read record files: `<id> (<label>)` for each
 // row still open, no matter which record file carries it.
 export function openRows(texts: readonly string[]): string[] {
+  return rowsWhere(texts, row => row.state === 'open')
+}
+
+// The open rows the operator deferred (`deferred` carries his ruling): still open, put off.
+export function deferredRows(texts: readonly string[]): string[] {
+  return rowsWhere(texts, row => row.state === 'open' && typeof row.deferred === 'string' && row.deferred.trim() !== '')
+}
+
+function rowsWhere(texts: readonly string[], keep: (row: Record<string, any>) => boolean): string[] {
   const rows: string[] = []
   for (const text of texts) {
     for (const line of text.split('\n')) {
       if (!line.trim()) continue
       try {
         const row = JSON.parse(line)
-        if (row && typeof row === 'object' && row.state === 'open') {
+        if (row && typeof row === 'object' && keep(row)) {
           rows.push(`${row.id} (${row.label || 'no label'})`)
         }
       } catch { /* a line that is no row: no row */ }
@@ -386,11 +419,12 @@ export function checkWake(facts: {
   if (busy) return null
   if (facts.watching || running.length > 0) return null
   if (facts.awaiting) return null
-  if (matched) return 'read-what-is-left'
+  if (matched || deferredIds(last) !== null) return 'read-what-is-left'
   if (facts.agents.length > 0) {
     const names = facts.agents.map(a => a.label).join(', ')
     return { case: 'idle-agents', reason: (facts.agents.length === 1 ? IDLE_ONE : IDLE_MANY).replace('%s', names) }
   }
+  if (DEFERRED_WORD.test(last)) return { case: 'malformed-machine-line', reason: DEFERRED_MALFORMED }
   if (last.toLowerCase().startsWith('waiting') && LOOKS_DECLARED.test(last)) {
     return { case: 'malformed-machine-line', reason: MALFORMED }
   }
@@ -457,17 +491,52 @@ export function isSuccessorSpawn(command: string): boolean {
 // holds open, and the faults that make the file no record of the spec (a goal met with no
 // evidence on disk, one ruled out without the operator's words, a row count or a text that
 // is not the spec's). goals.py check reads them, the one implementation of the grammar.
+//
+// Work the operator deferred (`deferredRows` among the open rows, `goalsDeferred` beside the
+// open goals) is open and put off by his ruling. The ending `waiting: deferred — <ids>`
+// (`ending: 'deferred'`) takes it when nothing else is open, and is refused when nothing is
+// deferred; `waiting: done` refuses it, and names the line that fits. The ids the line lists
+// (`ids`) must be those deferred items, each named and none unknown.
+function idsMismatch(listed: string, rows: readonly string[], goals: readonly string[]): string | null {
+  const wanted = new Map<string, string>()
+  for (const row of rows) wanted.set(row.split(' ')[0].toUpperCase(), `row ${row.split(' ')[0]}`)
+  for (const goal of goals) wanted.set(goal.toUpperCase(), goal)
+  const named = listed.split(/[,\s]+/).filter(id => id !== '' && !/^rows?$/i.test(id))
+  const upper = named.map(id => id.toUpperCase())
+  const missing = [...wanted].filter(([id]) => !upper.includes(id)).map(([, name]) => name)
+  const unknown = named.filter(id => !wanted.has(id.toUpperCase()))
+  if (missing.length === 0 && unknown.length === 0) return null
+  const said = [missing.length > 0 ? `missing ${missing.join(', ')}` : '', unknown.length > 0 ? `unknown ${unknown.join(', ')}` : '']
+  return IDS_WRONG.replace('%s', said.filter(part => part !== '').join('; '))
+}
+
 export function checkWakeDone(left: {
   agents: readonly OwnAgent[]
   checkouts: readonly string[]
   deferred: readonly string[]
+  deferredRows?: readonly string[]
   goalsOpen?: readonly string[]
+  goalsDeferred?: readonly string[]
   goalsFaults?: readonly string[]
+  ending?: 'done' | 'deferred'
+  ids?: string
 }): Held | null {
   const stillThere = [...left.checkouts, ...left.agents.map(a => a.label)]
+  const putOff = left.deferredRows ?? []
+  const rows = left.deferred.filter(row => !putOff.includes(row))
   const goals = { open: left.goalsOpen ?? [], faults: left.goalsFaults ?? [] }
-  if (stillThere.length === 0 && left.deferred.length === 0 && goals.open.length === 0 && goals.faults.length === 0) return null
-  return { case: 'not-done', reason: notDoneReasons(stillThere, left.deferred, goals).join(' ') }
+  const putOffGoals = left.goalsDeferred ?? []
+  const reasons = notDoneReasons(stillThere, rows, goals)
+  const names = [...putOff.map(row => `row ${row}`), ...putOffGoals]
+  if (left.ending === 'deferred') {
+    if (names.length === 0 && reasons.length === 0) return { case: 'nothing-deferred', reason: NOTHING_DEFERRED }
+    const wrong = names.length > 0 && left.ids !== undefined ? idsMismatch(left.ids, putOff, putOffGoals) : null
+    if (wrong) reasons.push(wrong)
+  } else if (names.length > 0) {
+    reasons.push(DEFERRED_STILL.replace('%s', names.join(', ')))
+  }
+  if (reasons.length === 0) return null
+  return { case: 'not-done', reason: reasons.join(' ') }
 }
 
 // One goals.md as the gate reads it: the path, and goals.py check --json's answer.
@@ -475,6 +544,7 @@ export type GoalsReading = {
   path: string
   ok: boolean
   open: readonly string[]
+  deferred: readonly string[]
   faults: readonly string[]
   notes: readonly string[]
   rows: number
@@ -489,7 +559,7 @@ export function parseGoalsCheck(path: string, text: string): GoalsReading | null
     if (!a || typeof a !== 'object' || typeof a.ok !== 'boolean' || !Array.isArray(a.open) || !Array.isArray(a.faults)) return null
     const strings = (v: unknown): string[] => (Array.isArray(v) ? v.map(String) : [])
     return {
-      path, ok: a.ok, open: strings(a.open), faults: strings(a.faults), notes: strings(a.notes),
+      path, ok: a.ok, open: strings(a.open), deferred: strings(a.deferred), faults: strings(a.faults), notes: strings(a.notes),
       rows: typeof a.rows === 'number' ? a.rows : 0, table: typeof a.table === 'string' ? a.table : '',
     }
   } catch {

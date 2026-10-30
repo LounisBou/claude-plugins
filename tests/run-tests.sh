@@ -269,8 +269,13 @@ check "the ungated pull request has its red flag" "1" "$(grep -c "A pull request
 # 21,450 until the module reported an agent's turn end and gate crossing too.
 # 21,518 until the label sentence (the operator's order of 2026-10-29).
 # 21,446 until the hand-over sentence naming the successor to the agents (item 154, « A », 2026-10-19).
-check "the orchestrator rulebook stays at 21,619 bytes or fewer" "yes" \
-  "$([ "$(wc -c < "$ROOT/skills/orchestrator/SKILL.md" | tr -d ' ')" -le 21619 ] && echo yes || echo no)"
+# 21,619 until the deferred ending (the operator's order of 2026-10-29).
+check "the orchestrator rulebook stays at 21,700 bytes or fewer" "yes" \
+  "$([ "$(wc -c < "$ROOT/skills/orchestrator/SKILL.md" | tr -d ' ')" -le 21700 ] && echo yes || echo no)"
+# Work the operator deferred ends a turn on its own machine line, never on a question to him:
+# the rulebook, the decision round and the gate's reasons name it.
+check "the rulebook, the decision round and the gate's reasons name waiting: deferred" "yes|yes|yes|yes" \
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'waiting: deferred — <ids>')|$(spells "$ROOT/commands/decide.md" 'waiting: deferred — <ids>')|$(spells "$ROOT/hooks/stop-gate.ts" 'end on waiting: deferred — <ids>')|$(spells "$ROOT/commands/decide.md" 'dispatch-record.sh defer <record> <id> --ruling')"
 # Real load on a shared machine is stopped, and « under load » means emulated throttling: the
 # rulebook, the briefs reference and the phase brief template each carry the rule.
 check "the rulebook stops real machine load an agent reports or plans" "yes" \
@@ -611,6 +616,39 @@ for sub in "plan G1 --phase P1" "met G1 --evidence $GSPEC" "rule-out G2 --ruling
 done
 check "reopen puts the goal back open, its ruling cleared" "yes" "$(grep -q '^| G2 | open | .* |  |  |$' "$GRD/goals.md" && echo yes || echo no)"
 
+# A ruling that defers work (« later, when I say so ») is recorded, not left as a question: a row
+# or a goal stays open and carries the operator's words, and the stop gate takes the ending
+# `waiting: deferred — <ids>` once nothing else is open.
+DD="$WORK/deferred-build"; DR="$DD/dispatch.jsonl"; DG="$DD/goals.md"
+bash "$REC" goals "$DR" init --spec none --goal "first goal" --goal "second goal" --goal "third goal" >/dev/null
+d1=$(bash "$REC" open "$DR" --class x --tier light --label "the mini-tech row")
+d2=$(bash "$REC" open "$DR" --class x --tier light --label "the live row")
+check_status "defer a row without --ruling dies" 1 bash "$REC" defer "$DR" "$d1"
+check_status "defer an unknown row dies" 1 bash "$REC" defer "$DR" 99 --ruling "later"
+check_status "defer a goal without --ruling dies" 1 bash "$REC" goals "$DR" defer G1
+bash "$REC" defer "$DR" "$d1" --ruling "2026-10-29: later, when I am on mini-tech" >/dev/null
+check "defer keeps the row open and records his words" "open|2026-10-29: later, when I am on mini-tech" \
+  "$(jq -r --argjson i "$d1" 'select(.id==$i)|.state' "$DR")|$(jq -r --argjson i "$d1" 'select(.id==$i)|.deferred' "$DR")"
+check "summary --open shows a deferred row as deferred, with its ruling, and the live one as open" \
+  "deferred=$d1 label=the mini-tech row ruling=2026-10-29: later, when I am on mini-tech|open=$d2 label=the live row" \
+  "$(bash "$REC" summary "$DR" --open | grep "^deferred=")|$(bash "$REC" summary "$DR" --open | grep '^open=')"
+bash "$REC" goals "$DR" defer G1 --ruling "2026-10-29: later, when I am on mini-tech" >/dev/null
+bash "$REC" goals "$DR" defer G3 --ruling "« same »" >/dev/null
+check "goals defer writes the status and his words" "yes|yes" \
+  "$(spells "$DG" '| G1 | deferred |')|$(spells "$DG" 'operator: « same »')"
+check "the goals line counts a deferred goal apart from the open ones" "goals met=0/3 ruled_out=0 open=G2 unplanned=G2 deferred=G1,G3" \
+  "$(bash "$REC" goals "$DR" status | tail -1)"
+check "goals status shows the deferred goal with its ruling" "yes" "$(bash "$REC" goals "$DR" status | grep -q '^| G1 | deferred |.*operator: « 2026-10-29: later, when I am on mini-tech » |$' && echo yes || echo no)"
+check "check --json lists the deferred goals apart, and is not ok" "G2|G1,G3|false" \
+  "$(bash "$REC" goals "$DR" check --json | jq -r '.open|join(",")')|$(bash "$REC" goals "$DR" check --json | jq -r '.deferred|join(",")')|$(bash "$REC" goals "$DR" check --json | jq -r '.ok')"
+check_status "defer a goal already met dies" 1 bash -c "bash '$REC' goals '$DR' met G2 --evidence '$DG' >/dev/null && bash '$REC' goals '$DR' defer G2 --ruling later"
+sed 's/^| G3 | deferred | \(.*\) | operator: « same » |$/| G3 | deferred | \1 | later |/' "$DG" > "$DG.new" && mv "$DG.new" "$DG"
+check "a deferred goal without his words is a fault" "1" "$(bash "$REC" goals "$DR" check 2>/dev/null | grep -c 'G3 deferred without the operator.s words')"
+bash "$REC" goals "$DR" reopen G1 >/dev/null
+bash "$REC" undefer "$DR" "$d1" >/dev/null
+check "reopen and undefer lift a deferral" "open|null|G1|goals met=1/3 ruled_out=0 open=G1 unplanned=G1 deferred=G3" \
+  "$(jq -r --argjson i "$d1" 'select(.id==$i)|.state' "$DR")|$(jq -r --argjson i "$d1" 'select(.id==$i)|.deferred' "$DR")|$(bash "$REC" goals "$DR" check --json | jq -r '.open|join(",")')|$(bash "$REC" goals "$DR" status | tail -1)"
+
 # A cascade starts one tier BELOW the table's row, on classes where a failed attempt is
 # cheap to detect and cheap to throw away. Marking the row is what makes the bet payable:
 # without it, a cascade that failed looks exactly like a row that needed two rounds.
@@ -760,7 +798,7 @@ check "and names the row it did not find" "1" "$(bash "$REC" ready "$G" 99 --hea
 check_status "review on an unknown option is an error" 1 bash "$REC" review "$G" "$g1" --head ccc333 --norms tool --force
 check_status "an unknown subcommand is an error" 1 bash "$REC" bogus "$G"
 check "and names the subcommands it expects" "1" \
-  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, fixed, surface, audit, ready, exempt, close, escaped, cost, summary or goals)')"
+  "$(bash "$REC" bogus "$G" 2>&1 | grep -c 'unknown subcommand: bogus (expected open, round, review, fixed, surface, audit, ready, exempt, close, defer, undefer, escaped, cost, summary or goals)')"
 
 # The screenshots. Five front-office pull requests were declared ready without one image,
 # under a rule written three times in prose. A `--ui` row reads its pull request's
@@ -3265,8 +3303,8 @@ check "the orchestrator rulebook no longer runs the lookup and the send itself" 
 check "a decision round goes through a running coordinator, carried by the module" "yes|yes" \
   "$(spells "$ROOT/commands/decide.md" '**While a coordinator runs, the wave goes through it**, carried by the hooks module: each')|$(spells "$ROOT/commands/decide.md" 'blocks>`, and the module forwards it; never send it yourself.')"
 # The module carries each question; the round sending them itself as well delivered one question twice.
-check "the decision round no longer looks the coordinator up or sends it the questions itself, and stays at 8,650 bytes or fewer" "no|no|0|yes" \
-  "$(spells "$ROOT/commands/decide.md" 'coordinator.sh lookup')|$(spells "$ROOT/commands/decide.md" 'goes to that coordinator with `SendMessage`')|$(sed -n '1,5p' "$ROOT/commands/decide.md" | grep -c '^allowed-tools: .*coordinator\.sh')|$([ "$(wc -c < "$ROOT/commands/decide.md" | tr -d ' ')" -le 8650 ] && echo yes || echo no)"
+check "the decision round no longer looks the coordinator up or sends it the questions itself, and stays at 8,800 bytes or fewer" "no|no|0|yes" \
+  "$(spells "$ROOT/commands/decide.md" 'coordinator.sh lookup')|$(spells "$ROOT/commands/decide.md" 'goes to that coordinator with `SendMessage`')|$(sed -n '1,5p' "$ROOT/commands/decide.md" | grep -c '^allowed-tools: .*coordinator\.sh')|$([ "$(wc -c < "$ROOT/commands/decide.md" | tr -d ' ')" -le 8800 ] && echo yes || echo no)"
 # The operator's order of 2026-10-24: a question the pane shows is asked in the coordinator's tab
 # only once due — urgent, or no pane open — and never twice; whether the pane is open decides.
 # A hold on his word keeps the other questions open, and the urgent ones still signalled.
