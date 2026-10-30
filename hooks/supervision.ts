@@ -19,7 +19,7 @@
 // own origin read and its own transcript-window reader, while the figures
 // cross as a plain import (currentReading, no $ argument) and the name runs
 // over the walk's pure core with readers built here.
-import { currentReading } from './gauge.ts'
+import { currentReading, setTabQuestion } from './gauge.ts'
 import { tripGate } from './gauge-core.ts'
 import {
   roleOf, walkName, hostBasenames, hostRecordOf, blockArgv, bytesOfBase64,
@@ -33,7 +33,7 @@ import {
   parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, heldQuestion, withdrawalText, gateText, noStatusText, NO_STATUS_KEY, coordinatorOf, chainOwnerTty, waitLabel, waitParts,
   type WaitKind,
 } from './relay.ts'
-import { entryFingerprint, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, entryQuestions, plainText, textSpans, prPieces, repositoryOwners, numberLabel, questionBody, questionShape, isDue, dueText, asksNothing, carriesChoices, type RoundAnswer, type RoundChoice, type RoundEntry } from './round.ts'
+import { entryFingerprint, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, tabQuestion, waitSummary, entryQuestions, plainText, textSpans, prPieces, repositoryOwners, numberLabel, questionBody, questionShape, isDue, dueText, asksNothing, carriesChoices, type RoundAnswer, type RoundChoice, type RoundEntry } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
   remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, machineLabel, prsInFlight, ROW_MARKER, REMOTE_STALE_AFTER_MS, type RemoteRow,
@@ -968,6 +968,71 @@ export function registerWake(on: (...args: [event: string, handler: Function] | 
     } catch (err) {
       await logLine($, `round wake: ${(err as Error).message}`)
     }
+    return next(e)
+  }).catch(async ($: any, e: any, next: any) => {
+    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+}
+
+// The tab's question band: this session's own open operator entry, kept in sight above its
+// prompt until it is answered, closed or withdrawn, wherever that happened. The round is read by
+// a clock started at the session's start, with one tick at once and then one every
+// PANE_ROUND_POLL_MS: it stats the round directory and reads the entries only when its mtime
+// moved (a missing directory, read once, stays so), and redraws the band only when what it
+// shows changed, so an answer written by the coordinator's pane reaches the tab within one tick.
+type TabBandMemory = { timer: { cancel(): void } | null; seen: number | null | undefined; failed: string | null; running: boolean }
+const tabBand: TabBandMemory = { timer: null, seen: undefined, failed: null, running: false }
+
+async function tabBandTick($: any): Promise<void> {
+  const mtime = await roundMtime($)
+  if (mtime === tabBand.seen) return
+  const sessionId = await $.session.id()
+  const asked = tabQuestion((await readRound($)).map(found => found.entry), sessionId)
+  tabBand.seen = mtime
+  const next = asked ? { since: asked.since, blocks: asked.blocks ?? '', text: plainText(asked.question) } : null
+  tabBand.failed = null
+  if (setTabQuestion(next)) $.ui.invalidate('ui.render')
+}
+
+// One failure is logged once: the same message at every tick would fill the log in a minute.
+// A tick still running when the next fires is skipped, the two never reading side by side.
+async function tabBandRun($: any): Promise<void> {
+  if (tabBand.running) return
+  tabBand.running = true
+  await tabBandTick($).catch(async (err: unknown) => {
+    const message = (err as Error).message
+    if (message === tabBand.failed) return
+    tabBand.failed = message
+    await logLine($, `tab band: ${message}`)
+  }).finally(() => { tabBand.running = false })
+}
+
+function stopTabBand(): void {
+  tabBand.timer?.cancel()
+  tabBand.timer = null
+  tabBand.seen = undefined
+  tabBand.failed = null
+  tabBand.running = false
+  setTabQuestion(null)
+}
+
+export function registerTabBand(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
+  on('session.start', {}, async ($: any, e: any, next: (e: any) => any) => {
+    try {
+      stopTabBand()
+      tabBand.timer = $.clock.every(PANE_ROUND_POLL_MS, () => { tabBandRun($) })
+      await tabBandRun($)
+    } catch (err) {
+      await logLine($, `tab band: ${(err as Error).message}`)
+    }
+    return next(e)
+  }).catch(async ($: any, e: any, next: any) => {
+    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+  on('session.end', {}, async ($: any, e: any, next: (e: any) => any) => {
+    stopTabBand()
     return next(e)
   }).catch(async ($: any, e: any, next: any) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)

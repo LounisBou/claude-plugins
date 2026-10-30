@@ -14,6 +14,27 @@ let lastModel: string | null = null
 // model by — a toast alone fades in seconds, and nothing tells the model.
 let pendingDrift: string | null = null
 
+// The open question this session's own tab keeps in sight above the prompt, set by the round's
+// reader (supervision.ts): when it began, what it blocks, its text whole. Null when none is open.
+export type TabQuestion = { since: string; blocks: string; text: string }
+let tabQuestion: TabQuestion | null = null
+
+// Replaces the question in sight; true when it differs from the one held, so the caller redraws.
+export function setTabQuestion(next: TabQuestion | null): boolean {
+  const same = JSON.stringify(next) === JSON.stringify(tabQuestion)
+  tabQuestion = next
+  return !same
+}
+
+const PARIS_CLOCK = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+
+// The question's lines as the band draws them: the head, then the text whole.
+export function tabQuestionLines(question: TabQuestion): { head: string; body: string } {
+  const at = new Date(question.since)
+  const time = Number.isNaN(at.getTime()) ? question.since : PARIS_CLOCK.format(at)
+  return { head: `Question for you (since ${time})${question.blocks ? `: ${question.blocks}` : ''}`, body: question.text }
+}
+
 // The band's input: null until the first measure of a load fills it — the usage
 // fields are optional in the shipped types before the first answered turn, so a null
 // reading is the expected start, not an error.
@@ -163,20 +184,25 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // The thresholds the session's environment set, the gate line's own: the band
       // and the gate never disagree on whether this session is past it.
       const tree = bandTree(currentReading(), await gateEnv($))
-      if (!tree) return next(e)
+      const asked = tabQuestion
+      if (!tree && !asked) return next(e)
       // A read, not a dispatch: the table is the surface's own, and the tree is
       // returned as the band's drawing — the component's props are read-only, so
       // nothing is written back into e.
       const el = $.ui.resolve(e)
+      const question = asked ? tabQuestionLines(asked) : null
       return el.Box({
         flexDirection: 'column',
         children: [
           // Below the gate the line is the default text colour with the percentage bold;
           // past it the whole line is warning and bold.
-          tree.past
+          ...(tree ? [tree.past
             ? el.Text({ color: 'warning', bold: true, children: tree.label })
-            : el.Text({ children: [el.Text({ children: tree.lead }), el.Text({ bold: true, children: tree.percent }), el.Text({ children: tree.figures })] }),
-          ...(tree.note ? [el.Text({ color: 'warning', children: tree.note })] : []),
+            : el.Text({ children: [el.Text({ children: tree.lead }), el.Text({ bold: true, children: tree.percent }), el.Text({ children: tree.figures })] })] : []),
+          ...(tree?.note ? [el.Text({ color: 'warning', children: tree.note })] : []),
+          // The question kept in sight: its head bold, its text whole under it, wrapped by the
+          // Text itself at the tab's width.
+          ...(question ? [el.Text({ bold: true, color: 'suggestion', children: question.head }), el.Text({ wrap: 'wrap', children: question.body })] : []),
         ],
       })
     } catch (err) {
