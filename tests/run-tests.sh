@@ -8354,8 +8354,8 @@ check "the design says why the audit left the orchestrator's context" "yes|yes" 
   "$(flat_has "$ROOT/docs/design.md" 'about 42,000 tokens')|$(flat_has "$ROOT/docs/design.md" '`orchestrator:screenshots`')"
 check "the record's messages say the audit is the screenshots agent's" "yes|yes" \
   "$(spells "$REC" 'ready: the audit covers $a_images image(s), the description of $pr carries $shots: audit every image')|$(spells "$REC" 'the screenshots agent audits each one')"
-check "both manifests carry 0.88.0" "1|2" \
-  "$(grep -c '"version": "0.88.0"' "$ROOT/.claude-plugin/plugin.json")|$(grep -c '"version": "0.88.0"' "$ROOT/.claude-plugin/marketplace.json")"
+check "both manifests carry 0.89.0" "1|2" \
+  "$(grep -c '"version": "0.89.0"' "$ROOT/.claude-plugin/plugin.json")|$(grep -c '"version": "0.89.0"' "$ROOT/.claude-plugin/marketplace.json")"
 
 # A pull request carries Ready or Not Ready beside the draft. The implementer's opens Not
 # Ready (`pr-create --draft` labels it, or `pr-readiness <n> not-ready` after another way of

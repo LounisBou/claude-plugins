@@ -315,6 +315,20 @@ export function asksNothing(entry: Pick<RoundEntry, 'question' | 'choices' | 're
   return entryQuestions(entry).every(part => part.choices.length === 0 && questionShape(part.question, part.choices) === null)
 }
 
+// A question asked in prose: its text, by its last non-empty line trimmed, ends with « ? ». The
+// pane draws it as a card with its free-text field, though it has no lettered choice and no
+// labelled field; a status report ends otherwise and stays a line.
+export function endsAsQuestion(entry: Pick<RoundEntry, 'question'>): boolean {
+  const lines = entry.question.split('\n').map(line => line.trim()).filter(line => line !== '')
+  return lines.length > 0 && lines[lines.length - 1].endsWith('?')
+}
+
+// What the pane draws as a card: an operator entry that asks something, by its shape or by its
+// closing « ? ». `asksNothing` alone stays the relay's reading of a wait, which withdraws nothing.
+function isPaneQuestion(entry: RoundEntry): boolean {
+  return entry.kind === 'operator' && (!asksNothing(entry) || endsAsQuestion(entry))
+}
+
 // An operator question that carries lettered choices, in any of its questions: the one a later
 // wait asking nothing never withdraws. A closing proposal is none, whatever its text.
 export function carriesChoices(entry: RoundEntry): boolean {
@@ -322,21 +336,34 @@ export function carriesChoices(entry: RoundEntry): boolean {
 }
 
 // The open operator questions in the order the pane draws them: those that carry choices
-// first, in the round's order among themselves, then those without, then the waits that ask
-// nothing. A question the operator can only answer in its session never hides one he can answer
-// from the pane. A wait that asks nothing, with no lettered choice and no labelled field, is
-// drawn too, its text whole and the field to answer it: an open wait missing from the pane left
-// the operator before an empty pane (his report of 2026-10-25). An entry that asks several
-// questions is read by its first.
+// first, in the round's order among themselves, then those without. A question the operator can
+// only answer in its session never hides one he can answer from the pane. A wait that asks
+// nothing, with no lettered choice, no labelled field and no closing « ? », is no question: it has
+// no card and is not counted, `waitsInTab` lists it for the line of its orchestrator's row. An entry that asks
+// several questions is read by its first.
 export function paneQuestions(entries: readonly RoundEntry[]): RoundEntry[] {
   const read = openEntries(entries)
-    .filter(entry => entry.kind === 'operator')
-    .map(entry => ({ entry, first: entryQuestions(entry)[0], silent: asksNothing(entry) }))
+    .filter(isPaneQuestion)
+    .map(entry => ({ entry, first: entryQuestions(entry)[0] }))
   return [
     ...read.filter(({ first }) => first.choices.length > 0),
-    ...read.filter(({ first, silent }) => first.choices.length === 0 && !silent),
-    ...read.filter(({ silent }) => silent),
+    ...read.filter(({ first }) => first.choices.length === 0),
   ].map(({ entry }) => entry)
+}
+
+// The open operator waits that ask nothing, in the round's order: the pane draws none as a card,
+// and keeps the operator informed that the orchestrator waits on him, in its tab, with one line
+// on that orchestrator's row (the open wait missing from the pane left the operator before an
+// empty pane, his report of 2026-10-25).
+export function waitsInTab(entries: readonly RoundEntry[]): RoundEntry[] {
+  return openEntries(entries).filter(entry => entry.kind === 'operator' && !isPaneQuestion(entry))
+}
+
+// What the row's line says of such a wait: what it blocks, or the first line of its text.
+export function waitSummary(entry: Pick<RoundEntry, 'blocks' | 'question'>): string {
+  const blocks = (entry.blocks ?? '').trim()
+  if (blocks !== '') return blocks
+  return plainText(entry.question.split('\n').find(line => line.trim() !== '') ?? '').trim()
 }
 
 // An open question is due in the coordinator's tab when its sender marked it urgent, or when no

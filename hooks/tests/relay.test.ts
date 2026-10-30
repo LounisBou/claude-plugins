@@ -6,7 +6,7 @@
 // write or a send that fails never holding the turn's end.
 import { expect, test } from 'claude-code/testing'
 import { parseWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel, waitParts, heldQuestion, withdrawalText, RELAY_CAP } from '../relay.ts'
-import { paneQuestions, roundEntry, type RoundEntry } from '../round.ts'
+import { paneQuestions, waitsInTab, roundEntry, type RoundEntry } from '../round.ts'
 import { answerFromPane, settledText, parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
 import { logLineOf } from './fakes.ts'
@@ -682,26 +682,37 @@ async function choicesThen(answer: string) {
   return { chains, fx, asked }
 }
 
-test('a choice-less turn end is entered as its own entry beside the open question with choices, which stays as asked, and the pane draws both', async () => {
+test('a choice-less turn end is entered as its own entry beside the open question with choices, which stays as asked, and the pane draws the question, the wait having a line', async () => {
   const { chains, fx, asked } = await choicesThen(answerOf(STAGING_REPORT, REPORT_LINE))
   const row = fx.row()!
   const wait = roundEntry('s-one', 'Orch : belt', parseWait(answerOf(STAGING_REPORT, REPORT_LINE))!, row.waiting_since!, 'T')
   expect(entries(fx)).toEqual([asked, { ...wait, at: entries(fx)[1].at }])
   expect(fx.logged.some(l => l.includes('round: withdrawn by the sender'))).toBe(false)
   expect(row.relayed).toBe(fingerprint(parseWait(answerOf(STAGING_REPORT, REPORT_LINE))!))
-  expect(paneQuestions(entries(fx)).map(e => e.id)).toEqual([asked.id, wait.id])
+  expect(paneQuestions(entries(fx)).map(e => e.id)).toEqual([asked.id])
+  expect(waitsInTab(entries(fx)).map(e => e.id)).toEqual([wait.id])
   // The same report again is the same wait: nothing more is written.
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(STAGING_REPORT, REPORT_LINE)))
   expect(entries(fx).length).toBe(2)
   expect(fx.sent.length).toBe(0)
 })
 
-test('a prose question after a question with choices is entered beside it, and the pane draws both, choices first', async () => {
+test('a prose question after a question with choices is entered beside it, and the pane draws both as cards', async () => {
   const { fx, asked } = await choicesThen(answerOf('Shall I also tag the release?', 'waiting: operator — blocks: phase 4'))
   const [first, prose] = entries(fx)
   expect(first).toEqual(asked)
   expect([prose.status, prose.blocks, prose.question, prose.choices]).toEqual(['open', 'phase 4', 'Shall I also tag the release?', []])
   expect(paneQuestions(entries(fx)).map(e => e.id)).toEqual([asked.id, prose.id])
+  expect(waitsInTab(entries(fx)).map(e => e.id)).toEqual([])
+})
+
+test('a prose wait ending with a full stop after a question with choices is entered beside it, and the pane draws the question, the prose having a line', async () => {
+  const { fx, asked } = await choicesThen(answerOf('I will also tag the release.', 'waiting: operator — blocks: phase 4'))
+  const [first, prose] = entries(fx)
+  expect(first).toEqual(asked)
+  expect([prose.status, prose.blocks, prose.question, prose.choices]).toEqual(['open', 'phase 4', 'I will also tag the release.', []])
+  expect(paneQuestions(entries(fx)).map(e => e.id)).toEqual([asked.id])
+  expect(waitsInTab(entries(fx)).map(e => e.id)).toEqual([prose.id])
 })
 
 test('a done turn after a question with choices absorbs nothing and withdraws nothing', async () => {

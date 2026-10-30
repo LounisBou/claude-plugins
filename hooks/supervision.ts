@@ -33,7 +33,7 @@ import {
   parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, heldQuestion, withdrawalText, gateText, noStatusText, NO_STATUS_KEY, coordinatorOf, chainOwnerTty, waitLabel, waitParts,
   type WaitKind,
 } from './relay.ts'
-import { entryFingerprint, roundEntry, roundEntryId, roundPath, paneQuestions, entryQuestions, plainText, textSpans, prPieces, repositoryOwners, numberLabel, questionBody, questionShape, isDue, dueText, asksNothing, carriesChoices, type RoundAnswer, type RoundChoice, type RoundEntry } from './round.ts'
+import { entryFingerprint, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, entryQuestions, plainText, textSpans, prPieces, repositoryOwners, numberLabel, questionBody, questionShape, isDue, dueText, asksNothing, carriesChoices, type RoundAnswer, type RoundChoice, type RoundEntry } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
   remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, machineLabel, prsInFlight, ROW_MARKER, REMOTE_STALE_AFTER_MS, type RemoteRow,
@@ -177,6 +177,7 @@ const WORDS = {
   noOrchestrator: 'no live orchestrator',
   status: 'Status',
   blocks: 'Blocks',
+  waitsInTab: 'Waits in its tab',
   other: 'Other answer',
   otherBelow: 'Other answer: type it below',
   otherInSession: 'Other answer: in the session',
@@ -1336,6 +1337,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       let asking: RoundEntry | null = null
       let failed: { entry: RoundEntry; reason: string }[] = []
       let pending = 0
+      // The sessions whose open wait asks nothing, each with the line its row carries.
+      const tabWaits = new Map<string, string>()
       let owners = new Map<string, string>()
       let none = 'type /coordinator-supervision or /orchestrator-supervision to open the pane again'
       const coordinator = pane.opened?.role === 'coordinator'
@@ -1352,6 +1355,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         const read = await readRound($)
         const drawn = read.map(found => found.entry).filter(entry => sessionKey(entry.session) in local)
         const questions = paneQuestions(drawn)
+        for (const wait of waitsInTab(drawn)) if (!tabWaits.has(sessionKey(wait.session))) tabWaits.set(sessionKey(wait.session), waitSummary(wait))
         // The answers given to the first questions of an entry no longer drawn are forgotten.
         for (const id of pane.partial?.keys() ?? []) if (!questions.some(entry => entry.id === id)) pane.partial!.delete(id)
         // Each question counts, those of an entry that asks several one by one, less those
@@ -1448,6 +1452,10 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           ],
         })
         const textWidth = width - 2 - WAIT_LABEL_COLUMN
+        // The line of a wait that asks nothing, one text wrapping under its own start: no label
+        // column, the label being longer than the one Status and Blocks share.
+        const tabWait = tabWaits.get(row.key)
+        const tabLine = `${WORDS.waitsInTab}: ${tabWait ?? ''}`
         return {
           node: el.Box({
             flexDirection: 'column',
@@ -1456,16 +1464,19 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
               line,
               ...(row.status !== null ? [labelled(WORDS.status, el.Text({ color: state, children: row.status }))] : []),
               ...(row.blocked !== null ? [labelled(WORDS.blocks, rich(row.blocked))] : []),
+              ...(tabWait !== undefined ? [el.Box({ paddingLeft: 2, children: [el.Text({ children: tabLine })] })] : []),
             ],
           }),
           rows: (i > 0 ? 1 : 0)
             + rowsOf(`● ${row.name} · ${row.head} · ${row.fill}${row.age !== null ? ` · ${row.age}` : ''}`, width)
             + (row.status !== null ? rowsOf(row.status, textWidth) : 0)
-            + (row.blocked !== null ? rowsOf(takesRows(row.blocked), textWidth) : 0),
+            + (row.blocked !== null ? rowsOf(takesRows(row.blocked), textWidth) : 0)
+            + (tabWait !== undefined ? rowsOf(plainText(tabLine), width - 2) : 0),
         }
       }
       const listed: Drawn[] = blocks.length === 0 ? [{ node: el.Text({ children: none }), rows: rowsOf(none, width) }] : blocks.map(block)
-      const waiting = blocks.filter(row => row.waiting === 'operator').length
+      // A waiting row with its line in the pane is not one the operator is left without.
+      const waiting = blocks.filter(row => row.waiting === 'operator' && !tabWaits.has(row.key)).length
       const says = waiting === 0
         ? WORDS.none
         : `${WORDS.none} in the pane — ${waiting} orchestrator${waiting === 1 ? ' waits' : 's wait'} for you: ask the coordinator`
@@ -1720,7 +1731,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // (the offset), so both stay in view wherever it is. At the top, not the bottom: the host
       // keeps the held picker in view by bringing it to the window's bottom edge, where a pinned
       // line would cover it.
-      const drawnKey = JSON.stringify([asking?.id ?? null, index, pending, blocks, failed.map(notice => notice.reason), pane.writing, [...pane.other], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
+      const drawnKey = JSON.stringify([asking?.id ?? null, index, pending, blocks, [...tabWaits], failed.map(notice => notice.reason), pane.writing, [...pane.other], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
       pane.drawn = drawnKey
       const measured = pane.measure && pane.measure.drawn === drawnKey ? pane.measure.contentRows : null
       const pinnedRows = keyLine !== null && width > 0 ? wrapWords(keyLine, width) : []
