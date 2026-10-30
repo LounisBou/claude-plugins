@@ -1940,8 +1940,16 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
     : before?.waiting ? clearedWait(before) : null
   if (patch) await writeWait($, sessionId, { ...patch, relayed, name, pid })
   const key = wait ? fingerprint(wait) : NO_STATUS_KEY
-  if (relayed === key) return
-  const coordinator = role === 'orchestrator' ? await coordinatorAddress($) : null
+  let coordinator: Awaited<ReturnType<typeof coordinatorAddress>> = null
+  if (relayed === key) {
+    // The fingerprint of a question whose entry the coordinator closed (its answer comes by a
+    // message, which forgets nothing) or archived blocks nothing: only an entry still open does.
+    if (role !== 'orchestrator' || !wait || (wait.kind !== 'operator' && wait.kind !== 'done')) return
+    coordinator = await coordinatorAddress($)
+    if (!coordinator?.local || await entryIsOpen($, roundEntryId(sessionId, wait))) return
+  } else if (role === 'orchestrator') {
+    coordinator = await coordinatorAddress($)
+  }
   // A coordinator on this machine reads its round: the wait is entered there, and its model
   // is not woken for it. The fingerprint is kept once the entry is in place, as a delivery's.
   if (coordinator?.local && wait && patch) {
@@ -2192,6 +2200,11 @@ async function answerEntryFromPane($: any, pane: PaneMemory, asked: RoundEntry, 
 async function senderAddress($: any, entry: RoundEntry): Promise<string | { sessionId: string }> {
   if (entry.session === '') return entry.from
   return sessionKey(entry.session) in await readSessions($) ? { sessionId: entry.session } : entry.from
+}
+
+// Whether the round holds the entry of that id, open: a file absent, or in any other status, is not.
+async function entryIsOpen($: any, id: string): Promise<boolean> {
+  return parseRoundEntry(String(await $.fs.read(`${await stateDir($)}/round/${id}.json`).catch(() => '')))?.status === 'open'
 }
 
 // A settled entry's fingerprint forgotten in its sender's wait file, so the same question asked

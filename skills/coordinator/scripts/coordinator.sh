@@ -845,6 +845,47 @@ record_listed() {
     return 0
 }
 
+# entry_fingerprint <entry JSON>: the fingerprint of the wait an entry was written for, as the
+# hooks module computes it (round.ts entryFingerprint over relay.ts fingerprint): the length of
+# "<kind>\n<blocks>\n<question when no blocks>[\nurgent]" in UTF-16 units, a dash, and its 32-bit
+# FNV-1a hash over those units in hexadecimal. jq builds the text and lists its units, the
+# surrogate pairs of the characters past U+FFFF included; the shell hashes them.
+entry_fingerprint() {
+    local units=() c h=2166136261
+    read -r -a units < <(printf '%s' "$1" | jq -r '
+        (if .kind == "operator" then (.blocks // "") else "" end) as $blocks
+        | "\(.kind)\n\($blocks)\n\(if $blocks == "" then .question else "" end)\(if .kind == "operator" and (.urgent // false) then "\nurgent" else "" end)"
+        | explode
+        | map(if . > 65535 then (. - 65536) as $p | [55296 + ($p / 1024 | floor), 56320 + ($p % 1024)] else [.] end)
+        | (add // []) | map(tostring) | join(" ")') || return 1
+    for c in "${units[@]}"; do
+        h=$(( ((h ^ c) * 16777619) & 4294967295 ))
+    done
+    printf '%s-%x' "${#units[@]}" "$h"
+}
+
+# forget_relayed <entry JSON>: a closed entry's fingerprint forgotten in its sender's wait file
+# (the hooks module's forgetRelayed), so the same question asked again is entered again. The file
+# is rewritten, as the module writes it, only while its `relayed` is still that entry's own
+# fingerprint (a later wait may have replaced it). Whatever fails is said on stderr and changes
+# nothing: the close itself is done. A sender with no wait file (a remote one, or none yet) has
+# nothing to forget, and it is no failure to say.
+forget_relayed() {
+    local session wait fp now tmp
+    session=$(printf '%s' "$1" | jq -r '.session // ""' 2>/dev/null)
+    [ -n "$session" ] || return 0
+    wait="$MODULE/store/waits/$(printf '%s' "$session" | sed 's/[^A-Za-z0-9._-]/_/g')"
+    [ -f "$wait" ] || return 0
+    fp=$(entry_fingerprint "$1") || { echo "coordinator: round-close: cannot compute the fingerprint of the entry" >&2; return 0; }
+    now=$(jq -c --arg fp "$fp" 'select(type == "object" and .relayed == $fp) | del(.typed) | .relayed = null' "$wait" 2>/dev/null) \
+        || { echo "coordinator: round-close: cannot read $wait, its fingerprint is not forgotten" >&2; return 0; }
+    [ -n "$now" ] || return 0
+    tmp=$(mktemp "$wait.tmp-XXXXXX" 2>/dev/null) \
+        && printf '%s\n' "$now" > "$tmp" && mv -f "$tmp" "$wait" \
+        || { rm -f "${tmp:-}"; echo "coordinator: round-close: cannot write $wait, its fingerprint is not forgotten" >&2; }
+    return 0
+}
+
 cmd_round_close() {
     local id="${1:-}" answer="" has_answer=0
     [ -n "$id" ] && shift || die 'round-close: usage: round-close <id> --answer "<text>"'
@@ -865,6 +906,7 @@ cmd_round_close() {
     # As the module writes it: a temporary file beside it, then one rename.
     tmp=$(mktemp "$path.tmp-XXXXXX") || die "round-close: cannot write into $ROUND"
     printf '%s\n' "$closed" > "$tmp" && mv -f "$tmp" "$path" || { rm -f "$tmp"; die "round-close: cannot write $path"; }
+    forget_relayed "$closed"
     echo "closed $id"
 }
 

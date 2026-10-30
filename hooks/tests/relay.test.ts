@@ -1512,3 +1512,41 @@ test('turns that wait on a tool, one per monitor event, leave the open question 
   expect(entries(fx)).toEqual([entry])
   expect(fx.sent.length).toBe(0)
 })
+
+test('after a round-close, the same question asked again is entered again', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const ask = turnEnd(answerOf(QUESTION, 'waiting: operator — blocks: phase 3'))
+  await drive(chains, 'turn.complete', fx.dollar, ask)
+  const [first] = entries(fx)
+  // The coordinator's round-close, as the script writes it: the entry closed, the wait file untouched.
+  const path = `${ROUND}/${first.id}.json`
+  fx.files.set(path, JSON.stringify({ ...first, status: 'closed', answer: { text: 'A', by: 'coordinator', at: first.at } }) + '\n')
+  await drive(chains, 'turn.start', fx.dollar, { text: 'the coordinator answered' })
+  await drive(chains, 'turn.complete', fx.dollar, ask)
+  const again = JSON.parse(fx.files.get(path)!) as RoundEntry
+  expect(entries(fx).length).toBe(1)
+  expect(again.status).toBe('open')
+  expect(again.answer).toBeNull()
+  expect(fx.row()!.relayed).toBe(fingerprint(parseWait(answerOf(QUESTION, 'waiting: operator — blocks: phase 3'))!))
+  expect(fx.sent.length).toBe(0)
+  // An entry the coordinator archived is no file at all: entered again as well.
+  fx.files.delete(path)
+  await drive(chains, 'turn.complete', fx.dollar, ask)
+  expect((JSON.parse(fx.files.get(path)!) as RoundEntry).status).toBe('open')
+})
+
+test('an open entry, the same wait again, is not entered twice', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const ask = turnEnd(answerOf(QUESTION, 'waiting: operator — blocks: phase 3'))
+  await drive(chains, 'turn.complete', fx.dollar, ask)
+  const [first] = entries(fx)
+  const path = `${ROUND}/${first.id}.json`
+  // A mark only the first writing carries: a second writing would erase it.
+  fx.files.set(path, JSON.stringify({ ...first, marked: true }) + '\n')
+  await drive(chains, 'turn.start', fx.dollar, { text: '' })
+  await drive(chains, 'turn.complete', fx.dollar, ask)
+  expect(entries(fx).length).toBe(1)
+  expect((JSON.parse(fx.files.get(path)!) as { marked?: boolean }).marked).toBe(true)
+})

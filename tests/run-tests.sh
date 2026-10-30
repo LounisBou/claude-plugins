@@ -6662,6 +6662,42 @@ check "round-close refuses an unknown id, a path, an unreadable entry and a miss
 check "the refusal of an unknown id names it" "coordinator: round-close: no entry nobody in $CROUND" \
   "$(coord round-close nobody --answer x 2>&1 >/dev/null)"
 
+# round-close also forgets the sender's fingerprint, as the module's forgetRelayed does, so the
+# same question asked again is entered again: the wait file's `relayed` is nulled when it is the
+# closed entry's own fingerprint, whatever the entry's kind, blocks, mark and characters, and kept
+# when it is not. The expected fingerprints are the module's own (hooks/relay.ts fingerprint).
+CWAITS="$CLAUDE_CONFIG_DIR/claude-orchestrator/store/waits"
+mkdir -p "$CWAITS"
+fp_entry() {  # <id> <kind> <blocks or -> <urgent 0|1> <question>
+  jq -n --arg id "$1" --arg kind "$2" --arg blocks "$3" --argjson urgent "$4" --arg q "$5" \
+    '{id:$id, from:"Orch : f", session:("s-" + $id), kind:$kind, since:"2026-10-18T10:00:00.000Z",
+      blocks:(if $kind == "operator" then $blocks else null end), question:$q, choices:[], recommendation:null,
+      status:"open", at:"2026-10-18T10:00:00.000Z", answer:null} + (if $urgent == 1 then {urgent:true} else {} end)' > "$CROUND/$1.json"
+}
+fp_wait() {  # <id> <relayed>
+  jq -n -c --arg r "$2" '{waiting:"operator", blocks:"phase 3", waiting_since:"2026-10-18T10:00:00.000Z", relayed:$r, name:"Orch : f", pid:"1", typed:{blocks:"phase 3", since:null}}' > "$CWAITS/s-$1"
+}
+fp_entry fp-plain operator 'phase 3' 0 'Ship it?';        fp_wait fp-plain 17-fdd599a1
+fp_entry fp-text operator '' 0 'Ship it? 🚀 Café';          fp_wait fp-text 26-6c02a0af
+fp_entry fp-urgent operator 'phase 3' 1 'Ship it?';       fp_wait fp-urgent 24-fd010f64
+fp_entry fp-done done - 0 'Everything merged. 🚀';         fp_wait fp-done 27-c971227f
+fp_entry fp-other operator 'phase 3' 0 'Ship it?';        fp_wait fp-other 17-00000000
+fp_entry fp-nowait operator 'phase 3' 0 'Ship it?'
+fp_entry fp-broken operator 'phase 3' 0 'Ship it?';       printf '{"relayed": "half' > "$CWAITS/s-fp-broken"
+out=$(coord round-close fp-plain --answer A 2>&1); code=$?
+check "round-close says only that it closed when it forgot the fingerprint" "closed fp-plain|exit 0" "$out|exit $code"
+for id in fp-text fp-urgent fp-done fp-other fp-nowait fp-broken; do coord round-close $id --answer A >"$WORK/fp-$id.out" 2>"$WORK/fp-$id.err"; echo "exit $?" >> "$WORK/fp-$id.out"; done
+check "round-close nulls the relayed fingerprint it matches, a plain one, a non-ASCII one, an urgent one and a done one, and the turn's mark with it" \
+  "null|null|null|null|false" \
+  "$(jq -r '.relayed' "$CWAITS/s-fp-plain")|$(jq -r '.relayed' "$CWAITS/s-fp-text")|$(jq -r '.relayed' "$CWAITS/s-fp-urgent")|$(jq -r '.relayed' "$CWAITS/s-fp-done")|$(jq 'has("typed")' "$CWAITS/s-fp-plain")"
+check "round-close keeps the rest of the wait file, and leaves no temporary file" "operator|phase 3|Orch : f|0" \
+  "$(jq -r '[.waiting, .blocks, .name] | join("|")' "$CWAITS/s-fp-plain")|$(find "$CWAITS" -name '*.tmp-*' | wc -l | tr -d ' ')"
+check "round-close keeps a fingerprint that is not the closed entry's, a later wait's" "17-00000000|closed" \
+  "$(jq -r .relayed "$CWAITS/s-fp-other")|$(jq -r .status "$CROUND/fp-other.json")"
+check "round-close still closes with no wait file, saying nothing, and with one that does not parse, saying so on stderr" \
+  "exit 0|exit 0|closed|closed|0|1|{\"relayed\": \"half" \
+  "$(tail -1 "$WORK/fp-fp-nowait.out")|$(tail -1 "$WORK/fp-fp-broken.out")|$(jq -r .status "$CROUND/fp-nowait.json")|$(jq -r .status "$CROUND/fp-broken.json")|$(wc -l < "$WORK/fp-fp-nowait.err" | tr -d ' ')|$(wc -l < "$WORK/fp-fp-broken.err" | tr -d ' ')|$(cat "$CWAITS/s-fp-broken")"
+
 # round-archive moves the closed entries into round/archive/ and nothing else; the archive is
 # read by no one, so an entry planted there with the status open is neither printed nor counted.
 AROUND="$WORK/coord-archive"
@@ -8430,8 +8466,8 @@ check "the design says why the audit left the orchestrator's context" "yes|yes" 
   "$(flat_has "$ROOT/docs/design.md" 'about 42,000 tokens')|$(flat_has "$ROOT/docs/design.md" '`orchestrator:screenshots`')"
 check "the record's messages say the audit is the screenshots agent's" "yes|yes" \
   "$(spells "$REC" 'ready: the audit covers $a_images image(s), the description of $pr carries $shots: audit every image')|$(spells "$REC" 'the screenshots agent audits each one')"
-check "both manifests carry 0.90.0" "1|2" \
-  "$(grep -c '"version": "0.90.0"' "$ROOT/.claude-plugin/plugin.json")|$(grep -c '"version": "0.90.0"' "$ROOT/.claude-plugin/marketplace.json")"
+check "both manifests carry 0.90.1" "1|2" \
+  "$(grep -c '"version": "0.90.1"' "$ROOT/.claude-plugin/plugin.json")|$(grep -c '"version": "0.90.1"' "$ROOT/.claude-plugin/marketplace.json")"
 
 # A pull request carries Ready or Not Ready beside the draft. The implementer's opens Not
 # Ready (`pr-create --draft` labels it, or `pr-readiness <n> not-ready` after another way of
