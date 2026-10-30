@@ -74,6 +74,7 @@ The floor `pick` lands on when nothing is measured: the class's tier, through th
 | An N-bis corrective on a findings list | `n-bis` | `standard` | you, on the artifact: the diff, the decisive tests |
 | A review collector, a comments agent | `review-collector`, `comments` | `standard` | you verify every finding |
 | The review lenses, dispatched as the subagent type `orchestrator:lens` | `review-lens` | `standard` | the collector, then you |
+| The screenshot audit of a pull request, dispatched as the subagent type `orchestrator:screenshots` | `screenshot-audit` | `standard` | you, on a capture in doubt |
 | Read-only search subagents | `search` | `light` | they locate; they never judge |
 
 The tabs you launch and the subagents launched inside a session read this one table: say the lenses' pair in the review brief.
@@ -147,7 +148,7 @@ dispatch-record.sh round <record> <id>                                  # a revi
 dispatch-record.sh review <record> <id> --head <sha> --norms tool|none  # and what it read
 dispatch-record.sh fixed <record> <id> --head <sha>                     # the one correction round, verified
 dispatch-record.sh surface <record> <id> --ui <owner/repo>#<n>|--minor <reason>|--none  # whether the pull request changes what a user sees
-dispatch-record.sh audit <record> <id> --head <sha> --images <n> [--defect "<text>"]...  # your own audit of the screenshots on a --ui pull request, read by ready
+dispatch-record.sh audit <record> <id> --head <sha> --images <n> [--defect "<text>"]...  # the screenshots agent's audit of the images on a --ui pull request, read by ready
 dispatch-record.sh ready <record> <id> --head <sha> --e2e "<the E2E line>" [--e2e-waiver "<his words, dated>"]  # refuses a head neither reviewed nor fixed, no surface, a --ui pull request with no image, no E2E line, or E2E: none unvalidated; with no review, warns
 dispatch-record.sh exempt <record> --e2e "<his words, dated>"          # the operator exempts every pull request of this session from E2E
 dispatch-record.sh close <record> <id> --verdict approved

@@ -69,11 +69,13 @@
 # pushed onto its own row past the edge of the controls above, an « after » image with stray
 # text left in a search field - were each read by an orchestrator and passed, because every
 # check asked only whether the images were there and showed the surface. So the orchestrator
-# records its own audit of the images at a head: how many it opened (`--images`) and each
-# defect it saw (`--defect`, once per defect; none means every image is clean). A new audit
-# replaces the previous one, and a review round does not erase it. On a `--ui` row, `ready`
+# records the audit of the images at a head, made by the screenshots agent (a read-only agent
+# that opens each image on its own, so the orchestrator's context never carries them): how many
+# images it audited (`--images`) and each defect it reported (`--defect`, once per defect; none
+# means every image is clean). A new audit replaces the previous one, and a review round does
+# not erase it. On a `--ui` row, `ready`
 # refuses when no audit is recorded at the head in front of it or at the reviewed or fixed
-# head the rules above accept, when the audit opened fewer images than the description
+# head the rules above accept, when the audit covers fewer images than the description
 # carries, and when it recorded any defect: the defect is fixed, the capture retaken, and the
 # images audited again. `--minor` and `--none` rows are not held to it. Whether the audit was
 # honest stays the orchestrator's; the record makes it a step nobody can skip by forgetting.
@@ -319,8 +321,8 @@ surface)
         --arg k "$kind" --arg p "$pr" --arg r "$reason" --arg a "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     ;;
 audit)
-    # The orchestrator's own audit of the images on the row's pull request, at a head: how many
-    # images it opened and each defect it saw. Read by `ready` on a `--ui` row; recording it
+    # The screenshots agent's audit of the images on the row's pull request, at a head: how many
+    # images it audited and each defect it reported. Read by `ready` on a `--ui` row; recording it
     # again replaces it whole, defects included.
     id="${3:-}"; [ -n "$id" ] || die "audit: a row id is required"
     require_row audit "$id"
@@ -337,7 +339,7 @@ audit)
     done
     [ -n "$head" ] || die "audit: --head is required"
     [ "${#head}" -ge 7 ] || die "audit: head $head is too short to identify a commit (7 characters at least)"
-    [[ "$images" =~ ^[1-9][0-9]*$ ]] || die "audit: --images takes the number of images you opened and audited, got: ${images:-nothing}"
+    [[ "$images" =~ ^[1-9][0-9]*$ ]] || die "audit: --images takes the number of images the screenshots agent audited, got: ${images:-nothing}"
     rewrite 'if .id==$i then .audit={head:$h,images:($n|tonumber),defects:$d,at:$a} else . end' "$id" \
         --arg h "$head" --arg n "$images" --argjson d "$defects" --arg a "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     ;;
@@ -373,10 +375,10 @@ ready)
             # A markdown image or an HTML one, which is what an uploaded attachment becomes.
             shots=$(printf '%s\n' "$body" | grep -oiE '!\[[^]]*\]\([^)]+\)|<img[[:space:]]' | wc -l | tr -d ' ')
             [ "$shots" -gt 0 ] || die "ready: $pr changes a frontend surface and its description carries no screenshot: not ready"
-            # Counted is not looked at: the orchestrator's own audit of every image, at a head
+            # Counted is not looked at: the screenshots agent's audit of every image, at a head
             # the rules below accept, with no defect seen.
             audit=$(jq -sc --argjson i "$id" '[.[]|select(.id==$i)][0].audit // empty' "$record")
-            [ -n "$audit" ] || die "ready: no audit of the images on $pr is recorded: open each one, audit it, and record it with \`audit <record> $id --head <sha> --images <n>\`: not ready"
+            [ -n "$audit" ] || die "ready: no audit of the images on $pr is recorded: the screenshots agent audits each one, and the audit is recorded with \`audit <record> $id --head <sha> --images <n>\`: not ready"
             a_head=$(jq -r .head <<<"$audit"); a_images=$(jq -r .images <<<"$audit")
             a_ok=0
             for h in "$head" \
@@ -386,7 +388,7 @@ ready)
                 if same_commit "$a_head" "$h"; then a_ok=1; break; fi
             done
             [ "$a_ok" = 1 ] || die "ready: the images on $pr were audited at $a_head, head is $head: audit them again at the head in front of you"
-            [ "$a_images" -ge "$shots" ] || die "ready: the audit opened $a_images image(s), the description of $pr carries $shots: audit every image"
+            [ "$a_images" -ge "$shots" ] || die "ready: the audit covers $a_images image(s), the description of $pr carries $shots: audit every image"
             n_defects=$(jq -r '.defects | length' <<<"$audit")
             [ "$n_defects" = 0 ] || die "ready: the audit of $pr recorded $n_defects defect(s): $(jq -r '.defects | join("; ")' <<<"$audit"). Fix each one, retake the capture, and audit again: not ready"
             surface_line="$shots screenshot(s) on $pr, audited clean at $a_head" ;;

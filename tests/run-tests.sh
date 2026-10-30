@@ -864,14 +864,14 @@ srec surface "$A" "$a1" --ui acme/front#14 >/dev/null
 srec review "$A" "$a1" --head aaa1111 --norms tool >/dev/null
 check_status "ready refuses a --ui row with no audit recorded" 1 srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK"
 check "and names the subcommand that records it" "1" \
-  "$(srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK" 2>&1 | grep -c 'ready: no audit of the images on acme/front#14 is recorded: open each one, audit it, and record it with `audit <record> 1 --head <sha> --images <n>`')"
+  "$(srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK" 2>&1 | grep -c 'ready: no audit of the images on acme/front#14 is recorded: the screenshots agent audits each one, and the audit is recorded with `audit <record> 1 --head <sha> --images <n>`')"
 srec audit "$A" "$a1" --head aaa1111 --images 1 >/dev/null
 check "audit records the head, the images and no defect" "aaa1111|1|0" \
   "$(jq -r --argjson i "$a1" 'select(.id==$i)|[.audit.head,.audit.images,(.audit.defects|length)]|join("|")' "$A")"
 check "an audit is not a round" "1" "$(jq -r --argjson i "$a1" 'select(.id==$i)|.rounds' "$A")"
-check_status "ready refuses an audit that opened fewer images than the description carries" 1 srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK"
+check_status "ready refuses an audit that covered fewer images than the description carries" 1 srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK"
 check "and names both counts" "1" \
-  "$(srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK" 2>&1 | grep -c 'ready: the audit opened 1 image(s), the description of acme/front#14 carries 2: audit every image')"
+  "$(srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK" 2>&1 | grep -c 'ready: the audit covers 1 image(s), the description of acme/front#14 carries 2: audit every image')"
 srec audit "$A" "$a1" --head aaa1111 --images 2 --defect "map button: icon off-centre, style unlike its neighbours" --defect "after: stray text in the search field" >/dev/null
 check "a defect is recorded per --defect" "2" "$(jq -r --argjson i "$a1" 'select(.id==$i)|.audit.defects|length' "$A")"
 check_status "ready refuses an audit that recorded a defect" 1 srec ready "$A" "$a1" --head aaa1111 --e2e "$E2EOK"
@@ -1005,11 +1005,11 @@ VAUDIT='edges aligned with their neighbours; icons and text centred in their con
 check "the phase brief orders the visual audit of every capture before delivery" "yes|yes|yes" \
   "$(spells "$ROOT/templates/agent-phase-brief.md" "Before you deliver, audit every capture yourself, image by image, against this checklist: $VAUDIT.")|$(spells "$ROOT/templates/agent-phase-brief.md" 'Your report carries one line per image, `<image>: clean` or `<image>: <the defect>`.')|$(spells "$ROOT/templates/agent-phase-brief.md" 'A capture that shows a defect is not delivered: fix the defect, retake the capture, and audit it again.')"
 check "the standing rule carries the audit, its checklist and the retake" "yes|yes|yes" \
-  "$(spells "$ROOT/skills/orchestrator/references/briefs.md" "Every capture is audited by the implementer before delivery, image by image, against one checklist — $VAUDIT — and the report carries one line per image, clean or the defect it shows.")|$(spells "$ROOT/skills/orchestrator/references/briefs.md" 'A capture that shows a defect is not delivered: the defect is fixed and the capture retaken.')|$(spells "$ROOT/skills/orchestrator/references/briefs.md" 'The orchestrator audits each image again itself before its verdict')"
+  "$(spells "$ROOT/skills/orchestrator/references/briefs.md" "Every capture is audited by the implementer before delivery, image by image, against one checklist — $VAUDIT — and the report carries one line per image, clean or the defect it shows.")|$(spells "$ROOT/skills/orchestrator/references/briefs.md" 'A capture that shows a defect is not delivered: the defect is fixed and the capture retaken.')|$(spells "$ROOT/skills/orchestrator/references/briefs.md" 'The orchestrator has each image audited again by the screenshots agent before its verdict')"
 check "the review brief audits every image and makes each defect a finding" "yes|yes" \
   "$(spells "$ROOT/templates/agent-review-brief.md" "With \`yes\`, you also open and audit every image, one by one, against this checklist: $VAUDIT.")|$(spells "$ROOT/templates/agent-review-brief.md" 'and every defect is also a finding: a capture that shows a defect is never a pass')"
-check "item 12: the orchestrator audits each image itself, and a defect is a finding" "yes|yes|yes" \
-  "$(spells "$ROOT/skills/orchestrator/references/review.md" "Then open each image yourself and audit it, before the verdict, against the checklist the briefs carry: $VAUDIT.")|$(spells "$ROOT/skills/orchestrator/references/review.md" 'A defect you see on a capture is a finding, and the pull request is not ready')|$(spells "$ROOT/skills/orchestrator/references/review.md" 'dispatch-record.sh audit <record> <id> --head <sha> --images <n> [--defect "<text>"]...')"
+check "item 12: the screenshots agent audits each image, and a defect is a finding" "yes|yes|yes" \
+  "$(spells "$ROOT/skills/orchestrator/references/review.md" "the checklist the briefs carry: $VAUDIT.")|$(spells "$ROOT/skills/orchestrator/references/review.md" 'A defect on a capture is a finding, and the pull request is not ready')|$(spells "$ROOT/skills/orchestrator/references/review.md" 'dispatch-record.sh audit <record> <id> --head <sha> --images <n> [--defect "<text>"]...')"
 check "the script's header and the design name the audit" "yes|yes" \
   "$(spells "$REC" '#   dispatch-record.sh audit   <record> <id> --head <sha> --images <n> [--defect "<text>"]...')|$(spells "$ROOT/docs/design.md" 'dispatch-record.sh audit <record> <id> --head <sha> --images <n> [--defect "<text>"]...')"
 check "the record's subcommands list surface" "1" \
@@ -8321,6 +8321,38 @@ check "the review brief dispatches each lens as the subagent type orchestrator:l
   "$(spells "$ROOT/templates/agent-review-brief.md" 'one read-only sub-agent of the type `orchestrator:lens` per lens')"
 check "the routing table, the review reference and the design name the lens type" "yes|yes|yes" \
   "$(flat_has "$ROOT/skills/model-routing/SKILL.md" '`orchestrator:lens`')|$(flat_has "$ROOT/skills/orchestrator/references/review.md" '`orchestrator:lens`')|$(flat_has "$ROOT/docs/design.md" '`orchestrator:lens`')"
+
+# The orchestrator's audit of a pull request's screenshots runs in a dedicated read-only agent:
+# twenty captures opened by the orchestrator itself stayed in its context until its succession,
+# opened by a disposable agent they cost it the agent's text lines. The agent audits each image
+# against the checklist and never counts; the record's refusals are unchanged.
+SHOTS="$ROOT/agents/screenshots.md"
+check "the screenshots agent exists, is named screenshots and names no model" "yes|1|0" \
+  "$([ -f "$SHOTS" ] && echo yes || echo no)|$(grep -cx 'name: screenshots' "$SHOTS" 2>/dev/null)|$(grep -c '^model:' "$SHOTS" 2>/dev/null)"
+check "the screenshots agent's tools line carries no writing tool" "1|0" \
+  "$(grep -c '^tools: ' "$SHOTS" 2>/dev/null)|$(grep '^tools: ' "$SHOTS" 2>/dev/null | grep -ciE 'edit|write|notebook')"
+check "the screenshots agent carries the four line shapes of the reply contract" "yes|yes|yes|yes" \
+  "$(spells "$SHOTS" 'images: <audited>/<in description> on <owner/repo>#<n> at <head>')|$(spells "$SHOTS" '<k>. <image alt text or file name>: clean')|$(spells "$SHOTS" '<k>. <image alt text or file name>: <the defect seen>')|$(spells "$SHOTS" 'unreadable: <image> — <why>')"
+check "the screenshots agent audits against the checklist and never counts" "yes|yes" \
+  "$(spells "$SHOTS" "$VAUDIT")|$(carries "$SHOTS" 'never counts')"
+check "item 12 dispatches the screenshots agent and keeps the one-image exception" "yes|yes|yes" \
+  "$(flat_has "$ROOT/skills/orchestrator/references/review.md" 'dispatch `orchestrator:screenshots`')|$(flat_has "$ROOT/skills/orchestrator/references/review.md" 'never open the batch yourself')|$(flat_has "$ROOT/skills/orchestrator/references/review.md" 'open that one only')"
+check "item 12 says an unreadable line is an image not audited and ready refuses until it is" "yes" \
+  "$(flat_has "$ROOT/skills/orchestrator/references/review.md" '`unreadable:` line is an image not audited, so the `<audited>` figure stays below the description'"'"'s count and `ready` refuses until the image is fetched and audited')"
+check "the screenshots agent names both fetch commands and the file check" "yes|yes|yes" \
+  "$(spells "$SHOTS" 'gh api "repos/<o>/<r>/contents/<path>?ref=<ref>" -H "Accept: application/vnd.github.raw" > <file>')|$(spells "$SHOTS" 'curl -fsSL -H "Authorization: Bearer $(gh auth token)" "<url>" -o <file>')|$(spells "$SHOTS" '`file <file>`')"
+check "item 12 relays the agent's lines and records its figures" "yes|yes" \
+  "$(flat_has "$ROOT/skills/orchestrator/references/review.md" 'per the screenshots agent')|$(flat_has "$ROOT/skills/orchestrator/references/review.md" 'the agent audits, it never counts')"
+check "the standing rule has the screenshots agent audit each image again" "yes" \
+  "$(flat_has "$ROOT/skills/orchestrator/references/briefs.md" 'The orchestrator has each image audited again by the screenshots agent before its verdict (`references/review.md`, item 12).')"
+check "the routing table has the screenshot-audit row at the standard tier" "1" \
+  "$(grep -c 'orchestrator:screenshots`.*`screenshot-audit` | `standard` | you, on a capture in doubt' "$ROOT/skills/model-routing/SKILL.md")"
+check "the design says why the audit left the orchestrator's context" "yes|yes" \
+  "$(flat_has "$ROOT/docs/design.md" 'about 42,000 tokens')|$(flat_has "$ROOT/docs/design.md" '`orchestrator:screenshots`')"
+check "the record's messages say the audit is the screenshots agent's" "yes|yes" \
+  "$(spells "$REC" 'ready: the audit covers $a_images image(s), the description of $pr carries $shots: audit every image')|$(spells "$REC" 'the screenshots agent audits each one')"
+check "both manifests carry 0.88.0" "1|2" \
+  "$(grep -c '"version": "0.88.0"' "$ROOT/.claude-plugin/plugin.json")|$(grep -c '"version": "0.88.0"' "$ROOT/.claude-plugin/marketplace.json")"
 
 # A pull request carries Ready or Not Ready beside the draft. The implementer's opens Not
 # Ready (`pr-create --draft` labels it, or `pr-readiness <n> not-ready` after another way of
