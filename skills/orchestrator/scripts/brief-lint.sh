@@ -20,10 +20,13 @@
 # after the merge).
 #
 # Check 11 holds an orchestrator succession brief (first line `# Orchestrator succession
-# brief`) to 10,000 characters.
+# brief`) to 10,000 characters, the open-questions value apart.
 #
 # Check 12 refuses a succession brief, from the template or written by hand, that does not
 # have its reader close the predecessor's tab.
+#
+# Check 15 refuses a succession brief whose Live state lacks the operator's open questions, leaves
+# them empty or as the placeholder (`none` passes).
 #
 # Check 13 refuses a pull request title the brief imposes (`title \`...\``) of more than 60
 # characters. The operator's writing rule caps a pull request title at 60, and a brief that
@@ -315,12 +318,55 @@ fi
 # 11. A succession brief is read whole by a session that has nothing else in its context yet:
 #     past 10,000 characters it costs a successor what the live state was meant to save. The
 #     class is read from the first line, as the template writes it. Characters, not bytes: the
-#     continuation bytes of a multibyte character are dropped before counting.
+#     continuation bytes of a multibyte character are dropped before counting. The open-questions
+#     field's value is not counted, its label is: a verbatim `Question i of N` block is several
+#     hundred characters, and with the field filled the cap would refuse the very handover the
+#     field exists for.
 succession_limit=10000
+oq_field() {  # $1 mode: `value` prints the open-questions value, `rest` the brief without it
+    awk -v mode="$1" '
+        function next_field(s) {
+            return s ~ /^- (Rows open|Pull requests open|Agents running|The operator.s rulings|The operator.s open questions|The next step)/
+        }
+        f == 0 && /^- The operator.s open questions/ {
+            f = 1; found = 1
+            i = index($0, ":")
+            if (mode == "rest") print (i ? substr($0, 1, i) : $0)
+            else if (i) print substr($0, i + 1)
+            next
+        }
+        f == 1 && (/^#/ || next_field($0)) { f = 2 }
+        f == 1 { if (mode == "value") print; next }
+        mode == "rest" { print }
+        END { if (!found) exit 3 }
+    ' "$brief" 2>/dev/null
+}
 if head -n 1 "$brief" 2>/dev/null | grep -q '^# Orchestrator succession brief'; then
-    chars=$(LC_ALL=C tr -d '\200-\277' < "$brief" | wc -c | tr -d ' ')
+    chars_all=$(LC_ALL=C tr -d '\200-\277' < "$brief" | wc -c | tr -d ' ')
+    chars=$(oq_field rest | LC_ALL=C tr -d '\200-\277' | wc -c | tr -d ' ')
     [ "$chars" -le "$succession_limit" ] \
-        || say 1 "succession brief is $chars characters, over the limit of $succession_limit: keep Live state to what is live and the rest as pointers"
+        || say 1 "succession brief is $chars_all characters, over the limit of $succession_limit once the open-questions value is set apart ($chars): keep Live state to what is live and the rest as pointers"
+fi
+
+# 15. The Live state of a succession brief carries the operator's open questions, verbatim: a
+#     question the predecessor held and the successor never saw is a question lost at the
+#     handover. The field is the bullet « The operator's open questions »; its value is what
+#     follows the first colon of that line and the lines after it, up to the next field of the
+#     Live state or the next heading. Missing, empty or still its placeholder is refused; `none`
+#     and a filled value pass.
+if grep -q '^## Live state' "$brief" 2>/dev/null; then
+    oq_value=$(oq_field value)
+    if [ $? = 3 ]; then
+        say 1 "Live state has no open-questions field: add \"The operator's open questions\", each verbatim, or none"
+    else
+        oq_line=$(grep -n -m1 "^- The operator.s open questions" "$brief" | cut -d: -f1)
+        oq_value=$(printf '%s' "$oq_value" | tr -d '[:space:]')
+        if [ -z "$oq_value" ]; then
+            say "$oq_line" "the open-questions field is empty: write each question verbatim, or none after reading the round"
+        elif [ "$oq_value" = '{{LIVE_OPEN_QUESTIONS}}' ]; then
+            say "$oq_line" "the open-questions field is still its placeholder: write each question verbatim, or none after reading the round"
+        fi
+    fi
 fi
 
 # 12. A succession brief carries the close of the predecessor: the operator's standing order

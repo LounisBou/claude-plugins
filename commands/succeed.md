@@ -17,9 +17,12 @@ Preconditions, verify each before acting:
   of this session, and the predecessor stayed open (`brief-lint.sh` now refuses it);
 - its « Live state » section is filled now, from the state file's live part (the section is
   the hand-over copy of it; status still lives once, in the state file). The brief is standing:
-  after its first use the five fields hold the last handover's text, not placeholders, so the
-  predecessor overwrites the previous handover's Live state, never appends to it. The whole
-  brief stays within 10,000 characters: the lint refuses more.
+  after its first use the six fields hold the last handover's text, not placeholders, so the
+  predecessor overwrites the previous handover's Live state, never appends to it. The open
+  questions field is filled from the round's open entries of this session and the questions
+  this session asked the operator that no answer has settled, verbatim, never summarised;
+  `none` only after reading the round. The whole
+  brief stays within 10,000 characters, the open-questions value apart: the lint refuses more.
 
 Then:
 
