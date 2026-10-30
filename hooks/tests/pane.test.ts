@@ -1628,6 +1628,35 @@ test('a refused or failing focus or scroll request never blocks the draw', async
   for (const timer of fx.later) timer.fn()
 })
 
+// The fake host's screen draws an Input on one row whatever its `rows`, so the pane's own count
+// is read from where its scroll track appears: the fewest window rows that need none.
+async function countedRows(render: (props?: object) => Promise<any>): Promise<number> {
+  for (let bodyRows = 1; bodyRows < 400; bodyRows++) {
+    const tree = await render({ scroll: { offset: 0, bodyRows }, bodyColumns: 200 })
+    if (tree.props.children.every((k: any) => k.props?.position !== 'absolute')) return bodyRows
+  }
+  throw new Error('the pane never fits')
+}
+
+test('the Other answer field is drawn four rows tall, beside a picker once it is picked and for a question without choices', async () => {
+  const withChoices = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const beside = await askingPane([withChoices])
+  await pick(await beside.render(), 'other')
+  expect(input(await beside.render()).props.rows).toBe(4)
+  const alone = await askingPane([entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', question: '_Question_ : Rename it?' })])
+  expect(input(await alone.render()).props.rows).toBe(4)
+})
+
+test('the rows the pane counts include the Other answer field\'s four, beside a picker and for a question without choices', async () => {
+  const withChoices = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const beside = await askingPane([withChoices])
+  await pick(await beside.render(), 'other')
+  // The screen helper draws the field on one row: the three rows it adds are the field's own.
+  expect(await countedRows(beside.render)).toBe(drawScreen(await beside.render({ bodyColumns: 200 }), 198).length + 3)
+  const alone = await askingPane([entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', question: '_Question_ : Rename it?' })])
+  expect(await countedRows(alone.render)).toBe(drawScreen(await alone.render({ bodyColumns: 200 }), 198).length + 3)
+})
+
 test('the Other answer field comes last, labelled, and replaces the in-session Button', async () => {
   const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
   const { render } = await askingPane([asked])

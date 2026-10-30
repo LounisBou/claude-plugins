@@ -201,6 +201,10 @@ const CARD_PADDING_TOP = 1
 const FIELD_INDENT = 2
 const BADGE_COLUMN = 5
 
+// How many rows tall the « Other answer » field is drawn, label included: a typed answer shows
+// whole up to this many lines, and a longer one scrolls within the field.
+const ANSWER_ROWS = 4
+
 // The mark of the recommended choice and of the recommendation's line.
 const STAR = '★'
 
@@ -1723,9 +1727,10 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
             label: OTHER_LABEL,
             placeholder: WORDS.otherPlaceholder,
             submitLabel: WORDS.send,
+            rows: ANSWER_ROWS,
             onSubmit: (value: string) => answerFromPaneText($, pane, entry, value, index),
           }),
-          rows: 1,
+          rows: ANSWER_ROWS,
         }])
         : [{
           node: el.Box({
