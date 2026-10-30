@@ -130,18 +130,8 @@ MOVE_ROLES = ("Orch", "Coord")
 # ships with a change to this list, and a launcher test keeps the keys passed.
 TOTAL_TOKENS_ENV = "CLAUDE_CODE_TOTAL_TOKENS_REMINDER"
 SILENT_TURN_ENV = "CLAUDE_CODE_SILENT_TURN_REMINDER"
-# The window a session compacts at. The host shows it as the session's window and compacts
-# 33 thousand tokens short of it: near 267 thousand for an agent.
-COMPACT_WINDOW_ENV = "CLAUDE_CODE_AUTO_COMPACT_WINDOW"
-AGENT_COMPACT_WINDOW = "300000"
-# An orchestrator and a coordinator compact near 367 thousand, after their 300 thousand gate,
-# so a session hands over to a successor instead of compacting. The module's gate reads a
-# window under a million as a percentage, so the launch sets it at 75 %, 300 thousand of 400.
-ORCH_COMPACT_WINDOW = "400000"
-ORCH_GATE_PERCENT = 75
-# The gate an agent runs under. The module reads the session's window as one million whatever
-# the compaction window says, so its default gate is 300 thousand and the host, which compacts
-# near 267 thousand, would always act first: the launch sets the gate below that instead.
+# The gate an agent runs under, below the 300 thousand default of an orchestrator. The host's
+# compaction window is the operator's to set in his own settings, never the launcher's.
 AGENT_GATE_TOKENS = 240000
 # The skills the account syncs from the web app are listed under this prefix, thirteen of
 # them on this machine, about 2.1 thousand tokens on every call, and no session has invoked
@@ -1718,16 +1708,12 @@ def host_cuts(role):
     """The settings that stop the host adding to a session what nobody reads there. An agent
     is read by its orchestrator alone, so it loses the away recap and the silent-turn
     reminder too; every other role is read by the operator, who keeps both, and only the
-    token countdown goes (its figure is not the gate the module measures). An orchestrator
-    and a coordinator also compact at a 400 thousand window."""
+    token countdown goes (its figure is not the gate the module measures)."""
     env = {TOTAL_TOKENS_ENV: "off"}
     cuts = {}
     if role == "Agent":
         cuts["awaySummaryEnabled"] = False
         env[SILENT_TURN_ENV] = "0"
-        env[COMPACT_WINDOW_ENV] = AGENT_COMPACT_WINDOW
-    elif role in MOVE_ROLES:
-        env[COMPACT_WINDOW_ENV] = ORCH_COMPACT_WINDOW
     cuts["env"] = env
     return cuts
 
@@ -1760,8 +1746,6 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
         # gate and its band. Exported when asked for, and for an agent by default: absent,
         # the module's own default holds.
         parts.insert(2, "export ORCHESTRATOR_CONTEXT_GATE_TOKENS=%d" % gate_tokens)
-    if title_role(title) in MOVE_ROLES:
-        parts.insert(2, "export ORCHESTRATOR_CONTEXT_GATE=%d" % ORCH_GATE_PERCENT)
     cli = [shq(cli_path)]
     if model:
         cli += ["--model", shq(model)]
@@ -2140,13 +2124,13 @@ def cmd_spawn(argv):
                         % (brief_abs, args.orchestrator))
         if gate_tokens:
             # So a brief's "past 300,000" is read against the session's real gate. The brief
-            # itself is not rewritten. The option only takes effect on a large window: the
-            # line says so, or a small-window session would be told a gate that never trips.
-            # The literal breaks before its percent sign: the suite's sweep for a gate stated
-            # without its token half reads source lines, and this one states both halves.
-            brief_prompt += (" Your context gate is %d tokens on a window of 1,000,000 tokens"
-                             " or more; below, 80"
-                             " %% of the window." % gate_tokens)
+            # itself is not rewritten. The gate is the smaller of the option and the window's
+            # percentage gate: the line says so, or a small-window session would be told a
+            # gate that never trips. The literal breaks before its percent sign: the suite's
+            # sweep for a gate stated without its token half reads source lines, and this one
+            # states both halves.
+            brief_prompt += (" Your context gate is the smaller of %d tokens and 80"
+                             " %% of the reported window." % gate_tokens)
     if not (brief_prompt or args.prompt or args.prompt_file):
         # The host writes a session's transcript only once it has a first prompt (§29): a
         # promptless launch has no transcript to read a mode on, so verify_mode's own

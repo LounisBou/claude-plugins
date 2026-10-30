@@ -37,7 +37,7 @@ the context alone.
    (from its brief or the dispatch record — not from the agent, which cannot see
    its own), branch and head, commits ahead of main, PR and CI state, blocker,
    context % and tokens. Mark any agent past the gate —
-   300,000 tokens (30 %) on a window of 1,000,000 tokens or more, the common case, and 80 % of a smaller window — with ⚠ — the rotation gate of the `orchestrator:orchestrator` skill,
+   the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000, 533,000 or 400,000; 160,000 on 200,000 — with ⚠ — the rotation gate of the `orchestrator:orchestrator` skill,
    « Thresholds » — and
    say for each what YOU owe it (a verdict, an answer).
 5. An agent that has not answered within fifteen minutes is reported as such —

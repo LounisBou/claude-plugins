@@ -8,20 +8,22 @@ export type MeasureReading = {
   model: string; updated_at: string
 }
 
+// The gate is a token count no reported window moves: the smaller of the session's gate in
+// tokens and its percentage of the reported window. The host's compaction window is the
+// operator's to set, so a session may report 533,000 and must hand over where it would on
+// 1,000,000. A model whose real window is small keeps the percentage.
 export function tripGate(
   percent: number | null, tokens: number | null, window: number | null,
-  env: { gate?: number; gateTokens?: number; largeWindow?: number } = {},
+  env: { gate?: number; gateTokens?: number } = {},
 ): { tripped: boolean; words: string } {
   const gate = env.gate ?? 80
   const gateTokens = env.gateTokens ?? 300000
-  const largeWindow = env.largeWindow ?? 1000000
   const thousands = (n: number) => n.toLocaleString('en-US')
   const windowLabel = (n: number) => (n % 1000000 === 0 ? `${n / 1000000}M` : thousands(n))
-  if (tokens !== null && window !== null && window >= largeWindow) {
-    if (tokens < gateTokens) return { tripped: false, words: '' }
+  if (percent !== null && percent >= gate) return { tripped: true, words: `${percent}% (gate ${gate}%)` }
+  if (tokens !== null && window !== null && tokens >= gateTokens) {
     return { tripped: true, words: `${thousands(tokens)} tokens (gate ${thousands(gateTokens)} on a ${windowLabel(window)} window)` }
   }
-  if (percent !== null && percent >= gate) return { tripped: true, words: `${percent}% (gate ${gate}%)` }
   return { tripped: false, words: '' }
 }
 

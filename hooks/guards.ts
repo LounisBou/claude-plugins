@@ -93,11 +93,10 @@ function setLine(set: readonly string[]): string {
 }
 
 // The thresholds the environment set, by the names it set them under.
-function setNames(env: { gate?: number; gateTokens?: number; largeWindow?: number }): string[] {
+function setNames(env: { gate?: number; gateTokens?: number }): string[] {
   const names: string[] = []
   if (env.gate !== undefined) names.push(`ORCHESTRATOR_CONTEXT_GATE=${env.gate}`)
   if (env.gateTokens !== undefined) names.push(`ORCHESTRATOR_CONTEXT_GATE_TOKENS=${env.gateTokens}`)
-  if (env.largeWindow !== undefined) names.push(`ORCHESTRATOR_LARGE_WINDOW=${env.largeWindow}`)
   return names
 }
 
@@ -145,18 +144,16 @@ async function gateEnv($: { env: { get(name: string): Promise<string | undefined
   return {
     gate: threshold(await $.env.get('ORCHESTRATOR_CONTEXT_GATE')),
     gateTokens: threshold(await $.env.get('ORCHESTRATOR_CONTEXT_GATE_TOKENS')),
-    largeWindow: threshold(await $.env.get('ORCHESTRATOR_LARGE_WINDOW')),
   }
 }
 
 // The unmeasured line (context-gate.sh:126-130, said for the one channel the
 // module world has): it names what was read, and the gate that cannot be.
-function unmeasuredAnnouncement(env: { gate?: number; gateTokens?: number; largeWindow?: number }): string {
+function unmeasuredAnnouncement(env: { gate?: number; gateTokens?: number }): string {
   const words = (n: number) => n.toLocaleString('en-US')
   const gate = env.gate ?? 80
   const gateTokens = env.gateTokens ?? 300000
-  const largeWindow = env.largeWindow ?? 1000000
-  return `CONTEXT GATE: unmeasured: the measure file carries no figure; the next turn fills it. The gate (${words(gateTokens)} tokens on a window of ${words(largeWindow)} or more, ${gate}% of a smaller window) cannot be read; measure by hand before dispatching or rotating.`
+  return `CONTEXT GATE: unmeasured: the measure file carries no figure; the next turn fills it. The gate (the smaller of ${words(gateTokens)} tokens and ${gate}% of the reported window) cannot be read; measure by hand before dispatching or rotating.`
 }
 
 // $.fs.read carries no range — the API's own types offer only { as }, and a

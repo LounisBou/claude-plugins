@@ -612,7 +612,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
 }
 ```
 
-`joinContext(existing, line)` concatenates with a newline; `gateEnv()` reads `ORCHESTRATOR_CONTEXT_GATE`, `ORCHESTRATOR_CONTEXT_GATE_TOKENS` and `ORCHESTRATOR_LARGE_WINDOW` through `$.env.get` and returns the `env` object `tripGate` takes; `transcriptHasAnswer` checks the transcript for one `"type": "assistant"` entry through the same block reader as Task 4 (the first-prompt case stays silent, `context-gate.sh:113-135`). Block-reader law, verified by Task 4: `$.fs.read` offers no ranges and refuses past 4 MiB — reads go through bounded `dd if=<path> bs=65536 skip=<n> count=1` windows via `$.process.run` (argv-only, no pipes), carrying the cut first line on every block except the file-starting one (`title_in()`'s rule — the sketch's inverted condition corrupted boundary lines and was ruled out at the Task 4 review).
+`joinContext(existing, line)` concatenates with a newline; `gateEnv()` reads `ORCHESTRATOR_CONTEXT_GATE`, `ORCHESTRATOR_CONTEXT_GATE_TOKENS` through `$.env.get` and returns the `env` object `tripGate` takes; `transcriptHasAnswer` checks the transcript for one `"type": "assistant"` entry through the same block reader as Task 4 (the first-prompt case stays silent, `context-gate.sh:113-135`). Block-reader law, verified by Task 4: `$.fs.read` offers no ranges and refuses past 4 MiB — reads go through bounded `dd if=<path> bs=65536 skip=<n> count=1` windows via `$.process.run` (argv-only, no pipes), carrying the cut first line on every block except the file-starting one (`title_in()`'s rule — the sketch's inverted condition corrupted boundary lines and was ruled out at the Task 4 review).
 
 - [ ] **Step 4: Run tests** — PASS.
 

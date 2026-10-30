@@ -58,12 +58,11 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --i
     # a negative, a fraction or a non-number is refused before a tab exists. The launch then
     # exports ORCHESTRATOR_CONTEXT_GATE_TOKENS=<N> beside ORCHESTRATOR_SPAWNED=1, so the
     # module's context gate and its band, which both read it from their environment, use
-    # it. Absent, nothing is exported and the default (300,000 tokens on a window of
-    # 1,000,000 or more) holds. The token gate takes effect on a window of 1,000,000 tokens or
-    # more only; below, the percentage gate of the window decides. With --brief, the startup
-    # prompt adds « Your context gate is <N> tokens on a window of 1,000,000 tokens or more »
-    # and says that below it the window's percentage gate holds (a --prompt or --prompt-file
-    # spawn gets the export, not that line); a brief that says 300,000 is not rewritten. A successor does not inherit
+    # it. Absent, nothing is exported and the default (300,000 tokens) holds. The gate is the
+    # smaller of the option and the window's percentage gate. With --brief, the startup
+    # prompt adds « Your context gate is the smaller of <N> tokens and the percentage of the
+    # reported window » (a --prompt or --prompt-file spawn gets the export, not that line); a brief
+    # that says 300,000 is not rewritten. A successor does not inherit
     # the predecessor's gate: it carries one only if the option is given. `rotate` forwards it.
     # --keep-tool <name> / --drop-tool <name>: the session's tools are CHOSEN too (§65). Every
     # launched session is started with `--disallowedTools` naming the tools no session has

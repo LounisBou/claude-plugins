@@ -64,7 +64,7 @@ export type BandDescription = {
 }
 
 export function bandTree(reading: MeasureReading | null,
-  env: { gate?: number; gateTokens?: number; largeWindow?: number } = {}): BandDescription | null {
+  env: { gate?: number; gateTokens?: number } = {}): BandDescription | null {
   if (!reading) return null
   const past = tripGate(reading.context_percent, reading.context_tokens, reading.context_window, env).tripped
   const lead = 'context '
@@ -206,7 +206,7 @@ async function forget($: any, sessionId: string, mine = currentIn === sessionId)
 // The gate's thresholds from the environment, guards.ts's own reading spelled again
 // here (the $ fence): a value that is no positive number stays undefined, and
 // tripGate applies the default itself.
-async function gateEnv($: any): Promise<{ gate?: number; gateTokens?: number; largeWindow?: number }> {
+async function gateEnv($: any): Promise<{ gate?: number; gateTokens?: number }> {
   const threshold = (raw: string | undefined) => {
     const n = raw === undefined ? NaN : Number(raw)
     return Number.isFinite(n) && n > 0 ? n : undefined
@@ -214,7 +214,6 @@ async function gateEnv($: any): Promise<{ gate?: number; gateTokens?: number; la
   return {
     gate: threshold(await $.env.get('ORCHESTRATOR_CONTEXT_GATE')),
     gateTokens: threshold(await $.env.get('ORCHESTRATOR_CONTEXT_GATE_TOKENS')),
-    largeWindow: threshold(await $.env.get('ORCHESTRATOR_LARGE_WINDOW')),
   }
 }
 

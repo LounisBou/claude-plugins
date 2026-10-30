@@ -72,7 +72,7 @@ export type DeckInput = {
   chains: readonly { name: string; mtimeMs: number; text: string }[]
   prs: ReadonlyMap<string, string[]>    // store key of a local orchestrator → its pull requests in flight
   sleepingText: string
-  gate?: { gate?: number; gateTokens?: number; largeWindow?: number }
+  gate?: { gate?: number; gateTokens?: number }
 }
 
 // The deck the inputs describe. Orchestrators come sorted by name, a remote one after a

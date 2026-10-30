@@ -168,3 +168,15 @@ test('past the gate the band line stays warning and bold, the gate line below it
   expect(line.every((p: any) => p.color === 'warning' && p.bold)).toBe(true)
   expect(gate).toEqual([{ text: 'rotation gate — succeed at the next quiet boundary', color: 'warning', bold: false }])
 })
+
+test('the band hands over at the same token count on 1,000,000 and on 533,000, and by percentage on a small window', () => {
+  const at = (tokens: number, window: number, env = {}) =>
+    bandTree({ context_percent: Math.floor(tokens * 100 / window), context_tokens: tokens, context_window: window, model: 'a-model', updated_at: 't' }, env)?.past
+  expect(at(299999, 533000)).toBe(false)
+  expect(at(300000, 533000)).toBe(true)
+  expect(at(300000, 1000000)).toBe(true)
+  expect(at(239999, 533000, { gateTokens: 240000 })).toBe(false)
+  expect(at(240000, 533000, { gateTokens: 240000 })).toBe(true)
+  expect(at(159999, 200000)).toBe(false)
+  expect(at(160000, 200000)).toBe(true)
+})

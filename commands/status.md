@@ -18,7 +18,7 @@ host then runs this body as a prompt.
    `${CLAUDE_CONFIG_DIR:-~/.claude}/claude-orchestrator/measure/$CLAUDE_CODE_SESSION_ID.json`,
    one JSON line the module writes on every gauge pass — and keep its figures.
 4. Present one table: session, context %, tokens, window, model, updated. Mark
-   sessions past the gate — 300,000 tokens (30 %) on a window of 1,000,000 tokens or more, the common case, and 80 % of a smaller window — with ⚠: that is the pre-dispatch and mid-work
+   sessions past the gate — the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000, 533,000 or 400,000; 160,000 on 200,000 — with ⚠: that is the pre-dispatch and mid-work
    gate of the orchestrator skill, « Thresholds ».
 
 Session ids are not agent names. If the user needs the mapping, ask each live
