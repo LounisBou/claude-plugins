@@ -6,7 +6,7 @@
 // write or a send that fails never holding the turn's end.
 import { expect, test } from 'claude-code/testing'
 import { parseWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel, waitParts, heldQuestion, withdrawalText, RELAY_CAP } from '../relay.ts'
-import { paneQuestions, waitsInTab, roundEntry, type RoundEntry } from '../round.ts'
+import { paneQuestions, waitsInTab, tabQuestion, roundEntry, type RoundEntry } from '../round.ts'
 import { answerFromPane, settledText, parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
 import { logLineOf } from './fakes.ts'
@@ -1155,6 +1155,154 @@ for (const [label, send] of [
     expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('open')
   })
 }
+
+// --- the successor holds the open questions -------------------------------------------------
+
+// The operator's report of 2026-10-30: a question withdrawn when its sender's tab was closed by
+// its successor, which never asked it again. The successor's « takeover confirmed » teaches the
+// sender who it is; the hand-over and the session end then move the open entries to it.
+const SUCCESSOR_FROM = 'uds:/tmp/peer-s-two.sock'
+const confirmed = (name: string, body = 'takeover confirmed') => ({
+  origin: { kind: 'peer' },
+  text: `<cross-session-message from="${SUCCESSOR_FROM}" from-name="${name}" from-mode="prompting">\n${body}\n</cross-session-message>`,
+})
+
+// The successor runs on this machine: the host's registry names its session, and its row is live.
+function successorRunning(fx: ReturnType<typeof fake>, name = 'Orch : belt-2') {
+  fx.files.set(`${HOME}/.claude/sessions/9002.json`, JSON.stringify({ pid: 9002, sessionId: 's-two', name }))
+  fx.files.set(`${HOME}/.claude/claude-orchestrator/store/sessions/s-two`, JSON.stringify({
+    role: 'orchestrator', name, pid: '9002', repo: null, context_percent: 5, context_tokens: 1, window: 100,
+    model: 'a-model', busy: false, updated_at: '2026-10-30T16:20:00.000Z',
+  }) + '\n')
+}
+
+function expectMoved(fx: ReturnType<typeof fake>, asked: RoundEntry, other: RoundEntry, settled: RoundEntry) {
+  const after = new Map(entries(fx).map(e => [e.id, e]))
+  expect(after.get(asked.id)).toEqual({ ...asked, session: 's-two', from: 'Orch : belt-2', movedFrom: 's-one' })
+  expect(fx.logged.filter(l => l.includes(`round: moved to the successor Orch : belt-2: ${asked.id}`)).length).toBe(1)
+  expect(fx.logged.some(l => l.includes('withdrawn by the sender'))).toBe(false)
+  expect(after.get(other.id)).toEqual(other)
+  expect(after.get(settled.id)).toEqual(settled)
+}
+
+for (const [label, end] of [
+  ['the hand-over', async (chains: Record<string, Function[]>, fx: ReturnType<typeof fake>) => drive(chains, 'session.send', fx.dollar, { to: 'Orch : belt-2', text: 'handed over', origin: { kind: 'model' } })],
+  ['the session end', async (chains: Record<string, Function[]>, fx: ReturnType<typeof fake>) => drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })],
+] as const) {
+  test(`« takeover confirmed » from an orchestrator, then ${label}, moves the open entries to it, still open`, async () => {
+    const { chains, fx, asked, other, settled } = await senderWithEntries()
+    successorRunning(fx)
+    await drive(chains, 'session.receive', fx.dollar, confirmed('Orch : belt-2'))
+    await end(chains, fx)
+    expectMoved(fx, asked, other, settled)
+    expect(waitsInTab(entries(fx)).find(e => e.id === asked.id)?.from).toBe('Orch : belt-2')
+    expect(tabQuestion(entries(fx), 's-two')?.id).toBe(asked.id)
+  })
+}
+
+test('a successor not found on this machine is recorded by its name: the entries move to that name', async () => {
+  const { chains, fx, asked } = await senderWithEntries()
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch : belt-2', 'Takeover confirmed.\nAgents re-addressed.'))
+  await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
+  const moved = entries(fx).find(e => e.id === asked.id)!
+  expect([moved.status, moved.session, moved.from]).toEqual(['open', '', 'Orch : belt-2'])
+})
+
+test('the successor\'s own wait file is left as it is by the move', async () => {
+  const { chains, fx } = await senderWithEntries()
+  successorRunning(fx)
+  const theirs = `${HOME}/.claude/claude-orchestrator/store/waits/s-two`
+  const wait = JSON.stringify({ waiting: 'operator', blocks: 'phase 9', waiting_since: 'T', relayed: 'its-own', name: 'Orch : belt-2', pid: '9002' }) + '\n'
+  fx.files.set(theirs, wait)
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch : belt-2'))
+  await drive(chains, 'session.send', fx.dollar, { to: 'Orch : belt-2', text: 'handed over', origin: { kind: 'model' } })
+  expect(fx.files.get(theirs)).toBe(wait)
+})
+
+for (const [label, delivery] of [
+  ['an agent', confirmed('Agent : belt-p3')],
+  ['a coordinator', confirmed('Coord : ops')],
+  ['an orchestrator saying something else', confirmed('Orch : belt-2', 'takeover not confirmed yet')],
+  ['the operator', { origin: { kind: 'user' }, text: 'takeover confirmed' }],
+] as const) {
+  test(`« takeover confirmed » from ${label} learns no successor: the hand-over withdraws as before`, async () => {
+    const { chains, fx, asked, other, settled } = await senderWithEntries()
+    successorRunning(fx)
+    await drive(chains, 'session.receive', fx.dollar, delivery)
+    await drive(chains, 'session.send', fx.dollar, { to: 'Orch : belt-2', text: 'handed over', origin: { kind: 'model' } })
+    expectWithdrawn(fx, asked, other, settled, 'handed over to its successor')
+  })
+}
+
+test('a later « takeover confirmed » replaces the successor learnt before it', async () => {
+  const { chains, fx, asked } = await senderWithEntries()
+  successorRunning(fx)
+  fx.files.set(`${HOME}/.claude/sessions/9003.json`, JSON.stringify({ pid: 9003, sessionId: 's-three', name: 'Orch : belt-3' }))
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch : belt-2'))
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch : belt-3'))
+  await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
+  const moved = entries(fx).find(e => e.id === asked.id)!
+  expect([moved.status, moved.session, moved.from]).toEqual(['open', 's-three', 'Orch : belt-3'])
+})
+
+test('a session that is no orchestrator learns no successor', async () => {
+  const chains = mounted()
+  const agent = fake({ name: 'Agent : belt-p3', role: 'agent' })
+  await drive(chains, 'session.receive', agent.dollar, confirmed('Orch : belt-2'))
+  expect([...agent.files.keys()].some(p => p.includes('/store/successors/'))).toBe(false)
+})
+
+test('the pane\'s answer to a moved entry goes to the successor, never to the ended sender', async () => {
+  const { chains, fx, asked } = await senderWithEntries()
+  successorRunning(fx)
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch : belt-2'))
+  await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
+  const moved = entries(fx).find(e => e.id === asked.id)!
+  const pane = { opened: null, ticker: null, other: new Set<string>(), writing: null, undelivered: new Map(), answering: new Set<string>() }
+  await answerFromPane({ ...fx.dollar, ui: { invalidate: () => undefined } }, pane, moved, { letter: 'A', text: 'merge it' })
+  expect(fx.sent.map(s => s.to)).toEqual([{ sessionId: 's-two' }])
+  expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('answered')
+})
+
+test('a moved entry is not superseded by the successor\'s own question: it stays open', async () => {
+  const { chains, fx, asked } = await senderWithEntries()
+  successorRunning(fx)
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch : belt-2'))
+  await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
+  const successor = { ...fx.dollar, session: { ...fx.dollar.session, id: async () => 's-two' } }
+  await drive(chains, 'turn.complete', successor, turnEnd(answerOf('Question 1 of 1 — start phase 9?', 'waiting: operator — blocks: phase 9')))
+  const after = entries(fx)
+  expect(after.find(e => e.id === asked.id)!.status).toBe('open')
+  // The successor's own older entry is superseded as ever; its own new one and the moved one stand.
+  expect(after.filter(e => e.session === 's-two' && e.status === 'open').length).toBe(2)
+  expect(after.find(e => e.id === 'other-session')!.status).toBe('withdrawn')
+  expect(fx.logged.some(l => l.includes(`withdrawn by the sender: ${asked.id}`))).toBe(false)
+})
+
+test('two sessions share the successor\'s name, one of them the receiver\'s own: the other is the successor', async () => {
+  const { chains, fx, asked } = await senderWithEntries()
+  fx.files.set(`${HOME}/.claude/sessions/501.json`, JSON.stringify({ pid: 501, sessionId: 's-one', name: 'Orch : belt-2' }))
+  successorRunning(fx)
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch : belt-2'))
+  expect(fx.logged.filter(l => l.includes('round: successor learnt: Orch : belt-2 (session s-two)')).length).toBe(1)
+  await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
+  const moved = entries(fx).find(e => e.id === asked.id)!
+  expect([moved.status, moved.session, moved.from]).toEqual(['open', 's-two', 'Orch : belt-2'])
+})
+
+test('several sessions share the successor\'s name besides the receiver: the reply address\'s process id chooses', async () => {
+  const { chains, fx, asked } = await senderWithEntries()
+  fx.files.set(`${HOME}/.claude/sessions/501.json`, JSON.stringify({ pid: 501, sessionId: 's-one', name: 'Orch : belt-2' }))
+  successorRunning(fx)
+  fx.files.set(`${HOME}/.claude/sessions/9003.json`, JSON.stringify({ pid: 9003, sessionId: 's-three', name: 'Orch : belt-2' }))
+  await drive(chains, 'session.receive', fx.dollar, {
+    origin: { kind: 'peer' },
+    text: '<cross-session-message from="uds:/tmp/claude-sockets/9003.sock" from-name="Orch : belt-2" from-mode="prompting">\ntakeover confirmed\n</cross-session-message>',
+  })
+  await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
+  const moved = entries(fx).find(e => e.id === asked.id)!
+  expect([moved.status, moved.session, moved.from]).toEqual(['open', 's-three', 'Orch : belt-2'])
+})
 
 // --- a settled question leaves the coordinator's tab -------------------------------------------
 

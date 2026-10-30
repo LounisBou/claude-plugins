@@ -55,6 +55,12 @@ export function handsOver(text: string): boolean {
   return /^handed over$/i.test(machineLine(text))
 }
 
+// A successor's word to its predecessor, « takeover confirmed » (the succession brief), read on
+// the text's first line, its markup dropped as handsOver drops it.
+export function confirmsTakeover(text: string): boolean {
+  return /^takeover confirmed$/i.test(machineLine(text.split('\n').find(line => line.trim() !== '') ?? ''))
+}
+
 // An agent's last line, its brief's own: `status: done|blocked|question — <one line>`,
 // read over the stop gate's normalisation. The text above it is its report or question.
 const STATUS_LINE = /^status:\s*(done|blocked|question)\b\s*(?:(?:—|–|--|-|:)\s*(.*))?$/i

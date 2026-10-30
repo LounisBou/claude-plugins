@@ -30,6 +30,7 @@ export type RoundEntry = {
   at: string                    // when the module wrote the entry, ISO
   answer: RoundAnswer | null
   urgent?: true                 // the sender marked its wait `(urgent)`: `coordinator.sh round` makes it due at once
+  movedFrom?: string            // the session id of the predecessor this entry was moved from at a succession: the successor's own later question never supersedes it
 }
 
 // A choice as `/orchestrator-decide` step 2 writes it, one per line: `- **A** : <text>`. A line

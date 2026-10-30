@@ -10,7 +10,7 @@
 import { roleOf } from './session-name.ts'
 import { watchNumberOf } from './stop-gate.ts'
 import type { SessionRow } from './supervision.ts'
-import type { WaitKind } from './relay.ts'
+import { confirmsTakeover, type WaitKind } from './relay.ts'
 
 // The line's fixed head: what the receiver keys on, and nothing a person or a model
 // writes by chance.
@@ -303,6 +303,29 @@ export function learntOf(delivery: Delivery, now: number): LearntCoordinator | n
   if (!name || name.length > NAME_CAP || roleOf(name) !== 'coordinator') return null
   const from = delivery.from && delivery.from.length <= 200 && /^(?:uds|bridge):\S+$/.test(delivery.from) ? delivery.from : null
   return { name, from, at: new Date(now).toISOString() }
+}
+
+// The successor an orchestrator learnt from its « takeover confirmed » (`store/successors/<id>`):
+// its name, its address as the envelope gave it, and its session id when this machine's
+// registry names it alone.
+export type LearntSuccessor = { name: string; from: string | null; session: string | null; at: string }
+
+// A delivery from an orchestrator whose first line confirms the takeover names the successor;
+// anything else names none. The session id is resolved by the caller, which holds the $.
+export function successorOf(delivery: Delivery, now: number): LearntSuccessor | null {
+  const name = delivery.fromName?.trim() ?? ''
+  if (!name || name.length > NAME_CAP || roleOf(name) !== 'orchestrator' || !confirmsTakeover(delivery.body)) return null
+  const from = delivery.from && delivery.from.length <= 200 && /^(?:uds|bridge):\S+$/.test(delivery.from) ? delivery.from : null
+  return { name, from, session: null, at: new Date(now).toISOString() }
+}
+
+export function parseSuccessor(text: string): LearntSuccessor | null {
+  try {
+    const s = JSON.parse(text) as LearntSuccessor
+    return s && typeof s.name === 'string' && roleOf(s.name) === 'orchestrator' && (s.session === null || typeof s.session === 'string') ? s : null
+  } catch {
+    return null
+  }
 }
 
 export function parseLearnt(text: string): LearntCoordinator | null {

@@ -36,7 +36,8 @@ import {
 import { entryFingerprint, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, tabQuestion, waitSummary, entryQuestions, plainText, textSpans, prPieces, repositoryOwners, numberLabel, questionBody, questionShape, isDue, dueText, asksNothing, carriesChoices, type RoundAnswer, type RoundChoice, type RoundEntry } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
-  remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, machineLabel, prsInFlight, ROW_MARKER, REMOTE_STALE_AFTER_MS, type RemoteRow,
+  remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, ROW_MARKER, REMOTE_STALE_AFTER_MS,
+  type RemoteRow, type LearntSuccessor,
 } from './remote-row.ts'
 import { deckOf, deckText, deckIsNews, DECK_FILE, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, type Prices, type UsageBook } from './usage.ts'
@@ -324,6 +325,12 @@ export function rowKey(id: string): string {
   return `rows/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
 }
 
+// The successor an orchestrator learnt from its « takeover confirmed » (`successors/<id>`,
+// remote-row.ts): the receive path is its one writer, and it goes with the session's row.
+export function successorKey(id: string): string {
+  return `successors/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
+}
+
 export function parseWaitRecord(text: string): WaitRecord | null {
   try {
     const record = JSON.parse(text) as WaitRecord
@@ -430,7 +437,7 @@ export async function readSessions($: any): Promise<Record<string, SessionRow>> 
   const now = Date.now()
   for (const [name, text, row] of read) {
     if (row && !isStale(row, now, alive)) rows[`sessions/${name}`] = row
-    else if (text === '' || row) dead.push(`${dir}/${name}`, `${await storeOf($)}/waits/${name}`, `${await storeOf($)}/gates/${name}`, `${await storeOf($)}/rows/${name}`)
+    else if (text === '' || row) dead.push(`${dir}/${name}`, `${await storeOf($)}/waits/${name}`, `${await storeOf($)}/gates/${name}`, `${await storeOf($)}/rows/${name}`, `${await storeOf($)}/successors/${name}`)
   }
   // A liveness read that failed removes nothing: its rows are drawn as alive
   // and the next read that answers sweeps the dead. Removing on it wiped the
@@ -444,7 +451,7 @@ export async function readSessions($: any): Promise<Record<string, SessionRow>> 
 export async function deleteSession($: any, id: string): Promise<void> {
   const path = `${await storeOf($)}/${sessionKey(id)}`
   const store = await storeOf($)
-  const done = await $.process.run(['rm', '-f', path, `${store}/${waitKey(id)}`, `${store}/${gateKey(id)}`, `${store}/${rowKey(id)}`], { timeoutMs: 5000 }).catch(() => null)
+  const done = await $.process.run(['rm', '-f', path, `${store}/${waitKey(id)}`, `${store}/${gateKey(id)}`, `${store}/${rowKey(id)}`, `${store}/${successorKey(id)}`], { timeoutMs: 5000 }).catch(() => null)
   if (!done || done.exitCode !== 0) await $.fs.write(path, '')
 }
 
@@ -1147,8 +1154,11 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
 
   on('session.end', {}, async ($: any, e: any, next: (e: any) => any) => {
     const sessionId = e.sessionId ?? await $.session.id()
+    // Read before the row goes: the successor's file goes with it.
+    let successor: LearntSuccessor | null = null
     try {
       stopWake(wake)
+      successor = await readSuccessor($, sessionId)
       await deleteSession($, sessionId)
       await recordPaneClosed($)
     } catch (err) {
@@ -1158,13 +1168,15 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     // What the host's end bound leaves, shared by the round and the deck after it.
     let until = Date.now() + Math.min(RELAY_BOUND_MS, next.budget?.remainingMs ?? RELAY_BOUND_MS)
     try {
-      // A question whose sender has ended has no one left to answer it. After the row is
-      // gone, and bounded by what the host's own end bound leaves: a slow round never
-      // starves the store's deletion.
+      // A question whose sender has ended has no one left to answer it, unless a successor took
+      // it over: then it is the successor's. After the row is gone, and bounded by what the
+      // host's own end bound leaves: a slow round never starves the store's deletion.
       // Every write first, then the notices in what is left of it.
       const bound = Math.min(RELAY_BOUND_MS, next.budget?.remainingMs ?? RELAY_BOUND_MS)
       until = Date.now() + bound
-      const done = await withDeadline(withdrawStale($, sessionId, null, "the sender's session ended"), bound)
+      const done = await withDeadline(successor
+        ? moveToSuccessor($, sessionId, successor)
+        : withdrawStale($, sessionId, null, "the sender's session ended"), bound)
       if (isDegradedPass(done)) await logLine($, `round: did not finish within ${bound} ms`)
       else await tellSettled($, done, until)
     } catch (err) {
@@ -1275,7 +1287,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // A peer's delivery, read before it is queued. A marked row (remote-row.ts) is written to
   // the store and consumed: no model reads it, on either side. A coordinator's message
   // teaches this machine its address, for the relay and the row when the coordinator runs
-  // elsewhere. Anything else passes through untouched.
+  // elsewhere; a successor's « takeover confirmed » teaches an orchestrator who holds its open
+  // questions once it hands over or ends. Anything else passes through untouched.
   on('session.receive', {}, async ($: any, e: any, next: (e: any) => any) => {
     try {
       if (!e.agentId && isPeerOrigin(e.origin) && typeof e.text === 'string') {
@@ -1288,6 +1301,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         }
         const learnt = learntOf(delivery, Date.now())
         if (learnt) await learnCoordinator($, learnt)
+        const successor = successorOf(delivery, Date.now())
+        if (successor) await learnSuccessor($, successor)
       }
     } catch (err) {
       await logLine($, `receive: ${(err as Error).message}`)
@@ -1945,7 +1960,11 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
     // withdraws its session's open question with choices, which only copies its urgent mark.
     const silent = asksNothing(entry)
     if (silent && entry.urgent) await markUrgent($, sessionId)
-    await tellSettled($, await withdrawStale($, sessionId, entry.id, `superseded by ${entry.id}`, silent ? carriesChoices : undefined))
+    // An entry moved here from a predecessor is the operator's question still, whatever this
+    // session asks next: only its answer, a round-close, the tab's typed answer or this session's
+    // own end settles it.
+    const standing = (open: RoundEntry) => open.movedFrom !== undefined || (silent && carriesChoices(open))
+    await tellSettled($, await withdrawStale($, sessionId, entry.id, `superseded by ${entry.id}`, standing))
     return
   }
   const to = role === 'orchestrator'
@@ -2043,11 +2062,14 @@ async function markUrgent($: any, sessionId: string): Promise<void> {
   }
 }
 
-// The session's open entries withdrawn by its hand-over, every write first, then the notices
-// in what is left of the bound.
+// The session's open entries moved to the successor it learnt, or, none learnt, withdrawn by its
+// hand-over, every write first, then the notices in what is left of the bound.
 async function handOver($: any, sessionId: string): Promise<void> {
   const until = Date.now() + RELAY_BOUND_MS
-  const done = await withDeadline(withdrawStale($, sessionId, null, 'handed over to its successor'), RELAY_BOUND_MS)
+  const successor = await readSuccessor($, sessionId)
+  const done = await withDeadline(successor
+    ? moveToSuccessor($, sessionId, successor)
+    : withdrawStale($, sessionId, null, 'handed over to its successor'), RELAY_BOUND_MS)
   if (isDegradedPass(done)) await logLine($, `round: did not finish within ${RELAY_BOUND_MS} ms`)
   else await tellSettled($, done, until)
 }
@@ -2267,12 +2289,14 @@ const REFERENCED = / \[[^\]\s]+\]$/
 
 // The session id of the one session on this machine that the host's registry (its sessions
 // directory, one record per process) names so, the process the coordinator's record names when
-// several do; null when none or several, or when the registry cannot be read.
-async function registeredSession($: any, name: string, recordText: string): Promise<{ sessionId: string } | null> {
-  let pid: string | null = null
+// several do; null when none or several, or when the registry cannot be read. `exclude` is a
+// session id left out of the candidates, and `pid` the process to choose among several, over
+// the record's own.
+async function registeredSession($: any, name: string, recordText: string, options: { exclude?: string; pid?: string | null } = {}): Promise<{ sessionId: string } | null> {
+  let pid: string | null = options.pid ?? null
   try {
     const recorded = JSON.parse(recordText)?.pid
-    if (recorded !== undefined && recorded !== null && String(recorded) !== '') pid = String(recorded)
+    if (pid === null && recorded !== undefined && recorded !== null && String(recorded) !== '') pid = String(recorded)
   } catch { /* coordinatorOf read it already */ }
   const dir = `${await configDir($)}/sessions`
   const named: { pid: string; sessionId: string }[] = []
@@ -2281,7 +2305,7 @@ async function registeredSession($: any, name: string, recordText: string): Prom
       if (!file || file.kind !== 'file' || !file.name.endsWith('.json')) continue
       try {
         const record = JSON.parse(String(await $.fs.read(`${dir}/${file.name}`)))
-        if (record?.name === name && typeof record.sessionId === 'string' && record.sessionId !== '') named.push({ pid: String(record.pid ?? ''), sessionId: record.sessionId })
+        if (record?.name === name && typeof record.sessionId === 'string' && record.sessionId !== '' && record.sessionId !== options.exclude) named.push({ pid: String(record.pid ?? ''), sessionId: record.sessionId })
       } catch { /* a record being written, or gone: not this one */ }
     }
   } catch {
@@ -2310,6 +2334,42 @@ async function learnCoordinator($: any, learnt: { name: string; from: string | n
   const known = parseLearnt(String(await $.fs.read(path).catch(() => '')))
   if (known && known.name === learnt.name && known.from === learnt.from) return
   await writeAtomic($, path, JSON.stringify(learnt) + '\n')
+}
+
+// A successor's « takeover confirmed », recorded by an orchestrator only, over any successor
+// recorded before it: its session id when this machine's registry names it alone, else its name
+// and address. At « takeover confirmed » the predecessor and its successor carry one name, so
+// the receiving session's own record is left out of the candidates, and the process id the
+// reply address carries (`uds:/…/<pid>.sock`) chooses among the several that remain.
+async function learnSuccessor($: any, learnt: LearntSuccessor): Promise<void> {
+  const sessionId = await $.session.id()
+  const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
+  if (roleOf(row?.name ?? null) !== 'orchestrator') return
+  const pid = learnt.from?.match(/\/(\d+)\.sock$/)?.[1] ?? null
+  const session = (await registeredSession($, learnt.name, '', { exclude: sessionId, pid }))?.sessionId ?? null
+  await writeAtomic($, `${await storeOf($)}/${successorKey(sessionId)}`, JSON.stringify({ ...learnt, session }) + '\n')
+  await logLine($, `round: successor learnt: ${learnt.name}${session ? ` (session ${session})` : ''}`)
+}
+
+async function readSuccessor($: any, sessionId: string): Promise<LearntSuccessor | null> {
+  return parseSuccessor(String(await $.fs.read(`${await storeOf($)}/${successorKey(sessionId)}`).catch(() => '')))
+}
+
+// The session's open entries rewritten in place for its successor: its session and name become
+// theirs, the status stays open, and the answer goes to the successor (senderAddress). The
+// successor's own fingerprint is left as it is. Each move is one log line; one that cannot be
+// written is one too, and the others go on. Nothing is settled: the coordinator is told nothing.
+async function moveToSuccessor($: any, sessionId: string, successor: LearntSuccessor): Promise<Settled[]> {
+  for (const { path, entry } of await readRound($)) {
+    if (entry.session !== sessionId || entry.status !== 'open') continue
+    try {
+      await writeAtomic($, path, JSON.stringify({ ...entry, session: successor.session ?? '', from: successor.name, movedFrom: sessionId }) + '\n')
+      await logLine($, `round: moved to the successor ${successor.name}: ${entry.id}`)
+    } catch (err) {
+      await logLine($, `round: ${(err as Error).message}`)
+    }
+  }
+  return []
 }
 
 // The host name, read once per module load: the machine label a row carries.
