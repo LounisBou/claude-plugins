@@ -32,7 +32,7 @@ export const ROW_REFRESH_MS = 10 * 60 * 1000
 // The receiver's caps: a line past them is refused whole, never cut.
 export const ROW_TEXT_CAP = 2048
 const NAME_CAP = 120
-const BLOCKS_CAP = 200
+export const BLOCKS_CAP = 200   // what a row's and an ask's blocks are cut to (remote-round.ts)
 const MACHINE_CAP = 64
 const STAMP_CAP = 40
 const NUMBER_CAP = 100_000_000

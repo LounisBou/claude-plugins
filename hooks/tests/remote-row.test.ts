@@ -12,6 +12,7 @@ import {
 } from '../remote-row.ts'
 import { paneRows, sendRow, readRemoteRows, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
+import { ASK_MARKER, parseAsk } from '../remote-round.ts'
 import { logLineOf } from './fakes.ts'
 
 const HOME = '/tmp/h'
@@ -202,8 +203,9 @@ test('the wait relay uses the learnt coordinator when none is registered here', 
   for (const handler of chains['turn.complete']) {
     await handler(fx.dollar, { answer: 'Merge #12?\n\nwaiting: operator — blocks: phase 3\n', reason: 'answer', isAborted: false, durationMs: 1, turnId: 't' }, (e: any) => e)
   }
-  const report = fx.sent.find(s => s.text.startsWith('[module] Orch : belt waits for the operator'))
+  const report = fx.sent.find(s => s.text.startsWith(ASK_MARKER))
   expect(report?.to).toBe(COORD_FROM)
+  expect(parseAsk(report!.text)!.entry.blocks).toBe('phase 3')
   // The same turn's end carried the row, its wait included.
   const row = fx.sent.find(s => s.text.startsWith(ROW_MARKER))
   expect(parseRemoteRow(row!.text)!.waiting).toBe('operator')

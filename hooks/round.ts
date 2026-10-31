@@ -31,6 +31,7 @@ export type RoundEntry = {
   answer: RoundAnswer | null
   urgent?: true                 // the sender marked its wait `(urgent)`: `coordinator.sh round` makes it due at once
   movedFrom?: string            // the session id of the predecessor this entry was moved from at a succession: the successor's own later question never supersedes it
+  origin?: { machine: string; address: string } // a sender on another machine (remote-round.ts): its machine's label and the address its ask came from, written by this machine's module on receipt; absent for a sender on this machine
 }
 
 // A choice as `/orchestrator-decide` step 2 writes it, one per line: `- **A** : <text>`. A line

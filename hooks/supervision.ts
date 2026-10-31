@@ -37,8 +37,9 @@ import { entryFingerprint, roundEntry, roundEntryId, roundPath, paneQuestions, w
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
   remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, ROW_MARKER, REMOTE_STALE_AFTER_MS,
-  type RemoteRow, type LearntSuccessor,
+  type RemoteRow, type LearntSuccessor, type Delivery,
 } from './remote-row.ts'
+import { askLine, ackLine, parseAsk, parseAck, isAsk, isAck } from './remote-round.ts'
 import { deckOf, deckText, deckIsNews, DECK_FILE, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, type Prices, type UsageBook } from './usage.ts'
 
@@ -311,7 +312,10 @@ export function parseSessionRow(text: string): SessionRow | null {
 // one writer, so the measure's read-merge-write of the row can never put an older wait
 // back over a newer one — a lost wait was the very defect the relay ends. The name and
 // the pid ride along for the coordinator's facts, which read this file alone.
-export type WaitRecord = Pick<SessionRow, 'waiting' | 'blocks' | 'waiting_since' | 'relayed'> & { name: string | null; pid: string | null; last_waiting?: WaitKind | null; typed?: { blocks: string; since: string | null } | null }
+// `pending` is the id of the entry sent to a coordinator on another machine and not acknowledged
+// yet, with the fingerprint its acknowledgment keeps (`pending_key`): an outbox, never drawn or
+// answered from here (remote-round.ts).
+export type WaitRecord = Pick<SessionRow, 'waiting' | 'blocks' | 'waiting_since' | 'relayed'> & { name: string | null; pid: string | null; last_waiting?: WaitKind | null; typed?: { blocks: string; since: string | null } | null; pending?: string | null; pending_key?: string | null }
 
 export function waitKey(id: string): string {
   return `waits/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
@@ -1224,7 +1228,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   })
 
   // A peer's delivery, read before it is queued. A marked row (remote-row.ts) is written to
-  // the store and consumed: no model reads it, on either side. A coordinator's message
+  // the store and consumed: no model reads it, on either side; so are a remote orchestrator's
+  // ask, entered in the coordinator's round, and its acknowledgment (remote-round.ts). A coordinator's message
   // teaches this machine its address, for the relay and the row when the coordinator runs
   // elsewhere; a successor's « takeover confirmed » teaches an orchestrator who holds its open
   // questions once it hands over or ends. Anything else passes through untouched.
@@ -1232,6 +1237,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     try {
       if (!e.agentId && isPeerOrigin(e.origin) && typeof e.text === 'string') {
         const delivery = deliveryOf(e.text)
+        if (isAsk(delivery.body)) return await receiveAsk($, delivery)
+        if (isAck(delivery.body)) return await receiveAck($, delivery.body)
         if (isMarked(delivery.body)) {
           const received = await receiveRow($, delivery.body)
           // A remote orchestrator's row is one of the deck's keys.
@@ -1893,26 +1900,14 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
     if (kept) {
       // The same wait, its text now a note: the entry keeps its choices and takes the urgent mark
       // or its absence, urgent, it is due at once.
-      if (Boolean(kept.entry.urgent) !== Boolean(entry.urgent)) {
-        const { urgent: _, ...plain } = kept.entry
-        await writeAtomic($, kept.path, JSON.stringify(entry.urgent ? { ...plain, urgent: true } : plain) + '\n')
-      }
+      await takeUrgent($, kept, entry)
       await writeWait($, sessionId, { ...patch, relayed: key, name, pid })
       return
     }
     await writeAtomic($, roundPath(await stateDir($), entry.id), JSON.stringify(entry) + '\n')
     await writeWait($, sessionId, { ...patch, relayed: key, name, pid })
-    if (entry.kind !== 'operator' || swept) return
-    // A new question is what the session waits on now: its older open entries are not. A turn
-    // the operator typed in withdrew them already, above. A wait that asks nothing never
-    // withdraws its session's open question with choices, which only copies its urgent mark.
-    const silent = asksNothing(entry)
-    if (silent && entry.urgent) await markUrgent($, sessionId)
-    // An entry moved here from a predecessor is the operator's question still, whatever this
-    // session asks next: only its answer, a round-close, the tab's typed answer or this session's
-    // own end settles it.
-    const standing = (open: RoundEntry) => open.movedFrom !== undefined || (silent && carriesChoices(open))
-    await tellSettled($, await withdrawStale($, sessionId, entry.id, `superseded by ${entry.id}`, standing))
+    // A turn the operator typed in withdrew the session's older open entries already, above.
+    if (!swept) await supersede($, entry)
     return
   }
   const to = role === 'orchestrator'
@@ -1920,6 +1915,19 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
     : tty ? await orchestratorOn($, tty) : null
   if (!to) {
     if (role === 'agent') await logLine($, `relay: no orchestrator found for ${name} on ${tty ?? 'an unknown tty'}`)
+    return
+  }
+  // A coordinator on another machine is sent the entry itself, to enter in its round: the wait
+  // holds it as pending until the acknowledgment, which keeps the fingerprint (receiveAck). The
+  // pending mark is written before the send, so an acknowledgment arriving as it returns finds it.
+  if (role === 'orchestrator' && wait && patch) {
+    const entry = roundEntry(sessionId, name, wait, patch.waiting_since!, new Date().toISOString())
+    await writeWait($, sessionId, { ...patch, relayed, pending: entry.id, pending_key: key, name, pid })
+    const sent = await sendToCoordinator($, to, askLine(entry, await machineOf($)))
+    if (sent?.isDelivered) return
+    await logLine($, `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
+    const now = await readWait($, sessionId)
+    if (now && now.pending === entry.id) await writeWait($, sessionId, { ...now, pending: null, pending_key: null })
     return
   }
   const context = row && row.context_tokens > 0 ? `${row.context_tokens.toLocaleString('en-US')} (${row.context_percent}%)` : null
@@ -1999,6 +2007,14 @@ async function keptChoices($: any, entry: RoundEntry): Promise<{ path: string; e
   return (await readRound($)).find(({ entry: open }) =>
     open.session === entry.session && open.kind === 'operator' && open.status === 'open'
     && open.blocks === entry.blocks && open.since === entry.since && open.choices.length > 0) ?? null
+}
+
+// The stored entry of a wait asked again takes the urgent mark of the new one, or its absence, and
+// nothing else of it: written only when the mark changes.
+async function takeUrgent($: any, kept: { path: string; entry: RoundEntry }, entry: RoundEntry): Promise<void> {
+  if (Boolean(kept.entry.urgent) === Boolean(entry.urgent)) return
+  const { urgent: _, ...plain } = kept.entry
+  await writeAtomic($, kept.path, JSON.stringify(entry.urgent ? { ...plain, urgent: true } : plain) + '\n')
 }
 
 // The urgent mark of a wait that asks nothing, copied onto its session's open questions with
@@ -2379,6 +2395,102 @@ export async function sendRow($: any, sessionId: string): Promise<void> {
   if (!sent?.isDelivered && to.to !== to.name) sent = await sendToCoordinator($, to.name, rowText(row))
   if (sent?.isDelivered) await writeAtomic($, path, JSON.stringify(rowSent(row, now)) + '\n')
   else await logLine($, `row: not delivered to ${to.name}: ${sent?.reason ?? 'no answer'}`)
+}
+
+// A new question is what its session waits on now: its older open entries are not, a closing
+// proposal withdrawing none. A wait that asks nothing never withdraws its session's open
+// question with choices, which only copies its urgent mark. An entry moved here from a
+// predecessor is the operator's question still, whatever this session asks next: only its
+// answer, a round-close, the tab's typed answer or this session's own end settles it.
+async function supersede($: any, entry: RoundEntry): Promise<void> {
+  if (entry.kind !== 'operator') return
+  const silent = asksNothing(entry)
+  if (silent && entry.urgent) await markUrgent($, entry.session)
+  const standing = (open: RoundEntry) => open.movedFrom !== undefined || (silent && carriesChoices(open))
+  await tellSettled($, await withdrawStale($, entry.session, entry.id, `superseded by ${entry.id}`, standing))
+}
+
+// A remote orchestrator's ask (remote-round.ts), consumed whatever it holds. In the
+// coordinator's session alone, one that passes every check is entered in the round with where it
+// came from, its session's older entries superseded as a local one's are, and acknowledged to its
+// sender. The same entry sent again, its wait's start unchanged, is not entered twice: it is
+// acknowledged again, its first acknowledgment having been lost, and an open one takes the urgent
+// mark it now carries or not, as a local wait asked again does. That rule keeps the choices of the
+// wait's text too: a note without choices under the same wait has the same id and the same start
+// (roundEntryId reads no question under a wait that blocks something), so it never replaces the
+// entry, as keptChoices keeps a local one's. Anything else is one log line.
+async function receiveAsk($: any, delivery: Delivery): Promise<{ consumed: string }> {
+  const asked = parseAsk(delivery.body)
+  const from = delivery.from && delivery.from.length <= 200 && /^(?:uds|bridge):\S+$/.test(delivery.from) ? delivery.from : null
+  if (!asked || !from) {
+    await logLine($, `receive: a remote question was refused (${delivery.body.length} characters${from ? '' : ', no sender address'})`)
+    return { consumed: 'orchestrator: a malformed remote question, refused' }
+  }
+  // The line is the module's own: whatever throws below, it is consumed, never passed to a model.
+  let step = 'the role read'
+  try {
+    if (await ownRole($) !== 'coordinator') {
+      await logLine($, `receive: a remote question reached a session that is no coordinator: ${asked.entry.id}`)
+      return { consumed: 'orchestrator: a remote question for no coordinator, dropped' }
+    }
+    step = 'the entry read'
+    const path = roundPath(await stateDir($), asked.entry.id)
+    const known = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
+    if (known?.since === asked.entry.since) {
+      if (known.status === 'open') {
+        step = 'the urgent mark'
+        await takeUrgent($, { path, entry: known }, asked.entry)
+      }
+    } else {
+      const entry: RoundEntry = { ...asked.entry, origin: { machine: asked.machine, address: from } }
+      step = 'the entry write'
+      await writeAtomic($, path, JSON.stringify(entry) + '\n')
+      await logLine($, `round: entered from ${asked.machine}: ${entry.id}`)
+      step = 'the supersede'
+      await supersede($, entry)
+      step = 'the deck refresh'
+      await refreshDeck($)
+    }
+    step = 'the acknowledgment'
+    const sent = await $.session.send({ to: from, text: ackLine(asked.entry.id, asked.entry.since) })
+    if (!sent?.isDelivered) await logLine($, `receive: the acknowledgment of ${asked.entry.id} was not delivered to ${from}: ${sent?.reason ?? 'no answer'}`)
+  } catch (err) {
+    await logLine($, `receive: a remote question failed at ${step} (${asked.entry.id}): ${(err as Error).message}`)
+  }
+  return { consumed: 'orchestrator: a remote question, entered' }
+}
+
+// A coordinator's acknowledgment, consumed whatever it holds: the one of the entry this session's
+// wait holds as pending, and of the very ask it holds (the same start), keeps its fingerprint, as
+// a delivery's, and clears it. An older ask's, late, matches nothing: the newer one stays pending
+// and is sent again. The wait is read again just before, a turn's end may have written it. Any
+// other is one log line.
+async function receiveAck($: any, body: string): Promise<{ consumed: string }> {
+  const ack = parseAck(body)
+  let step = 'the wait read'
+  try {
+    const sessionId = await $.session.id()
+    const now = ack === null ? null : await readWait($, sessionId)
+    if (ack === null || !now || now.pending !== ack.id || now.waiting_since !== ack.since || typeof now.pending_key !== 'string') {
+      await logLine($, `receive: an acknowledgment ${ack === null ? 'was refused' : `of ${ack.id} matches no pending question`}`)
+      return { consumed: 'orchestrator: an acknowledgment, dropped' }
+    }
+    step = 'the wait write'
+    await writeWait($, sessionId, { ...now, relayed: now.pending_key, pending: null, pending_key: null })
+  } catch (err) {
+    await logLine($, `receive: an acknowledgment failed at ${step}${ack ? ` (${ack.id})` : ''}: ${(err as Error).message}`)
+    return { consumed: 'orchestrator: an acknowledgment, failed' }
+  }
+  return { consumed: 'orchestrator: an acknowledgment, recorded' }
+}
+
+// This session's role, by the name its row carries, else by a walk of its own.
+async function ownRole($: any): Promise<SessionRow['role']> {
+  const sessionId = await $.session.id()
+  const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
+  if (row?.name) return roleOf(row.name)
+  const walked = await walkWithinBound($, sessionId)
+  return walked.known ? roleOf(walked.name) : null
 }
 
 // A marked delivery: consumed whatever it holds — the marker is the module's own, never a
