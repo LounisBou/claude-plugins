@@ -195,7 +195,7 @@ cannot is permission laundering.
 
 ## Where the rest lives
 
-- The hooks module (`docs/design.md` §3) owns the measured facts — each session's fill every turn, the band, the gate's line, `/orchestrator-status`'s rows — and the measure file (`claude-orchestrator/measure/` in the host's config dir), the one channel an outside process reads.
+- The hooks module (`docs/design.md` §3) owns the measured facts — each session's fill every turn, the gate's line, `/orchestrator-status`'s rows — and the measure file (`claude-orchestrator/measure/` in the host's config dir), the one channel an outside process reads.
 - `references/briefs.md`: « Prerequisites and phase rules »; the directives rule (see « Carried at every step »), with its guard over your own directives.
 - `references/lifecycle.md`: « Boundaries that stay yours » (environment preparation, pipelining) and the tab-close rationalization.
 - `references/review.md`: « Depth vs scope, and the rationalizations observed ».

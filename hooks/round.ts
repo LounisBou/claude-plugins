@@ -367,14 +367,6 @@ export function waitSummary(entry: Pick<RoundEntry, 'blocks' | 'question'>): str
   return plainText(entry.question.split('\n').find(line => line.trim() !== '') ?? '').trim()
 }
 
-// The open operator entry a session keeps in sight in its own tab: its own, whatever it asks,
-// the pane's first question first (choices, then labelled fields) and a wait that asks nothing
-// after them. Null when it has none open.
-export function tabQuestion(entries: readonly RoundEntry[], session: string): RoundEntry | null {
-  const own = entries.filter(entry => entry.session === session)
-  return paneQuestions(own)[0] ?? waitsInTab(own)[0] ?? null
-}
-
 // An open question is due in the coordinator's tab when its sender marked it urgent, or when no
 // pane of the coordinator is open to show it, the operator's ruling of 2026-10-24: whether he
 // keeps the pane open decides where a question goes, and an open pane shows it for as long as

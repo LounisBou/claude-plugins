@@ -136,7 +136,7 @@ cat ~/.claude/claude-orchestrator/measure/$CLAUDE_CODE_SESSION_ID.json
 Past the gate —
 the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000, 533,000 or 400,000; 160,000 on 200,000 —
 the context gate puts the role's line in front of every prompt of an
-orchestration session, and a band above the prompt shows the fill;
+orchestration session;
 `/orchestrator-status` answers the same figures for every session on the
 machine, and for the orchestrators on other machines whose rows reached it. Measured beats estimated: in observed runs, agents' self-estimates
 ran 13 points above the gauge.

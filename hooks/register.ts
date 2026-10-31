@@ -9,7 +9,7 @@
 // handler passes a marked move message on and leaves the moving to consume it.
 import { register as registerGauge } from './gauge.ts'
 import { register as registerGuards } from './guards.ts'
-import { register as registerSupervision, registerWake, registerPaneTool, registerTabBand } from './supervision.ts'
+import { register as registerSupervision, registerWake, registerPaneTool } from './supervision.ts'
 import { register as registerCommands } from './commands.ts'
 import { register as registerNaming } from './naming.ts'
 import { register as registerMoving } from './moving.ts'
@@ -30,7 +30,6 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   registerSupervision(on)
   registerWake(on)
   registerPaneTool(on)
-  registerTabBand(on)
   registerCommands(on)
   registerNaming(on)
   registerMoving(on)

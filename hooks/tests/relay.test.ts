@@ -6,7 +6,7 @@
 // write or a send that fails never holding the turn's end.
 import { expect, test } from 'claude-code/testing'
 import { parseWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel, waitParts, heldQuestion, withdrawalText, RELAY_CAP } from '../relay.ts'
-import { paneQuestions, waitsInTab, tabQuestion, roundEntry, type RoundEntry } from '../round.ts'
+import { paneQuestions, waitsInTab, roundEntry, type RoundEntry } from '../round.ts'
 import { answerFromPane, settledText, parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
 import { logLineOf } from './fakes.ts'
@@ -1196,7 +1196,7 @@ for (const [label, end] of [
     await end(chains, fx)
     expectMoved(fx, asked, other, settled)
     expect(waitsInTab(entries(fx)).find(e => e.id === asked.id)?.from).toBe('Orch : belt-2')
-    expect(tabQuestion(entries(fx), 's-two')?.id).toBe(asked.id)
+    expect(entries(fx).find(e => e.id === asked.id)?.session).toBe('s-two')
   })
 }
 
