@@ -2292,13 +2292,14 @@ test('a typed answer to one question of several is kept with its number, and its
 })
 
 test('an entry whose sender withdrew it between two answers forgets the first, and its count goes with it', async () => {
-  const { fx, render } = await askingPane([twoQuestions()])
+  const { fx, render, stored } = await askingPane([twoQuestions()])
   await pick(await render(), 'A')
   fx.files.set(`${ROUND}/${twoQuestions().id}.json`, JSON.stringify({ ...twoQuestions(), status: 'withdrawn' }) + '\n')
   expect(texts(await render())[0]).toBe('Questions for you')
   // Asked again, it starts at its first question.
   fx.files.set(`${ROUND}/${twoQuestions().id}.json`, JSON.stringify(twoQuestions()) + '\n')
   expect(texts(cardOf(await render()))[0]).toBe('Orch : low · Question 3 / 4')
+  expect(stored(twoQuestions().id).partial).toBeUndefined()
 })
 
 test('without a picker (mobile) the same card draws one Button per choice, and answers question by question', async () => {
@@ -2413,4 +2414,82 @@ test('a dim rule line, the pane\'s width wide, stands between the questions and 
     expect(rule.props.children[0].props).toMatchObject({ dimColor: true, wrap: 'truncate-end', children: '─'.repeat(width) })
     expect(texts(heading)).toEqual(['Orchestrators'])
   }
+})
+
+// --- a remote orchestrator's question, drawn and answered from the pane -----------------------
+
+const REMOTE_DIR = `${HOME}/.claude/claude-orchestrator/store/remote`
+const FAR = 'uds:/tmp/cc-socks/far.sock'
+const remoteEntry = (over: Partial<RoundEntry> = {}) => entry('Orch : belt', '2026-10-30T10:03:00.000Z', {
+  session: 's-far', choices: CHOICES, recommendation: 'A', origin: { machine: 'far', address: FAR }, ...over,
+})
+// The remote row of `name` measured on `machine`, as the coordinator's module stores it.
+function remoteRow(fx: Fx, name: string, machine: string, updatedAt = new Date().toISOString()) {
+  fx.files.set(`${REMOTE_DIR}/${name.replace(/[^A-Za-z0-9._-]/g, '_')}`, JSON.stringify({
+    name, role: 'orchestrator', context_tokens: 1, context_percent: 30, window: 100, waiting: 'operator', blocks: 'phase 3',
+    waiting_since: '2026-10-30T10:03:00.000Z', updated_at: updatedAt, machine, repo: null, prs: [],
+  }) + '\n')
+}
+
+test('a remote entry is drawn with its machine and answered; an unacked answer is said on its card after a reload', async () => {
+  const asked = remoteEntry()
+  const { fx, sent, render, stored } = await askingPane([asked])
+  remoteRow(fx, 'Orch : belt', 'far')
+  const tree = await render()
+  expect(texts(tree)[0]).toBe('Questions for you — 1 pending')
+  expect(texts(cardOf(tree))[0]).toBe('Orch : belt · remote far')
+  await pick(tree, 'A')
+  const answered = stored(asked.id)
+  expect(answered.status).toBe('answered')
+  expect(answered.delivery).toEqual({ state: 'sent', at: answered.delivery!.at, attempts: 1 })
+  expect(sent.map(s => s.to)).toEqual([FAR])
+  expect(sent[0].text.startsWith('[module-answer] ')).toBe(true)
+  // The module reloaded, its memory gone: the delivery is read from the entry's file.
+  // The pane still shown at the host: the command closes it, and opens it again.
+  const reloaded = mounted(registerSupervision).handlers
+  await reloaded['command.run'](fx.dollar, supervisionRun)
+  await reloaded['command.run'](fx.dollar, supervisionRun)
+  const drawn = () => reloaded['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
+  const after = texts(await drawn())
+  expect(after[0]).toBe('Questions for you')
+  expect(after).toContain('being delivered: the answer to Orch : belt on far (blocks: phase 3) — sent 1 of 3, not acknowledged yet')
+  fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify({ ...answered, delivery: { state: 'pending', at: answered.delivery!.at, attempts: 0 } }) + '\n')
+  expect(texts(await drawn())).toContain('being delivered: the answer to Orch : belt on far (blocks: phase 3) — not sent yet')
+  fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify({ ...answered, delivery: { state: 'failed', at: answered.delivery!.at, attempts: 3, reason: 'no acknowledgment after 3 sends' } }) + '\n')
+  expect(texts(await drawn())).toContain('not delivered: no acknowledgment after 3 sends — the answer to Orch : belt on far (blocks: phase 3)')
+  fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify({ ...answered, status: 'closed', delivery: { state: 'acked', at: answered.delivery!.at, attempts: 1 } }) + '\n')
+  expect(texts(await drawn()).some(t => t.startsWith('being delivered') || t.startsWith('not delivered'))).toBe(false)
+})
+
+test('a remote entry whose sender\'s remote row is gone is not drawn', async () => {
+  const asked = remoteEntry()
+  const { fx, render } = await askingPane([asked])
+  const none = async () => {
+    const drawn = await render()
+    expect(texts(drawn)[0]).toBe('Questions for you')
+    expect(cardOf(drawn)).toBeUndefined()
+  }
+  await none()
+  // A row of that name measured on another machine, or past the stale bound, is not its sender's.
+  remoteRow(fx, 'Orch : belt', 'near')
+  await none()
+  remoteRow(fx, 'Orch : belt', 'far', new Date(Date.now() - 25 * 3600_000).toISOString())
+  await none()
+  remoteRow(fx, 'Orch : belt', 'far')
+  expect(texts(cardOf(await render()))[0]).toBe('Orch : belt · remote far')
+})
+
+test('the answers given to a multi-question entry survive a reload', async () => {
+  const { fx, render, stored } = await askingPane([twoQuestions()])
+  await pick(await render(), 'A')
+  expect(stored(twoQuestions().id).partial).toEqual([`Question 3 sur 4: A : ${FIRST_A}`])
+  // The pane still shown at the host: the command closes it, and opens it again.
+  const reloaded = mounted(registerSupervision).handlers
+  await reloaded['command.run'](fx.dollar, supervisionRun)
+  await reloaded['command.run'](fx.dollar, supervisionRun)
+  const tree = await reloaded['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
+  expect(texts(tree)[0]).toBe('Questions for you — 1 pending')
+  expect(texts(cardOf(tree))[0]).toBe('Orch : low · Question 4 / 4')
+  await pick(tree, 'B')
+  expect(stored(twoQuestions().id).answer!.text).toBe(`Question 3 sur 4: A : ${FIRST_A} · Question 4 sur 4: B : ${SECOND_B}`)
 })

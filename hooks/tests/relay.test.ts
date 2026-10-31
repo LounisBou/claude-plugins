@@ -7,10 +7,10 @@
 import { expect, test } from 'claude-code/testing'
 import { parseWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel, waitParts, heldQuestion, withdrawalText, RELAY_CAP } from '../relay.ts'
 import { paneQuestions, waitsInTab, roundEntry, type RoundEntry } from '../round.ts'
-import { answerFromPane, settledText, parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
+import { answerFromPane, paneAnswerText, settledText, parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
 import { logLineOf } from './fakes.ts'
-import { ASK_MARKER, ACK_MARKER, askLine, ackLine, parseAsk } from '../remote-round.ts'
+import { ASK_MARKER, ACK_MARKER, ANSWER_MARKER, ANSWER_ACK_MARKER, askLine, ackLine, parseAsk, parseAnswer, answerAckLine } from '../remote-round.ts'
 
 const HOME = '/tmp/h'
 const ROW = `${HOME}/.claude/claude-orchestrator/store/sessions/s-one`
@@ -138,6 +138,8 @@ function fake(over: { name?: string; role?: SessionRow['role']; coordinator?: st
   const files = new Map<string, string>()
   const sent: { to: unknown; text: string }[] = []
   const logged: string[] = []
+  const later: { ms: number; fn: () => unknown; cancelled: boolean }[] = []
+  const invalidated: string[] = []
   files.set(ROW, JSON.stringify({
     role: over.role === undefined ? 'orchestrator' : over.role, name: over.name ?? 'Orch : belt', pid: '501', repo: null,
     context_percent: 20, context_tokens: 1, window: 100, model: 'a-model', busy: false, updated_at: '2026-10-14T09:00:00.000Z',
@@ -187,8 +189,18 @@ function fake(over: { name?: string; role?: SessionRow['role']; coordinator?: st
     },
     command: { run: async () => undefined },
     prompt: { submit: async () => undefined },
+    // The coordinator's round wake is armed on the clock, and a round write redraws the pane.
+    clock: {
+      after: (ms: number, fn: () => unknown) => {
+        const timer = { ms, fn, cancelled: false }
+        later.push(timer)
+        return { cancel: () => { timer.cancelled = true } }
+      },
+      every: () => ({ cancel: () => undefined }),
+    },
+    ui: { invalidate: (what: string) => { invalidated.push(what) } },
   }
-  return { dollar, files, sent, logged, row: () => withWait(parseSessionRow(files.get(ROW) ?? '')!, files.get(WAIT) ?? '') }
+  return { dollar, files, sent, logged, later, invalidated, row: () => withWait(parseSessionRow(files.get(ROW) ?? '')!, files.get(WAIT) ?? '') }
 }
 
 // The round's entries as the files hold them, in the order their files were first written; a
@@ -1774,4 +1786,255 @@ test('a remote note without choices, under the same wait, keeps the entry\'s que
   expect(entries(coordinator)).toEqual([asked])
   expect([asked.question, asked.choices.length, asked.recommendation]).toEqual([choices, 2, 'A'])
   expect(acks(coordinator).length).toBe(2)
+})
+
+// --- the pane's answer to a remote entry, carried back to its sender and acknowledged ----------
+
+const answers = (fx: ReturnType<typeof fake>) => fx.sent.filter(s => s.text.startsWith(ANSWER_MARKER))
+const answerAcks = (fx: ReturnType<typeof fake>) => fx.sent.filter(s => s.text.startsWith(ANSWER_ACK_MARKER))
+const emptyPane = () => ({ opened: null, ticker: null, other: new Set<string>(), writing: null, undelivered: new Map(), answering: new Set<string>() })
+
+// Two turn ends of one test may fall in one millisecond: a new start is told apart from the old
+// one only once the clock has moved.
+const clockMoves = () => new Promise(resolve => setTimeout(resolve, 5))
+
+// A remote wait entered on the coordinator's machine and acknowledged on the sender's: the entry
+// as the coordinator's round holds it.
+async function enteredRemotely(over: Parameters<typeof fake>[0] = {}) {
+  const chains = mounted()
+  const sender = fake({ remote: true })
+  const coordinator = coordinatorMachine(over)
+  const ask = turnEnd(answerOf(`${QUESTION}\n- **A** : merge it\n- **B** : wait`, QUESTION_LINE))
+  await drive(chains, 'turn.complete', sender.dollar, ask)
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', asks(sender).at(-1)!.text))
+  if (acks(coordinator).length > 0) await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', acks(coordinator).at(-1)!.text))
+  const [entry] = entries(coordinator)
+  const stored = () => JSON.parse(coordinator.files.get(`${ROUND}/${entry.id}.json`)!) as RoundEntry
+  return { chains, sender, coordinator, ask, entry, stored }
+}
+
+test('a pane answer to a remote entry reaches the sender\'s module, forgets its relayed, passes the readable line, and is acked; the entry is closed', async () => {
+  const { chains, sender, coordinator, ask, entry, stored } = await enteredRemotely()
+  expect(coordinator.invalidated).toContain('ui.render')
+  expect([waitOf(sender).relayed, waitOf(sender).relayed_id]).toEqual([fingerprint(parseWait(ask.answer)!), entry.id])
+  await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[0])
+  const answered = stored()
+  expect(answered.status).toBe('answered')
+  expect(answered.delivery).toEqual({ state: 'sent', at: answered.delivery!.at, attempts: 1 })
+  // Sent to the address its ask came from, never by name, and no local wait file forgotten.
+  const [line] = answers(coordinator)
+  expect(answers(coordinator).length).toBe(1)
+  expect(line.to).toBe(SENDER_AT)
+  const readable = paneAnswerText(entry, 'A : merge it', answered.answer!.at)
+  expect(parseAnswer(line.text)).toEqual({ id: entry.id, since: entry.since, text: 'A : merge it', at: answered.answer!.at, readable })
+  expect(coordinator.files.has(`${HOME}/.claude/claude-orchestrator/store/waits/s-one`)).toBe(false)
+  // The sender's module takes the marked line out and passes the readable answer alone.
+  const passed = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', line.text))
+  expect(passed.consumed).toBeUndefined()
+  expect(passed.text).toBe(delivered(COORD_AT, 'Coord : ops [abc]', readable).text)
+  expect([waitOf(sender).relayed, waitOf(sender).relayed_id]).toEqual([null, null])
+  expect(answerAcks(sender)).toEqual([{ to: COORD_AT, text: answerAckLine(entry.id, entry.since) }])
+  // The coordinator's module takes the acknowledgment out and closes the entry.
+  coordinator.invalidated.length = 0
+  const consumed = await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', answerAcks(sender)[0].text))
+  expect(typeof consumed.consumed).toBe('string')
+  const closed = stored()
+  expect([closed.status, closed.delivery!.state, closed.delivery!.attempts]).toEqual(['closed', 'acked', 1])
+  expect(closed.answer).toEqual(answered.answer)
+  expect(coordinator.invalidated).toContain('ui.render')
+  // A second acknowledgment of the same answer settles nothing more: one log line.
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', answerAcks(sender)[0].text))
+  expect(stored()).toEqual(closed)
+  expect(coordinator.logged.filter(l => l.includes(`| receive: an answer's acknowledgment of ${entry.id} matches no answer sent`)).length).toBe(1)
+})
+
+test('an answer whose since is not the acknowledged wait\'s is passed and acked, its relayed kept; a refused one is consumed, passed nowhere, acked never', async () => {
+  const { chains, sender, coordinator, ask, entry } = await enteredRemotely()
+  await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[1])
+  const line = answers(coordinator)[0].text
+  const older = line.replace(JSON.stringify(entry.since), JSON.stringify('2026-10-01T00:00:00.000Z'))
+  const passed = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', older))
+  expect(passed.text.includes(ANSWER_MARKER)).toBe(false)
+  expect(waitOf(sender).relayed).toBe(fingerprint(parseWait(ask.answer)!))
+  expect(answerAcks(sender)).toEqual([{ to: COORD_AT, text: answerAckLine(entry.id, '2026-10-01T00:00:00.000Z') }])
+  const refused = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', `${ANSWER_MARKER}{"id":1}\nreadable`))
+  expect(typeof refused.consumed).toBe('string')
+  expect(refused.text).toBeUndefined()
+  expect(answerAcks(sender).length).toBe(1)
+  expect(sender.logged.filter(l => l.includes('| receive: an answer was refused')).length).toBe(1)
+})
+
+test('an answer whose handling throws is consumed with one log line, its readable line still passed', async () => {
+  const { chains, sender, coordinator, entry } = await enteredRemotely()
+  await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[0])
+  const run = sender.dollar.process.run
+  sender.dollar.process.run = async (argv: readonly string[]) => argv[0] === 'mv' && argv[3] === WAIT ? { exitCode: 1, stdout: '', stderr: 'refused' } : run(argv)
+  const passed = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', answers(coordinator)[0].text))
+  expect(passed.text).toBe(delivered(COORD_AT, 'Coord : ops [abc]', parseAnswer(answers(coordinator)[0].text)!.readable).text)
+  expect(sender.logged.filter(l => l.includes(`| receive: an answer failed at the wait write (${entry.id}):`)).length).toBe(1)
+})
+
+test('no answer ack → resent on the tick, failed after 3', async () => {
+  const { chains, coordinator, entry, stored } = await enteredRemotely()
+  await drive(chains, 'session.start', coordinator.dollar, { cwd: '/tmp/w', surface: 'terminal', isInteractive: true })
+  const tick = async () => {
+    const armed = coordinator.later.filter(t => t.ms === 30000 && !t.cancelled)
+    await armed[armed.length - 1].fn()
+  }
+  const aged = () => {
+    const now = stored()
+    coordinator.files.set(`${ROUND}/${entry.id}.json`, JSON.stringify({ ...now, delivery: { ...now.delivery, at: new Date(Date.now() - 31_000).toISOString() } }) + '\n')
+  }
+  await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[0])
+  expect(stored().delivery!.attempts).toBe(1)
+  // Within ANSWER_RESEND_MS of its last send, nothing is sent again.
+  await tick()
+  expect([answers(coordinator).length, stored().delivery!.attempts]).toEqual([1, 1])
+  aged()
+  await tick()
+  expect([answers(coordinator).length, stored().delivery!.state, stored().delivery!.attempts]).toEqual([2, 'sent', 2])
+  expect(answers(coordinator)[1]).toEqual(answers(coordinator)[0])
+  aged()
+  await tick()
+  expect([answers(coordinator).length, stored().delivery!.attempts]).toEqual([3, 3])
+  aged()
+  await tick()
+  expect(answers(coordinator).length).toBe(3)
+  expect(stored().delivery).toEqual({ state: 'failed', at: stored().delivery!.at, attempts: 3, reason: 'no acknowledgment after 3 sends' })
+  expect(stored().status).toBe('answered')
+  await tick()
+  expect(answers(coordinator).length).toBe(3)
+  // A late acknowledgment still settles a failed delivery.
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', answerAckLine(entry.id, entry.since)))
+  expect([stored().status, stored().delivery!.state]).toEqual(['closed', 'acked'])
+})
+
+test('an answer the host does not deliver is failed at once with its reason, and never sent again', async () => {
+  const { chains, coordinator, entry, stored } = await enteredRemotely({ send: 'refuse' })
+  await drive(chains, 'session.start', coordinator.dollar, { cwd: '/tmp/w', surface: 'terminal', isInteractive: true })
+  const pane = emptyPane()
+  await answerFromPane(coordinator.dollar, pane, entry, entry.choices[0])
+  expect(stored().delivery).toEqual({ state: 'failed', at: stored().delivery!.at, attempts: 1, reason: 'nobody by that name' })
+  expect(pane.undelivered.size).toBe(0)
+  const armed = coordinator.later.filter(t => t.ms === 30000)
+  await armed[armed.length - 1].fn()
+  expect(stored().delivery!.state).toBe('failed')
+})
+
+test('an answered remote entry, the same wait again at the next turn end, is entered again', async () => {
+  const { chains, sender, coordinator, ask, entry, stored } = await enteredRemotely()
+  await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[0])
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', answers(coordinator)[0].text))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', answerAcks(sender)[0].text))
+  expect(stored().status).toBe('closed')
+  await clockMoves()
+  await drive(chains, 'turn.start', sender.dollar, { text: '' })
+  await drive(chains, 'turn.complete', sender.dollar, ask)
+  expect(asks(sender).length).toBe(2)
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', asks(sender)[1].text))
+  const again = stored()
+  expect([again.status, again.answer, again.delivery]).toEqual(['open', null, undefined])
+  expect(again.origin).toEqual({ machine: 'unknown', address: SENDER_AT })
+  expect(acks(coordinator).length).toBe(2)
+})
+
+test('an answered remote entry whose answer is still travelling is not entered again by its ask sent again', async () => {
+  const { chains, sender, coordinator, entry, stored } = await enteredRemotely()
+  await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[0])
+  const travelling = stored()
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', asks(sender)[0].text))
+  expect(stored()).toEqual(travelling)
+  expect(acks(coordinator).length).toBe(2)
+})
+
+test('an ask sent again, of the same start, never reopens its entry settled meanwhile, and is acked again', async () => {
+  const { chains, sender, coordinator, entry, stored } = await enteredRemotely()
+  const path = `${ROUND}/${entry.id}.json`
+  const again = () => drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', asks(sender)[0].text))
+  // Closed by a round-close while the ask's first acknowledgment was lost.
+  const closed = { ...stored(), status: 'closed', answer: { text: 'A', by: 'coordinator', at: entry.at } }
+  coordinator.files.set(path, JSON.stringify(closed) + '\n')
+  await again()
+  expect(stored()).toEqual(closed)
+  // Answered from the pane, its delivery failed after its sends.
+  const failed = { ...closed, status: 'answered', answer: { text: 'A : merge it', by: 'pane', at: entry.at }, delivery: { state: 'failed', at: entry.at, attempts: 3, reason: 'no acknowledgment after 3 sends' } }
+  coordinator.files.set(path, JSON.stringify(failed) + '\n')
+  await again()
+  expect(stored()).toEqual(failed)
+  expect(acks(coordinator).length).toBe(3)
+})
+
+test('an accepted answer forgets the wait\'s start: the same wait asked again is a new ask, of a new start', async () => {
+  const { chains, sender, coordinator, ask, entry } = await enteredRemotely()
+  await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[0])
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', answers(coordinator)[0].text))
+  expect([waitOf(sender).waiting_since ?? null, waitOf(sender).relayed, waitOf(sender).relayed_id]).toEqual([null, null, null])
+  await clockMoves()
+  await drive(chains, 'turn.start', sender.dollar, { text: '' })
+  await drive(chains, 'turn.complete', sender.dollar, ask)
+  const asked = parseAsk(asks(sender)[1].text)!
+  expect(asked.entry.id).toBe(entry.id)
+  expect(asked.entry.since).not.toBe(entry.since)
+  expect(waitOf(sender).waiting_since).toBe(asked.entry.since)
+})
+
+test('an answer arriving before its ask\'s ack is taken: passed once, acked, and its ask never sent again', async () => {
+  const chains = mounted()
+  const sender = fake({ remote: true })
+  const coordinator = coordinatorMachine()
+  const ask = turnEnd(answerOf(`${QUESTION}\n- **A** : merge it\n- **B** : wait`, QUESTION_LINE))
+  await drive(chains, 'turn.complete', sender.dollar, ask)
+  // The ask is entered, its acknowledgment lost on the way back.
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', asks(sender)[0].text))
+  const [entry] = entries(coordinator)
+  expect(waitOf(sender).pending).toBe(entry.id)
+  await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[0])
+  const readable = parseAnswer(answers(coordinator)[0].text)!.readable
+  const passed = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', answers(coordinator)[0].text))
+  expect(passed.text).toBe(delivered(COORD_AT, 'Coord : ops [abc]', readable).text)
+  expect([waitOf(sender).pending, waitOf(sender).pending_key, waitOf(sender).waiting_since ?? null]).toEqual([null, null, null])
+  expect(answerAcks(sender)).toEqual([{ to: COORD_AT, text: answerAckLine(entry.id, entry.since) }])
+  await clockMoves()
+  await drive(chains, 'turn.start', sender.dollar, { text: '' })
+  await drive(chains, 'turn.complete', sender.dollar, ask)
+  // The answered ask is never sent again: the same wait at the next turn end is a new one.
+  expect(asks(sender).filter(s => parseAsk(s.text)!.entry.since === entry.since).length).toBe(1)
+})
+
+test('an answer sent again, its ack lost, is acked again and reaches the model once', async () => {
+  const { chains, sender, coordinator, entry } = await enteredRemotely()
+  await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[0])
+  const line = answers(coordinator)[0].text
+  const first = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', line))
+  expect(first.text).toBe(delivered(COORD_AT, 'Coord : ops [abc]', parseAnswer(line)!.readable).text)
+  const second = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', line))
+  expect(typeof second.consumed).toBe('string')
+  expect(second.text).toBeUndefined()
+  expect(answerAcks(sender)).toEqual([0, 1].map(() => ({ to: COORD_AT, text: answerAckLine(entry.id, entry.since) })))
+})
+
+test('a delivery left pending is sent on the wake once aged, and an ack landing on pending closes the entry', async () => {
+  const { chains, coordinator, entry, stored } = await enteredRemotely()
+  await drive(chains, 'session.start', coordinator.dollar, { cwd: '/tmp/w', surface: 'terminal', isInteractive: true })
+  await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[0])
+  const path = `${ROUND}/${entry.id}.json`
+  const pending = (at: string) => coordinator.files.set(path, JSON.stringify({ ...stored(), delivery: { state: 'pending', at, attempts: 0 } }) + '\n')
+  // A module that stopped between the pending write and the send: the wake sends it once aged.
+  pending(new Date(Date.now() - 31_000).toISOString())
+  const armed = coordinator.later.filter(t => t.ms === 30000 && !t.cancelled)
+  await armed[armed.length - 1].fn()
+  expect([answers(coordinator).length, stored().delivery!.state, stored().delivery!.attempts]).toEqual([2, 'sent', 1])
+  pending(new Date().toISOString())
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', answerAckLine(entry.id, entry.since)))
+  expect([stored().status, stored().delivery!.state]).toEqual(['closed', 'acked'])
+})
+
+test('an answer ack of the right id and another start leaves the entry sent, with one log line', async () => {
+  const { chains, coordinator, entry, stored } = await enteredRemotely()
+  await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[0])
+  const sent = stored()
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', answerAckLine(entry.id, '2026-10-01T00:00:00.000Z')))
+  expect(stored()).toEqual(sent)
+  expect(stored().delivery!.state).toBe('sent')
+  expect(coordinator.logged.filter(l => l.includes(`| receive: an answer's acknowledgment of ${entry.id} matches no answer sent`)).length).toBe(1)
 })

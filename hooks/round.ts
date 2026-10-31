@@ -32,7 +32,15 @@ export type RoundEntry = {
   urgent?: true                 // the sender marked its wait `(urgent)`: `coordinator.sh round` makes it due at once
   movedFrom?: string            // the session id of the predecessor this entry was moved from at a succession: the successor's own later question never supersedes it
   origin?: { machine: string; address: string } // a sender on another machine (remote-round.ts): its machine's label and the address its ask came from, written by this machine's module on receipt; absent for a sender on this machine
+  delivery?: RoundDelivery      // the answer's trip back to a sender on another machine, written by the coordinator's module alone, only on an entry with `origin`
+  partial?: string[]            // the answers the pane gave so far to an entry that asks several questions, each with its question's number
 }
+
+// An answer on its way to a remote sender: `pending` written with the answer, `sent` once the host
+// took the line, `acked` once the sender's module acknowledged it, `failed` when the host refused it
+// or no acknowledgment came after the last send (`reason`). `at` is the last transition's time,
+// `attempts` the sends so far.
+export type RoundDelivery = { state: 'pending' | 'sent' | 'acked' | 'failed'; at: string; attempts: number; reason?: string }
 
 // A choice as `/orchestrator-decide` step 2 writes it, one per line: `- **A** : <text>`. A line
 // of that shape lettered past E is read too, so a sixth choice spoils the list instead of

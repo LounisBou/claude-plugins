@@ -3,11 +3,15 @@
 // entry as one marked line, round-tripped whole; refused whole by the receiver past its caps, with
 // a field more or less, of a wrong type, sent with an origin, already answered, or under an id
 // that is no entry's; a long question cut at the cap and the cut said. The acknowledgment the
-// same way, by the id alone.
+// same way, by the id alone. The answer back to the sender: its first line one object, the
+// readable rest returned whole, refused whole the same way; its acknowledgment by id and since.
 import { expect, test } from 'claude-code/testing'
-import { ASK_MARKER, ACK_MARKER, ASK_LINE_CAP, askLine, parseAsk, ackLine, parseAck } from '../remote-round.ts'
+import {
+  ASK_MARKER, ACK_MARKER, ASK_LINE_CAP, askLine, parseAsk, ackLine, parseAck,
+  ANSWER_MARKER, ANSWER_ACK_MARKER, ANSWER_LINE_CAP, answerLine, parseAnswer, answerAckLine, parseAnswerAck,
+} from '../remote-round.ts'
 import { roundEntry, type RoundEntry } from '../round.ts'
-import { RELAY_CAP } from '../relay.ts'
+import { RELAY_CAP, cutQuestion } from '../relay.ts'
 
 const QUESTION = 'Merge #12 now?\n- **A** : merge it\n- **B** : wait\n_Recommendation_ : A'
 const SINCE = '2026-10-30T10:00:00.000Z'
@@ -103,4 +107,68 @@ test('control characters in what a wait blocks or who asks never make its ask re
   const read = parseAsk(askLine(entry, 'far'))
   expect(read?.entry.blocks).toBe('phase 3 next ')
   expect(read?.entry.from).toBe('Orch : be lt')
+})
+
+// --- the answer, carried back to the sender, and its acknowledgment ---------------------------
+
+const READABLE = "[module] The operator answered from the coordinator's pane at 2026-10-30T10:05:00.000Z — A : merge it (question since 2026-10-30T10:00:00.000Z, blocks: phase 3)"
+const ANSWERED = '2026-10-30T10:05:00.000Z'
+
+// The answer line's first line, its object changed by `edit`, the readable rest kept.
+function answerEdited(edit: (o: Record<string, unknown>) => void): string {
+  const [head, ...rest] = answerLine(asked().id, SINCE, 'A : merge it', ANSWERED, READABLE).split('\n')
+  const o = JSON.parse(head.slice(ANSWER_MARKER.length))
+  edit(o)
+  return [ANSWER_MARKER + JSON.stringify(o), ...rest].join('\n')
+}
+
+test('an answer round-trips: its id, since, text and time from the first line, the readable rest returned whole', () => {
+  const { id } = asked()
+  const line = answerLine(id, SINCE, 'A : merge it', ANSWERED, READABLE)
+  expect(line).toBe(`${ANSWER_MARKER}${JSON.stringify({ id, since: SINCE, text: 'A : merge it', at: ANSWERED })}\n${READABLE}`)
+  expect(parseAnswer(line)).toEqual({ id, since: SINCE, text: 'A : merge it', at: ANSWERED, readable: READABLE })
+  // A typed answer over several lines stays in the first line's object; the readable rest keeps its own lines.
+  const typed = 'neither:\nkeep 1.14'
+  const readable = `${READABLE}\nsecond line\n\nthird`
+  expect(parseAnswer(answerLine(id, SINCE, typed, ANSWERED, readable))).toEqual({ id, since: SINCE, text: typed, at: ANSWERED, readable })
+  const long = cutQuestion('y'.repeat(RELAY_CAP + 50))
+  expect(parseAnswer(answerLine(id, SINCE, long, ANSWERED, `${READABLE} ${long}`))!.text).toBe(long)
+})
+
+const answerRefusals: [string, string][] = [
+  ['no marker', answerLine(asked().id, SINCE, 'A', ANSWERED, READABLE).slice(ANSWER_MARKER.length)],
+  ['the ask marker', answerLine(asked().id, SINCE, 'A', ANSWERED, READABLE).replace(ANSWER_MARKER, ASK_MARKER)],
+  ['no readable rest', answerLine(asked().id, SINCE, 'A', ANSWERED, READABLE).split('\n')[0]],
+  ['a blank readable rest', answerLine(asked().id, SINCE, 'A', ANSWERED, '  ')],
+  ['a text past the cap', answerEdited(o => { o.text = 'x'.repeat(RELAY_CAP + 100) })],
+  ['a readable rest past the cap', answerLine(asked().id, SINCE, 'A', ANSWERED, 'x'.repeat(ANSWER_LINE_CAP))],
+  ['not json', `${ANSWER_MARKER}{"id":\n${READABLE}`],
+  ['an array', `${ANSWER_MARKER}[]\n${READABLE}`],
+  ['a field more', answerEdited(o => { o.by = 'pane' })],
+  ['a field missing', answerEdited(o => { delete o.at })],
+  ['a malformed id', answerEdited(o => { o.id = '../../etc/passwd' })],
+  ['a since that is no stamp', answerEdited(o => { o.since = 'yesterday' })],
+  ['a time that is no stamp', answerEdited(o => { o.at = 7 })],
+  ['an empty text', answerEdited(o => { o.text = '' })],
+  ['a text of a wrong type', answerEdited(o => { o.text = ['A'] })],
+]
+for (const [label, line] of answerRefusals) {
+  test(`an answer with ${label} is refused whole`, () => {
+    expect(parseAnswer(line)).toBeNull()
+  })
+}
+
+test('the answer\'s acknowledgment names it by its id and since, and is refused whole otherwise', () => {
+  const { id, since } = asked()
+  expect(answerAckLine(id, since)).toBe(`${ANSWER_ACK_MARKER}{"id":"${id}","since":"${since}"}`)
+  expect(parseAnswerAck(answerAckLine(id, since))).toEqual({ id, since })
+  expect(parseAnswerAck(` ${answerAckLine(id, since)}\n`)).toEqual({ id, since })
+  // An ask's acknowledgment is no answer's, nor the other way round.
+  expect(parseAnswerAck(ackLine(id, since))).toBeNull()
+  expect(parseAck(answerAckLine(id, since))).toBeNull()
+  for (const bad of [
+    `${ANSWER_ACK_MARKER}{"id":"${id}"}`, `${ANSWER_ACK_MARKER}{"id":"${id}","since":"yesterday"}`,
+    `${ANSWER_ACK_MARKER}{"id":"${id}","since":"${since}","more":1}`, `${ANSWER_ACK_MARKER}{"id":"../x","since":"${since}"}`,
+    `${ANSWER_ACK_MARKER}${'x'.repeat(400)}`, `${ANSWER_ACK_MARKER}[]`,
+  ]) expect([bad, parseAnswerAck(bad)]).toEqual([bad, null])
 })

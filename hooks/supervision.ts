@@ -30,16 +30,19 @@ import { typedByOperator } from './models-guard.ts'
 import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
-  parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, heldQuestion, withdrawalText, gateText, noStatusText, NO_STATUS_KEY, coordinatorOf, chainOwnerTty, waitLabel, waitParts,
+  parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, NO_STATUS_KEY, coordinatorOf, chainOwnerTty, waitLabel, waitParts,
   type WaitKind,
 } from './relay.ts'
-import { entryFingerprint, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, entryQuestions, plainText, textSpans, prPieces, repositoryOwners, numberLabel, questionBody, questionShape, isDue, dueText, asksNothing, carriesChoices, type RoundAnswer, type RoundChoice, type RoundEntry } from './round.ts'
+import { entryFingerprint, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, entryQuestions, plainText, textSpans, prPieces, repositoryOwners, numberLabel, questionBody, questionShape, isDue, dueText, asksNothing, carriesChoices, type RoundAnswer, type RoundChoice, type RoundEntry, type RoundDelivery } from './round.ts'
 import {
   remoteRowOf, rowIsNews, rowSent, parseRowSent, rowText, deliveryOf, isPeerOrigin, isMarked, parseRemoteRow,
   remoteKey, withRemote, isRemoteStale, learntOf, parseLearnt, successorOf, parseSuccessor, machineLabel, prsInFlight, ROW_MARKER, REMOTE_STALE_AFTER_MS,
   type RemoteRow, type LearntSuccessor, type Delivery,
 } from './remote-row.ts'
-import { askLine, ackLine, parseAsk, parseAck, isAsk, isAck } from './remote-round.ts'
+import {
+  askLine, ackLine, parseAsk, parseAck, isAsk, isAck,
+  answerLine, parseAnswer, answerAckLine, parseAnswerAck, isAnswer, isAnswerAck,
+} from './remote-round.ts'
 import { deckOf, deckText, deckIsNews, DECK_FILE, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, type Prices, type UsageBook } from './usage.ts'
 
@@ -150,6 +153,11 @@ const PANE_OPENED = { plugin: 'orchestrator', key: 'paneOpened' } as const
 // again by each reading.
 const ROUND_WAKE_MS = 30000
 
+// An answer sent to a sender on another machine and not acknowledged is sent again by that same
+// reading once its last send is this old, ANSWER_SENDS sends at most, then failed.
+const ANSWER_RESEND_MS = 30000
+const ANSWER_SENDS = 3
+
 // How often an open pane redraws on its own. A render is raised by a measure of
 // this session, and a supervisor mostly waits: without a clock its rows — the
 // others' fills, their ages — froze at its own last turn.
@@ -190,6 +198,7 @@ const WORDS = {
   choices: 'Choices',
   next: 'next',
   notDelivered: 'not delivered',
+  delivering: 'being delivered',
 } as const
 const OTHER_LABEL = WORDS.other
 
@@ -314,8 +323,9 @@ export function parseSessionRow(text: string): SessionRow | null {
 // the pid ride along for the coordinator's facts, which read this file alone.
 // `pending` is the id of the entry sent to a coordinator on another machine and not acknowledged
 // yet, with the fingerprint its acknowledgment keeps (`pending_key`): an outbox, never drawn or
-// answered from here (remote-round.ts).
-export type WaitRecord = Pick<SessionRow, 'waiting' | 'blocks' | 'waiting_since' | 'relayed'> & { name: string | null; pid: string | null; last_waiting?: WaitKind | null; typed?: { blocks: string; since: string | null } | null; pending?: string | null; pending_key?: string | null }
+// answered from here (remote-round.ts). `relayed_id` is the id of the entry that acknowledgment
+// kept, so the answer to it forgets `relayed` as forgetRelayed does on the coordinator's machine.
+export type WaitRecord = Pick<SessionRow, 'waiting' | 'blocks' | 'waiting_since' | 'relayed'> & { name: string | null; pid: string | null; last_waiting?: WaitKind | null; typed?: { blocks: string; since: string | null } | null; pending?: string | null; pending_key?: string | null; relayed_id?: string | null }
 
 export function waitKey(id: string): string {
   return `waits/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
@@ -331,6 +341,12 @@ export function gateKey(id: string): string {
 // the send path is its one writer.
 export function rowKey(id: string): string {
   return `rows/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
+}
+
+// The last answer of a coordinator on another machine this session took (`answered/<id>`, its
+// entry's id and start): the receive path is its one writer, and it goes with the session's row.
+export function answeredKey(id: string): string {
+  return `answered/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
 }
 
 // The successor an orchestrator learnt from its « takeover confirmed » (`successors/<id>`,
@@ -459,7 +475,7 @@ export async function readSessions($: any): Promise<Record<string, SessionRow>> 
 export async function deleteSession($: any, id: string): Promise<void> {
   const path = `${await storeOf($)}/${sessionKey(id)}`
   const store = await storeOf($)
-  const done = await $.process.run(['rm', '-f', path, `${store}/${waitKey(id)}`, `${store}/${gateKey(id)}`, `${store}/${rowKey(id)}`, `${store}/${successorKey(id)}`], { timeoutMs: 5000 }).catch(() => null)
+  const done = await $.process.run(['rm', '-f', path, `${store}/${waitKey(id)}`, `${store}/${gateKey(id)}`, `${store}/${rowKey(id)}`, `${store}/${successorKey(id)}`, `${store}/${answeredKey(id)}`], { timeoutMs: 5000 }).catch(() => null)
   if (!done || done.exitCode !== 0) await $.fs.write(path, '')
 }
 
@@ -656,10 +672,11 @@ Promise<{ tty: string | null; name: string | null; pid: string | null; known: bo
 // The pane as the module remembers it: what it was opened to list, and its clock, started by
 // the open and cancelled by any close. A coordinator's pane also keeps the questions whose
 // « other answer » was pressed (their ids: the hint is drawn under them), the answers chosen
-// in it that were not delivered, said on their question until its sender is gone or the entry
-// no longer holds that answer, the entries whose answer is in flight, so a second press on one
-// does nothing, and the entry whose « Other answer » was picked, its text field drawn until the
-// ring leaves it.
+// in it that were not delivered to a sender on this machine, said on their question until its
+// sender is gone or the entry no longer holds that answer (an answer to another machine says its
+// delivery from the entry's own file), the entries whose answer is in flight, so a second press
+// on one does nothing, and the entry whose « Other answer » was picked, its text field drawn
+// until the ring leaves it.
 export type PaneMemory = {
   opened: { role: 'coordinator' | 'orchestrator'; tty: string | null } | null
   ticker: { cancel(): void } | null
@@ -667,10 +684,6 @@ export type PaneMemory = {
   writing: string | null
   undelivered: Map<string, { entry: RoundEntry; reason: string }>
   answering: Set<string>
-  // The answers already given to the first questions of an entry that asks several, by entry
-  // id, each with its question's number: the entry is answered, and its sender told, once its
-  // last question is. Module memory: a reload asks them again from the first.
-  partial?: Map<string, string[]>
   // The content last drawn, as the module counts its rows, and the tree's height as the
   // person's last move measured it, with the content it measured.
   drawn?: string
@@ -888,8 +901,9 @@ function stopWake(wake: WakeMemory): void {
   wake.timer = null
 }
 
-// One reading: a failure is one log line, and the next reading still comes. A timer no longer
-// the one armed reads nothing.
+// One reading: the questions just due, then the answers to send again to another machine. A
+// failure of either is one log line, and the next reading still comes. A timer no longer the one
+// armed reads nothing.
 async function wakeTick($: any, wake: WakeMemory, timer: unknown, generation: number): Promise<void> {
   if (wake.timer !== timer) return
   wake.timer = null
@@ -897,6 +911,11 @@ async function wakeTick($: any, wake: WakeMemory, timer: unknown, generation: nu
     await wakeForDue($)
   } catch (err) {
     await logLine($, `round wake: ${(err as Error).message}`)
+  }
+  try {
+    await resendAnswers($)
+  } catch (err) {
+    await logLine($, `round resend: ${(err as Error).message}`)
   }
   if (wake.generation === generation) armWake($, wake)
 }
@@ -1229,16 +1248,27 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
 
   // A peer's delivery, read before it is queued. A marked row (remote-row.ts) is written to
   // the store and consumed: no model reads it, on either side; so are a remote orchestrator's
-  // ask, entered in the coordinator's round, and its acknowledgment (remote-round.ts). A coordinator's message
+  // ask, entered in the coordinator's round, its acknowledgment, and the acknowledgment of an
+  // answer sent back (remote-round.ts). That answer reaches the sender's model as its readable
+  // line alone, its marked first line taken out. A coordinator's message
   // teaches this machine its address, for the relay and the row when the coordinator runs
   // elsewhere; a successor's « takeover confirmed » teaches an orchestrator who holds its open
   // questions once it hands over or ends. Anything else passes through untouched.
   on('session.receive', {}, async ($: any, e: any, next: (e: any) => any) => {
+    let passed = e
     try {
       if (!e.agentId && isPeerOrigin(e.origin) && typeof e.text === 'string') {
         const delivery = deliveryOf(e.text)
         if (isAsk(delivery.body)) return await receiveAsk($, delivery)
         if (isAck(delivery.body)) return await receiveAck($, delivery.body)
+        if (isAnswerAck(delivery.body)) return await receiveAnswerAck($, delivery.body)
+        if (isAnswer(delivery.body)) {
+          const received = await receiveAnswer($, delivery)
+          if ('consumed' in received) return received
+          // The marked first line out, the readable answer in its place, the envelope kept.
+          const at = e.text.indexOf(delivery.body)
+          passed = { ...e, text: at < 0 ? received.readable : e.text.slice(0, at) + received.readable + e.text.slice(at + delivery.body.length) }
+        }
         if (isMarked(delivery.body)) {
           const received = await receiveRow($, delivery.body)
           // A remote orchestrator's row is one of the deck's keys.
@@ -1253,7 +1283,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     } catch (err) {
       await logLine($, `receive: ${(err as Error).message}`)
     }
-    return next(e)
+    return next(passed)
   }).catch(async ($: any, e: any, next: any) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
@@ -1362,6 +1392,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       let speaker: string | null = null
       let asking: RoundEntry | null = null
       let failed: { entry: RoundEntry; reason: string }[] = []
+      let delivering: RoundEntry[] = []
       let pending = 0
       // The sessions whose open wait asks nothing, each with the line its row carries.
       const tabWaits = new Map<string, string>()
@@ -1375,21 +1406,22 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         owners = repositoryOwners([await (ownRepo ??= repoOf($)), ...Object.values(merged).flatMap(row => [row.repo, ...((row as { prs?: unknown }).prs instanceof Array ? (row as { prs: string[] }).prs : [])])])
         none = WORDS.noOrchestrator
         // A question whose sender has ended has no one left to answer: only the entries of a
-        // session with a live row are drawn, and counted.
+        // session with a live row are drawn, and counted; an entry from another machine while a
+        // live remote row of its sender's name was measured on that machine.
         // Stat before the read: a write landing between the two is seen by the next tick.
         pane.roundSeen = await roundMtime($)
         const read = await readRound($)
-        const drawn = read.map(found => found.entry).filter(entry => sessionKey(entry.session) in local)
+        const drawn = read.map(found => found.entry).filter(entry => entry.origin
+          ? merged[remoteKey(entry.from)]?.machine === entry.origin.machine
+          : sessionKey(entry.session) in local)
         const questions = paneQuestions(drawn)
-        for (const wait of waitsInTab(drawn)) if (!tabWaits.has(sessionKey(wait.session))) tabWaits.set(sessionKey(wait.session), waitSummary(wait))
-        // The answers given to the first questions of an entry no longer drawn are forgotten.
-        for (const id of pane.partial?.keys() ?? []) if (!questions.some(entry => entry.id === id)) pane.partial!.delete(id)
+        for (const wait of waitsInTab(drawn)) if (!tabWaits.has(rowKeyOf(wait))) tabWaits.set(rowKeyOf(wait), waitSummary(wait))
         // Each question counts, those of an entry that asks several one by one, less those
         // already answered.
-        pending = questions.reduce((sum, entry) => sum + entryQuestions(entry).length - (pane.partial?.get(entry.id)?.length ?? 0), 0)
+        pending = questions.reduce((sum, entry) => sum + entryQuestions(entry).length - (entry.partial?.length ?? 0), 0)
         // The orchestrator whose question is drawn, by its session: two may share a name.
         const first = questions[0]
-        speaker = first ? sessionKey(first.session) : null
+        speaker = first ? rowKeyOf(first) : null
         asking = first ?? null
         // An answer not delivered is said until a render finds its sender gone, or its entry
         // settled since: withdrawn, closed, or holding another answer than the one that failed.
@@ -1399,7 +1431,9 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           const same = (now?.status === 'answered' || now?.status === 'closed') && now.answer?.by === 'pane' && now.answer.at === notice.entry.answer?.at
           if (!(sessionKey(notice.entry.session) in local) || !same) pane.undelivered.delete(id)
         }
-        failed = [...pane.undelivered.values()]
+        // An answer to another machine says its delivery from the entry itself, a reload kept.
+        failed = [...pane.undelivered.values(), ...drawn.filter(entry => entry.delivery?.state === 'failed').map(entry => ({ entry, reason: entry.delivery!.reason ?? 'no answer' }))]
+        delivering = drawn.filter(entry => entry.delivery?.state === 'pending' || entry.delivery?.state === 'sent')
       } else if (pane.opened?.role === 'orchestrator') {
         // Bounded like every side read: an agent list that cannot be read in
         // time draws as none, never a held render.
@@ -1509,7 +1543,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // The question the card asks: an entry that asks several presents them one at a time, the
       // first not yet answered.
       const parts = asking ? entryQuestions(asking) : []
-      const index = asking ? Math.min(pane.partial?.get(asking.id)?.length ?? 0, parts.length - 1) : 0
+      const index = asking ? Math.min(asking.partial?.length ?? 0, parts.length - 1) : 0
       const part = parts[index] ?? null
       // An entry's key, or with several questions its question's, so each question's picker, field
       // and focus are its own.
@@ -1695,7 +1729,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // The card: a rounded border in `suggestion`, its title the sender and the question's own
       // number, then its pieces a blank line apart.
       const card = (entry: RoundEntry): Drawn => {
-        const title = part!.number === null ? entry.from : `${entry.from} · ${numberLabel(part!.number)}`
+        const sender = entry.origin ? `${entry.from} · remote ${entry.origin.machine}` : entry.from
+        const title = part!.number === null ? sender : `${sender} · ${numberLabel(part!.number)}`
         const pieces: Drawn[] = [
           { node: el.Text({ bold: true, color: 'suggestion', children: title }), rows: rowsOf(title, inner) },
           ...(shape !== null ? fields(entry) : []),
@@ -1727,8 +1762,16 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       })()
       // An answer not delivered is one line at the section's foot, every one of them in it, so a
       // notice never stands between the title and the next question.
-      const noticeText = `${WORDS.notDelivered}: ${failed.map(notice => `${notice.reason} — the answer to ${notice.entry.from} (blocks: ${notice.entry.blocks})`).join(' · ')}`
-      const notices: Drawn[] = failed.length === 0 ? [] : [{ node: el.Text({ color: 'error', children: noticeText }), rows: rowsOf(noticeText, width) }]
+      const answerTo = (entry: RoundEntry) => `the answer to ${entry.from}${entry.origin ? ` on ${entry.origin.machine}` : ''} (blocks: ${entry.blocks})`
+      const noticeText = `${WORDS.notDelivered}: ${failed.map(notice => `${notice.reason} — ${answerTo(notice.entry)}`).join(' · ')}`
+      // An answer on its way to another machine, dim, until its sender acknowledges it.
+      const deliveringText = `${WORDS.delivering}: ${delivering.map(entry => `${answerTo(entry)} — ${entry.delivery!.state === 'pending'
+        ? 'not sent yet'
+        : `sent ${entry.delivery!.attempts} of ${ANSWER_SENDS}, not acknowledged yet`}`).join(' · ')}`
+      const notices: Drawn[] = [
+        ...(delivering.length === 0 ? [] : [{ node: el.Text({ dimColor: true, children: deliveringText }), rows: rowsOf(deliveringText, width) }]),
+        ...(failed.length === 0 ? [] : [{ node: el.Text({ color: 'error', children: noticeText }), rows: rowsOf(noticeText, width) }]),
+      ]
       const title = pending === 0 ? WORDS.questions : `${WORDS.questions} — ${pending} ${WORDS.pending}`
       // A rule, dim, closes the questions, a blank line below them: one row, cut at the pane's width.
       const rule: Drawn = {
@@ -1758,7 +1801,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // (the offset), so both stay in view wherever it is. At the top, not the bottom: the host
       // keeps the held picker in view by bringing it to the window's bottom edge, where a pinned
       // line would cover it.
-      const drawnKey = JSON.stringify([asking?.id ?? null, index, pending, blocks, [...tabWaits], failed.map(notice => notice.reason), pane.writing, [...pane.other], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
+      const drawnKey = JSON.stringify([asking?.id ?? null, index, pending, blocks, [...tabWaits], failed.map(notice => notice.reason), delivering.map(entry => entry.delivery), pane.writing, [...pane.other], e.props?.isFocused ?? false, columns, scroll?.bodyRows ?? null, keyLine])
       pane.drawn = drawnKey
       const measured = pane.measure && pane.measure.drawn === drawnKey ? pane.measure.contentRows : null
       const pinnedRows = keyLine !== null && width > 0 ? wrapWords(keyLine, width) : []
@@ -1871,16 +1914,18 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
   const before = read ? withoutMark(read) : null
   // A wait rewritten while the withdrawal was sent keeps the fingerprint it was written with.
   const relayed = forgotten && (before?.relayed ?? null) === heldKey ? null : before?.relayed ?? null
+  // The id of the entry a remote coordinator acknowledged, kept while its fingerprint is.
+  const relayedId = relayed !== null && relayed === (before?.relayed ?? null) ? before?.relayed_id ?? null : null
   // A turn that ends on « handed over »: the successor holds the work, and the questions.
   if (!wait && role === 'orchestrator' && handsOver(answer)) await handOver($, sessionId)
   if (!wait && role === 'orchestrator') {
-    if (before?.waiting || typed) await writeWait($, sessionId, { ...clearedWait(before!), relayed, name, pid })
+    if (before?.waiting || typed) await writeWait($, sessionId, { ...clearedWait(before!), relayed, relayed_id: relayedId, name, pid })
     return
   }
   const patch = wait
     ? waitPatch(before, wait, new Date().toISOString())
     : before?.waiting ? clearedWait(before) : null
-  if (patch) await writeWait($, sessionId, { ...patch, relayed, name, pid })
+  if (patch) await writeWait($, sessionId, { ...patch, relayed, relayed_id: relayedId, name, pid })
   const key = wait ? fingerprint(wait) : NO_STATUS_KEY
   let coordinator: Awaited<ReturnType<typeof coordinatorAddress>> = null
   if (relayed === key) {
@@ -1922,7 +1967,7 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
   // pending mark is written before the send, so an acknowledgment arriving as it returns finds it.
   if (role === 'orchestrator' && wait && patch) {
     const entry = roundEntry(sessionId, name, wait, patch.waiting_since!, new Date().toISOString())
-    await writeWait($, sessionId, { ...patch, relayed, pending: entry.id, pending_key: key, name, pid })
+    await writeWait($, sessionId, { ...patch, relayed, relayed_id: relayedId, pending: entry.id, pending_key: key, name, pid })
     const sent = await sendToCoordinator($, to, askLine(entry, await machineOf($)))
     if (sent?.isDelivered) return
     await logLine($, `relay: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
@@ -2079,23 +2124,32 @@ export async function answerFromPaneText($: any, pane: PaneMemory, asked: RoundE
 }
 
 // The answer to one question of an entry. An entry that asks several is answered one question at
-// a time: each answer is kept, with the question's number, until the last, and then all of them
-// go together, in order, as the entry's answer. An answer to a question other than the one the
-// pane presents (a press landing late) does nothing.
+// a time: each answer is kept in the entry (`partial`), read again first and written whole, with
+// the question's number, so a reload asks the next one, until the last, and then all of them go
+// together, in order, as the entry's answer. An answer to a question other than the one the
+// entry is at (a press landing late), or to an entry no longer open, does nothing.
 async function answerPart($: any, pane: PaneMemory, asked: RoundEntry, text: string, part: number): Promise<void> {
   const parts = entryQuestions(asked)
   if (parts.length < 2) return answerEntryFromPane($, pane, asked, text)
-  const given = pane.partial?.get(asked.id) ?? []
-  if (part !== given.length || part >= parts.length) return
-  const number = parts[part].number
-  const answers = [...given, `${number === null ? `Question ${part + 1}` : number}: ${text}`]
-  forgetDraft(pane, `${asked.id}:${part + 1}`)
-  if (answers.length < parts.length) {
-    pane.partial = (pane.partial ?? new Map()).set(asked.id, answers)
-    $.ui.invalidate('ui.render')
+  let answers: string[]
+  try {
+    const path = roundPath(await stateDir($), asked.id)
+    const entry = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
+    if (!entry || entry.status !== 'open') return
+    const given = entry.partial ?? []
+    if (part !== given.length || part >= parts.length) return
+    const number = parts[part].number
+    answers = [...given, `${number === null ? `Question ${part + 1}` : number}: ${text}`]
+    forgetDraft(pane, `${asked.id}:${part + 1}`)
+    if (answers.length < parts.length) {
+      await writeAtomic($, path, JSON.stringify({ ...entry, partial: answers }) + '\n')
+      $.ui.invalidate('ui.render')
+      return
+    }
+  } catch (err) {
+    await logLine($, `round: ${(err as Error).message}`)
     return
   }
-  pane.partial?.delete(asked.id)
   return answerEntryFromPane($, pane, asked, answers.join(' · '))
 }
 
@@ -2106,7 +2160,9 @@ function forgetDraft(pane: PaneMemory, key: string): void {
 }
 
 // The one sequence both answers share: the entry written answered by the pane with `text`, its
-// fingerprint forgotten, the text sent to its sender.
+// fingerprint forgotten, the text sent to its sender. An entry from another machine forgets no
+// wait file here: its answer is pending in the same write and sent as a marked line to the
+// address its ask came from (sendAnswer), its sender's module forgetting the fingerprint.
 async function answerEntryFromPane($: any, pane: PaneMemory, asked: RoundEntry, text: string): Promise<void> {
   if (pane.answering.has(asked.id)) return
   pane.answering.add(asked.id)
@@ -2118,20 +2174,26 @@ async function answerEntryFromPane($: any, pane: PaneMemory, asked: RoundEntry, 
     // The coordinator that was shown this question leaves it at once, in its own session: the
     // entry is closed here, in the same rename, and never waits on its round-close.
     const closed = await shownToCoordinator($, entry.id)
-    const answer: RoundAnswer = { text: closed ? `answered from the pane: ${text}` : text, by: 'pane', at }
-    await writeAtomic($, path, JSON.stringify({ ...entry, status: closed ? 'closed' : 'answered', answer }) + '\n')
+    const answer: RoundAnswer = { text: closed ? `${PANE_CLOSED}${text}` : text, by: 'pane', at }
+    // An answer to another machine is pending in the same write, then sent by its module.
+    const delivery: RoundDelivery | undefined = entry.origin ? { state: 'pending', at, attempts: 0 } : undefined
+    const answered: RoundEntry = { ...entry, status: closed ? 'closed' : 'answered', answer, ...(delivery ? { delivery } : {}) }
+    await writeAtomic($, path, JSON.stringify(answered) + '\n')
     forgetDraft(pane, entry.id)
-    await forgetRelayed($, entry)
-    let reason: string | null = null
-    try {
-      const sent = await $.session.send({ to: await senderAddress($, entry), text: paneAnswerText(entry, text, at) })
-      if (!sent?.isDelivered) reason = sent?.reason ?? 'no answer'
-    } catch (err) {
-      reason = (err as Error).message
-    }
-    if (reason !== null) {
-      pane.undelivered.set(entry.id, { entry: { ...entry, status: 'answered', answer: { text, by: 'pane', at } }, reason })
-      await logLine($, `round: the pane's answer was not delivered to ${entry.from}: ${reason}`)
+    if (entry.origin) await sendAnswer($, path, answered, text)
+    else {
+      await forgetRelayed($, entry)
+      let reason: string | null = null
+      try {
+        const sent = await $.session.send({ to: await senderAddress($, entry), text: paneAnswerText(entry, text, at) })
+        if (!sent?.isDelivered) reason = sent?.reason ?? 'no answer'
+      } catch (err) {
+        reason = (err as Error).message
+      }
+      if (reason !== null) {
+        pane.undelivered.set(entry.id, { entry: { ...entry, status: 'answered', answer: { text, by: 'pane', at } }, reason })
+        await logLine($, `round: the pane's answer was not delivered to ${entry.from}: ${reason}`)
+      }
     }
     if (closed) {
       const taken = await $.prompt.submit({ text: settledText(entry, answer) })
@@ -2143,6 +2205,74 @@ async function answerEntryFromPane($: any, pane: PaneMemory, asked: RoundEntry, 
     pane.answering.delete(asked.id)
     $.ui.invalidate('ui.render')
   }
+}
+
+// The prefix of the answer an entry the coordinator was shown is closed with.
+const PANE_CLOSED = 'answered from the pane: '
+
+// One send of the pane's answer to an entry from another machine, its delivery `pending` or `sent`
+// as `entry` holds it: the marked line to the address its ask came from, the answer cut as the
+// channel carries it and the cut said; then the entry read again and, while its delivery is still
+// the one this send moves, written whole once: `sent` with one more attempt, or `failed` with the
+// host's reason when the send was not delivered.
+async function sendAnswer($: any, path: string, entry: RoundEntry, text: string): Promise<void> {
+  const at = entry.answer!.at
+  const carried = cutQuestion(text)
+  let reason: string | null = null
+  try {
+    const sent = await $.session.send({ to: entry.origin!.address, text: answerLine(entry.id, entry.since, carried, at, paneAnswerText(entry, carried, at)) })
+    if (!sent?.isDelivered) reason = sent?.reason ?? 'no answer'
+  } catch (err) {
+    reason = (err as Error).message
+  }
+  const now = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
+  const was = entry.delivery!
+  if (!now?.delivery || now.delivery.state !== was.state || now.delivery.attempts !== was.attempts) {
+    await logLine($, `round: the delivery of ${entry.id} moved during its send, left as it is`)
+    return
+  }
+  const attempts = was.attempts + 1
+  const moved: RoundDelivery = reason === null
+    ? { state: 'sent', at: new Date().toISOString(), attempts }
+    : { state: 'failed', at: new Date().toISOString(), attempts, reason }
+  await writeAtomic($, path, JSON.stringify({ ...now, delivery: moved }) + '\n')
+  if (reason !== null) {
+    await logLine($, `round: the pane's answer was not delivered to ${entry.from} on ${entry.origin!.machine}: ${reason}`)
+    $.ui.invalidate('ui.render')
+  }
+}
+
+// The answers sent to another machine and not acknowledged, read at each round wake whether the
+// pane is open or not: one whose last send is ANSWER_RESEND_MS old, or left pending that long (its
+// module stopped before the send), is sent again, or, sent ANSWER_SENDS times already, failed — the
+// entry read again first and written whole once. A failure of one entry is one log line, and the
+// others are still read.
+async function resendAnswers($: any): Promise<void> {
+  const now = Date.now()
+  for (const { path, entry } of await readRound($)) {
+    const delivery = entry.delivery
+    if (!entry.origin || !entry.answer || (delivery?.state !== 'sent' && delivery?.state !== 'pending') || now - Date.parse(delivery.at) < ANSWER_RESEND_MS) continue
+    try {
+      if (delivery.attempts < ANSWER_SENDS) {
+        await sendAnswer($, path, entry, entry.status === 'closed' && entry.answer.text.startsWith(PANE_CLOSED) ? entry.answer.text.slice(PANE_CLOSED.length) : entry.answer.text)
+        continue
+      }
+      const read = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
+      if (read?.delivery?.state !== delivery.state || read.delivery.attempts !== delivery.attempts) continue
+      const reason = `no acknowledgment after ${ANSWER_SENDS} sends`
+      await writeAtomic($, path, JSON.stringify({ ...read, delivery: { state: 'failed', at: new Date().toISOString(), attempts: delivery.attempts, reason } }) + '\n')
+      await logLine($, `round: the pane's answer to ${entry.from} on ${entry.origin.machine} failed: ${reason}`)
+      $.ui.invalidate('ui.render')
+    } catch (err) {
+      await logLine($, `round resend: ${entry.id}: ${(err as Error).message}`)
+    }
+  }
+}
+
+// The row an entry's sender is drawn on: its session's, or, from another machine, its name's
+// remote row.
+function rowKeyOf(entry: RoundEntry): string {
+  return entry.origin ? remoteKey(entry.from) : sessionKey(entry.session)
 }
 
 // Where an entry's answer goes: its sender's own session, by the id the entry recorded, while
@@ -2232,10 +2362,23 @@ function parseRoundEntry(text: string): RoundEntry | null {
     const choices = Array.isArray(e.choices) && e.choices.every((c: any) => typeof c?.letter === 'string' && typeof c?.text === 'string')
     const nullable = [e.blocks, e.recommendation].every(field => field === null || typeof field === 'string')
     const known = (e.kind === 'operator' || e.kind === 'done') && ROUND_STATUSES.includes(e.status)
-    return texts && choices && nullable && known ? e as RoundEntry : null
+    const partial = e.partial === undefined || (Array.isArray(e.partial) && e.partial.every((answer: unknown) => typeof answer === 'string'))
+    return texts && choices && nullable && known && partial && deliveryRead(e) ? e as RoundEntry : null
   } catch {
     return null
   }
+}
+
+// An entry's delivery, when it carries one: only beside an origin, its four fields of their type
+// and no other, the reason a text.
+const DELIVERY_STATES: readonly string[] = ['pending', 'sent', 'acked', 'failed']
+function deliveryRead(e: any): boolean {
+  if (e.delivery === undefined) return true
+  const d = e.delivery
+  if (!e.origin || typeof e.origin !== 'object' || !d || typeof d !== 'object' || Array.isArray(d)) return false
+  const keys = Object.keys(d)
+  return DELIVERY_STATES.includes(d.state) && typeof d.at === 'string' && Number.isInteger(d.attempts) && d.attempts >= 0
+    && (d.reason === undefined || typeof d.reason === 'string') && keys.every(key => ['state', 'at', 'attempts', 'reason'].includes(key))
 }
 
 // Where an orchestrator's reports go: the coordinator registered on this machine first
@@ -2410,18 +2553,19 @@ async function supersede($: any, entry: RoundEntry): Promise<void> {
   await tellSettled($, await withdrawStale($, entry.session, entry.id, `superseded by ${entry.id}`, standing))
 }
 
-// A remote orchestrator's ask (remote-round.ts), consumed whatever it holds. In the
-// coordinator's session alone, one that passes every check is entered in the round with where it
-// came from, its session's older entries superseded as a local one's are, and acknowledged to its
-// sender. The same entry sent again, its wait's start unchanged, is not entered twice: it is
-// acknowledged again, its first acknowledgment having been lost, and an open one takes the urgent
-// mark it now carries or not, as a local wait asked again does. That rule keeps the choices of the
-// wait's text too: a note without choices under the same wait has the same id and the same start
-// (roundEntryId reads no question under a wait that blocks something), so it never replaces the
-// entry, as keptChoices keeps a local one's. Anything else is one log line.
+// A remote orchestrator's ask (remote-round.ts), consumed whatever it holds. In the coordinator's
+// session alone, one that passes every check is entered in the round with where it came from, its
+// session's older entries superseded as a local one's are, and acknowledged to its sender. The same
+// entry sent again, its wait's start unchanged, is never entered twice, whatever became of it
+// since: it is acknowledged again, its first acknowledgment having been lost, and an open one takes
+// the urgent mark it now carries or not, as a local wait asked again does. The same wait asked
+// again once answered is a new ask, of a new start (receiveAnswer). That rule keeps the choices of
+// the wait's text too: a note without choices under the same wait has the same id and the same
+// start (roundEntryId reads no question under a wait that blocks something), so it never replaces
+// the entry, as keptChoices keeps a local one's. Anything else is one log line.
 async function receiveAsk($: any, delivery: Delivery): Promise<{ consumed: string }> {
   const asked = parseAsk(delivery.body)
-  const from = delivery.from && delivery.from.length <= 200 && /^(?:uds|bridge):\S+$/.test(delivery.from) ? delivery.from : null
+  const from = peerAddress(delivery)
   if (!asked || !from) {
     await logLine($, `receive: a remote question was refused (${delivery.body.length} characters${from ? '' : ', no sender address'})`)
     return { consumed: 'orchestrator: a malformed remote question, refused' }
@@ -2450,6 +2594,8 @@ async function receiveAsk($: any, delivery: Delivery): Promise<{ consumed: strin
       await supersede($, entry)
       step = 'the deck refresh'
       await refreshDeck($)
+      step = 'the pane redraw'
+      $.ui.invalidate('ui.render')
     }
     step = 'the acknowledgment'
     const sent = await $.session.send({ to: from, text: ackLine(asked.entry.id, asked.entry.since) })
@@ -2476,7 +2622,7 @@ async function receiveAck($: any, body: string): Promise<{ consumed: string }> {
       return { consumed: 'orchestrator: an acknowledgment, dropped' }
     }
     step = 'the wait write'
-    await writeWait($, sessionId, { ...now, relayed: now.pending_key, pending: null, pending_key: null })
+    await writeWait($, sessionId, { ...now, relayed: now.pending_key, relayed_id: now.pending, pending: null, pending_key: null })
   } catch (err) {
     await logLine($, `receive: an acknowledgment failed at ${step}${ack ? ` (${ack.id})` : ''}: ${(err as Error).message}`)
     return { consumed: 'orchestrator: an acknowledgment, failed' }
@@ -2484,7 +2630,94 @@ async function receiveAck($: any, body: string): Promise<{ consumed: string }> {
   return { consumed: 'orchestrator: an acknowledgment, recorded' }
 }
 
+// The coordinator's answer to this session's question (remote-round.ts), the marked line consumed
+// whatever happens. One that parses is taken when the wait's entry is that very one, of the same
+// start — acknowledged (`relayed_id`), or still pending, its ask's acknowledgment lost: the wait
+// forgets its fingerprint, as forgetRelayed does on the coordinator's machine, its pending ask, and
+// its start, so the same wait asked again is a new ask, of a new start (waitPatch), entered again.
+// It is acknowledged to the address it came from, and its readable line is passed to the model, the
+// one part a model reads. The last one taken is kept (answeredKey): the same answer sent again, its
+// acknowledgment lost, is acknowledged again and passed nowhere. A throw is one log line and the
+// readable line still passes. A refused one is one log line, passed nowhere, never acknowledged.
+async function receiveAnswer($: any, delivery: Delivery): Promise<{ consumed: string } | { readable: string }> {
+  const answer = parseAnswer(delivery.body)
+  if (!answer) {
+    await logLine($, `receive: an answer was refused (${delivery.body.length} characters)`)
+    return { consumed: 'orchestrator: a malformed answer, refused' }
+  }
+  let step = 'the wait read'
+  try {
+    const sessionId = await $.session.id()
+    const taken = `${await storeOf($)}/${answeredKey(sessionId)}`
+    const last = parseAnswered(String(await $.fs.read(taken).catch(() => '')))
+    const again = last?.id === answer.id && last.since === answer.since
+    const now = again ? null : await readWait($, sessionId)
+    if (now && now.waiting_since === answer.since && (now.relayed_id === answer.id || now.pending === answer.id)) {
+      step = 'the wait write'
+      await writeWait($, sessionId, { ...now, waiting_since: null, relayed: null, relayed_id: null, pending: null, pending_key: null })
+      step = 'the answer record'
+      await writeAtomic($, taken, JSON.stringify({ id: answer.id, since: answer.since }) + '\n')
+    }
+    step = 'the acknowledgment'
+    const from = peerAddress(delivery)
+    if (!from) await logLine($, `receive: the answer to ${answer.id} came with no sender address, not acknowledged`)
+    else {
+      const sent = await $.session.send({ to: from, text: answerAckLine(answer.id, answer.since) })
+      if (!sent?.isDelivered) await logLine($, `receive: the acknowledgment of the answer to ${answer.id} was not delivered to ${from}: ${sent?.reason ?? 'no answer'}`)
+    }
+    if (again) return { consumed: 'orchestrator: an answer received already, acknowledged again' }
+  } catch (err) {
+    await logLine($, `receive: an answer failed at ${step} (${answer.id}): ${(err as Error).message}`)
+  }
+  return { readable: answer.readable }
+}
+
+// The last answer taken, as answeredKey's file holds it: null when it holds no id and start.
+function parseAnswered(text: string): { id: string; since: string } | null {
+  try {
+    const read = JSON.parse(text)
+    return read && typeof read.id === 'string' && typeof read.since === 'string' ? { id: read.id, since: read.since } : null
+  } catch {
+    return null
+  }
+}
+
+// A remote sender's acknowledgment of the answer sent to it, consumed whatever it holds: the
+// entry of that id and start, its answer pending, sent or failed, is acknowledged and closed, and
+// the pane drawn again. Any other is one log line.
+async function receiveAnswerAck($: any, body: string): Promise<{ consumed: string }> {
+  const ack = parseAnswerAck(body)
+  let step = 'the entry read'
+  try {
+    if (!ack) {
+      await logLine($, "receive: an answer's acknowledgment was refused")
+      return { consumed: "orchestrator: an answer's acknowledgment, refused" }
+    }
+    const path = roundPath(await stateDir($), ack.id)
+    const entry = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
+    const state = entry?.delivery?.state
+    if (!entry?.origin || !entry.delivery || entry.since !== ack.since || (state !== 'pending' && state !== 'sent' && state !== 'failed')) {
+      await logLine($, `receive: an answer's acknowledgment of ${ack.id} matches no answer sent`)
+      return { consumed: "orchestrator: an answer's acknowledgment, dropped" }
+    }
+    step = 'the entry write'
+    const { reason: _reason, ...delivery } = entry.delivery
+    await writeAtomic($, path, JSON.stringify({ ...entry, status: 'closed', delivery: { ...delivery, state: 'acked', at: new Date().toISOString() } }) + '\n')
+    step = 'the pane redraw'
+    $.ui.invalidate('ui.render')
+  } catch (err) {
+    await logLine($, `receive: an answer's acknowledgment failed at ${step}${ack ? ` (${ack.id})` : ''}: ${(err as Error).message}`)
+  }
+  return { consumed: "orchestrator: an answer's acknowledgment, recorded" }
+}
+
+// A peer's address as its envelope gave it, when it is one a send can reach.
+function peerAddress(delivery: Delivery): string | null {
+  return delivery.from && delivery.from.length <= 200 && /^(?:uds|bridge):\S+$/.test(delivery.from) ? delivery.from : null
+}
+
 // This session's role, by the name its row carries, else by a walk of its own.
+
 async function ownRole($: any): Promise<SessionRow['role']> {
   const sessionId = await $.session.id()
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))

@@ -5,8 +5,11 @@
 // line, and the coordinator's module takes that line out of the delivery before any model
 // reads it, as the remote rows are (remote-row.ts), writes the entry with where it came from
 // (`origin`), and acknowledges it by its id. Until that acknowledgment the sender holds the
-// entry as pending in its wait file and sends it again at its next turn's end. Pure on purpose:
-// the handlers hold the $ (supervision.ts) and pass their reads in here.
+// entry as pending in its wait file and sends it again at its next turn's end. The operator's
+// answer from the coordinator's pane travels back the same way: one marked line the sender's
+// module takes out before its model reads it, the readable answer under it the only part passed
+// on, and an acknowledgment by the entry's id. Pure on purpose: the handlers hold the $
+// (supervision.ts) and pass their reads in here.
 import { cutQuestion, RELAY_CAP } from './relay.ts'
 import { parseChoices, type RoundEntry } from './round.ts'
 import { roleOf } from './session-name.ts'
@@ -16,6 +19,8 @@ import { BLOCKS_CAP } from './remote-row.ts'
 // chance.
 export const ASK_MARKER = '[module-ask] '
 export const ACK_MARKER = '[module-ack] '
+export const ANSWER_MARKER = '[module-answer] '
+export const ANSWER_ACK_MARKER = '[module-ack-answer] '
 
 // The receiver's caps on each field: a line past any of them is refused whole, never cut.
 const NAME_CAP = 120                       // remote-row.ts's own
@@ -42,6 +47,18 @@ const JSON_ESCAPE = 6
 export const ASK_LINE_CAP = ASK_MARKER.length + SKELETON
   + JSON_ESCAPE * (ID_CAP + NAME_CAP + SESSION_CAP + 2 * STAMP_CAP + BLOCKS_CAP + 2 * QUESTION_CAP + MACHINE_CAP)
 const ACK_LINE_CAP = ACK_MARKER.length + JSON.stringify({ id: '', since: '' }).length + ID_CAP + STAMP_CAP
+
+// The answer's text as the sender cuts it (cutQuestion): the question's own bound. Its readable
+// rest is paneAnswerText's (supervision.ts): its own words, 97 characters, rounded up, then the
+// answer, what the entry blocks and two stamps.
+const ANSWER_TEXT_CAP = QUESTION_CAP
+const ANSWER_WORDS = 160
+const READABLE_CAP = ANSWER_WORDS + ANSWER_TEXT_CAP + BLOCKS_CAP + 2 * STAMP_CAP
+// The whole answer: the marker, its object with every text at its cap six times over, the
+// newline, the readable rest.
+export const ANSWER_LINE_CAP = ANSWER_MARKER.length + JSON.stringify({ id: '', since: '', text: '', at: '' }).length
+  + JSON_ESCAPE * (ID_CAP + 2 * STAMP_CAP + ANSWER_TEXT_CAP) + 1 + READABLE_CAP
+const ANSWER_ACK_LINE_CAP = ANSWER_ACK_MARKER.length + JSON.stringify({ id: '', since: '' }).length + ID_CAP + STAMP_CAP
 
 // The fields an ask carries: the entry's as roundEntry builds them, and the sender's machine.
 // No `origin`, which only the receiver writes, and no `movedFrom`, which only a succession does.
@@ -106,8 +123,56 @@ export function ackLine(id: string, since: string): string {
 
 export function parseAck(body: string): { id: string; since: string } | null {
   const o = markedObject(body, ACK_MARKER, ACK_LINE_CAP)
-  if (!o || Object.keys(o).length !== 2 || typeof o.id !== 'string' || o.id.length > ID_CAP || !ID_SHAPE.test(o.id) || !stamp(o.since)) return null
-  return { id: o.id, since: o.since as string }
+  if (!o || Object.keys(o).length !== 2 || !anId(o.id) || !stamp(o.since)) return null
+  return { id: o.id as string, since: o.since as string }
+}
+
+// The operator's answer to an entry, sent back to the machine it came from: the marker and one
+// object on the first line — the entry's id and since, the answer's text and when it was given —
+// then the readable answer, the only part the sender's model reads. The text arrives cut
+// (cutQuestion): its own lines stay inside the object.
+export function answerLine(id: string, since: string, text: string, at: string, readable: string): string {
+  return `${ANSWER_MARKER}${JSON.stringify({ id, since, text, at })}\n${readable}`
+}
+
+export function isAnswer(body: string): boolean {
+  return body.trimStart().startsWith(ANSWER_MARKER)
+}
+
+export function isAnswerAck(body: string): boolean {
+  return body.trimStart().startsWith(ANSWER_ACK_MARKER)
+}
+
+// The sender's whole check: the line's cap, the first line's exact object, an id of an entry's
+// shape, two stamps, a text within its cap, and a readable rest that says something. The rest is
+// returned whole, its own lines kept. Anything else is null.
+export function parseAnswer(body: string): { id: string; since: string; text: string; at: string; readable: string } | null {
+  const text = body.trimStart()
+  if (text.length > ANSWER_LINE_CAP) return null
+  const cut = text.indexOf('\n')
+  if (cut < 0) return null
+  const readable = text.slice(cut + 1)
+  if (readable.trim() === '' || readable.length > READABLE_CAP) return null
+  const o = markedObject(text.slice(0, cut), ANSWER_MARKER, ANSWER_LINE_CAP)
+  if (!o || Object.keys(o).length !== 4 || !anId(o.id) || !stamp(o.since) || !stamp(o.at)) return null
+  if (typeof o.text !== 'string' || o.text === '' || o.text.length > ANSWER_TEXT_CAP) return null
+  return { id: o.id as string, since: o.since as string, text: o.text, at: o.at as string, readable }
+}
+
+// The answer's acknowledgment, by the entry's id and since: a late one of an older answer to the
+// same id must not settle a newer entry.
+export function answerAckLine(id: string, since: string): string {
+  return ANSWER_ACK_MARKER + JSON.stringify({ id, since })
+}
+
+export function parseAnswerAck(body: string): { id: string; since: string } | null {
+  const o = markedObject(body, ANSWER_ACK_MARKER, ANSWER_ACK_LINE_CAP)
+  if (!o || Object.keys(o).length !== 2 || !anId(o.id) || !stamp(o.since)) return null
+  return { id: o.id as string, since: o.since as string }
+}
+
+function anId(v: unknown): boolean {
+  return typeof v === 'string' && v.length <= ID_CAP && ID_SHAPE.test(v)
 }
 
 function spaced(text: string): string {
