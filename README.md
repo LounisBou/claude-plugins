@@ -46,6 +46,13 @@ mechanical work the markdown would otherwise hand the model:
   "skip", no `git push` unless the user's last words ask for one, and under
   `/norms:check` no commit message naming the check or its tooling. Any other
   words the user types, an interrupted turn and any other command release them.
+- `/norms:check` leaves a norms record at its end, through the `check_done` tool
+  and the `github` plugin's record tool (0.12.0 or later), for the `github`
+  plugin's ready guard: `pass` when no finding is left open, `fail` otherwise,
+  at the head commit the check ended on. It leaves none, and says why on a
+  `record:` line of the report, when `/norms:check` did not compute its scope in
+  the session, the branch has no pull request, tracked files have changes, or
+  the `github` plugin is absent, older, or refuses the record.
 - `validate`: the lexical checks (empty entries, vague words, no code block,
   mixed list markers, no top-level header) arrive with exact line numbers.
 

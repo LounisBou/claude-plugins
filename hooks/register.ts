@@ -7,10 +7,12 @@ import { register as registerCheck } from './check.ts'
 import { register as registerLearn } from './learn.ts'
 import { register as registerGuards } from './guards.ts'
 import { register as registerValidate } from './validate.ts'
+import { register as registerRecord } from './record.ts'
 
 export function register(on: any): void {
   registerCheck(on)
   registerLearn(on)
   registerGuards(on)
   registerValidate(on)
+  registerRecord(on)
 }

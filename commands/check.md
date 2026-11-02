@@ -1,7 +1,7 @@
 ---
 description: "Analyze code against established project patterns and conventions using parallel agents"
 argument-hint: "[agents-to-run] [base=<branch>] [use also <path> as pattern reference]"
-allowed-tools: ["Bash", "Glob", "Grep", "Read", "Task", "Edit", "Write", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "AskUserQuestion"]
+allowed-tools: ["Bash", "Glob", "Grep", "Read", "Task", "Edit", "Write", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "AskUserQuestion", "mcp__norms__check_done"]
 ---
 
 # Norms Check — Parallel Agent Orchestrator
@@ -186,7 +186,7 @@ All agent results are returned directly from the Task calls. Aggregate all findi
 | ... | ... | ... | ... | ... |
 ```
 
-**If zero findings:** Display "No issues found. All norms checks passed." and stop.
+**If zero findings:** Call `mcp__norms__check_done` with `{open: 0, fixed: 0, passed: 0}`, display "No issues found. All norms checks passed." followed by the `record:` line it answers, verbatim, and stop. When the tool is not in the tool list, display the message alone.
 
 ### Step 6: Create TODO List
 
@@ -369,6 +369,8 @@ After all findings are processed, present the final summary:
 |---|------|-------------------|---------------|---------------|
 | 3 | `api.ts:12` | Extract to `TIMEOUT_MS` | User preferred `API_TIMEOUT_MS` for clarity | Fixed with user's naming |
 ```
+
+Then call `mcp__norms__check_done` with `{open, fixed, passed}`: the counts of findings left neither fixed nor passed (0 when every finding was processed), fixed and passed. Print the `record:` line it answers, verbatim, under the tables. When the tool is not in the tool list, print nothing.
 
 If any fixes were committed, remind: "Remember to push your commits when ready."
 

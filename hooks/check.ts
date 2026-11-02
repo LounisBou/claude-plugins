@@ -12,6 +12,7 @@ import {
   classifyAll, projectTypes, parseCheckArgs, scopeBlock, filesFor, contextBlock,
   DIFF_INLINE_MAX, type Scope, type ReferencePaths,
 } from './scope.ts'
+import { markScope } from './record.ts'
 
 const GIT_TIMEOUT_MS = 30_000
 // Agents spawned in one message reuse the scope the command computed.
@@ -72,6 +73,7 @@ export function register(on: any): void {
     const args = parseCheckArgs(String(e.args ?? ''))
     const scope = await computeScope($, args.base)
     cached = { scope, at: Date.now() }
+    markScope(scope.head)
     const refs = await checkPaths($, args.paths)
     const block = scopeBlock(scope, args, refs)
     const typed = String(e.args ?? '').trim()

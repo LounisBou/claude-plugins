@@ -40,10 +40,10 @@ check "declares the github dependency" "github@lounisbou" \
 check "marketplace lists the plugin" "norms" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["plugins"][0]["name"])' "$ROOT/.claude-plugin/marketplace.json")"
 
-check "plugin version" "0.2.2" \
+check "plugin version" "0.3.0" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$ROOT/.claude-plugin/plugin.json")"
 
-check "marketplace plugin version" "0.2.2" \
+check "marketplace plugin version" "0.3.0" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["plugins"][0]["version"])' "$ROOT/.claude-plugin/marketplace.json")"
 
 echo "== components =="
@@ -254,6 +254,13 @@ tag_read norms-scope scope.ts "$ROOT/commands/check.md"
 tag_read norms-context scope.ts "$ROOT"/agents/norms-*.md
 tag_read norms-learn learn.ts "$ROOT/commands/learn.md"
 tag_read norms-validate-scan validate.ts "$ROOT/skills/validate/SKILL.md"
+
+check "the check command records its outcome in Step 5 and Step 8" "3" \
+  "$(grep -c -F 'mcp__norms__check_done' "$ROOT/commands/check.md")"
+check "the check command may call the record tool" "1" \
+  "$(sed -n '4p' "$ROOT/commands/check.md" | grep -c -F '"mcp__norms__check_done"')"
+check "the check command prints the record line verbatim" "2" \
+  "$(grep -c -F '`record:` line' "$ROOT/commands/check.md")"
 
 check "the module resolves the base with the shared script" "yes" \
   "$(grep -q -F '/scripts/resolve_base.sh`' "$ROOT/hooks/check.ts" && echo yes || echo no)"
