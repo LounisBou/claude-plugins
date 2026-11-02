@@ -36,14 +36,19 @@ export type Loop = {
   testCommand: string
   seen: string[]
   lastFindings: number
+  // The Critical and Important findings of the last pass, or undefined when the
+  // review did not say.
+  lastBlocking?: number
   fixes: Fix[]
   // Why the loop ended: clean, max_passes, or released by the user.
   exit?: string
+  // Whether this loop's review record was attempted: one per loop.
+  isRecorded: boolean
 }
 
 export const MAX_PASSES = 5
 
-export const loop: Loop = { isActive: false, pass: 0, testCommand: '', seen: [], lastFindings: 0, fixes: [] }
+export const loop: Loop = { isActive: false, pass: 0, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false }
 
 export function resetLoop(testCommand: string): void {
   loop.isActive = true
@@ -51,8 +56,10 @@ export function resetLoop(testCommand: string): void {
   loop.testCommand = testCommand
   loop.seen = []
   loop.lastFindings = 0
+  loop.lastBlocking = undefined
   loop.fixes = []
   loop.exit = undefined
+  loop.isRecorded = false
 }
 
 // The successful preflight, once per session: a skill started again skips it.

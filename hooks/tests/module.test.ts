@@ -271,3 +271,181 @@ test('an interrupted turn releases the loop', async ($, on) => {
   const out: any = await $.classic.Stop({ stop_hook_active: false } as any)
   expect(out.block).toBeUndefined()
 })
+
+// ── the review record at the loop's exit ─────────────────────────────────────
+
+const WRITTEN = '/data/records/o/n/' + 'a'.repeat(40) + '/review.json'
+
+type Stubs = { records: any[]; prCalls: number; dirty?: string; pr?: string; listed?: string[]; recordAnswer?: any; recordThrows?: boolean }
+
+function wireRecord(on: any, stubs: Stubs) {
+  on('tool.list', () => ({ value: (stubs.listed ?? ['mcp__github__gh', 'mcp__github__record']).map((name) => ({ name })) }))
+  on('process.run', (_$: any, e: any) => {
+    if (e.argv[1] === 'status') return { value: { ...ok, stdout: stubs.dirty ?? '' } }
+    if (e.argv[1] === 'remote') return { value: { ...ok, stdout: 'git@github.com:LounisBou/claude-review.git\n' } }
+    return { value: ok }
+  })
+  on('tool.call', { tool: 'mcp__github__gh' }, () => {
+    stubs.prCalls += 1
+    return { result: stubs.pr ?? '12\n' }
+  })
+  on('tool.call', { tool: 'mcp__github__record' }, (_$: any, e: any) => {
+    if (stubs.recordThrows) throw new Error('boom')
+    stubs.records.push({ pr: e.pr, repo: e.repo, kind: e.kind, result: e.result, detail: e.detail })
+    return stubs.recordAnswer ?? { result: WRITTEN }
+  })
+}
+
+const loopCall = ($: any, args: Record<string, unknown>): Promise<any> =>
+  $.tool.call({ tool: 'mcp__pr-review__loop', ...args } as any)
+
+async function runToMaxPasses($: any, blocking?: number): Promise<any> {
+  await loopCall($, { action: 'start' })
+  for (let i = 1; i <= 5; i++) {
+    await loopCall($, { action: 'begin_pass' })
+    await loopCall($, { action: 'findings', keys: ['a' + i, 'b' + i, 'c' + i], ...(blocking === undefined ? {} : { blocking }) })
+  }
+  return loopCall($, { action: 'begin_pass' })
+}
+
+async function cleanLoop($: any): Promise<any> {
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  return loopCall($, { action: 'findings', keys: [] })
+}
+
+test('a clean exit writes a passing review record and says where', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireRecord(on, stubs)
+  const out = await cleanLoop($)
+  expect(stubs.records).toEqual([
+    { pr: 12, repo: 'LounisBou/claude-review', kind: 'review', result: 'pass', detail: 'clean at pass 1' },
+  ])
+  expect(String(out.result)).toContain('record: ' + WRITTEN)
+  expect(String(out.result)).toContain('"exit": "clean"')
+})
+
+test('max_passes with no blocking finding left writes pass, with the leftover count', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireRecord(on, stubs)
+  const out = await runToMaxPasses($, 0)
+  expect(String(out.result)).toContain('"exit": "max_passes"')
+  expect(stubs.records.length).toBe(1)
+  expect(stubs.records[0].result).toBe('pass')
+  expect(stubs.records[0].detail).toBe('3 findings left after 5 passes, none Critical or Important')
+})
+
+test('max_passes with blocking findings left writes fail', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireRecord(on, stubs)
+  await runToMaxPasses($, 2)
+  expect(stubs.records.length).toBe(1)
+  expect(stubs.records[0].result).toBe('fail')
+  expect(stubs.records[0].detail).toBe('3 findings left after 5 passes, 2 Critical or Important')
+})
+
+test('max_passes without a blocking count writes fail, severity unknown', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireRecord(on, stubs)
+  await runToMaxPasses($)
+  expect(stubs.records.length).toBe(1)
+  expect(stubs.records[0].result).toBe('fail')
+  expect(stubs.records[0].detail).toBe('3 findings left after 5 passes, severity unknown')
+})
+
+test('only the last pass decides the blocking count', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireRecord(on, stubs)
+  await loopCall($, { action: 'start' })
+  for (let i = 1; i <= 5; i++) {
+    await loopCall($, { action: 'begin_pass' })
+    await loopCall($, { action: 'findings', keys: ['k' + i], blocking: i === 5 ? 0 : 4 })
+  }
+  await loopCall($, { action: 'begin_pass' })
+  expect(stubs.records[0].result).toBe('pass')
+  expect(stubs.records[0].detail).toBe('1 findings left after 5 passes, none Critical or Important')
+})
+
+test('a branch with no pull request leaves no record and says why', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, pr: '\n' }
+  wireRecord(on, stubs)
+  const out = await cleanLoop($)
+  expect(stubs.records.length).toBe(0)
+  expect(String(out.result)).toContain('record: none — the branch has no pull request')
+  expect(String(out.result)).toContain('"exit": "clean"')
+})
+
+test('tracked files with changes leave no record, and the pull request is not even read', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, dirty: ' M hooks/loop.ts\n' }
+  wireRecord(on, stubs)
+  const out = await cleanLoop($)
+  expect(stubs.records.length).toBe(0)
+  expect(stubs.prCalls).toBe(0)
+  expect(String(out.result)).toContain('record: none — the tracked files have changes')
+})
+
+test("the github tool's refusal is shown verbatim and the loop's answer is unchanged", async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, recordAnswer: { deny: "github: the checkout is at abc1234, the pull request's head is def5678" } }
+  wireRecord(on, stubs)
+  const out = await cleanLoop($)
+  expect(out.isError).toBeUndefined()
+  expect(String(out.result)).toContain("record: none — github: the checkout is at abc1234, the pull request's head is def5678")
+  expect(String(out.result)).toContain('"exit": "clean"')
+})
+
+test("the github tool's error text is shown verbatim", async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, recordAnswer: { result: 'record.py: bad head', isError: true } }
+  wireRecord(on, stubs)
+  const out = await cleanLoop($)
+  expect(out.isError).toBeUndefined()
+  expect(String(out.result)).toContain('record: none — record.py: bad head')
+})
+
+test('a github plugin without the record tool leaves no record and says so', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, listed: ['mcp__github__gh'] }
+  wireRecord(on, stubs)
+  const out = await cleanLoop($)
+  expect(stubs.records.length).toBe(0)
+  expect(String(out.result)).toContain('record: none — the github plugin 0.12.0 or later is not available')
+})
+
+test('a record call that throws never throws out of the handler', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, recordThrows: true }
+  wireRecord(on, stubs)
+  const out = await cleanLoop($)
+  expect(out.isError).toBeUndefined()
+  expect(String(out.result)).toContain('"exit": "clean"')
+  expect(String(out.result)).toContain('record: none —')
+})
+
+test('a released loop writes no record', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireRecord(on, stubs)
+  on('prompt.submit', (_$: any, e: any) => e)
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await $.prompt.submit({ text: 'stop, I need the terminal', wait: false, origin: composer })
+  const out = await loopCall($, { action: 'status' })
+  expect(String(out.result)).toContain('"exit": "released"')
+  expect(stubs.records.length).toBe(0)
+  expect(stubs.prCalls).toBe(0)
+})
+
+test('one record per loop: calls after the exit write nothing more', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireRecord(on, stubs)
+  await cleanLoop($)
+  const again = await loopCall($, { action: 'begin_pass' })
+  await loopCall($, { action: 'status' })
+  await loopCall($, { action: 'findings', keys: [] })
+  expect(stubs.records.length).toBe(1)
+  expect(String(again.result)).not.toContain('record:')
+})
+
+test('a new loop writes its own record', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireRecord(on, stubs)
+  await cleanLoop($)
+  await cleanLoop($)
+  expect(stubs.records.length).toBe(2)
+})

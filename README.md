@@ -115,6 +115,14 @@ and every skill keeps its own route.
   findings and fix log, held outside the model's memory. While a loop runs and
   neither exit condition (a clean review, pass 5) is met, a stop is refused once,
   naming the pass. Any prompt the user types, or an interrupted turn, ends that hold.
+- **The review record.** When the loop ends, it leaves a review record at the pull
+  request's head, written through the github plugin's `mcp__github__record`, for that
+  plugin's ready guard. A clean review writes `pass`. A loop stopped by the pass limit
+  writes `pass` when the last review left nothing Critical or Important, and `fail`
+  otherwise, or when the severity was not reported. It leaves none when the loop was
+  released by the user, when the branch has no pull request, when tracked files have
+  uncommitted changes, or when the github plugin is absent or older than 0.12.0. The
+  loop's answer then says `record: none — <why>`.
 - **The band.** A line above the prompt while a skill holds the session: which one,
   the comments kept, the prepared commits waiting for `commit` or `drop`, the pass.
 - **`/pr-review:doctor` and `/pr-review:install`** answer with `install.sh`'s output

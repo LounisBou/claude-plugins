@@ -30,10 +30,14 @@ long run that way. Call it at each of these points, with `action` and its fields
 | --- | --- | --- |
 | Step 1, once, after Step 1.5 | `{"action": "start", "test_command": "<TEST_COMMAND or empty>"}` | pass 0 |
 | Step 2, before every review | `{"action": "begin_pass"}` | the pass number, or `exit: max_passes` with the summary |
-| Step 4, after every review | `{"action": "findings", "keys": ["<file>::<one-line summary>", ...]}`, one key per finding, an empty list when the review found nothing | `exit: clean` with the summary, or which keys are `new` and which were `seen` |
+| Step 4, after every review | `{"action": "findings", "keys": ["<file>::<one-line summary>", ...], "blocking": <n>}`, one key per finding, an empty list when the review found nothing, and `blocking` the number of those findings that are Critical or Important (Suggestions do not count) | `exit: clean` with the summary, or which keys are `new` and which were `seen` |
 | Step 5, after each fix commit | `{"action": "fixed", "key": "<key>", "sha": "<short sha>", "description": "<fix>"}` | the fix count |
 | Step 6, after a revert | `{"action": "reverted", "key": "<key>", "sha": "<reverted sha>"}` | the sha it marked |
 | Step 7 | `{"action": "status"}` | passes, exit reason, fixes and reverts for the summary |
+
+The answer that carries an `exit` ends with one more line, `record: <path>` or
+`record: none — <why>`: the review record the loop left for the github plugin's
+ready guard, or the reason it left none. It never changes the exit. Step 7 prints it.
 
 Treat a `seen` key exactly as the algorithm treats `seen_issues`: SKIP it. When an
 answer carries `exit`, go to Step 7 with that reason and render the summary from
@@ -194,7 +198,9 @@ Wait for ALL agents to complete. Aggregate results.
 
 ### Step 4: Check for clean exit
 
-Count ALL findings across all agents (Critical + Important + Suggestions).
+Count ALL findings across all agents (Critical + Important + Suggestions), and
+among them the Critical and Important ones: that second count is the `blocking`
+field of the `findings` call.
 
 **If total findings == 0:**
 → go to Step 7 (Exit Summary) with exit_reason = "clean"
@@ -260,7 +266,14 @@ Display:
 
 ### Skipped Issues (if any)
 - {issue description} — Reason: {suggestion/ambiguous/already_attempted}
+
+{the `record:` line of the exit answer, verbatim}
 ```
+
+The last line is the `record:` line the answer that carried `exit` ended with, copied
+as it stands, whether it names a path or says `none — <why>`. When the tool was not
+listed, or the exit answer carried no such line, print `record: none — the loop tool
+is not available`.
 
 ## Commit Convention
 
