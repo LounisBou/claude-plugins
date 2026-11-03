@@ -92,10 +92,6 @@ function fits(busy: boolean, running: readonly string[]): string {
 const blocksNothingReason = (busy: boolean, running: readonly string[]) =>
   'Your wait on the operator blocks nothing: that line is for a question he must answer, and the coordinator '
   + `would put it to him. ${fits(busy, running)} The line goes as the message's last line, no markup.`
-const toolNotRunningReason = (busy: boolean) =>
-  'Nothing of yours runs in the background: waiting: tool — <what is watched> fits only while a command or '
-  + `monitor you started still runs. ${fits(busy, [])} `
-  + "The line goes as the message's last line, no markup."
 const idleDelivered = (who: string) =>
   `Idle with its pull request open or merged: ${who}. Stand it down now — or, if it waits on a question you have not answered, answer it.`
 const IDLE_ONE = '%s is idle: its notice was spent. Read its report or relaunch it.'
@@ -424,7 +420,7 @@ export function checkWake(facts: {
   background?: readonly string[]
   awaiting?: boolean
   hostUnread?: boolean
-}): Held | { blocks: string } | { tool: string } | 'read-what-is-left' | null {
+}): Held | { blocks: string } | { tool: string; notRunning?: true } | 'read-what-is-left' | null {
   const last = machineLine(facts.message)
   const matched = MACHINE_LINE.exec(last)
   const busy = facts.agents.some(a => a.state === 'busy')
@@ -441,7 +437,9 @@ export function checkWake(facts: {
   const tool = TOOL_LINE.exec(last)
   if (tool) {
     if (running.length > 0 || facts.watching || facts.hostUnread) return { tool: tool[1].trim() }
-    return { case: 'tool-not-running', reason: toolNotRunningReason(busy) }
+    // Measured, not refused: the parent-chain detection of the session's own processes is too
+    // fragile to be a gate, so the line passes and the caller logs that nothing was seen running.
+    return { tool: tool[1].trim(), notRunning: true }
   }
   if (busy) return null
   if (facts.watching || running.length > 0) return null

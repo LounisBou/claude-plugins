@@ -69,13 +69,12 @@ const OPEN_SINCE = '2026-11-03T10:00:00.000Z'
 const openEntry = (over: object = {}) => ({ ...roundEntry('a1b2c3', 'Orch : belt', { kind: 'operator', blocks: 'the deploy order', question: OPEN_QUESTION }, OPEN_SINCE, OPEN_SINCE), ...over })
 const roundOf = (entry: { id: string }) => ({ [`${entry.id}.json`]: `${JSON.stringify(entry)}\n` })
 
-test('an orchestrator turn that ends without its unanswered question in full is refused, the refusal naming it', async () => {
+test('an orchestrator turn that ends without its unanswered question in full passes, the log naming it', async () => {
   const { handlers } = mounted()
-  const { dollar, ran } = fakeDollar({ round: roundOf(openEntry()) })
-  const refused = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'Agent belt-p3 delivered; reviewing next.' }))
-  expect((refused.answer as any).block).toContain('still unanswered')
-  expect((refused.answer as any).block).toContain('**Question 1 of 1** — which one ships first?')
-  expect(ran.filter(l => l.includes('iterm-agent.sh')).length).toBe(0)
+  const { dollar, written } = fakeDollar({ round: roundOf(openEntry()) })
+  const left = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'Agent belt-p3 delivered; reviewing next.' }))
+  expect(String((left.answer as any)?.block ?? '')).not.toContain('still unanswered')
+  expect(written.some(l => l.includes('| stop gate: warn question-unshown ('))).toBe(true)
   const shown = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: `Agent belt-p3 delivered.\n\n${OPEN_QUESTION}\n\nYou decide: A or B?\nwaiting: operator — blocks: the deploy order` }))
   expect(shown.answer).toBe(shown.passed)
 })
@@ -93,17 +92,19 @@ test('a question his prompt withdrew as answered in the tab is settled: the turn
 // session id has no question to read; its last line « handed over » is the hand-over itself.
 const UNSHOWN = 'Successor spawned; waiting for its « takeover confirmed ».'
 
-test('a session that handed over is never refused for a question still open', async () => {
+test('a session that handed over leaves no unshown-question line for a question still open', async () => {
   const { handlers } = mounted()
-  const { dollar } = fakeDollar({ round: roundOf(openEntry()) })
-  expect(((await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: UNSHOWN }))).answer as any).block).toContain('still unanswered')
+  const { dollar, written } = fakeDollar({ round: roundOf(openEntry()) })
+  await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: UNSHOWN }))
+  expect(written.filter(l => l.includes('warn question-unshown')).length).toBe(1)
   const spawn = { tool: 'Bash', tool_use_id: 't9', command: 'bash /plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh spawn --successor --title "Orch : belt"' }
   await handlers['tool.call'](dollar, spawn, async () => ({ result: { stdout: 'spawned' } }))
   const over = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: UNSHOWN }))
   expect(over.answer).toBe(over.passed)
+  expect(written.filter(l => l.includes('warn question-unshown')).length).toBe(1)
 })
 
-test('a session that asked to end is never refused for a question still open', async () => {
+test('a session that asked to end leaves no unshown-question line for a question still open', async () => {
   const { handlers } = mounted()
   const naming: Record<string, Function> = {}
   registerNaming((...args: any[]) => {
@@ -111,12 +112,14 @@ test('a session that asked to end is never refused for a question still open', a
     naming[tool === `mcp__orchestrator__${END_TOOL}` ? 'end' : args[0]] = args[args.length - 1]
     return { catch: () => undefined }
   })
-  const { dollar } = fakeDollar({ round: roundOf(openEntry()) })
-  expect(((await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'waiting: done' }))).answer as any).block).toContain('still unanswered')
+  const { dollar, written } = fakeDollar({ round: roundOf(openEntry()) })
+  await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
+  expect(written.filter(l => l.includes('warn question-unshown')).length).toBe(1)
   await naming['end'](dollar, {})
   try {
     const ending = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
     expect(ending.answer).toBe(ending.passed)
+    expect(written.filter(l => l.includes('warn question-unshown')).length).toBe(1)
   } finally {
     // The end asked is module memory: an interrupted turn drops it, for the tests after this one.
     await naming['turn.complete'](dollar, { isAborted: true }, (x: unknown) => x)
@@ -1554,7 +1557,7 @@ test('a stop that ends on no machine line while a background process of the sess
   expect(out.answer).toBe(out.passed)
 })
 
-test('waiting: tool passes while a background process of the session runs, and is refused when none does', async () => {
+test('waiting: tool passes while a background process of the session runs, and passes with a warn line when none does', async () => {
   const { handlers } = mounted()
   const message = { last_assistant_message: 'Deploys started.\nwaiting: tool — the deploy monitor' }
   const watched = fakeDollar({ ps: MONITOR_PS })
@@ -1562,21 +1565,19 @@ test('waiting: tool passes while a background process of the session runs, and i
   expect(passed.answer).toBe(passed.passed)
   expect(watched.written.some(l => l.endsWith('| stop gate: check1 tool the deploy monitor'))).toBe(true)
   const idle = fakeDollar({ ps: `  820     1 ${shellOf('sleep 9')}\n` })
-  const held = ((await stop(handlers['classic.Stop'], idle.dollar, stopEvent(message))).answer as any).block
-  expect(held).toContain('Nothing of yours runs in the background')
-  expect(held).toContain('waiting: operator — blocks: <what it blocks>')
-  expect(held).toContain('waiting: done')
+  const unseen = await stop(handlers['classic.Stop'], idle.dollar, stopEvent(message))
+  expect(unseen.answer).toBe(unseen.passed)
+  expect(idle.written.some(l => l.endsWith('| stop gate: warn tool-not-running the deploy monitor'))).toBe(true)
+  expect(idle.written.some(l => l.includes('check1 tool'))).toBe(false)
 })
 
 test('the tool line, decided over the facts', () => {
   const base = { agents: [], resident: false, delivered: [] }
   expect(checkWake({ ...base, message: 'x\n`waiting: tool — the deploy monitor`.', background: ['tail -f deploy.log'] })).toEqual({ tool: 'the deploy monitor' })
   expect(checkWake({ ...base, message: 'Waiting: Tool - ci-watch 12', watching: true })).toEqual({ tool: 'ci-watch 12' })
-  expect((checkWake({ ...base, message: 'waiting: tool — the deploy monitor' }) as any).case).toBe('tool-not-running')
-  // A busy agent is what wakes it: the line fits nothing, and the text says the turn ends on none.
-  const busy = checkWake({ ...base, agents: [AGENT_BUSY], message: 'waiting: tool — the monitor' }) as any
-  expect(busy.case).toBe('tool-not-running')
-  expect(busy.reason).toContain('An agent of yours is busy: end on no machine line')
+  expect(checkWake({ ...base, message: 'waiting: tool — the deploy monitor' })).toEqual({ tool: 'the deploy monitor', notRunning: true })
+  // A busy agent beside a tool line with nothing running: logged, not refused.
+  expect(checkWake({ ...base, agents: [AGENT_BUSY], message: 'waiting: tool — the monitor' })).toEqual({ tool: 'the monitor', notRunning: true })
   // A delivered idle agent is told first, as for every line but a blocking question.
   expect((checkWake({ ...base, agents: [AGENT_IDLE], delivered: ['Agent : idle-p3 (pull request #1, OPEN)'], message: 'waiting: tool — x', background: ['sleep 9'] }) as any).case).toBe('idle-delivered')
 })
@@ -1606,8 +1607,8 @@ test('a wait on the operator that blocks nothing is refused, the right line name
 test('a true tool line is accepted when the host pid could not be read', () => {
   const base = { agents: [], resident: false, delivered: [] }
   expect(checkWake({ ...base, message: 'waiting: tool — the deploy monitor', hostUnread: true })).toEqual({ tool: 'the deploy monitor' })
-  // A read host pid still refuses a tool line with nothing running.
-  expect((checkWake({ ...base, message: 'waiting: tool — the deploy monitor' }) as any).case).toBe('tool-not-running')
+  // A read host pid with nothing running is flagged for the log, not refused.
+  expect(checkWake({ ...base, message: 'waiting: tool — the deploy monitor' })).toEqual({ tool: 'the deploy monitor', notRunning: true })
 })
 
 test('the refusals offer the tool line only as what follows a launch, never as a line that fits now', () => {
@@ -1757,7 +1758,8 @@ test('the malformed-line text and the lines that fit name the deferred ending', 
   const NAMED = 'if the operator deferred it, his ruling recorded: waiting: deferred — <ids>'
   expect((checkWake({ ...base, message: 'waiting: operater blocks x' }) as any).reason).toContain(NAMED)
   expect((checkWake({ ...base, message: 'waiting: operator — blocks: nothing' }) as any).reason).toContain(NAMED)
-  expect((checkWake({ ...base, message: 'waiting: tool — the monitor' }) as any).reason).toContain(NAMED)
+  // A tool line with nothing running is no longer a refusal: it has no text to name the ending in.
+  expect((checkWake({ ...base, message: 'waiting: tool — the monitor' }) as any).reason).toBeUndefined()
   // While something runs, the line that fits is the tool line alone.
   expect((checkWake({ ...base, message: 'waiting: operator — blocks: nothing', background: ['sleep 9'] }) as any).reason).not.toContain(NAMED)
 })

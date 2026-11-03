@@ -502,8 +502,9 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         const pending = await quietly($, async () => pendingQuestion(sessionId, await roundEntries($, state), await waitRead($, sessionId)), until, null)
         const unshown = unansweredRefusal(message, pending)
         if (unshown !== null) {
-          await logLine($, `stop gate: an operator question left unshown (${pending?.entry?.id ?? pending?.blocks ?? '?'})`)
-          return refuse(unshown)
+          // Measured, not refused: a refusal made the turn rewrite the whole block each time. The pane
+          // keeps the question visible, and the log counts the turns that left it out.
+          await logLine($, `stop gate: warn question-unshown (${pending?.entry?.id ?? pending?.blocks ?? '?'})`)
         }
       }
       const root = $.plugin.root   // never $.env: the module's environment has no CLAUDE_PLUGIN_ROOT
@@ -563,7 +564,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         // figures that say whether the gate earns its cost are read there.
         await logLine($, `stop gate: check1 blocks ${wake.blocks}`)
       } else if (wake !== null && typeof wake === 'object' && 'tool' in wake) {
-        await logLine($, `stop gate: check1 tool ${wake.tool}`)
+        await logLine($, wake.notRunning ? `stop gate: warn tool-not-running ${wake.tool}` : `stop gate: check1 tool ${wake.tool}`)
       } else if (wake === 'read-what-is-left') {
         // The done line: the facts are read only now, as the shell gate read them lazily.
         const top = await projectTop($, String(e.cwd ?? ''), until)
