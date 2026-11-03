@@ -3,8 +3,8 @@ spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
 launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
 prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
 self=/dev/ttys900
-anchor=
-side=left
+anchor=self
+side=right
 trust=already
 successor=no
 auditor=no
@@ -188,8 +188,8 @@ spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
 launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
 prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
 self=/dev/ttys900
-anchor=
-side=left
+anchor=self
+side=right
 trust=already
 successor=no
 auditor=no
@@ -214,8 +214,8 @@ spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
 launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
 prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
 self=/dev/ttys900
-anchor=
-side=left
+anchor=self
+side=right
 trust=already
 successor=no
 auditor=no
@@ -240,8 +240,8 @@ spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
 launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' odd && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-odd-@TIME@.txt)" --name odd
 prompt_file=@WORK@/state/prompts/prompt-odd-@TIME@.txt
 self=/dev/ttys900
-anchor=
-side=left
+anchor=self
+side=right
 trust=already
 successor=no
 auditor=no
@@ -269,8 +269,8 @@ spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
 launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --effort low --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
 prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
 self=/dev/ttys900
-anchor=
-side=left
+anchor=self
+side=right
 trust=already
 successor=no
 auditor=no
@@ -295,8 +295,8 @@ spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
 launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --model a-model --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode acceptEdits --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
 prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
 self=/dev/ttys900
-anchor=
-side=left
+anchor=self
+side=right
 trust=already
 successor=no
 auditor=no
@@ -321,8 +321,8 @@ spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
 launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --model a-model --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
 prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
 self=/dev/ttys900
-anchor=
-side=left
+anchor=self
+side=right
 trust=already
 successor=no
 auditor=no
@@ -347,8 +347,8 @@ spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
 launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=200000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
 prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
 self=/dev/ttys900
-anchor=
-side=left
+anchor=self
+side=right
 trust=already
 successor=no
 auditor=no
@@ -373,8 +373,8 @@ spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
 launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session Foo --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
 prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
 self=/dev/ttys900
-anchor=
-side=left
+anchor=self
+side=right
 trust=already
 successor=no
 auditor=no
@@ -399,8 +399,8 @@ spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
 launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --permission-mode auto --settings '{"remoteControlAtStartup":false,"enableAllProjectMcpServers":true,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
 prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
 self=/dev/ttys900
-anchor=
-side=left
+anchor=self
+side=right
 trust=already
 successor=no
 auditor=no
@@ -425,8 +425,8 @@ spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
 launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
 prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
 self=/dev/ttys900
-anchor=
-side=left
+anchor=self
+side=right
 trust=already
 successor=no
 auditor=no
@@ -453,8 +453,8 @@ prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
 prompt=Read and execute @WORK@/brief.md. Your orchestrator is Orch : f [a1b2c3].
 lint=brief-lint: @WORK@/brief.md: 0 findings
 self=/dev/ttys900
-anchor=
-side=left
+anchor=self
+side=right
 trust=already
 successor=no
 auditor=no
@@ -479,8 +479,8 @@ spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
 launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/brief.md)" --name 'Agent : a'
 prompt_file=@WORK@/brief.md
 self=/dev/ttys900
-anchor=
-side=left
+anchor=self
+side=right
 trust=already
 successor=no
 auditor=no
@@ -586,7 +586,7 @@ ERROR: spawn: refused: --resident marks an agent of your chain; a successor, an 
 exit=1
 ### auditor
 spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
-launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Audit : tm' && exec @WORK@/bin/host-cli --model a-model --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Audit---tm-@TIME@.txt)" --name 'Audit : tm' --remote-control 'Audit : tm'
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_AUDITOR=1 && printf '\033]0;%s\007' 'Audit : tm' && exec @WORK@/bin/host-cli --model a-model --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Audit---tm-@TIME@.txt)" --name 'Audit : tm' --remote-control 'Audit : tm'
 prompt_file=@WORK@/state/prompts/prompt-Audit---tm-@TIME@.txt
 self=/dev/ttys900
 anchor=self
@@ -612,7 +612,7 @@ program=/bin/sh -l <launch-file>
 exit=0
 ### auditor, derived successor
 spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
-launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Audit : f' && exec @WORK@/bin/host-cli --model a-model --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Audit---f-@TIME@.txt)" --name 'Audit : f' --remote-control 'Audit : f'
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_AUDITOR=1 && printf '\033]0;%s\007' 'Audit : f' && exec @WORK@/bin/host-cli --model a-model --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Audit---f-@TIME@.txt)" --name 'Audit : f' --remote-control 'Audit : f'
 prompt_file=@WORK@/state/prompts/prompt-Audit---f-@TIME@.txt
 self=/dev/ttys900
 anchor=self
@@ -822,8 +822,8 @@ exit=0
 launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --mcp-config @WORK@/state/prompts/mcp-Agent---a-@TIME@.json --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
 prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
 self=/dev/ttys900
-anchor=
-side=left
+anchor=self
+side=right
 trust=already
 successor=no
 auditor=no
@@ -847,8 +847,8 @@ exit=0
 launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --mcp-config @WORK@/state/prompts/mcp-Agent---a-@TIME@.json --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
 prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
 self=/dev/ttys900
-anchor=
-side=left
+anchor=self
+side=right
 trust=already
 successor=no
 auditor=no
@@ -872,8 +872,8 @@ exit=0
 launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
 prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
 self=/dev/ttys900
-anchor=
-side=left
+anchor=self
+side=right
 trust=already
 successor=no
 auditor=no
@@ -903,8 +903,8 @@ exit=0
 launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : r' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --mcp-config @WORK@/state/prompts/mcp-Agent---r-@TIME@.json --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---r-@TIME@.txt)" --name 'Agent : r'
 prompt_file=@WORK@/state/prompts/prompt-Agent---r-@TIME@.txt
 self=/dev/ttys900
-anchor=
-side=left
+anchor=self
+side=right
 trust=already
 successor=no
 auditor=no
@@ -933,8 +933,8 @@ rotate: forced: /dev/ttys950 is an auditor's tab ('Audit : tm')
 launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : r' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --mcp-config @WORK@/state/prompts/mcp-Agent---r-@TIME@.json --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---r-@TIME@.txt)" --name 'Agent : r'
 prompt_file=@WORK@/state/prompts/prompt-Agent---r-@TIME@.txt
 self=/dev/ttys900
-anchor=
-side=left
+anchor=self
+side=right
 trust=already
 successor=no
 auditor=no

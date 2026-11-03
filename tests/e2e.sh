@@ -284,7 +284,7 @@ EOF
 check "the agent behind a maximized pane is listed, and marked" "1" "$(bash "$AGENT" list | grep "$TTY" | grep -c '| hidden$')"
 bash "$AGENT" close --tty "$TTY" --expect-title "e2e" >/dev/null 2>&1
 check "the hidden agent closes by its tty" "0" "$?"
-check "its sibling pane survives the close" "1" "$(bash "$AGENT" list | grep -c "$SIB")"
+check "its sibling pane survives the close" "1" "$(bash "$AGENT" list | grep '^w[0-9]' | grep -c "$SIB")"
 bash "$AGENT" close --tty "$SIB" >/dev/null 2>&1
 check "the sibling closes with the tab" "0" "$(bash "$AGENT" list | grep -c "$SIB")"
 TTY=""

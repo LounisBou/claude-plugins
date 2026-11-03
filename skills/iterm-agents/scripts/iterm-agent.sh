@@ -9,6 +9,14 @@
 #                        [--left-of <tty> | --right-of <tty> | --right-of self | --successor] [--no-verify]
 #                        [--gate-tokens <positive integer>] [--resident]
 #                        [--keep-tool <name>] [--drop-tool <name>] [--keep-synced-skills]
+#     An agent given no placement flag is placed as --right-of self: after the caller's last
+#     agent while that tab is still contiguous with the caller's group, otherwise directly
+#     right of the caller, never at the window's end.
+#     A title "Orch : ..." is refused without --successor, --open or --wake, and from an
+#     auditor at all: its only successor is its own audit session.
+#     A successor, at its spawn and at `takeover`, takes the predecessor's whole chain and the
+#     predecessor's chain file is removed; a chain file whose every agent has ended is pruned
+#     on the next chain write, and `list` names the ended orchestrator of each orphaned agent.
 #     --keep-tool / --drop-tool: take a tool out of, or add one to, the set the launch removes
 #     from the session (§65). Both repeat; an empty name, or one name on both, is refused.
 #     --keep-synced-skills: leave the account's synced skills in; the launch hides them otherwise.

@@ -395,8 +395,8 @@ check "the hand-over moves the predecessor's own entries" "2" "$(transfer)"
 check "under the successor's tty and owner, the stale file replaced" \
   '{"tab_id": "8", "tty": "/dev/ttys908", "owner": "S-NEW"}|{"tab_id": "9", "tty": "/dev/ttys909", "owner": "S-NEW"}' \
   "$(paste -sd'|' "$CHAINS/ttys950.jsonl")"
-check "and leaves the predecessor only what was never its own" '{"tab_id": "7", "tty": "/dev/ttys907", "owner": "S-OTHER"}' \
-  "$(cat "$CHAINS/ttys900.jsonl")"
+check "and removes the predecessor's file, what was never its own included" 'absent' \
+  "$([ -e "$CHAINS/ttys900.jsonl" ] && echo present || echo absent)"
 check "a predecessor with no agents hands over an empty chain" "0|0" "$(transfer)|$(wc -l < "$CHAINS/ttys950.jsonl" | tr -d ' ')"
 # A RESIDENT agent stays idle by design while a background command of its own waits: the
 # stop gate must not count it as an agent to read or relaunch. `--resident` marks its entry;
@@ -422,11 +422,14 @@ check "a hand-over keeps the mark" '{"tab_id": "9", "tty": "/dev/ttys909", "owne
 # ORCHESTRATOR's chain, not in the caller's, so the hand-over above never reaches it. It must
 # follow the successor, owner and mark kept, or the orchestrator reads a closed tab as its
 # resident agent.
-repoint() { ORCHESTRATOR_STATE_DIR="$WORK/istate" "$py" -c "
+# The agents these chains name run: a chain write prunes only the files whose agents are all dead.
+REPOINTPS="$WORK/ps-repoint.txt"
+printf '/dev/ttys940 claude\n/dev/ttys941 claude\n/dev/ttys942 claude\n/dev/ttys943 claude\n' > "$REPOINTPS"
+repoint() { ORCHESTRATOR_STATE_DIR="$WORK/istate" ORCHESTRATOR_PS_TABLE="$REPOINTPS" "$py" -c "
 import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
 import iterm_agent as m
 print(m.chain_repoint_tab('41', '42', '/dev/ttys942'))" 2>&1; }
-dropt() { ORCHESTRATOR_STATE_DIR="$WORK/istate" "$py" -c "
+dropt() { ORCHESTRATOR_STATE_DIR="$WORK/istate" ORCHESTRATOR_PS_TABLE="$REPOINTPS" "$py" -c "
 import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
 import iterm_agent as m
 m.chain_drop_tab('41')" 2>&1; }
@@ -2530,6 +2533,11 @@ check "the launch names the session after its title" "1" "$(printf '%s' "$cmd" |
 # operator read his window and could not tell one agent from another at a glance.
 # `--title-free` is the escape for a probe that names its tab otherwise, and the dry run
 # says when it is on.
+# An orchestrator's launch, read through its one plain door: its successor, spawned by an
+# orchestrator caller and without remote control, whose launch line is a plain spawn's.
+ORCHVPS="$WORK/ps-orch-vehicle.txt"
+printf '/dev/ttys900 claude --name Orch : f\n' > "$ORCHVPS"
+orchv() { ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$ORCHVPS" "$@"; }
 shaped() {
   case " $* " in
     *" --prompt "*|*" --prompt-file "*) set -- "$@" ;;
@@ -2540,7 +2548,7 @@ shaped() {
 check "a shaped title names the session" "1" \
   "$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : x'")"
 check "and so does an orchestrator's" "1" \
-  "$(shaped --title 'Orch : x' | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch : x'")"
+  "$(orchv shaped --title 'Orch : x' --successor --no-remote-control | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch : x'")"
 check "and so does a probe's" "1" \
   "$(shaped --title 'Agent : anchor' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : anchor'")"
 check "the dry run says which name it passes" "1" "$(shaped --title 'Agent : anchor' | grep -c '^name=Agent : anchor$')"
@@ -3769,7 +3777,7 @@ check "without --gate-tokens an agent's launch exports the 240000 gate" "1" "$(g
 check "--gate-tokens on an agent wins over the 240000 default" "1|0" \
   "$(gspawn --prompt p --gate-tokens 150000 | grep -c '^launch=.*export ORCHESTRATOR_CONTEXT_GATE_TOKENS=150000 && ')|$(gspawn --prompt p --gate-tokens 150000 | grep -c 'GATE_TOKENS=240000')"
 check "an orchestrator's, an auditor's and a coordinator's launch export no gate" "0|0|0" \
-  "$(gspawn --title 'Orch : gate' --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE_TOKENS')|$(gspawn --title 'Audit : gate' --auditor --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE_TOKENS')|$(gspawn --title 'Coord : gate' --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE_TOKENS')"
+  "$(orchv gspawn --title 'Orch : gate' --successor --no-remote-control --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE_TOKENS')|$(gspawn --title 'Audit : gate' --auditor --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE_TOKENS')|$(gspawn --title 'Coord : gate' --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE_TOKENS')"
 for bad in 0 -5 abc 1.5 ""; do
   badout=$(gspawn --prompt p --gate-tokens "$bad"); badcode=$?
   check "--gate-tokens '$bad' is refused, nothing launched" "1|0|1" \
@@ -3948,7 +3956,7 @@ printf '{"context_tokens":21000,"context_window":200000,"context_percent":10,"mo
 inh() { local sid=$1; shift; CLAUDE_CODE_SESSION_ID="$sid" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" CLAUDE_CONFIG_DIR="$ICFG" \
   bash "$AGENT" spawn --dir "$WORK" "$@" 2>&1; }
 check "inherit-model types the calling session's model" "1" \
-  "$(inh s-inh --title "Orch : heir" --inherit-model --prompt p | sed -n 's/^launch=//p' | grep -c -- '--model a-model')"
+  "$(orchv inh s-inh --title "Orch : heir" --successor --no-remote-control --inherit-model --prompt p | sed -n 's/^launch=//p' | grep -c -- '--model a-model')"
 printf '{"context_tokens":21000,"context_window":200000,"context_percent":10,"model":"override-root-model","updated_at":"2026-10-10T00:00:00Z"}\n' > "$ISTATE/measure/s-ovr.json"
 check "the measure file is read under the config dir, not the state override" "1" \
   "$(inh s-ovr --inherit-model --prompt p | grep -cF "$ICFG/claude-orchestrator/measure/s-ovr.json")"
@@ -3958,7 +3966,7 @@ check "inherit-model with no measure file refuses and names the module" "1" \
 # model to type, and a succession must not start on a guess (§27).
 printf '{"context_tokens":21000,"context_window":200000,"context_percent":10,"model":"unavailable","updated_at":"2026-10-10T00:00:00Z"}\n' > "$ICFG/claude-orchestrator/measure/s-unav.json"
 check "inherit-model refuses the unavailable sentinel, as if no model were recorded" "0|1" \
-  "$(inh s-unav --title "Orch : heir" --inherit-model --prompt p | grep -c -- '--model unavailable')|$(inh s-unav --title "Orch : heir" --inherit-model --prompt p | grep -c 'no model recorded for this session')"
+  "$(orchv inh s-unav --title "Orch : heir" --successor --no-remote-control --inherit-model --prompt p | grep -c -- '--model unavailable')|$(orchv inh s-unav --title "Orch : heir" --successor --no-remote-control --inherit-model --prompt p | grep -c 'no model recorded for this session')"
 check "inherit-model is exclusive with a tier" "1" \
   "$(inh s-inh --inherit-model --tier deep --prompt p | grep -c 'exclusive')"
 check_status "an unknown tier is refused at spawn" 1 \
@@ -5979,7 +5987,11 @@ ia.as_spawn = lambda command: (app.windows[0].tabs.append(T("AS", S("S-AS", "/de
                                or "/dev/ttys902")
 ia.as_close = lambda tty, expect: closed_by_tty.append(tty) or "the made one"
 if scenario.startswith("raise"):
-    async def boom(tab, connection=None, tries=10): raise RuntimeError("the tab vanished")
+    real_tty_of = ia.tty_of
+    async def boom(tab, connection=None, tries=10):
+        if tab.tab_id != "NEW":
+            return await real_tty_of(tab, connection, tries)
+        raise RuntimeError("the tab vanished")
     ia.tty_of = boom
 out, err = io.StringIO(), io.StringIO()
 code = 0
@@ -6029,7 +6041,7 @@ check "a verified agent is appended to its caller's chain, and its tty printed l
   "0|['/dev/ttys902']|[('2', 'S-OWN'), ('NEW', 'S-OWN')]" \
   "$(sfield "$res" exit)|$(sfield "$res" stdout)|$(sfield "$res" own)"
 res=$(sprobe succ running /dev/ttys801 --successor --title "Orch : heir")
-check "a verified successor takes the chain" "0|[]|[('2', 'S-NEW')]" \
+check "a verified successor takes the chain" "0|absent|[('2', 'S-NEW')]" \
   "$(sfield "$res" exit)|$(sfield "$res" own)|$(sfield "$res" new)"
 res=$(sprobe transcript none /dev/ttys801 --title "Agent : x")
 check "a session that wrote its transcript has started, whatever the process table says" \
@@ -6103,7 +6115,7 @@ seamp() { local state="$WORK/seamstate-$1"; rm -rf "$state"; mkdir -p "$state/ch
     "$py" "$WORK/seam_probe.py" "$ROOT/skills/iterm-agents/scripts" "$1" "$WORK" 2>&1; }
 res=$(seamp append)
 check "a spawn's chain entry carries the stable id create returned, under the owner the terminal names" \
-  "0|[('T-OLD', 'O-ME'), ('T-RET', 'O-ME')]|create anywhere left append,owner" \
+  "0|[('T-OLD', 'O-ME'), ('T-RET', 'O-ME')]|create beside right append,owner" \
   "$(sfield "$res" exit)|$(sfield "$res" chain)|$(sfield "$res" calls)"
 res=$(seamp beside)
 check "the place is a value: beside its anchor, on its side" "create beside right append,owner" "$(sfield "$res" calls)"
@@ -6134,6 +6146,217 @@ check "from a tmux pane, a tab its chain holds is the caller's to move, a siblin
   "$(paneowned "ia.move_is_owned(app, '/dev/ttys805', '/dev/ttys950')")|$(paneowned "ia.move_is_owned(app, '/dev/ttys802', '/dev/ttys950')")"
 check "and its last agent anchors the next one, wherever the app put it" "/dev/ttys805" \
   "$(paneowned "ia.chain_anchor(app, '/dev/ttys950')")"
+
+echo "== iterm-agents: every tab beside its orchestrator =="
+# The contract: every agent tab the launcher opens sits in its orchestrator's group, to its
+# right; an orchestrator tab is opened only as a successor, an opened orchestrator or a woken
+# one; an orchestrator's agents follow it to its successor. An agent spawned with no place
+# landed at the window's end and was still written into its caller's chain; `--right-of self`
+# anchored after the last agent wherever that tab had been moved, beside another orchestrator.
+# Over a fake app whose window is a list of tabs, the caller on ttys801.
+cat > "$WORK/place_probe.py" <<'PYEOF'
+import asyncio, contextlib, io, json, os, sys
+sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+layout, workdir, argv = sys.argv[2], sys.argv[3], sys.argv[4:]
+if os.environ.get("PROBE_NO_TTY"):
+    ia.self_tty = lambda: None
+class S:
+    def __init__(s, sid, tty): s.session_id = sid; s.tty = tty
+    async def async_get_variable(s, k): return {"tty": s.tty, "autoName": ""}.get(k)
+class T:
+    def __init__(s, tid, sess): s.tab_id = tid; s.sessions = [sess]; s.all_sessions = [sess]
+    @property
+    def current_session(s): return s.sessions[0]
+class W:
+    def __init__(s, tabs): s.window_id = "w"; s.tabs = tabs
+    async def async_create_tab(s, command=None, index=None, select=True):
+        t = T("NEW", S("S-NEW", "/dev/ttys902"))
+        s.tabs.insert(len(s.tabs) if index is None else index, t)
+        return t
+class App:
+    def __init__(s, wins): s.windows = wins; s.current_window = wins[0]
+tabs = []
+for spec in layout.split(","):
+    tid, sid, tty = spec.split(":")
+    tabs.append(T(tid, S(sid, "/dev/ttys" + tty)))
+app = App([W(tabs)])
+class Api:
+    async def async_get_app(self, connection): return app
+ia.run = lambda fn: asyncio.run(fn(Api(), None))
+out, err = io.StringIO(), io.StringIO()
+code = 0
+try:
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        if argv[:1] == ["list"]:
+            ia.cmd_list([])
+        else:
+            ia.cmd_spawn(["--dir", workdir, "--prompt", "p", "--no-verify"] + argv)
+except SystemExit as e:
+    code = e.code
+print("exit=%s" % code)
+print("tabs=%s" % ",".join(t.tab_id for t in app.windows[0].tabs))
+print("rows=%s" % "~".join(out.getvalue().strip().splitlines()))
+print("ERR:" + " ".join(err.getvalue().split()))
+PYEOF
+PLACEPS="$WORK/ps-place.txt"
+printf '/dev/ttys801 claude --name Orch : own\n/dev/ttys802 claude --name Agent : a\n/dev/ttys803 claude --name Orch : other\n/dev/ttys804 claude --name Agent : b\n/dev/ttys902 claude --name Agent : x\n' > "$PLACEPS"
+pprobe() { local layout="$1" state="$WORK/placestate"; shift
+  ORCHESTRATOR_BACKEND=api ORCHESTRATOR_STATE_DIR="$state" ORCHESTRATOR_SELF_TTY=/dev/ttys801 \
+    ORCHESTRATOR_PS_TABLE="$PLACEPS" "$py" "$WORK/place_probe.py" "$ROOT/skills/iterm-agents/scripts" \
+    "$layout" "$WORK" "$@" 2>&1; }
+pchain() { rm -rf "$WORK/placestate"; mkdir -p "$WORK/placestate/chains"
+  [ -n "$1" ] && printf '%s\n' "$1" > "$WORK/placestate/chains/ttys801.jsonl"; return 0; }
+pchain ''
+res=$(pprobe '1:S-OWN:801,3:S-OTHER:803' --title "Agent : x")
+check "an agent given no place, its caller's chain empty, lands right of its caller, not at the window's end" \
+  "0|1,NEW,3" "$(sfield "$res" exit)|$(sfield "$res" tabs)"
+pchain '{"tab_id":"2","tty":"/dev/ttys802","owner":"S-OWN"}'
+res=$(pprobe '1:S-OWN:801,2:S-AG:802,3:S-OTHER:803' --title "Agent : x")
+check "an agent given no place lands after its caller's last agent" \
+  "0|1,2,NEW,3" "$(sfield "$res" exit)|$(sfield "$res" tabs)"
+pchain '{"tab_id":"2","tty":"/dev/ttys802","owner":"S-OWN"}'
+res=$(pprobe '1:S-OWN:801,2:S-AG:802,3:S-OTHER:803' --title "Agent : x" --right-of self)
+check "--right-of self lands after the last agent while it is contiguous with its caller's group" \
+  "0|1,2,NEW,3" "$(sfield "$res" exit)|$(sfield "$res" tabs)"
+pchain '{"tab_id":"2","tty":"/dev/ttys802","owner":"S-OWN"}'
+res=$(pprobe '1:S-OWN:801,3:S-OTHER:803,2:S-AG:802' --title "Agent : x" --right-of self)
+check "--right-of self lands directly right of its caller once the last agent sits apart from its group" \
+  "0|1,NEW,3,2" "$(sfield "$res" exit)|$(sfield "$res" tabs)"
+pchain '{"tab_id":"2","tty":"/dev/ttys802","owner":"S-OWN"}
+{"tab_id":"4","tty":"/dev/ttys804","owner":"S-OWN"}'
+res=$(pprobe '1:S-OWN:801,2:S-AG:802,3:S-OTHER:803,4:S-AG4:804' --title "Agent : x")
+check "and so does an agent given no place, whose last agent is past a stranger's tab" \
+  "0|1,2,NEW,3,4" "$(sfield "$res" exit)|$(sfield "$res" tabs)"
+pchain '{"tab_id":"2","tty":"/dev/ttys802","owner":"S-OWN"}
+{"tab_id":"4","tty":"/dev/ttys804","owner":"S-OWN"}'
+res=$(pprobe '1:S-OWN:801,3:S-OTHER:803,2:S-AG:802,4:S-AG4:804' --title "Agent : x")
+check "an agent given no place lands directly right of its caller when none of its agents is in the group" \
+  "0|1,NEW,3,2,4" "$(sfield "$res" exit)|$(sfield "$res" tabs)"
+
+# A caller with no readable tty: the default placement falls back to the window's end and says
+# so, while an explicit --right-of self keeps refusing.
+pchain ''
+res=$(PROBE_NO_TTY=1 pprobe '1:S-OWN:801,3:S-OTHER:803' --title "Agent : x")
+check "an agent given no place, its caller's tty unreadable, lands at the window's end and says why" \
+  "0|1,3,NEW|1" "$(sfield "$res" exit)|$(sfield "$res" tabs)|$(sfield "$res" ERR | grep -c "own tty cannot be resolved")"
+res=$(PROBE_NO_TTY=1 pprobe '1:S-OWN:801,3:S-OTHER:803' --title "Agent : x" --right-of self)
+check "while an explicit --right-of self is still refused" \
+  "1|1" "$(sfield "$res" exit)|$(sfield "$res" ERR | grep -c "cannot resolve this session's own tty")"
+
+# An orchestrator tab has three ways in. The auditor's relaunch of an orchestrator, a plain
+# spawn under an `Orch :` title, landed at the window's end and became the auditor's agent.
+# The auditor's own successor runs on its model, read from the measure file the module writes.
+mkdir -p "$WORK/orchcfg/claude-orchestrator/measure"
+printf '{"model":"a-model"}\n' > "$WORK/orchcfg/claude-orchestrator/measure/s-orch.json"
+orchp() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/orchstate" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
+  ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CONFIG_DIR="$WORK/orchcfg" CLAUDE_CODE_SESSION_ID=s-orch \
+  ORCHESTRATOR_PS_TABLE="$1" bash "$AGENT" spawn --dir "$WORK" --prompt p "${@:2}" 2>&1; }
+ORCHPS="$WORK/ps-orchcaller.txt"; AUDPS="$WORK/ps-audcaller.txt"
+printf '/dev/ttys900 claude --name Orch : f\n' > "$ORCHPS"
+printf '/dev/ttys900 claude --name Audit : f\n' > "$AUDPS"
+check "a plain spawn titled Orch is refused, naming the successor, the opening and the wake" "1|1" \
+  "$(orchp "$ORCHPS" --title 'Orch : x' >/dev/null 2>&1; echo $?)|$(orchp "$ORCHPS" --title 'Orch : x' | grep -c "an orchestrator's tab is opened only as a successor (--successor), an opened orchestrator (--open) or a woken one (--wake)")"
+check "and so is one under --title-free" "1" \
+  "$(orchp "$ORCHPS" --title 'Orch : x' --title-free >/dev/null 2>&1; echo $?)"
+check "an orchestrator's successor under an Orch title is still launched" "0|transfer" \
+  "$(orchp "$ORCHPS" --title 'Orch : g' --successor >/dev/null 2>&1; echo $?)|$(orchp "$ORCHPS" --title 'Orch : g' --successor | sed -n 's/^chain=//p')"
+check "an auditor's spawn titled Orch is refused as a successor and as a wake" "1|1|1" \
+  "$(orchp "$AUDPS" --title 'Orch : x' --successor >/dev/null 2>&1; echo $?)|$(orchp "$AUDPS" --title 'Orch : x' --wake --model a-model >/dev/null 2>&1; echo $?)|$(orchp "$AUDPS" --title 'Orch : x' --successor | grep -c "its only successor is its own audit session, --successor without --title")"
+check "an auditor's wake of an orchestrator is refused with a message naming the flags that apply" "1" \
+  "$(orchp "$AUDPS" --title 'Orch : x' --wake --model a-model | grep -c "opens no orchestrator tab with --wake or an Orch title, and --open is a coordinator's or an orchestrator's; its only successor is its own audit session, --successor without --title")"
+printf '/dev/ttys900 claude\n' > "$WORK/ps-unnamed.txt"
+check "an auditor whose name cannot be read is refused all the same, by the marker its launch exports" "1|1|0" \
+  "$(ORCHESTRATOR_AUDITOR=1 orchp "$WORK/ps-unnamed.txt" --title 'Orch : x' --wake --model a-model | grep -c "this session is an auditor's")|$(orchp "$ORCHPS" --auditor --title 'Audit : tm' | grep -c '^launch=.*export ORCHESTRATOR_AUDITOR=1 && ')|$(orchp "$ORCHPS" --title 'Agent : x' | grep -c 'ORCHESTRATOR_AUDITOR')"
+check "an auditor's spawn stays out of the chain and left of its caller, a woken orchestrator's out of the chain" "1|1|1" \
+  "$(orchp "$ORCHPS" --auditor --title 'Audit : tm' | grep -c '^chain=none$')|$(orchp "$ORCHPS" --auditor --title 'Audit : tm' | grep -c '^side=left$')|$(orchp "$ORCHPS" --title 'Orch : x' --wake --model a-model | grep -c '^chain=none$')"
+check "an auditor's --open is refused, as an agent's is" "1|1" \
+  "$(orchp "$AUDPS" --title 'Orch : x' --open >/dev/null 2>&1; echo $?)|$(orchp "$AUDPS" --title 'Orch : x' --open | grep -c 'an agent never opens an orchestrator')"
+check "while the auditor's own successor is launched" "0|Audit : f" \
+  "$(orchp "$AUDPS" --successor >/dev/null 2>&1; echo $?)|$(orchp "$AUDPS" --successor | sed -n 's/^name=//p')"
+
+# A successor takes its predecessor's chain whole, and the predecessor's file goes, so no
+# chain is left that no live session owns.
+TRSTATE="$WORK/transferstate"; rm -rf "$TRSTATE"; mkdir -p "$TRSTATE/chains"
+printf '{"tab_id":"2","tty":"/dev/ttys802","owner":"S-OLD"}\n{"tab_id":"5","tty":"/dev/ttys805","owner":"S-GONE"}\n' > "$TRSTATE/chains/ttys801.jsonl"
+printf '{"tab_id":"4","tty":"/dev/ttys804","owner":"S-NEW"}\n{"tab_id":"6","tty":"/dev/ttys806","owner":"S-STALE"}\n' > "$TRSTATE/chains/ttys903.jsonl"
+res=$(ORCHESTRATOR_STATE_DIR="$TRSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys801 ORCHESTRATOR_PS_TABLE="$PLACEPS" "$py" -c "
+import sys; sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+print(ia.chain_transfer('/dev/ttys801', 'S-OLD', '/dev/ttys903', 'S-NEW'))" "$ROOT/skills/iterm-agents/scripts" 2>&1)
+check "a successor's chain takes the predecessor's agents, and the predecessor's file goes" \
+  "1|2:S-NEW|absent" \
+  "$res|$(jq -r '"\(.tab_id):\(.owner)"' "$TRSTATE/chains/ttys903.jsonl" | paste -sd, -)|$([ -e "$TRSTATE/chains/ttys801.jsonl" ] && echo present || echo absent)"
+# The takeover in a home session hands over what the predecessor launched after the
+# succession's spawn took its chain, after the agents the successor launched itself.
+TKSTATE="$WORK/takeoverstate"; rm -rf "$TKSTATE"; mkdir -p "$TKSTATE/chains"
+printf '{"tab_id":"tmux:/s:@4","tty":"/dev/ttys804","owner":"tmux:/s:%%1"}\n' > "$TKSTATE/chains/ttys966.jsonl"
+printf '{"tab_id":"tmux:/s:@2","tty":"/dev/ttys802","owner":"tmux:/s:%%3"}\n' > "$TKSTATE/chains/ttys967.jsonl"
+printf '/dev/ttys967 claude --name Orch : x\n/dev/ttys802 claude --name Agent : a\n/dev/ttys804 claude --name Agent : b\n' > "$WORK/ps-takeover.txt"
+res=$(ORCHESTRATOR_STATE_DIR="$TKSTATE" ORCHESTRATOR_PS_TABLE="$WORK/ps-takeover.txt" TMUX=/s,1,0 TMUX_PANE=%3 "$py" -c "
+import sys; sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+P = ia.Pane
+class Home:
+    def window_of(self, tty, what):
+        return P('home', '0', '@1', '%1', tty, 'Orch : x', '') if tty == '/dev/ttys966' \
+            else P('home', '2', '@3', '%3', tty, 'Orch : x', '')
+    def kill(self, window, what): pass
+    def survives(self, stable_id): return False
+    def stable_id(self, window): return 'tmux:/s:' + window
+    def session(self): return 'home'
+ia.TmuxTerminal = Home
+ia.in_home_session = lambda: True
+ia.self_tty = lambda: '/dev/ttys967'
+ia.tmux_out = lambda args, what: '0'
+ia.host_identity = lambda tty: None
+ia.wait_gone = lambda tty, timeout=None: None
+ia.cmd_takeover(['--tty', '/dev/ttys966', '--expect-title', 'Orch : x'])" "$ROOT/skills/iterm-agents/scripts" 2>&1)
+check "a takeover hands the predecessor's agents to the successor and removes the predecessor's chain" \
+  "1|tmux:/s:@2,tmux:/s:@4|absent" \
+  "$(printf '%s' "$res" | grep -c '^took window 0')|$(jq -r .tab_id "$TKSTATE/chains/ttys967.jsonl" | paste -sd, -)|$([ -e "$TKSTATE/chains/ttys966.jsonl" ] && echo present || echo absent)"
+
+# An orchestrator that ended before any successor took its chain leaves agents whose tabs
+# nobody else claims: the listing says whose each one was, on a line of its own that a reader
+# of the rows (the stop gate's) skips, and says nothing of an agent whose orchestrator runs.
+pchain '{"tab_id":"2","tty":"/dev/ttys802","owner":"S-OWN"}'
+printf '{"tab_id":"4","tty":"/dev/ttys804","owner":"S-DEAD"}\n' > "$WORK/placestate/chains/ttys016.jsonl"
+res=$(pprobe '1:S-OWN:801,2:S-AG:802,3:S-OTHER:803,4:S-AG4:804' list)
+check "list names the ended orchestrator of an orphaned agent, on a line no row reader takes for a row" \
+  "orphan: /dev/ttys804 (w1/t4) is an agent of the orchestrator on /dev/ttys016, which has ended|4|0" \
+  "$(sfield "$res" rows | tr '~' '\n' | grep '^orphan:')|$(sfield "$res" rows | tr '~' '\n' | grep -c '^w1/t')|$(sfield "$res" rows | tr '~' '\n' | grep '^orphan:' | grep -c ' | ')"
+
+res=$(ORCHESTRATOR_BACKEND=api ORCHESTRATOR_STATE_DIR="$WORK/placestate" ORCHESTRATOR_SELF_TTY=/dev/ttys801 \
+  ORCHESTRATOR_PS_TABLE="$WORK/ps-missing.txt" "$py" "$WORK/place_probe.py" "$ROOT/skills/iterm-agents/scripts" \
+  '1:S-OWN:801,2:S-AG:802,3:S-OTHER:803,4:S-AG4:804' "$WORK" list 2>&1)
+check "list names no orphan when the process table cannot be read" "0|4" \
+  "$(sfield "$res" rows | tr '~' '\n' | grep -c '^orphan:')|$(sfield "$res" rows | tr '~' '\n' | grep -c '^w1/t')"
+
+# Chain files of dead or recycled ttys piled up. The next chain write removes every file
+# whose every entry is a dead tty; never one with an agent still running, even when its
+# orchestrator has ended (it is what `list` names the orphan's owner from), never the
+# caller's own, and nothing at all when the process table cannot be read.
+PRSTATE="$WORK/prunestate"
+prune_seed() { rm -rf "$PRSTATE"; mkdir -p "$PRSTATE/chains"
+  printf '{"tab_id":"9","tty":"/dev/ttys809","owner":"S-X"}\n' > "$PRSTATE/chains/ttys015.jsonl"
+  printf '{"tab_id":"9","tty":"/dev/ttys809","owner":"S-X"}\n{"tab_id":"3","tty":"/dev/ttys803","owner":"S-X"}\n' > "$PRSTATE/chains/ttys016.jsonl"
+  printf '{"tab_id":"9","tty":"/dev/ttys809","owner":"S-X"}\n' > "$PRSTATE/chains/ttys803.jsonl"
+  printf '{"tab_id":"4","tty":"/dev/ttys804","owner":"S-X"}\n' > "$PRSTATE/chains/ttys802.jsonl"
+  printf '{"tab_id":"7","tty":"/dev/ttys807","owner":"S-OWN"}\n' > "$PRSTATE/chains/ttys801.jsonl"; }
+prune_run() { ORCHESTRATOR_STATE_DIR="$PRSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys801 ORCHESTRATOR_PS_TABLE="$1" "$py" -c "
+import sys; sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+ia.chain_append('/dev/ttys804', 'T', '/dev/ttys902', 'S-B')" "$ROOT/skills/iterm-agents/scripts" 2>&1
+  ls "$PRSTATE/chains" | paste -sd, -; }
+prune_seed
+check "a chain write prunes every file whose agents are all dead, never a live one or the caller's" \
+  "ttys016.jsonl,ttys801.jsonl,ttys802.jsonl,ttys804.jsonl" "$(prune_run "$PLACEPS")"
+prune_seed
+check "an ended orchestrator's file with one agent still running is kept" "present" \
+  "$(prune_run "$PLACEPS" >/dev/null; [ -e "$PRSTATE/chains/ttys016.jsonl" ] && echo present || echo absent)"
+prune_seed
+check "and prunes nothing when the process table cannot be read" \
+  "ttys015.jsonl,ttys016.jsonl,ttys801.jsonl,ttys802.jsonl,ttys803.jsonl,ttys804.jsonl" "$(prune_run "$WORK/no-such-ps-table")"
 
 echo "== iterm-agents: agents as windows of a home session =="
 # Inside a tmux session the home command marked (`@orchestrator-home` = 1), an agent is a
@@ -9689,7 +9912,7 @@ LEANMOVE="mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orches
 check "an agent loses the five unused tools and the three that move an orchestrator" "$LEANBASE $LEANMOVE" \
   "$(leanl --title 'Agent : x' | leanset)"
 check "an orchestrator loses the five and keeps the three" "$LEANBASE" \
-  "$(leanl --title 'Orch : x' | leanset)"
+  "$(orchv leanl --title 'Orch : x' --successor --no-remote-control | leanset)"
 check "a title of no role is read as an agent's: it loses all eight" "$LEANBASE $LEANMOVE" \
   "$(leanl --title-free --title probe | leanset)"
 check "an auditor loses all eight" "$LEANBASE $LEANMOVE" \
@@ -9701,7 +9924,7 @@ check "a successor keeps the three, as an orchestrator does" "$LEANBASE" \
 check "a woken orchestrator and an opened one keep the three" "$LEANBASE|$LEANBASE" \
   "$(crdl --wake --title 'Orch : alpha' --model a-model | leanset)|$(opn 'Coord : ops' --open --title 'Orch : sync logs' | sed -n 's/^launch=//p' | leanset)"
 check "the removed set is the dry run's too, and Artifact is never switched off by the host's own setting" "1|0" \
-  "$(lean --title 'Orch : x' | grep -c '^tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings$')|$(leanl --title 'Agent : x' | grep -c enableArtifact)"
+  "$(orchv lean --title 'Orch : x' --successor --no-remote-control | grep -c '^tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings$')|$(leanl --title 'Agent : x' | grep -c enableArtifact)"
 check "the removed set is followed by another option and comes before --permission-mode: never last, never next to the prompt" "1|1|0" \
   "$(leanl --title 'Agent : x' | grep -c -- '--disallowedTools [^-].* --permission-mode ')|$(leanl --title 'Agent : x' | leanset | grep -c .)|$(leanl --title 'Agent : x' | grep -c -- '--disallowedTools [^-]* "\$(cat ')"
 check "with a server file the removed set comes first and the pair is still closed by the mode" "1" \
@@ -9719,9 +9942,9 @@ check "--drop-tool given the same name twice removes it once, on the launch line
 check "--keep-tool of a name the default keeps is harmless, and the options repeat" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE WebSearch" \
   "$(leanl --title 'Agent : x' --keep-tool Artifact --keep-tool Bash --drop-tool WebSearch | leanset)"
 check "--drop-tool on a name the role keeps removes it" "$LEANBASE mcp__orchestrator__end_session" \
-  "$(leanl --title 'Orch : x' --drop-tool mcp__orchestrator__end_session | leanset)"
+  "$(orchv leanl --title 'Orch : x' --successor --no-remote-control --drop-tool mcp__orchestrator__end_session | leanset)"
 check "a spawn that keeps every default removes no tool, and the option is then left out" "0|none" \
-  "$(leanl --title 'Orch : x' --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings | grep -c -- '--disallowedTools')|$(lean --title 'Orch : x' --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings | sed -n 's/^tools_removed=//p')"
+  "$(orchv leanl --title 'Orch : x' --successor --no-remote-control --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings | grep -c -- '--disallowedTools')|$(orchv lean --title 'Orch : x' --successor --no-remote-control --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings | sed -n 's/^tools_removed=//p')"
 check "an empty name is refused for either option, before any tab exists" "1|1|1|1" \
   "$(lean --title 'Agent : x' --keep-tool '' >/dev/null 2>&1; echo $?)|$(lean --title 'Agent : x' --drop-tool '  ' >/dev/null 2>&1; echo $?)|$(lean --title 'Agent : x' --keep-tool '' | grep -c -- '--keep-tool needs a tool name')|$(lean --title 'Agent : x' --drop-tool '' | grep -c -- '--drop-tool needs a tool name')"
 check "the same name on both options is refused, and the refusal names it" "1|1" \
@@ -9750,15 +9973,15 @@ check "an agent's settings cut the synced skills, the recap, the countdown and t
 check "an agent's settings carry no compaction window, and no switch for the 1M window" "0|0" \
   "$(leanl --title 'Agent : x' | grep -c 'AUTO_COMPACT_WINDOW')|$(leanl --title 'Agent : x' | grep -c 'DISABLE_1M_CONTEXT')"
 check "no role's settings carry a compaction window: the host's own setting applies" "0|0|0|0|0" \
-  "$(leanl --title 'Orch : x' | grep -c 'AUTO_COMPACT_WINDOW')|$(succ "$PSTAB" --successor | grep -c 'AUTO_COMPACT_WINDOW')|$(audl --auditor --title 'Audit : tm' | grep -c 'AUTO_COMPACT_WINDOW')|$(crdl --coordinator-successor --title 'Coord : ops' | grep -c 'AUTO_COMPACT_WINDOW')|$(leanl --title 'Agent : x' | grep -c 'AUTO_COMPACT_WINDOW')"
+  "$(orchv leanl --title 'Orch : x' --successor --no-remote-control | grep -c 'AUTO_COMPACT_WINDOW')|$(succ "$PSTAB" --successor | grep -c 'AUTO_COMPACT_WINDOW')|$(audl --auditor --title 'Audit : tm' | grep -c 'AUTO_COMPACT_WINDOW')|$(crdl --coordinator-successor --title 'Coord : ops' | grep -c 'AUTO_COMPACT_WINDOW')|$(leanl --title 'Agent : x' | grep -c 'AUTO_COMPACT_WINDOW')"
 check "no role exports a percentage gate: the gate is a token count" "0|0|0|0|0" \
-  "$(gspawn --title 'Orch : gate' --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')|$(gspawn --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')|$(gspawn --title 'Audit : gate' --auditor --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')|$(succ "$PSTAB" --successor | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')|$(crdl --coordinator-successor --title 'Coord : ops' | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')"
+  "$(orchv gspawn --title 'Orch : gate' --successor --no-remote-control --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')|$(gspawn --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')|$(gspawn --title 'Audit : gate' --auditor --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')|$(succ "$PSTAB" --successor | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')|$(crdl --coordinator-successor --title 'Coord : ops' | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')"
 check "an orchestrator's settings cut the synced skills and the countdown" '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' \
-  "$(leanl --title 'Orch : x' | leansettings)"
+  "$(orchv leanl --title 'Orch : x' --successor --no-remote-control | leansettings)"
 check "a successor, an auditor and the coordinator's successor carry the cuts and no setting for remote control" '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}|{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}|{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' \
   "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | leansettings)|$(audl --auditor --title 'Audit : tm' | leansettings)|$(crdl --coordinator-successor --title 'Coord : ops' | leansettings)"
 check "the settings key for the host's own artifact switch is never passed, whatever the role" "0|0|0" \
-  "$(leanl --title 'Agent : x' --keep-tool Artifact | grep -c enableArtifact)|$(leanl --title 'Orch : x' | grep -c enableArtifact)|$(audl --auditor --title 'Audit : tm' | grep -c enableArtifact)"
+  "$(leanl --title 'Agent : x' --keep-tool Artifact | grep -c enableArtifact)|$(orchv leanl --title 'Orch : x' --successor --no-remote-control | grep -c enableArtifact)|$(audl --auditor --title 'Audit : tm' | grep -c enableArtifact)"
 check "--account-connectors still merges into the same JSON, before the cuts" '{"remoteControlAtStartup":false,"enableAllProjectMcpServers":true,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' \
   "$(mcpd --account-connectors | sed -n 's/^launch=//p' | leansettings)"
 
