@@ -304,6 +304,20 @@ out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate2" bash "$ROOT/
 case "$out" in *"mutually exclusive"*) anchors="refused" ;; *) anchors="$out" ;; esac
 check "two anchors are refused at spawn" "refused" "$anchors"
 
+echo "== iterm-agents: every spawn form's dry run, byte for byte =="
+# The launcher's terminal operations sit behind one object, so a second terminal can stand
+# beside the iTerm one. That is a conversion: nothing the operator or an orchestrator reads
+# may change. The golden file was recorded from the launcher before the move; the script
+# prints every spawn form (and the close, rotate and move dry runs) with its lines, its
+# refusals and its exit codes, and the two must stay identical.
+DRYGOLD="$ROOT/tests/fixtures/spawn-dry-run.golden"
+DRYNOW="$WORK/spawn-dry-run.now"
+bash "$ROOT/tests/fixtures/spawn-dry-run.sh" > "$DRYNOW" 2>&1
+check "the dry run of every spawn form is byte-identical to the recorded one" "same" \
+  "$(cmp -s "$DRYGOLD" "$DRYNOW" && echo same || diff "$DRYGOLD" "$DRYNOW" | head -5)"
+check "and the recording covers the forms: successor, auditor, coordinator, wake, open, chain, close, rotate, move" "1|1|1|1|1|1|1|1|1" \
+  "$(for h in '### successor, derived name' '### auditor$' '### coordinator successor' '### wake' '### open$' '### agent, right of self, chain of two' '### close$' '### rotate$' '### move, leftmost'; do grep -c -- "$h" "$DRYGOLD"; done | paste -sd'|' -)"
+
 echo "== agent chain (dry run) =="
 # The operator's rule: orchestrator, agent 1, agent 2, … in launch order. `--right-of self`
 # used to mean « immediately right of my tab », which put every new agent BETWEEN the

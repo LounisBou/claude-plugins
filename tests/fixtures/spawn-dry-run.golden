@@ -1,0 +1,942 @@
+### agent, no anchor
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
+prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
+self=/dev/ttys900
+anchor=
+side=left
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=Agent : a
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### agent, right of self, no chain
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
+prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
+self=/dev/ttys900
+anchor=self
+side=right
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=Agent : a
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### agent, right of self, chain of two
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
+prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
+self=/dev/ttys900
+anchor=/dev/ttys902
+side=right
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=Agent : a
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### agent, left of self, chain ignored
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
+prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
+self=/dev/ttys900
+anchor=self
+side=left
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=Agent : a
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### agent, explicit right anchor
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
+prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
+self=/dev/ttys900
+anchor=/dev/ttys555
+side=right
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=Agent : a
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### agent, explicit left anchor
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
+prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
+self=/dev/ttys900
+anchor=/dev/ttys555
+side=left
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=Agent : a
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### agent, two anchors refused
+ERROR: spawn: --left-of and --right-of are mutually exclusive
+exit=1
+### agent, corrupt chain
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
+prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
+self=/dev/ttys900
+anchor=self
+side=right
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=Agent : a
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### agent, resident
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
+prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
+self=/dev/ttys900
+anchor=
+side=left
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=yes
+name=Agent : a
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### agent, no verify, trust
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
+prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
+self=/dev/ttys900
+anchor=
+side=left
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=Agent : a
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### agent, free title
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' odd && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-odd-@TIME@.txt)" --name odd
+prompt_file=@WORK@/state/prompts/prompt-odd-@TIME@.txt
+self=/dev/ttys900
+anchor=
+side=left
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=odd
+title_free=yes
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### agent, bad title refused
+ERROR: spawn: refused: a title reads "Orch : <subject>" or "Agent : <subject>", the subject at most 25 characters and neither starting nor ending with a space, got 'odd' (pass --title-free for a tab named otherwise)
+exit=1
+### agent, tier
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --effort low --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
+prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
+self=/dev/ttys900
+anchor=
+side=left
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=Agent : a
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### agent, model
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --model a-model --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode acceptEdits --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
+prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
+self=/dev/ttys900
+anchor=
+side=left
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=Agent : a
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### agent, inherit model
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --model a-model --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
+prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
+self=/dev/ttys900
+anchor=
+side=left
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=Agent : a
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### agent, gate tokens
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=200000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
+prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
+self=/dev/ttys900
+anchor=
+side=left
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=Agent : a
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### agent, tools kept and dropped
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session Foo --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
+prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
+self=/dev/ttys900
+anchor=
+side=left
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=Agent : a
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=kept
+tools_removed=Artifact,SendFeedback,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session,Foo
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### agent, account connectors
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --permission-mode auto --settings '{"remoteControlAtStartup":false,"enableAllProjectMcpServers":true,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
+prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
+self=/dev/ttys900
+anchor=
+side=left
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=Agent : a
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=yes
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### agent, no remote control
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
+prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
+self=/dev/ttys900
+anchor=
+side=left
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=Agent : a
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### agent, brief
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
+prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
+prompt=Read and execute @WORK@/brief.md. Your orchestrator is Orch : f [a1b2c3].
+lint=brief-lint: @WORK@/brief.md: 0 findings
+self=/dev/ttys900
+anchor=
+side=left
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=Agent : a
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### agent, prompt file
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/brief.md)" --name 'Agent : a'
+prompt_file=@WORK@/brief.md
+self=/dev/ttys900
+anchor=
+side=left
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=Agent : a
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### agent, no prompt refused
+ERROR: spawn: refused: no startup prompt: the host writes no transcript before a first prompt, so the session's mode cannot be read; give the brief with --prompt or --prompt-file
+exit=1
+### successor, derived name
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch : f' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch---f-@TIME@.txt)" --name 'Orch : f' --remote-control 'Orch : f'
+prompt_file=@WORK@/state/prompts/prompt-Orch---f-@TIME@.txt
+self=/dev/ttys900
+anchor=self
+side=right
+trust=already
+successor=yes
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=transfer
+resident=no
+name=Orch : f
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings
+remote_control=yes
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### successor, typed name
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch : g' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch---g-@TIME@.txt)" --name 'Orch : g' --remote-control 'Orch : g'
+prompt_file=@WORK@/state/prompts/prompt-Orch---g-@TIME@.txt
+self=/dev/ttys900
+anchor=self
+side=right
+trust=already
+successor=yes
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=transfer
+resident=no
+name=Orch : g
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings
+remote_control=yes
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### successor, no remote control
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch : f' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch---f-@TIME@.txt)" --name 'Orch : f'
+prompt_file=@WORK@/state/prompts/prompt-Orch---f-@TIME@.txt
+self=/dev/ttys900
+anchor=self
+side=right
+trust=already
+successor=yes
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=transfer
+resident=no
+name=Orch : f
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### successor, resident
+ERROR: spawn: refused: --resident marks an agent of your chain; a successor, an auditor or a coordinator's successor is written into no chain as an agent
+exit=1
+### auditor
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Audit : tm' && exec @WORK@/bin/host-cli --model a-model --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Audit---tm-@TIME@.txt)" --name 'Audit : tm' --remote-control 'Audit : tm'
+prompt_file=@WORK@/state/prompts/prompt-Audit---tm-@TIME@.txt
+self=/dev/ttys900
+anchor=self
+side=left
+trust=already
+successor=no
+auditor=yes
+coordinator_successor=no
+wake=no
+open=no
+chain=none
+resident=no
+name=Audit : tm
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=yes
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### auditor, derived successor
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Audit : f' && exec @WORK@/bin/host-cli --model a-model --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Audit---f-@TIME@.txt)" --name 'Audit : f' --remote-control 'Audit : f'
+prompt_file=@WORK@/state/prompts/prompt-Audit---f-@TIME@.txt
+self=/dev/ttys900
+anchor=self
+side=right
+trust=already
+successor=yes
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=none
+resident=no
+name=Audit : f
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=yes
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### auditor, tier refused
+ERROR: spawn: refused: --tier is not an auditor's: an auditor lands immediately left of its caller, reads "Audit : <subject>", runs on the caller's model and comes up under remote control
+exit=1
+### coordinator successor
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Coord : c' && exec @WORK@/bin/host-cli --model a-model --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Coord---c-@TIME@.txt)" --name 'Coord : c' --remote-control 'Coord : c'
+prompt_file=@WORK@/state/prompts/prompt-Coord---c-@TIME@.txt
+self=/dev/ttys900
+anchor=leftmost
+side=left
+trust=already
+successor=no
+auditor=no
+coordinator_successor=yes
+wake=no
+open=no
+chain=none
+resident=no
+name=Coord : c
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings
+remote_control=yes
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### wake
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch : w' && exec @WORK@/bin/host-cli --model a-model --effort high --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch---w-@TIME@.txt)" --name 'Orch : w' --remote-control 'Orch : w'
+prompt_file=@WORK@/state/prompts/prompt-Orch---w-@TIME@.txt
+self=/dev/ttys900
+anchor=self
+side=right
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=yes
+open=no
+chain=none
+resident=no
+name=Orch : w
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings
+remote_control=yes
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### open
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch : o' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch---o-@TIME@.txt)" --name 'Orch : o' --remote-control 'Orch : o'
+prompt_file=@WORK@/state/prompts/prompt-Orch---o-@TIME@.txt
+self=/dev/ttys900
+anchor=self
+side=right
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=yes
+chain=none
+resident=no
+name=Orch : o
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings
+remote_control=yes
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### open, tier
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch : o' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch---o-@TIME@.txt)" --name 'Orch : o' --remote-control 'Orch : o'
+prompt_file=@WORK@/state/prompts/prompt-Orch---o-@TIME@.txt
+self=/dev/ttys900
+anchor=self
+side=right
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=yes
+chain=none
+resident=no
+name=Orch : o
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings
+remote_control=yes
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### open, bound deep tier
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch : o' && exec @WORK@/bin/host-cli --model a-model --effort high --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch---o-@TIME@.txt)" --name 'Orch : o' --remote-control 'Orch : o'
+prompt_file=@WORK@/state/prompts/prompt-Orch---o-@TIME@.txt
+self=/dev/ttys900
+anchor=self
+side=right
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=yes
+chain=none
+resident=no
+name=Orch : o
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings
+remote_control=yes
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### agent, mcp default
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --mcp-config @WORK@/state/prompts/mcp-Agent---a-@TIME@.json --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
+prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
+self=/dev/ttys900
+anchor=
+side=left
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=Agent : a
+title_free=no
+mcp=a
+mcp_file=@WORK@/state/prompts/mcp-Agent---a-@TIME@.json
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### agent, mcp named
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --mcp-config @WORK@/state/prompts/mcp-Agent---a-@TIME@.json --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
+prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
+self=/dev/ttys900
+anchor=
+side=left
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=Agent : a
+title_free=no
+mcp=a,b
+mcp_file=@WORK@/state/prompts/mcp-Agent---a-@TIME@.json
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### agent, mcp none
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
+prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
+self=/dev/ttys900
+anchor=
+side=left
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=Agent : a
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+exit=0
+### close
+close=/dev/ttys901 expect_title=Agent : x
+exit=0
+### close, keep checkout
+close=/dev/ttys901 expect_title=
+exit=0
+### rotate
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : r' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --mcp-config @WORK@/state/prompts/mcp-Agent---r-@TIME@.json --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---r-@TIME@.txt)" --name 'Agent : r'
+prompt_file=@WORK@/state/prompts/prompt-Agent---r-@TIME@.txt
+self=/dev/ttys900
+anchor=
+side=left
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=Agent : r
+title_free=no
+mcp=a
+mcp_file=@WORK@/state/prompts/mcp-Agent---r-@TIME@.json
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+close=/dev/ttys901 expect_title=Agent : x
+exit=0
+### rotate, auditor refused
+ERROR: rotate: refused: /dev/ttys950 is an auditor's tab ('Audit : tm'): an auditor is not an agent and is not rotated (pass --force to rotate it anyway)
+exit=1
+### rotate, auditor forced
+rotate: forced: /dev/ttys950 is an auditor's tab ('Audit : tm')
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : r' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --mcp-config @WORK@/state/prompts/mcp-Agent---r-@TIME@.json --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---r-@TIME@.txt)" --name 'Agent : r'
+prompt_file=@WORK@/state/prompts/prompt-Agent---r-@TIME@.txt
+self=/dev/ttys900
+anchor=
+side=left
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=no
+open=no
+chain=append
+resident=no
+name=Agent : r
+title_free=no
+mcp=a
+mcp_file=@WORK@/state/prompts/mcp-Agent---r-@TIME@.json
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings,mcp__orchestrator__move_send,mcp__orchestrator__move_probe,mcp__orchestrator__end_session
+remote_control=no
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+close=/dev/ttys950 expect_title=
+exit=0
+### rotate, coordinator refused
+ERROR: rotate: refused: /dev/ttys951 is the coordinator's tab ('Coord : c'): the coordinator is not an agent and is not rotated (pass --force to rotate it anyway)
+exit=1
+### rotate, successor refused
+ERROR: rotate: refused: --successor is not a rotation's (a rotation replaces an agent with a titled agent; a successor is spawned with spawn --successor)
+exit=1
+### move, own agent right of self
+move=/dev/ttys901 right_of=/dev/ttys900
+exit=0
+### move, own agent left of a tab
+move=/dev/ttys901 left_of=/dev/ttys555
+exit=0
+### move, leftmost
+move=/dev/ttys901 left_of=leftmost
+exit=0
+### move, a stranger refused
+ERROR: move: refused: /dev/ttys777 is neither this session's tab nor in its chain (pass --force to move it anyway)
+exit=1
+### move, a stranger forced
+move: forced: /dev/ttys777 is not in this session's chain
+move=/dev/ttys777 left_of=/dev/ttys555
+exit=0
+### move, auditor refused
+ERROR: move: refused: /dev/ttys950 is an auditor's tab ('Audit : tm'), not this session's to place (pass --force to move it anyway)
+exit=1
+### move, coordinator refused
+ERROR: move: refused: /dev/ttys951 is the coordinator's tab ('Coord : c'), not this session's to place (pass --force to move it anyway)
+exit=1
+### move, same session refused
+ERROR: move: --tty and its anchor are the same session
+exit=1
+### move, no place refused
+ERROR: move: --left-of, --right-of or --leftmost is required
+exit=1

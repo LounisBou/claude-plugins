@@ -1589,16 +1589,13 @@ def repair_auditor_place(auditor, caller):
     reads next. A reading or a move that fails, for whatever reason, is said on stderr in
     one line and the second reading decides; a repair that itself breaks leaves the place
     unverified, and says so."""
-    async def rows(iterm2, connection):
-        return await list_rows(await iterm2.async_get_app(connection))
-
     def note(what, exc):
         reason = (" ".join(str(exc).split()) or type(exc).__name__) if exc else ""
         print("spawn: %s%s" % (what, ": " + reason if reason else ""), file=sys.stderr)
 
     def read():
         try:
-            return served_by("list", {"api": lambda: run(rows), "applescript": as_list})
+            return terminal().rows()
         except SystemExit:
             return None
         except Exception as exc:
@@ -1607,8 +1604,7 @@ def repair_auditor_place(auditor, caller):
 
     def move(tty, anchor):
         try:
-            served_by("move", {"api": lambda: run(
-                lambda iterm2, connection: move_left_of(iterm2, connection, tty, anchor))})
+            terminal().move_left_of(tty, anchor)
         except SystemExit:
             return False
         except Exception as exc:
@@ -1620,6 +1616,279 @@ def repair_auditor_place(auditor, caller):
     except Exception as exc:
         note("the auditor's place on %s could not be settled" % auditor, exc)
         return unverified_line(auditor), 1
+
+
+# --- the terminal seam ---------------------------------------------------------------
+#
+# Everything the launcher asks of the terminal goes through ONE object: find a session by its
+# tty, make one, list them, read a screen, close one, put one elsewhere. The subcommands
+# below call `terminal()` and never the app, so a second terminal can stand beside the iTerm
+# one by implementing the same methods; the choice is made in `terminal()` and nowhere else.
+#
+# A chain entry's `tab_id` is whatever the terminal hands back for the session it made. The
+# launcher stores it, compares it and writes it as an opaque string; only the terminal that
+# issued it reads it as anything more.
+
+class Terminal:
+    """What the launcher needs of a terminal. Every method answers for the terminal it is."""
+
+    def find(self, tty):
+        """Whether a session sits on `tty`."""
+        raise NotImplementedError
+
+    def can_place(self, anchor, side):
+        """Whether a new session can be put on `side` of the one on `anchor`."""
+        raise NotImplementedError
+
+    def chain_anchor(self, own):
+        """The tty of the caller's last agent still open beside it, or None."""
+        raise NotImplementedError
+
+    def create(self, command, anchor, side, own, effect, made, plan, auditor=False):
+        """Make a session running `command`: (its tty, its stable id).
+
+        `made` receives what a refusal needs to close it again; `plan` what the chain needs
+        once the session is verified. A tty is None when the session was made and then could
+        not be read, the reason being in `made["error"]`."""
+        raise NotImplementedError
+
+    def rows(self):
+        """One listing line per session."""
+        raise NotImplementedError
+
+    def screen(self, tty, lines):
+        """The last `lines` lines the session on `tty` shows."""
+        raise NotImplementedError
+
+    def close(self, tty, expect):
+        """Close the session on `tty`, after checking its title holds `expect`."""
+        raise NotImplementedError
+
+    def close_made(self, made):
+        """Close the session a spawn just made; True only when it was closed."""
+        raise NotImplementedError
+
+    def move(self, tty, anchor, right, leftmost, own, guard):
+        """Put the session on `tty` beside `anchor` (or first); its new position."""
+        raise NotImplementedError
+
+    def move_left_of(self, tty, anchor):
+        """Put the session on `tty` immediately before `anchor`'s, quietly."""
+        raise NotImplementedError
+
+
+class ItermTerminal(Terminal):
+    """iTerm2: the API rung and, where the API does not serve, the AppleScript rung."""
+
+    def find(self, tty):
+        async def probe_leftmost(iterm2, connection):
+            app = await iterm2.async_get_app(connection)
+            win, _, _ = await find_tab(app, tty)
+            return win is not None
+        return bool(run(probe_leftmost))
+
+    def can_place(self, anchor, side):
+        async def probe(iterm2, connection):
+            app = await iterm2.async_get_app(connection)
+            win, _ = await anchor_position(app, anchor, side)
+            return win is not None
+        return run(probe)
+
+    def chain_anchor(self, own):
+        async def last(iterm2, connection):
+            app = await iterm2.async_get_app(connection)
+            return await chain_anchor(app, own)
+        return run(last)
+
+    def create(self, command, anchor, side, own, effect, made, plan, auditor=False):
+        async def go(iterm2, connection):
+            app = await iterm2.async_get_app(connection)
+            index = None
+            if anchor == "leftmost":
+                # No neighbour tab to resolve against: the target is the caller's own window,
+                # at its very first place, whatever tab happens to sit there today.
+                win, _, _ = await find_tab(app, own)
+                if win is None:
+                    die("spawn: no session found on %s" % own)
+                index = 0
+            elif anchor:
+                # Resolved again on a fresh app: the probe above ran on another connection,
+                # and a window object is a cached copy (§14).
+                win, index = await anchor_position(app, anchor, side)
+                if win is None:
+                    die("spawn: no session found on %s" % anchor)
+            else:
+                win = app.current_window
+                if win is None:
+                    die("spawn: iTerm2 has no current window")
+            own_sess_id = await own_session_id(app, own)
+            # select=False: the operator is working in another tab, and a spawn that pulls the
+            # window to the new one interrupts them every time an agent is launched.
+            tab = await win.async_create_tab(command=command, index=index, select=False)
+            # Kept for every refusal: it closes the session THIS spawn made, by its own id,
+            # never by a tty another session could hold by then.
+            made["tab_id"] = tab.tab_id
+            try:
+                new = await tty_of(tab, connection)
+                made["tty"] = new or ""
+                # The session is read on a FRESH app: the tab handed back by the creation may
+                # be the stale copy whose `current_session` is still None, and an id read
+                # there is an empty one — a refusal that then closes nothing.
+                new_sess, fresh = None, app
+                for _ in range(10 if new else 0):
+                    fresh = await iterm2.async_get_app(connection)
+                    _, _, new_sess = await find_tab(fresh, new)
+                    if new_sess is not None:
+                        break
+                    await asyncio.sleep(0.3)
+                made["session_id"] = (new_sess.session_id if new_sess is not None else
+                                      tab.current_session.session_id if tab.current_session
+                                      else "")
+                if own and new and effect != "none":
+                    plan.update(effect=effect, own_sess_id=own_sess_id, tab_id=tab.tab_id,
+                                new=new,
+                                new_sess_id=new_sess.session_id if new_sess is not None else "",
+                                own_tab_id="")
+                    if effect == "transfer":
+                        _, own_tab, _ = await find_tab(fresh, own)
+                        plan["own_tab_id"] = own_tab.tab_id if own_tab is not None else ""
+            except Exception as exc:
+                # The tab exists: whatever failed after it, the refusal closes it.
+                made["error"] = (str(exc).splitlines() or [type(exc).__name__])[0]
+                return None
+            return new
+
+        def fallback_tab(make):
+            """A real iTerm2 tab, made without the API. It places nothing and keeps no chain:
+            the app's AppleScript exposes `index` in its dictionary but does not implement it
+            (`-1728` on every form, measured on 3.7.0), and the only placement left there
+            drives the menu bar through the accessibility layer — a grant, the app brought to
+            the front and a focus flicker per move, which is what the API replaced. A tab that
+            lands in the wrong place is an agent that runs; a placement bought at that price
+            is not. Said out loud rather than assumed — the placement and the chain both."""
+            if anchor and not auditor:
+                print("spawn: this rung cannot place a tab; the new session lands where the "
+                      "terminal puts it, not beside %s." % anchor, file=sys.stderr)
+            if own and effect != "none":
+                print("spawn: this rung keeps no chain, so the chain was not updated (the %s "
+                      "was skipped)%s." % (effect, "; your agents stay in your own chain"
+                                           if effect == "transfer" else ""), file=sys.stderr)
+            return make()
+
+        new_tty = served_by("spawn", {
+            "api": lambda: run(go),
+            "applescript": lambda: fallback_tab(lambda: as_spawn(command)),
+        })
+        return new_tty, made.get("tab_id", "")
+
+    def rows(self):
+        async def rows(iterm2, connection):
+            return await list_rows(await iterm2.async_get_app(connection))
+        return served_by("list", {"api": lambda: run(rows), "applescript": as_list})
+
+    def screen(self, tty, lines):
+        async def go(iterm2, connection):
+            app = await iterm2.async_get_app(connection)
+            _, _, sess = await find_tab(app, tty)
+            if sess is None:
+                die("screen: no session found on %s" % tty)
+            contents = await sess.async_get_screen_contents()
+            every = [contents.line(i).string.rstrip()
+                     for i in range(contents.number_of_lines)]
+            return last_lines(every, lines)
+        return run(go)
+
+    def close(self, tty, expect):
+        async def go(iterm2, connection):
+            app = await iterm2.async_get_app(connection)
+            return await close_session(app, tty, expect)
+        return served_by("close", {"api": lambda: run(go),
+                                   "applescript": lambda: as_close(tty, expect)})
+
+    def close_made(self, made):
+        """By the session's own id, never a tty another session could hold by then. The tab's
+        id stands in when the session's could not be read; the tty only when the AppleScript
+        rung made the tab, which hands back nothing else, and then seconds after it did.
+
+        The call is wrapped: `run()` catches nothing, and a refusal path that ends on a
+        traceback is never an answer — the caller dies with its refusal either way, so a
+        close that fails must be SAID, not thrown."""
+        session_id = made.get("session_id") or ""
+        tab_id = made.get("tab_id") or ""
+        tty = made.get("tty") or ""
+        if not session_id and not tab_id:
+            if not tty:
+                return False
+            try:
+                return bool(as_close(tty, ""))
+            except (Exception, SystemExit) as exc:
+                print("spawn: the refused session could not be closed: %s"
+                      % (str(exc).splitlines() or ["unknown error"])[0], file=sys.stderr)
+                return False
+
+        async def go(iterm2, connection):
+            app = await iterm2.async_get_app(connection)
+            for window in app.windows:
+                for tab in window.tabs:
+                    hit = [sess for sess in tab.sessions
+                           if (session_id and sess.session_id == session_id)
+                           or (not session_id and tab.tab_id == tab_id)]
+                    if hit:
+                        for sess in hit:
+                            await sess.async_close(force=True)
+                        chain_drop_tab(tab.tab_id)
+                        return True
+            return False
+
+        try:
+            return bool(run(go))
+        except Exception as exc:
+            print("spawn: the refused session could not be closed: %s"
+                  % (str(exc).splitlines() or ["unknown error"])[0], file=sys.stderr)
+            return False
+
+    def move(self, tty, anchor, right, leftmost, own, guard):
+        async def go(iterm2, connection):
+            app = await iterm2.async_get_app(connection)
+            win, tab, _ = await find_tab(app, tty)
+            if tab is None:
+                die("move: no session found on %s" % tty)
+            guard(await move_is_owned(app, tty, own))
+            tabs = list(win.tabs)
+            if leftmost:
+                tabs.remove(tab)
+                at = 0
+            else:
+                target = None
+                for i, t in enumerate(tabs):
+                    if await tty_of(t) == anchor:
+                        target = t
+                        break
+                if target is None:
+                    die("move: no session found on %s" % anchor)
+                tabs.remove(tab)
+                at = tabs.index(target) + (1 if right else 0)
+            tabs.insert(at, tab)
+            await win.async_set_tabs(tabs)
+            # Re-read the APP, not the window we already hold: both carry a cached tab list,
+            # and a reorder read back through either looks like a reorder that never happened
+            # — or, worse, reports the position the tab used to have.
+            fresh = await iterm2.async_get_app(connection)
+            idx, _ = await tab_index_of(fresh, win, tab.tab_id)
+            return idx
+        return run(go)
+
+    def move_left_of(self, tty, anchor):
+        return served_by("move", {"api": lambda: run(
+            lambda iterm2, connection: move_left_of(iterm2, connection, tty, anchor))})
+
+
+ITERM = ItermTerminal()
+
+
+def terminal():
+    """The terminal this launcher drives: the one place that chooses."""
+    return ITERM
 
 
 # --- subcommands -----------------------------------------------------------------
@@ -1665,12 +1934,7 @@ async def list_rows(app):
 
 
 def cmd_list(_argv):
-    async def go(iterm2, connection):
-        app = await iterm2.async_get_app(connection)
-        return await list_rows(app)
-
-    rows = served_by("list", {"api": lambda: run(go), "applescript": as_list})
-    for line in rows or []:
+    for line in terminal().rows() or []:
         print(line)
 
 
@@ -2242,19 +2506,12 @@ def cmd_spawn(argv):
                 chain = chain_owned(chain_read(own), SELF_ID)
                 anchor = chain[-1]["tty"] if chain else "self"
             else:
-                async def last(iterm2, connection):
-                    app = await iterm2.async_get_app(connection)
-                    return await chain_anchor(app, own)
-                anchor = run(last) or own
+                anchor = terminal().chain_anchor(own) or own
     elif anchor == "leftmost":
         if not own and not DRY_RUN:
             die("spawn: --coordinator-successor: cannot resolve this session's own tty")
         if not DRY_RUN:
-            async def probe_leftmost(iterm2, connection):
-                app = await iterm2.async_get_app(connection)
-                win, _, _ = await find_tab(app, own)
-                return win is not None
-            if not run(probe_leftmost):
+            if not terminal().find(own):
                 # Same reading as anchor_after_probe's for "self": the caller is running
                 # outside the app (a multiplexer, a plain shell), so there is no window to
                 # place a first tab of — the new tab lands where the app puts it instead.
@@ -2263,11 +2520,7 @@ def cmd_spawn(argv):
                       "the app puts it." % own, file=sys.stderr)
                 anchor = ""
     if anchor and anchor not in ("self", "leftmost") and not DRY_RUN:
-        async def probe(iterm2, connection):
-            app = await iterm2.async_get_app(connection)
-            win, _ = await anchor_position(app, anchor, side)
-            return win is not None
-        anchor = anchor_after_probe(run(probe), anchor, own)
+        anchor = anchor_after_probe(terminal().can_place(anchor, side), anchor, own)
     # BEFORE the tab exists, and BEFORE the prompt file is written: a refusal on the trust
     # question must leave nothing behind — a prompt file written ahead of it survived every
     # refusal and piled up under the state directory's prompts/ for a directory that was
@@ -2356,84 +2609,9 @@ def cmd_spawn(argv):
     # it found it, and a successor that never started must not take the predecessor's agents.
     plan = {}
 
-    async def go(iterm2, connection):
-        app = await iterm2.async_get_app(connection)
-        index = None
-        if anchor == "leftmost":
-            # No neighbour tab to resolve against: the target is the caller's own window,
-            # at its very first place, whatever tab happens to sit there today.
-            win, _, _ = await find_tab(app, own)
-            if win is None:
-                die("spawn: no session found on %s" % own)
-            index = 0
-        elif anchor:
-            # Resolved again on a fresh app: the probe above ran on another connection,
-            # and a window object is a cached copy (§14).
-            win, index = await anchor_position(app, anchor, side)
-            if win is None:
-                die("spawn: no session found on %s" % anchor)
-        else:
-            win = app.current_window
-            if win is None:
-                die("spawn: iTerm2 has no current window")
-        own_sess_id = await own_session_id(app, own)
-        # select=False: the operator is working in another tab, and a spawn that pulls the
-        # window to the new one interrupts them every time an agent is launched.
-        tab = await win.async_create_tab(command=command, index=index, select=False)
-        # Kept for every refusal below: it closes the session THIS spawn made, by its own id,
-        # never by a tty another session could hold by then.
-        made["tab_id"] = tab.tab_id
-        try:
-            new = await tty_of(tab, connection)
-            made["tty"] = new or ""
-            # The session is read on a FRESH app: the tab handed back by the creation may be
-            # the stale copy whose `current_session` is still None, and an id read there is
-            # an empty one — a refusal that then closes nothing.
-            new_sess, fresh = None, app
-            for _ in range(10 if new else 0):
-                fresh = await iterm2.async_get_app(connection)
-                _, _, new_sess = await find_tab(fresh, new)
-                if new_sess is not None:
-                    break
-                await asyncio.sleep(0.3)
-            made["session_id"] = (new_sess.session_id if new_sess is not None else
-                                  tab.current_session.session_id if tab.current_session else "")
-            if own and new and effect != "none":
-                plan.update(effect=effect, own_sess_id=own_sess_id, tab_id=tab.tab_id, new=new,
-                            new_sess_id=new_sess.session_id if new_sess is not None else "",
-                            own_tab_id="")
-                if effect == "transfer":
-                    _, own_tab, _ = await find_tab(fresh, own)
-                    plan["own_tab_id"] = own_tab.tab_id if own_tab is not None else ""
-        except Exception as exc:
-            # The tab exists: whatever failed after it, the refusal below closes it.
-            made["error"] = (str(exc).splitlines() or [type(exc).__name__])[0]
-            return None
-        return new
-
-    def fallback_tab(make):
-        """A real iTerm2 tab, made without the API. It places nothing and keeps no chain:
-        the app's AppleScript exposes `index` in its dictionary but does not implement it
-        (`-1728` on every form, measured on 3.7.0), and the only placement left there drives
-        the menu bar through the accessibility layer — a grant, the app brought to the front
-        and a focus flicker per move, which is what the API replaced. A tab that lands in the
-        wrong place is an agent that runs; a placement bought at that price is not. Said out
-        loud rather than assumed — the placement and the chain both."""
-        if anchor and not args.auditor:
-            print("spawn: this rung cannot place a tab; the new session lands where the "
-                  "terminal puts it, not beside %s." % anchor, file=sys.stderr)
-        if own and effect != "none":
-            print("spawn: this rung keeps no chain, so the chain was not updated (the %s "
-                  "was skipped)%s." % (effect, "; your agents stay in your own chain"
-                                       if effect == "transfer" else ""), file=sys.stderr)
-        return make()
-
     # Before the tab exists, so no transcript older than this launch can be taken for its.
     launch_epoch = time.time()
-    new_tty = served_by("spawn", {
-        "api": lambda: run(go),
-        "applescript": lambda: fallback_tab(lambda: as_spawn(command)),
-    })
+    new_tty, _ = terminal().create(command, anchor, side, own, effect, made, plan, args.auditor)
     if made.get("error"):
         refuse_made(made, "spawn: the tab was made, then the terminal failed: %s"
                     % made["error"])
@@ -2495,17 +2673,7 @@ def cmd_screen(argv):
     if not args.tty:
         die("screen: --tty is required")
 
-    async def go(iterm2, connection):
-        app = await iterm2.async_get_app(connection)
-        _, _, sess = await find_tab(app, args.tty)
-        if sess is None:
-            die("screen: no session found on %s" % args.tty)
-        contents = await sess.async_get_screen_contents()
-        every = [contents.line(i).string.rstrip()
-                 for i in range(contents.number_of_lines)]
-        return last_lines(every, args.lines)
-
-    for line in run(go) or []:
+    for line in terminal().screen(args.tty, args.lines) or []:
         print(line)
 
 
@@ -2544,47 +2712,8 @@ def close_made(made):
     """Close the session a spawn just made, by its own id; True only when it was closed.
 
     A refusal after the tab exists must leave no tab: an agent nobody can use, in a window
-    the operator reads, is worse than a spawn that failed. The id and not the tty, because
-    a tty is a claim about a moment and the session is the thing that was created. The tab's
-    id stands in when the session's could not be read; the tty only when the AppleScript
-    rung made the tab, which hands back nothing else, and then seconds after it did.
-
-    The call is wrapped: `run()` catches nothing, and a refusal path that ends on a
-    traceback is never an answer — the caller dies with its refusal either way, so a close
-    that fails must be SAID, not thrown."""
-    session_id = made.get("session_id") or ""
-    tab_id = made.get("tab_id") or ""
-    tty = made.get("tty") or ""
-    if not session_id and not tab_id:
-        if not tty:
-            return False
-        try:
-            return bool(as_close(tty, ""))
-        except (Exception, SystemExit) as exc:
-            print("spawn: the refused session could not be closed: %s"
-                  % (str(exc).splitlines() or ["unknown error"])[0], file=sys.stderr)
-            return False
-
-    async def go(iterm2, connection):
-        app = await iterm2.async_get_app(connection)
-        for window in app.windows:
-            for tab in window.tabs:
-                hit = [sess for sess in tab.sessions
-                       if (session_id and sess.session_id == session_id)
-                       or (not session_id and tab.tab_id == tab_id)]
-                if hit:
-                    for sess in hit:
-                        await sess.async_close(force=True)
-                    chain_drop_tab(tab.tab_id)
-                    return True
-        return False
-
-    try:
-        return bool(run(go))
-    except Exception as exc:
-        print("spawn: the refused session could not be closed: %s"
-              % (str(exc).splitlines() or ["unknown error"])[0], file=sys.stderr)
-        return False
+    the operator reads, is worse than a spawn that failed."""
+    return terminal().close_made(made)
 
 
 def apply_chain_plan(plan, own, resident):
@@ -2675,12 +2804,7 @@ def cmd_close(argv):
         cwd = host_cli_cwd(args.tty)
         checkout = checkout_of(cwd) if cwd else None
 
-    async def go(iterm2, connection):
-        app = await iterm2.async_get_app(connection)
-        return await close_session(app, args.tty, args.expect)
-
-    served_by("close", {"api": lambda: run(go),
-                        "applescript": lambda: as_close(args.tty, args.expect)})
+    terminal().close(args.tty, args.expect)
     # The close is not what was asked for, it is what the process table shows. The line
     # below used to print the moment the request was acknowledged, over a session that
     # kept running for minutes and had to be ended by hand (§46).
@@ -2768,36 +2892,7 @@ def cmd_move(argv):
         print("move=%s %s=%s" % (args.tty, "right_of" if args.right_of else "left_of", anchor))
         return
 
-    async def go(iterm2, connection):
-        app = await iterm2.async_get_app(connection)
-        win, tab, _ = await find_tab(app, args.tty)
-        if tab is None:
-            die("move: no session found on %s" % args.tty)
-        guard(await move_is_owned(app, args.tty, own))
-        tabs = list(win.tabs)
-        if args.leftmost:
-            tabs.remove(tab)
-            at = 0
-        else:
-            target = None
-            for i, t in enumerate(tabs):
-                if await tty_of(t) == anchor:
-                    target = t
-                    break
-            if target is None:
-                die("move: no session found on %s" % anchor)
-            tabs.remove(tab)
-            at = tabs.index(target) + (1 if args.right_of else 0)
-        tabs.insert(at, tab)
-        await win.async_set_tabs(tabs)
-        # Re-read the APP, not the window we already hold: both carry a cached tab list,
-        # and a reorder read back through either looks like a reorder that never happened
-        # — or, worse, reports the position the tab used to have.
-        fresh = await iterm2.async_get_app(connection)
-        idx, _ = await tab_index_of(fresh, win, tab.tab_id)
-        return idx
-
-    idx = run(go)
+    idx = terminal().move(args.tty, anchor, bool(args.right_of), args.leftmost, own, guard)
     print("moved %s to position %s" % (args.tty, idx))
 
 

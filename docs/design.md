@@ -157,6 +157,8 @@ tests/pane-e2e.sh                    the coordinator's pane answered from the ke
 tests/fixtures/tap-settings.json     a settings.json wired the way the tap installer wired it, for the unwrap
 tests/fixtures/transcript-renamed.jsonl  a transcript whose last custom-title entry is a rename
 tests/fixtures/rhythm-repo.sh        builds the dated repository rhythm.sh is tested on
+tests/fixtures/spawn-dry-run.sh      prints the dry run of every spawn form, and of close, rotate and move, for the suite to hold to the recorded one
+tests/fixtures/spawn-dry-run.golden  the dry runs above as recorded before the terminal operations moved behind one object
 tests/fixtures/usage/transcript.jsonl, tests/fixtures/usage/prices.json  a transcript of repeated message ids, a placeholder, a tiered prompt, split and unsplit cache writes, messages without id, multi-byte text and a broken line, with its price file, for the deck's usage against routing.py cost
 tests/fixtures/goals/spec.md         a spec with a Why and five numbered Goals, one carrying a pipe, for goals.py
 tests/fixtures/routing/prices.json, tests/fixtures/routing/projects/-repo/s-1.jsonl, tests/fixtures/routing/projects/-repo/s-1/subagents/agent-x.jsonl, tests/fixtures/routing/projects/-repo/s-2.jsonl, tests/fixtures/routing/projects/-repo/s-3.jsonl, tests/fixtures/routing/projects/-repo/s-4.jsonl  a price file, a session with a subagent, a prompt crossing the tiered threshold through cache reads, an unpriced model and a transcript with no usage, for routing.py cost
