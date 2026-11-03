@@ -112,8 +112,9 @@
 #     dispatched at all — is cleared by pressing Escape, with no restart and no settings
 #     change and no session lost;
 #   - the command falls to AppleScript, which drove this plugin before the API existed, and
-#     SAYS which rung served it. There is no rung outside the app: an agent is an iTerm2
-#     tab, always. When both are down the app is wedged, and the launcher names it and
+#     SAYS which rung served it. There is no rung outside the app: an agent is a window of
+#     its orchestrator's home session or an iTerm2 tab, and no OTHER terminal is a rung.
+#     When both are down the app is wedged, and the launcher names it and
 #     stops rather than handing back a terminal nobody asked for.
 
 set -euo pipefail

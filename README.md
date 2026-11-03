@@ -214,8 +214,8 @@ window after it, shown in a tab bar with one block per window and a state icon
 after its name (busy ●, idle ○, asks ✋, done ✓, gate ⚠). There is nothing to
 type for it: the orchestrator command moves its own tab into the home session
 by itself. Click a block, or press `C-b n` / `C-b p`, to switch; `C-b C-b`
-sends a Ctrl-B to the program in the pane. Closing the tab detaches without
-ending anything; `tmux -L <server> attach` in a new tab brings it back. The
+sends a Ctrl-B to the program in the pane. Closing the tab ends the server,
+the orchestrator and every agent, once the tab's client is attached. The
 auditor and the coordinator stay iTerm2 tabs.
 
 Outside a home session an agent is an iTerm2 tab, and the orchestrator's tab

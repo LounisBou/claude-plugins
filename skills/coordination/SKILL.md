@@ -289,9 +289,7 @@ Then, on its `paused-ready`:
    it « call mcp__orchestrator__end_session ». The proof is the tty: `verify --tty` fails, or
    `ps -t` shows no host CLI. A tab that shows a home session takes its whole server with it,
    agents included (which is why an orchestrator stands its agents down before it
-   answers `paused-ready`), and the close's `home:` line names the session window 0 ran;
-   closing the iTerm2 tab by hand ends nothing, the server keeps running detached, and
-   `tmux -L <server> attach` in a new tab shows it again.
+   answers `paused-ready`), and the close's `home:` line names the session window 0 ran.
 3. **Record it sleeping**, its name without its reference:
 
    ```

@@ -29,7 +29,7 @@ An orchestrator's tab is a real terminal that holds a tmux session of its own, i
 - **The auditor stays an iTerm2 tab.** It is read beside the build, not part of it, and its place left of its caller is a tab position that means nothing in a window bar.
 - **The operator switches** by clicking a block of the tab bar, or with `C-b n` and `C-b p` (next and previous window). The windows keep their numbers, 0 for the orchestrator and 1, 2, … after it, though the bar shows none, so `C-b <digit>` still selects one. `C-b C-b` sends a Ctrl-B to the program in the pane, which is how the host's « run in background » key is typed.
 - **The bar** is one padded block per window, the current one bold on yellow, with no index, no session name and nothing on the right; the state is an icon after the name — busy ●, idle ○, asks ✋, done ✓, gate ⚠ — written by the module on the window when it changes.
-- **Closing the iTerm2 tab does not end the orchestration.** It detaches the client; the server, the orchestrator and every agent keep running, and a new tab running `tmux -L <server> attach` brings them back. What ends an orchestration is the close of its home session by the launcher (`close` on the tab that shows it ends the whole server, every window proved gone).
+- **Closing the iTerm2 tab ends the orchestration.** Once the tab's client is proved attached, the server is set to exit when no client is left, so the tab's close ends the server, the orchestrator and every agent window. A server shown by no tab is never set so, and a takeover kills a window with the tab still attached. The launcher's `close` on the tab does the same and proves every window gone.
 
 ## Reading the placement
 
@@ -79,7 +79,7 @@ An `Agent :` session also comes up without the away recap and the silent-turn re
 
 **A window or a tab is closed by its tty with `--expect-title`, never by title alone or by position** (in a home session the title checked is the window's name, which the launcher gave it and the host never rewrites) — the title read from `list` seconds before (« Safety order for a live rotation » says why a rotation takes none). The first character of a title is an activity glyph that flips on its own. Match on words, never on the glyph.
 
-**A close is proved on the process table, never on the app's acknowledgement.** The API answering a close request says the request was TAKEN, not that the session is gone. Verify a close with `list` + `ps`, not with the exit code: the artifact, not the message, says whether the session is dead. A killed session leaves its process visible for a second or two.
+**A close is proved on the process table, never on the app's acknowledgement.** The API answering a close request says the request was TAKEN, not that the session is gone. The launcher reads the host's pid and start time before the close, and once the close is accepted it waits for that process, then sends it SIGTERM, then SIGKILL, each step logged in `close.log` of the state directory; it reports the close only once the process is gone. Verify a close with `list` + `ps`, not with the exit code: the artifact, not the message, says whether the session is dead. A killed session leaves its process visible for a second or two.
 
 Prompt and launch files accumulate under the state directory's `prompts/`; they are small and they are the record of what each session was launched with. Delete a wave's when its review is closed, like any other artifact you produced.
 

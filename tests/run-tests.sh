@@ -5202,6 +5202,271 @@ check "a --pid that is no number is a usage error, not « not running »" "exit 
 check "the close note claims no more than the table showed" "1|0" \
   "$(ipy "print(ia.close_note('/dev/ttys901', None))" | grep -c 'no process matching claude was found on /dev/ttys901')|$(ipy "print(ia.close_note('/dev/ttys901', None))" | grep -c 'was running')"
 
+echo "== iterm-agents: a close ends the host it closes =="
+# The app accepted a close, the tab went, and the host kept running: the terminal's
+# session-keeping daemon held the tty open, no hangup ever reached the host, and the host
+# ignored the SIGTERM sent by hand. The launcher no longer leaves the end to the app: the pid
+# and start time read BEFORE the close are waited for, then sent SIGTERM, then SIGKILL, each
+# step logged, and the close is reported only once the process table shows that process gone.
+# The fake hosts are real processes of the suite's own, entered in the stand-in table on a
+# tty no session holds; the proof is read on the real process table, by pid.
+ESTATE="$WORK/end-state"
+# The host CLI is named a-host here, its stand-in rows matched on that name.
+host_cli_kept=$ORCHESTRATOR_HOST_CLI
+export ORCHESTRATOR_HOST_CLI=a-host
+mkdir -p "$ESTATE" "$WORK/end-cfg/sessions"
+# One that ignores SIGTERM, the way the stuck host did; one that dies of it.
+stubborn() { "$py" -c 'import signal, time
+signal.signal(signal.SIGTERM, signal.SIG_IGN)
+time.sleep(120)' >/dev/null 2>&1 & echo $!; }
+polite() { "$py" -c 'import time; time.sleep(120)' >/dev/null 2>&1 & echo $!; }
+alive() { kill -0 "$1" 2>/dev/null && echo alive || echo gone; }
+# A close of the tab on $1 whose host is pid $2, asked with --expect-title $3 of a session
+# titled $4, through a terminal of the probe's own that accepts the close and ends nothing.
+endclose() {
+  printf '/dev/%s %s /opt/x/a-host --name Agent : fake\n' "$1" "$2" > "$WORK/ps-end.txt"
+  ORCHESTRATOR_PS_TABLE="$WORK/ps-end.txt" ORCHESTRATOR_STATE_DIR="$ESTATE" \
+  ORCHESTRATOR_CLOSE_TIMEOUT=1 ORCHESTRATOR_TERM_GRACE=1 ORCHESTRATOR_KILL_GRACE=3 \
+  CLAUDE_CONFIG_DIR="$WORK/end-cfg" ipy "
+class Accepting:
+    def close(self, tty, expect):
+        if expect and ia.stable_title(expect) not in ia.stable_title('$4'):
+            ia.die('close: refused: session on %s is titled $4' % tty)
+        return ''
+    def survives(self, closed_id): return False
+ia.terminal_for = lambda tty: Accepting()
+ia.close_tab('/dev/$1', '$3')
+print('proved gone')" 2>&1
+}
+: > "$ESTATE/close.log"
+sp=$(stubborn)
+out=$(endclose ttys961 "$sp" "Agent : fake" "Agent : fake")
+check "a host that ignores SIGTERM is sent SIGKILL, and the close is proved on its pid" "1|1|1|gone" \
+  "$(printf '%s' "$out" | grep -c "SIGTERM sent to $sp")|$(printf '%s' "$out" | grep -c "SIGKILL sent to $sp")|$(printf '%s' "$out" | grep -c '^proved gone$')|$(alive "$sp")"
+check "each step of the escalation is logged in the state directory" "1|1|1" \
+  "$(grep -c "still running on /dev/ttys961 after 1s" "$ESTATE/close.log")|$(grep -c "SIGTERM sent to $sp" "$ESTATE/close.log")|$(grep -c "SIGKILL sent to $sp" "$ESTATE/close.log")"
+pp=$(polite)
+out=$(endclose ttys962 "$pp" "Agent : fake" "Agent : fake")
+check "a host that dies of SIGTERM is never sent SIGKILL" "1|0|1|gone" \
+  "$(printf '%s' "$out" | grep -c "SIGTERM sent to $pp")|$(printf '%s' "$out" | grep -c 'SIGKILL')|$(printf '%s' "$out" | grep -c '^proved gone$')|$(alive "$pp")"
+# The title guard is first: a session whose title was not checked is sent nothing.
+sg=$(stubborn)
+out=$(endclose ttys963 "$sg" "Agent : other" "Agent : fake")
+check "a close refused by its title signals nothing" "1|0|alive" \
+  "$(printf '%s' "$out" | grep -c 'close: refused')|$(printf '%s' "$out" | grep -c 'SIG')|$(alive "$sg")"
+# A pid is a number the system hands out again: the start time read before the close is
+# what names the process, and a pid now started at another time is another process.
+check "a pid now held by a process started at another time is not signalled" "True|alive" \
+  "$(ORCHESTRATOR_STATE_DIR="$ESTATE" ORCHESTRATOR_CLOSE_TIMEOUT=1 ipy "print(ia.end_host('$sg', 'Thu Jan  1 00:00:00 1970', '/dev/ttys963', 'close'))" 2>&1)|$(alive "$sg")"
+check "the identity read before a close is the pid and the start time of the table" "$sg|yes" \
+  "$(printf '/dev/ttys963 %s /opt/x/a-host\n' "$sg" > "$WORK/ps-end.txt"; ORCHESTRATOR_PS_TABLE="$WORK/ps-end.txt" CLAUDE_CONFIG_DIR="$WORK/end-cfg" ipy "
+pid, start = ia.host_identity('/dev/ttys963')
+print('%s|%s' % (pid, 'yes' if start == ia.process_state(pid)[0] and start else 'no'))")"
+kill -9 "$sg" 2>/dev/null
+# « Gone » is read on the pid with its start time, never on the tty: a host killed under the
+# terminal's daemon stays in the table for days, its tty released (`??`), in the exiting
+# state `?Es` its parent never reaps, and a zombie is the same end. Both have exited and run
+# nothing more: they are gone. A live state, the same start, is not.
+check "an exited process its parent has not reaped is gone, a live one is not" "True|True|False|True" \
+  "$(ipy "
+ia.process_state = lambda pid: ('S0', '?Es')
+a = ia.process_gone('7', 'S0')
+ia.process_state = lambda pid: ('S0', 'Z+')
+b = ia.process_gone('7', 'S0')
+ia.process_state = lambda pid: ('S0', 'Ss+')
+c = ia.process_gone('7', 'S0')
+ia.process_state = lambda pid: None
+print('%s|%s|%s|%s' % (a, b, c, ia.process_gone('7', 'S0')))")"
+# The exiting mark is read among all the flags, not only first: `UE`, `SE`, `?Es`; a zombie
+# `Z+` is gone; `Ss+` and `S+` are live.
+check "the exiting flag is read anywhere after the state letter" "True|True|True|True|False|False" \
+  "$(ipy "
+r = []
+for stat in ('UE', 'SE', '?Es', 'Z+', 'Ss+', 'S+'):
+    ia.process_state = lambda pid, stat=stat: ('S0', stat)
+    r.append(str(ia.process_gone('7', 'S0')))
+print('|'.join(r))")"
+# A table that could not be read is not a table without the pid: a hung or failing `ps` over a
+# live host must never be reported as « gone », and nothing is signalled on an identity that
+# could not be checked.
+lp=$(polite)
+check "a ps that times out or fails over a live host is not a gone host, and signals nothing" "False|False|False|False|alive" \
+  "$(ORCHESTRATOR_STATE_DIR="$ESTATE" ORCHESTRATOR_CLOSE_TIMEOUT=1 ORCHESTRATOR_TERM_GRACE=1 ipy "
+import subprocess
+start, _ = ia.process_state($lp)
+real = subprocess.run
+def hung(*a, **k): raise subprocess.TimeoutExpired('ps', 10)
+def broken(*a, **k): raise OSError('ps failed')
+def garbled(*a, **k): return subprocess.CompletedProcess(a, 0, stdout='garbage', stderr='')
+def failed(*a, **k): return subprocess.CompletedProcess(a, 2, stdout='', stderr='boom')
+res = []
+for stub in (hung, broken, garbled):
+    ia.subprocess.run = stub
+    res.append(ia.process_gone('$lp', start))
+ia.subprocess.run = hung
+res.append(ia.end_host('$lp', start, '/dev/ttys966', 'close'))
+ia.subprocess.run = real
+print('|'.join(str(r) for r in res), end='|')" 2>/dev/null)$(alive "$lp")"
+check "a pid the table does not know (empty answer, exit 1) is gone" "True" \
+  "$(ipy "print(ia.process_gone('999999', 'Thu Jan  1 00:00:00 1970'))")"
+# A refused signal: the host may be gone by then, and when it is not, the caller says the
+# refusal, not a SIGKILL that was never sent.
+rp=$(polite)
+check "a refused SIGTERM over a live host fails with the refusal named, over a gone one succeeds" "False|True|1|0" \
+  "$(ORCHESTRATOR_STATE_DIR="$ESTATE" ORCHESTRATOR_CLOSE_TIMEOUT=1 ORCHESTRATOR_TERM_GRACE=1 ipy "
+import os
+start, _ = ia.process_state($rp)
+def refuse(pid, sig): raise PermissionError(1, 'Operation not permitted')
+os.kill = refuse
+live = ia.end_host('$rp', start, '/dev/ttys967', 'close')
+msg = ia.end_failure('$rp', '/dev/ttys967')
+ia.process_state = lambda pid: None
+gone = ia.end_host('$rp', start, '/dev/ttys967', 'close')
+print('%s|%s|%d|%d' % (live, gone, 'refused' in msg, 'SIGKILL' in msg))" 2>/dev/null)"
+kill "$lp" "$rp" 2>/dev/null
+check "a real zombie, read on the real table by pid and start, is gone" "Z|True" \
+  "$(ipy "
+import os, time
+child = os.fork()
+if child == 0:
+    os._exit(0)
+time.sleep(0.5)
+start, stat = ia.process_state(child)
+print('%s|%s' % (stat[:1], ia.process_gone(str(child), start)))
+os.waitpid(child, 0)")"
+# A home server's close and a succession inside a home session go through the same end: the
+# host of each window is waited for, then escalated, never left to the server's end alone.
+sh0=$(stubborn); sh1=$(stubborn)
+printf '{"pid":%s,"sessionId":"s-home-end"}\n' "$sh0" > "$WORK/end-cfg/sessions/$sh0.json"
+printf '/dev/ttys964 %s /opt/x/a-host --name Orch : x\n/dev/ttys965 %s /opt/x/a-host --name Agent : y\n' \
+  "$sh0" "$sh1" > "$WORK/ps-end.txt"
+out=$(ORCHESTRATOR_PS_TABLE="$WORK/ps-end.txt" ORCHESTRATOR_STATE_DIR="$ESTATE" ORCHESTRATOR_CLOSE_TIMEOUT=1 \
+  ORCHESTRATOR_TERM_GRACE=1 ORCHESTRATOR_KILL_GRACE=3 CLAUDE_CONFIG_DIR="$WORK/end-cfg" ipy "
+ia.kill_home = lambda socket: True
+print(ia.end_home('orch-suite-none-$$', 'close', ([('0', '/dev/ttys964'), ('1', '/dev/ttys965')], '')))" 2>&1)
+check "ending a home server ends the host of every window, SIGKILL included" "1|1|gone|gone" \
+  "$(printf '%s' "$out" | grep -c "SIGKILL sent to $sh0")|$(printf '%s' "$out" | grep -c "SIGKILL sent to $sh1")|$(alive "$sh0")|$(alive "$sh1")"
+st=$(stubborn)
+printf '/dev/ttys966 %s /opt/x/a-host --name Orch : x\n' "$st" > "$WORK/ps-end.txt"
+out=$(ORCHESTRATOR_PS_TABLE="$WORK/ps-end.txt" ORCHESTRATOR_STATE_DIR="$ESTATE" ORCHESTRATOR_CLOSE_TIMEOUT=1 \
+  ORCHESTRATOR_TERM_GRACE=1 ORCHESTRATOR_KILL_GRACE=3 CLAUDE_CONFIG_DIR="$WORK/end-cfg" ipy "
+P = ia.Pane
+class Home:
+    def window_of(self, tty, what):
+        return P('home', '0', '@1', '%1', tty, 'Orch : x', '') if tty == '/dev/ttys966' \
+            else P('home', '2', '@3', '%3', tty, 'Orch : x', '')
+    def kill(self, window, what): pass
+    def survives(self, stable_id): return False
+    def stable_id(self, window): return 'tmux:s:' + window
+    def session(self): return 'home'
+ia.TmuxTerminal = Home
+ia.in_home_session = lambda: True
+ia.self_tty = lambda: '/dev/ttys967'
+ia.tmux_out = lambda args, what: '0'
+ia.cmd_takeover(['--tty', '/dev/ttys966', '--expect-title', 'Orch : x'])" 2>&1)
+check "a successor's takeover ends its predecessor's host before it takes window 0" "1|1|gone" \
+  "$(printf '%s' "$out" | grep -c "SIGKILL sent to $st")|$(printf '%s' "$out" | grep -c '^took window 0')|$(alive "$st")"
+kill -9 "$sh0" "$sh1" "$st" "$sp" "$pp" 2>/dev/null
+export ORCHESTRATOR_HOST_CLI="$host_cli_kept"
+
+echo "== iterm-agents: closing a home tab ends its server =="
+# The operator closes the tab of an orchestrator's home session and expects the orchestrator
+# and every agent window to end with it. With tmux's defaults the server outlived its only
+# client, unseen. Once the home tab's client is proved attached, the server is told to exit
+# when no client is left; before that moment (the detached start) it is not, and a takeover
+# kills a window while the tab stays attached. A server and a client of the suite's own; the
+# client runs on a pty whose master the probe holds, as the tab's terminal does, and closing
+# that master is closing the tab.
+if command -v tmux >/dev/null 2>&1; then
+  HSRV="suite-home-$$"
+  HMARK=$((3600 + $$ % 1000))
+  printf '%s\n' 'import os, pty, sys, time' \
+    'pid, fd = pty.fork()' \
+    'if pid == 0:' \
+    '    os.execvp(sys.argv[1], sys.argv[1:])' \
+    'while True:' \
+    '    try:' \
+    '        os.read(fd, 4096)' \
+    '    except OSError:' \
+    '        time.sleep(0.2)' > "$WORK/ptyclient.py"
+  hsrv() { env -u TMUX -u TMUX_PANE tmux -L "$HSRV" "$@"; }
+  hpanes() { pgrep -fx "sleep $HMARK" | wc -l | tr -d ' '; }
+  hserver() { hsrv has-session -t home 2>/dev/null && echo up || echo down; }
+  # The server is started by the launcher's own make_home, as every home server is: armed
+  # there, it would exit at once, no client being attached yet.
+  ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.make_home('$HSRV', 'Orch : x', '$WORK', 'sleep $HMARK', 'suite')" >/dev/null 2>&1
+  hsrv new-window -d -t home: -n 'Agent : a' "sleep $HMARK" 2>/dev/null
+  hsrv new-window -d -t home: -n 'Agent : b' "sleep $HMARK" 2>/dev/null
+  sleep 1
+  check "a home server started detached is not ended for having no client yet" "up|3" "$(hserver)|$(hpanes)"
+  TERM=xterm-256color "$py" "$WORK/ptyclient.py" tmux -L "$HSRV" attach -t home >/dev/null 2>&1 &
+  hclient=$!
+  i=0; while [ "$(hsrv list-clients 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+  check "the client of the home tab attaches, and the server is armed" "1|True" \
+    "$(hsrv list-clients 2>/dev/null | wc -l | tr -d ' ')|$(ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "print(ia.arm_home('$HSRV', 'suite'))")"
+  # A takeover kills window 0 while the tab stays attached: the server stays.
+  hsrv kill-window -t home:0 2>/dev/null
+  sleep 1
+  check "a takeover's kill of window 0 leaves the attached server running" "up|2" "$(hserver)|$(hpanes)"
+  { kill "$hclient"; wait "$hclient"; } 2>/dev/null
+  i=0; while [ "$(hserver)" = up ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+  sleep 0.5
+  check "closing the tab ends the server and every window it held" "down|0" "$(hserver)|$(hpanes)"
+  hsrv kill-server 2>/dev/null
+  # Why the option waits for the client: armed with none attached, a server exits at once.
+  hsrv new-session -d -s home "sleep $HMARK" 2>/dev/null
+  ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.arm_home('$HSRV', 'suite')" >/dev/null 2>&1
+  i=0; while [ "$(hserver)" = up ] && [ $i -lt 30 ]; do sleep 0.1; i=$((i+1)); done
+  check "armed before any client attaches, a server exits at once" "down" "$(hserver)"
+  hsrv kill-server 2>/dev/null
+  pkill -fx "sleep $HMARK" 2>/dev/null
+else
+  echo "  skip a home server's end is not checked: no tmux"
+fi
+# Armed by open_home_tab, at the one moment the tab's client is proved, and by nothing before:
+# a spawn, a wake, an open and a move all show their server through it, and a server shown by
+# no tab (ORCHESTRATOR_HOME_NO_TAB) is never armed, its operator attaching and detaching at will.
+check "the home tab arms its server once its client is proved, and not before" "client,arm" \
+  "$(ipy "
+calls = []
+class Maker:
+    def create(self, program, title, place, prompt, made):
+        calls.append('create'); return '/dev/ttys968', None
+    def close_made(self, made): return True
+ia.ITERM = Maker()
+ia.client_on = lambda socket, tty: calls.append('client') or True
+ia.arm_home = lambda socket, what: calls.append('arm') or True
+ia.open_home_tab('orch-suite', 'Orch : x', '', 'spawn')
+print(','.join(calls[1:]))")"
+check "a server that cannot be armed is ended with its tab, and the open dies saying so" "1|closed|ended" \
+  "$(ipy "
+said = []
+class Maker:
+    def create(self, program, title, place, prompt, made): return '/dev/ttys968', None
+    def close_made(self, made): said.append('closed'); return True
+ia.ITERM = Maker()
+ia.client_on = lambda socket, tty: True
+ia.arm_home = lambda socket, what: False
+ia.kill_home = lambda socket: said.append('ended') or True
+try:
+    ia.open_home_tab('orch-suite', 'Orch : x', '', 'spawn')
+except SystemExit:
+    pass
+print(said and '|'.join(said))" 2>&1 | grep -c 'closing the tab would not end it')|$(ipy "
+said = []
+class Maker:
+    def create(self, program, title, place, prompt, made): return '/dev/ttys968', None
+    def close_made(self, made): said.append('closed'); return True
+ia.ITERM = Maker()
+ia.client_on = lambda socket, tty: True
+ia.arm_home = lambda socket, what: False
+ia.kill_home = lambda socket: said.append('ended') or True
+try:
+    ia.open_home_tab('orch-suite', 'Orch : x', '', 'spawn')
+except SystemExit:
+    pass
+print('|'.join(said))" 2>/dev/null)"
+
 echo "== iterm-agents: a close takes the stood-down session's checkout with it =="
 # The session's purpose is over once its close is proved on the process table, so the
 # checkout it worked in is deleted — through `workspace.sh delete`, never `--discard`, so a
@@ -6254,8 +6519,8 @@ hprobe() { homecmd "$py" "$WORK/home_probe.py" "$ROOT/skills/iterm-agents/script
 reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
 res=$(hprobe ok)
 NEWS="[-u][-L][orch-abcdef12][-f][@ROOT@/skills/iterm-agents/tmux/home.conf][new-session][-d][-s][home][-n][Orch : conv][-c][@WORK@][/bin/sh -l @WORK@/homestate/prompts/home-Orch---conv-@TIME@.sh]"
-check "the move starts the home server with its conf, window 0 named after the orchestrator, then reads window 0's tty and the tab's client" \
-  "0|$NEWS|[-u][-L][orch-abcdef12][display-message][-p][-t][home:0][#{pane_tty}]|[-u][-L][orch-abcdef12][list-clients][-F][#{client_tty}]" \
+check "the move starts the home server with its conf, window 0 named after the orchestrator, then reads window 0's tty and the tab's client, then sets the server to exit with its tab" \
+  "0|$NEWS|[-u][-L][orch-abcdef12][display-message][-p][-t][home:0][#{pane_tty}]|[-u][-L][orch-abcdef12][list-clients][-F][#{client_tty}]|[-u][-L][orch-abcdef12][set-option][-s][exit-unattached][on]" \
   "$(sfield "$res" exit)|$(hcalls | paste -sd'|' -)"
 check "the old tab is read first, the new one is made right of it under the orchestrator's name, and the move says where" \
   "identity /dev/ttys900,create beside /dev/ttys900 right Orch : conv|moved: orch-abcdef12, shown on /dev/ttys970" \
