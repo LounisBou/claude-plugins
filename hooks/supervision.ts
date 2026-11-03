@@ -3043,13 +3043,14 @@ async function refreshDeck($: any, bound = RELAY_BOUND_MS): Promise<void> {
 }
 
 // The orchestrator an agent reports to, and the path that found it, said in the log under
-// `what`. First the chain that names the agent's tty (chainOwnerTty), then the live
-// orchestrator row measured on that chain's tty, the latest if two. A chain whose owner tty
-// holds no live orchestrator leaves the entry orphaned, one log line. Then the orchestrator
-// the launch recorded (ORCHESTRATOR_REPORTS_TO), without its reference: the live session of
-// the host's registry that bears that name, the one started last when several do, so a
-// replacement wins over the session it replaced. A pid the process table cannot be read for is
-// never judged dead. Null when neither path finds one.
+// `what`. First the orchestrator the launch recorded (ORCHESTRATOR_REPORTS_TO), without its
+// reference: the session of the host's registry that bears that name and runs live (runsLive,
+// so a host that is exiting does not count), the one started last when several do, so a
+// replacement wins over the session it replaced. Then, when that is unset or finds none, the
+// chain that names the agent's tty (chainOwnerTty) and the live orchestrator row measured on
+// that chain's tty, the latest if two; a chain whose owner tty holds no live orchestrator
+// leaves the entry orphaned, one log line. A pid the process table cannot be read for is never
+// judged dead. Null when neither path finds one.
 export async function orchestratorOn($: any, tty: string | null, agent: string, what: string): Promise<CoordinatorTo | null> {
   const dir = `${await stateDir($)}/chains`
   const listed: readonly { name: string; kind: string; mtimeMs?: number }[] = tty ? await $.fs.list(dir).catch(() => []) : []
@@ -3058,46 +3059,46 @@ export async function orchestratorOn($: any, tty: string | null, agent: string, 
     if (entry.kind !== 'file' || !entry.name.endsWith('.jsonl')) continue
     chains.push({ name: entry.name, mtimeMs: entry.mtimeMs ?? 0, text: String(await $.fs.read(`${dir}/${entry.name}`).catch(() => '')) })
   }
-  const owner = tty ? chainOwnerTty(chains, tty) : null
-  let alive: Set<string> | null | undefined
+  let alive: ReturnType<typeof livePids> | undefined
   const live = async (pid: unknown): Promise<boolean> => {
     if (pid === null || pid === undefined || !/^\d+$/.test(String(pid))) return true
-    if (alive === undefined) alive = livePids(await $.process.run(['ps', '-A', '-o', 'pid='], { timeoutMs: 5000 }).catch(() => null))
-    return alive === null || alive.has(String(pid))
-  }
-  if (owner) {
-    const rows = `${await storeOf($)}/sessions`
-    let found: SessionRow | null = null
-    for (const entry of await $.fs.list(rows).catch(() => [])) {
-      const row = parseSessionRow(String(await $.fs.read(`${rows}/${entry.name}`).catch(() => '')))
-      if (row?.role === 'orchestrator' && row.tty === owner && row.name && (!found || row.updated_at > found.updated_at) && await live(row.pid)) found = row
-    }
-    if (found?.name) {
-      await logLine($, `${what}: ${agent} on ${tty} goes to ${found.name} by the chain on ${owner}`)
-      return found.name
-    }
-    await logLine($, `${what}: the chain on ${owner} names ${tty} and has no live owner: the entry is orphaned`)
+    if (alive === undefined) alive = livePids(await $.process.run(['ps', '-A', '-o', 'pid=,stat=,tty='], { timeoutMs: 5000 }).catch(() => null))
+    return alive === null || runsLive(alive, String(pid))
   }
   const recorded = String((await $.env.get('ORCHESTRATOR_REPORTS_TO')) ?? '').trim()
   const bare = recorded.replace(REFERENCED, '').trim()
-  if (!bare) return null
-  const registry = `${await configDir($)}/sessions`
-  let chosen: { sessionId: string; startedAt: number } | null = null
-  for (const file of await $.fs.list(registry).catch(() => [])) {
-    if (!file || file.kind !== 'file' || !file.name.endsWith('.json')) continue
-    try {
-      const record = JSON.parse(String(await $.fs.read(`${registry}/${file.name}`)))
-      if (record?.name !== bare || typeof record.sessionId !== 'string' || record.sessionId === '') continue
-      const startedAt = Number(record.startedAt) || 0
-      if ((!chosen || startedAt > chosen.startedAt) && await live(record.pid)) chosen = { sessionId: record.sessionId, startedAt }
-    } catch { /* a record being written, or gone: not this one */ }
-  }
-  if (!chosen) {
+  if (bare) {
+    const registry = `${await configDir($)}/sessions`
+    let chosen: { sessionId: string; startedAt: number } | null = null
+    for (const file of await $.fs.list(registry).catch(() => [])) {
+      if (!file || file.kind !== 'file' || !file.name.endsWith('.json')) continue
+      try {
+        const record = JSON.parse(String(await $.fs.read(`${registry}/${file.name}`)))
+        if (record?.name !== bare || typeof record.sessionId !== 'string' || record.sessionId === '') continue
+        const startedAt = Number(record.startedAt) || 0
+        if ((!chosen || startedAt > chosen.startedAt) && await live(record.pid)) chosen = { sessionId: record.sessionId, startedAt }
+      } catch { /* a record being written, or gone: not this one */ }
+    }
+    if (chosen) {
+      await logLine($, `${what}: ${agent} on ${tty ?? 'an unknown tty'} goes to ${bare} (session ${chosen.sessionId}) by the launch record`)
+      return { sessionId: chosen.sessionId }
+    }
     await logLine($, `${what}: ${agent} was launched for ${recorded}, and no live session bears the name ${bare}`)
-    return null
   }
-  await logLine($, `${what}: ${agent} on ${tty ?? 'an unknown tty'} goes to ${bare} (session ${chosen.sessionId}) by the launch record`)
-  return { sessionId: chosen.sessionId }
+  const owner = tty ? chainOwnerTty(chains, tty) : null
+  if (!owner) return null
+  const rows = `${await storeOf($)}/sessions`
+  let found: SessionRow | null = null
+  for (const entry of await $.fs.list(rows).catch(() => [])) {
+    const row = parseSessionRow(String(await $.fs.read(`${rows}/${entry.name}`).catch(() => '')))
+    if (row?.role === 'orchestrator' && row.tty === owner && row.name && (!found || row.updated_at > found.updated_at) && await live(row.pid)) found = row
+  }
+  if (found?.name) {
+    await logLine($, `${what}: ${agent} on ${tty} goes to ${found.name} by the chain on ${owner}`)
+    return found.name
+  }
+  await logLine($, `${what}: the chain on ${owner} names ${tty} and has no live owner: the entry is orphaned`)
+  return null
 }
 
 // An agent's measure against the gate its session runs under (the gauge's thresholds,
