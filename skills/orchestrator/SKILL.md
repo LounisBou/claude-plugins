@@ -135,7 +135,7 @@ When you hand over to a successor: once it runs, send each agent ONE message giv
 
 They hold at every step of the loop, whatever a reference adds.
 
-**The gate is the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000, 533,000 or 400,000; 160,000 on 200,000.** The module enforces it and reports an agent past it; others point here. The host compacts at 500,000 (operator); agent 240,000; `--gate-tokens` sets a session's own.
+**The gate is the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000; 160,000 on 200,000.** The module enforces it and reports an agent past it; others point here. The host compacts where the operator's settings say; the plugin sets only the gates: agent 240,000; `--gate-tokens` sets a session's own.
 
 The fill is the module's measurement, never an estimate — `/orchestrator-status` answers it. Two gates on it:
 

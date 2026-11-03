@@ -77,7 +77,8 @@ $SCRIPT spawn --dir <workdir> [--tier deep|standard|light | --model <name> | --i
     # an empty name, and one name given to both options. A kept name the default never removed
     # is harmless. `tools` lists what exists. The dry run prints `tools_removed=` with the set.
     # The same launch carries the host's cuts in its one --settings: an `Agent :` session
-    # loses the away recap and the silent-turn reminder, and every launched session loses the
+    # loses the away recap and the silent-turn reminder. The host compacts where the operator's settings say; the plugin sets only the gates: agent 240,000, others 300,000.
+    # Every launched session loses the
     # token countdown, and the account's synced skills (`anthropic-skills:*`) are hidden
     # for it through `syncClaudeAiSkills: false` in that same --settings, which moves nothing
     # on disk; --keep-synced-skills leaves them in, for a brief that invokes one (§65).

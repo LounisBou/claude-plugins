@@ -321,6 +321,13 @@ DRYNOW="$WORK/spawn-dry-run.now"
 bash "$ROOT/tests/fixtures/spawn-dry-run.sh" > "$DRYNOW" 2>&1
 check "the dry run of every spawn form is byte-identical to the recorded one" "same" \
   "$(cmp -s "$DRYGOLD" "$DRYNOW" && echo same || diff "$DRYGOLD" "$DRYNOW" | head -5)"
+# The host compacts where the operator's settings say, and no launch sets it for any role:
+# a compaction window passed by the launcher put sessions under or past their gate three
+# times. Neither the recorded dry run, nor this run's, nor any launcher script names the
+# host's compaction key. The name is split here so this line is not its own finding.
+COMPACT_KEY="AUTO_COMPACT""_WINDOW"
+check "no launch sets a compaction window: the recorded dry run, this run's and the scripts" "0|0|" \
+  "$(grep -c -F "$COMPACT_KEY" "$DRYGOLD")|$(grep -c -F "$COMPACT_KEY" "$DRYNOW")|$(cd "$ROOT" && git grep -n -F "$COMPACT_KEY" -- 'skills/*/scripts/*' 'hooks/*.ts' 2>/dev/null)"
 check "and the recording covers the forms: successor, auditor, coordinator, wake, open, chain, close, rotate, move" "1|1|1|1|1|1|1|1|1" \
   "$(for h in '### successor, derived name' '### auditor$' '### coordinator successor' '### wake' '### open$' '### agent, right of self, chain of two' '### close$' '### rotate$' '### move, leftmost'; do grep -c -- "$h" "$DRYGOLD"; done | paste -sd'|' -)"
 
@@ -4056,12 +4063,18 @@ check "no context threshold other than the gate's rule remains in the tracked tr
 # The gate is the smaller of 300,000 tokens (30 %) and 80 % of the reported window. A line
 # that states 80 % without the token half is a gate a large-window session would read as its own: every such line carries the rule
 # whole, in the same words.
-GATE_RULE='the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000, 533,000 or 400,000; 160,000 on 200,000'
+GATE_RULE='the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000; 160,000 on 200,000'
 BARE_RE='([^0-9,.]|^)80 ?%|~ ?80([^0-9]|$)'
 check "every line stating the 80 % gate states the token gate with it" "" \
   "$(cd "$ROOT" && git grep -n -E "$BARE_RE" -- skills hooks templates commands README.md docs/design.md | grep -v -F "$GATE_RULE")"
 check "the rule is stated in « Thresholds »" "1" \
   "$(grep -c -F "**The gate is $GATE_RULE.**" "$ROOT/skills/orchestrator/SKILL.md")"
+
+# Compaction is the operator's, the gates the plugin's, in the same words in every text that
+# states them.
+WINDOW_RULE="The host compacts where the operator's settings say; the plugin sets only the gates: agent 240,000"
+check "every text says the host compacts where the operator says and the plugin sets the gates" "1|1|1|1|1|1" \
+  "$(for f in skills/orchestrator/SKILL.md templates/coordinator-succession-brief.md skills/coordination/SKILL.md skills/iterm-agents/references/commands.md docs/design.md; do grep -c -F "$WINDOW_RULE" "$ROOT/$f"; done | paste -sd'|' -)|$(grep -c -i -F "$WINDOW_RULE" "$ROOT/README.md")"
 
 # The gate reads no window variable: the name of the one that was removed is read by nothing
 # and mentioned nowhere. The name is split here so this line is not its own finding.

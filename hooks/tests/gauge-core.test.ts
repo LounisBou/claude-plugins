@@ -32,7 +32,7 @@ test('an unreadable reading never trips', () => {
 })
 
 test('the tripped words name what was read', () => {
-  expect(tripGate(80, 80000, 100000).words).toBe('80% (gate 80%)') // the gate: the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000, 533,000 or 400,000; 160,000 on 200,000
+  expect(tripGate(80, 80000, 100000).words).toBe('80% (gate 80%)') // the gate: the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000; 160,000 on 200,000
   expect(tripGate(30, 300000, 1000000).words).toBe('300,000 tokens (gate 300,000 on a 1M window)')
 })
 
@@ -205,8 +205,8 @@ test('an explicit 75 percent gate trips at 300,000 tokens on a 400,000 window', 
 })
 
 // The gate is a token count no window moves: the smaller of the gate in tokens and the
-// percentage of the reported window. The operator sets the host's compaction window, so a
-// session may report 533,000 and must hand over at the same token count as on 1,000,000.
+// percentage of the reported window, the model's window, so a session hands over at the
+// same token count on any large window, 533,000 as 1,000,000.
 const SMALL_WINDOW = 200000
 const SMALL_GATE = SMALL_WINDOW * 4 / 5
 

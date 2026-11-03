@@ -14,8 +14,8 @@ test('each role gets its own line, verbatim from the shell gate', () => {
 })
 
 test('the announcement names what was read', () => {
-  const a = gateAnnouncement({ tripped: true, words: '80% (gate 80%)' }, 'agent') // the gate: the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000, 533,000 or 400,000; 160,000 on 200,000
-  expect(a).toBe('CONTEXT GATE: this session is at 80% (gate 80%). ' + roleLine('agent')) // the gate: the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000, 533,000 or 400,000; 160,000 on 200,000
+  const a = gateAnnouncement({ tripped: true, words: '80% (gate 80%)' }, 'agent') // the gate: the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000; 160,000 on 200,000
+  expect(a).toBe('CONTEXT GATE: this session is at 80% (gate 80%). ' + roleLine('agent')) // the gate: the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000; 160,000 on 200,000
 })
 
 test('below the gate nothing is said', () => {
@@ -146,7 +146,7 @@ test('past the gate the role line rides the prompt as one context block', async 
   const seen = await submit(mounted(), dollar)
   expect(seen).toMatchObject({
     text: 'go',
-    context: [`CONTEXT GATE: this session is at 84% (gate 80%). ${roleLine('agent')}`], // the gate: the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000, 533,000 or 400,000; 160,000 on 200,000
+    context: [`CONTEXT GATE: this session is at 84% (gate 80%). ${roleLine('agent')}`], // the gate: the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000; 160,000 on 200,000
   })
 })
 
@@ -180,7 +180,7 @@ test('an unmeasured session is told so once, after a turn has answered', async (
   const handlers = mounted()
   const first = await submit(handlers, dollar)
   expect(first).toMatchObject({
-    context: ['CONTEXT GATE: unmeasured: the measure file carries no figure; the next turn fills it. The gate (the smaller of 300,000 tokens and 80% of the reported window) cannot be read; measure by hand before dispatching or rotating.'], // the gate: the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000, 533,000 or 400,000; 160,000 on 200,000
+    context: ['CONTEXT GATE: unmeasured: the measure file carries no figure; the next turn fills it. The gate (the smaller of 300,000 tokens and 80% of the reported window) cannot be read; measure by hand before dispatching or rotating.'], // the gate: the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000; 160,000 on 200,000
   })
   // Once per session: the next prompt meets the same silence as a low fill.
   const second = await submit(handlers, dollar)

@@ -412,9 +412,9 @@ thread); its code never does, it travels by git.
 
 The module measures it every turn; read the live state with `/orchestrator-status`, your
 own session's row included. At the gate —
-the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000, 533,000 or 400,000; 160,000 on 200,000 —
+the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000; 160,000 on 200,000 —
 with no question awaiting his answer, succeed yourself without asking and tell the operator
-after; an open round passes to the successor with its round file:
+after; an open round passes to the successor with its round file. The host compacts where the operator's settings say; the plugin sets only the gates: agent 240,000, others 300,000.
 
 1. Run `${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh round-archive`: it moves the closed entries of the round into `round/archive/`, which nothing reads. Then copy `${CLAUDE_PLUGIN_ROOT}/templates/coordinator-succession-brief.md` to
    `<state dir>/coordinator/succession-brief.md` (one at a time: the successor's own succession overwrites it), fill every placeholder — the round file's path included — and lint it with
