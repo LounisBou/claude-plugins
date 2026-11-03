@@ -5415,6 +5415,44 @@ for stat in ('UE', 'SE', '?Es', 'Z+', 'Ss+', 'S+'):
     ia.process_state = lambda pid, stat=stat: ('S0', stat)
     r.append(str(ia.process_gone('7', 'S0')))
 print('|'.join(r))")"
+# The close's proof reads the tty and the host on it, and an exiting `?Es` host passes it: the
+# tab went, the close was reported, and the pane drew the session live for hours on the pid
+# the hooks module's store recorded. The close now names that pid on stderr while the table
+# lists it, with its state, and its exit is the same. The table is the probe's own: nothing is
+# signalled, and a row of another tty or a pid gone is named nowhere.
+LSTATE="$WORK/linger-state"; LMOD="$WORK/linger-module"
+mkdir -p "$LSTATE" "$LMOD/store/sessions"
+printf '%s\n' '{"role":"orchestrator","name":"Orch : ghost","pid":"56717","tty":"/dev/ttys964","updated_at":"2026-01-01T00:00:00Z"}' > "$LMOD/store/sessions/ghost"
+printf '%s\n' '{"role":"agent","name":"Agent : other","pid":"56800","tty":"/dev/ttys965","updated_at":"2026-01-01T00:00:00Z"}' > "$LMOD/store/sessions/other"
+printf '/dev/ttys964 56717 /opt/x/a-host --name Orch : ghost\n' > "$WORK/ps-linger.txt"
+lingerclose() {
+  env -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_PS_TABLE="$WORK/ps-linger.txt" ORCHESTRATOR_STATE_DIR="$LSTATE" \
+  ORCHESTRATOR_MODULE_DIR="$LMOD" ORCHESTRATOR_CLOSE_TIMEOUT=1 CLAUDE_CONFIG_DIR="$WORK/end-cfg" "$py" -c "
+import sys
+sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia
+class Accepting:
+    def close(self, tty, expect): return ''
+    def survives(self, closed_id): return False
+ia.terminal_for = lambda tty: Accepting()
+ia.os.kill = lambda pid, sig: (_ for _ in ()).throw(AssertionError('signalled %s' % pid))
+ia.process_state = lambda pid: $1
+try:
+    ia.cmd_close(['--tty', '/dev/ttys964', '--expect-title', 'Orch : ghost', '--keep-checkout'])
+except SystemExit as exc:
+    print('exit %s' % exc.code)
+else:
+    print('exit 0')"
+}
+out=$(lingerclose "{'56717': ('S0', '?Es'), '56800': ('S0', 'Ss+')}.get(pid)" 2>&1)
+check "a close whose recorded host lingers exiting names its pid and state, and exits as before" "1|1|0|1|1" \
+  "$(printf '%s' "$out" | grep -c '^closed 1 session on /dev/ttys964$')|$(printf '%s' "$out" | grep -c '^close: pid 56717 lingers (?Es)$')|$(printf '%s' "$out" | grep -c '56800')|$(printf '%s' "$out" | grep -c '^exit 0$')|$(grep -c 'close: pid 56717 lingers (?Es)' "$LSTATE/close.log")"
+: > "$WORK/ps-linger.txt"
+out=$(lingerclose "None" 2>&1)
+check "a close whose recorded host is gone from the table names no pid" "1|0|1" \
+  "$(printf '%s' "$out" | grep -c '^closed 1 session on /dev/ttys964$')|$(printf '%s' "$out" | grep -c 'lingers')|$(printf '%s' "$out" | grep -c '^exit 0$')"
+check "the pids a close names are the store's rows on its tty, an unreadable row skipped" "56717" \
+  "$(printf 'not json' > "$LMOD/store/sessions/torn"; ORCHESTRATOR_MODULE_DIR="$LMOD" ipy "print(','.join(ia.recorded_pids({'/dev/ttys964'})))")"
 # A table that could not be read is not a table without the pid: a hung or failing `ps` over a
 # live host must never be reported as « gone », and nothing is signalled on an identity that
 # could not be checked.

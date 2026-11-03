@@ -154,6 +154,8 @@ $SCRIPT close --tty /dev/ttysNNN --expect-title <substring> [--keep-checkout]
     # `close: kept checkout <path>: <reason>`); the stdout line `closed 1 session on <tty>`
     # is unchanged and a refused delete never fails the close. --keep-checkout opts out
     # (the checkout is then deleted by hand, or by the next sweep). `rotate` always keeps it.
+    # A host pid the hooks module's store records on the tty and the table still lists after
+    # the close is named on stderr, `close: pid <n> lingers (<state>)`, the exit unchanged.
 
 $SCRIPT move --tty /dev/ttysNNN (--right-of self | --right-of /dev/ttysMMM | --left-of /dev/ttysMMM | --leftmost) [--force]
     # places a tab immediately beside another (same window), or at the FIRST place of its

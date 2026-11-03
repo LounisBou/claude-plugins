@@ -88,36 +88,67 @@ export type SessionRow = {
 // measure for an hour, no row.
 export const STALE_AFTER_MS = 60 * 60 * 1000
 
+// One process as the machine's listing shows it: its state flags and its tty
+// (`??` when it has none), both null when the listing carried the pid alone.
+export type ProcessState = { stat: string | null; tty: string | null }
+// The listing, by pid: the pids it shows, each with its state.
+export type ProcessTable = ReadonlyMap<string, ProcessState>
+
 // The rule above as a function, pure and exported: the commands read the same
 // store through their own $ (the fence forbids sharing the reader) and judge
-// every row by this same rule. `alive` is the set of live pids the caller read
+// every row by this same rule. `alive` is the process table the caller read
 // (livePidsArgv, livePids); null when that read failed, and a read that failed
 // knows nothing of any pid: the row is kept, never judged dead on no evidence.
-export function isStale(row: SessionRow, now: number, alive: ReadonlySet<string> | null = new Set()): boolean {
-  if (row.pid) return alive !== null && !alive.has(String(row.pid))
+export function isStale(row: SessionRow, now: number, alive: ProcessTable | null = new Map()): boolean {
+  if (row.pid) return alive !== null && !runsLive(alive, String(row.pid), row.tty)
   const at = Date.parse(row.updated_at)
   return !Number.isFinite(at) || now - at > STALE_AFTER_MS
 }
 
-// One ps listing every live pid on the machine, run when a row names a pid at
-// all; the caller intersects. Never `ps -p <the rows' pids>`: its exit and its
-// output depend on the pids asked — one it refuses (macOS: « process id too
-// large ») fails the whole call with nothing printed — so a single bad row
-// made every live row read as dead, and the store reader removed them all.
-export function livePidsArgv(pids: readonly string[]): string[] | null {
-  return pids.some(pid => /^\d+$/.test(pid)) ? ['ps', '-A', '-o', 'pid='] : null
+// Whether `pid` still runs a session, the one reading the deck, the pane and the
+// commands share. A pid in the table is not enough: a host whose tab was closed
+// under the terminal's session-keeping daemon stays listed for days, exiting and
+// never reaped (`?Es`, tty `??`), and its row read as a live orchestrator nine
+// hours stale. A pid is live when it is listed, neither exiting (an `E` among
+// its flags) nor a zombie (state `Z`), and, when the row recorded a tty, still
+// on that tty: a tty lost (`??`) or another one is a session whose tab is gone.
+// A row with no tty recorded is not judged on its tty: a session started off a
+// terminal runs without one. A listing that carried the pid alone judges by the
+// pid alone.
+export function runsLive(table: ProcessTable, pid: string, tty?: string | null): boolean {
+  const listed = table.get(pid)
+  if (!listed) return false
+  const flags = (listed.stat ?? '').replace(/^\?+/, '')
+  if (flags.startsWith('Z') || flags.includes('E')) return false
+  if (!tty || listed.tty === null) return true
+  return listed.tty === tty.replace(/^\/dev\//, '')
 }
 
-// The live pids out of that ps's result, or null when the read failed: no
+// One ps listing every process on the machine with its state and tty, run when
+// a row names a pid at all; the caller looks its pids up. Never `ps -p <the
+// rows' pids>`: its exit and its output depend on the pids asked — one it
+// refuses (macOS: « process id too large ») fails the whole call with nothing
+// printed — so a single bad row made every live row read as dead, and the store
+// reader removed them all.
+export function livePidsArgv(pids: readonly string[]): string[] | null {
+  return pids.some(pid => /^\d+$/.test(pid)) ? ['ps', '-A', '-o', 'pid=,stat=,tty='] : null
+}
+
+// The process table out of that ps's result, or null when the read failed: no
 // result (it rejected, it timed out), a degraded pass, a non-zero exit, or a
 // listing with no pid in it — ps lists itself, so an honest one is never empty.
-// Null is « unknown », never « none alive »: a caller deletes nothing on it.
-export function livePids(result: unknown): Set<string> | null {
+// Null is « unknown », never « none alive »: a caller deletes nothing on it. A
+// line carrying the pid alone (a listing asked for `pid=` only) has no state.
+export function livePids(result: unknown): Map<string, ProcessState> | null {
   if (typeof result !== 'object' || result === null) return null
   const { exitCode, stdout } = result as { exitCode?: unknown; stdout?: unknown }
   if (exitCode !== 0) return null
-  const pids = new Set(String(stdout ?? '').split('\n').map(line => line.trim()).filter(pid => /^\d+$/.test(pid)))
-  return pids.size === 0 ? null : pids
+  const table = new Map<string, ProcessState>()
+  for (const line of String(stdout ?? '').split('\n')) {
+    const [pid, stat, tty] = line.trim().split(/\s+/)
+    if (/^\d+$/.test(pid ?? '')) table.set(pid, { stat: stat ?? null, tty: tty ?? null })
+  }
+  return table.size === 0 ? null : table
 }
 
 // The supervision pane: the id names it at the engine (the open, the render's

@@ -22,7 +22,7 @@
 // import — so this file spells its own env resolution, its own store read and
 // its own record read, while the row parser, the staleness rule and the pane's
 // row shaper cross as plain imports from the supervision domain.
-import { parseSessionRow, withWait, paneRows, type PaneRow, isStale, livePidsArgv, livePids, sessionKey, type SessionRow } from './supervision.ts'
+import { parseSessionRow, withWait, paneRows, type PaneRow, isStale, runsLive, livePidsArgv, livePids, sessionKey, type SessionRow } from './supervision.ts'
 import { parseRemoteRow, withRemote, ROW_MARKER, REMOTE_STALE_AFTER_MS, type RemoteRow } from './remote-row.ts'
 import { hostRecordOf, roleOf } from './session-name.ts'
 import { withDeadline, isDegradedPass } from './stop-gate.ts'
@@ -184,7 +184,7 @@ async function unmeasuredAgents($: any, rows: Record<string, SessionRow>): Promi
   const alive = argv ? livePids(ps) : new Set<string>()
   const agents: UnmeasuredAgent[] = []
   for (const [pid, record] of records) {
-    if (!record || !record.sessionId || (alive !== null && !alive.has(pid)) || roleOf(record.name) !== 'agent') continue
+    if (!record || !record.sessionId || (alive !== null && !runsLive(alive, pid)) || roleOf(record.name) !== 'agent') continue
     if (sessionKey(record.sessionId) in rows) continue
     agents.push({ name: record.name as string, status: record.status })
   }

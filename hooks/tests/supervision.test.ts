@@ -9,7 +9,7 @@
 // origin read.
 import { expect, test } from 'claude-code/testing'
 import {
-  writeSession, readSessions, deleteSession, sessionKey, parseSessionRow,
+  writeSession, readSessions, deleteSession, sessionKey, parseSessionRow, runsLive, livePids, livePidsArgv,
 } from '../supervision.ts'
 import { register } from '../register.ts'
 import { logLineOf, blockOf } from './fakes.ts'
@@ -44,6 +44,8 @@ function fakeDollar(over: {
   transcript?: string
   alive?: string[]
   psFails?: 'reject' | 'exit' | 'empty'
+  // The machine's listing as `ps -A -o pid=,stat=,tty=` prints it, in place of the pids alone.
+  table?: string
 } = {}): Fx {
   const files = new Map<string, string>()
   const ran: string[] = []
@@ -110,6 +112,7 @@ function fakeDollar(over: {
           if (over.psFails === 'reject') throw new Error('ps did not answer in time')
           if (over.psFails === 'exit') return { exitCode: 1, stdout: '', stderr: 'ps: failed' }
           if (over.psFails === 'empty') return { exitCode: 0, stdout: '', stderr: '' }
+          if (over.table !== undefined) return { exitCode: 0, stdout: over.table, stderr: '' }
           return { exitCode: 0, stdout: ['1', ...alive].map(pid => `  ${pid}\n`).join(''), stderr: '' }
         }
         if (argv[0] === 'ps' && argv[1] === '-o' && argv[3] === '-p') {
@@ -220,6 +223,51 @@ for (const psFails of ['reject', 'exit', 'empty'] as const) {
     expect(ran.filter(line => line.startsWith('rm '))).toEqual([])
   })
 }
+
+// The ghost: a tab closed under the terminal's session-keeping daemon left its host in the
+// table for hours, exiting and never reaped (`?Es`, tty `??`), and the pane drew it as a live
+// orchestrator past the gate, nine hours stale. Listed is not live.
+const GHOST_TABLE = [
+  '    1 Ss   ??',
+  '  501 Ss+  ttys001',
+  '56717 ?Es  ??',
+  '  602 Z+   ttys002',
+  '  603 Ss+  ??',
+  '  604 Ss+  ttys020',
+  '  605 S    ??',
+  '  606 UE   ttys006',
+].join('\n') + '\n'
+
+test('a listed pid that is exiting, a zombie, off its tty or on another one is not live', () => {
+  const table = livePids({ exitCode: 0, stdout: GHOST_TABLE })!
+  expect(runsLive(table, '501', '/dev/ttys001')).toBe(true)
+  expect(runsLive(table, '56717', '/dev/ttys014')).toBe(false)
+  expect(runsLive(table, '56717', null)).toBe(false)
+  expect(runsLive(table, '602', '/dev/ttys002')).toBe(false)
+  expect(runsLive(table, '606', '/dev/ttys006')).toBe(false)
+  // The tty the row recorded is gone: the process lost it (`??`) or the pid runs elsewhere.
+  expect(runsLive(table, '603', '/dev/ttys003')).toBe(false)
+  expect(runsLive(table, '604', '/dev/ttys014')).toBe(false)
+  // A row that recorded no tty is not judged on one: a session started off a terminal has none.
+  expect(runsLive(table, '605', null)).toBe(true)
+  expect(runsLive(table, '9999', null)).toBe(false)
+  // A listing of the pids alone says nothing of state or tty: the pid is the whole reading.
+  expect(runsLive(livePids({ exitCode: 0, stdout: '  1\n  501\n' })!, '501', '/dev/ttys001')).toBe(true)
+})
+
+test('the store reads one listing with each process state and tty, and drops the ghost rows', async () => {
+  expect(livePidsArgv(['501'])).toEqual(['ps', '-A', '-o', 'pid=,stat=,tty='])
+  const { dollar, files } = fakeDollar({ table: GHOST_TABLE })
+  const stale = new Date(Date.now() - 9 * 3600000).toISOString()
+  await writeSession(dollar, 'live', { role: 'orchestrator', name: 'Orch : live', pid: '501', tty: '/dev/ttys001' })
+  await writeSession(dollar, 'ghost', { role: 'orchestrator', name: 'Orch : ghost', pid: '56717', tty: '/dev/ttys014', updated_at: stale })
+  await writeSession(dollar, 'zombie', { role: 'agent', name: 'Agent : zombie', pid: '602', tty: '/dev/ttys002' })
+  await writeSession(dollar, 'tty-lost', { role: 'agent', name: 'Agent : lost', pid: '603', tty: '/dev/ttys003' })
+  await writeSession(dollar, 'tty-gone', { role: 'agent', name: 'Agent : gone', pid: '604', tty: '/dev/ttys014' })
+  const rows = await readSessions(dollar)
+  expect(Object.keys(rows)).toEqual(['sessions/live'])
+  for (const id of ['ghost', 'zombie', 'tty-lost', 'tty-gone']) expect([id, files.has(`${SESSIONS}/${id}`)]).toEqual([id, false])
+})
 
 test('a row written before rows carried a pid: older than one hour is dropped, a fresh one kept', async () => {
   const { dollar } = fakeDollar()

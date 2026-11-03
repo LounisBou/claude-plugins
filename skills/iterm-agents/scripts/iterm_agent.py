@@ -848,6 +848,51 @@ def process_gone(pid, start):
     return flags[:1] in ("Z", "E") or "E" in flags[1:]
 
 
+def module_dir():
+    """The hooks module's own directory, where its store lives: ORCHESTRATOR_MODULE_DIR when
+    set, as the module reads it."""
+    return (os.environ.get("ORCHESTRATOR_MODULE_DIR")
+            or os.path.join(host_config_dir(), "claude-orchestrator"))
+
+
+def recorded_pids(ttys):
+    """The host pids the hooks module's store records for sessions on `ttys`, in file order.
+
+    Read BEFORE a close: the row names the session's own host, which the close's proof
+    reads by tty alone. A host whose tab went under the terminal's session-keeping daemon
+    stays listed for hours, exiting and never reaped, its tty released: the tty's proof
+    passed, and the pane drew the session as live. A row unreadable is no row."""
+    shorts = {t.replace("/dev/", "") for t in ttys if t}
+    store = os.path.join(module_dir(), "store", "sessions")
+    try:
+        names = sorted(os.listdir(store))
+    except OSError:
+        return []
+    pids = []
+    for name in names:
+        try:
+            with open(os.path.join(store, name)) as fh:
+                row = json.loads(fh.read())
+        except (OSError, ValueError):
+            continue
+        if not isinstance(row, dict):
+            continue
+        pid, tty = str(row.get("pid") or ""), str(row.get("tty") or "")
+        if pid.isdigit() and tty.replace("/dev/", "") in shorts and pid not in pids:
+            pids.append(pid)
+    return pids
+
+
+def name_lingering(pids):
+    """Name on stderr, and in close.log, every pid of `pids` the process table still lists,
+    with its state: a close proved on its tty that leaves its host behind says so. A table
+    that could not be read names nothing. The close's outcome is not changed."""
+    for pid in pids:
+        state = process_state(pid)
+        if state and state != UNREADABLE:
+            close_log("close", "pid %s lingers (%s)" % (pid, state[1]))
+
+
 def close_log(what, line):
     """Say one step of a host's end on stderr and append it, timestamped, to close.log in the
     state directory, where a close that went wrong is read afterwards."""
@@ -4260,6 +4305,9 @@ def cmd_close(argv):
     if not args.keep_checkout:
         cwd = host_cli_cwd(host_tty)
         checkout = checkout_of(cwd) if cwd else None
+    # And the host pids the hooks module's store records on it: the close's proof reads the
+    # tty, and these are named afterwards when the process table still lists them.
+    recorded = recorded_pids({host_tty, args.tty})
 
     note = close_note(host_tty, was_running)
     if socket:
@@ -4278,6 +4326,7 @@ def cmd_close(argv):
         # that qualifies it goes to stderr rather than changing it.
         print("closed 1 session on %s" % args.tty)
         sys.stdout.flush()
+    name_lingering(recorded)
     # The session's purpose is over and its process is proved gone: its checkout goes with
     # it, unless it holds work (`workspace.sh delete` refuses that, and says why).
     if checkout:
