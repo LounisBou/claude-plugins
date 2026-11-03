@@ -75,7 +75,8 @@ export function register(on: any): void {
     cached = { scope, at: Date.now() }
     markScope(scope.head)
     const refs = await checkPaths($, args.paths)
-    const block = scopeBlock(scope, args, refs)
+    const spawned = String((await $.env.get('ORCHESTRATOR_SPAWNED').catch(() => undefined)) ?? '')
+    const block = scopeBlock(scope, args, refs, args.auto === true || spawned !== '')
     const typed = String(e.args ?? '').trim()
     return next({ ...e, args: (typed ? typed + '\n\n' : '') + block })
   }).catch(($: any, e: any, next: any) => next(e))

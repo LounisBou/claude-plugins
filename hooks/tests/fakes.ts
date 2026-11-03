@@ -39,6 +39,7 @@ export type FakeSetup = {
   dirs?: Record<string, string[]>
   tool?: (input: any) => any
   home?: string
+  env?: Record<string, string>
 }
 
 export function fakeDollar(setup: FakeSetup): { $: any; argvs: string[]; written: Record<string, string>; toolCalls: any[] } {
@@ -48,7 +49,7 @@ export function fakeDollar(setup: FakeSetup): { $: any; argvs: string[]; written
   const files = { ...(setup.files ?? {}) }
   const $ = {
     plugin: { name: 'norms', root: '/plugin' },
-    env: { get: async (name: string) => (name === 'HOME' ? setup.home ?? '/home/u' : undefined) },
+    env: { get: async (name: string) => (name === 'HOME' ? setup.home ?? '/home/u' : setup.env?.[name]) },
     process: {
       run: async (argv: readonly string[]) => {
         const key = argv.join(' ')

@@ -15,7 +15,7 @@ const GIT_TIMEOUT_MS = 30_000
 export const CHECK_DONE_DESCRIPTION =
   '/norms:check\'s last act: record its outcome at the pull request\'s head commit, for the github '
   + 'plugin\'s ready guard. open = findings neither fixed nor passed, fixed = findings fixed, passed = '
-  + 'findings passed. Answers one line, `record: <path>` or `record: none — <why>`: print it in the report. '
+  + 'findings passed; auto = true in automatic mode. Answers one line, `record: <path>` or `record: none — <why>`: print it in the report. '
   + 'Refused unless /norms:check computed its scope in this session.'
 
 export const CHECK_DONE_SCHEMA = {
@@ -24,6 +24,7 @@ export const CHECK_DONE_SCHEMA = {
     open: { type: 'integer', minimum: 0, description: 'findings left neither fixed nor passed' },
     fixed: { type: 'integer', minimum: 0, description: 'findings fixed' },
     passed: { type: 'integer', minimum: 0, description: 'findings passed' },
+    auto: { type: 'boolean', description: 'automatic mode: the passed findings were passed automatically as non-blocking (default false)' },
   },
   required: ['open', 'fixed', 'passed'],
 }
@@ -100,7 +101,7 @@ export async function checkDone($: any, input: any): Promise<{ result: string; i
       recorded = textOf(await $.tool.call({
         tool: RECORD_TOOL, pr, repo, kind: 'norms',
         result: open === 0 ? 'pass' : 'fail',
-        detail: `${fixed} fixed, ${passed} passed, ${open} open`,
+        detail: `${fixed} fixed, ${passed} passed${input?.auto === true ? ' (non-blocking, automatic)' : ''}, ${open} open`,
       }))
     } catch {
       return { result: none('the github plugin is absent or older than 0.12.0') }

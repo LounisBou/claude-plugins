@@ -27,6 +27,24 @@ in the existing codebase. No evidence, no finding.
 - `find-pattern` skill — pre-implementation pattern discovery for a given file type
 - `validate` skill — validates `CONTRIBUTING.md` structure before `/norms:check` relies on it
 
+## Automatic mode
+
+`/norms:check` runs without asking anything, so that an unattended session
+(nobody typing in its tab) still ends with its record.
+It is automatic when:
+
+- the arguments say `mode=auto` (beside `base=<branch>`), or
+- the environment variable `ORCHESTRATOR_SPAWNED` is set and not empty (the
+  launcher of an unattended session sets it).
+
+The analysis is the same. No question is asked and no code is edited; the
+findings come in one table (severity, agent, `file:line`, issue, proposed fix).
+The record counts the ERROR findings as open and passes the WARNING and INFO
+ones as non-blocking: its detail reads like
+`0 fixed, 3 passed (non-blocking, automatic), 0 open`, so a reader can tell an
+automatic pass from an operator's. The result is `pass` when nothing is open,
+`fail` otherwise. Typing the command in your own session stays interactive.
+
 ## Hooks module
 
 Where the host loads plugin modules, `hooks/register.ts` takes over the

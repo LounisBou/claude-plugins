@@ -161,3 +161,36 @@ test('agents spawned after /norms:check reuse its base instead of resolving agai
   expect(argvs.filter(a => a.includes('resolve_base.sh')).length).toBe(1)
   expect(seen[0].prompt).toContain('+a')
 })
+
+test('mode=auto in the arguments selects the automatic mode', () => {
+  expect(parseCheckArgs('mode=auto').auto).toBe(true)
+  expect(parseCheckArgs('naming mode=auto base=develop')).toEqual({ base: 'develop', agents: ['norms-variable-naming'], paths: [], auto: true })
+  expect(parseCheckArgs('base=develop').auto).toBeFalsy()
+  expect(parseCheckArgs('mode=interactive').auto).toBeFalsy()
+})
+
+async function scopeArgs(args: string, env: Record<string, string> = {}): Promise<string> {
+  resetCache()
+  const hooks = mount(register)
+  const { $ } = fakeDollar({
+    runs: gitRuns(['src/auth.ts'], ['src/auth.ts'], {}, 'develop'),
+    dirs: { '.': ['package.json'] },
+    env,
+  })
+  const { next, seen } = nextOf()
+  await hook(hooks, 'command.run', { command: 'norms:check' }).handler($, { command: 'norms:check', args: `base=develop ${args}` }, next)
+  return seen[0].args
+}
+
+test('a non-empty launcher variable runs the check in automatic mode', async () => {
+  expect(await scopeArgs('', { ORCHESTRATOR_SPAWNED: '1' })).toContain('mode: automatic')
+})
+
+test('mode=auto runs the check in automatic mode without the launcher variable', async () => {
+  expect(await scopeArgs('mode=auto')).toContain('mode: automatic')
+})
+
+test('neither the argument nor a non-empty launcher variable leaves the check interactive', async () => {
+  expect(await scopeArgs('')).not.toContain('mode:')
+  expect(await scopeArgs('', { ORCHESTRATOR_SPAWNED: '' })).not.toContain('mode:')
+})

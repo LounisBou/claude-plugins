@@ -216,3 +216,38 @@ test('session.start lists the tool from the start, and a registration that fails
   await start.handler($, { cwd: '/work' }, second.next)
   expect(second.seen.length).toBe(1)
 })
+
+test('an automatic check records that its findings were passed automatically as non-blocking', async () => {
+  resetMark(); resetCache()
+  const calls: any[] = []
+  const { $ } = setup({}, {}, calls)
+  const m = mounted()
+  await m.scope($)
+  const out = await m.done($, { open: 0, fixed: 0, passed: 3, auto: true })
+  expect(out.result).toBe('record: ' + WRITTEN)
+  expect(recordCalls(calls)).toEqual([
+    { tool: 'mcp__github__record', pr: 12, repo: 'Owner/Repo', kind: 'norms', result: 'pass', detail: '0 fixed, 3 passed (non-blocking, automatic), 0 open' },
+  ])
+})
+
+test('an automatic check with an open ERROR records a fail from open alone', async () => {
+  resetMark(); resetCache()
+  const calls: any[] = []
+  const { $ } = setup({}, {}, calls)
+  const m = mounted()
+  await m.scope($)
+  await m.done($, { open: 1, fixed: 0, passed: 5, auto: true })
+  expect(recordCalls(calls)[0].result).toBe('fail')
+  expect(recordCalls(calls)[0].detail).toBe('0 fixed, 5 passed (non-blocking, automatic), 1 open')
+})
+
+test('auto false or absent leaves the interactive record unchanged', async () => {
+  resetMark(); resetCache()
+  const calls: any[] = []
+  const { $ } = setup({}, {}, calls)
+  const m = mounted()
+  await m.scope($)
+  await m.done($, { open: 0, fixed: 1, passed: 2, auto: false })
+  await m.done($, { open: 0, fixed: 1, passed: 2 })
+  expect(recordCalls(calls).map(c => c.detail)).toEqual(['1 fixed, 2 passed, 0 open', '1 fixed, 2 passed, 0 open'])
+})

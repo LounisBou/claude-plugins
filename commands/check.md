@@ -1,6 +1,6 @@
 ---
 description: "Analyze code against established project patterns and conventions using parallel agents"
-argument-hint: "[agents-to-run] [base=<branch>] [use also <path> as pattern reference]"
+argument-hint: "[agents-to-run] [base=<branch>] [mode=auto] [use also <path> as pattern reference]"
 allowed-tools: ["Bash", "Glob", "Grep", "Read", "Task", "Edit", "Write", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "AskUserQuestion", "mcp__norms__check_done"]
 ---
 
@@ -8,7 +8,7 @@ allowed-tools: ["Bash", "Glob", "Grep", "Read", "Task", "Edit", "Write", "TaskCr
 
 Run a comprehensive code norms check using multiple specialized agents, each focusing on a different aspect of code quality.
 
-**Arguments (optional agents, `base=<branch>`, reference paths):**
+**Arguments (optional agents, `base=<branch>`, `mode=auto`, reference paths):**
 
 $ARGUMENTS
 
@@ -35,6 +35,18 @@ $ARGUMENTS
 | "I should push these commits" | NEVER push. Remind user to do it. |
 
 ## Workflow
+
+### Automatic mode
+
+The check runs in **automatic mode** when the arguments contain `mode=auto`, or when the `<norms-scope>` block carries a `mode: automatic` line (`ORCHESTRATOR_SPAWNED` is set and not empty). Without a block, `mode=auto` in the arguments or a non-empty `ORCHESTRATOR_SPAWNED` in the environment is enough. Otherwise the check is interactive and Steps 6 to 8 apply as written.
+
+In automatic mode nobody types in this session, so nothing waits for an answer:
+
+1. Run Steps 0 to 5 as usual.
+2. Ask no question (no `AskUserQuestion`), wait for no one, edit no code, make no commit. Skip Steps 6 to 8.
+3. Report every finding in one table: severity, agent, `file:line`, issue, proposed fix.
+4. Call the record tool (`check_done`) with `{open, fixed: 0, passed, auto: true}`: `open` is the number of ERROR findings, `passed` the number of WARNING and INFO findings (they are passed automatically as non-blocking).
+5. Print the line it answers (`record: …`), verbatim, as the last line of the report, before any status line. When the tool is not in the tool list, print nothing.
 
 ### Step 0: Precomputed Scope
 
@@ -186,9 +198,11 @@ All agent results are returned directly from the Task calls. Aggregate all findi
 | ... | ... | ... | ... | ... |
 ```
 
-**If zero findings:** Call `mcp__norms__check_done` with `{open: 0, fixed: 0, passed: 0}`, display "No issues found. All norms checks passed." followed by the `record:` line it answers, verbatim, and stop. When the tool is not in the tool list, display the message alone.
+**If zero findings:** Call `mcp__norms__check_done` with `{open: 0, fixed: 0, passed: 0}` (plus `auto: true` in automatic mode), display "No issues found. All norms checks passed." followed by the `record:` line it answers, verbatim, and stop. When the tool is not in the tool list, display the message alone.
 
 ### Step 6: Create TODO List
+
+Interactive mode only.
 
 Create one `TaskCreate` entry per finding, ordered by severity (ERRORs first, then WARNINGs, then INFOs).
 

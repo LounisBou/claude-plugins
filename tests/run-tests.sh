@@ -40,10 +40,10 @@ check "declares the github dependency" "github@lounisbou" \
 check "marketplace lists the plugin" "norms" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["plugins"][0]["name"])' "$ROOT/.claude-plugin/marketplace.json")"
 
-check "plugin version" "0.3.0" \
+check "plugin version" "0.4.0" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$ROOT/.claude-plugin/plugin.json")"
 
-check "marketplace plugin version" "0.3.0" \
+check "marketplace plugin version" "0.4.0" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["plugins"][0]["version"])' "$ROOT/.claude-plugin/marketplace.json")"
 
 echo "== components =="
@@ -264,6 +264,11 @@ check "the check command prints the record line verbatim" "2" \
 
 check "the module resolves the base with the shared script" "yes" \
   "$(grep -q -F '/scripts/resolve_base.sh`' "$ROOT/hooks/check.ts" && echo yes || echo no)"
+
+check "the automatic mode counts only the ERROR findings as open" "yes" \
+  "$(grep -q -F '`open` is the number of ERROR findings, `passed` the number of WARNING and INFO findings' "$ROOT/commands/check.md" && echo yes || echo no)"
+check "the automatic mode asks no question and edits no code" "yes" \
+  "$(grep -q -F 'Ask no question (no `AskUserQuestion`), wait for no one, edit no code' "$ROOT/commands/check.md" && echo yes || echo no)"
 
 echo
 echo "$pass passed, $fail failed"

@@ -92,6 +92,8 @@ export type CheckArgs = {
   // only the model can read. Otherwise the agents the words name.
   agents: 'all' | 'free-text' | string[]
   paths: string[]
+  // Set only by `mode=auto`; the environment variable is read where the command runs.
+  auto?: true
 }
 
 const PATH_START = /^(\/|\.\.?\/|~\/)/
@@ -105,11 +107,16 @@ export function parseCheckArgs(args: string): CheckArgs {
   const named: string[] = []
   let freeWords = 0
   let all = false
+  let auto = false
   for (const raw of args.split(/\s+/)) {
     if (!raw) continue
     const m = raw.match(/^base=(\S+)$/)
     if (m) {
       base = m[1]
+      continue
+    }
+    if (raw === 'mode=auto') {
+      auto = true
       continue
     }
     if (PATH_START.test(raw) || (raw.includes('/') && !/^[a-z]+:\/\//i.test(raw))) {
@@ -125,7 +132,7 @@ export function parseCheckArgs(args: string): CheckArgs {
   }
   let agents: CheckArgs['agents'] = 'all'
   if (named.length > 0) agents = freeWords > 0 ? 'free-text' : all ? 'all' : named
-  return { base, agents, paths }
+  return auto ? { base, agents, paths, auto } : { base, agents, paths }
 }
 
 export type Applicability = { run: string[]; skipped: [string, string][] }
@@ -168,7 +175,7 @@ export type ReferencePaths = { found: string[]; missing: string[] }
 
 // The block appended to /norms:check's arguments. commands/check.md reads it
 // in place of Steps 1 to 3.
-export function scopeBlock(scope: Scope, args: CheckArgs, refs: ReferencePaths): string {
+export function scopeBlock(scope: Scope, args: CheckArgs, refs: ReferencePaths, automatic = false): string {
   const list = (xs: string[]) => (xs.length ? xs.join(', ') : 'none')
   const { run, skipped } = applicable(scope.files, scope.hasTestInfra)
   const lines = [
@@ -196,6 +203,7 @@ export function scopeBlock(scope: Scope, args: CheckArgs, refs: ReferencePaths):
   }
   lines.push(`external references (validated): ${list(refs.found)}`)
   if (refs.missing.length) lines.push(`external references not found (tell the user): ${refs.missing.join(', ')}`)
+  if (automatic) lines.push('mode: automatic (no question, no edit; the findings are recorded as non-blocking)')
   lines.push('diff: the plugin appends it to each norms agent prompt at spawn; do not paste it')
   lines.push('</norms-scope>')
   return lines.join('\n')
