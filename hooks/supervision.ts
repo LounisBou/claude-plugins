@@ -2405,7 +2405,7 @@ export async function readRound($: any): Promise<{ path: string; entry: RoundEnt
 const ROUND_STATUSES: readonly string[] = ['open', 'answered', 'withdrawn', 'closed']
 
 // An entry file read back: the JSON of one entry, each field of its type, or nothing.
-function parseRoundEntry(text: string): RoundEntry | null {
+export function parseRoundEntry(text: string): RoundEntry | null {
   try {
     const e = JSON.parse(text)
     if (!e || typeof e !== 'object') return null

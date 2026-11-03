@@ -15,6 +15,8 @@ import {
 } from '../stop-gate.ts'
 import { register as registerGuards } from '../guards.ts'
 import { logLineOf, blockOf } from './fakes.ts'
+import { roundEntry } from '../round.ts'
+import { register as registerNaming, END_TOOL } from '../naming.ts'
 
 // A turn's question for the operator in the decide shape: the orchestrator's stop gate refuses an
 // operator wait with no such block, so the tests that need that wait to pass end on this one.
@@ -56,6 +58,103 @@ test('an orchestrator ending on an operator wait with no question block is refus
   const coord = fakeDollar({ launchName: 'Coord : machine' })
   const passed = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: report }))
   expect(passed.answer).toBe(passed.passed)
+})
+
+// --- a question still on the operator, shown in the orchestrator's own chat ----------------------
+
+// The orchestrator's question in the round, as the relay entered it at the end of the turn that asked it.
+const OPEN_QUESTION = ['**Question 1 of 1**', '_Subject_ : the deploy order', '_Question_ : which one ships first?', '_Choices_ :', '- **A** : the schema first', '- **B** : both at once', '_Recommendation_ : A — the reads need the column.'].join('\n')
+const OPEN_SINCE = '2026-11-03T10:00:00.000Z'
+const openEntry = (over: object = {}) => ({ ...roundEntry('a1b2c3', 'Orch : belt', { kind: 'operator', blocks: 'the deploy order', question: OPEN_QUESTION }, OPEN_SINCE, OPEN_SINCE), ...over })
+const roundOf = (entry: { id: string }) => ({ [`${entry.id}.json`]: `${JSON.stringify(entry)}\n` })
+
+test('an orchestrator turn that ends without its unanswered question in full is refused, the refusal naming it', async () => {
+  const { handlers } = mounted()
+  const { dollar, ran } = fakeDollar({ round: roundOf(openEntry()) })
+  const refused = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'Agent belt-p3 delivered; reviewing next.' }))
+  expect((refused.answer as any).block).toContain('still unanswered')
+  expect((refused.answer as any).block).toContain('**Question 1 of 1** — which one ships first?')
+  expect(ran.filter(l => l.includes('iterm-agent.sh')).length).toBe(0)
+  const shown = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: `Agent belt-p3 delivered.\n\n${OPEN_QUESTION}\n\nYou decide: A or B?\nwaiting: operator — blocks: the deploy order` }))
+  expect(shown.answer).toBe(shown.passed)
+})
+
+test('a question his prompt withdrew as answered in the tab is settled: the turn passes without it', async () => {
+  const { handlers } = mounted()
+  const withdrawn = openEntry({ status: 'withdrawn', answer: { text: "answered in the sender's own tab", by: 'tab', at: OPEN_SINCE } })
+  const wait = JSON.stringify({ waiting: null, last_waiting: 'operator', blocks: 'the deploy order', waiting_since: OPEN_SINCE, relayed: null, name: 'Orch : belt', pid: '123', typed: { blocks: 'the deploy order', since: OPEN_SINCE, withdrawn: true, told: [withdrawn.id] } })
+  const { dollar } = fakeDollar({ round: roundOf(withdrawn), wait })
+  const passed = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: `Recorded: A, the schema first.\n\n${ASKED}\nwaiting: operator — blocks: the next one` }))
+  expect(passed.answer).toBe(passed.passed)
+})
+
+// The session that handed over, or asked to end, leaves its questions to its successor; a stop with no
+// session id has no question to read; its last line « handed over » is the hand-over itself.
+const UNSHOWN = 'Successor spawned; waiting for its « takeover confirmed ».'
+
+test('a session that handed over is never refused for a question still open', async () => {
+  const { handlers } = mounted()
+  const { dollar } = fakeDollar({ round: roundOf(openEntry()) })
+  expect(((await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: UNSHOWN }))).answer as any).block).toContain('still unanswered')
+  const spawn = { tool: 'Bash', tool_use_id: 't9', command: 'bash /plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh spawn --successor --title "Orch : belt"' }
+  await handlers['tool.call'](dollar, spawn, async () => ({ result: { stdout: 'spawned' } }))
+  const over = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: UNSHOWN }))
+  expect(over.answer).toBe(over.passed)
+})
+
+test('a session that asked to end is never refused for a question still open', async () => {
+  const { handlers } = mounted()
+  const naming: Record<string, Function> = {}
+  registerNaming((...args: any[]) => {
+    const tool = args.length === 3 ? args[1].tool : undefined
+    naming[tool === `mcp__orchestrator__${END_TOOL}` ? 'end' : args[0]] = args[args.length - 1]
+    return { catch: () => undefined }
+  })
+  const { dollar } = fakeDollar({ round: roundOf(openEntry()) })
+  expect(((await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'waiting: done' }))).answer as any).block).toContain('still unanswered')
+  await naming['end'](dollar, {})
+  try {
+    const ending = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
+    expect(ending.answer).toBe(ending.passed)
+  } finally {
+    // The end asked is module memory: an interrupted turn drops it, for the tests after this one.
+    await naming['turn.complete'](dollar, { isAborted: true }, (x: unknown) => x)
+  }
+})
+
+test('a stop with no session id reads no question', async () => {
+  const { handlers } = mounted()
+  const { dollar } = fakeDollar({ round: roundOf(openEntry({ session: '' })) })
+  const out = await stop(handlers['classic.Stop'], dollar, stopEvent({ session_id: '', last_assistant_message: UNSHOWN }))
+  expect(String((out.answer as any)?.block ?? '')).not.toContain('still unanswered')
+})
+
+test('a last line « handed over » passes with a question still open: the successor holds it', async () => {
+  const { handlers } = mounted()
+  const { dollar } = fakeDollar({ round: roundOf(openEntry()) })
+  const over = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'Takeover confirmed.\nhanded over' }))
+  expect(over.answer).toBe(over.passed)
+})
+
+test('a round or a wait file that does not answer in time lets the stop go on', async () => {
+  const { handlers } = mounted()
+  for (const hang of ['list', 'read'] as const) {
+    const fx = fakeDollar({ round: roundOf(openEntry()), roundHang: hang, env: { ORCHESTRATOR_STOP_GATE_DEADLINE: '0.2' } })
+    const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'Agent belt-p3 delivered; reviewing next.' }))
+    expect(String((out.answer as any)?.block ?? '')).not.toContain('still unanswered')
+  }
+})
+
+test('a question the operator answered from the pane, or a coordinator\'s turn, is never refused for it', async () => {
+  const { handlers } = mounted()
+  const answered = openEntry({ status: 'answered', answer: { text: 'A : the schema first', by: 'pane', at: OPEN_SINCE } })
+  const { dollar } = fakeDollar({ round: roundOf(answered) })
+  const report = `Recorded nothing.\n\n${ASKED}\nwaiting: operator — blocks: the next one`
+  const passed = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: report }))
+  expect(passed.answer).toBe(passed.passed)
+  const coord = fakeDollar({ launchName: 'Coord : machine', round: roundOf(openEntry()) })
+  const coordinator = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: 'the round is read.' }))
+  expect(coordinator.answer).toBe(coordinator.passed)
 })
 
 test('an orchestrator ending on an operator wait that blocks nothing gets the blocks-nothing refusal, not the no-question one', async () => {
@@ -365,6 +464,7 @@ const LAUNCHER = '/plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh'
 const WORKSPACE = '/plugins/orch-root/skills/orchestrator/scripts/workspace.sh'
 const GOALS_PY = '/plugins/orch-root/skills/orchestrator/scripts/goals.py'
 const GOALS_FILE = '/tmp/h/rec/goals.md'
+const WAIT_FILE = `${STATE}/store/waits/a1b2c3`
 
 const BUSY_ROW = 'w1/t2 | /dev/ttys002 | ⠋ Agent : belt | Agent : belt-p3'
 const IDLE_ROW = 'w1/t3 | /dev/ttys003 | ✳ Agent : idle | Agent : idle-p3'
@@ -417,6 +517,9 @@ type Setup = {
   selfBin?: string
   goals?: { exitCode: number; stdout: string } | 'hang'
   goalsShown?: string
+  round?: Record<string, string>
+  wait?: string
+  roundHang?: 'list' | 'read'
 }
 
 function fakeDollar(setup: Setup): { dollar: any; written: string[]; ran: string[]; wrote: Record<string, string>; stamp: { atRun?: string }; inits: Record<string, any> } {
@@ -452,6 +555,9 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[]; ran: string
         }
         if (p === `${HOME}/.claude/sessions/77.json` && setup.hostRecord !== undefined) return setup.hostRecord
         if (p === `${S.root}/stop-gate/a1b2c3.goals` && setup.goalsShown !== undefined) return setup.goalsShown
+        if (setup.roundHang === 'read' && (p.startsWith(`${S.root}/round/`) || p === WAIT_FILE)) return new Promise(() => undefined)
+        if (p.startsWith(`${S.root}/round/`) && setup.round?.[p.slice(S.root.length + 7)] !== undefined) return setup.round[p.slice(S.root.length + 7)]
+        if (p === WAIT_FILE && setup.wait !== undefined) return setup.wait
         if (p.startsWith(`${S.ci}/`)) {
           // The owner file is read before its log: the log's own read is the one that fails.
           if (setup.failLogRead && !p.endsWith('.session')) throw new Error('EIO: the log cannot be read')
@@ -480,6 +586,10 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[]; ran: string
           ))
         }
         if (p === PROJECTS) return []
+        if (p === `${S.root}/round`) {
+          if (setup.roundHang === 'list') return new Promise(() => undefined)
+          return Object.entries(setup.round ?? {}).map(([name, text]) => ({ name, kind: 'file', size: text.length, mtimeMs: 0, isLink: false }))
+        }
         return []
       },
       exists: async (p: string) => p === GOALS_FILE && setup.goals !== undefined,

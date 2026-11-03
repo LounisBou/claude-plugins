@@ -193,6 +193,11 @@ export function machineLine(message: string): string {
   return lines.length > 0 ? normalise(lines[lines.length - 1]) : ''
 }
 
+// Whether the message ends on the predecessor's last word, `handed over`.
+export function endsOnHandOver(message: string): boolean {
+  return HANDED_OVER.test(machineLine(message))
+}
+
 // --- the launcher's listing (stop_gate.py:187-219) ---------------------------------------
 
 export type Row = { tty: string; title: string; name: string }

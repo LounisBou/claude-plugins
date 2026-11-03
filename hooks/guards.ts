@@ -29,9 +29,12 @@ import {
   listing, chainEntries, chainOwner, ownAgents, hostStatusOf, pullRequestOf, openRows, deferredRows, deferredIds, machineLine, projectCheckouts,
   headsPath, readHeads, writeHeads, parseCiWatchLog, watchNumberOf, watchedNumbers,
   checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownBackground, logTell,
-  noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, presentGoals, goalsShownPath, type GoalsReading,
+  noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, presentGoals, goalsShownPath, endsOnHandOver, type GoalsReading,
 } from './stop-gate.ts'
-import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
+import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
+import { pendingQuestion, unansweredRefusal, type WaitRead } from './unanswered-question.ts'
+import { parseRoundEntry, parseWaitRecord, waitKey } from './supervision.ts'
+import type { RoundEntry } from './round.ts'
 import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, editsTheMap, bashWritesTheMap } from './models-guard.ts'
 
 // The config dir, gauge.ts's own resolution: $ never crosses an import, so
@@ -489,6 +492,19 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         return refuse(unasked)
       }
       const state = await stateDir($)
+      // A question still on the operator is shown again in the orchestrator's own chat at every
+      // turn's end until he answers it (his ruling of 2026-11-03), unless the session handed over,
+      // or ends on its last word `handed over`: its successor holds the questions. Read off the round
+      // and the wait file, within the deadline.
+      const message = String(e.last_assistant_message ?? '')
+      if (sessionId !== '' && handedOverIn !== sessionId && !isEnding() && !endsOnHandOver(message)) {
+        const pending = await quietly($, async () => pendingQuestion(sessionId, await roundEntries($, state), await waitRead($, sessionId)), until, null)
+        const unshown = unansweredRefusal(message, pending)
+        if (unshown !== null) {
+          await logLine($, `stop gate: an operator question left unshown (${pending?.entry?.id ?? pending?.blocks ?? '?'})`)
+          return refuse(unshown)
+        }
+      }
       const root = $.plugin.root   // never $.env: the module's environment has no CLAUDE_PLUGIN_ROOT
       let swept = false
       sweepAtStop = async () => {
@@ -790,6 +806,26 @@ async function hostStatuses($: any, ttys: readonly string[], until: number): Pro
 function runUntil($: any, argv: readonly string[], until: number, cwd?: string): Promise<any> {
   const timeoutMs = Math.max(1, until - Date.now())
   return $.process.run(argv, cwd ? { timeoutMs, cwd } : { timeoutMs })
+}
+
+// Every entry of the round on this machine (supervision.ts readRound's reading, $ never crossing
+// an import): a file that does not parse, or a temporary one, is no entry; no directory, none.
+async function roundEntries($: any, state: string): Promise<RoundEntry[]> {
+  const dir = `${state}/round`
+  const listed: readonly { name: string; kind: string }[] = await $.fs.list(dir).catch(() => [])
+  const entries: RoundEntry[] = []
+  for (const file of listed) {
+    if (!file || file.kind !== 'file' || !file.name.endsWith('.json') || file.name.includes('.tmp-')) continue
+    const entry = parseRoundEntry(String(await $.fs.read(`${dir}/${file.name}`).catch(() => '')))
+    if (entry) entries.push(entry)
+  }
+  return entries
+}
+
+// The session's wait file in the module's store (supervision.ts storeOf), or none.
+async function waitRead($: any, sessionId: string): Promise<WaitRead | null> {
+  const store = `${moduleDirOf(await configDir($), await $.env.get('ORCHESTRATOR_MODULE_DIR'))}/store`
+  return parseWaitRecord(String(await $.fs.read(`${store}/${waitKey(sessionId)}`).catch(() => '')))
 }
 
 // A quiet read's fallback shape.

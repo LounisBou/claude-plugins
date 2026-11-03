@@ -161,7 +161,9 @@ tab while the pane still showed it, by one `round-close`; neither is presented a
 focus on one subject and present nothing else, present none of the other due questions until
 he lifts that hold: they stay open, in the pane and in the round; an urgent one you signal in
 one line, sender and what it blocks, without leaving the subject. When he asks to take them
-all, `/coordinator-decide` runs one round over every orchestrator's questions.
+all, `/coordinator-decide` runs one round over every orchestrator's questions. Not asking twice is
+your tab's rule alone: the orchestrator that asked keeps the question in full in its own chat
+until he answers it, his ruling of 2026-11-03.
 
 An orchestrator on another machine still reports by message, handled as follows.
 A message headed `[module]` is the hooks module's report of an orchestrator's turn end, sent

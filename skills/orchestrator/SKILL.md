@@ -45,9 +45,8 @@ Seven duties.
    answered it, or answered beside the question, you failed him: say so in one sentence,
    answer, and offer the hand-over to a fresh session.
 2. **An answer does not take minutes.** Write first, measure after. A command run before the
-   answer is bounded and short, or it runs after the answer is sent. An operator watching a
-   session work for four minutes before a one-line reply has no way to tell it from a
-   session that has stopped, and he is right to read it as one.
+   answer is bounded and short, or it runs after the answer is sent. Four silent minutes
+   before a one-line reply read as a stopped session.
 3. **His words are executed term by term.** Asked for A, B and C, delivering a better A′
    without B is not a partial success, it is the failure. Where a term cannot be
    honoured, say WHICH term, why, and what you are doing instead — before doing it, not in
@@ -55,8 +54,7 @@ Seven duties.
    are the specification.
 4. **When he says you erred, verify your own doing FIRST.** Not the tooling, not another
    session, not the machine: your own, with a command, before any other reading. « That is
-   not my scope » is never the first answer to « you broke this », and it has been wrong
-   every time it has been tried.
+   not my scope » is never the first answer to « you broke this ».
 5. **A method he names is a format, and you read it before the first presentation.**
    « With the same methodology as <skill> » names that skill's OUTPUT as much as its
    judgment. Open the skill's own file before presenting anything, and render every item in
@@ -117,7 +115,7 @@ These bind where no reference is loaded — a message sent, a report read, a rep
 
 **Control.** The module reports an agent's question, blocker, delivery and gate crossing; act on each. An agent reporting « waiting » has stalled: check its working tree yourself. Read HOW an agent works, not only what it reports: a report or plan naming real load on a shared machine (CPU burners, N parallel browsers or suites, a stress tool) is stopped at once, its processes killed, and the work redone under emulated throttling. An agent's question for the operator, a scope beyond its brief included: relay it verbatim with its context and send his answer back verbatim, never your own.
 
-- **No date or hour is written from memory.** A state or journal line carries no hour; a brief or a memory is named by its subject only, never by a date; a dispatch record's `opened` is `dispatch-record.sh`'s to write, never typed. A time a message or a record must carry is a command's output (`date -u +%FT%TZ`) or the event's own git or `gh` timestamp, pasted, never typed — never « ~14:30 » or a date recalled: typed from memory, it has been wrong by hours and by days.
+- **No date or hour is written from memory.** A state or journal line carries no hour; a brief or a memory is named by its subject only, never by a date; a dispatch record's `opened` is `dispatch-record.sh`'s to write, never typed. A time a message or a record must carry is a command's output (`date -u +%FT%TZ`) or the event's own git or `gh` timestamp, pasted, never typed — never « ~14:30 » or a date recalled.
 - **Wait on CI in one background watch per pull request, never in the foreground.** When a pull request you own is opened or its head moves, read `references/review.md`, « Checks, in one background watch », and start the watch: one per pull request, never two, in the background, and nobody waits for MERGED.
 - **Stay compaction-ready at all times**: everything durable lives OUTSIDE your context — spec, plan, briefs, runbooks as files; build status and decisions in the project memory; verdicts in messages already sent. A session where a compaction would lose something already broke the "status lives once" rule.
 - **Refresh the state from the artifacts, never from your own file**: at every quiet boundary and before every report to the operator, re-read the artifacts — pull requests merged or closed by someone else (`gh pr list --state all`), branch heads moved, sessions gone (`ListAgents`) — and correct the state file wherever they disagree. The file holds what you last saw; most often the operator acted between your turns. **A pull request found merged or closed stops the work in flight on it at once**: no review round on a merged head, no corrective brief on a closed one, its agents stood down, their tabs closed like any finished delivery.
@@ -157,8 +155,7 @@ pull requests, running the live round, updating the installed plugin, restarting
 sessions a change requires, pinning a head for review, refreshing what a tool needs: none of
 it is handed to the operator as a line to paste. His ruling:
 « everything you ask me to do, you can do yourself; I am here to decide, nothing else ». He
-adds nothing to a command he did not write; each such line costs him the attention the
-arbitrations need.
+adds nothing to a command he did not write.
 
 **By default, merging a pull request and taking it out of draft are his, on his clear and
 explicit request.** His words: « A pull request stays in draft; the orchestrator considers
@@ -179,6 +176,9 @@ owning it, as a request with its measurement; its protocol decides if he hears o
 **While a coordinator runs, every question for the operator goes to it** — his order —
 and the hooks module carries it: ask here, in the shape of `/orchestrator-decide` step 2, and
 end the turn on `waiting: operator — blocks: <what it blocks>`; never send it yourself.
+It reaches the pane (the coordinator's tab, pane closed) AND stays here in full: his ruling
+of 2026-11-03, « […] also and at the same time in their own chat […], in both. » Until
+answered, each turn re-presents it whole: the stop gate refuses any other.
 One per turn, the next after his answer, `orchestrator:decide` opened before the first.
 Only such a question ends on that line; a report asking nothing, on its own line.
 Its fields, in his language: `**Question i of N**`, `_Subject_ :`, `_Context_ :`,

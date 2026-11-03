@@ -23,7 +23,9 @@ round of its own where your questions come together. Its pane shows each one, it
 again only when urgent or no pane is open (his order of 2026-10-24: no question asked
 twice); end on `waiting: operator (urgent) — blocks: …` only for
 what step 1 calls urgent.
-Its answer, verbatim and dated, is his ruling, recorded as step 4 says.
+Its answer, verbatim and dated, is his ruling, recorded as step 4 says. **And each question is
+written in full in your own chat too**: his ruling of 2026-11-03, « […] but also and at the
+same time in their own chat […], in both. »
 
 ## 1. Collect first, then announce the count
 
@@ -74,7 +76,7 @@ operator's pane draws these fields alone.
 ## 3. Wait for the answer
 
 Do not proceed on silence; do not assume; do not pick for them, not even the « obvious »
-one — obvious to you is exactly what a round exists to check. A partial or ambiguous
+one. A partial or ambiguous
 answer gets ONE clarifying line, not a new question. Messages and idle notices from agents
 that arrive meanwhile are read and held, never shown and never acted on: nothing stands
 between a question and its answer, nor between an answer and the next question. Only a
@@ -102,7 +104,7 @@ question before it is presented.
 
 If ANYTHING else was shown to the user between a question and its answer — a status line
 you had to write, a notice the host printed — re-present the question IN FULL, in step 2's whole shape, never « as above » or a pointer. A question the user must scroll back to find is a question answered
-wrong.
+wrong. Until he answers, every turn re-presents it so: the stop gate refuses any other end.
 
 ## 6. A ruling is not reopened
 
@@ -121,13 +123,12 @@ context, appended to the round. Never re-argue a ruled question inside another o
 3. Collect again (step 1): the questions the consequences raise, the STOPs the held agents'
    messages carried, a premise a launch found false. If any is open and he is still there,
    announce « Wave 2: M questions, back to back. » and present its first question in this
-   same turn — chained at once, it costs him far less than later.
+   same turn.
 4. When no question is left: in one short list, where each ruling was written (file, entry),
    which agent was told, what was launched — and the round ends.
 
 Rules that hold throughout: one question per message, the next one presented the moment
 the last is answered; nothing relayed, launched or reported inside a wave; explanation
-before options; a recommendation always; the cost inside the choice; never a bare
-identifier; the user's language; nothing decided on their behalf.
+before options; nothing decided on their behalf.
 
 $ARGUMENTS

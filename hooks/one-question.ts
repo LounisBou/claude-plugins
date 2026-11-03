@@ -5,7 +5,8 @@
 // that ends on a wait for him puts one: an operator wait with no block asks him nothing he can
 // see. The blocks are the ones round.ts's questionParts splits an entry on (`**Question 3 of 4**`,
 // in the sender's language): the numbering is read there, once. A heading inside a fenced code
-// block is a quoted example, never a block: both rules read the message without its fences.
+// block is a quoted example, never a block: both rules read the message without its fences, as
+// unanswered-question.ts does.
 import { questionParts, entryQuestions } from './round.ts'
 import { MACHINE_LINE, blocksNothing, machineLine } from './stop-gate.ts'
 
@@ -25,7 +26,7 @@ export const NO_QUESTION =
 // The message without its fenced code blocks (``` or ~~~, the closing fence of the opening one's
 // marker and at least its length; one never closed runs to the end), the text both rules count
 // blocks in: a numbering line quoted as an example is no question.
-function outsideFences(message: string): string {
+export function outsideFences(message: string): string {
   const kept: string[] = []
   let fence: string | null = null
   for (const line of message.split('\n')) {
