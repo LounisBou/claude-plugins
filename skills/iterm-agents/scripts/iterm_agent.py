@@ -893,10 +893,12 @@ def name_lingering(pids):
             close_log("close", "pid %s lingers (%s)" % (pid, state[1]))
 
 
-def close_log(what, line):
-    """Say one step of a host's end on stderr and append it, timestamped, to close.log in the
-    state directory, where a close that went wrong is read afterwards."""
-    print("%s: %s" % (what, line), file=sys.stderr)
+def close_log(what, line, echo=True):
+    """Say one step of a host's end on stderr (unless `echo` is off) and append it,
+    timestamped, to close.log in the state directory, where a close that went wrong is read
+    afterwards."""
+    if echo:
+        print("%s: %s" % (what, line), file=sys.stderr)
     try:
         os.makedirs(STATE_DIR, exist_ok=True)
         with open(os.path.join(STATE_DIR, "close.log"), "a") as fh:
@@ -2912,12 +2914,61 @@ def make_home(socket, title, cwd, program, what):
     return tty
 
 
+# How long the watcher waits for a server that is not there yet before it gives up: a server
+# is up by the time its watcher starts.
+HOME_WATCH_UP = 3
+
+
+def home_end_marker(socket):
+    """The file a launcher command leaves before it ends the home server `socket`: the
+    server's watcher then knows the end was traced by that command and says nothing."""
+    return os.path.join(STATE_DIR, "home-ended", socket)
+
+
+def trace_home(socket, ended, cause, tty):
+    """One dated line in close.log for an end of a home server, or of its window 0: what
+    ended, on which socket, from which cause, on which tty."""
+    close_log("home", "%s %s ended: cause=%s tty=%s" % (ended, socket, cause, tty or "-"),
+              echo=False)
+
+
+def unmark_home(socket):
+    """Take back the file `kill_watched_home` left: the server was not ended, so its watcher
+    still has an end to say."""
+    try:
+        os.remove(home_end_marker(socket))
+    except OSError:
+        pass
+
+
+def trace_home_unproved(socket, cause, why, tty):
+    """One dated line for an end of a home server that was asked and not proved: the kill went
+    out, and what was left to see says why the end cannot be called done."""
+    close_log("home", "server %s end not proved: cause=%s tty=%s (%s)"
+              % (socket, cause, tty or "-", why), echo=False)
+
+
 def kill_home(socket):
     """End the home server `socket`, every window it holds with it; True when tmux did."""
     try:
         return tmux_call(["-L", socket, "kill-server"]).returncode == 0
     except TmuxError:
         return False
+
+
+def kill_watched_home(socket):
+    """End the home server `socket` that a watcher watches, and leave the file that tells the
+    watcher this command traces the end: taken back when tmux did not end the server, so the
+    next real end is not silent. True when tmux ended it."""
+    try:
+        os.makedirs(os.path.dirname(home_end_marker(socket)), exist_ok=True)
+        open(home_end_marker(socket), "w").close()
+    except OSError:
+        pass
+    ended = kill_home(socket)
+    if not ended:
+        unmark_home(socket)
+    return ended
 
 
 def ended_clause(socket):
@@ -2982,6 +3033,7 @@ def open_home_tab(socket, title, anchor, what):
         die("%s: the home server %s could not be told to exit with its tab, so closing the tab "
             "would not end it; %s; %s" % (what, socket, closed_clause(closed, tty),
                                          ended_clause(socket)))
+    start_home_watch(socket, tty)
     return tty, made
 
 
@@ -3002,6 +3054,63 @@ def arm_home(socket, what):
               file=sys.stderr)
         return False
     return True
+
+
+def start_home_watch(socket, tty):
+    """Start the watcher of the home server `socket`, shown by the tab `tty`: the server
+    exits by itself when its tab closes, with no launcher command to say so, and the watcher
+    is what writes that end. It outlives this command and ends with the server."""
+    try:
+        os.makedirs(os.path.dirname(home_end_marker(socket)), exist_ok=True)
+        if os.path.exists(home_end_marker(socket)):
+            os.remove(home_end_marker(socket))
+        subprocess.Popen([sys.executable, os.path.abspath(__file__), "home-watch", "--socket",
+                          socket, "--tty", tty], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except OSError as exc:
+        print("home: the end of the server %s will not be traced: %s" % (socket, exc),
+              file=sys.stderr)
+
+
+def cmd_home_watch(argv):
+    """Wait for the home server to end, then write its end when no launcher command did:
+    run in the background by the start of a home tab, never by hand."""
+    p = argparse.ArgumentParser(prog="home-watch", add_help=False)
+    p.add_argument("--socket", default="")
+    p.add_argument("--tty", default="")
+    args, _ = p.parse_known_args(argv)
+    if not args.socket:
+        die("home-watch: --socket is required")
+    poll = float(os.environ.get("ORCHESTRATOR_HOME_WATCH_POLL", "0.5"))
+    import socket as sockets
+    path = os.path.join(os.environ.get("TMUX_TMPDIR") or "/tmp", "tmux-%d" % os.getuid(),
+                        args.socket)
+
+    def alive():
+        """Whether the server still answers on its socket: asked of the socket itself, so
+        the watcher runs no tmux."""
+        probe = sockets.socket(sockets.AF_UNIX)
+        try:
+            probe.connect(path)
+            return True
+        except OSError:
+            return False
+        finally:
+            probe.close()
+    deadline = time.time() + HOME_WATCH_UP
+    while not alive():
+        if time.time() >= deadline:
+            return
+        time.sleep(poll)
+    while alive():
+        time.sleep(poll)
+    marker = home_end_marker(args.socket)
+    if os.path.exists(marker):
+        os.remove(marker)
+        return
+    trace_home(args.socket, "server", "exit-unattached (its tab closed; no launcher command "
+               "ended it)", args.tty)
 
 
 def home_of_tab(tty):
@@ -3030,12 +3139,13 @@ def home_panes(socket):
     return [l.split() for l in done.stdout.splitlines() if len(l.split()) == 2], ""
 
 
-def end_home(socket, what, listed=None):
+def end_home(socket, what, listed=None, tab=""):
     """End a home server and prove it: no host left on any of its windows' ttys, and no tmux
     server left on its socket. `(session id of window 0, the ttys it held)`. A server whose
     window 0 session id cannot be read is NOT ended, and the death says why: a pause that
     recorded no session would wake a fresh conversation, the orchestrator's own lost. `listed`
-    is `home_panes`' answer, when the caller has asked already."""
+    is `home_panes`' answer, when the caller has asked already. `tab` is the tab's tty, for the
+    line that says an end was not proved."""
     panes, why = listed if listed is not None else home_panes(socket)
     session_id = ""
     if panes is not None:
@@ -3057,7 +3167,7 @@ def end_home(socket, what, listed=None):
     # Read before the server is ended, as for a tab: a host the end of its pane does not end
     # is ended by its pid and start time.
     hosts = {tty: host_identity(tty) for tty in ttys}
-    kill_home(socket)
+    kill_watched_home(socket)
 
     def survives(tty):
         host = hosts.get(tty)
@@ -3066,6 +3176,7 @@ def end_home(socket, what, listed=None):
         return not end_host(host[0], host[1], tty, what) or bool(others_on(tty, host[0]))
     survivors = [tty for tty in ttys if survives(tty)]
     if survivors:
+        trace_home_unproved(socket, what, "a host still runs on %s" % ", ".join(survivors), tab)
         die("%s: the home server %s was asked to end, and a host still runs on %s"
             % (what, socket, ", ".join(survivors)))
     deadline = time.time() + CLOSE_TIMEOUT
@@ -3077,6 +3188,8 @@ def end_home(socket, what, listed=None):
         if not alive:
             break
         if time.time() >= deadline:
+            unmark_home(socket)
+            trace_home_unproved(socket, what, "the server still answers", tab)
             die("%s: the home server %s still answers after %ds" % (what, socket, CLOSE_TIMEOUT))
         time.sleep(0.3)
     return session_id, ttys
@@ -3103,7 +3216,8 @@ def close_home_tab(tty, socket, expect, listed=None):
         if stable_title(expect) not in stable_title(name):
             die("close: refused: session on %s is titled '%s', which does not contain '%s'"
                 % (tty, name, expect))
-    session_id, ttys = end_home(socket, "close", listed)
+    session_id, ttys = end_home(socket, "close", listed, tty)
+    trace_home(socket, "server", "close", tty)
     deadline = time.time() + CLOSE_TIMEOUT
     while ITERM.find(tty):
         if time.time() >= deadline:
@@ -3169,6 +3283,9 @@ def cmd_takeover(argv):
             % (pred.window, survivor, args.tty))
     if term.survives(term.stable_id(pred.window)):
         die("takeover: the window %s is still there; window 0 was not taken" % pred.window)
+    home = os.path.basename(os.environ.get("TMUX", "").split(",")[0])
+    if home:
+        trace_home(home, "window 0 of", "takeover", args.tty)
     chain_drop_tab(term.stable_id(pred.window))
     # The predecessor's agents follow it to its successor: what it launched after the
     # succession's spawn handed its chain over would otherwise be nobody's.
@@ -4385,7 +4502,11 @@ def close_made(made):
     closed = (made.get("terminal") or terminal()).close_made(made)
     if made.get("home"):
         # The home server goes with its tab: every window of it, the session in window 0.
-        closed = kill_home(made["home"]) and closed
+        watched = made.get("terminal") is not NO_TAB
+        ended = kill_watched_home(made["home"]) if watched else kill_home(made["home"])
+        if ended and watched:
+            trace_home(made["home"], "server", "spawn-failed", made.get("tty"))
+        closed = ended and closed
     if closed and made.get("tab_id"):
         chain_drop_tab(made["tab_id"])
     return closed
@@ -4851,6 +4972,7 @@ COMMANDS = {
     "move": cmd_move, "rotate": cmd_rotate, "resolve-tier": cmd_resolve_tier,
     "screen": cmd_screen, "trust": cmd_trust, "tools": cmd_tools,
     "home": cmd_home, "home-release": cmd_home_release, "takeover": cmd_takeover,
+    "home-watch": cmd_home_watch,
 }
 
 

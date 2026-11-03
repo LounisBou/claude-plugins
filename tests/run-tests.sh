@@ -5636,11 +5636,111 @@ if command -v tmux >/dev/null 2>&1; then
 else
   echo "  skip a home server's end is not checked: no tmux"
 fi
+echo "== iterm-agents: every end of a home server is traced =="
+# A home server's end writes one dated line in close.log with the socket, the cause and the tty,
+# whoever ends it: the tab closed (the server exits by itself, so a watcher says it), a close
+# command, a takeover. Servers and clients of the suite's own, under sockets it names, ended by it.
+if command -v tmux >/dev/null 2>&1; then
+  TSTATE_E="$WORK/trace-state"; rm -rf "$TSTATE_E"; mkdir -p "$TSTATE_E"
+  TRSRV="suite-trace-$$"
+  TRMARK=$((4600 + $$ % 1000))
+  trsrv() { env -u TMUX -u TMUX_PANE tmux -L "$TRSRV" "$@"; }
+  tpy() { ORCHESTRATOR_STATE_DIR="$TSTATE_E" ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "$1"; }
+  tpy "ia.make_home('$TRSRV', 'Orch : x', '$WORK', 'sleep $TRMARK', 'suite')" >/dev/null 2>&1
+  TERM=xterm-256color "$py" "$WORK/ptyclient.py" tmux -L "$TRSRV" attach -t home >/dev/null 2>&1 &
+  trclient=$!
+  i=0; while [ "$(trsrv list-clients 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+  tpy "ia.arm_home('$TRSRV', 'suite'); ia.start_home_watch('$TRSRV', '/dev/ttys977')" >/dev/null 2>&1
+  sleep 1
+  { kill "$trclient"; wait "$trclient"; } 2>/dev/null
+  i=0; while [ ! -s "$TSTATE_E/close.log" ] && [ $i -lt 100 ]; do sleep 0.1; i=$((i+1)); done
+  check "a tab closed ends its server and the watcher writes the dated line: socket, cause, tty" "1" \
+    "$(grep -cE "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z home: server $TRSRV ended: cause=exit-unattached .* tty=/dev/ttys977\$" "$TSTATE_E/close.log")"
+  trsrv kill-server 2>/dev/null
+  pkill -fx "sleep $TRMARK" 2>/dev/null
+  # A close command ends the server itself: one line with the cause close, and no second one
+  # from the watcher, which is told by the file the command leaves.
+  : > "$TSTATE_E/close.log"
+  tpy "ia.make_home('$TRSRV', 'Orch : x', '$WORK', 'sleep $TRMARK', 'suite')" >/dev/null 2>&1
+  TERM=xterm-256color "$py" "$WORK/ptyclient.py" tmux -L "$TRSRV" attach -t home >/dev/null 2>&1 &
+  trclient=$!
+  i=0; while [ "$(trsrv list-clients 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
+  tpy "ia.arm_home('$TRSRV', 'suite'); ia.start_home_watch('$TRSRV', '/dev/ttys978')" >/dev/null 2>&1
+  sleep 1
+  tpy "
+class Gone:
+    def find(self, tty): return None
+ia.ITERM = Gone()
+ia.close_home_tab('/dev/ttys978', '$TRSRV', '', ([], ''))" >/dev/null 2>&1
+  { kill "$trclient"; wait "$trclient"; } 2>/dev/null
+  sleep 3
+  check "a close writes its own line, with the cause close and the tab's tty, and the watcher adds none" "1|1" \
+    "$(grep -cE "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z home: server $TRSRV ended: cause=close tty=/dev/ttys978\$" "$TSTATE_E/close.log")|$(grep -c . "$TSTATE_E/close.log")"
+  trsrv kill-server 2>/dev/null
+  pkill -fx "sleep $TRMARK" 2>/dev/null
+  check "no server, no host and no watcher of the trace probes is left: the watcher ended with its server" "0|0" \
+    "$(trsrv ls 2>/dev/null | wc -l | tr -d ' ')|$(pgrep -f "$TRSRV|sleep $TRMARK" | wc -l | tr -d ' ')"
+else
+  echo "  skip the end of a home server is not traced here: no tmux"
+fi
+
+echo "== iterm-agents: the ends of a home server that no watcher sees are traced too =="
+# The file `kill_home` leaves tells the server's watcher that a command traced the end. It must
+# not outlive a failed kill (the next real end would be silent), nor be left for a server that
+# no watcher watches (a server shown by no tab). Tmux is stood in for: no server is made here.
+HSTATE_R="$WORK/trace-state-r"; rm -rf "$HSTATE_R"; mkdir -p "$HSTATE_R"
+hpy() { ( export ORCHESTRATOR_STATE_DIR="$HSTATE_R" ORCHESTRATOR_TMUX=/usr/bin/true; ipy "
+class Done:
+    def __init__(self, rc): self.returncode = rc
+class Tab:
+    def close_made(self, made): return True
+$1
+" ); }
+check "a kill that fails takes back its file: the next real end is not silent" "False" \
+  "$(hpy "
+ia.tmux_call = lambda args: Done(1)
+ia.close_made(dict(terminal=Tab(), home='suite-kill-failed', tty='/dev/ttys970'))
+print(__import__('os').path.exists(ia.home_end_marker('suite-kill-failed')))")"
+check "a server shown by no tab leaves no file: no watcher would consume it" "False" \
+  "$(hpy "
+ia.tmux_call = lambda args: Done(0)
+ia.close_made(dict(terminal=ia.NO_TAB, home='suite-no-tab', tty='/dev/ttys971'))
+print(__import__('os').path.exists(ia.home_end_marker('suite-no-tab')))")"
+check "a server a watcher watches is ended with its file left for it" "True" \
+  "$(hpy "
+ia.tmux_call = lambda args: Done(0)
+ia.close_made(dict(terminal=Tab(), home='suite-watched', tty='/dev/ttys972'))
+print(__import__('os').path.exists(ia.home_end_marker('suite-watched')))")"
+check "a spawn refused after its tab opened writes the dated line: socket, cause spawn-failed, tty" "1|0|0" \
+  "$(grep -cE "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z home: server suite-watched ended: cause=spawn-failed tty=/dev/ttys972\$" "$HSTATE_R/close.log")|$(grep -c "suite-kill-failed" "$HSTATE_R/close.log")|$(grep -c "suite-no-tab" "$HSTATE_R/close.log")"
+# A close that cannot prove the end (a host outlives the kill, the server still answers) writes
+# a line saying so, whatever became of the file the kill left.
+UNPROVED='ia.ITERM = type("Gone", (), dict(find=lambda self, tty: None))()
+ia.tmux_call = lambda args: Done(0)
+ia.cli_pid_on_tty = lambda tty: 1
+ia.host_registry = lambda pid: dict(sessionId="sid")
+ia.host_identity = lambda tty: ("123", "t")
+ia.others_on = lambda tty, pid: []'
+check "a close that leaves a host running writes a line that says the end is not proved" "1" \
+  "$(hpy "$UNPROVED
+ia.end_host = lambda *a: False
+try:
+    ia.close_home_tab('/dev/ttys973', 'suite-host-left', '', ([['0', '/dev/ttys974']], ''))
+except SystemExit:
+    pass" >/dev/null 2>&1; grep -cE "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z home: server suite-host-left end not proved: cause=close tty=/dev/ttys973 \(a host still runs on /dev/ttys974\)\$" "$HSTATE_R/close.log")"
+check "a close whose server still answers writes that line too, and takes its file back" "1|False" \
+  "$(ORCHESTRATOR_CLOSE_TIMEOUT=1 hpy "$UNPROVED
+try:
+    ia.close_home_tab('/dev/ttys975', 'suite-still-up', '', ([], ''))
+except SystemExit:
+    pass
+print(__import__('os').path.exists(ia.home_end_marker('suite-still-up')))" 2>/dev/null | tail -1 >"$WORK/still-up"; grep -cE "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z home: server suite-still-up end not proved: cause=close tty=/dev/ttys975 \(the server still answers\)\$" "$HSTATE_R/close.log")|$(cat "$WORK/still-up")"
+
 # Armed by open_home_tab, at the one moment the tab's client is proved, and by nothing before:
 # a spawn, a wake, an open and a move all show their server through it, and a server shown by
 # no tab (ORCHESTRATOR_HOME_NO_TAB) is never armed, its operator attaching and detaching at will.
 check "the home tab arms its server once its client is proved, and not before" "client,arm" \
-  "$(ipy "
+  "$(export ORCHESTRATOR_STATE_DIR="$HSTATE_R"; ipy "
 calls = []
 class Maker:
     def create(self, program, title, place, prompt, made):
@@ -5649,8 +5749,11 @@ class Maker:
 ia.ITERM = Maker()
 ia.client_on = lambda socket, tty: calls.append('client') or True
 ia.arm_home = lambda socket, what: calls.append('arm') or True
+ia.start_home_watch = lambda socket, tty: None
 ia.open_home_tab('orch-suite', 'Orch : x', '', 'spawn')
 print(','.join(calls[1:]))")"
+check "and starts no watcher of its own: the suite's stand-in server has none to watch" "0" \
+  "$(pgrep -f 'home-watch --socket orch-suite' | wc -l | tr -d ' ')"
 check "a server that cannot be armed is ended with its tab, and the open dies saying so" "1|closed|ended" \
   "$(ipy "
 said = []
@@ -6733,6 +6836,19 @@ out=$(heir takeover --tty /dev/ttys900 --expect-title "Orch : home" 2>&1)
 check "takeover kills window 0 by its id, proved gone, and moves the successor to index 0 detached" \
   "took window 0: the predecessor's window @0 on /dev/ttys900 was closed|[-u][kill-window][-t][@0]|[-u][move-window][-d][-s][@4][-t][\$1:0]|0|0" \
   "$out|$(calls | grep -F '[kill-window]')|$(calls | grep -F '[move-window]')|$(calls | grep -c '\[select-window\]')|$(grep -c ttys900 "$TR/ps")"
+check "a takeover writes its dated line: the socket, the cause takeover and the predecessor's tty" "1" \
+  "$(grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z home: window 0 of home ended: cause=takeover tty=/dev/ttys900$' "$TSTATE/close.log")"
+# A TMUX value that names no socket gives the takeover no socket to write: no line, rather than a
+# line that reads « window 0 of  ended ».
+reset_home
+printf '%s\n' '$1	0	@0	%0	/dev/ttys900	Orch : home	✳ Orch : home' '$1	9	@4	%4	/dev/ttys903	Orch : home	✳ Orch : home' > "$TR/panes"
+printf '/dev/ttys903 claude --name Orch : home\n' >> "$TR/ps"
+rm -f "$TR/calls"
+out=$(TMUX=",4242,1" TMUX_PANE=%4 ORCHESTRATOR_TMUX="$TR/tmux" ORCHESTRATOR_OSASCRIPT="$TR/osascript" \
+    ORCHESTRATOR_SAMPLE=/usr/bin/false ORCHESTRATOR_APP_PID=1 ORCHESTRATOR_SELF_TTY=/dev/ttys903 ORCHESTRATOR_STATE_DIR="$TSTATE" \
+    ORCHESTRATOR_PS_TABLE="$TR/ps" ORCHESTRATOR_CLOSE_TIMEOUT=1 bash "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" takeover --tty /dev/ttys900 --expect-title "Orch : home" 2>&1)
+check "a takeover that knows no socket writes no line: the window is taken and close.log holds no empty name" "1|0" \
+  "$(printf '%s' "$out" | grep -c '^took window 0:')|$(cat "$TSTATE/close.log" 2>/dev/null | grep -c 'window 0 of  ended')"
 reset_home
 printf '%s\n' '$1	0	@0	%0	/dev/ttys900	Orch : home	✳ Orch : home' '$1	9	@4	%4	/dev/ttys903	Orch : home	✳ Orch : home' > "$TR/panes"
 printf '/dev/ttys903 claude --name Orch : home\n' >> "$TR/ps"
