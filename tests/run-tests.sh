@@ -5241,6 +5241,20 @@ closed = s.find('end try', select)
 ret = s.find('return newTty', select)
 print('guarded' if -1 < opened < select < closed < ret else 'no')" "$AS_SENT")"
 
+echo "== iterm-agents: the AppleScript close compares the title before it closes =="
+# The rung used to send `close s` and read the name afterwards, so a refused title had
+# already closed the tab. The stub appends every script it is sent and answers with a title.
+AS_CLOSE_LOG="$WORK/as-close-sent.applescript"
+printf '#!/bin/bash\ncat >> "%s"\necho "Agent : other"\n' "$AS_CLOSE_LOG" > "$IBIN/osascript-title"
+chmod +x "$IBIN/osascript-title"
+: > "$AS_CLOSE_LOG"
+res=$(ORCHESTRATOR_OSASCRIPT="$IBIN/osascript-title" ipy "ia.as_close('/dev/ttys901', 'Agent : fake')" 2>&1)
+check "a close whose title differs is refused" "1" "$(printf '%s' "$res" | grep -c 'close: refused')"
+check "and no script that closes a session was sent" "0" "$(grep -c 'close s' "$AS_CLOSE_LOG")"
+: > "$AS_CLOSE_LOG"
+ORCHESTRATOR_OSASCRIPT="$IBIN/osascript-title" ipy "ia.as_close('/dev/ttys901', 'Agent : other')" >/dev/null 2>&1
+check "a close whose title matches is sent" "1" "$(grep -c 'close s' "$AS_CLOSE_LOG")"
+
 echo "== iterm-agents: a self-anchor the app cannot resolve is lost, not fatal (§51) =="
 # Two refusals that look alike and are not. A NAMED anchor the app does not know is a tab
 # the caller got wrong: refuse it. The caller's OWN tty, when the app has no session on it,

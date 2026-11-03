@@ -1170,29 +1170,41 @@ def as_list():
     return lines
 
 
-def as_close(tty, expect):
-    name = as_run('''
+def as_close_script(tty, closing):
+    """The script that finds the session on `tty` and returns its name, closing it first
+    only when `closing` is set."""
+    return '''
         tell application "iTerm2"
           repeat with w in windows
             repeat with t in tabs of w
               repeat with s in sessions of t
                 if (tty of s) is %s then
                   set n to name of s
-                  close s
+                  %s
                   return n
                 end if
               end repeat
             end repeat
           end repeat
         end tell
-        return ""''' % as_quote(tty), "a close")
+        return ""''' % (as_quote(tty), "close s" if closing else "")
+
+
+def as_close(tty, expect):
+    # The guard is the API rung's own, applied here too: a rung that closed what the rung
+    # above would have refused is a fallback that is not the same tool. The title is read
+    # first and compared in Python, and the close is sent only once it matches, so a refused
+    # title closes nothing.
+    if expect:
+        name = as_run(as_close_script(tty, False), "a title read")
+        if not name:
+            die("close: no session found on %s" % tty)
+        if stable_title(expect) not in stable_title(name):
+            die("close: refused: session on %s is titled '%s', which does not contain '%s'"
+                % (tty, name, expect))
+    name = as_run(as_close_script(tty, True), "a close")
     if not name:
         die("close: no session found on %s" % tty)
-    # The guard is the API rung's own, applied here too: a rung that closed what the rung
-    # above would have refused is a fallback that is not the same tool.
-    if expect and stable_title(expect) not in stable_title(name):
-        die("close: refused: session on %s is titled '%s', which does not contain '%s'"
-            % (tty, name, expect))
     return name
 
 
