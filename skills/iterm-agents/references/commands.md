@@ -3,6 +3,7 @@
 Read before typing any `iterm-agent.sh` command, and again when one fails, hangs or says on stderr that a fallback served it. SKILL.md carries when to spawn, close, move or rotate and in what order; the conditions that come with an option stay beside it here.
 
 - Quick reference — `list`, `spawn`, `verify`, `screen`, `close`, `move`, `rotate`, `trust prune`, `tools`, the dry run
+- Agents as windows of a home session — where the launcher puts an agent, what each command does there, `home`, `takeover`
 - How the launcher builds a tab — trust, servers, focus, the launch file, the shell, the anchor's window, titles, hidden panes, the environment
 - When iTerm2 does not answer — the cause named, the two rungs, what the fallback cannot do
 
@@ -204,6 +205,18 @@ $SCRIPT tools [--transcript <path>]
 
 `ORCHESTRATOR_DRY_RUN=1` makes `spawn`, `close` and `move` print what they would ask the app for — the launch, the prompt file, the anchor — touching no terminal. It is the test suite's door, and yours when a launch looks wrong; `rotate` walks its whole order through it.
 
+## Agents as windows of a home session
+
+An orchestrator's tab holds a tmux session of its own, its **home session**, on a server of its own (`-L orch-<id>`, started with the plugin's `skills/iterm-agents/tmux/home.conf` and nothing of the operator's tmux setup). The orchestrator is in window 0, and **the launcher puts an agent where its caller runs**: a caller inside a home session (`$TMUX` set and the session carrying the plugin's mark) gets a window, any other caller a tab. Windows are a placement, not a rung of « When iTerm2 does not answer »: a failed iTerm2 call never falls to tmux, and a tmux that cannot answer inside a pane is a refusal that names the cause. The auditor is made as a tab, and so is a woken or opened orchestrator (as a home session of its own, shown by a tab).
+
+- **`spawn`** makes the window with `new-window -d` (the operator's view stays put), named by `-n` with the title, because a window not named takes its program's name. It takes the next free index; `--right-of self` is read as « after my last agent », and a first place or `--left-of` is said to be unsupported there. Its chain entry is `tmux:<socket>:@N`, owned by `tmux:<socket>:%N`.
+- **`list`** prints the home session's windows, one row each, the caller's own marked `self`, then the app's tabs it did not make as windows (an auditor's, for one). **`screen`** reads a window with `capture-pane`.
+- **`close`** kills the window, guarded by `--expect-title` against the window's name, proved gone on the process table, the checkout deleted as for a tab. A tty of another tmux session is refused. On a tab that shows a home session it ends the whole server first and prints a `home:` line.
+- **`move`** is `move-window`, with the operator's view kept; window 0 is refused as a subject, as an anchor to place something before, and as `--leftmost`. **`rotate`** spawns, verifies, then closes, as for tabs.
+- **`home --session <id> --name "Orch : <subject>"`** is run by the hooks module at the end of the turn that names an orchestrator, never by hand: it makes the server, resumes the same conversation in window 0 and opens a tab showing it, printing `moved: …` or `stay: <why>` (a session that is not an orchestrator, or already in a home session, stays). **`home-release`** is window 0's watcher, closing the tab the orchestrator left once the resumed host is proved running. **`takeover --tty <predecessor> --expect-title <words>`** is a successor's close of its predecessor: window 0 killed (the title being required) and proved gone, then the successor's window moved to index 0.
+- **The tab bar** shows one block per window — the name, then the state icon the module wrote on the window: busy ●, idle ○, asks ✋, done ✓, gate ⚠. A click on a block or `C-b n` / `C-b p` switches; the windows keep their numbers, so `C-b <digit>` still selects one, though the bar shows none. `C-b C-b` sends a Ctrl-B to the pane.
+- **`ORCHESTRATOR_TMUX`** names the tmux binary (the suite stands a recorder in for it); `ORCHESTRATOR_HOME_WAIT` is how long window 0 waits for the moved session to end in its old place.
+
 ## How the launcher builds a tab
 
 - **A directory the host has never opened stops the session on a workspace question**, whose highlighted answer is « exit ». Nobody sits at that keyboard: the session waits for ever having never read its brief, or takes a stray keystroke and quits — and from outside both look like a launched agent, because the process genuinely runs. `spawn` refuses such a launch before making a tab, and `--trust` records the answer for ONE directory (the limit is in `SKILL.md`'s launch safety order). The record is the host's own, `~/.claude.json`, and writing to it is why the flag is explicit rather than automatic. It never rewrites an entry that already says yes, and a record it cannot read is said on stderr rather than launched past in silence; entries outlive their directories — `trust prune` lists them, `--apply` removes them.
@@ -221,7 +234,7 @@ $SCRIPT tools [--transcript <path>]
 
 ## When iTerm2 does not answer
 
-The launcher drives iTerm2, and iTerm2 can stop answering. When it does, the launcher **names the cause** — it never hangs, it never reports a thing it did not verify, and it never quietly hands you a terminal you did not ask for.
+The launcher drives iTerm2 for the tabs it makes, and iTerm2 can stop answering. When it does, the launcher **names the cause** — it never hangs, it never reports a thing it did not verify, and it never quietly hands you a terminal you did not ask for.
 
 **Why a menu stops an API.** A menu, a sheet or a modal dialog runs a NESTED event loop. While one runs, the app's main thread never returns to its default run loop mode and **AppleEvents are not dispatched** — they queue and expire on their own two-minute timeout, silently. The terminals keep scrolling the whole time, because a session's I/O runs on other threads, so nothing looks wrong from the outside. A sheet check does not find a context menu.
 

@@ -288,7 +288,10 @@ Then, on its `paused-ready`:
    tty> --expect-title "<the title list printed>"`; where the host refuses the close, message
    it « call mcp__orchestrator__end_session ». The proof is the tty: `verify --tty` fails, or
    `ps -t` shows no host CLI. A tab that shows a home session takes its whole server with it,
-   agents included, and the close's `home:` line names the session window 0 ran.
+   agents included (which is why an orchestrator stands its agents down before it
+   answers `paused-ready`), and the close's `home:` line names the session window 0 ran;
+   closing the iTerm2 tab by hand ends nothing, the server keeps running detached, and
+   `tmux -L <server> attach` in a new tab shows it again.
 3. **Record it sleeping**, its name without its reference:
 
    ```
@@ -309,8 +312,10 @@ field):
 ${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --wake --title "Orch : <subject>" --model <model> [--effort <effort>] [--resume <its session>] --dir <its directory> --permission-mode auto --prompt "Read and execute <brief path>. You wake from a pause: your predecessor is gone; skip the takeover handshake."
 ```
 
-`--wake` lands it right of your tab, in no chain, under remote control under its name, in
-window 0 of a home session of its own; with the record's session, the same conversation resumes.
+`--wake` makes a home session of its own, the orchestrator in its window 0, shown by a tab
+right of yours; it joins no chain, comes up under remote control under its name, and with
+the record's session the same conversation resumes. Its agents will be windows of that
+session.
 Verify it — `iterm-agent.sh list`, `verify --tty`, `ListAgents` naming `Orch : <subject>` —
 then `coordinator.sh wake-done --name "Orch : <subject>"`, and announce yourself to it as to
 any newcomer. A spawn that fails keeps the record, and the operator is told.

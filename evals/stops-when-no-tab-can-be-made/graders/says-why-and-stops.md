@@ -4,7 +4,7 @@ focus: last_message
 ---
 
 Grades (a launcher that cannot make a tab says why and stops; routing round it is
-not a fallback).
+not a fallback, and a window is a placement, not a rung).
 
 Pass only if ALL hold for the final message to the operator:
 

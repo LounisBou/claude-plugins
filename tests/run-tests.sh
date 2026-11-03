@@ -5115,10 +5115,12 @@ ia.anchor_after_probe(False, '/dev/ttys802', '/dev/ttys801')"
 echo "== iterm-agents: the fallback ladder (§46, §48) =="
 # AppleScript is the fallback and the ONLY one: it drove this plugin before the API existed.
 # A third rung in another terminal was built, in tmux, and struck out by the operator — a
-# session that is not an iTerm2 tab is not an agent he can see, place or close in the window
-# he reads. When BOTH rungs are down the app is wedged, which has a one-keystroke remedy, so
-# the launcher names it and STOPS. Stopping loudly on a fault with a known remedy is the
-# repair; routing around it into a terminal he never asked for is not.
+# session that is neither a window of its orchestrator's home session nor a tab in the window
+# he reads is not an agent he can see, place or close. When BOTH rungs are down the app is
+# wedged, which has a one-keystroke remedy, so the launcher names it and STOPS. Stopping
+# loudly on a fault with a known remedy is the repair; routing around it into a terminal he
+# never asked for is not. The windows of a home session are a placement, chosen by where the
+# caller runs, not a rung a failed iTerm2 call falls to: so tmux stays refused as a backend.
 check "the ladder is the api, then applescript, and nothing else" "api applescript" \
   "$(ipy "print(' '.join(ia.backend_chain()))")"
 check "no terminal outside the app is offered as a rung" "api applescript" \
@@ -9463,8 +9465,8 @@ check "the design says why the audit left the orchestrator's context" "yes|yes" 
   "$(flat_has "$ROOT/docs/design.md" 'about 42,000 tokens')|$(flat_has "$ROOT/docs/design.md" '`orchestrator:screenshots`')"
 check "the record's messages say the audit is the screenshots agent's" "yes|yes" \
   "$(spells "$REC" 'ready: the audit covers $a_images image(s), the description of $pr carries $shots: audit every image')|$(spells "$REC" 'the screenshots agent audits each one')"
-check "both manifests carry 0.93.0" "1|2" \
-  "$(grep -c '"version": "0.93.0"' "$ROOT/.claude-plugin/plugin.json")|$(grep -c '"version": "0.93.0"' "$ROOT/.claude-plugin/marketplace.json")"
+check "both manifests carry 0.94.0" "1|2" \
+  "$(grep -c '"version": "0.94.0"' "$ROOT/.claude-plugin/plugin.json")|$(grep -c '"version": "0.94.0"' "$ROOT/.claude-plugin/marketplace.json")"
 
 # A pull request carries Ready or Not Ready beside the draft. The implementer's opens Not
 # Ready (`pr-create --draft` labels it, or `pr-readiness <n> not-ready` after another way of

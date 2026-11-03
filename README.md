@@ -204,16 +204,27 @@ next read. A new `at` alone is no reason to write the file again.
 2. Every brief is a file the fresh session can open, with contracts verbatim, a non-goals list ending in "STOP and ask", and state-verification commands.
 3. Review on evidence: diff it yourself, re-run the one command that decides the verdict, treat every claim — cleanup claims included — as a claim. Heavy reading goes to a review session spawned for the round (its readers sized by you, from its own reading to several lenses, and it reports once); the verdict stays with you, and the session is closed when the round is judged.
 4. Context is a gate at the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000, 533,000 or 400,000; 160,000 on 200,000: never dispatch a phase to an agent past it, and an agent crossing it mid-work finishes the unit and stops. Rotation is a resume brief for a fresh session.
-5. Succession is the orchestrator's to trigger, at a quiet moment, with a standing pointer-based brief; the successor verifies the state on the artifacts, re-identifies itself to the agents, confirms the takeover, then closes the predecessor's tab.
+5. Succession is the orchestrator's to trigger, at a quiet moment, with a standing pointer-based brief; the successor verifies the state on the artifacts, re-identifies itself to the agents, confirms the takeover, then closes the predecessor's tab (in a home session, takes its window 0).
 
-## Tab layout
+## Where agents run
 
-The orchestrator's tab sits immediately left of its implementer's tab. A plain
-`spawn` appends at the far right of the window, which is beside the orchestrator
-only when it happens to be the last tab — so always name an anchor, and name the
-one you know: `--right-of self` resolves the calling session's own tty from the
-process tree. `--left-of <tty>` covers the mirror case, and `move` repairs the
-layout after the fact.
+An orchestrator's tab is a real terminal holding a tmux session of its own, its
+home session: the orchestrator runs in window 0 and every agent it spawns is a
+window after it, shown in a tab bar with one block per window and a state icon
+after its name (busy ●, idle ○, asks ✋, done ✓, gate ⚠). There is nothing to
+type for it: the orchestrator command moves its own tab into the home session
+by itself. Click a block, or press `C-b n` / `C-b p`, to switch; `C-b C-b`
+sends a Ctrl-B to the program in the pane. Closing the tab detaches without
+ending anything; `tmux -L <server> attach` in a new tab brings it back. The
+auditor and the coordinator stay iTerm2 tabs.
+
+Outside a home session an agent is an iTerm2 tab, and the orchestrator's tab
+sits immediately left of its implementer's tab. A plain `spawn` appends at the
+far right of the window, which is beside the orchestrator only when it happens
+to be the last tab — so always name an anchor, and name the one you know:
+`--right-of self` resolves the calling session's own tty from the process tree.
+`--left-of <tty>` covers the mirror case, and `move` repairs the layout after
+the fact.
 
 ## Uninstall
 
