@@ -1607,3 +1607,18 @@ test('goals alone deferred, no open row: the deferred line passes and the done l
   const short = await stop(handlers['classic.Stop'], unnamed.dollar, stopEvent({ last_assistant_message: 'waiting: deferred — G5' }))
   expect((short.answer as any).block).toContain('missing G6')
 })
+
+// Every window of a tmux server inherits the server's ITERM_SESSION_ID, so the owner of a
+// chain entry cannot be read from it there: the pane names the session.
+const TMUX_ENV = { ITERM_SESSION_ID: 'w0t0:2:17', TMUX: '/private/tmp/tmux-501/orch,4242,0' }
+const TMUX_OWNED = '{"tab_id":"tmux:/private/tmp/tmux-501/orch:@1","tty":"/dev/ttys002","owner":"tmux:/private/tmp/tmux-501/orch:%3"}\n'
+
+test('an entry owned by a tmux pane is counted for that pane only, not for a sibling sharing the server\'s ITERM_SESSION_ID', async () => {
+  const { handlers } = mounted()
+  const own = fakeDollar({ listing: BUSY_ROW, chain: TMUX_OWNED, env: { ...TMUX_ENV, TMUX_PANE: '%3' } })
+  const mine = stopEvent({})
+  expect((await stop(handlers['classic.Stop'], own.dollar, mine)).answer).toBe(mine)
+  const sibling = fakeDollar({ listing: BUSY_ROW, chain: TMUX_OWNED, env: { ...TMUX_ENV, TMUX_PANE: '%4' } })
+  const refused = await stop(handlers['classic.Stop'], sibling.dollar, stopEvent({}))
+  expect((refused.answer as any).block).toContain('Nothing will wake you')
+})

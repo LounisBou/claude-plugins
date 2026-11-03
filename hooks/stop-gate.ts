@@ -273,6 +273,19 @@ export function ownAgents(rows: readonly Row[], entries: readonly ChainEntry[], 
   return { agents, resident }
 }
 
+// The owner a chain entry names: the one session that wrote it. Inside tmux every window
+// inherits the server's ITERM_SESSION_ID, so it stops naming one session; the pane does:
+// `tmux:<socket path>:<pane id>` (the socket is the first field of TMUX). Elsewhere it is
+// the part of ITERM_SESSION_ID after its last colon. The launcher states the same rule
+// (iterm_agent.py, `tmux_owner`); empty when neither names a session.
+export async function chainOwner($: any): Promise<string> {
+  const tmux = String((await $.env.get('TMUX')) ?? '')
+  const pane = String((await $.env.get('TMUX_PANE')) ?? '')
+  if (tmux && pane) return `tmux:${tmux.split(',')[0]}:${pane}`
+  const session = String((await $.env.get('ITERM_SESSION_ID')) ?? '')
+  return session.includes(':') ? session.slice(session.lastIndexOf(':') + 1) : ''
+}
+
 // chain_read() ported over an already-read text (iterm_agent.py:1009-1020): entries
 // with a tab id and a tty. One line that is no JSON empties the whole file, as the
 // launcher's own read does — its writes are atomic, so a bad line means the file is

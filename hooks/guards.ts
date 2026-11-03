@@ -25,7 +25,7 @@ import { isEnding } from './naming.ts'
 import { detectForces } from './tokenizer.ts'
 import {
   refuse, withDeadline, isDegradedPass, type DegradedPass,
-  listing, chainEntries, ownAgents, hostStatusOf, pullRequestOf, openRows, deferredRows, deferredIds, machineLine, projectCheckouts,
+  listing, chainEntries, chainOwner, ownAgents, hostStatusOf, pullRequestOf, openRows, deferredRows, deferredIds, machineLine, projectCheckouts,
   headsPath, readHeads, writeHeads, parseCiWatchLog, watchNumberOf, watchedNumbers,
   checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownBackground, logTell,
   noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, presentGoals, goalsShownPath, type GoalsReading,
@@ -484,8 +484,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // entries its own session wrote, still running one by the listing's glyph.
       const rows = listing(await mustRun($, ['bash', `${root}/skills/iterm-agents/scripts/iterm-agent.sh`, 'list'], "the launcher's listing", until))
       const chain = await quietly($, () => $.fs.read(`${state}/chains/${tty.split('/').pop()}.jsonl`), until, '')
-      const session = (await $.env.get('ITERM_SESSION_ID')) ?? ''
-      const owner = session.includes(':') ? session.slice(session.lastIndexOf(':') + 1) : ''
+      const owner = await chainOwner($)
       if (!owner) {
         // Said once per stop, as the shell gate said it (stop_gate.py:232): without the
         // owner no chain entry is counted, and the operator should know why the gate

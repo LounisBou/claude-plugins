@@ -2493,3 +2493,19 @@ test('the answers given to a multi-question entry survive a reload', async () =>
   await pick(tree, 'B')
   expect(stored(twoQuestions().id).answer!.text).toBe(`Question 3 sur 4: A : ${FIRST_A} · Question 4 sur 4: B : ${SECOND_B}`)
 })
+
+test('an orchestrator\'s pane in tmux lists the agents its own pane spawned, not a sibling pane\'s sharing the server\'s ITERM_SESSION_ID', async () => {
+  const owned = JSON.stringify({ tab_id: 'tmux:/private/tmp/tmux-501/orch:@1', tty: '/dev/ttys009', owner: 'tmux:/private/tmp/tmux-501/orch:%3' }) + '\n'
+  const paneText = async (pane: string) => {
+    const fx = fakeDollar({ launchName: 'Orch : phase-3' })
+    Object.assign(fx.env, { ITERM_SESSION_ID: 'w0t1p0:OWNER-1', TMUX: '/private/tmp/tmux-501/orch,4242,0', TMUX_PANE: pane })
+    fx.files.set(`${HOME}/.claude/claude-orchestrator/chains/ttys001.jsonl`, owned)
+    fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ sessionId: 's-agent', name: 'Agent : belt-p3', status: 'busy' }))
+    fx.files.set(`${SESSIONS}/s-agent`, JSON.stringify(row({ role: 'agent', name: 'Agent : belt-p3', context_percent: 40 })) + '\n')
+    const { handlers } = mounted(registerSupervision)
+    await handlers['command.run'](fx.dollar, supervisionRun)
+    return JSON.stringify(await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))
+  }
+  expect(await paneText('%3')).toContain('Agent : belt-p3')
+  expect(await paneText('%4')).toContain('no agent running')
+})

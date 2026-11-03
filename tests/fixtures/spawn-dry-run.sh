@@ -25,6 +25,8 @@ printf '{"projects":{"%s":{"hasTrustDialogAccepted":true}}}\n' "$WORK" > "$ORCHE
 export CLAUDE_CONFIG_DIR="$WORK/config"
 # The caller's model, as the hooks module records it each turn, for the forms that inherit it.
 export CLAUDE_CODE_SESSION_ID=s-dry
+# Outside tmux, whatever shell runs this: the owner is the caller's app session id.
+unset TMUX TMUX_PANE
 mkdir -p "$CLAUDE_CONFIG_DIR/claude-orchestrator/measure"
 printf '{"model":"a-model"}\n' > "$CLAUDE_CONFIG_DIR/claude-orchestrator/measure/s-dry.json"
 export ORCHESTRATOR_LOGIN_SHELL=/bin/sh

@@ -56,8 +56,21 @@ STATE_DIR = os.environ.get("ORCHESTRATOR_STATE_DIR") or os.path.join(
 PROMPTS_DIR = os.path.join(STATE_DIR, "prompts")
 CHAINS_DIR = os.path.join(STATE_DIR, "chains")
 SELF_TTY = os.environ.get("ORCHESTRATOR_SELF_TTY", "")
-# The app's session id of the caller, for a dry run that has no app to ask (§26).
-SELF_ID = os.environ.get("ORCHESTRATOR_SELF_ID", "")
+
+
+def tmux_owner():
+    """The chain owner of a caller inside a tmux pane, or "" outside one.
+
+    Every window of a tmux server inherits the server's ITERM_SESSION_ID, so the app's
+    session id names no one session there; the pane does. The owner is
+    `tmux:<socket path>:<pane id>`, the socket being the first comma-separated field of TMUX.
+    The hooks module states the same rule (stop-gate.ts, `chainOwner`)."""
+    tmux, pane = os.environ.get("TMUX", ""), os.environ.get("TMUX_PANE", "")
+    return "tmux:%s:%s" % (tmux.split(",")[0], pane) if tmux and pane else ""
+
+
+# The caller's chain owner, for a dry run that has no app to ask (§26).
+SELF_ID = tmux_owner() or os.environ.get("ORCHESTRATOR_SELF_ID", "")
 # The shell the tab runs the launch through. A LOGIN shell, so the session inherits the
 # operator's environment — the package manager's binaries included — instead of the bare
 # default the app hands a program run directly (§22). Non-interactive `-l` reads the
@@ -1380,7 +1393,7 @@ async def move_is_owned(app, tty, own):
     _, _, own_sess = await find_tab(app, own)
     if tab is None or own_sess is None:
         return False
-    mine = {e["tab_id"] for e in chain_owned(chain_read(own), own_sess.session_id)}
+    mine = {e["tab_id"] for e in chain_owned(chain_read(own), tmux_owner() or own_sess.session_id)}
     return tab.tab_id in mine
 
 
@@ -1395,7 +1408,7 @@ async def chain_anchor(app, own_tty):
         return None
     live = {t.tab_id: t for t in win.tabs}
     entries = chain_read(own_tty)
-    kept = [e for e in chain_owned(entries, own_sess.session_id) if e["tab_id"] in live]
+    kept = [e for e in chain_owned(entries, tmux_owner() or own_sess.session_id) if e["tab_id"] in live]
     if len(kept) != len(entries):
         chain_write(own_tty, kept)
     for e in reversed(kept):
@@ -1473,6 +1486,8 @@ async def own_session_id(app, tty):
     where the answer was « your terminal is not one of mine, so I kept no chain » (§49)."""
     if not tty:
         return ""
+    if tmux_owner():
+        return tmux_owner()
     _, _, sess = await find_tab(app, tty)
     return sess.session_id if sess is not None else ""
 
@@ -2586,6 +2601,8 @@ def cmd_spawn(argv):
         print("wake=%s" % ("yes" if args.wake else "no"))
         print("open=%s" % ("yes" if args.open_ else "no"))
         print("chain=%s" % effect)
+        if effect != "none" and tmux_owner():
+            print("chain_owner=%s" % tmux_owner())
         print("resident=%s" % ("yes" if args.resident else "no"))
         print("name=%s" % title)
         print("title_free=%s" % ("yes" if args.title_free else "no"))

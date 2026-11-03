@@ -25,7 +25,7 @@ import {
   roleOf, walkName, hostBasenames, hostRecordOf, blockArgv, bytesOfBase64,
   type ReadRecord, type HostNames,
 } from './session-name.ts'
-import { withDeadline, isDegradedPass, chainEntries, watchNumberOf, deferredIds, machineLine } from './stop-gate.ts'
+import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf, deferredIds, machineLine } from './stop-gate.ts'
 import { typedByOperator } from './models-guard.ts'
 import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
@@ -596,8 +596,7 @@ export function agentPaneRows(agents: readonly AgentView[]): { label: string; na
 async function agentViews($: any, tty: string): Promise<AgentView[]> {
   const config = await configDir($)
   const state = await stateDir($)
-  const terminal = String((await $.env.get('ITERM_SESSION_ID')) ?? '')
-  const owner = terminal.includes(':') ? terminal.slice(terminal.lastIndexOf(':') + 1) : ''
+  const owner = await chainOwner($)
   if (!owner) return []
   const chain = String(await $.fs.read(`${state}/chains/${tty.split('/').pop()}.jsonl`).catch(() => ''))
   const views: AgentView[] = []

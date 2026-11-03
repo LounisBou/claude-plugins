@@ -32,8 +32,9 @@ fail=0
 export ORCHESTRATOR_HOST_CLI=claude
 
 # The dispatch record registers itself under the host's session id when it has one. A suite
-# run from inside a session must not write into that operator's own state directory.
-unset CLAUDE_CODE_SESSION_ID
+# run from inside a session must not write into that operator's own state directory. Nor
+# may a run from inside tmux change the chain owner the launcher reads (TMUX, TMUX_PANE).
+unset CLAUDE_CODE_SESSION_ID TMUX TMUX_PANE
 
 export ORCHESTRATOR_TRUST_FILE="$WORK/suite-trust.json"
 "$(command -v python3 || echo python3)" -c "
@@ -351,6 +352,19 @@ check "a chain written by strangers anchors on self" "1" "$(printf '%s' "$out" |
 printf '{"tab_id":"9","tty":"/dev/ttys909"}\n' > "$CHAINS/ttys900.jsonl"
 out=$(ORCHESTRATOR_SELF_ID=S-ME chain_spawn --right-of self)
 check "an entry with no owner is skipped once an owner is known" "1" "$(printf '%s' "$out" | grep -c '^anchor=self$')"
+
+# Inside tmux the owner is the pane, qualified by its server's socket: every window of a
+# server inherits one ITERM_SESSION_ID, so the app's id cannot name a session there.
+TMUX_SOCK=/private/tmp/tmux-501/orch
+printf '{"tab_id":"7","tty":"/dev/ttys907","owner":"S-ME"}\n{"tab_id":"8","tty":"/dev/ttys908","owner":"tmux:%s:%%3"}\n' "$TMUX_SOCK" > "$CHAINS/ttys900.jsonl"
+out=$(TMUX="$TMUX_SOCK,4242,0" TMUX_PANE=%3 ORCHESTRATOR_SELF_ID=S-ME chain_spawn --right-of self)
+check "from a tmux pane the dry run prints the chain owner it would write, and the pane's own entry anchors" "1|1" \
+  "$(printf '%s' "$out" | grep -c "^chain_owner=tmux:$TMUX_SOCK:%3\$")|$(printf '%s' "$out" | grep -c '^anchor=/dev/ttys908$')"
+out=$(TMUX="$TMUX_SOCK,4242,0" TMUX_PANE=%4 ORCHESTRATOR_SELF_ID=S-ME chain_spawn --right-of self)
+check "a sibling pane of the same server owns none of it" "1|1" \
+  "$(printf '%s' "$out" | grep -c "^chain_owner=tmux:$TMUX_SOCK:%4\$")|$(printf '%s' "$out" | grep -c '^anchor=self$')"
+out=$(ORCHESTRATOR_SELF_ID=S-ME chain_spawn --right-of self)
+check "outside tmux the dry run prints no chain owner line" "0" "$(printf '%s' "$out" | grep -c '^chain_owner=')"
 
 # A successor is not an agent: it takes the predecessor's place, immediately right of it,
 # chain ignored, and takes the chain with it (§34). Dry: the anchor, and the file untouched.
