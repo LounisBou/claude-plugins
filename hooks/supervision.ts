@@ -492,16 +492,44 @@ export async function readSessions($: any): Promise<Record<string, SessionRow>> 
   const alive = argv ? livePids(await $.process.run(argv, { timeoutMs: 5000 }).catch(() => null)) : new Set<string>()
   const rows: Record<string, SessionRow> = {}
   const dead: string[] = []
+  const gone: string[] = []
   const now = Date.now()
   for (const [name, text, row] of read) {
     if (row && !isStale(row, now, alive)) rows[`sessions/${name}`] = row
-    else if (text === '' || row) dead.push(`${dir}/${name}`, `${await storeOf($)}/waits/${name}`, `${await storeOf($)}/gates/${name}`, `${await storeOf($)}/rows/${name}`, `${await storeOf($)}/successors/${name}`)
+    else if (text === '' || row) {
+      // A row with no pid removed for idleness alone is not known dead: its sender may live on.
+      if (text === '' || row?.pid) gone.push(`sessions/${name}`)
+      dead.push(`${dir}/${name}`, `${await storeOf($)}/waits/${name}`, `${await storeOf($)}/gates/${name}`, `${await storeOf($)}/rows/${name}`, `${await storeOf($)}/successors/${name}`)
+    }
   }
   // A liveness read that failed removes nothing: its rows are drawn as alive
   // and the next read that answers sweeps the dead. Removing on it wiped the
   // whole store at every render the pane drew.
   if (alive !== null && dead.length > 0) await $.process.run(['rm', '-f', ...dead], { timeoutMs: 5000 }).catch(() => undefined)
+  if (alive !== null && gone.length > 0) await sweepGoneSenders($, new Set(gone))
   return rows
+}
+
+// The entries a session left open and no session end closed (a killed host, a tab closed with no
+// clean end, an end past its bound): every open entry of this machine whose sender's row this read
+// has just judged dead and removed is withdrawn, on the read every reader makes — the sender
+// `co round` prints as « sender gone ». Only a row removed here is judged: a session not yet
+// measured (a successor an entry was moved to) has no row and is not gone. An entry naming no
+// session, or from another machine, is not judged. A sweep that fails is one log line and the
+// read goes on.
+async function sweepGoneSenders($: any, removed: ReadonlySet<string>): Promise<void> {
+  try {
+    const senders = new Set<string>()
+    for (const { entry } of await readRound($)) {
+      if (entry.status === 'open' && entry.session !== '' && !entry.origin && removed.has(sessionKey(entry.session))) senders.add(entry.session)
+    }
+    for (const sessionId of senders) {
+      const settled = await withdrawStale($, sessionId, null, "the sender's session ended")
+      await tellSettled($, settled, Date.now() + RELAY_BOUND_MS)
+    }
+  } catch (err) {
+    await logLine($, `round: ${(err as Error).message}`)
+  }
 }
 
 // The session's own row goes with it: removed, or — rm failing — truncated to
@@ -2401,7 +2429,10 @@ async function withdrawStale($: any, sessionId: string, current: string | null, 
     try {
       const closed = await closesItself($, entry.id)
       const answer: RoundAnswer = { text: closed ? `withdrawn: ${why}` : why, by: 'sender', at: new Date().toISOString() }
-      await writeAtomic($, path, JSON.stringify({ ...entry, status: closed ? 'closed' : 'withdrawn', answer }) + '\n')
+      // Re-read just before the write: a move to a successor in between is never overwritten.
+      const fresh = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
+      if (!fresh || fresh.status !== 'open' || fresh.session !== sessionId) continue
+      await writeAtomic($, path, JSON.stringify({ ...fresh, status: closed ? 'closed' : 'withdrawn', answer }) + '\n')
       await logLine($, `round: withdrawn by the sender: ${entry.id}`)
       await forgetRelayed($, entry)
       if (closed) settled.push({ entry, answer })
