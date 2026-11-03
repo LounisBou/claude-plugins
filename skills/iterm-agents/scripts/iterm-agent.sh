@@ -81,6 +81,7 @@
 #                                api|applescript, to pin a single rung
 #   ORCHESTRATOR_PROBE_TIMEOUT   seconds the app has to answer before a rung gives up (8)
 #   ORCHESTRATOR_CLOSE_TIMEOUT   seconds a close waits for the process to leave the tty (10)
+#   ORCHESTRATOR_TMUX            the tmux to run inside a home session (tmux)
 #
 # When iTerm2 does not answer:
 #   - no AppleScript here is ever unbounded, the library's own cookie request included: the
