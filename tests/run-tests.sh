@@ -3756,6 +3756,12 @@ check_status "a lint-clean brief spawns" 0 env ORCHESTRATOR_DRY_RUN=1 ORCHESTRAT
 check "the built prompt reads exactly" "1" \
   "$(printf '%s\n' "$out" | grep -Fc "prompt=Read and execute $BABS/good.md. Your orchestrator is $ORCHREF.")"
 check "the lint verdict is shown" "1" "$(printf '%s\n' "$out" | grep -c '^lint=brief-lint: .*0 findings$')"
+# The orchestrator the brief names is recorded in the launch, where the relay reads it
+# when no chain names a live owner for the agent's tty.
+check "the launch records the orchestrator --orchestrator names" "1" \
+  "$(printf '%s\n' "$out" | grep -Fc "export ORCHESTRATOR_REPORTS_TO='$ORCHREF' && ")"
+check "a launch without --orchestrator records none" "0" \
+  "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : brief" --prompt p 2>&1 | grep -c 'ORCHESTRATOR_REPORTS_TO')"
 
 # A relative brief path still resolves to the absolute one the fresh session can open.
 # A relative path goes through `os.getcwd()`, which the OS resolves PHYSICALLY (symlinks

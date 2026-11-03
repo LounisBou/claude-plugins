@@ -448,7 +448,7 @@ program=/bin/sh -l <launch-file>
 exit=0
 ### agent, brief
 spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
-launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && export ORCHESTRATOR_REPORTS_TO='Orch : f [a1b2c3]' && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'
 prompt_file=@WORK@/state/prompts/prompt-Agent---a-@TIME@.txt
 prompt=Read and execute @WORK@/brief.md. Your orchestrator is Orch : f [a1b2c3].
 lint=brief-lint: @WORK@/brief.md: 0 findings

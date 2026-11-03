@@ -62,7 +62,9 @@ test('the owner is the chain naming the tty, the one written last when two do', 
 // shell, and writes no row, so the session under test is named by its own walk: `agent`,
 // the agent's host process itself; `underneath`, the run — its id the one under test, the
 // agent's record carrying another.
-type Over = { name?: string; role?: string; chain?: boolean; send?: 'reject' | 'refuse'; gateTokens?: string; walk?: 'agent' | 'underneath' }
+// `reportsTo`: the orchestrator the launch recorded. `alive`: the pids the process table lists,
+// none read when absent. `registry`: the host's registry records of other sessions.
+type Over = { name?: string; role?: string; chain?: boolean; send?: 'reject' | 'refuse'; gateTokens?: string; walk?: 'agent' | 'underneath'; reportsTo?: string; alive?: string[]; registry?: { pid: string; sessionId: string; name: string; startedAt: number }[] }
 
 // The tab and the run: the agent's host process (501) on ttys005, launched with its
 // --name; its shell (850) and the run (900) on no tty. The module's shell is a child of
@@ -81,6 +83,8 @@ function fake(over: Over = {}) {
   const usage = { context: { tokens: 120000, window: 1000000, percent: 12 } }
   const env: Record<string, string> = { HOME, ORCHESTRATOR_HOST_CLI: 'hostcli' }
   if (over.gateTokens) env.ORCHESTRATOR_CONTEXT_GATE_TOKENS = over.gateTokens
+  if (over.reportsTo) env.ORCHESTRATOR_REPORTS_TO = over.reportsTo
+  for (const r of over.registry ?? []) files.set(`${HOME}/.claude/sessions/${r.pid}.json`, JSON.stringify({ pid: Number(r.pid), sessionId: r.sessionId, name: r.name, startedAt: r.startedAt, kind: 'interactive', entrypoint: 'cli' }))
   const name = over.name ?? AGENT
   if (!over.walk) files.set(ROW, JSON.stringify({
     role: over.role ?? 'agent', name, pid: '501', tty: '/dev/ttys005', repo: null,
@@ -144,6 +148,7 @@ function fake(over: Over = {}) {
         if (argv[0] === 'ps' && argv[1] === '-p' && UNDERNEATH[argv[2]]) {
           return { exitCode: 0, stdout: `${UNDERNEATH[argv[2]].ppid} ${UNDERNEATH[argv[2]].tty}\n`, stderr: '' }
         }
+        if (argv[0] === 'ps' && argv[1] === '-A' && over.alive) return { exitCode: 0, stdout: over.alive.map(pid => `${pid}\n`).join(''), stderr: '' }
         if (argv[0] === 'ps' && argv[1] === '-t') return { exitCode: 0, stdout: `  501 hostcli --name ${name}\n`, stderr: '' }
         return { exitCode: 1, stdout: '', stderr: '' }
       },
@@ -222,6 +227,48 @@ test('the orchestrator comes from the chain, never from the text', async () => {
   await drive(chains, 'turn.complete', lone.dollar, turnEnd('Orch : belt, help.\nstatus: blocked — alone'))
   expect(lone.sent.length).toBe(0)
   expect(lone.logged.some(l => l.includes('relay: no orchestrator found for Agent : belt-p3'))).toBe(true)
+})
+
+// A chain outlives its owner's tab: an orchestrator relaunched without a successor's hand-over
+// leaves its agents in a chain nobody live owns. The relay then goes to the orchestrator the
+// launch recorded, by its name without its reference, and the log says which path it took.
+test('a chain with no live owner falls back on the orchestrator the launch recorded', async () => {
+  const chains = mounted()
+  // The chain names the agent, its owner (pid 400) is gone, a replacement bears the name.
+  const fx = fake({
+    reportsTo: `${ORCH} [a1b2c3]`, alive: ['501', '610', '620'],
+    registry: [{ pid: '610', sessionId: 's-old', name: ORCH, startedAt: 100 }, { pid: '620', sessionId: 's-new', name: ORCH, startedAt: 200 }, { pid: '630', sessionId: 's-dead', name: ORCH, startedAt: 300 }],
+  })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  expect(fx.sent.map(s => s.to)).toEqual([{ sessionId: 's-new' }])
+  expect(fx.logged.some(l => l.includes('relay: the chain on /dev/ttys001 names /dev/ttys005 and has no live owner: the entry is orphaned'))).toBe(true)
+  expect(fx.logged.some(l => l.includes(`relay: ${AGENT} on /dev/ttys005 goes to ${ORCH} (session s-new) by the launch record`))).toBe(true)
+  // No chain names the agent at all: the launch record alone routes it.
+  const lone = fake({ chain: false, reportsTo: `${ORCH} [a1b2c3]`, alive: ['501', '620'], registry: [{ pid: '620', sessionId: 's-new', name: ORCH, startedAt: 200 }] })
+  await drive(chains, 'turn.complete', lone.dollar, turnEnd(QUESTION))
+  expect(lone.sent.map(s => s.to)).toEqual([{ sessionId: 's-new' }])
+  // Nobody live bears the recorded name: nothing is sent, and the log says why.
+  const gone = fake({ chain: false, reportsTo: `${ORCH} [a1b2c3]`, alive: ['501'], registry: [{ pid: '620', sessionId: 's-new', name: ORCH, startedAt: 200 }] })
+  await drive(chains, 'turn.complete', gone.dollar, turnEnd(QUESTION))
+  expect(gone.sent.length).toBe(0)
+  expect(gone.logged.some(l => l.includes(`relay: ${AGENT} was launched for ${ORCH} [a1b2c3], and no live session bears the name ${ORCH}`))).toBe(true)
+})
+
+test('a live chain owner wins over the launch record, and the log names the chain', async () => {
+  const chains = mounted()
+  const fx = fake({ reportsTo: 'Orch : other [zzz999]', alive: ['400', '501', '620'], registry: [{ pid: '620', sessionId: 's-other', name: 'Orch : other', startedAt: 200 }] })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  expect(fx.sent.map(s => s.to)).toEqual([ORCH])
+  expect(fx.logged.some(l => l.includes(`relay: ${AGENT} on /dev/ttys005 goes to ${ORCH} by the chain on /dev/ttys001`))).toBe(true)
+})
+
+test('the gate crossing takes the same fallback', async () => {
+  const chains = mounted()
+  const fx = fake({ gateTokens: '200000', chain: false, reportsTo: `${ORCH} [a1b2c3]`, alive: ['501', '620'], registry: [{ pid: '620', sessionId: 's-new', name: ORCH, startedAt: 200 }] })
+  fx.usage.context.tokens = 210000
+  fx.usage.context.percent = 21
+  await drive(chains, 'session.measure', fx.dollar, {})
+  expect(fx.sent).toEqual([{ to: { sessionId: 's-new' }, text: `[module] ${AGENT} context 210,000 (21%) — at the gate` }])
 })
 
 for (const [name, role] of [['Coord : ops', 'coordinator'], ['Audit : method', 'auditor'], ['a session', null]] as const) {

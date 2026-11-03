@@ -3500,7 +3500,7 @@ def host_cuts(role):
 def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_file="",
                   account_connectors=False, gate_tokens=0, effort="", keep_tools=(),
                   drop_tools=(), keep_synced_skills=False, session=(), plugin_dirs=(),
-                  caller_plugins=None):
+                  caller_plugins=None, reports_to=""):
     """The command iTerm2 runs in the new tab. It is HANDED to the app, never typed, so
     its length and its bytes stop being a hazard. No model argument at all when neither a
     tier nor an explicit identifier says which: the host's own default is the right
@@ -3524,6 +3524,11 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
         # from the process table, which cannot give it back for a session launched without
         # one, and that session must still be known for an auditor.
         parts.insert(2, "export ORCHESTRATOR_AUDITOR=1")
+    if reports_to:
+        # The orchestrator the brief names, read by the hooks module's relay when no chain
+        # names a live owner for this session's tty: a chain outlives its owner's tab, and an
+        # orchestrator relaunched without --successor leaves its agents in a dead one.
+        parts.insert(2, "export ORCHESTRATOR_REPORTS_TO=%s" % shq(reports_to))
     if not gate_tokens and title_role(title) == "Agent":
         gate_tokens = AGENT_GATE_TOKENS
     if gate_tokens:
@@ -4162,7 +4167,7 @@ def cmd_spawn(argv):
     launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control,
                            mcp_file, args.account_connectors, gate_tokens, effort,
                            args.keep_tool, args.drop_tool, args.keep_synced_skills,
-                           session_words, plugin_dirs, caller_plugins)
+                           session_words, plugin_dirs, caller_plugins, args.orchestrator)
 
     if DRY_RUN:
         print("launch=%s" % launch)
