@@ -102,9 +102,14 @@
 # lower pair (`promote=`). Rows written before pairs existed read as tier rows, unchanged.
 #
 # The record belongs to the PROJECT being built, not to this plugin: the default table
-# ships here, a project's corrections belong with that project's state.
+# ships here, a project's corrections belong with that project's state. Inside it a record
+# belongs to ONE orchestration: the first write names it in `<record>.owner` (the orchestration's
+# name as the host spells it, without its reference) and a write from any other is refused, naming
+# the record's path and its owner. A record with no owner file, every one written before this, is
+# claimed by its first write. A read (`summary`, `goals status|check`) claims nothing, and registers
+# the record only for its owner.
 #
-# Every subcommand also registers the record's absolute path under the host session that ran
+# Every write, and every read by the owner, also registers the record's absolute path under the host session that ran
 # it, in `<state dir>/records/<CLAUDE_CODE_SESSION_ID>` (one path per line, no duplicate). An
 # order noted « to plan after the round » in prose alone was lost once: nothing read it back.
 # A row opened for it is read back by the stop gate (the module's own gate, over the Stop
@@ -117,8 +122,8 @@
 # ever opened for them. So `open` refuses while no `goals.md` sits beside the record (a build
 # with no spec says `goals <record> init --spec none`), warns on every open goal no phase
 # carries, and the stop gate refuses `waiting: done` while a goal is open, lacks evidence, or
-# was ruled out without the operator's words. `goals` registers the record even before its
-# first row, so the gate finds the goals from the first command.
+# was ruled out without the operator's words. `goals init` registers the record even before its
+# first row, so the gate finds the goals from the first write.
 
 set -uo pipefail
 
@@ -141,14 +146,84 @@ EFFORTS="low medium high xhigh max"
 GOALS_PY="$(cd "$(dirname "$0")" && pwd)/goals.py"
 GOALS_FILE="$(dirname "$record")/goals.md"
 E2E_EXEMPT_FILE="$record.e2e-exempt"
+OWNER_FILE="$record.owner"
 # A waiver or an exemption is the operator's words with their date, or it is nobody's.
 DATED_RE='[0-9]{4}-[0-9]{2}-[0-9]{2}'
 # `goals` registers a record that has no row yet: its goals are written before the first open.
 REGISTER_ABSENT=0
+# Set by a write once it is allowed: a read neither registers nor claims the record.
+WRITING=0
+# Set when this run made the claim in guard_owner: a write that then fails gives it back.
+CLAIMED=0
+
+# The orchestration this session belongs to, as the host's record of the session names it
+# (`<config dir>/sessions/<pid>.json`, the newest record carrying this session id): « Orch :
+# <subject> », its reference left off, a hand-typed « Orch: x » put in the house shape. Empty for
+# a shell outside any session, a session the host kept no record of, and one that is no
+# orchestrator. `.owner` holds this name today and the orchestration's id once it has one.
+orch_form() {
+    local name
+    name=$(printf '%s' "$1" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//; s/ \[[^] [:space:]]+\]$//; s/[[:space:]]+$//')
+    if [[ "$name" =~ ^Orch\ ?:\ *([^[:space:]].*)$ ]]; then printf 'Orch : %s' "${BASH_REMATCH[1]}"; else printf '%s' "$name"; fi
+}
+session_orchestration() {
+    [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] || return 0
+    local f line newest name
+    for f in "${CLAUDE_CONFIG_DIR:-$HOME/.claude}"/sessions/*.json; do
+        [ -f "$f" ] || continue
+        line=$(jq -r --arg s "$CLAUDE_CODE_SESSION_ID" \
+            'select(.sessionId == $s and (.name | type) == "string") | "\(.updatedAt // 0)\t\(.name)"' "$f" 2>/dev/null) || continue
+        [ -n "$line" ] || continue
+        [ -n "${newest:-}" ] && [ "${newest%%$'\t'*}" -ge "${line%%$'\t'*}" ] 2>/dev/null && continue
+        newest="$line"
+    done
+    [ -n "${newest:-}" ] || return 0
+    name=$(orch_form "${newest#*$'\t'}")
+    case "$name" in "Orch : "*) printf '%s' "$name" ;; esac
+}
+
+# A write is refused when the record belongs to another orchestration: rows and goals are read
+# back by the stop gate as the session's own, and a session made to answer for another's work
+# ends on a question that is not its own. Outside any session (the operator's own shell) a write
+# is accepted; inside one, only the owner's. Sets WRITING once the write is allowed.
+guard_owner() {
+    local owner me
+    if [ -n "${CLAUDE_CODE_SESSION_ID:-}" ]; then
+        me=$(session_orchestration)
+        owner=$(orch_form "$(head -n 1 "$OWNER_FILE" 2>/dev/null)")
+        if [ -z "$owner" ] && [ -n "$me" ] && [ -d "$(dirname "$record")" ]; then
+            # No owner yet, or an empty file: claim now, before the write, so of two first writers
+            # one claim stands and the other reads the winner back and is refused.
+            if ( set -C; printf '%s\n' "$me" > "$OWNER_FILE" ) 2>/dev/null; then CLAIMED=1
+            elif [ ! -s "$OWNER_FILE" ]; then printf '%s\n' "$me" >| "$OWNER_FILE" 2>/dev/null && CLAIMED=1
+            fi
+            owner=$(orch_form "$(head -n 1 "$OWNER_FILE" 2>/dev/null)")
+        fi
+        if [ -n "$owner" ]; then
+            [ "$me" = "$owner" ] || die "$cmd: $record belongs to $owner, and this session is ${me:-no orchestration it can tell}: a record belongs to one orchestration, so open your own beside your briefs and hand $owner the work by message"
+        fi
+    fi
+    WRITING=1
+}
+
+# Whether this session belongs to the orchestration that owns the record: the same name, so
+# the owner's successor too. False for a record with no owner and for a session that is no
+# orchestration.
+reads_own_record() {
+    local owner me
+    [ -f "$OWNER_FILE" ] || return 1
+    owner=$(orch_form "$(head -n 1 "$OWNER_FILE" 2>/dev/null)")
+    me=$(session_orchestration)
+    [ -n "$owner" ] && [ "$me" = "$owner" ]
+}
 
 # Run on exit, so a record `open` has just created is registered with its directory in place.
-# Its status is the command's own: nothing here may change it.
+# Its status is the command's own: nothing here may change it. A write registers the record
+# under the session, and so does a read by its owner (a successor taking over reads it first);
+# a read by anyone else leaves the register alone, so a summary never makes a session answer
+# for rows it did not write.
 register_record() {
+    [ "$WRITING" = 1 ] || reads_own_record || return 0
     [ -n "${CLAUDE_CODE_SESSION_ID:-}" ] || return 0
     [ -f "$record" ] || { [ "$REGISTER_ABSENT" = 1 ] && [ -d "$(dirname "$record")" ]; } || return 0
     local dir abs list
@@ -159,7 +234,28 @@ register_record() {
     grep -qxF "$abs" "$list" 2>/dev/null || printf '%s\n' "$abs" >> "$list" 2>/dev/null
     return 0
 }
-trap register_record EXIT
+
+# The first write that succeeds names the record's owner: the orchestration that ran it. The
+# file is created or left alone, never replaced, so of two first writers one claim stands.
+claim_record() {
+    [ "$WRITING" = 1 ] && [ ! -e "$OWNER_FILE" ] || return 0
+    [ -f "$record" ] || { [ "$REGISTER_ABSENT" = 1 ] && [ -d "$(dirname "$record")" ]; } || return 0
+    local me
+    me=$(session_orchestration)
+    [ -z "$me" ] || ( set -C; printf '%s\n' "$me" > "$OWNER_FILE" ) 2>/dev/null
+    return 0
+}
+
+finish() {
+    local status=$?
+    if [ "$status" -ne 0 ] && [ "$CLAIMED" = 1 ] && [ "$(orch_form "$(head -n 1 "$OWNER_FILE" 2>/dev/null)")" = "$(session_orchestration)" ]; then
+        rm -f "$OWNER_FILE"
+    fi
+    register_record
+    [ "$status" -ne 0 ] || claim_record
+    return 0
+}
+trap finish EXIT
 
 next_id() { if [ -f "$record" ]; then jq -s 'if length==0 then 1 else ([.[].id]|max)+1 end' "$record"; else echo 1; fi; }
 
@@ -201,6 +297,11 @@ rewrite() {
     jq -c "$filter" --argjson i "$id" "$@" "$record" > "$tmp" || { rm -f "$tmp"; die "could not update $record"; }
     mv "$tmp" "$record"
 }
+
+case "$cmd" in
+    open|round|review|fixed|surface|audit|ready|exempt|close|defer|undefer|escaped|cost) guard_owner ;;
+    goals) case "${3:-}" in init|plan|met|rule-out|defer|reopen) guard_owner ;; esac ;;
+esac
 
 case "$cmd" in
 open)

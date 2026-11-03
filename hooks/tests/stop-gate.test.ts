@@ -12,6 +12,7 @@ import {
   projectCheckouts, watchedNumbers, parseCiWatchLog, watchNumberOf, pullRequestOf,
   checkWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground,
   noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths, presentGoals, goalsShownPath, GOALS_SHOW,
+  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows,
 } from '../stop-gate.ts'
 import { register as registerGuards } from '../guards.ts'
 import { logLineOf, blockOf } from './fakes.ts'
@@ -520,6 +521,10 @@ type Setup = {
   round?: Record<string, string>
   wait?: string
   roundHang?: 'list' | 'read'
+  // The owner file of the register's record, and further registered records beside it, each
+  // with its text, its owner file and its goals.md reading.
+  recordOwner?: string
+  shared?: { path: string; text: string; owner?: string; goals?: { exitCode: number; stdout: string } }[]
 }
 
 function fakeDollar(setup: Setup): { dollar: any; written: string[]; ran: string[]; wrote: Record<string, string>; stamp: { atRun?: string }; inits: Record<string, any> } {
@@ -544,8 +549,13 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[]; ran: string
     fs: {
       read: async (p: string) => {
         if (p === S.chain) return setup.chain ?? ''
-        if (p === S.register) return setup.records ? `${RECORD}\n` : ''
+        if (p === S.register) return [...(setup.records ? [RECORD] : []), ...(setup.shared ?? []).map(r => r.path)].map(r => `${r}\n`).join('')
         if (p === RECORD) return (setup.records ?? [])[0] ?? ''
+        if (p === `${RECORD}.owner` && setup.recordOwner !== undefined) return `${setup.recordOwner}\n`
+        for (const record of setup.shared ?? []) {
+          if (p === record.path) return record.text
+          if (p === `${record.path}.owner` && record.owner !== undefined) return `${record.owner}\n`
+        }
         if (p === S.heads) return setup.heads ?? ''
         if (p === S.ignored) {
           if (setup.failIgnoredRead) throw new Error('EACCES: permission denied')
@@ -592,7 +602,8 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[]; ran: string
         }
         return []
       },
-      exists: async (p: string) => p === GOALS_FILE && setup.goals !== undefined,
+      exists: async (p: string) => (p === GOALS_FILE && setup.goals !== undefined)
+        || (setup.shared ?? []).some(record => record.goals !== undefined && p === `${record.path.replace(/\/[^/]*$/, '')}/goals.md`),
     },
     process: {
       run: async (argv: readonly string[], init?: object) => {
@@ -648,6 +659,8 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[]; ran: string
         }
         if (argv[0] === 'bash' && argv[1] === WORKSPACE) return { exitCode: 0, stdout: setup.workspace ?? '', stderr: '' }
         if (argv[0] === 'python3' && argv[1] === GOALS_PY) {
+          const sharedGoals = (setup.shared ?? []).find(record => `${record.path.replace(/\/[^/]*$/, '')}/goals.md` === argv[3])
+          if (sharedGoals?.goals) return { exitCode: sharedGoals.goals.exitCode, stdout: sharedGoals.goals.stdout, stderr: '' }
           if (setup.goals === 'hang') return new Promise(() => undefined)
           return { exitCode: setup.goals?.exitCode ?? 2, stdout: setup.goals?.stdout ?? '', stderr: '' }
         }
@@ -1779,4 +1792,110 @@ test('an entry owned by a tmux pane is counted for that pane only, not for a sib
   const sibling = fakeDollar({ listing: BUSY_ROW, chain: TMUX_OWNED, env: { ...TMUX_ENV, TMUX_PANE: '%4' } })
   const refused = await stop(handlers['classic.Stop'], sibling.dollar, stopEvent({}))
   expect((refused.answer as any).block).toContain('Nothing will wake you')
+})
+
+// --- a dispatch record belongs to one orchestration ------------------------------------------
+
+// A record was read by every session that had touched it, and its open rows and goals.md were
+// the session's to answer for whoever opened them. The owner file beside the record
+// (`<record>.owner`, written by dispatch-record.sh) names the orchestration; the gate reads a
+// record that is its session's own, or has no owner yet, and no other.
+test('an orchestration is its name without the reference, in the house shape', () => {
+  expect(orchestrationOf('Orch : Shipping')).toBe('Orch : Shipping')
+  expect(orchestrationOf('Orch : Shipping [a1b2c3]')).toBe('Orch : Shipping')
+  expect(orchestrationOf('Orch: belt')).toBe('Orch : belt')
+  expect(orchestrationOf('  Orch :  belt  ')).toBe('Orch : belt')
+  expect(orchestrationOf('Agent : belt')).toBeNull()
+  expect(orchestrationOf(null)).toBeNull()
+})
+
+test('an owner file names its owner on its first line, and a blank file names nobody', () => {
+  expect(ownerOf('Orch : other\n')).toBe('Orch : other')
+  expect(ownerOf('Orch: other [a1b2c3]\nignored\n')).toBe('Orch : other')
+  expect(ownerOf('\n  \n')).toBeNull()
+  expect(ownerOf('')).toBeNull()
+})
+
+test('an owner line that is no orchestration name is the owner as written', () => {
+  expect(ownerOf('o-1234\n')).toBe('o-1234')
+})
+
+test('a record is the session\'s own when it has no owner or the owner is the session\'s orchestration', () => {
+  expect(isOwnRecord(null, 'Orch : belt')).toBe(true)
+  expect(isOwnRecord('Orch : belt', 'Orch : belt')).toBe(true)
+  expect(isOwnRecord('Orch : other', 'Orch : belt')).toBe(false)
+  expect(isOwnRecord('Orch : belt', null)).toBe(false)
+  expect(isOwnRecord(null, null)).toBe(true)
+})
+
+test('the records that hold an open row not deferred are the ones the refusal names', () => {
+  const live = '{"id":1,"label":"a","state":"open"}\n'
+  const putOff = '{"id":2,"label":"b","state":"open","deferred":"2026-11-03: later"}\n'
+  const closed = '{"id":3,"label":"c","state":"closed"}\n'
+  expect(recordsWithOpenRows(['/r/a.jsonl', '/r/b.jsonl', '/r/c.jsonl'], [live, putOff, closed])).toEqual(['/r/a.jsonl'])
+})
+
+test('the refusals name the record or the goals file they read, when they are given', () => {
+  const rows = checkWakeDone({ agents: [], checkouts: [], deferred: ['5 (a)'], rowRecords: ['/r/dispatch.jsonl'] })!
+  expect(rows.reason).toContain('Not done: row 5 (a) is open in /r/dispatch.jsonl. Dispatch it')
+  const many = checkWakeDone({ agents: [], checkouts: [], deferred: ['5 (a)', '6 (b)'], rowRecords: ['/r/x.jsonl', '/s/y.jsonl'] })!
+  expect(many.reason).toContain('Not done: rows 5 (a), 6 (b) are open in /r/x.jsonl, /s/y.jsonl. Dispatch them')
+  const goals = checkWakeDone({ agents: [], checkouts: [], deferred: [], goalsOpen: ['G3'], goalsRecords: ['/r/goals.md'] })!
+  expect(goals.reason).toContain('Not done against the spec: G3 open in /r/goals.md. Dispatch the work')
+})
+
+// The end-to-end path: a full stop event, two orchestrations sharing one record directory.
+const FOREIGN_RECORD = '/tmp/h/other/dispatch-record.jsonl'
+const FOREIGN_ROWS = '{"id":35,"label":"to implement by Orch : other","state":"open"}\n'
+const FOREIGN_GOALS = { exitCode: 1, stdout: goalsAnswer({ open: ['G1', 'G2'] }) }
+
+test('a session is never made to answer for the rows and goals of a record another orchestration owns', async () => {
+  const { handlers } = mounted()
+  // The session is « Orch : belt »; the record and the goals.md beside it belong to other.
+  const foreign = fakeDollar({ ...NO_ROWS, shared: [{ path: FOREIGN_RECORD, text: FOREIGN_ROWS, owner: 'Orch : other', goals: FOREIGN_GOALS }] })
+  const passed = await stop(handlers['classic.Stop'], foreign.dollar, stopEvent(DONE))
+  expect(passed.answer).toBe(passed.passed)
+  expect(foreign.ran.filter(line => line.startsWith('python3'))).toEqual([])
+  expect(foreign.written.join('\n')).toContain(`stop gate: ${FOREIGN_RECORD} belongs to Orch : other: not read`)
+})
+
+test('the same record, owned by the session\'s own orchestration, is read and its refusals name its path', async () => {
+  const { handlers } = mounted()
+  const own = fakeDollar({ ...NO_ROWS, shared: [{ path: FOREIGN_RECORD, text: FOREIGN_ROWS, owner: 'Orch : belt', goals: FOREIGN_GOALS }] })
+  const held = await stop(handlers['classic.Stop'], own.dollar, stopEvent(DONE))
+  expect((held.answer as any).block).toContain(`row 35 (to implement by Orch : other) is open in ${FOREIGN_RECORD}.`)
+  expect((held.answer as any).block).toContain('Not done against the spec: G1, G2 open in /tmp/h/other/goals.md.')
+})
+
+test('a record with no owner yet is read as before, beside a foreign one that is not', async () => {
+  const { handlers } = mounted()
+  const mixed = fakeDollar({
+    ...NO_ROWS,
+    shared: [
+      { path: FOREIGN_RECORD, text: FOREIGN_ROWS, owner: 'Orch : other', goals: FOREIGN_GOALS },
+      { path: '/tmp/h/mine/dispatch-record.jsonl', text: '{"id":2,"label":"mine","state":"open"}\n' },
+    ],
+  })
+  const held = await stop(handlers['classic.Stop'], mixed.dollar, stopEvent(DONE))
+  expect((held.answer as any).block).toContain('row 2 (mine) is open in /tmp/h/mine/dispatch-record.jsonl.')
+  expect((held.answer as any).block).not.toContain('row 35')
+  expect((held.answer as any).block).not.toContain('Not done against the spec')
+})
+
+test('an orchestrator whose name carries no subject owns no owned record, and answers for none of its rows', async () => {
+  const { handlers } = mounted()
+  const owned = fakeDollar({ ...NO_ROWS, launchName: 'Orch :', shared: [{ path: FOREIGN_RECORD, text: FOREIGN_ROWS, owner: 'Orch : belt', goals: FOREIGN_GOALS }] })
+  const passed = await stop(handlers['classic.Stop'], owned.dollar, stopEvent(DONE))
+  expect(passed.answer).toBe(passed.passed)
+  expect(owned.written.join('\n')).toContain(`stop gate: ${FOREIGN_RECORD} belongs to Orch : belt: not read`)
+})
+
+test('the register\'s own record is held to its owner file too', async () => {
+  const { handlers } = mounted()
+  const ROW = '{"id":"r-12","label":"the report row","state":"open"}\n'
+  const foreign = fakeDollar({ records: [ROW], recordOwner: 'Orch : other' })
+  const passed = await stop(handlers['classic.Stop'], foreign.dollar, stopEvent(DONE))
+  expect(passed.answer).toBe(passed.passed)
+  const own = fakeDollar({ records: [ROW], recordOwner: 'Orch : belt [a1b2c3]' })
+  expect(((await stop(handlers['classic.Stop'], own.dollar, stopEvent(DONE))).answer as any).block).toContain('row r-12 (the report row) is open')
 })

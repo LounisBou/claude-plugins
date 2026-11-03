@@ -107,11 +107,11 @@ const NOT_DONE_MANY = 'Not done: %s are still there. Finish them, or say what bl
 // and ended on its own machine line, never put to him again as a question.
 const DEFER_ROW = 'record his ruling with dispatch-record.sh defer <record> <id> --ruling "<his words, dated>" '
   + 'and end on waiting: deferred — <ids>'
-const ROW_ONE = `Not done: row %s is open. Dispatch it, close it, or say what blocks it — or, if the operator deferred it, ${DEFER_ROW}.`
-const ROW_MANY = `Not done: rows %s are open. Dispatch them, close them, or say what blocks them — or, if the operator deferred them, ${DEFER_ROW}.`
+const ROW_ONE = `Not done: row %s is open%p. Dispatch it, close it, or say what blocks it — or, if the operator deferred it, ${DEFER_ROW}.`
+const ROW_MANY = `Not done: rows %s are open%p. Dispatch them, close them, or say what blocks them — or, if the operator deferred them, ${DEFER_ROW}.`
 // The spec's goals (goals.md beside a registered record, read by goals.py check): done is
 // measured against what the spec set out to reach, not against the plan alone.
-const GOALS_OPEN = 'Not done against the spec: %s open. Dispatch the work that meets it and record its evidence '
+const GOALS_OPEN = 'Not done against the spec: %s open%p. Dispatch the work that meets it and record its evidence '
   + '(dispatch-record.sh goals <record> met <G> --evidence …), or put it to the operator when he has not ruled: '
   + 'waiting: operator — blocks: <G>: <what he must rule> — or, if he deferred it, record his ruling with '
   + 'dispatch-record.sh goals <record> defer <G> --ruling "<his words, dated>" and end on waiting: deferred — <ids>.'
@@ -124,12 +124,21 @@ const GOALS_FAULT = 'goals.md is not a record of the spec: %s.'
 // table, because whether a piece of evidence that exists is enough is his to judge.
 export const GOALS_SHOW = 'Show the operator this table, each goal with its evidence, then end on waiting: done again.'
 
+// Where the rows and the goals were read: the record files and goals.md files that hold them,
+// said in the refusal so a session sees whose file it is being asked about. Nothing is said
+// when the caller does not know them.
+type Where = { rows?: readonly string[]; goals?: readonly string[] }
+const placed = (paths: readonly string[] | undefined) => (paths && paths.length > 0 ? ` in ${paths.join(', ')}` : '')
+// One pass over the template, so a label or a path that spells a placeholder is never filled twice.
+const fill = (template: string, names: readonly string[], paths: readonly string[] | undefined) =>
+  template.replace(/%([sp])/g, (_, which: string) => (which === 's' ? names.join(', ') : placed(paths)))
+
 function notDoneReasons(left: readonly string[], deferred: readonly string[],
-  goals: { open: readonly string[]; faults: readonly string[] } = { open: [], faults: [] }): string[] {
+  goals: { open: readonly string[]; faults: readonly string[] } = { open: [], faults: [] }, where: Where = {}): string[] {
   const reasons: string[] = []
   if (left.length > 0) reasons.push((left.length === 1 ? NOT_DONE_ONE : NOT_DONE_MANY).replace('%s', left.join(', ')))
-  if (deferred.length > 0) reasons.push((deferred.length === 1 ? ROW_ONE : ROW_MANY).replace('%s', deferred.join(', ')))
-  if (goals.open.length > 0) reasons.push(GOALS_OPEN.replace('%s', goals.open.join(', ')))
+  if (deferred.length > 0) reasons.push(fill(deferred.length === 1 ? ROW_ONE : ROW_MANY, deferred, where.rows))
+  if (goals.open.length > 0) reasons.push(fill(GOALS_OPEN, goals.open, where.goals))
   if (goals.faults.length > 0) reasons.push(GOALS_FAULT.replace('%s', goals.faults.join('; ')))
   return reasons
 }
@@ -536,6 +545,8 @@ export function checkWakeDone(left: {
   goalsOpen?: readonly string[]
   goalsDeferred?: readonly string[]
   goalsFaults?: readonly string[]
+  rowRecords?: readonly string[]
+  goalsRecords?: readonly string[]
   ending?: 'done' | 'deferred'
   ids?: string
 }): Held | null {
@@ -544,7 +555,7 @@ export function checkWakeDone(left: {
   const rows = left.deferred.filter(row => !putOff.includes(row))
   const goals = { open: left.goalsOpen ?? [], faults: left.goalsFaults ?? [] }
   const putOffGoals = left.goalsDeferred ?? []
-  const reasons = notDoneReasons(stillThere, rows, goals)
+  const reasons = notDoneReasons(stillThere, rows, goals, { rows: left.rowRecords, goals: left.goalsRecords })
   const names = [...putOff.map(row => `row ${row}`), ...putOffGoals]
   if (left.ending === 'deferred') {
     if (names.length === 0 && reasons.length === 0) return { case: 'nothing-deferred', reason: NOTHING_DEFERRED }
@@ -583,6 +594,36 @@ export function parseGoalsCheck(path: string, text: string): GoalsReading | null
   } catch {
     return null
   }
+}
+
+// --- whose a record is ----------------------------------------------------------------------
+
+// A dispatch record belongs to one orchestration: dispatch-record.sh writes its name in
+// `<record>.owner` at the first write, and a session answers for no other's rows or goals.
+// The orchestration is the session's name in the house shape, without its reference, which
+// is what a successor keeps; the file will hold the orchestration's id the day it has one.
+const REFERENCE = / \[[^\]\s]+\]$/
+export function orchestrationOf(name: string | null | undefined): string | null {
+  const bare = (name ?? '').trim().replace(REFERENCE, '').trim()
+  const subject = /^Orch ?: *(\S.*)$/.exec(bare)?.[1]
+  return subject ? `Orch : ${subject}` : null
+}
+
+// The owner an owner file names: its first line, as the orchestration when it reads as one,
+// null when the file is blank.
+export function ownerOf(text: string): string | null {
+  const line = text.split('\n')[0].trim()
+  return line === '' ? null : orchestrationOf(line) ?? line
+}
+
+// A record with no owner is read as it always was; an owned one only by its owner.
+export const isOwnRecord = (owner: string | null, own: string | null): boolean => owner === null || owner === own
+
+// The record files that hold an open row the operator has not deferred: the ones a refusal
+// about rows names. `texts` runs parallel to `records`.
+export function recordsWithOpenRows(records: readonly string[], texts: readonly string[]): string[] {
+  return records.filter((_, i) => rowsWhere([texts[i] ?? ''], row =>
+    row.state === 'open' && !(typeof row.deferred === 'string' && row.deferred.trim() !== '')).length > 0)
 }
 
 // The goals.md of each registered record: the file beside it, once per directory.

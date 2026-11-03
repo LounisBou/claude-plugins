@@ -30,6 +30,7 @@ import {
   headsPath, readHeads, writeHeads, parseCiWatchLog, watchNumberOf, watchedNumbers,
   checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownBackground, logTell,
   noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, presentGoals, goalsShownPath, endsOnHandOver, type GoalsReading,
+  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows,
 } from './stop-gate.ts'
 import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
 import { pendingQuestion, unansweredRefusal, type WaitRead } from './unanswered-question.ts'
@@ -567,7 +568,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         // The done line: the facts are read only now, as the shell gate read them lazily.
         const top = await projectTop($, String(e.cwd ?? ''), until)
         const checkouts = projectCheckouts(top, await mustRun($, ['bash', `${root}/skills/orchestrator/scripts/workspace.sh`, 'list'], 'workspace.sh list', until))
-        const records = await registeredRecords($, state, sessionId, until)
+        const records = await ownRecords($, await registeredRecords($, state, sessionId, until), orchestrationOf(name), until)
         const ids = deferredIds(machineLine(String(e.last_assistant_message ?? '')))
         const ending = ids === null ? 'done' : 'deferred'
         const texts = await readRecords($, records, until)
@@ -579,6 +580,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
           goalsOpen: goals.flatMap(g => g.open),
           goalsDeferred: goals.flatMap(g => g.deferred),
           goalsFaults: goals.flatMap(g => g.faults),
+          rowRecords: recordsWithOpenRows(records, texts),
+          goalsRecords: goals.filter(g => g.open.length > 0).map(g => g.path),
           ending,
           ids: ids ?? undefined,
         })
@@ -907,6 +910,23 @@ async function registeredRecords($: any, state: string, sessionId: string, until
   const safe = sessionId.replace(/[^A-Za-z0-9._-]/g, '_')
   const register = await quietly($, () => $.fs.read(`${state}/records/${safe}`), until, '')
   return String(register).split('\n').map(line => line.trim()).filter(Boolean)
+}
+
+// The registered records that are this session's own: no owner file yet, or the owner file names
+// the session's orchestration. A record another orchestration owns is not read, nor its goals.md:
+// the session never answers for what it did not open. Each one skipped is said in the log with
+// its path. A session whose orchestration is unknown owns nothing, and every owned record is skipped.
+async function ownRecords($: any, records: readonly string[], own: string | null, until: number): Promise<string[]> {
+  const kept: string[] = []
+  for (const path of records) {
+    const owner = ownerOf(String(await quietly($, () => $.fs.read(`${path}.owner`), until, '')))
+    if (isOwnRecord(owner, own)) {
+      kept.push(path)
+      continue
+    }
+    await logLine($, `stop gate: ${path} belongs to ${owner}: not read`)
+  }
+  return kept
 }
 
 async function readRecords($: any, records: readonly string[], until: number): Promise<string[]> {
