@@ -328,7 +328,7 @@ export function parseSessionRow(text: string): SessionRow | null {
 // yet, with the fingerprint its acknowledgment keeps (`pending_key`): an outbox, never drawn or
 // answered from here (remote-round.ts). `relayed_id` is the id of the entry that acknowledgment
 // kept, so the answer to it forgets `relayed` as forgetRelayed does on the coordinator's machine.
-export type WaitRecord = Pick<SessionRow, 'waiting' | 'blocks' | 'waiting_since' | 'relayed'> & { name: string | null; pid: string | null; last_waiting?: WaitKind | null; typed?: { blocks: string; since: string | null } | null; pending?: string | null; pending_key?: string | null; relayed_id?: string | null }
+export type WaitRecord = Pick<SessionRow, 'waiting' | 'blocks' | 'waiting_since' | 'relayed'> & { name: string | null; pid: string | null; last_waiting?: WaitKind | null; typed?: { blocks: string; since: string | null; withdrawn?: boolean; told?: string[] } | null; pending?: string | null; pending_key?: string | null; relayed_id?: string | null }
 
 export function waitKey(id: string): string {
   return `waits/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
@@ -852,6 +852,14 @@ export function settledText(entry: RoundEntry, answer: RoundAnswer): string {
     + 'Already closed: drop it, never ask or relay it again, present the next.'
 }
 
+// The notice that an entry told settled is open again: its sender's turn ended on the same wait
+// the operator's typed prompt had withdrawn. It stands for the settled notice before it, which no
+// longer holds. One line, no command to run, no operator text.
+export function reopenedText(entry: RoundEntry): string {
+  return `[module] Reopened: ${entry.from}'s question since ${entry.since} (entry ${entry.id}) — its turn ended on the same wait. `
+    + 'Open again: the settled notice before it no longer holds, present it as any open question.'
+}
+
 // Whether the entry is closed by the module when settled: the coordinator on this machine was
 // shown it. A coordinator elsewhere never reads this round.
 async function closesItself($: any, id: string): Promise<boolean> {
@@ -882,6 +890,17 @@ async function tellSettled($: any, settled: readonly Settled[], until = Infinity
     } catch (err) {
       await logLine($, `round: ${(err as Error).message}`)
     }
+  }
+}
+
+// The coordinator on this machine told that an entry it was told closed is open again: one log
+// line when the notice is refused or throws, and the turn's end is never held on it.
+async function tellReopened($: any, to: CoordinatorTo, entry: RoundEntry): Promise<void> {
+  try {
+    const sent = await sendToCoordinator($, to, reopenedText(entry))
+    if (!sent?.isDelivered) await logLine($, `round: the reopened notice of ${entry.id} was not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
+  } catch (err) {
+    await logLine($, `round: ${(err as Error).message}`)
   }
 }
 
@@ -1872,9 +1891,12 @@ async function dropMark($: any): Promise<void> {
 // is kept only once the entry is in place or the send is delivered. Nobody to send to: nothing
 // is sent. A write that fails or a send refused is one log line; the turn's end is never held
 // on it. The row itself is never written here: the measure is its one writer.
-// A prompt the operator typed while a question was held left a mark (withdrawOnTyped): the turn
-// that ends on the same wait leaves the question open, any other end withdraws it as answered
-// in the tab, and only such a turn withdraws the session's other open entries as answered there.
+// A prompt the operator typed while a question was held withdrew it at once and left a mark
+// (withdrawOnTyped). The turn that ends on the same wait enters it again, open and with a new start,
+// in the pane and to the coordinator, a coordinator on this machine that was told it closed being
+// told it is open again. Any other end leaves it withdrawn as answered in the tab (a withdrawal
+// that failed at the prompt is tried again here), and only such a turn withdraws the session's
+// other open entries as answered there.
 // A turn that ends on an operator wait whose text asks nothing is entered as its own entry and
 // never withdraws its session's open question with choices.
 export async function relayTurnEnd($: any, answer: string): Promise<void> {
@@ -1898,17 +1920,18 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
   // wait, nothing entered or sent, the wait cleared like a tool wait's.
   const deferred = role === 'orchestrator' && deferredIds(machineLine(answer)) !== null
   // The mark of a prompt the operator typed while a question was held (withdrawOnTyped): it
-  // belongs to this turn alone and is never written back. Withdrawn before the wait is read:
-  // a fingerprint the withdrawal forgot stays forgotten.
+  // belongs to this turn alone and is never written back. The question is withdrawn already,
+  // unless that failed, and a fingerprint the withdrawal forgot stays forgotten.
   const typed = role === 'orchestrator' ? (await readWait($, sessionId))?.typed ?? null : null
   let forgotten = false
   let heldKey: string | null = null
   let swept = false
+  const sameWait = !!typed && wait?.kind === 'operator' && wait.blocks === typed.blocks
   if (typed) {
-    const sameWait = wait?.kind === 'operator' && wait.blocks === typed.blocks
     heldKey = (await readWait($, sessionId))?.relayed ?? null
     if (!sameWait) {
-      forgotten = await withdrawHeld($, sessionId, name, typed)
+      // Withdrawn already at prompt.submit, unless that withdrawal failed: tried again here.
+      forgotten = typed.withdrawn ? false : await withdrawHeld($, sessionId, name, typed) !== null
       // He answered in this tab: a turn ending on another machine line, a wait or done, leaves
       // none of the session's other open entries waiting either.
       // A deferred ending is no wait, but it leaves none of them standing either.
@@ -1930,8 +1953,11 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
     if (before?.waiting || typed) await writeWait($, sessionId, { ...clearedWait(before!), relayed, relayed_id: relayedId, name, pid })
     return
   }
+  // The same wait asked again once its withdrawal was done is a new ask, of a new start: the
+  // coordinator that was told it withdrawn takes it for what it is, never for the first one again.
+  const reasked = sameWait && typed?.withdrawn === true
   const patch = wait
-    ? waitPatch(before, wait, new Date().toISOString())
+    ? waitPatch(reasked && before ? { ...before, waiting_since: null } : before, wait, new Date().toISOString())
     : before?.waiting ? clearedWait(before) : null
   if (patch) await writeWait($, sessionId, { ...patch, relayed, relayed_id: relayedId, name, pid })
   const key = wait ? fingerprint(wait) : NO_STATUS_KEY
@@ -1959,6 +1985,8 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
     }
     await writeAtomic($, roundPath(await stateDir($), entry.id), JSON.stringify(entry) + '\n')
     await writeWait($, sessionId, { ...patch, relayed: key, name, pid })
+    // A coordinator told this entry closed at the prompt is told it is open again.
+    if (sameWait && typed?.told?.includes(entry.id)) await tellReopened($, coordinator.to, entry)
     // A turn the operator typed in withdrew the session's older open entries already, above.
     if (!swept) await supersede($, entry)
     return
@@ -1994,14 +2022,19 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
 }
 
 // The operator typed a prompt (composer or bridge) in an orchestrator whose relayed question
-// is still on him. What he typed may be the answer or not — a word to the session about
-// something else — and only the turn's end tells (relayTurnEnd): here the question is only
-// marked in the session's wait file as held while he typed. Anything else does nothing, a slash
+// is still on him. What he typed is taken as the answer: the question is withdrawn at once, as
+// answered in the tab, and its fingerprint forgotten, so the pane stops showing it while the turn
+// runs. The session's wait file keeps a mark of it for the turn's end (relayTurnEnd), which enters
+// it again when the turn ends on the same wait. The mark is written before the withdrawal is
+// sent, as not done: the bound may abandon this work, and a turn that ends meanwhile reads it and
+// tries again. It is updated once the withdrawal is done, unless the turn's end has taken the mark
+// by then: a mark written after the turn would outlive it. Anything else does nothing, a slash
 // command included: it starts no turn, so nothing would read the mark. Without a coordinator
-// nothing is marked. A wait file that holds no question (the last turn ended on done) leaves the
-// round's own open entry of the session to be marked, the earliest when several, when the
-// coordinator runs on this machine. The wait is re-read before it is written back, a turn's start may have
-// written it.
+// nothing is withdrawn. A wait file that holds no question (the last turn ended on done) leaves
+// the round's own open entry of the session to be withdrawn, the earliest when several, when the
+// coordinator runs on this machine, but only for the first prompt of a turn: a second one finds
+// the first one's mark and has no other entry of the session to withdraw. The wait is re-read
+// before it is written back, a turn's start may have written it.
 export async function withdrawOnTyped($: any, kind: string, text: string): Promise<void> {
   if (!typedByOperator(kind) || text.trimStart().startsWith('/')) return
   const sessionId = await $.session.id()
@@ -2014,10 +2047,18 @@ export async function withdrawOnTyped($: any, kind: string, text: string): Promi
   if (!name || roleOf(name) !== 'orchestrator') return
   const coordinator = await coordinatorAddress($)
   if (!coordinator) return
-  const held = heldQuestion(await readWait($, sessionId)) ?? (coordinator.local ? await openQuestion($, sessionId) : null)
+  const prior = await readWait($, sessionId)
+  const held = heldQuestion(prior) ?? (coordinator.local && !prior?.typed ? await openQuestion($, sessionId) : null)
   if (!held) return
+  const heldKey = prior?.relayed ?? null
+  if (prior) await writeWait($, sessionId, { ...prior, typed: { ...held, withdrawn: false } })
+  const told = await withdrawHeld($, sessionId, name, held)
   const now = await readWait($, sessionId)
-  if (now) await writeWait($, sessionId, { ...now, typed: held })
+  if (!now?.typed) return
+  // The fingerprint is forgotten with the withdrawal, as the turn's end did: the same question
+  // asked again is relayed again. A wait rewritten while the withdrawal was sent keeps its own.
+  const relayed = told !== null && (now.relayed ?? null) === heldKey ? null : now.relayed ?? null
+  await writeWait($, sessionId, { ...now, relayed, typed: { ...held, withdrawn: told !== null, told: told ?? [] } })
 }
 
 // The session's open operator entry in the round, the earliest when several: the question a
@@ -2030,27 +2071,28 @@ async function openQuestion($: any, sessionId: string): Promise<{ blocks: string
   return open.length > 0 ? { blocks: open[0].blocks!, since: open[0].since } : null
 }
 
-// The held question withdrawn at the end of the turn the operator typed in: answered in the
-// sender's own tab. An entry in the round of a coordinator on this machine is marked, a
-// coordinator elsewhere is sent the withdrawal. True when it is done, so the question asked
-// again is relayed again; a send refused is one log line, and the fingerprint is kept.
-async function withdrawHeld($: any, sessionId: string, name: string, held: { blocks: string; since: string | null }): Promise<boolean> {
+// The held question withdrawn as the operator types in the tab (or at the end of the turn he
+// typed in, when that failed): answered in the sender's own tab. An entry in the round of a
+// coordinator on this machine is marked, a coordinator elsewhere is sent the withdrawal. Null
+// when it is not done, a send refused being one log line and the fingerprint kept; else the ids
+// of the entries the coordinator on this machine was told closed, so the question asked again is
+// relayed again, and the coordinator told when it is open again (tellReopened).
+async function withdrawHeld($: any, sessionId: string, name: string, held: { blocks: string; since: string | null }): Promise<string[] | null> {
   const coordinator = await coordinatorAddress($)
-  if (!coordinator) return false
+  if (!coordinator) return null
   try {
     if (coordinator.local) {
-      await tellSettled($, await withdrawEntry($, sessionId, name, held))
-    } else {
-      const sent = await sendToCoordinator($, coordinator.to, withdrawalText(name, held.blocks, held.since))
-      if (!sent?.isDelivered) {
-        await logLine($, `withdraw: not delivered to ${addressLabel(coordinator.to)}: ${sent?.reason ?? 'no answer'}`)
-        return false
-      }
+      const settled = await withdrawEntry($, sessionId, name, held)
+      await tellSettled($, settled)
+      return settled.map(({ entry }) => entry.id)
     }
-    return true
+    const sent = await sendToCoordinator($, coordinator.to, withdrawalText(name, held.blocks, held.since))
+    if (sent?.isDelivered) return []
+    await logLine($, `withdraw: not delivered to ${addressLabel(coordinator.to)}: ${sent?.reason ?? 'no answer'}`)
+    return null
   } catch (err) {
     await logLine($, `withdraw: ${(err as Error).message}`)
-    return false
+    return null
   }
 }
 
@@ -2094,7 +2136,8 @@ async function handOver($: any, sessionId: string): Promise<void> {
 // The held question's entry in the round: that session's open operator question with the same
 // start and the same blocks, marked withdrawn, answered in its own tab, or closed so when the
 // coordinator was shown it (the entries to tell it of). None found, nothing is written and the
-// log says so; one that cannot be written throws, and the next typed prompt tries again.
+// log says so; one that cannot be written throws, and the next typed prompt tries again, and so
+// does the turn's end.
 async function withdrawEntry($: any, sessionId: string, name: string, held: { blocks: string; since: string | null }): Promise<Settled[]> {
   const settled: Settled[] = []
   let matched = 0
