@@ -8,7 +8,7 @@
 #                            works in, then the collisions among them
 #   coordinator.sh owners    each open pull request of those repositories, traced to its orchestrator
 #   coordinator.sh sleep --name "Orch : <subject>" --brief <path> --dir <path> --model <id>
-#                        [--effort <level>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
+#                        [--effort <level>] [--session <id>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
 #                            records a paused orchestrator as sleeping, once its tab is closed;
 #                            prints "sleeping <name>"
 #   coordinator.sh sleeping  one line per sleeping orchestrator; nothing when none sleeps
@@ -47,6 +47,7 @@
 # sleeping prints, one per sleeping orchestrator, in the order they went to sleep:
 #   sleeping <name> | since <UTC time> | <directory> | prs <repository>#<n> <branch>, ... or none
 #     | checkouts <path>, ... or none | brief <path> | model <id> | effort <level or default>
+#     [ | session <id>]: the session the close of its home session read, which the wake resumes
 # round prints, for each entry whose status is open, then for each answered one (chosen in the
 # coordinator's pane and sent to the asking orchestrator), then for each withdrawn one, a line
 #   round <id> | <operator or done> | from <sender> | since <UTC time> | blocks: <what it blocks, or -> | <status>[ | due][ | sender gone]
@@ -332,7 +333,7 @@ name_option() {
 }
 
 cmd_sleep() {
-    local name="" brief="" dir="" model="" effort="" prs='[]' checkouts='[]'
+    local name="" brief="" dir="" model="" effort="" session="" prs='[]' checkouts='[]'
     while [ $# -gt 0 ]; do
         case "$1" in
             --name) name="${2:-}"; shift 2 || die "sleep: --name needs a value" ;;
@@ -340,6 +341,7 @@ cmd_sleep() {
             --dir) dir="${2:-}"; shift 2 || die "sleep: --dir needs a value" ;;
             --model) model="${2:-}"; shift 2 || die "sleep: --model needs a value" ;;
             --effort) effort="${2:-}"; shift 2 || die "sleep: --effort needs a value" ;;
+            --session) session="${2:-}"; shift 2 || die "sleep: --session needs a value" ;;
             --pr) [ -n "${2:-}" ] || die "sleep: --pr needs a value"
                   prs=$(jq -c --arg v "$2" '. + [$v]' <<< "$prs"); shift 2 ;;
             --checkout) [ -n "${2:-}" ] || die "sleep: --checkout needs a value"
@@ -348,7 +350,7 @@ cmd_sleep() {
         esac
     done
     [ -n "$name" ] && [ -n "$brief" ] && [ -n "$dir" ] && [ -n "$model" ] \
-        || die 'sleep: usage: sleep --name "Orch : <subject>" --brief <path> --dir <path> --model <id> [--effort <level>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...'
+        || die 'sleep: usage: sleep --name "Orch : <subject>" --brief <path> --dir <path> --model <id> [--effort <level>] [--session <id>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...'
     printf '%s' "$name" | grep -qE "$ORCH_NAME_SHAPE" && ! printf '%s' "$name" | grep -qE ' \[[0-9A-Za-z]+\]$' \
         || die "sleep: refused: the name reads \"Orch : <subject>\", without its reference, the subject at most 25 characters, got '$name'"
     case "$brief" in /*) ;; *) die "sleep: refused: the brief's path must be absolute, got $brief" ;; esac
@@ -356,14 +358,17 @@ cmd_sleep() {
     case "$dir" in /*) ;; *) die "sleep: refused: the directory must be absolute, got $dir" ;; esac
     [ -d "$dir" ] || die "sleep: refused: the directory $dir does not exist: a wake starts in it"
     case "$effort" in ""|low|medium|high|xhigh|max) ;; *) die "sleep: refused: unknown effort $effort (low, medium, high, xhigh or max)" ;; esac
+    [ -z "$session" ] || printf '%s' "$session" | grep -qE '^[0-9A-Za-z-]+$' \
+        || die "sleep: refused: a session id reads letters, digits and hyphens, got '$session'"
     lock sleep
     local all
     all=$(sleeping_read) || exit 1
     jq -e --arg n "$name" 'any(.[]; .name == $n)' <<< "$all" >/dev/null \
         && die "sleep: refused: $name is already sleeping"
     all=$(jq -c --arg n "$name" --arg b "$brief" --arg d "$dir" --arg m "$model" --arg e "$effort" \
-        --arg s "$(now)" --argjson p "$prs" --argjson c "$checkouts" \
-        '. + [{name:$n, brief:$b, dir:$d, model:$m, effort:$e, slept:$s, prs:$p, checkouts:$c}]' <<< "$all") \
+        --arg s "$(now)" --arg sid "$session" --argjson p "$prs" --argjson c "$checkouts" \
+        '. + [{name:$n, brief:$b, dir:$d, model:$m, effort:$e, slept:$s, prs:$p, checkouts:$c}
+              + (if $sid == "" then {} else {session:$sid} end)]' <<< "$all") \
         || die "sleep: cannot build the record"
     write_atomic "$SLEEPING" "$all"
     echo "sleeping $name"
@@ -373,7 +378,7 @@ cmd_sleeping() {
     [ $# -eq 0 ] || die "sleeping: unexpected argument $1"
     local all
     all=$(sleeping_read) || exit 1
-    jq -r '.[] | "sleeping \(.name) | since \(.slept) | \(.dir) | prs \(if (.prs | length) > 0 then (.prs | join(", ")) else "none" end) | checkouts \(if (.checkouts | length) > 0 then (.checkouts | join(", ")) else "none" end) | brief \(.brief) | model \(.model) | effort \(if .effort == "" then "default" else .effort end)"' <<< "$all"
+    jq -r '.[] | "sleeping \(.name) | since \(.slept) | \(.dir) | prs \(if (.prs | length) > 0 then (.prs | join(", ")) else "none" end) | checkouts \(if (.checkouts | length) > 0 then (.checkouts | join(", ")) else "none" end) | brief \(.brief) | model \(.model) | effort \(if .effort == "" then "default" else .effort end)\(if (.session // "") != "" then " | session \(.session)" else "" end)"' <<< "$all"
 }
 
 # remove_sleeping <name> <subcommand>: the array without that name, or a refusal when it

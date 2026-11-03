@@ -5719,7 +5719,7 @@ d=$(dirname "$0")
 [ "$1" = -u ] && shift
 case "$1" in
   show) [ -f "$d/mark" ] && cat "$d/mark"; exit 0 ;;
-  display-message) printf '%s\n' "${REC_SESSION:-\$1}" ;;
+  display-message) if [ "${@: -1}" = '#{window_active}' ]; then printf '%s\n' "${REC_ACTIVE:-0}"; else printf '%s\n' "${REC_SESSION:-\$1}"; fi ;;
   list-panes)
     [ -n "${REC_PANES_RAW:-}" ] && { printf '%b' "$REC_PANES_RAW"; exit 0; }
     if [ "$2" = -a ]; then cat "$d/panes"; else awk -F'\t' -v s="$4" '$1 == s' "$d/panes"; fi ;;
@@ -5739,7 +5739,7 @@ case "$1" in
   kill-window)
     tty=$(awk -F'\t' -v w="$3" '$3 == w { print $5 }' "$d/panes")
     [ -z "${REC_KEEP_WINDOW:-}" ] && awk -F'\t' -v w="$3" '$3 != w' "$d/panes" > "$d/panes.tmp" && mv "$d/panes.tmp" "$d/panes"
-    grep -v "^$tty " "$d/ps" > "$d/ps.tmp"; mv "$d/ps.tmp" "$d/ps"
+    [ -z "${REC_KEEP_HOST:-}" ] && { grep -v "^$tty " "$d/ps" > "$d/ps.tmp"; mv "$d/ps.tmp" "$d/ps"; }
     [ -n "${REC_KILL_ERR:-}" ] && { echo "$REC_KILL_ERR" >&2; exit 1; }
     exit 0 ;;
   move-window)
@@ -5989,13 +5989,89 @@ out=$(REC_KEEP_WINDOW=1 home close --tty /dev/ttys901 2>&1)
 check "a window still in the server after its process is gone is a close that did not happen" "1|0" \
   "$(printf '%s' "$out" | grep -c 'ERROR: close: the request was accepted but tmux:.*:@1 is still there')|$(printf '%s' "$out" | grep -c '^closed')"
 
-# Only an agent is a window: a successor, an auditor, the coordinator's successor, a woken or
-# an opened orchestrator are made as tabs, as they always were.
-reset_home
-out=$(home spawn --dir "$WORK" --successor --title "Orch : heir" --prompt p 2>&1)
-check "a successor spawned from a home session is still made by iTerm2, and no window is made" "yes|0" \
-  "$(printf '%s' "$out" | grep -qi 'iterm2' && echo yes || echo no)|$(calls | grep -c '\[new-window\]')"
+# An agent and an orchestrator's successor are windows: the successor takes the predecessor's
+# window 0 in the same session, where the agents are. An auditor, the coordinator's successor,
+# a woken or an opened orchestrator are made as tabs, as they always were.
+reset_home; rm -f "$TR/iterm-asked"
+out=$(home spawn --dir "$WORK" --successor --prompt p 2>"$WORK/tsucc.err")
+check "a successor spawned from a home session is a window of that session under the caller's name, and iTerm2 is never asked" \
+  "/dev/ttys903|[-u][new-window][-d][-t][\$1:][-n][Orch : home][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Orch---home-@TIME@.sh]|none" \
+  "$out|$(calls | grep -F '[new-window]')|$(asked)"
+check "the chain is handed over keyed on the successor's pane: its tty's file, the successor's tmux owner, never an app id" \
+  "{\"tab_id\": \"tmux:$TSOCK:@1\", \"tty\": \"/dev/ttys901\", \"owner\": \"tmux:$TSOCK:%4\"}|{\"tab_id\": \"tmux:$TSOCK:@2\", \"tty\": \"/dev/ttys902\", \"owner\": \"tmux:$TSOCK:%4\"}|0|1" \
+  "$(paste -sd'|' "$TSTATE/chains/ttys903.jsonl")|$(chainf | grep -c .)|$(grep -c 'chain of 2 agent(s) handed to the successor on /dev/ttys903' "$WORK/tsucc.err")"
 rm -f "$TR/iterm-asked"
+
+# The successor's takeover, from its own window: the predecessor's window 0 killed, guarded by
+# its name, proved gone, then the successor moved to index 0 without taking the operator's view.
+heir() { # <subcommand and options>: the launcher, called from the successor's window
+  TMUX="$TSOCK,4242,1" TMUX_PANE=%4 ORCHESTRATOR_TMUX="$TR/tmux" ORCHESTRATOR_OSASCRIPT="$TR/osascript" \
+    ORCHESTRATOR_SAMPLE=/usr/bin/false ORCHESTRATOR_APP_PID=1 ORCHESTRATOR_SELF_TTY=/dev/ttys903 ORCHESTRATOR_STATE_DIR="$TSTATE" \
+    ORCHESTRATOR_PS_TABLE="$TR/ps" ORCHESTRATOR_CLOSE_TIMEOUT=1 bash "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" "$@"; }
+reset_home
+printf '%s\n' '$1	9	@4	%4	/dev/ttys903	Orch : home	✳ Orch : home' >> "$TR/panes"
+printf '/dev/ttys903 claude --name Orch : home\n' >> "$TR/ps"
+printf '%s\n' '$1	0	@0	%0	/dev/ttys900	Orch : home	✳ Orch : home' '$1	1	@1	%1	/dev/ttys901	Agent : one	✳ Agent : one' \
+  '$1	2	@2	%2	/dev/ttys902	Agent : two	⠂ Agent : two' '$2	0	@3	%3	/dev/ttys950	other	✳ elsewhere' \
+  '$1	9	@4	%4	/dev/ttys903	Orch : home	✳ Orch : home' > "$TR/panes"
+rm -f "$TR/calls"
+out=$(heir takeover --tty /dev/ttys900 --expect-title "Orch : home" 2>&1)
+check "takeover kills window 0 by its id, proved gone, and moves the successor to index 0 detached" \
+  "took window 0: the predecessor's window @0 on /dev/ttys900 was closed|[-u][kill-window][-t][@0]|[-u][move-window][-d][-s][@4][-t][\$1:0]|0|0" \
+  "$out|$(calls | grep -F '[kill-window]')|$(calls | grep -F '[move-window]')|$(calls | grep -c '\[select-window\]')|$(grep -c ttys900 "$TR/ps")"
+reset_home
+printf '%s\n' '$1	0	@0	%0	/dev/ttys900	Orch : home	✳ Orch : home' '$1	9	@4	%4	/dev/ttys903	Orch : home	✳ Orch : home' > "$TR/panes"
+printf '/dev/ttys903 claude --name Orch : home\n' >> "$TR/ps"
+rm -f "$TR/calls"
+out=$(REC_ACTIVE=1 heir takeover --tty /dev/ttys900 --expect-title "Orch : home" 2>&1)
+check "and selects window 0 only when the operator was on it" "[-u][select-window][-t][@4]" "$(calls | grep -F '[select-window]')"
+reset_home
+printf '%s\n' '$1	0	@0	%0	/dev/ttys900	Orch : home	✳ Orch : home' '$1	1	@1	%1	/dev/ttys901	Agent : one	✳ Agent : one' '$1	9	@4	%4	/dev/ttys903	Orch : home	✳ Orch : home' > "$TR/panes"
+rm -f "$TR/calls"
+out=$(heir takeover --tty /dev/ttys900 --expect-title "Orch : other" 2>&1)
+check "a window 0 whose name does not hold the expected words is not killed" "1|0" \
+  "$(printf '%s' "$out" | grep -c "takeover: refused: the window on /dev/ttys900 is named 'Orch : home', which does not contain 'Orch : other'")|$(calls | grep -c '\[kill-window\]')"
+rm -f "$TR/calls"
+out=$(heir takeover --tty /dev/ttys901 2>&1)
+check "an agent's window is not the predecessor's place" "1|0" \
+  "$(printf '%s' "$out" | grep -c 'takeover: refused: the window on /dev/ttys901 is window 1, not window 0')|$(calls | grep -c '\[kill-window\]')"
+rm -f "$TR/calls"
+out=$(heir takeover --tty /dev/ttys903 2>&1)
+check "nor is the successor's own window" "1|0" \
+  "$(printf '%s' "$out" | grep -c "takeover: refused: /dev/ttys903 is this session's own window")|$(calls | grep -c '\[kill-window\]')"
+# The successor's takeover proves what it did before it takes the index: a host that outlives
+# the kill, or a window still listed, stops it; the name guard is required; the chain entry of
+# the predecessor's window goes with it.
+takeover_setup() {
+  reset_home
+  printf '%s\n' '$1	0	@0	%0	/dev/ttys900	Orch : home	✳ Orch : home' '$1	1	@1	%1	/dev/ttys901	Agent : one	✳ Agent : one' \
+    '$1	9	@4	%4	/dev/ttys903	Orch : home	✳ Orch : home' > "$TR/panes"
+  printf '/dev/ttys903 %s --name Orch : home\n' "$(awk 'NR == 1 { print $2 }' "$TR/ps")" >> "$TR/ps"
+  rm -f "$TR/calls"
+}
+takeover_setup
+out=$(REC_KEEP_HOST=1 heir takeover --tty /dev/ttys900 --expect-title "Orch : home" 2>&1)
+check "a host still on the tty after the kill stops the takeover: it dies and window 0 is not taken" "1|1|0" \
+  "$(printf '%s' "$out" | grep -c 'takeover: the window @0 was killed and .* still runs on /dev/ttys900; window 0 was not taken')|$(calls | grep -c '\[kill-window\]')|$(calls | grep -c '\[move-window\]')"
+takeover_setup
+out=$(REC_KEEP_WINDOW=1 heir takeover --tty /dev/ttys900 --expect-title "Orch : home" 2>&1)
+check "a window still listed by the server after the kill stops it too" "1|1|0" \
+  "$(printf '%s' "$out" | grep -c 'takeover: the window @0 is still there; window 0 was not taken')|$(calls | grep -c '\[kill-window\]')|$(calls | grep -c '\[move-window\]')"
+takeover_setup
+out=$(heir takeover --tty /dev/ttys900 2>&1)
+check "a takeover without the expected title is refused before anything is killed" "1|0|0" \
+  "$(printf '%s' "$out" | grep -c 'takeover: --expect-title is required')|$(calls | grep -c '\[kill-window\]')|$(calls | grep -c '\[move-window\]')"
+takeover_setup
+printf '{"tab_id":"tmux:%s:@0","tty":"/dev/ttys905","owner":"tmux:%s:%%9"}\n{"tab_id":"tmux:%s:@7","tty":"/dev/ttys906","owner":"tmux:%s:%%9"}\n' "$TSOCK" "$TSOCK" "$TSOCK" "$TSOCK" > "$TSTATE/chains/ttys905.jsonl"
+out=$(heir takeover --tty /dev/ttys900 --expect-title "Orch : home" 2>&1)
+check "the chain entry naming the predecessor's window is dropped by the takeover, the others kept" "0|1" \
+  "$(grep -c "tmux:$TSOCK:@0\"" "$TSTATE/chains/ttys905.jsonl" 2>/dev/null)|$(grep -c "tmux:$TSOCK:@7\"" "$TSTATE/chains/ttys905.jsonl" 2>/dev/null)"
+
+rm -f "$TR/mark"
+out=$(heir takeover --tty /dev/ttys900 2>&1)
+check "outside a home session the takeover is refused, the tab being closed as before" "1" \
+  "$(printf '%s' "$out" | grep -c 'takeover: refused: this session is not in a home session')"
+printf '1\n' > "$TR/mark"
 
 # `screen --lines N` returned the FIRST N lines of the tab, which on a tall terminal are
 # blank: the blocked agent's prompt sat at the bottom and three reads out of four came back
@@ -6014,6 +6090,469 @@ check "nothing but blanks reads as nothing" '[]' \
 # line says the check was skipped rather than passed.
 check "the dry run skips the reading and says so" "1" \
   "$(shaped --title 'Agent : x' | grep -c '^mode_check=skipped$')"
+
+echo "== iterm-agents: the home server's configuration =="
+# Read by home servers alone, through `-f`: the keys the host needs (Shift-Enter as a newline
+# needs the extended keys, asked of the terminal), the names the launcher gives, the default
+# prefix, and the mark every session of the server carries. Loaded by a real tmux when there
+# is one, in a detached server of the suite's own, killed at once.
+HOMECONF="$ROOT/skills/iterm-agents/tmux/home.conf"
+check "the conf sets each option the home server needs" "1|1|1|1|1|1|1|1|1" \
+  "$(for l in '^set -g focus-events on$' '^set -g extended-keys always$' '^set -g extended-keys-format csi-u$' \
+      "^set -as terminal-features 'xterm\*:extkeys'\$" '^set -g automatic-rename off$' '^set -g mouse on$' \
+      '^set -g prefix C-b$' '^bind C-b send-prefix$' '^set-hook -g session-created "set-option @orchestrator-home 1"$'; do
+      grep -c -- "$l" "$HOMECONF"; done | paste -sd'|' -)"
+if command -v tmux >/dev/null 2>&1; then
+  CONFSRV="suite-conf-$$"
+  env -i HOME="$HOME" PATH="$PATH" tmux -L "$CONFSRV" -f "$HOMECONF" new-session -d -s home 'sleep 20' 2>/dev/null
+  confpane=$(tmux -L "$CONFSRV" display -p -t home:0 '#{pane_id}' 2>/dev/null)
+  check "a server started on it marks its session, read the way the launcher reads it, and keeps its keys" \
+    "1|always|csi-u|off|1" \
+    "$(tmux -L "$CONFSRV" show -qv -t "$confpane" @orchestrator-home)|$(tmux -L "$CONFSRV" show -gv extended-keys)|$(tmux -L "$CONFSRV" show -gv extended-keys-format)|$(tmux -L "$CONFSRV" show -wgv automatic-rename)|$(tmux -L "$CONFSRV" list-keys -T prefix C-b | grep -c send-prefix)"
+  tmux -L "$CONFSRV" kill-server 2>/dev/null
+else
+  echo "  skip the conf is not loaded: no tmux"
+fi
+
+echo "== iterm-agents: an orchestrator moves into its home session =="
+# The one way an orchestrator gets a home session: at the end of the turn that named it, the
+# module runs `home`, which starts a server of its own whose window 0 resumes the SAME
+# conversation once the session has ended in its old tab, and opens a tab right of that one
+# showing it. The launch is replayed from the process's own words, less what named the
+# conversation. A recorder stands in for tmux and a terminal of the probe's own for iTerm2;
+# the host's registry and the process's words are files of the suite's. The server is started
+# with an environment of its own, so the recorder reads its answers from files, never from
+# variables.
+HR="$WORK/homerec"; mkdir -p "$HR"
+cat > "$HR/tmux" <<'SH'
+#!/bin/bash
+d=$(dirname "$0")
+{ for a in "$@"; do printf '[%s]' "$a"; done; printf '\n'; } >> "$d/calls"
+[ "$1" = -u ] && shift
+[ "$1" = -L ] && shift 2
+[ "$1" = -f ] && shift 2
+case "$1" in
+  show) [ -f "$d/mark" ] && cat "$d/mark"; exit 0 ;;
+  new-session) [ -f "$d/new-err" ] && { cat "$d/new-err" >&2; exit 1; }; printf '%s\n' "${@: -1}" > "$d/window0"; exit 0 ;;
+  display-message) echo /dev/ttys960 ;;
+  list-clients) [ -f "$d/clients" ] && cat "$d/clients"; exit 0 ;;
+  has-session) exit 1 ;;
+  kill-server) [ -f "$d/kill-err" ] && { cat "$d/kill-err" >&2; exit 1; }; exit 0 ;;
+  list-panes) [ -f "$d/panes-err" ] && { cat "$d/panes-err" >&2; exit 1; }; [ -f "$d/panes" ] && cat "$d/panes"; exit 0 ;;
+esac
+exit 0
+SH
+chmod +x "$HR/tmux"
+HSID=abcdef12-3456-4789-8abc-def012345678
+HCONF="$WORK/homeconfig"; mkdir -p "$HCONF/sessions"
+printf '{"pid":%s,"sessionId":"%s","cwd":"%s","name":"Agent : start"}\n' "$$" "$HSID" "$WORK" > "$HCONF/sessions/$$.json"
+HARGV='["/opt/x/host","--model","a-model","--effort","high","--permission-mode","auto","--settings","{\"k\":1}","--strict-mcp-config","--mcp-config","/m/a.json","--name","Agent : start","the first prompt"]'
+homecmd() { # the launcher's `home`, from a plain tab outside tmux unless HTMUX names a pane's server
+  env -u TMUX -u TMUX_PANE ${HTMUX:+TMUX="$HTMUX" TMUX_PANE=%0} CLAUDE_CONFIG_DIR="$HCONF" ORCHESTRATOR_HOST_ARGV="${HARGV_OVERRIDE:-$HARGV}" ORCHESTRATOR_TMUX="$HR/tmux" \
+    ORCHESTRATOR_STATE_DIR="$WORK/homestate" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_LOGIN_SHELL=/bin/sh ORCHESTRATOR_HOST_CLI=/opt/x/host \
+    "$@"; }
+hcalls() { sed "s#$WORK#@WORK@#g; s#$ROOT#@ROOT@#g; s#-[0-9]\{13\}\.#-@TIME@.#g" "$HR/calls" 2>/dev/null; }
+reset_homerec() { rm -f "$HR/calls" "$HR/mark" "$HR/clients" "$HR/window0" "$HR/kill-err" "$HR/panes-err" "$HR/panes"; rm -rf "$WORK/homestate"; }
+
+reset_homerec
+out=$(homecmd env ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" home --session "$HSID" --name "Orch : conv" --prompt "Go on" 2>&1)
+check "the dry run names the server after the session, its conf, and window 0 after the orchestrator" \
+  "orch-abcdef12|skills/iterm-agents/tmux/home.conf|Orch : conv|right of /dev/ttys900" \
+  "$(sfield "$out" home_server)|$(sfield "$out" home_conf)|$(sfield "$out" home_window0)|$(sfield "$out" home_tab)"
+HOSTLINE="/opt/x/host --model a-model --effort high --permission-mode auto --settings '{\"k\":1}' --strict-mcp-config --mcp-config /m/a.json --resume $HSID 'Go on' --name 'Orch : conv'"
+BYHAND=$("$py" -c 'import shlex,sys; print(shlex.quote(sys.argv[1]))' "cd $WORK && $HOSTLINE")
+check "window 0 waits for the old process, runs the resume on the launch's model, effort, mode, settings and servers under its name, releases the old tab through a watcher once the resumed host is proved, and names the failure of a resume that fails" \
+  "cd $WORK && i=0 && while kill -0 $$ 2>/dev/null; do if [ \$i -ge 600 ]; then echo 'the session did not end in its old place: it goes on there'; sleep 10; exit 1; fi; sleep 0.2; i=\$((i+1)); done; pane=\$(tty); $ROOT/skills/iterm-agents/scripts/iterm-agent.sh home-release --tty /dev/ttys900 --session-id '<old-tab-session-id>' --pane-tty \"\$pane\" --resumed $HSID >> $WORK/homestate/home-release.log 2>&1 & watcher=\$!; $HOSTLINE; rc=\$?; [ \$rc -eq 0 ] && exit 0; kill \$watcher 2>/dev/null; printf 'the resume of session %s failed (exit %s); resume it by hand: %s\\n' $HSID \"\$rc\" $BYHAND; exec \"\${SHELL:-/bin/sh}\" -l" \
+  "$(sfield "$out" home_launch)"
+check "and the dry run touched no tmux" "" "$(hcalls)"
+
+# The move itself, over the recorder and a terminal standing in for iTerm2.
+cat > "$WORK/home_probe.py" <<'PYEOF'
+import contextlib, io, os, sys
+sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+scenario = sys.argv[2]
+calls = []
+class FakeIterm(ia.Terminal):
+    def identity(self, tty, fresh=False):
+        calls.append("identity %s" % tty)
+        return ("" , "") if scenario == "notab" else ("OLD-SESSION", "OLD-TAB")
+    def create(self, command, title, place, chain, made):
+        calls.append("create %s %s %s %s" % (place.at, place.anchor, place.side, title))
+        made["session_id"] = "NEW-SESSION"
+        if scenario == "tabfail":
+            made["error"] = "the app refused"
+            return None, ""
+        open(os.path.join(sys.argv[3], "attach"), "w").write(command)
+        return "/dev/ttys970", "NEW-TAB"
+    def close_made(self, made):
+        calls.append("close_made %s" % made.get("session_id")); return True
+ia.ITERM = FakeIterm()
+ia.time.sleep = lambda s: None
+ia.SPAWN_TIMEOUT = 0
+out, err = io.StringIO(), io.StringIO()
+code = 0
+try:
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        ia.cmd_home(["--session", sys.argv[4], "--name", sys.argv[5], "--prompt", "Go on"])
+except SystemExit as e:
+    code = e.code
+print("exit=%s" % code)
+print("calls=%s" % ",".join(calls))
+print("OUT:" + " ".join(out.getvalue().split()))
+print("ERR:" + " ".join(err.getvalue().split()))
+PYEOF
+hprobe() { homecmd "$py" "$WORK/home_probe.py" "$ROOT/skills/iterm-agents/scripts" "$1" "$HR" "$HSID" "${2:-Orch : conv}" 2>&1; }
+reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
+res=$(hprobe ok)
+NEWS="[-u][-L][orch-abcdef12][-f][@ROOT@/skills/iterm-agents/tmux/home.conf][new-session][-d][-s][home][-n][Orch : conv][-c][@WORK@][/bin/sh -l @WORK@/homestate/prompts/home-Orch---conv-@TIME@.sh]"
+check "the move starts the home server with its conf, window 0 named after the orchestrator, then reads window 0's tty and the tab's client" \
+  "0|$NEWS|[-u][-L][orch-abcdef12][display-message][-p][-t][home:0][#{pane_tty}]|[-u][-L][orch-abcdef12][list-clients][-F][#{client_tty}]" \
+  "$(sfield "$res" exit)|$(hcalls | paste -sd'|' -)"
+check "the old tab is read first, the new one is made right of it under the orchestrator's name, and the move says where" \
+  "identity /dev/ttys900,create beside /dev/ttys900 right Orch : conv|moved: orch-abcdef12, shown on /dev/ttys970" \
+  "$(sfield "$res" calls)|$(sfield "$res" OUT)"
+check "window 0 closes the old tab by the id read before the move, and the new tab runs the client of the home server alone" \
+  "1|1" \
+  "$(grep -c "home-release --tty /dev/ttys900 --session-id OLD-SESSION " "$(ls "$WORK"/homestate/prompts/home-*.sh)")|$(grep -c "exec env -u TMUX -u TMUX_PANE $HR/tmux -u -L orch-abcdef12 attach -t home\$" "$(sed 's/^\/bin\/sh -l //' "$HR/attach")")"
+check "the server's environment is the operator's, without the caller's session or nesting marks" "none" \
+  "$(homecmd env CLAUDECODE=1 ITERM_SESSION_ID=w0t0p0:X "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia
+e = ia.home_env()
+print(','.join(k for k in ('CLAUDECODE', 'ITERM_SESSION_ID', 'ORCHESTRATOR_HOST_ARGV', 'ORCHESTRATOR_SELF_TTY') if k in e) or 'none')")"
+
+reset_homerec
+res=$(hprobe ok)
+check "a tab that shows no client of the server is closed, the server ended, and the session stays" \
+  "1|close_made NEW-SESSION|1|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep close_made)|$(hcalls | grep -c '\[kill-server\]')|$(sfield "$res" ERR | grep -c 'shows no client of the home server orch-abcdef12')"
+reset_homerec
+res=$(hprobe tabfail)
+check "a tab the app fails to make ends the server too" "1|1|1" \
+  "$(sfield "$res" exit)|$(hcalls | grep -c '\[kill-server\]')|$(sfield "$res" ERR | grep -c 'the tab for the home server orch-abcdef12 failed: the app refused')"
+reset_homerec; printf 'server busy\n' > "$HR/kill-err"
+res=$(hprobe tabfail)
+check "a kill-server that fails is reported: the server was NOT ended, and the message names its socket" "1|1|0" \
+  "$(sfield "$res" exit)|$(sfield "$res" ERR | grep -c "the server was NOT ended: end it with $HR/tmux -L orch-abcdef12 kill-server")|$(sfield "$res" ERR | grep -c 'the server was ended')"
+reset_homerec; printf 'server busy\n' > "$HR/kill-err"
+res=$(hprobe ok)
+check "so is it when the tab shows no client of the server" "1|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" ERR | grep -c "shows no client of the home server orch-abcdef12 after 0s; the tab was closed; the server was NOT ended: end it with $HR/tmux -L orch-abcdef12 kill-server")"
+reset_homerec
+res=$(hprobe notab)
+check "a session that is no tab of the app's is not moved, and no server is started" "1|0|1" \
+  "$(sfield "$res" exit)|$(hcalls | grep -c 'new-session')|$(sfield "$res" ERR | grep -c 'is not a tab of iTerm2.s (/dev/ttys900), so no tab can take its place; the session stays where it is')"
+reset_homerec
+printf 'duplicate session: home\n' > "$HR/new-err"
+res=$(hprobe ok); rm -f "$HR/new-err"
+check "a server already on the socket is refused by tmux, and no tab is made" "1|0|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls | grep -c create)|$(sfield "$res" ERR | grep -c 'tmux refused to start the home server orch-abcdef12: duplicate session: home')"
+reset_homerec
+res=$(HARGV_OVERRIDE='["/opt/x/host","--some-new-option","x"]' hprobe ok)
+check "a launch with an option the move cannot replay stays where it is, before anything is made" "1|0|1" \
+  "$(sfield "$res" exit)|$(hcalls | grep -c 'new-session')|$(sfield "$res" ERR | grep -c 'started with --some-new-option, an option the move does not know how to replay; the session stays')"
+reset_homerec
+res=$(HARGV_OVERRIDE='["/opt/x/host","-p","x"]' hprobe ok)
+check "a printing session is never moved" "1|0" "$(sfield "$res" exit)|$(hcalls | grep -c 'new-session')"
+
+# ORCHESTRATOR_HOME_NO_TAB is a test's: left in a shell it would end the old session and run the
+# orchestrator in a server no tab shows. Without the test marker it is ignored, with one line.
+reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
+res=$(ORCHESTRATOR_HOME_NO_TAB=1 hprobe ok)
+check "the no-tab variable without the test marker is ignored: a tab is made and shows the server, one line says so" \
+  "0|create beside /dev/ttys900 right Orch : conv|moved: orch-abcdef12, shown on /dev/ttys970|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep create)|$(sfield "$res" OUT)|$(sfield "$res" ERR | grep -o 'ORCHESTRATOR_HOME_NO_TAB is ignored' | wc -l | tr -d ' ')"
+reset_homerec
+res=$(ORCHESTRATOR_HOME_NO_TAB=1 ORCHESTRATOR_TEST_RUN=1 hprobe ok)
+check "and with the marker the move makes the server and no tab" "0|0|moved: orch-abcdef12 (no tab: attach with $HR/tmux -L orch-abcdef12 attach)" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c create)|$(sfield "$res" OUT)"
+
+# Window 0 runs the resume and does not exec it: the old tab is released by a watcher once the
+# resumed host is proved, and a resume that fails leaves both tabs and says how to resume by
+# hand. The launch is run for real, over a host and a launcher that are stand-ins.
+RUNL="$WORK/runlaunch"; rm -rf "$RUNL"; mkdir -p "$RUNL"
+printf '#!/bin/sh\necho "$@" >> "%s/host-args"\n[ "${STUB_RC:-0}" -eq 0 ] && : > "%s/host-ran"\nexit "${STUB_RC:-0}"\n' "$RUNL" "$RUNL" > "$RUNL/host"
+printf '#!/bin/sh\ni=0\nwhile [ ! -f "%s/host-ran" ] && [ $i -lt 20 ]; do sleep 0.1; i=$((i+1)); done\n[ -f "%s/host-ran" ] && echo "$@" >> "%s/released"\nexit 0\n' "$RUNL" "$RUNL" "$RUNL" > "$RUNL/launcher"
+chmod +x "$RUNL/host" "$RUNL/launcher"
+reset_homerec
+out=$(homecmd env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_HOST_CLI="$RUNL/host" bash "$AGENT" home --session "$HSID" --name "Orch : conv" --prompt "Go on" 2>&1)
+sfield "$out" home_launch | sed "s#kill -0 $$ #kill -0 999999999 #; s#$ROOT/skills/iterm-agents/scripts/iterm-agent.sh#$RUNL/launcher#" > "$RUNL/launch.sh"
+mkdir -p "$WORK/homestate"
+(cd "$RUNL" && STUB_RC=1 SHELL=/bin/echo sh "$RUNL/launch.sh" > "$RUNL/failed.out" 2>&1); sleep 1
+check "a resume that fails leaves the old tab: the release is not run, the pane says what failed and how to resume by hand, and stays open" \
+  "0|1|1|1" \
+  "$([ -f "$RUNL/released" ] && echo 1 || echo 0)|$(grep -c "^the resume of session $HSID failed (exit 1); resume it by hand: cd $WORK && $RUNL/host .*--resume $HSID" "$RUNL/failed.out")|$(grep -c -- '^-l$' "$RUNL/failed.out")|$(wc -l < "$RUNL/host-args" | tr -d ' ')"
+rm -f "$RUNL/released" "$RUNL/host-ran"
+(cd "$RUNL" && STUB_RC=0 sh "$RUNL/launch.sh" > "$RUNL/ran.out" 2>&1); sleep 1
+check "a resume that runs triggers the release, with the old tab's id, the pane's tty and the resumed session" "1" \
+  "$(grep -c -- "^home-release --tty /dev/ttys900 --session-id <old-tab-session-id> --pane-tty .* --resumed $HSID\$" "$RUNL/released" 2>/dev/null)"
+
+# The release's own guards, over a terminal of the probe's own: the proof first, then the tab.
+cat > "$WORK/release_probe.py" <<'PYEOF'
+import asyncio, contextlib, io, os, sys
+sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+scenario, resumed = sys.argv[2], sys.argv[3]
+calls = []
+class Sess:
+    def __init__(self, sid): self.session_id = sid
+    async def async_close(self, force=False): calls.append("close")
+class Iterm2:
+    @staticmethod
+    async def async_get_app(connection): return None
+async def fake_find_tab(app, tty):
+    if scenario == "gone": return None, None, None
+    return None, None, Sess("OTHER-SESSION" if scenario == "other" else "OLD-SESSION")
+ia.find_tab = fake_find_tab
+ia.run = lambda go: asyncio.run(go(Iterm2, None))
+ia.time.sleep = lambda s: None
+ia.SPAWN_TIMEOUT = 0
+out, err = io.StringIO(), io.StringIO()
+code = 0
+try:
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        ia.cmd_home_release(["--tty", "/dev/ttys900", "--session-id", "OLD-SESSION",
+                             "--pane-tty", "/dev/ttys961", "--resumed", resumed])
+except SystemExit as e:
+    code = e.code
+print("exit=%s" % code)
+print("calls=%s" % ",".join(calls))
+print("OUT:" + " ".join(out.getvalue().split()))
+print("ERR:" + " ".join(err.getvalue().split()))
+PYEOF
+rprobe() { # <scenario> <resumed session> <ps table content>
+  printf '%s' "$3" > "$WORK/release-ps"
+  homecmd env ORCHESTRATOR_PS_TABLE="$WORK/release-ps" "$py" "$WORK/release_probe.py" "$ROOT/skills/iterm-agents/scripts" "$1" "$2" 2>&1; }
+res=$(rprobe ok "$HSID" "/dev/ttys961 /opt/x/host --resume $HSID
+")
+check "the old tab is closed once a host runs on window 0's tty" "0|close|home-release: the tab on /dev/ttys900 was closed" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" OUT)"
+res=$(rprobe ok "$HSID" "")
+check "or once the host's registry has the resumed session alive" "0|close" "$(sfield "$res" exit)|$(sfield "$res" calls)"
+res=$(rprobe ok "00000000-0000-4000-8000-000000000000" "")
+check "no host on window 0 and no registry entry: the old tab is left open and the release says the resume never showed" "1||1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" ERR | grep -c "the resumed session 00000000-0000-4000-8000-000000000000 never showed on /dev/ttys961 after 0s; the tab on /dev/ttys900 is left open")"
+res=$(rprobe ok "$HSID" "/dev/ttys900 /opt/x/host --name Orch : conv
+/dev/ttys961 /opt/x/host --resume $HSID
+")
+check "a host still on the old tab's tty leaves it open" "1||1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" ERR | grep -c 'a host still runs on /dev/ttys900; the tab is left open')"
+res=$(rprobe other "$HSID" "/dev/ttys961 /opt/x/host --resume $HSID
+")
+check "a tab whose session is another's by then is left open" "1||1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" ERR | grep -c 'the tab on /dev/ttys900 is no longer the one the move left (OLD-SESSION); it is left open')"
+res=$(rprobe gone "$HSID" "/dev/ttys961 /opt/x/host --resume $HSID
+")
+check "a tab already closed is said so, and nothing is closed twice" "0||home-release: the tab on /dev/ttys900 was already closed" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" OUT)"
+
+# Never for anyone but an orchestrator, never twice.
+for who in "Coord : c" "Audit : a" "Agent : x"; do
+  reset_homerec
+  res=$(hprobe ok "$who")
+  check "a session named '$who' stays where it is, and tmux is never asked" "0|1|" \
+    "$(sfield "$res" exit)|$(sfield "$res" OUT | grep -c '^stay: only an orchestrator moves into a home session')|$(hcalls)"
+done
+reset_homerec; printf '1\n' > "$HR/mark"
+res=$(HTMUX=/private/tmp/tmux-501/orch-x,1,0 hprobe ok)
+check "an orchestrator already in a home session stays, asking only for the mark" \
+  "0|stay: this session already runs in a home session|[-u][show][-qv][-t][%0][@orchestrator-home]" \
+  "$(sfield "$res" exit)|$(sfield "$res" OUT)|$(hcalls)"
+reset_homerec; printf '0\n' > "$HR/mark"
+res=$(HTMUX=/private/tmp/tmux-501/mine,1,0 hprobe ok)
+check "an orchestrator in a tmux session the operator made by hand moves" "1" \
+  "$(hcalls | grep -c '\[new-session\]')"
+
+# The words of a launch, replayed: the conversation's own names dropped, the rest kept as typed.
+rw() { "$py" -c "
+import json, sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia
+try:
+    print(json.dumps(ia.resume_words(json.loads(sys.argv[1]), 'S', 'Orch : n', 'go')))
+except ValueError as e:
+    print('refused: %s' % e)" "$1"; }
+check "a resume drops the old resume, the session id, the continue flag, the old name and the first prompt" \
+  '["--model", "m", "--resume", "S", "go", "--name", "Orch : n"]' \
+  "$(rw '["--resume","OLD","-c","--session-id","X","--fork-session","-n","Agent : a","--model","m","hello"]')"
+check "an option of many values keeps them all, an optional value is kept when given, an = form stays one word" \
+  '["--disallowedTools", "A", "B", "--remote-control", "Orch : r", "--effort=high", "--resume", "S", "go", "--name", "Orch : n"]' \
+  "$(rw '["--disallowedTools","A","B","--remote-control","Orch : r","--effort=high"]')"
+check "an option that takes a value and has none is refused" "refused: --model has no value" "$(rw '["--model"]')"
+
+echo "== iterm-agents: the coordinator opens, pauses and wakes an orchestrator in its home session =="
+# Each from the coordinator's own tab: an opened or woken orchestrator starts in window 0 of a
+# home session of its own, shown by a tab right of the caller's; a pause ends the whole server,
+# its agents with it, then the tab. The same recorder and a terminal of the probe's own.
+cat > "$WORK/life_probe.py" <<'PYEOF'
+import contextlib, io, json, os, sys
+sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+scenario, rec, workdir = sys.argv[2], sys.argv[3], sys.argv[4]
+calls = []
+class FakeIterm(ia.Terminal):
+    def find(self, tty):
+        calls.append("find %s" % tty)
+        return scenario == "tab-stays" and calls.count("find %s" % tty) < 99
+    def can_place(self, anchor, side):
+        if os.environ.get("LIFE_PROBES"): calls.append("can_place %s" % anchor)
+        return True
+    def create(self, command, title, place, chain, made):
+        calls.append("create %s %s %s %s" % (place.at, place.anchor, place.side, title))
+        made["session_id"] = "NEW-SESSION"
+        return "/dev/ttys970", "NEW-TAB"
+    def close(self, tty, expect): calls.append("close %s" % tty); return "TAB"
+    def close_made(self, made): calls.append("close_made %s" % made.get("session_id")); return True
+ia.ITERM = FakeIterm()
+ia.time.sleep = lambda s: None
+ia.SPAWN_TIMEOUT = 1
+ia.CLOSE_TIMEOUT = 0
+# One reading of the clients, the recorder's answer being fixed.
+real_client_on = ia.client_on
+ia.client_on = lambda socket, tty: (setattr(ia, "SPAWN_TIMEOUT", 0), real_client_on(socket, tty), setattr(ia, "SPAWN_TIMEOUT", 1))[1]
+ia.self_tty = lambda: "/dev/ttys900"
+ia.session_name_on = lambda tty: "Coord : c" if tty == "/dev/ttys900" else None
+ia.iterm_title = lambda tty: "✳ Orch : w"
+ia.cli_pid_on_tty = lambda tty: "4242" if scenario != "never" else None
+ia.host_registry = lambda pid: {"sessionId": "abcdef12-3456-4789-8abc-def012345678"} if pid == "4242" else None
+ia.wait_gone = lambda tty, timeout=None: None
+# The checkout a home tab's window 0 works in, and its deletion: recorded, never run.
+ia.host_cli_cwd = lambda tty: os.environ.get("LIFE_CWD") if tty == "/dev/ttys961" else None
+ia.checkout_of = lambda cwd: cwd
+ia.delete_checkout = lambda path: calls.append("delete_checkout %s" % path)
+out, err = io.StringIO(), io.StringIO()
+code = 0
+argv = json.loads(sys.argv[5])
+try:
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        ia.COMMANDS[argv[0]](argv[1:])
+except SystemExit as e:
+    code = e.code
+print("exit=%s" % code)
+print("calls=%s" % ",".join(calls))
+print("OUT:" + "|".join(out.getvalue().split("\n")).strip("|"))
+print("ERR:" + " ".join(err.getvalue().split()))
+PYEOF
+LIFEPROJ="$WORK/lifeprojects"
+life() { # <scenario> <argv as JSON>
+  env -u TMUX -u TMUX_PANE -u ORCHESTRATOR_SELF_TTY -u ORCHESTRATOR_PS_TABLE ORCHESTRATOR_TMUX="$HR/tmux" ORCHESTRATOR_STATE_DIR="$WORK/lifestate" \
+    ORCHESTRATOR_LOGIN_SHELL=/bin/sh ORCHESTRATOR_HOST_CLI=/opt/x/host ORCHESTRATOR_NEW_SESSION_ID=0badc0de-1111-4222-8333-444455556666 \
+    ORCHESTRATOR_PROJECTS_DIR="$LIFEPROJ" ORCHESTRATOR_MODE_TIMEOUT=2 ORCHESTRATOR_PS_TABLE="${LIFE_PS:-}" \
+    "$py" "$WORK/life_probe.py" "$ROOT/skills/iterm-agents/scripts" "$1" "$HR" "$WORK" "$2" 2>&1; }
+lcalls() { hcalls | sed "s#$WORK/lifestate#@STATE@#g"; }
+
+reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
+res=$(life ok "[\"spawn\",\"--open\",\"--dir\",\"$WORK\",\"--title\",\"Orch : o\",\"--prompt\",\"p\",\"--no-verify\"]")
+check "an opened orchestrator starts in window 0 of a server named after the id it is given, then a tab right of the caller's shows it" \
+  "0|[-u][-L][orch-0badc0de][-f][@ROOT@/skills/iterm-agents/tmux/home.conf][new-session][-d][-s][home][-n][Orch : o][-c][@WORK@]|create beside /dev/ttys900 right Orch : o|/dev/ttys960" \
+  "$(sfield "$res" exit)|$(hcalls | head -1 | sed 's/\]\[\/bin\/sh -l .*$/]/')|$(sfield "$res" calls)|$(sfield "$res" OUT)"
+check "its window 0 runs the launch with the id the server is named after" "1" \
+  "$(grep -c -- "'--session-id' 0badc0de-1111-4222-8333-444455556666 " "$(sed 's/^\/bin\/sh -l //' "$HR/window0")")"
+reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
+res=$(life ok "[\"spawn\",\"--wake\",\"--dir\",\"$WORK\",\"--title\",\"Orch : w\",\"--model\",\"a-model\",\"--prompt\",\"p\",\"--resume\",\"abcdef12-3456-4789-8abc-def012345678\",\"--no-verify\"]")
+check "a woken orchestrator resumes its recorded session in window 0 of a new home session, shown right of the caller" \
+  "0|[-u][-L][orch-abcdef12][-f]|create beside /dev/ttys900 right Orch : w|1" \
+  "$(sfield "$res" exit)|$(hcalls | head -1 | sed 's/\[-f\].*$/[-f]/')|$(sfield "$res" calls)|$(grep -c -- "'--resume' abcdef12-3456-4789-8abc-def012345678 " "$(sed 's/^\/bin\/sh -l //' "$HR/window0")")"
+# Verified on window 0, where the host runs: its mode read on what the resumed transcript
+# gained since the launch, never on the conversation's first launch.
+reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
+mkdir -p "$LIFEPROJ/p"; printf '{"permissionMode":"default"}\n' > "$LIFEPROJ/p/abcdef12-3456-4789-8abc-def012345678.jsonl"
+res=$(life ok "[\"spawn\",\"--wake\",\"--dir\",\"$WORK\",\"--title\",\"Orch : w\",\"--model\",\"a-model\",\"--prompt\",\"p\",\"--resume\",\"abcdef12-3456-4789-8abc-def012345678\",\"--permission-mode\",\"default\"]")
+check "a wake whose resumed transcript gains no mode is refused: the tab closed and the server ended, and the old mode is not taken for the new" \
+  "1|close_made NEW-SESSION|1|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep close_made)|$(hcalls | grep -c '\[kill-server\]')|$(sfield "$res" ERR | grep -c 'gained no entry carrying a mode')"
+reset_homerec
+res=$(life ok "[\"spawn\",\"--wake\",\"--dir\",\"$WORK\",\"--title\",\"Orch : w\",\"--model\",\"a-model\",\"--prompt\",\"p\",\"--no-verify\"]")
+check "a tab that shows no client of the woken orchestrator's server is closed and the server ended" "1|1|1" \
+  "$(sfield "$res" exit)|$(hcalls | grep -c '\[kill-server\]')|$(sfield "$res" ERR | grep -c 'shows no client of the home server orch-0badc0de')"
+# Without a tab (ORCHESTRATOR_HOME_NO_TAB, as the move has it): the server alone, which a live
+# run drives without the app; a refusal then ends the server and asks the app nothing.
+reset_homerec
+res=$(LIFE_PROBES=1 ORCHESTRATOR_HOME_NO_TAB=1 ORCHESTRATOR_TEST_RUN=1 life ok "[\"spawn\",\"--wake\",\"--dir\",\"$WORK\",\"--title\",\"Orch : w\",\"--model\",\"a-model\",\"--prompt\",\"p\",\"--resume\",\"abcdef12-3456-4789-8abc-def012345678\",\"--no-verify\"]")
+check "a wake without a tab starts its home server, makes no tab and says how to attach" "0|[-u][-L][orch-abcdef12][-f]||1|/dev/ttys960" \
+  "$(sfield "$res" exit)|$(hcalls | head -1 | sed 's/\[-f\].*$/[-f]/')|$(sfield "$res" calls)|$(sfield "$res" ERR | grep -c 'no tab: attach with .* -L orch-abcdef12 attach')|$(sfield "$res" OUT)"
+reset_homerec
+res=$(LIFE_PROBES=1 ORCHESTRATOR_HOME_NO_TAB=1 ORCHESTRATOR_TEST_RUN=1 life never "[\"spawn\",\"--wake\",\"--dir\",\"$WORK\",\"--title\",\"Orch : w\",\"--model\",\"a-model\",\"--prompt\",\"p\",\"--resume\",\"abcdef12-3456-4789-8abc-def012345678\"]")
+check "and one that never starts ends the server, the app never asked" "1||1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls)|$(hcalls | grep -c '\[kill-server\]')"
+
+# The no-tab variable alone is ignored for a wake as for a move: the tab is made.
+reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
+res=$(ORCHESTRATOR_HOME_NO_TAB=1 life ok "[\"spawn\",\"--wake\",\"--dir\",\"$WORK\",\"--title\",\"Orch : w\",\"--model\",\"a-model\",\"--prompt\",\"p\",\"--resume\",\"abcdef12-3456-4789-8abc-def012345678\",\"--no-verify\"]")
+check "a wake with the no-tab variable and no test marker still makes the tab, and says the variable is ignored" "0|create beside /dev/ttys900 right Orch : w|/dev/ttys960|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" OUT)|$(sfield "$res" ERR | grep -c 'ORCHESTRATOR_HOME_NO_TAB is ignored')"
+reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
+res=$(ORCHESTRATOR_HOME_NO_TAB=1 life ok "[\"spawn\",\"--open\",\"--dir\",\"$WORK\",\"--title\",\"Orch : o\",\"--prompt\",\"p\",\"--no-verify\"]")
+check "and so does an open" "0|create beside /dev/ttys900 right Orch : o" "$(sfield "$res" exit)|$(sfield "$res" calls)"
+
+# A server tmux refuses to kill is not « ended »: the message names its socket and says so.
+reset_homerec; printf 'server busy\n' > "$HR/kill-err"
+res=$(life ok "[\"spawn\",\"--wake\",\"--dir\",\"$WORK\",\"--title\",\"Orch : w\",\"--model\",\"a-model\",\"--prompt\",\"p\",\"--no-verify\"]")
+check "a tab with no client and a kill-server that fails says the server was NOT ended, and names its socket" "1|1|0" \
+  "$(sfield "$res" exit)|$(sfield "$res" ERR | grep -c "the server was NOT ended: end it with $HR/tmux -L orch-0badc0de kill-server")|$(sfield "$res" ERR | grep -c 'the server was ended')"
+
+# The pause: the coordinator closes the paused orchestrator's tab by tty, and the tab shows a
+# home session: the server is ended, proved, then the tab.
+printf '/dev/ttys970 9001 tmux -u -L orch-abcdef12 attach -t home\n' > "$WORK/life-ps"
+reset_homerec
+res=$(LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch : w"]')
+check "closing a tab that shows a home session ends its whole server, then says the session window 0 ran" \
+  "0|[-u][-L][orch-abcdef12][list-panes][-a][-F][#{window_index} #{pane_tty}]|[-u][-L][orch-abcdef12][kill-server]|[-u][-L][orch-abcdef12][has-session]|closed 1 session on /dev/ttys970|home: ended the server orch-abcdef12 and its 0 window(s)" \
+  "$(sfield "$res" exit)|$(hcalls | paste -sd'|' -)|$(sfield "$res" OUT)"
+reset_homerec
+res=$(LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch : other"]')
+check "a title that does not match refuses before the server is touched" "1|0" \
+  "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-server')"
+reset_homerec
+res=$(LIFE_PS="$WORK/life-ps" life tab-stays '["close","--tty","/dev/ttys970"]')
+check "a tab that outlives its client is closed after the server" "0|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c '^close /dev/ttys970$')"
+printf '/dev/ttys970 9001 tmux -u -L my-own attach\n' > "$WORK/life-ps-own"
+check "a tab is a home session's when its tmux client names a server of the plugin's, and not otherwise" "orch-abcdef12|" \
+  "$(ORCHESTRATOR_PS_TABLE="$WORK/life-ps" "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia
+print(ia.home_of_tab('/dev/ttys970'))")|$(ORCHESTRATOR_PS_TABLE="$WORK/life-ps-own" "$py" -c "
+import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
+import iterm_agent as ia
+print(ia.home_of_tab('/dev/ttys970'))")"
+
+# A pause records the session window 0 ran, for the wake to resume: a server whose window 0
+# session cannot be read is not ended, and the refusal says why.
+reset_homerec; printf 'no server running on /tmp/x\n' > "$HR/panes-err"
+res=$(LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch : w"]')
+check "a pause whose panes cannot be listed refuses, the server is not killed and the refusal names why" "1|0|1|1" \
+  "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-server')|$(sfield "$res" ERR | grep -c 'cannot be read: tmux refused to list its panes')|$(sfield "$res" ERR | grep -c 'the server was NOT ended and the orchestrator stays where it is')"
+reset_homerec; printf '1 /dev/ttys962\n' > "$HR/panes"
+res=$(LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch : w"]')
+check "and one with no window 0 refuses the same way" "1|0|1" \
+  "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-server')|$(sfield "$res" ERR | grep -c 'no host of window 0 was found on the server')"
+reset_homerec; printf '0 /dev/ttys961\n1 /dev/ttys962\n' > "$HR/panes"
+res=$(LIFE_PS="$WORK/life-ps" life never '["close","--tty","/dev/ttys970","--expect-title","Orch : w"]')
+check "and one whose window 0 runs no host whose session can be read refuses, naming the pane" "1|0|1" \
+  "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-server')|$(sfield "$res" ERR | grep -c 'window 0 on /dev/ttys961 runs no host whose session can be read')"
+reset_homerec; printf '0 /dev/ttys961\n1 /dev/ttys962\n' > "$HR/panes"
+res=$(LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch : w"]')
+check "with window 0's session read, the server is ended and the home line carries the session and every window" "0|1|home: ended the server orch-abcdef12 and its 2 window(s), session abcdef12-3456-4789-8abc-def012345678" \
+  "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-server')|$(sfield "$res" OUT | tr '|' '\n' | grep '^home:')"
+
+# A home tab's close ends with what the ordinary close ends with: the checkout the orchestrator
+# worked in is deleted, unless it is kept.
+reset_homerec; printf '0 /dev/ttys961\n' > "$HR/panes"
+res=$(LIFE_CWD=/co/proj/work LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch : w"]')
+check "closing a home tab deletes the checkout window 0 worked in, after the server is gone" "0|delete_checkout /co/proj/work|closed 1 session on /dev/ttys970" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep delete_checkout)|$(sfield "$res" OUT | tr '|' '\n' | grep '^closed')"
+reset_homerec; printf '0 /dev/ttys961\n' > "$HR/panes"
+res=$(LIFE_CWD=/co/proj/work LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch : w","--keep-checkout"]')
+check "and --keep-checkout keeps it" "0|0" "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c delete_checkout)"
+
+# The sleeping record keeps the session the close read, for the wake to resume.
+SLST="$WORK/sleepstate"; mkdir -p "$SLST"; printf 'b\n' > "$SLST/brief.md"
+ORCHESTRATOR_STATE_DIR="$SLST" bash "$ROOT/skills/coordinator/scripts/coordinator.sh" sleep --name "Orch : w" --brief "$SLST/brief.md" --dir "$WORK" --model a-model --session abcdef12-3456-4789-8abc-def012345678 >/dev/null 2>&1
+check "a paused orchestrator's record carries its session, and its line says it" "1" \
+  "$(ORCHESTRATOR_STATE_DIR="$SLST" bash "$ROOT/skills/coordinator/scripts/coordinator.sh" sleeping | grep -c '| effort default | session abcdef12-3456-4789-8abc-def012345678$')"
+check "a session id that is not one is refused" "1" \
+  "$(ORCHESTRATOR_STATE_DIR="$SLST" bash "$ROOT/skills/coordinator/scripts/coordinator.sh" sleep --name "Orch : v" --brief "$SLST/brief.md" --dir "$WORK" --model a-model --session 'x y' 2>&1 | grep -c 'refused: a session id')"
 
 echo "== install =="
 

@@ -56,6 +56,7 @@ skills/iterm-agents/SKILL.md         tab management on macOS
 skills/iterm-agents/references/commands.md   the script's commands, how it builds a tab, when iTerm2 does not answer
 skills/iterm-agents/scripts/iterm-agent.sh   entry point: resolves an interpreter
 skills/iterm-agents/scripts/iterm_agent.py   the implementation, over the app API
+skills/iterm-agents/tmux/home.conf          a home server's tmux configuration, read through -f
 skills/orchestrator/scripts/brief-lint.sh   lints a brief before it is dispatched, warning on its findings
 skills/orchestrator/scripts/ci-watch.sh      the one wait on a pull request's checks, in the background, ending in one line and a code
 skills/orchestrator/scripts/draft_guard.py     which failing checks of a draft pull request are draft guards, read from the job's own definition

@@ -667,7 +667,7 @@ program=/bin/sh -l <launch-file>
 exit=0
 ### wake
 spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
-launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch : w' && exec @WORK@/bin/host-cli --model a-model --effort high --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch---w-@TIME@.txt)" --name 'Orch : w' --remote-control 'Orch : w'
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch : w' && exec @WORK@/bin/host-cli --model a-model --effort high --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto '--session-id' '<new-session-id>' --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch---w-@TIME@.txt)" --name 'Orch : w' --remote-control 'Orch : w'
 prompt_file=@WORK@/state/prompts/prompt-Orch---w-@TIME@.txt
 self=/dev/ttys900
 anchor=self
@@ -690,10 +690,47 @@ tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings
 remote_control=yes
 mode_check=skipped
 program=/bin/sh -l <launch-file>
+home_server=orch-<new>
+home_conf=skills/iterm-agents/tmux/home.conf
+home_window0=Orch : w
+home_tab=right of self
 exit=0
+### a resumed wake
+spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch : w' && exec @WORK@/bin/host-cli --model a-model --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto '--resume' abcdef12-3456-4789-8abc-def012345678 --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch---w-@TIME@.txt)" --name 'Orch : w' --remote-control 'Orch : w'
+prompt_file=@WORK@/state/prompts/prompt-Orch---w-@TIME@.txt
+self=/dev/ttys900
+anchor=self
+side=right
+trust=already
+successor=no
+auditor=no
+coordinator_successor=no
+wake=yes
+open=no
+chain=none
+resident=no
+name=Orch : w
+title_free=no
+mcp=none
+mcp_file=none
+account_connectors=no
+synced_skills=removed
+tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings
+remote_control=yes
+mode_check=skipped
+program=/bin/sh -l <launch-file>
+home_server=orch-abcdef12
+home_conf=skills/iterm-agents/tmux/home.conf
+home_window0=Orch : w
+home_tab=right of self
+exit=0
+### resume without wake refused
+ERROR: spawn: refused: --resume is a wake's: it names the session a paused orchestrator resumes
+exit=1
 ### open
 spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
-launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch : o' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch---o-@TIME@.txt)" --name 'Orch : o' --remote-control 'Orch : o'
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch : o' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto '--session-id' '<new-session-id>' --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch---o-@TIME@.txt)" --name 'Orch : o' --remote-control 'Orch : o'
 prompt_file=@WORK@/state/prompts/prompt-Orch---o-@TIME@.txt
 self=/dev/ttys900
 anchor=self
@@ -716,10 +753,14 @@ tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings
 remote_control=yes
 mode_check=skipped
 program=/bin/sh -l <launch-file>
+home_server=orch-<new>
+home_conf=skills/iterm-agents/tmux/home.conf
+home_window0=Orch : o
+home_tab=right of self
 exit=0
 ### open, tier
 spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
-launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch : o' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch---o-@TIME@.txt)" --name 'Orch : o' --remote-control 'Orch : o'
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch : o' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto '--session-id' '<new-session-id>' --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch---o-@TIME@.txt)" --name 'Orch : o' --remote-control 'Orch : o'
 prompt_file=@WORK@/state/prompts/prompt-Orch---o-@TIME@.txt
 self=/dev/ttys900
 anchor=self
@@ -742,10 +783,14 @@ tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings
 remote_control=yes
 mode_check=skipped
 program=/bin/sh -l <launch-file>
+home_server=orch-<new>
+home_conf=skills/iterm-agents/tmux/home.conf
+home_window0=Orch : o
+home_tab=right of self
 exit=0
 ### open, bound deep tier
 spawn: no server catalogue at @WORK@/state/mcp.json: the session loads no server
-launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch : o' && exec @WORK@/bin/host-cli --model a-model --effort high --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch---o-@TIME@.txt)" --name 'Orch : o' --remote-control 'Orch : o'
+launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && printf '\033]0;%s\007' 'Orch : o' && exec @WORK@/bin/host-cli --model a-model --effort high --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings --strict-mcp-config --permission-mode auto '--session-id' '<new-session-id>' --settings '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' "$(cat @WORK@/state/prompts/prompt-Orch---o-@TIME@.txt)" --name 'Orch : o' --remote-control 'Orch : o'
 prompt_file=@WORK@/state/prompts/prompt-Orch---o-@TIME@.txt
 self=/dev/ttys900
 anchor=self
@@ -768,6 +813,10 @@ tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings
 remote_control=yes
 mode_check=skipped
 program=/bin/sh -l <launch-file>
+home_server=orch-<new>
+home_conf=skills/iterm-agents/tmux/home.conf
+home_window0=Orch : o
+home_tab=right of self
 exit=0
 ### agent, mcp default
 launch=cd @WORK@ && export ORCHESTRATOR_SPAWNED=1 && export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && printf '\033]0;%s\007' 'Agent : a' && exec @WORK@/bin/host-cli --disallowedTools Artifact SendFeedback Workflow ScheduleWakeup ReportFindings mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session --strict-mcp-config --mcp-config @WORK@/state/prompts/mcp-Agent---a-@TIME@.json --permission-mode auto --settings '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' "$(cat @WORK@/state/prompts/prompt-Agent---a-@TIME@.txt)" --name 'Agent : a'

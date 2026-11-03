@@ -96,6 +96,8 @@ show "auditor, tier refused" spawn --auditor --title "Audit : tm" --prompt p --t
 show "coordinator successor" spawn --coordinator-successor --title "Coord : c" --prompt p
 export ORCHESTRATOR_PS_TABLE="$PS_ORCH"
 show "wake" spawn --wake --title "Orch : w" --prompt p --model a-model --effort high
+show "a resumed wake" spawn --wake --title "Orch : w" --prompt p --model a-model --resume abcdef12-3456-4789-8abc-def012345678
+show "resume without wake refused" spawn --title "Agent : a" --prompt p --resume abcdef12
 show "open" spawn --open --title "Orch : o" --prompt p
 show "open, tier" spawn --open --title "Orch : o" --prompt p --tier deep
 export ORCHESTRATOR_MODELS_MAP="$WORK/models.json"

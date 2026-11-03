@@ -174,6 +174,15 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // very completion is still holding. Its failure is said in the log.
       $.command.run({ command: 'rename', args: name })
         .catch((err: unknown) => logLine($, `rename to "${name}" failed: ${String((err as Error)?.message ?? err)}`))
+      // An orchestrator moves into its home session here, where it is resumed anyway:
+      // the launcher starts the home server whose window 0 resumes this very session,
+      // and the tab that shows it, then this session ends and window 0 takes over with
+      // the resume's prompt. Anything but a move leaves the session where it is.
+      if (!ending && name.startsWith('Orch : ') && await movedHome($, name)) {
+        $.command.run({ command: 'exit' })
+          .catch((err: unknown) => logLine($, `exit after the move into the home session failed: ${String((err as Error)?.message ?? err)}`))
+        return next(e)
+      }
       // Then the turn that resumes it, queued behind the rename: a session started
       // unattended goes on under its name instead of waiting on the operator. Not for
       // a session that also asked to end — it leaves.
@@ -193,6 +202,34 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
+}
+
+// The bound of the move: the launcher waits for the new tab's client, its spawn timeout.
+export const HOME_MOVE_MS = 90_000
+
+// The launcher's move of this session into a home session of its own, as argv.
+export function homeArgv(root: string, sessionId: string, name: string): string[] {
+  return [`${root}/skills/iterm-agents/scripts/iterm-agent.sh`, 'home', '--session', sessionId, '--name', name, '--prompt', resumeText(name)]
+}
+
+// Whether the launcher moved this session (`moved: …` on its first line). A session it
+// keeps (`stay: …`) and a move that failed both stay where they are; a failure is logged.
+async function movedHome($: any, name: string): Promise<boolean> {
+  try {
+    const sessionId = await $.session.id()
+    const done = await $.process.run(homeArgv($.plugin.root, sessionId, name), { timeoutMs: HOME_MOVE_MS })
+    const first = String(done?.stdout ?? '').split('\n')[0]
+    if (done?.exitCode === 0 && first.startsWith('moved: ')) {
+      await logLine($, `moved into its home session: ${first.slice('moved: '.length)}`)
+      return true
+    }
+    if (done?.exitCode !== 0) {
+      await logLine($, `the move into a home session failed, the session stays where it is: ${String(done?.stderr ?? '').trim().split('\n').pop() || `exit ${done?.exitCode}`}`)
+    }
+  } catch (err) {
+    await logLine($, `the move into a home session could not run, the session stays where it is: ${String((err as Error)?.message ?? err)}`)
+  }
+  return false
 }
 
 // The domains' log shape: the config dir resolved here ($ never crosses an

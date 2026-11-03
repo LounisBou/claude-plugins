@@ -3,7 +3,7 @@
 // the call that records the name and the turn's completion that runs the host's
 // /rename with it — never from the call itself, which the host refuses.
 import { expect, test } from 'claude-code/testing'
-import { checkName, END_TOOL, register as registerNaming, RENAME_TOOL, MAIN_THREAD_ONLY, isEnding } from '../naming.ts'
+import { checkName, END_TOOL, register as registerNaming, RENAME_TOOL, MAIN_THREAD_ONLY, isEnding, homeArgv, resumeText, HOME_MOVE_MS } from '../naming.ts'
 
 // A registration is keyed by its event, and a tool call by its tool too: the
 // file serves two tools.
@@ -222,4 +222,71 @@ test('the end tool is offered to an orchestrator or a coordinator that has hande
   await handlers['session.start'](fx.dollar, {}, (x: unknown) => x)
   expect(fx.registered.find((spec: any) => spec.name === END_TOOL).description)
     .toContain('Only for an orchestrator or a coordinator that has handed over and whose successor asks it to end its session.')
+})
+
+// The move into a home session: at the end of the turn that named an orchestrator, the
+// launcher's `home` is run; on `moved:` the session ends and window 0 resumes it with the
+// resume's prompt, on anything else the session is resumed where it is, as before.
+function movingDollar(answer: { exitCode: number; stdout: string; stderr?: string } | Error) {
+  const fx = fakeDollar()
+  const processes: any[] = []
+  const dollar = {
+    ...fx.dollar,
+    plugin: { root: '/plugin' },
+    session: { id: async () => 'S-1' },
+    process: {
+      run: async (argv: string[], opts: any) => {
+        if (argv[1] === 'home') {
+          processes.push({ argv, opts })
+          if (answer instanceof Error) throw answer
+          return answer
+        }
+        return { exitCode: 0, stdout: '', stderr: '' }
+      },
+    },
+  }
+  return { ...fx, dollar, processes }
+}
+
+test("an orchestrator's naming turn moves it into its home session, then ends it there", async () => {
+  const { handlers } = mounted()
+  const fx = movingDollar({ exitCode: 0, stdout: 'moved: orch-S1, shown on /dev/ttys970\n' })
+  await handlers['tool.call'](fx.dollar, { name: 'Orch : phase-3' })
+  await handlers['turn.complete'](fx.dollar, {}, (x: unknown) => x)
+  expect(fx.processes).toEqual([{ argv: ['/plugin/skills/iterm-agents/scripts/iterm-agent.sh', 'home', '--session', 'S-1', '--name', 'Orch : phase-3', '--prompt', resumeText('Orch : phase-3')], opts: { timeoutMs: HOME_MOVE_MS } }])
+  expect(fx.order).toEqual(['command:rename', 'command:exit'])
+  expect(fx.submits).toEqual([])
+})
+
+test('a session the launcher keeps, or a move that fails, is resumed where it is', async () => {
+  for (const answer of [{ exitCode: 0, stdout: 'stay: this session already runs in a home session\n' },
+    { exitCode: 1, stdout: '', stderr: 'ERROR: home: this session is not a tab of iTerm2s' },
+    new Error('spawn failed')]) {
+    const { handlers } = mounted()
+    const fx = movingDollar(answer)
+    await handlers['tool.call'](fx.dollar, { name: 'Orch : phase-3' })
+    await handlers['turn.complete'](fx.dollar, {}, (x: unknown) => x)
+    expect(fx.processes.length).toBe(1)
+    expect(fx.order).toEqual(['command:rename', 'prompt'])
+  }
+})
+
+test('a coordinator never moves, and neither does a session that asked to end', async () => {
+  const { handlers } = mounted()
+  const fx = movingDollar({ exitCode: 0, stdout: 'moved: orch-S1\n' })
+  await handlers['tool.call'](fx.dollar, { name: 'Coord : main' })
+  await handlers['turn.complete'](fx.dollar, {}, (x: unknown) => x)
+  expect(fx.processes).toEqual([])
+  expect(fx.order).toEqual(['command:rename', 'prompt'])
+  const ending = mounted()
+  const fy = movingDollar({ exitCode: 0, stdout: 'moved: orch-S1\n' })
+  await ending.handlers['tool.call'](fy.dollar, { name: 'Orch : phase-3' })
+  await ending.handlers['tool.call:end'](fy.dollar, {})
+  await ending.handlers['turn.complete'](fy.dollar, {}, (x: unknown) => x)
+  expect(fy.processes).toEqual([])
+  expect(fy.order).toEqual(['command:rename', 'command:exit'])
+})
+
+test('the move is the launcher with the session, its name and the resume prompt', () => {
+  expect(homeArgv('/r', 'S', 'Orch : x')).toEqual(['/r/skills/iterm-agents/scripts/iterm-agent.sh', 'home', '--session', 'S', '--name', 'Orch : x', '--prompt', 'Your name "Orch : x" is taken. Continue where you left off.'])
 })

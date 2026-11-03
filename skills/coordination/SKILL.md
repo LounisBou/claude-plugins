@@ -287,11 +287,12 @@ Then, on its `paused-ready`:
 2. **You close it**, as a successor closes its predecessor: `iterm-agent.sh close --tty <its
    tty> --expect-title "<the title list printed>"`; where the host refuses the close, message
    it « call mcp__orchestrator__end_session ». The proof is the tty: `verify --tty` fails, or
-   `ps -t` shows no host CLI.
+   `ps -t` shows no host CLI. A tab that shows a home session takes its whole server with it,
+   agents included, and the close's `home:` line names the session window 0 ran.
 3. **Record it sleeping**, its name without its reference:
 
    ```
-   ${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh sleep --name "Orch : <subject>" --brief <brief path> --dir <its directory> --model <model> [--effort <effort>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
+   ${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh sleep --name "Orch : <subject>" --brief <brief path> --dir <its directory> --model <model> [--effort <effort>] [--session <that session>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
    ```
 
 4. Tell the operator in one line: asleep, since when, brief, pull requests left open.
@@ -305,10 +306,11 @@ Its open pull requests stay as they are.
 field):
 
 ```
-${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --wake --title "Orch : <subject>" --model <model> [--effort <effort>] --dir <its directory> --permission-mode auto --prompt "Read and execute <brief path>. You wake from a pause: your predecessor is gone; skip the takeover handshake."
+${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --wake --title "Orch : <subject>" --model <model> [--effort <effort>] [--resume <its session>] --dir <its directory> --permission-mode auto --prompt "Read and execute <brief path>. You wake from a pause: your predecessor is gone; skip the takeover handshake."
 ```
 
-`--wake` lands it right of your tab, in no chain, under remote control under its name.
+`--wake` lands it right of your tab, in no chain, under remote control under its name, in
+window 0 of a home session of its own; with the record's session, the same conversation resumes.
 Verify it — `iterm-agent.sh list`, `verify --tty`, `ListAgents` naming `Orch : <subject>` —
 then `coordinator.sh wake-done --name "Orch : <subject>"`, and announce yourself to it as to
 any newcomer. A spawn that fails keeps the record, and the operator is told.
