@@ -3180,7 +3180,10 @@ CRDSTATE="$WORK/crdstate"; CRDCFG="$WORK/crdcfg"
 mkdir -p "$CRDSTATE/chains" "$CRDCFG/claude-orchestrator/measure"
 printf '{"context_tokens":21000,"context_window":200000,"context_percent":10,"model":"crd-model","updated_at":"2026-10-10T00:00:00Z"}\n' > "$CRDCFG/claude-orchestrator/measure/s-crd.json"
 printf '{"tab_id":"7","tty":"/dev/ttys901","owner":"S-ME"}\n' > "$CRDSTATE/chains/ttys900.jsonl"
+# The caller reads as an orchestrator: a wake takes --open's caller rule.
+CRDCALLER="$WORK/ps-crdcaller.txt"; printf '/dev/ttys900 claude --name Orch : f\n' > "$CRDCALLER"
 crd() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" CLAUDE_CONFIG_DIR="$CRDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
+  ORCHESTRATOR_PS_TABLE="$CRDCALLER" \
   ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-crd bash "$AGENT" spawn --dir "$WORK" --prompt p "$@" 2>&1; }
 crdl() { crd "$@" | sed -n 's/^launch=//p'; }
 CRDOUT=$(crd --coordinator-successor --title 'Coord : ops')
@@ -3279,6 +3282,8 @@ check "a tier the opening names wins over the deep default" "1" \
 # exist, so a launcher that let the stand-ins through still stops short of a tab.
 check "outside a dry run, an opening refuses the suite's stand-ins for the caller" "1|1" \
   "$(env -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_STATE_DIR="$OPSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$OPPS" bash "$AGENT" spawn --open --title 'Orch : x' --dir "$WORK/no-such-dir" --prompt p 2>&1 | grep -c 'are for tests and dry runs')|$(env -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_STATE_DIR="$OPSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 bash "$AGENT" spawn --open --title 'Orch : x' --dir "$WORK/no-such-dir" --prompt p 2>&1 | grep -c 'are for tests and dry runs')"
+check "outside a dry run, a wake refuses the same stand-ins, and names itself" "1|1|1" \
+  "$(env -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_STATE_DIR="$OPSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$OPPS" bash "$AGENT" spawn --wake --title 'Orch : x' --model a-model --dir "$WORK/no-such-dir" --prompt p 2>&1 | grep -c 'are for tests and dry runs')|$(env -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_STATE_DIR="$OPSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 bash "$AGENT" spawn --wake --title 'Orch : x' --model a-model --dir "$WORK/no-such-dir" --prompt p 2>&1 | grep -c -- '--wake reads its caller')|$(env -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_STATE_DIR="$OPSTATE" ORCHESTRATOR_PS_TABLE="$OPPS" bash "$AGENT" spawn --wake --title 'Orch : x' --model a-model --dir "$WORK/no-such-dir" --prompt p 2>&1 | grep -c 'are for tests and dry runs')"
 check "the coordination skill opens on his order, by the bare command, and relays it to another machine" "yes|yes|yes|yes|yes" \
   "$(spells "$ROOT/skills/coordination/SKILL.md" 'operator told you to open, pause or wake')|$(spells "$ROOT/skills/coordination/SKILL.md" 'spawn --open --title "Orch : <subject>"')|$(spells "$ROOT/skills/coordination/SKILL.md" 'answer that he should do it himself')|$(spells "$ROOT/skills/coordination/SKILL.md" 'Run it alone, never chained to another command')|$(spells "$ROOT/skills/coordination/SKILL.md" 'Never ask a session to change')"
 check "an orchestrator runs a relayed opening and never edits its own permissions" "yes|yes|yes" \
@@ -6300,9 +6305,28 @@ check "an auditor's wake of an orchestrator is refused with a message naming the
   "$(orchp "$AUDPS" --title 'Orch : x' --wake --model a-model | grep -c "opens no orchestrator tab with --wake or an Orch title, and --open is a coordinator's or an orchestrator's; its only successor is its own audit session, --successor without --title")"
 printf '/dev/ttys900 claude\n' > "$WORK/ps-unnamed.txt"
 check "an auditor whose name cannot be read is refused all the same, by the marker its launch exports" "1|1|0" \
-  "$(ORCHESTRATOR_AUDITOR=1 orchp "$WORK/ps-unnamed.txt" --title 'Orch : x' --wake --model a-model | grep -c "this session is an auditor's")|$(orchp "$ORCHPS" --auditor --title 'Audit : tm' | grep -c '^launch=.*export ORCHESTRATOR_AUDITOR=1 && ')|$(orchp "$ORCHPS" --title 'Agent : x' | grep -c 'ORCHESTRATOR_AUDITOR')"
+  "$(ORCHESTRATOR_AUDITOR=1 orchp "$WORK/ps-unnamed.txt" --title 'Orch : x' --wake --model a-model | grep -c "this session is not an orchestrator's or a coordinator's")|$(orchp "$ORCHPS" --auditor --title 'Audit : tm' | grep -c '^launch=.*export ORCHESTRATOR_AUDITOR=1 && ')|$(orchp "$ORCHPS" --title 'Agent : x' | grep -c 'ORCHESTRATOR_AUDITOR')"
 check "an auditor's spawn stays out of the chain and left of its caller, a woken orchestrator's out of the chain" "1|1|1" \
   "$(orchp "$ORCHPS" --auditor --title 'Audit : tm' | grep -c '^chain=none$')|$(orchp "$ORCHPS" --auditor --title 'Audit : tm' | grep -c '^side=left$')|$(orchp "$ORCHPS" --title 'Orch : x' --wake --model a-model | grep -c '^chain=none$')"
+NEUTRALPS="$WORK/ps-neutralcaller.txt"; AGENTPS="$WORK/ps-agentcaller.txt"
+printf '/dev/ttys900 claude --name Audit neutre : f\n' > "$NEUTRALPS"
+printf '/dev/ttys900 claude --name Agent : f\n' > "$AGENTPS"
+check "a wake from a session named otherwise is refused before any tab exists, the orchestrator's still goes" "1|0|1|0" \
+  "$(orchp "$NEUTRALPS" --title 'Orch : x' --wake --model a-model | grep -c "this session is not an orchestrator's or a coordinator's")|$(orchp "$NEUTRALPS" --title 'Orch : x' --wake --model a-model | grep -c '^launch=')|$(orchp "$AGENTPS" --title 'Orch : x' --wake --model a-model | grep -c "an agent never wakes an orchestrator")|$(orchp "$ORCHPS" --title 'Orch : x' --wake --model a-model >/dev/null 2>&1; echo $?)"
+# A coordinator opened by hand and renamed carries a readable name that is not `Coord : `;
+# only its own record places it on the tty. The auditor guard reads that record too.
+RENSTATE="$WORK/orchstate-renamed"; mkdir -p "$RENSTATE/chains"
+printf '{"name":"geonative-fix","tty":"/dev/ttys900"}\n' > "$RENSTATE/coordinator.json"
+printf '/dev/ttys900 claude --name geonative-fix\n' > "$WORK/ps-renamedcoord.txt"
+renamed() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$1" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
+  ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CONFIG_DIR="$WORK/orchcfg" CLAUDE_CODE_SESSION_ID=s-orch \
+  ORCHESTRATOR_PS_TABLE="$WORK/ps-renamedcoord.txt" bash "$AGENT" spawn --dir "$WORK" --prompt p "${@:2}" 2>&1; }
+check "a coordinator renamed away from Coord is no auditor to the guard: its record names it, a stranger of that name is still refused" "0|1" \
+  "$(renamed "$RENSTATE" --title 'Orch : x' --successor >/dev/null 2>&1; echo $?)|$(renamed "$WORK/orchstate" --title 'Orch : x' --successor | grep -c "this session is")"
+check "the refusal names what the caller is not, whatever its name, and the tail naming the flags stays" "1|1|0" \
+  "$(renamed "$WORK/orchstate" --title 'Orch : x' --wake --model a-model | grep -c "this session is not an orchestrator's or a coordinator's ('geonative-fix')")|$(renamed "$WORK/orchstate" --title 'Orch : x' --wake --model a-model | grep -c "opens no orchestrator tab with --wake or an Orch title, and --open is a coordinator's or an orchestrator's; its only successor is its own audit session, --successor without --title")|$(renamed "$WORK/orchstate" --title 'Orch : x' --wake --model a-model | grep -c "an auditor's")"
+check "an auditor named otherwise opens no orchestrator tab as a successor either" "1" \
+  "$(orchp "$NEUTRALPS" --title 'Orch : x' --successor | grep -c "Audit neutre : f")"
 check "an auditor's --open is refused, as an agent's is" "1|1" \
   "$(orchp "$AUDPS" --title 'Orch : x' --open >/dev/null 2>&1; echo $?)|$(orchp "$AUDPS" --title 'Orch : x' --open | grep -c 'an agent never opens an orchestrator')"
 check "while the auditor's own successor is launched" "0|Audit : f" \
