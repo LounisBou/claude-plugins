@@ -16,6 +16,10 @@ import {
 import { register as registerGuards } from '../guards.ts'
 import { logLineOf, blockOf } from './fakes.ts'
 
+// A turn's question for the operator in the decide shape: the orchestrator's stop gate refuses an
+// operator wait with no such block, so the tests that need that wait to pass end on this one.
+const ASKED = ['**Question 1 of 1**', '_Subject_ : the report', '- **A** : yes', '- **B** : no'].join('\n')
+
 // --- the decision shapes -----------------------------------------------------------------
 
 test('a refusal is the documented shape', () => {
@@ -28,6 +32,50 @@ test('a refusal is the documented shape', () => {
 
 test('a summary with nothing holding the stop passes', () => {
   expect(wakeDecision({ busyOwnAgents: [], blockingQuestion: null, openRows: [] })).toEqual({ decision: 'pass' })
+})
+
+test('an orchestrator whose last message asks two questions is refused before anything is read', async () => {
+  const { handlers } = mounted()
+  const { dollar, ran } = fakeDollar({})
+  const block = (head: string) => [head, '_Subject_ : a thing', '- **A** : yes', '- **B** : no'].join('\n')
+  const two = [block('**Question 1 of 2**'), block('**Question 2 of 2**')].join('\n\n')
+  const refused = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: two }))
+  expect((refused.answer as any).block).toContain('One question per turn')
+  expect(ran.filter(l => l.includes('iterm-agent.sh')).length).toBe(0)
+  const one = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: `${block('**Question 1 of 2**')}\nwaiting: operator — blocks: the answer` }))
+  expect(one.answer).toBe(one.passed)
+})
+
+test('an orchestrator ending on an operator wait with no question block is refused before anything is read', async () => {
+  const { handlers } = mounted()
+  const { dollar, ran } = fakeDollar({})
+  const report = 'the report\n\nwaiting: operator — blocks: ligne 359, ligne 343'
+  const refused = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: report }))
+  expect((refused.answer as any).block).toContain('**Question i of N**')
+  expect(ran.filter(l => l.includes('iterm-agent.sh')).length).toBe(0)
+  const coord = fakeDollar({ launchName: 'Coord : machine' })
+  const passed = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: report }))
+  expect(passed.answer).toBe(passed.passed)
+})
+
+test('an orchestrator ending on an operator wait that blocks nothing gets the blocks-nothing refusal, not the no-question one', async () => {
+  const { handlers } = mounted()
+  const { dollar } = fakeDollar({})
+  const refused = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'the report\n\nwaiting: operator — blocks: nothing' }))
+  expect((refused.answer as any).block).toContain('Your wait on the operator blocks nothing')
+  expect((refused.answer as any).block).not.toContain('**Question i of N**')
+})
+
+test('a coordinator whose last message asks two questions is refused, an agent is not', async () => {
+  const { handlers } = mounted()
+  const block = (head: string) => [head, '_Subject_ : a thing', '- **A** : yes', '- **B** : no'].join('\n')
+  const two = [block('**Question 1 of 2**'), block('**Question 2 of 2**')].join('\n\n')
+  const coord = fakeDollar({ launchName: 'Coord : machine' })
+  const refused = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: two }))
+  expect((refused.answer as any).block).toContain('One question per turn')
+  const agent = fakeDollar({ launchName: 'Agent : belt' })
+  const passed = await stop(handlers['classic.Stop'], agent.dollar, stopEvent({ last_assistant_message: two }))
+  expect(passed.answer).toBe(passed.passed)
 })
 
 test('a busy own agent releases the stop — its idle notice will wake the orchestrator', () => {
@@ -574,7 +622,7 @@ test('a stop with nothing to wake the orchestrator is refused with the machine l
   expect((refused.answer as any).block).toContain('Nothing will wake you')
   // The same session declaring its block on the last line passes instead — the message
   // is read where the event carries it.
-  const declared = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'a report\nwaiting: operator — blocks: the report' }))
+  const declared = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: ASKED + '\nwaiting: operator — blocks: the report' }))
   expect(declared.answer).toBe(declared.passed)
 })
 
@@ -629,7 +677,7 @@ test('a checkout left of the project holds a done stop, read from the event\'s c
 
 test('a pending ci-watch log holds the stop once and records the telling', async () => {
   const { handlers } = mounted()
-  const message = { last_assistant_message: 'waiting: operator — blocks: the report' }
+  const message = { last_assistant_message: ASKED + '\nwaiting: operator — blocks: the report' }
   const first = fakeDollar({ ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\ntest\tfail\t30\tu\n' }, 'here-pr160.log.session': { mtimeMs: 1728000000000, text: 'a1b2c3\n' } } })
   const held = await stop(handlers['classic.Stop'], first.dollar, stopEvent(message))
   expect((held.answer as any).block).toContain('#160')
@@ -652,7 +700,7 @@ test('a pull request waited on in the background is not told', async () => {
     ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\n' }, 'here-pr160.log.session': { mtimeMs: 1728000000000, text: 'a1b2c3\n' } },
     ps: `  900   1 /bin/bash ${CI_WATCH} 160\n`,
   })
-  const outcome = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'waiting: operator — blocks: the report' }))
+  const outcome = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: ASKED + '\nwaiting: operator — blocks: the report' }))
   expect(outcome.answer).toBe(outcome.passed)
   // Nothing recorded for a watched pull request, so a watch that dies is still told once.
   expect(wrote[HEADS]).toBe('')
@@ -699,7 +747,7 @@ test('a read that cannot answer in time lets the stop pass and says so', async (
 test('a directory that cannot be read lets the stop pass and says so', async () => {
   const { handlers } = mounted()
   const { dollar, written } = fakeDollar({ failCiList: true })
-  const e = stopEvent({ last_assistant_message: 'waiting: operator — blocks: the report' })
+  const e = stopEvent({ last_assistant_message: ASKED + '\nwaiting: operator — blocks: the report' })
   const { answer } = await stop(handlers['classic.Stop'], dollar, e)
   expect(answer).toBe(e)
   // The blocks line the gate logs beside the unread one it stands down on.
@@ -712,7 +760,7 @@ test('a directory that cannot be read lets the stop pass and says so', async () 
 
 // A passing, scoped stop: the blocks line releases check 1 and no ci-watch log exists,
 // so the stop reaches the sweep at its final exit.
-const PASSING = { last_assistant_message: 'a report\nwaiting: operator — blocks: the report' }
+const PASSING = { last_assistant_message: ASKED + '\nwaiting: operator — blocks: the report' }
 // Fifteen minutes old: past the default interval, inside a longer override.
 const OLD_STAMP = Date.now() - 15 * 60 * 1000
 const sweepLine = (ran: readonly string[]) => ran.find(l => l.includes(' sweep --deadline'))
@@ -827,7 +875,7 @@ test('a sweep that fails is said with its first stderr line', async () => {
 
 test('a failing check named beyond latin-1 is told once for its tell', async () => {
   const { handlers } = mounted()
-  const message = { last_assistant_message: 'waiting: operator — blocks: the report' }
+  const message = { last_assistant_message: ASKED + '\nwaiting: operator — blocks: the report' }
   // One pending check beside the failing one: the record keeps the pending state and
   // the failing SET, and the next stop compares that set — where the codec shows.
   const log = 'build\tpending\t9\tu\n🚀 deploy\tfail\t30\tu\n'
@@ -972,7 +1020,7 @@ test('the state root follows ORCHESTRATOR_STATE_DIR, the module\'s own log stayi
   // pins the config-dir root; this one pins the branch the override selects.
   const { handlers } = mounted()
   const OVER = '/tmp/h/over'
-  const message = { last_assistant_message: 'waiting: operator — blocks: the report' }
+  const message = { last_assistant_message: ASKED + '\nwaiting: operator — blocks: the report' }
   const watched = fakeDollar({
     env: { ORCHESTRATOR_STATE_DIR: OVER },
     ciLogs: { 'here-pr160.log': { mtimeMs: 1728000000000, text: 'build\tpending\t9\tu\n' }, 'here-pr160.log.session': { mtimeMs: 1728000000000, text: 'a1b2c3\n' } },
@@ -1054,7 +1102,7 @@ test("a declared block is honoured before « stand it down »: the idle agent ma
     listing: IDLE_ROW, chain: IDLE_OWNED,
     agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: '{"number":160,"state":"OPEN"}',
   })
-  const outcome = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'A or B?\nwaiting: operator — blocks: the choice of A or B' }))
+  const outcome = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: ASKED + '\nwaiting: operator — blocks: the choice of A or B' }))
   expect(outcome.answer).toBe(outcome.passed)
 })
 
@@ -1170,7 +1218,7 @@ test('a ci-watch this session started, still running, will wake it; a stranger\'
 
 test('a failing set is told once per watch, whatever the log\'s mtime does while the watch appends', async () => {
   const { handlers } = mounted()
-  const message = { last_assistant_message: 'waiting: operator — blocks: the report' }
+  const message = { last_assistant_message: ASKED + '\nwaiting: operator — blocks: the report' }
   const at = (mtimeMs: number, text: string) => ({ 'here-pr160.log': { mtimeMs, text }, 'here-pr160.log.session': { mtimeMs, text: 'a1b2c3\n' } })
   const first = fakeDollar({ ciLogs: at(1, 'build\tpending\t9\tu\ntest\tfail\t30\tu\n') })
   expect(((await stop(handlers['classic.Stop'], first.dollar, stopEvent(message))).answer as any).block).toContain('1 failing (test)')
@@ -1285,7 +1333,7 @@ test('the same goals, all met, pass once the operator was shown the table', asyn
 test('a declared block passes with goals open, and the goals are never read', async () => {
   const { handlers } = mounted()
   const fx = fakeDollar({ ...NO_ROWS, goals: OPEN_GOALS })
-  const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'waiting: operator — blocks: G3: plan it or rule it out' }))
+  const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: ASKED + '\nwaiting: operator — blocks: G3: plan it or rule it out' }))
   expect(out.answer).toBe(out.passed)
   expect(fx.ran.some(l => l.startsWith('python3'))).toBe(false)
 })

@@ -115,7 +115,7 @@ These bind where no reference is loaded — a message sent, a report read, a rep
 
 **On your side**: once re-instantiated, your first message re-announces your new address to every running agent before you read anything else, and your succession brief carries both addresses.
 
-**Control.** The module reports an agent's question, blocker, delivery and gate crossing; act on each. An agent reporting « waiting » has stalled: check its working tree yourself. Read HOW an agent works, not only what it reports: a report or plan naming real load on a shared machine (CPU burners, N parallel browsers or suites, a stress tool) is stopped at once, its processes killed, and the work redone under emulated throttling. An agent's question for the operator, a scope beyond its brief included: relay it verbatim with its context (routed as « The operator decides; the orchestrator runs » says) and send his answer back verbatim, never your own.
+**Control.** The module reports an agent's question, blocker, delivery and gate crossing; act on each. An agent reporting « waiting » has stalled: check its working tree yourself. Read HOW an agent works, not only what it reports: a report or plan naming real load on a shared machine (CPU burners, N parallel browsers or suites, a stress tool) is stopped at once, its processes killed, and the work redone under emulated throttling. An agent's question for the operator, a scope beyond its brief included: relay it verbatim with its context and send his answer back verbatim, never your own.
 
 - **No date or hour is written from memory.** A state or journal line carries no hour; a brief or a memory is named by its subject only, never by a date; a dispatch record's `opened` is `dispatch-record.sh`'s to write, never typed. A time a message or a record must carry is a command's output (`date -u +%FT%TZ`) or the event's own git or `gh` timestamp, pasted, never typed — never « ~14:30 » or a date recalled: typed from memory, it has been wrong by hours and by days.
 - **Wait on CI in one background watch per pull request, never in the foreground.** When a pull request you own is opened or its head moves, read `references/review.md`, « Checks, in one background watch », and start the watch: one per pull request, never two, in the background, and nobody waits for MERGED.
@@ -137,7 +137,7 @@ When you hand over to a successor: once it runs, send each agent ONE message giv
 
 They hold at every step of the loop, whatever a reference adds.
 
-**The gate is the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000, 533,000 or 400,000; 160,000 on 200,000.** The module enforces it and reports an agent past it (« Where the rest lives »); others point here. The host compacts at 500,000 (operator); agent 240,000; `--gate-tokens` sets a session's own.
+**The gate is the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000, 533,000 or 400,000; 160,000 on 200,000.** The module enforces it and reports an agent past it; others point here. The host compacts at 500,000 (operator); agent 240,000; `--gate-tokens` sets a session's own.
 
 The fill is the module's measurement, never an estimate — `/orchestrator-status` answers it. Two gates on it:
 
@@ -179,6 +179,7 @@ owning it, as a request with its measurement; its protocol decides if he hears o
 **While a coordinator runs, every question for the operator goes to it** — his order —
 and the hooks module carries it: ask here, in the shape of `/orchestrator-decide` step 2, and
 end the turn on `waiting: operator — blocks: <what it blocks>`; never send it yourself.
+One per turn, the next after his answer, `orchestrator:decide` opened before the first.
 Only such a question ends on that line; a report asking nothing, on its own line.
 Its fields, in his language: `**Question i of N**`, `_Subject_ :`, `_Context_ :`,
 `_Question_ :`, `_Choices_ :` then one `- **A** : <text>` each, `_Recommendation_ : A — <why>`;

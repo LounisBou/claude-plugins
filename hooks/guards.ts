@@ -22,6 +22,7 @@ import {
 import { tripGate, parseMeasure, measureFilePath } from './gauge-core.ts'
 import { takeDrift } from './gauge.ts'
 import { isEnding } from './naming.ts'
+import { oneQuestionRefusal, operatorWaitRefusal } from './one-question.ts'
 import { detectForces } from './tokenizer.ts'
 import {
   refuse, withDeadline, isDegradedPass, type DegradedPass,
@@ -471,7 +472,22 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         await logLine($, `stop gate: the session's name cannot be read on ${tty}`)
         return next(e)
       }
-      if (roleOf(name) !== 'orchestrator') return next(e)
+      const role = roleOf(name)
+      if (role !== 'orchestrator' && role !== 'coordinator') return next(e)
+      // One question per turn, for the orchestrator and the coordinator alike: read off the
+      // message alone, before any read the checks pay.
+      const crowded = oneQuestionRefusal(String(e.last_assistant_message ?? ''))
+      if (crowded !== null) {
+        await logLine($, 'stop gate: several questions in one turn')
+        return refuse(crowded)
+      }
+      if (role === 'coordinator') return next(e)
+      // An orchestrator ending on a wait for the operator puts him a question: read off the message too.
+      const unasked = operatorWaitRefusal(String(e.last_assistant_message ?? ''))
+      if (unasked !== null) {
+        await logLine($, 'stop gate: an operator wait with no question')
+        return refuse(unasked)
+      }
       const state = await stateDir($)
       const root = $.plugin.root   // never $.env: the module's environment has no CLAUDE_PLUGIN_ROOT
       let swept = false

@@ -218,7 +218,7 @@ and present the next one in full in the same message; a superseded one makes <id
    repository, current phase or pull requests, where it stands — so that he recalls the frame
    before its questions. It is the sender's own account, sent with its questions; missing,
    you ask the sender for it before presenting the group, and you never invent it.
-5. **One question per message**, in the shape of `/orchestrator-decide` step 2, its first
+5. **One question per message**, in the shape of `/orchestrator-decide` step 2 (the next one only after his answer, the decide skill opened before the first question of a session is presented), its first
    line naming who asks: « Question i of N — from `<sender's exact name>` », then the sender's
    question and context verbatim, its choices and its recommendation if it gave them. Re-verify
    the item on its artifact immediately before
