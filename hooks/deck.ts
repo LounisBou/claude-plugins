@@ -13,7 +13,7 @@ import type { RoundEntry } from './round.ts'
 import type { SessionRow } from './supervision.ts'
 import { periodStarts, USAGE_TIMEZONE } from './usage.ts'
 
-export const DECK_VERSION = 2
+export const DECK_VERSION = 3
 
 // The file's name under the state directory.
 export const DECK_FILE = 'deck.json'
@@ -34,6 +34,7 @@ export type DeckSession = {
   key: string                   // the store key, stable for the session's life
   name: string
   tty: string | null            // null for a remote session: no tab here to focus
+  tmux: string | null           // `<session>:@N.%N`, the window of a session in a home session: null elsewhere
   repo: string | null
   context: DeckContext
   waiting: DeckWait | null
@@ -86,6 +87,7 @@ export function deckOf(input: DeckInput): Deck {
     key,
     name: row.name ?? 'unnamed',
     tty: row.machine ? null : row.tty ?? null,
+    tmux: row.machine ? null : row.tmux ?? null,
     repo: row.repo ?? null,
     context: contextOf(row, input.gate),
     waiting: row.waiting === 'operator' || row.waiting === 'done'
@@ -106,7 +108,7 @@ export function deckOf(input: DeckInput): Deck {
   for (const row of input.remote) {
     if (localNames.has(row.name)) continue
     orchestrators.push({
-      key: `remote/${row.name}`, name: row.name, tty: null, repo: row.repo, context: contextOf(row, input.gate),
+      key: `remote/${row.name}`, name: row.name, tty: null, tmux: null, repo: row.repo, context: contextOf(row, input.gate),
       waiting: row.waiting ? { kind: row.waiting, blocks: row.blocks, since: row.waiting_since, urgent: false } : null,
       updated_at: row.updated_at, usage: null, machine: row.machine, prs: [...row.prs], agents: [],
     })

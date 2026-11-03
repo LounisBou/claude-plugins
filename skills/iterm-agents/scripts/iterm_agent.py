@@ -3050,6 +3050,65 @@ def removed_tools(title, keep=(), drop=()):
     return names
 
 
+_plugin_dir_said = []
+
+
+def caller_plugin_launch():
+    """`(plugin_dirs, enabled_plugins)` of the calling host's own launch: each `--plugin-dir`
+    it was started with, and the `enabledPlugins` entries of its `--settings`. A session run
+    on a plugin directory is tested on it, and an agent it spawns would otherwise load the
+    installed plugin, whose hooks write none of what the tested one writes. Empty for a caller
+    that is not a registered host session or has no plugin directory, which leaves the launch
+    as it always was. A launch that cannot be read is said once on stderr and also leaves it
+    so: a spawn is never refused for it."""
+    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
+    pid, record = session_record(sid) if sid else (None, None)
+    if not pid:
+        return [], {}
+    words = host_argv(pid)
+    if not words:
+        if not _plugin_dir_said:
+            _plugin_dir_said.append(True)
+            print("spawn: the launch of process %s cannot be read, so the agent does not "
+                  "inherit its plugin directory" % pid, file=sys.stderr)
+        return [], {}
+    args = words[1:]
+    cwd = record.get("cwd") or ""
+    dirs, settings_words = [], []
+    i = 0
+    while i < len(args):
+        option, eq, value = args[i].partition("=")
+        i += 1
+        if option not in ("--plugin-dir", "--settings"):
+            continue
+        if not eq:
+            if i >= len(args):
+                break
+            value = args[i]
+            i += 1
+        if option == "--settings":
+            settings_words.append(value)
+        elif value:
+            dirs.append(value if os.path.isabs(value) or not cwd
+                        else os.path.normpath(os.path.join(cwd, value)))
+    if not dirs:
+        return [], {}
+    enabled = {}
+    for word in settings_words:
+        try:
+            parsed = json.loads(word)
+        except ValueError:
+            try:
+                with open(word) as fh:
+                    parsed = json.load(fh)
+            except (OSError, ValueError):
+                continue
+        plugins = parsed.get("enabledPlugins") if isinstance(parsed, dict) else None
+        if isinstance(plugins, dict):
+            enabled.update(plugins)
+    return dirs, enabled
+
+
 def host_cuts(role):
     """The settings that stop the host adding to a session what nobody reads there. An agent
     is read by its orchestrator alone, so it loses the away recap and the silent-turn
@@ -3066,7 +3125,8 @@ def host_cuts(role):
 
 def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_file="",
                   account_connectors=False, gate_tokens=0, effort="", keep_tools=(),
-                  drop_tools=(), keep_synced_skills=False, session=()):
+                  drop_tools=(), keep_synced_skills=False, session=(), plugin_dirs=(),
+                  caller_plugins=None):
     """The command iTerm2 runs in the new tab. It is HANDED to the app, never typed, so
     its length and its bytes stop being a hazard. No model argument at all when neither a
     tier nor an explicit identifier says which: the host's own default is the right
@@ -3098,6 +3158,9 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
     # Right after the model, which it qualifies; none typed leaves the host's own default.
     if effort:
         cli += ["--effort", shq(effort)]
+    # The plugin directories the caller runs on, ahead of the many-valued options below.
+    for plugin_dir in plugin_dirs:
+        cli += ["--plugin-dir", shq(plugin_dir)]
     # The lean tool set (§65). `--disallowedTools` takes several values like `--mcp-config`,
     # so whatever follows it is read as another tool name: it goes before another option and
     # never last, ahead of the strict flag and the server file so that pair stays closed by
@@ -3139,6 +3202,10 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
         settings["enableAllProjectMcpServers"] = True
     if not keep_synced_skills:
         settings[SYNCED_SKILLS_SETTING] = False
+    # The caller's enabledPlugins, so the tested plugin stays the one that loads. Under the
+    # launcher's own entries for the same plugin, and no other key of the caller's settings.
+    if plugin_dirs and caller_plugins:
+        settings["enabledPlugins"] = dict(caller_plugins, **settings.get("enabledPlugins", {}))
     settings.update(host_cuts(title_role(title)))
     cli += ["--settings", shq(json.dumps(settings, separators=(",", ":")))]
     # The prompt goes BEFORE the options that follow it, and --name is the LAST of them or
@@ -3682,10 +3749,11 @@ def cmd_spawn(argv):
             session_words = ("--session-id", new_id)
         socket = home_socket(session_words[1]) if not session_words[1].startswith("<") \
             else HOME_SOCKET_PREFIX + "<new>"
+    plugin_dirs, caller_plugins = caller_plugin_launch()
     launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control,
                            mcp_file, args.account_connectors, gate_tokens, effort,
                            args.keep_tool, args.drop_tool, args.keep_synced_skills,
-                           session_words)
+                           session_words, plugin_dirs, caller_plugins)
 
     if DRY_RUN:
         print("launch=%s" % launch)

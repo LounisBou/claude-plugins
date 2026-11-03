@@ -68,6 +68,22 @@ test('the deck names its version, its machine and its coordinator', () => {
   expect(deck.coordinator?.tty).toBe('/dev/ttys001')
 })
 
+test("a session names its window in a home session, null outside one", () => {
+  const deck = deckOf(input({
+    local: {
+      ...input().local,
+      'sessions/s-agent': row({ role: 'agent', name: 'Agent : one', tty: '/dev/ttys005', tmux: 'home:@3.%7' }),
+    },
+  }))
+  expect(deck.orchestrators[0].agents[0].tmux).toBe('home:@3.%7')
+  expect(deck.orchestrators[0].tmux).toBeNull()
+  expect(deck.coordinator?.tmux).toBeNull()
+  expect(deck.unattached_agents[0].tmux).toBeNull()
+  // A remote session has no window here, whatever its row says.
+  expect(deckOf(input()).orchestrators.find(o => o.machine)?.tmux).toBeNull()
+  expect(JSON.parse(deckText(deck)).orchestrators[0].agents[0].tmux).toBe('home:@3.%7')
+})
+
 test('no coordinator row is a null coordinator', () => {
   const local = { ...input().local }
   delete local['sessions/s-coord']
@@ -141,9 +157,9 @@ function usage(input: number, cost: number | null, at = AT): DeckUsage {
   return { day: period('2026-10-27T23:00:00.000Z'), week: period('2026-10-25T23:00:00.000Z'), at }
 }
 
-test('the deck is version 2 and names the basis of its costs', () => {
+test('the deck is version 3 and names the basis of its costs', () => {
   const deck = deckOf(input())
-  expect(DECK_VERSION).toBe(2)
+  expect(DECK_VERSION).toBe(3)
   expect(deck.usage_basis).toEqual({ currency: 'USD', prices: 'api-list-equivalent', timezone: 'Europe/Paris' })
 })
 
@@ -383,7 +399,7 @@ test('the read books the session\'s own transcript and its subagents\', into its
   await refreshUsage(fx.dollar)
   expect(ownRow().usage.day.tokens).toEqual({ input: 1100, output: 0, cache_read: 0, cache_write: 0 })
   const deck = JSON.parse(fx.files.get(DECK)!)
-  expect(deck.version).toBe(2)
+  expect(deck.version).toBe(3)
   expect(mine().usage.day.tokens).toEqual({ input: 1100, output: 0, cache_read: 0, cache_write: 0 })
   expect(Math.abs(mine().usage.week.cost_usd - 1100 * 4 / 1e6) < 1e-12).toBe(true)
   expect(deck.orchestrators[0].usage).toBeNull()

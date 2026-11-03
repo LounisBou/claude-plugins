@@ -6109,6 +6109,32 @@ if command -v tmux >/dev/null 2>&1; then
   check "a server started on it marks its session, read the way the launcher reads it, and keeps its keys" \
     "1|always|csi-u|off|1" \
     "$(tmux -L "$CONFSRV" show -qv -t "$confpane" @orchestrator-home)|$(tmux -L "$CONFSRV" show -gv extended-keys)|$(tmux -L "$CONFSRV" show -gv extended-keys-format)|$(tmux -L "$CONFSRV" show -wgv automatic-rename)|$(tmux -L "$CONFSRV" list-keys -T prefix C-b | grep -c send-prefix)"
+  # The tab bar: two windows carry a state, the third none; the current one is bracketed. Read
+  # back through the status line's own expansion, the server being detached and drawing nothing.
+  tmux -L "$CONFSRV" new-window -d -t home: -n second 'sleep 20' 2>/dev/null
+  tmux -L "$CONFSRV" new-window -d -t home: -n third 'sleep 20' 2>/dev/null
+  tmux -L "$CONFSRV" set -w -t home:0 @state busy 2>/dev/null
+  tmux -L "$CONFSRV" set -w -t home:2 @state asks 2>/dev/null
+  check "the tab bar shows each window's name and state icon in a padded block, the current one in bold, without index or session name" \
+    " sleep ● | second | third ✋ " \
+    "$(tmux -L "$CONFSRV" display -p -t home:0 '#{W:#{E:window-status-format}|,#{E:window-status-current-format}|}' 2>/dev/null | sed 's/#\[[^]]*\]//g; s/|$//' | tr -d '\n')"
+  # Each of the five states renders its own icon after the name, in the inactive block and in
+  # the current one; a state the module never writes renders none.
+  stateicons=""
+  for st in busy idle asks done gate bogus; do
+    tmux -L "$CONFSRV" set -w -t home:1 @state "$st" 2>/dev/null
+    stateicons="$stateicons$(tmux -L "$CONFSRV" display -p -t home:1 '#{E:window-status-format}|#{E:window-status-current-format}' 2>/dev/null | sed 's/#\[[^]]*\]//g; s/second//g; s/  */ /g')/"
+  done
+  check "each state renders its icon in both blocks, an unknown state none" \
+    " ● | ● / ○ | ○ / ✋ | ✋ / ✓ | ✓ / ⚠ | ⚠ / | /" "$stateicons"
+  check "the status line shows no session name" "" "$(tmux -L "$CONFSRV" display -p -t home:0 '#{E:status-left}' 2>/dev/null)"
+  check "the status line shows nothing on its right: no pane title, no clock" "" "$(tmux -L "$CONFSRV" display -p -t home:0 '#{E:status-right}' 2>/dev/null)"
+  check "the current window's format is bold" "1" \
+    "$(tmux -L "$CONFSRV" show -gv window-status-current-format | grep -c 'bold')"
+  check "the windows are set apart by a separator that is not empty" "yes" \
+    "$([ -n "$(tmux -L "$CONFSRV" show -gv window-status-separator)" ] && echo yes || echo no)"
+  check "the bar, inactive, current and state colours are the chosen ones" "1|1|1|1" \
+    "$(tmux -L "$CONFSRV" show -gv status-style | grep -ci 'fg=#ffffff.*bg=#1c1c1c\|bg=#1c1c1c.*fg=#ffffff')|$(tmux -L "$CONFSRV" show -gv window-status-format | grep -ci 'fg=#e4e4e4.*bg=#303030\|bg=#303030.*fg=#e4e4e4')|$(tmux -L "$CONFSRV" show -gv window-status-current-format | grep -ci 'fg=#000000.*bg=#ffd75f\|bg=#ffd75f.*fg=#000000')|$(tmux -L "$CONFSRV" show -gv window-status-format | grep -ci 'fg=#87d7ff')"
   tmux -L "$CONFSRV" kill-server 2>/dev/null
 else
   echo "  skip the conf is not loaded: no tmux"
@@ -6165,6 +6191,26 @@ check "window 0 waits for the old process, runs the resume on the launch's model
   "cd $WORK && i=0 && while kill -0 $$ 2>/dev/null; do if [ \$i -ge 600 ]; then echo 'the session did not end in its old place: it goes on there'; sleep 10; exit 1; fi; sleep 0.2; i=\$((i+1)); done; pane=\$(tty); $ROOT/skills/iterm-agents/scripts/iterm-agent.sh home-release --tty /dev/ttys900 --session-id '<old-tab-session-id>' --pane-tty \"\$pane\" --resumed $HSID >> $WORK/homestate/home-release.log 2>&1 & watcher=\$!; $HOSTLINE; rc=\$?; [ \$rc -eq 0 ] && exit 0; kill \$watcher 2>/dev/null; printf 'the resume of session %s failed (exit %s); resume it by hand: %s\\n' $HSID \"\$rc\" $BYHAND; exec \"\${SHELL:-/bin/sh}\" -l" \
   "$(sfield "$out" home_launch)"
 check "and the dry run touched no tmux" "" "$(hcalls)"
+
+# An agent spawned by a caller that runs on a plugin directory runs on the same one: the
+# caller's --plugin-dir options and the enabledPlugins entries of its --settings travel into
+# the agent's launch, and nothing else of those settings.
+PLUGARGV='["/opt/x/host","--plugin-dir","/p/pin","--plugin-dir","/p/two","--settings","{\"enabledPlugins\":{\"orchestrator@lounisbou\":false},\"env\":{\"K\":\"v\"}}","--name","Orch : f"]'
+plugspawn() { # the caller's words in $1, then the spawn's own options
+  local words="$1"; shift
+  env CLAUDE_CONFIG_DIR="$HCONF" CLAUDE_CODE_SESSION_ID="$HSID" ORCHESTRATOR_HOST_ARGV="$words" ORCHESTRATOR_DRY_RUN=1 \
+    ORCHESTRATOR_STATE_DIR="$WORK/homestate" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_LOGIN_SHELL=/bin/sh \
+    ORCHESTRATOR_HOST_CLI=/opt/x/host bash "$AGENT" spawn --dir "$WORK" --title "Agent : plug" --prompt p "$@"; }
+out=$(plugspawn "$PLUGARGV" 2>&1)
+check "an agent's launch carries the caller's plugin directories and its enabledPlugins entries, no other key of its settings" \
+  "1|1|1|0" \
+  "$(printf '%s' "$out" | grep -c -- "--plugin-dir /p/pin --plugin-dir /p/two ")|$(printf '%s' "$out" | grep -c '"enabledPlugins":{"orchestrator@lounisbou":false}')|$(printf '%s' "$out" | sed -n 's/^launch=//p' | grep -c -- '--settings')|$(printf '%s' "$out" | grep -c '"K":"v"')"
+out=$(plugspawn '["/opt/x/host","--settings","{\"enabledPlugins\":{\"x@y\":false}}","--name","Orch : f"]' 2>&1)
+check "a caller without a plugin directory gets the launch it always got" "0|0" \
+  "$(printf '%s' "$out" | grep -c -- '--plugin-dir')|$(printf '%s' "$out" | grep -c 'enabledPlugins')"
+out2=$(plugspawn '[]' 2>/dev/null; echo "exit=$?")
+check "a caller whose launch cannot be read gets the launch it always got, said once on stderr, and is never refused" "1|1|0" \
+  "$(printf '%s' "$out2" | grep -c '^exit=0$')|$(plugspawn '[]' 2>&1 >/dev/null | grep -c 'cannot be read')|$(printf '%s' "$out2" | grep -c -- '--plugin-dir')"
 
 # The move itself, over the recorder and a terminal standing in for iTerm2.
 cat > "$WORK/home_probe.py" <<'PYEOF'

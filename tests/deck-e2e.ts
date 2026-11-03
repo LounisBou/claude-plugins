@@ -96,7 +96,7 @@ const period = (p: any) => p && iso(p.from) && ['input', 'output', 'cache_read',
   && Object.keys(p.tokens).length === 4 && (p.cost_usd === null || (typeof p.cost_usd === 'number' && p.cost_usd >= 0))
 const usage = (u: any) => u && period(u.day) && period(u.week) && iso(u.at)
 
-if (deck.version === 2) {
+if (deck.version >= 2) {
   const sessions = [
     ...(deck.coordinator ? [deck.coordinator] : []),
     ...deck.orchestrators.flatMap((o: any) => [o, ...o.agents]),

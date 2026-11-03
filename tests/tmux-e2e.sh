@@ -24,7 +24,8 @@
 # ORCHESTRATOR_TIER_LIGHT, and each is asked to reply with a fixed word.
 #
 # The hosts run with the user's settings left out (`--setting-sources project`, through a
-# wrapper the launcher is pointed at) and no MCP server. Everything the launcher writes goes to
+# wrapper the launcher is pointed at) and no MCP server, and with this checkout loaded as their
+# plugin: the module it carries is what writes each window's `@state`. Everything the launcher writes goes to
 # the sandbox: its state (ORCHESTRATOR_STATE_DIR, the chain and the launch files among it) and
 # the module's own files (ORCHESTRATOR_MODULE_DIR). What the host itself keeps of a session it
 # ran is its own bookkeeping: the transcript directory of the sandbox's work path is removed at
@@ -126,7 +127,7 @@ while [ \$n -gt 0 ]; do
   set -- "\$@" "\$a"
 done
 [ \$patched -eq 1 ] || set -- "\$@" --settings '{"remoteControlAtStartup":false}'
-exec "\$real" --setting-sources project "\$@"
+exec "\$real" --setting-sources project --plugin-dir "$ROOT" "\$@"
 WSH
 chmod +x "$WRAPPER"
 # The launcher's own trust record names the work directory; the host trusts it through BASE.
@@ -271,6 +272,30 @@ audit_rc
 check "the first agent replied within 90s" "1" "$ONE_REPLIED"
 launcher 20 screen --tty "$ONE" --lines 60
 check "screen reads the first agent's reply" "0|1" "$(rc)|$(out | grep -ciE "$(REPLY_RE E2E-ONE-READY)")"
+
+echo "== the state in the tab bar =="
+# The module writes @state on the agent's own window: busy while a turn runs, idle once it has
+# ended. Read back from the server, as the status line reads it; a second turn is typed into the
+# first agent's window so that the busy state is caught on its way.
+state_of() { tm display -p -t "$1" '#{@state}' 2>/dev/null; }
+state_is() { # <pane> <state> <seconds>, polled every tenth of a second
+  local i=0
+  while [ $i -lt $(($3 * 10)) ]; do
+    [ "$(state_of "$1")" = "$2" ] && return 0
+    sleep 0.1; i=$((i + 1))
+  done
+  return 1
+}
+if state_is "$ONE_PANE" idle 30; then FIRST_IDLE=idle; else FIRST_IDLE=$(state_of "$ONE_PANE"); fi
+check "the first turn left the agent's window idle" "idle" "$FIRST_IDLE"
+tm send-keys -t "$ONE_PANE" -l "$(prompt E2E-ONE-AGAIN)"
+tm send-keys -t "$ONE_PANE" Enter
+if state_is "$ONE_PANE" busy 30; then SECOND_BUSY=busy; else SECOND_BUSY=$(state_of "$ONE_PANE"); fi
+check "the window reads busy during the next turn" "busy" "$SECOND_BUSY"
+if wait_reply "$ONE_PANE" E2E-ONE-AGAIN 90; then AGAIN_REPLIED=1; else AGAIN_REPLIED=0; fi
+check "the agent answered the second turn" "1" "$AGAIN_REPLIED"
+if state_is "$ONE_PANE" idle 30; then SECOND_IDLE=idle; else SECOND_IDLE=$(state_of "$ONE_PANE"); fi
+check "the window reads idle after it" "idle" "$SECOND_IDLE"
 
 echo "== close =="
 launcher 20 close --tty "$ONE" --expect-title "Agent : e2e two"
