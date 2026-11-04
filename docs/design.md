@@ -123,6 +123,7 @@ hooks/stop-gate.ts                   the stop gate's checks, pure: the wake deci
 hooks/tab-state.ts                   the state a window shows in its home session's tab bar, pure: the target read from $TMUX, the argv of the mark read and of the `@state` write, the state a turn's end and a measure leave
 hooks/one-question.ts                the stop gate's question rules, pure: refuses a message with two numbered question blocks or more, and an operator wait that asks no question, both counting the blocks with the round module's parser outside code fences
 hooks/unanswered-question.ts         the stop gate's rule on a question still on the operator, pure: an orchestrator's open operator entry in the round, or a wait relayed to a coordinator elsewhere, refuses the turn that does not show the question in full; his answer settles it, typed in the tab included, which withdraws it at once (the operator's ruling of 2026-11-03: every question in the orchestrator's own chat too, until he answers it)
+hooks/answered.ts                    the orchestrator's tool for an answer that reached it by a message: marks its open question answered, by message, with the message's author
 hooks/module-log.ts                  the module's log line, pure: the argv each domain hands its own process run, the log path and its cap
 hooks/log-append.sh                  appends one line to the module's log, shared by every session, and rotates it to one .1 generation past the cap
 hooks/tests/scaffold.test.ts         proves the module chain loads, run by the host's plugin test

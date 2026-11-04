@@ -2412,27 +2412,41 @@ export function paneAnswerText(entry: RoundEntry, answer: string, at: string): s
   return `[module] The operator answered from the coordinator's pane at ${at} — ${answer} (question since ${entry.since}, blocks: ${entry.blocks})`
 }
 
+// The orchestrator acted on an answer that reached it by a message (a relay from another session):
+// its open operator entries, or only `only` when named, are marked `answered`, by `message`, with
+// the message's author. Answers the ids still open, for the tool's reply, or null for a session
+// that is no orchestrator.
+export async function answerByMessage($: any, author: string, only: string | null): Promise<string[] | null> {
+  const sessionId = await $.session.id()
+  const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
+  if (roleOf(row?.name ?? (await walkWithinBound($, sessionId)).name ?? null) !== 'orchestrator') return null
+  await tellSettled($, await withdrawStale($, sessionId, null, `answered by a message from ${author}`,
+    entry => entry.kind !== 'operator' || (only !== null && entry.id !== only), { author }))
+  return (await readRound($)).filter(({ entry }) => entry.session === sessionId && entry.kind === 'operator' && entry.status === 'open').map(({ entry }) => entry.id)
+}
+
 // An orchestrator's turn ended on a machine line other than the wait an open entry of its own
 // holds: that entry is no longer what it waits on, so it is withdrawn by the sender, leaves the
 // pane and its count, and its fingerprint is forgotten. A turn with no machine line says nothing
 // of its wait and withdraws nothing. The same withdrawal closes every open entry of a session
 // that is superseded by its new question, that ended, or that handed over (`current` null).
 // `current` is the id of the entry this turn's wait has, kept open; `why` the withdrawal's answer
-// text; `kept` the entries left open besides. An entry the coordinator on this machine was shown
-// is closed instead, its answer « withdrawn: <why> », and returned so the caller tells it once
+// text; `kept` the entries left open besides; `via` set, the answer reached the sender by a message
+// from that author: the entry is `answered`, by `message`, rather than withdrawn. An entry the
+// coordinator on this machine was shown is closed instead, its answer « withdrawn: <why> », and returned so the caller tells it once
 // every write is done. Each withdrawal is one log line; one that cannot be written is one too,
 // and the relay goes on.
-async function withdrawStale($: any, sessionId: string, current: string | null, why: string, kept?: (entry: RoundEntry) => boolean): Promise<Settled[]> {
+async function withdrawStale($: any, sessionId: string, current: string | null, why: string, kept?: (entry: RoundEntry) => boolean, via?: { author: string }): Promise<Settled[]> {
   const settled: Settled[] = []
   for (const { path, entry } of await readRound($)) {
     if (entry.session !== sessionId || entry.status !== 'open' || entry.id === current || kept?.(entry)) continue
     try {
       const closed = await closesItself($, entry.id)
-      const answer: RoundAnswer = { text: closed ? `withdrawn: ${why}` : why, by: 'sender', at: new Date().toISOString() }
+      const answer: RoundAnswer = { text: closed ? `withdrawn: ${why}` : why, by: via ? 'message' : 'sender', at: new Date().toISOString(), ...via }
       // Re-read just before the write: a move to a successor in between is never overwritten.
       const fresh = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
       if (!fresh || fresh.status !== 'open' || fresh.session !== sessionId) continue
-      await writeAtomic($, path, JSON.stringify({ ...fresh, status: closed ? 'closed' : 'withdrawn', answer }) + '\n')
+      await writeAtomic($, path, JSON.stringify({ ...fresh, status: closed ? 'closed' : via ? 'answered' : 'withdrawn', answer }) + '\n')
       await logLine($, `round: withdrawn by the sender: ${entry.id}`)
       await forgetRelayed($, entry)
       if (closed) settled.push({ entry, answer })
