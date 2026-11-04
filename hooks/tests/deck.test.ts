@@ -418,6 +418,15 @@ test('the read books the session\'s own transcript and its subagents\', into its
   expect(deck.usage_totals.day.tokens.input).toBe(1100)
 })
 
+test('the read writes the usage into the row through one rename, no temporary file left', async () => {
+  const { fx, ownRow } = solo('s-u9')
+  fx.files.set(`${PROJECT}/s-u9.jsonl`, said('m1', 100))
+  await refreshUsage(fx.dollar)
+  expect(ownRow().usage.day.tokens.input).toBe(100)
+  expect(fx.renames).toContain(`${STORE}/sessions/s-u9`)
+  expect([...fx.files.keys()].some(k => k.includes('.tmp-'))).toBe(false)
+})
+
 test('a process never opens another session\'s transcript', async () => {
   const { fx, ownRow } = solo('s-u6')
   fx.files.set(`${PROJECT}/s-u6.jsonl`, said('m1', 10))

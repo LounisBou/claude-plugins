@@ -394,6 +394,20 @@ test('status answers the store read through its own fs calls, dropping the stale
   expect(await status.handler(bare.dollar, { command: 'orchestrator:orchestrator-status', args: '' })).toEqual({ text: 'Live sessions: none measured yet.' })
 })
 
+test('status reads no temporary file as a row: a write in flight is no second session', async () => {
+  const { registrations } = mounted()
+  const status = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-status')!
+  const fx = fakeDollar()
+  fx.files.set(`${SESSIONS}/live`, JSON.stringify({ ...row({ name: 'Agent : live' }), pid: '501' }) + '\n')
+  fx.files.set(`${SESSIONS}/live.tmp-1-abcdef`, JSON.stringify({ ...row({ name: 'Agent : in flight' }), pid: '501' }) + '\n')
+  fx.alive = ['501']
+  expect(await status.handler(fx.dollar, { command: 'orchestrator:orchestrator-status', args: '' })).toEqual({ text: [
+    'Live sessions (1), most urgent first:',
+    '  name          role   context  last measured',
+    '  Agent : live  agent      30%  now',
+  ].join('\n') })
+})
+
 test('agents answers the agent rows alone', async () => {
   const { registrations } = mounted()
   const agents = registrations.find(r => r.matcher && (r.matcher as any).command === 'orchestrator:orchestrator-agents')!

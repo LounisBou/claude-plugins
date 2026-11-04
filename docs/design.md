@@ -162,6 +162,7 @@ tests/run-tests.sh
 tests/e2e.sh                         one real round: a tab, a session, a close
 tests/deck-e2e.ts                    the deck built once from this machine's real state, read-only, into a temporary file: one write timed cold and warm, each listed session's own read played in turn, every usage field's type, the totals' sum, the periods' Paris starts and one session's week against routing.py cost checked
 tests/usage-rule.ts                  the deck's usage rule run under node, through the module's own reader in two reads, for the suite to hold it to routing.py cost, and the reader's own answer for one window
+tests/row-rule.ts                    the module's row writer run under node, for the suite to hold the launcher's row_write to the same key, line and temporary file
 tests/pane-e2e.sh                    the coordinator's pane answered from the keyboard in a live host, under tmux
 tests/tmux-e2e.sh                    agents as windows of a home session, spawned, listed, read, closed and rotated by the launcher on live hosts, under tmux
 tests/fixtures/tap-settings.json     a settings.json wired the way the tap installer wired it, for the unwrap

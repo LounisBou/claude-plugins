@@ -299,6 +299,48 @@ test('an absent, empty or unparseable row file is no row', async () => {
   expect(rows['sessions/empty']).toBeUndefined()
 })
 
+// The row is written the way the launcher writes it (iterm_agent.py row_write): a temporary
+// file beside it, then one rename, so a reader never meets a row caught mid-write.
+test('the row is written to a temporary file beside it, then renamed into place', async () => {
+  const { dollar, files, ran } = fakeDollar()
+  await writeSession(dollar, 's', { role: 'agent', name: 'Agent : one' })
+  const moves = ran.filter(line => line.startsWith('mv '))
+  expect(moves.length).toBe(1)
+  expect(new RegExp(`^mv -f ${SESSIONS}/s\\.tmp-\\d+-[0-9a-z]+ ${SESSIONS}/s$`).test(moves[0])).toBe(true)
+  expect(parseSessionRow(files.get(`${SESSIONS}/s`)!)?.name).toBe('Agent : one')
+  expect([...files.keys()].some(k => k.includes('.tmp-'))).toBe(false)
+})
+
+test('a rename that fails leaves the row as it was, and its temporary file removed', async () => {
+  const fx = fakeDollar()
+  await writeSession(fx.dollar, 's', { role: 'agent', name: 'Agent : one' })
+  const before = fx.files.get(`${SESSIONS}/s`)
+  const real = fx.dollar.process.run
+  fx.dollar.process.run = async (argv: readonly string[]) => argv[0] === 'mv' ? { exitCode: 1, stdout: '', stderr: 'refused' } : real(argv)
+  let failed = false
+  try {
+    await writeSession(fx.dollar, 's', { name: 'Agent : two' })
+  } catch {
+    failed = true
+  }
+  expect(failed).toBe(true)
+  expect(fx.files.get(`${SESSIONS}/s`)).toBe(before)
+  expect([...fx.files.keys()].some(k => k.includes('.tmp-'))).toBe(false)
+})
+
+// A temporary file is a write in flight, or one whose rename never came: never a second row,
+// and never removed by a reader — removing a writer's temporary file fails its rename.
+test('a temporary file beside the rows is no row, and the read leaves it in place', async () => {
+  const { dollar, files } = fakeDollar({ alive: ['501'] })
+  await writeSession(dollar, 'live', { role: 'agent', name: 'Agent : live', pid: '501' })
+  files.set(`${SESSIONS}/live.tmp-1-abcdef`, files.get(`${SESSIONS}/live`)!)
+  files.set(`${SESSIONS}/fresh.tmp-2-abcdef`, '')
+  const rows = await readSessions(dollar)
+  expect(Object.keys(rows)).toEqual(['sessions/live'])
+  expect(files.has(`${SESSIONS}/live.tmp-1-abcdef`)).toBe(true)
+  expect(files.has(`${SESSIONS}/fresh.tmp-2-abcdef`)).toBe(true)
+})
+
 // --- the wiring ---------------------------------------------------------------------------
 
 // The composed chain, one list per event: a domain's handler answers after the

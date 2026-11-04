@@ -855,6 +855,173 @@ def module_dir():
             or os.path.join(host_config_dir(), "claude-orchestrator"))
 
 
+# --- the session's row in the hooks module's store -----------------------------------
+#
+# One file per session under the module's store (hooks/supervision.ts, SessionRow). The
+# module's measure writes it while the session's host runs; the launcher writes it only before
+# that host starts or once it is gone (row_write), so the two never write one row at once and
+# no lock is needed. Both write it alike: the same key, the same compact JSON line, a
+# temporary file beside it renamed into place, so no reader meets a row caught mid-write.
+
+# The module's empty row (writeSession), in its key order: what a patch merges into when the
+# session has no row yet.
+ROW_BASE = (("role", None), ("name", None), ("repo", None), ("context_percent", 0),
+            ("context_tokens", 0), ("window", 0), ("model", ""), ("busy", False),
+            ("updated_at", ""))
+ROW_WHEN = ("birth", "end")
+_ROW_KEY_SAFE = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
+_BASE36 = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+
+def row_key(sid):
+    """The row's key in the store, the module's sessionKey: `sessions/<id>`, each character
+    outside A-Za-z0-9._- replaced by an underscore. The module replaces UTF-16 code units, so
+    a character beyond the Basic Multilingual Plane is two underscores here as there: one id,
+    one file, whichever side names it."""
+    return "sessions/" + "".join(
+        c if c in _ROW_KEY_SAFE else ("__" if ord(c) > 0xFFFF else "_") for c in sid)
+
+
+def _row_path(sid):
+    return os.path.join(module_dir(), "store", row_key(sid))
+
+
+def row_read(sid):
+    """The session's row as a dict, or None when it is absent, unreadable, no JSON object, or
+    lacks the string stamp the module judges its age by (parseSessionRow): a row caught
+    mid-write, or truncated by a session's end, is no row."""
+    try:
+        with open(_row_path(sid), encoding="utf-8") as fh:
+            row = json.loads(fh.read())
+    except (OSError, ValueError):
+        return None
+    return row if isinstance(row, dict) and isinstance(row.get("updated_at"), str) else None
+
+
+def _row_json(value):
+    """A value as the module's JSON.stringify spells it: an integral float as an integer (`3`,
+    never `3.0`), a float that is no finite number as null."""
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            return None
+        return int(value) if value.is_integer() and abs(value) < 1e21 else value
+    if isinstance(value, dict):
+        return {k: _row_json(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_row_json(v) for v in value]
+    return value
+
+
+def _row_now():
+    """Now as the module's toISOString writes it: UTC, to the millisecond, `Z`."""
+    ms = int(time.time() * 1000)
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(ms // 1000)) + ".%03dZ" % (ms % 1000)
+
+
+def row_write(sid, patch, when):
+    """Merge `patch` into the session's row and write it as the module does (writeSession):
+    over the row found, else over the module's empty row; stamped with the patch's own
+    `updated_at`, else the write's time; one compact JSON line into a temporary file named as
+    the module names its own (writeAtomic), then renamed into place. True when written.
+
+    `when` is "birth", before the session's host starts, or "end", once it is gone: the
+    launcher never writes a row a running host owns. A row whose pid runs live on its tty
+    (runs_live) is refused, False, and so is a row naming a pid when the process table cannot
+    be read, which proves no death. So is, said on stderr, a row file that holds no row the
+    module parses or whose state cannot be read: only a file known absent, or known empty (the
+    module's end when its removal fails, deleteSession), is written as no row. A write
+    that fails is False, said on stderr, the temporary file it made removed, never one another
+    writer holds under the same name."""
+    if when not in ROW_WHEN:
+        raise ValueError("row_write: when is birth or end, not %r" % (when,))
+    path = _row_path(sid)
+    found = row_read(sid)
+    if found is None:
+        try:
+            unread = os.stat(path).st_size > 0
+        except OSError as exc:
+            unread = not isinstance(exc, FileNotFoundError)
+        if unread:
+            print("row: the row %s could not be read, left as it is" % path, file=sys.stderr)
+            return False
+    pid = str((found or {}).get("pid") or "")
+    if pid and runs_live(process_table(), pid, found.get("tty")):
+        return False
+    row = dict(ROW_BASE if found is None else found)
+    row.update(patch)
+    row["updated_at"] = patch["updated_at"] if patch.get("updated_at") is not None else _row_now()
+    text = json.dumps(_row_json(row), ensure_ascii=False, separators=(",", ":")) + "\n"
+    tmp = "%s.tmp-%d-%s" % (path, int(time.time() * 1000),
+                            "".join(_BASE36[b % 36] for b in os.urandom(6)))
+    made = False
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(tmp, "x", encoding="utf-8") as fh:
+            made = True
+            fh.write(text)
+        os.replace(tmp, path)
+    except (OSError, UnicodeError) as exc:
+        if made:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+        print("row: the row %s could not be written: %s" % (path, exc), file=sys.stderr)
+        return False
+    return True
+
+
+def process_table():
+    """Every process on the machine by pid, each with its state flags and its tty
+    (`{"stat": ..., "tty": ...}`), the module's livePids over one `ps -A -o pid=,stat=,tty=`;
+    None when the listing failed or listed no pid — unknown, never « none alive ». A line
+    carrying the pid alone has no state and no tty.
+
+    ORCHESTRATOR_PS_TABLE names the suite's stand-in for `ps` (ps_rows), one
+    `<tty> [<pid>] <command>` line per process: each line with a pid gives that pid its tty
+    and no state, the others are skipped."""
+    table = {}
+    stand_in = os.environ.get("ORCHESTRATOR_PS_TABLE", "")
+    try:
+        if stand_in:
+            with open(stand_in) as fh:
+                for l in fh:
+                    r = l.split()
+                    if len(r) >= 3 and r[1].isdigit():
+                        table[r[1]] = {"stat": None, "tty": r[0].replace("/dev/", "", 1)}
+            return table or None
+        done = subprocess.run(["ps", "-A", "-o", "pid=,stat=,tty="],
+                              capture_output=True, text=True, timeout=5)
+    except Exception:
+        return None
+    if done.returncode != 0:
+        return None
+    for line in done.stdout.splitlines():
+        parts = line.split()
+        if parts and parts[0].isdigit():
+            table[parts[0]] = {"stat": parts[1] if len(parts) > 1 else None,
+                               "tty": parts[2] if len(parts) > 2 else None}
+    return table or None
+
+
+def runs_live(table, pid, tty=None):
+    """Whether `pid` still runs a session, the module's runsLive: listed in `table`
+    (process_table), neither exiting (an `E` among its flags) nor a zombie (state `Z`), and,
+    when `tty` is given and the table knows the process's tty, on that tty. A table that could
+    not be read (None) proves no death: True, as every reader of the module takes it."""
+    if table is None:
+        return True
+    listed = table.get(str(pid))
+    if listed is None:
+        return False
+    flags = (listed.get("stat") or "").lstrip("?")
+    if flags.startswith("Z") or "E" in flags:
+        return False
+    if not tty or listed.get("tty") is None:
+        return True
+    return listed["tty"] == (tty[5:] if tty.startswith("/dev/") else tty)
+
+
 def recorded_pids(ttys):
     """The host pids the hooks module's store records for sessions on `ttys`, in file order.
 
@@ -870,6 +1037,9 @@ def recorded_pids(ttys):
         return []
     pids = []
     for name in names:
+        # A temporary file is a row write in flight (row_write, the module's writeAtomic).
+        if ".tmp-" in name:
+            continue
         try:
             with open(os.path.join(store, name)) as fh:
                 row = json.loads(fh.read())

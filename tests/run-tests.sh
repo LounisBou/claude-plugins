@@ -5521,6 +5521,151 @@ check "a close whose recorded host is gone from the table names no pid" "1|0|1" 
   "$(printf '%s' "$out" | grep -c '^closed 1 session on /dev/ttys964$')|$(printf '%s' "$out" | grep -c 'lingers')|$(printf '%s' "$out" | grep -c '^exit 0$')"
 check "the pids a close names are the store's rows on its tty, an unreadable row skipped" "56717" \
   "$(printf 'not json' > "$LMOD/store/sessions/torn"; ORCHESTRATOR_MODULE_DIR="$LMOD" ipy "print(','.join(ia.recorded_pids({'/dev/ttys964'})))")"
+# A row write in flight is a temporary file beside the rows (the module's writeAtomic, the
+# launcher's row_write): never a row whose pid a close names.
+check "a temporary file beside the store's rows names no pid to a close" "56717" \
+  "$(printf '%s\n' '{"role":"agent","name":"Agent : late","pid":"56999","tty":"/dev/ttys964","updated_at":"2026-01-01T00:00:00Z"}' > "$LMOD/store/sessions/late.tmp-1-abcdef"; ORCHESTRATOR_MODULE_DIR="$LMOD" ipy "print(','.join(ia.recorded_pids({'/dev/ttys964'})))")"
+rm -f "$LMOD/store/sessions/late.tmp-1-abcdef"
+
+# The store's row, written by the launcher as the hooks module writes it: the same key, the
+# same compact JSON line, the same temporary file renamed into place. tests/row-rule.ts runs
+# the module's own writer (writeSession) under node; each case writes one patch through both,
+# into two module directories, and the two files are compared byte for byte. The patches
+# spell their non-ASCII characters as JSON escapes, the odd id as printf octal escapes.
+RTS="$WORK/row-ts"; RPY="$WORK/row-py"
+rowts() { ORCHESTRATOR_MODULE_DIR="$RTS" node --no-warnings "$ROOT/tests/row-rule.ts" "$@" 2>&1; }
+rowpy() {  # <id> <patch JSON>: row_write's answer, then the temporary file it renamed
+  ROW_ID="$1" ROW_PATCH="$2" ORCHESTRATOR_MODULE_DIR="$RPY" ORCHESTRATOR_PS_TABLE="$WORK/ps-row-none.txt" ipy '
+import json, os
+moved = []
+rename = os.replace
+def spy(src, dst):
+    moved.append(src)
+    rename(src, dst)
+os.replace = spy
+print(ia.row_write(os.environ["ROW_ID"], json.loads(os.environ["ROW_PATCH"]), "birth"))
+print("\n".join(moved))' 2>&1
+}
+# The pid the merge case finds in its row runs nowhere: the stand-in lists another one.
+printf 'ttys002 5151 sh\n' > "$WORK/ps-row-none.txt"
+tmpshape() { case "${1#"$2".tmp-}" in "$1") echo "no temp" ;; *) printf '%s' "${1#"$2".tmp-}" | grep -qE '^[0-9]{13}-[0-9a-z]{1,6}$' && echo ok || echo "bad: $1" ;; esac; }
+GPATCH='{"role":"agent","name":"Agent : \u00e9 \u2713 \ud83d\ude00 \"q\"\t\\ \u0001","pid":"4242","tty":"/dev/ttys001","context_percent":12.5,"context_tokens":3.0,"busy":false,"updated_at":"2026-11-04T10:00:00.000Z"}'
+ts_tmp=$(rowts write s-golden "$GPATCH"); py_out=$(rowpy s-golden "$GPATCH")
+check "the launcher writes a new row byte for byte as the module does: unicode, escapes, an integral float" "True|same" \
+  "$(printf '%s\n' "$py_out" | head -1)|$(cmp -s "$RTS/store/sessions/s-golden" "$RPY/store/sessions/s-golden" && echo same || echo differ)"
+check "both writers write the row to a temporary file named alike, renamed into place, none left" "ok|ok|0" \
+  "$(tmpshape "$ts_tmp" "$RTS/store/sessions/s-golden")|$(tmpshape "$(printf '%s\n' "$py_out" | sed -n 2p)" "$RPY/store/sessions/s-golden")|$(ls "$RTS/store/sessions" "$RPY/store/sessions" | grep -c 'tmp')"
+MPATCH='{"name":"Orch : new","context_percent":41,"updated_at":"2026-11-04T10:05:00.000Z"}'
+rowts write s-golden "$MPATCH" >/dev/null; py_out=$(rowpy s-golden "$MPATCH")
+check "the launcher merges a patch into the row it finds as the module does, every field kept in place" "True|same" \
+  "$(printf '%s\n' "$py_out" | head -1)|$(cmp -s "$RTS/store/sessions/s-golden" "$RPY/store/sessions/s-golden" && echo same || echo differ)"
+ODD=$(printf 'a/\303\251\360\237\230\200 b')
+check "the row's key is the module's for an odd id: each UTF-16 unit outside the safe set is one underscore" \
+  "sessions/a_____b|sessions/a_____b" "$(rowts key "$ODD")|$(ROW_ID="$ODD" ipy "import os; print(ia.row_key(os.environ['ROW_ID']))" 2>&1)"
+rowts write "$ODD" '{"role":"agent","updated_at":"2026-11-04T10:00:00.000Z"}' >/dev/null
+rowpy "$ODD" '{"role":"agent","updated_at":"2026-11-04T10:00:00.000Z"}' >/dev/null
+check "a patch with no stamp is stamped with the write's own time, in the module's form" "same|ok|ok" \
+  "$(cmp -s "$RTS/store/sessions/a_____b" "$RPY/store/sessions/a_____b" && echo same || echo differ)|$(rowts write s-stamp '{"role":"agent"}' >/dev/null; jq -r .updated_at "$RTS/store/sessions/s-stamp" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$' && echo ok)|$(rowpy s-stamp '{"role":"agent"}' >/dev/null; jq -r .updated_at "$RPY/store/sessions/s-stamp" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$' && echo ok)"
+# row_read: the module's row parser, a row without a stamp being no row.
+RRD="$WORK/row-read"; mkdir -p "$RRD/store/sessions"
+printf '%s\n' '{"role":"agent","name":"Agent : read","updated_at":"2026-11-04T10:00:00.000Z"}' > "$RRD/store/sessions/s-ok"
+printf '{"role":"agent","name' > "$RRD/store/sessions/s-torn"
+printf '%s\n' '{"role":"agent"}' > "$RRD/store/sessions/s-nostamp"
+printf '%s\n' '["not", "a row"]' > "$RRD/store/sessions/s-list"
+check "row_read reads a row, and none from an absent, torn, unstamped or non-object file" "Agent : read|None|None|None|None" \
+  "$(ORCHESTRATOR_MODULE_DIR="$RRD" ipy "print('|'.join(str(r and r.get('name')) for r in map(ia.row_read, ('s-ok', 's-absent', 's-torn', 's-nostamp', 's-list'))))" 2>&1)"
+# The launcher writes a row only before its host starts (a birth) or once it is gone (an end):
+# never over a row whose pid runs live, by the module's own rule (runsLive), on the stand-in
+# table. A table that cannot be read proves no death.
+RREF="$WORK/row-refuse"; mkdir -p "$RREF/store/sessions"
+printf '/dev/ttys001 4242 /opt/x/a-host\nttys002 5151 sh\n' > "$WORK/ps-row.txt"
+seedrow() { printf '{"role":"agent","name":"Agent : %s","pid":"%s","tty":"%s","updated_at":"2026-11-04T09:00:00.000Z"}\n' "$1" "$2" "$3" > "$RREF/store/sessions/$1"; }
+seedrow live 4242 /dev/ttys001; seedrow moved 4242 /dev/ttys009; seedrow dead 7777 /dev/ttys001
+rowwrite() { ORCHESTRATOR_MODULE_DIR="$RREF" ORCHESTRATOR_PS_TABLE="${3:-$WORK/ps-row.txt}" ipy "print(ia.row_write('$1', {'name': 'Agent : new'}, '$2'))" 2>&1; }
+check "a birth or an end over a row whose pid runs live is refused, the row left as it was" "False|False|Agent : live" \
+  "$(rowwrite live birth)|$(rowwrite live end)|$(jq -r .name "$RREF/store/sessions/live")"
+check "a row whose pid runs on another tty, or no longer runs, is written over" "True|True|Agent : new|Agent : new" \
+  "$(rowwrite moved birth)|$(rowwrite dead end)|$(jq -r .name "$RREF/store/sessions/moved")|$(jq -r .name "$RREF/store/sessions/dead")"
+printf '{"role":"agent","name":"Agent : nopid","updated_at":"2026-11-04T09:00:00.000Z"}\n' > "$RREF/store/sessions/nopid"
+check "an unreadable table refuses a row that names a pid, and none is read for a row without one" "False|True|True|Agent : live" \
+  "$(rowwrite live birth "$WORK/no-such-table")|$(rowwrite nopid birth "$WORK/no-such-table")|$(rowwrite fresh birth "$WORK/no-such-table")|$(jq -r .name "$RREF/store/sessions/live")"
+check "a write that is neither a birth nor an end is an error, and writes nothing" "ValueError|absent" \
+  "$(ORCHESTRATOR_MODULE_DIR="$RREF" ipy "
+try:
+    ia.row_write('later', {'name': 'x'}, 'later')
+except ValueError:
+    print('ValueError')" 2>&1)|$([ -e "$RREF/store/sessions/later" ] && echo present || echo absent)"
+# A write that fails is False and said, writes no row and leaves no temporary file of its
+# own; a temporary name another writer already holds is that writer's file, left to it.
+RFAIL="$WORK/row-fail"; mkdir -p "$RFAIL/store/sessions"
+printf 'other\n' > "$RFAIL/store/sessions/s-taken.tmp-1000-000000"
+out=$(ORCHESTRATOR_MODULE_DIR="$RFAIL" ORCHESTRATOR_PS_TABLE="$WORK/ps-row.txt" ipy "
+def refuse(src, dst):
+    raise OSError('rename refused')
+replace = ia.os.replace
+ia.os.replace = refuse
+failed = ia.row_write('s-fail', {'name': 'Agent : fail'}, 'birth')
+ia.os.replace = replace
+ia.time.time = lambda: 1.0
+ia.os.urandom = lambda n: bytes(n)
+print('%s|%s' % (failed, ia.row_write('s-taken', {'name': 'Agent : taken'}, 'birth')))" 2>"$WORK/row-fail.err")
+check "a write whose rename fails, or whose temporary name is taken, is False and said, no row and none of its temporary files left" \
+  "False|False|2|0|other" \
+  "$out|$(grep -c '^row: the row .* could not be written: ' "$WORK/row-fail.err")|$(ls "$RFAIL/store/sessions" | grep -cvx 's-taken\.tmp-1000-000000')|$(cat "$RFAIL/store/sessions/s-taken.tmp-1000-000000" 2>/dev/null || echo gone)"
+# A row file that holds no row the module parses proves no death: the launcher leaves it byte
+# for byte, and so a file it cannot even stat. Known absent, or known empty (the module's end
+# when its removal fails, deleteSession), it is written.
+printf '{"role":"agent","name":"Agent : torn' > "$RREF/store/sessions/torn"
+cp "$RREF/store/sessions/torn" "$WORK/row-torn.orig"
+: > "$RREF/store/sessions/emptied"
+ln -s looped "$RREF/store/sessions/looped"
+out=$(rowwrite torn birth; rowwrite torn end; rowwrite looped birth)
+check "a row file that does not parse, or cannot be read, is refused, said, and left as it is; an absent or empty one is written" \
+  "3|3|same|looped|True|True|Agent : new|Agent : new" \
+  "$(printf '%s\n' "$out" | grep -cx False)|$(printf '%s\n' "$out" | grep -c '^row: the row .* could not be read, left as it is$')|$(cmp -s "$RREF/store/sessions/torn" "$WORK/row-torn.orig" && echo same || echo differ)|$(readlink "$RREF/store/sessions/looped")|$(rowwrite emptied birth)|$(rowwrite unborn end)|$(jq -r .name "$RREF/store/sessions/emptied")|$(jq -r .name "$RREF/store/sessions/unborn")"
+# process_table and runs_live: the module's livePids and runsLive, ported. The table is the
+# machine's listing (ps -A -o pid=,stat=,tty=), or the stand-in, whose lines carry no state.
+check "process_table reads one listing of every process with its state and tty, and runs_live judges it as runsLive" \
+  "['ps', '-A', '-o', 'pid=,stat=,tty=']|True|False|False|False|False|False|False|True|False|True|True|True" \
+  "$(ipy "
+import os
+os.environ.pop('ORCHESTRATOR_PS_TABLE', None)
+GHOST = '    1 Ss   ??\n  501 Ss+  ttys001\n56717 ?Es  ??\n  602 Z+   ttys002\n  603 Ss+  ??\n  604 Ss+  ttys020\n  605 S    ??\n  606 UE   ttys006\n'
+class Done:
+    def __init__(self, code, out):
+        self.returncode, self.stdout = code, out
+asked = []
+def listing(argv, **kw):
+    asked.append(argv)
+    return Done(0, listing.out)
+listing.out = GHOST
+ia.subprocess.run = listing
+t = ia.process_table()
+r = [ia.runs_live(t, '501', '/dev/ttys001'), ia.runs_live(t, '56717', '/dev/ttys014'), ia.runs_live(t, '56717', None),
+     ia.runs_live(t, '602', '/dev/ttys002'), ia.runs_live(t, '606', '/dev/ttys006'), ia.runs_live(t, '603', '/dev/ttys003'),
+     ia.runs_live(t, '604', '/dev/ttys014'), ia.runs_live(t, '605', None), ia.runs_live(t, '9999', None), ia.runs_live(t, 501, 'ttys001')]
+listing.out = '  1\n  501\n'
+r.append(ia.runs_live(ia.process_table(), '501', '/dev/ttys001'))
+r.append(ia.runs_live(None, '9999', '/dev/ttys001'))
+print('|'.join([str(asked[0])] + [str(x) for x in r]))" 2>&1)"
+check "a listing that fails, exits non-zero or lists nothing is no table" "None|None|None" \
+  "$(ipy "
+import os
+os.environ.pop('ORCHESTRATOR_PS_TABLE', None)
+class Done:
+    def __init__(self, code, out):
+        self.returncode, self.stdout = code, out
+def hung(argv, **kw):
+    raise OSError('timed out')
+r = []
+for run in (hung, lambda argv, **kw: Done(1, ''), lambda argv, **kw: Done(0, '')):
+    ia.subprocess.run = run
+    r.append(str(ia.process_table()))
+print('|'.join(r))" 2>&1)"
+printf 'ttys003 shell-without-pid\n' > "$WORK/ps-row-nopid.txt"
+check "the stand-in table gives each pid its tty and no state; an unreadable one, or one with no pid, is no table" \
+  "{'4242': {'stat': None, 'tty': 'ttys001'}, '5151': {'stat': None, 'tty': 'ttys002'}}|None|None" \
+  "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-row.txt" ipy "print(ia.process_table())" 2>&1)|$(ORCHESTRATOR_PS_TABLE="$WORK/no-such-table" ipy "print(ia.process_table())" 2>&1)|$(ORCHESTRATOR_PS_TABLE="$WORK/ps-row-nopid.txt" ipy "print(ia.process_table())" 2>&1)"
 # A table that could not be read is not a table without the pid: a hung or failing `ps` over a
 # live host must never be reported as « gone », and nothing is signalled on an identity that
 # could not be checked.
@@ -8248,6 +8393,11 @@ check "facts exits 1 on a collision" "exit 1" "$(cfacts_status facts)"
 check "facts shows a live orchestrator waiting on the operator, and no dead one, cleared wait or broken file" \
   "waiting Orch : alpha | operator since 2026-10-14T09:45:16.000Z | blocks: phase 3" \
   "$(printf '%s\n' "$FACTS" | grep '^waiting ')"
+# A wait write in flight is a temporary file beside the waits (the module's writeWait renames
+# it into place, and leaves it behind when its rename and its removal both fail): no second wait.
+cp "$CSTORE/s-alpha" "$CSTORE/s-alpha.tmp-1-abcdef"
+check "facts reads no temporary file beside the waits as a wait" "1" "$(cfacts facts 2>/dev/null | grep -c '^waiting ')"
+rm -f "$CSTORE/s-alpha.tmp-1-abcdef"
 
 check "owners traces each open pull request to the orchestrator named in its agent's brief" \
   "pr forge.example/o/app#7 | feat/x | Orch : alpha [aaa111] | session 101 in $RA1|pr forge.example/o/app#7 | feat/x | Orch : beta [bbb222] | session 102 in $RB1|pr forge.example/o/app#8 | feat/y | unknown | session 103 in $RC1 names no orchestrator|pr forge.example/o/app#9 | feat/z | unknown | no checkout on feat/z|pr forge.example/o/app#10 | feat/w | unknown | no session in $RIDLE" \
@@ -8710,6 +8860,18 @@ mkdir -p "$GMOD/store/sessions"
 : > "$GMOD/store/sessions/s-ended"
 check "with the module directory overridden, round reads the senders' sessions files there alone" "round live | operator | from Orch : live | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open | sender gone|round ended | operator | from Orch : ended | since 2026-10-18T10:02:00.000Z | blocks: phase 3 | open" \
   "$(ORCHESTRATOR_STATE_DIR="$GSTATE" CLAUDE_CONFIG_DIR="$GCFG" ORCHESTRATOR_MODULE_DIR="$GMOD" COORDINATOR_NOW=$ROUND_NOW bash "$COORD" round 2>&1 | grep '^round \(live\|ended\) ' | paste -sd'|' -)"
+# A row write in flight is a temporary file beside the sessions files (the module's
+# writeAtomic, the launcher's row_write), never one: an entry whose session bears that very
+# name has its sender gone.
+TSTATE="$WORK/coord-tmp"; TCFG="$WORK/coord-tmp-config"
+mkdir -p "$TSTATE/round" "$TCFG/claude-orchestrator/store/sessions"
+cp "$CS/pane.json" "$TSTATE/pane.json"
+jq -n '{id:"tmp", from:"Orch : tmp", session:"s-tmp.tmp-1-abcdef", kind:"operator", since:"2026-10-18T10:01:00.000Z",
+  blocks:"phase 3", question:"Ship it?", choices:[], recommendation:null, status:"open", at:"T", answer:null}' > "$TSTATE/round/tmp.json"
+: > "$TCFG/claude-orchestrator/store/sessions/s-tmp.tmp-1-abcdef"
+check "round reads no temporary file beside the sessions files as a sender's" \
+  "round tmp | operator | from Orch : tmp | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open | sender gone" \
+  "$(ORCHESTRATOR_STATE_DIR="$TSTATE" CLAUDE_CONFIG_DIR="$TCFG" COORDINATOR_NOW=$ROUND_NOW bash "$COORD" round 2>&1 | grep '^round tmp ')"
 # An entry the operator answered from the coordinator's pane is printed after the open ones and
 # before the withdrawn ones, each set in the round's order, with the answer the pane recorded.
 ASTATE="$WORK/coord-answered"; ACFG="$WORK/coord-answered-config"

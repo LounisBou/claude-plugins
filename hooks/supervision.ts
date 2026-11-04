@@ -433,6 +433,9 @@ async function writeAtomic($: any, path: string, text: string): Promise<void> {
 // carries one (the measure handler passes the reading's own time). The
 // measure handler is the only writer of a key: a same-key race is last-writer-wins,
 // at most one measure of freshness. The relay writes its own file (writeWait).
+// The row is written atomically (writeAtomic), its temporary file named and its line
+// spelled as the launcher's row_write does (iterm_agent.py): a reader never meets a
+// row caught mid-write.
 export async function writeSession($: any, id: string, patch: Partial<SessionRow>): Promise<void> {
   await onOwnRow(async () => {
     const path = `${await storeOf($)}/${sessionKey(id)}`
@@ -442,7 +445,7 @@ export async function writeSession($: any, id: string, patch: Partial<SessionRow
       model: '', busy: false, updated_at: '',
     }
     const row: SessionRow = { ...base, ...patch, updated_at: patch.updated_at ?? new Date().toISOString() }
-    await $.fs.write(path, JSON.stringify(row) + '\n')
+    await writeAtomic($, path, JSON.stringify(row) + '\n')
   })
 }
 
@@ -463,7 +466,7 @@ async function publishUsage($: any, id: string, usage: DeckUsage | null): Promis
   await onOwnRow(async () => {
     const path = `${await storeOf($)}/${sessionKey(id)}`
     const row = parseSessionRow(String(await $.fs.read(path).catch(() => '')))
-    if (row && (usage || row.usage)) await $.fs.write(path, JSON.stringify({ ...row, usage }) + '\n')
+    if (row && (usage || row.usage)) await writeAtomic($, path, JSON.stringify({ ...row, usage }) + '\n')
   })
 }
 
@@ -482,7 +485,9 @@ export async function readSessions($: any): Promise<Record<string, SessionRow>> 
   }
   const read: [string, string, SessionRow | null][] = []
   for (const entry of entries) {
-    if (!entry || entry.kind !== 'file') continue
+    // A temporary file is a row write in flight (writeAtomic): no second row, and never
+    // removed here, or the writer's rename fails.
+    if (!entry || entry.kind !== 'file' || entry.name.includes('.tmp-')) continue
     const text = String(await $.fs.read(`${dir}/${entry.name}`).catch(() => ''))
     const row = parseSessionRow(text)
     const waits = `${await storeOf($)}/waits/${entry.name}`
@@ -3208,6 +3213,8 @@ export async function orchestratorOn($: any, tty: string | null, agent: string, 
   const rows = `${await storeOf($)}/sessions`
   const orchestrators = new Map<string, SessionRow>()
   for (const entry of await $.fs.list(rows).catch(() => [])) {
+    // A row write in flight (writeAtomic) is no orchestrator of its own.
+    if (entry.name.includes('.tmp-')) continue
     const row = parseSessionRow(String(await $.fs.read(`${rows}/${entry.name}`).catch(() => '')))
     if (row?.role !== 'orchestrator' || !row.name || !row.tty) continue
     const held = orchestrators.get(row.tty)

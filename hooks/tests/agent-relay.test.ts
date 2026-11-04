@@ -290,6 +290,17 @@ test('a chain with no live owner and no launch record is orphaned, and the log s
   expect(fx.logged.some(l => l.includes('the chain on /dev/ttys001 names /dev/ttys005 and has no live owner: the entry is orphaned'))).toBe(true)
 })
 
+test('an orchestrator row met only as a temporary file is no orchestrator: the entry is orphaned', async () => {
+  const chains = mounted()
+  const fx = fake({ alive: ['400', '501'] })
+  const orch = `${STATE}/store/sessions/s-orch`
+  fx.files.set(`${orch}.tmp-1-abcdef`, fx.files.get(orch)!)
+  fx.files.delete(orch)
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  expect(fx.sent.length).toBe(0)
+  expect(fx.logged.some(l => l.includes('the chain on /dev/ttys001 names /dev/ttys005 and has no live owner: the entry is orphaned'))).toBe(true)
+})
+
 test('a newer chain of a dead owner does not take the agent from its live orchestrator', async () => {
   const chains = mounted()
   const fx = fake({ alive: ['400', '501'] })

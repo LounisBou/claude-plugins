@@ -71,7 +71,8 @@ async function readRows($: any): Promise<Record<string, SessionRow>> {
   }
   const read: [string, SessionRow][] = []
   for (const entry of entries) {
-    if (!entry || entry.kind !== 'file') continue
+    // A temporary file is a row write in flight, never a second row.
+    if (!entry || entry.kind !== 'file' || entry.name.includes('.tmp-')) continue
     const row = parseSessionRow(String(await $.fs.read(`${dir}/${entry.name}`).catch(() => '')))
     // The wait an orchestrator's turn end left, read from its own file beside the row.
     if (row) read.push([entry.name, withWait(row, String(await $.fs.read(`${dir.replace(/\/sessions$/, '/waits')}/${entry.name}`).catch(() => '')))])

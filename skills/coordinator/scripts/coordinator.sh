@@ -733,11 +733,12 @@ remote_pr_lines() {
 # waiting_rows: the orchestrators waiting at the end of their turn, from the hooks module's
 # store (its waits directory under the module's directory, one JSON wait per orchestrator session,
 # written by the module's relay alone), each kept while its pid is in the process table
-# read above. Display only: a file unread is no line.
+# read above. Display only: a file unread is no line, and a temporary file (a wait write in
+# flight, `<key>.tmp-*`) is no wait.
 waiting_rows() {
     local store="$MODULE/store/waits"
     [ -d "$store" ] || return 0
-    find "$store" -type f -exec cat {} + 2>/dev/null \
+    find "$store" -type f ! -name '*.tmp-*' -exec cat {} + 2>/dev/null \
         | jq -R -r 'fromjson? | select(.waiting == "operator" or .waiting == "done")
             | [(.pid // "" | tostring), (.name // "unnamed"), .waiting, (.waiting_since // "?"), (.blocks // "")] | @tsv' 2>/dev/null \
         | awk -F'\t' 'FILENAME == ARGV[1] { live[$1] = 1; next }
@@ -769,11 +770,12 @@ round_entries_of() {
 
 # live_sessions: the sessions files of the hooks module's store (under the module's directory, as
 # waiting_rows resolves it), as a JSON array of file names. The module names a file after the
-# session id with every character outside A-Za-z0-9._- replaced by an underscore.
+# session id with every character outside A-Za-z0-9._- replaced by an underscore. A temporary
+# file (a row write in flight, `<key>.tmp-*`) is no sessions file.
 live_sessions() {
     local store="$MODULE/store/sessions"
     [ -d "$store" ] || { echo '[]'; return 0; }
-    find "$store" -type f -exec basename {} \; 2>/dev/null | jq -R -s -c 'split("\n") | map(select(. != ""))'
+    find "$store" -type f ! -name '*.tmp-*' -exec basename {} \; 2>/dev/null | jq -R -s -c 'split("\n") | map(select(. != ""))'
 }
 
 # pane_open: whether the coordinator's pane is open, from the record the hooks module keeps at
