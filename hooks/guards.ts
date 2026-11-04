@@ -28,7 +28,7 @@ import {
   refuse, withDeadline, isDegradedPass, type DegradedPass,
   listing, chainEntries, chainOwner, ownAgents, hostStatusOf, pullRequestOf, openRows, deferredRows, deferredIds, machineLine, projectCheckouts,
   headsPath, readHeads, writeHeads, parseCiWatchLog, watchNumberOf, watchedNumbers,
-  checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownBackground, logTell,
+  checkWake, checkWakeDone, checkCi, isSuccessorSpawn, processTable, ownBackground, hostTasks, logTell,
   noticeFrom, awaitingAny, goalsPaths, parseGoalsCheck, presentGoals, goalsShownPath, endsOnHandOver, type GoalsReading,
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows,
 } from './stop-gate.ts'
@@ -572,6 +572,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       if (hostUnread) await logLine($, 'stop gate: host pid unread: the process table could not be tied to this session')
       const wake = checkWake({
         agents, resident, delivered, background, hostUnread,
+        // The host's own list of the session's work in flight: the tool line's reliable reading.
+        tasks: hostTasks(e.background_tasks, e.session_crons),
         awaiting: sessionId !== '' && awaitingIn(sessionId),
         message: String(e.last_assistant_message ?? ''),
         handedOver: (sessionId !== '' && handedOverIn === sessionId) || isEnding(),

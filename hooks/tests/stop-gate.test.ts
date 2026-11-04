@@ -10,7 +10,7 @@ import {
   refuse, wakeDecision, withDeadline, isDegradedPass,
   machineLine, deferredIds, deferredRows, readHeads, writeHeads, headsPath, listing, ownAgents, hostStatusOf, openRows,
   projectCheckouts, watchedNumbers, parseCiWatchLog, watchNumberOf, pullRequestOf,
-  checkWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground,
+  checkWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground, hostTasks,
   noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths, presentGoals, goalsShownPath, GOALS_SHOW,
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows,
 } from '../stop-gate.ts'
@@ -1572,6 +1572,159 @@ test('waiting: tool passes while a background process of the session runs, and p
   expect(unseen.answer).toBe(unseen.passed)
   expect(idle.written.some(l => l.endsWith('| stop gate: warn tool-not-running the deploy monitor'))).toBe(true)
   expect(idle.written.some(l => l.includes('check1 tool'))).toBe(false)
+})
+
+// An orchestrator ended its turn on a tool line with nothing of its own in flight, the gate let
+// it end, and it sat idle. The host's own list of the session's background work, carried on the
+// stop, decides the line now; the process table only adds to it.
+const TOOL_WAIT = { last_assistant_message: 'Deploy started.\nwaiting: tool — the deploy run' }
+const SHELL_TASK = { id: 'b1', type: 'shell', status: 'running', description: 'deploy', command: 'bash deploy.sh' }
+const NOTHING_PS = `  820     1 ${shellOf('sleep 9')}\n`
+
+test('a tool line is refused when the host says nothing of the session runs, the short form first', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ ps: NOTHING_PS })
+  const held = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...TOOL_WAIT, background_tasks: [], session_crons: [] }))
+  const reason = String((held.answer as any).block)
+  expect(reason.startsWith('Nothing of yours runs in the background')).toBe(true)
+  expect(reason).toContain('Launch it with run_in_background')
+  expect(reason).toContain('waiting: done')
+  expect(held.passed).toBe(null)
+  expect(fx.written.some(l => l.endsWith('| stop gate: check1 tool-not-running'))).toBe(true)
+})
+
+test('a tool line passes while a background command of the session runs, and is refused once it completed', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ ps: NOTHING_PS })
+  // The old false refusal: a real background task the parent chain does not see.
+  const running = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...TOOL_WAIT, background_tasks: [SHELL_TASK] }))
+  expect(running.answer).toBe(running.passed)
+  expect(fx.written.some(l => l.endsWith('| stop gate: check1 tool the deploy run'))).toBe(true)
+  const done = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...TOOL_WAIT, background_tasks: [] }))
+  expect(String((done.answer as any).block)).toContain('Nothing of yours runs in the background')
+})
+
+test('a tool line passes with an idle subscription not yet fired, a scheduled wake-up, or a process of its own', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ ps: NOTHING_PS })
+  await handlers['tool.call:SendMessage'](fx.dollar, SUBSCRIBE, SENT)
+  const subscribed = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...TOOL_WAIT, background_tasks: [] }))
+  expect(subscribed.answer).toBe(subscribed.passed)
+  const base = { agents: [], resident: false, delivered: [], message: TOOL_WAIT.last_assistant_message }
+  expect(checkWake({ ...base, tasks: hostTasks([], [{ id: 'c1', schedule: '*/5 * * * *', recurring: true, prompt: 'x' }]) })).toEqual({ tool: 'the deploy run' })
+  expect(checkWake({ ...base, tasks: [], background: ['tail -f deploy.log'] })).toEqual({ tool: 'the deploy run' })
+  expect(checkWake({ ...base, tasks: [], watching: true })).toEqual({ tool: 'the deploy run' })
+  expect(checkWake({ ...base, tasks: [], agents: [AGENT_BUSY] })).toEqual({ tool: 'the deploy run' })
+  expect((checkWake({ ...base, tasks: [], hostUnread: true }) as any).case).toBe('tool-not-running')
+})
+
+test('the host task list names each task by what it runs, and is null when the host gives none', () => {
+  expect(hostTasks(undefined, [])).toBe(null)
+  expect(hostTasks('x', undefined)).toBe(null)
+  expect(hostTasks([], undefined)).toEqual([])
+  expect(hostTasks([SHELL_TASK, { id: 'a', type: 'subagent', status: 'running', description: 'search' }, { id: 'm', type: 'monitor', status: 'running', description: '' }, null], [{ schedule: '0 9 * * *' }, {}]))
+    .toEqual(['bash deploy.sh', 'search', 'monitor', 'a scheduled wake-up (0 9 * * *)', 'a scheduled wake-up'])
+})
+
+// The host's list carries a status per task and only promises a string: a task it lists as
+// finished wakes nothing, so a tool line resting on it alone is refused. A status not known to
+// be terminal, or none, still counts — a wrong list must never refuse a real wait.
+test('a tool line is refused when the only task the host lists has finished', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ ps: NOTHING_PS })
+  const held = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...TOOL_WAIT, background_tasks: [{ ...SHELL_TASK, status: 'completed' }], session_crons: [] }))
+  expect(String((held.answer as any).block).startsWith('Nothing of yours runs in the background')).toBe(true)
+  expect(held.passed).toBe(null)
+  expect(fx.written.some(l => l.endsWith('| stop gate: check1 tool-not-running'))).toBe(true)
+})
+
+test('a tool line passes with a running task, or one whose status is not known to be terminal', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ ps: NOTHING_PS })
+  const { status: _, ...unstated } = SHELL_TASK
+  for (const task of [SHELL_TASK, { ...SHELL_TASK, status: 'paused' }, { ...SHELL_TASK, status: 'settling' }, unstated]) {
+    const waited = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...TOOL_WAIT, background_tasks: [task], session_crons: [] }))
+    expect(waited.answer).toBe(waited.passed)
+  }
+})
+
+test('the host task list leaves out a completed, failed, killed or stopped task', () => {
+  const settled = ['completed', 'failed', 'killed', 'stopped'].map(status => ({ ...SHELL_TASK, status, command: `bash ${status}.sh` }))
+  expect(hostTasks(settled, [])).toEqual([])
+  expect(hostTasks([...settled, { ...SHELL_TASK, status: 'pending' }, { id: 'a', type: 'subagent', description: 'search' }], []))
+    .toEqual(['bash deploy.sh', 'search'])
+})
+
+// A predecessor waiting on its successor's confirmation was told « tool-not-running » live: its
+// successor's « takeover confirmed » wakes it, as at its other endings.
+const SUCCESSOR_SPAWN = { tool: 'Bash', tool_use_id: 't9', command: 'bash /plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh spawn --successor --title "Orch : belt"' }
+const TAKEOVER_WAIT = { last_assistant_message: 'Successor spawned.\nwaiting: tool — takeover confirmation of « Orch : belt [b7f1] »' }
+
+test('a tool line of a session that handed over passes with nothing in flight', () => {
+  const base = { agents: [], resident: false, delivered: [], message: TAKEOVER_WAIT.last_assistant_message, tasks: [] }
+  expect(checkWake({ ...base, handedOver: true })).toEqual({ tool: 'takeover confirmation of « Orch : belt [b7f1] »' })
+  expect((checkWake({ ...base, handedOver: false }) as any).case).toBe('tool-not-running')
+})
+
+test('the predecessor that spawned its successor passes its tool line at the stop, the host listing nothing', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ ps: NOTHING_PS })
+  await handlers['tool.call'](fx.dollar, SUCCESSOR_SPAWN, async () => ({ result: { stdout: 'spawned' } }))
+  const waiting = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...TAKEOVER_WAIT, background_tasks: [], session_crons: [] }))
+  expect(waiting.answer).toBe(waiting.passed)
+  expect(fx.written.some(l => l.endsWith('| stop gate: check1 tool takeover confirmation of « Orch : belt [b7f1] »'))).toBe(true)
+})
+
+// The plain ending with nothing to wake it is refused on the same list; without one it is only logged.
+const PLAIN = { last_assistant_message: 'Both reviews are dispatched.' }
+
+test('a plain ending is refused when the host lists nothing in flight, the short form first', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ ps: NOTHING_PS })
+  const held = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...PLAIN, background_tasks: [], session_crons: [] }))
+  const reason = String((held.answer as any).block)
+  expect(reason.startsWith('Nothing will wake you')).toBe(true)
+  expect(reason).toContain('run_in_background')
+  expect(reason).toContain('waiting: done')
+  expect(held.passed).toBe(null)
+  expect(fx.written.some(l => l.endsWith('| stop gate: check1 nothing-will-wake'))).toBe(true)
+})
+
+test('a plain ending passes while the host lists work in flight, and is refused once it completed', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ ps: NOTHING_PS })
+  const running = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...PLAIN, background_tasks: [SHELL_TASK] }))
+  expect(running.answer).toBe(running.passed)
+  const done = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...PLAIN, background_tasks: [] }))
+  expect(String((done.answer as any).block)).toContain('Nothing will wake you')
+})
+
+test('a plain ending passes with a subscription not yet fired, or after the hand-over, the host listing nothing', async () => {
+  const subscribed = mounted()
+  const fx = fakeDollar({ ps: NOTHING_PS })
+  await subscribed.handlers['tool.call:SendMessage'](fx.dollar, SUBSCRIBE, SENT)
+  const waiting = await stop(subscribed.handlers['classic.Stop'], fx.dollar, stopEvent({ ...PLAIN, background_tasks: [] }))
+  expect(waiting.answer).toBe(waiting.passed)
+  const handed = mounted()
+  const hx = fakeDollar({ ps: NOTHING_PS })
+  await handed.handlers['tool.call'](hx.dollar, SUCCESSOR_SPAWN, async () => ({ result: { stdout: 'spawned' } }))
+  const after = await stop(handed.handlers['classic.Stop'], hx.dollar, stopEvent({ ...PLAIN, background_tasks: [] }))
+  expect(after.answer).toBe(after.passed)
+})
+
+test('nothing will wake, decided over the facts with the host list', () => {
+  const base = { agents: [], resident: false, delivered: [], message: 'stopped.' }
+  expect((checkWake({ ...base, tasks: [] }) as any).case).toBe('nothing-will-wake')
+  expect(checkWake({ ...base, tasks: ['sleep 90'] })).toBeNull()
+  expect(checkWake({ ...base, tasks: hostTasks([], [{ id: 'c1', schedule: '0 9 * * *' }]) })).toBeNull()
+  expect(checkWake({ ...base, tasks: [], background: ['tail -f deploy.log'] })).toBeNull()
+  expect(checkWake({ ...base, tasks: [], watching: true })).toBeNull()
+  expect(checkWake({ ...base, tasks: [], awaiting: true })).toBeNull()
+  expect(checkWake({ ...base, tasks: [], agents: [AGENT_BUSY] })).toBeNull()
+  expect(checkWake({ ...base, tasks: [], resident: true })).toBeNull()
+  expect(checkWake({ ...base, tasks: [], handedOver: true })).toBeNull()
+  // No list from the host: only logged, as before.
+  expect(checkWake({ ...base, tasks: null })).toEqual({ warn: 'nothing-will-wake', detail: '' })
 })
 
 test('the tool line, decided over the facts', () => {

@@ -84,6 +84,14 @@ function fits(busy: boolean, running: readonly string[]): string {
   if (running.length > 0) return runningFits(running)
   return busy ? BUSY_FITS : OTHER_FITS
 }
+// A turn that ends on no machine line with nothing in flight, no agent busy and no notice awaited.
+const NOTHING = 'Nothing will wake you: nothing of yours runs in the background and no agent of yours is busy. '
+  + 'Launch what you announced (an agent, or a command with run_in_background, then end with the line waiting: tool — <what is watched>), '
+  + `or end on the line that fits. ${OTHER_FITS} The line goes as the message's last line, no markup.`
+// A tool line with nothing of the session's own in flight: no end and no event will come to wake it.
+const TOOL_NOT_RUNNING = 'Nothing of yours runs in the background: waiting: tool — <what is watched> fits only while '
+  + 'a command, monitor or subagent you started still runs. Launch it with run_in_background, or end on the line that fits. '
+  + `${OTHER_FITS} The line goes as the message's last line, no markup.`
 const blocksNothingReason = (busy: boolean, running: readonly string[]) =>
   'Your wait on the operator blocks nothing: that line is for a question he must answer, and the coordinator '
   + `would put it to him. ${fits(busy, running)} The line goes as the message's last line, no markup.`
@@ -373,6 +381,36 @@ export function projectCheckouts(top: string, listOut: string): string[] {
 
 // --- check 1 (stop_gate.py:356-392) --------------------------------------------------------
 
+// The work the host itself says is in flight for the session, off the stop's own payload:
+// `background_tasks` (background shells, monitors, subagents, workflows — running, pending or
+// backgrounded) and `session_crons` (scheduled wake-ups), each named by what it runs. Null when
+// the payload carries no task list at all — a host that does not say — so the caller can tell
+// « nothing runs » from « not told ».
+//
+// A task the host lists as settled wakes nothing: its type only promises a string status, so
+// the terminal ones it uses for its tasks (`completed`, `failed`, `killed`, and `stopped` on a
+// task's end notice) are left out. Any other status, or none, still counts: a wrong list must
+// never refuse a real wait. A scheduled wake-up carries no status.
+const SETTLED_TASK = new Set(['completed', 'failed', 'killed', 'stopped'])
+
+export function hostTasks(tasks: unknown, crons: unknown): string[] | null {
+  if (!Array.isArray(tasks)) return null
+  const named: string[] = []
+  for (const task of tasks) {
+    if (!task || typeof task !== 'object') continue
+    const t = task as { command?: unknown; description?: unknown; type?: unknown; status?: unknown }
+    if (typeof t.status === 'string' && SETTLED_TASK.has(t.status)) continue
+    const what = [t.command, t.description, t.type].find(v => typeof v === 'string' && v.trim() !== '')
+    named.push(typeof what === 'string' ? what.trim() : 'a background task')
+  }
+  for (const cron of Array.isArray(crons) ? crons : []) {
+    if (!cron || typeof cron !== 'object') continue
+    const schedule = (cron as { schedule?: unknown }).schedule
+    named.push(`a scheduled wake-up${typeof schedule === 'string' && schedule.trim() !== '' ? ` (${schedule.trim()})` : ''}`)
+  }
+  return named
+}
+
 export type Held = { case: string; reason: string }
 
 // check_wake()'s first half: everything decidable before the facts of a done message
@@ -402,6 +440,12 @@ export type Held = { case: string; reason: string }
 // (`awaiting`: a SendMessage with notify_when_idle, its notice not arrived yet) wakes
 // it as a busy agent's would; and a session that handed over is never told nothing
 // will wake it — its successor's « takeover confirmed » will.
+//
+// The tool line is decided first on the host's own word (`tasks`, hostTasks above): what the
+// host holds in flight for the session is what will wake it, and a tool line with none of it,
+// no process of its own, no watch, no subscription and no busy agent is refused. The process
+// table walked by parent chain only adds work: alone it missed real waits and refused them, so
+// when the host gives no task list the line passes and the caller logs it, as before.
 export function checkWake(facts: {
   agents: readonly OwnAgent[]
   resident: boolean
@@ -412,6 +456,7 @@ export function checkWake(facts: {
   background?: readonly string[]
   awaiting?: boolean
   hostUnread?: boolean
+  tasks?: readonly string[] | null
 }): Held | { blocks: string } | { tool: string; notRunning?: true } | { warn: 'idle-delivered' | 'idle-agents' | 'nothing-will-wake'; detail: string } | 'read-what-is-left' | null {
   const last = machineLine(facts.message)
   const matched = MACHINE_LINE.exec(last)
@@ -429,6 +474,11 @@ export function checkWake(facts: {
   }
   const tool = TOOL_LINE.exec(last)
   if (tool) {
+    if (facts.tasks !== undefined && facts.tasks !== null) {
+      // A session that handed over is woken by its successor's « takeover confirmed », as at its other endings.
+      if (facts.tasks.length > 0 || running.length > 0 || facts.watching || facts.awaiting || busy || facts.handedOver) return { tool: tool[1].trim() }
+      return { case: 'tool-not-running', reason: TOOL_NOT_RUNNING }
+    }
     if (running.length > 0 || facts.watching || facts.hostUnread) return { tool: tool[1].trim() }
     // Measured, not refused: the parent-chain detection of the session's own processes is too
     // fragile to be a gate, so the line passes and the caller logs that nothing was seen running.
@@ -454,6 +504,11 @@ export function checkWake(facts: {
     return null
   }
   if (facts.handedOver) return null
+  // Refused on the host's own list of work in flight, as the tool line is; a host that sends none is only logged.
+  if (facts.tasks !== undefined && facts.tasks !== null) {
+    if (facts.tasks.length > 0) return null
+    return { case: 'nothing-will-wake', reason: NOTHING }
+  }
   return { warn: 'nothing-will-wake', detail: '' }
 }
 
