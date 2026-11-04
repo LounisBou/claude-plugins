@@ -4469,7 +4469,14 @@ def cmd_verify(argv):
     args, _ = p.parse_known_args(argv)
     if not args.tty:
         die("verify: --tty is required")
-    every = host_clis_on(args.tty)
+    # A home session's tab carries only the tmux client: its host runs in window 0 of the
+    # server that client shows, so that is where the host is read.
+    host_tty = args.tty
+    socket = home_of_tab(args.tty)
+    if socket:
+        panes, _ = home_panes(socket)
+        host_tty = next((tty for index, tty in panes or [] if index == "0"), args.tty)
+    every = host_clis_on(host_tty)
     # With --pid, only that process counts, whichever host CLI of the tty it is: another one
     # on a reused tty is « not running ».
     if args.pid is None:

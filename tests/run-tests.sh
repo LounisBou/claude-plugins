@@ -5374,6 +5374,25 @@ check "verify --pid of a pid the tty does not run is not running, and silent" "|
 check "verify without --pid names the first host CLI" "a-host running on /dev/ttys901 (pid 5100)" "$(vpid 2>&1)"
 check "a --pid that is no number is a usage error, not « not running »" "exit 2|1" \
   "$(vpid_status --pid abc)|$(vpid --pid abc 2>&1 >/dev/null | grep -c 'invalid int value')"
+# A home session's tab carries only the tmux client; the host runs in window 0 of the server.
+mkdir -p "$WORK/vhome"
+printf '#!/bin/sh\nfor a in "$@"; do [ "$a" = list-panes ] && printf "0 /dev/ttys971\\n1 /dev/ttys972\\n"; done\nexit 0\n' > "$WORK/vhome/tmux"
+chmod +x "$WORK/vhome/tmux"
+printf '/dev/ttys970 6000 %s -u -L orch-vhome attach -t home\n/dev/ttys971 6001 a-host --name Orch\n/dev/ttys972 6002 a-host --name Agent\n' \
+  "$WORK/vhome/tmux" > "$WORK/vhome/ps.txt"
+printf '/dev/ttys970 6000 %s -u -L orch-vhome attach -t home\n/dev/ttys971 6003 -zsh\n' \
+  "$WORK/vhome/tmux" > "$WORK/vhome/ps-dead.txt"
+vhome() { ORCHESTRATOR_TMUX="$WORK/vhome/tmux" ORCHESTRATOR_HOST_CLI=a-host ORCHESTRATOR_PS_TABLE="$1" \
+  CLAUDE_CONFIG_DIR="$WORK/hostcfg" bash "$AGENT" verify --tty /dev/ttys970 "${@:2}"; }
+check "verify of a home tab reads the host in window 0 of its server" "a-host running on /dev/ttys970 (pid 6001)|0" \
+  "$(vhome "$WORK/vhome/ps.txt" 2>&1)|$(vhome "$WORK/vhome/ps.txt" >/dev/null 2>&1; echo $?)"
+check "verify of a home tab whose window 0 runs no host is not running" "1" \
+  "$(vhome "$WORK/vhome/ps-dead.txt" >/dev/null 2>&1; echo $?)"
+# A host on the tab's own tty is not the home's host: only window 0 of the server is read.
+printf '/dev/ttys970 6000 %s -u -L orch-vhome attach -t home\n/dev/ttys970 6004 a-host --name Stray\n/dev/ttys971 6003 -zsh\n' \
+  "$WORK/vhome/tmux" > "$WORK/vhome/ps-tab-host.txt"
+check "verify of a home tab ignores a host on the tab's tty when window 0 runs none" "1" \
+  "$(vhome "$WORK/vhome/ps-tab-host.txt" >/dev/null 2>&1; echo $?)"
 check "the close note claims no more than the table showed" "1|0" \
   "$(ipy "print(ia.close_note('/dev/ttys901', None))" | grep -c 'no process matching claude was found on /dev/ttys901')|$(ipy "print(ia.close_note('/dev/ttys901', None))" | grep -c 'was running')"
 
