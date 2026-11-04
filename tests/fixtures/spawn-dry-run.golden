@@ -970,11 +970,8 @@ exit=0
 ### move, leftmost
 move=/dev/ttys901 left_of=leftmost
 exit=0
-### move, a stranger refused
-ERROR: move: refused: /dev/ttys777 is neither this session's tab nor in its chain (pass --force to move it anyway)
-exit=1
-### move, a stranger forced
-move: forced: /dev/ttys777 is not in this session's chain
+### move, a stranger warned
+move: warning: /dev/ttys777 is not in this session's chain: moved anyway
 move=/dev/ttys777 left_of=/dev/ttys555
 exit=0
 ### move, auditor refused

@@ -118,8 +118,7 @@ chain '{"tab_id":"2","tty":"/dev/ttys901","owner":"S-ME"}'
 show "move, own agent right of self" bash "$AGENT" move --tty /dev/ttys901 --right-of self
 show "move, own agent left of a tab" bash "$AGENT" move --tty /dev/ttys901 --left-of /dev/ttys555
 show "move, leftmost" bash "$AGENT" move --tty /dev/ttys901 --leftmost
-show "move, a stranger refused" bash "$AGENT" move --tty /dev/ttys777 --left-of /dev/ttys555
-show "move, a stranger forced" bash "$AGENT" move --tty /dev/ttys777 --left-of /dev/ttys555 --force
+show "move, a stranger warned" bash "$AGENT" move --tty /dev/ttys777 --left-of /dev/ttys555
 show "move, auditor refused" bash "$AGENT" move --tty /dev/ttys950 --left-of /dev/ttys555
 show "move, coordinator refused" bash "$AGENT" move --tty /dev/ttys951 --leftmost
 show "move, same session refused" bash "$AGENT" move --tty /dev/ttys901 --left-of /dev/ttys901

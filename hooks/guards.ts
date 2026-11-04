@@ -565,6 +565,9 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         await logLine($, `stop gate: check1 blocks ${wake.blocks}`)
       } else if (wake !== null && typeof wake === 'object' && 'tool' in wake) {
         await logLine($, wake.notRunning ? `stop gate: warn tool-not-running ${wake.tool}` : `stop gate: check1 tool ${wake.tool}`)
+      } else if (wake !== null && typeof wake === 'object' && 'warn' in wake) {
+        // Measured, not refused: these three reminders cost a turn each and mostly turned out wrong.
+        await logLine($, `stop gate: warn ${wake.warn}${wake.detail === '' ? '' : ` ${wake.detail}`}`)
       } else if (wake === 'read-what-is-left') {
         // The done line: the facts are read only now, as the shell gate read them lazily.
         const top = await projectTop($, String(e.cwd ?? ''), until)
@@ -575,6 +578,9 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         const texts = await readRecords($, records, until)
         const deferred = openRows(texts)
         const goals = await readGoals($, records, root, until)
+        // Measured, not refused: the working copies are not filtered by session, so another
+        // orchestrator's checkout of the same project would hold this one's done line.
+        if (checkouts.length > 0) await logLine($, `stop gate: warn working-copies ${checkouts.join(', ')}`)
         const held = checkWakeDone({
           agents, checkouts, deferred,
           deferredRows: deferredRows(texts),

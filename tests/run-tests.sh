@@ -276,7 +276,7 @@ check "the orchestrator rulebook stays at 21,700 bytes or fewer" "yes" \
 # Work the operator deferred ends a turn on its own machine line, never on a question to him:
 # the rulebook, the decision round and the gate's reasons name it.
 check "the rulebook, the decision round and the gate's reasons name waiting: deferred" "yes|yes|yes|yes" \
-  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'waiting: deferred — <ids>')|$(spells "$ROOT/commands/decide.md" 'waiting: deferred — <ids>')|$(spells "$ROOT/hooks/stop-gate.ts" 'end on waiting: deferred — <ids>')|$(spells "$ROOT/commands/decide.md" 'dispatch-record.sh defer <record> <id> --ruling')"
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'waiting: deferred — <ids>')|$(spells "$ROOT/commands/decide.md" 'waiting: deferred — <ids>')|$(spells "$ROOT/hooks/stop-gate.ts" 'end on waiting: deferred — <n> rows (or <ids>)')|$(spells "$ROOT/commands/decide.md" 'dispatch-record.sh defer <record> <id> --ruling')"
 # Every operator question stays in full in the orchestrator's own chat until he answers it, as
 # well as in the coordinator's round (the operator's ruling of 2026-11-03): the decision round,
 # the rulebook and the coordinator's skill each carry the rule.
@@ -2871,10 +2871,9 @@ check "the row carries the tab title, the session name and the caller's own mark
 check "a session launched without a name says so, and a hidden pane still says hidden" \
   'w1/t2 | /dev/ttys900 | ✳ T | (host default) | hidden' "$(row '✳ T' - other hidden)"
 
-# `move` moves what is the caller's: its own tab, or a tab of its chain. An orchestrator
-# that had never measured its own tty read the listing, took the last tab for its own and
-# moved a stranger's session out of the way; the script obeyed (§38). --force is the
-# operator's hand and the layout repair, and it says on stderr what it moved.
+# `move` moves what it is told to, and warns (stderr and close.log) when the tab is neither the
+# caller's own nor in its chain: an orchestrator that had never measured its own tty took the
+# last tab for its own (§38), and the warning is what finds that move afterwards.
 mv_() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
   ORCHESTRATOR_SELF_ID=S-ME bash "$AGENT" move "$@" 2>&1; }
 mkdir -p "$ISTATE/chains"
@@ -2884,10 +2883,13 @@ check "a tab of the caller's chain moves" "1" \
 check "the caller's own tab moves" "1" \
   "$(mv_ --tty /dev/ttys900 --left-of /dev/ttys555 | grep -c '^move=/dev/ttys900 left_of=/dev/ttys555$')"
 printf '{"tab_id":"2","tty":"/dev/ttys902","owner":"S-ME"}\n' > "$ISTATE/chains/ttys900.jsonl"
-check "a tab that is neither is refused, and the refusal names it" "1|1" \
-  "$(mv_ --tty /dev/ttys901 --left-of self >/dev/null 2>&1; echo $?)|$(mv_ --tty /dev/ttys901 --left-of self | grep -c "move: refused: /dev/ttys901 is neither this session's tab nor in its chain (pass --force to move it anyway)")"
-check "--force moves it and says what it moved" "0|1" \
-  "$(mv_ --tty /dev/ttys901 --left-of self --force >/dev/null 2>&1; echo $?)|$(mv_ --tty /dev/ttys901 --left-of self --force | grep -c "^move: forced: /dev/ttys901 is not in this session's chain$")"
+rm -f "$ISTATE/close.log"
+check "a tab that is neither moves anyway, a warning on stderr and in close.log naming it" "0|1|1" \
+  "$(mv_ --tty /dev/ttys901 --left-of self >/dev/null 2>&1; echo $?)|$(mv_ --tty /dev/ttys901 --left-of self | grep -c "^move: warning: /dev/ttys901 is not in this session's chain: moved anyway$")|$(grep -q "move: warning: /dev/ttys901 is not in this session's chain: moved anyway$" "$ISTATE/close.log" && echo 1 || echo 0)"
+check "and it still prints the move" "1" \
+  "$(mv_ --tty /dev/ttys901 --left-of self | grep -c '^move=/dev/ttys901 left_of=/dev/ttys900$')"
+check "--force on that tab still moves it: exit 0, the move printed" "0|1" \
+  "$(mv_ --tty /dev/ttys901 --left-of self --force >/dev/null 2>&1; echo $?)|$(mv_ --tty /dev/ttys901 --left-of self --force | grep -c '^move=/dev/ttys901 left_of=/dev/ttys900$')"
 
 # `--leftmost` places a tab at the first place of its window, no neighbour tab named: a
 # third form beside `--left-of` and `--right-of`, exclusive with both.
@@ -2900,10 +2902,8 @@ check "no anchor at all is refused, naming all three forms" "1|1" \
 
 # The guard that refuses a stranger's tab applies to `--leftmost` exactly as it does to
 # `--left-of` and `--right-of`: the anchor form changes, not whose tab this is.
-check "--leftmost refuses a tab out of the caller's chain, and the refusal names it" "1|1" \
-  "$(mv_ --tty /dev/ttys901 --leftmost >/dev/null 2>&1; echo $?)|$(mv_ --tty /dev/ttys901 --leftmost | grep -c "move: refused: /dev/ttys901 is neither this session's tab nor in its chain (pass --force to move it anyway)")"
-check "--force moves it leftmost too, and says what it moved" "0|1" \
-  "$(mv_ --tty /dev/ttys901 --leftmost --force >/dev/null 2>&1; echo $?)|$(mv_ --tty /dev/ttys901 --leftmost --force | grep -c "^move: forced: /dev/ttys901 is not in this session's chain$")"
+check "--leftmost moves a tab out of the caller's chain too, with the warning naming it" "0|1" \
+  "$(mv_ --tty /dev/ttys901 --leftmost >/dev/null 2>&1; echo $?)|$(mv_ --tty /dev/ttys901 --leftmost | grep -c "^move: warning: /dev/ttys901 is not in this session's chain: moved anyway$")"
 
 # An AUDITOR is neither a successor nor an agent (§52). It is placed immediately LEFT of
 # its caller, the chain ignored — on the caller's model and under remote control under its
@@ -6286,8 +6286,8 @@ res=$(seamp survivor)
 check "a session that survived its close keeps its chain entry" "1|[('T-OLD', 'O-ME')]" \
   "$(sfield "$res" exit)|$(sfield "$res" chain)"
 res=$(seamp stranger)
-check "a refused move asks the terminal who owns the tab, and never asks it to move" "1|owns|1" \
-  "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" ERR | grep -c 'is neither this session.s tab nor in its chain')"
+check "a move of a tab the terminal says is not the caller's warns, and moves it anyway after asking who owns it" "0|owns,move|1" \
+  "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" ERR | grep -c "is not in this session.s chain: moved anyway")"
 res=$(seamp mine)
 check "an owned one is moved once the guard has ruled" "0|owns,move" "$(sfield "$res" exit)|$(sfield "$res" calls)"
 
@@ -6738,8 +6738,8 @@ reset_home
 printf '{"tab_id":"tmux:%s:@9","tty":"/dev/ttys902","owner":"tmux:%s:%%0"}\n' "$TSOCK" "$TSOCK" > "$TSTATE/chains/ttys900.jsonl"
 rm -f "$TR/calls"
 out=$(home move --tty /dev/ttys902 --left-of /dev/ttys901 2>&1)
-check "a window whose id the caller's chain does not hold is not its to move" "1|0" \
-  "$(printf '%s' "$out" | grep -c 'is neither this session.s tab nor in its chain')|$(calls | grep -c '\[move-window\]')"
+check "a window whose id the caller's chain does not hold is moved with a warning, the window and the indexes closed up" "1|2" \
+  "$(printf '%s' "$out" | grep -c 'is not in this session.s chain: moved anyway')|$(calls | grep -c '\[move-window\]')"
 
 reset_home
 out=$(home rotate --old-tty /dev/ttys901 --expect-title "Agent : one" --dir "$WORK" --title "Agent : one" --prompt p 2>"$WORK/trot.err")
