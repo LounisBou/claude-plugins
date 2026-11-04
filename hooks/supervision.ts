@@ -1985,7 +1985,7 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
   const role = roleOf(name)
   if (!name || (role !== 'orchestrator' && role !== 'agent')) return
   const wait = role === 'orchestrator' ? parseWait(answer) : parseStatus(answer)
-  // The ending of a turn whose open work the operator deferred (`waiting: deferred — <ids>`): no
+  // The ending of a turn whose open work the operator deferred (`waiting: deferred — <n> items`): no
   // wait, nothing entered or sent, the wait cleared like a tool wait's.
   const deferred = role === 'orchestrator' && deferredIds(machineLine(answer)) !== null
   // The mark of a prompt the operator typed while a question was held (withdrawOnTyped): it

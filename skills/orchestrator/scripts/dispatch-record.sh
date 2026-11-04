@@ -23,7 +23,8 @@
 # `open` prints the row id. `summary --open` prints only the open rows, for a takeover that
 # has no use for the statistics. A row (or a goal) the operator deferred stays open and carries
 # his ruling; the summary shows it as `deferred=` with that ruling, and the stop gate takes the
-# ending `waiting: deferred — <ids>` once every row and goal still open is one. The record is JSON lines: appendable, greppable, and read back
+# ending `waiting: deferred — <n> items`, n the deferred rows and goals together, once every row
+# and goal still open is one. The record is JSON lines: appendable, greppable, and read back
 # with the `jq` the rest of this plugin already needs.
 #
 # Why it exists: the routing rule says a tier drop that costs a second corrective round is

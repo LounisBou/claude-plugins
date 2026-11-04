@@ -94,7 +94,7 @@ question before it is presented.
    reads it. A ruling that defers work (« later, when I say so ») is recorded with
    `dispatch-record.sh defer <record> <id> --ruling "<his words, dated>"` for a row and
    `dispatch-record.sh goals <record> defer <G> --ruling "<his words, dated>"` for a goal, never left
-   open as a question: the turn then ends on `waiting: deferred — <ids>`, which asks him nothing.
+   open as a question: the turn then ends on `waiting: deferred — <n> items`, which asks him nothing.
    Mark it « to relay » in `decision-round.md`.
 3. Present the next question IN FULL (step 2), in this same message, right under the
    « Recorded » line. Nothing else: no relay to an agent, no launch, no status — all wait
