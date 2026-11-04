@@ -114,6 +114,17 @@ test('an agent goes under the orchestrator its chain names; one no chain names i
   expect(deck.unattached_agents.map(a => a.name)).toEqual(['Agent : loose'])
 })
 
+test('an agent whose tty a newer chain of a dead owner also names stays under the live owner', () => {
+  const deck = deckOf(input({
+    chains: [
+      { name: 'ttys003.jsonl', mtimeMs: 1, text: chain('/dev/ttys005') },
+      { name: 'ttys004.jsonl', mtimeMs: 2, text: chain('/dev/ttys005') },
+    ],
+  }))
+  expect(deck.orchestrators[0].agents.map(a => a.name)).toEqual(['Agent : one'])
+  expect(deck.unattached_agents.map(a => a.name)).toEqual(['Agent : loose'])
+})
+
 test('the gate is the gauge\'s own: tokens past 300,000 on a wide window, the env\'s when given', () => {
   const deck = deckOf(input())
   expect(deck.orchestrators[0].agents[0].context.past_gate).toBe(true)

@@ -123,7 +123,7 @@ export function deckOf(input: DeckInput): Deck {
   }
   const unattached: DeckAgent[] = []
   for (const [key, row] of entries.filter(([, row]) => row.role === 'agent').sort(([, a], [, b]) => (a.name ?? '').localeCompare(b.name ?? ''))) {
-    const owner = row.tty ? chainOwnerTty(input.chains, row.tty) : null
+    const owner = row.tty ? chainOwnerTty(input.chains, row.tty, owner => byTty.has(owner)) : null
     const orchestrator = owner ? byTty.get(owner) : undefined
     ;(orchestrator ? orchestrator.agents : unattached).push(session(key, row))
   }

@@ -3085,19 +3085,22 @@ export async function orchestratorOn($: any, tty: string | null, agent: string, 
     }
     await logLine($, `${what}: ${agent} was launched for ${recorded}, and no live session bears the name ${bare}`)
   }
-  const owner = tty ? chainOwnerTty(chains, tty) : null
-  if (!owner) return null
   const rows = `${await storeOf($)}/sessions`
-  let found: SessionRow | null = null
+  const orchestrators = new Map<string, SessionRow>()
   for (const entry of await $.fs.list(rows).catch(() => [])) {
     const row = parseSessionRow(String(await $.fs.read(`${rows}/${entry.name}`).catch(() => '')))
-    if (row?.role === 'orchestrator' && row.tty === owner && row.name && (!found || row.updated_at > found.updated_at) && await live(row.pid)) found = row
+    if (row?.role !== 'orchestrator' || !row.name || !row.tty) continue
+    const held = orchestrators.get(row.tty)
+    if ((!held || row.updated_at > held.updated_at) && await live(row.pid)) orchestrators.set(row.tty, row)
   }
+  const owner = tty ? chainOwnerTty(chains, tty, ownerTty => orchestrators.has(ownerTty)) : null
+  const found = owner ? orchestrators.get(owner) ?? null : null
   if (found?.name) {
     await logLine($, `${what}: ${agent} on ${tty} goes to ${found.name} by the chain on ${owner}`)
     return found.name
   }
-  await logLine($, `${what}: the chain on ${owner} names ${tty} and has no live owner: the entry is orphaned`)
+  const stale = tty ? chainOwnerTty(chains, tty) : null
+  if (stale) await logLine($, `${what}: the chain on ${stale} names ${tty} and has no live owner: the entry is orphaned`)
   return null
 }
 

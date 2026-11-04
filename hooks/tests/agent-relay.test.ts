@@ -56,6 +56,18 @@ test('the owner is the chain naming the tty, the one written last when two do', 
   expect(chainOwnerTty(chains, '/dev/ttys007')).toBeNull()
 })
 
+test('a chain whose owner is not live is not counted, however recently it was written', () => {
+  const entry = (tty: string) => JSON.stringify({ tab_id: 't', tty, owner: 'o' })
+  const chains = [
+    { name: 'ttys001.jsonl', mtimeMs: 10, text: entry('/dev/ttys005') },
+    { name: 'ttys020.jsonl', mtimeMs: 90, text: entry('/dev/ttys005') },
+  ]
+  const live = new Set(['/dev/ttys001'])
+  expect(chainOwnerTty(chains, '/dev/ttys005', t => live.has(t))).toBe('/dev/ttys001')
+  expect(chainOwnerTty(chains, '/dev/ttys005', () => false)).toBeNull()
+  expect(chainOwnerTty(chains, '/dev/ttys005')).toBe('/dev/ttys020')
+})
+
 // --- the wiring over a faked $ ------------------------------------------------------------
 
 // `walk` serves the process table of the agent's tab and of a headless run started from its
@@ -276,6 +288,17 @@ test('a chain with no live owner and no launch record is orphaned, and the log s
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
   expect(fx.sent.length).toBe(0)
   expect(fx.logged.some(l => l.includes('the chain on /dev/ttys001 names /dev/ttys005 and has no live owner: the entry is orphaned'))).toBe(true)
+})
+
+test('a newer chain of a dead owner does not take the agent from its live orchestrator', async () => {
+  const chains = mounted()
+  const fx = fake({ alive: ['400', '501'] })
+  // A stale chain on a recycled tty names the same agent tty and was written last.
+  fx.files.set(`${STATE}/chains/ttys020.jsonl`, JSON.stringify({ tab_id: 'tab-z', tty: '/dev/ttys005', owner: 'gone' }) + '\n')
+  fx.mtimes.set(`${STATE}/chains/ttys020.jsonl`, 9e12)
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  expect(fx.sent.map(s => s.to)).toEqual([ORCH])
+  expect(fx.logged.some(l => l.includes(`goes to ${ORCH} by the chain on /dev/ttys001`))).toBe(true)
 })
 
 test('a launch record whose session is dead falls through to the chain', async () => {

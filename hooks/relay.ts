@@ -172,10 +172,14 @@ export function noStatusText(name: string, context: string | null): string {
 
 // The orchestrator's tty an agent's tty belongs to: the launcher's chains, one file per
 // orchestrator tty, each entry an agent's tty. A chain outlives its tab and a tty is
-// recycled, so of the chains naming this tty the one written last wins — the spawn that
-// put this agent there appended to it. Null when no chain names it.
-export function chainOwnerTty(chains: readonly { name: string; mtimeMs: number; text: string }[], tty: string): string | null {
-  const named = chains.filter(c => c.name.endsWith('.jsonl') && chainEntries(c.text).some(e => e.tty === tty))
+// recycled, so a chain counts only while its owner (the tty that names the file) is one
+// `ownerLives` says carries a live orchestrator; of those naming this tty the one written
+// last wins — the spawn that put this agent there appended to it. Without `ownerLives`
+// every chain counts. Null when no chain counts.
+export function chainOwnerTty(chains: readonly { name: string; mtimeMs: number; text: string }[], tty: string,
+  ownerLives?: (ownerTty: string) => boolean): string | null {
+  const named = chains.filter(c => c.name.endsWith('.jsonl') && chainEntries(c.text).some(e => e.tty === tty)
+    && (ownerLives === undefined || ownerLives(`/dev/${c.name.slice(0, -'.jsonl'.length)}`)))
   if (named.length === 0) return null
   const last = named.reduce((a, b) => (b.mtimeMs > a.mtimeMs ? b : a))
   return `/dev/${last.name.slice(0, -'.jsonl'.length)}`

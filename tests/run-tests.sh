@@ -429,9 +429,9 @@ check "a hand-over keeps the mark" '{"tab_id": "9", "tty": "/dev/ttys909", "owne
 # ORCHESTRATOR's chain, not in the caller's, so the hand-over above never reaches it. It must
 # follow the successor, owner and mark kept, or the orchestrator reads a closed tab as its
 # resident agent.
-# The agents these chains name run: a chain write prunes only the files whose agents are all dead.
+# The orchestrators that own these chains run: a chain write prunes only the files whose owner runs none.
 REPOINTPS="$WORK/ps-repoint.txt"
-printf '/dev/ttys940 claude\n/dev/ttys941 claude\n/dev/ttys942 claude\n/dev/ttys943 claude\n' > "$REPOINTPS"
+printf '/dev/ttys898 claude\n/dev/ttys899 claude\n/dev/ttys940 claude\n/dev/ttys941 claude\n/dev/ttys942 claude\n/dev/ttys943 claude\n' > "$REPOINTPS"
 repoint() { ORCHESTRATOR_STATE_DIR="$WORK/istate" ORCHESTRATOR_PS_TABLE="$REPOINTPS" "$py" -c "
 import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
 import iterm_agent as m
@@ -6512,9 +6512,10 @@ check "list names no orphan when the process table cannot be read" "0|4" \
   "$(sfield "$res" rows | tr '~' '\n' | grep -c '^orphan:')|$(sfield "$res" rows | tr '~' '\n' | grep -c '^w1/t')"
 
 # Chain files of dead or recycled ttys piled up. The next chain write removes every file
-# whose every entry is a dead tty; never one with an agent still running, even when its
-# orchestrator has ended (it is what `list` names the orphan's owner from), never the
-# caller's own, and nothing at all when the process table cannot be read.
+# whose owner (the tty that names it) no longer carries an orchestrator host: not one whose
+# agents' ttys were recycled by strangers, not an ended orchestrator's with an agent still
+# running; never the caller's own, a live orchestrator's, nor the client of a live home
+# server whose window 0 holds one, and nothing at all when the process table cannot be read.
 PRSTATE="$WORK/prunestate"
 prune_seed() { rm -rf "$PRSTATE"; mkdir -p "$PRSTATE/chains"
   printf '{"tab_id":"9","tty":"/dev/ttys809","owner":"S-X"}\n' > "$PRSTATE/chains/ttys015.jsonl"
@@ -6528,11 +6529,31 @@ import iterm_agent as ia
 ia.chain_append('/dev/ttys804', 'T', '/dev/ttys902', 'S-B')" "$ROOT/skills/iterm-agents/scripts" 2>&1
   ls "$PRSTATE/chains" | paste -sd, -; }
 prune_seed
-check "a chain write prunes every file whose agents are all dead, never a live one or the caller's" \
-  "ttys016.jsonl,ttys801.jsonl,ttys802.jsonl,ttys804.jsonl" "$(prune_run "$PLACEPS")"
+check "a chain write prunes every file whose owner runs no orchestrator, never a live one or the caller's" \
+  "ttys801.jsonl,ttys803.jsonl,ttys804.jsonl" "$(prune_run "$PLACEPS")"
 prune_seed
-check "an ended orchestrator's file with one agent still running is kept" "present" \
+check "an ended orchestrator's file with one agent still running is pruned" "absent" \
   "$(prune_run "$PLACEPS" >/dev/null; [ -e "$PRSTATE/chains/ttys016.jsonl" ] && echo present || echo absent)"
+prune_seed
+check "a file whose owner tty now carries an agent is pruned, though its own agent still runs" "absent" \
+  "$(prune_run "$PLACEPS" >/dev/null; [ -e "$PRSTATE/chains/ttys802.jsonl" ] && echo present || echo absent)"
+prune_seed
+check "a file whose owner carries a host with no readable name is kept" "present" \
+  "$(printf '/dev/ttys016 claude\n' > "$WORK/ps-prune-bare.txt"; prune_run "$WORK/ps-prune-bare.txt" >/dev/null; [ -e "$PRSTATE/chains/ttys016.jsonl" ] && echo present || echo absent)"
+# A home orchestrator's tab carries only the tmux client; its host runs on the server's pane.
+prune_seed
+printf '/dev/ttys016 tmux -L orch-abc123 attach\n/dev/ttys950 claude --name Orch : home\n' > "$WORK/ps-prune-home.txt"
+prune_home() { ORCHESTRATOR_STATE_DIR="$PRSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys801 ORCHESTRATOR_PS_TABLE="$WORK/ps-prune-home.txt" "$py" -c "
+import sys; sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+ia.home_panes = lambda socket: ([['1', '/dev/ttys951'], [sys.argv[2], '/dev/ttys950']], '')
+ia.chain_append('/dev/ttys804', 'T', '/dev/ttys902', 'S-B')" "$ROOT/skills/iterm-agents/scripts" "$1" 2>&1
+  [ -e "$PRSTATE/chains/ttys016.jsonl" ] && echo present || echo absent; }
+check "the chain of a tab carrying the client of a live home server is kept when window 0 holds an orchestrator" "present" \
+  "$(prune_home 0 | tail -1)"
+prune_seed
+check "and pruned when the host on window 0 is not an orchestrator's" "absent" \
+  "$(printf '/dev/ttys016 tmux -L orch-abc123 attach\n/dev/ttys950 claude --name Agent : home\n' > "$WORK/ps-prune-home.txt"; prune_home 0 | tail -1)"
 prune_seed
 check "and prunes nothing when the process table cannot be read" \
   "ttys015.jsonl,ttys016.jsonl,ttys801.jsonl,ttys802.jsonl,ttys803.jsonl,ttys804.jsonl" "$(prune_run "$WORK/no-such-ps-table")"
