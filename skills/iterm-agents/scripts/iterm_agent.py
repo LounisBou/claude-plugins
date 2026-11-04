@@ -1845,12 +1845,19 @@ async def tty_of(tab, connection=None, tries=10):
     handed over: `current_session` reads None, and the attribute error that follows names
     nothing useful. It is a race, so it is intermittent — the first probes never saw it, and
     a rotation found it on the fourth spawn of one run. Where a connection is available the
-    app is re-fetched, because the tab we hold may be the stale copy."""
+    app is re-fetched, because the tab we hold may be the stale copy.
+
+    The tty itself is set by the app once the session's job is forked, after the tab is handed
+    back: on a busy app the first read is empty (measured live), and a tab read once was a home
+    tab refused for « no tty » while its session was starting. An empty read is waited out too.
+    """
     for attempt in range(tries):
         sess = tab.current_session
         if sess is not None:
             try:
-                return await sess.async_get_variable("tty")
+                tty = await sess.async_get_variable("tty")
+                if tty:
+                    return tty
             except Exception:
                 pass
         await asyncio.sleep(0.3)
@@ -2972,12 +2979,51 @@ def trace_home_unproved(socket, cause, why, tty):
               % (socket, cause, tty or "-", why), echo=False)
 
 
-def kill_home(socket):
-    """End the home server `socket`, every window it holds with it; True when tmux did."""
+def home_socket_path(socket):
+    """The file tmux listens on for the server `socket`, where tmux itself puts it."""
+    return os.path.join(os.environ.get("TMUX_TMPDIR") or "/tmp", "tmux-%d" % os.getuid(), socket)
+
+
+def home_answers(socket):
+    """Whether the server `socket` still answers on its file: asked of the file itself, so
+    no tmux is run."""
+    import socket as sockets
+    probe = sockets.socket(sockets.AF_UNIX)
     try:
-        return tmux_call(["-L", socket, "kill-server"]).returncode == 0
+        probe.connect(home_socket_path(socket))
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
+def remove_exited_home_socket(socket):
+    """Remove the socket file tmux left behind for the server `socket`, once nothing answers
+    there: asked again right before the remove, since a server restarted on the same name
+    since the last probe owns the file."""
+    if home_answers(socket):
+        return
+    try:
+        os.remove(home_socket_path(socket))
+    except OSError:
+        pass
+
+
+def kill_home(socket):
+    """End the home server `socket`, every window it holds with it; True when tmux did. The
+    socket file goes with it once nothing answers there: tmux leaves it behind on a kill
+    (measured on 3.8)."""
+    try:
+        ended = tmux_call(["-L", socket, "kill-server"]).returncode == 0
     except TmuxError:
         return False
+    if ended and not home_answers(socket):
+        try:
+            os.remove(home_socket_path(socket))
+        except OSError:
+            pass
+    return ended
 
 
 def kill_watched_home(socket):
@@ -3107,21 +3153,9 @@ def cmd_home_watch(argv):
     if not args.socket:
         die("home-watch: --socket is required")
     poll = float(os.environ.get("ORCHESTRATOR_HOME_WATCH_POLL", "0.5"))
-    import socket as sockets
-    path = os.path.join(os.environ.get("TMUX_TMPDIR") or "/tmp", "tmux-%d" % os.getuid(),
-                        args.socket)
 
     def alive():
-        """Whether the server still answers on its socket: asked of the socket itself, so
-        the watcher runs no tmux."""
-        probe = sockets.socket(sockets.AF_UNIX)
-        try:
-            probe.connect(path)
-            return True
-        except OSError:
-            return False
-        finally:
-            probe.close()
+        return home_answers(args.socket)
     deadline = time.time() + HOME_WATCH_UP
     while not alive():
         if time.time() >= deadline:
@@ -3129,6 +3163,8 @@ def cmd_home_watch(argv):
         time.sleep(poll)
     while alive():
         time.sleep(poll)
+    # The server exited by itself and nothing answered on its file: tmux leaves it behind.
+    remove_exited_home_socket(args.socket)
     marker = home_end_marker(args.socket)
     if os.path.exists(marker):
         os.remove(marker)
