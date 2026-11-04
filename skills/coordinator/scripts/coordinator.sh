@@ -73,7 +73,10 @@
 # is printed, so the entry is closed with it.
 # round records the ids of the open entries it printed in <state>/round-listed.json (record_listed).
 # round-close rewrites the entry with status closed and the answer {text, by "coordinator", at},
-# in one rename, and refuses an id with no entry.
+# in one rename, and refuses an id with no entry. An entry still open and of kind operator, whose sender waits on that
+# answer, also gets its delivery pending, stamped as the answer ({state "pending", at, attempts 0},
+# with answerAt for a sender on this machine): the coordinator's hooks module sends the answer at
+# its next round reading and writes the outcome there, so the close is the one gesture.
 # round-archive moves each entry file of <state>/round/ whose status is closed into
 # <state>/round/archive/ (created when absent), each in one rename; open, answered and withdrawn
 # entries stay, and so does a file that does not parse. Nothing reads the archive: round and
@@ -906,7 +909,9 @@ cmd_round_close() {
         || die "round-close: no entry $id in $ROUND"
     local path="$ROUND/$id.json" closed tmp
     closed=$(jq -c --arg id "$id" --arg text "$answer" --arg at "$(now)" \
-        'select(type == "object" and .id == $id) | .status = "closed" | .answer = {text: $text, by: "coordinator", at: $at}' \
+        'select(type == "object" and .id == $id) | (.status == "open") as $open
+         | .status = "closed" | .answer = {text: $text, by: "coordinator", at: $at}
+         | if $open and .kind == "operator" then .delivery = ({state: "pending", at: $at, attempts: 0} + (if .origin then {} else {answerAt: $at} end)) else . end' \
         "$path" 2>/dev/null) && [ -n "$closed" ] || die "round-close: no entry $id in $ROUND"
     # As the module writes it: a temporary file beside it, then one rename.
     tmp=$(mktemp "$path.tmp-XXXXXX") || die "round-close: cannot write into $ROUND"

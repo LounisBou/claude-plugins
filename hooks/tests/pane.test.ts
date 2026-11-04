@@ -2494,6 +2494,123 @@ test('the answers given to a multi-question entry survive a reload', async () =>
   expect(stored(twoQuestions().id).answer!.text).toBe(`Question 3 sur 4: A : ${FIRST_A} · Question 4 sur 4: B : ${SECOND_B}`)
 })
 
+// --- an answer closed by the coordinator's round-close, delivered by its module ----------------
+
+// An open entry as `coordinator.sh round-close` leaves it: closed with the coordinator's answer,
+// its delivery pending for the module, stamped as the answer.
+function closedByCoordinator(asked: RoundEntry, text = 'A, ship it'): RoundEntry {
+  const at = new Date().toISOString()
+  const delivery = asked.origin ? { state: 'pending', at, attempts: 0 } : { state: 'pending', at, attempts: 0, answerAt: at }
+  return { ...asked, status: 'closed', answer: { text, by: 'coordinator', at }, delivery } as RoundEntry
+}
+
+// The sends of a coordinator's module, delivered or refused with `refuse`.
+function sends(fx: Fx, refuse?: string) {
+  const sent: { to: unknown; text: string }[] = []
+  fx.dollar.session.send = async (args: { to: unknown; text: string }) => {
+    sent.push(args)
+    return refuse ? { isDelivered: false, reason: refuse } : { isDelivered: true }
+  }
+  return sent
+}
+
+const storedIn = (fx: Fx, id: string) => JSON.parse(String(fx.files.get(`${ROUND}/${id}.json`))) as RoundEntry
+
+// The pane of a fresh module over the same files, the old one still shown at the host: the
+// command closes it, and opens it again.
+async function reloadedPane(fx: Fx) {
+  const reloaded = mounted(registerSupervision).handlers
+  await reloaded['command.run'](fx.dollar, supervisionRun)
+  await reloaded['command.run'](fx.dollar, supervisionRun)
+  return texts(await reloaded['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))
+}
+
+test('an answer round-close wrote reaches its sender once, at the round\'s reading, its delivery written delivered', async () => {
+  const asked = closedByCoordinator(entry('Orch : a', minutesAgo(1), { session: 'sa' }))
+  const { fx, tick } = await wakingCoordinator([asked])
+  const sent = sends(fx)
+  await tick()
+  expect(sent).toEqual([{
+    to: { sessionId: 'sa' },
+    text: `[module] The operator answered through the coordinator at ${asked.answer!.at} — A, ship it (question since ${asked.since}, blocks: phase 3)`,
+  }])
+  const stored = storedIn(fx, asked.id)
+  expect(stored.status).toBe('closed')
+  expect(stored.delivery).toEqual({ state: 'delivered', at: stored.delivery!.at, attempts: 1, answerAt: asked.answer!.at })
+  await tick()
+  await tick()
+  expect(sent.length).toBe(1)
+})
+
+test('an answer round-close wrote that the host refuses is written failed on disk, sent once, and a fresh module\'s pane says it', async () => {
+  const asked = closedByCoordinator(entry('Orch : low', minutesAgo(1), { session: 'low' }))
+  const { fx, tick } = await wakingCoordinator([asked])
+  const sent = sends(fx, 'nobody by that name')
+  await tick()
+  const stored = storedIn(fx, asked.id)
+  expect(stored.delivery).toEqual({ state: 'failed', at: stored.delivery!.at, attempts: 1, answerAt: asked.answer!.at, reason: 'nobody by that name' })
+  expect(fx.written.filter(l => l.includes("round: the coordinator's answer was not delivered to Orch : low: nobody by that name")).length).toBe(1)
+  await tick()
+  expect(sent.length).toBe(1)
+  expect(await reloadedPane(fx)).toContain('not delivered: nobody by that name — the answer to Orch : low (blocks: phase 3)')
+})
+
+test('an answer round-close wrote to an entry from another machine goes as a marked line at the round\'s reading', async () => {
+  const asked = closedByCoordinator(remoteEntry({ since: minutesAgo(1) }))
+  const { fx, tick } = await wakingCoordinator([asked])
+  const sent = sends(fx)
+  await tick()
+  expect(sent.map(s => s.to)).toEqual([FAR])
+  expect(sent[0].text.startsWith('[module-answer] ')).toBe(true)
+  expect(sent[0].text).toContain(`The operator answered through the coordinator at ${asked.answer!.at} — A, ship it`)
+  const stored = storedIn(fx, asked.id)
+  expect(stored.delivery).toEqual({ state: 'sent', at: stored.delivery!.at, attempts: 1 })
+  await tick()
+  expect(sent.length).toBe(1)
+})
+
+test('an entry closed with no delivery pending — before round-close carried one, or from the pane — is sent nothing at the round\'s reading', async () => {
+  const old = entry('Orch : a', minutesAgo(5), { session: 'sa', status: 'closed', answer: { text: 'A', by: 'coordinator', at: minutesAgo(4) } })
+  const pane = entry('Orch : b', minutesAgo(5), { session: 'sb', status: 'closed', answer: { text: 'answered from the pane: A', by: 'pane', at: minutesAgo(4) } })
+  const { fx, tick } = await wakingCoordinator([old, pane])
+  const sent = sends(fx)
+  await tick()
+  expect(sent).toEqual([])
+  expect(storedIn(fx, old.id).delivery).toBeUndefined()
+})
+
+test('an entry of kind done closed with a pending delivery is sent nothing at the round\'s reading', async () => {
+  const asked = closedByCoordinator(entry('Orch : a', minutesAgo(1), { session: 'sa', kind: 'done', blocks: null }))
+  const { fx, tick } = await wakingCoordinator([asked])
+  const sent = sends(fx)
+  await tick()
+  expect(sent).toEqual([])
+  expect(storedIn(fx, asked.id).delivery).toEqual(asked.delivery)
+})
+
+test('a pending delivery stamped for another answer than the entry holds is written failed, naming the mismatch, and sent nothing', async () => {
+  const closed = closedByCoordinator(entry('Orch : a', minutesAgo(1), { session: 'sa' }))
+  const asked = { ...closed, delivery: { ...closed.delivery!, answerAt: minutesAgo(3) } } as RoundEntry
+  const { fx, tick } = await wakingCoordinator([asked])
+  const sent = sends(fx)
+  await tick()
+  expect(sent).toEqual([])
+  const stored = storedIn(fx, asked.id)
+  expect(stored.delivery!.state).toBe('failed')
+  expect(stored.delivery!.reason).toContain('stamped for the answer of')
+  await tick()
+  expect(sent).toEqual([])
+})
+
+test('a pane answer not delivered is written failed in its entry, and a fresh module\'s pane still says it', async () => {
+  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const { fx, render, stored } = await askingPane([asked], { refuse: 'nobody by that name' })
+  await pick(await render(), 'A')
+  const answered = stored(asked.id)
+  expect(answered.delivery).toEqual({ state: 'failed', at: answered.delivery!.at, attempts: 1, answerAt: answered.answer!.at, reason: 'nobody by that name' })
+  expect(await reloadedPane(fx)).toContain('not delivered: nobody by that name — the answer to Orch : low (blocks: phase 3)')
+})
+
 test('an orchestrator\'s pane in tmux lists the agents its own pane spawned, not a sibling pane\'s sharing the server\'s ITERM_SESSION_ID', async () => {
   const owned = JSON.stringify({ tab_id: 'tmux:/private/tmp/tmux-501/orch:@1', tty: '/dev/ttys009', owner: 'tmux:/private/tmp/tmux-501/orch:%3' }) + '\n'
   const paneText = async (pane: string) => {

@@ -30,10 +30,11 @@ verbatim, and you add nothing of your own. Only what follows differs.
 4. **Re-verify before presenting.** Run `round --by-urgency` again just before each question:
    an entry answered in the pane or withdrawn by its sender meanwhile is not asked; write it
    back in the ledger and present the next one instead, the count moving with it.
-5. **The relay, on each answer, in the same turn.** « Recorded: <his ruling> »; the ruling
+5. **The relay, on each answer, in the same turn.** « Recorded: <his ruling> »; for an entry of
+   the round, `coordinator.sh round-close <id> --answer "<his words>"` alone, which your module
+   sends, dated, to the sender; for a question that reached you by message, the ruling
    verbatim and dated (`date -u +%FT%TZ`, pasted) to the sender, by `SendMessage` to its
-   exact `ListAgents` name, « the operator answered »; for an entry of the round,
-   `coordinator.sh round-close <id> --answer "<his words>"`; marked sent in the ledger; then
+   exact `ListAgents` name, « the operator answered »; marked sent in the ledger; then
    the next question in full in the same message. The relay goes with each answer, never held
    for the end: each orchestrator waits on its own.
 6. **The end line.** « The round is complete: N/N. » — then one short list: each ruling, the
