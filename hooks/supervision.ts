@@ -2525,7 +2525,7 @@ export async function coordinatorAddress($: any): Promise<{ to: CoordinatorTo; n
 }
 
 // A name that carries its session's reference, « Coord : ops [abc] »: no other session has it.
-const REFERENCED = / \[[^\]\s]+\]$/
+export const REFERENCED = / \[[^\]\s]+\]$/
 
 // The session id of the one session on this machine that the host's registry (its sessions
 // directory, one record per process) names so, the process the coordinator's record names when

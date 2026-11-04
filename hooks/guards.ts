@@ -22,7 +22,7 @@ import {
 import { tripGate, parseMeasure, measureFilePath } from './gauge-core.ts'
 import { takeDrift } from './gauge.ts'
 import { isEnding } from './naming.ts'
-import { oneQuestionRefusal, operatorWaitRefusal } from './one-question.ts'
+import { oneQuestionRefusal, operatorWaitRefusal, asksTheOperator, QUESTION_BY_MESSAGE } from './one-question.ts'
 import { detectForces } from './tokenizer.ts'
 import {
   refuse, withDeadline, isDegradedPass, type DegradedPass,
@@ -34,7 +34,7 @@ import {
 } from './stop-gate.ts'
 import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
 import { pendingQuestion, unansweredRefusal, type WaitRead } from './unanswered-question.ts'
-import { parseRoundEntry, parseWaitRecord, waitKey } from './supervision.ts'
+import { parseRoundEntry, parseWaitRecord, waitKey, coordinatorAddress, REFERENCED } from './supervision.ts'
 import type { RoundEntry } from './round.ts'
 import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, editsTheMap, bashWritesTheMap } from './models-guard.ts'
 
@@ -360,8 +360,25 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // the stop gate, which reads it as something that will wake the session. Mounted
   // before the Bash guard below.
   on('tool.call', { tool: 'SendMessage' }, async ($: any, e: any, next: (e: any) => any) => {
-    const out = await next(e)
     const to = typeof e.to === 'string' ? e.to.trim() : ''
+    // A question sent to the coordinator by message reaches no round: refused, the turn's end carries it.
+    // The coordinator is read only for a message that asks one; a read that fails lets the send through.
+    if (to && typeof e.message === 'string' && asksTheOperator(e.message)) {
+      try {
+        const coordinator = await coordinatorAddress($)
+        // Compared without the ` [ref]` suffix on both sides: « Coord : ops » is « Coord : ops [abc] ».
+        const bare = (name: string) => name.replace(REFERENCED, '').trim()
+        const addressed = coordinator !== null
+          && [coordinator.name, typeof coordinator.to === 'string' ? coordinator.to : coordinator.to.sessionId].some(a => bare(a) === bare(to))
+        if (addressed) {
+          await logLine($, `a question sent to the coordinator by message refused (${to})`)
+          return { deny: QUESTION_BY_MESSAGE }
+        }
+      } catch (err) {
+        await logLine($, `the coordinator could not be read for a message to ${to}: ${(err as Error).message}`)
+      }
+    }
+    const out = await next(e)
     if (!e.agentId && e.notify_when_idle === true && to && out && !out.isError && !out.deny) {
       try {
         const sessionId = await $.session.id()

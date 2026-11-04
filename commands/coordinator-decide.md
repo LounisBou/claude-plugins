@@ -17,8 +17,7 @@ verbatim, and you add nothing of your own. Only what follows differs.
 1. **The source.** `${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh round
    --by-urgency`: its open `operator` entries are the round, every one of them, due or not,
    whether the pane is open or closed, plus the questions that reached you by message and are
-   still open in your ledger. Each is written to `decision-round.md` first, as the coordination
-   skill's ledger says. A closing proposal (`done`) is presented as the skill says, outside
+   still open in your ledger. A closing proposal (`done`) is presented as the skill says, outside
    this round.
 2. **The order.** As `--by-urgency` prints them: the urgent first, then by `since`, the
    oldest first, across senders, with no grouping by orchestrator. A question received by

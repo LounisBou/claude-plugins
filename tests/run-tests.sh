@@ -3458,10 +3458,10 @@ check "the successor's announcement keeps operator questions coming to it" "yes"
 # dropped or merged. The questions come grouped by the orchestrator that sent them, each group
 # opened by that orchestrator's own account of its work, every message naming the sender and
 # the coordinator, since he runs several coordinators.
-check "the coordinator runs every relayed question as a decision round by default, with its file and end line" "yes|yes|yes|yes" \
-  "$(spells "$COORDSKILL" 'goes through a decision round, by default**: the whole method of `/orchestrator-decide`, run')|$(spells "$COORDSKILL" 'without his asking and without his typing that command, even for a single question')|$(spells "$COORDSKILL" '`decision-round.md` in your scratch directory: number, the sender'"'"'s exact `ListAgents`')|$(spells "$COORDSKILL" '« The round is complete: N/N. »')"
-check "every relayed question reaches the operator: in the ledger first, none dropped or merged" "yes|yes|yes" \
-  "$(spells "$COORDSKILL" 'A question received is written, before anything else is done, to')|$(spells "$COORDSKILL" 'The round file is the ledger: nothing received is dropped, merged or')|$(spells "$COORDSKILL" 'one found settled is not dropped by you: ask its sender, and only its')"
+check "the coordinator runs every relayed question as a decision round by default, with its end line, no parallel ledger, and a question by message sent back to be asked at the end of the turn" "yes|yes|yes|yes|yes" \
+  "$(spells "$COORDSKILL" 'goes through a decision round, by default**: the whole method of `/orchestrator-decide`, run')|$(spells "$COORDSKILL" 'without his asking and without his typing that command, even for a single question')|$(spells "$COORDSKILL" '« The round is complete: N/N. »')|$(grep -qF 'decision-round.md' "$COORDSKILL" && echo no || echo yes)|$(spells "$COORDSKILL" 'message from a session on this machine is not presented: ask its sender to ask it again at the end of its turn')"
+check "a question found settled is not dropped by the coordinator: its sender is asked" "yes" \
+  "$(spells "$COORDSKILL" 'one found settled is not dropped by you: ask its sender, and only its')"
 check "the round groups its questions by the orchestrator that sent them" "yes|yes|yes" \
   "$(spells "$COORDSKILL" 'all the questions of one orchestrator together, consecutive, in the sender'"'"'s own order')|$(spells "$COORDSKILL" 'question arriving mid-round from an orchestrator whose group is not done joins that')|$(spells "$COORDSKILL" '« `<sender'"'"'s exact name>` — 3 questions »')"
 check "the round names the coordinator and each sender, and opens each group with the sender's own context" "yes|yes|yes|yes|yes" \

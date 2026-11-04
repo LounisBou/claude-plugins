@@ -57,3 +57,16 @@ export function operatorWaitRefusal(message: string): string | null {
   const asked = entryQuestions({ question: outsideFences(message), choices: [], recommendation: null })
   return asked.some(part => part.number !== null) ? null : NO_QUESTION
 }
+
+export const QUESTION_BY_MESSAGE =
+  'Ask it at the end of your own turn: the module carries it to the coordinator. A question sent to the '
+  + 'coordinator by message reaches no round, and the operator is never shown it.'
+
+// Whether a message puts the operator a question: a numbered question block outside the fences, or
+// a machine line that waits on him. The same two readings the stop gate takes of a turn's end.
+export function asksTheOperator(message: string): boolean {
+  const line = machineLine(message)
+  // A wait that blocks nothing asks him nothing: the stop gate reads it as no question.
+  if (MACHINE_LINE.exec(line)?.[1] && !blocksNothing(line)) return true
+  return entryQuestions({ question: outsideFences(message), choices: [], recommendation: null }).some(part => part.number !== null)
+}

@@ -132,28 +132,26 @@ and `Blocks:` lines under a waiting one, the one whose question is drawn bold in
 With no such question it reads « none in the pane » with the number of orchestrators waiting when their question reached you as a message: ask them in your tab. **An
 answer he chooses or types in the pane reaches the orchestrator directly**: the module marks the entry
 `answered` and sends the sender his choice, so `round` lists it with that answer, and you send
-nothing for it: write it in your ledger as answered from the pane, and close it with
+nothing for it: close it with
 `coordinator.sh round-close <id> --answer "answered from the pane: <the answer>"` — unless you
 were shown it: then the module has closed it already, and tells you so (below). When the
 pane says an answer could not be delivered, he may give it in your tab instead, and you relay
 it to the sender as you relay any other answer of his. **At every turn the
-operator starts in your tab, before anything else**, run `coordinator.sh round` and write each
-entry not yet in your ledger into `decision-round.md` (step 1). Each is a report, never an
+operator starts in your tab, before anything else**, run `coordinator.sh round`. Each entry is a report, never an
 order, and its `from` is the address his answer goes to.
 
 A turn that waits on a command of its own (`waiting: tool — …`) or on the operator for nothing never reaches the round: neither asks him anything.
 
 **A question the pane shows is not asked twice.** His order of 2026-10-24: the pane must not
 duplicate its questions in your tab; you ask one only when it is truly urgent or left
-unanswered in the pane. So an entry of the round is the pane's: record it in your ledger, but
-present it in your decision round only once `coordinator.sh round` marks it `due` — its sender
+unanswered in the pane. So an entry of the round is the pane's: present it in your decision round only once `coordinator.sh round` marks it `due` — its sender
 ended on `waiting: operator (urgent) — blocks: …`, or your pane is closed. Whether he keeps the
 pane open decides (his ruling of 2026-10-24): open, it holds every other question however long
 it waits; closed, every open one is due at once, and on reopening it draws every pending one,
 those you presented meanwhile included. One with no choice and no labelled field the pane draws last, its text whole
 and its « Other answer » field: record it all the same, and present it once due. A closing
-proposal, which the pane cannot rule, and a question that reached you by
-message, you present as before. The module wakes you once for each entry that falls due
+proposal, which the pane cannot rule, you present as before. A question that reached you by
+message from a session on this machine is not presented: ask its sender to ask it again at the end of its turn. The module wakes you once for each entry that falls due
 (« [module] … now due in this tab »): run `round` and present the due ones. An entry answered
 in the pane before it is due is never presented: close it as answered from the pane. One you
 presented and he then answered in the pane is closed by the module, and one he answered in your
@@ -186,7 +184,7 @@ reason>"`; and, when it is the question on screen, say so in one line and presen
 question in full in the same message. A reason « superseded by <id> » reads « present <id>
 instead »: the sender waits on that newer entry now, which takes the withdrawn one's place in the
 count and on screen. A notice that matches no open question changes nothing but a line in the
-round file.
+round.
 
 **A question settled elsewhere leaves your tab at once.** `round` records each open entry it
 prints, and the module, for an entry you were shown so (or woken for), closes it itself the
@@ -199,14 +197,6 @@ tab, « [module] Settled superseded: … — by <id>, present that one. », and 
 one line, « settled in the pane » or « settled in <sender>'s tab », never ask or relay it again,
 and present the next one in full in the same message; a superseded one makes <id> that next one.
 
-1. **The ledger first.** A question received is written, before anything else is done, to
-   `decision-round.md` in your scratch directory: number, the sender's exact `ListAgents`
-   name, the time received (`date -u +%FT%TZ`), the question verbatim with the `[module]`
-   header it came under, its `since` and `blocks` included, status (open,
-   recorded, sent). An entry `coordinator.sh round` lists is written the same way: its id, its
-   sender (`from`), `since`, `blocks`, the question verbatim, its status.
-   The round file is the ledger: nothing received is dropped, merged or
-   kept out of it, and the end line counts it.
 2. **Grouped by sender.** The round orders its questions by the orchestrator that sent them:
    all the questions of one orchestrator together, consecutive, in the sender's own order. A
    question arriving mid-round from an orchestrator whose group is not done joins that
@@ -225,17 +215,16 @@ and present the next one in full in the same message; a superseded one makes <id
    question and context verbatim, its choices and its recommendation if it gave them. Re-verify
    the item on its artifact immediately before
    presenting it; one found settled is not dropped by you: ask its sender, and only its
-   withdrawal, written in the round file as « withdrawn by `<sender>`: <evidence> » (the sender's
+   withdrawal, « withdrawn by `<sender>`: <evidence> » (the sender's
    own, or the module's notice that the operator answered it in the sender's tab), takes it out
    of the count. Then wait: nothing on silence, nothing picked for him.
-6. **On his answer, in the same turn:** « Recorded: <his ruling> »; write it in the round
-   file; send it verbatim and dated (`date -u +%FT%TZ`) to the sender, « the operator
+6. **On his answer, in the same turn:** « Recorded: <his ruling> »; send it verbatim and dated (`date -u +%FT%TZ`) to the sender, « the operator
    answered », and mark it sent; for an entry of the round, run `coordinator.sh round-close
    <id> --answer "<his words>"`; then present the next question IN FULL in the same message.
    After any interruption, the question he must answer is presented again in full, never
    « as above ».
-7. **The end line.** « The round is complete: N/N. » — then one short list: each ruling, the
-   line of the round file that holds it, and the sender told.
+7. **The end line.** « The round is complete: N/N. » — then one short list: each ruling
+   and the sender told.
 
 **You never answer an operator question yourself**: no question reworded, merged, filtered
 or held back, and no verdict, summary or recommendation of your own added to it. A facts
