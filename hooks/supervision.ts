@@ -1205,8 +1205,11 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     const sessionId = e.sessionId ?? await $.session.id()
     // Read before the row goes: the successor's file goes with it.
     let successor: LearntSuccessor | null = null
+    // Read before the wait file goes: the question a coordinator elsewhere holds or was sent.
+    let remote: { name: string; held: { blocks: string; since: string | null } } | null = null
     try {
       stopWake(wake)
+      remote = await remoteQuestion($, sessionId)
       successor = await readSuccessor($, sessionId)
       await deleteSession($, sessionId)
       await recordPaneClosed($)
@@ -1225,7 +1228,10 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       until = Date.now() + bound
       const done = await withDeadline(successor
         ? moveToSuccessor($, sessionId, successor)
-        : withdrawStale($, sessionId, null, "the sender's session ended"), bound)
+        : withdrawStale($, sessionId, null, "the sender's session ended").then(async settled => {
+          if (remote) await withdrawRemote($, remote.name, remote.held)
+          return settled
+        }), bound)
       if (isDegradedPass(done)) await logLine($, `round: did not finish within ${bound} ms`)
       else await tellSettled($, done, until)
     } catch (err) {
@@ -2156,6 +2162,34 @@ async function withdrawHeld($: any, sessionId: string, name: string, held: { blo
   } catch (err) {
     await logLine($, `withdraw: ${(err as Error).message}`)
     return null
+  }
+}
+
+// The question of a session's wait that a coordinator elsewhere holds (acknowledged: `relayed`) or
+// was sent and has not yet acknowledged (`pending`), with the name it was asked under. Null when
+// the wait holds none, or names no one to withdraw it as.
+async function remoteQuestion($: any, sessionId: string): Promise<{ name: string; held: { blocks: string; since: string | null } } | null> {
+  const wait = await readWait($, sessionId)
+  if (!wait) return null
+  const sent = (wait.waiting ?? wait.last_waiting ?? null) === 'operator' && !!wait.pending && typeof wait.blocks === 'string' && wait.blocks !== ''
+    ? { blocks: wait.blocks, since: wait.waiting_since ?? null }
+    : null
+  const held = heldQuestion(wait) ?? sent
+  const name = wait.name ?? parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))?.name ?? null
+  return held && name ? { name, held } : null
+}
+
+// The marked withdrawal of a session that ended, sent to the coordinator on another machine (the
+// one on this machine reads the round the session end withdrew). A send not delivered is one log
+// line: the session has no other chance to say it.
+async function withdrawRemote($: any, name: string, held: { blocks: string; since: string | null }): Promise<void> {
+  const coordinator = await coordinatorAddress($)
+  if (!coordinator || coordinator.local) return
+  try {
+    const sent = await sendToCoordinator($, coordinator.to, withdrawalText(name, held.blocks, held.since))
+    if (!sent?.isDelivered) await logLine($, `withdraw: not delivered to ${addressLabel(coordinator.to)}: ${sent?.reason ?? 'no answer'}`)
+  } catch (err) {
+    await logLine($, `withdraw: ${(err as Error).message}`)
   }
 }
 

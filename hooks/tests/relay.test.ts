@@ -1352,6 +1352,45 @@ for (const [label, send] of [
 
 // --- the successor holds the open questions -------------------------------------------------
 
+// A coordinator elsewhere holds no file of this machine's round: the session end tells it.
+test('the session end of a sender whose question a coordinator elsewhere holds sends it one withdrawal line', async () => {
+  const { chains, fx } = await relayedQuestion({ remote: true })
+  await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
+  const lines = fx.sent.filter(m => m.text.startsWith('[module]'))
+  expect(lines.length).toBe(1)
+  expect(lines[0].text).toContain('Orch : belt withdraws its question for the operator since')
+  expect(lines[0].text).toContain('blocks: phase 3')
+})
+
+test('the session end of a sender whose question was sent and not yet acknowledged sends the withdrawal too', async () => {
+  const chains = mounted()
+  const fx = fake({ remote: true })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+  expect(JSON.parse(fx.files.get(WAIT)!).pending).toBeTruthy()
+  fx.sent.length = 0
+  await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
+  expect(fx.sent.filter(m => m.text.startsWith('[module]')).length).toBe(1)
+})
+
+test('the session end of a sender with a successor, its question held by a coordinator elsewhere, sends no withdrawal', async () => {
+  const { chains, fx } = await relayedQuestion({ remote: true })
+  successorRunning(fx)
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch : belt-2'))
+  fx.sent.length = 0
+  await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
+  expect(fx.sent.filter(m => m.text.startsWith('[module]')).length).toBe(0)
+})
+
+test('the session end sends no withdrawal when nothing was asked, or when the coordinator is on this machine', async () => {
+  const idle = fake({ remote: true })
+  await drive(mounted(), 'session.end', idle.dollar, { sessionId: 's-one', reason: 'exit' })
+  expect(idle.sent.length).toBe(0)
+  const { chains, fx } = await relayedQuestion()
+  fx.sent.length = 0
+  await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
+  expect(fx.sent.filter(m => m.text.startsWith('[module]')).length).toBe(0)
+})
+
 // The operator's report of 2026-10-30: a question withdrawn when its sender's tab was closed by
 // its successor, which never asked it again. The successor's « takeover confirmed » teaches the
 // sender who it is; the hand-over and the session end then move the open entries to it.

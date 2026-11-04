@@ -80,7 +80,8 @@
 # round-archive moves each entry file of <state>/round/ whose status is closed into
 # <state>/round/archive/ (created when absent), each in one rename; open, answered and withdrawn
 # entries stay, and so does a file that does not parse. Nothing reads the archive: round and
-# round-close see only the files directly under round/.
+# round-close see only the files directly under round/. It also removes the *.json.tmp-* files
+# a write died on, once a day old; a fresher one is a write in flight and stays.
 # drop prints "dropped <name>", then "brief moved to <path>" (or "brief <path> was already
 # gone"), then "left untouched: <each pull request and checkout, or none>" — the pull requests,
 # their branches and the checkouts are the operator's to close, never this script's.
@@ -931,6 +932,9 @@ cmd_round_archive() {
             mv -f "$f" "$ROUND/archive/${f##*/}" || die "round-archive: cannot move $f"
             n=$((n + 1))
         done
+        # A write that died between its temporary file and the rename leaves the temporary behind; one a
+        # day old is no write in flight.
+        find "$ROUND" -maxdepth 1 -type f -name '*.json.tmp-*' -mmin +1440 -exec rm -f {} + 2>/dev/null || true
     fi
     echo "archived $n"
 }

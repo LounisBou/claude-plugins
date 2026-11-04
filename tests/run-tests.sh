@@ -8667,6 +8667,12 @@ check "round-archive moves the closed entries only, and leaves the others and th
 check "a second round-archive finds nothing to move" "archived 0" "$(acoord round-archive 2>&1)"
 check "round-archive on a missing round directory moves nothing" "archived 0|exit 0" \
   "$(ORCHESTRATOR_STATE_DIR="$WORK/coord-no-round" bash "$COORD" round-archive 2>&1)|exit $?"
+TMPDIR_ROUND="$WORK/coord-archive-tmp"
+mkdir -p "$TMPDIR_ROUND/round"
+printf '{"id": "half' > "$TMPDIR_ROUND/round/old.json.tmp-1-abc"; printf '{"id": "half' > "$TMPDIR_ROUND/round/fresh.json.tmp-2-def"
+touch -t 202001010000 "$TMPDIR_ROUND/round/old.json.tmp-1-abc"
+check "round-archive removes a temporary file a day old and keeps a fresh one" "archived 0|fresh.json.tmp-2-def" \
+  "$(ORCHESTRATOR_STATE_DIR="$TMPDIR_ROUND" bash "$COORD" round-archive 2>&1)|$(ls "$TMPDIR_ROUND/round")"
 check "round-archive refuses an argument and moves nothing" "exit 1|0" \
   "$(ORCHESTRATOR_STATE_DIR="$AROUND" bash "$COORD" round-archive now >/dev/null 2>&1; echo "exit $?")|$(find "$AROUND/round/archive" -type f | wc -l | tr -d ' ' | awk '{ print $1 - 2 }')"
 arch_entry z-hidden open; mv "$AROUND/round/z-hidden.json" "$AROUND/round/archive/z-hidden.json"
