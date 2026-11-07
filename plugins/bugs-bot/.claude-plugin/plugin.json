@@ -1,0 +1,13 @@
+{
+  "name": "bugs-bot",
+  "description": "A Telegram or Slack bug-report relay for Claude Code: one bot, one group or channel and one agent per project.",
+  "version": "0.4.0",
+  "dependencies": [{"name": "orchestrator", "marketplace": "lounisbou", "version": ">=0.49"}],
+  "author": {
+    "name": "Lounis Bou",
+    "email": "lounis.bou@gmail.com"
+  },
+  "homepage": "https://github.com/LounisBou/claude-bugs-bot",
+  "repository": "https://github.com/LounisBou/claude-bugs-bot",
+  "license": "MIT"
+}

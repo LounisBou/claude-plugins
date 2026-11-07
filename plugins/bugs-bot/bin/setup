@@ -1,0 +1,100 @@
+#!/bin/sh
+# bugs-bot setup: find a Python 3.10 or newer, install one only when none is found, and remember it.
+#
+#   sh <plugin>/bin/setup                 find, remember, print the interpreter's path on the last line
+#   sh <plugin>/bin/setup install         the same, then run `bugs-bot install` through it (/bugs-bot:install)
+#
+# The interpreter is remembered in ~/.bugs-bot/python (BUGS_BOT_HOME moves it): the fixed launcher reads
+# it at every start, so PM2's Pull and every session run it. BUGS_BOT_PYTHON, when set, still wins.
+# Where it is looked for, in order: BUGS_BOT_PYTHON, the remembered one, python3.14 ... python3.10 and
+# python3 on the PATH, pyenv's versions, Homebrew's prefixes, then `uv python find '>=3.10'`.
+# None found: uv is installed if missing (its standalone installer, into ~/.local/bin, no root, no
+# shell profile edited), then `uv python install 3.12`. The system Python is never changed, and
+# bugs-bot stays standard-library only: no virtual environment.
+
+MIN_PROBE='import sys; sys.version_info >= (3, 10) or sys.exit(1); print(sys.executable)'
+UV_INSTALLER_URL='https://astral.sh/uv/install.sh'
+UV_PYTHON='3.12'
+
+case $0 in */*) bin=${0%/*} ;; *) bin=. ;; esac
+root=$(CDPATH= cd -- "$bin/.." && pwd) || exit 1
+home="${BUGS_BOT_HOME:-$HOME/.bugs-bot}"
+remembered="$home/python"
+
+say() { printf 'bugs-bot setup: %s\n' "$*" >&2; }
+
+# probe <candidate>: print the interpreter's own path when it is a Python 3.10+, else fail.
+probe() {
+  [ -n "$1" ] || return 1
+  out=$("$1" -c "$MIN_PROBE" 2>/dev/null) || return 1
+  [ -n "$out" ] && [ -x "$out" ] || return 1
+  printf '%s\n' "$out"
+}
+
+found=''
+try() { found=$(probe "$1") && [ -n "$found" ]; }
+
+find_uv() {
+  if command -v uv >/dev/null 2>&1; then
+    command -v uv
+  elif [ -x "$HOME/.local/bin/uv" ]; then
+    printf '%s\n' "$HOME/.local/bin/uv"
+  else
+    return 1
+  fi
+}
+
+search() {
+  r=''
+  [ -r "$remembered" ] && { read -r r < "$remembered" || [ -n "$r" ]; } && try "$r" && return 0
+  for v in 3.14 3.13 3.12 3.11 3.10; do
+    c=$(command -v "python$v" 2>/dev/null) && try "$c" && return 0
+  done
+  c=$(command -v python3 2>/dev/null) && try "$c" && return 0
+  for c in "${PYENV_ROOT:-$HOME/.pyenv}"/versions/*/bin/python3; do
+    [ -x "$c" ] && try "$c" && return 0
+  done
+  for p in ${HOMEBREW_PREFIX:-/opt/homebrew /usr/local /home/linuxbrew/.linuxbrew}; do
+    for v in 3.14 3.13 3.12 3.11 3.10; do
+      for c in "$p/bin/python$v" "$p/opt/python@$v/bin/python$v"; do
+        [ -x "$c" ] && try "$c" && return 0
+      done
+    done
+  done
+  uv=$(find_uv) && try "$("$uv" python find '>=3.10' 2>/dev/null)" && return 0
+  return 1
+}
+
+install() {
+  if ! uv=$(find_uv); then
+    command -v curl >/dev/null 2>&1 || { say "no Python 3.10+ found, and curl is missing to install uv: install a Python 3.10+, then run this again"; return 1; }
+    say "no Python 3.10+ found: installing uv into $HOME/.local/bin ($UV_INSTALLER_URL)"
+    script=$(mktemp "${TMPDIR:-/tmp}/uv-install.XXXXXX") || return 1
+    if ! curl -LsSf "$UV_INSTALLER_URL" -o "$script"; then
+      rm -f "$script"; say "the uv installer could not be downloaded"; return 1
+    fi
+    UV_INSTALL_DIR="$HOME/.local/bin" UV_NO_MODIFY_PATH=1 sh "$script" >&2
+    status=$?
+    rm -f "$script"
+    [ "$status" -eq 0 ] && [ -x "$HOME/.local/bin/uv" ] || { say "the uv installer failed (exit $status)"; return 1; }
+    uv="$HOME/.local/bin/uv"
+  fi
+  say "installing Python $UV_PYTHON with $uv (into your home directory)"
+  "$uv" python install "$UV_PYTHON" >&2 || { say "uv python install $UV_PYTHON failed"; return 1; }
+  try "$("$uv" python find "$UV_PYTHON" 2>/dev/null)" || { say "uv installed Python $UV_PYTHON but does not find it"; return 1; }
+}
+
+if [ -n "${BUGS_BOT_PYTHON:-}" ]; then
+  try "$BUGS_BOT_PYTHON" || { say "BUGS_BOT_PYTHON=$BUGS_BOT_PYTHON is not a Python 3.10+: unset it or point it at one"; exit 1; }
+elif ! search; then
+  install || exit 1
+fi
+
+mkdir -p "$home" || exit 1
+printf '%s\n' "$found" > "$remembered.$$" && mv -f "$remembered.$$" "$remembered" || { rm -f "$remembered.$$"; exit 1; }
+say "Python: $found (remembered in $remembered)"
+
+if [ "$#" -gt 0 ]; then
+  exec "$found" "$root/bin/bugs-bot" "$@"
+fi
+printf '%s\n' "$found"

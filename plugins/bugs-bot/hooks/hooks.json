@@ -1,0 +1,4 @@
+{
+  "description": "The bugs-bot hooks module",
+  "modules": ["./register.ts"]
+}
