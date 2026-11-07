@@ -44,6 +44,9 @@ operator works.
 8. The method kernel is about 2,000 tokens: ten principles, no dated quotation, each tested by ablation.
 9. Outcome evals compare a single session with an orchestration on replayed merged pull requests and are re-measured at every release.
 10. `routing.py` is reduced to the tier-to-alias map and the cost rule, with one price table.
+11. The orchestrator starts in a mode: `build` loads the method's lifecycle, `investigate` loads supervision, agents, the gauge and the succession only.
+12. The succession brief is generated from the state, its notes of judgment are capped and promoted or dropped at each generation, and a script refuses a brief that misses an open item.
+13. Each role's starting context and each succession brief's size are measured at every start.
 
 ## What this build starts from
 
@@ -89,6 +92,8 @@ Defects this build owns (line numbers at 0.98.0, relative to `plugins/orchestrat
 7. Outcome evals: goal 9; six to ten merged pull requests replayed, a spend cap per measure stated before any run, the cap the operator's.
 8. Kernel: goal 8, on the evals' harness, within the program's method plugin if the operator adopts it.
 9. Routing: goal 10.
+10. Modes: goal 11, once the program's method plugin exists.
+11. Succession: goals 12 and 13, on core's store and the rulings register (the in-flight `docs/standing-rulings` work is its starting point).
 
 ## Non-goals
 

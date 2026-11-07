@@ -25,6 +25,7 @@ change: a change that crosses plugins is one pull request.
                               ▲
    packages/core   ◀──────────┤   knows no plugin
         ▲                     │
+        │      plugins/method ◀── every plugin that takes part in the lifecycle
         │      plugins/github ◀── norms, pr-review, orchestrator, implement
         │      plugins/orchestrator ◀── bugs-bot, statusbar (through a contract)
         └───── every plugin    cloudflare stands alone
@@ -37,6 +38,14 @@ change: a change that crosses plugins is one pull request.
   plugin's private state.
 
 These rules are checked by the dependency lint (program goal 7), not by review.
+
+## One method, many roles
+
+The lifecycle, the definition of done and the artifact formats belong to the `method` plugin
+(decision 0006). The others are roles in it and point at it: implement runs it alone, the
+orchestrator runs it with implementer sessions in its `build` mode and leaves it out in its
+`investigate` mode, norms and pr-review supply reviews to github's ready gate, bugs-bot turns
+reports into its inputs, statusbar shows its state. cloudflare stands outside it.
 
 ## Packaging
 
@@ -76,5 +85,6 @@ because the host caches by version. A release is the merge; the tag `<name>--v<v
 | tooling tests | `scripts/*.test.ts` |
 | catalogue matches the manifests | `plugins/*/.claude-plugin/plugin.json` |
 | shipped change raises the version | the same manifests, against the base branch |
+| tooling at 100 % lines, branches, functions | `npm test` thresholds |
 | prompt budgets and duplicates only fall | `ci/prompts.json` |
 | every plugin's suite, macOS and Linux | `plugins/<name>/tests/run-tests.sh`, blocking per `ci/plugins.json` |

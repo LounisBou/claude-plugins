@@ -44,6 +44,11 @@ to this repository only once it is proved stable (`docs/migration.md`).
 15. Outcome evals compare a single session with an orchestration on replayed merged pull requests and are re-measured at every release.
 16. The operator's configuration is adapted on its own branch with no stale reference.
 17. The cutover criteria of the migration document are met.
+18. Code is covered at 100 % of lines, branches and functions, with every exclusion an adapter line counted by a ratchet, and mutation testing runs on the pure logic at each release.
+19. The method plugin owns the lifecycle, the definition of done, the artifact formats and the question format, and no other plugin restates them.
+20. implement runs the shared lifecycle alone, its review made by another session.
+21. A context simulator computes the tokens of each scenario from declared loads, CI shows each pull request's difference by scenario, and the gauge's first-turn measures calibrate it.
+22. Every rule a prompt states is enforced by code or named by an eval case, measured by a script.
 
 ## Constraints
 
@@ -63,13 +68,14 @@ to this repository only once it is proved stable (`docs/migration.md`).
 |---|---|---|---|
 | 0 | Urgent risks | 1 | In the current repositories, re-imported here. |
 | 1 | Install from the monorepo | 2 | Verify the catalogue's relative sources on the operator's host, in the separate profile. |
-| 2 | Core | 3, 5 | First the link verification (decision 0002), then the store, the paths, the name shapes, the plugin locator. One copy removed per pull request. |
+| 2 | Core | 3, 5, 18 | First the link verification (decision 0002), then the store, the paths, the name shapes, the plugin locator. One copy removed per pull request; each part enters at 100 % coverage. |
 | 3 | Contracts and dependencies | 4, 7 | Every row of `docs/contracts.md`. |
 | 4 | Readiness and consent | 8, 9, 10 | github first (the gate), then each consumer. |
+| 4b | Method | 19, 20 | The `method` plugin from what the orchestrator and implement state today; then implement on it. |
 | 5 | Security | 11, 12 | |
 | 6 | Platforms | 6 | Ratchet `ci/plugins.json` plugin by plugin. |
 | 7 | Plugin defects | 13 | One plugin per pull request, from the lists below. The orchestrator's urgent fixes run in its former repository and are imported; its refactoring is `orchestrator-refoundation-design.md`, and touches `plugins/orchestrator/` only once the urgent build has ended. |
-| 8 | Prompts and evals | 14, 15 | The spend cap of each eval run is the operator's, asked before any run. |
+| 8 | Prompts and evals | 14, 15, 21, 22 | The spend cap of each eval run is the operator's, asked before any run. |
 | 9 | Configuration and cutover | 16, 17 | |
 
 ## Copied rules core replaces (goal 3)
