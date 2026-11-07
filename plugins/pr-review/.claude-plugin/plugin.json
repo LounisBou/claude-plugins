@@ -1,0 +1,14 @@
+{
+  "name": "pr-review",
+  "description": "Interactive PR review workflow: a pending-review walkthrough item by item, GitHub comment processing, and an autonomous review-fix loop.",
+  "version": "0.6.0",
+  "dependencies": ["github@lounisbou"],
+  "author": {
+    "name": "Lounis Bou",
+    "email": "lounis.bou@gmail.com"
+  },
+  "homepage": "https://github.com/LounisBou/claude-review",
+  "repository": "https://github.com/LounisBou/claude-review",
+  "license": "MIT",
+  "keywords": ["pull-request", "code-review", "github", "api", "python"]
+}
