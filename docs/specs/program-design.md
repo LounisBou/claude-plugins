@@ -68,7 +68,7 @@ to this repository only once it is proved stable (`docs/migration.md`).
 | 4 | Readiness and consent | 8, 9, 10 | github first (the gate), then each consumer. |
 | 5 | Security | 11, 12 | |
 | 6 | Platforms | 6 | Ratchet `ci/plugins.json` plugin by plugin. |
-| 7 | Plugin defects | 13 | One plugin per pull request, from the lists below. The orchestrator's own build is `orchestrator-refoundation-design.md`. |
+| 7 | Plugin defects | 13 | One plugin per pull request, from the lists below. The orchestrator's urgent fixes run in its former repository and are imported; its refactoring is `orchestrator-refoundation-design.md`, and touches `plugins/orchestrator/` only once the urgent build has ended. |
 | 8 | Prompts and evals | 14, 15 | The spend cap of each eval run is the operator's, asked before any run. |
 | 9 | Configuration and cutover | 16, 17 | |
 

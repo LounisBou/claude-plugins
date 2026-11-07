@@ -10,8 +10,7 @@ holds it: 446 commits in two months with 7 refactors, a stop gate turned from re
 and back within two days, the same rule written in TypeScript, bash and Python, state spread
 over JSON files written by several processes without locks, about 60,000 tokens of rules
 loaded into every orchestrator, and evals that grade obedience to the plugin's own wording
-rather than the quality of what ships. This build fixes the verified defects, then rebuilds
-the foundations in place, one stacked pull request at a time, without changing how the
+rather than the quality of what ships. This build rebuilds the foundations in place, one stacked pull request at a time, without changing how the
 operator works.
 
 ## Operator priorities (they rank every trade-off below)
@@ -35,46 +34,36 @@ operator works.
 
 ## Goals
 
-1. The verified defects are fixed, each with a test that fails when its fix is reverted.
-2. Spawning is hardened without any new prompt: the launcher accepts only an allowlisted permission mode, and the trust-file write is locked, atomic and backed up.
-3. The local command-text push guard is removed once the program's forge protection has shipped.
-4. Every machine-wide fact of the orchestrator is kept by core's store, and `deck.json` is a view of it whose format is unchanged.
-5. A wait is declared by a structured tool call, `declare_wait({kind, blocks})`, and the stop gate decides on it deterministically.
-6. The hooks module is strict TypeScript on core, and every bash script is ported to TypeScript; Python remains only as a thin iTerm2 API adapter.
-7. The machine-to-machine move works end to end on core's store.
+1. Every machine-wide fact of the orchestrator is kept by core's store, and `deck.json` is a view of it whose format is unchanged.
+2. A wait is declared by a structured tool call, `declare_wait({kind, blocks})`, and the stop gate decides on it deterministically.
+3. The hooks module is strict TypeScript on core, and every bash script is ported to TypeScript; Python remains only as a thin iTerm2 API adapter.
+4. The machine-to-machine move works end to end on core's store.
+5. The local command-text push guard is removed once the program's forge protection has shipped.
+6. Deadlines cancel their work, and no temporary file outlives the write that made it.
+7. The suite blocks on macOS and Linux.
 8. The method kernel is about 2,000 tokens: ten principles, no dated quotation, each tested by ablation.
 9. Outcome evals compare a single session with an orchestration on replayed merged pull requests and are re-measured at every release.
 10. `routing.py` is reduced to the tier-to-alias map and the cost rule, with one price table.
 
-## Verified defects (goal 1)
+## What this build starts from
 
-Each was read in the code; line numbers are at 0.98.0.
+The urgent fixes run first in the former repository (`docs/specs/urgent-fixes-design.md` of
+`LounisBou/claude-orchestrator`): the stop gate's order, the liveness reads, the stale gauge
+reading, the coordinator's collision lines, the permission-mode allowlist, the locked trust
+write. They are imported here by `git subtree pull`. Until that build has ended, no pull request
+of this one touches `plugins/orchestrator/`: the two would conflict.
 
-- `hooks/stop-gate.ts:470-474`: the `idle-delivered` warning still returns before every
-  other check, so one idle agent with an open or merged pull request skips `waiting: done`,
-  `tool-not-running` and the malformed-line refusals; `idle-agents` (`:491`) does the same.
-  `stop-gate.test.ts:1738` pins the wrong behaviour and is the test the ruling names to change.
-- `hooks/supervision.ts:497` (also `commands.ts:83,185`): a `Set` passed where a
-  `ProcessTable` (`Map`) is expected.
-- `hooks/supervision.ts:857-866`: `paneIsOpen` judges liveness by bare pid, outside the rule
-  `runsLive` applies.
-- `hooks/gauge.ts` catch path: a failed measure keeps the previous reading, rewritten with
-  its old `updated_at`; `currentIn` is not checked against the session id (`supervision.ts:1158`).
-- `writeAtomic` temp files left by a killed process are never removed (`supervision.ts:490,2578`).
-- `skills/coordinator/scripts/coordinator.sh:961,963`: `l[k] = (k in l) ? …` evaluates after
-  `l[k]` exists under mawk; collision lines start with `", "`.
-- `iterm_agent.py:4048-4052`: the trust-file rewrite has a fixed temp name and no lock.
-- `iterm_agent.py:4091,3941`: `--permission-mode` is free-form while `install.sh:42` pre-approves
-  `spawn --open *`, so a prompt injected into an `Orch :` session can launch `bypassPermissions`.
-- `routing.py:1500`: `--max-usd` is checked only at job submission.
-- `stop-gate.ts:56` `withDeadline` abandons work without cancelling it; late writes can land
-  after newer ones.
+Defects this build owns (line numbers at 0.98.0, relative to `plugins/orchestrator/`):
+
+- `hooks/stop-gate.ts:56`: `withDeadline` abandons work without cancelling it (goal 6).
+- `hooks/supervision.ts:490,2578`: `writeAtomic` temporary files left by a killed process (goal 6).
+- `skills/model-routing/scripts/routing.py:1500`: `--max-usd` checked only at submission (goal 10).
+- `tests/run-tests.sh`: 29 of 2,240 checks fail on Linux as root — `chmod 000` under root,
+  `stat -f` on GNU, `pgrep -f` self-match (`:5180`), `ls | grep -c` (`:5557`), temp-path
+  length (`:4989`) (goal 7).
 - Suspected, to confirm or drop with a reading: lost updates on round entries between the
   pane answer and a withdrawal; `close` by a recycled tty; ignored files outside the
-  `workspace.sh delete` guard; measure and stop handlers past the host's handler budget.
-- Test portability: `tests/run-tests.sh` fails 29 of 2,240 checks on Linux as root (`chmod 000`
-  under root, `stat -f` on GNU, `pgrep -f` self-match at `:5180`, `ls | grep -c` at `:5557`,
-  temp-path length at `:4989`). The suite runs green on macOS and Linux.
+  `workspace.sh delete` guard; handlers past the host's budget.
 
 ## Constraints
 
@@ -91,15 +80,14 @@ Each was read in the code; line numbers are at 0.98.0.
 
 ## Phases (the orchestrator may split, never merge two)
 
-1. Defects: goal 1, on the current code.
-2. Hardening: goal 2; goal 3 once the program's forge protection (its goal 12) has shipped.
-3. State: goal 4, once core's store exists (program phase 2), with a measured cut in processes spawned per measure event.
-4. `declare_wait`: goal 5.
-5. Strict TypeScript and ports: goal 6, one script per pull request, `workspace.sh` last.
-6. Move: goal 7, once the state module has shipped; the operator lists what fails today.
-7. Kernel: goal 8, after phase 8's harness exists for the ablation.
-8. Outcome evals: goal 9; six to ten merged pull requests replayed, a spend cap per
-   measure stated before any run, the cap the operator's.
+1. State: goal 1, once core's store exists (program phase 2), with a measured cut in processes spawned per measure event.
+2. `declare_wait`: goal 2.
+3. Strict TypeScript and ports: goals 3 and 6, one script per pull request, `workspace.sh` last.
+4. Move: goal 4, on core's store; the operator lists what fails today.
+5. Push guard: goal 5, after the program's forge protection.
+6. Platforms: goal 7.
+7. Outcome evals: goal 9; six to ten merged pull requests replayed, a spend cap per measure stated before any run, the cap the operator's.
+8. Kernel: goal 8, on the evals' harness, within the program's method plugin if the operator adopts it.
 9. Routing: goal 10.
 
 ## Non-goals
