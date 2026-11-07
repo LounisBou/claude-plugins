@@ -1,0 +1,2088 @@
+#!/bin/bash
+# Test suite. No network, no plugin installation, isolated HOME per case.
+#
+# Each case runs a script against a temporary state directory or a temporary
+# HOME and compares its output or its side effects with an expected value.
+
+set -u
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+WORK=$(mktemp -d)
+trap 'rm -rf "$WORK"' EXIT
+
+pass=0
+fail=0
+
+# check <name> <expected> <actual>
+check() {
+  if [ "$2" = "$3" ]; then
+    printf '  ok   %s\n' "$1"
+    pass=$((pass + 1))
+  else
+    printf '  FAIL %s\n' "$1"
+    printf '       expected: %s\n' "$(printf '%s' "$2" | tr '\n' '⏎')"
+    printf '       actual:   %s\n' "$(printf '%s' "$3" | tr '\n' '⏎')"
+    fail=$((fail + 1))
+  fi
+}
+
+# check_status <name> <expected-exit-code> <command...>
+check_status() {
+  local name="$1" expected="$2"
+  shift 2
+  "$@" >/dev/null 2>&1
+  local code=$?
+  check "$name" "exit $expected" "exit $code"
+}
+
+echo "== manifests =="
+
+check "plugin name" "github" \
+  "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$ROOT/.claude-plugin/plugin.json")"
+
+check "plugin license" "MIT" \
+  "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["license"])' "$ROOT/.claude-plugin/plugin.json")"
+
+check "marketplace lists the plugin" "github" \
+  "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["plugins"][0]["name"])' "$ROOT/.claude-plugin/marketplace.json")"
+
+# The product name belongs only in load-bearing identifiers: host paths, host
+# environment variables, the plugin name and the manifest directory.
+
+echo "== preflight: system tools =="
+
+# A PATH containing none of the required tools.
+mkdir -p "$WORK/emptybin"
+check_status "missing python3 exits 11" 11 \
+  env PATH="$WORK/emptybin" HOME="$WORK" /bin/bash "$ROOT/scripts/preflight.sh"
+
+# Not a git repository at all.
+mkdir -p "$WORK/norepo"
+check_status "not a git repo exits 13" 13 \
+  env HOME="$WORK" sh -c "cd '$WORK/norepo' && /bin/bash '$ROOT/scripts/preflight.sh'"
+
+# A git repository whose origin is not GitHub.
+mkdir -p "$WORK/gitlab" && git -C "$WORK/gitlab" init -q -b main
+git -C "$WORK/gitlab" remote add origin https://gitlab.com/acme/thing.git
+check_status "non-github origin exits 13" 13 \
+  env HOME="$WORK" sh -c "cd '$WORK/gitlab' && /bin/bash '$ROOT/scripts/preflight.sh'"
+
+# The failure message names the remedy.
+msg=$(env PATH="$WORK/emptybin" HOME="$WORK" /bin/bash "$ROOT/scripts/preflight.sh" 2>&1 >/dev/null | grep -c '^fix:')
+check "failure prints a fix line" "1" "$msg"
+
+echo "== preflight: GitHub token =="
+
+mkdir -p "$WORK/repo" && git -C "$WORK/repo" init -q -b main
+git -C "$WORK/repo" remote add origin https://github.com/acme/thing.git
+
+# Missing token, missing gh
+mkdir -p "$WORK/fakebin"
+printf '#!/bin/sh\nexit 1\n' > "$WORK/fakebin/gh"
+chmod +x "$WORK/fakebin/gh"
+check_status "missing token exits 12" 12 \
+  env -u GH_TOKEN HOME="$WORK" PATH="$WORK/fakebin:$PATH" \
+    sh -c "cd '$WORK/repo' && bash '$ROOT/scripts/preflight.sh'"
+
+# Token via environment variable
+check_status "GH_TOKEN set exits 0" 0 \
+  env HOME="$WORK" GH_TOKEN="dummy-token-12345" \
+    sh -c "cd '$WORK/repo' && bash '$ROOT/scripts/preflight.sh'"
+
+echo "== preflight has no plugin dependency check =="
+
+check "no enabledPlugins read" "" \
+  "$(grep -o 'enabledPlugins' "$ROOT/scripts/preflight.sh" | head -1)"
+
+# The brief's suggested pipeline for this ("grep -o 'exit 10\|\" 10$|10$' | grep -c
+# '^10$' | grep -v '^0$'") never actually fires: grep -o's alternation prints the
+# *matched text itself* ("exit 10", not "10"), so the follow-up "^10$" line-match
+# never sees a bare "10" and the check reads "" whether or not exit 10 is present.
+# This version matches the token "10" as an exit-code argument directly (bounded by
+# non-digits so it can't be fooled by "11"/"110"/etc.) and reports the offending
+# line so a failure is legible instead of just a bare mismatch.
+check "no exit 10 in preflight.sh" "" \
+  "$(grep -nE '(^|[^0-9])10([^0-9]|$)' "$ROOT/scripts/preflight.sh")"
+
+# A settings file naming no plugins at all must not stop this plugin.
+printf '{"enabledPlugins":{}}' > "$WORK/empty-settings.json"
+mkdir -p "$WORK/ghrepo" && git -C "$WORK/ghrepo" init -q 2>/dev/null
+git -C "$WORK/ghrepo" remote add origin https://github.com/o/n.git 2>/dev/null
+check_status "no plugins enabled still exits 0" 0 \
+  env HOME="$WORK" GH_TOKEN=x PR_REVIEW_SETTINGS="$WORK/empty-settings.json" \
+  /bin/bash -c "cd '$WORK/ghrepo' && bash '$ROOT/scripts/preflight.sh'"
+
+echo "== http transport =="
+
+GHDIR="$ROOT/engine"
+FIX="$WORK/fix"; mkdir -p "$FIX"
+
+printf '%s' '{"number":42,"title":"A title"}' > "$FIX/GET_repos_acme_thing_pulls_42.json"
+
+out=$(env GH_FIXTURES="$FIX" GH_TOKEN=x python3 -c "
+import sys; sys.path.insert(0, '$GHDIR')
+from ghlib import http
+print(http.rest('GET', '/repos/acme/thing/pulls/42')['title'])
+")
+check "reads a fixture instead of the network" "A title" "$out"
+
+# Pagination: two pages joined into a single list.
+printf '%s' '[{"id":1}]' > "$FIX/GET_repos_acme_thing_pulls_42_comments__per_page=1.json"
+printf '%s' '[{"id":2}]' > "$FIX/GET_repos_acme_thing_pulls_42_comments__per_page=1&page=2.json"
+# GH_PAGE_SIZE=1 makes a one-item page a full page, so a second is fetched.
+# The third request finds no fixture, returns nothing, and ends the loop.
+out=$(env GH_FIXTURES="$FIX" GH_TOKEN=x GH_PAGE_SIZE=1 python3 -c "
+import sys; sys.path.insert(0, '$GHDIR')
+from ghlib import http
+print(len(http.rest('GET', '/repos/acme/thing/pulls/42/comments', paginate=True)))
+")
+check "paginates until a short page" "2" "$out"
+
+# The bug this guards against: GitHub's own default page size is 30, not the
+# value the loop compares chunk lengths against. Without per_page on every
+# request, a full 30-item first page still looks "short" against the default
+# size of 100 and pagination silently truncates with no signal. Assert on the
+# transmitted paths themselves, not on a page count that a fixture can fake.
+paths=$(python3 -c "
+import json
+rows = [json.loads(line) for line in open('$FIX/sent.jsonl')]
+matches = [r['path'] for r in rows if r['path'].startswith('/repos/acme/thing/pulls/42/comments')]
+print('|'.join(matches[:2]))
+")
+check "paginated requests carry per_page" \
+  "/repos/acme/thing/pulls/42/comments?per_page=1|/repos/acme/thing/pulls/42/comments?per_page=1&page=2" \
+  "$paths"
+
+# Each HTTP status maps to its own exit code.
+raises() {  # raises <name> <status> <message> <expected-exit>
+  printf '{"__status":%s,"message":"%s"}' "$2" "$3" > "$FIX/GET_repos_acme_thing_err_$2.json"
+  check_status "$1" "$4" \
+    env GH_FIXTURES="$FIX" GH_TOKEN=x python3 -c "
+import sys; sys.path.insert(0, '$GHDIR')
+from ghlib import http, errors
+try:
+    http.rest('GET', '/repos/acme/thing/err/$2')
+except errors.GhError as e:
+    sys.exit(e.code)
+sys.exit(0)
+"
+}
+
+raises "a 401 raises AuthError"          401 "Bad credentials"        2
+raises "a 403 rate limit raises code 5"  403 "API rate limit exceeded" 5
+raises "a 404 raises NotFound"           404 "Not Found"              4
+raises "a 422 raises ApiError"           422 "Validation Failed"      3
+raises "a 429 raises code 5"             429 "You have exceeded a secondary rate limit" 5
+
+# Requests are recorded for later assertion.
+sent=$(wc -l < "$FIX/sent.jsonl" | tr -d ' ')
+check "records every request sent" "9" "$sent"
+
+# GitHub sends "message": null on some error responses. .get("message", ...)
+# substitutes its default only for an absent key, so a present null survives
+# to reach message.lower() unguarded and raises AttributeError -- inside the
+# error mapper itself, which is not a GhError and so prints as a bare
+# traceback. That line only runs for a 401/403, where the rate-limit check
+# short-circuits it for every other status.
+printf '%s' '{"__status":401,"message":null}' > "$FIX/GET_repos_acme_thing_err_nullmsg.json"
+
+check_status "a null message still maps to AuthError" 2 \
+  env GH_FIXTURES="$FIX" GH_TOKEN=x python3 -c "
+import sys; sys.path.insert(0, '$GHDIR')
+from ghlib import http, errors
+try:
+    http.rest('GET', '/repos/acme/thing/err/nullmsg')
+except errors.GhError as e:
+    sys.exit(e.code)
+sys.exit(0)
+"
+
+out=$(env GH_FIXTURES="$FIX" GH_TOKEN=x python3 -c "
+import sys; sys.path.insert(0, '$GHDIR')
+from ghlib import http, errors
+try:
+    http.rest('GET', '/repos/acme/thing/err/nullmsg')
+except errors.GhError as e:
+    print('error: ' + str(e.message))
+    sys.exit(e.code)
+" 2>&1)
+check "a null message prints an error line" "1" "$(printf '%s' "$out" | grep -c '^error:')"
+check "a null message has no traceback" "0" "$(printf '%s' "$out" | grep -cE 'Traceback|AttributeError')"
+
+# Test that _request survives non-JSON responses (like diffs).
+# Mock urllib.request.urlopen to return plain text, verify _request returns it as a string.
+result=$(python3 -c "
+import sys
+sys.path.insert(0, '$GHDIR')
+from unittest.mock import Mock, patch
+from ghlib import http
+
+# Mock response with plain text (like a diff)
+mock_resp = Mock()
+mock_resp.read.return_value = b'--- file\n+++ file\n'
+mock_resp.status = 200
+mock_resp.__enter__ = Mock(return_value=mock_resp)
+mock_resp.__exit__ = Mock(return_value=False)
+
+with patch('urllib.request.urlopen', return_value=mock_resp):
+    status, data = http._request('GET', 'http://example.com/diff', None, {})
+    # data should be a string, not a dict
+    if isinstance(data, str) and data.startswith('---'):
+        print('ok')
+    else:
+        print('fail')
+")
+check "transport survives non-JSON response" "ok" "$result"
+
+echo "== cli skeleton =="
+
+check "resolves owner/repo from the origin remote" "acme/thing" \
+  "$(sh -c "cd '$WORK/repo' && python3 -c \"
+import sys; sys.path.insert(0, '$GHDIR')
+from ghlib import repo
+print(repo.nwo())
+\"")"
+
+check "--repo overrides the remote" "other/name" \
+  "$(env GH_REPO=other/name python3 -c "
+import sys; sys.path.insert(0, '$GHDIR')
+from ghlib import repo
+print(repo.nwo())
+")"
+
+check_status "an unknown subcommand exits 1" 1 \
+  env GH_TOKEN=x python3 "$GHDIR/gh.py" no-such-command
+
+check_status "no subcommand exits 1" 1 \
+  env GH_TOKEN=x python3 "$GHDIR/gh.py"
+
+echo "== formatters =="
+
+render() {
+  printf '%s' "$2" | python3 -c "
+import json, sys
+sys.path.insert(0, '$GHDIR')
+from ghlib import fmt
+print(fmt.render('$1', json.load(sys.stdin)))
+"
+}
+
+check "pr-number from a list" "42" "$(render pr-number '[{"number":42}]')"
+check "pr-number from an object" "42" "$(render pr-number '{"number":42}')"
+check "pr-number when absent" "" "$(render pr-number '[]')"
+check "pr-url" "https://x/1" "$(render pr-url '{"html_url":"https://x/1"}')"
+check "pr-merge-status merged" "merged" "$(render pr-merge-status '{"state":"closed","merged":true}')"
+check "pr-merge-status open" "open" "$(render pr-merge-status '{"state":"open","merged":false}')"
+check "pr-merge-status closed" "closed" "$(render pr-merge-status '{"state":"closed","merged":false}')"
+
+# checks-status must be genuinely combined: pr-checks fetches both legacy
+# commit statuses and check runs, and the docs and the subcommand help both
+# call the result "combined". A repo relying on statuses (not check runs)
+# would otherwise read SUCCESS over a red CI. All check runs pass here; only
+# the legacy status fails.
+check "checks-status folds a failing commit status into the verdict" "FAILURE" \
+  "$(render checks-status '{"check_runs":[{"name":"build","status":"completed","conclusion":"success"}],"statuses":{"state":"failure","statuses":[{"state":"failure","context":"ci/legacy"}]}}' \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
+
+check "checks-status names the failing legacy status" "ci/legacy" \
+  "$(render checks-status '{"check_runs":[{"name":"build","status":"completed","conclusion":"success"}],"statuses":{"state":"failure","statuses":[{"state":"failure","context":"ci/legacy"}]}}' \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["failed_checks"][0])')"
+# checks-status gives the ready guard's verdict, the one pr-gate reads: a
+# skipped check proves nothing, and any conclusion but success, neutral or
+# skipped is a failure.
+check "checks-status never reads a skipped check as green" "PENDING" \
+  "$(render checks-status '{"check_runs":[{"name":"test","status":"completed","conclusion":"skipped"}],"statuses":{"statuses":[]}}' \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
+check "checks-status names a check that failed to start" "FAILURE build" \
+  "$(render checks-status '{"check_runs":[{"name":"build","status":"completed","conclusion":"startup_failure"}],"statuses":{"statuses":[]}}' \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["result"], ",".join(d["failed_checks"]))')"
+check "checks-status reads a neutral check outside draft as green" "SUCCESS" \
+  "$(render checks-status '{"check_runs":[{"name":"scan","status":"completed","conclusion":"neutral"}],"statuses":{"statuses":[]}}' \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
+check "open-threads keeps only unresolved" "1" \
+  "$(render open-threads '[{"id":"a","isResolved":false},{"id":"b","isResolved":true}]' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
+check "resolve-status" "resolved" "$(render resolve-status '{"resolveReviewThread":{"thread":{"isResolved":true}}}')"
+
+check "thread-summary with null author renders ?" "| ? |" \
+  "$(render thread-summary '[{"id":"t1","path":"f.py","line":"10","comments":{"nodes":[{"author":null}]},"isResolved":false}]' | grep -o '| ? |')"
+
+check "issue-comments-summary with null user renders ?" "| ? |" \
+  "$(render issue-comments-summary '[{"id":"c1","user":null,"body":"test comment"}]' | grep -o '| ? |')"
+
+check_status "resolve-status with null mutation payload exits 3" 3 \
+  sh -c "printf '{\"resolveReviewThread\":null}' | python3 -c \"
+import json, sys
+sys.path.insert(0, '$GHDIR')
+from ghlib import fmt, errors
+try:
+    fmt.render('resolve-status', json.load(sys.stdin))
+except errors.GhError as e:
+    sys.exit(e.code)
+\""
+
+check_status "an unknown formatter exits 1" 1 \
+  sh -c "printf '{}' | python3 -c \"
+import json, sys
+sys.path.insert(0, '$GHDIR')
+from ghlib import fmt, errors
+try:
+    fmt.render('nope', json.load(sys.stdin))
+except errors.GhError as e:
+    sys.exit(e.code)
+\""
+
+echo "== carried-over reads =="
+
+F2="$WORK/fix2"; mkdir -p "$F2"
+gh() { env GH_FIXTURES="$F2" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" "$@"; }
+
+printf '%s' '{"login":"someone"}' > "$F2/GET_user.json"
+check "auth-check reaches /user" "someone" "$(gh auth-check --format raw | python3 -c 'import json,sys; print(json.load(sys.stdin)["login"])')"
+
+printf '%s' '[{"number":7,"title":"T","state":"open","html_url":"u","head":{"ref":"h"},"base":{"ref":"main"},"draft":false}]' \
+  > "$F2/GET_repos_acme_thing_pulls__head=acme:feature-x.json"
+check "pr-get resolves the branch PR number" "7" "$(gh pr-get --branch feature-x --format pr-number)"
+
+# pr-get falls back to the current branch when none is given. Outside a git
+# checkout (or in detached HEAD, where git prints nothing useful) that
+# resolves to an empty string, and an unguarded request would go out as
+# "head=owner:" -- probably matching every open PR. pr-create already guards
+# this the same way; pr-get must too.
+check_status "pr-get with no resolvable branch exits 1" 1 \
+  sh -c "cd '$WORK/norepo' && env GH_FIXTURES='$F2' GH_TOKEN=x GH_REPO=acme/thing python3 '$GHDIR/gh.py' pr-get"
+
+out=$(sh -c "cd '$WORK/norepo' && env GH_FIXTURES='$F2' GH_TOKEN=x GH_REPO=acme/thing python3 '$GHDIR/gh.py' pr-get" 2>&1)
+check "unresolvable branch has no traceback" "0" "$(printf '%s' "$out" | grep -cE 'Traceback|^[A-Za-z]*Error:')"
+
+printf '%s' '{"number":7,"state":"closed","merged":true}' > "$F2/GET_repos_acme_thing_pulls_7.json"
+check "pr-status reports merged" "merged" "$(gh pr-status 7 --format pr-merge-status)"
+
+# pr-get by number answers in the shape it answers for a branch: a list of one.
+check "pr-get by number returns that PR" "7" "$(gh pr-get --pr 7 --format pr-number)"
+check "pr-get by number is a list, as for a branch" "list 7" \
+  "$(gh pr-get --pr 7 --format raw | python3 -c 'import json,sys; d=json.load(sys.stdin); print(type(d).__name__, d[0]["number"])')"
+printf '%s' '{"__status":404,"message":"Not Found"}' > "$F2/GET_repos_acme_thing_pulls_404.json"
+check_status "pr-get with an unknown number exits 4" 4 gh pr-get --pr 404
+check "pr-get with an unknown number names it" "error: no pull request #404 in acme/thing" \
+  "$(gh pr-get --pr 404 2>&1 >/dev/null)"
+check_status "pr-get with both a number and a branch exits 1" 1 gh pr-get --pr 7 --branch feature-x
+check "pr-get still resolves a branch beside a number fixture" "7" "$(gh pr-get --branch feature-x --format pr-number)"
+
+printf '%s' '[{"id":11,"body":"hello","user":{"login":"bob"}}]' > "$F2/GET_repos_acme_thing_issues_7_comments__per_page=100.json"
+check "pr-issue-comments returns the comments" "11" \
+  "$(gh pr-issue-comments 7 --format raw | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["id"])')"
+
+# --format is defined on the parent parser but also mirrored (via SUPPRESS) onto
+# every subparser, so it must work on either side of the subcommand, and the
+# parent's "raw" default must still apply when the flag is given on neither.
+check "--format also works before the subcommand" "someone" \
+  "$(gh --format raw auth-check | python3 -c 'import json,sys; print(json.load(sys.stdin)["login"])')"
+
+check "--format defaults to raw when omitted on both sides" "someone" \
+  "$(gh auth-check | python3 -c 'import json,sys; print(json.load(sys.stdin)["login"])')"
+
+# comments-resolved-batch must map a missing or malformed file to a usage exit
+# instead of leaking a raw FileNotFoundError/JSONDecodeError traceback.
+check_status "comments-resolved-batch on a missing file exits 1" 1 \
+  gh comments-resolved-batch "$F2/does-not-exist.json"
+
+out=$(gh comments-resolved-batch "$F2/does-not-exist.json" 2>&1)
+check "missing file prints an error line" "1" "$(printf '%s' "$out" | grep -c '^error:')"
+check "missing file has no traceback" "0" "$(printf '%s' "$out" | grep -cE 'Traceback|^[A-Za-z]*Error:')"
+
+printf 'not json' > "$F2/bad.json"
+check_status "comments-resolved-batch on malformed json exits 1" 1 \
+  gh comments-resolved-batch "$F2/bad.json"
+
+out=$(gh comments-resolved-batch "$F2/bad.json" 2>&1)
+check "malformed file prints an error line" "1" "$(printf '%s' "$out" | grep -c '^error:')"
+check "malformed file has no traceback" "0" "$(printf '%s' "$out" | grep -cE 'Traceback|^[A-Za-z]*Error:')"
+
+# A non-numeric pr must fail via argparse's own mapped usage exit, not an
+# unguarded int() conversion inside the handler.
+check_status "pr-threads with a non-numeric pr exits 1" 1 \
+  gh pr-threads abc
+
+out=$(gh pr-threads abc 2>&1)
+check "non-numeric pr has no traceback" "0" "$(printf '%s' "$out" | grep -cE 'Traceback|^[A-Za-z]*Error:')"
+
+echo "== body-file fidelity =="
+
+F3="$WORK/fix3"; mkdir -p "$F3"
+gh3() { env GH_FIXTURES="$F3" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" "$@"; }
+
+# Every character class that breaks shell quoting, in one body.
+BODY="$WORK/body.md"
+{
+  printf 'Line one with `backticks` and a $VAR sequence\n'
+  printf 'A "double quoted" phrase and a '\''single quoted'\'' one\n'
+  printf '\n'
+  printf '```bash\n'
+  printf 'echo "$(whoami)" && rm -rf /tmp/nothing\n'
+  printf '```\n'
+  printf 'Trailing line with an accent: éàü\n'
+  # A CRLF line, so that removing newline="" from bodies.read is detectable.
+  # Without one, the setting this test exists to protect is never exercised.
+  printf 'A line ending in CRLF\r\n'
+} > "$BODY"
+
+printf '%s' '{"id":99}' > "$F3/POST_repos_acme_thing_issues_7_comments.json"
+gh3 pr-comment 7 --body-file "$BODY" >/dev/null
+
+# Compare through files, never through "$(...)": command substitution strips
+# every trailing newline from BOTH sides before check() sees them, so a real
+# stripping regression in bodies.read would compare equal and pass.
+python3 -c "
+import json, sys
+for line in open('$F3/sent.jsonl'):
+    row = json.loads(line)
+    if row['path'].endswith('/issues/7/comments'):
+        sys.stdout.write(row['body']['body'])
+        break
+" > "$WORK/sent-body.md"
+check_status "body-file arrives byte-identical" 0 cmp -s "$BODY" "$WORK/sent-body.md"
+
+check_status "a missing body file exits 1" 1 gh3 pr-comment 7 --body-file "$WORK/nope.md"
+check_status "an abbreviated --body-file is refused as a usage error" 1 gh3 pr-comment 7 --body-f "$BODY"
+check_status "an abbreviated flag is refused on every subcommand" 1 gh3 pr-merge 7 --meth squash
+# The mod's argv shape: flags as --key=value first, positionals after "--".
+check_status "the mod's argv shape posts a comment" 0 gh3 pr-comment --body-file="$BODY" --repo=acme/thing -- 7
+check_status "a flag-looking positional after -- is not read as a flag" 1 gh3 pr-comment --body-file="$BODY" -- --body-file=/etc/hosts
+check_status "an empty body file exits 1" 1 sh -c ": > '$WORK/empty.md'; $(printf '%q ' env GH_FIXTURES="$F3" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py") pr-comment 7 --body-file '$WORK/empty.md'"
+
+echo "== review writes =="
+
+printf '%s' '{"id":5,"state":"COMMENTED"}' > "$F3/POST_repos_acme_thing_pulls_7_reviews.json"
+cat > "$WORK/inline.json" <<'JSON'
+[{"path":"src/a.py","line":12,"side":"RIGHT","body":"Consider renaming this."}]
+JSON
+gh3 review-submit 7 --event COMMENT --body-file "$BODY" --comments-file "$WORK/inline.json" >/dev/null
+
+payload=$(python3 -c "
+import json
+for line in open('$F3/sent.jsonl'):
+    row = json.loads(line)
+    if row['path'].endswith('/pulls/7/reviews'):
+        print(row['body']['event'], len(row['body']['comments']), row['body']['comments'][0]['path'])
+")
+check "review-submit sends event and inline comments" "COMMENT 1 src/a.py" "$payload"
+
+# Task 5 overrode ArgumentParser.error() so argparse's own exit 2 becomes the
+# CLI's documented usage code. An invalid --event choice therefore exits 1.
+check_status "an invalid event exits 1 as a usage error" 1 gh3 review-submit 7 --event NOPE --body-file "$BODY"
+
+echo "== pr content =="
+
+printf '%s' '[{"filename":"src/a.py","status":"modified","patch":"@@ -1 +1 @@"}]' \
+  > "$F3/GET_repos_acme_thing_pulls_7_files__per_page=100.json"
+check "pr-files lists changed paths" "src/a.py" \
+  "$(gh3 pr-files 7 --format raw | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["filename"])')"
+
+# pr-commits: returns a list
+printf '%s' '[{"sha":"abc123","message":"Fix bug"}]' > "$F3/GET_repos_acme_thing_pulls_7_commits__per_page=100.json"
+check "pr-commits returns commits list" "abc123" \
+  "$(gh3 pr-commits 7 --format raw | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["sha"])')"
+
+# file-at-ref: valid UTF-8 content round-trips unchanged with binary=false
+printf '%s' '{"content":"aGVsbG8=","encoding":"base64"}' \
+  > "$F3/GET_repos_acme_thing_contents_README.md__ref=main.json"
+check "file-at-ref decodes base64 content" "hello" \
+  "$(gh3 file-at-ref README.md main --format raw | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["content"] if not d.get("binary") else "BINARY")')"
+
+# file-at-ref: directory response (JSON array) exits 1 with error line, no traceback
+printf '%s' '[{"name":"file1.txt"},{"name":"file2.txt"}]' \
+  > "$F3/GET_repos_acme_thing_contents_docs__ref=main.json"
+check_status "file-at-ref on directory exits 1" 1 gh3 file-at-ref docs main
+out=$(gh3 file-at-ref docs main 2>&1)
+check "directory error has error line" "1" "$(printf '%s' "$out" | grep -c '^error:')"
+check "directory error has no traceback" "0" "$(printf '%s' "$out" | grep -cE 'Traceback|^[A-Za-z]*Error:')"
+
+# file-at-ref: malformed base64 exits 3 with error line, no traceback
+printf '%s' '{"content":"not-valid-base64!!!","encoding":"base64"}' \
+  > "$F3/GET_repos_acme_thing_contents_broken.bin__ref=main.json"
+check_status "file-at-ref on malformed base64 exits 3" 3 gh3 file-at-ref broken.bin main
+out=$(gh3 file-at-ref broken.bin main 2>&1)
+check "malformed base64 has error line" "1" "$(printf '%s' "$out" | grep -c '^error:')"
+check "malformed base64 has no traceback" "0" "$(printf '%s' "$out" | grep -cE 'Traceback|^[A-Za-z]*Error:')"
+
+# file-at-ref: binary content (non-UTF8) returns binary=true and base64-encoded content
+# PNG magic bytes: 89 50 4E 47 = iVBORw== in base64
+printf '%s' '{"content":"iVBORw==","encoding":"base64"}' \
+  > "$F3/GET_repos_acme_thing_contents_image.png__ref=main.json"
+out=$(gh3 file-at-ref image.png main --format raw)
+binary_flag=$(printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("true" if d.get("binary") else "false")')
+check "binary content returns binary=true" "true" "$binary_flag"
+# Verify round-trip: base64-encode the content and it should match
+content=$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["content"])')
+check "binary content is base64-encoded" "iVBORw==" "$content"
+
+# pr-diff: plain text response returns the diff (fixture as JSON string)
+printf '%s' '"--- a/file\n+++ b/file\n@@ -1 +1 @@"' > "$F3/GET_repos_acme_thing_pulls_42.json"
+check "pr-diff returns plain text diff" "--- a/file
++++ b/file" \
+  "$(gh3 pr-diff 42 --format raw | python3 -c 'import json,sys; print(json.load(sys.stdin)["diff"][:21])')"
+
+# pr-diff: dict response (missing fixture or wrong response) exits 3 with error line
+# Fixture is a plain dict with no __status, so it flows through transport untouched to the handler
+printf '%s' '{"diff":""}' \
+  > "$F3/GET_repos_acme_thing_pulls_999.json"
+check_status "pr-diff on dict response exits 3" 3 gh3 pr-diff 999
+out=$(gh3 pr-diff 999 2>&1)
+check "pr-diff dict response has error line" "1" "$(printf '%s' "$out" | grep -c '^error:')"
+check "pr-diff dict response has no traceback" "0" "$(printf '%s' "$out" | grep -cE 'Traceback|^[A-Za-z]*Error:')"
+
+echo "== metadata and issues =="
+
+printf '%s' '{"number":7,"title":"New"}' > "$F3/PATCH_repos_acme_thing_pulls_7.json"
+gh3 pr-update 7 --title "New" >/dev/null
+title=$(python3 -c "
+import json
+for line in open('$F3/sent.jsonl'):
+    row = json.loads(line)
+    if row['method'] == 'PATCH' and row['path'].endswith('/pulls/7'):
+        print(row['body']['title'])
+")
+check "pr-update sends only the given fields" "New" "$title"
+
+check_status "pr-update with no field exits 1" 1 gh3 pr-update 7
+
+printf '%s' '[{"name":"bug"}]' > "$F3/POST_repos_acme_thing_issues_7_labels.json"
+check "label-add returns the label set" "bug" \
+  "$(gh3 label-add 7 bug --format raw | python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["name"])')"
+
+# label-remove interpolates the label name raw into a DELETE path. A
+# multi-word label like "good first issue" carries a literal space, a control
+# character to http.client, which previously escaped only as an uncaught
+# http.client.InvalidURL -- not a GhError -- surfacing as a raw traceback on a
+# live connection. quote() must run before the name reaches the URL. That
+# InvalidURL only reproduces against a real socket, which this offline suite
+# never opens, so -- exactly as the issue-search tests above do -- assert on
+# the recorded outgoing path: it fails the moment quote() is dropped, because
+# the request would then be recorded (and looked up) under a path with a
+# literal space instead of "%20".
+printf '%s' '{}' > "$F3/DELETE_repos_acme_thing_issues_7_labels_good%20first%20issue.json"
+check_status "label-remove with a multi-word label exits 0" 0 \
+  gh3 label-remove 7 "good first issue"
+
+out=$(gh3 label-remove 7 "good first issue" 2>&1)
+check "label-remove multi-word label has no traceback" "0" \
+  "$(printf '%s' "$out" | grep -cE 'Traceback|^[A-Za-z]*Error:')"
+
+encoded_path=$(python3 -c "
+import json
+rows = [json.loads(line) for line in open('$F3/sent.jsonl')]
+matches = [r['path'] for r in rows if r['path'].startswith('/repos/acme/thing/issues/7/labels/')]
+print(matches[-1])
+")
+check "label-remove percent-encodes a multi-word label" \
+  "/repos/acme/thing/issues/7/labels/good%20first%20issue" "$encoded_path"
+
+# GitHub's own API deletes one label per call, so a "names" list secretly
+# dropped everything past the first. label-remove takes a single "name"
+# positional instead, which makes a second label a usage error rather than a
+# silent loss.
+check_status "label-remove rejects a second label" 1 gh3 label-remove 7 foo bar
+
+printf '%s' '{"number":3,"title":"An issue"}' > "$F3/GET_repos_acme_thing_issues_3.json"
+check "issue-view fetches the issue" "An issue" \
+  "$(gh3 issue-view 3 --format raw | python3 -c 'import json,sys; print(json.load(sys.stdin)["title"])')"
+
+# A non-numeric issue number must fail via argparse's own mapped usage exit,
+# like every other numeric positional, not an unguarded conversion or a raw
+# lookup miss inside the handler.
+check_status "issue-view with a non-numeric number exits 1" 1 gh3 issue-view abc
+out=$(gh3 issue-view abc 2>&1)
+check "non-numeric issue number has no traceback" "0" "$(printf '%s' "$out" | grep -cE 'Traceback|^[A-Za-z]*Error:')"
+
+printf '%s' '{"items":[{"number":9}]}' > "$F3/GET_search_issues__q=repo%3Aacme%2Fthing%20bug.json"
+check "issue-search queries the search API" "9" \
+  "$(gh3 issue-search bug --format raw | python3 -c 'import json,sys; print(json.load(sys.stdin)["items"][0]["number"])')"
+
+# issue-search must percent-encode the whole query, not just replace spaces
+# with "+". A raw "#" opens a URL fragment (the server never sees anything
+# after it) and a raw "&" starts a second query parameter -- both would
+# silently change what is actually searched for. Assert on the transmitted
+# path recorded in sent.jsonl, not on the (fixture-less) response, so the
+# check fails if quote() is ever replaced by a plainer substitution.
+gh3 issue-search 'C#' >/dev/null
+hash_path=$(python3 -c "
+import json
+rows = [json.loads(line) for line in open('$F3/sent.jsonl')]
+matches = [r for r in rows if r['path'].startswith('/search/issues')]
+print(matches[-1]['path'])
+")
+check "issue-search percent-encodes a # term" "/search/issues?q=repo%3Aacme%2Fthing%20C%23" "$hash_path"
+
+gh3 issue-search 'foo&bar' >/dev/null
+amp_path=$(python3 -c "
+import json
+rows = [json.loads(line) for line in open('$F3/sent.jsonl')]
+matches = [r for r in rows if r['path'].startswith('/search/issues')]
+print(matches[-1]['path'])
+")
+check "issue-search percent-encodes a & term" "/search/issues?q=repo%3Aacme%2Fthing%20foo%26bar" "$amp_path"
+
+echo "== image upload =="
+
+printf 'not really a png' > "$WORK/shot.png"
+SHA=$(python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$WORK/shot.png")
+
+printf '%s' '{"__status":404,"message":"Not Found"}' > "$F3/GET_repos_acme_thing_contents_${SHA}.png__ref=pr-assets.json"
+printf '%s' '{"ref":"refs/heads/pr-assets"}' > "$F3/GET_repos_acme_thing_git_ref_heads_pr-assets.json"
+printf '%s' '{"content":{"path":"'"$SHA"'.png"}}' > "$F3/PUT_repos_acme_thing_contents_${SHA}.png.json"
+
+out=$(gh3 image-upload "$WORK/shot.png" --format raw)
+check "url points at the assets branch through github.com" \
+  "https://github.com/acme/thing/blob/pr-assets/$SHA.png?raw=true" \
+  "$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["url"])')"
+check "markdown is ready to paste" \
+  "![](https://github.com/acme/thing/blob/pr-assets/$SHA.png?raw=true)" \
+  "$(printf '%s' "$out" | python3 -c 'import json,sys; print(json.load(sys.stdin)["markdown"])')"
+
+# An identical file already on the branch is not re-uploaded.
+printf '%s' '{"sha":"abc","path":"'"$SHA"'.png"}' > "$F3/GET_repos_acme_thing_contents_${SHA}.png__ref=pr-assets.json"
+check "an existing asset is reused" "True" \
+  "$(gh3 image-upload "$WORK/shot.png" --format raw | python3 -c 'import json,sys; print(json.load(sys.stdin)["reused"])')"
+
+check_status "a missing image exits 1" 1 gh3 image-upload "$WORK/absent.png"
+
+titled=$(gh3 image-upload "$WORK/shot.png" --title "Login screen" --format raw)
+check "a title becomes a bold line above the image" \
+  "**Login screen**
+![Login screen](https://github.com/acme/thing/blob/pr-assets/$SHA.png?raw=true)" \
+  "$(printf '%s' "$titled" | python3 -c 'import json,sys; print(json.load(sys.stdin)["markdown"])')"
+check "the title is echoed back in the JSON" "Login screen" \
+  "$(printf '%s' "$titled" | python3 -c 'import json,sys; print(json.load(sys.stdin)["title"])')"
+
+untitled=$(gh3 image-upload "$WORK/shot.png" --format raw)
+check "without --title the markdown stays bare" \
+  "![](https://github.com/acme/thing/blob/pr-assets/$SHA.png?raw=true)" \
+  "$(printf '%s' "$untitled" | python3 -c 'import json,sys; print(json.load(sys.stdin)["markdown"])')"
+check "without --title the JSON carries no title key" "False" \
+  "$(printf '%s' "$untitled" | python3 -c 'import json,sys; print("title" in json.load(sys.stdin))')"
+
+check_status "a title over 100 characters exits 1" 1 \
+  gh3 image-upload "$WORK/shot.png" --title "$(printf 'x%.0s' {1..101})"
+check "a descriptive title of 66 characters is kept" "Export dialog, open with a month of invoices, mobile 390 px, after" \
+  "$(gh3 image-upload "$WORK/shot.png" --title "Export dialog, open with a month of invoices, mobile 390 px, after" --format raw | python3 -c 'import json,sys; print(json.load(sys.stdin).get("title"))')"
+check "asterisks and closing brackets are taken out of a title" \
+  "**Login screen [v2**
+![Login screen [v2](https://github.com/acme/thing/blob/pr-assets/$SHA.png?raw=true)" \
+  "$(gh3 image-upload "$WORK/shot.png" --title "**Login** screen [v2]" --format raw | python3 -c 'import json,sys; print(json.load(sys.stdin)["markdown"])')"
+check_status "a title made only of asterisks exits 1" 1 gh3 image-upload "$WORK/shot.png" --title "**"
+check_status "a title ending with a colon once its asterisks are out exits 1" 1 gh3 image-upload "$WORK/shot.png" --title "Login screen:**"
+check "a title of exactly 100 characters is kept" "$(printf 'x%.0s' {1..100})" \
+  "$(gh3 image-upload "$WORK/shot.png" --title "$(printf 'x%.0s' {1..100})" --format raw | python3 -c 'import json,sys; print(json.load(sys.stdin).get("title"))')"
+check_status "a title ending with a colon exits 1" 1 gh3 image-upload "$WORK/shot.png" --title "Login screen:"
+for refused in "Login; logout" "Login screen #12" "Login screen acme/thing#12" "Login screen, see acme/thing#12" \
+  "Login screen unchanged" "Login screen, no dependency" "The list does not load" "The list doesn't load" \
+  "The list doesn’t load" "Login is not changed" "Login left untouched" "No other pull request" \
+  "Login without conflict" "UNCHANGED login" "Login https://github.com/acme/thing/pull/12"; do
+  check_status "a title the lint would refuse exits 1: $refused" 1 gh3 image-upload "$WORK/shot.png" --title "$refused"
+done
+check "a title made only of asterisks says it is empty, not that it spans lines" \
+  "error: image title is empty once its asterisks and closing brackets are taken out" \
+  "$(gh3 image-upload "$WORK/shot.png" --title "**" 2>&1 >/dev/null | head -1)"
+check "a title with no refused phrase near its words is kept" "Undo changed items, no dependency-free build" \
+  "$(gh3 image-upload "$WORK/shot.png" --title "Undo changed items, no dependency-free build" --format raw | python3 -c 'import json,sys; print(json.load(sys.stdin).get("title"))')"
+check "the engine's refused phrases are the lint's" \
+  "$(python3 -c '
+import re, sys
+text = open(sys.argv[1], encoding="utf-8").read()
+body = re.search(r"NEGATIVE_PHRASES = \[(.*?)\]", text, re.S).group(1)
+print("\n".join(m[0] or m[1] for m in re.findall(r"\x27([^\x27]*)\x27|\"([^\"]*)\"", body)))
+' "$ROOT/hooks/writing.ts")" \
+  "$(PYTHONPATH="$ROOT/engine" python3 -c 'from ghlib import assets; print("\n".join(assets.NEGATIVE_PHRASES))')"
+check_status "an empty title after trim exits 1" 1 gh3 image-upload "$WORK/shot.png" --title "   "
+
+# The block written for each surviving title passes the description lint (hooks/writing.ts,
+# read through bun, which the mod's own tests run under).
+if command -v bun >/dev/null 2>&1; then
+  blocks="$WORK/blocks.json"
+  F3="$F3" GHDIR="$GHDIR" python3 - "$WORK" > "$blocks" <<'PY'
+import json, os, subprocess, sys
+env = dict(os.environ, GH_FIXTURES=os.environ["F3"], GH_TOKEN="x", GH_REPO="acme/thing")
+out = []
+for title in ("Login screen", "**Login** screen [v2]", "Undo changed items, no dependency-free build",
+              "Devices list, desktop 1440 px, after", "Fish & chips <b>", "Price in $ and 100% done", "x" * 100):
+    run = subprocess.run(
+        ["python3", os.environ["GHDIR"] + "/gh.py", "image-upload", sys.argv[1] + "/shot.png", "--title", title, "--format", "raw"],
+        env=env, capture_output=True, text=True)
+    out.append(json.loads(run.stdout)["markdown"])
+print(json.dumps(out))
+PY
+  check "a block written for each surviving title passes the description lint" "7 blocks, 0 refused" \
+    "$(BLOCKS="$blocks" ROOT="$ROOT" bun -e '
+const { lint } = await import(process.env.ROOT + "/hooks/writing.ts")
+const blocks = JSON.parse(await Bun.file(process.env.BLOCKS).text())
+const none = "**TODO Staging:** none\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:** none"
+let refused = 0
+for (const block of blocks) {
+  if (lint("pr-create", { title: "fix: x", body: "Adds the screenshots.\n\n" + block + "\n\n" + none }).length > 0) refused++
+}
+console.log(blocks.length + " blocks, " + refused + " refused")
+')"
+fi
+
+printf 'another capture' > "$WORK/second.png"
+SHA2=$(python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$WORK/second.png")
+printf '%s' '{"__status":404,"message":"Not Found"}' > "$F3/GET_repos_acme_thing_contents_${SHA2}.png__ref=pr-assets.json"
+printf '%s' '{"content":{"path":"'"$SHA2"'.png"}}' > "$F3/PUT_repos_acme_thing_contents_${SHA2}.png.json"
+
+multi=$(gh3 image-upload "$WORK/shot.png" "$WORK/second.png" --title "First" --title "Second" --format raw)
+check "two titled files are joined by one separator" \
+  "**First**
+![First](https://github.com/acme/thing/blob/pr-assets/$SHA.png?raw=true)
+
+---
+
+**Second**
+![Second](https://github.com/acme/thing/blob/pr-assets/$SHA2.png?raw=true)" \
+  "$(printf '%s' "$multi" | python3 -c 'import json,sys; print(json.load(sys.stdin)["markdown"])')"
+check "the separator appears exactly once" "1" \
+  "$(printf '%s' "$multi" | python3 -c 'import json,sys; print(json.load(sys.stdin)["markdown"].count("\n\n---\n\n"))')"
+check "multi-file JSON lists one entry per image" "2" \
+  "$(printf '%s' "$multi" | python3 -c 'import json,sys; print(len(json.load(sys.stdin)["images"]))')"
+
+check_status "a title count not matching the file count exits 1" 1 \
+  gh3 image-upload "$WORK/shot.png" "$WORK/second.png" --title "Only one"
+check_status "several files without --title exit 1" 1 \
+  gh3 image-upload "$WORK/shot.png" "$WORK/second.png"
+check "several files without --title say a title is required for each" "True" \
+  "$(gh3 image-upload "$WORK/shot.png" "$WORK/second.png" 2>&1 | grep -q 'requires --title' && echo True || echo False)"
+
+echo "== opening and merging a pull request =="
+
+printf '%s' '{"number":12,"html_url":"https://github.com/acme/thing/pull/12"}' \
+  > "$F3/POST_repos_acme_thing_pulls.json"
+printf 'Body from a file with `backticks`\n' > "$WORK/prbody.md"
+
+check "pr-create returns the new number" "12" \
+  "$(gh3 pr-create --title 'A title' --body-file "$WORK/prbody.md" --head feature-x --format pr-number)"
+
+# The title, base and head reach the request, and the body comes from the file.
+created=$(python3 -c "
+import json
+for line in open('$F3/sent.jsonl'):
+    row = json.loads(line)
+    if row['method'] == 'POST' and row['path'].endswith('/pulls'):
+        b = row['body']
+        print(b['title'], b['base'], b['head'], repr(b['body']))
+")
+check "pr-create sends title, base, head and the file body" \
+  "A title main feature-x 'Body from a file with \`backticks\`\n'" "$created"
+
+check "pr-create without --draft sends no draft key" "" \
+  "$(python3 -c "
+import json
+for line in open('$F3/sent.jsonl'):
+    row = json.loads(line)
+    if row['method'] == 'POST' and row['path'].endswith('/pulls'):
+        print('draft' if 'draft' in row['body'] else '', end='')
+")"
+
+check "pr-create --draft returns the new number" "12" \
+  "$(gh3 pr-create --title 'A title' --body-file "$WORK/prbody.md" --head feature-x --draft --format pr-number)"
+
+draft_sent=$(python3 -c "
+import json
+for line in open('$F3/sent.jsonl'):
+    row = json.loads(line)
+    if row['method'] == 'POST' and row['path'].endswith('/pulls'):
+        last = row
+print(last['body'].get('draft'))
+")
+check "pr-create --draft sends draft true" "True" "$draft_sent"
+
+check_status "pr-create without a title exits 1" 1 gh3 pr-create --head feature-x
+
+printf '%s' '{"merged":true,"message":"Pull Request successfully merged"}' \
+  > "$F3/PUT_repos_acme_thing_pulls_7_merge.json"
+check "pr-merge reports the merge" "True" \
+  "$(gh3 pr-merge 7 --format raw | python3 -c 'import json,sys; print(json.load(sys.stdin)["merged"])')"
+
+merged=$(python3 -c "
+import json
+for line in open('$F3/sent.jsonl'):
+    row = json.loads(line)
+    if row['method'] == 'PUT' and row['path'].endswith('/merge'):
+        print(row['body']['merge_method'])
+")
+check "pr-merge defaults to the merge method" "merge" "$merged"
+
+check_status "pr-merge rejects an unknown method" 1 gh3 pr-merge 7 --method fast-forward
+check_status "pr-merge rejects a non-numeric PR" 1 gh3 pr-merge abc
+
+# --sha pins the head that was verified: it travels as the API's own "sha", so
+# GitHub refuses the merge when the head moved. Without it no key is sent.
+HEAD_SHA=0123456789abcdef0123456789abcdef01234567
+: > "$F3/sent.jsonl"
+gh3 pr-merge 7 --method squash --sha "$HEAD_SHA" >/dev/null
+check "pr-merge --sha sends the sha and the method" "squash $HEAD_SHA" \
+  "$(python3 -c "
+import json
+for line in open('$F3/sent.jsonl'):
+    row = json.loads(line)
+    if row['method'] == 'PUT' and row['path'].endswith('/merge'):
+        print(row['body']['merge_method'], row['body'].get('sha'))
+")"
+
+: > "$F3/sent.jsonl"
+gh3 pr-merge 7 >/dev/null
+check "pr-merge without --sha sends no sha key" "False" \
+  "$(python3 -c "
+import json
+for line in open('$F3/sent.jsonl'):
+    row = json.loads(line)
+    if row['method'] == 'PUT' and row['path'].endswith('/merge'):
+        print('sha' in row['body'])
+")"
+
+# A short or malformed sha would be refused by GitHub as a moved head, which
+# reads as a race rather than as a typo: refuse it here, before any request.
+: > "$F3/sent.jsonl"
+check_status "pr-merge refuses a short sha" 1 gh3 pr-merge 7 --sha abc123
+check_status "pr-merge refuses a 64-character sha" 1 gh3 pr-merge 7 --sha "$(printf 'a%.0s' {1..64})"
+check_status "pr-merge refuses a sha with a trailing newline" 1 gh3 pr-merge 7 --sha "$HEAD_SHA
+"
+check "a refused sha sends no request" "0" "$(wc -l < "$F3/sent.jsonl" | tr -d ' ')"
+
+# A PR that GitHub counts as part of a stack refuses the synchronous endpoint
+# with a 403 and asks for the asynchronous one. pr-merge follows that pointer,
+# with the same method and sha, then reads the PR until it is merged.
+F5="$WORK/fix5"; mkdir -p "$F5"
+gh5() { env GH_FIXTURES="$F5" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" "$@"; }
+STACKED_MSG='Merging stacked PRs via this endpoint is not supported. Use the asynchronous merge endpoint instead.'
+MERGE_SHA=fedcba9876543210fedcba9876543210fedcba98
+# sent_rows <dir> <method> <path-suffix>: how many recorded requests match.
+sent_rows() {
+  python3 -c "
+import json, sys
+rows = [json.loads(l) for l in open(sys.argv[1] + '/sent.jsonl')]
+print(sum(1 for r in rows if r['method'] == sys.argv[2] and r['path'].endswith(sys.argv[3])))
+" "$1" "$2" "$3"
+}
+
+printf '{"__status":403,"message":"%s"}' "$STACKED_MSG" > "$F5/PUT_repos_acme_thing_pulls_7_merge.json"
+printf '%s' '{"status":"pending","details":{"message":"Merge request enqueued.","uuid":"u-1234","merge_method":"squash","merge_action":"default","expected_head_sha":"'"$HEAD_SHA"'"}}' \
+  > "$F5/PUT_repos_acme_thing_pulls_7_merge-async.json"
+printf '%s' '{"number":7,"state":"closed","merged":true,"merged_at":"2026-09-25T10:00:00Z","merge_commit_sha":"'"$MERGE_SHA"'"}' \
+  > "$F5/GET_repos_acme_thing_pulls_7.json"
+
+out=$(gh5 pr-merge 7 --method squash --sha "$HEAD_SHA" --format raw)
+check "a stacked refusal falls back to async and reports the merge sha" "True $MERGE_SHA" \
+  "$(printf '%s' "$out" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["merged"], d["sha"])')"
+check "the async request carries the same method and sha" "squash $HEAD_SHA" \
+  "$(python3 -c "
+import json
+for line in open('$F5/sent.jsonl'):
+    row = json.loads(line)
+    if row['method'] == 'PUT' and row['path'].endswith('/merge-async'):
+        print(row['body']['merge_method'], row['body'].get('sha'))
+")"
+check "the synchronous endpoint is tried once, first" "1" "$(sent_rows "$F5" PUT /pulls/7/merge)"
+
+# Only the stacked refusal is followed. Any other 403 surfaces as it is and no
+# asynchronous request is made.
+printf '%s' '{"__status":403,"message":"Resource not accessible by personal access token"}' \
+  > "$F5/PUT_repos_acme_thing_pulls_8_merge.json"
+check_status "a non-stacked 403 is not retried and exits 2" 2 gh5 pr-merge 8
+check "a non-stacked 403 makes no async request" "0" "$(sent_rows "$F5" PUT /pulls/8/merge-async)"
+check "a non-stacked 403 is sent once" "1" "$(sent_rows "$F5" PUT /pulls/8/merge)"
+
+# A merge that never shows up inside GH_MERGE_WAIT is a failure that names the
+# uuid, so the merge can still be looked up afterwards.
+printf '{"__status":403,"message":"%s"}' "$STACKED_MSG" > "$F5/PUT_repos_acme_thing_pulls_9_merge.json"
+printf '%s' '{"status":"pending","details":{"uuid":"u-9"}}' > "$F5/PUT_repos_acme_thing_pulls_9_merge-async.json"
+printf '%s' '{"number":9,"state":"open","merged":false,"merged_at":null,"merge_commit_sha":null}' \
+  > "$F5/GET_repos_acme_thing_pulls_9.json"
+# The status read may not answer at all: the PR's own state stays the authority,
+# so a 404 there is a wait that goes on, not a failure of its own.
+printf '%s' '{"__status":404,"message":"Not Found"}' > "$F5/GET_repos_acme_thing_pulls_9_merge-async_u-9.json"
+check_status "a merge not seen within GH_MERGE_WAIT exits 3" 3 \
+  env GH_MERGE_WAIT=0 GH_FIXTURES="$F5" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" pr-merge 9
+timeout_err=$(GH_MERGE_WAIT=0 gh5 pr-merge 9 2>&1 >/dev/null)
+check "the timeout names the uuid" "u-9" "$(printf '%s' "$timeout_err" | grep -o 'u-9' | head -1)"
+check "the timeout says so" "timed out" "$(printf '%s' "$timeout_err" | grep -o 'timed out' | head -1)"
+check "the timeout is one error line and no traceback" "1 0" \
+  "$(printf '%s\n' "$timeout_err" | grep -c '^error:') $(printf '%s\n' "$timeout_err" | grep -c Traceback)"
+
+# The async status, when it answers, ends the wait early on "failed".
+printf '{"__status":403,"message":"%s"}' "$STACKED_MSG" > "$F5/PUT_repos_acme_thing_pulls_10_merge.json"
+printf '%s' '{"status":"pending","details":{"uuid":"u-10"}}' > "$F5/PUT_repos_acme_thing_pulls_10_merge-async.json"
+printf '%s' '{"number":10,"state":"open","merged":false,"merged_at":null}' > "$F5/GET_repos_acme_thing_pulls_10.json"
+printf '%s' '{"status":"failed"}' > "$F5/GET_repos_acme_thing_pulls_10_merge-async_u-10.json"
+failed_err=$(GH_MERGE_WAIT=0 gh5 pr-merge 10 2>&1 >/dev/null)
+check "a failed async status ends the wait as a failure" "failed u-10" \
+  "$(printf '%s' "$failed_err" | grep -oE 'failed|u-10' | paste -sd' ' -)"
+
+# An accepted request with no uuid under "details" is not a merge to wait for.
+printf '{"__status":403,"message":"%s"}' "$STACKED_MSG" > "$F5/PUT_repos_acme_thing_pulls_11_merge.json"
+printf '%s' '{"status":"pending"}' > "$F5/PUT_repos_acme_thing_pulls_11_merge-async.json"
+check_status "an async answer with no uuid exits 3" 3 env GH_MERGE_WAIT=0 \
+  GH_FIXTURES="$F5" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" pr-merge 11
+check "an async answer with no uuid is refused for it" "did not return a uuid" \
+  "$(GH_MERGE_WAIT=0 gh5 pr-merge 11 2>&1 >/dev/null | grep -o 'did not return a uuid')"
+
+check_status "a non-numeric GH_MERGE_WAIT exits 1" 1 \
+  env GH_MERGE_WAIT=soon GH_FIXTURES="$F5" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" pr-merge 7
+
+# Fixtures answer the same way every time, so the wait itself is checked with
+# the transport replaced: two reads that find the PR open, then one that finds
+# it merged, and a sleep between reads.
+polled=$(GH_MERGE_WAIT=60 python3 -c "
+import sys, types
+sys.path.insert(0, '$GHDIR')
+from unittest.mock import patch
+from ghlib import errors, http, pr
+
+pulls = iter([
+    {'merged_at': None},
+    {'merged_at': None},
+    {'merged_at': '2026-09-25T10:00:00Z', 'merge_commit_sha': 'abc'},
+])
+reads = []
+
+def fake_rest(method, path, body=None, **kw):
+    if method == 'PUT' and path.endswith('/merge'):
+        raise errors.AuthError('$STACKED_MSG')
+    if method == 'PUT':
+        return {'status': 'pending', 'details': {'uuid': 'u-1'}}
+    if path.endswith('/pulls/7'):
+        reads.append(path)
+        return next(pulls)
+    return {'status': 'pending'}
+
+sleeps = []
+args = types.SimpleNamespace(pr=7, method='squash', sha=None)
+with patch.object(http, 'rest', fake_rest), \\
+        patch.object(pr.repo, 'owner_repo', lambda: ('acme', 'thing')), \\
+        patch.object(pr.time, 'sleep', sleeps.append):
+    result = pr.pr_merge(args)
+print(result['sha'], len(sleeps), len(reads))
+")
+check "the wait keeps reading until the PR is merged" "abc 2 3" "$polled"
+
+# The status endpoint is unmeasured, so whatever it answers with, an error of any
+# kind included, cannot end the wait: the PR's merged_at is the authority.
+status_err=$(GH_MERGE_WAIT=60 python3 -c "
+import sys, types
+sys.path.insert(0, '$GHDIR')
+from unittest.mock import patch
+from ghlib import errors, http, pr
+
+pulls = iter([
+    {'merged_at': None},
+    {'merged_at': '2026-09-25T10:00:00Z', 'merge_commit_sha': 'abc'},
+])
+
+def fake_rest(method, path, body=None, **kw):
+    if method == 'PUT' and path.endswith('/merge'):
+        raise errors.AuthError('$STACKED_MSG')
+    if method == 'PUT':
+        return {'status': 'pending', 'details': {'uuid': 'u-1'}}
+    if '/merge-async/' in path:
+        raise errors.ApiError('Validation Failed')
+    return next(pulls)
+
+args = types.SimpleNamespace(pr=7, method='squash', sha=None)
+with patch.object(http, 'rest', fake_rest), \\
+        patch.object(pr.repo, 'owner_repo', lambda: ('acme', 'thing')), \\
+        patch.object(pr.time, 'sleep', lambda s: None):
+    print(pr.pr_merge(args)['sha'])
+")
+check "a status read that fails with a 422 does not end the wait" "abc" "$status_err"
+
+
+echo "== skill documents =="
+
+SKILLDOC="$ROOT/engine/REFERENCE.md"
+
+echo "== pending reviews =="
+
+# A fixture directory of its own, so the PR, user and reviews fixtures below
+# never overwrite the ones earlier sections rely on.
+F4="$WORK/fix4"; mkdir -p "$F4"
+gh4() { env GH_FIXTURES="$F4" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" "$@"; }
+# The shape of a failure: how many error: lines and how many tracebacks reached
+# stderr. An exit code alone does not tell a mapped error from a crash.
+errshape() {
+  local out
+  out=$("$@" 2>&1 >/dev/null)
+  printf '%s %s' "$(printf '%s\n' "$out" | grep -c '^error:')" "$(printf '%s\n' "$out" | grep -c Traceback)"
+}
+
+printf '%s' '{"login":"me"}' > "$F4/GET_user.json"
+printf '%s' '{"number":7,"node_id":"PR_kwDO","head":{"sha":"abc123"}}' > "$F4/GET_repos_acme_thing_pulls_7.json"
+printf '%s' '[{"id":5,"node_id":"PRR_5","state":"PENDING","user":{"login":"me"}},{"id":6,"node_id":"PRR_6","state":"COMMENTED","user":{"login":"me"}},{"id":7,"node_id":"PRR_7","state":"PENDING","user":null}]' \
+  > "$F4/GET_repos_acme_thing_pulls_7_reviews__per_page=100.json"
+printf '%s' '[{"path":"src/a.py","position":3,"commit_id":"abc123","body":"x"},{"path":"src/b.py","position":9,"commit_id":"abc123","body":"y"}]' \
+  > "$F4/GET_repos_acme_thing_pulls_7_reviews_5_comments__per_page=100.json"
+
+check "login formatter prints the token login" "me" "$(gh4 auth-check --format login)"
+
+check "review-pending returns the pending review and its comments" "5 2 me" \
+  "$(gh4 review-pending 7 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["review"]["id"], len(d["comments"]), d["login"])')"
+
+check "review-pending for another author finds nothing" "None 0 nobody" \
+  "$(gh4 review-pending 7 --author nobody | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["review"], len(d["comments"]), d["login"])')"
+
+printf '%s' '{"id":9,"node_id":"PRR_9","state":"PENDING","user":{"login":"me"}}' > "$F4/POST_repos_acme_thing_pulls_7_reviews.json"
+cat > "$WORK/pending.json" <<'JSON'
+[{"path":"src/a.py","line":12,"body":"Consider renaming this."},
+ {"path":"src/b.py","line":30,"start_line":25,"body":"This block repeats the one above."}]
+JSON
+
+# No PENDING review by "me" yet: the fixture holds only a submitted one and a
+# pending one by a deleted account.
+printf '%s' '[{"id":6,"node_id":"PRR_6","state":"COMMENTED","user":{"login":"me"}},{"id":7,"node_id":"PRR_7","state":"PENDING","user":null}]' \
+  > "$F4/GET_repos_acme_thing_pulls_7_reviews__per_page=100.json"
+: > "$F4/sent.jsonl"
+gh4 review-pending-create 7 --comments-file "$WORK/pending.json" >/dev/null
+payload=$(python3 -c "
+import json
+for line in open('$F4/sent.jsonl'):
+    row = json.loads(line)
+    if row['method'] == 'POST' and row['path'].endswith('/pulls/7/reviews'):
+        b = row['body']
+        print(b['commit_id'], 'event' in b, len(b['comments']), b['comments'][0]['side'], b['comments'][1]['start_line'], b['comments'][1]['start_side'])
+")
+check "review-pending-create sends commit_id and comments, never event" "abc123 False 2 RIGHT 25 RIGHT" "$payload"
+
+printf '%s' '[{"id":5,"node_id":"PRR_5","state":"PENDING","user":{"login":"me"}},{"id":6,"node_id":"PRR_6","state":"COMMENTED","user":{"login":"me"}},{"id":7,"node_id":"PRR_7","state":"PENDING","user":null}]' \
+  > "$F4/GET_repos_acme_thing_pulls_7_reviews__per_page=100.json"
+check_status "review-pending-create refuses when a PENDING review exists" 1 gh4 review-pending-create 7 --comments-file "$WORK/pending.json"
+check "the refusal names the existing review and the add subcommand" "id 5 review-pending-add" \
+  "$(gh4 review-pending-create 7 --comments-file "$WORK/pending.json" 2>&1 >/dev/null | grep -oE 'id 5|review-pending-add' | paste -sd' ' -)"
+check "the refusal is one error line and no traceback" "1 0" "$(errshape gh4 review-pending-create 7 --comments-file "$WORK/pending.json")"
+
+# Each malformed comments file is refused by the validator, before any request:
+# the message names the defect, so a refusal by the guard above cannot pass for it.
+printf '%s' '{"path":"x"}' > "$WORK/bad-object.json"
+printf '%s' '[]' > "$WORK/bad-empty.json"
+printf '%s' '[{"path":"a","line":3}]' > "$WORK/bad-nobody.json"
+printf '%s' '[{"path":"a","line":"3","body":"b"}]' > "$WORK/bad-line.json"
+printf '%s' '[{"path":"a","line":3,"start_line":3,"body":"b"}]' > "$WORK/bad-range.json"
+for case in object empty nobody line range; do
+  check_status "a bad comments file ($case) exits 1" 1 gh4 review-pending-create 7 --comments-file "$WORK/bad-$case.json"
+  check "a bad comments file ($case) is one error line and no traceback" "1 0" "$(errshape gh4 review-pending-create 7 --comments-file "$WORK/bad-$case.json")"
+done
+check "the validator names the array rule (object)" "non-empty JSON array" \
+  "$(gh4 review-pending-create 7 --comments-file "$WORK/bad-object.json" 2>&1 >/dev/null | grep -o 'non-empty JSON array' | head -1)"
+check "the validator names the array rule (empty)" "non-empty JSON array" \
+  "$(gh4 review-pending-create 7 --comments-file "$WORK/bad-empty.json" 2>&1 >/dev/null | grep -o 'non-empty JSON array' | head -1)"
+check "the validator names the field" "body" \
+  "$(gh4 review-pending-create 7 --comments-file "$WORK/bad-nobody.json" 2>&1 >/dev/null | grep -o 'body' | head -1)"
+check "the validator names the line rule" "line must be an integer" \
+  "$(gh4 review-pending-create 7 --comments-file "$WORK/bad-line.json" 2>&1 >/dev/null | grep -o 'line must be an integer' | head -1)"
+check "the validator names the range rule" "start_line" \
+  "$(gh4 review-pending-create 7 --comments-file "$WORK/bad-range.json" 2>&1 >/dev/null | grep -o 'start_line' | head -1)"
+check "no request is sent for a bad comments file" "0" \
+  "$(: > "$F4/sent.jsonl"; gh4 review-pending-create 7 --comments-file "$WORK/bad-range.json" >/dev/null 2>&1; wc -l < "$F4/sent.jsonl" | tr -d ' ')"
+check_status "a missing comments file exits 1" 1 gh4 review-pending-create 7 --comments-file "$WORK/nope.json"
+
+printf '%s' '{"id":5,"node_id":"PRR_5","state":"PENDING","user":{"login":"me"}}' > "$F4/GET_repos_acme_thing_pulls_7_reviews_5.json"
+printf '%s' '{"id":6,"node_id":"PRR_6","state":"COMMENTED","user":{"login":"me"}}' > "$F4/GET_repos_acme_thing_pulls_7_reviews_6.json"
+printf '%s' '{"id":8,"node_id":"PRR_8","state":"PENDING","user":{"login":"someone-else"}}' > "$F4/GET_repos_acme_thing_pulls_7_reviews_8.json"
+printf '%s' '{"addPullRequestReviewThread":{"thread":{"id":"PRRT_1","comments":{"nodes":[{"id":"PRRC_1"}]}}}}' > "$F4/graphql.json"
+printf 'Rename `foo` to say what it holds.\n' > "$WORK/thread.md"
+
+: > "$F4/sent.jsonl"
+gh4 review-pending-add 7 --review-id 5 --path src/a.py --line 12 --body-file "$WORK/thread.md" >/dev/null
+mutation=$(python3 -c "
+import json
+rows = [json.loads(l) for l in open('$F4/sent.jsonl') if '\"query\"' in l]
+q, v = rows[-1]['query'], rows[-1]['variables']
+print('addPullRequestReviewThread' in q, 'pullRequestReviewId' in q, v['review'], v['pr'], v['path'], v['line'], v['side'], 'startLine' in v, v['body'].startswith('Rename'))
+")
+check "review-pending-add sends the thread mutation with both ids" "True True PRR_5 PR_kwDO src/a.py 12 RIGHT False True" "$mutation"
+
+: > "$F4/sent.jsonl"
+gh4 review-pending-add 7 --review-id 5 --path src/a.py --line 12 --start-line 8 --body-file "$WORK/thread.md" >/dev/null
+check "review-pending-add sends a range as startLine and startSide" "8 RIGHT" \
+  "$(python3 -c "
+import json
+rows = [json.loads(l) for l in open('$F4/sent.jsonl') if '\"query\"' in l]
+v = rows[-1]['variables']
+print(v.get('startLine'), v.get('startSide'))
+")"
+
+check_status "a start line not below the line exits 1" 1 gh4 review-pending-add 7 --review-id 5 --path src/a.py --line 12 --start-line 12 --body-file "$WORK/thread.md"
+check "a submitted review is refused by state" "not PENDING" \
+  "$(gh4 review-pending-add 7 --review-id 6 --path src/a.py --line 12 --body-file "$WORK/thread.md" 2>&1 >/dev/null | grep -o 'not PENDING' | head -1)"
+check "another user's pending review is refused by name" "someone-else" \
+  "$(gh4 review-pending-add 7 --review-id 8 --path src/a.py --line 12 --body-file "$WORK/thread.md" 2>&1 >/dev/null | grep -o 'someone-else' | head -1)"
+check "a refused add is one error line and no traceback" "1 0" \
+  "$(errshape gh4 review-pending-add 7 --review-id 8 --path src/a.py --line 12 --body-file "$WORK/thread.md")"
+check_status "a missing review exits 4" 4 gh4 review-pending-add 7 --review-id 404 --path src/a.py --line 12 --body-file "$WORK/thread.md"
+check "no mutation is sent for a refused add" "0" \
+  "$(: > "$F4/sent.jsonl"; gh4 review-pending-add 7 --review-id 6 --path src/a.py --line 12 --body-file "$WORK/thread.md" >/dev/null 2>&1; grep -c '"query"' "$F4/sent.jsonl")"
+check_status "an empty body file exits 1" 1 sh -c ": > '$WORK/empty-thread.md'; $(printf '%q ' env GH_FIXTURES="$F4" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py") review-pending-add 7 --review-id 5 --path src/a.py --line 12 --body-file '$WORK/empty-thread.md'"
+
+printf '%s' '[{"user":{"login":"other"},"body":"Merci."},{"user":{"login":"me"},"body":"Please rename this."},{"user":{"login":"me"},"body":"Second one."},{"user":null,"body":"ghost"}]' \
+  > "$F4/GET_repos_acme_thing_pulls_comments__sort=created&direction=desc&per_page=100.json"
+check "repo-review-comments filters on the author" "2" \
+  "$(gh4 repo-review-comments --author me | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
+check "repo-review-comments honours --limit" "1" \
+  "$(gh4 repo-review-comments --author me --limit 1 | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
+check "a deleted-account author does not crash the filter" "2" \
+  "$(gh4 repo-review-comments --author me | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
+check "repo-review-comments asks for the newest first" "1" \
+  "$(: > "$F4/sent.jsonl"; gh4 repo-review-comments >/dev/null; grep -c 'sort=created&direction=desc&per_page=100' "$F4/sent.jsonl")"
+check "comment-bodies prints the bodies only" "Please rename this.|---|Second one." \
+  "$(gh4 repo-review-comments --author me --format comment-bodies | paste -sd'|' -)"
+check "comment-bodies on an empty list prints nothing" "" \
+  "$(gh4 repo-review-comments --author nobody --format comment-bodies)"
+check "login formatter on a list of comments prints empty" "" \
+  "$(gh4 repo-review-comments --format login)"
+check_status "login formatter on a list of comments exits 0" 0 gh4 repo-review-comments --format login
+
+summary=$(gh4 review-pending 7 --format pending-review-summary)
+check "pending-review-summary heads with id, node_id, state, count" "id 5 node_id PRR_5 state PENDING comments 2" \
+  "$(printf '%s\n' "$summary" | head -4 | paste -sd' ' -)"
+check "pending-review-summary tables path, position and commit" "| src/b.py | 9 | abc123 |" \
+  "$(printf '%s\n' "$summary" | tail -1)"
+check "pending-review-summary prints none without a review" "none" \
+  "$(gh4 review-pending 7 --author nobody --format pending-review-summary)"
+
+# A separate fixture write, restored right after: the review-5 comments
+# fixture above is shared with the count and table checks just above, so a
+# third entry here would change their expected values.
+cp "$F4/GET_repos_acme_thing_pulls_7_reviews_5_comments__per_page=100.json" "$WORK/reviews-5-comments-orig.json"
+printf '%s' '[{"path":"src/a.py","position":3,"commit_id":"abc123","body":"x"},{"path":"src/b.py","position":9,"commit_id":"abc123","body":"y"},{"path":"src/c.py","line":4,"body":"z"}]' \
+  > "$F4/GET_repos_acme_thing_pulls_7_reviews_5_comments__per_page=100.json"
+check "pending-review-summary uses a sentinel for a missing commit_id" "| src/c.py | 4 | ? |" \
+  "$(gh4 review-pending 7 --format pending-review-summary | tail -1)"
+cp "$WORK/reviews-5-comments-orig.json" "$F4/GET_repos_acme_thing_pulls_7_reviews_5_comments__per_page=100.json"
+
+check "manifest version" "0.13.2" \
+  "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$ROOT/.claude-plugin/plugin.json")"
+check "marketplace version matches" "0.13.2 0.13.2" \
+  "$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["metadata"]["version"], m["plugins"][0]["version"])' "$ROOT/.claude-plugin/marketplace.json")"
+
+for needle in '--sha' 'GH_MERGE_WAIT' 'asynchronous merge endpoint'; do
+  check "REFERENCE.md documents '$needle'" "1" \
+    "$(grep -qF -- "$needle" "$SKILLDOC" && echo 1 || echo 0)"
+done
+
+# Read the live parser: a subcommand that exists but is not written down is one
+# no skill will ever call, so the suite enforces the documentation rather than
+# trusting the author to remember.
+undocumented=$(python3 - "$GHDIR" "$SKILLDOC" <<'PYDOC'
+import sys
+sys.path.insert(0, sys.argv[1])
+import gh
+parser = gh.build_parser()
+actions = [a for a in parser._actions if a.dest == "command"]
+names = sorted(actions[0].choices) if actions else []
+doc = open(sys.argv[2], encoding="utf-8").read()
+print(" ".join(n for n in names if "`%s`" % n not in doc))
+PYDOC
+)
+check "every subcommand is documented" "" "$undocumented"
+
+undocumented_formats=$(python3 - "$GHDIR" "$SKILLDOC" <<'PYFMT'
+import sys
+sys.path.insert(0, sys.argv[1])
+from ghlib import fmt
+doc = open(sys.argv[2], encoding="utf-8").read()
+print(" ".join(n for n in sorted(fmt._FORMATTERS) if "`%s`" % n not in doc))
+PYFMT
+)
+check "every formatter is documented" "" "$undocumented_formats"
+
+# No relative .claude/skills path may survive the move into a plugin.
+stale=$(grep -rn '\.claude/skills/' "$ROOT/engine" 2>/dev/null || true)
+check "no relative skill paths" "" "$stale"
+
+
+echo "== fallback skill =="
+
+# Plugins built on earlier releases run skills/github-curl/gh.py: it must keep
+# behaving as the engine itself, output and exit codes alike.
+SHIM="$ROOT/skills/github-curl/gh.py"
+check "the former entry point runs the engine" "someone" \
+  "$(env GH_FIXTURES="$F2" GH_TOKEN=x GH_REPO=acme/thing python3 "$SHIM" auth-check --format login)"
+check_status "the former entry point keeps the engine's exit codes" 1 \
+  env GH_FIXTURES="$F2" GH_TOKEN=x GH_REPO=acme/thing python3 "$SHIM" pr-comment 7 --body-file "$WORK/nope.md"
+check "the fallback skill points at the engine" "1" \
+  "$(grep -cF '${CLAUDE_PLUGIN_ROOT}/engine/gh.py' "$ROOT/skills/github-curl/SKILL.md")"
+check "the fallback skill defers to the native tool" "1" \
+  "$(grep -qF 'mcp__github__gh' "$ROOT/skills/github-curl/SKILL.md" && echo 1 || echo 0)"
+
+echo "== writing rules =="
+
+WRITINGDOC="$ROOT/engine/WRITING.md"
+
+check "WRITING.md exists" "yes" "$([ -f "$WRITINGDOC" ] && echo yes || echo no)"
+
+# Fence-aware: a "## " inside a fenced example (the PR description template)
+# is not a section heading of the document itself.
+headings=$(python3 - "$WRITINGDOC" <<'PYHEAD'
+import sys
+FENCE = chr(96) * 3
+in_fence = False
+found = []
+for line in open(sys.argv[1], encoding="utf-8"):
+    stripped = line.rstrip("\n")
+    if stripped.startswith(FENCE):
+        in_fence = not in_fence
+        continue
+    if in_fence:
+        continue
+    if stripped.startswith("## "):
+        found.append(stripped[3:])
+print(" | ".join(found))
+PYHEAD
+)
+check "WRITING.md headings are in order" \
+  "Commit messages | Pull request titles | References to pull requests and issues | Pull request descriptions | Ready pull requests | Security update pull requests | Review comments" \
+  "$headings"
+
+check "REFERENCE.md points at WRITING.md" "1" \
+  "$(grep -cF 'read `WRITING.md` beside this file' "$SKILLDOC")"
+
+for needle in '--draft' '**TODO Staging:**' '**TODO Prod:**' '**PRs Dependency:**' '**Related PRs:**' 'TODO Staging or TODO Prod item is a task-list checkbox' 'A TODO item stands alone' '"do the same edit"' 'the value before and after' 'checkbox, one action' 'never joined by "then" or "and run"' 'follow-up' 'mandatory' 'kept apart' 'no semicolon' 'published and edited without asking' 'heading' '| Advisory |' 'locked at' 'one table per advisory' 'is a markdown link to its advisory'; do
+  check "WRITING.md mentions '$needle'" "1" \
+    "$(grep -qF -- "$needle" "$WRITINGDOC" && echo 1 || echo 0)"
+done
+
+for needle in 'leaves draft only once it is ready (see « Ready' 'A pull request is ready when four things hold at its current head commit' 'Ready belongs to one head' 'A push to the pull request'"'"'s branch puts `Not Ready` back' 'see REFERENCE.md « Records »' 'When the CI does not run on a draft, the pull request leaves draft for it,' 'goes back to draft once the CI is green, then takes `Ready`' 'CI is read from GitHub'; do
+  check "WRITING.md Ready pull requests mentions '$needle'" "1" \
+    "$(python3 -c 'import sys; print(1 if sys.argv[1] in open(sys.argv[2], encoding="utf-8").read() else 0)' "$needle" "$WRITINGDOC")"
+done
+
+for needle in 'Each screenshot is its descriptive title in bold, alone on its line' 'with no colon at its end' 'separated by a `---` line with a blank line before it' 'other than the `---` between two screenshots'; do
+  check "WRITING.md screenshots mention '$needle'" "1" \
+    "$(grep -qF -- "$needle" "$WRITINGDOC" && echo 1 || echo 0)"
+done
+check "WRITING.md asks for no plain caption under a screenshot" "0" "$(grep -c 'plain caption' "$WRITINGDOC")"
+check "REFERENCE.md gives the image title bound" "1" \
+  "$(grep -qF -- '100 characters or fewer' "$SKILLDOC" && echo 1 || echo 0)"
+
+titles_concise=$(python3 - "$WRITINGDOC" <<'PYTITLES'
+import sys
+lines = open(sys.argv[1], encoding="utf-8").read().splitlines()
+start = lines.index("## Pull request titles")
+end = next(i for i in range(start + 1, len(lines)) if lines[i].startswith("## "))
+section = "\n".join(lines[start:end])
+print(1 if "concise" in section else 0)
+PYTITLES
+)
+check "titles section says short and concise" "1" "$titles_concise"
+
+# Same fence-aware pass, counting ";" instead of "## " lines.
+semicolons=$(python3 - "$WRITINGDOC" <<'PYSEMI'
+import sys
+FENCE = chr(96) * 3
+in_fence = False
+count = 0
+for line in open(sys.argv[1], encoding="utf-8"):
+    stripped = line.rstrip("\n")
+    if stripped.startswith(FENCE):
+        in_fence = not in_fence
+        continue
+    if in_fence:
+        continue
+    count += stripped.count(";")
+print(count)
+PYSEMI
+)
+check "no semicolon outside fences in WRITING.md" "0" "$semicolons"
+
+
+echo "== install =="
+
+# commands/install.md and commands/doctor.md both tell the user to run
+# "${CLAUDE_PLUGIN_ROOT}/install.sh" directly, and their allowed-tools scope
+# Bash to that exact executable path. Invoking it through "/bin/bash" (as the
+# rest of this suite does, below) works regardless of the file's own mode and
+# would never catch a missing execute bit, so this checks the mode itself.
+check "install.sh is executable" "executable" \
+  "$([ -x "$ROOT/install.sh" ] && echo executable || echo not-executable)"
+
+mkdir -p "$WORK/cfg"
+
+inst() {
+  env HOME="$WORK" GH_SKIP_AUTH=1 \
+    sh -c "cd '$WORK/repo' && /bin/bash '$ROOT/install.sh'"
+}
+
+check_status "install.sh succeeds" 0 inst
+
+# It must write nothing: compare the whole listing before and after.
+before=$(find "$WORK/cfg" -type f | sort)
+inst >/dev/null 2>&1
+check "install.sh writes nothing" "$before" "$(find "$WORK/cfg" -type f | sort)"
+
+check "both commands declare a description" "2" \
+  "$(grep -l '^description:' "$ROOT"/commands/*.md 2>/dev/null | wc -l | tr -d ' ')"
+
+check "no uninstall script exists" "" \
+  "$(ls "$ROOT/uninstall.sh" 2>/dev/null || true)"
+
+echo "== install: gh and its browser sign-in =="
+
+# Every external command install.sh may run is faked: nothing is installed and
+# no browser opens. PATH holds only the fakes and a few links to system tools,
+# so a real gh or brew on this machine is never found.
+SYS="$WORK/sysbin"
+mkdir -p "$SYS"
+for t in bash sh git curl sed awk head mktemp seq nohup sleep rm cp chmod mkdir tar cat grep tr dirname env ls touch shasum sha256sum; do
+  p=$(command -v "$t") && ln -sf "$p" "$SYS/$t" || :
+done
+# The interpreter itself, not a version-manager shim that needs its own PATH.
+ln -sf "$(python3 -c 'import sys; print(sys.executable)')" "$SYS/python3"
+
+# A token value the fake gh holds once signed in. It must never reach output.
+SECRET="gho_FAKESECRET0123456789"
+
+# new_fakes <dir>: an empty fake-bin directory with a call log.
+new_fakes() {
+  rm -rf "$1" && mkdir -p "$1" && : > "$1/calls.log"
+  # open / xdg-open: log the URL instead of starting a browser.
+  for t in open xdg-open; do
+    printf '#!/bin/sh\necho "%s $*" >> "%s/calls.log"\n' "$t" "$1" > "$1/$t"
+    chmod +x "$1/$t"
+  done
+  printf '#!/bin/sh\nexit 1\n' > "$1/sudo" && chmod +x "$1/sudo"
+}
+
+# fake_gh <file> <dir>: a gh with no token until "$dir/authed" exists. Its
+# login prints a one-time code the way gh does without a terminal.
+fake_gh() {
+  cat > "$1" <<GH
+#!/bin/sh
+echo "gh \$*" >> "$2/calls.log"
+case "\$1 \$2" in
+  "auth token") [ -f "$2/authed" ] && { echo "$SECRET"; exit 0; }; exit 1 ;;
+  "auth login") echo "! First copy your one-time code: ABCD-1234" >&2
+                echo "Open this URL to continue in your web browser: https://github.com/login/device" >&2 ;;
+esac
+GH
+  chmod +x "$1"
+}
+
+# fake_uname <dir> <system> <machine>
+fake_uname() {
+  printf '#!/bin/sh\ncase "$1" in -m) echo %s ;; *) echo %s ;; esac\n' "$3" "$2" > "$1/uname"
+  chmod +x "$1/uname"
+}
+
+# run_install <dir> <home> [args...]: install.sh from the GitHub clone.
+run_install() {
+  local dir="$1" home="$2"
+  shift 2
+  env -u GH_TOKEN HOME="$home" PATH="$dir:$SYS" \
+    /bin/bash -c "cd '$WORK/repo' && /bin/bash '$ROOT/install.sh' $*" </dev/null 2>&1
+}
+
+# macOS, no gh: Homebrew installs it, then the sign-in starts.
+F="$WORK/fk-mac"
+new_fakes "$F"
+fake_uname "$F" Darwin arm64
+cat > "$F/brew" <<BREW
+#!/bin/sh
+echo "brew \$*" >> "$F/calls.log"
+BREW
+printf 'cp "%s/gh.src" "%s/gh"\n' "$F" "$F" >> "$F/brew"
+chmod +x "$F/brew"
+fake_gh "$F/gh.src" "$F"
+out=$(run_install "$F" "$WORK/home-mac"); code=$?
+check "missing gh on macOS: brew install gh" "brew install gh" "$(grep '^brew' "$F/calls.log")"
+check "missing gh on macOS: web sign-in started" "gh auth login --web --git-protocol https --hostname github.com" \
+  "$(grep '^gh auth login' "$F/calls.log")"
+check "sign-in opens the device page" "open https://github.com/login/device" "$(grep '^open' "$F/calls.log")"
+check "sign-in prints the one-time code" "1" "$(printf '%s' "$out" | grep -c 'ABCD-1234')"
+check "sign-in started exits 14" "14" "$code"
+
+# gh present, no token: nothing installed, the sign-in starts.
+F="$WORK/fk-notoken"
+new_fakes "$F"
+fake_uname "$F" Darwin arm64
+printf '#!/bin/sh\necho "brew $*" >> "%s/calls.log"\n' "$F" > "$F/brew" && chmod +x "$F/brew"
+fake_gh "$F/gh" "$F"
+out=$(run_install "$F" "$WORK/home-notoken"); code=$?
+check "no token: brew not run" "" "$(grep '^brew' "$F/calls.log")"
+check "no token: gh auth login --web run" "gh auth login --web --git-protocol https --hostname github.com" \
+  "$(grep '^gh auth login' "$F/calls.log")"
+check "no token: exits 14" "14" "$code"
+
+# gh prints its code and exits between the loop's read of the log and its
+# liveness check. The fake gh waits until the fake sed has taken its read, then
+# prints and exits. The fake sed holds the output for 0.5 s, so the check comes
+# after gh has exited.
+F="$WORK/fk-race"
+new_fakes "$F"
+fake_uname "$F" Darwin arm64
+fake_gh "$F/gh" "$F"
+sed -i.bak 's|^  "auth login") echo|  "auth login") i=0; while [ ! -f "'"$F"'/read" ] \&\& [ \$i -lt 100 ]; do sleep 0.05; i=\$((i+1)); done; echo|' "$F/gh" && rm -f "$F/gh.bak"
+cat > "$F/sed" <<SED
+#!/bin/sh
+out=\$("$SYS/sed" "\$@")
+touch "$F/read"
+sleep 0.5
+printf '%s\n' "\$out"
+SED
+chmod +x "$F/sed"
+out=$(run_install "$F" "$WORK/home-race"); code=$?
+check "gh exits right after printing its code: exits 14" "14" "$code"
+check "gh exits right after printing its code: the code is shown" "1" "$(printf '%s' "$out" | grep -c 'ABCD-1234')"
+
+# Token present: nothing installed, no sign-in, no browser, and the token
+# never shows.
+touch "$F/authed"
+: > "$F/calls.log"
+out=$(run_install "$F" "$WORK/home-notoken"); code=$?
+check "token present: exits 0" "0" "$code"
+check "token present: only asks gh whether a token exists" "" \
+  "$(grep -v '^gh auth token' "$F/calls.log")"
+check "token present: the token never appears in output" "0" "$(printf '%s' "$out" | grep -c "$SECRET")"
+
+# --check (/github:doctor) installs nothing and starts no sign-in.
+F="$WORK/fk-check"
+new_fakes "$F"
+fake_uname "$F" Darwin arm64
+printf '#!/bin/sh\necho "brew $*" >> "%s/calls.log"\n' "$F" > "$F/brew" && chmod +x "$F/brew"
+out=$(run_install "$F" "$WORK/home-check" --check); code=$?
+check "--check without gh: nothing run" "" "$(cat "$F/calls.log")"
+check "--check without gh: exits 12" "12" "$code"
+check "--check without gh: names /github:install" "fix:   /github:install" "$(printf '%s' "$out" | grep '^fix:')"
+
+# Linux without root: the release archive lands in ~/.local/bin.
+F="$WORK/fk-linux"
+new_fakes "$F"
+fake_uname "$F" Linux x86_64
+printf '#!/bin/sh\necho 1000\n' > "$F/id" && chmod +x "$F/id"
+printf '#!/bin/sh\necho "apt-get $*" >> "%s/calls.log"\n' "$F" > "$F/apt-get" && chmod +x "$F/apt-get"
+mkdir -p "$WORK/rel/gh_9.9.9_linux_amd64/bin"
+fake_gh "$WORK/rel/gh_9.9.9_linux_amd64/bin/gh" "$F"
+tar -czf "$WORK/rel/gh.tar.gz" -C "$WORK/rel" gh_9.9.9_linux_amd64
+sum=$(python3 -c 'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$WORK/rel/gh.tar.gz")
+printf '%s  gh_9.9.9_linux_amd64.tar.gz\n' "$sum" > "$WORK/rel/checksums.txt"
+cat > "$F/curl" <<CURL
+#!/bin/sh
+echo "curl \$*" >> "$F/calls.log"
+out=""; url=""
+while [ \$# -gt 0 ]; do
+  case "\$1" in -o) out="\$2"; shift ;; -*) ;; *) url="\$1" ;; esac
+  shift
+done
+case "\$url" in
+  */releases/latest) echo '{"tag_name": "v9.9.9"}' ;;
+  */gh_9.9.9_linux_amd64.tar.gz) cp "$WORK/rel/gh.tar.gz" "\$out" ;;
+  */gh_9.9.9_checksums.txt) cp "$WORK/rel/checksums.txt" "\$out" ;;
+  *) exit 22 ;;
+esac
+CURL
+chmod +x "$F/curl"
+out=$(run_install "$F" "$WORK/home-linux"); code=$?
+check "Linux without root: gh in ~/.local/bin" "executable" \
+  "$([ -x "$WORK/home-linux/.local/bin/gh" ] && echo executable || echo missing)"
+check "Linux without root: package manager not run" "" "$(grep '^apt-get' "$F/calls.log")"
+check "Linux without root: sign-in started" "gh auth login --web --git-protocol https --hostname github.com" \
+  "$(grep '^gh auth login' "$F/calls.log")"
+check "Linux opens the device page with xdg-open" "xdg-open https://github.com/login/device" \
+  "$(rm -f "$F/open"; : > "$F/calls.log"; run_install "$F" "$WORK/home-linux" >/dev/null; grep '^xdg-open' "$F/calls.log")"
+
+# A checksum mismatch, or no checksum line for the archive, installs nothing.
+for case in mismatch missing; do
+  if [ "$case" = mismatch ]; then
+    printf '%s  gh_9.9.9_linux_amd64.tar.gz\n' "$(printf '0%.0s' $(seq 1 64))" > "$WORK/rel/checksums.txt"
+  else
+    printf '%s  gh_9.9.9_linux_arm64.tar.gz\n' "$sum" > "$WORK/rel/checksums.txt"
+  fi
+  : > "$F/calls.log"
+  out=$(run_install "$F" "$WORK/home-$case"); code=$?
+  check "checksum $case: ~/.local/bin/gh absent" "absent" \
+    "$([ -e "$WORK/home-$case/.local/bin/gh" ] && echo present || echo absent)"
+  check "checksum $case: refused with exit 11" "11" "$code"
+  check "checksum $case: no sign-in" "" "$(grep '^gh auth login' "$F/calls.log")"
+done
+
+# Linux as root: the system package manager installs gh.
+F="$WORK/fk-root"
+new_fakes "$F"
+fake_uname "$F" Linux x86_64
+printf '#!/bin/sh\necho 0\n' > "$F/id" && chmod +x "$F/id"
+fake_gh "$F/gh.src" "$F"
+printf '#!/bin/sh\necho "apt-get $*" >> "%s/calls.log"\ncp "%s/gh.src" "%s/gh"\n' "$F" "$F" "$F" > "$F/apt-get"
+chmod +x "$F/apt-get"
+out=$(run_install "$F" "$WORK/home-root"); code=$?
+check "Linux as root: apt-get install -y gh" "apt-get install -y gh" "$(grep '^apt-get' "$F/calls.log")"
+
+# The engine's own message, when a call needs a token and finds none.
+F="$WORK/fk-engine"
+new_fakes "$F"
+fake_gh "$F/gh" "$F"
+check "engine without a token names /github:install" "error: no GitHub token; run /github:install" \
+  "$(env -u GH_TOKEN HOME="$WORK/home-engine" PATH="$F:$SYS" python3 "$ROOT/engine/gh.py" auth-check 2>&1 | grep '^error:')"
+
+# preflight's fix line for a missing token.
+check "preflight without a token names /github:install" "fix:   /github:install" \
+  "$(env -u GH_TOKEN HOME="$WORK/home-engine" PATH="$F:$SYS" /bin/bash -c "cd '$WORK/repo' && /bin/bash '$ROOT/scripts/preflight.sh'" 2>&1 | grep '^fix:')"
+
+echo "== install and doctor need no repository =="
+
+# Outside any git repository, with the sign-in present: both succeed.
+F="$WORK/fk-norepo"
+new_fakes "$F"
+fake_gh "$F/gh" "$F"
+touch "$F/authed"
+mkdir -p "$WORK/plain-dir"
+for args in "" "--check"; do
+  check "install.sh${args:+ $args} outside a repository exits 0" "0" \
+    "$(env -u GH_TOKEN HOME="$WORK/home-norepo" PATH="$F:$SYS" \
+      /bin/bash -c "cd '$WORK/plain-dir' && /bin/bash '$ROOT/install.sh' $args" </dev/null >/dev/null 2>&1; echo $?)"
+done
+
+# A call that works on a repository still refuses outside one, with its pair.
+out=$(env -u GH_TOKEN HOME="$WORK/home-norepo" PATH="$F:$SYS" \
+  /bin/bash -c "cd '$WORK/plain-dir' && /bin/bash '$ROOT/scripts/preflight.sh'" 2>&1); code=$?
+check "preflight outside a repository exits 13" "13" "$code"
+check "preflight outside a repository names the remedy" \
+  "error: no git remote named origin⏎fix:   run this from a GitHub repository clone" \
+  "$(printf '%s' "$out" | tr '\n' '⏎')"
+check "engine outside a repository refuses" "error: no GitHub origin remote; pass --repo owner/name" \
+  "$(env GH_TOKEN=x HOME="$WORK/home-norepo" PATH="$F:$SYS" \
+    /bin/bash -c "cd '$WORK/plain-dir' && python3 '$ROOT/engine/gh.py' pr-list" 2>&1 | grep '^error:')"
+
+echo "== doctor.md matches the retired exit code =="
+
+check "doctor.md documents no exit 10" "" \
+  "$(grep -c '^| `10`' "$ROOT/commands/doctor.md" | grep -v '^0$')"
+
+echo "== repository policy =="
+
+check "no attribution trailers in history" "0" \
+  "$(cd "$ROOT" && git log --format='%B' | grep -ciE 'claude-session|co-authored-by|generated with')"
+
+# The old plugin (the one this tool was extracted from) must not still be named
+# anywhere a user or Claude actually reads or runs: the manifests, the command
+# docs, the skill doc, the README, install.sh's own output, and the
+# preflight/CLI code whose User-Agent header is sent to GitHub on every
+# request. tests/run-tests.sh itself is deliberately excluded: it is a
+# developer-only harness (never shipped to, or read by, a plugin user), and it
+# necessarily spells out the very string this check searches for in its own
+# source. A prior version of a similar check filtered grep -r output by the
+# repository's own path, which happened to contain the string being searched
+# for -- every line matched the exclusion and nothing was left to examine, so
+# the check passed on broken code. This check never filters by path: it reads
+# each file's content directly through git ls-files, so the search string
+# appearing in this very file (or in $ROOT) cannot silently swallow a real hit.
+# "pr-reviews" (the GitHub review-list subcommand and its docs) is a genuine,
+# unrelated feature name that happens to start with the same prefix, so the
+# pattern requires the character after "pr-review" not be "s".
+#
+# The file set is every file this repository ships and tracks (git ls-files),
+# minus this test suite itself -- a developer-only harness, never installed
+# or read as part of using the plugin, and the one file guaranteed to spell
+# out the search string in its own source.
+#
+# Two narrow exceptions. The hooks test files (hooks/*.test.ts) are
+# developer-only like this suite, and spell out the name to prove the record
+# tool tells the review's plugin apart. The one line of hooks/ready.ts that
+# defines REVIEW_PLUGIN carries the name the host installs claude-review
+# under, which is what a hook call's origin reports; every other line still
+# counts, so a refusal text or a doc naming the old plugin still fails here.
+old_name_hits=""
+for f in $(cd "$ROOT" && git ls-files); do
+  case "$f" in
+    tests/run-tests.sh) continue ;;
+    hooks/*.test.ts) continue ;;
+  esac
+  hit=$(grep -inE 'pr-review([^s]|$)' "$ROOT/$f" 2>/dev/null || true)
+  if [ "$f" = hooks/ready.ts ]; then
+    hit=$(printf '%s\n' "$hit" | grep -vE "^[0-9]+:export const REVIEW_PLUGIN = 'pr-review'$" || true)
+  fi
+  if [ -n "$hit" ]; then
+    old_name_hits="$old_name_hits
+$f: $hit"
+  fi
+done
+check "no user-facing file names the old plugin" "" "$old_name_hits"
+
+
+echo "== comment minimisation =="
+
+# comment-resolve must minimise a comment, not resolve a thread: the read side
+# asks isMinimized, so using the thread mutation set a state nothing produced.
+printf '%s' '{"minimizeComment":{"minimizedComment":{"isMinimized":true}}}' > "$F3/graphql.json"
+gh3 comment-resolve IC_abc123 >/dev/null
+
+mutation=$(python3 -c "
+import json
+rows = [json.loads(l) for l in open('$F3/sent.jsonl') if '\"query\"' in l]
+q = rows[-1]['query']
+print('minimize' if 'minimizeComment' in q and 'unminimize' not in q else
+      'resolveThread' if 'resolveReviewThread' in q else 'other')
+")
+check "comment-resolve minimises the comment" "minimize" "$mutation"
+
+gh3 comment-unresolve IC_abc123 >/dev/null
+unmutation=$(python3 -c "
+import json
+rows = [json.loads(l) for l in open('$F3/sent.jsonl') if '\"query\"' in l]
+print('unminimize' if 'unminimizeComment' in rows[-1]['query'] else 'other')
+")
+check "comment-unresolve restores the comment" "unminimize" "$unmutation"
+
+# thread-resolve keeps using the thread mutation — the two are not interchangeable.
+gh3 thread-resolve PRRT_xyz >/dev/null
+tmutation=$(python3 -c "
+import json
+rows = [json.loads(l) for l in open('$F3/sent.jsonl') if '\"query\"' in l]
+print('resolveThread' if 'resolveReviewThread' in rows[-1]['query'] else 'other')
+")
+check "thread-resolve still resolves a thread" "resolveThread" "$tmutation"
+
+# comment-resolved must read isMinimized off the Minimizable interface, not
+# just IssueComment: a review body (PRR_...), a commit comment or a review
+# comment answer an empty node under the old query and read as "not minimized".
+printf '%s' '{"node":{"isMinimized":true,"minimizedReason":"resolved"}}' > "$F3/graphql.json"
+gh3 comment-resolved PRR_kwDOFgZ9Fc8AAAABN_aweg >/dev/null
+resolved_query=$(python3 -c "
+import json
+rows = [json.loads(l) for l in open('$F3/sent.jsonl') if '\"query\"' in l]
+print('minimizable' if 'Minimizable' in rows[-1]['query'] else 'other')
+")
+check "comment-resolved asks the Minimizable interface" "minimizable" "$resolved_query"
+
+resolved_state=$(gh3 comment-resolved PRR_kwDOFgZ9Fc8AAAABN_aweg | python3 -c 'import json,sys; print(json.load(sys.stdin)["node"]["isMinimized"])')
+check "a minimized review body reads as minimized" "True" "$resolved_state"
+
+
+echo "== skills call only what exists =="
+
+# The reverse of the documentation check. That one asks "is everything that exists
+# written down"; this one asks "does everything written down exist". Its absence is
+# what let process-comments ship calling ten subcommands that were never there.
+phantom=$(python3 - "$GHDIR" "$ROOT" <<'PYREV'
+import os, re, sys
+sys.path.insert(0, sys.argv[1])
+import gh
+from ghlib import fmt
+subs = set([a for a in gh.build_parser()._actions if a.dest == "command"][0].choices)
+fmts = set(fmt._FORMATTERS)
+bad = []
+name = "REFERENCE.md"
+path = os.path.join(sys.argv[2], "engine", name)
+for i, line in enumerate(open(path, encoding="utf-8"), 1):
+    m = re.search(r'python3\s+"\$GH"\s+([a-z][a-z0-9-]+)', line)
+    if m and m.group(1) not in subs:
+        bad.append("%s:%d subcommand %s" % (name, i, m.group(1)))
+    for f in re.finditer(r'--format\s+([a-z][a-z0-9-]+)', line):
+        if f.group(1) not in fmts:
+            bad.append("%s:%d format %s" % (name, i, f.group(1)))
+print(" ".join(bad))
+PYREV
+)
+check "every skill invocation names something real" "" "$phantom"
+
+
+echo "== stdin json =="
+
+F6="$WORK/fix6"; mkdir -p "$F6"
+gh6() { env GH_FIXTURES="$F6" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" "$@"; }
+
+# argv6 <json>: the argument vector --stdin-json builds, without running it.
+argv6() {
+  printf '%s' "$1" | python3 -c "
+import json, sys, tempfile
+sys.path.insert(0, '$GHDIR')
+import gh
+from ghlib import errors, stdinjson
+with tempfile.TemporaryDirectory() as d:
+    try:
+        print(' '.join(stdinjson.build_argv(gh.build_parser(), json.load(sys.stdin), d)))
+    except errors.GhError as e:
+        print('error: ' + e.message)
+"
+}
+
+check "stdin json puts flags before -- and positionals after" \
+  "pr-checks --format=checks-status --repo=acme/thing -- 12" \
+  "$(argv6 '{"command":"pr-checks","args":{"format":"checks-status","pr":12},"repo":"acme/thing"}')"
+check "stdin json maps the mod's positional names onto argparse dests" \
+  "label-add -- 12 bug ui" \
+  "$(argv6 '{"command":"label-add","args":{"pr":12,"label":["bug","ui"]}}')"
+check "stdin json repeats append flags" \
+  "image-upload --title=B --title=A -- a.png b.png" \
+  "$(argv6 '{"command":"image-upload","args":{"file":["a.png","b.png"],"title":["B","A"]}}')"
+check "stdin json passes pr-get's pr as its flag" \
+  "pr-get --pr=12" \
+  "$(argv6 '{"command":"pr-get","args":{"pr":12}}')"
+check "stdin json sets store_true flags" \
+  "pr-create --title=T --draft" \
+  "$(argv6 '{"command":"pr-create","args":{"title":"T","draft":true}}')"
+check "stdin json leaves out -- when there are no positionals" \
+  "pr-list" "$(argv6 '{"command":"pr-list"}')"
+check "stdin json refuses body-file" \
+  'error: "body-file" is managed by the engine; pass body, comments or nodes' \
+  "$(argv6 '{"command":"pr-comment","args":{"pr":7,"body-file":"/etc/hosts"}}')"
+check "stdin json refuses an abbreviated flag" \
+  'error: unknown argument "body-f" for pr-comment' \
+  "$(argv6 '{"command":"pr-comment","args":{"pr":7,"body-f":"/etc/hosts"}}')"
+check "stdin json refuses an array on a single positional" \
+  'error: "pr" takes a single value, not an array' \
+  "$(argv6 '{"command":"pr-update","args":{"pr":["7","--body-file=/etc/hosts"]}}')"
+check "stdin json refuses an unknown key" \
+  'error: unknown argument "nope" for pr-list' \
+  "$(argv6 '{"command":"pr-list","args":{"nope":1}}')"
+
+# A value shaped like a flag stays a value: after "--" for positionals, glued
+# to its flag for options.
+injected=$(printf '%s' '{"command":"label-add","args":{"pr":7,"label":["--body-file=/etc/hosts"]}}' | python3 -c "
+import json, sys, tempfile
+sys.path.insert(0, '$GHDIR')
+import gh
+from ghlib import stdinjson
+with tempfile.TemporaryDirectory() as d:
+    a = gh.build_parser().parse_args(stdinjson.build_argv(gh.build_parser(), json.load(sys.stdin), d))
+print(a.names[0])
+")
+check "a positional starting with -- is not read as a flag" "--body-file=/etc/hosts" "$injected"
+check "an option value starting with -- is not read as a flag" \
+  "pr-create --title=--draft" "$(argv6 '{"command":"pr-create","args":{"title":"--draft"}}')"
+
+# The body travels inside the JSON and must reach the API byte-identical.
+printf '%s' '{"id":99}' > "$F6/POST_repos_acme_thing_issues_7_comments.json"
+python3 -c "
+import json, sys
+print(json.dumps({'command': 'pr-comment', 'args': {'pr': 7, 'body': open(sys.argv[1], encoding='utf-8', newline='').read()}}))
+" "$BODY" | gh6 --stdin-json >/dev/null
+python3 -c "
+import json, sys
+for line in open('$F6/sent.jsonl'):
+    row = json.loads(line)
+    if row['path'].endswith('/issues/7/comments'):
+        sys.stdout.write(row['body']['body'])
+        break
+" > "$WORK/sent-body6.md"
+check_status "a stdin json body arrives byte-identical" 0 cmp -s "$BODY" "$WORK/sent-body6.md"
+
+check_status "stdin that is not JSON exits 1" 1 \
+  sh -c "printf 'nope' | env GH_FIXTURES='$F6' GH_TOKEN=x python3 '$GHDIR/gh.py' --stdin-json"
+
+# The mod's command enum is a static list; it must name exactly the engine's
+# subcommands and the mod's own (MOD_COMMANDS), which the engine never sees.
+enum_drift=$(python3 - "$GHDIR" "$ROOT/hooks/register.ts" <<'PYENUM'
+import re, sys
+sys.path.insert(0, sys.argv[1])
+import gh
+subs = set([a for a in gh.build_parser()._actions if a.dest == "command"][0].choices)
+src = open(sys.argv[2], encoding="utf-8").read()
+if "export const COMMANDS = [" not in src:
+    print("no COMMANDS list in register.ts")
+    sys.exit()
+block = src.split("export const COMMANDS = [", 1)[1].split("]", 1)[0]
+names = set(re.findall(r"'([a-z-]+)'", block))
+own = set()
+if "export const MOD_COMMANDS = new Set([" in src:
+    own = set(re.findall(r"'([a-z-]+)'", src.split("export const MOD_COMMANDS = new Set([", 1)[1].split("]", 1)[0]))
+print(" ".join(sorted((subs | own) ^ names | (own & subs))))
+PYENUM
+)
+check "the mod's COMMANDS match the engine's subcommands" "" "$enum_drift"
+
+
+echo "== Ready and Not Ready labels =="
+
+# One fixture directory per scenario, so the recorded requests of one never
+# show in the next. sent7 prints the requests that carry a body or change state.
+new7() { F7="$WORK/fix7-$1"; rm -rf "$F7"; mkdir -p "$F7"; }
+gh7() { env GH_FIXTURES="$F7" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" "$@"; }
+# net7 runs gh.py with every label request failing as a dropped connection.
+net7() {
+  env GH_FIXTURES="$F7" GH_TOKEN=x GH_REPO=acme/thing python3 -c "
+import sys, urllib.error
+sys.path.insert(0, sys.argv[1])
+import gh
+from ghlib import http
+real = http._call
+def call(method, path, *rest, **kw):
+    if '/labels' in path:
+        raise urllib.error.URLError('connection dropped')
+    return real(method, path, *rest, **kw)
+http._call = call
+sys.exit(gh.main(sys.argv[2:]))
+" "$GHDIR" "$@"
+}
+sent7() {
+  python3 -c "
+import json, sys
+for line in open(sys.argv[1] + '/sent.jsonl'):
+    row = json.loads(line)
+    if row['method'] != 'GET' and row['path'] != '/graphql':
+        print(row['method'], row['path'], json.dumps(row['body'], sort_keys=True))
+" "$F7" 2>/dev/null
+}
+
+new7 ensure-empty
+check "labels-ensure creates both labels on a bare repository" "created Ready
+created Not Ready" "$(gh7 labels-ensure)"
+check "labels-ensure sends the house names and colours, no description" \
+  'POST /repos/acme/thing/labels {"color": "27e760", "name": "Ready"}
+POST /repos/acme/thing/labels {"color": "8c1455", "name": "Not Ready"}' "$(sent7)"
+
+new7 ensure-present
+printf '%s' '[{"name":"ready","color":"ffffff"},{"name":"Not Ready","color":"8c1455"},{"name":"bug","color":"d73a4a"}]' \
+  > "$F7/GET_repos_acme_thing_labels__per_page=100.json"
+check "labels-ensure reports a label present, with its colour when it differs" "present ready #ffffff
+present Not Ready" "$(gh7 labels-ensure)"
+check "labels-ensure never renames or recolours a present label" "" "$(sent7)"
+
+new7 ready-swap
+printf '%s' '[{"name":"Ready","color":"27e760"},{"name":"Not Ready","color":"8c1455"}]' \
+  > "$F7/GET_repos_acme_thing_labels__per_page=100.json"
+printf '%s' '[{"name":"Not Ready"},{"name":"bug"}]' \
+  > "$F7/GET_repos_acme_thing_issues_7_labels__per_page=100.json"
+check "pr-readiness ready prints the state now carried" "ready" "$(gh7 pr-readiness 7 ready)"
+check "pr-readiness adds the wanted label and removes the other" \
+  'POST /repos/acme/thing/issues/7/labels {"labels": ["Ready"]}
+DELETE /repos/acme/thing/issues/7/labels/Not%20Ready null' "$(sent7)"
+
+new7 ready-carried-spelling
+printf '%s' '[{"name":"Ready","color":"27e760"},{"name":"Not Ready","color":"8c1455"}]' \
+  > "$F7/GET_repos_acme_thing_labels__per_page=100.json"
+printf '%s' '[{"name":"NOT READY"}]' > "$F7/GET_repos_acme_thing_issues_7_labels__per_page=100.json"
+gh7 pr-readiness 7 ready >/dev/null
+check "pr-readiness removes the other label under the spelling the pull request carries" \
+  'POST /repos/acme/thing/issues/7/labels {"labels": ["Ready"]}
+DELETE /repos/acme/thing/issues/7/labels/NOT%20READY null' "$(sent7)"
+
+new7 ready-idempotent
+printf '%s' '[{"name":"Ready","color":"27e760"},{"name":"Not Ready","color":"8c1455"}]' \
+  > "$F7/GET_repos_acme_thing_labels__per_page=100.json"
+printf '%s' '[{"name":"Ready"}]' > "$F7/GET_repos_acme_thing_issues_7_labels__per_page=100.json"
+check "pr-readiness says so when nothing changes" "ready (unchanged)" "$(gh7 pr-readiness 7 ready)"
+check "pr-readiness changes nothing on a second call" "" "$(sent7)"
+
+new7 notready-creates
+printf '%s' '[{"name":"Ready"}]' > "$F7/GET_repos_acme_thing_issues_7_labels__per_page=100.json"
+check "pr-readiness not-ready creates the missing labels first" "created Ready
+created Not Ready
+not-ready" "$(gh7 pr-readiness 7 not-ready)"
+check "pr-readiness not-ready swaps the label" \
+  'POST /repos/acme/thing/labels {"color": "27e760", "name": "Ready"}
+POST /repos/acme/thing/labels {"color": "8c1455", "name": "Not Ready"}
+POST /repos/acme/thing/issues/7/labels {"labels": ["Not Ready"]}
+DELETE /repos/acme/thing/issues/7/labels/Ready null' "$(sent7)"
+
+check_status "pr-readiness refuses an unknown state" 1 gh7 pr-readiness 7 maybe
+
+new7 create-draft
+printf '%s' '{"number":12,"html_url":"https://github.com/acme/thing/pull/12"}' > "$F7/POST_repos_acme_thing_pulls.json"
+check "pr-create --draft still answers the new number" "12" \
+  "$(gh7 pr-create --title T --head feature-x --draft --format pr-number)"
+check "pr-create --draft puts Not Ready on the pull request" \
+  'POST /repos/acme/thing/pulls {"base": "main", "body": "", "draft": true, "head": "feature-x", "title": "T"}
+POST /repos/acme/thing/labels {"color": "27e760", "name": "Ready"}
+POST /repos/acme/thing/labels {"color": "8c1455", "name": "Not Ready"}
+POST /repos/acme/thing/issues/12/labels {"labels": ["Not Ready"]}' "$(sent7)"
+
+new7 create-ready
+printf '%s' '{"number":12,"html_url":"https://github.com/acme/thing/pull/12"}' > "$F7/POST_repos_acme_thing_pulls.json"
+gh7 pr-create --title T --head feature-x >/dev/null
+check "pr-create without --draft puts Ready on the pull request" \
+  'POST /repos/acme/thing/issues/12/labels {"labels": ["Ready"]}' "$(sent7 | grep '/issues/')"
+
+new7 create-label-fails
+printf '%s' '{"number":12,"html_url":"https://github.com/acme/thing/pull/12"}' > "$F7/POST_repos_acme_thing_pulls.json"
+printf '%s' '{"__status":500,"message":"boom"}' > "$F7/POST_repos_acme_thing_issues_12_labels.json"
+gh7 pr-create --title T --head feature-x --draft --format pr-number >"$WORK/out7" 2>"$WORK/err7"
+check "a label failure leaves pr-create succeeding" "0 12" "$(echo $? | tr -d '\n') $(cat "$WORK/out7")"
+check "a label failure is printed on its own line" "1" "$(grep -c '^error: label' "$WORK/err7")"
+
+new7 create-label-network-fails
+printf '%s' '{"number":12,"html_url":"https://github.com/acme/thing/pull/12"}' > "$F7/POST_repos_acme_thing_pulls.json"
+net7 pr-create --title T --head feature-x --draft --format pr-number >"$WORK/out7" 2>"$WORK/err7"
+check "a network failure while labelling leaves pr-create succeeding" "0 12" "$(echo $? | tr -d '\n') $(cat "$WORK/out7")"
+check "a network failure while labelling is printed on its own line" "1" "$(grep -c '^error: label' "$WORK/err7")"
+check "a network failure while labelling prints no traceback" "0" "$(grep -c 'Traceback' "$WORK/err7")"
+
+new7 ready-label-fails
+printf '%s' '{"number":7,"node_id":"PR_x"}' > "$F7/GET_repos_acme_thing_pulls_7.json"
+printf '%s' '{"__status":500,"message":"boom"}' > "$F7/POST_repos_acme_thing_issues_7_labels.json"
+gh7 pr-ready 7 >/dev/null 2>"$WORK/err7"
+check "a label failure leaves pr-ready succeeding" "0" "$?"
+check "a label failure on pr-ready is printed on its own line" "1" "$(grep -c '^error: label' "$WORK/err7")"
+
+new7 ready-out-of-draft
+printf '%s' '{"number":7,"node_id":"PR_x"}' > "$F7/GET_repos_acme_thing_pulls_7.json"
+gh7 pr-ready 7 >/dev/null
+check "pr-ready puts Ready on the pull request" \
+  'POST /repos/acme/thing/issues/7/labels {"labels": ["Ready"]}' "$(sent7 | grep '/issues/')"
+
+check "stdin json maps pr-readiness positionals by name" \
+  "pr-readiness -- 12 not-ready" \
+  "$(argv6 '{"command":"pr-readiness","args":{"pr":12,"state":"not-ready"}}')"
+check "stdin json accepts labels-ensure with no positional" \
+  "labels-ensure" "$(argv6 '{"command":"labels-ensure"}')"
+
+echo "== readiness reads =="
+
+GATEHEAD=89abcdef0123456789abcdef0123456789abcdef
+# gate8 <scenario> <pull json> <combined status json> <check runs json>: one
+# fixture directory with the three reads pr-gate makes.
+gate8() {
+  F8="$WORK/fix8-$1"; rm -rf "$F8"; mkdir -p "$F8"
+  printf '%s' "$2" > "$F8/GET_repos_acme_thing_pulls_12.json"
+  printf '%s' "$3" > "$F8/GET_repos_acme_thing_commits_${GATEHEAD}_status.json"
+  printf '%s' "$4" > "$F8/GET_repos_acme_thing_commits_${GATEHEAD}_check-runs__per_page=100.json"
+}
+gh8() { env GH_FIXTURES="$F8" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" "$@"; }
+ci8() { gh8 pr-gate 12 | python3 -c 'import json,sys; c=json.load(sys.stdin)["ci"]; print(c["result"], ",".join(c["failed"]), ",".join(c["skipped"]), c["total"])'; }
+PULL8='{"number":12,"state":"open","draft":false,"head":{"sha":"'$GATEHEAD'","ref":"feat"},"labels":[{"name":"Not Ready"},{"name":"bug"}]}'
+
+gate8 shape "$PULL8" '{"state":"success","statuses":[{"context":"ci/legacy","state":"success"}]}' '{"total_count":1,"check_runs":[{"name":"test","status":"completed","conclusion":"success"}]}'
+check "pr-gate answers repo, pr, state, draft, head, labels and ci" \
+  "acme/thing 12 open False $GATEHEAD Not Ready|bug SUCCESS 2" \
+  "$(gh8 pr-gate 12 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["repo"], d["pr"], d["state"], d["draft"], d["head"], "|".join(d["labels"]), d["ci"]["result"], d["ci"]["total"])')"
+check "pr-gate makes three reads, the check runs a full page" \
+  "GET /repos/acme/thing/pulls/12|GET /repos/acme/thing/commits/$GATEHEAD/status|GET /repos/acme/thing/commits/$GATEHEAD/check-runs?per_page=100" \
+  "$(python3 -c 'import json,sys; print("|".join(json.loads(l)["method"] + " " + json.loads(l)["path"] for l in open(sys.argv[1])))' "$F8/sent.jsonl")"
+
+gate8 none "$PULL8" '{"state":"pending","statuses":[]}' '{"total_count":0,"check_runs":[]}'
+check "pr-gate reads no check at all as green, total 0" "SUCCESS   0" "$(ci8)"
+
+gate8 failed "$PULL8" '{"state":"failure","statuses":[{"context":"ci/legacy","state":"error"}]}' '{"check_runs":[{"name":"lint","status":"completed","conclusion":"failure"},{"name":"test","status":"completed","conclusion":"success"}]}'
+check "pr-gate names the failed checks and statuses" "FAILURE lint,ci/legacy  3" "$(ci8)"
+
+gate8 running "$PULL8" '{"statuses":[]}' '{"check_runs":[{"name":"test","status":"in_progress","conclusion":null}]}'
+check "pr-gate reads a running check as pending" "PENDING   1" "$(ci8)"
+
+gate8 skipped "$PULL8" '{"statuses":[]}' '{"check_runs":[{"name":"test","status":"completed","conclusion":"skipped"},{"name":"lint","status":"completed","conclusion":"success"}]}'
+check "pr-gate never reads a skipped check as green" "PENDING  test 2" "$(ci8)"
+
+gate8 neutral-open "$PULL8" '{"statuses":[]}' '{"check_runs":[{"name":"scan","status":"completed","conclusion":"neutral"}]}'
+check "pr-gate reads a neutral check out of draft as green" "SUCCESS   1" "$(ci8)"
+
+gate8 neutral-draft "$(printf '%s' "$PULL8" | sed 's/"draft":false/"draft":true/')" '{"statuses":[]}' '{"check_runs":[{"name":"scan","status":"completed","conclusion":"neutral"}]}'
+check "pr-gate never reads a neutral check on a draft as green" "PENDING  scan 1" "$(ci8)"
+
+gate8 startup "$PULL8" '{"statuses":[]}' '{"check_runs":[{"name":"build","status":"completed","conclusion":"startup_failure"},{"name":"lint","status":"completed","conclusion":"success"}]}'
+check "pr-gate reads a check that failed to start as failed" "FAILURE build  2" "$(ci8)"
+
+gate8 checks-draft "$(printf '%s' "$PULL8" | sed 's/"draft":false/"draft":true/')" '{"statuses":[]}' '{"check_runs":[]}'
+printf '%s' '{"check_runs":[{"name":"scan","status":"completed","conclusion":"neutral"}]}' > "$F8/GET_repos_acme_thing_commits_${GATEHEAD}_check-runs.json"
+cp "$F8/GET_repos_acme_thing_commits_${GATEHEAD}_check-runs.json" "$F8/GET_repos_acme_thing_commits_${GATEHEAD}_check-runs__per_page=100.json"
+check "pr-checks reads a neutral check on a draft as pr-gate does" "PENDING" \
+  "$(gh8 pr-checks 12 --format checks-status | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
+
+gate8 checks-page "$PULL8" '{"statuses":[]}' '{"check_runs":[{"name":"test","status":"completed","conclusion":"success"}]}'
+gh8 pr-checks 12 >/dev/null
+check "pr-checks reads the check runs a full page, as pr-gate does" \
+  "GET /repos/acme/thing/pulls/12|GET /repos/acme/thing/commits/$GATEHEAD/status|GET /repos/acme/thing/commits/$GATEHEAD/check-runs?per_page=100" \
+  "$(python3 -c 'import json,sys; print("|".join(json.loads(l)["method"] + " " + json.loads(l)["path"] for l in open(sys.argv[1])))' "$F8/sent.jsonl")"
+
+gate8 checks-neutral "$PULL8" '{"statuses":[]}' '{"check_runs":[{"name":"scan","status":"completed","conclusion":"neutral"}]}'
+check "pr-checks reads a neutral check out of draft as pr-gate does" "SUCCESS" \
+  "$(gh8 pr-checks 12 --format checks-status | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
+
+gate8 merged "$(printf '%s' "$PULL8" | sed 's/"state":"open"/"state":"closed","merged_at":"2026-11-01T00:00:00Z"/')" '{"statuses":[]}' '{"check_runs":[]}'
+check "pr-gate says merged for a merged pull request" "merged" \
+  "$(gh8 pr-gate 12 | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')"
+gate8 unknown '{"__status":404,"message":"Not Found"}' '{}' '{}'
+check_status "pr-gate of an unknown pull request exits 4" 4 gh8 pr-gate 12
+gate8 nohead '{"number":12,"state":"open","head":{}}' '{}' '{}'
+check_status "pr-gate of a pull request with no head sha exits 3" 3 gh8 pr-gate 12
+gate8 sha-newline '{"number":12,"state":"open","head":{"sha":"'$GATEHEAD'\n"}}' '{"state":"success","statuses":[]}' '{"total_count":0,"check_runs":[]}'
+check_status "pr-gate of a head sha with a trailing newline exits 3" 3 gh8 pr-gate 12
+
+echo "== draft and back =="
+
+new7 to-draft
+printf '%s' '{"number":7,"node_id":"PR_x"}' > "$F7/GET_repos_acme_thing_pulls_7.json"
+gh7 pr-draft 7 >/dev/null
+check "pr-draft converts the pull request to a draft" "1" \
+  "$(grep -c 'convertPullRequestToDraft' "$F7/sent.jsonl")"
+check "pr-draft puts Not Ready on the pull request" \
+  'POST /repos/acme/thing/issues/7/labels {"labels": ["Not Ready"]}' "$(sent7 | grep '/issues/')"
+
+new7 ready-for-ci
+printf '%s' '{"number":7,"node_id":"PR_x"}' > "$F7/GET_repos_acme_thing_pulls_7.json"
+gh7 pr-ready 7 --for-ci >/dev/null
+check "pr-ready --for-ci leaves draft and keeps Not Ready" \
+  'POST /repos/acme/thing/issues/7/labels {"labels": ["Not Ready"]}' "$(sent7 | grep '/issues/')"
+check "pr-ready --for-ci marks the pull request ready for review" "1" \
+  "$(grep -c 'markPullRequestReadyForReview' "$F7/sent.jsonl")"
+
+echo "== records =="
+
+RECORD="$ROOT/engine/record.py"
+HEAD40=0123456789abcdef0123456789abcdef01234567
+rec() { env -u CLAUDE_CODE_SESSION_ID CLAUDE_CONFIG_DIR="$WORK/cfgrec" python3 "$RECORD" "$@"; }
+recbase() { rec --repo Acme/Thing --pr 12 --head "$HEAD40" --producer pr-review "$@"; }
+
+rm -rf "$WORK/cfgrec"
+path=$(recbase --kind review --result pass --detail "clean at pass 3")
+check "record.py exits 0 on a valid record" "0" "$?"
+check "record.py writes under the lowercased repository and the full head" \
+  "$WORK/cfgrec/pr-records/acme/thing/$HEAD40/" "$(dirname "$path")/"
+check "record.py names the file kind.at.producer.json" "1" \
+  "$(basename "$path" | grep -cE '^review\.[0-9]{8}T[0-9]{6}Z\.pr-review\.json$')"
+check "record.py prints the path of a file that exists" "yes" "$([ -f "$path" ] && echo yes || echo no)"
+check "record.py writes the contract's fields" \
+  "v=1 repo=acme/thing pr=12 head=$HEAD40 kind=review result=pass producer=pr-review detail=clean at pass 3 session=" \
+  "$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(" ".join("%s=%s" % (k, d[k]) for k in ("v","repo","pr","head","kind","result","producer","detail","session")))' "$path")"
+check "record.py stamps at in UTC, matching the file name" "1" \
+  "$(python3 -c 'import json,sys,os; d=json.load(open(sys.argv[1])); n=os.path.basename(sys.argv[1]).split(".")[1]; print(1 if d["at"].replace("-","").replace(":","") == n else 0)' "$path")"
+check "record.py leaves no temporary file behind" "1" \
+  "$(ls -A "$(dirname "$path")" | wc -l | tr -d ' ')"
+check "record.py writes one JSON object, nothing else" "1" \
+  "$(python3 -c 'import json,sys; print(1 if isinstance(json.load(open(sys.argv[1])), dict) else 0)' "$path")"
+
+path=$(env CLAUDE_CODE_SESSION_ID=s-42 CLAUDE_CONFIG_DIR="$WORK/cfgrec" python3 "$RECORD" --repo acme/thing --pr 12 --head "$HEAD40" --kind norms --result fail --producer norms)
+check "record.py takes the session from CLAUDE_CODE_SESSION_ID" "s-42" \
+  "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["session"])' "$path")"
+path=$(recbase --kind e2e --result pass --session given)
+check "record.py takes --session over the environment" "given" \
+  "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["session"])' "$path")"
+check "record.py writes an empty detail when none is given" "" \
+  "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["detail"])' "$path")"
+
+path=$(env -u CLAUDE_CONFIG_DIR HOME="$WORK/homerec" python3 "$RECORD" --repo acme/thing --pr 12 --head "$HEAD40" --kind e2e --result pass --producer session-e2e)
+check "record.py writes under HOME/.claude without CLAUDE_CONFIG_DIR" \
+  "$WORK/homerec/.claude/pr-records/acme/thing/$HEAD40" "$(dirname "$path")"
+
+path=$(recbase --kind e2e --result waived --detail "waived by the operator on 2026-11-02: no browser here")
+check "record.py accepts an e2e waiver whose detail carries a date" "0" "$?"
+check "record.py lowercases an upper-case head" "$WORK/cfgrec/pr-records/acme/thing/$HEAD40" \
+  "$(dirname "$(rec --repo acme/thing --pr 12 --head "$(printf %s "$HEAD40" | tr a-f A-F)" --kind review --result pass --producer x)")"
+
+long=$(python3 -c 'print("x" * 501)')
+for case in \
+  "short head|--repo acme/thing --pr 12 --head 0123456 --kind review --result pass --producer x" \
+  "non-hex head|--repo acme/thing --pr 12 --head ${HEAD40%?}g --kind review --result pass --producer x" \
+  "unknown kind|--repo acme/thing --pr 12 --head $HEAD40 --kind screenshots --result pass --producer x" \
+  "unknown result|--repo acme/thing --pr 12 --head $HEAD40 --kind review --result ok --producer x" \
+  "waived review|--repo acme/thing --pr 12 --head $HEAD40 --kind review --result waived --detail 2026-11-02 --producer x" \
+  "waiver without detail|--repo acme/thing --pr 12 --head $HEAD40 --kind e2e --result waived --producer x" \
+  "repo without owner|--repo thing --pr 12 --head $HEAD40 --kind review --result pass --producer x" \
+  "repo with a dot path|--repo acme/.. --pr 12 --head $HEAD40 --kind review --result pass --producer x" \
+  "pr not a number|--repo acme/thing --pr x --head $HEAD40 --kind review --result pass --producer x" \
+  "pr zero|--repo acme/thing --pr 0 --head $HEAD40 --kind review --result pass --producer x" \
+  "producer with a capital|--repo acme/thing --pr 12 --head $HEAD40 --kind review --result pass --producer Bad" \
+  "producer with a slash|--repo acme/thing --pr 12 --head $HEAD40 --kind review --result pass --producer a/b" \
+  "missing producer|--repo acme/thing --pr 12 --head $HEAD40 --kind review --result pass" \
+  "unknown option|--repo acme/thing --pr 12 --head $HEAD40 --kind review --result pass --producer x --force"; do
+  name=${case%%|*}
+  # shellcheck disable=SC2086
+  check_status "record.py refuses a $name with exit 2" 2 rec ${case#*|}
+done
+check_status "record.py refuses a waiver whose detail has no date with exit 2" 2 \
+  rec --repo acme/thing --pr 12 --head "$HEAD40" --kind e2e --result waived --detail "the operator said so" --producer x
+check_status "record.py refuses a detail past 500 characters with exit 2" 2 \
+  rec --repo acme/thing --pr 12 --head "$HEAD40" --kind review --result pass --detail "$long" --producer x
+check "record.py prints one error line on a usage error" "1" \
+  "$(rec --repo acme/thing --pr 12 --head 0123 --kind review --result pass --producer x 2>&1 >/dev/null | grep -c '^error: ')"
+check "record.py writes nothing on a usage error" "no" \
+  "$(rm -rf "$WORK/cfgrec2"; env CLAUDE_CONFIG_DIR="$WORK/cfgrec2" python3 "$RECORD" --repo acme/thing --pr 12 --head 0123 --kind review --result pass --producer x 2>/dev/null; [ -e "$WORK/cfgrec2/pr-records" ] && echo yes || echo no)"
+check "record.py imports nothing outside the standard library" "" \
+  "$(grep -E '^(import|from) ' "$RECORD" | grep -vE '^(import|from) (argparse|datetime|json|os|re|sys|tempfile)( |$)')"
+
+
+echo
+echo "$pass passed, $fail failed"
+[ "$fail" -eq 0 ]

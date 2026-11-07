@@ -1,0 +1,221 @@
+"""Turn an API response into the shape a skill wants to read."""
+
+import json
+
+from . import errors
+
+
+def _first(obj):
+    if isinstance(obj, list):
+        return obj[0] if obj else None
+    return obj
+
+
+class Lines(str):
+    """Plain text lines a subcommand prints as they are, not as JSON."""
+
+
+def _raw(obj):
+    if isinstance(obj, Lines):
+        return str(obj)
+    return json.dumps(obj, indent=2, sort_keys=True)
+
+
+def _error_check(obj):
+    if isinstance(obj, dict) and "message" in obj and "documentation_url" in obj:
+        raise errors.ApiError(obj["message"])
+    return ""
+
+
+def _pr_number(obj):
+    item = _first(obj)
+    return str(item["number"]) if item and "number" in item else ""
+
+
+def _pr_url(obj):
+    item = _first(obj)
+    return item.get("html_url", "") if item else ""
+
+
+def _pr_merge_status(obj):
+    item = _first(obj) or {}
+    if item.get("merged"):
+        return "merged"
+    return "open" if item.get("state") == "open" else "closed"
+
+
+def gate_ci(statuses, runs, draft):
+    """CI at one head, as the ready guard reads it. A completed check passes
+    on success, and on neutral out of draft. A skipped one, and on a draft a
+    neutral one, did not prove anything: not green. Any other conclusion is a
+    failure, named by its check. A check still running is not green. No check
+    at all is green."""
+    commit_statuses = (statuses or {}).get("statuses") or []
+    passing = ("success",) if draft else ("success", "neutral")
+    unproven = ("skipped", "neutral") if draft else ("skipped",)
+    completed = [run for run in runs if run.get("status") == "completed"]
+    failed = [
+        run.get("name", "?") for run in completed if run.get("conclusion") not in passing + unproven
+    ] + [status.get("context", "?") for status in commit_statuses if status.get("state") in ("failure", "error")]
+    running = [run for run in runs if run.get("status") != "completed"] + [
+        status for status in commit_statuses if status.get("state") == "pending"
+    ]
+    skipped = [run.get("name", "?") for run in completed if run.get("conclusion") in unproven]
+    if failed:
+        result = "FAILURE"
+    elif running or skipped:
+        result = "PENDING"
+    else:
+        result = "SUCCESS"
+    return {
+        "result": result,
+        "failed": failed,
+        "running": len(running),
+        "skipped": skipped,
+        "total": len(runs) + len(commit_statuses),
+    }
+
+
+def _checks_status(obj):
+    # "statuses" is the combined-status API's own response: {"state": ...,
+    # "statuses": [{"state": ..., "context": ...}, ...]}. Its inner list is
+    # what legacy commit statuses (as opposed to check runs) actually live in.
+    # The verdict is the ready guard's, the one pr-gate reads.
+    ci = gate_ci(obj.get("statuses"), obj.get("check_runs", []), bool(obj.get("draft")))
+    return json.dumps({"result": ci["result"], "failed_checks": ci["failed"]}, sort_keys=True)
+
+
+def _threads(obj, resolved):
+    items = obj if isinstance(obj, list) else obj.get("threads", [])
+    return json.dumps([t for t in items if bool(t.get("isResolved")) is resolved], sort_keys=True)
+
+
+def _thread_summary(obj):
+    items = json.loads(_threads(obj, False))
+    if not items:
+        return "No open review threads."
+    lines = ["| thread | file | line | author |", "|---|---|---|---|"]
+    for thread in items:
+        first = ((thread.get("comments") or {}).get("nodes") or [{}])[0]
+        lines.append(
+            "| %s | %s | %s | %s |"
+            % (
+                thread.get("id", "?"),
+                thread.get("path", "?"),
+                thread.get("line", "?"),
+                (first.get("author") or {}).get("login", "?"),
+            )
+        )
+    return "\n".join(lines)
+
+
+def _resolve_status(obj):
+    thread = (obj.get("resolveReviewThread") or {}).get("thread") or {}
+    if thread.get("isResolved"):
+        return "resolved"
+    thread = (obj.get("unresolveReviewThread") or {}).get("thread") or {}
+    if thread and not thread.get("isResolved"):
+        return "unresolved"
+    raise errors.ApiError("thread was not resolved")
+
+
+def _issue_comments_summary(obj):
+    if not isinstance(obj, list) or not obj:
+        return "No issue comments."
+    lines = ["| id | author | first line |", "|---|---|---|"]
+    for comment in obj:
+        body = (comment.get("body") or "").strip().splitlines()
+        lines.append(
+            "| %s | %s | %s |"
+            % (
+                comment.get("id", "?"),
+                (comment.get("user") or {}).get("login", "?"),
+                body[0][:60] if body else "",
+            )
+        )
+    return "\n".join(lines)
+
+
+def _pr_details(obj):
+    item = _first(obj) or {}
+    return json.dumps(
+        {
+            "number": item.get("number"),
+            "title": item.get("title"),
+            "state": item.get("state"),
+            "draft": item.get("draft"),
+            "head": (item.get("head") or {}).get("ref"),
+            "base": (item.get("base") or {}).get("ref"),
+            "url": item.get("html_url"),
+        },
+        sort_keys=True,
+    )
+
+
+def _login(obj):
+    item = _first(obj)
+    return (item or {}).get("login") or ""
+
+
+def _comment_bodies(obj):
+    if not isinstance(obj, list):
+        return ""
+    return "\n---\n".join((c.get("body") or "") for c in obj if isinstance(c, dict))
+
+
+def _pending_review_summary(obj):
+    review = (obj or {}).get("review")
+    if not review:
+        return "none"
+    comments = (obj or {}).get("comments") or []
+    lines = [
+        "id %s" % review.get("id"),
+        "node_id %s" % review.get("node_id"),
+        "state %s" % review.get("state"),
+        "comments %d" % len(comments),
+        "",
+        "| path | line | commit_id |",
+        "|---|---|---|",
+    ]
+    for comment in comments:
+        if not isinstance(comment, dict):
+            continue
+        # A pending review's comments carry position, not line; show whichever
+        # GitHub sent so the table is never blank.
+        line = comment.get("line")
+        if line is None:
+            line = comment.get("position")
+        if line is None:
+            line = "?"
+        lines.append("| %s | %s | %s |" % (comment.get("path") or "?", line, comment.get("commit_id") or "?"))
+    return "\n".join(lines)
+
+
+_FORMATTERS = {
+    "raw": _raw,
+    "error-check": _error_check,
+    "pr-number": _pr_number,
+    "pr-url": _pr_url,
+    "pr-merge-status": _pr_merge_status,
+    "pr-details": _pr_details,
+    "checks-status": _checks_status,
+    "open-threads": lambda obj: _threads(obj, False),
+    "resolved-threads": lambda obj: _threads(obj, True),
+    "thread-summary": _thread_summary,
+    "resolve-status": _resolve_status,
+    "issue-comments-summary": _issue_comments_summary,
+    "login": _login,
+    "pending-review-summary": _pending_review_summary,
+    "comment-bodies": _comment_bodies,
+}
+
+
+def render(name, obj):
+    if obj is None:
+        return ""
+    handler = _FORMATTERS.get(name)
+    if handler is None:
+        raise errors.UsageError(
+            "unknown --format %r; known: %s" % (name, ", ".join(sorted(_FORMATTERS)))
+        )
+    return handler(obj)
