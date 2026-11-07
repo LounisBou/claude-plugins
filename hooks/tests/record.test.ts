@@ -2,7 +2,7 @@
 // The norms record: mcp__norms__check_done leaves one record through the
 // github plugin's record tool, once /norms:check computed its scope.
 import { expect, test } from 'claude-code/testing'
-import { register as registerCheck, resetCache } from '../check.ts'
+import { register as registerCheck, resetCache, SKILL_MATCHER } from '../check.ts'
 import { register as registerRecord, resetMark, repoOf } from '../record.ts'
 import { mount, hook, nextOf, fakeDollar, gitRuns, HEAD, type FakeSetup } from './fakes.ts'
 
@@ -250,4 +250,43 @@ test('auto false or absent leaves the interactive record unchanged', async () =>
   await m.done($, { open: 0, fixed: 1, passed: 2, auto: false })
   await m.done($, { open: 0, fixed: 1, passed: 2 })
   expect(recordCalls(calls).map(c => c.detail)).toEqual(['1 fixed, 2 passed, 0 open', '1 fixed, 2 passed, 0 open'])
+})
+
+const skillHook = (hooks: any[]) => {
+  const found = hooks.find(h => h.event === 'tool.call' && h.matcher === SKILL_MATCHER)
+  if (!found) throw new Error('no Skill tool.call hook')
+  return found
+}
+
+test('a check run through the Skill tool marks its scope, so its record is written', async () => {
+  resetMark(); resetCache()
+  const calls: any[] = []
+  const { $ } = setup({}, {}, calls)
+  const m = mounted()
+  const { next, seen } = nextOf()
+  await skillHook(m.hooks).handler($, { tool: 'Skill', skill: 'norms:check', args: 'report only' }, next)
+  expect(seen[0].args).toContain('report only\n\n<norms-scope>')
+  const out = await m.done($, { open: 0, fixed: 0, passed: 1 })
+  expect(out.result).toBe('record: ' + WRITTEN)
+})
+
+test('the Skill hook matches the check alone, with or without its slash', () => {
+  expect(SKILL_MATCHER.skill.test('norms:check')).toBe(true)
+  expect(SKILL_MATCHER.skill.test('/norms:check')).toBe(true)
+  expect(SKILL_MATCHER.skill.test('norms:learn')).toBe(false)
+  expect(SKILL_MATCHER.skill.test('norms:checkout')).toBe(false)
+})
+
+test('a scope that fails on a Skill run passes the call on unchanged and marks nothing', async () => {
+  resetMark(); resetCache()
+  const calls: any[] = []
+  const { $ } = setup({}, { 'git rev-parse HEAD': { exitCode: 128, stderr: 'fatal: not a git repository' } }, calls)
+  const m = mounted()
+  const h = skillHook(m.hooks)
+  const e = { tool: 'Skill', skill: 'norms:check', args: '' }
+  const { next, seen } = nextOf()
+  await h.handler($, e, next).catch(() => h.net($, e, next))
+  expect(seen[seen.length - 1]).toBe(e)
+  const out = await m.done($, { open: 0, fixed: 0, passed: 0 })
+  expect(out.isError).toBe(true)
 })

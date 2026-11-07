@@ -2,8 +2,8 @@
 // The norms record: /norms:check ends by calling mcp__norms__check_done, which
 // leaves one record at the pull request's head through the github plugin's
 // record tool (mcp__github__record), for its ready guard to read.
-// The call is refused unless /norms:check computed its scope in this session
-// (hooks/check.ts sets the mark), so the record follows its own scope. A
+// The call is refused unless /norms:check computed its scope in this session,
+// typed or run through the Skill tool (hooks/check.ts sets the mark), so the record follows its own scope. A
 // failure never throws out of the handler: the answer is one `record:` line,
 // the path written or `none` with the reason.
 

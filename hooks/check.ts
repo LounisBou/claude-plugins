@@ -1,6 +1,7 @@
 // hooks/check.ts
 // N1: /norms:check's Steps 1 to 3 run here, before the command's markdown
-// expands, and land as a <norms-scope> block appended to its arguments
+// expands, whether the person typed it (command.run) or the model ran it
+// through the Skill tool (tool.call), and land as a <norms-scope> block appended to its arguments
 // ($ARGUMENTS). The base comes from scripts/resolve_base.sh, the same script
 // the markdown runs, so both paths agree on it.
 // N2: every norms agent spawned gets the diff of its own files and its own
@@ -68,17 +69,35 @@ export function resetCache(): void {
   cached = undefined
 }
 
+// The Skill tool call that runs the check. In the matcher, so the hook sits
+// in no other skill's chain.
+export const SKILL_MATCHER = { tool: 'Skill', skill: /^\/?norms:check$/ }
+
+// Steps 1 to 3 for one run of /norms:check: the scope is computed, cached for
+// the agents and marked for the record, and its block appended to the words.
+async function withScope($: any, words: string): Promise<string> {
+  const args = parseCheckArgs(words)
+  const scope = await computeScope($, args.base)
+  cached = { scope, at: Date.now() }
+  const refs = await checkPaths($, args.paths)
+  const spawned = String((await $.env.get('ORCHESTRATOR_SPAWNED').catch(() => undefined)) ?? '')
+  const block = scopeBlock(scope, args, refs, args.auto === true || spawned !== '')
+  // Last, so the mark means the block is delivered.
+  markScope(scope.head)
+  const typed = words.trim()
+  return (typed ? typed + '\n\n' : '') + block
+}
+
 export function register(on: any): void {
+  // Typed by the person: the host runs command.run.
   on('command.run', { command: 'norms:check' }, async ($: any, e: any, next: any) => {
-    const args = parseCheckArgs(String(e.args ?? ''))
-    const scope = await computeScope($, args.base)
-    cached = { scope, at: Date.now() }
-    markScope(scope.head)
-    const refs = await checkPaths($, args.paths)
-    const spawned = String((await $.env.get('ORCHESTRATOR_SPAWNED').catch(() => undefined)) ?? '')
-    const block = scopeBlock(scope, args, refs, args.auto === true || spawned !== '')
-    const typed = String(e.args ?? '').trim()
-    return next({ ...e, args: (typed ? typed + '\n\n' : '') + block })
+    return next({ ...e, args: await withScope($, String(e.args ?? '')) })
+  }).catch(($: any, e: any, next: any) => next(e))
+
+  // Run by a session through the Skill tool: the host runs no command.run, so
+  // the same steps run at the tool call, its args carrying the block.
+  on('tool.call', SKILL_MATCHER, async ($: any, e: any, next: any) => {
+    return next({ ...e, args: await withScope($, String(e.args ?? '')) })
   }).catch(($: any, e: any, next: any) => next(e))
 
   on('agent.spawn', async ($: any, e: any, next: any) => {
