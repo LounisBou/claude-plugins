@@ -1,0 +1,5 @@
+{"type":"user","message":{"role":"user","content":"go"}}
+{"type":"assistant","message":{"id":"m1","model":"a-model-1","usage":{"input_tokens":1000,"output_tokens":2000,"cache_read_input_tokens":10000,"cache_creation_input_tokens":3000,"cache_creation":{"ephemeral_5m_input_tokens":1000,"ephemeral_1h_input_tokens":2000}}}}
+{"type":"assistant","message":{"id":"m1","model":"a-model-1","usage":{"input_tokens":1000,"output_tokens":2000,"cache_read_input_tokens":10000,"cache_creation_input_tokens":3000,"cache_creation":{"ephemeral_5m_input_tokens":1000,"ephemeral_1h_input_tokens":2000}}}}
+{"type":"assistant","message":{"id":"m2","model":"c-model-1","usage":{"input_tokens":200000,"output_tokens":1000,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}
+{"type":"assistant","message":{"id":"m0","model":"<synthetic>","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}

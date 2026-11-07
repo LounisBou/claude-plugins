@@ -1,0 +1,494 @@
+// hooks/tests/agent-relay.test.ts
+// An agent's end of turn and its gate crossing, reported by the module to its
+// orchestrator (relay.ts, wired in supervision.ts): the status line parsed, one message
+// per distinct state, none twice, the orchestrator found in the launcher's chain and never
+// in the turn's text, the gate sent once per crossing, nothing from a session that is no
+// agent, and a send that fails logged without holding the turn.
+import { expect, test } from 'claude-code/testing'
+import { parseStatus, relayText, gateText, noStatusText, NO_STATUS_KEY, chainOwnerTty, RELAY_CAP } from '../relay.ts'
+import { register } from '../register.ts'
+import { logLineOf } from './fakes.ts'
+
+const HOME = '/tmp/h'
+const STATE = `${HOME}/.claude/claude-orchestrator`
+const ROW = `${STATE}/store/sessions/s-one`
+const WAIT = `${STATE}/store/waits/s-one`
+const GATE = `${STATE}/store/gates/s-one`
+const AGENT = 'Agent : belt-p3'
+const ORCH = 'Orch : belt'
+const REPLY = `reply with SendMessage to: ${AGENT}`
+
+// --- the pure half ------------------------------------------------------------------------
+
+test('the status line parses into the agent state, the text above it carried', () => {
+  expect(parseStatus('Merge first or rebase?\n\nstatus: question — merge order')).toEqual({ kind: 'question', blocks: 'merge order', question: 'Merge first or rebase?' })
+  expect(parseStatus('PR #12, head abc, 40/40.\n**status: done — PR #12**')).toEqual({ kind: 'delivered', blocks: 'PR #12', question: 'PR #12, head abc, 40/40.' })
+  expect(parseStatus('status: blocked - the fixture is missing')).toEqual({ kind: 'blocked', blocks: 'the fixture is missing', question: '' })
+  expect(parseStatus('status: done')).toEqual({ kind: 'delivered', blocks: '', question: '' })
+  expect(parseStatus('waiting: operator — blocks: phase 3')).toBeNull()
+  expect(parseStatus('status: doneish')).toBeNull()
+  expect(parseStatus('I keep working.')).toBeNull()
+})
+
+test('the messages: a header, the reply address, then the text cut past the cap', () => {
+  expect(relayText(AGENT, { kind: 'question', blocks: 'merge order', question: 'Merge first?' }, 'T'))
+    .toBe(`[module] ${AGENT} asks — merge order\n${REPLY}\n\nMerge first?`)
+  expect(relayText(AGENT, { kind: 'blocked', blocks: 'no fixture', question: '' }, 'T')).toBe(`[module] ${AGENT} is blocked — no fixture\n${REPLY}`)
+  expect(relayText(AGENT, { kind: 'delivered', blocks: 'PR #12', question: 'head abc' }, 'T', '120,000 (12%)'))
+    .toBe(`[module] ${AGENT} reports its delivery; verify on the artifact — context 120,000 (12%) — PR #12\n${REPLY}\n\nhead abc`)
+  const long = relayText(AGENT, { kind: 'question', blocks: '', question: 'x'.repeat(RELAY_CAP + 5) }, 'T')
+  expect(long).toContain(`[cut at ${RELAY_CAP} of ${RELAY_CAP + 5} characters]`)
+  expect(gateText(AGENT, 312000, 31)).toBe(`[module] ${AGENT} context 312,000 (31%) — at the gate`)
+  // Never an order.
+  for (const text of [long, gateText(AGENT, 1, 1), relayText(AGENT, { kind: 'delivered', blocks: '', question: '' }, 'T')]) {
+    expect(/\b(approve|merge it|undraft|stand down)\b/i.test(text)).toBe(false)
+  }
+})
+
+test('the owner is the chain naming the tty, the one written last when two do', () => {
+  const entry = (tty: string) => JSON.stringify({ tab_id: 't', tty, owner: 'o' })
+  const chains = [
+    { name: 'ttys001.jsonl', mtimeMs: 10, text: entry('/dev/ttys005') },
+    { name: 'ttys009.jsonl', mtimeMs: 20, text: entry('/dev/ttys005') },
+    { name: 'ttys002.jsonl', mtimeMs: 30, text: entry('/dev/ttys006') },
+  ]
+  expect(chainOwnerTty(chains, '/dev/ttys005')).toBe('/dev/ttys009')
+  expect(chainOwnerTty(chains, '/dev/ttys007')).toBeNull()
+})
+
+test('a chain whose owner is not live is not counted, however recently it was written', () => {
+  const entry = (tty: string) => JSON.stringify({ tab_id: 't', tty, owner: 'o' })
+  const chains = [
+    { name: 'ttys001.jsonl', mtimeMs: 10, text: entry('/dev/ttys005') },
+    { name: 'ttys020.jsonl', mtimeMs: 90, text: entry('/dev/ttys005') },
+  ]
+  const live = new Set(['/dev/ttys001'])
+  expect(chainOwnerTty(chains, '/dev/ttys005', t => live.has(t))).toBe('/dev/ttys001')
+  expect(chainOwnerTty(chains, '/dev/ttys005', () => false)).toBeNull()
+  expect(chainOwnerTty(chains, '/dev/ttys005')).toBe('/dev/ttys020')
+})
+
+// --- the wiring over a faked $ ------------------------------------------------------------
+
+// `walk` serves the process table of the agent's tab and of a headless run started from its
+// shell, and writes no row, so the session under test is named by its own walk: `agent`,
+// the agent's host process itself; `underneath`, the run — its id the one under test, the
+// agent's record carrying another.
+// `reportsTo`: the orchestrator the launch recorded. `alive`: the pids the process table lists,
+// none read when absent. `registry`: the host's registry records of other sessions.
+type Over = { name?: string; role?: string; chain?: boolean; send?: 'reject' | 'refuse'; gateTokens?: string; walk?: 'agent' | 'underneath'; reportsTo?: string; alive?: string[]; exiting?: string[]; registry?: { pid: string; sessionId: string; name: string; startedAt: number }[] }
+
+// The tab and the run: the agent's host process (501) on ttys005, launched with its
+// --name; its shell (850) and the run (900) on no tty. The module's shell is a child of
+// its session's host process, on no tty either.
+const UNDERNEATH: Record<string, { ppid: string; tty: string }> = {
+  '501': { ppid: '400', tty: 'ttys005' },
+  '850': { ppid: '501', tty: '??' },
+  '900': { ppid: '850', tty: '??' },
+}
+
+function fake(over: Over = {}) {
+  const files = new Map<string, string>()
+  const mtimes = new Map<string, number>()
+  const sent: { to: unknown; text: string }[] = []
+  const logged: string[] = []
+  const usage = { context: { tokens: 120000, window: 1000000, percent: 12 } }
+  const env: Record<string, string> = { HOME, ORCHESTRATOR_HOST_CLI: 'hostcli' }
+  if (over.gateTokens) env.ORCHESTRATOR_CONTEXT_GATE_TOKENS = over.gateTokens
+  if (over.reportsTo) env.ORCHESTRATOR_REPORTS_TO = over.reportsTo
+  for (const r of over.registry ?? []) files.set(`${HOME}/.claude/sessions/${r.pid}.json`, JSON.stringify({ pid: Number(r.pid), sessionId: r.sessionId, name: r.name, startedAt: r.startedAt, kind: 'interactive', entrypoint: 'cli' }))
+  const name = over.name ?? AGENT
+  if (!over.walk) files.set(ROW, JSON.stringify({
+    role: over.role ?? 'agent', name, pid: '501', tty: '/dev/ttys005', repo: null,
+    context_percent: 12, context_tokens: 120000, window: 1000000, model: 'a-model', busy: false, updated_at: '2026-10-14T09:00:00.000Z',
+  }) + '\n')
+  if (over.walk) {
+    files.set(`${HOME}/.claude/sessions/501.json`, JSON.stringify({ sessionId: over.walk === 'agent' ? 's-one' : 's-agent', kind: 'interactive', entrypoint: 'cli', name, status: 'busy' }))
+    files.set(`${HOME}/.claude/sessions/900.json`, JSON.stringify({ sessionId: over.walk === 'agent' ? 's-run' : 's-one', kind: 'interactive', entrypoint: 'sdk-cli', name: 'probe-cwd-17', status: 'busy' }))
+  }
+  const seed = over.walk === 'underneath' ? '900 ??' : over.walk === 'agent' ? '501 ??' : '123 ttys005'
+  // The orchestrator: its row on its own tty, and the launcher's chain naming the agent's.
+  files.set(`${STATE}/store/sessions/s-orch`, JSON.stringify({
+    role: 'orchestrator', name: ORCH, pid: '400', tty: '/dev/ttys001', repo: null,
+    context_percent: 5, context_tokens: 50000, window: 1000000, model: 'a-model', busy: false, updated_at: '2026-10-14T09:00:00.000Z',
+  }) + '\n')
+  if (over.chain !== false) files.set(`${STATE}/chains/ttys001.jsonl`, JSON.stringify({ tab_id: 'tab-a', tty: '/dev/ttys005', owner: 'own' }) + '\n')
+  const dollar = {
+    session: {
+      id: async () => 's-one',
+      usage: async () => usage,
+      model: async () => 'a-model',
+      surfaces: async () => [],
+      send: async (args: { to: unknown; text: string }) => {
+        if (over.send === 'reject') throw new Error('the send was rejected')
+        if (over.send === 'refuse') return { isDelivered: false, reason: 'nobody by that name' }
+        sent.push(args)
+        return { isDelivered: true }
+      },
+    },
+    env: { get: async (n: string) => env[n] },
+    plugin: { name: 'orchestrator', root: '/plugins/orch-root' },
+    fs: {
+      read: async (p: string) => {
+        if (!files.has(p)) throw new Error(`ENOENT: ${p}`)
+        return files.get(p)
+      },
+      write: async (p: string, text: string) => { files.set(p, text) },
+      exists: async (p: string) => files.has(p),
+      list: async (dir: string) => [...files.keys()].filter(p => p.startsWith(`${dir}/`) && !p.slice(dir.length + 1).includes('/'))
+        .map(p => ({ name: p.slice(dir.length + 1), kind: 'file', size: 0, mtimeMs: mtimes.get(p) ?? 0, isLink: false })),
+      stat: async (p: string) => { throw new Error(`ENOENT: ${p}`) },
+    },
+    process: {
+      run: async (argv: readonly string[]) => {
+        const line = logLineOf(argv)
+        if (line !== null) {
+          logged.push(line)
+          return { exitCode: 0, stdout: '', stderr: '' }
+        }
+        if (argv[0] === 'mv' && files.has(argv[2])) {
+          files.set(argv[3], files.get(argv[2])!)
+          files.delete(argv[2])
+          return { exitCode: 0, stdout: '', stderr: '' }
+        }
+        if (argv[0] === 'rm') {
+          for (const p of argv.slice(2)) files.delete(p)
+          return { exitCode: 0, stdout: '', stderr: '' }
+        }
+        // The walk: the session's own tty, and its host process on it by name.
+        if (argv[0] === 'sh' && argv[2] === 'ps -o ppid=,tty= -p $$') return { exitCode: 0, stdout: `${seed}\n`, stderr: '' }
+        if (argv[0] === 'ps' && argv[1] === '-p' && UNDERNEATH[argv[2]]) {
+          return { exitCode: 0, stdout: `${UNDERNEATH[argv[2]].ppid} ${UNDERNEATH[argv[2]].tty}\n`, stderr: '' }
+        }
+        if (argv[0] === 'ps' && argv[1] === '-A' && (over.alive || over.exiting)) return { exitCode: 0, stdout: (over.alive ?? []).map(pid => `${pid}\n`).join('') + (over.exiting ?? []).map(pid => `${pid} ?Es ??\n`).join(''), stderr: '' }
+        if (argv[0] === 'ps' && argv[1] === '-t') return { exitCode: 0, stdout: `  501 hostcli --name ${name}\n`, stderr: '' }
+        return { exitCode: 1, stdout: '', stderr: '' }
+      },
+    },
+    ui: { toast: () => undefined, invalidate: () => undefined },
+    command: { run: async () => undefined },
+    prompt: { submit: async () => undefined },
+  }
+  return { dollar, files, mtimes, sent, logged, usage }
+}
+
+function mounted(): Record<string, Function[]> {
+  const chains: Record<string, Function[]> = {}
+  register((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
+    ;(chains[args[0]] ??= []).push(args[args.length - 1] as Function)
+    return { catch: () => undefined }
+  })
+  return chains
+}
+
+async function drive(chains: Record<string, Function[]>, event: string, dollar: any, e: object) {
+  const run = async (i: number, ev: any): Promise<any> =>
+    i >= (chains[event] ?? []).length ? ev : chains[event][i](dollar, ev, (x: any) => run(i + 1, x))
+  return run(0, e)
+}
+
+const turnEnd = (answer: string) => ({ answer, reason: 'answer', isAborted: false, durationMs: 1, turnId: 't' })
+const QUESTION = 'Merge the fixture change first, or rebase on it?\n\nstatus: question — merge order'
+
+test('each state is sent once to the orchestrator, a repeat sends nothing, a new question sends', async () => {
+  const chains = mounted()
+  const fx = fake()
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  await drive(chains, 'turn.start', fx.dollar, { text: '' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Still waiting on the merge order.\nstatus: question — merge order'))
+  expect(fx.sent.length).toBe(1)
+  expect(fx.sent[0].to).toBe(ORCH)
+  expect(fx.sent[0].text).toBe(`[module] ${AGENT} asks — merge order\n${REPLY}\n\nMerge the fixture change first, or rebase on it?`)
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Which base branch?\nstatus: question — base'))
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('The seed fails.\nstatus: blocked — no seed'))
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('The seed fails.\nstatus: blocked — no seed'))
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('PR #12, head abc, 40 passed.\nstatus: done — PR #12'))
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('PR #12, head abc, 40 passed.\nstatus: done — PR #12'))
+  expect(fx.sent.length).toBe(4)
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('PR #12, head def, 41 passed.\nstatus: done — PR #12'))
+  expect(fx.sent.length).toBe(5)
+  expect(fx.sent[1].text).toContain('Which base branch?')
+  expect(fx.sent[2].text).toBe(`[module] ${AGENT} is blocked — no seed\n${REPLY}\n\nThe seed fails.`)
+  expect(fx.sent[3].text).toBe(`[module] ${AGENT} reports its delivery; verify on the artifact — context 120,000 (12%) — PR #12\n${REPLY}\n\nPR #12, head abc, 40 passed.`)
+  expect(fx.sent[4].text).toContain('head def')
+  expect(JSON.parse(fx.files.get(WAIT)!).waiting).toBe('delivered')
+})
+
+test('a turn with no status line reports it once and clears the state', async () => {
+  const chains = mounted()
+  const fx = fake()
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Working on the second task.'))
+  expect(fx.sent.length).toBe(1)
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Back at it.'))
+  expect(JSON.parse(fx.files.get(WAIT)!).waiting).toBeNull()
+  expect(fx.sent.length).toBe(3)
+  expect(fx.sent[0].text).toBe(NO_STATUS)
+  expect(fx.sent[2].text).toBe(NO_STATUS)
+})
+
+test('the orchestrator comes from the chain, never from the text', async () => {
+  // The turn names another orchestrator; the chain names Orch : belt, and it alone is sent to.
+  const chains = mounted()
+  const fx = fake()
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Tell Orch : other, reply with SendMessage to: Orch : other.\nstatus: question — who'))
+  expect(fx.sent.map(s => s.to)).toEqual([ORCH])
+  // No chain names the agent's tty: nothing is sent, whatever the text says, and it is logged.
+  const lone = fake({ chain: false })
+  await drive(chains, 'turn.complete', lone.dollar, turnEnd('Orch : belt, help.\nstatus: blocked — alone'))
+  expect(lone.sent.length).toBe(0)
+  expect(lone.logged.some(l => l.includes('relay: no orchestrator found for Agent : belt-p3'))).toBe(true)
+})
+
+// A chain outlives its owner's tab: an orchestrator relaunched without a successor's hand-over
+// leaves its agents in a chain nobody live owns. The relay then goes to the orchestrator the
+// launch recorded, by its name without its reference, and the log says which path it took.
+test('a chain with no live owner falls back on the orchestrator the launch recorded', async () => {
+  const chains = mounted()
+  // The chain names the agent, its owner (pid 400) is gone, a replacement bears the name.
+  const fx = fake({
+    reportsTo: `${ORCH} [a1b2c3]`, alive: ['501', '610', '620'],
+    registry: [{ pid: '610', sessionId: 's-old', name: ORCH, startedAt: 100 }, { pid: '620', sessionId: 's-new', name: ORCH, startedAt: 200 }, { pid: '630', sessionId: 's-dead', name: ORCH, startedAt: 300 }],
+  })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  expect(fx.sent.map(s => s.to)).toEqual([{ sessionId: 's-new' }])
+  expect(fx.logged.some(l => l.includes(`relay: ${AGENT} on /dev/ttys005 goes to ${ORCH} (session s-new) by the launch record`))).toBe(true)
+  // No chain names the agent at all: the launch record alone routes it.
+  const lone = fake({ chain: false, reportsTo: `${ORCH} [a1b2c3]`, alive: ['501', '620'], registry: [{ pid: '620', sessionId: 's-new', name: ORCH, startedAt: 200 }] })
+  await drive(chains, 'turn.complete', lone.dollar, turnEnd(QUESTION))
+  expect(lone.sent.map(s => s.to)).toEqual([{ sessionId: 's-new' }])
+  // Nobody live bears the recorded name: nothing is sent, and the log says why.
+  const gone = fake({ chain: false, reportsTo: `${ORCH} [a1b2c3]`, alive: ['501'], registry: [{ pid: '620', sessionId: 's-new', name: ORCH, startedAt: 200 }] })
+  await drive(chains, 'turn.complete', gone.dollar, turnEnd(QUESTION))
+  expect(gone.sent.length).toBe(0)
+  expect(gone.logged.some(l => l.includes(`relay: ${AGENT} was launched for ${ORCH} [a1b2c3], and no live session bears the name ${ORCH}`))).toBe(true)
+})
+
+test('a live launch record wins over a live chain owner, and the log names the record', async () => {
+  const chains = mounted()
+  const fx = fake({ reportsTo: 'Orch : other [zzz999]', alive: ['400', '501', '620'], registry: [{ pid: '620', sessionId: 's-other', name: 'Orch : other', startedAt: 200 }] })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  expect(fx.sent.map(s => s.to)).toEqual([{ sessionId: 's-other' }])
+  expect(fx.logged.some(l => l.includes('relay: ' + AGENT + ' on /dev/ttys005 goes to Orch : other (session s-other) by the launch record'))).toBe(true)
+})
+
+test('no launch record: the chain routes the agent', async () => {
+  const chains = mounted()
+  const fx = fake({ alive: ['400', '501'] })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  expect(fx.sent.map(s => s.to)).toEqual([ORCH])
+  expect(fx.logged.some(l => l.includes(`relay: ${AGENT} on /dev/ttys005 goes to ${ORCH} by the chain on /dev/ttys001`))).toBe(true)
+})
+
+test('a chain with no live owner and no launch record is orphaned, and the log says so', async () => {
+  const chains = mounted()
+  // The chain names the agent's tty, its owner (pid 400) is not listed, and no launch record is set.
+  const fx = fake({ alive: ['501'] })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  expect(fx.sent.length).toBe(0)
+  expect(fx.logged.some(l => l.includes('the chain on /dev/ttys001 names /dev/ttys005 and has no live owner: the entry is orphaned'))).toBe(true)
+})
+
+test('an orchestrator row met only as a temporary file is no orchestrator: the entry is orphaned', async () => {
+  const chains = mounted()
+  const fx = fake({ alive: ['400', '501'] })
+  const orch = `${STATE}/store/sessions/s-orch`
+  fx.files.set(`${orch}.tmp-1-abcdef`, fx.files.get(orch)!)
+  fx.files.delete(orch)
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  expect(fx.sent.length).toBe(0)
+  expect(fx.logged.some(l => l.includes('the chain on /dev/ttys001 names /dev/ttys005 and has no live owner: the entry is orphaned'))).toBe(true)
+})
+
+test('a newer chain of a dead owner does not take the agent from its live orchestrator', async () => {
+  const chains = mounted()
+  const fx = fake({ alive: ['400', '501'] })
+  // A stale chain on a recycled tty names the same agent tty and was written last.
+  fx.files.set(`${STATE}/chains/ttys020.jsonl`, JSON.stringify({ tab_id: 'tab-z', tty: '/dev/ttys005', owner: 'gone' }) + '\n')
+  fx.mtimes.set(`${STATE}/chains/ttys020.jsonl`, 9e12)
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  expect(fx.sent.map(s => s.to)).toEqual([ORCH])
+  expect(fx.logged.some(l => l.includes(`goes to ${ORCH} by the chain on /dev/ttys001`))).toBe(true)
+})
+
+test('a launch record whose session is dead falls through to the chain', async () => {
+  const chains = mounted()
+  const fx = fake({ reportsTo: 'Orch : other [zzz999]', alive: ['400', '501'], registry: [{ pid: '620', sessionId: 's-other', name: 'Orch : other', startedAt: 200 }] })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  expect(fx.sent.map(s => s.to)).toEqual([ORCH])
+  expect(fx.logged.some(l => l.includes('no live session bears the name Orch : other'))).toBe(true)
+})
+
+test('a launch record naming an exiting host (?Es) falls through to the chain', async () => {
+  const chains = mounted()
+  const fx = fake({ reportsTo: 'Orch : other [zzz999]', alive: ['400', '501'], exiting: ['620'], registry: [{ pid: '620', sessionId: 's-other', name: 'Orch : other', startedAt: 200 }] })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  expect(fx.sent.map(s => s.to)).toEqual([ORCH])
+})
+
+test('a launch record naming an exiting host (?Es) relays nowhere when no chain names the agent', async () => {
+  // Without a chain the chain does not win: the exiting host must not be picked by the pid alone.
+  const chains = mounted()
+  const fx = fake({ chain: false, reportsTo: 'Orch : other [zzz999]', alive: ['400', '501'], exiting: ['620'], registry: [{ pid: '620', sessionId: 's-other', name: 'Orch : other', startedAt: 200 }] })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  expect(fx.sent.length).toBe(0)
+})
+
+test('an empty chain with a live launch record is relayed, never « no orchestrator found »', async () => {
+  const chains = mounted()
+  const fx = fake({ chain: false, reportsTo: `${ORCH} [a1b2c3]`, alive: ['501', '620'], registry: [{ pid: '620', sessionId: 's-new', name: ORCH, startedAt: 200 }] })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  expect(fx.sent.map(s => s.to)).toEqual([{ sessionId: 's-new' }])
+  expect(fx.logged.some(l => l.includes('no orchestrator found'))).toBe(false)
+})
+
+test('the gate crossing takes the same fallback', async () => {
+  const chains = mounted()
+  const fx = fake({ gateTokens: '200000', chain: false, reportsTo: `${ORCH} [a1b2c3]`, alive: ['501', '620'], registry: [{ pid: '620', sessionId: 's-new', name: ORCH, startedAt: 200 }] })
+  fx.usage.context.tokens = 210000
+  fx.usage.context.percent = 21
+  await drive(chains, 'session.measure', fx.dollar, {})
+  expect(fx.sent).toEqual([{ to: { sessionId: 's-new' }, text: `[module] ${AGENT} context 210,000 (21%) — at the gate` }])
+})
+
+for (const [name, role] of [['Coord : ops', 'coordinator'], ['Audit : method', 'auditor'], ['a session', null]] as const) {
+  test(`a session that is no agent (${role}) sends nothing on a status line`, async () => {
+    const chains = mounted()
+    const fx = fake({ name, role: role as any })
+    await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+    expect(fx.sent.length).toBe(0)
+    expect(fx.files.has(WAIT)).toBe(false)
+  })
+}
+
+for (const failure of ['reject', 'refuse'] as const) {
+  test(`a send that fails (${failure}) is logged, never holds the turn's end, and is tried again`, async () => {
+    const chains = mounted()
+    const fx = fake({ send: failure })
+    const e = turnEnd(QUESTION)
+    expect(await drive(chains, 'turn.complete', fx.dollar, e)).toBe(e)
+    expect(fx.logged.some(l => l.includes('| supervision |') && l.includes('relay:'))).toBe(true)
+    expect(JSON.parse(fx.files.get(WAIT)!).relayed).toBeNull()
+  })
+}
+
+test('the gate crossing is sent once per crossing, at the threshold the session runs under', async () => {
+  const chains = mounted()
+  const fx = fake({ gateTokens: '200000' })
+  await drive(chains, 'session.measure', fx.dollar, {})
+  expect(fx.sent.length).toBe(0)
+  fx.usage.context.tokens = 210000
+  fx.usage.context.percent = 21
+  await drive(chains, 'session.measure', fx.dollar, {})
+  fx.usage.context.tokens = 230000
+  fx.usage.context.percent = 23
+  await drive(chains, 'session.measure', fx.dollar, {})
+  expect(fx.sent).toEqual([{ to: ORCH, text: `[module] ${AGENT} context 210,000 (21%) — at the gate` }])
+  // Back under it (a compaction), then over again: a new crossing, a new message.
+  fx.usage.context.tokens = 40000
+  fx.usage.context.percent = 4
+  await drive(chains, 'session.measure', fx.dollar, {})
+  fx.usage.context.tokens = 205000
+  fx.usage.context.percent = 20
+  await drive(chains, 'session.measure', fx.dollar, {})
+  expect(fx.sent.length).toBe(2)
+  expect(fx.files.get(GATE)).toBe('reported\n')
+})
+
+test('the default gate holds when the session sets none, and a non-agent crossing it sends nothing', async () => {
+  const chains = mounted()
+  const fx = fake()
+  fx.usage.context.tokens = 290000
+  await drive(chains, 'session.measure', fx.dollar, {})
+  expect(fx.sent.length).toBe(0)
+  fx.usage.context.tokens = 300000
+  await drive(chains, 'session.measure', fx.dollar, {})
+  expect(fx.sent.length).toBe(1)
+  const orch = fake({ name: 'Orch : other', role: 'orchestrator' })
+  orch.usage.context.tokens = 900000
+  await drive(chains, 'session.measure', orch.dollar, {})
+  expect(orch.sent.length).toBe(0)
+  expect(orch.files.has(GATE)).toBe(false)
+})
+
+test('a gate send that fails is logged and tried again on the next measure', async () => {
+  const chains = mounted()
+  const fx = fake({ send: 'refuse' })
+  fx.usage.context.tokens = 400000
+  await drive(chains, 'session.measure', fx.dollar, {})
+  expect(fx.logged.some(l => l.includes('gate: not delivered to Orch : belt'))).toBe(true)
+  expect(fx.files.has(GATE)).toBe(false)
+})
+
+// --- a turn that ends without its status line ---------------------------------------------
+
+const NO_STATUS = `[module] ${AGENT} ended a turn without its status line — context 120,000 (12%)`
+
+test('the report of a turn without a status line: the name, the context when known', () => {
+  expect(NO_STATUS_KEY).toBe('no-status')
+  expect(noStatusText(AGENT, '120,000 (12%)')).toBe(NO_STATUS)
+  expect(noStatusText(AGENT, null)).toBe(`[module] ${AGENT} ended a turn without its status line`)
+})
+
+test('a turn without a status line is reported once, a status turn between two re-arms it', async () => {
+  const chains = mounted()
+  const fx = fake()
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Working on the second task.'))
+  expect(fx.sent).toEqual([{ to: ORCH, text: NO_STATUS }])
+  expect(JSON.parse(fx.files.get(WAIT)!).relayed).toBe(NO_STATUS_KEY)
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Still working.'))
+  expect(fx.sent.length).toBe(1)
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  expect(fx.sent.length).toBe(2)
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Back at it.'))
+  expect(fx.sent.length).toBe(3)
+  expect(fx.sent[2]).toEqual({ to: ORCH, text: NO_STATUS })
+})
+
+test('an orchestrator turn without a machine line sends nothing', async () => {
+  const chains = mounted()
+  const fx = fake({ name: 'Orch : other', role: 'orchestrator' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Reviewing the pull request.'))
+  expect(fx.sent.length).toBe(0)
+})
+
+test('a refused report of a turn without a status line writes no key', async () => {
+  const chains = mounted()
+  const fx = fake({ send: 'refuse' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Working.'))
+  expect(fx.logged.some(l => l.includes('relay: not delivered'))).toBe(true)
+  expect(fx.files.has(WAIT) ? JSON.parse(fx.files.get(WAIT)!).relayed ?? null : null).toBeNull()
+})
+
+// --- a run launched underneath the agent -------------------------------------------------
+
+test("a run launched from the agent's shell sends no notice in its name, the agent still does", async () => {
+  const chains = mounted()
+  const run = fake({ walk: 'underneath' })
+  await drive(chains, 'turn.complete', run.dollar, turnEnd('PR #12, head abc, 40 passed.\nstatus: done — PR #12'))
+  await drive(chains, 'turn.complete', run.dollar, turnEnd('ok'))
+  expect(run.sent).toEqual([])
+  expect(run.files.has(WAIT)).toBe(false)
+  const agent = fake({ walk: 'agent' })
+  await drive(chains, 'turn.complete', agent.dollar, turnEnd('Working on the second task.'))
+  expect(agent.sent).toEqual([{ to: ORCH, text: `[module] ${AGENT} ended a turn without its status line` }])
+})
+
+test("a run launched from the agent's shell writes no row and reports no gate in its name", async () => {
+  const chains = mounted()
+  const run = fake({ walk: 'underneath' })
+  run.usage.context.tokens = 400000
+  run.usage.context.percent = 40
+  await drive(chains, 'session.measure', run.dollar, {})
+  const row = JSON.parse(run.files.get(ROW)!)
+  expect([row.role, row.name, row.pid, row.tty]).toEqual([null, null, undefined, undefined])
+  expect(run.sent).toEqual([])
+  expect(run.files.has(GATE)).toBe(false)
+  const agent = fake({ walk: 'agent' })
+  agent.usage.context.tokens = 400000
+  agent.usage.context.percent = 40
+  await drive(chains, 'session.measure', agent.dollar, {})
+  expect(JSON.parse(agent.files.get(ROW)!).name).toBe(AGENT)
+  expect(agent.sent).toEqual([{ to: ORCH, text: `[module] ${AGENT} context 400,000 (40%) — at the gate` }])
+})

@@ -1,0 +1,21 @@
+{
+  "name": "orchestrator",
+  "description": "Orchestrate implementer sessions from one supervising session: briefs, evidence-based reviews, agent rotation, succession, terminal tab tooling and a context gauge any session can read.",
+  "version": "0.98.0",
+  "types": "./types/index.d.ts",
+  "author": {
+    "name": "Lounis Bou",
+    "email": "lounis.bou@gmail.com"
+  },
+  "homepage": "https://github.com/LounisBou/claude-orchestrator",
+  "repository": "https://github.com/LounisBou/claude-orchestrator",
+  "license": "MIT",
+  "keywords": [
+    "orchestration",
+    "agents",
+    "context",
+    "iterm2",
+    "bash",
+    "model-routing"
+  ]
+}

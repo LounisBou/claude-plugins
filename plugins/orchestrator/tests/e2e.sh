@@ -1,0 +1,369 @@
+#!/bin/bash
+# e2e.sh - the round the suite cannot play: a real tab, a real session, a real close.
+#
+#   tests/e2e.sh            run it
+#   tests/e2e.sh --keep     leave the sandbox behind for inspection
+#
+# NOT part of `run-tests.sh`, and deliberately so: it drives the terminal, it starts a
+# session that costs tokens, and it needs the app running with its API enabled. A suite
+# that cannot run in a checkout with no window server is a suite people stop running.
+#
+# What it proves that the unit tests cannot: that a brief written from a template reaches
+# a session, that the tier named at dispatch is the model that session actually runs, that
+# the tab lands where the layout says, and that a stood-down agent's tab and process are
+# both gone. Every one of those was a defect at least once, and none was reachable from a
+# dry run.
+#
+# It does NOT talk to the agent. Verdicts and reviews are the orchestrator's
+# job and need judgment; this checks the mechanism underneath them.
+
+set -uo pipefail
+
+ROOT=$(cd "$(dirname "$0")/.." && pwd)
+AGENT="$ROOT/skills/iterm-agents/scripts/iterm-agent.sh"
+LINT="$ROOT/skills/orchestrator/scripts/brief-lint.sh"
+RECORD="$ROOT/skills/orchestrator/scripts/dispatch-record.sh"
+KEEP=0
+[ "${1:-}" = "--keep" ] && KEEP=1
+
+pass=0; fail=0; TTY=""
+check() {
+  if [ "$2" = "$3" ]; then printf '  ok   %s\n' "$1"; pass=$((pass+1))
+  else printf '  FAIL %s\n       expected: %s\n       actual:   %s\n' "$1" "$2" "$3"; fail=$((fail+1)); fi
+}
+
+# Explicitly inside TMPDIR: the platform default lands in a directory a sandboxed
+# shell may not write to, and the suite then runs with an empty path where it thinks
+# it has a directory.
+SANDBOX=$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")
+[ -d "${SANDBOX}" ] || { echo "cannot create a working directory under ${TMPDIR:-/tmp}" >&2; exit 1; }
+cleanup() {
+  # The tab first: a session left running is the one failure this script must not cause,
+  # and it outlives the shell that started it.
+  for t in "$TTY" "${OLD_TTY:-}" "${ONE:-}" "${TWO:-}" "${SUCC:-}" "${SIB:-}" "${AUD:-}"; do
+    [ -n "$t" ] && bash "$AGENT" close --tty "$t" >/dev/null 2>&1
+  done
+  [ "$KEEP" = 1 ] || rm -rf "$SANDBOX"
+  [ "$KEEP" = 1 ] && echo "sandbox kept: $SANDBOX"
+  return 0
+}
+trap cleanup EXIT
+
+# Every checkout the round makes lands under the sandbox, so cleanup's rm -rf takes them.
+export ORCHESTRATOR_WORKSPACES="$SANDBOX/ws"
+WS="$ROOT/skills/orchestrator/scripts/workspace.sh"
+
+echo "== preflight =="
+[ "$(uname -s)" = "Darwin" ] || { echo "  not macOS: nothing to drive, skipping"; exit 0; }
+bash "$AGENT" list >/dev/null 2>&1
+check "the tooling can read the app" "0" "$?"
+bash "$AGENT" list >/dev/null 2>&1 || { echo "  cannot reach the app (API enabled? /orchestrator-install run?)"; exit 1; }
+tier=${ORCHESTRATOR_E2E_TIER:-light}
+bound=$(bash "$AGENT" resolve-tier "$tier")
+check "the probe tier is bound in the operator's map" "bound" "$([ -n "$bound" ] && echo bound || echo "unbound: fill models.json or set ORCHESTRATOR_E2E_TIER")"
+[ -n "$bound" ] || exit 1
+
+echo "== a brief, from the template, linted =="
+mkdir -p "$SANDBOX/repo"
+( cd "$SANDBOX/repo" && git init -q -b main && git config user.email e2e@local && git config user.name e2e \
+  && echo "scratch" > README.md && git add -A && git commit -q -m "Set up the scratch repository" )
+# The documented placeholder reference: the brief must name exactly one address, and the
+# probe session is never messaged, so a real one would be a lie the lint could not see.
+me="e2e-orchestrator [a1b2c3]"
+sed -e "s|{{PROJECT}}|scratch|g" -e "s|{{PHASE_NUMBER}}|1|g" -e "s|{{PHASE_TITLE}}|probe|g" \
+    -e "s|{{SPEC}}|$SANDBOX/repo/README.md|g" -e "s|{{PLAN}}|$SANDBOX/repo/README.md|g" \
+    -e "s|{{NORMS}}|$SANDBOX/repo/README.md|g" -e "s|{{REFERENCE_FILES}}|none|g" \
+    -e "s|{{WORKTREE}}|$SANDBOX/repo|g" -e "s|{{ENV_CHECKS}}|none|g" \
+    -e "s|{{BRANCH}}|probe|g" -e "s|{{BASE_BRANCH}}|main|g" -e "s|{{STATE_COMMANDS}}|git status --short|g" \
+    -e "s|{{DELIVERABLES}}|- nothing: this brief exists to be read, not executed|g" \
+    -e "s|{{CONTRACTS}}|none|g" -e "s|{{NON_GOALS}}|- everything|g" \
+    -e "s|{{QUALITY_GATE}}|true|g" -e "s|{{ARTIFACTS_POLICY_SOURCE}}|$SANDBOX/repo/README.md|g" \
+    -e "s|{{ARTIFACTS_POLICY}}|local only|g" -e "s|{{TESTS_POLICY}}|committed|g" \
+    -e "s|{{EXTRA_FORBIDDEN}}|- none|g" -e "s|{{ORCHESTRATOR_NAME}}|$me|g" \
+    -e "s|{{PR_TITLE}}|none|g" -e "s|{{PR_DESCRIPTION_SHAPE}}|none|g" -e "s|{{RESOURCE_ENVELOPE}}|none|g" \
+    -e "s|{{MCP_SERVERS}}|none|g" \
+    -e "s|{{TIER}}|$tier|g" -e "s|{{TIER_REASON}}|it is a probe, not a phase|g" \
+    -e "s|{{TIER_MODEL}}|the host's default|g" -e "s|{{TIER_MODEL_REASON}}|the tier is the probe's|g" \
+    "$ROOT/templates/agent-phase-brief.md" > "$SANDBOX/brief.md"
+check "every placeholder is filled" "0" "$(grep -c '{{' "$SANDBOX/brief.md")"
+lint=$(bash "$LINT" "$SANDBOX/brief.md" 2>&1); code=$?
+check "the brief passes its own lint" "0" "$code"
+
+echo "== the dispatch, recorded =="
+REC="$SANDBOX/dispatch.jsonl"
+bash "$RECORD" goals "$REC" init --spec none >/dev/null
+id=$(bash "$RECORD" open "$REC" --class probe --tier "$tier" --label "e2e")
+check "the dispatch is recorded before it happens" "1" "$id"
+
+echo "== spawn =="
+self=$(bash "$AGENT" list | head -1 | awk -F' \\| ' '{print $2}')
+# stderr is KEPT: a spawn that fails says why on it, and a check that swallows the reason
+# reports an empty string where a diagnosis was available.
+# --trust: the sandbox is a checkout this script made two steps ago, and without it the
+# session stops on the host's workspace question and never reads its brief — while its
+# process runs, so from outside it looks launched. That is what this round was measuring
+# before the flag existed.
+# The probe runs in a checkout the script made from the round's repository, not in the
+# repository itself: that is the flow the method uses from 0.23.0, and the proof that
+# trust and the sandbox let a fresh root through (§30).
+WSDIR=$(bash "$WS" create "$SANDBOX/repo" e2e-probe --base main 2>/dev/null)
+check "a checkout was made for the probe" "$SANDBOX/ws/repo/e2e-probe" "$WSDIR"
+[ -n "$WSDIR" ] || exit 1
+spawn_out=$(bash "$AGENT" spawn --dir "$WSDIR" --tier "$tier" --title "Agent : e2e probe" --trust \
+      --prompt "Read $SANDBOX/brief.md and wait. Do not write anything." --right-of "$self" 2>&1)
+TTY=$(printf '%s' "$spawn_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
+check "spawn returns a tty" "yes" \
+  "$(printf '%s' "$TTY" | grep -qE '^/dev/tty' && echo yes || printf 'no tty; spawn said: %s' "$(printf '%s' "$spawn_out" | tail -2 | tr '\n' ' ')")"
+[ -n "$TTY" ] || exit 1
+
+waited=0
+while [ $waited -lt 30 ]; do
+  bash "$AGENT" verify --tty "$TTY" >/dev/null 2>&1 && break
+  sleep 1; waited=$((waited+1))
+done
+# Asked again, on its own: `$?` after that loop is the arithmetic, not the answer.
+bash "$AGENT" verify --tty "$TTY" >/dev/null 2>&1
+check "the session is running on that tty" "0" "$?"
+
+# The agent inherits the operator's PATH: read from the process, never assumed. The first
+# entry of a login shell's own PATH is the machine-neutral witness (the package manager's
+# directory on this one); a session born of the app's bare default does not carry it.
+pid=$(bash "$AGENT" verify --tty "$TTY" 2>/dev/null | grep -oE 'pid [0-9]+' | grep -oE '[0-9]+')
+want=$("${SHELL:-/bin/zsh}" -l -c 'printf %s "$PATH"' 2>/dev/null | cut -d: -f1)
+check "the session inherits a login shell's PATH" "1" \
+  "$(ps -E -p "$pid" -o command= 2>/dev/null | tr ' ' '\n' | grep '^PATH=' | grep -c -- "$want")"
+
+# THE assertion this whole script exists for: the tier named at dispatch is the model the
+# live process carries. Everything else can be read from a dry run; this cannot.
+got=$(ps -t "${TTY#/dev/}" -o command= 2>/dev/null | grep -oE -- '--model [^ ]+' | awk '{print $2}')
+check "the live process carries the tier's model" "$bound" "$got"
+
+# The session's working directory is the checkout, read from the process, not assumed.
+check "the session runs in its checkout" "1" \
+  "$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | grep -c "^n$(cd "$WSDIR" && pwd -P)\$")"
+
+pos_self=$(bash "$AGENT" list | grep -n "$self" | cut -d: -f1)
+pos_new=$(bash "$AGENT" list | grep -n "$TTY" | cut -d: -f1)
+check "the tab landed immediately right of its anchor" "$((pos_self + 1))" "$pos_new"
+
+# The second agent goes after the FIRST, not between the orchestrator and it. `self` here
+# is the tab running this script; both probes anchor on it and the chain orders them.
+# The dry run carries --trust because the trust gate runs before the dry-run print (§31)
+# and the sandbox is not yet recorded here; it carries --prompt because a promptless
+# launch is refused up front, same as any real one. Either refusal, or this shell simply
+# having no tty of its own to resolve `self` against, leaves `me` empty — two different
+# causes the block below must tell apart instead of reporting one for the other.
+me_err=$(mktemp "$SANDBOX/self-probe.XXXXXX")
+me=$(ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" spawn --dir "$SANDBOX/repo" --title "Agent : e2e self" --trust \
+      --prompt "Do nothing." --right-of self 2>"$me_err" | sed -n 's/^self=//p')
+if [ -n "$me" ]; then
+  # The caller's own row, marked: the reading an orchestrator goes without when it takes the
+  # last tab in the listing for its own, and moves a stranger's session (§38).
+  check "the listing marks the caller's own row, and only it" "1|1" \
+    "$(bash "$AGENT" list | grep "$me" | grep -c ' | self$')|$(bash "$AGENT" list | grep -c ' | self$')"
+  one_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title "Agent : e2e chain 1" --trust \
+        --prompt "Do nothing." --right-of self 2>&1)
+  ONE=$(printf '%s' "$one_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
+  two_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title "Agent : e2e chain 2" --trust \
+        --prompt "Do nothing." --right-of self 2>&1)
+  TWO=$(printf '%s' "$two_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
+  pos_one=$(bash "$AGENT" list | grep -n "$ONE" | cut -d: -f1)
+  pos_two=$(bash "$AGENT" list | grep -n "$TWO" | cut -d: -f1)
+  check "the second agent lands right of the first, not of the orchestrator" "$((pos_one + 1))" "$pos_two"
+  chain="${ORCHESTRATOR_STATE_DIR:-$HOME/.claude/claude-orchestrator}/chains/$(basename "$me").jsonl"
+  check "the chain names both" "2" "$(grep -c "\"tty\": \"$ONE\"\|\"tty\": \"$TWO\"" "$chain")"
+  check "the chain names its owner" "2" "$(grep -E "\"tty\": \"$ONE\"|\"tty\": \"$TWO\"" "$chain" | grep -c '"owner": "[^"]')"
+  # A successor takes the predecessor's place and its chain (§34): immediately right of the
+  # caller, left of the agents, and the agents' entries move under its tty. It is spawned
+  # with NO title, because a successor carries the caller's own name (§39): the name column
+  # of the listing is where that is read back, and it is the only instrument that reads it.
+  succ_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --trust \
+        --prompt "Do nothing." --successor 2>&1)
+  SUCC=$(printf '%s' "$succ_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
+  pos_me=$(bash "$AGENT" list | grep -n "$me" | cut -d: -f1)
+  pos_succ=$(bash "$AGENT" list | grep -n "$SUCC" | cut -d: -f1)
+  name_col() { bash "$AGENT" list | grep "$1" | cut -d'|' -f4 | sed 's/^ *//;s/ *$//'; }
+  check "the successor comes up under the caller's own name" "$(name_col "$me")" "$(name_col "$SUCC")"
+  check "the successor lands immediately right of the caller, left of the agents" "$((pos_me + 1))" "$pos_succ"
+  succ_chain="${ORCHESTRATOR_STATE_DIR:-$HOME/.claude/claude-orchestrator}/chains/$(basename "$SUCC").jsonl"
+  check "the successor's chain names both agents" "2" "$(grep -c "\"tty\": \"$ONE\"\|\"tty\": \"$TWO\"" "$succ_chain")"
+  check "and the caller's chain no longer does" "0" "$(grep -c "\"tty\": \"$ONE\"\|\"tty\": \"$TWO\"" "$chain")"
+  bash "$AGENT" close --tty "$SUCC" >/dev/null 2>&1
+  bash "$AGENT" close --tty "$TWO" >/dev/null 2>&1
+  bash "$AGENT" close --tty "$ONE" >/dev/null 2>&1
+  check "a closed agent leaves the chain" "0" "$(grep -c "\"tty\": \"$ONE\"\|\"tty\": \"$TWO\"" "$succ_chain")"
+else
+  self_reason=$(head -1 "$me_err")
+  if [ -n "$self_reason" ]; then
+    echo "  skip the chain: the self probe was refused: $self_reason"
+  else
+    echo "  skip the chain: this shell has no tty of its own"
+  fi
+fi
+rm -f "$me_err"
+
+# An auditor is placed immediately LEFT of its caller (§52), and read back after the spawn:
+# the launch reports done only when the real order says so. The caller is `$me`, the tab this
+# script runs in; the auditor needs a model on record for this session, and a shell that has
+# none is refused by the launcher, which is a fact to state, not a failure of the placement.
+if [ -n "$me" ]; then
+  aud_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --auditor --title "Audit : e2e probe" --trust \
+        --prompt "Do nothing." 2>&1)
+  AUD=$(printf '%s' "$aud_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
+  if [ -z "$AUD" ] && printf '%s' "$aud_out" | grep -q '/orchestrator-install'; then
+    echo "  skip the auditor: no model on record for this session"
+  else
+    check "an auditor spawn returns a tty" "yes" \
+      "$(printf '%s' "$AUD" | grep -qE '^/dev/tty' && echo yes || printf 'no tty; spawn said: %s' "$(printf '%s' "$aud_out" | tail -2 | tr '\n' ' ')")"
+    pos_me=$(bash "$AGENT" list | grep -n "$me" | cut -d: -f1)
+    pos_aud=$(bash "$AGENT" list | grep -n "$AUD" | cut -d: -f1)
+    check "the auditor landed immediately left of its caller" "$((pos_me - 1))" "$pos_aud"
+    check "and the caller moved one place right" "$((pos_aud + 1))" "$pos_me"
+    aud_title=$(bash "$AGENT" list | grep "$AUD" | cut -d'|' -f3 | sed 's/^ *//;s/ *$//' | cut -c1-6)
+    bash "$AGENT" close --tty "$AUD" --expect-title "$aud_title" >/dev/null 2>&1
+    check "the auditor probe closes by its tty, title guard held" "0" "$?"
+    aud_dead=0
+    for _ in 1 2 3 4 5 6; do
+      ps -t "${AUD#/dev/}" -o command= 2>/dev/null | grep -q . || { aud_dead=1; break; }
+      sleep 2
+    done
+    check "the auditor's process is gone, not merely detached" "1" "$aud_dead"
+    [ "$aud_dead" = 1 ] && AUD=""
+  fi
+fi
+
+# A running process is not a launched agent. Until this check existed, every round here
+# passed with its session parked on a question nobody was there to answer.
+screen=""
+for _ in 1 2 3 4 5 6 7 8; do
+  screen=$(bash "$AGENT" screen --tty "$TTY" 2>/dev/null || true)
+  printf '%s' "$screen" | grep -qiE 'trust|safety check' || break
+  sleep 2
+done
+check "the session is past the startup questions" "0" \
+  "$(printf '%s' "$screen" | grep -ciE 'is this a project you|trust this folder')"
+
+echo "== an anchor that is not there =="
+# A tab that lands somewhere is worse than no tab: the script has said where it is and
+# the orchestrator believes it. Before this check, an anchor in another window — or no
+# window at all — was silently replaced by « the end of whatever window is in front ».
+tabs_before=$(bash "$AGENT" list | wc -l | tr -d ' ')
+ghost_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title "Agent : e2e ghost" --trust \
+      --prompt "Do nothing." --right-of /dev/ttys999 2>&1)
+ghost_code=$?
+check "an absent anchor is refused" "1" "$ghost_code"
+check "the refusal names the anchor" "1" "$(printf '%s' "$ghost_out" | grep -c 'no session found on /dev/ttys999')"
+check "no tab was made for it" "$tabs_before" "$(bash "$AGENT" list | wc -l | tr -d ' ')"
+
+echo "== a hidden pane =="
+# The host extension's review views are sibling panes of the agent's tab, one maximized at
+# a time. The probe's tab is split and the new pane maximized through the app, exactly as
+# the extension does; the agent behind it must stay listed, findable and closable alone.
+py="${ORCHESTRATOR_PYTHON:-${ORCHESTRATOR_STATE_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claude-orchestrator}/venv/bin/python}"
+SIB=$("$py" - "$TTY" <<'EOF'
+import iterm2, asyncio, sys
+tty = sys.argv[1]
+async def main(connection):
+    app = await iterm2.async_get_app(connection)
+    for w in app.windows:
+        for t in w.tabs:
+            for s in t.all_sessions:
+                if await s.async_get_variable("tty") == tty:
+                    sib = await s.async_split_pane(vertical=True)
+                    await asyncio.sleep(1)
+                    await t.async_select()
+                    await sib.async_activate()
+                    ident = iterm2.MainMenu.View.MAXIMIZE_ACTIVE_PANE.value.identifier
+                    await iterm2.MainMenu.async_select_menu_item(connection, ident)
+                    await asyncio.sleep(1)
+                    print(await sib.async_get_variable("tty"))
+                    return
+iterm2.run_until_complete(main)
+EOF
+)
+check "the agent behind a maximized pane is listed, and marked" "1" "$(bash "$AGENT" list | grep "$TTY" | grep -c '| hidden$')"
+bash "$AGENT" close --tty "$TTY" --expect-title "e2e" >/dev/null 2>&1
+check "the hidden agent closes by its tty" "0" "$?"
+check "its sibling pane survives the close" "1" "$(bash "$AGENT" list | grep '^w[0-9]' | grep -c "$SIB")"
+bash "$AGENT" close --tty "$SIB" >/dev/null 2>&1
+check "the sibling closes with the tab" "0" "$(bash "$AGENT" list | grep -c "$SIB")"
+TTY=""
+check "the probe's checkout is deleted after its close" "0" \
+  "$(bash "$WS" delete "$WSDIR" --discard >/dev/null 2>&1; [ -e "$WSDIR" ] && echo 1 || echo 0)"
+
+# The rest of the round rotates and stands down a live probe; the one above is gone.
+spawn_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title "Agent : e2e 2" --trust \
+      --prompt "Read $SANDBOX/brief.md and wait. Do not write anything." --right-of "$self" 2>&1)
+TTY=$(printf '%s' "$spawn_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
+check "a fresh probe for the rest of the round" "yes" \
+  "$(printf '%s' "$TTY" | grep -qE '^/dev/tty' && echo yes || printf 'no tty; spawn said: %s' "$(printf '%s' "$spawn_out" | tail -2 | tr '\n' ' ')")"
+[ -n "$TTY" ] || exit 1
+waited=0
+while [ $waited -lt 30 ]; do
+  bash "$AGENT" verify --tty "$TTY" >/dev/null 2>&1 && break
+  sleep 1; waited=$((waited+1))
+done
+
+echo "== rotation =="
+# The one operation that KILLS something, and the only one whose safety order matters: the
+# replacement is spawned and verified BEFORE the old tab is closed, so a spawn that fails
+# never leaves zero agents. Dry runs cannot show that order holding — both halves have to
+# really happen, in sequence, against a real window.
+old_tty="$TTY"; OLD_TTY="$TTY"
+
+# FIRST, the property the order exists for: a rotation whose replacement cannot start must
+# leave the old session alive. Checking only that a good rotation works would pass just as
+# well on a script that closed first and spawned second — which is the one outcome this
+# order is written to prevent, and the only one that loses work.
+bash "$AGENT" rotate --old-tty "$old_tty" \
+     --dir "$SANDBOX/nowhere" --tier "$tier" >/dev/null 2>&1
+check "a rotation refused it a replacement leaves the old one alive" "0" \
+  "$(bash "$AGENT" verify --tty "$old_tty" >/dev/null 2>&1; echo $?)"
+check "and its tab is still there" "1" "$(bash "$AGENT" list | grep -c "$old_tty")"
+
+# No --expect-title here, and that is the finding rather than a shortcut: a rotation takes
+# ten seconds between reading a title and closing on it, and a working session rewrites its
+# title to say what it is doing. The tty is the identity; what makes the close safe is the
+# stand-down that preceded it, not a string that was true a moment ago.
+out=$(bash "$AGENT" rotate --old-tty "$old_tty" \
+      --dir "$SANDBOX/repo" --tier "$tier" --title "Agent : e2e rotated" \
+      --prompt "Do nothing." 2>&1)
+TTY=$(printf '%s' "$out" | grep -oE '/dev/ttys[0-9]+' | head -1)
+check "the rotation returned a new tty" "yes" "$(printf '%s' "$TTY" | grep -qE '^/dev/tty' && echo yes || echo "$out")"
+check "the replacement is not the session it replaced" "different" \
+  "$([ "$TTY" != "$old_tty" ] && echo different || echo "same: $TTY")"
+bash "$AGENT" verify --tty "$TTY" >/dev/null 2>&1
+check "the replacement is running" "0" "$?"
+gone=0
+for _ in 1 2 3 4 5 6; do
+  ps -t "${old_tty#/dev/}" -o command= 2>/dev/null | grep -q . || { gone=1; break; }
+  sleep 2
+done
+check "the session it replaced is gone" "1" "$gone"
+check "and its tab with it" "0" "$(bash "$AGENT" list | grep -c "$old_tty")"
+# Cleared only once the old session is PROVED gone: a rotation this probe fails past this
+# point must still find its old tab closed by the trap, not leaked past the sandbox.
+[ "$gone" = 1 ] && OLD_TTY=""
+
+echo "== stand down =="
+title=$(bash "$AGENT" list | grep "$TTY" | cut -d'|' -f3 | sed 's/^ *//;s/ *$//' | cut -c1-6)
+bash "$AGENT" close --tty "$TTY" --expect-title "nope" >/dev/null 2>&1
+check "the title guard refuses a mismatch" "1" "$?"
+bash "$AGENT" close --tty "$TTY" --expect-title "$title" >/dev/null 2>&1
+check "the tab closes with the right title" "0" "$?"
+dead=0
+for _ in 1 2 3 4 5 6; do
+  ps -t "${TTY#/dev/}" -o command= 2>/dev/null | grep -q . || { dead=1; break; }
+  sleep 2
+done
+check "the process is gone, not merely detached" "1" "$dead"
+check "the tab is gone from the listing" "0" "$(bash "$AGENT" list | grep -c "$TTY")"
+TTY=""
+
+bash "$RECORD" close "$REC" "$id" --verdict approved >/dev/null
+check "the dispatch closes in one round" "1" "$(bash "$RECORD" summary "$REC" | grep -c 'class=probe .* rounds_avg=0')"
+check "one round raises no signal" "0" "$(bash "$RECORD" summary "$REC" | grep -c '^signal=')"
+
+echo
+echo "$pass passed, $fail failed"
+[ "$fail" = 0 ]

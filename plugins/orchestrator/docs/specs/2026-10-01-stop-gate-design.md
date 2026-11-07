@@ -1,0 +1,253 @@
+# Stop gate — an orchestrator stops only when nothing can advance
+
+Superseded: the stop gate as it runs is `docs/design.md` section 4.3 (« Hooks »), with CI read from
+ci-watch's logs (section 62). The body below is the original design, unchanged.
+
+Status: design, approved in conversation by the operator on 2026-10-01; this file is the
+written spec for his review.
+
+## 1. Problem
+
+Two failures, observed repeatedly in real orchestrations:
+
+1. **Announced work, nothing launched.** The orchestrator writes « I am launching X » or
+   « preparing the brief », then ends its turn with no agent running. An orchestrator is
+   woken only by an agent's message, an idle notice it subscribed to, or the operator; with
+   none of them pending, the build sits idle until the operator notices. A rule against it
+   exists (in the orchestrator's memory) and has not held.
+2. **Inaccurate CI reports.** Twice the orchestrator stated « the only red is known » or
+   « the reds are fixed » about a pull request's GitHub checks before they had finished,
+   and it was false: its own push had turned the checks red, or nothing was fixed. The rule
+   « a fact you did not read is a fact you do not state » exists and has not held.
+
+Both happen at the same moment: the orchestrator ends its turn on a message. The repair is
+a mechanism at that moment, not another sentence.
+
+## 2. Goal and principle
+
+The orchestrator's first objective, in the operator's words: **advance the work without
+losing time, and stop only when there is not enough to advance.** A question to the
+operator does not justify a stop unless it blocks what remains; a non-blocking question is
+asked, and everything that can advance does, in the same turn.
+
+Two axes bound every choice below: conformity to that objective, and token use. A refused
+stop replays the whole cached context (about 150k tokens for an orchestrator mid-build), so
+a false refusal is the most expensive thing this mechanism can do: precision over recall.
+
+## 3. Architecture
+
+One hook, a new `stop-gate.sh` under the hooks directory, registered on the host's `Stop` event in `hooks/hooks.json`
+beside `context-gate.sh` and `push-guard.sh`.
+
+**Host contract used.** The hook reads on stdin `session_id`, `cwd`,
+`last_assistant_message` (the full text of the turn's final message) and `stop_hook_active`.
+It refuses a stop by printing `{"decision": "block", "reason": "<text>"}` and exiting 0;
+the model resumes with the reason. The host forces the stop after 8 consecutive refusals.
+
+**Scope.** The hook acts only in an orchestrator's session: one whose session name starts
+with `Orch :`. The name is read in two steps, the first that gives one wins: the name the
+session was launched with (`--name`, read from the process table on the session's own tty by
+the launcher's code, `self_tty` and `session_name_on`), then, when the session was launched
+without one, the value of the LAST `custom-title` entry in the transcript at the payload's
+`transcript_path` (the host writes `{"type":"custom-title","customTitle":"…"}` when the
+session is renamed; the value may carry surrounding quotes, which are stripped). The
+transcript is read from its end and only the matching line is parsed. Everywhere else —
+agents, auditors, the coordinator, sessions started by hand without a name — it exits 0 at
+once. The scope is decided before any call to the launcher's listing, which is read only for
+an `Orch :` session; when the session's own tty or its name cannot be read, one line is
+logged and the stop passes.
+
+**Loop guard.** When `stop_hook_active` is true the stop passes: at most one refusal per
+turn.
+
+**Its own failures never block.** A missing tool, an unreadable listing or a network error
+lets the stop pass and appends one line to the hook's log (§6); the hook never holds a
+session on its own fault. The whole hook runs under one deadline of about 20 seconds,
+checked between its external calls: past it, the stop passes and one line is logged.
+
+**Silence on a legitimate stop.** A stop that passes writes nothing into the context.
+
+## 4. Check 1 — what will wake you
+
+Before those three cases, one refusal that nothing lifts: **an agent of this orchestrator
+is idle and its pull request is OPEN or MERGED.** Its delivery is over and its tab is only
+left behind (a brief ordered duties after the delivery, and nobody stood the agent down).
+Neither a busy agent beside it nor a `waiting:` line lifts it. The pull request is found
+from the agent's tty alone: the working directory of the host process there (the
+launcher's `host_cli_cwd`, one `ps` and one `lsof`), the branch checked out in it (`git
+symbolic-ref`), then `gh pr view <branch> --json number,state` run in that directory. Cost:
+at most one `gh` call per idle agent, none for a busy one, all inside the hook's deadline;
+measured on the development machine, about 0.4 s for the `gh` call and under 0.05 s for the
+local reads. A read that fails, or runs past the deadline, is one log line and counts as
+« no pull request »: the idle agent then falls under the cases below, as before. A CLOSED
+pull request, or none, does not trigger it.
+
+Otherwise the stop passes in exactly three cases, checked in this order:
+
+1. **An agent of this orchestrator is busy.** Its idle notice will wake the orchestrator.
+   « Of this orchestrator » is read from the chain the launcher already keeps per
+   orchestrator tty (`chain_append` in `skills/iterm-agents/scripts/iterm_agent.py`, one
+   entry per agent spawned with `--right-of self`, handed to a successor by
+   `chain_transfer`). « Busy » is the tab's activity glyph in the launcher's listing — the
+   same glyph `list` prints (`✳` idle, a spinner glyph busy). Inferred, nothing declared.
+2. **A blocking question is pending.** The message carries the question and the machine
+   line `waiting: operator — blocks: <what it blocks>`. Without that line a question does
+   not justify the stop.
+3. **Nothing is left to advance.** The machine line `waiting: done`, checked against the
+   facts: no checkout of the project in `workspace.sh list`, no agent of this orchestrator
+   running, and no open row in the dispatch records the session registered (below). A
+   checkout, a running agent or an open row means work is in flight or deferred.
+
+The machine line is the message's last non-empty line, matched after normalisation:
+surrounding backticks, `*` and `_`, a leading `>` or `-`/`*` bullet, surrounding spaces and
+one trailing period are stripped; the dash between « operator » and « blocks: » may be `—`,
+`–`, `--` or `-`, with or without spaces; whitespace is collapsed; `waiting` and the keywords
+are case-insensitive. What is then matched is
+`^waiting: (operator — blocks: .+|done)$`; a hyphen inside the reason is the reason's own.
+A last line that still does not match but declares a `blocks:` is told the form to use, never
+« blocks nothing declared ». The skill and the refusal show the line as plain text and ask
+for it « as the message's last line, no markup ».
+
+**Deferred work.** An orchestrator once lost an order it had noted « to plan after the
+round », in prose only. A decision deferred opens its dispatch-record row at once, with its
+label, and closes it when the work is done or ruled out. `dispatch-record.sh`, on every
+subcommand, adds the record's absolute path to `<state dir>/records/<session id>` (the host's
+session id, `CLAUDE_CODE_SESSION_ID`, which is the payload's `session_id`); the `done` case
+reads those records and refuses while a row is `open`.
+
+Otherwise the stop is refused, with the reason that fits:
+
+| Case | Reason sent back |
+|---|---|
+| no busy agent, no valid line | « Nothing will wake you: no agent of yours is running. Launch what you announced, or, if a question truly blocks, end with the line waiting: operator — blocks: <what it blocks>, or with waiting: done. The line goes as the message's last line, no markup. » |
+| an idle agent whose pull request is open or merged | « Idle with its pull request open or merged: <agent> (pull request #<n>, <OPEN or MERGED>). Stand it down now — or, if it waits on a question you have not answered, answer it. » |
+| only idle agents | « <agent> is idle: its notice was spent. Read its report or relaunch it. » |
+| a question without `blocks:` | « Your question blocks nothing declared: advance everything that can advance; its answer will come in a later turn. » |
+| `done` against a checkout or a running agent | « Not done: <checkout or agent> is still there. Finish it, or say what blocks it. » |
+| `done` against an open dispatch-record row | « Not done: row <id> (<label>) is open. Dispatch it, close it, or say what blocks it. » |
+| a last line that declares `blocks:` without being the machine line | « Your last line is not the machine line: end the message with the line waiting: operator — blocks: <what it blocks>, or with waiting: done, as the message's last line, no markup. » |
+
+**What the hook cannot verify**, left to one sentence of the orchestrator's skill: that a
+question declared blocking truly blocks everything, and that an orchestrator waiting on an
+agent had no other work to dispatch in parallel. The sentence: « Before ending a turn,
+launch everything that can advance; stop only when nothing can advance without the
+operator's answer. » The log of `blocks:` reasons (§6) is what shows a blocking claim made
+wrongly.
+
+## 5. Check 2 — the real CI state reaches the orchestrator before its report
+
+Ruled by the operator (2026-10-01): the check triggers on FACTS, never on the words of the
+message. A list of claim words fails open on any rewording (« all repaired », « the PR is
+sound ») and in any language; a fact does not.
+
+Runs only when Check 1 let the stop pass.
+
+**Trigger.** The pull requests this session armed a ci-watch for: the logs under
+`<state dir>/ci-watch/` whose owner file (`<log>.session`, written by `ci-watch.sh`) names this
+session, whatever repository they name. A pull request whose head differs from the head this
+hook last reported for this session. The
+hook keeps, per session, the head it last reported for each pull request
+(`<state dir>/stop-gate/<session_id>.heads`). A pull request whose head has not moved
+costs no further call.
+
+**Facts.** For each such pull request, `gh pr checks <NNN>` on its current head.
+
+**Refusal, once while pending, again on red.** Ruled by the operator (2026-10-03). When any
+check on that head is pending or failing, the stop is refused with the real state, once: the
+head is recorded `pending`. A pending head already told passes silently while nothing
+fails; as soon as a check fails, even while others are still pending, it refuses again with
+the failing check named, once per failing set (the names are kept in the record). A head
+whose checks have all finished is recorded `done`, so the same head never refuses twice:
+
+« #NNN at <short sha>: <n> checks pending (<names>), <m> failing (<names>). Report this
+state as it is; to wait for the end, start `<plugin>/skills/orchestrator/scripts/ci-watch.sh NNN`
+with `run_in_background` (timeout 7200000), never in the foreground. »
+
+Amended (2026-10-03, design section 62): nobody waits on CI in the foreground. A head whose
+checks are pending, with none failing and not yet told, does NOT refuse when a `ci-watch.sh NNN`
+process is alive: the watch ends by waking the orchestrator, and the head is left unrecorded so
+that a watch which dies is told once. The process table is read once for the whole check
+(`ps -axo command`), only when a pending head is met; a table that cannot be read is one log
+line and no watch alive. A failing check refuses with or without a watch: a red is treated,
+not waited for.
+
+All checks finished and passing: the head is recorded `done`, the stop passes, nothing is
+written. A head whose check list is empty is not green but unread (a push is seen before its
+checks are registered): nothing is recorded, and it is read again at the next stop. A moved
+head starts over. The record is `<number> <head> <pending|done> [<failing names>]` (a line of
+two fields, written by the previous version, reads as done):
+
+```
+no checks yet             -> nothing recorded, read again
+pending, first seen       -> refuse once, record pending
+pending, seen, no failure -> pass
+a check failing           -> refuse once per failing set, then record (done when finished)
+all finished, green       -> record done, pass
+``` The hook judges no cause and reads no claim: it puts the real state in front of
+the orchestrator before the message it ends on, whatever that message says.
+
+**Limit, stated.** The hook does not stop the orchestrator from writing a false sentence
+AFTER the real state reached it; it stops it from writing one without that state in front
+of it, which is the shape of both observed cases.
+
+## 6. Measurement — every change is a trial
+
+The hook appends one line per refusal and per `blocks:` stop to
+`<state dir>/stop-gate.log`: timestamp, session name, check, case, and for `blocks:` the
+reason. Expected gain: zero stops the operator has to restart by hand for announced work,
+and zero CI states stated against the checks. Figures to re-read after a few real phases:
+refusals per session, refusals judged wrong on reading the log, `blocks:` reasons judged
+wrong, against the operator's own restarts.
+
+## 7. What the mechanism replaces
+
+The rule now lives in memory files (`never-end-a-turn-on-announced-work`), not in the
+skill. Once the hook ships: that memory shrinks to a pointer to the hook; the orchestrator's
+skill gains the one sentence of §4; the « Carried at every step » section of
+`skills/orchestrator/SKILL.md` names the machine line in one clause, as plain text, as the
+message's last line, no markup. The skill also gains the deferred-work sentence of §4 (« A
+decision deferred — after the round, in the next version, to plan — opens its dispatch-record
+row at once, with its label, and the row is closed when the work is done or ruled out. »);
+`dispatch-record.sh summary` lists the open rows; the succession brief's first task runs it
+and treats every open row as work to dispatch or to ask about, not as history.
+
+## 8. Edge cases
+
+- A question followed by a fenced block or blank lines: the machine line is the last
+  non-empty line; the question itself may sit anywhere above it.
+- Several agents, some idle and some busy: one busy agent of this orchestrator suffices.
+- Several agents, one idle with its pull request open: the refusal holds whatever the
+  others do.
+- An agent of another orchestrator: not in this orchestrator's chain, never counted.
+- A successor: inherits its predecessor's chain through `chain_transfer`, so its agents
+  count from its first turn.
+- `gh` absent or offline: Check 2 passes, logged.
+- A pull request whose head has not moved since the last report: no `gh pr checks` call.
+- A head moved by someone else (an agent, the operator): reported like the orchestrator's
+  own; within the operator's own pull requests, the push's author does not matter, the state
+  on the head does. A pull request by someone else is never read.
+- A session renamed after it was launched: scoped by the renamed title (§3).
+- `ITERM_SESSION_ID` unset: no chain entry is counted and one line is logged.
+
+## 9. Tests
+
+- `tests/run-tests.sh`: the hook fed simulated stdin, a fake listing, a fake chain file, a
+  fake `workspace.sh list` and a fake `gh` on `PATH`. One check per row of Check 1's
+  refusal table, per Check 2 case (pending, failing, all green, head unchanged, refused
+  once then passing for the same head) and per pass case, each seen to fall when its branch is removed; the loop
+  guard; a non-orchestrator session untouched; a tool failure passing.
+- Two eval cases, graded by what the session does after a refusal:
+  1. announced work, no agent running: refused once, then the agent is launched in the
+     same turn;
+  2. a non-blocking question and a ready phase: the question is asked AND the phase
+     dispatched in the same turn, ending without a stop the hook refuses.
+- `tests/e2e.sh` is not touched: the hook runs no tab.
+
+## 10. Out of scope
+
+- A question asked needlessly (« shall I continue? ») with a `blocks:` line: allowed by
+  the hook, visible in the log.
+- Claims about local suites: the operator's two cases were GitHub checks.
+- The wording of the orchestrator's report: no check reads it (ruling of 2026-10-01).
+- Agents' own stops: an agent is held by its brief and the orchestrator's verification.
+

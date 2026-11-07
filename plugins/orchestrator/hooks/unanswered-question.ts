@@ -1,0 +1,98 @@
+// hooks/unanswered-question.ts
+// The stop gate's rule on a question still on the operator, the operator's ruling of 2026-11-03:
+// an orchestrator asks the coordinator (its pane, or its session when the pane is closed) and,
+// at the same time, its own chat, where he must see the question too, at every turn's end until
+// he answers it. A question once asked and then lost from the chat left him unaware of what the
+// orchestrator waited on. Pure: the stop gate reads the round and the session's wait file, this
+// file decides on what they hold and on the turn's final message.
+import { entryQuestions, questionParts, questionShape, parseChoices, plainText, numberLabel, type RoundEntry, type QuestionShape } from './round.ts'
+import { heldQuestion, type RelayedWait } from './relay.ts'
+import { outsideFences } from './one-question.ts'
+
+// The session's wait file as this rule reads it: the wait, the fingerprint the coordinator
+// holds, and a send not yet acknowledged by a coordinator on another machine.
+export type WaitRead = RelayedWait & { pending?: string | null }
+
+// The question still on the operator: its round entry when this machine's round holds it, else
+// only what the wait file knows of it (its blocks and its start).
+export type Pending = { entry: RoundEntry | null; blocks: string; since: string | null }
+
+// The session's question the operator has not answered, the earliest when several (one question
+// per turn: the others wait behind it): an operator entry of the session still open. His answer
+// settles it wherever he gives it: in the pane or to the coordinator, or typed in the sender's own
+// tab, which withdraws it at once (supervision.ts withdrawOnTyped); a turn that ends on the same
+// wait opens it again, and it is pending again. An entry with no numbered question block asks
+// nothing the chat could show again and is passed over. With no such entry in this machine's
+// round, the wait file's operator wait relayed to a coordinator elsewhere (held, or sent and not
+// yet acknowledged) is the question; an entry of the same wait in the round, whatever its status,
+// rules instead.
+export function pendingQuestion(sessionId: string, entries: readonly RoundEntry[], wait: WaitRead | null): Pending | null {
+  const own = entries.filter(entry => entry.session === sessionId && entry.kind === 'operator')
+  const open = own
+    .filter(entry => entry.status === 'open')
+    .filter(entry => askedPart(entry) !== null)
+    .sort((a, b) => (a.since < b.since ? -1 : a.since > b.since ? 1 : 0))
+  if (open.length > 0) return { entry: open[0], blocks: open[0].blocks ?? '', since: open[0].since }
+  const held = wait ? heldQuestion(wait) ?? sentQuestion(wait) : null
+  if (!held || held.blocks === '') return null
+  if (own.some(entry => entry.blocks === held.blocks && entry.since === held.since)) return null
+  return { entry: null, blocks: held.blocks, since: held.since }
+}
+
+// An operator wait sent to a coordinator on another machine and not acknowledged yet.
+function sentQuestion(wait: WaitRead): { blocks: string; since: string | null } | null {
+  if (wait.waiting !== 'operator' || !wait.pending || typeof wait.blocks !== 'string') return null
+  return { blocks: wait.blocks, since: wait.waiting_since ?? null }
+}
+
+// The entry's question still unanswered: its first numbered question the pane has not answered
+// yet (`partial` holds the answers given so far, in order), with its shape; null when none is.
+function askedPart(entry: RoundEntry): { number: string; shape: QuestionShape; choices: RoundEntry['choices'] } | null {
+  const numbered = entryQuestions(entry).filter(part => part.number !== null)
+  const part = numbered[entry.partial?.length ?? 0]
+  if (!part) return null
+  const shape = questionShape(part.question, part.choices)
+  return shape ? { number: part.number!, shape, choices: part.choices } : null
+}
+
+// A text as compared: its emphasis dropped, its spacing collapsed, its case kept.
+const flat = (text: string) => plainText(text).replace(/\s+/g, ' ').trim()
+
+// The refusal for a turn that ends while the session's question is still on the operator and
+// does not show him that question in full; null otherwise.
+// In full: a numbered block of the message, outside code fences, with the same numbering, the
+// entry's `Question` field with its text, and every choice with its letter and text. The other
+// fields may be worded anew: what he must recognise is the question and what he can answer. With
+// only the wait file's knowledge of the question, any numbered block with labelled fields is
+// taken for it.
+export function unansweredRefusal(message: string, pending: Pending | null): string | null {
+  if (pending === null) return null
+  const text = outsideFences(message)
+  const shown = questionParts(text).map(part => {
+    const { choices } = parseChoices(part)
+    return { shape: questionShape(part, choices), choices }
+  })
+  const asked = pending.entry ? askedPart(pending.entry) : null
+  if (asked === null) {
+    if (shown.some(part => part.shape?.number)) return null
+    return refusal(`blocks: ${pending.blocks}`, pending.blocks)
+  }
+  const question = questionField(asked.shape)
+  const same = shown.some(({ shape, choices }) => shape !== null && shape.number !== null
+    && numberLabel(shape.number) === numberLabel(asked.number)
+    && (question === undefined || flat(questionField(shape) ?? '') === flat(question))
+    && asked.choices.every(choice => choices.some(seen => seen.letter === choice.letter && flat(seen.text) === flat(choice.text))))
+  if (same) return null
+  return refusal(`**${asked.number}** — ${flat(question ?? pending.blocks)}`, pending.blocks)
+}
+
+// The text of a question's `Question` field, its label read in any case and emphasis.
+const questionField = (shape: QuestionShape) => shape.fields.find(field => /^question$/i.test(flat(field.label)))?.text
+
+function refusal(named: string, blocks: string): string {
+  return `Your question to the operator is still unanswered: « ${named} ». He must see it in your own chat as well as `
+    + 'in the coordinator\'s round, at every turn\'s end until he answers it (his ruling of 2026-11-03). Present it again '
+    + 'IN FULL in this message, in the shape of orchestrator:decide step 2 — its `**Question i of N**` line and every '
+    + 'labelled field, its choices and its recommendation, as you asked it — and end the turn on its wait line again, '
+    + `\`waiting: operator — blocks: ${blocks}\`.`
+}

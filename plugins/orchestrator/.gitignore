@@ -1,0 +1,24 @@
+.DS_Store
+*.bak
+
+# The global ~/.gitignore on some machines ignores `docs/`. A repository
+# .gitignore takes precedence over global excludes, so this negation restores
+# docs/ for this project, where the design document is versioned.
+!docs/
+
+# editor swap files
+*.swp
+*.swo
+
+# transient probe planted by the policy self-check
+.policy-probe-*
+
+# host state in a checkout: logs and local settings, never repository content
+/.claude/
+
+# typings a live plugin load writes into a checkout, generated never authored
+/.claude-plugin/types/
+/tsconfig.json
+
+# Eval run output
+evals/results/
