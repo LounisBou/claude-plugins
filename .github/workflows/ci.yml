@@ -31,6 +31,8 @@ jobs:
         run: npm run typecheck
       - name: tooling tests
         run: npm test
+      - name: prompt budgets and duplicates only fall
+        run: npm run -s prompts > /dev/null
       - name: catalogue matches the manifests
         run: npm run marketplace -- --check
       - name: a shipped change raises its plugin's version

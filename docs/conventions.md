@@ -64,13 +64,29 @@ changed by a pull request that edits this file and the code it governs together.
 - Every suite runs on macOS and Linux, as a normal user and as root, under any locale.
 - One entry point per plugin: `tests/run-tests.sh`, selectable by case where the runner allows.
 
+## Code decides, the model judges
+
+- Whatever can be decided without judgment is decided by code: a script, a hook, a tool, a
+  lint. A model is asked only what needs judgment (decision 0005).
+- A command whose answer is computable is answered by the plugin's module, without a model
+  turn.
+- A rule a guard enforces is not restated in a prompt. The guard's refusal teaches it, at the
+  moment it applies, in one sentence that says what to do instead.
+- A check a model would run by reading a long rulebook (a writing style, a naming rule, a
+  layout) is a lint the tool runs, returning the violations; the model fixes them.
+
 ## Prompts (skills, commands, agents, briefs)
 
-- A rule is stated once, in imperative form, with no history: no dates, no quotation of a past
+- A rule is stated once across the whole repository. Another prompt that needs it points at
+  it; it never restates it, and so never contradicts it.
+- A rule is stated in imperative form, with no history: no dates, no quotation of a past
   ruling, no account of the incident behind it. The reason, when needed, goes in a decision
   record or the commit, where it costs nothing at run time.
-- Each plugin has a budget of tokens loaded per session, measured by CI; text is added only
-  by removing as much.
+- A prompt carries what is generic to the method. What belongs to a project or to a person (a
+  name, an account, a time zone, a language, a stack) lives in configuration, never in a
+  plugin.
+- Each plugin has a budget of prompt tokens and the repository a ceiling of sentences said
+  more than once, both held by CI (`ci/prompts.json`, `npm run prompts`); they only fall.
 - A rule enters a prompt only when an eval shows it changes an outcome, and it replaces one.
 
 ## Changes and releases
@@ -85,6 +101,7 @@ changed by a pull request that edits this file and the code it governs together.
 ## Ratchets
 
 Some coverage grows one step at a time: the TypeScript under the strict check
-(`tsconfig.json`), the platforms where a suite blocks (`ci/plugins.json`), the prompt budgets.
+(`tsconfig.json`), the platforms where a suite blocks (`ci/plugins.json`), the prompt budgets
+and the duplicate ceiling (`ci/prompts.json`).
 A ratchet only tightens. A pull request that loosens one is refused unless it says why in its
 description and the operator accepts it.

@@ -76,4 +76,5 @@ because the host caches by version. A release is the merge; the tag `<name>--v<v
 | tooling tests | `scripts/*.test.ts` |
 | catalogue matches the manifests | `plugins/*/.claude-plugin/plugin.json` |
 | shipped change raises the version | the same manifests, against the base branch |
+| prompt budgets and duplicates only fall | `ci/prompts.json` |
 | every plugin's suite, macOS and Linux | `plugins/<name>/tests/run-tests.sh`, blocking per `ci/plugins.json` |

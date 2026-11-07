@@ -6,6 +6,7 @@ import { describe, it } from 'node:test'
 import { compareVersions, parseManifest, readPlugins } from './lib/plugins.ts'
 import { entryOf, render } from './marketplace.ts'
 import { matrixOf, parseBlocking } from './plugin-matrix.ts'
+import { breaches, isPromptPath, measure } from './prompts.ts'
 import { missingBumps, shippedChanges } from './version-bump.ts'
 
 const MANIFEST = { name: 'alpha', version: '1.2.3', description: 'An alpha plugin.', author: { name: 'A', email: 'a@example.com' } }
@@ -90,5 +91,45 @@ describe('plugin matrix', () => {
 
   it('refuses an unknown platform', () => {
     assert.throws(() => parseBlocking({ blocking: { alpha: ['windows-latest'] } }, ['alpha']), /unknown platform/)
+  })
+})
+
+describe('prompts', () => {
+  const long = 'every agent reads its brief before it acts and never guesses the state of the branch.'
+
+  it('counts only the files a model reads', () => {
+    assert.ok(isPromptPath('skills/x/SKILL.md'))
+    assert.ok(isPromptPath('commands/status.md'))
+    assert.ok(!isPromptPath('README.md'))
+    assert.ok(!isPromptPath('docs/design.md'))
+    assert.ok(!isPromptPath('tests/fixture.md'))
+    assert.ok(!isPromptPath('hooks/register.ts'))
+  })
+
+  it('finds a sentence said in two files, and ignores short phrases', () => {
+    const measured = measure([
+      { plugin: 'a', path: 'a/x.md', text: `${long}\n\nStop and ask.` },
+      { plugin: 'b', path: 'b/y.md', text: `**${long}**\n\nStop and ask.` },
+    ])
+    assert.equal(measured.duplicates.length, 1)
+    assert.deepEqual(measured.duplicates[0]?.paths, ['a/x.md', 'b/y.md'])
+  })
+
+  it('sums the tokens of each plugin', () => {
+    const measured = measure([
+      { plugin: 'a', path: 'a/x.md', text: 'abcd' },
+      { plugin: 'a', path: 'a/y.md', text: 'abcdefgh' },
+    ])
+    assert.equal(measured.tokens['a'], 3)
+  })
+
+  it('refuses a budget exceeded, a plugin without one and more duplicates than the ceiling', () => {
+    const measured = { tokens: { a: 10, b: 1 }, duplicates: [{ sentence: 's', paths: ['x', 'y'] }] }
+    assert.deepEqual(breaches(measured, { budgets: { a: 9 }, duplicates: 0 }), [
+      'a: 10 prompt tokens, over its budget of 9',
+      'b: no prompt budget in ci/prompts.json',
+      '1 sentences said more than once, over the ceiling of 0',
+    ])
+    assert.deepEqual(breaches(measured, { budgets: { a: 10, b: 1 }, duplicates: 1 }), [])
   })
 })
