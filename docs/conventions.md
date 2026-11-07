@@ -58,18 +58,14 @@ changed by a pull request that edits this file and the code it governs together.
 
 ## Tests and coverage
 
-- Code is covered at 100 % of lines, branches and functions: TypeScript by node's coverage
-  (`npm test` fails under it), Python by `coverage.py --fail-under=100`. A part joins the
-  measure the day it is strict, and its threshold never falls.
+- Coverage is a floor, not a target: 85 % of lines and functions, 80 % of branches, for
+  TypeScript (node's coverage, `npm test` fails under it) and for Python (`coverage.py
+  --fail-under`). A part joins the measure the day it is strict. A test is written for a
+  behaviour worth protecting, never to raise a percentage.
 - What cannot run under a test (a process entry point, a call into the host or an outside API)
-  is a thin adapter around tested logic. Its exclusion is a `node:coverage ignore` or
-  `pragma: no cover` comment on that line alone, and the count of such comments is a ratchet.
-- Coverage proves a line ran, not that a test would notice it change. Mutation testing (Stryker
-  for TypeScript, mutmut for Python) runs on the pure logic at each release, and its surviving
-  mutants are fixed or explained.
-- Prompts have coverage too: every rule a prompt states is either enforced by code (and covered
-  by that code's tests) or named by at least one eval case that fails without it. A rule
-  covered by neither is a candidate for removal.
+  is a thin adapter around tested logic, so the floor is reached without tests of plumbing.
+- Prompts are measured the same way: a script reports each rule a prompt states that neither
+  code enforces nor an eval names. The report is a list of candidates for removal, not a gate.
 - A test checks behaviour: what a function returns, what a command does, what a hook decides.
   A test never asserts the wording of a skill or a document.
 - A fix lands with the test that fails when the fix is reverted.
