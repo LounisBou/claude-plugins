@@ -75,10 +75,9 @@ bound in the tier map (or those `--families` names) times the five efforts, or t
 `--grid` names. It prints one line per trial and a last line `bench: spent=<usd> trials=<n>
 unmeasured=<n> pruned=<n>`, where unmeasured counts every planned trial the cap or a dropped
 pair left undone and pruned the pairs stopped after stage A and never re-admitted (below).
-`--max-usd` is required and the operator gives it: the run stops starting trials when the
-trials and their judges have cost that much, finishes those in flight, and prints what is left
-unmeasured. Nothing else stops a run; the subscription gauge is recorded with each trial as a
-control, never read to stop, slow or choose.
+`--max-usd` is the operator's: the run stops starting trials when the trials and their judges
+have cost that much, finishes those in flight, and prints what is left unmeasured. Nothing else
+stops a run; the subscription gauge is recorded with each trial as a control only.
 
 A trial sees the tree at the task's base with no history, so the merged commit is
 unreachable, and its one commit holds every file of the base whatever ignore rules apply; its directory is created under the system's temporary root and removed when the

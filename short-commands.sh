@@ -12,6 +12,8 @@
 # plugin's: a file of the same name without it is the operator's, never written, never removed.
 # `sync` is the module's pass at each session start: after a plugin update the copies still
 # name the earlier version's root, and it rewrites them, never creating one the operator removed.
+# All three remove a marked file that matches no row: a row dropped from the table would
+# otherwise leave its copy behind on every machine that installed it.
 #
 # The directory: --dir, else ORCHESTRATOR_COMMANDS_DIR, else the config dir's commands/.
 
@@ -92,4 +94,19 @@ while IFS=$'\t' read -r short file; do
       fi ;;
   esac
 done < "$MAP"
+
+# A marked copy whose row is gone: the earlier version wrote it, no version answers it now.
+# The names are matched in the shell, not through a pipe into `grep -q`: under pipefail a
+# grep that stops early can fail the pipe and make a row it found look absent.
+if [ -d "$DEST" ]; then
+  rows=$'\n'$(cut -f1 "$MAP")$'\n'
+  for target in "$DEST"/*.md; do
+    [ -f "$target" ] && [ ! -L "$target" ] || continue
+    name=$(basename "$target" .md)
+    case "$rows" in *$'\n'"$name"$'\n'*) continue ;; esac
+    ours "$target" || continue
+    [ "$DRY" = 1 ] || rm -f "$target"
+    say "stale short command removed: $target (no row of short-names.tsv names it)"
+  done
+fi
 exit 0

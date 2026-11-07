@@ -23,8 +23,7 @@ under `<state dir>/routing/`. `routing.py` below is
   merge commit is in the local clone. Missing, refuse and ask for them. `--test-command`,
   `--test-glob` and `--budget-usd` are passed to `harvest` as given.
 - **The judge.** Read `<state dir>/models.json`. With no `deep` entry, stop here and say so:
-  `bench` refuses a run with the `deep` tier unbound, since the judge has no model. Binding it
-  is the operator's; this command never writes the map.
+  binding it is the operator's; this command never writes the map.
 
 Tell the operator, in one line, the project, the class, the pull requests and the cap.
 
@@ -40,9 +39,8 @@ and stop.
 
 The slug is the directory under `<state dir>/routing/projects/` whose manifest's `repo` is the
 checkout (`ls` the directory, then read the manifest). Read that manifest: **an empty
-`test_command` or empty `test_globs` stops the command here**,
-because `ready` and `bench` both refuse such a manifest. Say which is missing and that `--test-command` and
-`--test-glob` set them.
+`test_command` or empty `test_globs` stops the command here**: say which is missing and that
+`--test-command` and `--test-glob` set them.
 
 Then read each drafted brief, `projects/<slug>/briefs/pr-<n>.md`, as the agent will. A brief
 that leaks the answer (a list of the files to change, a test the body spelled out) is quoted

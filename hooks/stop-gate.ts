@@ -93,8 +93,8 @@ const TOOL_NOT_RUNNING = 'Nothing of yours runs in the background: waiting: tool
   + 'a command, monitor or subagent you started still runs. Launch it with run_in_background, or end on the line that fits. '
   + `${OTHER_FITS} The line goes as the message's last line, no markup.`
 const blocksNothingReason = (busy: boolean, running: readonly string[]) =>
-  'Your wait on the operator blocks nothing: that line is for a question he must answer, and the coordinator '
-  + `would put it to him. ${fits(busy, running)} The line goes as the message's last line, no markup.`
+  'Your wait on the operator blocks nothing: that line is for a question he must answer. '
+  + `${fits(busy, running)} The line goes as the message's last line, no markup.`
 const QUESTION = 'Your question blocks nothing declared: advance everything that can advance; its answer will come in a later turn.'
 const NOT_DONE_ONE = 'Not done: %s is still there. Finish it, or say what blocks it.'
 const NOT_DONE_MANY = 'Not done: %s are still there. Finish them, or say what blocks them.'

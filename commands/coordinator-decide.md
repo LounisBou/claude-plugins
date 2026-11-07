@@ -19,20 +19,22 @@ verbatim, and you add nothing of your own. Only what follows differs.
    whether the pane is open or closed, plus the questions that reached you by message and are
    still open in your ledger. A closing proposal (`done`) is presented as the skill says, outside
    this round.
-2. **The order.** As `--by-urgency` prints them: the urgent first, then by `since`, the
-   oldest first, across senders, with no grouping by orchestrator. A question received by
-   message takes its place by the time you received it. Announce the count in one line:
+2. **The order.** As `--by-urgency` prints them, as the skill's step 2 says:
+   the urgent level first, then within each level the questions grouped by
+   orchestrator, the groups ordered by their oldest wait. A question received by message
+   takes its place in its sender's group by the time you received it. Announce the count in one line:
    « Round by `<your exact name>`: N questions, the urgent first, from `<sender>` (3),
    `<sender>` (1). »
 3. **The sender in each question.** Its first line names who asks: « Question i of N — from
    `<sender's exact name>` ». The first question of each sender carries that sender's context
    block, three to five sentences in its own words, as the coordination skill's step 4 says.
 4. **Re-verify before presenting.** Run `round --by-urgency` again just before each question:
-   an entry answered in the pane or withdrawn by its sender meanwhile is not asked; write it
-   back in the ledger and present the next one instead, the count moving with it.
+   an entry answered in the pane or withdrawn by its sender meanwhile is not asked, and one
+   found settled on its artifact is withdrawn as the skill's step 5 says; write it back in the
+   ledger and present the next one instead, the count moving with it.
 5. **The relay, on each answer, in the same turn.** « Recorded: <his ruling> »; for an entry of
-   the round, `coordinator.sh round-close <id> --answer "<his words>"` alone, which your module
-   sends, dated, to the sender; for a question that reached you by message, the ruling
+   the round, `coordinator.sh round-close <id> --answer "<his words>"` alone,
+   which your module sends, dated, to the sender as soon as it returns; for a question that reached you by message, the ruling
    verbatim and dated (`date -u +%FT%TZ`, pasted) to the sender, by `SendMessage` to its
    exact `ListAgents` name, « the operator answered »; marked sent in the ledger; then
    the next question in full in the same message. The relay goes with each answer, never held

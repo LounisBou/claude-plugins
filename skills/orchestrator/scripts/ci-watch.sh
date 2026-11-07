@@ -66,6 +66,31 @@
 # `filtered` counts the push runs on that commit the workflow filter left out: above 0, a
 # followed workflow is misnamed, and the operator is told.
 #
+# What the caller does, per line:
+#   green: with auto-merge, nothing: the merge is coming, and a watch that sees auto-merge enabled
+#     on green waits, bounded, for it and follows the base branch, so a green line there means no
+#     merge came within the bound; otherwise report « ready ».
+#   red: read the failing job first; when its failure is outside what the pull request touches
+#     (an unrelated flake, infrastructure), re-run the failed jobs once with
+#     `gh run rerun <run-id> --failed`, after naming the failing job's cause in one line, read in
+#     its log, and re-arm the watch. Only a second red, or a red in what the pull request touches,
+#     is reported to the operator in one line, and you dispatch the correction at once, to a fresh
+#     session (the implementer was stood down at its delivery).
+#   moved: re-arm on the new head.
+#   no-checks: ready on the suite's evidence; with auto-merge enabled, no merge came within the
+#     bound either.
+#   closed: stop the work on it.
+#   closed MERGED with --no-base, or merged by hand: start the watch again in the background: it
+#     enters on MERGED and follows the base branch.
+#   unread: re-arm once, then report; the same when the host's timeout ends the watch.
+#   base-green: nothing.
+#   base-red: read the failing job; a flake or an infrastructure fault is re-run once with
+#     `gh run rerun <run-id> --failed`, after naming its cause in one line, and the watch re-armed;
+#     any other red, or a second one, is reported to the operator in one line and fixed at once in
+#     its own pull request, dispatched to a fresh session: a red base branch is never left standing.
+#   base-no-run filtered=0: nothing, the project runs no push CI on that branch; above 0, a
+#     misnamed workflow, reported to the operator in one line.
+#
 # CI_WATCH_REGISTER_WAIT bounds the wait for registration, in seconds (default 180).
 # CI_WATCH_MERGE_WAIT bounds the wait for an auto-merge after green, in seconds (default 1800),
 # so that the whole watch stays inside the host's background bound.

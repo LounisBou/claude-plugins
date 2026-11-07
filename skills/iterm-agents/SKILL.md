@@ -17,7 +17,7 @@ Its commands are `list`, `spawn`, `verify`, `screen`, `close`, `move`, `rotate`,
 `list` prints each tab's title, the session's name, and `self` on your own tab. Read self before you anchor, move or close.
 
 - **tty numbers are recycled**: a freshly closed `/dev/ttys000` can be reassigned to the next spawned tab. Never reuse a stored tty across a close — re-`list` every time.
-- **A fresh tab is titled « Chat » before the session names itself.** The host's own first title stands for a few seconds, so a `list` taken immediately after a spawn shows it in the title column while the name column is already right — which is the column to read when you are looking for a session rather than for what it is doing.
+- **A fresh tab is titled « Chat » for a few seconds**: to find a session right after a spawn, read `list`'s name column, not its title.
 - The spawned session takes a few seconds to appear in `ListAgents`; `list` shows the tab immediately, `verify` the process as soon as the CLI has started.
 
 ## An agent is a window of its orchestrator's home session, or a tab
@@ -55,12 +55,12 @@ Name an anchor when you know a better place than that default, and name the one 
 ## Safety order for a launch
 
 1. The brief exists at a path the fresh session can open on this machine. Say in the agent's brief which servers it was given: it cannot see the file.
-2. `spawn --brief <path> --orchestrator "<name [ref]>"`, with `--right-of self` so the tab lands beside yours rather than at the end of a window you do not own. `--brief` lints the brief before any tab exists; a finding no longer refuses the spawn, it prints as a warning on stderr and the launch goes on, prompt built either way — the brief's path and your exact `ListAgents` name and reference, nothing the brief already says. You never hand-build that prompt. A startup prompt is not optional: `spawn` (and `rotate`, which spawns) refuses, before any tab is made, a launch carrying none of `--brief`, `--prompt` or `--prompt-file` — the host writes no transcript before a first prompt, so a promptless session's mode could never be read.
+2. `spawn --brief <path> --orchestrator "<name [ref]>"`, with `--right-of self` so the tab lands beside yours rather than at the end of a window you do not own. `--brief` lints the brief (a finding warns on stderr, the launch goes on) and builds the startup prompt — the brief's path and your exact `ListAgents` name and reference. You never hand-build that prompt; a launch with no prompt at all is refused.
 3. Read the result: the script has already waited for the host CLI on the new tty, but the artifact decides — `list` (the tab), `verify --tty` (the process), `ListAgents` (the peer session, a few seconds later).
-4. **No startup dialog may stand between the launch and the brief.** Two are known: the workspace-trust question, refused before the tab exists unless `--trust` says so — right for a checkout you prepared yourself and wrong for anything else; and the question about servers. The launch is strict by default and carries a configuration file written for that session, so the host asks nothing and loads exactly what the file names — the catalogue's default set, plus whatever `--mcp` added; a fresh session parked on « enable these MCP servers? » never reads its brief and nobody sits at that keyboard. `--account-connectors` drops strict for that one spawn so it also loads every connector of the operator's account — not one of them, all of them — and the launch pre-answers the project's own server dialog for it too, so it never parks on that question either; off unless asked, and the default launch is unaffected. Any other startup question the launch cannot pre-answer (a trust prompt, a migration notice) is read in the tab's contents and answered by the orchestrator through the tab — a session stuck on a dialog is not launched, whatever the script printed.
+4. **No startup dialog may stand between the launch and the brief.** `--trust` is for a checkout you prepared yourself, never for anything else; the launch loads the catalogue's default set plus `--mcp`, and `--account-connectors` every connector of the operator's account (`references/commands.md` says how each dialog is pre-answered). Any other startup question (a migration notice) is read in the tab's contents and answered through the tab — a session stuck on a dialog is not launched, whatever the script printed.
 5. Rely on that verification and on the module's reports, not on a first message. An agent idle before its work is reported is inspected, not waited for: `verify` for the process, `list` for the tab, and `screen --tty` for what that tab is showing right now — how you tell an agent stopped on a question from one at work.
 
-**A tier nobody bound is not an error.** `spawn` then types no model argument and the host applies its default, so a half-filled map never silently routes deep work to a cheap model — it routes it to whatever the operator's host already runs. Read the map with `resolve-tier` before dispatching a wave, not after it comes back wrong. When the tier the work needs is unbound, the orchestrator picks the model it judges fit (`--model <name>`, or the host's default on purpose), writes the choice and its reason in the brief, and tells the operator in one line at the spawn (`orchestrator:model-routing`).
+**A tier nobody bound is not an error**: `spawn` types no model argument and the host applies its default. What to do about it is `orchestrator:model-routing`'s, « Pairs, tiers and the map ».
 
 ## The tools a session is given
 
@@ -77,9 +77,7 @@ An `Agent :` session also comes up without the away recap and the silent-turn re
 
 **A finished agent's window or tab is closed, not left open.** The approval that closes a phase stands the agent down and closes its place in the same move (`list`, `close --tty --expect-title`, `ps`). An implementer is stood down at the verification of its delivery, never kept through its review round, unless its next phase is dispatched to it at that verification; a review finding goes to a fresh session with a resume brief, which costs one cold start and keeps the window readable. The only places open at any time are the orchestrator's and its running implementers' (and the auditor's tab). `close --tty` on a hidden agent closes its session alone — its tab and its review pane stay open (`references/commands.md`, the hidden-pane entry).
 
-**A window or a tab is closed by its tty with `--expect-title`, never by title alone or by position** (in a home session the title checked is the window's name, which the launcher gave it and the host never rewrites) — the title read from `list` seconds before (« Safety order for a live rotation » says why a rotation takes none). The first character of a title is an activity glyph that flips on its own. Match on words, never on the glyph.
-
-**A close is proved on the process table, never on the app's acknowledgement.** The API answering a close request says the request was TAKEN, not that the session is gone. The launcher reads the host's pid and start time before the close, and once the close is accepted it waits for that process, then sends it SIGTERM, then SIGKILL, each step logged in `close.log` of the state directory; it reports the close only once the process is gone. Verify a close with `list` + `ps`, not with the exit code: the artifact, not the message, says whether the session is dead. A killed session leaves its process visible for a second or two.
+**A window or a tab is closed by its tty with `--expect-title`, never by title alone or by position** — the title read from `list` seconds before (a rotation takes none, below). Match on words, never on the first character, an activity glyph that flips on its own.
 
 Prompt and launch files accumulate under the state directory's `prompts/`; they are small and they are the record of what each session was launched with. Delete a wave's when its review is closed, like any other artifact you produced.
 
@@ -87,7 +85,7 @@ Prompt and launch files accumulate under the state directory's `prompts/`; they 
 
 1. The old agent must have STOOD DOWN (message it; wait for its acknowledgment) — never close a tab whose session may still be writing. **In a rotation this acknowledgment IS the guard**, not the title.
 2. `list` to confirm the tty is the one you mean.
-3. `rotate`, which spawns the replacement and verifies it is running before the old one is gone. **Do not pass `--expect-title` to a rotation.** A rotation spends ten seconds bringing up the replacement, and a working session rewrites its own title to say what it is doing: a title read before the spawn and compared after it is a string that was true a moment ago. Refusing on it turned a safeguard into a rotation that never completed. The tty is the identity; a stood-down agent that acknowledged is what makes closing it safe.
+3. `rotate`, which spawns the replacement and verifies it is running before the old one is gone. **Do not pass `--expect-title` to a rotation**: a working session rewrites its title during the ten seconds of the spawn. The tty is the identity; a stood-down agent that acknowledged is what makes closing it safe.
 4. Verify with `list` (the old tab gone, the new one present) AND `ListAgents` (new peer session visible, old one gone) before reporting the rotation done.
 
 `--expect-title` remains right for a STANDALONE `close`, where you read the title from `list` seconds before and nothing runs in between.
@@ -97,7 +95,7 @@ Prompt and launch files accumulate under the state directory's `prompts/`; they 
 - Handing the user a brief path and an invocation to paste: the orchestrator spawns (Overview).
 - Trusting the printed tty: launch steps 3 and 5.
 - Closing by title alone or by position: « Window and tab hygiene ».
-- Spawning without an anchor: « Layout convention ».
+- Spawning without an anchor where you know a better place than the default: « Layout convention ».
 - Reading a process that runs in a directory the host never opened as a launched agent: it is stopped on a question — launch steps 4 and 5.
 - Rotating before the old agent acknowledged stand-down, or passing `--expect-title` to a rotation: rotation steps 1 and 3.
 - Storing a tty and using it after any close happened in between: « Reading the tabs ».

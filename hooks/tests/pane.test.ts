@@ -360,30 +360,31 @@ function commandRuns(register: (on: any) => void): { matcher: object | undefined
 }
 
 // Measured live: the host hands the plugin's command as `orchestrator:<file>` and the
-// installer's user command as its bare short name; the 0.80.0 `orchestrator:<short>` forms stay.
-test('the supervision answers to every form of its two short names, one pane whichever was typed', async () => {
+// installer's user command as its bare short name; the 0.80.0 `orchestrator:<short>` form stays.
+// One command for both roles, the operator's ruling 229 (« B »): /orchestrator:supervision alone
+// is kept, and no form of the coordinator's own name toggles the pane any more.
+test('the supervision answers to every form of its one short name, one pane whichever was typed', async () => {
   const runs = commandRuns(registerSupervision)
   expect(runs.map(run => run.matcher)).toEqual([
     { command: 'orchestrator:orchestrator-supervision' },
-    { command: 'orchestrator:coordinator-supervision' },
     { command: 'orchestrator:supervision' },
     { command: 'orchestrator-supervision' },
-    { command: 'coordinator-supervision' },
   ])
-  const [orchestratorForm, coordinatorForm] = runs.map(run => run.handler)
-  for (const [opener, closer] of [[orchestratorForm, coordinatorForm], [coordinatorForm, orchestratorForm]]) {
+  const [shortForm, pluginForm] = runs.map(run => run.handler)
+  for (const [opener, closer] of [[shortForm, pluginForm], [pluginForm, shortForm]]) {
     const coord = fakeDollar({ launchName: 'Coord : main' })
     expect((await opener(coord.dollar, { command: 'orchestrator:orchestrator-supervision', args: '' })).text).toContain('pane opened')
-    expect(await closer(coord.dollar, { command: 'orchestrator:coordinator-supervision', args: '' })).toEqual({ text: 'Supervision pane closed.' })
+    expect(await closer(coord.dollar, { command: 'orchestrator:supervision', args: '' })).toEqual({ text: 'Supervision pane closed.' })
     expect(coord.opened.length).toBe(1)
     expect(coord.closed).toEqual([{ id: 'supervision' }])
   }
 })
 
+// The bare short name is /orchestrator-supervision alone, the operator's ruling 229 (« B »).
 test('a bare short name toggles the pane when its user command is the plugin\'s copy, and runs as written otherwise', async () => {
   const runs = commandRuns(registerSupervision)
   const passed = (x: unknown) => ({ passed: x })
-  for (const command of ['coordinator-supervision', 'orchestrator-supervision']) {
+  for (const command of ['orchestrator-supervision']) {
     const hook = runs.find(run => (run.matcher as any).command === command)!.handler
     const e = { command, args: '' }
     const marked = fakeDollar({ launchName: 'Coord : main' })
@@ -409,7 +410,8 @@ test('/orchestrator-supervision opens the pane in a coordinator or an orchestrat
   const run = { command: 'orchestrator:orchestrator-supervision', args: '' }
 
   const coord = fakeDollar({ launchName: 'Coord : main' })
-  expect(await handlers['command.run'](coord.dollar, run)).toEqual({ text: 'Supervision pane opened; type /coordinator-supervision again, or click its ✕, to close it.' })
+  // The one command of both roles, the operator's ruling 229 (« B »).
+  expect(await handlers['command.run'](coord.dollar, run)).toEqual({ text: 'Supervision pane opened; type /orchestrator-supervision again, or click its ✕, to close it.' })
   expect(coord.opened).toEqual([{ id: 'supervision', title: 'Orchestrators', focus: true }])
   // Typed again, the command closes the pane it opened.
   expect(await handlers['command.run'](coord.dollar, run)).toEqual({ text: 'Supervision pane closed.' })
@@ -553,7 +555,8 @@ test('an orchestrator\'s pane lists the agents its own tab spawned, read from th
 test('a pane the module no longer remembers opening asks to be opened again', async () => {
   const { handlers } = mounted(registerSupervision)
   const text = JSON.stringify(await handlers['ui.render'](fakeDollar().dollar, renderEvent, (x: unknown) => ({ passed: x })))
-  expect(text).toContain('type /coordinator-supervision or /orchestrator-supervision to open the pane again')
+  // The one command of both roles, the operator's ruling 229 (« B »).
+  expect(text).toContain('type /orchestrator-supervision to open the pane again')
 })
 
 test('a name walk that cannot answer in time costs the row its name, never the measure', async () => {

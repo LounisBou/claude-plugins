@@ -7,8 +7,8 @@ allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agen
 Run on the operator's word only: he types this command, in the session whose tab the
 auditor should sit beside. Nothing of the audit stays with this session once it is launched.
 
-Usage: `/orchestrator-audit <subject> [--since <date>]`. The subject is at most 25
-characters: it becomes the title `Audit : <subject>`.
+Usage: `/orchestrator-audit <subject> [--since <date>]`. The subject becomes the title
+`Audit : <subject>`.
 
 1. **Fill the brief.** Copy `${CLAUDE_PLUGIN_ROOT}/templates/agent-audit-brief.md` into the
    project's briefs directory as `audit-<subject>-brief.md`, and fill every
@@ -35,19 +35,11 @@ characters: it becomes the title `Audit : <subject>`.
    ${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --dir <repository> --auditor --title "Audit : <subject>" --permission-mode auto --trust --prompt "Read and execute <brief path>"
    ```
 
-   `--auditor` places the tab immediately left of this one, the chain ignored, on this
-   session's model, under remote control under its title. It takes no chain and joins none,
-   because the auditor is neither this session's successor nor its agent: this session's
-   agents stay its own, and its next `--right-of self` still lands after its last agent. The
-   title is required, and `Audit :` is refused on any spawn without `--auditor`;
-   `--successor`, an anchor, `--title-free`, `--tier`, `--model` and `--no-remote-control`
-   are refused beside it. `rotate` and `move` refuse a tab whose session is named `Audit :`
-   unless `--force`. The auditor never closes this tab.
-   Its place is read after the spawn and repaired if wrong: a launch that leaves it
-   elsewhere prints one line on stdout naming both ttys and the `move` that repairs it, and
-   exits non-zero. On a non-zero exit, run the `move` the line prints and never relaunch;
-   when the line says « unverified » or « API is not available », read `list` and move the
-   tab by hand only if it is misplaced.
+   `--auditor` places the tab immediately left of this one. It takes no chain and joins none:
+   this session's agents stay its own. The auditor never closes this tab.
+   On a non-zero exit, run the `move` the line on stdout prints and never relaunch; when it
+   says « unverified » or « API is not available », read `list` and move the tab by hand only
+   if it is misplaced.
 4. **Verify** that `iterm-agent.sh list` shows the `Audit : <subject>` tab and
    `iterm-agent.sh verify --tty <its tty>` its process.
 5. **Tell the operator** in one line: the tab, and the report path. Then carry on with your

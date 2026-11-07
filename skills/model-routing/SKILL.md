@@ -15,11 +15,11 @@ How the tables are measured, generalised and exported: `references/calibration.m
 
 ## Pairs, tiers and the map
 
-A dispatch runs on a **pair** `<alias>/<effort>`: a family alias and an effort, one of `low`, `medium`, `high`, `xhigh`, `max`. `spawn --model <alias> --effort <level>` sets it; without an effort the launcher types none and the host applies its default. Three tiers name capability: `deep`, `standard`, `light`. Their binding is the operator's, in `<state dir>/models.json`, a model alone (`"a-model"`) or a pair (`{"model": "a-model", "effort": "medium"}`); `iterm-agent.sh resolve-tier <tier>` prints `<model>` or `<model>/<effort>`, and `spawn --tier` takes the effort from the map unless `--effort` is given. **Read your map before dispatching a wave.** An unbound tier is not an error: the launcher types no model argument and the host applies its default. When the tier the work needs is unbound, pick the model you judge fit — `--model <name>` on that one spawn, or the host's default taken on purpose — write the choice and its reason in the brief, and tell the operator in one line at the spawn, so he can correct it or bind the tier. You never rebind his map yourself: a binding the mode check refuses is put to him with the refusal. The map binds each tier for every project. A pair `pick` returns for one class or one project goes in the brief, the record and `calibrate`'s project table, never in `models.json`: the module denies a session of the orchestration any write of the map until he names the map or a tier in a prompt he typed.
+A dispatch runs on a **pair** `<alias>/<effort>`: a family alias and an effort, one of `low`, `medium`, `high`, `xhigh`, `max`. `spawn --model <alias> --effort <level>` sets it; without an effort the launcher types none and the host applies its default. Three tiers name capability: `deep`, `standard`, `light`. Their binding is the operator's, in `<state dir>/models.json`, a model alone (`"a-model"`) or a pair (`{"model": "a-model", "effort": "medium"}`); `iterm-agent.sh resolve-tier <tier>` prints `<model>` or `<model>/<effort>`, and `spawn --tier` takes the effort from the map unless `--effort` is given. **Read your map before dispatching a wave.** An unbound tier is not an error (the host applies its default): when the work needs it, pick the model you judge fit — `--model <name>`, or the host's default on purpose — write the choice and its reason in the brief, and tell the operator in one line at the spawn. The map is his and binds every project: a binding the mode check refuses is put to him. A pair `pick` returns for one class or one project goes in the brief, the record and `calibrate`'s project table, never in `models.json`, which the module keeps from your writes.
 
-**A tier or a pair names a family alias, never a versioned identifier**, which keeps naming the model it named the day it was written. The launcher warns in one line on a versioned binding, names the alias to bind instead, and launches anyway.
+**A tier or a pair names a family alias, never a versioned identifier**; the launcher warns on a versioned binding.
 
-**A session nobody watches runs in the operator's decision mode.** A binding the host does not run in that mode is a binding to fix: rebind the tier, or spawn that agent with `--permission-mode acceptEdits` for a few edits and allow-listed commands only. The launcher reads the mode on the session's transcript and refuses the spawn when it differs. A model you choose for an unbound tier runs in the operator's decision mode, or, with no auto mode, with `--permission-mode acceptEdits`. Name the mode in the brief where you name the pair.
+**A session nobody watches runs in the operator's decision mode**, which the launcher checks on the transcript, refusing a spawn that came up in another. A binding the host does not run in that mode is fixed by a rebind, or by `--permission-mode acceptEdits` for an agent of a few edits and allow-listed commands. Name the mode in the brief where you name the pair.
 
 ## Where the pair comes from
 
@@ -53,7 +53,7 @@ map.
 
 `/orchestrator-calibrate <checkout> --max-usd <cap> --class <class> --pr <n>...` does it: it runs steps 1 to 4 below in order, stops at the first failure, and leaves 5 and 6 to the operator. It refuses to run without his cap and never picks one. Run by hand, these are the `routing.py` subcommands, in this order. Everything lands under `<state dir>/routing/`; `references/calibration.md` has the detail of each step.
 
-1. `harvest <repo> --class <class> --pr <n> [--pr <n>]... [--test-command <cmd>] [--test-glob <glob>]... [--budget-usd <x>]`: needs merged pull requests whose merge commit is in the local clone. Drafts one task per pull request in `projects/<slug>/manifest.json`, its brief in `projects/<slug>/briefs/pr-<n>.md`. Read each brief and cut what leaks the answer.
+1. `harvest <repo> --class <class> --pr <n> [--pr <n>]... [--test-command <cmd>] [--test-glob <glob>]... [--budget-usd <x>]`: needs merged pull requests whose merge commit is in the local clone. Drafts one task per pull request in `projects/<slug>/manifest.json`, its brief in `projects/<slug>/briefs/pr-<n>.md`.
 2. `ready <slug> <task-id>...`: the control run. Needs the manifest's `test_command` and `test_globs`. Runs the tests on each task's merged commit and marks it `ready`, or `void` when its own reference fails.
 3. `bench <slug> --max-usd <n>`: the spend cap, given by the operator and required; `--budget-usd` caps each trial. Needs ready tasks and the `deep` tier bound (the judge). Runs the grid of pairs on the ready tasks and appends each trial to `projects/<slug>/trials.jsonl`.
 4. `calibrate <slug>`: writes the project's table, `tables/project-<slug>.json`, which `pick` reads first.
@@ -95,17 +95,13 @@ Two readings high or more raises the pair by **one** notch up the class's ladder
 
 ## The correction round runs one notch above its phase
 
-`pick` ends with `nbis=<pair>`: the phase's pair one effort level up on the same family, the same pair at `max`, and no line for a pair with no effort to raise. The phase's correction round runs at that pair, and the brief names it. The round is the retry: the phase starts cheap and a failure escalates, so the review and its correction round are the escalation, not a cascade; the phase itself is never retried at its own pair. `--class n-bis` serves a correction round whose phase's pair is unknown: the round runs at that call's `pair=` line, and its `nbis=` line is not read.
+`pick` ends with `nbis=<pair>`: the phase's pair one effort level up on the same family, the same pair at `max`, and no line for a pair with no effort to raise. The phase's correction round runs at that pair, and the brief names it; the phase itself is never retried at its own pair. `--class n-bis` serves a correction round whose phase's pair is unknown: the round runs at that call's `pair=` line, and its `nbis=` line is not read.
 
 ## Explore one notch, never more
 
-`pick` prints a second line, `explore=<pair>` (`nbis=` stays last), when the record shows three one-round closes at the class's pair, no escaped defect there, and no failed exploration of the class. The pair is **one notch** below: the immediate cheaper pair of the class's ladder, unless it was measured and found not equivalent to the best (a pair not measured on every task is offered); without a ladder to read it from, the effort one level down on the same family; at the lowest effort, the next lighter family in the map at the same effort. Take it only when the five readings show at most one high, and open the row `--explore`.
+`pick` prints `explore=<pair>` (`nbis=` stays last) when the record allows a try one notch below: take it only when the five readings show at most one high, and open the row `--explore`.
 
-The orchestrator, a successor, a decision round, a contract-defining phase and the final verification are never explored: nothing re-checks that work, so a failure there is paid N times.
-
-`summary` prints `frozen=<class>` after an exploration that cost a corrective round or let a defect escape: the class reverts to its pair and is not explored again this build. It prints `promote=<class> <pair>` after three explorations closed in one round: dispatch the class on that pair for the rest of the build, and fold it into the project's table with `routing.py calibrate <slug> --from-record <record>`.
-
-An exploration is not a cascade. A cascade retries the same work one notch below and is forbidden on phases; an exploration dispatches the work once, at the lower pair, and its failure is paid by the normal correction round.
+`summary` prints `frozen=<class>` after a failed exploration (the class reverts and is not explored again this build) and `promote=<class> <pair>` after three that closed in one round (dispatch the class on that pair, and fold it into the project's table with `routing.py calibrate <slug> --from-record <record>`).
 
 ## Escalate on evidence, one step, at a session boundary
 
@@ -117,25 +113,13 @@ Triggers, each a thing you have read:
 
 An escalation IS a rotation — fresh session, resume brief, one notch up the class's ladder, the brief carrying the evidence that triggered it. **Never de-escalate inside a phase**: a drop applies to the next dispatch of that class.
 
-## Cascade where a retry is cheap — and only there
-
-A cascade tries one notch below the class's pair and escalates when the result does not hold. It pays only where a failed attempt is cheap to detect and to throw away. For a phase it is not — a failed attempt costs a review round plus a rework round — so **never cascade a phase**. Three classes qualify:
-
-| Class | What detects the failure | What a retry costs |
-|---|---|---|
-| A review lens | its report is empty, vague, or dies on the first verification you run | one reader, re-run |
-| A read-only search subagent | it returns nothing where you know something is | one search |
-| An N-bis narrow enough that the gate judges it | the project's own quality gate | one short session |
-
-Dispatch one notch below and mark it — `dispatch-record.sh open … --cascade`; if it costs a round, re-dispatch at the class's pair and close the marked row `--verdict escalated`. `summary` reports `cascade=<class> at <pair>: N of M paid` and says `stop cascading` when fewer than half pay over at least two attempts. One notch below, never two. An N-bis cascades from its `nbis=` pair: its notch is read below that pair, not under the `n-bis` class's own entry.
-
 ## The false economy
 
-**A pair drop that produces a second corrective round is reverted for that class, and the reversion is recorded, unless you name the mechanism, other than the pair, that cost the round.** A rework round plus its review round costs more than the phase one notch up.
+**A pair drop that produces a second corrective round is reverted for that class, and the reversion is recorded, unless you name the mechanism, other than the pair, that cost the round.** The summary's `signal=` lines name those drops (« The record »).
 
 ## A second reader, armed by evidence
 
-A strong judge rarely invents a defect but misses some, and a miss leaves no trace in the round that missed it. When a later round finds a defect in work already approved, record it: `dispatch-record.sh escaped <record> <id>`. `summary` then prints `signal=double-read <class> at <pair or tier>`, and that class's next round gets a **second reader with a DIFFERENT lens**; a finding is kept only when both see it. Not from a hunch, and never a second reader on the same lens.
+A defect found later in work already approved is recorded with `dispatch-record.sh escaped <record> <id>`: `summary` then prints `signal=double-read <class> at <pair or tier>`, and that class's next round gets a second reader with a DIFFERENT lens, a finding kept only when both see it.
 
 ## The record
 
@@ -156,7 +140,7 @@ dispatch-record.sh cost <record> <id> --session <session id>         # after eac
 dispatch-record.sh summary <record>
 ```
 
-`review` records instead of `round` the head it read and whether the project's own norms tool ran (`tool`) or the project ships none (`none`). `fixed` records the ONE correction round at the head you verified on the artifact; with no review on the row, or a second time, it replaces the recorded correction and warns. `ready` stands in front of telling the operator a pull request is ready: it passes at the head the last review read or the one its correction round was verified at, and refuses any other; with no review on the row it warns. The pull request stays in draft: lifting it is the operator's by default. `cost` adds a session's measured cost to the row once that session ends — its id is the one the spawn verified — so a dispatch's corrective rounds count in what it cost; a model with no price marks the row `cost_incomplete`.
+`review` records instead of `round` the head it read and whether the project's own norms tool ran (`tool`) or the project ships none (`none`). `fixed` records the ONE correction round at the head you verified on the artifact; with no review on the row, or a second time, it replaces the recorded correction and warns. `ready` stands in front of telling the operator a pull request is ready: it passes at the head the last review read or the one its correction round was verified at, and refuses any other; with no review on the row it warns. `cost` adds a session's measured cost to the row once that session ends — its id is the one the spawn verified — so a dispatch's corrective rounds count in what it cost; a model with no price marks the row `cost_incomplete`.
 
 The summary groups rows by class and pair, with `cost_avg=<usd>` over the closed rows whose cost is complete, and prints `frozen=<class>` and `promote=<class> <pair>` for the explorations above.
 
@@ -165,11 +149,3 @@ The summary groups rows by class and pair, with `cost_avg=<usd>` over the closed
 ```
 signal=n-bis at light averages 2 rounds: the drop did not pay, revert it for this class
 ```
-
-## The costliest mistakes
-
-- A pair chosen from how hard the phase feels, or two notches at once — run `pick`, take the five readings.
-- A large phase run on a pair measured on small work: `--files` and `--lines` not given to `pick`, or a `beyond=` left out of the brief.
-- A wave dispatched without reading the map or the summary, or a signal in it left standing.
-- A class explored that is never explored, or explored again after `frozen=`.
-- A phase cascaded, or an escalation attempted inside a live session instead of as a rotation.

@@ -1,7 +1,6 @@
 coordinator	coordinator
 coordinator-end	coordinator-end
 coordinator-decide	coordinator-decide
-coordinator-supervision	coordinator-supervision
 orchestrator-agents	agents
 orchestrator-audit	audit
 orchestrator-calibrate	calibrate

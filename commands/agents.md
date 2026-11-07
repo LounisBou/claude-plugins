@@ -40,8 +40,7 @@ the context alone.
    the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000; 160,000 on 200,000 — with ⚠ — the rotation gate of the `orchestrator:orchestrator` skill,
    « Thresholds » — and
    say for each what YOU owe it (a verdict, an answer).
-5. An agent that has not answered within fifteen minutes is reported as such —
-   « no answer, last artifact activity <time> » — never as « probably fine ».
+5. An agent silent fifteen minutes: « no answer, last artifact activity <time> ».
 6. An agent that reports the work needs more judgment than its brief anticipated
    is relayed with its evidence, not summarised: escalating is a rotation at the
    next boundary, and the evidence is what the replacement's brief must carry.

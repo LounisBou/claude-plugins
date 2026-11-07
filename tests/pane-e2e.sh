@@ -148,7 +148,7 @@ start() {
   rm -rf "$SANDBOX/module" "$SANDBOX/state" "$SANDBOX/work"
   mkdir -p "$ROWS" "$SANDBOX/state/round" "$SANDBOX/work"
   # The short names, written by the installer's own writer as the work directory's project
-  # commands, never in the host's user commands: `/coordinator-supervision` below is the copy.
+  # commands, never in the host's user commands: `/orchestrator-supervision` below is the copy.
   ORCHESTRATOR_COMMANDS_DIR="$COMMANDS" bash "$ROOT/short-commands.sh" install >/dev/null \
     || { echo "refused: the short names could not be written to $COMMANDS" >&2; exit 1; }
   jq -n '{ tui: "fullscreen" }' > "$SANDBOX/settings.json"
@@ -184,7 +184,7 @@ start() {
     exit 1
   fi
   subscription_or_exit "$(screen)"
-  tm send-keys -t "$SESSION" '/coordinator-supervision'
+  tm send-keys -t "$SESSION" '/orchestrator-supervision'
   sleep 1
   tm send-keys -t "$SESSION" Enter
   wait_for "$drawn" 15
@@ -464,7 +464,8 @@ tm send-keys -t "$SESSION" '/orchestrator-supervision'
 sleep 1
 tm send-keys -t "$SESSION" Enter
 sleep 2
-check "the other role's short name closes the pane the coordinator's opened, and its record goes with it" "0|0" "$(screen | grep -c 'Questions for you')|$([ -f "$SANDBOX/state/pane.json" ] && echo 1 || echo 0)"
+# One command for both roles, the operator's ruling 229 (« B »): the name that opened the pane closes it.
+check "typed again, the short name closes the pane it opened, and its record goes with it" "0|0" "$(screen | grep -c 'Questions for you')|$([ -f "$SANDBOX/state/pane.json" ] && echo 1 || echo 0)"
 wait_for 'now due in this tab' 40
 wait_woken 10
 record "the pane closed"
@@ -484,8 +485,8 @@ record "the pane open again"
 check "reopened by the file's own prefixed name, the pane draws every pending question, those presented in the tab included" "1|1|open,open" "$(pane | grep -c '^Questions for you — 3 pending')|$(flat | grep -c 'merge the release branch now?')|$(statuses)"
 
 # The short names as the installer writes them, here as project commands: the typeahead draws
-# one name per row and one row per description, and the copy of `/coordinator-supervision`
-# toggles the pane. The host also reads the operator's real ~/.claude/commands (HOME is kept
+# one name per row and one row per description, and the copy of `/orchestrator-supervision`, the
+# one command of both roles (the operator's ruling 229, « B »), toggles the pane. The host also reads the operator's real ~/.claude/commands (HOME is kept
 # for its login), so the rows of the operator's own copies may be drawn too: the checks count
 # a wrapped description only on the rows of the sandbox's names, and need two rows at least,
 # so they hold whether or not the real copies exist. A row of the list starts with its name;
@@ -511,9 +512,9 @@ typeahead() {
 }
 echo "== the short names as project commands (160x50)"
 start 50
-check "the copy the writer marked opened the pane, its marker read" "1|1" "$(pane | grep -c '^Questions for you')|$(grep -cx 'installed-by: claude-orchestrator' "$COMMANDS/coordinator-supervision.md")"
+check "the copy the writer marked opened the pane, its marker read" "1|1" "$(pane | grep -c '^Questions for you')|$(grep -cx 'installed-by: claude-orchestrator' "$COMMANDS/orchestrator-supervision.md")"
 press Escape
-tm send-keys -t "$SESSION" '/coordinator-supervision'
+tm send-keys -t "$SESSION" '/orchestrator-supervision'
 sleep 1
 tm send-keys -t "$SESSION" Enter
 sleep 2

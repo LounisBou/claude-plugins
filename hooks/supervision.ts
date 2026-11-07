@@ -3,8 +3,8 @@
 // the name the walk read, the repository of the working directory — written by
 // this file's own session.measure handler and removed by its session.end, one
 // file per key under the module's state root. The supervision pane below reads
-// the same rows, opened when the person types /coordinator-supervision or
-// /orchestrator-supervision — never on a start: the operator wants nothing placed
+// the same rows, opened when the person types /orchestrator-supervision — never on
+// a start: the operator wants nothing placed
 // on screen unasked — and in a coordinator, by the module itself once, at the end
 // of its first turn while the coordinator's record names one: his ruling of
 // 2026-10-18. In a coordinator session it lists the orchestrators, and under them
@@ -159,11 +159,11 @@ const PANE_ID = 'supervision'
 const PANE_TITLES = { coordinator: 'Orchestrators', orchestrator: 'Agents' } as const
 
 // The commands that toggle the pane, as the host hands them to command.run (short-names.ts):
-// the 0.80.0 forms of both roles' short names, the plugin's `supervision` file, and the bare
-// short names of the installer's user commands (`coordinator-supervision` is also its file).
+// the 0.80.0 form of the short name, the plugin's `supervision` file, and the bare short name of
+// the installer's user command. One command for both roles, the operator's ruling 229 (« B »):
+// /orchestrator:supervision alone is kept, the coordinator's own name is gone.
 export const SUPERVISION_COMMANDS = [
-  'orchestrator:orchestrator-supervision', 'orchestrator:coordinator-supervision', 'orchestrator:supervision',
-  'orchestrator-supervision', 'coordinator-supervision',
+  'orchestrator:orchestrator-supervision', 'orchestrator:supervision', 'orchestrator-supervision',
 ] as const
 
 // The tool that opens or closes the same pane on the operator's plain words, called by the
@@ -1393,7 +1393,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // The pane opens on the person's own command alone — the shipped types' «
   // asked » open, placed at any width — in the two supervising roles: a
   // coordinator's lists the orchestrators, an orchestrator's its own agents.
-  // Anywhere else the command says so and opens nothing. Every form of either role's
+  // Anywhere else the command says so and opens nothing. Every form of the
   // command answers, the same toggle on the same pane; a bare short name only when its user
   // command is this plugin's copy, the operator's own command of that name run as he wrote it.
   for (const command of SUPERVISION_COMMANDS) on('command.run', { command }, async ($: any, e: any, next: any) => {
@@ -1415,7 +1415,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       return { text: 'Supervision pane closed.' }
     }
     await openPane($, pane, role, tty, pid)
-    return { text: `Supervision pane opened; type /${role}-supervision again, or click its ✕, to close it.` }
+    return { text: 'Supervision pane opened; type /orchestrator-supervision again, or click its ✕, to close it.' }
   }).catch(async ($: any, e: any, next: any) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
@@ -1498,7 +1498,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // The sessions whose open wait asks nothing, each with the line its row carries.
       const tabWaits = new Map<string, string>()
       let owners = new Map<string, string>()
-      let none = 'type /coordinator-supervision or /orchestrator-supervision to open the pane again'
+      let none = 'type /orchestrator-supervision to open the pane again'
       const coordinator = pane.opened?.role === 'coordinator'
       if (coordinator) {
         const local = await readSessions($)

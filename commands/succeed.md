@@ -12,17 +12,12 @@ Preconditions, verify each before acting:
 - the project state file is current — status lives once, there;
 - the standing succession brief exists; otherwise instantiate
   `${CLAUDE_PLUGIN_ROOT}/templates/orchestrator-succession-brief.md` into the
-  project's briefs directory, filling every `{{PLACEHOLDER}}` —
-  never a brief written by hand: one dropped the template's step 4, the successor's close
-  of this session, and the predecessor stayed open (`brief-lint.sh` now refuses it);
-- its « Live state » section is filled now, from the state file's live part (the section is
-  the hand-over copy of it; status still lives once, in the state file). The brief is standing:
-  after its first use the six fields hold the last handover's text, not placeholders, so the
-  predecessor overwrites the previous handover's Live state, never appends to it. The open
-  questions field is filled from the round's open entries of this session and the questions
-  this session asked the operator that no answer has settled, verbatim, never summarised;
-  `none` only after reading the round. The whole
-  brief stays within 10,000 characters, the open-questions value apart: the lint refuses more.
+  project's briefs directory, filling every `{{PLACEHOLDER}}`, never a brief written by hand;
+- its « Live state » section is filled now, from the state file's live part: its six fields
+  are rewritten, the predecessor overwrites the previous handover's Live state, never appends.
+  The open questions are the round's open entries of this session and its questions no answer
+  of his has settled, verbatim, never summarised; `none` only after reading the round. The
+  brief stays within 10,000 characters, the open-questions value apart.
 
 Then:
 
@@ -33,14 +28,9 @@ Then:
    --successor --prompt "Read and execute <brief path>"` — the operator's
    decision mode, or the successor stops at its first prompt in a tab nobody watches.
    No title: `--successor` takes THIS session's own name, so the successor is the same
-   `Orch : <subject>` with a reference of its own, which is what every brief
-   cites; it also comes up under remote control under that name (spec §39). The launcher
-   reads that name from the host's registry, where `rename_session` puts it, before the
-   launch line's `--name`. Where it reads none — the rename never landed — or none it can
-   read as one — a whole launch line from an older launcher, or a session named under the
-   older convention — it says to type one: pass `--title "<this session's current name>"`,
-   the name `ListAgents` prints for it without its bracketed reference, in the house format. This is the case of every
-   orchestrator alive across the upgrade.
+   `Orch : <subject>` with a reference of its own, which is what every brief cites. Where the
+   launcher reads no such name, it says to type one: pass `--title "<this session's current
+   name>"`, the name `ListAgents` prints for it without its bracketed reference.
    The successor runs on the model this session runs on NOW — the operator's choice, carried
    across every succession; the map binds agents, never the orchestrator (spec §27).
    `--successor` places it immediately right of this tab, between it and the first agent,
@@ -50,8 +40,8 @@ Then:
    the successor's exact name and reference and saying that the successor's messages are its own
    from now on. An agent takes no word from a session it was never told of, and the successor
    cannot vouch for itself.
-5. Answer nothing new. Wait for the successor's "takeover confirmed"; answer
-   its questions about state only. On the confirmation, send it « handed over » as your
+5. Start nothing new. Wait for the successor's "takeover confirmed"; answer its questions about state only.
+   On the confirmation, send it « handed over » as your
    LAST message, with `SendMessage` to the name it confirmed from:
    a line written in your own tab reaches no one, and the successor waits on it.
    Nothing of yours is left to write; end the turn: that message is what it closes

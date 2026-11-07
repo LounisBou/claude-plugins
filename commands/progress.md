@@ -14,8 +14,8 @@ ruling, never work to dispatch),
 then the tally `dispatches=<n> closed=<n> rounds_avg=<n>`. It reads no pull request and
 corrects no state file. The steps below run only when that answer fails; a report to the
 user still follows them by hand, and correcting the state file from the artifacts is the
-rulebook's « Refresh the state from the artifacts », due at every quiet boundary whatever
-this command printed.
+rulebook's duty 6 of « The operator's word comes first », due at every quiet boundary
+whatever this command printed.
 
 1. Read the project's state file (the one the `orchestrator:orchestrator` skill
    says status lives in), the plan's phase list, and the briefs directory.

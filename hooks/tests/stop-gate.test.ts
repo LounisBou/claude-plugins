@@ -169,6 +169,15 @@ test('an orchestrator ending on an operator wait that blocks nothing gets the bl
   expect((refused.answer as any).block).not.toContain('**Question i of N**')
 })
 
+// Rule 241 of the rules review: the refusal says what the line is for, and no more.
+test('the blocks-nothing refusal says what the operator wait is for in one clause', async () => {
+  const { handlers } = mounted()
+  const { dollar } = fakeDollar({})
+  const refused = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: 'the report\n\nwaiting: operator — blocks: nothing' }))
+  expect((refused.answer as any).block).toContain('Your wait on the operator blocks nothing: that line is for a question he must answer.')
+  expect((refused.answer as any).block).not.toContain('the coordinator would put it to him')
+})
+
 test('a coordinator whose last message asks two questions is refused, an agent is not', async () => {
   const { handlers } = mounted()
   const block = (head: string) => [head, '_Subject_ : a thing', '- **A** : yes', '- **B** : no'].join('\n')

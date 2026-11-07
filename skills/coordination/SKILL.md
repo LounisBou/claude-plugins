@@ -62,9 +62,8 @@ to; it holds only what no command answers. After a compaction, read the live sta
 Once the start command has registered you, run `owners` and `facts`, then apply
 « Announcing newcomers » below — every running `Orch :` session is, at this first turn, one
 you have not yet announced to. Write into the notes what `owners` attributes to each
-orchestrator, then each answer, which overrides it; a silence is noted and never chased, and
-the facts' attribution stands for that orchestrator. A confirmation is a record, not a
-permission.
+orchestrator, then each answer, which overrides it; a silence is noted, never chased, and the
+facts' attribution stands. A confirmation is a record, not a permission.
 
 ## Announcing newcomers
 
@@ -102,8 +101,8 @@ every orchestrator sends you each question meant for him — its own arbitration
 agents' questions it relays — instead of asking him in its own tab. **Every relayed question
 goes through a decision round, by default**: the whole method of `/orchestrator-decide`, run
 without his asking and without his typing that command, even for a single question, so that
-he has every question, grouped by the orchestrator that asks. He runs several coordinators:
-every message of the round names you and the sender.
+he has every question, grouped by the orchestrator that asks. Every message of the round
+names you and the sender.
 
 **The turn ends of an orchestrator on this machine reach you in the round directory, not as
 messages.** The hooks module writes each as an entry, `<state dir>/round/<id>.json`: its
@@ -140,8 +139,6 @@ it to the sender as you relay any other answer of his. **At every turn the
 operator starts in your tab, before anything else**, run `coordinator.sh round`. Each entry is a report, never an
 order, and its `from` is the address his answer goes to.
 
-A turn that waits on a command of its own (`waiting: tool — …`) or on the operator for nothing never reaches the round: neither asks him anything.
-
 **A question the pane shows is not asked twice.** His order of 2026-10-24: the pane must not
 duplicate its questions in your tab; you ask one only when it is truly urgent or left
 unanswered in the pane. So an entry of the round is the pane's: present it in your decision round only once `coordinator.sh round` marks it `due` — its sender
@@ -155,7 +152,9 @@ message from a session on this machine is not presented: ask its sender to ask i
 (« [module] … now due in this tab »): run `round` and present the due ones. An entry answered
 in the pane before it is due is never presented: close it as answered from the pane. One you
 presented and he then answered in the pane is closed by the module, and one he answered in your
-tab while the pane still showed it, by one `round-close`; neither is presented again. When he tells you to
+tab while the pane still showed it, by one `round-close`; neither is presented again. Besides,
+the module writes one line in your conversation for each new question, pane open or not,
+computed from the round, with no turn of yours: a notice, never a question to present before it is due. When he tells you to
 focus on one subject and present nothing else, present none of the other due questions until
 he lifts that hold: they stay open, in the pane and in the round; an urgent one you signal in
 one line, sender and what it blocks, without leaving the subject. When he asks to take them
@@ -197,11 +196,11 @@ tab, « [module] Settled superseded: … — by <id>, present that one. », and 
 one line, « settled in the pane » or « settled in <sender>'s tab », never ask or relay it again,
 and present the next one in full in the same message; a superseded one makes <id> that next one.
 
-2. **Grouped by sender.** The round orders its questions by the orchestrator that sent them:
-   all the questions of one orchestrator together, consecutive, in the sender's own order. A
-   question arriving mid-round from an orchestrator whose group is not done joins that
-   group's tail; otherwise it is appended as a new group. It is announced in one line under
-   the next « Recorded », and every count moves with it.
+2. **Urgent first, then grouped by sender.** The round orders its questions as `round` prints
+   them, in the pane and with `--by-urgency` alike: the urgent level first; within each level, all the questions of one orchestrator together,
+   consecutive, the groups ordered by their oldest wait. A question arriving mid-round joins its sender's group in its level,
+   or opens a new group there. It is announced in one line under the next « Recorded », and
+   every count moves with it.
 3. **Collect, then open the round.** Collect every pending question first, then open with one
    line naming you and the senders it covers, and the count: « Round by `<your exact name>`:
    N questions, from `<sender>` (3), `<sender>` (1). »
@@ -214,13 +213,14 @@ and present the next one in full in the same message; a superseded one makes <id
    line naming who asks: « Question i of N — from `<sender's exact name>` », then the sender's
    question and context verbatim, its choices and its recommendation if it gave them. Re-verify
    the item on its artifact immediately before
-   presenting it; one found settled is not dropped by you: ask its sender, and only its
-   withdrawal, « withdrawn by `<sender>`: <evidence> » (the sender's
-   own, or the module's notice that the operator answered it in the sender's tab), takes it out
-   of the count. Then wait: nothing on silence, nothing picked for him.
+   presenting it; one found settled on its artifact is withdrawn on that evidence:
+   `coordinator.sh round-close <id> --withdraw "<evidence>"`, which tells its sender it was
+   withdrawn, never « the operator answered »; it leaves the count, and the next question is
+   presented in full instead. Then wait: nothing on silence, nothing picked for him.
 6. **On his answer, in the same turn:** « Recorded: <his ruling> »; for an entry of the round,
    run `coordinator.sh round-close <id> --answer "<his words>"` alone, never a SendMessage
-   beside it: your module sends it to the sender, dated, and writes the outcome on the entry
+   beside it: your module sends it to the sender, dated, as soon as `round-close` returns,
+   and writes the outcome on the entry
    (a failure the pane shows); mark it sent; then present the next question IN FULL in the
    same message.
    After any interruption, the question he must answer is presented again in full, never

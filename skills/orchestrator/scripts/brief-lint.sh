@@ -9,28 +9,8 @@
 # Prints one line per finding and exits 1 when there is any; exits 0 and says so
 # otherwise. Every check is mechanical: this reads the file, it does not judge the work.
 #
-# Why it exists: specification is the largest category of multi-agent failure, and a brief
-# is the whole specification act. Two defects reached a live agent before anything read
-# the file — a path built from a variable the agent's shell does not set, and a second
-# session reference sitting beside the real one, inside the rule whose point is that there
-# is exactly one address.
-#
-# Check 9 also refuses a duty ordered after the delivery in an implementer brief: the
-# phrases that keep a finished agent's tab idle (stand by, stay until merged, clean up
-# after the merge).
-#
-# Check 11 holds an orchestrator succession brief (first line `# Orchestrator succession
-# brief`) to 10,000 characters, the open-questions value apart.
-#
-# Check 12 refuses a succession brief, from the template or written by hand, that does not
-# have its reader close the predecessor's tab.
-#
-# Check 15 refuses a succession brief whose Live state lacks the operator's open questions, leaves
-# them empty or as the placeholder (`none` passes).
-#
-# Check 13 refuses a pull request title the brief imposes (`title \`...\``) of more than 60
-# characters. The operator's writing rule caps a pull request title at 60, and a brief that
-# imposes a longer one makes its implementer choose between the brief and the rule.
+# A brief is the whole specification act: a defect in it reaches a live agent before anything
+# else reads the file. Each check's rule is stated in the comment above its code.
 #
 # Check 14 refuses an implementer brief whose delivery opens a pull request without saying
 # how it comes out labelled `Not Ready`: through the github tool's `pr-create --draft`, or
@@ -309,11 +289,7 @@ if is_class implementer; then
     ' "$brief" 2>/dev/null || true)
 fi
 
-# 8. Retired with the context gauge's shell script (the hooks-module cutover): the
-#    check demanded an absolute path to context-gauge.sh, and the file is gone — the
-#    module measures every session itself, in-process, and no brief cites a script
-#    anymore. The number stays unused rather than renumbering every check above,
-#    which the suite's brief-lint cases cite by their finding texts.
+# 8. Retired with the context gauge's script; the number stays unused.
 
 # 11. A succession brief is read whole by a session that has nothing else in its context yet:
 #     past 10,000 characters it costs a successor what the live state was meant to save. The

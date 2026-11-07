@@ -19,9 +19,9 @@ and no file written (this brief aside) — the exchange with your predecessor ex
 1. **Read** the report and this brief. Whatever is still owed the operator is yours from here.
 2. **Find yourself.** `ListAgents` — your exact name and reference (its first line); the
    launcher `{{ITERM_AGENT_SH}}`, its `list` — your tty, the row marked `self`.
-3. **Take over.** Message `{{PREDECESSOR}}` « takeover confirmed », then wait for
-   its « handed over ». Until then it forwards you what still reaches it. Five minutes without
-   « handed over »: read its screen with the launcher's `screen --tty {{PREDECESSOR_TTY}}`, and go on
+3. **Take over.** Message `{{PREDECESSOR}}` « takeover confirmed » and wait for its « handed
+   over ». Until then it forwards you what still reaches it. Five minutes without « handed
+   over »: read its screen with the launcher's `screen --tty {{PREDECESSOR_TTY}}`, and go on
    only on a prompt with nothing in flight.
 4. **Close its tab, and prove it.** The launcher's `list` must still show an `Audit :` session
    on {{PREDECESSOR_TTY}} that is not yours. Then:
@@ -36,15 +36,16 @@ and no file written (this brief aside) — the exchange with your predecessor ex
 
 ## Standing context
 
-- Your tab sits where your predecessor's did, immediately left of the orchestrator's: it was
-  spawned with `--successor`, which lands immediately right of its caller, on its model and
-  under remote control under its title, and joins no chain. `rotate` and `move` refuse an
-  `Audit :` tab unless `--force`.
 - After the report the operator may keep you on. At your own gate with his work in hand, you
-  succeed the same way: copy `{{SUCCESSION_TEMPLATE}}` beside the report as the next succession
-  brief and fill every placeholder (the report's path, the operator's work still owed with its
-  state, your own name, reference and tty), then spawn — no title, it takes yours:
+  succeed: copy `{{SUCCESSION_TEMPLATE}}` beside the report as the next succession brief and
+  fill every placeholder (the report's path, the operator's work still owed with its state,
+  your own name, reference and tty, the launcher, the template's own absolute path and the
+  repository), then spawn — no title, it takes yours:
 
   ```
   {{ITERM_AGENT_SH}} spawn --dir {{REPOSITORY}} --successor --inherit-model --permission-mode auto --prompt "Read and execute <succession brief path>"
   ```
+
+  Next, tell the operator in one line that you are handing over: to whom, and what is still
+  owed him. THEN wait for « takeover confirmed », answer it with
+  « handed over » as your last message and end the turn: the successor closes this tab.

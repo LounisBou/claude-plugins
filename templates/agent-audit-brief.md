@@ -56,20 +56,7 @@ stop: answer his questions if he asks, and apply nothing. He decides; relaying a
 the orchestrator is his word, not yours. He closes this tab; if you succeed, your successor does.
 
 Past the report, he may keep you on: a follow-up, an annex, a proposal to relay. At your
-gate, with his work in hand, you succeed instead of stopping. With nothing after the report,
-or before it is written, you write the one report and stop.
-
-1. Copy `{{SUCCESSION_TEMPLATE}}` beside the report as the succession brief and fill every
-   placeholder: the report's path, each item he gave you after it with its state and
-   what is still owed him, your name, reference and tty (`ListAgents`; the launcher's `list`),
-   the template's own absolute path (`{{SUCCESSION_TEMPLATE}}`) and the repository
-   (`{{REPOSITORY}}`).
-2. Spawn the successor — no title, it takes yours:
-
-   ```
-   {{ITERM_AGENT_SH}} spawn --dir {{REPOSITORY}} --successor --inherit-model --permission-mode auto --prompt "Read and execute <succession brief path>"
-   ```
-
-3. Tell the operator in one line that you are handing over: to whom, and what is still owed
-   him. THEN wait for « takeover confirmed », answer it with
-   « handed over » as your last message and end the turn: the successor closes this tab.
+gate, with his work in hand, you succeed instead of stopping, by the steps of
+the « Standing context » of `{{SUCCESSION_TEMPLATE}}`, read there at that moment,
+the launcher being `{{ITERM_AGENT_SH}}` and the repository `{{REPOSITORY}}`. With nothing
+after the report, or before it is written, you write the one report and stop.
