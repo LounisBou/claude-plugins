@@ -5,6 +5,7 @@
 //   npm run marketplace -- --check exit 1 when the file is not what the manifests give
 import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { processIo, type Io } from './lib/io.ts'
 import { isEntry, isRecord, PLUGINS_DIR, readPlugins, type Plugin } from './lib/plugins.ts'
 
 export const MARKETPLACE_PATH = join('.claude-plugin', 'marketplace.json')
@@ -28,18 +29,20 @@ export function render(current: unknown, plugins: readonly Plugin[]): string {
   return `${JSON.stringify({ ...current, plugins: plugins.map(entryOf) }, null, 2)}\n`
 }
 
-function main(root: string, check: boolean): number {
+export function run(root: string, args: readonly string[], io: Io): number {
+  const check = args.includes('--check')
   const path = join(root, MARKETPLACE_PATH)
   const text = readFileSync(path, 'utf8')
   const expected = render(JSON.parse(text), readPlugins(root))
   if (text === expected) return 0
   if (check) {
-    console.error(`${MARKETPLACE_PATH} is out of date with the plugin manifests: run \`npm run marketplace\` and commit it.`)
+    io.err(`${MARKETPLACE_PATH} is out of date with the plugin manifests: run \`npm run marketplace\` and commit it.`)
     return 1
   }
   writeFileSync(path, expected)
-  console.log(`${MARKETPLACE_PATH} rewritten`)
+  io.out(`${MARKETPLACE_PATH} rewritten`)
   return 0
 }
 
-if (isEntry(import.meta.url)) process.exit(main(process.cwd(), process.argv.includes('--check')))
+/* node:coverage ignore next */
+if (isEntry(import.meta.url)) process.exit(run(process.cwd(), process.argv.slice(2), processIo))

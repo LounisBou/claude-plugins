@@ -29,7 +29,7 @@ jobs:
       - run: npm ci
       - name: strict types
         run: npm run typecheck
-      - name: tooling tests
+      - name: tooling tests, 100 % lines, branches and functions
         run: npm test
       - name: prompt budgets and duplicates only fall
         run: npm run -s prompts > /dev/null

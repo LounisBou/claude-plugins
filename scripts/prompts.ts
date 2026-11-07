@@ -6,6 +6,7 @@
 //   npm run prompts -- --lower   rewrite ci/prompts.json down to what is measured
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
+import { processIo, type Io } from './lib/io.ts'
 import { isEntry, isRecord, PLUGINS_DIR, readPlugins } from './lib/plugins.ts'
 
 export const CEILINGS_PATH = join('ci', 'prompts.json')
@@ -83,7 +84,8 @@ export function breaches(measured: Measure, ceilings: Ceilings): string[] {
   return faults
 }
 
-export function parseCeilings(raw: unknown): Ceilings {
+/** The ceilings, and the file's authored fields to keep when it is rewritten. */
+export function parseCeilings(raw: unknown): { readonly ceilings: Ceilings; readonly authored: Readonly<Record<string, unknown>> } {
   if (!isRecord(raw) || !isRecord(raw['budgets']) || typeof raw['duplicates'] !== 'number') {
     throw new Error(`${CEILINGS_PATH}: expected { "budgets": { <plugin>: <tokens> }, "duplicates": <count> }`)
   }
@@ -92,7 +94,7 @@ export function parseCeilings(raw: unknown): Ceilings {
     if (typeof value !== 'number') throw new Error(`${CEILINGS_PATH}: budget of "${plugin}" is not a number`)
     budgets[plugin] = value
   }
-  return { budgets, duplicates: raw['duplicates'] }
+  return { ceilings: { budgets, duplicates: raw['duplicates'] }, authored: raw }
 }
 
 function promptFiles(root: string): PromptFile[] {
@@ -108,19 +110,19 @@ function promptFiles(root: string): PromptFile[] {
   return files
 }
 
-function main(root: string, lower: boolean): number {
+export function run(root: string, args: readonly string[], io: Io): number {
+  const lower = args.includes('--lower')
   const measured = measure(promptFiles(root))
-  const ceilings = parseCeilings(JSON.parse(readFileSync(join(root, CEILINGS_PATH), 'utf8')))
+  const { ceilings, authored } = parseCeilings(JSON.parse(readFileSync(join(root, CEILINGS_PATH), 'utf8')))
   const faults = breaches(measured, ceilings)
-  for (const fault of faults) console.error(fault)
-  for (const { sentence, paths } of measured.duplicates) console.log(`said ${paths.length}×: « ${sentence.slice(0, 90)}… » in ${paths.join(', ')}`)
+  for (const fault of faults) io.err(fault)
+  for (const { sentence, paths } of measured.duplicates) io.out(`said ${paths.length}×: « ${sentence.slice(0, 90)}… » in ${paths.join(', ')}`)
   if (faults.length > 0) return 1
   if (lower) {
-    const raw: unknown = JSON.parse(readFileSync(join(root, CEILINGS_PATH), 'utf8'))
-    const authored = isRecord(raw) ? raw : {}
     writeFileSync(join(root, CEILINGS_PATH), `${JSON.stringify({ ...authored, budgets: measured.tokens, duplicates: measured.duplicates.length }, null, 2)}\n`)
   }
   return 0
 }
 
-if (isEntry(import.meta.url)) process.exit(main(process.cwd(), process.argv.includes('--lower')))
+/* node:coverage ignore next */
+if (isEntry(import.meta.url)) process.exit(run(process.cwd(), process.argv.slice(2), processIo))

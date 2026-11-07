@@ -66,19 +66,15 @@ export function parseManifest(raw: unknown, origin: string): Manifest {
 
 /** Orders two MAJOR.MINOR.PATCH versions: negative, zero or positive. */
 export function compareVersions(a: string, b: string): number {
-  const pa = parseVersion(a)
-  const pb = parseVersion(b)
-  for (let i = 0; i < 3; i++) {
-    const delta = (pa[i] ?? 0) - (pb[i] ?? 0)
-    if (delta !== 0) return delta
-  }
-  return 0
+  const [majorA, minorA, patchA] = parseVersion(a)
+  const [majorB, minorB, patchB] = parseVersion(b)
+  return majorA - majorB || minorA - minorB || patchA - patchB
 }
 
-function parseVersion(version: string): number[] {
+function parseVersion(version: string): readonly [number, number, number] {
   const match = SEMVER.exec(version)
   if (!match) throw new Error(`version "${version}" is not MAJOR.MINOR.PATCH`)
-  return match.slice(1, 4).map(Number)
+  return [Number(match[1]), Number(match[2]), Number(match[3])]
 }
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

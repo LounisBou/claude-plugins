@@ -5,6 +5,8 @@
 //
 //   npm run plugin-matrix   prints the matrix; appends it to $GITHUB_OUTPUT when set
 import { appendFileSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { processIo, type Io } from './lib/io.ts'
 import { isEntry, isRecord, readPlugins } from './lib/plugins.ts'
 
 export const PLATFORMS = ['ubuntu-latest', 'macos-latest'] as const
@@ -45,14 +47,15 @@ export function matrixOf(blocking: ReadonlyMap<string, ReadonlySet<Platform>>): 
   return [...blocking].flatMap(([plugin, platforms]) => PLATFORMS.map(os => ({ plugin, os, blocking: platforms.has(os) })))
 }
 
-function main(): number {
-  const plugins = readPlugins('.').map(plugin => plugin.dir)
-  const matrix = matrixOf(parseBlocking(JSON.parse(readFileSync('ci/plugins.json', 'utf8')), plugins))
+export function run(root: string, _args: readonly string[], io: Io): number {
+  const plugins = readPlugins(root).map(plugin => plugin.dir)
+  const matrix = matrixOf(parseBlocking(JSON.parse(readFileSync(join(root, 'ci', 'plugins.json'), 'utf8')), plugins))
   const line = JSON.stringify({ include: matrix })
-  console.log(line)
-  const output = process.env['GITHUB_OUTPUT']
+  io.out(line)
+  const output = io.env['GITHUB_OUTPUT']
   if (output !== undefined) appendFileSync(output, `matrix=${line}\n`)
   return 0
 }
 
-if (isEntry(import.meta.url)) process.exit(main())
+/* node:coverage ignore next */
+if (isEntry(import.meta.url)) process.exit(run(process.cwd(), process.argv.slice(2), processIo))
