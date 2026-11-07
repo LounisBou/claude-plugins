@@ -1,0 +1,7 @@
+{
+  "name": "@claude-plugins/core",
+  "private": true,
+  "description": "What every plugin of the repository shares, defined once.",
+  "type": "module",
+  "exports": { ".": "./src/index.ts" }
+}
