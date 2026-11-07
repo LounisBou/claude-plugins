@@ -1,0 +1,4 @@
+{
+  "description": "The status bar hooks module",
+  "modules": ["./register.ts"]
+}
