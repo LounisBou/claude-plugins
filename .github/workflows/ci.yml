@@ -1,0 +1,69 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository:
+    name: repository rules
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: strict types
+        run: npm run typecheck
+      - name: tooling tests
+        run: npm test
+      - name: catalogue matches the manifests
+        run: npm run marketplace -- --check
+      - name: a shipped change raises its plugin's version
+        if: github.event_name == 'pull_request'
+        run: npm run version-bump -- origin/${{ github.base_ref }}
+      - id: matrix
+        name: plugin matrix
+        run: npm run -s plugin-matrix
+
+  plugin:
+    name: ${{ matrix.plugin }} on ${{ matrix.os }}${{ matrix.blocking && '' || ' (not yet blocking)' }}
+    needs: repository
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.repository.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ !matrix.blocking }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: tools the suites call
+        run: |
+          python -m pip install --quiet pytest
+          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get install -y -qq tmux jq; else brew install tmux jq; fi
+      - name: suite
+        env:
+          CLAUDE_GITHUB_ROOT: ${{ github.workspace }}/plugins/github
+          LC_ALL: en_US.UTF-8
+        run: plugins/${{ matrix.plugin }}/tests/run-tests.sh
