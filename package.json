@@ -1,0 +1,21 @@
+{
+  "name": "claude-plugins",
+  "private": true,
+  "description": "LounisBou's Claude Code plugins, one repository, one catalogue.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=22.6"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --experimental-strip-types --no-warnings --test 'scripts/**/*.test.ts'",
+    "marketplace": "node --experimental-strip-types --no-warnings scripts/marketplace.ts",
+    "version-bump": "node --experimental-strip-types --no-warnings scripts/version-bump.ts",
+    "plugin-matrix": "node --experimental-strip-types --no-warnings scripts/plugin-matrix.ts"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.21",
+    "typescript": "5.8.3"
+  }
+}
