@@ -1,0 +1,4 @@
+{
+  "description": "The norms hooks module",
+  "modules": ["./register.ts"]
+}

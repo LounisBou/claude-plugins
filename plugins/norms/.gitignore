@@ -1,0 +1,9 @@
+.DS_Store
+*.bak
+__pycache__/
+*.pyc
+.claude-plugin/types/
+
+# docs/ holds specs and implementation plans. They are working artefacts and
+# stay local: the global ~/.gitignore excludes them and this repository does
+# not override that.
