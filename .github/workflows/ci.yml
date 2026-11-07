@@ -19,10 +19,10 @@ jobs:
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -43,7 +43,7 @@ jobs:
         run: npm run -s plugin-matrix
 
   plugin:
-    name: ${{ matrix.plugin }} on ${{ matrix.os }}${{ matrix.blocking && '' || ' (not yet blocking)' }}
+    name: ${{ matrix.plugin }} on ${{ matrix.os }}${{ !matrix.blocking && ' (not yet blocking)' || '' }}
     needs: repository
     strategy:
       fail-fast: false
@@ -52,16 +52,17 @@ jobs:
     continue-on-error: ${{ !matrix.blocking }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
       - uses: oven-sh/setup-bun@v2
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: tools the suites call
         run: |
+          npm install --global --silent @anthropic-ai/claude-code@2.1.319
           python -m pip install --quiet pytest
           if [ "$RUNNER_OS" = Linux ]; then sudo apt-get install -y -qq tmux jq; else brew install tmux jq; fi
       - name: suite
