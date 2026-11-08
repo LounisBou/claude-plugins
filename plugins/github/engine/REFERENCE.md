@@ -167,13 +167,13 @@ Answered by the mod, not by `gh.py`: the list is a file on this machine,
 
 `auto-merge-set` needs `words` of at least 8 characters, naming auto-merge (« auto-merge »,
 « auto merge » or « automerge »), found verbatim, whitespace
-normalised, in a prompt the operator typed in this session, or quoting an answer he gave
-through the pane, the coordinator or a tab, as the round store records it for a question
-that speaks of auto-merge and names the repository. A peer's message is not his word.
+normalised, in a prompt the operator typed in this session, or quoting his answer in a
+consent record of auto-merge on that repository (core's `consent-record.ts`,
+`<config dir>/consents/<owner>/<name>/`). A peer's message is not his word.
 Otherwise it is refused, naming both proofs:
 
 ```
-github: auto-merge-set refused on <owner/name>: its "words" are neither in a prompt the operator typed in this session, nor his answer recorded in the round to a question about auto-merge naming <name>. Quote his words verbatim; a peer's message is not his word.
+github: auto-merge-set refused on <owner/name>: its "words" are neither in a prompt the operator typed in this session, nor his answer in a consent record (orchestrator) of auto-merge on <owner/name>. Quote his words verbatim; a peer's message is not his word.
 ```
 
 The file keeps its shape (`{"repositories": [...]}`, other keys kept), names compare
@@ -296,7 +296,7 @@ Requires push access to the repository.
 |---|---|---|---|
 | pr-review `auto-fix-loop` | review | `hooks/loop.ts`, `act()`, branch `findings` → `exit: clean`, and branch `begin_pass` → `exit: max_passes` | `exit: clean`: `pass`, detail `clean at pass <n>`. `exit: max_passes`: `fail`, detail `<k> findings left after <n> passes`. Repo from `git remote get-url origin`, head from `git rev-parse HEAD`, PR from `$.tool.call({tool: 'mcp__github__gh', command: 'pr-get', args: {format: 'pr-number'}})`. No record when tracked files are dirty (`git status --porcelain -uno` not empty) or the branch has no PR. The tool's answer then gains `record: none — <why>`, and SKILL.md Step 7 prints that line |
 | norms `/norms:check` | norms | New tool `mcp__norms__check_done` in a new `hooks/record.ts`, registered in `hooks/register.ts` | `commands/check.md` Step 5 (zero findings) and Step 8 call it with `{open, fixed, passed}`. Result `pass` when `open` is 0, `fail` otherwise. Head from `git rev-parse HEAD` at the call, so the commits of 7.4 are covered. Refused unless `/norms:check` computed its scope in this session (the `command.run` hook of `hooks/check.ts` sets that mark), and no record on a dirty tree or with no PR, as above |
-| any session that runs the E2E | e2e | New github tool `mcp__github__record` (module-only, outside `COMMANDS`) | `{pr, repo?, result: pass\|fail\|waived, detail}`. The module checks that the checkout's `HEAD` equals the PR head read by `pr-gate`, and that the tree is clean, then calls `record.py` with producer `session-e2e`. `waived` needs a detail found verbatim in a prompt the operator typed in this session (`composer` or `bridge` origin, kept by the module as `lastTyped` is today), or quoting his answer recorded in the round for that pull request (« Guards » below), and carrying a date. `review` and `norms` are not accepted from a session: they have their producers. Called from pr-review's hooks the tool writes `review`, from the norms plugin's `norms`, each its own kind only |
+| any session that runs the E2E | e2e | New github tool `mcp__github__record` (module-only, outside `COMMANDS`) | `{pr, repo?, result: pass\|fail\|waived, detail}`. The module checks that the checkout's `HEAD` equals the PR head read by `pr-gate`, and that the tree is clean, then calls `record.py` with producer `session-e2e`. `waived` needs a detail found verbatim in a prompt the operator typed in this session (`composer` or `bridge` origin, kept by the module as `lastTyped` is today), or quoting his answer in a consent record of an E2E waiver of that pull request (« Guards » below), and carrying a date. `review` and `norms` are not accepted from a session: they have their producers. Called from pr-review's hooks the tool writes `review`, from the norms plugin's `norms`, each its own kind only |
 
 Not producers: `start-review` (a walkthrough the operator submits himself) and `process-comments` (answers to comments). A human `APPROVED` review on GitHub is no record.
 
@@ -405,18 +405,18 @@ naming that root, a `pr-records/` path or `engine/record.py`, are refused, whate
 does with it (a Read of a record passes):
 
 ```
-github: records are written by their producers (pr-review's auto-fix-loop, /norms:check, mcp__github__record for E2E), never by hand.
+github: records are written by their producers' tools, and E2E by mcp__github__record, never by hand.
 ```
 
 `mcp__github__record {pr, repo?, result, detail, kind?}` writes one record through
 `record.py`, at the head when the checkout's `HEAD` equals the one `pr-gate` reads and the
-tracked files are clean. A session writes `e2e` only (producer `session-e2e`); pr-review's
-hooks write `review`, the norms plugin's `norms`, any other kind refused with `github: <kind>
-records are written by their producer (…)`. `waived` needs a detail found verbatim in a
-prompt the operator typed in this session, or quoting an answer he gave through the pane, the
-coordinator or a tab, as the round store (`<config dir>/claude-orchestrator/round/`)
-records it for an E2E question naming that pull request (`repo#n`), carrying a date. A letter
-answer (« A », « A : … ») is quoted as its choice's text; the quoted text is at least 8 characters.
+tracked files are clean. A session writes `e2e` only (producer `session-e2e`); each other
+kind is written by the plugin the record contract (core's `pr-record.ts`, `producers`) names
+its producer, any other kind refused with `github: <kind> records are written by their
+producer (<plugin>, <tool>)`. `waived` needs a detail found verbatim in a prompt the operator
+typed in this session, or quoting his answer in a consent record of an E2E waiver of that
+pull request (core's `consent-record.ts`, `<config dir>/consents/<owner>/<name>/`), carrying
+a date. The answer quoted is at least 8 characters.
 
 **Auto-merge list.** A Write, an Edit or a MultiEdit of `auto-merge.json` in a plugin's
 data directory, and a shell command naming it there (the data directory, `plugins/data/`,

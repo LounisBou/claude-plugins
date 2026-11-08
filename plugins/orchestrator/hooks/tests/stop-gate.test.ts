@@ -15,7 +15,7 @@ import {
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE,
 } from '../stop-gate.ts'
 import { register as registerGuards } from '../guards.ts'
-import { register as registerWait, Declarations, parseDeclaration, withDeclaredWait, WAIT_TOOL } from '../wait.ts'
+import { register as registerWait, Declarations, declaredConsent, parseDeclaration, withDeclaredWait, WAIT_TOOL } from '../wait.ts'
 import { logLineOf, blockOf } from './fakes.ts'
 import { roundEntry } from '../round.ts'
 import { register as registerNaming, END_TOOL } from '../naming.ts'
@@ -2170,6 +2170,22 @@ test('a declaration is validated: a known kind, and what it blocks where the kin
   for (const bad of [{}, { kind: 'later' }, { kind: 'operator' }, { kind: 'tool', blocks: ' ' }, { kind: 'deferred', blocks: 3 }, { kind: 'tool', blocks: 'x'.repeat(301) }, { kind: 'done', urgent: true }, { kind: 'operator', blocks: 'G1', urgent: 'yes' }]) {
     expect('error' in parseDeclaration(bad)).toBe(true)
   }
+})
+
+test('an operator question may declare the subject it asks consent on, read by the relay in its own turn only', () => {
+  const waiver = { kind: 'e2e-waiver', repo: 'acme/thing', pr: 12 }
+  expect(parseDeclaration({ kind: 'operator', blocks: 'G1', consent: waiver })).toEqual({ wait: { kind: 'operator', blocks: 'G1', consent: waiver } })
+  for (const bad of [
+    { kind: 'tool', blocks: 'x', consent: waiver }, { kind: 'operator', blocks: 'G1', consent: { kind: 'e2e-waiver', repo: 'acme/thing' } },
+    { kind: 'operator', blocks: 'G1', consent: { kind: 'merge', repo: 'acme/thing' } },
+  ]) expect('error' in parseDeclaration(bad)).toBe(true)
+  const declarations = new Declarations()
+  declarations.turnStarted()
+  expect(declaredConsent(declarations)).toBe(null)
+  declarations.declare({ kind: 'operator', blocks: 'G1', consent: { kind: 'auto-merge', repo: 'acme/thing' } })
+  expect(declaredConsent(declarations)).toEqual({ kind: 'auto-merge', repo: 'acme/thing' })
+  declarations.turnStarted()
+  expect(declaredConsent(declarations)).toBe(null)
 })
 
 test('the declare_wait tool is registered at every start, and refused to a subagent and on a bad input', async () => {

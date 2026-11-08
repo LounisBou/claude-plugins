@@ -8,6 +8,14 @@ export const PR_RECORD_CONTRACT = {
   kinds: ['review', 'norms', 'e2e'],
   results: ['pass', 'fail', 'waived'],
   waivable: 'e2e',
+  // The plugin, by the name its host gives it, that alone writes each kind through
+  // mcp__github__record, and the tool it writes it with; a kind with no producer here is written by
+  // any caller (`open`).
+  producers: {
+    review: { plugin: 'pr-review', tool: 'its auto-fix-loop' },
+    norms: { plugin: 'norms', tool: '/norms:check' },
+  },
+  open: 'e2e',
   detail_max: 500,
   patterns: {
     head: '^[0-9a-fA-F]{40}$',
@@ -38,6 +46,17 @@ export interface PrRecord {
 export const KINDS: readonly Kind[] = contract.kinds.filter(isKind)
 export const RECORD_VERSION = contract.version
 export const DETAIL_MAX = contract.detail_max
+
+/** The kind a caller of mcp__github__record writes: the one its plugin produces, the open kind otherwise. */
+export function kindFor(origin: string): Kind {
+  for (const kind of KINDS) if (producerOf(kind)?.plugin === origin) return kind
+  return contract.open
+}
+
+/** The producer the contract declares for a kind, or undefined for the kind any caller writes. */
+export function producerOf(kind: string): { readonly plugin: string; readonly tool: string } | undefined {
+  return Object.entries(contract.producers).find(([named]) => named === kind)?.[1]
+}
 
 const HEAD = new RegExp(contract.patterns.head)
 const PRODUCER = new RegExp(contract.patterns.producer)

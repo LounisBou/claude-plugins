@@ -1284,6 +1284,20 @@ test('an answer not delivered keeps the entry answered, is logged, and is said u
   expect(texts(await render()).some(t => t.startsWith('not delivered:'))).toBe(false)
 })
 
+test('the answer to a question that asks consent is written as its subject\'s consent record, the choice as its text', async () => {
+  const consent = { kind: 'e2e-waiver' as const, repo: 'Acme/Thing', pr: 12 }
+  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, consent })
+  const plain = entry('Orch : low', '2026-10-18T10:04:00.000Z', { session: 'low', choices: CHOICES })
+  const { fx } = await askingPane([asked, plain])
+  const pane = { opened: null, ticker: null, other: new Set<string>(), writing: null, undelivered: new Map(), answering: new Set<string>() }
+  await answerFromPane(fx.dollar, pane, asked, CHOICES[0])
+  await answerFromPane(fx.dollar, pane, plain, CHOICES[0])
+  const records = [...fx.files.keys()].filter(p => p.startsWith(`${HOME}/.claude/consents/`))
+  expect(records).toEqual([`${HOME}/.claude/consents/acme/thing/${asked.id}.json`])
+  const record = JSON.parse(String(fx.files.get(records[0])))
+  expect({ ...record, at: 'x' }).toEqual({ v: 1, subject: consent, entry: asked.id, question: asked.question, answer: CHOICES[0].text, by: 'pane', at: 'x' })
+})
+
 test('two live sessions share the sender\'s name: the answer goes to the entry\'s own session', async () => {
   const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low-2', choices: CHOICES })
   const { fx, sent, render } = await askingPane([asked])
