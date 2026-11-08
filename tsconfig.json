@@ -10,6 +10,8 @@
     "plugins/orchestrator/hooks/session-name.ts",
     "plugins/orchestrator/hooks/short-names.ts",
     "plugins/orchestrator/hooks/gauge-core.ts",
-    "plugins/orchestrator/hooks/move.ts"
+    "plugins/orchestrator/hooks/move.ts",
+    "plugins/orchestrator/hooks/gauge.ts",
+    "plugins/orchestrator/hooks/host.ts"
   ]
 }
