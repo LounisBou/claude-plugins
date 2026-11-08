@@ -10729,8 +10729,15 @@ check "a grid naming one model twice, by identifier and by alias, runs it once" 
   "$(wc -l < "$B4T" | tr -d ' ')|$(last_line "$out")"
 if [ -f "$WORK/aliases.bench.bak" ]; then cp "$WORK/aliases.bench.bak" "$BS/routing/aliases.json"; else rm -f "$BS/routing/aliases.json"; fi
 : > "$BT"
+# The cap holds during the run: a trial starts only when its worst cost (the manifest's 1.25
+# and the judge's 2.00) fits beside what is spent and the worst of the trials in flight.
 out=$(rb --grid b-model/medium,c-model/medium --max-usd 0.15 --concurrency 1)
-check "the cap stops new trials and says what is left" "1" "$(printf '%s\n' "$out" | tail -1 | grep -c '^bench: spent=0.24 trials=2 unmeasured=2 pruned=0$')"
+check "a trial whose worst cost does not fit under the cap never starts" "bench: spent=0.00 trials=0 unmeasured=4 pruned=0" \
+  "$(printf '%s\n' "$out" | tail -1)"
+: > "$BT"
+out=$(rb --grid b-model/medium,c-model/medium --max-usd 3.5 --concurrency 2)
+check "the cap stops new trials once the next one's worst cost passes it, and says what is left" \
+  "bench: spent=0.36 trials=3 unmeasured=1 pruned=0" "$(printf '%s\n' "$out" | tail -1)"
 : > "$BT"
 out=$(rb --grid b-model/medium,c-model/medium --max-usd 100 --reps 1 --concurrency 2)
 check "two trials at once measure the same grid" "6|0" \
@@ -11123,8 +11130,6 @@ check "the calibration reference walks the bench in the operator's order" "yes|y
   "$(spells "$MRC" 'max-usd')|$(spells "$MRC" 'generalize')|$(spells "$MRC" 'export')"
 check "the calibration reference states that a trial's session can reach the real repository" "yes" \
   "$(spells "$MRC" 'with its own permissions on the machine and could reach the real repository')"
-check "the calibration reference states that a run can pass its cap by the trials in flight" "yes" \
-  "$(spells "$MRC" "a run can pass \`--max-usd\` by at most N per-trial ceilings")"
 check "the calibration reference states the selection by equivalence, its keys and the size stamp" "yes|yes|yes|yes" \
   "$(spells "$MRC" '{"selection": {"delta": <d>, "bar": <b>}}')|$(spells "$MRC" 'The entry**: the eligible pair with the lowest expected cost')|$(spells "$MRC" 'the files matching `test_globs` left out')|$(spells "$MRC" 'show [--detail] [<slug>...]')"
 check "the calibration reference no longer states a floor for the tables" "no" "$(spells "$MRC" 'The reliability floors')"
