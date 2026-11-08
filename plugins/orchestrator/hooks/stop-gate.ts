@@ -73,13 +73,14 @@ export async function withDeadline<T>(work: ((signal: AbortSignal) => Promise<T>
 // operator, a command or monitor of its own, every goal met, or only deferred work left.
 export const WAIT_KINDS = ['operator', 'tool', 'done', 'deferred'] as const
 export type WaitKind = typeof WAIT_KINDS[number]
-export type DeclaredWait = { kind: WaitKind; blocks: string }
+// `urgent` marks an operator wait the coordinator presents at once (URGENT_LINE).
+export type DeclaredWait = { kind: WaitKind; blocks: string; urgent?: true }
 
 // The one machine line a declaration spells: the gate decides on it as on the line it replaces,
 // so a declared wait and a written one are held by the same checks.
 export function waitLine(wait: DeclaredWait): string {
   switch (wait.kind) {
-    case 'operator': return `waiting: operator — blocks: ${wait.blocks}`
+    case 'operator': return `waiting: operator${wait.urgent ? ' (urgent)' : ''} — blocks: ${wait.blocks}`
     case 'tool': return `waiting: tool — ${wait.blocks}`
     case 'deferred': return `waiting: deferred — ${wait.blocks}`
     case 'done': return 'waiting: done'

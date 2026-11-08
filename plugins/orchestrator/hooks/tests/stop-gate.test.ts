@@ -12,7 +12,7 @@ import {
   projectCheckouts, watchedNumbers, parseCiWatchLog, watchNumberOf, pullRequestOf,
   checkWake, checkWakeDone, checkCi, chainEntries, logTell, isSuccessorSpawn, processTable, ownWatches, ownBackground, hostTasks,
   noticeFrom, awaitingAny, NOTICE_TTL_MS, parseGoalsCheck, goalsPaths, presentGoals, goalsShownPath, GOALS_SHOW,
-  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows,
+  orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows, URGENT_LINE, MACHINE_LINE,
 } from '../stop-gate.ts'
 import { register as registerGuards } from '../guards.ts'
 import { register as registerWait, Declarations, parseDeclaration, withDeclaredWait, WAIT_TOOL } from '../wait.ts'
@@ -2165,7 +2165,9 @@ test('a declaration is validated: a known kind, and what it blocks where the kin
   expect(parseDeclaration({ kind: 'tool', blocks: 'ci-watch.sh 12' })).toEqual({ wait: { kind: 'tool', blocks: 'ci-watch.sh 12' } })
   expect(parseDeclaration({ kind: 'deferred', blocks: '2 items' })).toEqual({ wait: { kind: 'deferred', blocks: '2 items' } })
   expect(parseDeclaration({ kind: 'done', blocks: 'whatever' })).toEqual({ wait: { kind: 'done', blocks: '' } })
-  for (const bad of [{}, { kind: 'later' }, { kind: 'operator' }, { kind: 'tool', blocks: ' ' }, { kind: 'deferred', blocks: 3 }, { kind: 'tool', blocks: 'x'.repeat(301) }]) {
+  expect(parseDeclaration({ kind: 'operator', blocks: 'G1', urgent: true })).toEqual({ wait: { kind: 'operator', blocks: 'G1', urgent: true } })
+  expect(parseDeclaration({ kind: 'operator', blocks: 'G1', urgent: false })).toEqual({ wait: { kind: 'operator', blocks: 'G1' } })
+  for (const bad of [{}, { kind: 'later' }, { kind: 'operator' }, { kind: 'tool', blocks: ' ' }, { kind: 'deferred', blocks: 3 }, { kind: 'tool', blocks: 'x'.repeat(301) }, { kind: 'done', urgent: true }, { kind: 'operator', blocks: 'G1', urgent: 'yes' }]) {
     expect('error' in parseDeclaration(bad)).toBe(true)
   }
 })
@@ -2263,6 +2265,11 @@ test('the turn\'s end hands the declared wait to its readers, and shows the answ
   expect(seen).toBe(withDeclaredWait('Watching.', { kind: 'tool', blocks: 'ci-watch.sh 12' }))
   expect(machineLine(seen)).toBe('waiting: tool — ci-watch.sh 12')
   expect(shown).toEqual({ text: 'Watching.' })
+  // An urgent operator wait reaches the turn's end as the urgent line the relay reads.
+  await declare(wait, dollar, { kind: 'operator', blocks: 'G4: the scope', urgent: true })
+  await wait['turn.complete'](dollar, { reason: 'answer', answer: ASKED }, (x: any) => { seen = x.answer; return { text: x.answer } })
+  expect(URGENT_LINE.test(machineLine(seen))).toBe(true)
+  expect(MACHINE_LINE.exec(machineLine(seen))?.[1]).toBe('G4: the scope')
   // An agent's end is not the session's.
   await wait['turn.complete'](dollar, { reason: 'answer', answer: 'Done.', agentId: 'a-1' }, (x: any) => { seen = x.answer; return { text: x.answer } })
   expect(seen).toBe('Done.')

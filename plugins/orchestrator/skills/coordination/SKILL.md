@@ -142,7 +142,7 @@ order, and its `from` is the address his answer goes to.
 **A question the pane shows is not asked twice.** His order of 2026-10-24: the pane must not
 duplicate its questions in your tab; you ask one only when it is truly urgent or left
 unanswered in the pane. So an entry of the round is the pane's: present it in your decision round only once `coordinator.sh round` marks it `due` — its sender
-ended on `waiting: operator (urgent) — blocks: …`, or your pane is closed. Whether he keeps the
+declared its wait on the operator urgent, or your pane is closed. Whether he keeps the
 pane open decides (his ruling of 2026-10-24): open, it holds every other question however long
 it waits; closed, every open one is due at once, and on reopening it draws every pending one,
 those you presented meanwhile included. One with no choice and no labelled field the pane draws last, its text whole

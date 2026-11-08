@@ -46,7 +46,7 @@ plan → brief → launch → verify → review → terminate → replace. Each 
 - **Directives follow decisions**: when a ruling arrives or a defect is about to be repaired, read `references/briefs.md`, « When a decision changes, the directives change in the same move », first.
 - **Kill what you start, delete what you build, prove it with `ps` and `ls`**.
 - A suite you run waits in the call that ran it; nothing is left running when the turn ends, except a background watch, which wakes you.
-- **Before ending a turn, launch everything that can advance.** Its last line says what it waits on: no line while an agent of yours is busy, else waiting: tool — <what>, waiting: operator — blocks: <what it blocks>, waiting: deferred — <n> items, or, every goal in `goals.md` met or ruled out by him → waiting: done.
+- **Before ending a turn, launch everything that can advance, then declare what it waits on** with `declare_wait`: nothing while an agent of yours is busy, else kind `tool` (blocks: what is watched), `operator` (blocks: what it blocks), `deferred` (blocks: `<n> items`), or, every goal in `goals.md` met or ruled out by him, `done`.
 - **A decision deferred — after the round, in the next version, to plan — opens its dispatch-record row at once, with its label, closed when the work is done or ruled out.**
 - **Nothing outward-facing is published without the operator's approval, and a fix needs no words**: `references/review.md`, « Review rounds run in disposable sessions », before drafting a reply.
 - The hooks module (`docs/design.md` §3) owns the measured facts: each session's fill every turn, the gate's line, `/orchestrator-status`'s rows, and the measure file.
