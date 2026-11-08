@@ -15,7 +15,7 @@ from bugs_bot.answers import unseen
 from bugs_bot.edits import unseen_edits
 from bugs_bot.errors import BugsError
 from bugs_bot.followup import due, is_due, is_unanswered, unanswered
-from bugs_bot.project import Project
+from bugs_bot.project import PROJECT_FILE, Project
 from bugs_bot.questions import asks
 from bugs_bot.reports import one_line
 from bugs_bot.store import OPEN_STATUSES, Store, update_report
@@ -196,11 +196,41 @@ def cmd_agent_prompt(
     return prompt_file
 
 
+def _refuse_foreign_check(repo: Path) -> None:
+    """Refuse a deploy check the operator may not have written: it runs as a shell command under
+    the one allow rule, so its project file must be the operator's alone.
+
+    Raises:
+        BugsError: If the project file is versioned (anyone who can push wrote it), not owned by
+            the current user, or writable by its group or others.
+    """
+    path = repo / PROJECT_FILE
+    try:
+        info = path.stat()
+    except OSError as exc:
+        raise BugsError(f"the deploy check could not run: {exc.strerror or exc.__class__.__name__}") from None
+    if info.st_uid != os.getuid() or info.st_mode & 0o022:
+        raise BugsError(f"the deploy check is not run: {PROJECT_FILE} must be yours and writable by you alone (chmod 600 {PROJECT_FILE})")
+    try:
+        tracked = subprocess.run(
+            ["git", "-C", str(repo), "ls-files", "--error-unmatch", "--", PROJECT_FILE],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False,
+        )
+    except OSError as exc:
+        raise BugsError(f"the deploy check could not run: {exc.strerror or exc.__class__.__name__}") from None
+    if tracked.returncode == 0:
+        raise BugsError(
+            f"the deploy check is not run: {PROJECT_FILE} is versioned, so anyone who can push wrote it; "
+            f"keep it local (git rm --cached {PROJECT_FILE})"
+        )
+
+
 def cmd_deployed(project: Project, commit: str, env: Mapping[str, str]) -> int:
     """Say whether ``commit`` is served, through the project's ``deploy_check``: a fix is announced only once deployed.
 
     The check is the project's own shell command, run in its repository with the commit in
-    ``BUGS_BOT_COMMIT``: the commit never enters the command text, and is a hash or refused.
+    ``BUGS_BOT_COMMIT``: the commit never enters the command text, and is a hash or refused. It
+    runs only from a project file that is the operator's alone (``_refuse_foreign_check``).
 
     Returns:
         0 when the check passes (``deployed=yes``), 1 when it fails (``deployed=no``), 2 when the
@@ -214,6 +244,7 @@ def cmd_deployed(project: Project, commit: str, env: Mapping[str, str]) -> int:
     if not project.deploy_check:
         print("deployed=unknown: the launcher's word decides")
         return 2
+    _refuse_foreign_check(project.repo)
     try:
         # Its own session, so a timeout can take down everything the shell started; no stdin, so a
         # check that asks a question fails instead of hanging. The messages never echo the command:

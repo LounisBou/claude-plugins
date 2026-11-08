@@ -5,6 +5,14 @@ All notable changes are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.4.1 — 2026-11-07
+
+### Security
+
+- `deployed` runs the project's deploy check only from a project file that is the operator's alone: a
+  versioned `.bugs-bot.json` (which anyone who can push may have written), or one not owned by the user
+  or writable by its group or others, is refused before anything runs.
+
 ## 0.4.0 — 2026-10-14
 
 ### Added
