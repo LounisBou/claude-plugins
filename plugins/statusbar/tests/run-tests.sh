@@ -331,11 +331,13 @@ printf '%s' "{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"context_window\":
   | STATUSBAR_CONFIG="$INJECT" bash "$SCRIPT" >/dev/null
 if [ ! -e "$PWNED" ]; then printf '  ok   a settings line that is code is never run\n'; pass=$((pass + 1))
 else printf '  FAIL a settings line that is code is never run\n'; fail=$((fail + 1)); fi
-check "an unknown or malformed value keeps the default" \
-  "$(config_with SHOW_DIRECTORY=0 SHOW_USAGE=yes SHOW_CONTEXT=1 SHOW_MODEL=0 SHOW_SESSION_NAME=0 SHOW_LINES_CHANGED=0 SHOW_PROGRESS_BAR=0 RESET_COUNTDOWN=1)" \
-  "{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"context_window\":{\"used_percentage\":26},\"rate_limits\":{\"five_hour\":{\"used_percentage\":8,\"resets_at\":$IN_2H}}}" \
-  "$(printf '%s' "{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"context_window\":{\"used_percentage\":26},\"rate_limits\":{\"five_hour\":{\"used_percentage\":8,\"resets_at\":$IN_2H}}}" \
-     | STATUSBAR_CONFIG="$(config_with SHOW_DIRECTORY=0 SHOW_USAGE=1 SHOW_CONTEXT=1 SHOW_MODEL=0 SHOW_SESSION_NAME=0 SHOW_LINES_CHANGED=0 SHOW_PROGRESS_BAR=0 RESET_COUNTDOWN=1)" bash "$SCRIPT" | strip_ansi)"
+# Two settings files under their own names: bash 3.2 does not reseed $RANDOM in a subshell,
+# so config_with called inside a command substitution can write over the other one.
+printf '%s\n' SHOW_DIRECTORY=0 SHOW_USAGE=yes SHOW_CONTEXT=1 SHOW_MODEL=0 SHOW_SESSION_NAME=0 SHOW_LINES_CHANGED=0 SHOW_PROGRESS_BAR=0 RESET_COUNTDOWN=1 > "$WORK/malformed.txt"
+printf '%s\n' SHOW_DIRECTORY=0 SHOW_USAGE=1 SHOW_CONTEXT=1 SHOW_MODEL=0 SHOW_SESSION_NAME=0 SHOW_LINES_CHANGED=0 SHOW_PROGRESS_BAR=0 RESET_COUNTDOWN=1 > "$WORK/defaulted.txt"
+QUOTA="{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"context_window\":{\"used_percentage\":26},\"rate_limits\":{\"five_hour\":{\"used_percentage\":8,\"resets_at\":$IN_2H}}}"
+check "an unknown or malformed value keeps the default" "$WORK/malformed.txt" "$QUOTA" \
+  "$(printf '%s' "$QUOTA" | STATUSBAR_CONFIG="$WORK/defaulted.txt" bash "$SCRIPT" | strip_ansi)"
 
 # A reset shown as a clock time renders on BSD and on GNU date alike.
 CLOCK=$(printf '%s' "{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":8,\"resets_at\":$IN_2H}}}" \
