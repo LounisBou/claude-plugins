@@ -1,0 +1,79 @@
+{
+ "$comment": "The merged pull requests the outcome evals replay, in order: a pilot takes the first, a measure the first `cases` of caps.json, the rest are reserves (SELECTION.md). base is the merge's first parent, merge the merged result; the task states the problem as it stood before the change.",
+ "version": 1,
+ "repository": "LounisBou/claude-plugins",
+ "cases": [
+  {
+   "id": "norms-check-records-only-what-it-read",
+   "pr": 11,
+   "base": "07b37839097c15f5fa44867a1887be6af70dc1e1",
+   "merge": "60ed711d8501e663166c375e7406d39b0cd78f2a",
+   "plugin": "norms",
+   "task": "norms records a check at the head of the call: `check_done` stores the scope's head and never compares it, so a commit made after `/norms:check` is vouched for whatever it touches, code the check never read included. A check must vouch only for what it read: a commit made after the check that touches a file the check did not read must not be recorded as checked, while the walkthrough's own fix commits must still record."
+  },
+  {
+   "id": "github-auto-merge-list-under-a-lock",
+   "pr": 36,
+   "base": "7f2763de525346a08f39a3ea9276c7956c6636aa",
+   "merge": "0ec0a0ce7afa456d16ac8fb2e32e39f3a692c080",
+   "plugin": "github",
+   "task": "github's `auto-merge.json` is read, changed and written back without a lock, so two sessions running `auto-merge-set` at once lose one of the two changes. Make the change to the list safe under concurrency, following the repository's convention for writes, without leaving the list blocked forever when a session dies while it holds the list."
+  },
+  {
+   "id": "bugs-bot-guards-fail-closed",
+   "pr": 16,
+   "base": "b9952fe466a50a2f67387693a76bfdec9c628794",
+   "merge": "5578641e2f28632df7bbd968749f87a12c7604cb",
+   "plugin": "bugs-bot",
+   "task": "bugs-bot's guards in `hooks/guard.ts` fail open: when a guard throws, its net lets the call through, so a reply, an edit or a post to the testers' group, or a read of the token file, passes unchecked. A guard that protects must fail closed on what it protects, without blocking unrelated work when it breaks."
+  },
+  {
+   "id": "statusbar-verified-defects",
+   "pr": 22,
+   "base": "81973fac3e773cf69793343b5097102f44cd199e",
+   "merge": "6762db21af94a19fb1ab9cc5e3d7718340e9626b",
+   "plugin": "statusbar",
+   "task": "Fix statusbar's verified defects: `statusline/statusline.sh` uses `date -r <epoch>`, which only macOS has, so on GNU the reset times vanish silently; it sources its settings file as code at every redraw; `install.sh` writes `settings.json` non-atomically, replaces a symlinked `settings.json` with a file, and overwrites a foreign `statusLine` with only a backup to show for it. Confirm or drop two suspicions: `git status` taking `index.lock` beside agents, and `statusline/launcher.sh` taking the first install path it finds."
+  },
+  {
+   "id": "pr-review-verdict-computed-from-findings",
+   "pr": 18,
+   "base": "92f73e914c4626dcd69d457b361e6d7b2e20bed3",
+   "merge": "d081ec9aca65b0dfc59046e5c82b398fe454bfd9",
+   "plugin": "pr-review",
+   "task": "pr-review's auto-fix loop records its review verdict from a count of blocking findings the model passes to `findings`, so a pass can be declared clean whatever the review agents found. The verdict must be computed from what the review agents themselves report during the pass, with no new prompt to the user and no new question; a clean exit must be impossible without agents that reported no finding."
+  },
+  {
+   "id": "cloudflare-restore-only-where-taken",
+   "pr": 27,
+   "base": "1d6a8a6e31f1752b24c453da9aeb5dc235bab1e3",
+   "merge": "754b75b8de365fdd206c10d4865c8d0054a17d12",
+   "plugin": "cloudflare",
+   "task": "cloudflare's `restore` replays whatever account, zone and data a backup file carries, so a backup edited or taken elsewhere can write to another account or zone than the one it came from. Restore must replay a backup only into the account and zone it was taken from. Separately, the plugin's suite never starts on macOS runners: the fake Caddy under `tests/fixtures/caddy/` is still alive but has written nothing when the suite's wait ends; find why and fix it."
+  },
+  {
+   "id": "github-guards-fail-closed",
+   "pr": 15,
+   "base": "ab5b11bc9be3cb4dcf57af7de91d704e54351ebd",
+   "merge": "b9952fe466a50a2f67387693a76bfdec9c628794",
+   "plugin": "github",
+   "task": "Every guard of github's hooks ends in `.catch(… next(e))`: when the Bash guard or the records and auto-merge write guard throws, the call goes through. A guard that protects an irreversible act must fail closed on what it protects (a merge, a ready act, a non-draft create, the pull request records, the auto-merge list), without blocking unrelated work and without a new prompt."
+  },
+  {
+   "id": "norms-push-consent-is-asked",
+   "pr": 13,
+   "base": "55038890404ea89c85fdc3c5750272dd8d6f5a0f",
+   "merge": "cf9491f9890c0c0ad0642ee8f4c4eb4bc74d83f1",
+   "plugin": "norms",
+   "task": "norms' push guard (`hooks/guards.ts`) lets a push through during a walkthrough whenever the user's last prompt holds the word `push`, « don't push » included. Consent must never be inferred from words in a prompt (decision 0004); a push during `/norms:check` or `/norms:learn` must be granted only by a structured act of the user."
+  },
+  {
+   "id": "pr-review-no-clean-exit-before-a-pass",
+   "pr": 12,
+   "base": "60ed711d8501e663166c375e7406d39b0cd78f2a",
+   "merge": "55038890404ea89c85fdc3c5750272dd8d6f5a0f",
+   "plugin": "pr-review",
+   "task": "In pr-review's auto-fix loop (`hooks/loop.ts`), `start` followed by `findings {keys: []}` ends the loop clean at pass 0 and writes a passing review record although no review ran. A clean exit must not be possible before a review pass has been opened."
+  }
+ ]
+}

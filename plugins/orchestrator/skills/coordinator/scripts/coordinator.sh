@@ -165,164 +165,29 @@
 
 set -uo pipefail
 
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# register, clear, lookup, sleep, sleeping, wake-done, drop, round-close and round-archive are
+# coordinator.ts's, run by node as the plugin's other TypeScript is: same command line, output and exit codes.
+case "${1:-}" in
+    register|clear|lookup|sleep|sleeping|wake-done|drop|round-close|round-archive)
+        command -v node >/dev/null 2>&1 || { echo "coordinator: node is required" >&2; exit 1; }
+        exec node --experimental-strip-types --no-warnings "$here/coordinator.ts" "$@" ;;
+esac
+
 die() { echo "coordinator: $*" >&2; exit 1; }
-say() { echo "coordinator: $*" >&2; }
 command -v jq >/dev/null 2>&1 || die "jq is required"
 
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 STATE="${ORCHESTRATOR_STATE_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claude-orchestrator}"
 # The hooks module's own files (its store): ORCHESTRATOR_MODULE_DIR when set, as the module reads it.
 MODULE="${ORCHESTRATOR_MODULE_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/claude-orchestrator}"
-RECORD="$STATE/coordinator.json"
 # Mirrors REMOTE_STALE_AFTER_MS in hooks/remote-row.ts: a remote row is kept for a day after its
 # updated_at, and the module deletes it past that bound.
 REMOTE_STALE_AFTER_S=86400
 SLEEPING="$STATE/sleeping.json"
-LOCK="$STATE/coordinator.lock"
-T_ERR=$(mktemp "${TMPDIR:-/tmp}/coordinator-err-XXXXXX") || { echo "coordinator: cannot make a temporary file" >&2; exit 1; }
-VERIFIED=""
-LAUNCHER="$here/../../iterm-agents/scripts/iterm-agent.sh"
 LAUNCHER_PY="$here/../../iterm-agents/scripts/iterm_agent.py"
 WORKSPACE="$here/../../orchestrator/scripts/workspace.sh"
 
-now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
-
-# verify <tty> [<pid>]: asks the launcher (or COORDINATOR_VERIFY) whether the host CLI runs on
-# that tty, and with a pid whether that very process is it; its stdout goes to $VERIFIED.
-# Only the check's own « not running », exit 1 and silent, returns 1; a check that cannot run
-# or fails dies, since a live coordinator read as dead has its record taken.
-verify() {
-    local err rc out args=(--tty "$1")
-    [ -z "${2:-}" ] || args+=(--pid "$2")
-    if [ -n "${COORDINATOR_VERIFY:-}" ]; then
-        [ -f "$COORDINATOR_VERIFY" ] && [ -x "$COORDINATOR_VERIFY" ] \
-            || die "the liveness command $COORDINATOR_VERIFY is missing or not executable"
-        out=$("$COORDINATOR_VERIFY" "${args[@]}" 2>"$T_ERR" </dev/null)
-    else
-        [ -f "$LAUNCHER" ] || die "the launcher $LAUNCHER is missing"
-        out=$(bash "$LAUNCHER" verify "${args[@]}" 2>"$T_ERR" </dev/null)
-    fi
-    rc=$?
-    err=$(cat "$T_ERR")
-    VERIFIED="$out"
-    [ "$rc" = 0 ] && return 0
-    [ "$rc" = 1 ] && [ -z "$err" ] && return 1
-    die "the liveness check failed on $1: ${err:-exit $rc}"
-}
-
-# alive <tty> [<pid>]: the host CLI runs on that tty, and when the record named a process,
-# that same process does: another host CLI on a reused tty is not the recorded session. A
-# record with no pid, written before the pid was kept, is read by its tty alone.
-alive() { verify "$1" "${2:-}"; }
-
-# tty_pid <tty>: the pid of the host CLI on that tty, read from the check's « (pid N) »;
-# empty when nothing runs there or the check names no pid. A tty that runs a host CLI whose
-# check names no pid is said on stderr, in one line, since the record written from it is
-# read by its tty alone.
-tty_pid() {
-    local pid
-    verify "$1" || return 0
-    pid=$(printf '%s' "$VERIFIED" | sed -n 's/.*(pid \([0-9][0-9]*\)).*/\1/p' | head -1)
-    [ -n "$pid" ] || say "no process id found on $1: the record is written without one"
-    printf '%s' "$pid"
-}
-
-# lock <operation>: take the lock directory or refuse after five seconds. mkdir is the one
-# test-and-set the shell has; the lock is removed on exit only by the process that took it,
-# so a refused caller never frees a lock another one holds. The holder writes its pid and
-# its operation into the lock, so a refusal names who holds it and whether it still runs;
-# a lock left by a dead holder is named for removal, never broken here.
-held=0
-unlock() { [ "$held" = 1 ] && { rm -f "$LOCK/holder"; rmdir "$LOCK" 2>/dev/null; }; held=0; }
-trap 'unlock; rm -f "$T_ERR"' EXIT
-trap 'exit 1' INT TERM HUP
-lock() {
-    mkdir -p "$STATE" 2>/dev/null || die "cannot create the state directory $STATE"
-    [ -w "$STATE" ] || die "cannot write into the state directory $STATE"
-    local tries=0
-    until mkdir "$LOCK" 2>/dev/null; do
-        [ -d "$LOCK" ] || die "cannot create the lock $LOCK"
-        tries=$((tries + 1))
-        [ "$tries" -lt 50 ] || die "refused: $(lock_holder): remove $LOCK"
-        sleep 0.1
-    done
-    held=1
-    echo "$$ $1" > "$LOCK/holder"
-}
-
-# lock_holder: who holds the lock, as far as its holder file says, and nothing guessed.
-lock_holder() {
-    local pid="" op="" state=dead
-    { read -r pid op < "$LOCK/holder"; } 2>/dev/null
-    printf '%s' "$pid" | grep -qE '^[0-9]+$' \
-        || { printf "the coordinator's lock is held: %s names no holder" "$LOCK"; return; }
-    ps -p "$pid" >/dev/null 2>&1 && state=running
-    if [ -n "$op" ]; then printf 'a %s holds the lock' "$op"; else printf "the coordinator's lock is held"; fi
-    printf ': %s held by pid %s (%s)' "$LOCK" "$pid" "$state"
-}
-
-# write_atomic <path> <content>: the content replaces the file in one rename, so a reader
-# never sees half of it.
-write_atomic() {
-    [ ! -d "$1" ] || die "cannot write $1: it is a directory"
-    local tmp; tmp=$(mktemp "$STATE/.coordinator-XXXXXX") || die "cannot write into $STATE"
-    printf '%s\n' "$2" > "$tmp" && mv "$tmp" "$1" || { rm -f "$tmp"; die "cannot write $1"; }
-}
-
-cmd_register() {
-    local name="" tty=""
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --name) name="${2:-}"; shift 2 || die "register: --name needs a value" ;;
-            --tty) tty="${2:-}"; shift 2 || die "register: --tty needs a value" ;;
-            *) die "register: unknown option $1" ;;
-        esac
-    done
-    [ -n "$name" ] && [ -n "$tty" ] || die "register: usage: register --name \"<name [ref]>\" --tty /dev/ttysNNN"
-    lock registration
-    if [ -f "$RECORD" ]; then
-        local old_name old_tty old_pid
-        old_name=$(jq -r '.name // ""' "$RECORD" 2>/dev/null)
-        old_tty=$(jq -r '.tty // ""' "$RECORD" 2>/dev/null)
-        old_pid=$(jq -r '.pid // ""' "$RECORD" 2>/dev/null)
-        if [ -n "$old_tty" ] && alive "$old_tty" "$old_pid"; then
-            die "refused: a live coordinator is recorded: $old_name on $old_tty"
-        fi
-        say "replaced a stale record: ${old_name:-an unreadable record}"
-    fi
-    local record pid
-    pid=$(tty_pid "$tty")
-    record=$(jq -n --arg n "$name" --arg t "$tty" --arg s "$(now)" --arg p "$pid" \
-        '{name:$n, tty:$t, started:$s} + (if $p == "" then {} else {pid:($p | tonumber)} end)') \
-        || die "register: cannot build the record"
-    write_atomic "$RECORD" "$record"
-    echo "registered $name"
-}
-
-cmd_clear() {
-    [ $# -eq 0 ] || die "clear: unexpected argument $1"
-    rm -f "$RECORD" || die "clear: cannot remove $RECORD"
-}
-
-cmd_lookup() {
-    [ $# -eq 0 ] || die "lookup: unexpected argument $1"
-    [ -f "$RECORD" ] || return 0
-    local name tty pid
-    name=$(jq -r '.name // ""' "$RECORD" 2>/dev/null)
-    tty=$(jq -r '.tty // ""' "$RECORD" 2>/dev/null)
-    pid=$(jq -r '.pid // ""' "$RECORD" 2>/dev/null)
-    if [ -n "$name" ] && [ -n "$tty" ] && alive "$tty" "$pid"; then
-        echo "$name"
-    else
-        say "stale record: ${name:-an unreadable record} on ${tty:-no tty}"
-    fi
-}
-
 # --- The sleeping orchestrators. ---------------------------------------------------------
-
-# The launcher's own shape for an orchestrator's title: the name a wake spawns it under, so a
-# record the launcher would refuse at the wake is refused here, at the pause.
-ORCH_NAME_SHAPE='^Orch : [^ ](.{0,23}[^ ])?$'
 
 # sleeping_read: the record's array on stdout, [] when there is none; an unreadable record
 # dies, since a sleeping orchestrator read as absent is one the operator loses.
@@ -330,111 +195,6 @@ sleeping_read() {
     [ -e "$SLEEPING" ] || { echo '[]'; return 0; }
     jq -c 'if type == "array" then . else error("not an array") end' "$SLEEPING" 2>/dev/null \
         || die "the sleeping record $SLEEPING cannot be read: remove or repair it"
-}
-
-# name_option <subcommand> <args...>: the one --name the subcommand takes.
-name_option() {
-    local sub="$1" name=""; shift
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --name) name="${2:-}"; shift 2 || die "$sub: --name needs a value" ;;
-            *) die "$sub: unknown option $1" ;;
-        esac
-    done
-    [ -n "$name" ] || die "$sub: usage: $sub --name \"Orch : <subject>\""
-    printf '%s' "$name"
-}
-
-cmd_sleep() {
-    local name="" brief="" dir="" model="" effort="" session="" prs='[]' checkouts='[]'
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --name) name="${2:-}"; shift 2 || die "sleep: --name needs a value" ;;
-            --brief) brief="${2:-}"; shift 2 || die "sleep: --brief needs a value" ;;
-            --dir) dir="${2:-}"; shift 2 || die "sleep: --dir needs a value" ;;
-            --model) model="${2:-}"; shift 2 || die "sleep: --model needs a value" ;;
-            --effort) effort="${2:-}"; shift 2 || die "sleep: --effort needs a value" ;;
-            --session) session="${2:-}"; shift 2 || die "sleep: --session needs a value" ;;
-            --pr) [ -n "${2:-}" ] || die "sleep: --pr needs a value"
-                  prs=$(jq -c --arg v "$2" '. + [$v]' <<< "$prs"); shift 2 ;;
-            --checkout) [ -n "${2:-}" ] || die "sleep: --checkout needs a value"
-                  checkouts=$(jq -c --arg v "$2" '. + [$v]' <<< "$checkouts"); shift 2 ;;
-            *) die "sleep: unknown option $1" ;;
-        esac
-    done
-    [ -n "$name" ] && [ -n "$brief" ] && [ -n "$dir" ] && [ -n "$model" ] \
-        || die 'sleep: usage: sleep --name "Orch : <subject>" --brief <path> --dir <path> --model <id> --effort <level> [--session <id>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...'
-    printf '%s' "$name" | grep -qE "$ORCH_NAME_SHAPE" && ! printf '%s' "$name" | grep -qE ' \[[0-9A-Za-z]+\]$' \
-        || die "sleep: refused: the name reads \"Orch : <subject>\", without its reference, the subject at most 25 characters, got '$name'"
-    case "$brief" in /*) ;; *) die "sleep: refused: the brief's path must be absolute, got $brief" ;; esac
-    [ -f "$brief" ] && [ -r "$brief" ] || die "sleep: refused: the brief $brief cannot be read: a wake starts on it"
-    case "$dir" in /*) ;; *) die "sleep: refused: the directory must be absolute, got $dir" ;; esac
-    [ -d "$dir" ] || die "sleep: refused: the directory $dir does not exist: a wake starts in it"
-    # The effort travels with the model: a pause recorded without it would wake its orchestrator
-    # at an effort nobody chose. The paused orchestrator reads both with `iterm-agent.sh pair`.
-    [ -n "$effort" ] || die "sleep: refused: no effort: a pause records the model with its effort, --effort <level> (the paused orchestrator reads both with iterm-agent.sh pair)"
-    case "$effort" in low|medium|high|xhigh|max) ;; *) die "sleep: refused: unknown effort $effort (low, medium, high, xhigh or max)" ;; esac
-    [ -z "$session" ] || printf '%s' "$session" | grep -qE '^[0-9A-Za-z-]+$' \
-        || die "sleep: refused: a session id reads letters, digits and hyphens, got '$session'"
-    lock sleep
-    local all
-    all=$(sleeping_read) || exit 1
-    jq -e --arg n "$name" 'any(.[]; .name == $n)' <<< "$all" >/dev/null \
-        && die "sleep: refused: $name is already sleeping"
-    all=$(jq -c --arg n "$name" --arg b "$brief" --arg d "$dir" --arg m "$model" --arg e "$effort" \
-        --arg s "$(now)" --arg sid "$session" --argjson p "$prs" --argjson c "$checkouts" \
-        '. + [{name:$n, brief:$b, dir:$d, model:$m, effort:$e, slept:$s, prs:$p, checkouts:$c}
-              + (if $sid == "" then {} else {session:$sid} end)]' <<< "$all") \
-        || die "sleep: cannot build the record"
-    write_atomic "$SLEEPING" "$all"
-    echo "sleeping $name"
-}
-
-cmd_sleeping() {
-    [ $# -eq 0 ] || die "sleeping: unexpected argument $1"
-    local all
-    all=$(sleeping_read) || exit 1
-    jq -r '.[] | "sleeping \(.name) | since \(.slept) | \(.dir) | prs \(if (.prs | length) > 0 then (.prs | join(", ")) else "none" end) | checkouts \(if (.checkouts | length) > 0 then (.checkouts | join(", ")) else "none" end) | brief \(.brief) | model \(.model) | effort \(if (.effort // "") == "" then "none" else .effort end)\(if (.session // "") != "" then " | session \(.session)" else "" end)"' <<< "$all"
-}
-
-# remove_sleeping <name> <subcommand>: the array without that name, or a refusal when it
-# does not sleep. Called under the lock.
-remove_sleeping() {
-    local all
-    all=$(sleeping_read) || exit 1
-    jq -e --arg n "$1" 'any(.[]; .name == $n)' <<< "$all" >/dev/null \
-        || die "$2: refused: $1 is not sleeping (coordinator.sh sleeping lists who is)"
-    jq -c --arg n "$1" 'map(select(.name != $n))' <<< "$all"
-}
-
-cmd_wake_done() {
-    local name rest
-    name=$(name_option wake-done "$@") || exit 1
-    lock wake
-    rest=$(remove_sleeping "$name" wake-done) || exit 1
-    write_atomic "$SLEEPING" "$rest"
-    echo "woken $name"
-}
-
-cmd_drop() {
-    local name all one rest brief dest left
-    name=$(name_option drop "$@") || exit 1
-    lock drop
-    all=$(sleeping_read) || exit 1
-    rest=$(remove_sleeping "$name" drop) || exit 1
-    one=$(jq -c --arg n "$name" 'first(.[] | select(.name == $n))' <<< "$all")
-    brief=$(jq -r '.brief' <<< "$one")
-    # The brief is moved, never deleted: a drop typed by a slip loses nothing.
-    if [ -f "$brief" ]; then
-        dest="$(dirname "$brief")/abandoned/$(date -u +%Y%m%dT%H%M%SZ)-$(basename "$brief")"
-        mkdir -p "$(dirname "$dest")" 2>/dev/null && mv "$brief" "$dest" \
-            || die "drop: cannot move the brief $brief into $(dirname "$dest"): nothing was dropped"
-    fi
-    write_atomic "$SLEEPING" "$rest"
-    echo "dropped $name"
-    if [ -n "${dest:-}" ]; then echo "brief moved to $dest"; else echo "brief $brief was already gone"; fi
-    left=$(jq -r '[.prs[], .checkouts[]] | if length > 0 then join(", ") else "none" end' <<< "$one")
-    echo "left untouched: $left"
 }
 
 # --- The facts. Every table below is tab-separated, one row per line, in $T. -------------
@@ -504,7 +264,7 @@ brief_orchestrator() {
 # pull requests, for the repositories a session works in.
 read_facts() {
     T=$(mktemp -d "${TMPDIR:-/tmp}/coordinator-XXXXXX") || die "cannot make a temporary directory"
-    trap 'unlock; rm -rf "$T"; rm -f "$T_ERR"' EXIT
+    trap 'rm -rf "$T"' EXIT
     : > "$T/unread"; : > "$T/sessions"; : > "$T/places"; : > "$T/heavy"; : > "$T/prs"; : > "$T/read_repos"
     # With no host name no process is a session, and an empty list reads as « no collision ».
     local hostname
@@ -869,97 +629,6 @@ record_listed() {
     return 0
 }
 
-# entry_fingerprint <entry JSON>: the fingerprint of the wait an entry was written for, as the
-# hooks module computes it (round.ts entryFingerprint over relay.ts fingerprint): the length of
-# "<kind>\n<blocks>\n<question when no blocks>[\nurgent]" in UTF-16 units, a dash, and its 32-bit
-# FNV-1a hash over those units in hexadecimal. jq builds the text and lists its units, the
-# surrogate pairs of the characters past U+FFFF included; the shell hashes them.
-entry_fingerprint() {
-    local units=() c h=2166136261
-    read -r -a units < <(printf '%s' "$1" | jq -r '
-        (if .kind == "operator" then (.blocks // "") else "" end) as $blocks
-        | "\(.kind)\n\($blocks)\n\(if $blocks == "" then .question else "" end)\(if .kind == "operator" and (.urgent // false) then "\nurgent" else "" end)"
-        | explode
-        | map(if . > 65535 then (. - 65536) as $p | [55296 + ($p / 1024 | floor), 56320 + ($p % 1024)] else [.] end)
-        | (add // []) | map(tostring) | join(" ")') || return 1
-    for c in "${units[@]}"; do
-        h=$(( ((h ^ c) * 16777619) & 4294967295 ))
-    done
-    printf '%s-%x' "${#units[@]}" "$h"
-}
-
-# forget_relayed <entry JSON>: a closed entry's fingerprint forgotten in its sender's wait file
-# (the hooks module's forgetRelayed), so the same question asked again is entered again. The file
-# is rewritten, as the module writes it, only while its `relayed` is still that entry's own
-# fingerprint (a later wait may have replaced it). Whatever fails is said on stderr and changes
-# nothing: the close itself is done. A sender with no wait file (a remote one, or none yet) has
-# nothing to forget, and it is no failure to say.
-forget_relayed() {
-    local session wait fp now tmp
-    session=$(printf '%s' "$1" | jq -r '.session // ""' 2>/dev/null)
-    [ -n "$session" ] || return 0
-    wait="$MODULE/store/waits/$(printf '%s' "$session" | sed 's/[^A-Za-z0-9._-]/_/g')"
-    [ -f "$wait" ] || return 0
-    fp=$(entry_fingerprint "$1") || { echo "coordinator: round-close: cannot compute the fingerprint of the entry" >&2; return 0; }
-    now=$(jq -c --arg fp "$fp" 'select(type == "object" and .relayed == $fp) | del(.typed) | .relayed = null' "$wait" 2>/dev/null) \
-        || { echo "coordinator: round-close: cannot read $wait, its fingerprint is not forgotten" >&2; return 0; }
-    [ -n "$now" ] || return 0
-    tmp=$(mktemp "$wait.tmp-XXXXXX" 2>/dev/null) \
-        && printf '%s\n' "$now" > "$tmp" && mv -f "$tmp" "$wait" \
-        || { rm -f "${tmp:-}"; echo "coordinator: round-close: cannot write $wait, its fingerprint is not forgotten" >&2; }
-    return 0
-}
-
-cmd_round_close() {
-    local id="${1:-}" answer="" has_answer=0 evidence="" has_evidence=0
-    local usage='round-close: usage: round-close <id> --answer "<text>" | --withdraw "<evidence>"'
-    [ -n "$id" ] && shift || die "$usage"
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --answer) [ $# -ge 2 ] || die "round-close: --answer needs a value"; answer="$2"; has_answer=1; shift 2 ;;
-            --withdraw) [ $# -ge 2 ] && [ -n "$2" ] || die "round-close: --withdraw needs the evidence read on the artifact"
-                evidence="$2"; has_evidence=1; shift 2 ;;
-            *) die "round-close: unknown option $1" ;;
-        esac
-    done
-    [ $((has_answer + has_evidence)) = 1 ] || die "$usage"
-    # An id names a file of the round, never a path: the module's ids are sanitised the same way.
-    printf '%s' "$id" | grep -qE '^[A-Za-z0-9._-]+$' && [ "$id" != . ] && [ "$id" != .. ] \
-        || die "round-close: no entry $id in $ROUND"
-    local path="$ROUND/$id.json" closed tmp
-    # A withdrawal is closed as an answer is, its evidence kept beside the text: the module tells
-    # the sender its question was withdrawn, never that the operator answered it.
-    [ "$has_evidence" = 1 ] && answer="withdrawn: settled meanwhile — $evidence"
-    closed=$(jq -c --arg id "$id" --arg text "$answer" --arg at "$(now)" --arg evidence "$evidence" --argjson withdraw "$has_evidence" \
-        'select(type == "object" and .id == $id) | (.status == "open") as $open
-         | .status = "closed" | .answer = ({text: $text, by: "coordinator", at: $at} + (if $withdraw == 1 then {evidence: $evidence} else {} end))
-         | if $open and .kind == "operator" then .delivery = ({state: "pending", at: $at, attempts: 0} + (if .origin then {} else {answerAt: $at} end)) else . end' \
-        "$path" 2>/dev/null) && [ -n "$closed" ] || die "round-close: no entry $id in $ROUND"
-    # As the module writes it: a temporary file beside it, then one rename.
-    tmp=$(mktemp "$path.tmp-XXXXXX") || die "round-close: cannot write into $ROUND"
-    printf '%s\n' "$closed" > "$tmp" && mv -f "$tmp" "$path" || { rm -f "$tmp"; die "round-close: cannot write $path"; }
-    forget_relayed "$closed"
-    echo "closed $id"
-}
-
-cmd_round_archive() {
-    [ $# -eq 0 ] || die "round-archive: unexpected argument $1"
-    local n=0 f
-    if [ -d "$ROUND" ]; then
-        for f in "$ROUND"/*.json; do
-            [ -f "$f" ] || continue
-            round_entries_of "$f" | jq -e 'select(.status == "closed")' >/dev/null 2>&1 || continue
-            mkdir -p "$ROUND/archive" || die "round-archive: cannot create $ROUND/archive"
-            mv -f "$f" "$ROUND/archive/${f##*/}" || die "round-archive: cannot move $f"
-            n=$((n + 1))
-        done
-        # A write that died between its temporary file and the rename leaves the temporary behind; one a
-        # day old is no write in flight.
-        find "$ROUND" -maxdepth 1 -type f -name '*.json.tmp-*' -mmin +1440 -exec rm -f {} + 2>/dev/null || true
-    fi
-    echo "archived $n"
-}
-
 finish() {
     cat "$T/unread"
     if [ -s "$T/unread" ]; then exit 2; fi
@@ -1024,7 +693,5 @@ case "$cmd" in
     wake-done) cmd_wake_done "$@" ;;
     drop) cmd_drop "$@" ;;
     round) cmd_round "$@" ;;
-    round-close) cmd_round_close "$@" ;;
-    round-archive) cmd_round_archive "$@" ;;
     *) die "unknown subcommand: $cmd (expected register, clear, lookup, facts, owners, sleep, sleeping, wake-done, drop, round, round-close or round-archive)" ;;
 esac
