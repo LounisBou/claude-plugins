@@ -104,6 +104,7 @@ describe('prompts', () => {
     assert.ok(!isPromptPath('docs/design.md'))
     assert.ok(!isPromptPath('tests/fixture.md'))
     assert.ok(!isPromptPath('hooks/register.ts'))
+    assert.ok(!isPromptPath('.pytest_cache/README.md'))
   })
 
   it('finds a sentence said in two files, and ignores short phrases', () => {
