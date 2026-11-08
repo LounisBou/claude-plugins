@@ -1,6 +1,6 @@
 ---
 description: Hand the orchestration over to a fresh successor session
-allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh:*), Read, Write, Edit, ListAgents, SendMessage
+allowed-tools: Bash(${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh:*), Bash(${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/succession.sh:*), Read, Write, Edit, ListAgents, SendMessage
 ---
 
 Execute the orchestrator succession described in
@@ -16,11 +16,12 @@ Preconditions, verify each before acting:
 - the standing succession brief exists; otherwise instantiate
   `${CLAUDE_PLUGIN_ROOT}/templates/orchestrator-succession-brief.md` into the
   project's briefs directory, filling every `{{PLACEHOLDER}}`, never a brief written by hand;
-- its « Live state » section is filled now, from the state file's live part: its five fields
-  are rewritten, the predecessor overwrites the previous handover's Live state, never appends.
-  The open questions are the round's open entries of this session and its questions no answer
-  of his has settled, verbatim, never summarised; `none` only after reading the round. The
-  brief stays within 9,000 characters, the open-questions value apart.
+- its « Live state » is generated now, never written by hand:
+  `succession.sh live <brief path> --next "<the next step>"`, with at most five `--note` of
+  judgment; each note of the last generation is promoted into an artifact
+  (`--promote <n>=<path>`) or dropped. The script overwrites the previous handover's Live state,
+  and the spawn refuses a brief that misses an open item. The brief stays within 9,000
+  characters, the open-questions value apart.
 
 Then:
 

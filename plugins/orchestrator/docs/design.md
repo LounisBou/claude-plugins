@@ -65,6 +65,7 @@ skills/orchestrator/scripts/dispatch-record.sh  one row per dispatch, and the ro
 skills/orchestrator/scripts/goals.py         the spec's goals of one build, read by the record and the stop gate
 skills/orchestrator/scripts/workspace.sh    launches workspace.ts beside it: a clone per phase with the project's local material; a pinned worktree per review round
 skills/orchestrator/scripts/rhythm.sh       an audit's net balance, from git alone
+skills/orchestrator/scripts/succession.sh, skills/orchestrator/scripts/succession.ts, skills/orchestrator/scripts/succession.spec.ts  the succession brief's Live state generated from the state, and the check a successor's spawn runs
 skills/coordination/SKILL.md         the coordinator: answers from the facts, flags collisions, relays what is the operator's, its succession
 skills/coordinator/scripts/coordinator.sh  the coordinator's record, and the facts: register, clear, lookup, facts, owners; the sleeping orchestrators: sleep, sleeping, wake-done, drop; the round: round, round-close
 skills/model-routing/SKILL.md        which model/effort pair a dispatch gets

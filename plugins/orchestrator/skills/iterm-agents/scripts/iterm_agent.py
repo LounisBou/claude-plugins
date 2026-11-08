@@ -3940,6 +3940,37 @@ def cmd_list(_argv):
             print(line)
 
 
+def read_text(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+    except (OSError, ValueError):
+        return ""
+
+
+def succession_check(prompt):
+    """A successor is refused on a succession brief that misses an open item of the state (an
+    open dispatch row, pull request, running agent or pending question): the brief its prompt
+    names, read as the file whose first line is a succession brief's, is checked by
+    `succession.sh check` (decision 0007). A prompt that names no such file is not checked."""
+    for word in re.findall(r"[^\s'\"`]+", prompt or ""):
+        path = os.path.expanduser(word.rstrip(".,;:"))
+        if not os.path.isfile(path) or not read_text(path).startswith("# Orchestrator succession brief"):
+            continue
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "orchestrator",
+                              "scripts", "succession.ts")
+        argv = ["node", "--no-warnings", script, "check", path]
+        if os.environ.get("CLAUDE_CODE_SESSION_ID"):
+            argv += ["--session", os.environ["CLAUDE_CODE_SESSION_ID"]]
+        try:
+            ran = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        except OSError as exc:
+            die("spawn: refused: the succession brief %s could not be checked (%s)" % (path, exc))
+        if ran.returncode != 0:
+            die("spawn: refused: the succession brief %s is not the state's; regenerate its Live "
+                "state with succession.sh live:\n%s" % (path, ran.stdout.decode("utf-8", "replace").strip()))
+
+
 def write_prompt_file(prompt, title):
     os.makedirs(PROMPTS_DIR, exist_ok=True)
     path = state_file_path("prompt", title, "txt")
@@ -4597,6 +4628,8 @@ def cmd_spawn(argv, pair_from=""):
         die("spawn: refused: no startup prompt: the host writes no transcript before a "
             "first prompt, so the session's mode cannot be read; give the brief with "
             "--prompt or --prompt-file")
+    if args.successor:
+        succession_check(args.prompt or read_text(args.prompt_file))
     if args.tier and args.model:
         die("spawn: --tier and --model are mutually exclusive")
     if args.inherit and (args.tier or args.model):

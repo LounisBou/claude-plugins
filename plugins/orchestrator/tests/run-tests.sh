@@ -3129,6 +3129,17 @@ d1succ=$(succ "$PSTAB" --successor --prompt-file "$PROMPT_COLON" | sed -n 's/^la
 ps_line "$d1succ" "$PROMPT_COLON" /dev/ttys901 > "$WORK/ps-succ.txt"
 check "and a successor's, with the remote-control flag behind it" "Orch : f" \
   "$(name_on "$WORK/ps-succ.txt" /dev/ttys901)"
+# A successor starts from a brief generated from the state (decision 0007): one that misses an
+# open item of the state — here the round's open question — is refused before any tab exists,
+# and the same brief once `succession.sh live` wrote its Live state goes through.
+SUCCB="$WORK/succession-brief.md"; SUCCREC="$WORK/succession-record.jsonl"
+printf '{"id":4,"label":"api","state":"open"}\n' > "$SUCCREC"
+sed -e 's/{{PREDECESSOR_NAME_PATTERN}}/Orch : f/g' -e "s#{{DISPATCH_RECORD}}#$SUCCREC#g" "$ROOT/templates/orchestrator-succession-brief.md" > "$SUCCB"
+mkdir -p "$ISTATE/round"
+printf '{"id":"succ-q1","from":"Orch : f","session":"s-old","kind":"operator","status":"open","question":"Which?"}\n' > "$ISTATE/round/succ-q1.json"
+check "a successor is refused on a brief that misses an open item of the state, and spawned once it is generated" "1|0" \
+  "$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" 2>&1 | grep -c 'misses question succ-q1')|$(ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$ROOT/skills/orchestrator/scripts/succession.sh" live "$SUCCB" --next 'answer succ-q1' >/dev/null 2>&1; succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" 2>&1 | grep -c 'refused')"
+rm -f "$ISTATE/round/succ-q1.json"
 check "the launch puts the prompt before the name" "1" \
   "$(printf '%s' "$d1launch" | grep -cE '"\$\(cat [^"]+\)" --name ')"
 
@@ -5583,8 +5594,8 @@ check "review and briefs split « Review on evidence » and « Standing rules »
 # types no --inherit-model, which would read as a choice the successor's pair depends on.
 check "the succession line types --successor without --inherit-model" "0|0|yes|yes" \
   "$(grep -c -- '--inherit-model' "$ROOT/commands/succeed.md")|$(grep -c -- '--inherit-model' "$ORCH_REFS/lifecycle.md")|$(tr '\n' ' ' < "$ROOT/commands/succeed.md" | tr -s ' ' | grep -qF -- '`iterm-agent.sh spawn --dir <worktree> --permission-mode auto --successor --prompt "Read and execute <brief path>"`' && echo yes || echo no)|$(spells "$ORCH_REFS/lifecycle.md" 'with the brief as startup prompt, passing `--successor` — it runs on your live model and effort, read on your transcript, and `--tier`')"
-check "succeed.md and the lifecycle reference name the open-questions field and the re-ask" "yes|yes|yes" \
-  "$(spells "$ROOT/commands/succeed.md" 'five fields')|$(spells "$ROOT/commands/succeed.md" 'never summarised')|$(spells "$ORCH_REFS/lifecycle.md" 'ask it again, verbatim')"
+check "the lifecycle reference names the re-ask" "yes" \
+  "$(spells "$ORCH_REFS/lifecycle.md" 'ask it again, verbatim')"
 # The open-questions value sits outside the 9,000-character cap, its label inside: a verbatim
 # `Question i of N` block is several hundred characters, and a Live state already brings the
 # brief near the limit, so the cap would refuse the very handover the field exists for.
