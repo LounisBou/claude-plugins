@@ -5,8 +5,8 @@
 // writes it, a temporary file beside it and one rename.
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
-import { writeAtomic } from '../../../core/store.ts'
-import { die, moduleOf, stateOf, utc, type Context } from './context.ts'
+import { withLock, writeAtomic } from '../../../core/store.ts'
+import { die, moduleOf, Refusal, stateOf, utc, type Context } from './context.ts'
 
 type Fields = Record<string, unknown>
 
@@ -134,27 +134,41 @@ export function roundClose(ctx: Context, args: readonly string[]): number {
   // An id names a file of the round, never a path: the module's ids are sanitised the same way.
   if (!/^[A-Za-z0-9._-]+$/.test(id) || id === '.' || id === '..') die(`round-close: no entry ${id} in ${round}`)
   const path = join(round, `${id}.json`)
-  const text = read(path)
-  const entry = text === undefined ? undefined : object(text)
-  if (entry === undefined || entry['id'] !== id) die(`round-close: no entry ${id} in ${round}`)
-  const at = utc(ctx.now())
-  const open = entry['status'] === 'open'
-  // A withdrawal is closed as an answer is, its evidence kept beside the text: the module tells
-  // the sender its question was withdrawn, never that the operator answered it.
-  const closed: Fields = {
-    ...entry,
-    status: 'closed',
-    answer: evidence === undefined
-      ? { text: answer, by: 'coordinator', at }
-      : { text: `withdrawn: settled meanwhile — ${evidence}`, by: 'coordinator', at, evidence },
+  // Under the entry's lock (`<path>.lock`), the module's too: a pane answer or a withdrawal
+  // written meanwhile is read here, never written over.
+  // A lock that cannot be taken is a write that cannot be made: refused as one.
+  const locked = <T>(work: () => T): T => {
+    try {
+      return withLock(path, work)
+    } catch (error) {
+      if (error instanceof Refusal) throw error
+      die(`round-close: cannot write ${path}`)
+    }
   }
-  // An open question's sender waits on the answer: its delivery is left pending for the module.
-  if (open && entry['kind'] === 'operator') closed['delivery'] = { state: 'pending', at, attempts: 0, ...(isSet(entry['origin']) ? {} : { answerAt: at }) }
-  try {
-    writeAtomic(path, `${JSON.stringify(closed)}\n`)
-  } catch {
-    die(`round-close: cannot write ${path}`)
-  }
+  const closed = locked((): Fields => {
+    const text = read(path)
+    const entry = text === undefined ? undefined : object(text)
+    if (entry === undefined || entry['id'] !== id) die(`round-close: no entry ${id} in ${round}`)
+    const at = utc(ctx.now())
+    const open = entry['status'] === 'open'
+    // A withdrawal is closed as an answer is, its evidence kept beside the text: the module tells
+    // the sender its question was withdrawn, never that the operator answered it.
+    const closed: Fields = {
+      ...entry,
+      status: 'closed',
+      answer: evidence === undefined
+        ? { text: answer, by: 'coordinator', at }
+        : { text: `withdrawn: settled meanwhile — ${evidence}`, by: 'coordinator', at, evidence },
+    }
+    // An open question's sender waits on the answer: its delivery is left pending for the module.
+    if (open && entry['kind'] === 'operator') closed['delivery'] = { state: 'pending', at, attempts: 0, ...(isSet(entry['origin']) ? {} : { answerAt: at }) }
+    try {
+      writeAtomic(path, `${JSON.stringify(closed)}\n`)
+    } catch {
+      die(`round-close: cannot write ${path}`)
+    }
+    return closed
+  })
   forgetRelayed(ctx, closed)
   ctx.out(`closed ${id}`)
   return 0

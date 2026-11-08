@@ -1,0 +1,31 @@
+# The orchestrator's machine-wide state
+
+Every file the orchestrator writes under its state root (`<config dir>/claude-orchestrator/`,
+`ORCHESTRATOR_STATE_DIR` and `ORCHESTRATOR_MODULE_DIR` overriding it), who writes it, and how.
+Goal 1 of the orchestrator's refoundation design (the repository's specs): every such fact is kept by core's
+store (a lock `<path>.lock`, a unique temporary name, one rename). A hooks module has no
+`node:fs`; it reaches the same convention through `core/store-io.ts` over its own `$`, a script
+through `core/store.ts`. A temporary file older than core's `STALE_MS` was left by a writer
+killed between its write and its rename: the module removes those at each session start and at
+each read of the store and of the round.
+
+Concurrent writers are separate processes: the hooks module of each session, the scripts, the
+Python launcher.
+
+| File | Writers | Discipline |
+|---|---|---|
+| `store/sessions/<id>` | the session's own hooks (measure, usage); any reader removes a dead row | one writer, one rename |
+| `store/gates/<id>`, `store/rows/<id>`, `store/answered/<id>`, `store/successors/<id>` | the session's own hooks | one writer, one rename (gates: a plain write) |
+| `store/remote/<name>` | the receiving session; any reader removes a stale row | one rename, no read-modify-write |
+| `round/<id>.json` | the hooks of every session (sender, pane, delivery, successor move); `coordinator.sh round-close` | read-modify-write under the entry's lock |
+| `deck.json` | every session | a view of the store, written only when it differs from the file or the file's stamp is a minute old (`DECK_REFRESH_MS`); format fixed by `hooks/tests/golden-deck.ts` |
+| `sleeping.json`, `coordinator.json` | the coordinator's scripts | under the coordinator's lock |
+| dispatch records, `records/<session>` | `dispatch-record.ts` | under core's lock |
+| `measure/<id>.json` | the session's own gauge | one writer, plain write, read as unmeasured when partial |
+| module log, `close.log`, `store/moves/probes.jsonl` | every process | appends |
+
+Still written by several processes with an unlocked read-modify-write, to be moved onto the
+store next: `store/waits/<id>` (the sender's relay, the coordinator's hooks, `round-close`),
+`chains/<tty>.jsonl` (every launcher process, through one fixed temporary name),
+`store/coordinator-learnt`, `round-woken.json` and `round-told.json` (two coordinators
+overlapping at a succession), and `round-close`'s archive, which moves an entry without its lock.

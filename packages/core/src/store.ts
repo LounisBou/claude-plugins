@@ -3,6 +3,7 @@
 import { randomBytes } from 'node:crypto'
 import { closeSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, statSync, writeFileSync, writeSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { lockOf, STALE_MS, temporaryOf } from './store-io.ts'
 
 export interface LockOptions {
   /** How long to wait for a lock before giving up, in milliseconds. */
@@ -14,13 +15,12 @@ export interface LockOptions {
 }
 
 const WAIT_MS = 5_000
-const STALE_MS = 30_000
 const POLL_MS = 20
 
 /** Replaces `path` with `text` in one rename, through a temporary file of a unique name beside it. */
 export function writeAtomic(path: string, text: string, mode = 0o600): void {
   mkdirSync(dirname(path), { recursive: true })
-  const temporary = `${path}.tmp-${process.pid}-${randomBytes(4).toString('hex')}`
+  const temporary = temporaryOf(path, `${process.pid}-${randomBytes(4).toString('hex')}`)
   try {
     writeFileSync(temporary, text, { mode, flag: 'wx' })
     renameSync(temporary, path)
@@ -42,7 +42,7 @@ export function readText(path: string): string | undefined {
 
 /** Runs `work` holding the lock of `path` (`<path>.lock`), released whatever `work` does. */
 export function withLock<T>(path: string, work: () => T, options: LockOptions = {}): T {
-  const lock = `${path}.lock`
+  const lock = lockOf(path)
   const now = options.now ?? Date.now
   const sleep = options.sleep ?? sleepSync
   const deadline = now() + (options.waitMs ?? WAIT_MS)
