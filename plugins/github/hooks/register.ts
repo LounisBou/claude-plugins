@@ -1520,10 +1520,10 @@ export function register(on: any): void {
   })
 
   // The records are written by their producers only, the auto-merge list by auto-merge-set only.
-  for (const tool of ['Write', 'Edit', 'MultiEdit']) {
+  for (const tool of ['Write', 'Edit', 'MultiEdit', 'NotebookEdit']) {
     on('tool.call', { tool }, async ($: any, e: any, next: any) => {
       const root = await recordsRoot($)
-      const path = normalise(String(e.file_path ?? ''), String(await $.session.cwd()))
+      const path = normalise(String(e.file_path ?? e.notebook_path ?? ''), String(await $.session.cwd()))
       if ((root && (path === root || path.startsWith(root + '/'))) || path.includes('/.claude/pr-records/')) {
         return { deny: RECORDS_REFUSAL }
       }
@@ -1533,7 +1533,7 @@ export function register(on: any): void {
       }
       return next(e)
     }).catch(async (_$: any, e: any, next: any) => {
-      const refusal = writeNetRefusal(String(e?.file_path ?? ''))
+      const refusal = writeNetRefusal(String(e?.file_path ?? e?.notebook_path ?? ''))
       return refusal === null ? next(e) : { deny: refusal }
     })
   }

@@ -624,7 +624,14 @@ check "issue-search percent-encodes a & term" "/search/issues?q=repo%3Aacme%2Fth
 
 echo "== image upload =="
 
-printf 'not really a png' > "$WORK/shot.png"
+printf '\211PNG\r\n\032\nnot really a png' > "$WORK/shot.png"
+# A 403 that refuses a permission is final; only a rate limit is waited out and retried.
+check "a permission 403 is not retried, a rate limit is" "False True True" \
+  "$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); from ghlib import http; print(http._rate_limited(403, {"message": "Resource not accessible by integration"}), http._rate_limited(403, {"message": "API rate limit exceeded"}), http._rate_limited(429, {}))' "$GHDIR")"
+# A file that is no image is never pushed to the repository, whatever its name.
+printf 'ssh-ed25519 AAAA...' > "$WORK/key.png"
+check_status "image-upload refuses a file that is no image, as a usage error" 1 env GH_FIXTURES="$F3" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" image-upload "$WORK/key.png"
+check "…and sends nothing for it" "" "$(grep -c 'key' "$F3/sent.jsonl" 2>/dev/null | grep -v '^0$')"
 SHA=$(python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$WORK/shot.png")
 
 printf '%s' '{"__status":404,"message":"Not Found"}' > "$F3/GET_repos_acme_thing_contents_${SHA}.png__ref=pr-assets.json"
@@ -724,7 +731,7 @@ console.log(blocks.length + " blocks, " + refused + " refused")
 ')"
 fi
 
-printf 'another capture' > "$WORK/second.png"
+printf '\377\330\377another capture' > "$WORK/second.png"
 SHA2=$(python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" "$WORK/second.png")
 printf '%s' '{"__status":404,"message":"Not Found"}' > "$F3/GET_repos_acme_thing_contents_${SHA2}.png__ref=pr-assets.json"
 printf '%s' '{"content":{"path":"'"$SHA2"'.png"}}' > "$F3/PUT_repos_acme_thing_contents_${SHA2}.png.json"

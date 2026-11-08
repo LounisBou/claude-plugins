@@ -94,10 +94,21 @@ def _ensure_branch(owner, name, branch):
     )
 
 
+# What an image file begins with: PNG, JPEG, GIF, WebP. Anything else is no screenshot, and is
+# never pushed to the repository, whatever its name.
+_IMAGE_MAGIC = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a")
+
+
+def is_image(payload):
+    return payload.startswith(_IMAGE_MAGIC) or (payload[:4] == b"RIFF" and payload[8:12] == b"WEBP")
+
+
 def _upload_one(owner, name, branch, path):
     if not os.path.isfile(path):
         raise errors.UsageError("no such image file: " + path)
     blob, payload = _blob_name(path)
+    if not is_image(payload):
+        raise errors.UsageError("not an image (PNG, JPEG, GIF or WebP): %s; nothing was uploaded" % path)
 
     reused = False
     try:

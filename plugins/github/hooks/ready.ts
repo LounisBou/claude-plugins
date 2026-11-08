@@ -472,8 +472,10 @@ export const RECORDS_REFUSAL = 'github: records are written by their producers (
 const RECORDS_PATH = /pr-records\/|\/pr-records(?![\w.-])/
 
 // Whether a Bash command line names the records or their writer.
+// The text, then each word as the shell reads it: quotes removed, so `rec""ord.py` is record.py.
 export function touchesRecords(line: string, root?: string): boolean {
-  return RECORDS_PATH.test(line) || line.includes('engine/record.py') || (!!root && line.includes(root))
+  const names = (text: string) => RECORDS_PATH.test(text) || text.includes('engine/record.py') || (!!root && text.includes(root))
+  return names(line) || simpleCommands(line).some((argv) => argv.some(names))
 }
 
 // The record kinds a caller of mcp__github__record may write, by the plugin

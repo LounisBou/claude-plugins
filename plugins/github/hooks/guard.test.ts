@@ -983,6 +983,7 @@ test('the records are refused to Write, Edit and Bash, a Read of one passes', as
   for (const call of [
     { tool: 'Write', file_path: RECORDS + '/acme/thing/' + HEAD + '/e2e.x.json', content: '{}' },
     { tool: 'Edit', file_path: '/home/x/.claude/pr-records/o/r/x.json', old_string: 'a', new_string: 'b' },
+    { tool: 'NotebookEdit', notebook_path: RECORDS + '/acme/thing/' + HEAD + '/review.x.ipynb', new_source: 'x' },
     { tool: 'MultiEdit', file_path: RECORDS + '/o/r/x.json', edits: [] },
     bash('echo x > ~/.claude/pr-records/o/r/x.json'),
     bash('python3 ' + ROOT + '/engine/record.py --repo o/r --pr 1'),
