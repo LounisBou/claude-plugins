@@ -1283,12 +1283,22 @@ def judge(brief, agent_diff, ref_diff, tests_out, d):
                 "raw": text[:RECORDED_CHARS], "ok": out["ok"]}
 
 
+def trial_ceiling(m):
+    """The most one agent run of the manifest may spend: the host's --max-budget-usd."""
+    return float(m.get("budget_usd") or 2.0)
+
+
+def trial_worst(m):
+    """The most one trial may cost: its agent's ceiling and its judge's."""
+    return trial_ceiling(m) + JUDGE_CEILING
+
+
 def run_trial(m, task, pair, rep, root, keep=False):
     """One trial, recorded whatever happens: an exception becomes an `error` trial keeping
     the cost measured before it, so a worker that raises never loses what was paid.
     """
     repo = m["repo"]
-    ceiling = float(m.get("budget_usd") or 2.0)
+    ceiling = trial_ceiling(m)
     d = None
     trial = {"task": task["id"], "class": task["class"], "pair": pair, "rep": rep,
              "at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -1525,14 +1535,23 @@ def cmd_bench(argv):
     judge_pair("bench")
     done = {(t["task"], canonical_pair(t["pair"], aliases), t.get("rep", 1)): t
             for t in read_trials(os.path.join(ROUTING_DIR, "projects", a.slug, "trials.jsonl"))}
-    state = {"spent": 0.0, "trials": 0, "errors": {}, "dropped": set(), "warned": set(),
-             "unmeasured": 0, "pruned": 0}
+    state = {"spent": 0.0, "reserved": 0.0, "trials": 0, "errors": {}, "dropped": set(),
+             "warned": set(), "unmeasured": 0, "pruned": 0}
+    worst = trial_worst(m)
+
+    def fits():
+        """Whether one more trial, at the most it may cost, stays within the cap with what is
+        spent and what the trials in flight may still spend: the cap holds during the run.
+        """
+        return state["spent"] + state["reserved"] + worst <= a.max_usd + 1e-9
+
     delta = selection()[0]  # read before anything is spent: a mistyped threshold stops the run here
     # Errors drop a pair for this run only: one host outage must not strike a pair for good.
 
     def run(jobs):
-        """Jobs in order; a job already in trials.jsonl is reused, never re-paid. The cap
-        stops new trials only: those in flight finish and are recorded.
+        """Jobs in order; a job already in trials.jsonl is reused, never re-paid. A trial
+        starts only when its worst cost fits under the cap beside the worst cost of those in
+        flight, so the trials in flight can never carry the run past it.
         """
         results = {}
         queue = []
@@ -1545,16 +1564,18 @@ def cmd_bench(argv):
         with cf.ThreadPoolExecutor(max_workers=workers) as pool:
             running = {}
             while queue or running:
-                while queue and len(running) < workers and state["spent"] < a.max_usd:
+                while queue and len(running) < workers and fits():
                     task_id, pair, rep = queue.pop(0)
                     if pair in state["dropped"]:
                         continue
                     task = runnable(m, task_id)
+                    state["reserved"] += worst
                     running[pool.submit(run_trial, m, task, pair, rep, tempfile.gettempdir())] = (task_id, pair, rep)
                 if not running:
                     break
                 fut = next(cf.as_completed(running))
                 job = running.pop(fut)
+                state["reserved"] -= worst
                 t = fut.result()
                 append_trial(a.slug, t)
                 note_alias(job[1].split("/")[0], t["models"])
@@ -1580,7 +1601,7 @@ def cmd_bench(argv):
         """
         results, left = run(jobs)
         state["unmeasured"] += left
-        return results, bool(left) and state["spent"] >= a.max_usd
+        return results, bool(left) and not fits()
 
     def bench_class(cls, tasks):
         """The class's stages; the number of pairs pruned after stage A and never re-admitted.
