@@ -37,6 +37,9 @@ jobs:
         run: |
           base="origin/${{ github.base_ref || 'main' }}"
           { echo '### Context by scenario'; echo; npm run -s context -- --base "$base"; } >> "$GITHUB_STEP_SUMMARY"
+      - name: the rules a prompt states that nothing holds (a report)
+        run: |
+          { echo '### Rules held by prose alone'; echo; npm run -s rules | sed -n '1,11p'; } >> "$GITHUB_STEP_SUMMARY"
       - name: dependencies declared with a range, no cycle, no import outside its plugin
         run: npm run deps
       - name: no committed permission grant, every installer rule listed

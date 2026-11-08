@@ -17,6 +17,7 @@
     "core": "node --experimental-strip-types --no-warnings scripts/core.ts",
     "deps": "node --experimental-strip-types --no-warnings scripts/deps.ts",
     "permissions": "node --experimental-strip-types --no-warnings scripts/permissions.ts",
+    "rules": "node --experimental-strip-types --no-warnings scripts/rules.ts",
     "context": "node --experimental-strip-types --no-warnings scripts/context.ts"
   },
   "devDependencies": {
