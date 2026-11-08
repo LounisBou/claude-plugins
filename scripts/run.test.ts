@@ -14,7 +14,7 @@ import { run as matrix } from './plugin-matrix.ts'
 import { parseCeilings, run as prompts } from './prompts.ts'
 import { run as versionBump } from './version-bump.ts'
 import { copyOf, MARK, run as core } from './core.ts'
-import { dependenciesOf, escapingImports, run as deps, satisfies } from './deps.ts'
+import { dependenciesOf, escapingImports, run as deps, satisfies, undeclaredVariables } from './deps.ts'
 
 interface Recorded extends Io {
   readonly lines: { out: string[]; err: string[] }
@@ -316,5 +316,13 @@ describe('dependency lint', () => {
     const io = recorder()
     assert.equal(deps(root, [], io), 1)
     assert.deepEqual(io.lines.err, ['plugins/alpha/hooks/a.ts: imports ../../beta/y.ts, outside its plugin'])
+  })
+})
+
+describe('shared environment variables', () => {
+  it('lets a plugin read its own family, and another plugin only the declared names', () => {
+    const source = "await $.env.get('ORCHESTRATOR_SPAWNED')\nawait $.env.get( \"ORCHESTRATOR_NEW\" )\nawait $.env.get('HOME')\nawait $.env.get('CLAUDE_GITHUB_X')"
+    assert.deepEqual(undeclaredVariables(source, 'norms'), ['ORCHESTRATOR_NEW', 'CLAUDE_GITHUB_X'])
+    assert.deepEqual(undeclaredVariables(source, 'orchestrator'), ['CLAUDE_GITHUB_X'])
   })
 })

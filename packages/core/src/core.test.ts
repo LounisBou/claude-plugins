@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, it } from 'node:test'
+import { ENV, isSpawned } from './env.ts'
 import { configDir, DeadlineExceeded, installRecordPath, locatePlugin, NotInstalled, parseSessionName, readText, sessionName, setting, stateDir, update, withDeadline, withLock, writeAtomic } from './index.ts'
 
 const scratch = (): string => mkdtempSync(join(tmpdir(), 'core-'))
@@ -166,5 +167,14 @@ describe('locate', () => {
       assert.throws(() => locatePlugin('github', ['lounisbou'], host(record).env), (error: unknown) =>
         error instanceof NotInstalled && problem.test(error.message) && error.fix === '/plugin install github@lounisbou')
     }
+  })
+})
+
+describe('env', () => {
+  it('reads a session as spawned only when the variable holds a value', () => {
+    assert.equal(isSpawned(undefined), false)
+    assert.equal(isSpawned(''), false)
+    assert.equal(isSpawned('1'), true)
+    assert.equal(ENV.spawned, 'ORCHESTRATOR_SPAWNED')
   })
 })

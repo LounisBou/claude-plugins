@@ -1,11 +1,13 @@
 // The dependency rules of docs/architecture.md, checked: a plugin of this repository is named
 // with its marketplace and a version range its current version satisfies, the graph has no
-// cycle, and no TypeScript file imports a path outside its own plugin.
+// cycle, no TypeScript file imports a path outside its own plugin, and a shared environment
+// variable is read only by a name core declares.
 //
 //   npm run deps
 import { readdirSync, readFileSync } from 'node:fs'
 import { dirname, join, relative, resolve, sep } from 'node:path'
 import { processIo, type Io } from './lib/io.ts'
+import { ENV } from '../packages/core/src/env.ts'
 import { compareVersions, isEntry, isRecord, manifestPath, PLUGINS_DIR, readPlugins } from './lib/plugins.ts'
 
 export const MARKETPLACE = 'lounisbou'
@@ -102,6 +104,20 @@ export function escapingImports(source: string, file: string, pluginRoot: string
   return escaping
 }
 
+// Each family of variables belongs to the plugin that sets them; another plugin reads one only
+// by a name core's ENV declares.
+const FAMILIES: Readonly<Record<string, string>> = { ORCHESTRATOR_: 'orchestrator', CLAUDE_GITHUB_: 'github' }
+const VARIABLE = /\$\.env\.get\(\s*['"]([A-Z0-9_]+)['"]/g
+const DECLARED: readonly string[] = Object.values(ENV)
+
+/** The variables of another plugin's family that `source`, in `plugin`, reads undeclared. */
+export function undeclaredVariables(source: string, plugin: string): string[] {
+  return [...source.matchAll(VARIABLE)]
+    .map(match => match[1] ?? '')
+    .filter(name => Object.entries(FAMILIES).some(([prefix, owner]) => name.startsWith(prefix) && owner !== plugin))
+    .filter(name => !DECLARED.includes(name))
+}
+
 function typescriptFiles(dir: string): string[] {
   return readdirSync(dir, { recursive: true, withFileTypes: true })
     .filter(entry => entry.isFile() && entry.name.endsWith('.ts') && !join(entry.parentPath, entry.name).includes(`${sep}node_modules${sep}`))
@@ -116,9 +132,11 @@ export function run(root: string, _args: readonly string[], io: Io): number {
     graph.set(dir, { version: manifest.version, dependencies: dependenciesOf(raw, dir) })
     const pluginRoot = resolve(root, PLUGINS_DIR, dir)
     for (const file of typescriptFiles(pluginRoot)) {
-      for (const specifier of escapingImports(readFileSync(file, 'utf8'), file, pluginRoot)) {
+      const source = readFileSync(file, 'utf8')
+      for (const specifier of escapingImports(source, file, pluginRoot)) {
         faults.push(`${relative(root, file)}: imports ${specifier}, outside its plugin`)
       }
+      for (const name of undeclaredVariables(source, dir)) faults.push(`${relative(root, file)}: reads ${name}, another plugin's variable core's ENV does not declare`)
     }
   }
   faults.push(...dependencyFaults(graph))
