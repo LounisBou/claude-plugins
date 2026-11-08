@@ -101,7 +101,7 @@ def build_report(channel: Channel, store: Store, group: list[InboundMessage]) ->
 
 
 def purge_old_done(store: Store, now: float) -> None:
-    """Delete closed (``done``/``fixed``) reports older than the retention period.
+    """Delete closed (``done``/``fixed``) reports closed longer ago than the retention period.
 
     Under the project's lock: a change of the report waits for the purge, and finds the report gone.
     """
@@ -109,7 +109,13 @@ def purge_old_done(store: Store, now: float) -> None:
         for _, path, report in store.reports():
             if report.get("status") not in CLOSED_STATUSES:
                 continue
-            age = now - datetime.fromisoformat(report["date"]).timestamp()
+            # A reaction still to apply keeps the report: the next pull retries it.
+            reaction = report.get("reaction") or {}
+            if reaction.get("wanted") is not None and reaction.get("wanted") != reaction.get("applied"):
+                continue
+            # The age counts from the closing, not the report: a bug fixed today is kept its full period.
+            closed = report.get("closed_at") or report["date"]
+            age = now - datetime.fromisoformat(closed).timestamp()
             if age > RETENTION_DAYS * 86400:
                 shutil.rmtree(path)
 

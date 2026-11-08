@@ -13,7 +13,7 @@
       "name": "bugs-bot",
       "source": "./plugins/bugs-bot",
       "description": "A Telegram or Slack bug-report relay for Claude Code: one bot, one group or channel and one agent per project.",
-      "version": "0.4.2",
+      "version": "0.4.3",
       "author": {
         "name": "Lounis Bou"
       }
