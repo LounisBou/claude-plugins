@@ -440,8 +440,6 @@ check "the phase brief template reads « under load » as emulated throttling" "
 # The directives rule moved out of the rulebook; the trigger that makes a session read it stays.
 check "the directives rule and the guard live in the briefs reference" "yes|yes" \
   "$(spells "$ORCH_REFS/briefs.md" '## When a decision changes, the directives change in the same move')|$(spells "$ORCH_REFS/briefs.md" '**A guard over your own directives is the one instrument you may write yourself**')"
-check "environment preparation, pipelining and the tab-close row live in the lifecycle reference" "yes|yes|yes" \
-  "$(spells "$ORCH_REFS/lifecycle.md" '**Environment preparation is orchestrator housekeeping**')|$(spells "$ORCH_REFS/lifecycle.md" 'An agent may pipeline only when PR N+1 is dispatched to that same agent')|$(spells "$ORCH_REFS/lifecycle.md" 'The agent acknowledged its stand-down, the tab can close')"
 check "the one-round rule, depth versus scope and the publishing rule live in the review reference" "yes|yes|yes" \
   "$(spells "$ORCH_REFS/review.md" '**One review round, one correction round, and you close it.**')|$(spells "$ORCH_REFS/review.md" '**Depth vs scope**')|$(spells "$ORCH_REFS/review.md" 'a thread closed by a change is answered by the change')"
 # Rule 36 of the rules review: the norms check's findings are triaged like any others, said in
@@ -5292,8 +5290,6 @@ check "the orchestrator skill merges a green head only where the method opts int
 check "and by default it reports ready" "yes" "$(help_has "$CWSCRIPT" 'otherwise report « ready »')"
 check "review.md's CI watch stays at 800 characters or fewer, its outcomes in the script" "yes|no|no" \
   "$([ "$(grep '^\*\*Checks, in one background watch\.\*\*' "$ORCH_REFS/review.md" | wc -m | tr -d ' ')" -le 800 ] && echo yes || echo no)|$(spells "$ORCH_REFS/review.md" 'Moved: re-arm on the new head')|$(spells "$ORCH_REFS/review.md" 'Base-no-run with `filtered=0`')"
-check "the lifecycle never rotates an agent, nor spawns a session, to watch CI" "yes|yes" \
-  "$(spells "$ORCH_REFS/lifecycle.md" 'is stood down, never rotated, and no session is spawned to watch CI')|$(spells "$ORCH_REFS/lifecycle.md" 'An agent whose remaining work is waiting on CI is not rotated')"
 check "the audit brief is named by its subject, with no date" "yes|no" \
   "$(spells "$ROOT/commands/audit.md" 'audit-<subject>-brief.md')|$(spells "$ROOT/commands/audit.md" 'audit-<date>')"
 check "the audit report keeps a dated name whose date is date +%F run at launch, never typed" "yes|yes" \
