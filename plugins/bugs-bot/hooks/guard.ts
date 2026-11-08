@@ -11,11 +11,13 @@
 // A denial says why, so the model rephrases. It never traps the person: what they
 // typed themselves in this session releases it (a token they wrote passes, and
 // naming `.env` lets the token file be reached), and it holds no state across
-// calls, so an aborted turn leaves nothing behind. A guard that cannot read lets
-// the call through: its `.catch` passes, and today's behaviour stands.
+// calls, so an aborted turn leaves nothing behind. A guard that throws fails closed
+// on what it protects only: its `.catch` refuses a call that posts or may reach the
+// token file, judged from the call alone, and lets every other call through.
 import {
-  DYNAMIC_DENIAL, PROJECT_FILE, TOKEN_DENIAL, TOOL, bashNamesTokenFile, bugsCalls, leakDenial, leaksOf,
-  parentsOf, postedWords, projectFacts, shellWords, tokenFile, typedByPerson, typedNamesTokenFile, unreleased,
+  DYNAMIC_DENIAL, PROJECT_FILE, TOKEN_DENIAL, TOOL, bashNamesTokenFile, bashNetDenial, bugsCalls, leakDenial, leaksOf,
+  parentsOf, postedWords, projectFacts, readNetDenial, shellWords, tokenFile, toolNetDenial, typedByPerson,
+  typedNamesTokenFile, unreleased,
   type Word,
 } from './core.ts'
 
@@ -100,7 +102,10 @@ export function register(on: any): void {
     const { file, home } = await tokenPath($)
     if (bashNamesTokenFile(command, file, home) && !typedNamesTokenFile(await typed($))) return { deny: TOKEN_DENIAL }
     return next(e)
-  }).catch(async (_$: any, e: any, next: any) => next(e))
+  }).catch(async (_$: any, e: any, next: any) => {
+    const denial = bashNetDenial(String(e?.command ?? ''))
+    return denial === null ? next(e) : { deny: denial }
+  })
 
   // The tool form: its arguments are the words already.
   on('tool.call', { tool: 'mcp__bugs-bot__bugs' }, async ($: any, e: any, next: any) => {
@@ -108,7 +113,10 @@ export function register(on: any): void {
     const denial = await judgePosted($, postedWords(String(e.command ?? ''), args))
     if (denial) return { deny: denial }
     return next(e)
-  }).catch(async (_$: any, e: any, next: any) => next(e))
+  }).catch(async (_$: any, e: any, next: any) => {
+    const denial = toolNetDenial(String(e?.command ?? ''))
+    return denial === null ? next(e) : { deny: denial }
+  })
 
   // Read and Grep on the token file (Grep on the directory that holds it too).
   on('tool.call', { tool: ['Read', 'Grep'] }, async ($: any, e: any, next: any) => {
@@ -121,5 +129,8 @@ export function register(on: any): void {
     const reaches = real === tokenReal || (e.tool === 'Grep' && real === holder)
     if (reaches && !typedNamesTokenFile(await typed($))) return { deny: TOKEN_DENIAL }
     return next(e)
-  }).catch(async (_$: any, e: any, next: any) => next(e))
+  }).catch(async (_$: any, e: any, next: any) => {
+    const denial = readNetDenial(String(e?.tool === 'Read' ? e?.file_path ?? '' : e?.path ?? ''))
+    return denial === null ? next(e) : { deny: denial }
+  })
 }

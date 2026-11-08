@@ -5,7 +5,7 @@
 import { expect, test } from 'claude-code/testing'
 import { capture, mount } from './fakes.ts'
 import { register } from '../guard.ts'
-import { DYNAMIC_DENIAL, TOKEN_DENIAL, TOOL, leaksOf, shellWords, unreleased } from '../core.ts'
+import { DYNAMIC_DENIAL, NET_DENIAL, TOKEN_DENIAL, TOOL, bashNetDenial, leaksOf, readNetDenial, shellWords, toolNetDenial, unreleased } from '../core.ts'
 
 const PROJECT = { '/repo/.bugs-bot.json': JSON.stringify({ project: 'demo', agent_title: 'Bugs : demo', deploy_url: 'https://demo.example/app' }) }
 const tokens = (text: string) => leaksOf(text, 'https://demo.example/app').map(l => l.token)
@@ -212,4 +212,32 @@ test('the person naming .env lets the token file be reached', async () => {
   expect((await read($, call, async () => 'read')).deny).toBe(TOKEN_DENIAL)
   await hook('prompt.submit')($, { text: 'check ~/.bugs-bot/.env has both keys', origin: { kind: 'composer' } }, async (e: any) => e)
   expect(await read($, call, async () => 'read')).toBe('read')
+})
+
+// --- a guard that fails ---------------------------------------------------------------
+
+test('a failed guard refuses, from the call alone, what posts or reaches the token file', () => {
+  for (const command of ['bugs-bot reply 1 "ok"', 'bugs-bot done 1 --reason x', 'cat ~/.bugs-bot/.env', 'echo $BUGS_BOT_ENV_FILE']) expect(bashNetDenial(command)).toBe(NET_DENIAL)
+  for (const command of ['bugs-bot list', 'git status', 'npm test']) expect(bashNetDenial(command)).toBe(null)
+  expect(toolNetDenial('post')).toBe(NET_DENIAL)
+  expect(toolNetDenial('list')).toBe(null)
+  for (const target of ['/home/op/.bugs-bot/.env', '/home/op/.bugs-bot', '/secrets/.env']) expect(readNetDenial(target)).toBe(NET_DENIAL)
+  expect(readNetDenial('/home/op/.bugs-bot/demo/state.json')).toBe(null)
+})
+
+test('a guard that throws refuses a post and lets a read through, through the engine', async ($, on) => {
+  let ran = 0
+  on('session.start', () => ({ cwd: '/repo' }))
+  on('tool.register', () => ({ value: undefined }))
+  on('session.id', () => ({ value: 'session-1' }))
+  on('session.cwd', () => { throw new Error('no cwd') })
+  on('env.get', () => { throw new Error('no env') })
+  on('tool.call', { tool: 'Bash' }, () => { ran++; return { result: 'ran' } })
+  on('tool.call', { tool: ['Read', 'Grep'] }, () => ({ result: 'read' }))
+  await begin($)
+  expect((await $.tool.call({ tool: 'Bash', command: 'bugs-bot reply 1 "corrigé"' })).deny).toBe(NET_DENIAL)
+  expect((await $.tool.call({ tool: 'Bash', command: 'git status' })).deny).toBeUndefined()
+  expect((await $.tool.call({ tool: 'Read', file_path: '/home/op/.bugs-bot/.env' })).deny).toBe(NET_DENIAL)
+  expect((await $.tool.call({ tool: 'Read', file_path: '/repo/src/app.ts' })).deny).toBeUndefined()
+  expect(ran).toBe(1)
 })
