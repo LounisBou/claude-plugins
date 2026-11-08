@@ -195,15 +195,24 @@ test('a phase dispatches Explore only', async ($, on) => {
   expect((await $.tool.call({ tool: 'Agent', subagent_type: 'Explore', prompt: 'find it', description: 'x' } as any)).result).toBe('ran')
 })
 
-test('the guard stays armed across turns and releases on the user\'s words', async ($, on) => {
+test('the guard stays armed across turns; words grant nothing, the user\'s Allow when asked does', async ($, on) => {
+  const replies: string[] = ['Deny', 'Allow']
+  const asked: string[] = []
+  // The host's question reaches the chain as an AskUserQuestion call, answered before the engine.
+  on('tool.call', { tool: 'AskUserQuestion' }, (_$: any, e: any) => {
+    const question = e.questions[0].question
+    asked.push(question)
+    return { result: { questions: e.questions, answers: { [question]: replies.shift() } } }
+  })
   await world(on)
   await start($)
   await skill($, 'phase')
   await turnEnd($, false)                     // stopped on a question
-  await typed($, 'go on with the next phase')
-  expect(refused(await agent($, 'general-purpose'))).toBe(true)
   await typed($, 'good, use a subagent now')
+  expect(refused(await agent($, 'general-purpose'))).toBe(true)
   expect((await agent($, 'general-purpose')).result).toBe('ran')
+  expect(asked.length).toBe(2)
+  expect(asked[0]).toContain('Let a general-purpose subagent run?')
 })
 
 test('an aborted turn releases the guard', async ($, on) => {
