@@ -53,20 +53,20 @@ function namesMap(word: string, maps: readonly string[], lineNamesState: boolean
 export function bashWritesTheMap(command: string, maps: readonly string[]): boolean {
   const lineNamesState = /claude-orchestrator|ORCHESTRATOR_STATE_DIR/.test(command)
   for (const m of command.matchAll(/(?:^|[^<>&0-9])\d?>{1,2}\|?\s*(\S+)/g)) {
-    if (namesMap(m[1], maps, lineNamesState)) return true
+    if (namesMap(m[1] ?? '', maps, lineNamesState)) return true
   }
   for (const segment of command.split(/&&|\|\||[;|\n&]/)) {
     const words = segment.trim().split(/\s+/).filter(Boolean)
     const at = words.findIndex(w => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w) && !['env', 'command', 'sudo', 'nohup', 'exec'].includes(w))
     if (at < 0) continue
-    const verb = words[at].split('/').pop() ?? ''
+    const verb = (words[at] ?? '').split('/').pop() ?? ''
     const args = words.slice(at + 1)
     const operands = args.filter(w => !w.startsWith('-'))
     if (verb === 'tee' && operands.some(w => namesMap(w, maps, lineNamesState))) return true
     if ((verb === 'sed' || verb === 'gsed' || verb === 'perl') && args.some(w => /^-[A-Za-z]*i|^--in-place/.test(w))
       && operands.some(w => namesMap(w, maps, lineNamesState))) return true
     if (['mv', 'cp', 'install', 'ln', 'rsync'].includes(verb) && operands.length >= 2
-      && namesMap(operands[operands.length - 1], maps, lineNamesState)) return true
+      && namesMap(operands.at(-1) ?? '', maps, lineNamesState)) return true
   }
   return false
 }
