@@ -1,7 +1,9 @@
 // A command line read the way the shell reads it: quoting, heredocs, comments, $((…)),
 // assignments and wrappers. A heredoc body, a comment and quoted text that is an argument (a
-// commit message, a body) are data and never read as a command. The argument of bash -c, sh -c
-// and zsh -c is read again, one level deep. Pure functions only. Every plugin that reads a
+// commit message, a body) are data and never read as a command. The command line a shell runs
+// with -c, or eval runs, is read again by simpleCommands, one level deep; readCommands hands the
+// structure to a reader that needs more than the words (what each substitution held, what fed
+// the pipe) and innerLine the line a command runs from a string. Pure functions only. Every plugin that reads a
 // command line reads it here (docs/conventions.md, « One rule, one place »).
 
 // Words that end a simple command or open a group: skipped in command position
@@ -19,7 +21,24 @@ const VALUED = new Set([
 // git global options that take a value: `git -C /tmp/r commit` commits.
 const GITVALUED = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env'])
 // The shells whose -c argument is a command line of its own.
-const SHELL = /^(.*\/)?(bash|sh|zsh)$/
+const SHELL = /^(.*\/)?(bash|sh|zsh|dash|ksh)$/
+// `command`'s lookup options: -v and -V (alone or clustered with -p) print where a program is
+// and run nothing.
+const LOOKUP = /^-[pvV]*[vV][pvV]*$/
+
+/** One simple command as the shell reads it. */
+export interface ShellCommand {
+  /** Its words from the real command on, quotes removed: assignments, reserved words and wrappers skipped. */
+  readonly argv: readonly string[]
+  /** The wrappers skipped before it (`sudo`, `xargs`, `env`…), in order. */
+  readonly wrappers: readonly string[]
+  /** Whether a `command -v` or `command -V` among them looks the program up rather than run it. */
+  readonly lookup: boolean
+  /** One entry per command substitution among its words: the simple commands it held. */
+  readonly substitutions: readonly (readonly ShellCommand[])[]
+  /** The programs, directory dropped, of the commands before it in its pipeline; empty after `;`, `&&`, `||`, `&` or a newline. */
+  readonly piped: readonly string[]
+}
 
 // Where a git command's subcommand sits in its argv, past git's global options,
 // or undefined when the argv is not git's or names no subcommand.
@@ -34,23 +53,36 @@ export function gitSubcommand(argv: readonly string[]): { at: number } | undefin
 // command on: the assignments, reserved words and wrappers before it skipped.
 // A command inside $(…) or backticks is one of its own.
 export function simpleCommands(line: string): string[][] {
-  const out = tokenize(line)
+  const out = readCommands(line).map(command => [...command.argv])
   for (const argv of [...out]) {
-    const inner = shellArgument(argv)
-    if (inner !== undefined) out.push(...tokenize(inner))
+    const inner = innerLine(argv)
+    if (inner !== undefined) out.push(...readCommands(inner).map(command => [...command.argv]))
   }
   return out
 }
 
-// The command line a shell runs with -c (alone or in a cluster such as -lc):
-// the first word after its options, the option each -o or -O sets skipped
-// (`bash -o pipefail -c …`, `bash -euo pipefail -c …`).
-function shellArgument(argv: readonly string[]): string | undefined {
+/**
+ * Every simple command of the line, in the order the shell finishes reading them (a
+ * substitution's commands before the command that holds it), each with its structure. The
+ * command line a shell's -c or eval runs is not read again: innerLine gives it.
+ */
+export function readCommands(line: string): ShellCommand[] {
+  return tokenize(line)
+}
+
+/**
+ * The command line a command runs from a string, or undefined when it runs none: eval's words
+ * joined by spaces, or what a shell (bash, sh, zsh, dash, ksh) runs with -c, alone or in a
+ * cluster such as -lc: the first word after its options, the option each -o or -O sets skipped
+ * (`bash -o pipefail -c …`, `bash -euo pipefail -c …`).
+ */
+export function innerLine(argv: readonly string[]): string | undefined {
+  if (/^(.*\/)?eval$/.test(argv[0] ?? '')) return argv.length > 1 ? argv.slice(1).join(' ') : undefined
   if (!SHELL.test(argv[0] ?? '')) return undefined
   let dashC = false
   for (let k = 1; k < argv.length; k++) {
     const word = argv[k] ?? ''
-    if (/^-[A-Za-z]+$/.test(word)) {
+    if (/^[-+][A-Za-z]+$/.test(word)) {
       if (word.includes('c')) dashC = true
       k += word.replace(/[^oO]/g, '').length
       continue
@@ -61,8 +93,12 @@ function shellArgument(argv: readonly string[]): string | undefined {
   return undefined
 }
 
-function tokenize(command: string): string[][] {
-  const found: string[][] = []
+function baseName(word: string): string {
+  return word.replace(/^.*\//, '')
+}
+
+function tokenize(command: string): ShellCommand[] {
+  const found: ShellCommand[] = []
 
   // The whole command with one trailing newline, and 1-based positions as in
   // the awk being ported: at() is substr(s, i, 1), rest() substr(s, i), find()
@@ -86,6 +122,14 @@ function tokenize(command: string): string[][] {
   const pd = [0]
   const dq = [0]
   const sk = [0]
+  // The substitutions closed among the words of the command being read, each as the
+  // commands it held; the commands read so far at each depth below the top (what pop()
+  // hands to the depth above); the programs of the pipeline so far, and whether the last
+  // separator was a pipe.
+  const substs: ShellCommand[][][] = [[]]
+  const held: ShellCommand[][] = [[]]
+  const chain: string[][] = [[]]
+  const piping = [false]
   let d = 0
   let cur = ''
   let started = 0
@@ -96,9 +140,13 @@ function tokenize(command: string): string[][] {
 
   function push(cl: string): void {
     flushWord(); d++; closer[d] = cl; words[d] = []; pd[d] = 0; dq[d] = 0; sk[d] = 0
+    substs[d] = []; held[d] = []; chain[d] = []; piping[d] = false
   }
   function pop(): void {
-    flushWord(); flushCmd(); d--
+    flushWord(); flushCmd()
+    const inside = held[d] ?? []
+    d--
+    substs[d]?.push(inside)
     cur = ''
     started = dq[d] ? 1 : 0
   }
@@ -111,9 +159,19 @@ function tokenize(command: string): string[][] {
     started = 0
   }
   function flushCmd(): void {
-    analyze(d)
+    if ((words[d] ?? []).length > 0) {
+      const piped = piping[d] ? chain[d] ?? [] : []
+      const command = analyze(d, piped)
+      if (command !== undefined) {
+        found.push(command)
+        if (d > 0) held[d]?.push(command)
+      }
+      chain[d] = [...piped, command === undefined ? '' : baseName(command.argv[0] ?? '')]
+      piping[d] = false
+    }
     words[d] = []
     sk[d] = 0
+    substs[d] = []
   }
   // `$((...))` is arithmetic, not a command: skipped whole, so a `<<` inside it is no heredoc.
   function arith(j: number): number {
@@ -161,18 +219,23 @@ function tokenize(command: string): string[][] {
     hdone = hn
     return j
   }
-  // A finished simple command: its argv from the real command on.
-  function analyze(depth: number): void {
+  // A finished simple command, from its real command on; undefined when nothing is left
+  // once the assignments, reserved words and wrappers are skipped.
+  function analyze(depth: number, piped: readonly string[]): ShellCommand | undefined {
     const w = words[depth] ?? []
     const n = w.length
+    const wrappers: string[] = []
+    let lookup = false
     let k = 1
     while (k <= n) {
       const word = w[k - 1] ?? ''
       if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word) || RESERVED.has(word)) { k++; continue }
       if (WRAPPER.has(word)) {
         const wrap = word
+        wrappers.push(wrap)
         k++
         while (k <= n && (w[k - 1] ?? '').startsWith('-')) {
+          if (wrap === 'command' && LOOKUP.test(w[k - 1] ?? '')) lookup = true
           k += VALUED.has(`${wrap} ${w[k - 1]}`) ? 2 : 1
         }
         if (wrap === 'timeout' || wrap === 'gtimeout') k++
@@ -180,7 +243,8 @@ function tokenize(command: string): string[][] {
       }
       break
     }
-    if (k <= n) found.push(w.slice(k - 1))
+    if (k > n) return undefined
+    return { argv: w.slice(k - 1), wrappers, lookup, substitutions: substs[depth] ?? [], piped }
   }
 
   // One pass over s, c the character, n1 the one after it.
@@ -226,7 +290,13 @@ function tokenize(command: string): string[][] {
       else if (d > 0 && closer[d] === ')') pop()
       i++
     }
-    else if (c === ';' || c === '|') { flushWord(); flushCmd(); i++ }
+    else if (c === '|') {
+      flushWord(); flushCmd()
+      // `||` is a list, not a pipe; `|&` pipes the error stream too.
+      if (n1 === '|') i += 2
+      else { piping[d] = true; i += n1 === '&' ? 2 : 1 }
+    }
+    else if (c === ';') { flushWord(); flushCmd(); i++ }
     else if (c === '&') { flushWord(); if (n1 !== '>') flushCmd(); i++ }
     else if (c === '<' && n1 === '<') {
       flushWord()
@@ -238,6 +308,8 @@ function tokenize(command: string): string[][] {
       while (/[<>&|]/.test(at(i))) i++
       sk[d] = 1
     }
+    // `{}` is a word (`xargs -I {} kill {}`, `find -exec rm {} ;`); a lone brace groups.
+    else if (c === '{' && n1 === '}') { cur += '{}'; started = 1; i += 2 }
     else if (c === '{' || c === '}') { flushWord(); i++ }
     else { cur += c; started = 1; i++ }
   }
