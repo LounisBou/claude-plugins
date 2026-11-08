@@ -1,5 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
-import { COMMANDS, READS, NEVER_GRANTED, NET_REFUSAL, WATCH_MS, bashNetRefusal, ciTransitions, register, writeNetRefusal } from './register.js'
+import { COMMANDS, READS, NEVER_GRANTED, NET_REFUSAL, WATCH_MS, bashNetRefusal, ciTransitions, register, selfReviewRefusal, writeNetRefusal } from './register.js'
 import { lint, NEGATIVE_PHRASES, proseLines, refusal, TITLE_MAX } from './writing.js'
 
 test('session.start registers the gh tool and the three commands', async ($, on) => {
@@ -2542,4 +2542,13 @@ test('a failed guard refuses, from the call alone, what it protects and lets the
   expect(writeNetRefusal('/h/.claude/plugins/data/github/pr-records/1.json')).toBe(NET_REFUSAL)
   expect(writeNetRefusal('/h/.claude/plugins/data/github/auto-merge.json')).toBe(NET_REFUSAL)
   expect(writeNetRefusal('/work/src/app.ts')).toBe(null)
+})
+
+test('a review of a head this session pushed is refused; another kind, or another head, is not', () => {
+  const head = 'a'.repeat(40)
+  const pushed = new Set([head])
+  expect(String(selfReviewRefusal('review', head, pushed))).toContain('a review is made by another session')
+  expect(selfReviewRefusal('review', 'b'.repeat(40), pushed)).toBe(null)
+  expect(selfReviewRefusal('e2e', head, pushed)).toBe(null)
+  expect(selfReviewRefusal('norms', head, pushed)).toBe(null)
 })

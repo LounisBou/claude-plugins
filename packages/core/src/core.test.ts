@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, it } from 'node:test'
 import { ENV, isSpawned } from './env.ts'
-import { configDir, DeadlineExceeded, installRecordPath, locatePlugin, NotInstalled, parseSessionName, readText, sessionName, setting, stateDir, update, withDeadline, withLock, writeAtomic } from './index.ts'
+import { configDir, DeadlineExceeded, installRecordPath, locatePlugin, NotInstalled, parseSessionName, readText, recordedInstallPaths, sessionName, setting, stateDir, update, withDeadline, withLock, writeAtomic } from './index.ts'
 
 const scratch = (): string => mkdtempSync(join(tmpdir(), 'core-'))
 
@@ -176,5 +176,14 @@ describe('env', () => {
     assert.equal(isSpawned(''), false)
     assert.equal(isSpawned('1'), true)
     assert.equal(ENV.spawned, 'ORCHESTRATOR_SPAWNED')
+  })
+})
+
+describe('install record', () => {
+  it('lists the recorded paths in the order of the marketplaces, or names the problem', () => {
+    const text = JSON.stringify({ plugins: { 'o@b': [{ installPath: '/b' }], 'o@a': ['junk', { installPath: '' }, { installPath: '/a' }] } })
+    assert.deepEqual(recordedInstallPaths(text, 'o', ['a', 'b', 'c']), { paths: ['/a', '/b'] })
+    assert.deepEqual(recordedInstallPaths('{', 'o', ['a']), { problem: 'the install record is not JSON' })
+    assert.deepEqual(recordedInstallPaths('[]', 'o', ['a']), { problem: 'the install record has no plugins' })
   })
 })

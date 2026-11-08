@@ -167,22 +167,9 @@ is read from `git log` at commit time, in `implement:phase`.
 
 ## Step 6 — State
 
-Write `docs/features/<codename>/IMPLEMENTATION.md` in this exact shape.
-`implement:phase` and `implement:close` parse it, so the spelling is the contract:
-
-```
-**Codename**: <codename>
-**Title**: <title>
-**Branch**: <type>/<codename>
-**Bump**: <major|minor|patch|none>
-**Artifacts**: <local|committed>
-**Base**: <sha of the main branch head>
-
-| phase | title | status | milestone |
-|---|---|---|---|
-| 01 | <title of plan/phase-01-<slug>.md> | todo |  |
-| 02 | <title of plan/phase-02-<slug>.md> | todo |  |
-```
+Write `docs/features/<codename>/IMPLEMENTATION.md` in the method's state-file shape
+(`references/plan.md` of `method:lifecycle`), exactly: `implement:phase` and
+`implement:close` parse it, so the spelling is the contract.
 
 One row per phase of `plan/INDEX.md`, in its order, `NN` on two digits, status
 `todo`, milestone empty. The base is the head the branch was cut from, which the

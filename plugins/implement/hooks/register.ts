@@ -10,6 +10,7 @@ import {
   preflightLines, silencesAttribution, skillOf, skillText, stateLine, typedByUser,
   type Band, type Guard, type Snapshot,
 } from './core.ts'
+import { candidateLaunchers, headlessArgv, lastLine, reviewerPrompt, reviewerTitle } from './review.ts'
 
 export const TOOL = 'mcp__implement__state'
 
@@ -127,6 +128,38 @@ function touchesState(command: string): boolean {
   return shellActions(command).includes('commit') || command.includes('IMPLEMENTATION.md')
 }
 
+// /implement:review: the reviewer launched as another session, in iTerm when the orchestrator's
+// launcher is installed on macOS, headless otherwise. Never the implementer's own review.
+async function launchReviewer($: any): Promise<string> {
+  const branch = await git($, ['branch', '--show-current'])
+  const top = await git($, ['rev-parse', '--show-toplevel'])
+  if (branch.code !== 0 || !branch.out || top.code !== 0) return 'implement:review needs a git repository on a branch: nothing was launched.'
+  const prompt = reviewerPrompt(branch.out)
+  const config = String((await $.env.get('CLAUDE_CONFIG_DIR')) || `${String((await $.env.get('HOME')) ?? '')}/.claude`)
+  const uname = await $.process.run(['uname', '-s'], { timeoutMs: 10_000 })
+  let launcher: string | null = null
+  if (String(uname.stdout ?? '').trim() === 'Darwin') {
+    const record = await readText($, `${config}/plugins/installed_plugins.json`)
+    for (const path of record === null ? [] : candidateLaunchers(record)) {
+      if (await $.fs.exists(path)) {
+        launcher = path
+        break
+      }
+    }
+  }
+  if (launcher !== null) {
+    const title = reviewerTitle(codenameOf(branch.out))
+    const spawned = await $.process.run([launcher, 'spawn', '--dir', top.out, '--title', title, '--prompt', prompt], { cwd: top.out, timeoutMs: 120_000 })
+    const tty = lastLine(spawned.stdout)
+    if (spawned.exitCode === 0 && tty.startsWith('/dev/')) return `Reviewer « ${title} » launched in iTerm on ${tty}. Its review record is the ready gate's; nothing more to do here.`
+    return `The launcher refused the reviewer (exit ${spawned.exitCode}): ${lastLine(spawned.stderr) || tty || 'no tty printed'}. Nothing was launched another way.`
+  }
+  const log = `${top.out}/.git/implement-review.log`
+  const started = await $.process.run(headlessArgv(prompt, log), { cwd: top.out, timeoutMs: 10_000 })
+  if (started.exitCode !== 0) return `The headless reviewer did not start (exit ${started.exitCode}): ${lastLine(started.stderr) || 'no output'}.`
+  return `Reviewer launched headless (no iTerm launcher here); its report goes to ${log}. Its review record is the ready gate's.`
+}
+
 // Whether this session loaded the method's kernel: the skills point at it until it is.
 const METHOD_SKILL = 'method:lifecycle'
 const method = { isLoaded: false }
@@ -165,6 +198,9 @@ export function register(on: any) {
       return { text: doctorText(await preflight($, true)) }
     }).catch(async ($: any, e: any, next: any) => next(e))
   }
+
+  on('command.run', { command: 'implement:review' }, async ($: any) => ({ text: await launchReviewer($) }))
+    .catch(async ($: any, e: any, next: any) => next(e))
 
   on('command.run', { command: 'implement:release-guard' }, async ($: any) => {
     await writeGuard($, IDLE)

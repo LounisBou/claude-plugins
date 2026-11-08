@@ -3,6 +3,7 @@ export { readText, update, withLock, writeAtomic, type LockOptions } from './sto
 export { DeadlineExceeded, withDeadline } from './deadline.ts'
 export { parseSessionName, ROLES, sessionName, type Prefix, type Role, type SessionName } from './names.ts'
 export { installRecordPath, locatePlugin, NotInstalled } from './locate.ts'
+export { recordedInstallPaths } from './install-record.ts'
 export { gitSubcommand, simpleCommands } from './shell.ts'
 export { accepts, DETAIL_MAX, KINDS, parsePrRecord, RECORD_VERSION, type Kind, type PrRecord, type Result } from './pr-record.ts'
 export { ENV, isSpawned } from './env.ts'

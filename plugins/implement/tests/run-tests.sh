@@ -38,8 +38,8 @@ check_status() {
 echo "== manifests =="
 MAN="$ROOT/.claude-plugin/plugin.json"
 check "plugin is named implement" "implement" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$MAN")"
-check "the only dependency is superpowers" "['superpowers@claude-plugins-official']" \
-  "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dependencies"])' "$MAN")"
+check "the dependencies are superpowers and the method" "superpowers method" \
+  "$(python3 -c 'import json,sys; print(" ".join(d.split("@")[0] if isinstance(d, str) else d["name"] for d in json.load(open(sys.argv[1]))["dependencies"]))' "$MAN")"
 check "both commands run the preflight" "2" "$(grep -l 'scripts/preflight.sh' "$ROOT"/commands/*.md | wc -l | tr -d ' ')"
 check "both commands check the dependency only" "2" "$(grep -l 'scripts/preflight.sh" --deps-only$' "$ROOT"/commands/*.md | wc -l | tr -d ' ')"
 check "no command description asks for a git repository" "0" "$(grep -il '^description:.*git repository' "$ROOT"/commands/*.md | wc -l | tr -d ' ')"
@@ -288,12 +288,11 @@ check "no phase bash block dispatches a subagent" "" \
 # The milestone column carries a sha from the moment a phase is under way: the base
 # of the sub-phase being written while the row is doing, the phase's last commit
 # once it is done. An example showing it empty teaches the older shape.
-check "phase's example table shows a doing row carrying its base" "1" \
+METHOD_PLAN="$ROOT/../method/skills/lifecycle/references/plan.md"
+check "the method's state table shows a doing row carrying its base" "1" \
   "$(awk "$FENCE_TRACK"'
-     !f && /^## Inputs$/ { in_in = 1; next }
-     !f && /^## / { in_in = 0 }
-     in_in && f && /^\| *[0-9]+ *\|[^|]*\| *doing *\| *[0-9a-f]+ *\|/ { hits++ }
-     END { print (hits > 0) ? 1 : 0 }' "$PHASE_DOC")"
+     f && /^\| *[0-9]+ *\|[^|]*\| *doing *\| *<commit [^|]*started from> *\|/ { hits++ }
+     END { print (hits > 0) ? 1 : 0 }' "$METHOD_PLAN")"
 
 echo "== feature =="
 FEATURE_DOC="$ROOT/skills/feature/SKILL.md"
@@ -320,10 +319,10 @@ check "feature's one question carries the four values" "4" \
 
 # The state table is the contract phase and close parse. It is shown in a fence so
 # the writer copies it rather than inventing a spelling of its own.
-check "feature gives the state table its header inside a fence" "1" \
+check "the method gives the state table its header inside a fence, and feature points at it" "1 1" \
   "$(awk "$FENCE_TRACK"'
      f && /^\| phase \| title \| status \| milestone \|/ { hits++ }
-     END { print (hits > 0) ? 1 : 0 }' "$FEATURE_DOC")"
+     END { print (hits > 0) ? 1 : 0 }' "$METHOD_PLAN") $(grep -c 'state-file shape' "$FEATURE_DOC")"
 
 # The brainstorm and the plan skill each save a file of their own under
 # docs/superpowers. This document names that path to say it is NOT written: the

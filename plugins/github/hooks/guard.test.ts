@@ -923,7 +923,7 @@ test('a push to the branch of a Ready pull request puts Not Ready back, a Not Re
 test('a push by URL reads the repository and the branch from the command', async ($, on) => {
   const seen = await world($, on, { pulls: { feat: [{ number: 4, labels: [{ name: 'ready' }] }] } })
   await $.tool.call(bash('git push https://github.com/o/r.git HEAD:feat'))
-  expect(seen.runs.map((r) => [r.command, r.repo, r.args])).toEqual([
+  expect(seen.runs.filter((r) => r.command).map((r) => [r.command, r.repo, r.args])).toEqual([
     ['pr-get', 'o/r', { branch: 'feat' }],
     ['pr-readiness', 'o/r', { pr: 4, state: 'not-ready' }],
   ])
