@@ -98,7 +98,7 @@ cap is the operator's.
 
 ## Copied rules core replaces (goal 3)
 
-- The shell reader: in core since github's copy moved there (`packages/core/src/shell.ts`); the orchestrator's `hooks/tokenizer.ts` follows in its refoundation.
+- The shell reader: in core (`packages/core/src/shell.ts`), read by github, implement, norms, pr-review and the orchestrator's kill guard.
 - The push detector, four times: orchestrator's push guard, `plugins/github/hooks` (`bashPushes`),
   `plugins/norms/hooks/guards.ts`, `plugins/pr-review/hooks/policy.ts` (`runsGitPush`). Removed
   with goal 12 rather than unified.
