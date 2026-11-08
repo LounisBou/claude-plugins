@@ -4,6 +4,8 @@
 // walkthrough refuses without them. No $ here, so the guards and their .catch
 // nets decide the same way, and the tests read the rules without an engine.
 
+import { gitSubcommand, simpleCommands } from '../core/shell.ts'
+
 export type Skill = 'start-review' | 'process-comments' | 'auto-fix-loop'
 
 // The skills this plugin ships, by the key skill.prompt carries.
@@ -82,22 +84,13 @@ export const releases = (prompt: string): boolean => starts(prompt, /^(end|stop)
  * message, not the subcommand, and reads as no push.
  */
 export function runsGitPush(command: string): boolean {
-  const segments = command.split(/\|\||&&|[;|&\n()]/)
-  for (const segment of segments) {
-    const words = segment.trim().split(/\s+/).filter(Boolean)
-    let i = 0
-    // Leading assignments and wrappers: `FOO=1 git push`, `env git push`, `command git push`.
-    while (i < words.length && (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]) || ['env', 'command', 'exec', 'nohup', 'time'].includes(words[i]))) i++
-    if (words[i] !== 'git' && !/\/git$/.test(words[i] ?? '')) continue
-    i++
-    while (i < words.length && words[i].startsWith('-')) {
-      // Global options that take their value as the next word.
-      if (['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--exec-path'].includes(words[i])) i++
-      i++
-    }
-    if (words[i] === 'push') return true
-  }
-  return false
+  // core's shell reader: each command of a list or a pipe, wrappers and assignments skipped,
+  // `sh -c` / `bash -lc` read again. `eval` joins its words into a line read the same way.
+  return simpleCommands(command).some((argv) => {
+    if (argv[0] === 'eval') return runsGitPush(argv.slice(1).join(' '))
+    const at = gitSubcommand(argv)?.at
+    return at !== undefined && argv[at] === 'push'
+  })
 }
 
 // A path of the walkthrough's own scratch directory, never a code change. A path

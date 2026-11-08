@@ -45,7 +45,7 @@ test('publishing needs the two words post now; end review and stop review releas
 })
 
 test('git push is read per command of a list, its subcommand after the global options', () => {
-  for (const yes of ['git push', 'git push origin main', 'git -C /repo push', 'git -c a=b push', 'cd x && git push', 'FOO=1 git push', 'git status; git push -u origin x', 'env git push']) {
+  for (const yes of ['git push', 'git push origin main', 'git -C /repo push', 'git -c a=b push', 'cd x && git push', 'FOO=1 git push', 'git status; git push -u origin x', 'env git push', 'sh -c "git push"', 'bash -lc "cd x && git push origin"', 'eval git push', 'eval "git push -f"']) {
     expect(runsGitPush(yes)).toBe(true)
   }
   for (const no of ['git commit -m "push it later"', 'git log --grep=push', 'echo git push', 'gh pr create', 'git status', 'git pull', 'git stash push']) {
