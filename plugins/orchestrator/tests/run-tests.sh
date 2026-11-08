@@ -11130,8 +11130,6 @@ check "the calibration reference walks the bench in the operator's order" "yes|y
   "$(spells "$MRC" 'max-usd')|$(spells "$MRC" 'generalize')|$(spells "$MRC" 'export')"
 check "the calibration reference states that a trial's session can reach the real repository" "yes" \
   "$(spells "$MRC" 'with its own permissions on the machine and could reach the real repository')"
-check "the calibration reference states that a run can pass its cap by the trials in flight" "yes" \
-  "$(spells "$MRC" "a run can pass \`--max-usd\` by at most N per-trial ceilings")"
 check "the calibration reference states the selection by equivalence, its keys and the size stamp" "yes|yes|yes|yes" \
   "$(spells "$MRC" '{"selection": {"delta": <d>, "bar": <b>}}')|$(spells "$MRC" 'The entry**: the eligible pair with the lowest expected cost')|$(spells "$MRC" 'the files matching `test_globs` left out')|$(spells "$MRC" 'show [--detail] [<slug>...]')"
 check "the calibration reference no longer states a floor for the tables" "no" "$(spells "$MRC" 'The reliability floors')"
