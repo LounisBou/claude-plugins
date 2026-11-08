@@ -187,15 +187,18 @@ async function nameOf($: Dollar): Promise<string | null> {
     return hostBasenames(host, resolved)
   }
   try {
-    const walked = await withDeadline(walkName(
-      (argv: readonly string[]) => $.process.run(argv, { timeoutMs: left() }),
-      async (path: string) => (await $.fs.stat(path)).size,
+    // Each step checks the signal first: past the deadline the walk starts nothing more.
+    const transcript = await transcriptPathOf($, sessionId)
+    const walked = await withDeadline(signal => walkName(
+      (argv: readonly string[]) => (signal.throwIfAborted(), $.process.run(argv, { timeoutMs: left() })),
+      async (path: string) => (signal.throwIfAborted(), (await $.fs.stat(path)).size),
       async (path: string, index: number) => {
+        signal.throwIfAborted()
         const { exitCode, stdout } = await $.process.run(blockArgv(path, index), { timeoutMs: left() })
         if (exitCode !== 0) throw new Error(`dd exited ${exitCode} on ${path}`)
         return bytesOfBase64(String(stdout ?? ''))
       },
-      await transcriptPathOf($, sessionId),
+      transcript,
       readRecord,
       hostNames,
       sessionId,

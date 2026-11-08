@@ -78,7 +78,7 @@ async function readRows($: any): Promise<Record<string, SessionRow>> {
     if (row) read.push([entry.name, withWait(row, String(await $.fs.read(`${dir.replace(/\/sessions$/, '/waits')}/${entry.name}`).catch(() => '')))])
   }
   const argv = livePidsArgv(read.map(([, row]) => String(row.pid ?? '')))
-  const ps = argv ? await withDeadline($.process.run(argv, { timeoutMs: await readBoundMs($) }), await readBoundMs($)).catch(() => null) : null
+  const ps = argv ? await withDeadline(async () => $.process.run(argv, { timeoutMs: await readBoundMs($) }), await readBoundMs($)).catch(() => null) : null
   // A liveness read that failed (null) keeps every row: it knows of no death.
   const alive = argv ? livePids(ps) : new Set<string>()
   const rows: Record<string, SessionRow> = {}
@@ -179,7 +179,7 @@ async function unmeasuredAgents($: any, rows: Record<string, SessionRow>): Promi
     records.push([pid, hostRecordOf(String(await $.fs.read(`${dir}/${entry.name}`).catch(() => '')))])
   }
   const argv = livePidsArgv(records.map(([pid]) => pid))
-  const ps = argv ? await withDeadline($.process.run(argv, { timeoutMs: await readBoundMs($) }), await readBoundMs($)).catch(() => null) : null
+  const ps = argv ? await withDeadline(async () => $.process.run(argv, { timeoutMs: await readBoundMs($) }), await readBoundMs($)).catch(() => null) : null
   // A liveness read that failed (null) keeps every record: an agent in its
   // first turn listed beside a stale record beats one hidden by a failed ps.
   const alive = argv ? livePids(ps) : new Set<string>()
@@ -251,7 +251,7 @@ async function progressText($: any): Promise<string> {
   const id = await $.session.id()
   const registry = `${await stateDir($)}/records/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
   const bound = await readBoundMs($)
-  const listed = await withDeadline($.fs.read(registry).catch(() => ''), bound)
+  const listed = await withDeadline(() => $.fs.read(registry).catch(() => ''), bound)
   if (isDegradedPass(listed)) {
     await logLine($, 'the dispatch record registry did not answer in time')
     return 'the dispatch record did not answer in time'
@@ -267,7 +267,7 @@ async function progressText($: any): Promise<string> {
       const line = await goalsLine($, goalsFile, bound)
       if (line) goals.push(line)
     }
-    const read = await withDeadline($.fs.read(path).catch(() => ''), bound)
+    const read = await withDeadline(() => $.fs.read(path).catch(() => ''), bound)
     if (isDegradedPass(read)) continue
     groups.push(String(read).split('\n').map(parseDispatchRow).filter((row): row is DispatchRow => row !== null))
   }
@@ -311,9 +311,9 @@ export function sleepingText(records: SleepingRecord[] | null, path: string): st
 
 async function readSleeping($: any): Promise<string> {
   const path = `${await stateDir($)}/sleeping.json`
-  const exists = await withDeadline(Promise.resolve($.fs.exists(path)).catch(() => false), await readBoundMs($))
+  const exists = await withDeadline(() => Promise.resolve($.fs.exists(path)).catch(() => false), await readBoundMs($))
   if (exists !== true) return sleepingText([], path)
-  const read = await withDeadline($.fs.read(path), await readBoundMs($))
+  const read = await withDeadline(() => $.fs.read(path), await readBoundMs($))
   if (isDegradedPass(read)) throw new Error(`the sleeping record ${path} did not answer in time`)
   return sleepingText(parseSleeping(String(read)), path)
 }
@@ -321,10 +321,10 @@ async function readSleeping($: any): Promise<string> {
 // The goals line of one goals.md, goals.py's own (`goals met=m/n ruled_out=k open=… unplanned=…`),
 // or null when there is no file, or its reading failed or ran out of time.
 async function goalsLine($: any, goalsFile: string, bound: number): Promise<string | null> {
-  const exists = await withDeadline(Promise.resolve($.fs.exists(goalsFile)).catch(() => false), bound)
+  const exists = await withDeadline(() => Promise.resolve($.fs.exists(goalsFile)).catch(() => false), bound)
   if (exists !== true) return null
   const done = await withDeadline(
-    $.process.run(['python3', `${$.plugin.root}/skills/orchestrator/scripts/goals.py`, 'line', goalsFile], { timeoutMs: bound }),
+    () => $.process.run(['python3', `${$.plugin.root}/skills/orchestrator/scripts/goals.py`, 'line', goalsFile], { timeoutMs: bound }),
     bound,
   ).catch(() => null)
   if (!done || isDegradedPass(done) || done.exitCode !== 0) {

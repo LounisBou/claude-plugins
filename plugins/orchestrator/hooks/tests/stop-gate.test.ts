@@ -224,6 +224,27 @@ test('the read that wins the race is answered as itself, and the degraded pass i
   expect(isDegradedPass(await withDeadline(new Promise(() => undefined), 10))).toBe(true)
 })
 
+test('work given a deadline is cancelled at the deadline, never left to write later', async () => {
+  const wrote: string[] = []
+  let seen: AbortSignal | null = null
+  const outcome = await withDeadline(async (signal: AbortSignal) => {
+    seen = signal
+    await new Promise(resolve => setTimeout(resolve, 60))
+    if (!signal.aborted) wrote.push('late')
+    return 'finished'
+  }, 10)
+  expect(isDegradedPass(outcome)).toBe(true)
+  await new Promise(resolve => setTimeout(resolve, 100))
+  expect(seen!.aborted).toBe(true)
+  expect(wrote).toEqual([])
+  // Within its deadline the work is answered as itself, its signal never aborted.
+  let kept: AbortSignal | null = null
+  expect(await withDeadline(async (signal: AbortSignal) => { kept = signal; return 'in time' }, 50)).toBe('in time')
+  expect(kept!.aborted).toBe(false)
+  // A failure of the work is the work's own, not a degraded pass.
+  await expect(withDeadline(async () => { throw new Error('the read broke') }, 50)).rejects.toThrow('the read broke')
+})
+
 // --- the ported parsers ------------------------------------------------------------------
 
 test('the machine line is read through whatever markup wraps it', () => {

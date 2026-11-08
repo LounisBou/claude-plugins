@@ -35,8 +35,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   on('session.start', {}, async ($: any, e: any, next: any) => {
     const bound = startBoundMs(next.budget?.remainingMs)
     try {
-      const done = await withDeadline(sync($), bound)
-      if (isDegradedPass(done)) await withDeadline(logLine($, `short commands not synced: did not finish within ${bound} ms`), TIMEOUT_LOG_MS)
+      const done = await withDeadline(signal => sync($, signal), bound)
+      if (isDegradedPass(done)) await withDeadline(() => logLine($, `short commands not synced: did not finish within ${bound} ms`), TIMEOUT_LOG_MS)
     } catch (err) {
       await logLine($, `short commands not synced: ${(err as Error).message}`)
     }
@@ -47,11 +47,13 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   })
 }
 
-// The sync itself, and its failure's log line: all of it under the start's one bound.
-async function sync($: any): Promise<void> {
+// The sync itself, and its failure's log line: all of it under the start's one bound. Past the
+// bound the timeout's own line has said it, and the sync's line is never written after it.
+async function sync($: any, signal: AbortSignal): Promise<void> {
   const argv = syncArgv($.plugin.root, await configDir($), await $.env.get('ORCHESTRATOR_COMMANDS_DIR'))
-  if (!argv) return
+  if (!argv || signal.aborted) return
   const done = await $.process.run(argv, { timeoutMs: SYNC_TIMEOUT_MS })
+  if (signal.aborted) return
   if (done.exitCode !== 0) await logLine($, `short commands not synced (exit ${done.exitCode}): ${String(done.stderr ?? '').trim()}`)
 }
 
