@@ -173,14 +173,14 @@ One row per verification, the evidence in the row, then the verdict and the stat
 | 7 contract coverage | --docs and --phase both present | PASS |
 
 FAIL: 5
-DONE_WITH_CONCERNS
+status: done — row 5 is cosmetic, named under deviations
 ```
 
 The verdict is one line: `PASS`, or `FAIL: <the numbers of the failing rows>`. The
-status is one of `DONE`, `DONE_WITH_CONCERNS`, `BLOCKED`, `NEEDS_DECISION` —
-`DONE` on a clean `PASS`, `DONE_WITH_CONCERNS` when every failing row is cosmetic,
-`BLOCKED` when the gate or the plan compliance fell, `NEEDS_DECISION` when the
-design and the delivery disagree on something the design does not settle.
+status line follows the method: `done` on a clean `PASS`, or when every failing row
+is cosmetic and named; `blocked` when the gate or the plan compliance fell;
+`question` when the design and the delivery disagree on something the design does
+not settle.
 
 ---
 

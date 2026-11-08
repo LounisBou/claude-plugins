@@ -1,5 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 import { TOOL } from './register.ts'
+import { METHOD_LINE } from './core.ts'
 
 const FIXTURE = `**Codename**: demo
 **Bump**: minor
@@ -307,4 +308,12 @@ test('the band draws the phase run, and nothing outside one', async ($, on) => {
   expect(await quiet.find({ type: 'Text', text: /implement:phase/ })).toBeUndefined()
   expect(await quiet.find({ type: 'Text', text: 'the engine band' })).toBeDefined()
   await quiet.unmount()
+})
+
+test('a skill points at the method until the session loads it, then no more', async ($, on) => {
+  await world(on)
+  await start($)
+  expect((await skill($, 'feature')).text).toContain(METHOD_LINE)
+  expect((await $.skill.prompt({ skill: 'method:lifecycle', text: 'KERNEL' })).text).toBe('KERNEL')
+  expect((await skill($, 'phase')).text).not.toContain(METHOD_LINE)
 })

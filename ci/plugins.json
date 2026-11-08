@@ -5,6 +5,9 @@
     "cloudflare": [],
     "github": [],
     "implement": [],
+    "method": [
+      "ubuntu-latest"
+    ],
     "norms": [
       "ubuntu-latest"
     ],

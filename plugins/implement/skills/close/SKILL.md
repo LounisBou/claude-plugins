@@ -30,9 +30,8 @@ NEVER close while a phase is not done, or while the tree is dirty
 NEVER touch a version file when the bump type is none
 ```
 
-This skill's own steps end at the branch. A push, a pull request (draft or ready) or a
-merge that the user's or the project's own instructions call for is carried out
-without asking, and is never refused here.
+This skill's own steps end at the branch. A push and a draft pull request need no consent;
+taking it out of draft and the merge follow the method's ready gate and consent rules.
 
 ---
 
@@ -120,7 +119,7 @@ the second and resets the third, `patch` raises the third. Write it back in plac
 `printf` for a plain `VERSION` file.
 
 Run the full gate of Step 1 again, every command with its exit code. A non-zero
-code stops here with the status `NEEDS_DECISION` and one line:
+code stops here with the status `question` and one line:
 `version written in <file>, gate red: <the first failing line>` — a repository that
 mirrors its version elsewhere (a marketplace entry, a suite literal) says so through
 its own gate, and aligning those places is the repository's decision, not this
@@ -159,7 +158,7 @@ git diff --stat "$BASE"..HEAD
 
 The summary states, in the user's language: the branch, every commit since the base,
 the version if one was written, and each gate command with its exit code. It ends on
-one sentence, said once: this skill's steps end at the branch, and a push, a pull request or a merge that your instructions call for is carried out without asking.
+one sentence, said once: this skill's steps end at the branch: a push and a draft pull request need no consent, and ready and merge follow the method's gate.
 
 ---
 
@@ -206,7 +205,7 @@ of the repository and stay in it.
 | The state file carries no `Base` line | `no Base line in <docs>/IMPLEMENTATION.md` |
 | A gate command came back non-zero | `<command> exit <code>` and the first lines of its output |
 | A bump is asked and no version file exists | the five names looked for, in order, then wait |
-| The gate is red on the run that follows the version write | `version written in <file>, gate red: <the first failing line>` — status `NEEDS_DECISION` |
+| The gate is red on the run that follows the version write | `version written in <file>, gate red: <the first failing line>` — status `question` |
 
 Each stop says its line once and waits. No answer to a stop turns it into an outward
 action that no instruction calls for.
@@ -225,7 +224,7 @@ gate:      <command> exit <code>   (one line per command: both runs when a
 checks:    every phase row done, tree clean before and after
 deviations: what departs from the plan or the bump type the feature declared
 open questions: what the branch leaves open
-status:    DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_DECISION
+status:    done|blocked|question — <one line>
 ```
 
 ---
@@ -243,5 +242,5 @@ status:    DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_DECISION
 5. Summary: branch, commits since the base, version, gate codes, the closing sentence
 6. local mode: delete the feature directory, the parents it empties and its roadmap
    line. committed: keep all
-7. The steps end at the branch; a push, a pull request or a merge the instructions call for is carried out without asking
+7. The steps end at the branch; ready and merge belong to the gate
 ```

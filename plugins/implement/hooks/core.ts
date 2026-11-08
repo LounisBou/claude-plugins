@@ -17,67 +17,9 @@ export function skillOf(key: string): SkillName | null {
 
 // ── The state file ───────────────────────────────────────────────────────────
 
-export type Row = { phase: string; title: string; status: string; milestone: string }
-export type State = {
-  codename: string | null
-  title: string | null
-  branch: string | null
-  bump: string | null
-  artifacts: string | null
-  base: string | null
-  rows: Row[]
-}
-
-const HEADER = /^\*\*(Codename|Title|Branch|Bump|Artifacts|Base)\*\*: *(.*)$/
-// The row shape close's own grep reads: `| NN | title | status | milestone |`.
-const ROW = /^\| *([0-9]+) *\|([^|]*)\| *([a-z]+) *\|([^|]*)\|/
-export const STATUSES = ['todo', 'doing', 'done'] as const
-
-export function parseState(text: string): State {
-  const state: State = { codename: null, title: null, branch: null, bump: null, artifacts: null, base: null, rows: [] }
-  for (const line of text.split('\n')) {
-    const header = HEADER.exec(line)
-    if (header) {
-      const key = header[1].toLowerCase() as 'codename' | 'title' | 'branch' | 'bump' | 'artifacts' | 'base'
-      state[key] = header[2].trim()
-      continue
-    }
-    const row = ROW.exec(line)
-    if (row) state.rows.push({ phase: row[1], title: row[2].trim(), status: row[3], milestone: row[4].trim() })
-  }
-  return state
-}
-
-// The phase to run: the first row whose status is not done.
-export function nextRow(rows: readonly Row[]): Row | null {
-  return rows.find(row => row.status !== 'done') ?? null
-}
-
-// `3`, `03` and `003` all name row 03: the number is written on two digits.
-export function twoDigits(phase: string | number): string | null {
-  const text = String(phase).trim()
-  if (!/^[0-9]+$/.test(text)) return null
-  return String(Number(text)).padStart(2, '0')
-}
-
-// One row rewritten in place, every other line of the file untouched. A todo
-// row leaves the milestone empty, whatever was asked.
-export function markRow(text: string, phase: string | number, status: string, milestone: string):
-{ text: string; row: Row } | { error: string } {
-  const wanted = twoDigits(phase)
-  if (wanted === null) return { error: `not a phase number: ${phase}` }
-  if (!(STATUSES as readonly string[]).includes(status)) return { error: `status must be todo, doing or done, not ${status}` }
-  if (status !== 'todo' && !/^[0-9a-f]{4,40}$/.test(milestone)) return { error: `a ${status} row needs a commit sha as its milestone, not "${milestone}"` }
-  const lines = text.split('\n')
-  for (let i = 0; i < lines.length; i++) {
-    const found = ROW.exec(lines[i])
-    if (!found || twoDigits(found[1]) !== wanted) continue
-    const row: Row = { phase: found[1], title: found[2].trim(), status, milestone: status === 'todo' ? '' : milestone }
-    lines[i] = `| ${row.phase} | ${row.title} | ${row.status} | ${row.milestone} |`
-    return { text: lines.join('\n'), row }
-  }
-  return { error: `no row ${wanted} in the state table` }
-}
+// The method's state-file format, owned by the method plugin and parsed in core.
+export { markRow, nextRow, parseState, twoDigits, ROW_STATUSES as STATUSES, type Row, type State } from '../core/method.ts'
+import type { Row, State } from '../core/method.ts'
 
 // ── The branch, the mode, the ignore guard ───────────────────────────────────
 
@@ -142,7 +84,11 @@ export const PREFLIGHT_PASSED = 'Preflight: passed'
 
 // The skill text as the model reads it: the stop when the preflight failed, the
 // verdict and the derived state ahead of the skill's own text when it passed.
-export function skillText(original: string, lines: readonly string[], stateLine: string | null): string {
+// The line that sends the session to the method once: the lifecycle, done, the report and
+// question formats are the method plugin's, loaded as its own skill, never restated here.
+export const METHOD_LINE = 'The method governs this skill: load the `method:lifecycle` skill once, now, before going on.'
+
+export function skillText(original: string, lines: readonly string[], stateLine: string | null, needsMethod = false): string {
   if (lines.length > 0) {
     return [
       'Preflight: failed, so this skill does not run. Print these lines to the user verbatim and do nothing else:',
@@ -152,6 +98,7 @@ export function skillText(original: string, lines: readonly string[], stateLine:
   }
   const header = [`${PREFLIGHT_PASSED}, checked before this text was loaded: do not run scripts/preflight.sh.`]
   if (stateLine) header.push(stateLine)
+  if (needsMethod) header.push(METHOD_LINE)
   return `${header.join('\n')}\n\n${original}`
 }
 
