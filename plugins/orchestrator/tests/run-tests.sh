@@ -242,14 +242,14 @@ check "the operator's entry skill stays in the command menu" "0" \
   "$(grep -c '^user-invocable: false$' "$ROOT/skills/orchestrator/SKILL.md")"
 check "the audit brief merges nothing" "1" \
   "$(grep -c 'no label, no merge' "$ROOT/templates/agent-audit-brief.md")"
-# Rule 17 of the rules review had the two locks left to the tools, the forge's force-push protection and the launcher's
+# Rule 17 of the rules review had the two locks left to the tools, forge protection and the launcher's
 # title-checked close. The operator's ruling of 2026-11-04, « restore everything and fix », after an
 # independent control, reverses that removal: his word lifts neither lock, so the rulebook
 # states them beside the sentence that lets his instruction replace the skill. Another route than
 # the launcher's takes the launcher's checks by hand, in lifecycle.md, which the core loop's launch
 # row sends every spawn to. Read with its line breaks folded.
 check "the rulebook keeps the two locks over his word and sends any route of a spawn to lifecycle.md" "1|yes|yes|yes" \
-  "$(tr '\n' ' ' < "$ROOT/skills/orchestrator/SKILL.md" | tr -s ' ' | grep -oF -- "Two locks hold whatever is said: the forge's force-push protection and the title-checked tab close." | wc -l | tr -d ' ')|$(spells "$ROOT/skills/orchestrator/SKILL.md" '| Launch, verify, terminate, replace: before spawning by any route,')|$(spells "$ORCH_REFS/lifecycle.md" "the checks the launcher would have made run by hand on that route")|$(spells "$ORCH_REFS/lifecycle.md" "The launcher's mode and trust refusals are defaults a project's own method may lift.")"
+  "$(tr '\n' ' ' < "$ROOT/skills/orchestrator/SKILL.md" | tr -s ' ' | grep -oF -- "Two locks hold whatever is said: forge protection and the title-checked tab close." | wc -l | tr -d ' ')|$(spells "$ROOT/skills/orchestrator/SKILL.md" '| Launch, verify, terminate, replace: before spawning by any route,')|$(spells "$ORCH_REFS/lifecycle.md" "the checks the launcher would have made run by hand on that route")|$(spells "$ORCH_REFS/lifecycle.md" "The launcher's mode and trust refusals are defaults a project's own method may lift.")"
 check "the succession brief closes the predecessor's tab" "1" "$(grep -c 'CLOSE ITS TAB' "$ROOT/templates/orchestrator-succession-brief.md")"
 # Every agent that works in a checkout keeps its scratch where the close takes it. Rule 55 of the
 # rules review, on the ruling on topic 18: the phase brief no longer says it, the host names its
