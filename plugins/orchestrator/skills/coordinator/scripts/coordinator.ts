@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url'
 import { Refusal, type Context, type RunResult } from './context.ts'
 import { releaseHeld } from './lock.ts'
 import { clear, lookup, register } from './record.ts'
+import { roundArchive, roundClose } from './round.ts'
 import { drop, sleep, sleeping, wakeDone } from './sleeping.ts'
 
 export const COMMANDS: Readonly<Record<string, (ctx: Context, args: readonly string[]) => number>> = {
@@ -19,6 +20,8 @@ export const COMMANDS: Readonly<Record<string, (ctx: Context, args: readonly str
   sleeping,
   'wake-done': wakeDone,
   drop,
+  'round-close': roundClose,
+  'round-archive': roundArchive,
 }
 
 /** Runs one subcommand; a refusal is said on the error stream and exits 1. */
