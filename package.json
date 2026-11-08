@@ -9,7 +9,7 @@
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json",
-    "test": "node --experimental-strip-types --no-warnings --test --experimental-test-coverage --test-coverage-exclude='**/*.test.ts' --test-coverage-lines=85 --test-coverage-branches=80 --test-coverage-functions=85 'scripts/**/*.test.ts' 'packages/*/src/**/*.test.ts' 'plugins/orchestrator/skills/coordinator/scripts/*.test.ts'",
+    "test": "node --experimental-strip-types --no-warnings --test --experimental-test-coverage --test-coverage-exclude='**/*.test.ts' --test-coverage-lines=85 --test-coverage-branches=80 --test-coverage-functions=85 'scripts/**/*.test.ts' 'packages/*/src/**/*.test.ts' 'plugins/*/skills/*/scripts/**/*.test.ts'",
     "marketplace": "node --experimental-strip-types --no-warnings scripts/marketplace.ts",
     "version-bump": "node --experimental-strip-types --no-warnings scripts/version-bump.ts",
     "plugin-matrix": "node --experimental-strip-types --no-warnings scripts/plugin-matrix.ts",
