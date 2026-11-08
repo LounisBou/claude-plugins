@@ -76,7 +76,7 @@
       "name": "pr-review",
       "source": "./plugins/pr-review",
       "description": "Interactive PR review workflow: a pending-review walkthrough item by item, GitHub comment processing, and an autonomous review-fix loop.",
-      "version": "0.8.0",
+      "version": "0.9.0",
       "author": {
         "name": "Lounis Bou"
       }

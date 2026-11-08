@@ -305,78 +305,42 @@ LOGIN_LINE="gh auth login --hostname github.com --git-protocol https --web --cli
 leaked=0
 leak_check() { grep -q "$FAKE_SECRET" "$A/out" && leaked=$((leaked + 1)); }
 
-# 1. macOS, gh missing, no token: Homebrew installs gh, then the browser login.
-auth_case mac-no-gh Darwin brew
-auth_run "$ROOT/install.sh"; leak_check
-check "missing gh on macOS: install.sh exits 0" "0" "$(cat "$A/code")"
-check "missing gh on macOS: brew install gh is run" "1" "$(grep -cx 'brew install gh' "$A/log")"
-check "missing gh on macOS: then gh auth login --web" "1" "$(grep -cx "$LOGIN_LINE" "$A/log")"
+# The login is the github plugin's: a fake one whose install.sh logs its call and exits with
+# FAKE_GH_INSTALL_CODE, found through CLAUDE_GITHUB_ROOT as the resolver allows.
+FAKE_GITHUB="$WORK/fake-github"
+mkdir -p "$FAKE_GITHUB"
+printf '#!/bin/sh\necho "github-install $*" >> "$FAKE_LOG"\nexit "${FAKE_GH_INSTALL_CODE:-0}"\n' > "$FAKE_GITHUB/install.sh"
+WITH_GITHUB="CLAUDE_GITHUB_ROOT=$FAKE_GITHUB"
 
-# 2. gh present, no token: no install, the login.
-auth_case mac-no-token Darwin brew gh
-auth_run "$ROOT/install.sh"; leak_check
-check "no token: install.sh exits 0" "0" "$(cat "$A/code")"
-check "no token: nothing installed" "0" "$(grep -c '^brew' "$A/log")"
-check "no token: gh auth login --web is run" "1" "$(grep -cx "$LOGIN_LINE" "$A/log")"
-
-# 3. gh holds a token: nothing runs but the question.
-auth_case mac-token Darwin brew gh
+# 1. No token: github's install.sh runs once, then the preflight passes on the token it left.
+auth_case delegates Darwin gh
 printf '%s' "$FAKE_SECRET" > "$A/state/token"
+AUTH_EXTRA="$WITH_GITHUB" auth_run "$ROOT/install.sh"; leak_check
+check "install.sh runs the github plugin's installer once, then exits 0" "0 1" \
+  "$(cat "$A/code") $(grep -cx 'github-install ' "$A/log")"
+check "install.sh installs no gh of its own" "0" "$(grep -cE '^brew|releases|auth login' "$A/log")"
+
+# 2. github's installer stops (a sign-in started, exit 14): its code is the answer, no preflight after it.
+auth_case delegate-fails Darwin gh
+AUTH_EXTRA="$WITH_GITHUB FAKE_GH_INSTALL_CODE=14" auth_run "$ROOT/install.sh"; leak_check
+check "github's installer exit code is install.sh's" "14" "$(cat "$A/code")"
+
+# 3. GH_TOKEN in the environment: nothing to install, github's installer is not run.
+auth_case env-token Darwin gh
+AUTH_EXTRA="$WITH_GITHUB GH_TOKEN=$FAKE_SECRET" auth_run "$ROOT/install.sh"; leak_check
+check "GH_TOKEN set: github's installer is not run" "0" "$(grep -c 'github-install' "$A/log")"
+
+# 4. No github plugin: the resolver's error and fix lines, exit 12, nothing installed.
+auth_case no-github Darwin gh
 auth_run "$ROOT/install.sh"; leak_check
-check "token present: install.sh exits 0" "0" "$(cat "$A/code")"
-check "token present: no install and no login" "0" "$(grep -cE '^brew|auth login' "$A/log")"
+check "without the github plugin install.sh exits 12 with the resolver's error and fix" "12 1 1" \
+  "$(cat "$A/code") $(grep -c '^error: ' "$A/out") $(grep -c '^fix:   .*github' "$A/out")"
 
-# 4. GH_TOKEN in the environment: gh is not even asked.
-auth_case env-token Darwin brew
-AUTH_EXTRA="GH_TOKEN=$FAKE_SECRET" auth_run "$ROOT/install.sh"; leak_check
-check "GH_TOKEN set: install.sh exits 0 and runs nothing" "0 0" "$(cat "$A/code") $(wc -l < "$A/log" | tr -d ' ')"
-
-# 5. macOS with neither gh nor Homebrew: a mapped refusal naming the remedy.
-auth_case mac-no-brew Darwin
-auth_run "$ROOT/install.sh"; leak_check
-check "no Homebrew: exits 11" "11" "$(cat "$A/code")"
-check "no Homebrew: error and fix lines, the fix names brew.sh" "1 1" \
-  "$(grep -c '^error: gh is not installed' "$A/out") $(grep -c '^fix: .*brew\.sh' "$A/out")"
-
-# 6. Linux, gh missing: the official release binary into ~/.local/bin, no root.
-auth_case linux-no-gh Linux
-auth_run "$ROOT/install.sh"; leak_check
-check "missing gh on Linux: install.sh exits 0" "0" "$(cat "$A/code")"
-check "missing gh on Linux: the release archive for this machine is fetched" "1" \
-  "$(grep -c 'releases/download/v2.99.0/gh_2.99.0_linux_amd64.tar.gz' "$A/log")"
-check "missing gh on Linux: gh lands in ~/.local/bin" "executable" \
-  "$([ -x "$A/home/.local/bin/gh" ] && echo executable || echo missing)"
-check "missing gh on Linux: then gh auth login --web" "1" "$(grep -cx "$LOGIN_LINE" "$A/log")"
-check "missing gh on Linux: the release checksum list is fetched from the same tag" "1" \
-  "$(grep -c 'releases/download/v2.99.0/gh_2.99.0_checksums.txt' "$A/log")"
-
-# 6b. An archive that does not match its checksum line is refused, and nothing
-# lands in ~/.local/bin.
-auth_case linux-bad-sum Linux
-AUTH_EXTRA="FAKE_SUMS=$TPL/checksums-bad.txt" auth_run "$ROOT/install.sh"; leak_check
-check "a checksum mismatch exits 11 with an error line" "11 1" \
-  "$(cat "$A/code") $(grep -c '^error: .*does not match its release checksum' "$A/out")"
-check "a checksum mismatch installs nothing" "absent 0" \
-  "$([ -e "$A/home/.local/bin/gh" ] && echo present || echo absent) $(grep -c 'auth login --hostname' "$A/log")"
-
-# 6c. A checksum list with no line for the archive is a refusal too.
-printf '%s  gh_2.99.0_linux_arm64.tar.gz\n' "$(printf '%064d' 1)" > "$WORK/sums-missing.txt"
-auth_case linux-no-sum Linux
-AUTH_EXTRA="FAKE_SUMS=$WORK/sums-missing.txt" auth_run "$ROOT/install.sh"; leak_check
-check "a missing checksum line exits 11 and installs nothing" "11 absent" \
-  "$(cat "$A/code") $([ -e "$A/home/.local/bin/gh" ] && echo present || echo absent)"
-
-# 7. The login does not complete: exit 12 and the one command that retries it.
-auth_case login-fails Darwin gh
-AUTH_EXTRA="FAKE_LOGIN_FAILS=1" auth_run "$ROOT/install.sh"; leak_check
-check "an unfinished login exits 12 with the retry command" "12 1" \
-  "$(cat "$A/code") $(grep -cx 'fix:   /pr-review:install' "$A/out")"
-
-# 8. doctor's --check changes nothing: no install, no login, just the verdict.
-auth_case check-only Darwin brew gh
-auth_run "$ROOT/install.sh" --check; leak_check
-check "install.sh --check exits 12 without a login" "12 0" \
-  "$(cat "$A/code") $(grep -cE '^brew|auth login' "$A/log")"
+# 5. doctor's --check runs no installer: just the verdict.
+auth_case check-only Darwin gh
+AUTH_EXTRA="$WITH_GITHUB" auth_run "$ROOT/install.sh" --check; leak_check
+check "install.sh --check exits 12 without running github's installer" "12 0" \
+  "$(cat "$A/code") $(grep -c 'github-install' "$A/log")"
 
 # 9. A skill's preflight with no token says the one command that fixes it.
 auth_case preflight-no-token Darwin gh

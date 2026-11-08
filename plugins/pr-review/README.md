@@ -35,12 +35,10 @@ Add the marketplace, install the plugin, then check it:
 ```
 
 `/pr-review:install` first gives the machine a GitHub login. When `GH_TOKEN` is not
-set it relies on `gh`: a missing `gh` is installed (Homebrew on macOS; on Linux the
-official release binary, unpacked into `~/.local/bin` with no root), then, when `gh`
-holds no token, `gh auth login --web` opens the browser on GitHub's device page with
-the one-time code on the clipboard. The token stays where `gh` keeps it, the system
-credential store; the plugin never prints, logs or writes it. Each step is skipped
-when already satisfied, so running it again is harmless.
+set it runs the github plugin's own installer, which installs `gh` when it is missing
+and signs in with the browser; the token stays in `gh`'s credential store, and nothing
+here prints or writes it. Each step is skipped when already satisfied, so running it
+again is harmless.
 
 It then verifies the two plugin dependencies — `pr-review-toolkit@claude-plugins-official`
 and `github@lounisbou` — plus python3 3.9+, curl and the GitHub token, from any directory: installing needs
