@@ -546,6 +546,14 @@ check "a malformed backup is an internal error, one line, no traceback" "1 cf: i
 rm -r "$WORK/backups/alpha/broken.example"
 cfw restore "$delete_bk" --account beta
 check "restore refuses another account than the backup's" "2 cf: $delete_bk belongs to account alpha, not beta" "$CODE $ERR"
+# A backup replays only where it was taken: one moved under another account or zone, or
+# edited to name one, is refused before anything is read from the API.
+mkdir -p "$WORK/backups/beta/example.com"
+cp "$delete_bk" "$WORK/backups/beta/example.com/moved-dns.json"
+cfw restore "$WORK/backups/beta/example.com/moved-dns.json"
+check_contains "restore refuses a backup that lies under another account than the one it holds" \
+  "holds account alpha, zone example.com, but lies under beta/example.com: a backup replays only where it was taken" "$CODE $ERR"
+rm -r "$WORK/backups/beta"
 
 # A restore cut between its delete and its re-create names the backup it took
 # of the state it was replacing, from which that state comes back. The A

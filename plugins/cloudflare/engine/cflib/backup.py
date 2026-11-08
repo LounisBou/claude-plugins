@@ -118,4 +118,11 @@ def load(path):
         raise errors.UsageError("cannot read the backup %s: %s" % (path, exc))
     if not isinstance(saved, dict) or not all(k in saved for k in ("account", "zone", "kind", "data")):
         raise errors.UsageError("%s is not a backup this engine wrote" % path)
+    # The file's place names what it may replay: <root>/<account>/<zone>/<file>, and the account
+    # and zone it holds must be those, so a file moved or edited cannot replay onto another one.
+    place = os.path.relpath(real, root).split(os.sep)
+    if len(place) != 3 or place[0] != saved["account"] or place[1] != saved["zone"]:
+        raise errors.UsageError(
+            "%s holds account %s, zone %s, but lies under %s: a backup replays only where it was taken"
+            % (path, saved["account"], saved["zone"], "/".join(place[:-1]) or "the backup root"))
     return saved
