@@ -257,9 +257,18 @@ export function register(on: any) {
     return out
   }).catch(($: any, e: any, next: any) => next(e))
 
+  // A subagent that writes, during a phase, runs only on the user's Allow in the host's own
+  // dialog: words in a prompt grant nothing, and nobody there to answer refuses it.
   on('tool.call', { tool: 'Agent' }, async ($: any, e: any, next: any) => {
     const deny = agentDecision(await readGuard($), e.subagent_type)
-    return deny ? { deny } : next(e)
+    if (deny === null) return next(e)
+    let answer: unknown
+    try {
+      answer = await $.ui.ask(`implement:phase writes the work itself. Let a ${String(e.subagent_type || 'general-purpose')} subagent run?`, ['Allow', 'Deny'])
+    } catch {
+      answer = undefined
+    }
+    return answer === 'Allow' ? next(e) : { deny }
   }).catch(($: any, e: any, next: any) => next(e))
 
   on('tool.call', { tool: ['Edit', 'Write', 'NotebookEdit', 'MultiEdit'] }, async ($: any, e: any, next: any) => {
