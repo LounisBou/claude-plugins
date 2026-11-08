@@ -5,7 +5,7 @@
 import { expect, test } from 'claude-code/testing'
 import { homeArgv, stateArgv, windowOf, stateAfterTurn, stateAfterMeasure, targetOf } from '../tab-state.ts'
 import { register } from '../register.ts'
-import { logLineOf } from './fakes.ts'
+import { logLineOf, lockRun } from './fakes.ts'
 
 const HOME = '/tmp/h'
 const STATE = `${HOME}/.claude/claude-orchestrator`
@@ -90,6 +90,8 @@ function fake(over: Over) {
     },
     process: {
       run: async (argv: readonly string[]) => {
+        const locked = lockRun(argv, files)
+        if (locked) return locked
         const line = logLineOf(argv)
         if (line !== null) {
           logged.push(line)
@@ -107,7 +109,10 @@ function fake(over: Over) {
           files.delete(argv[2])
           return { exitCode: 0, stdout: '', stderr: '' }
         }
-        if (argv[0] === 'rm') return { exitCode: 0, stdout: '', stderr: '' }
+        if (argv[0] === 'rm') {
+          for (const p of argv.slice(2)) files.delete(p)
+          return { exitCode: 0, stdout: '', stderr: '' }
+        }
         return { exitCode: 1, stdout: '', stderr: '' }
       },
     },

@@ -9,7 +9,7 @@ import { parseWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel,
 import { paneQuestions, waitsInTab, roundEntry, type RoundEntry } from '../round.ts'
 import { answerFromPane, paneAnswerText, settledText, reopenedText, withdrawOnTyped, parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
-import { logLineOf } from './fakes.ts'
+import { logLineOf, lockRun } from './fakes.ts'
 import { ROW_MARKER } from '../remote-row.ts'
 import { ASK_MARKER, ACK_MARKER, ANSWER_MARKER, ANSWER_ACK_MARKER, askLine, ackLine, parseAsk, parseAnswer, answerAckLine } from '../remote-round.ts'
 
@@ -172,6 +172,8 @@ function fake(over: { name?: string; role?: SessionRow['role']; coordinator?: st
     },
     process: {
       run: async (argv: readonly string[]) => {
+        const locked = lockRun(argv, files)
+        if (locked) return locked
         const line = logLineOf(argv)
         if (line !== null) logged.push(line)
         if (argv[0] === 'mv' && over.roundWrite === 'fail' && String(argv[3]).startsWith(`${ROUND}/`)) return { exitCode: 1, stdout: '', stderr: 'refused' }

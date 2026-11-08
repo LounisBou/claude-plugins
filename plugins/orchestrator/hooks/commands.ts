@@ -22,16 +22,20 @@
 // import — so this file spells its own env resolution, its own store read and
 // its own record read, while the row parser, the staleness rule and the pane's
 // row shaper cross as plain imports from the supervision domain.
-import { parseSessionRow, withWait, paneRows, type PaneRow, isStale, runsLive, livePidsArgv, livePids, sessionKey, type SessionRow } from './supervision.ts'
+import { parseSessionRow, withWait, paneRows, type PaneRow, isStale, runsLive, livePidsArgv, livePids, sessionKey, type SessionRow, type ProcessTable } from './supervision.ts'
 import { parseRemoteRow, withRemote, ROW_MARKER, REMOTE_STALE_AFTER_MS, type RemoteRow } from './remote-row.ts'
 import { hostRecordOf, roleOf } from './session-name.ts'
 import { withDeadline, isDegradedPass } from './stop-gate.ts'
 import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
 import { commandForms, commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
+import { messageOf, type CatchHook, type Events, type Host, type On } from './host.ts'
+
+// The nouns the commands hold.
+type Held = Host<'plugin' | 'env' | 'fs' | 'process' | 'session'>
 
 // The config dir, this file's own resolution: $ never crosses an import, so
 // each domain that needs it spells the same two env reads itself.
-async function configDir($: any): Promise<string> {
+async function configDir($: Host<'env'>): Promise<string> {
   return (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`
 }
 
@@ -42,7 +46,7 @@ async function configDir($: any): Promise<string> {
 // beside the config read it extends — $ never crosses an import — while this file's own
 // artifacts, the store and the log, stay under the module's own directory (module-log.ts,
 // moduleDirOf): no surviving script shares them.
-async function stateDir($: any): Promise<string> {
+async function stateDir($: Held): Promise<string> {
   return (await $.env.get('ORCHESTRATOR_STATE_DIR')) ?? `${await configDir($)}/claude-orchestrator`
 }
 
@@ -50,7 +54,7 @@ async function stateDir($: any): Promise<string> {
 // inherited from the guards: well inside the time a command's answer owns, so
 // a read that cannot answer in time is quietly no reading, never a held
 // command. The operator's env knob turns it, milliseconds like its name says.
-async function readBoundMs($: any): Promise<number> {
+async function readBoundMs($: Held): Promise<number> {
   const raw = await $.env.get('ORCHESTRATOR_SIDE_READ_MS')
   const n = raw === undefined ? NaN : Number(raw)
   return Number.isFinite(n) && n > 0 ? n : 2000
@@ -61,7 +65,7 @@ async function readBoundMs($: any): Promise<number> {
 // the dead (isStale, the store's own rule: the row's host pid is gone) and the
 // unreadable (a line caught mid-write parses to no row). An absent store is no
 // failure — nothing was ever written — and answers as no sessions.
-async function readRows($: any): Promise<Record<string, SessionRow>> {
+async function readRows($: Held): Promise<Record<string, SessionRow>> {
   const dir = `${moduleDirOf(await configDir($), await $.env.get('ORCHESTRATOR_MODULE_DIR'))}/store/sessions`
   let entries: { name: string; kind: string }[]
   try {
@@ -80,7 +84,7 @@ async function readRows($: any): Promise<Record<string, SessionRow>> {
   const argv = livePidsArgv(read.map(([, row]) => String(row.pid ?? '')))
   const ps = argv ? await withDeadline(async () => $.process.run(argv, { timeoutMs: await readBoundMs($) }), await readBoundMs($)).catch(() => null) : null
   // A liveness read that failed (null) keeps every row: it knows of no death.
-  const alive = argv ? livePids(ps) : new Set<string>()
+  const alive: ProcessTable | null = argv ? livePids(ps) : new Map()
   const rows: Record<string, SessionRow> = {}
   const now = Date.now()
   for (const [name, row] of read) {
@@ -92,7 +96,7 @@ async function readRows($: any): Promise<Record<string, SessionRow>> {
 // The rows an orchestrator on another machine sent this coordinator (remote-row.ts), this
 // file's own read of the store's remote directory, each checked again; the supervision
 // domain's reader removes the stale ones, this one only skips them.
-async function readRemote($: any): Promise<RemoteRow[]> {
+async function readRemote($: Held): Promise<RemoteRow[]> {
   const dir = `${moduleDirOf(await configDir($), await $.env.get('ORCHESTRATOR_MODULE_DIR'))}/store/remote`
   const entries: { name: string; kind: string }[] = await $.fs.list(dir).catch(() => [])
   const rows: RemoteRow[] = []
@@ -164,7 +168,7 @@ export function agentsText(rows: Record<string, SessionRow>, unmeasured: readonl
 // The live agents the store has no row for: the host's records of its sessions
 // (<config>/sessions/<pid>.json), each pid checked alive by one ps, kept when
 // the name reads as an agent and no live row carries its session.
-async function unmeasuredAgents($: any, rows: Record<string, SessionRow>): Promise<UnmeasuredAgent[]> {
+async function unmeasuredAgents($: Held, rows: Record<string, SessionRow>): Promise<UnmeasuredAgent[]> {
   const dir = `${await configDir($)}/sessions`
   let entries: { name: string; kind: string }[]
   try {
@@ -182,12 +186,12 @@ async function unmeasuredAgents($: any, rows: Record<string, SessionRow>): Promi
   const ps = argv ? await withDeadline(async () => $.process.run(argv, { timeoutMs: await readBoundMs($) }), await readBoundMs($)).catch(() => null) : null
   // A liveness read that failed (null) keeps every record: an agent in its
   // first turn listed beside a stale record beats one hidden by a failed ps.
-  const alive = argv ? livePids(ps) : new Set<string>()
+  const alive: ProcessTable | null = argv ? livePids(ps) : new Map()
   const agents: UnmeasuredAgent[] = []
   for (const [pid, record] of records) {
-    if (!record || !record.sessionId || (alive !== null && !runsLive(alive, pid)) || roleOf(record.name) !== 'agent') continue
+    if (!record || !record.sessionId || record.name === null || (alive !== null && !runsLive(alive, pid)) || roleOf(record.name) !== 'agent') continue
     if (sessionKey(record.sessionId) in rows) continue
-    agents.push({ name: record.name as string, status: record.status })
+    agents.push({ name: record.name, status: record.status })
   }
   return agents.sort((a, b) => a.name.localeCompare(b.name))
 }
@@ -247,7 +251,7 @@ export function progressLines(groups: readonly DispatchRow[][], goals: readonly 
 // the bound; a record that cannot answer in time, or is missing, or torn
 // contributes no rows (the stop gate reads them the same way), and a registry
 // that itself loses the race is said as unreadable rather than as absent.
-async function progressText($: any): Promise<string> {
+async function progressText($: Held): Promise<string> {
   const id = await $.session.id()
   const registry = `${await stateDir($)}/records/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
   const bound = await readBoundMs($)
@@ -282,15 +286,20 @@ export type SleepingRecord = { name: string; slept: string; dir: string; prs: st
 export function parseSleeping(text: string): SleepingRecord[] | null {
   if (text.trim() === '') return []
   try {
-    const all = JSON.parse(text)
+    const all: unknown = JSON.parse(text)
     if (!Array.isArray(all)) return null
-    return all.filter(r => r && typeof r === 'object' && typeof r.name === 'string').map(r => ({
-      name: r.name,
-      slept: typeof r.slept === 'string' ? r.slept : '',
-      dir: typeof r.dir === 'string' ? r.dir : '',
-      prs: Array.isArray(r.prs) ? r.prs.map(String) : [],
-      brief: typeof r.brief === 'string' ? r.brief : '',
-    }))
+    return all.flatMap((r: unknown) => {
+      if (!r || typeof r !== 'object') return []
+      const { name, slept, dir, prs, brief } = r as Record<string, unknown>
+      if (typeof name !== 'string') return []
+      return [{
+        name,
+        slept: typeof slept === 'string' ? slept : '',
+        dir: typeof dir === 'string' ? dir : '',
+        prs: Array.isArray(prs) ? prs.map(String) : [],
+        brief: typeof brief === 'string' ? brief : '',
+      }]
+    })
   } catch {
     return null
   }
@@ -305,11 +314,11 @@ export function sleepingText(records: SleepingRecord[] | null, path: string): st
   const labels = ['name', 'slept since', 'directory', 'open pull requests', 'brief']
   const width = Math.max(...labels.map(label => label.length))
   const block = (r: SleepingRecord) => [r.name, r.slept, r.dir, r.prs.length > 0 ? r.prs.join(', ') : 'none', r.brief]
-    .map((value, i) => `  **${labels[i]}**${' '.repeat(width - labels[i].length)}  ${value}`)
+    .map((value, i) => `  **${labels[i] ?? ''}**${' '.repeat(width - (labels[i] ?? '').length)}  ${value}`)
   return [`Sleeping orchestrators (${records.length}):`, ...records.flatMap((r, i) => [...(i > 0 ? [''] : []), ...block(r)])].join('\n')
 }
 
-async function readSleeping($: any): Promise<string> {
+async function readSleeping($: Held): Promise<string> {
   const path = `${await stateDir($)}/sleeping.json`
   const exists = await withDeadline(() => Promise.resolve($.fs.exists(path)).catch(() => false), await readBoundMs($))
   if (exists !== true) return sleepingText([], path)
@@ -320,7 +329,7 @@ async function readSleeping($: any): Promise<string> {
 
 // The goals line of one goals.md, goals.py's own (`goals met=m/n ruled_out=k open=… unplanned=…`),
 // or null when there is no file, or its reading failed or ran out of time.
-async function goalsLine($: any, goalsFile: string, bound: number): Promise<string | null> {
+async function goalsLine($: Held, goalsFile: string, bound: number): Promise<string | null> {
   const exists = await withDeadline(() => Promise.resolve($.fs.exists(goalsFile)).catch(() => false), bound)
   if (exists !== true) return null
   const done = await withDeadline(
@@ -335,7 +344,7 @@ async function goalsLine($: any, goalsFile: string, bound: number): Promise<stri
   return line.startsWith('goals ') ? line : null
 }
 
-export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
+export function register(on: On<Held>): void {
   // Each matcher names one form the host hands the hook (short-names.ts, measured live): the
   // plugin's command as `orchestrator:<file>`, the 0.80.0 `orchestrator:<short>`, and the bare
   // `<short>` of the user command the installer writes, answered only when that copy is this
@@ -344,14 +353,14 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // alone, never another plugin's and never the host's own commands. The engine validates
   // neither key nor field; the wiring tests pin the exact objects.
   for (const command of commandForms('status', 'orchestrator-status')) {
-    on('command.run', { command }, async ($: any, e: any, next: any) => {
+    on('command.run', { command }, async ($, e, next) => {
       if (!(await ownRun($, e))) return next(e)
       return { text: statusText(withRemote(await readRows($), await readRemote($), Date.now(), REMOTE_STALE_AFTER_MS)) }
     }).catch(fallBack)
   }
 
   for (const command of commandForms('progress', 'orchestrator-progress')) {
-    on('command.run', { command }, async ($: any, e: any, next: any) => {
+    on('command.run', { command }, async ($, e, next) => {
       if (!(await ownRun($, e))) return next(e)
       return { text: await progressText($) }
     }).catch(fallBack)
@@ -360,14 +369,14 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // The list alone is answered here; `drop <name>` asks the operator to confirm, which
   // takes a model turn, so any argument passes the run on to the markdown command.
   for (const command of commandForms('sleeping', 'orchestrator-sleeping')) {
-    on('command.run', { command }, async ($: any, e: any, next: any) => {
+    on('command.run', { command }, async ($, e, next) => {
       if (String(e?.args ?? '').trim() !== '' || !(await ownRun($, e))) return next(e)
       return { text: await readSleeping($) }
     }).catch(fallBack)
   }
 
   for (const command of commandForms('agents', 'orchestrator-agents')) {
-    on('command.run', { command }, async ($: any, e: any, next: any) => {
+    on('command.run', { command }, async ($, e, next) => {
       if (!(await ownRun($, e))) return next(e)
       const rows = await readRows($)
       return { text: agentsText(rows, await unmeasuredAgents($, rows)) }
@@ -377,14 +386,14 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
 
 // A command whose reader failed is skipped; the net lets the markdown command run as it
 // always did, and the failure is said.
-async function fallBack($: any, e: any, next: any) {
+const fallBack: CatchHook<Held, Events['command.run']> = async ($, e, next) => {
   await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
   return next(e)
 }
 
 // A prefixed run is the plugin's own command; a bare one is answered only when its user
 // command is this plugin's copy, read through this file's own $.fs.
-async function ownRun($: any, e: any): Promise<boolean> {
+async function ownRun($: Held, e: Events['command.run']): Promise<boolean> {
   const command = String(e?.command ?? '')
   if (!isBare(command)) return true
   const dir = commandsDirOf(await $.env.get('ORCHESTRATOR_COMMANDS_DIR'), await configDir($))
@@ -393,7 +402,7 @@ async function ownRun($: any, e: any): Promise<boolean> {
 
 // One line appended to the module's log (module-log.ts): the stamp names the
 // half that failed. Never throws, never blocks the command it serves.
-async function logLine($: any, message: string): Promise<void> {
+async function logLine($: Held, message: string): Promise<void> {
   try {
     const config = await configDir($)
     await $.process.run(logArgv($.plugin.root, config, 'commands', message, undefined, await $.env.get('ORCHESTRATOR_MODULE_DIR')), { timeoutMs: LOG_TIMEOUT_MS })

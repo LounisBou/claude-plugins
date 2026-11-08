@@ -75,8 +75,9 @@ bound in the tier map (or those `--families` names) times the five efforts, or t
 `--grid` names. It prints one line per trial and a last line `bench: spent=<usd> trials=<n>
 unmeasured=<n> pruned=<n>`, where unmeasured counts every planned trial the cap or a dropped
 pair left undone and pruned the pairs stopped after stage A and never re-admitted (below).
-`--max-usd` is the operator's: the run stops starting trials when the trials and their judges
-have cost that much, finishes those in flight, and prints what is left unmeasured. Nothing else
+`--max-usd` is the operator's and holds during the run: a trial starts only when its worst
+cost (the per-trial ceiling and the judge's) fits under the cap beside what is spent and the
+worst cost of the trials in flight, and the run prints what is left unmeasured. Nothing else
 stops a run; the subscription gauge is recorded with each trial as a control only.
 
 A trial sees the tree at the task's base with no history, so the merged commit is
@@ -101,10 +102,8 @@ on — is never free: the trial is charged the per-trial ceiling it was launched
 `"cost_incomplete": true`, counts toward the cap, and stays out of the pair's mean cost.
 A timeout kills the whole process group of the host and of the test command.
 
-Two limits, plainly. A trial's isolation removes the history, but the headless session runs
-with its own permissions on the machine and could reach the real repository. And with
-`--concurrency N` a run can pass `--max-usd` by at most N per-trial ceilings, since the trials
-in flight finish.
+One limit, plainly: a trial's isolation removes the history, but the headless session runs
+with its own permissions on the machine and could reach the real repository.
 
 Each trial is one line of `projects/<slug>/trials.jsonl`: task, class, pair, repetition, the
 model identifiers the host reports with their cost, `cost_usd` (the host's own per-model

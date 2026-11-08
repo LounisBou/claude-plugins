@@ -7,7 +7,7 @@
 import { expect, test } from 'claude-code/testing'
 import { parseStatus, relayText, gateText, noStatusText, NO_STATUS_KEY, chainOwnerTty, RELAY_CAP } from '../relay.ts'
 import { register } from '../register.ts'
-import { logLineOf } from './fakes.ts'
+import { logLineOf, lockRun } from './fakes.ts'
 
 const HOME = '/tmp/h'
 const STATE = `${HOME}/.claude/claude-orchestrator`
@@ -141,6 +141,8 @@ function fake(over: Over = {}) {
     },
     process: {
       run: async (argv: readonly string[]) => {
+        const locked = lockRun(argv, files)
+        if (locked) return locked
         const line = logLineOf(argv)
         if (line !== null) {
           logged.push(line)

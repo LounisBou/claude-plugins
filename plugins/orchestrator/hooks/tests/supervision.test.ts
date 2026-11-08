@@ -9,11 +9,12 @@
 // origin read.
 import { expect, test } from 'claude-code/testing'
 import {
-  writeSession, readSessions, deleteSession, sessionKey, parseSessionRow, parseRoundEntry, runsLive, livePids, livePidsArgv,
+  writeSession, readSessions, deleteSession, sessionKey, parseSessionRow, parseRoundEntry, runsLive, livePids, livePidsArgv, sweepTemporaries,
 } from '../supervision.ts'
+import { STALE_MS } from '../../core/store-io.ts'
 import { register } from '../register.ts'
 import { roundEntry } from '../round.ts'
-import { logLineOf, blockOf } from './fakes.ts'
+import { logLineOf, blockOf, lockRun } from './fakes.ts'
 
 const HOME = '/tmp/h'
 const STATE = `${HOME}/.claude/claude-orchestrator`
@@ -33,6 +34,8 @@ test('the key is per session id', () => {
 type Fx = {
   dollar: any
   files: Map<string, string>
+  // A file's modification time when a test sets one; any other is written now.
+  mtimes: Map<string, number>
   ran: string[]
   written: string[]
   usage: { context: { tokens: number; window: number; percent: number } }
@@ -49,6 +52,7 @@ function fakeDollar(over: {
   table?: string
 } = {}): Fx {
   const files = new Map<string, string>()
+  const mtimes = new Map<string, number>()
   const ran: string[] = []
   const written: string[] = []
   const usage = { context: { tokens: 30000, window: 100000, percent: 30 } }
@@ -86,7 +90,7 @@ function fakeDollar(over: {
         return [...names].map(name => {
           const text = files.get(`${dir}/${name}`)
           return text !== undefined
-            ? { name, kind: 'file', size: text.length, mtimeMs: 0, isLink: false }
+            ? { name, kind: 'file', size: text.length, mtimeMs: mtimes.get(`${dir}/${name}`) ?? Date.now(), isLink: false }
             : { name, kind: 'dir', size: 0, mtimeMs: 0, isLink: false }
         })
       },
@@ -94,6 +98,8 @@ function fakeDollar(over: {
     },
     process: {
       run: async (argv: readonly string[]) => {
+        const locked = lockRun(argv, files)
+        if (locked) return locked
         const line = logLineOf(argv)
         if (line !== null) {
           written.push(line)
@@ -143,7 +149,7 @@ function fakeDollar(over: {
     },
     ui: { toast: () => undefined, invalidate: () => undefined },
   }
-  return { dollar, files, ran, written, usage, env }
+  return { dollar, files, mtimes, ran, written, usage, env }
 }
 
 test('two sessions writing at once keep both rows', async () => {
@@ -330,7 +336,7 @@ test('a rename that fails leaves the row as it was, and its temporary file remov
 
 // A temporary file is a write in flight, or one whose rename never came: never a second row,
 // and never removed by a reader — removing a writer's temporary file fails its rename.
-test('a temporary file beside the rows is no row, and the read leaves it in place', async () => {
+test('a temporary file beside the rows is no row, and the read leaves a fresh one in place', async () => {
   const { dollar, files } = fakeDollar({ alive: ['501'] })
   await writeSession(dollar, 'live', { role: 'agent', name: 'Agent : live', pid: '501' })
   files.set(`${SESSIONS}/live.tmp-1-abcdef`, files.get(`${SESSIONS}/live`)!)
@@ -339,6 +345,38 @@ test('a temporary file beside the rows is no row, and the read leaves it in plac
   expect(Object.keys(rows)).toEqual(['sessions/live'])
   expect(files.has(`${SESSIONS}/live.tmp-1-abcdef`)).toBe(true)
   expect(files.has(`${SESSIONS}/fresh.tmp-2-abcdef`)).toBe(true)
+})
+
+test('a temporary file a killed writer left beside the rows is removed by the next read', async () => {
+  // A process killed between its write and its rename leaves its temporary file: one older than
+  // any write takes is no write in flight, and the read removes it, even when the liveness read fails.
+  const { dollar, files, mtimes } = fakeDollar({ psFails: 'exit' })
+  await writeSession(dollar, 'live', { role: 'agent', name: 'Agent : live', pid: '501' })
+  files.set(`${SESSIONS}/live.tmp-1-dead`, '{}')
+  mtimes.set(`${SESSIONS}/live.tmp-1-dead`, Date.now() - STALE_MS - 1000)
+  await readSessions(dollar)
+  expect(files.has(`${SESSIONS}/live.tmp-1-dead`)).toBe(false)
+  expect(files.has(`${SESSIONS}/live`)).toBe(true)
+})
+
+test('a session start removes the temporary files killed writers left in every directory the module writes', async () => {
+  const { dollar, files, mtimes, ran } = fakeDollar()
+  const old = Date.now() - STALE_MS - 1000
+  const left = [`${STATE}/store/waits/s.tmp-1-x`, `${STATE}/round/e.json.tmp-2-y`, `${STATE}/deck.json.tmp-3-z`]
+  for (const path of left) {
+    files.set(path, '{}')
+    mtimes.set(path, old)
+  }
+  files.set(`${STATE}/store/waits/s.tmp-4-fresh`, '{}')
+  files.set(`${STATE}/store/waits/s`, '{}')
+  expect((await sweepTemporaries(dollar)).sort()).toEqual([...left].sort())
+  expect(left.some(path => files.has(path))).toBe(false)
+  expect(files.has(`${STATE}/store/waits/s.tmp-4-fresh`)).toBe(true)
+  expect(files.has(`${STATE}/store/waits/s`)).toBe(true)
+  // Nothing left, nothing run.
+  ran.length = 0
+  expect(await sweepTemporaries(dollar)).toEqual([])
+  expect(ran).toEqual([])
 })
 
 // --- the wiring ---------------------------------------------------------------------------
@@ -382,6 +420,24 @@ test('the composed register writes the row the gauge just measured', async () =>
   expect(row.name).toBe('Agent : belt-p3')
   expect(row.repo).toBe('me/belt')
   expect(row.pid).toBe('501')
+})
+
+// The processes a measure spawns once the session is known: the walk's two reads of its own
+// process, the row's rename, the liveness reads and the deck's rename. The repository is read at
+// the first measure and kept, as the pane keeps it: a steady measure runs no git (at 0.98.10 it
+// ran one at every measure, eight processes in this case where seven run now).
+test('a steady measure reads the repository no more', async () => {
+  const chains = mounted(register)
+  const fx = fakeDollar({ origin: 'git@github.com:me/belt.git', launchName: 'Orch : belt' })
+  await drive(chains, 'session.measure', fx.dollar, {})
+  expect(fx.ran.filter(r => r.startsWith('git '))).toHaveLength(1)
+  fx.ran.length = 0
+  fx.usage.context.percent = 56
+  await drive(chains, 'session.measure', fx.dollar, {})
+  expect(fx.ran.filter(r => r.startsWith('git '))).toEqual([])
+  expect(fx.ran.filter(r => r.startsWith('mv ')).length).toBe(2)
+  expect(fx.ran.length).toBe(7)
+  expect((await readSessions(fx.dollar))['sessions/s-one'].repo).toBe('me/belt')
 })
 
 test('a walk that does not finish keeps the name and role the row already had', async () => {

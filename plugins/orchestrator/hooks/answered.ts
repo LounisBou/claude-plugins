@@ -6,12 +6,16 @@
 // leaves the round otherwise.
 import { answerByMessage } from './supervision.ts'
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
+import { messageOf, type Host, type On } from './host.ts'
+
+// The nouns the answered tool holds; supervision's answerByMessage reads the session and the store through them.
+type Held = Host<'plugin' | 'env' | 'process' | 'tool' | 'session' | 'fs'>
 
 // The tool's short name: the model calls it as mcp__orchestrator__answered-by-message.
 export const ANSWERED_TOOL = 'answered-by-message'
 
-export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
-  on('session.start', {}, async ($: any, e: any, next: (e: any) => any) => {
+export function register(on: On<Held>): void {
+  on('session.start', {}, async ($, e, next) => {
     try {
       await $.tool.register({
         name: ANSWERED_TOOL,
@@ -27,28 +31,28 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         },
       })
     } catch (err) {
-      await logLine($, `answered tool not registered: ${(err as Error).message}`)
+      await logLine($, `answered tool not registered: ${messageOf(err)}`)
     }
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
-  on('tool.call', { tool: `mcp__orchestrator__${ANSWERED_TOOL}` }, async ($: any, e: any) => {
+  on('tool.call', { tool: `mcp__orchestrator__${ANSWERED_TOOL}` }, async ($, e) => {
     if (e.agentId) return { result: "only the session's main thread withdraws its question", isError: true }
-    const author = typeof e.author === 'string' ? e.author.trim() : ''
+    const author = typeof e['author'] === 'string' ? e['author'].trim() : ''
     if (author === '') return { result: 'author is the sender of the message that carried the answer', isError: true }
-    const left = await answerByMessage($, author, typeof e.entry === 'string' && e.entry !== '' ? e.entry : null)
+    const left = await answerByMessage($, author, typeof e['entry'] === 'string' && e['entry'] !== '' ? e['entry'] : null)
     if (left === null) return { result: 'Only an orchestrator has a question to withdraw.', isError: true }
     return { result: left.length === 0 ? 'Withdrawn as answered by message.' : `Withdrawn as answered by message; still open: ${left.join(', ')}.` }
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: 'the question could not be withdrawn; the log says why', isError: true }
   })
 }
 
-async function logLine($: any, message: string): Promise<void> {
+async function logLine($: Host<'plugin' | 'env' | 'process'>, message: string): Promise<void> {
   try {
     const config = (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`
     await $.process.run(logArgv($.plugin.root, config, 'answered', message, undefined, await $.env.get('ORCHESTRATOR_MODULE_DIR')), { timeoutMs: LOG_TIMEOUT_MS })
