@@ -145,3 +145,28 @@ def test_a_string_chat_id_reads_back_as_a_string_and_digits_as_an_integer(regist
     registry.path.write_text(json.dumps({"slack:G0X": {"project": "a", "repo": "/a"}, "telegram:-42": {"project": "b", "repo": "/b"}}))
 
     assert set(registry.entries()) == {("slack", "G0X"), ("telegram", -42)}
+
+
+def test_concurrent_adds_lose_no_project(tmp_path):
+    """Processes registering at the same time each keep their entry: add reads and writes under the lock."""
+    import subprocess
+    import sys
+    path = tmp_path / "registry.json"
+    program = (
+        "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]);"
+        "from bugs_bot.registry import Registry;"
+        "r = Registry(Path(sys.argv[2]));"
+        "[r.add('telegram', -100 - int(sys.argv[3]) * 100 - i, f'p{sys.argv[3]}-{i}', Path('/r')) for i in range(15)]"
+    )
+    root = str(Path(__file__).resolve().parents[1])
+    procs = [subprocess.Popen([sys.executable, "-c", program, root, str(path), str(n)]) for n in range(4)]
+    assert [p.wait() for p in procs] == [0, 0, 0, 0]
+    assert len(Registry(path).entries()) == 60
+
+
+def test_a_write_leaves_no_temp_file(tmp_path):
+    from bugs_bot.jsonio import write_json
+    target = tmp_path / "x.json"
+    write_json(target, {"a": 1})
+    write_json(target, {"a": 2})
+    assert sorted(p.name for p in tmp_path.iterdir() if p.name.startswith((".x.json", "x.json"))) == ["x.json"]

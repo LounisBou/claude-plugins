@@ -190,7 +190,8 @@ def cmd_done(
     if reason:
         assert channel is not None
         send_reply(channel, chat_id, store, report, reason, now)
-    update_report(store, report_id, lambda fresh: fresh.update(status="done"))
+    closed_at = datetime.fromtimestamp(now, timezone.utc).isoformat()
+    update_report(store, report_id, lambda fresh: fresh.update(status="done", closed_at=fresh.get("closed_at") or closed_at))
     drop_closed(store, report)
     print(f"done {report_id}")
 

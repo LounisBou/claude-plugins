@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timezone
 
 from bugs_bot.channel import Channel, ChatId
 from bugs_bot.channels import mask
 from bugs_bot.errors import BugsError
-from bugs_bot.store import Store, update_report
+from bugs_bot.store import CLOSED_STATUSES, Store, update_report
 
 
 def set_reaction(channel: Channel, chat_id: ChatId, report: dict, emoji: str) -> None:
@@ -80,6 +81,8 @@ def move_to(
     """
 
     def move(report: dict) -> dict:
+        if status in CLOSED_STATUSES and report.get("status") not in CLOSED_STATUSES:
+            report["closed_at"] = datetime.now(timezone.utc).isoformat()
         report["status"] = status
         report["chat_id"] = report.get("chat_id", chat_id)
         report.setdefault("reaction", {"wanted": emoji, "applied": None, "error": None})["wanted"] = emoji

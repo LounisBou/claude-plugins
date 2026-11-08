@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 import os
 from pathlib import Path
 
@@ -427,6 +428,37 @@ def test_pull_deletes_old_fixed_reports_too(run, bound):
     assert run("pull", now=BASE_DATE) == 0
 
     assert not old.exists()
+
+
+def test_pull_keeps_a_report_closed_recently_however_old_it_is(run, bound):
+    """Retention counts from the closing: a bug reported months ago and fixed yesterday stays."""
+    kept = bound / "inbox" / "20260801-000000-2"
+    kept.mkdir(parents=True)
+    closed = datetime.fromtimestamp(BASE_DATE - 86400, timezone.utc).isoformat()
+    (kept / "report.json").write_text(json.dumps({"status": "fixed", "date": "2026-08-01T00:00:00+00:00", "closed_at": closed}))
+    gone = bound / "inbox" / "20260801-000000-3"
+    gone.mkdir(parents=True)
+    (gone / "report.json").write_text(json.dumps({"status": "done", "date": "2026-08-01T00:00:00+00:00", "closed_at": "2026-08-02T00:00:00+00:00"}))
+
+    assert run("pull", now=BASE_DATE) == 0
+
+    assert kept.exists() and not gone.exists()
+
+
+def test_pull_keeps_a_closed_report_whose_reaction_is_still_pending(run, bound):
+    pending = bound / "inbox" / "20260801-000000-4"
+    pending.mkdir(parents=True)
+    (pending / "report.json").write_text(json.dumps({
+        "status": "fixed", "date": "2026-08-01T00:00:00+00:00", "closed_at": "2026-08-02T00:00:00+00:00",
+        "chat_id": GROUP_ID, "message_id": 4,
+        "reaction": {"wanted": "\U0001f44c", "applied": None, "error": "REACTION_INVALID"},
+    }))
+    tg = FakeTelegram()
+    tg.fail_reaction = True  # still refused: the reaction stays pending through this pull
+
+    run("pull", now=BASE_DATE, transport=tg)
+
+    assert pending.exists()
 
 
 # -- list / show / reply / done ----------------------------------------------
