@@ -1,6 +1,6 @@
 // hooks/tests/usage.test.ts
-// A session's token use and its API-equivalent cost (usage.ts): routing.py's cost rule
-// spelled again over transcript lines, the day and the week in Paris time, and the book
+// A session's token use and its API-equivalent cost (usage.ts): the cost rule of
+// cost-rule.ts over transcript lines, the day and the week in Paris time, and the book
 // that keeps the sums current from the lines appended since the last read.
 import { expect, test } from 'claude-code/testing'
 import {
@@ -216,7 +216,7 @@ test('a price missing a rate, or with a rate that is no finite number, is no pri
     expect(sums.cost).toBeNull()
     expect(sums.tokens.input).toBe(10)
   }
-  // An upper tier that leaves a rate out takes the base one, as routing.py's rate.update does.
+  // An upper tier that leaves a rate out takes the base one.
   const { cache_read, ...upperPartial } = PRICES['b-model'].above!
   const big = recordOf(line({ model: 'b-model', input: 200000, read: 1000, output: 10 }))!.record
   const cost = messageCost(big, { ...PRICES['b-model'], above: upperPartial as any })

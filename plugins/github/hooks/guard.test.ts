@@ -181,7 +181,9 @@ async function world($: any, on: any, w: World = {}): Promise<Seen> {
     return { value: { exitCode: 0, stdout: 'ok', stderr: '' } }
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
-  await $.tool.call({ tool: 'Read', file_path: ROOT + '/engine/WRITING.md' })
+  for (const name of ['commits.md', 'pull-requests.md', 'comments.md', 'references.md']) {
+    await $.tool.call({ tool: 'Read', file_path: ROOT + '/engine/writing/' + name })
+  }
   return seen
 }
 
@@ -304,7 +306,7 @@ test('enforce: a not-ready pr-ready outside auto-merge is refused before anyone 
     const out: any = await $.tool.call(gh('pr-ready', { pr: 12 }))
     expect(out.deny).toBe('github: pr-ready refused on acme/thing#12 at 0123456: not ready. Missing: review: no record at'
       + ' 0123456, norms: no record at 0123456, e2e: no record at 0123456. A pull request is ready when a clean review,'
-      + ' a passed norms check, passed E2E and green CI are all at its current head (engine/WRITING.md « Ready pull requests »).')
+      + ' a passed norms check, passed E2E and green CI are all at its current head (engine/writing/pull-requests.md « Ready pull requests »).')
     expect(seen.asked.length).toBe(0)
     expect(commands(seen)).toEqual(['pr-gate'])
   })
