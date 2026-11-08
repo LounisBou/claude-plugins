@@ -13,6 +13,9 @@ trap 'rm -rf "$WORK"' EXIT
 pass=0
 fail=0
 
+# Lines joined on ⏎, the same on GNU and BSD: GNU tr is not multibyte and writes one byte of it.
+joinlines() { python3 -c 'import sys; sys.stdout.write(sys.stdin.read().replace("\n", "⏎"))'; }
+
 # check <name> <expected> <actual>
 check() {
   if [ "$2" = "$3" ]; then
@@ -20,8 +23,8 @@ check() {
     pass=$((pass + 1))
   else
     printf '  FAIL %s\n' "$1"
-    printf '       expected: %s\n' "$(printf '%s' "$2" | tr '\n' '⏎')"
-    printf '       actual:   %s\n' "$(printf '%s' "$3" | tr '\n' '⏎')"
+    printf '       expected: %s\n' "$(printf '%s' "$2" | joinlines)"
+    printf '       actual:   %s\n' "$(printf '%s' "$3" | joinlines)"
     fail=$((fail + 1))
   fi
 }
@@ -281,7 +284,7 @@ auth_case() {
   A="$WORK/auth/$1"; AOS="$2"; shift 2
   rm -rf "$A" && mkdir -p "$A/bin" "$A/home" "$A/state"
   : > "$A/log"
-  for tool in bash sh git tar mktemp cp mkdir chmod rm grep cat dirname head; do
+  for tool in bash sh git tar gzip mktemp cp mkdir chmod rm grep cat dirname head; do
     ln -s "$(command -v "$tool")" "$A/bin/$tool"
   done
   # The checksum tool the machine has: sha256sum, or shasum where it is missing.
@@ -744,7 +747,7 @@ f { if (blk == "") s = NR; blk = blk "\n" $0 }'
 check "start-review submits from exactly one bash block" "1" \
   "$(awk "${FENCES/CLOSE/if (blk ~ /review-submit/) cnt++} END { print cnt + 0 }" "$START_DOC")"
 check "start-review passes an event only beside review-submit" "" \
-  "$(awk "${FENCES/CLOSE/if (blk ~ /--event|\"event\"/ && blk !~ /review-submit/) print s}" "$START_DOC")"
+  "$(awk "${FENCES/CLOSE/if (blk ~ /--event|\"event\"/) if (blk !~ /review-submit/) print s}" "$START_DOC")"
 # And the one event it passes is COMMENT: a review opened with any other is
 # submitted with a verdict the user never gave.
 check "start-review submits with the COMMENT event alone" "" \
