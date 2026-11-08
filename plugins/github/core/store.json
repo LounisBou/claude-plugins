@@ -1,7 +1,0 @@
-{
-  "$comment": "Generated from packages/core/src by `npm run core`: edit the source, never this copy.",
-  "version": 1,
-  "lock_suffix": ".lock",
-  "temporary_mark": ".tmp-",
-  "stale_ms": 30000
-}
