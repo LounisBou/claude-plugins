@@ -166,10 +166,10 @@
 set -uo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-# register, clear, lookup, sleep, sleeping, wake-done and drop are coordinator.ts's, run by node
-# as the plugin's other TypeScript is: same command line, output and exit codes.
+# register, clear, lookup, sleep, sleeping, wake-done, drop, round-close and round-archive are
+# coordinator.ts's, run by node as the plugin's other TypeScript is: same command line, output and exit codes.
 case "${1:-}" in
-    register|clear|lookup|sleep|sleeping|wake-done|drop)
+    register|clear|lookup|sleep|sleeping|wake-done|drop|round-close|round-archive)
         command -v node >/dev/null 2>&1 || { echo "coordinator: node is required" >&2; exit 1; }
         exec node --experimental-strip-types --no-warnings "$here/coordinator.ts" "$@" ;;
 esac
@@ -186,8 +186,6 @@ REMOTE_STALE_AFTER_S=86400
 SLEEPING="$STATE/sleeping.json"
 LAUNCHER_PY="$here/../../iterm-agents/scripts/iterm_agent.py"
 WORKSPACE="$here/../../orchestrator/scripts/workspace.sh"
-
-now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 
 # --- The sleeping orchestrators. ---------------------------------------------------------
 
@@ -631,97 +629,6 @@ record_listed() {
     return 0
 }
 
-# entry_fingerprint <entry JSON>: the fingerprint of the wait an entry was written for, as the
-# hooks module computes it (round.ts entryFingerprint over relay.ts fingerprint): the length of
-# "<kind>\n<blocks>\n<question when no blocks>[\nurgent]" in UTF-16 units, a dash, and its 32-bit
-# FNV-1a hash over those units in hexadecimal. jq builds the text and lists its units, the
-# surrogate pairs of the characters past U+FFFF included; the shell hashes them.
-entry_fingerprint() {
-    local units=() c h=2166136261
-    read -r -a units < <(printf '%s' "$1" | jq -r '
-        (if .kind == "operator" then (.blocks // "") else "" end) as $blocks
-        | "\(.kind)\n\($blocks)\n\(if $blocks == "" then .question else "" end)\(if .kind == "operator" and (.urgent // false) then "\nurgent" else "" end)"
-        | explode
-        | map(if . > 65535 then (. - 65536) as $p | [55296 + ($p / 1024 | floor), 56320 + ($p % 1024)] else [.] end)
-        | (add // []) | map(tostring) | join(" ")') || return 1
-    for c in "${units[@]}"; do
-        h=$(( ((h ^ c) * 16777619) & 4294967295 ))
-    done
-    printf '%s-%x' "${#units[@]}" "$h"
-}
-
-# forget_relayed <entry JSON>: a closed entry's fingerprint forgotten in its sender's wait file
-# (the hooks module's forgetRelayed), so the same question asked again is entered again. The file
-# is rewritten, as the module writes it, only while its `relayed` is still that entry's own
-# fingerprint (a later wait may have replaced it). Whatever fails is said on stderr and changes
-# nothing: the close itself is done. A sender with no wait file (a remote one, or none yet) has
-# nothing to forget, and it is no failure to say.
-forget_relayed() {
-    local session wait fp now tmp
-    session=$(printf '%s' "$1" | jq -r '.session // ""' 2>/dev/null)
-    [ -n "$session" ] || return 0
-    wait="$MODULE/store/waits/$(printf '%s' "$session" | sed 's/[^A-Za-z0-9._-]/_/g')"
-    [ -f "$wait" ] || return 0
-    fp=$(entry_fingerprint "$1") || { echo "coordinator: round-close: cannot compute the fingerprint of the entry" >&2; return 0; }
-    now=$(jq -c --arg fp "$fp" 'select(type == "object" and .relayed == $fp) | del(.typed) | .relayed = null' "$wait" 2>/dev/null) \
-        || { echo "coordinator: round-close: cannot read $wait, its fingerprint is not forgotten" >&2; return 0; }
-    [ -n "$now" ] || return 0
-    tmp=$(mktemp "$wait.tmp-XXXXXX" 2>/dev/null) \
-        && printf '%s\n' "$now" > "$tmp" && mv -f "$tmp" "$wait" \
-        || { rm -f "${tmp:-}"; echo "coordinator: round-close: cannot write $wait, its fingerprint is not forgotten" >&2; }
-    return 0
-}
-
-cmd_round_close() {
-    local id="${1:-}" answer="" has_answer=0 evidence="" has_evidence=0
-    local usage='round-close: usage: round-close <id> --answer "<text>" | --withdraw "<evidence>"'
-    [ -n "$id" ] && shift || die "$usage"
-    while [ $# -gt 0 ]; do
-        case "$1" in
-            --answer) [ $# -ge 2 ] || die "round-close: --answer needs a value"; answer="$2"; has_answer=1; shift 2 ;;
-            --withdraw) [ $# -ge 2 ] && [ -n "$2" ] || die "round-close: --withdraw needs the evidence read on the artifact"
-                evidence="$2"; has_evidence=1; shift 2 ;;
-            *) die "round-close: unknown option $1" ;;
-        esac
-    done
-    [ $((has_answer + has_evidence)) = 1 ] || die "$usage"
-    # An id names a file of the round, never a path: the module's ids are sanitised the same way.
-    printf '%s' "$id" | grep -qE '^[A-Za-z0-9._-]+$' && [ "$id" != . ] && [ "$id" != .. ] \
-        || die "round-close: no entry $id in $ROUND"
-    local path="$ROUND/$id.json" closed tmp
-    # A withdrawal is closed as an answer is, its evidence kept beside the text: the module tells
-    # the sender its question was withdrawn, never that the operator answered it.
-    [ "$has_evidence" = 1 ] && answer="withdrawn: settled meanwhile — $evidence"
-    closed=$(jq -c --arg id "$id" --arg text "$answer" --arg at "$(now)" --arg evidence "$evidence" --argjson withdraw "$has_evidence" \
-        'select(type == "object" and .id == $id) | (.status == "open") as $open
-         | .status = "closed" | .answer = ({text: $text, by: "coordinator", at: $at} + (if $withdraw == 1 then {evidence: $evidence} else {} end))
-         | if $open and .kind == "operator" then .delivery = ({state: "pending", at: $at, attempts: 0} + (if .origin then {} else {answerAt: $at} end)) else . end' \
-        "$path" 2>/dev/null) && [ -n "$closed" ] || die "round-close: no entry $id in $ROUND"
-    # As the module writes it: a temporary file beside it, then one rename.
-    tmp=$(mktemp "$path.tmp-XXXXXX") || die "round-close: cannot write into $ROUND"
-    printf '%s\n' "$closed" > "$tmp" && mv -f "$tmp" "$path" || { rm -f "$tmp"; die "round-close: cannot write $path"; }
-    forget_relayed "$closed"
-    echo "closed $id"
-}
-
-cmd_round_archive() {
-    [ $# -eq 0 ] || die "round-archive: unexpected argument $1"
-    local n=0 f
-    if [ -d "$ROUND" ]; then
-        for f in "$ROUND"/*.json; do
-            [ -f "$f" ] || continue
-            round_entries_of "$f" | jq -e 'select(.status == "closed")' >/dev/null 2>&1 || continue
-            mkdir -p "$ROUND/archive" || die "round-archive: cannot create $ROUND/archive"
-            mv -f "$f" "$ROUND/archive/${f##*/}" || die "round-archive: cannot move $f"
-            n=$((n + 1))
-        done
-        # A write that died between its temporary file and the rename leaves the temporary behind; one a
-        # day old is no write in flight.
-        find "$ROUND" -maxdepth 1 -type f -name '*.json.tmp-*' -mmin +1440 -exec rm -f {} + 2>/dev/null || true
-    fi
-    echo "archived $n"
-}
-
 finish() {
     cat "$T/unread"
     if [ -s "$T/unread" ]; then exit 2; fi
@@ -786,7 +693,5 @@ case "$cmd" in
     wake-done) cmd_wake_done "$@" ;;
     drop) cmd_drop "$@" ;;
     round) cmd_round "$@" ;;
-    round-close) cmd_round_close "$@" ;;
-    round-archive) cmd_round_archive "$@" ;;
     *) die "unknown subcommand: $cmd (expected register, clear, lookup, facts, owners, sleep, sleeping, wake-done, drop, round, round-close or round-archive)" ;;
 esac
