@@ -40,13 +40,20 @@ export type FakeSetup = {
   tool?: (input: any) => any
   home?: string
   env?: Record<string, string>
+  // The host's $.state for the session, seeded by `plugin/key`; stateFails makes every set throw.
+  state?: Record<string, unknown>
+  stateFails?: string
 }
 
-export function fakeDollar(setup: FakeSetup): { $: any; argvs: string[]; written: Record<string, string>; toolCalls: any[] } {
+export function fakeDollar(setup: FakeSetup): {
+  $: any; argvs: string[]; written: Record<string, string>; toolCalls: any[]; state: Map<string, unknown>; logs: string[]
+} {
   const argvs: string[] = []
   const written: Record<string, string> = {}
   const toolCalls: any[] = []
   const files = { ...(setup.files ?? {}) }
+  const state = new Map<string, unknown>(Object.entries(setup.state ?? {}))
+  const logs: string[] = []
   const $ = {
     plugin: { name: 'norms', root: '/plugin' },
     env: { get: async (name: string) => (name === 'HOME' ? setup.home ?? '/home/u' : setup.env?.[name]) },
@@ -76,6 +83,15 @@ export function fakeDollar(setup: FakeSetup): { $: any; argvs: string[]; written
         throw new Error(`missing ${p}`)
       },
     },
+    state: {
+      get: async (ref: { plugin: string; key: string }) => ({ value: state.get(`${ref.plugin}/${ref.key}`), version: 0 }),
+      set: async (ref: { plugin: string; key: string }, value: unknown) => {
+        if (setup.stateFails) throw new Error(setup.stateFails)
+        state.set(`${ref.plugin}/${ref.key}`, value)
+        return { isSet: true, version: 1 }
+      },
+    },
+    ui: { log: (text: string) => { logs.push(text) } },
     tool: {
       call: async (input: any) => {
         toolCalls.push(input)
@@ -84,7 +100,7 @@ export function fakeDollar(setup: FakeSetup): { $: any; argvs: string[]; written
       },
     },
   }
-  return { $, argvs, written, toolCalls }
+  return { $, argvs, written, toolCalls, state, logs }
 }
 
 // The git answers of a feature branch two commits ahead of its base.
