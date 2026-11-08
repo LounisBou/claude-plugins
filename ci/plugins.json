@@ -5,8 +5,11 @@
       "ubuntu-latest",
       "macos-latest"
     ],
-    "cloudflare": [],
+    "cloudflare": [
+      "ubuntu-latest"
+    ],
     "github": [
+      "ubuntu-latest",
       "macos-latest"
     ],
     "implement": [
@@ -23,6 +26,7 @@
     ],
     "orchestrator": [],
     "pr-review": [
+      "ubuntu-latest",
       "macos-latest"
     ],
     "statusbar": [
