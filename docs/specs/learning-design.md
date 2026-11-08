@@ -1,5 +1,9 @@
 # The learning system — design
 
+**Status: proposal for the next version, awaiting the operator's confirmation.** Nothing in it
+is decided or scheduled until the operator answers the « Open questions »; the current program
+does not build it.
+
 For the version after `program-design.md`, whose priorities, conventions and constraints govern
 it; nothing here is built by the current program. Paths are relative to the repository root;
 line numbers are at `main` `5a78a08`.
@@ -27,7 +31,7 @@ removal of any of these that stops paying.
 The program's ranking holds (`program-design.md`, « Operator priorities »). This design serves:
 
 1. **Fluidity** — capture is done by hooks, distillation by a separate session started by code;
-   nothing asks the operator except what the « Open questions » below make his.
+   nothing asks the operator except what the « Open questions » below make theirs.
 2. **Ready means done** — recurring findings become guards and tests that the ready gate's
    inputs then hold.
 3. **Separation of roles** — the session that learns is never the session that did the work
@@ -203,7 +207,7 @@ the remedy needs judgment. The learning system adds two things the ladder lacks 
 - **Promotion is a pull request**, in the target repository, with its provenance: the
   candidate's signature, the count of its events and pull requests, the event ids. Under
   auto-merge in this repository, a remedy that is code and only tightens merges when proved; a
-  change of the method's text or of the operator's configuration waits for his structured
+  change of the method's text or of the operator's configuration waits for their structured
   answer (question 1).
 
 ### 6. Forget
@@ -255,7 +259,7 @@ the remedy needs judgment. The learning system adds two things the ladder lacks 
   distiller as `external` evidence (question 10).
 - **No private project leaks into a public pull request.** A method candidate's provenance
   names this repository's pull requests; others appear as counts and hashed ids (question 7).
-- **No new chore.** The operator is asked only what question 1 reserves to him, batched one
+- **No new chore.** The operator is asked only what question 1 reserves to them, batched one
   question per retrospective in the method's question format
   (`plugins/method/skills/lifecycle/references/questions.md`).
 
