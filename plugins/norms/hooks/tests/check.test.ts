@@ -3,7 +3,7 @@
 // (the <norms-context> block appended to each norms agent's prompt).
 import { expect, test } from 'claude-code/testing'
 import { classify, parseCheckArgs, applicable, classifyAll, contributingExcerpt, fenceFor, projectTypes } from '../scope.ts'
-import { register, resetCache } from '../check.ts'
+import { pullRequestBase, register, resetCache } from '../check.ts'
 import { mount, hook, nextOf, fakeDollar, gitRuns, BASE, HEAD } from './fakes.ts'
 
 test('files are classified by check.md Step 2', () => {
@@ -193,4 +193,14 @@ test('mode=auto runs the check in automatic mode without the launcher variable',
 test('neither the argument nor a non-empty launcher variable leaves the check interactive', async () => {
   expect(await scopeArgs('')).not.toContain('mode:')
   expect(await scopeArgs('', { ORCHESTRATOR_SPAWNED: '' })).not.toContain('mode:')
+})
+
+test('the pull request\'s base is read through the github tool, and anything unreadable is no base', async () => {
+  const ask = (answer: any) => pullRequestBase({ tool: { call: async () => answer } })
+  expect(await ask({ result: JSON.stringify([{ base: { ref: 'parent' } }]) })).toBe('parent')
+  expect(await ask({ result: '[]' })).toBe(undefined)
+  expect(await ask({ deny: 'no github' })).toBe(undefined)
+  expect(await ask({ result: 'not json' })).toBe(undefined)
+  expect(await ask({ result: JSON.stringify([{ base: { ref: 'x; rm -rf /' } }]) })).toBe(undefined)
+  expect(await pullRequestBase({ tool: { call: async () => { throw new Error('absent') } } })).toBe(undefined)
 })

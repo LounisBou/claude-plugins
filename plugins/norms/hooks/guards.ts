@@ -18,6 +18,8 @@
 // A guard whose own code fails lets the call through: the markdown still states every rule.
 // The push guard is the exception: when nobody can be asked, the push is refused.
 
+import { gitSubcommand, simpleCommands } from '../core/shell.ts'
+
 export type Mode = 'check' | 'learn'
 
 // check.md 7.3's answers that are not "fix".
@@ -44,6 +46,36 @@ export function editDecision(mode: Mode | undefined, lastPrompt: string | undefi
   if (isCommand(lastPrompt)) return 'norms: no rule is added before the user answers "add". Present the first proposed rule, then wait.'
   if (a === 'skip' || a === 'no' || a === 'pass') return `norms: the user answered "${lastPrompt.trim()}". This rule is not added: move on to the next one.`
   return null
+}
+
+// The review agents a walkthrough launches only read: during one, a subagent's shell line must
+// be made of commands that read, and redirect nothing but to /dev/null or its own streams.
+const READERS = new Set(['cat', 'head', 'tail', 'wc', 'ls', 'grep', 'rg', 'sort', 'uniq', 'cut', 'tr', 'pwd', 'echo', 'printf', 'test', '[', 'true', 'jq', 'diff', 'file', 'stat', 'basename', 'dirname', 'realpath'])
+const GIT_READERS = new Set(['diff', 'log', 'show', 'status', 'rev-parse', 'merge-base', 'ls-files', 'blame', 'grep', 'cat-file', 'show-ref', 'describe', 'shortlog', 'name-rev'])
+const HARMLESS_REDIRECT = /\d?>>?\s*\/dev\/null|\d?>&\d/g
+
+export const AGENT_WRITE_REFUSAL = 'norms: a review agent only reads during a walkthrough: no shell command that writes, no redirection.'
+  + ' Use Read, Grep and Glob, or the <norms-context> block the plugin gave you.'
+
+function reads(argv: readonly string[]): boolean {
+  const name = (argv[0] ?? '').split('/').pop() ?? ''
+  if (name === 'resolve_base.sh') return true
+  if (name === 'git' || /(^|\/)git$/.test(argv[0] ?? '')) {
+    const at = gitSubcommand(argv)?.at
+    const sub = at === undefined ? '' : argv[at] ?? ''
+    if (sub === 'branch') return argv.slice(at! + 1).every(a => a === '--show-current' || a === '--list' || a === '-a' || a === '-r')
+    return GIT_READERS.has(sub)
+  }
+  if (name === 'sed') return !argv.some(a => a === '-i' || a.startsWith('-i') || a === '--in-place' || a.startsWith('--in-place='))
+  if (name === 'find') return !argv.some(a => a === '-delete' || a === '-exec' || a === '-execdir' || a === '-ok' || a === '-fprint')
+  return READERS.has(name)
+}
+
+// The refusal for a subagent's shell line during a walkthrough, or null when it only reads.
+export function agentBashDecision(mode: Mode | undefined, command: string): string | null {
+  if (!mode) return null
+  if (command.replace(HARMLESS_REDIRECT, '').includes('>')) return AGENT_WRITE_REFUSAL
+  return simpleCommands(command).every(reads) ? null : AGENT_WRITE_REFUSAL
 }
 
 const PUSH = /(^|[\s;&|(])git(\s+(-C|-c)\s+\S+|\s+--?[\w-]+(=\S+)?)*\s+push(\s|$)/
@@ -150,7 +182,7 @@ export function register(on: any): void {
     const command = String(e.command ?? '')
     const question = pushQuestion(mode, command)
     if (question && !(await userAllows($, question))) return { deny: PUSH_REFUSAL }
-    const deny = e.agentId ? null : commitDecision(mode, lastPrompt, command)
+    const deny = e.agentId ? agentBashDecision(mode, command) : commitDecision(mode, lastPrompt, command)
     return deny ? { deny } : next(e)
   }).catch(pass)
 }

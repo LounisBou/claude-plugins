@@ -83,8 +83,10 @@ test('the pull request is read through the github tool', async () => {
   const { $ } = setup({}, {}, calls)
   const m = mounted()
   await m.scope($)
+  // The scope's own call, at the command's start, reads the pull request's base.
+  expect(calls).toEqual([{ tool: 'mcp__github__gh', command: 'pr-get', args: {} }])
   await m.done($, { open: 0, fixed: 0, passed: 0 })
-  expect(calls[0]).toEqual({ tool: 'mcp__github__gh', command: 'pr-get', args: { format: 'pr-number' } })
+  expect(calls[1]).toEqual({ tool: 'mcp__github__gh', command: 'pr-get', args: { format: 'pr-number' } })
 })
 
 test('a branch with no pull request leaves no record', async () => {
@@ -104,6 +106,7 @@ test('a dirty tree leaves no record, and is checked before the pull request is r
   const { $ } = setup({}, { 'git status --porcelain -uno': { stdout: ' M src/a.ts\n' } }, calls)
   const m = mounted()
   await m.scope($)
+  calls.length = 0
   const out = await m.done($, { open: 0, fixed: 0, passed: 0 })
   expect(out.result).toBe('record: none — the tracked files have changes')
   expect(calls).toEqual([])
@@ -204,6 +207,7 @@ test('counts that are not whole numbers are refused', async () => {
   const { $ } = setup({}, {}, calls)
   const m = mounted()
   await m.scope($)
+  calls.length = 0
   const out = await m.done($, { open: -1, fixed: 'x', passed: 0 })
   expect(out.isError).toBe(true)
   expect(calls).toEqual([])
