@@ -4,7 +4,7 @@
 // lists are each pinned here, in both directions: a refusal the user may find
 // strict, and a grant the matcher gives more loosely than the skill means.
 import { expect, test } from 'claude-code/testing'
-import { decide, grantsEdit, grantsResolve, grantsPublish, releases, runsGitPush, isScratch, scratchDirOf, endsWalkthrough } from '../policy.ts'
+import { decide, pushQuestion, grantsEdit, grantsResolve, grantsPublish, releases, runsGitPush, isScratch, scratchDirOf, endsWalkthrough } from '../policy.ts'
 
 const edit = (file_path: string) => ({ tool: 'Edit', file_path, old_string: 'a', new_string: 'b' })
 const gh = (command: string, args: Record<string, unknown> = {}) => ({ tool: 'mcp__github__gh', command, args })
@@ -110,12 +110,14 @@ test('process-comments: resolve waits for option 1 or 4, replies wait for post n
   expect(decide('process-comments', gh('pr-issue-comments', { pr: 1 }), '')).toBeNull()
 })
 
-test('both walkthroughs refuse git push until the user says push', () => {
+test('both walkthroughs ask the user before a push; words in a prompt grant none', () => {
   for (const skill of ['start-review', 'process-comments'] as const) {
-    expect(decide(skill, bash('git push origin main'), 'commit')).toContain('"push"')
-    expect(decide(skill, bash('git push origin main'), 'ok push it')).toBeNull()
+    expect(pushQuestion(skill, bash('git push origin main'))).toContain('push now?')
+    expect(pushQuestion(skill, bash('git commit -F /tmp/claude-pr-review-1/commit-1.msg -- a.ts'))).toBeNull()
     expect(decide(skill, bash('git commit -F /tmp/claude-pr-review-1/commit-1.msg -- a.ts'), 'commit')).toBeNull()
   }
+  expect(pushQuestion('auto-fix-loop', bash('git push'))).toBeNull()
+  expect(pushQuestion(null, bash('git push'))).toBeNull()
 })
 
 test('the resolver route is refused only while the github tool is listed', () => {
@@ -134,7 +136,7 @@ test('false positive (strict): consent in other words is refused, naming the wor
   }
   expect(decide('start-review', gh('pr-comment', { pr: 1 }), 'publish it')).toContain('"post now"')
   expect(decide('process-comments', gh('thread-resolve', { thread_id: 'T' }), 'close the thread')).toContain('1 or 4')
-  expect(decide('start-review', bash('git push'), 'ship it')).toContain('"push"')
+  expect(pushQuestion('start-review', bash('git push'))).toContain('push now?')
 })
 
 // Loose side: the matcher reads words, not intent; these grant although the user
@@ -142,7 +144,6 @@ test('false positive (strict): consent in other words is refused, naming the wor
 test('false positive (loose): a word in a negation or an aside still grants', () => {
   expect(decide('start-review', edit('/repo/a.ts'), "don't fix this one")).toBeNull()
   expect(decide('start-review', gh('pr-comment', { pr: 1 }), 'do not post now')).toBeNull()
-  expect(decide('start-review', bash('git push'), 'I will push later myself')).toBeNull()
   expect(decide('process-comments', gh('thread-resolve', { thread_id: 'T' }), 'why not resolve it?')).toBeNull()
 })
 

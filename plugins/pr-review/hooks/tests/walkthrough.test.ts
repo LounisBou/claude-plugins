@@ -75,15 +75,25 @@ test('start-review: pr-comment waits for post now', async ($, on) => {
   expect(ran).toEqual(['mcp__github__gh:pr-comment'])
 })
 
-test('process-comments: git push is refused, the word push lifts it', async ($, on) => {
+test('process-comments: a git push asks the user; only their Allow lets it through', async ($, on) => {
+  const replies = ['Deny', 'Allow']
+  const asked: string[] = []
+  // The host's question reaches the chain as an AskUserQuestion call, answered before the engine.
+  on('tool.call', { tool: 'AskUserQuestion' }, (_$: any, e: any) => {
+    const question = e.questions[0].question
+    asked.push(question)
+    return { result: { questions: e.questions, answers: { [question]: replies.shift() } } }
+  })
   const ran = engine(on)
   await $.skill.prompt({ skill: 'pr-review:process-comments', text: '' })
-  await say($, '1')
-  const refused: any = await $.tool.call({ tool: 'Bash', command: 'git push origin HEAD' } as any)
-  expect(String(refused.deny ?? refused.text)).toContain('"push"')
+  // « push » in the user's words grants nothing: the host's question decides.
   await say($, 'push')
+  const refused: any = await $.tool.call({ tool: 'Bash', command: 'git push origin HEAD' } as any)
+  expect(String(refused.deny ?? refused.text)).toContain('unless the user allows it when asked')
+  expect(ran).toEqual([])
   await $.tool.call({ tool: 'Bash', command: 'git push origin HEAD' } as any)
   expect(ran).toEqual(['Bash'])
+  expect(asked.length).toBe(2)
 })
 
 test('end review lifts the rules at once', async ($, on) => {
