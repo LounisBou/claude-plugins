@@ -13,6 +13,9 @@ trap 'rm -rf "$WORK"' EXIT
 pass=0
 fail=0
 
+# Lines joined on ⏎, the same on GNU and BSD: GNU tr is not multibyte and writes one byte of it.
+joinlines() { python3 -c 'import sys; sys.stdout.write(sys.stdin.read().replace("\n", "⏎"))'; }
+
 # check <name> <expected> <actual>
 check() {
   if [ "$2" = "$3" ]; then
@@ -20,8 +23,8 @@ check() {
     pass=$((pass + 1))
   else
     printf '  FAIL %s\n' "$1"
-    printf '       expected: %s\n' "$(printf '%s' "$2" | tr '\n' '⏎')"
-    printf '       actual:   %s\n' "$(printf '%s' "$3" | tr '\n' '⏎')"
+    printf '       expected: %s\n' "$(printf '%s' "$2" | joinlines)"
+    printf '       actual:   %s\n' "$(printf '%s' "$3" | joinlines)"
     fail=$((fail + 1))
   fi
 }
@@ -1328,7 +1331,7 @@ echo "== install: gh and its browser sign-in =="
 # so a real gh or brew on this machine is never found.
 SYS="$WORK/sysbin"
 mkdir -p "$SYS"
-for t in bash sh git curl sed awk head mktemp seq nohup sleep rm cp chmod mkdir tar cat grep tr dirname env ls touch shasum sha256sum; do
+for t in bash sh git curl sed awk head mktemp seq nohup sleep rm cp chmod mkdir tar cat grep tr dirname env ls touch shasum sha256sum gzip; do
   p=$(command -v "$t") && ln -sf "$p" "$SYS/$t" || :
 done
 # The interpreter itself, not a version-manager shim that needs its own PATH.
@@ -1542,7 +1545,7 @@ out=$(env -u GH_TOKEN HOME="$WORK/home-norepo" PATH="$F:$SYS" \
 check "preflight outside a repository exits 13" "13" "$code"
 check "preflight outside a repository names the remedy" \
   "error: no git remote named origin⏎fix:   run this from a GitHub repository clone" \
-  "$(printf '%s' "$out" | tr '\n' '⏎')"
+  "$(printf '%s' "$out" | joinlines)"
 check "engine outside a repository refuses" "error: no GitHub origin remote; pass --repo owner/name" \
   "$(env GH_TOKEN=x HOME="$WORK/home-norepo" PATH="$F:$SYS" \
     /bin/bash -c "cd '$WORK/plain-dir' && python3 '$ROOT/engine/gh.py' pr-list" 2>&1 | grep '^error:')"
