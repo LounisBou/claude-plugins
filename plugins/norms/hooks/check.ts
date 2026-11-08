@@ -13,6 +13,7 @@ import {
   classifyAll, projectTypes, parseCheckArgs, scopeBlock, filesFor, contextBlock,
   DIFF_INLINE_MAX, type Scope, type ReferencePaths,
 } from './scope.ts'
+import { isSpawned } from '../core/env.ts'
 import { markScope } from './record.ts'
 
 const GIT_TIMEOUT_MS = 30_000
@@ -80,8 +81,8 @@ async function withScope($: any, words: string): Promise<string> {
   const scope = await computeScope($, args.base)
   cached = { scope, at: Date.now() }
   const refs = await checkPaths($, args.paths)
-  const spawned = String((await $.env.get('ORCHESTRATOR_SPAWNED').catch(() => undefined)) ?? '')
-  const block = scopeBlock(scope, args, refs, args.auto === true || spawned !== '')
+  const spawned: unknown = await $.env.get('ORCHESTRATOR_SPAWNED').catch(() => undefined)
+  const block = scopeBlock(scope, args, refs, args.auto === true || isSpawned(typeof spawned === 'string' ? spawned : undefined))
   // Last, so the mark means the block is delivered.
   markScope(scope.head)
   const typed = words.trim()

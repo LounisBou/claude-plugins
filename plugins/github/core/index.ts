@@ -6,3 +6,4 @@ export { parseSessionName, ROLES, sessionName, type Prefix, type Role, type Sess
 export { installRecordPath, locatePlugin, NotInstalled } from './locate.ts'
 export { gitSubcommand, simpleCommands } from './shell.ts'
 export { accepts, DETAIL_MAX, KINDS, parsePrRecord, RECORD_VERSION, type Kind, type PrRecord, type Result } from './pr-record.ts'
+export { ENV, isSpawned } from './env.ts'

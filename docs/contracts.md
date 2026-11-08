@@ -16,7 +16,7 @@ defect.
 | `mcp__github__gh` commands (`pr-create`, `pr-readiness`, `record`) | github | orchestrator, norms, pr-review | undeclared by orchestrator | declared dependency with a version range |
 | Launcher CLI (`iterm-agent.sh spawn`) | orchestrator | bugs-bot | hard-coded path | a declared command with a versioned argument set |
 | `ListAgents` text | host | bugs-bot | parsed by regex | the host's structured data, or a `core` parser owned once |
-| Environment: `ORCHESTRATOR_SPAWNED`, `ORCHESTRATOR_CONTEXT_GATE*`, `CLAUDE_GITHUB_ROOT` | orchestrator / github | norms, statusbar | read ad hoc | named and typed in `core` |
+| Environment: `ORCHESTRATOR_SPAWNED`, `ORCHESTRATOR_CONTEXT_GATE*`, `CLAUDE_GITHUB_ROOT` | orchestrator / github | norms, statusbar | **named in core** (`env.ts`); `npm run deps` refuses another plugin's variable core does not declare; norms reads `ORCHESTRATOR_SPAWNED` through `isSpawned` | statusbar reads the gate from the measure file instead of the variables |
 
 ## Installer permission rules
 
