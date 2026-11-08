@@ -74,8 +74,12 @@ export function printed(error: unknown): string {
     .join('\n')
 }
 
-function tail(text: string): string {
-  return text.split('\n').filter(Boolean).slice(-TAIL_LINES).join('\n')
+/** What a suite's output says about its failure: its failing lines first, then its last lines. */
+export function tail(text: string): string {
+  const lines = text.split('\n').filter(Boolean)
+  const failing = lines.filter(line => /\bFAIL\b|^not ok|\(fail\)|\bfailed\b|Error:/.test(line)).slice(0, TAIL_LINES / 2)
+  const last = lines.slice(-TAIL_LINES / 2).filter(line => !failing.includes(line))
+  return [...failing, ...last].join('\n')
 }
 
 /** Whether the plugin in `dir` holds TypeScript tests, which only the host's test kit runs. */

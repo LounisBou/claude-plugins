@@ -8,7 +8,7 @@ import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { run as outcome, parseOptions } from '../../outcome.ts'
 import type { Io } from '../io.ts'
-import { gitBench, isTestPath, printed } from './bench.ts'
+import { gitBench, isTestPath, printed, tail } from './bench.ts'
 import { parseCapsFile, parseCases, selectCases, type Case, type Caps } from './cases.ts'
 import { brief, overlap, runEvals, type Agent, type Judge, type Meter, type Ports, type Report } from './harness.ts'
 import { Ledger } from './ledger.ts'
@@ -282,6 +282,15 @@ describe('outcome evals: pieces', () => {
   it('reads what a failed process printed', () => {
     assert.equal(printed('plain'), 'plain')
     assert.equal(printed({ stdout: 'out', stderr: 'err', code: 1 }), 'out\nerr')
+  })
+
+  it('keeps the failing lines of a long suite output before its last ones', () => {
+    const output = ['  FAIL early check', ...Array.from({ length: 100 }, (_, n) => `  ok   check ${n}`), '1 failed'].join('\n')
+    const kept = tail(output).split('\n')
+    assert.equal(kept[0], '  FAIL early check')
+    assert.ok(kept.includes('1 failed'))
+    assert.equal(kept.at(-1), '  ok   check 99')
+    assert.ok(kept.length <= 40)
   })
 
   it('measures the overlap of two sets of files', () => {
