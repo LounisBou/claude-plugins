@@ -16,13 +16,13 @@ function fakeGit(answers: Record<string, Ran | ((options: RunOptions) => Promise
     const key = argv.slice(3).join(' ')
     calls.push(key)
     const answer = answers[key]
-    if (answer === undefined) return { status: 1, stdout: '' }
+    if (answer === undefined) return { status: 1, stdout: '', stderr: '' }
     return typeof answer === 'function' ? answer(options) : answer
   }
   return Object.assign(git, { calls })
 }
 
-const ok = (stdout = ''): Ran => ({ status: 0, stdout })
+const ok = (stdout = ''): Ran => ({ status: 0, stdout, stderr: '' })
 
 test('the command line: a repository, a required --since, repeated globs', () => {
   assert.deepEqual(parseArgs(['r', '--since', '2026-08-10', '--product', 'a/**', '--instrument', 'b', '--product', 'c']), {
@@ -101,7 +101,7 @@ test('a name the clone lacks, or no answer: the guess is said as one', async () 
 test('a remote past its deadline is cancelled, and read as no answer', async () => {
   let aborted = false
   const hanging = (options: RunOptions): Promise<Ran> =>
-    new Promise(resolve => options.signal?.addEventListener('abort', () => { aborted = true; resolve({ status: null, stdout: 'ref: refs/heads/late\tHEAD\n' }) }))
+    new Promise(resolve => options.signal?.addEventListener('abort', () => { aborted = true; resolve({ status: null, stdout: 'ref: refs/heads/late\tHEAD\n', stderr: '' }) }))
   const io = recorder()
   const git = fakeGit({ 'ls-remote --symref origin HEAD': hanging, 'rev-parse --verify --quiet refs/heads/main': ok() })
   assert.equal(await defaultBranch('r', git, io, 5), 'main')

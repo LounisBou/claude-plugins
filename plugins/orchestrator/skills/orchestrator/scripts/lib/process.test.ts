@@ -1,4 +1,7 @@
 import { strict as assert } from 'node:assert'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 import { pathToFileURL } from 'node:url'
 import { fdWriter, isEntry, run } from './process.ts'
@@ -6,12 +9,28 @@ import { fdWriter, isEntry, run } from './process.ts'
 const node = process.execPath
 
 test('run collects stdout and the exit status, without a shell', async () => {
-  assert.deepEqual(await run([node, '-e', 'process.stdout.write("a $HOME;"); process.exit(3)']), { status: 3, stdout: 'a $HOME;' })
-  assert.deepEqual(await run([node, '-e', 'process.stdout.write(process.cwd())'], { cwd: '/' }), { status: 0, stdout: '/' })
+  assert.deepEqual(await run([node, '-e', 'process.stdout.write("a $HOME;"); process.exit(3)']), { status: 3, stdout: 'a $HOME;', stderr: '' })
+  assert.deepEqual(await run([node, '-e', 'process.stdout.write(process.cwd())'], { cwd: '/' }), { status: 0, stdout: '/', stderr: '' })
+  assert.deepEqual(await run([node, '-e', 'process.stderr.write("why")'], { stderr: 'pipe' }), { status: 0, stdout: '', stderr: 'why' })
+})
+
+test('run: a log takes both streams, truncated or appended; a log that cannot open runs nothing', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'process-'))
+  try {
+    const log = join(dir, 'log')
+    writeFileSync(log, 'old\n')
+    const both = 'process.stdout.write("o\\n"); process.stderr.write("e\\n")'
+    assert.deepEqual(await run([node, '-e', both], { log: { path: log, append: false } }), { status: 0, stdout: '', stderr: '' })
+    await run([node, '-e', both], { log: { path: log, append: true } })
+    assert.deepEqual(readFileSync(log, 'utf8').split('\n').sort(), ['', 'e', 'e', 'o', 'o'])
+    assert.deepEqual(await run([node, '-e', 'process.exit(0)'], { log: { path: join(dir, 'no', 'log'), append: true } }), { status: 1, stdout: '', stderr: '' })
+  } finally {
+    rmSync(dir, { recursive: true })
+  }
 })
 
 test('run: a command that cannot start has no status', async () => {
-  assert.deepEqual(await run(['/no/such/command']), { status: null, stdout: '' })
+  assert.deepEqual(await run(['/no/such/command']), { status: null, stdout: '', stderr: '' })
 })
 
 test('run: aborting the signal kills the command', async () => {
