@@ -57,7 +57,6 @@ export function grantsResolve(prompt: string): boolean {
 }
 
 export const grantsPublish = (prompt: string): boolean => has(prompt, /\bpost now\b/i)
-export const grantsPush = (prompt: string): boolean => has(prompt, /\bpush\b/i)
 export const releases = (prompt: string): boolean => has(prompt, RELEASE)
 
 /*
@@ -168,14 +167,24 @@ export function decide(skill: Skill | null, e: Call, prompt: string, ghListed = 
   if (e.tool === GH_TOOL) return ghDecision(skill, e, prompt)
   if (e.tool === 'Bash') {
     const command = String(e.command ?? '')
-    if (runsGitPush(command) && !grantsPush(prompt)) {
-      return `pr-review ${skill}: the walkthrough never pushes; pushing is the user's. ${ASK.replace('that word', '"push"')}`
-    }
     if (ghListed && /resolve_github\.py/.test(command)) {
       return `pr-review ${skill}: ${GH_TOOL} is listed in this session, so GitHub calls go through it, where the permission check applies; the Bash route is for sessions without it.`
     }
   }
   return null
+}
+
+export const PUSH_REFUSAL = 'the walkthrough never pushes unless the user allows it when asked; pushing is the user\'s.'
+
+/*
+ * The question a push during a walkthrough asks the user, or null when none guards it. A push is
+ * never granted by words in a prompt (« I will push later » holds the word): the user answers the
+ * host's own question (decision 0004).
+ */
+export function pushQuestion(skill: Skill | null, e: Call): string | null {
+  if (skill === null || skill === 'auto-fix-loop' || e.tool !== 'Bash') return null
+  const command = String(e.command ?? '')
+  return runsGitPush(command) ? `pr-review ${skill}: push now? ${command.trim().slice(0, 200)}` : null
 }
 
 // Whether a Bash call needs the tool list to be decided (the one async read).

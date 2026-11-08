@@ -8,7 +8,7 @@
 // Never a trap: "end review" typed by the user, an interrupted turn (Esc), a
 // /clear, or the skill's own closing line ends the rules at once (session.ts
 // holds those lifecycle hooks; this file holds the guard and the band).
-import { GH_TOOL, decide, needsToolList, scratchDirOf } from './policy.ts'
+import { GH_TOOL, PUSH_REFUSAL, decide, needsToolList, pushQuestion, scratchDirOf } from './policy.ts'
 import { walkthrough, loop, MAX_PASSES } from './state.ts'
 
 async function isGhListed($: any): Promise<boolean> {
@@ -59,10 +59,21 @@ async function bandPieces($: any): Promise<Piece[] | null> {
   return pieces
 }
 
+// Whether the user allows an act: only their own Allow does; a failure to ask refuses.
+async function userAllows($: any, question: string): Promise<boolean> {
+  try {
+    return (await $.ui.ask(question, ['Allow', 'Deny'])) === 'Allow'
+  } catch {
+    return false
+  }
+}
+
 export function register(on: any): void {
   on('tool.call', async ($: any, e: any, next: any) => {
     const skill = walkthrough.skill
     if (skill === null) return next(e)
+    const question = pushQuestion(skill, e)
+    if (question && !(await userAllows($, question))) return { deny: `pr-review ${skill}: ${PUSH_REFUSAL}` }
     const reason = decide(skill, e, walkthrough.lastPrompt, needsToolList(e) ? await isGhListed($) : false)
     if (reason) return { deny: reason }
     const dir = typeof e.file_path === 'string' ? scratchDirOf(e.file_path) : undefined
@@ -78,6 +89,8 @@ export function register(on: any): void {
     // the hook would have refused and passes the rest.
     if (next.called) return next(e)
     try {
+      // Nobody can be asked from the net: a push it meets is refused.
+      if (pushQuestion(walkthrough.skill, e)) return { deny: `pr-review ${String(walkthrough.skill)}: ${PUSH_REFUSAL}` }
       const reason = decide(walkthrough.skill, e, walkthrough.lastPrompt, false)
       return reason ? { deny: reason } : next(e)
     } catch {
