@@ -165,17 +165,19 @@ done
 check "no skill reads the ignore rule through the bare directory" "" \
   "$(grep -HoE 'check-ignore -q docs/features( |&&|\|\|)' \
      "$ROOT"/skills/{feature,prepare,phase,close}/SKILL.md 2>/dev/null || true)"
-# Contract: every superpowers:<name> exists in the installed plugin, every implement:<name> is one of ours.
+# Contract: every superpowers:<name> exists in the installed plugin, every implement:<name> is one of ours,
+# every method:<name> is a skill of the method plugin beside this one.
 # Each key of "plugins" in installed_plugins.json maps to a LIST of per-scope
 # install records (a plugin can be installed at more than one scope), so every
 # record of every matching key is flattened before the first installPath is read.
 SP_ROOT="${SUPERPOWERS_ROOT:-$(python3 -c 'import json,os; d=json.load(open(os.path.expanduser("~/.claude/plugins/installed_plugins.json"))); recs=[r for k,v in d.get("plugins",{}).items() if k.startswith("superpowers@") for r in v]; print(recs[0]["installPath"] if recs and isinstance(recs[0],dict) and "installPath" in recs[0] else "")' 2>/dev/null)}"
 check "the superpowers plugin resolves" "1" "$([ -d "$SP_ROOT/skills" ] && echo 1 || echo 0)"
 phantoms=$(for skill in feature phase check close prepare; do
-  grep -oE '(superpowers|implement):[a-z-]+' "$ROOT/skills/$skill/SKILL.md" 2>/dev/null | sort -u | while read -r ref; do
+  grep -oE '(superpowers|implement|method):[a-z-]+' "$ROOT/skills/$skill/SKILL.md" 2>/dev/null | sort -u | while read -r ref; do
     case "$ref" in
       (superpowers:*) [ -d "$SP_ROOT/skills/${ref#superpowers:}" ] || printf '%s:%s ' "$skill" "$ref" ;;
       (implement:*)   [ -d "$ROOT/skills/${ref#implement:}" ] || [ -f "$ROOT/commands/${ref#implement:}.md" ] || printf '%s:%s ' "$skill" "$ref" ;;
+      (method:*)      [ -d "$ROOT/../method/skills/${ref#method:}" ] || printf '%s:%s ' "$skill" "$ref" ;;
     esac
   done
 done)
@@ -387,7 +389,7 @@ check "close's iron rule holds three NEVER lines" "3" \
 # What happens after the branch belongs to the user. Said once: twice reads as a
 # warning, absent it reads as an offer to do it.
 check "close hands the rest back in one sentence" "1" \
-  "$(grep -o 'a push, a pull request or a merge that your instructions call for is carried out without asking' "$CLOSE_DOC" 2>/dev/null | wc -l | tr -d ' ')"
+  "$(grep -o 'ready and merge follow the method'"'"'s gate' "$CLOSE_DOC" 2>/dev/null | wc -l | tr -d ' ')"
 
 # A version written into one file and mirrored in another leaves the repository
 # green on the first gate and red on the second. The stop names the file it wrote.

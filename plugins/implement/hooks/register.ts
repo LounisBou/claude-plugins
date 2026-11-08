@@ -127,6 +127,10 @@ function touchesState(command: string): boolean {
   return shellActions(command).includes('commit') || command.includes('IMPLEMENTATION.md')
 }
 
+// Whether this session loaded the method's kernel: the skills point at it until it is.
+const METHOD_SKILL = 'method:lifecycle'
+const method = { isLoaded: false }
+
 export function register(on: any) {
   // The state tool, listed from the first turn.
   on('session.start', async ($: any, e: any, next: any) => {
@@ -170,6 +174,10 @@ export function register(on: any) {
 
   // The preflight ahead of the skill's text, and the guards the skill arms.
   on('skill.prompt', async ($: any, e: any, next: any) => {
+    if (String(e.skill ?? '') === METHOD_SKILL) {
+      method.isLoaded = true
+      return next(e)
+    }
     const skill = skillOf(String(e.skill ?? ''))
     if (skill === null) return next(e)
     await writeGuard($, armedBy(await readGuard($), skill))
@@ -177,7 +185,7 @@ export function register(on: any) {
     const reads = skill === 'phase' || skill === 'check' || skill === 'close'
     const line = lines.length === 0 && reads ? stateLine(await snapshot($)) : null
     if (skill === 'phase') await refreshBand($)
-    return { text: skillText(String(e.text ?? ''), lines, line) }
+    return { text: skillText(String(e.text ?? ''), lines, line, !method.isLoaded) }
   }).catch(async ($: any, e: any, next: any) => next(e))
 
   on('prompt.submit', async ($: any, e: any, next: any) => {

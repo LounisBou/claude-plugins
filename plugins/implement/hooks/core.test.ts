@@ -3,7 +3,7 @@ import {
   IDLE, armedBy, agentDecision, bandLine, bandOf, bandSegments, bashDecision, checkDeny, codenameOf, doctorText, editDecision,
   ignoreVerdict, isVerdict, markRow, modeOf, nextRow, onTurnEnd, onTyped, parseState,
   preflightLines, shellActions, silencesAttribution, simpleCommands, skillOf, skillText, stateLine,
-  COMMITTED_IGNORED, GUARD_SKIPPED, LOCAL_NOT_IGNORED, PREFLIGHT_PASSED, type Guard, type Snapshot,
+  COMMITTED_IGNORED, GUARD_SKIPPED, LOCAL_NOT_IGNORED, METHOD_LINE, PREFLIGHT_PASSED, type Guard, type Snapshot,
 } from './core.ts'
 
 // The same text as tests/fixtures/state-table.md, which tests/run-tests.sh
@@ -118,6 +118,8 @@ describe('the preflight', () => {
     expect(passed.startsWith(PREFLIGHT_PASSED)).toBe(true)
     expect(passed.endsWith('\n\nTHE SKILL')).toBe(true)
     expect(passed).toContain('State: s.')
+    expect(passed).not.toContain(METHOD_LINE)
+    expect(skillText('THE SKILL', [], null, true)).toContain(METHOD_LINE)
   })
   test('the state line names every derived value', () => {
     const s: Snapshot = {

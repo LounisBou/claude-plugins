@@ -127,7 +127,7 @@ gate:      not run here, no code is written
 checks:    the roadmap line matches the codename, the title and the bump type
 deviations: what departs from what the user confirmed, and why
 open questions: what the design leaves for a phase to settle
-status:    DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_DECISION
+status:    done|blocked|question — <one line>
 ```
 
 ---

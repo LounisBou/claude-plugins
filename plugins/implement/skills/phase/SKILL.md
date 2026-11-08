@@ -126,7 +126,7 @@ git rev-parse --short HEAD   # this sub-phase's base, into "$DOCS/IMPLEMENTATION
    check and test commands of its `CLAUDE.md`, else those of its `CONTRIBUTING.md`,
    else the tests covering the files just touched. Run each one synchronously, in
    the call that waits for it, and state it with its exit code. At most two fixes:
-   a third red run stops the phase `BLOCKED`.
+   a third red run stops the phase `blocked`.
 4. **The commit.** Read the convention rather than impose one:
 
 ```bash
@@ -142,7 +142,7 @@ git log --format=%s -10
    when given>`, where the recorded sha is the one the milestone column took when
    this sub-phase started and the path is the one `--docs` carried, when it carried
    one. A `FAIL` is repaired
-   inline and re-checked once. A second `FAIL` stops the phase `BLOCKED`, with the
+   inline and re-checked once. A second `FAIL` stops the phase `blocked`, with the
    table and the verdict quoted in the report.
 
 When the last sub-phase is green, close the phase: set its row to `done`, the
@@ -175,9 +175,9 @@ left, say that `implement:close` is next.
 | No `IMPLEMENTATION.md` under the derived path | `no IMPLEMENTATION.md under <docs>: run implement:feature first, or pass --docs <path>` |
 | `docs/features` or `ROADMAP.md` is not ignored in local mode | `docs/features and ROADMAP.md must be ignored in local mode: add them to the excludes, or set artifacts to committed in .implement.json` |
 | Either of them is ignored in committed mode | `docs/features and ROADMAP.md must not be ignored in committed mode` |
-| A gate still red after two fixes | `gate red after two fixes: <command> exit <code>` — status `BLOCKED` |
-| A second `FAIL` on the same sub-phase | `check failed twice on <sub-phase>: <the failing rows>` — status `BLOCKED` |
-| The plan does not settle a scope question | the question in one line, then wait — status `NEEDS_DECISION` |
+| A gate still red after two fixes | `gate red after two fixes: <command> exit <code>` — status `blocked` |
+| A second `FAIL` on the same sub-phase | `check failed twice on <sub-phase>: <the failing rows>` — status `blocked` |
+| The plan does not settle a scope question | the question in one line, then wait — status `question` |
 | An outward-facing or irreversible action is needed that no instruction calls for | name it and wait; it is not taken on the skill's own account |
 
 Each stop asks once, in one line, and waits. No progress narration between
@@ -197,12 +197,12 @@ gate:      <command> exit <code>   (one line per command, every run)
 checks:    <sub-phase> PASS | FAIL: <rows>   (one line per implement:check run)
 deviations: what departs from the plan file, and the line that justified it
 open questions: what the plan does not settle, one line each
-status:    DONE | DONE_WITH_CONCERNS | BLOCKED | NEEDS_DECISION
+status:    done|blocked|question — <one line>
 ```
 
-`DONE` when every sub-phase is green and its check passed. `DONE_WITH_CONCERNS`
-when a deviation was taken and is named. `BLOCKED` on a red gate or a twice-failed
-check. `NEEDS_DECISION` on a scope question the plan does not answer.
+`done` when every sub-phase is green and its check passed, a deviation named under
+`deviations`. `blocked` on a red gate or a twice-failed check. `question` on a scope
+question the plan does not answer.
 
 ---
 
@@ -222,9 +222,8 @@ implement skill starts, the user asks for a subagent in a prompt, interrupts the
 or runs `/implement:release-guard`. A refusal is a stop to report, never a wall to go
 around.
 
-This skill's own steps end at the branch. A push, a pull request (draft or ready) or a
-merge that the user's or the project's own instructions call for is carried out
-without asking, and is never refused here.
+This skill's own steps end at the branch. A push and a draft pull request need no consent;
+taking it out of draft and the merge follow the method's ready gate and consent rules.
 
 ---
 

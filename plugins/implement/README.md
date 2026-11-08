@@ -36,8 +36,8 @@ below.
 - **`/implement:check`** — verify a delivery against the plan and the design, on
   any commit range.
 - **`/implement:close`** — the full project gate, the version bump, the final
-  summary; its steps end at the branch, and a push, a pull request or a merge that
-  your instructions call for is carried out without asking.
+  summary; its steps end at the branch: a push and a draft pull request need no
+  consent, and ready and merge follow the method's gate (the `method` plugin).
 - **`/implement:prepare`** — plan a future feature onto `ROADMAP.md` without
   touching a branch, so it coexists with a feature in progress on another one.
 
