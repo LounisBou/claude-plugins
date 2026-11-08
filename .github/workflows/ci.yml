@@ -70,13 +70,13 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-      - uses: oven-sh/setup-bun@v2
       - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
       - name: tools the suites call
         run: |
-          npm install --global --silent @anthropic-ai/claude-code@2.1.319
+          # Bun from the npm registry: its GitHub release downloads fail on a forge outage.
+          npm install --global --silent @anthropic-ai/claude-code@2.1.319 bun@1.4.4
           python -m pip install --quiet pytest
           if [ "$RUNNER_OS" = Linux ]; then sudo apt-get install -y -qq tmux jq; else brew install tmux jq; fi
       - name: the superpowers plugin implement's skills stand on
