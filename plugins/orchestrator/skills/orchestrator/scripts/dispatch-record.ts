@@ -668,6 +668,8 @@ async function ready(ctx: Context, id: string, args: readonly string[]): Promise
   } else if (waiver !== '') {
     die(ctx, `ready: --e2e-waiver is for a pull request with no E2E test, and this line names one: ${e2e}`)
   }
+  // The github ready gate needs a review at the head; a row no review has touched is not ready.
+  if (reviewed === '') die(ctx, `ready: no review recorded on row ${id}: dispatch a review round and record it with \`review\`: not ready`)
   const at = stamp(ctx)
   rewrite(ctx, id, r => { r['e2e'] = { line: e2e, kind: e2eKind, waiver, exempt: exemptWords, head, at } })
   surfaceLine = `${surfaceLine}; ${e2eLine}`
@@ -676,11 +678,6 @@ async function ready(ctx: Context, id: string, args: readonly string[]): Promise
   const hash = pr.lastIndexOf('#')
   const labelCmd = kind === 'ui' ? `pr-readiness ${pr.slice(hash + 1)} ready on ${hash === -1 ? pr : pr.slice(0, hash)}` : 'pr-readiness <n> ready on <owner/repo>'
   const norms = text(or(field(row['review'], 'norms'), ''))
-  if (reviewed === '') {
-    warn(ctx, `ready: no review recorded on row ${id}: dispatch a review round and record it with \`review\``)
-    say(ctx, `ready: row ${id} has no review recorded yet; head ${head} is unverified; ${surfaceLine}`)
-    return
-  }
   if (sameCommit(ctx, reviewed, head)) {
     say(ctx, `ready: row ${id} reviewed at ${head}, norms check ${norms}; ${surfaceLine}`)
     say(ctx, labelCmd)

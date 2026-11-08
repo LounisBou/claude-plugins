@@ -45,30 +45,20 @@ dropped from the count, and not asked. Announce it in one line, the goals line f
 « N questions, back to back. Goals: m/n met, open: G3, G4. » A question that arises mid-round is appended as N + 1, announced in one line, and
 taken in order; the count in the header moves with it.
 
-## 2. Present ONE question, in the user's language, in this exact shape
+## 2. Present ONE question
 
 Re-verify the item and its premise on the artifact in the same turn, immediately before
 presenting it: the collection may be an hour old. Found settled, it is written back as
 « already done: <evidence> », dropped from the count (N in the header drops with it),
 reported in one line, and the next question is presented instead: a settled item is never asked.
 
-One field per line, its label italic before a colon, in the user's language: the
-operator's pane draws these fields alone.
-
-- `**Question i of N**`, alone on its line: the only numbering shown.
-- `_Subject_ :` the thing on the screen or in the data.
-- `_Context_ :` two to six sentences: what the thing is, where the user meets it, what
-  happens today, what the plan or the agent says, why this is the user's to decide, which
-  goal of `goals.md` it serves, what stays open after it. Plain words: an identifier only
-  beside the words that explain it.
-- `_Question_ :` the question as a sentence.
-- `_Choices_ :`, then two to four, one per line as `- **A** : <text>`, each with its COST
-  and GAIN, each a materially different piece of work — never shades of one option.
-- `_Recommendation_ : A — <its reason in one sentence>`: exactly one, after the choices.
-- Close with « You decide: A or B? » (the letters offered), then call
-  `declare_wait({kind: "operator", blocks: "<the question>"})`. Split references in `blocks` by `, `, never `/`. END THE TURN. Nothing else in
-  that message but the « Recorded » line of the answer just given: no status, no other
-  question, no agent report.
+The shape is the method's question (`method:lifecycle`, « Questions to the operator »), in the user's
+language, one field per line: the operator's pane draws these fields alone. The context names
+the goal of `goals.md` the question serves, and every choice is a materially different piece
+of work, never shades of one option. Then call
+`declare_wait({kind: "operator", blocks: "<the question>"})`. Split references in `blocks` by `, `, never `/`. END THE TURN. Nothing else in
+that message but the « Recorded » line of the answer just given: no status, no other
+question, no agent report.
 
 ## 3. Wait for the answer
 
