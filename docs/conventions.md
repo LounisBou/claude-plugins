@@ -99,6 +99,9 @@ changed by a pull request that edits this file and the code it governs together.
 
 ## Changes and releases
 
+- No attribution to a tool or an assistant anywhere in the history or on the forge: no
+  `Co-Authored-By`, session link or « Generated with » line in a commit, a pull request's title or
+  description, or a comment.
 - Conventional commits, the scope being the plugin (`fix(github): …`) or the repository part
   (`ci`, `core`, `docs`).
 - One plugin per pull request, except a contract change, which moves its owner and every
