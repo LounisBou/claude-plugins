@@ -9,7 +9,7 @@
 // origin read.
 import { expect, test } from 'claude-code/testing'
 import {
-  writeSession, readSessions, deleteSession, sessionKey, parseSessionRow, parseRoundEntry, runsLive, livePids, livePidsArgv, sweepTemporaries,
+  writeSession, readSessions, deleteSession, sessionKey, parseSessionRow, parseRoundEntry, runsLive, livePids, livePidsArgv, sweepTemporaries, mergeWait,
 } from '../supervision.ts'
 import { STALE_MS } from '../../core/store-io.ts'
 import { register } from '../register.ts'
@@ -612,4 +612,24 @@ test('an entry naming no session, or from another machine, stays open though a r
   expect(files.has(`${SESSIONS}/far`)).toBe(false)
   expect(statusOf(files, unnamed)).toBe('open')
   expect(statusOf(files, remote)).toBe('open')
+})
+
+// The wait file's writers live in several processes: the session's relay, the coordinator's hooks
+// forgetting a fingerprint, round-close. A relay write computed from what it read before the
+// coordinator forgot the fingerprint put the fingerprint back, and the same question was never
+// relayed again; a field the relay leaves as it read it keeps what the file holds now.
+test('a wait written from an older read keeps what another process changed since', () => {
+  const seen = { waiting: 'operator' as const, blocks: 'b', waiting_since: 't0', relayed: 'K', name: 'Orch : a', pid: '1', typed: { blocks: 'b', since: 't0' } }
+  const now = { ...seen, relayed: null }
+  delete (now as { typed?: unknown }).typed
+  const written = mergeWait(seen, now, { ...seen, waiting: 'done', waiting_since: 't1' })
+  expect(written.relayed).toBe(null)
+  expect('typed' in written).toBe(false)
+  expect(written.waiting).toBe('done')
+  expect(written.waiting_since).toBe('t1')
+  // A field this write changes is its own, whatever the file holds.
+  expect(mergeWait(seen, now, { ...seen, relayed: 'K2' }).relayed).toBe('K2')
+  // Nothing read before, or nothing there now: the write as it is.
+  expect(mergeWait(undefined, now, { ...seen })).toEqual(seen)
+  expect(mergeWait(seen, null, { ...seen })).toEqual(seen)
 })

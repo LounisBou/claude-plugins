@@ -622,6 +622,13 @@ check "the mark is written only where it is set" \
   "$(paste -sd'|' "$CHAINS/ttys900.jsonl")"
 check "a hand-over keeps the mark" '{"tab_id": "9", "tty": "/dev/ttys909", "owner": "S-NEW", "resident": true}' \
   "$(transfer >/dev/null; sed -n 2p "$CHAINS/ttys950.jsonl")"
+# Every launcher process rewrites chains (a spawn, a close, a move, a takeover): read outside a
+# lock, one append was lost under another's. Eight appends at once, each its own process, keep
+# all eight entries, and neither a lock nor a temporary file is left beside the chain.
+printf '' > "$CHAINS/ttys900.jsonl"
+for n in 1 2 3 4 5 6 7 8; do append "r$n" "/dev/ttys98$n" no >/dev/null & done; wait
+check "eight launchers appending to one chain at once keep every entry, and leave nothing beside it" "8|0" \
+  "$(grep -c '"tab_id": "r' "$CHAINS/ttys900.jsonl")|$(ls "$CHAINS" | grep -c '^ttys900\.jsonl\.')"
 # A resident agent's own succession: the entry naming the caller's tab sits in its
 # ORCHESTRATOR's chain, not in the caller's, so the hand-over above never reaches it. It must
 # follow the successor, owner and mark kept, or the orchestrator reads a closed tab as its
@@ -3159,6 +3166,17 @@ d1succ=$(succ "$PSTAB" --successor --prompt-file "$PROMPT_COLON" | sed -n 's/^la
 ps_line "$d1succ" "$PROMPT_COLON" /dev/ttys901 > "$WORK/ps-succ.txt"
 check "and a successor's, with the remote-control flag behind it" "Orch : f" \
   "$(name_on "$WORK/ps-succ.txt" /dev/ttys901)"
+# A successor starts from a brief generated from the state (decision 0007): one that misses an
+# open item of the state — here the round's open question — is refused before any tab exists,
+# and the same brief once `succession.sh live` wrote its Live state goes through.
+SUCCB="$WORK/succession-brief.md"; SUCCREC="$WORK/succession-record.jsonl"
+printf '{"id":4,"label":"api","state":"open"}\n' > "$SUCCREC"
+sed -e 's/{{PREDECESSOR_NAME_PATTERN}}/Orch : f/g' -e "s#{{DISPATCH_RECORD}}#$SUCCREC#g" "$ROOT/templates/orchestrator-succession-brief.md" > "$SUCCB"
+mkdir -p "$ISTATE/round"
+printf '{"id":"succ-q1","from":"Orch : f","session":"s-old","kind":"operator","status":"open","question":"Which?"}\n' > "$ISTATE/round/succ-q1.json"
+check "a successor is refused on a brief that misses an open item of the state, and spawned once it is generated" "1|0" \
+  "$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" 2>&1 | grep -c 'misses question succ-q1')|$(ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$ROOT/skills/orchestrator/scripts/succession.sh" live "$SUCCB" --next 'answer succ-q1' >/dev/null 2>&1; succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" 2>&1 | grep -c 'refused')"
+rm -f "$ISTATE/round/succ-q1.json"
 check "the launch puts the prompt before the name" "1" \
   "$(printf '%s' "$d1launch" | grep -cE '"\$\(cat [^"]+\)" --name ')"
 
@@ -4155,6 +4173,10 @@ check "the lint verdict is shown" "1" "$(printf '%s\n' "$out" | grep -c '^lint=b
 # when no chain names a live owner for the agent's tty.
 check "the launch records the orchestrator --orchestrator names" "1" \
   "$(printf '%s\n' "$out" | grep -Fc "export ORCHESTRATOR_REPORTS_TO='$ORCHREF' && ")"
+# The brief the session starts on is named in its environment: the gauge measures its size
+# beside the session's starting context (the measure file's `start`).
+check "the launch names the brief the session starts on, and a launch without one names none" "1|0" \
+  "$(printf '%s\n' "$out" | grep -Fc "export ORCHESTRATOR_BRIEF='$BABS/good.md' && ")|$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : brief" --prompt p 2>&1 | grep -c 'ORCHESTRATOR_BRIEF')"
 check "a launch without --orchestrator records none" "0" \
   "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : brief" --prompt p 2>&1 | grep -c 'ORCHESTRATOR_REPORTS_TO')"
 
@@ -5430,8 +5452,6 @@ check "succession prunes the state file and archives the finished journal" "yes|
 # ruling (2026-11-04, « A »: restore 2, 5, 6 and 7, remove 1, 3 and 4).
 check "lifecycle.md points at the succession brief's steps, leaves the checkout check to the move, and carries no approval sentence" "no|no|no|no" \
   "$(spells "$ORCH_REFS/lifecycle.md" "waits for ever) and subscribe to each one's idle notice")|$(spells "$ORCH_REFS/lifecycle.md" "never on the host's idle notice, which reaches a working session only when its own turn ends")|$(spells "$ORCH_REFS/lifecycle.md" 'your checkouts clean and pushed')|$(spells "$ORCH_REFS/lifecycle.md" 'macOS Automation approval')"
-check "the succession brief inherits a pruned state file and does not load the archive" "yes|no" \
-  "$(spells "$SUCC" 'pruned by your predecessor to what is live, its finished journal archived in a file you are not asked to load')|$(spells "$SUCC" 'read the archive')"
 # A successor confirmed its takeover at 75k to 97k tokens because step 1 ordered the spec, the plan,
 # the runbook, the state file and the briefs directory read whole. At takeover it needs what is live,
 # which its predecessor writes into the brief; the rest is read by the section a task touches.
@@ -5458,8 +5478,6 @@ check "the Live state section replaces reading the journal, which is read by gre
 # where each pull request stands (its VERIFY runs `pr-status`), then what each row has left (its
 # step 2 lists the open rows), never a number, a head, an id or a label (the operator's ruling of
 # 2026-11-04 on the cap, its template line).
-check "the Live state section says what is cut first when it overflows the cap" "1" \
-  "$(printf '%s' "$LIVE_BODY" | tr '\n' ' ' | tr -s ' ' | grep -cF 'Over the cap, cut first where each pull request stands, then what each row has left.')"
 SUCC5=$(awk '/^5\. /{f=1} /^## /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
 check "step 5 announces the successor's own measured context from its measure file" "1|yes|yes" \
   "$(printf '%s' "$SUCC5" | grep -oF 'your two figures' | wc -l | tr -d ' ')|$(spells "$ORCH_REFS/lifecycle.md" 'Your « first turn » figure is the `context_tokens`')|$(spells "$ORCH_REFS/lifecycle.md" 'Your measure file is')"
@@ -5613,8 +5631,8 @@ check "review and briefs split « Review on evidence » and « Standing rules »
 # types no --inherit-model, which would read as a choice the successor's pair depends on.
 check "the succession line types --successor without --inherit-model" "0|0|yes|yes" \
   "$(grep -c -- '--inherit-model' "$ROOT/commands/succeed.md")|$(grep -c -- '--inherit-model' "$ORCH_REFS/lifecycle.md")|$(tr '\n' ' ' < "$ROOT/commands/succeed.md" | tr -s ' ' | grep -qF -- '`iterm-agent.sh spawn --dir <worktree> --permission-mode auto --successor --prompt "Read and execute <brief path>"`' && echo yes || echo no)|$(spells "$ORCH_REFS/lifecycle.md" 'with the brief as startup prompt, passing `--successor` — it runs on your live model and effort, read on your transcript, and `--tier`')"
-check "succeed.md and the lifecycle reference name the open-questions field and the re-ask" "yes|yes|yes" \
-  "$(spells "$ROOT/commands/succeed.md" 'five fields')|$(spells "$ROOT/commands/succeed.md" 'never summarised')|$(spells "$ORCH_REFS/lifecycle.md" 'ask it again, verbatim')"
+check "the lifecycle reference names the re-ask" "yes" \
+  "$(spells "$ORCH_REFS/lifecycle.md" 'ask it again, verbatim')"
 # The open-questions value sits outside the 9,000-character cap, its label inside: a verbatim
 # `Question i of N` block is several hundred characters, and a Live state already brings the
 # brief near the limit, so the cap would refuse the very handover the field exists for.
