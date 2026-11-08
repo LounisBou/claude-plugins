@@ -20,6 +20,8 @@ trap 'rm -rf "$WORK"' EXIT
 
 pass=0
 fail=0
+# The names of the failed cases, said again after the count: a long run's failures are read at its end.
+failed=''
 
 # The launcher refuses a directory the host has never opened, in a dry run as much as in a
 # real one: "what would happen" includes being refused. The suite declares the precondition
@@ -71,16 +73,35 @@ json.dump({'projects': {os.path.realpath(sys.argv[1]): {'hasTrustDialogAccepted'
           open(sys.argv[2], 'w'))" "$WORK" "$ORCHESTRATOR_TRUST_FILE"
 
 # check <name> <expected> <actual>
+# The lines read, joined by ⏎ with no trailing one. GNU tr maps bytes, and ⏎ is three: it
+# cannot be a tr target under any locale.
+nl_join() { awk 'NR > 1 { printf "\342\217\216" } { printf "%s", $0 }'; }
+
 check() {
   if [ "$2" = "$3" ]; then
     printf '  ok   %s\n' "$1"
     pass=$((pass + 1))
   else
     printf '  FAIL %s\n' "$1"
-    printf '       expected: %s\n' "$(printf '%s' "$2" | tr '\n' '⏎')"
-    printf '       actual:   %s\n' "$(printf '%s' "$3" | tr '\n' '⏎')"
+    printf '       expected: %s\n' "$(printf '%s' "$2" | nl_join)"
+    printf '       actual:   %s\n' "$(printf '%s' "$3" | nl_join)"
     fail=$((fail + 1))
+    failed="$failed  FAIL $1"$'\n'
   fi
+}
+
+# A file's permission bits in octal: GNU stat first, since its -f reads the filesystem and
+# answers, then BSD's.
+perm_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%OLp' "$1"; }
+
+# Root reads and writes through any permission: a case built on a file its runner may not read
+# or a directory it may not write means nothing under root, and is skipped with the reason said.
+# `skip_as_root <name> || check <name> …`
+skipped=0
+skip_as_root() {
+  [ "$(id -u)" = 0 ] || return 1
+  printf '  skip %s (as root, permissions do not bind)\n' "$1"
+  skipped=$((skipped + 1))
 }
 
 # check_status <name> <expected-exit-code> <command...>
@@ -705,7 +726,7 @@ RIDS_OUT=$(bash "$REC" summary "$RIDS" --open --ids)
 check "summary --open --ids on 99 open rows: a count line per state, then the ids, within 1,500 characters" "99|open=91|deferred=8|$(jq -sr 'map(select(.state=="open").id|tostring)|"ids: "+join(" ")' "$RIDS")|3|yes|0" \
   "$RIDS_OPEN|$(printf '%s\n' "$RIDS_OUT" | sed -n 1p)|$(printf '%s\n' "$RIDS_OUT" | sed -n 2p)|$(printf '%s\n' "$RIDS_OUT" | sed -n 3p)|$(printf '%s\n' "$RIDS_OUT" | wc -l | tr -d ' ')|$([ "$(printf '%s' "$RIDS_OUT" | wc -c | tr -d ' ')" -le 1500 ] && echo yes || echo no)|$(printf '%s' "$RIDS_OUT" | grep -c 'label=')"
 check "summary --open --ids counts a state with no row as zero" "open=1⏎deferred=0⏎ids: 1" \
-  "$(bash "$REC" summary "$RO" --open --ids | tr '\n' '⏎' | sed 's/⏎$//')"
+  "$(bash "$REC" summary "$RO" --open --ids | nl_join)"
 check "summary --open --label prints exactly the rows named, as --open prints them" \
   "$(bash "$REC" summary "$RIDS" --open | grep -E '^(open|deferred)=(7|40|113) ')" \
   "$(bash "$REC" summary "$RIDS" --open --label 113,7,40)"
@@ -1727,6 +1748,7 @@ check "and says the same counts" "1|1|1" \
 check "the cp processes a create spawns do not grow with the file count" "$few_cp" "$(grep -c . "$WORK/cp-calls")"
 # A file the copy cannot read fails the whole pass: the checkout is removed, the step named.
 echo locked > "$WORK/wsrc/few/data/a/locked.txt" && chmod 000 "$WORK/wsrc/few/data/a/locked.txt"
+skip_as_root "a failed copy removes the checkout and names the step" ||
 check "a failed copy removes the checkout and names the step" "1|0|1" \
   "$(GIT_CONFIG_GLOBAL="$WORK/many-gitconfig" bash "$WS" create "$WORK/wsrc/few" locked --base main >/dev/null 2>"$WORK/wslocked.err"; echo $?)|$([ -e "$WORK/wsroot/few/locked" ] && echo 1 || echo 0)|$(grep -c 'create: copying the excluded files failed' "$WORK/wslocked.err")"
 chmod 600 "$WORK/wsrc/few/data/a/locked.txt"
@@ -1884,8 +1906,13 @@ echo "-- a removal goes through a trash, so one cut short leaves nothing at the 
 CJ=$(mkclone "$WCSRC" del-j feat/del-j); HJ=$(scratch "$CJ")
 mkdir -p "$CJ/locked" && echo x > "$CJ/locked/f" && chmod a-w "$CJ/locked"
 out=$(bash "$WS" delete "$CJ" --discard 2>"$WC/del-j.err"); code=$?
+if skip_as_root "a removal that cannot complete leaves nothing at the checkout's path, says so, and keeps the rest in the trash"; then
+  # What the removal root completes would have left: the leftover the sweeps below empty.
+  mkdir -p "$WCR/.trash/del-j/locked"
+else
 check "a removal that cannot complete leaves nothing at the checkout's path, says so, and keeps the rest in the trash" "0|0|0|1|1|1" \
   "$code|$(exists "$CJ")|$(exists "$HJ")|$(printf '%s\n' "$out" | grep -cxF "deleted $CJ")|$(ls "$WCR/.trash" 2>/dev/null | grep -c .)|$(grep -c 'the trash keeps' "$WC/del-j.err")"
+fi
 chmod -R u+w "$WCR/.trash" "$CJ" 2>/dev/null
 mkdir -p "$ORCHESTRATOR_HOST_TMP/.workspace-trash/zz/x/scratchpad"
 git init -q "$WCR/.trash/zy"
@@ -4035,7 +4062,7 @@ check_status "a directory already recorded needs no flag" 0 \
   env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
   CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --prompt p
 check "the record keeps owner-only permissions" "600" \
-  "$(stat -f '%OLp' "$TRUSTF" 2>/dev/null || stat -c '%a' "$TRUSTF")"
+  "$(perm_of "$TRUSTF")"
 
 # A record that already says yes is not rewritten: the host writes this file too, and a
 # rewrite for nothing is a window in which one of the two loses. The fixture is written
@@ -4077,7 +4104,7 @@ check "trust prune lists the gone entry, only it, and writes nothing" "$GONE|unc
   "$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" bash "$AGENT" trust prune 2>/dev/null)|$([ "$(cat "$TRUSTF")" = "$before" ] && echo unchanged || echo rewritten)"
 check "trust prune --apply removes it and keeps the rest, owner-only" "1|0|600" \
   "$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" bash "$AGENT" trust prune --apply >/dev/null 2>&1; \
-     "$py" -c "import json,sys; d=json.load(open(sys.argv[1]))['projects']; print('%d|%d' % (sys.argv[2] in d and d[sys.argv[2]].get('allowedTools')==['x'], sys.argv[3] in d))" "$TRUSTF" "$(cd "$UNTRUSTED" && pwd -P)" "$GONE")|$(stat -f '%OLp' "$TRUSTF" 2>/dev/null || stat -c '%a' "$TRUSTF")"
+     "$py" -c "import json,sys; d=json.load(open(sys.argv[1]))['projects']; print('%d|%d' % (sys.argv[2] in d and d[sys.argv[2]].get('allowedTools')==['x'], sys.argv[3] in d))" "$TRUSTF" "$(cd "$UNTRUSTED" && pwd -P)" "$GONE")|$(perm_of "$TRUSTF")"
 check "trust accepts prune and refuses another action" "0|1" \
   "$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" bash "$AGENT" trust prune >/dev/null 2>&1; echo $?)|$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" bash "$AGENT" trust wipe >/dev/null 2>&1; echo $?)"
 
@@ -7604,9 +7631,9 @@ rm -f "$TR/iterm-asked"
 out=$(home list 2>/dev/null)
 check "list: the home session's windows, in the shape the stop gate parses, the caller's own marked" \
   "w1/t0 | /dev/ttys900 | ✳ Orch : home | Orch : home | self⏎w1/t1 | /dev/ttys901 | ✳ Agent : one | Agent : one⏎w1/t2 | /dev/ttys902 | ⠂ Agent : two | Agent : two" \
-  "$(printf '%s' "$out" | tr '\n' '⏎')"
+  "$(printf '%s' "$out" | nl_join)"
 check "list asks the mark, the session, then its panes, then the app for the tabs it did not make" \
-  "${SHOW}⏎${SESS}⏎${LIST}|iterm" "$(calls | tr '\n' '⏎' | sed 's/⏎$//')|$(asked)"
+  "${SHOW}⏎${SESS}⏎${LIST}|iterm" "$(calls | nl_join)|$(asked)"
 rm -f "$TR/iterm-asked"
 
 reset_home
@@ -7623,7 +7650,7 @@ reset_home
 printf 'a\nb\nc\n\n\n' > "$TR/screen"
 check "screen: the pane's capture with its scrollback, read from the bottom" \
   "b⏎c|[-u][capture-pane][-p][-t][%1][-S][-2]" \
-  "$(home screen --tty /dev/ttys901 --lines 2 | tr '\n' '⏎' | sed 's/⏎$//')|$(calls | grep -F '[capture-pane]')"
+  "$(home screen --tty /dev/ttys901 --lines 2 | nl_join)|$(calls | grep -F '[capture-pane]')"
 
 reset_home
 out=$(home close --tty /dev/ttys901 --expect-title "Agent : one" 2>&1)
@@ -7651,7 +7678,7 @@ printf '%s\n' '$1	0	@0	%0	/dev/ttys900	orch	✳ Orch : home' \
 out=$(home move --tty /dev/ttys902 --left-of /dev/ttys901 2>&1)
 check "move: before its anchor, without taking the operator's window, the indexes closed up after" \
   "moved /dev/ttys902 to position 1|[-u][move-window][-d][-b][-s][@2][-t][@1]⏎[-u][move-window][-r][-t][\$1]" \
-  "$out|$(calls | grep -F '[move-window]' | tr '\n' '⏎' | sed 's/⏎$//')"
+  "$out|$(calls | grep -F '[move-window]' | nl_join)"
 reset_home
 out=$(home move --tty /dev/ttys901 --right-of /dev/ttys902 2>&1)
 check "and after it, on --right-of" "[-u][move-window][-d][-a][-s][@1][-t][@2]" \
@@ -7677,7 +7704,7 @@ reset_home
 out=$(home rotate --old-tty /dev/ttys901 --expect-title "Agent : one" --dir "$WORK" --title "Agent : one" --prompt p 2>"$WORK/trot.err")
 check "rotate: the replacement's window first, verified on the process table and its transcript, then the old window killed" \
   "/dev/ttys903⏎closed 1 session on /dev/ttys901|new-window kill-window|1|1" \
-  "$(printf '%s' "$out" | tr '\n' '⏎' | sed 's/⏎$//')|$(calls | grep -oE '\[(new|kill)-window\]' | tr -d '[]' | tr '\n' ' ' | sed 's/ $//')|$(grep -c 'running on /dev/ttys903' "$WORK/trot.err")|$(grep -c 'mode auto read on the transcript' "$WORK/trot.err")"
+  "$(printf '%s' "$out" | nl_join)|$(calls | grep -oE '\[(new|kill)-window\]' | tr -d '[]' | tr '\n' ' ' | sed 's/ $//')|$(grep -c 'running on /dev/ttys903' "$WORK/trot.err")|$(grep -c 'mode auto read on the transcript' "$WORK/trot.err")"
 check "and the chain trades the old window's entry for the new one's" "@2|@4" \
   "$(chainf | sed -n 's/.*:\(@[0-9]*\)".*/\1/p' | tr '\n' '|' | sed 's/|$//')"
 reset_home
@@ -8792,6 +8819,7 @@ check "sync and uninstall leave a dangling symlink of the same name" "link" "$([
 # A commands directory the writer cannot write to: the run fails and leaves nothing behind.
 SNRO="$WORK/short-readonly"; mkdir -p "$SNRO"; chmod 555 "$SNRO"
 bash "$ROOT/short-commands.sh" install --dir "$SNRO" >/dev/null 2>&1; snrc=$?
+skip_as_root "a commands directory that cannot be written fails the install and writes nothing" ||
 check "a commands directory that cannot be written fails the install and writes nothing" "1|0" \
   "$snrc|$(ls -A "$SNRO" | wc -l | tr -d ' ')"
 chmod 755 "$SNRO"
@@ -8943,6 +8971,7 @@ t0=$(date +%s)
 out=$(ORCHESTRATOR_STATE_DIR="$CRO" COORDINATOR_VERIFY="$WORK/coord-verify" COORD_LIVE="$CLIVE" \
   bash "$COORD" register --name "Coord : ro [r0r0r0]" --tty /dev/ttys201 2>&1); code=$?
 t1=$(date +%s)
+skip_as_root "an unwritable state directory is refused at once" ||
 check "an unwritable state directory is refused at once" \
   "coordinator: cannot write into the state directory $CRO|exit 1|1" \
   "$out|exit $code|$([ $((t1 - t0)) -le 2 ] && echo 1 || echo 0)"
@@ -9250,9 +9279,11 @@ CBRIEF=$(cbrief facts 2>/dev/null)
 check "a relative brief is read from its session's directory" \
   "session 111 | ttys111 | Agent : r | Orch : gamma [ccc333] | forge.example/o/app | feat/x | $RA1" \
   "$(printf '%s\n' "$CBRIEF" | grep '^session 111 ')"
+skip_as_root "a brief that cannot be read is said, its session unknown, and exit 2" ||
 check "a brief that cannot be read is said, its session unknown, and exit 2" \
   "unread brief $CF/briefs/locked.md: cannot be read|session 110 | ttys110 | Agent : k | unknown | forge.example/o/app | feat/y | $RC1|exit 2" \
   "$(printf '%s\n' "$CBRIEF" | grep '^unread brief ')|$(printf '%s\n' "$CBRIEF" | grep '^session 110 ')|$(cbrief facts >/dev/null 2>&1; echo "exit $?")"
+skip_as_root "and owners gives the unread brief as the reason, never « names no orchestrator »" ||
 check "and owners gives the unread brief as the reason, never « names no orchestrator »" \
   "pr forge.example/o/app#8 | feat/y | unknown | session 110 in $RC1: brief $CF/briefs/locked.md cannot be read" \
   "$(cbrief owners 2>/dev/null | grep '#8 ')"
@@ -11422,8 +11453,10 @@ check "the design says why the audit left the orchestrator's context" "yes|yes" 
   "$(flat_has "$ROOT/docs/design.md" 'about 42,000 tokens')|$(flat_has "$ROOT/docs/design.md" '`orchestrator:screenshots`')"
 check "the record's messages say the audit is the screenshots agent's" "yes|yes" \
   "$(spells "$REC" 'ready: the audit covers $a_images image(s), the description of $pr carries $shots: audit every image')|$(spells "$REC" 'the screenshots agent audits each one')"
-check "both manifests carry 0.98.3" "1|2" \
-  "$(grep -c '"version": "0.98.3"' "$ROOT/.claude-plugin/plugin.json")|$(grep -c '"version": "0.98.3"' "$ROOT/.claude-plugin/marketplace.json")"
+# The version is plugin.json's; the plugin's own marketplace.json carries the same one twice.
+PLUGIN_VERSION=$(jq -r .version "$ROOT/.claude-plugin/plugin.json")
+check "both manifests carry the plugin's version" "yes|2" \
+  "$(printf '%s' "$PLUGIN_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' && echo yes)|$(grep -cF "\"version\": \"$PLUGIN_VERSION\"" "$ROOT/.claude-plugin/marketplace.json")"
 
 # A pull request carries Ready or Not Ready beside the draft. The implementer's opens Not
 # Ready (`pr-create --draft` labels it, or `pr-readiness <n> not-ready` after another way of
@@ -11491,5 +11524,7 @@ check "SKILL.md and the design carry it" "yes|yes" \
   "$(flat_has "$ROOT/skills/orchestrator/SKILL.md" '`Ready` or `Not Ready` label')|$(flat_has "$ROOT/docs/design.md" '`Ready` or `Not Ready` label')"
 
 echo
+[ -n "$failed" ] && printf '%s' "$failed"
+[ "$skipped" -gt 0 ] && printf '%d skipped as root\n' "$skipped"
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
