@@ -322,6 +322,43 @@ check "empty stdin does not crash" "$ALL_ON" "" \
 check "invalid JSON does not crash" "$ALL_ON" "not json at all" \
 "Usage: ~"
 
+echo "== settings are data, dates are portable, git takes no lock =="
+
+# A line of the settings file that is code runs nothing: only KEY=0|1 lines are read.
+PWNED="$WORK/pwned"
+INJECT=$(config_with 'SHOW_DIRECTORY=0' "touch $PWNED" 'SHOW_USAGE=$(touch '"$PWNED"')' 'SHOW_CONTEXT=1' 'SHOW_MODEL=0' 'SHOW_SESSION_NAME=0' 'SHOW_LINES_CHANGED=0')
+printf '%s' "{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"context_window\":{\"used_percentage\":26}}" \
+  | STATUSBAR_CONFIG="$INJECT" bash "$SCRIPT" >/dev/null
+if [ ! -e "$PWNED" ]; then printf '  ok   a settings line that is code is never run\n'; pass=$((pass + 1))
+else printf '  FAIL a settings line that is code is never run\n'; fail=$((fail + 1)); fi
+check "an unknown or malformed value keeps the default" \
+  "$(config_with SHOW_DIRECTORY=0 SHOW_USAGE=yes SHOW_CONTEXT=1 SHOW_MODEL=0 SHOW_SESSION_NAME=0 SHOW_LINES_CHANGED=0 SHOW_PROGRESS_BAR=0 RESET_COUNTDOWN=1)" \
+  "{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"context_window\":{\"used_percentage\":26},\"rate_limits\":{\"five_hour\":{\"used_percentage\":8,\"resets_at\":$IN_2H}}}" \
+  "$(printf '%s' "{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"context_window\":{\"used_percentage\":26},\"rate_limits\":{\"five_hour\":{\"used_percentage\":8,\"resets_at\":$IN_2H}}}" \
+     | STATUSBAR_CONFIG="$(config_with SHOW_DIRECTORY=0 SHOW_USAGE=1 SHOW_CONTEXT=1 SHOW_MODEL=0 SHOW_SESSION_NAME=0 SHOW_LINES_CHANGED=0 SHOW_PROGRESS_BAR=0 RESET_COUNTDOWN=1)" bash "$SCRIPT" | strip_ansi)"
+
+# A reset shown as a clock time renders on BSD and on GNU date alike.
+CLOCK=$(printf '%s' "{\"workspace\":{\"current_dir\":\"$EMPTY_DIR\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":8,\"resets_at\":$IN_2H}}}" \
+  | STATUSBAR_CONFIG="$(config_with SHOW_DIRECTORY=0 SHOW_USAGE=1 SHOW_RESET_TIME=1 RESET_COUNTDOWN=0 SHOW_PROGRESS_BAR=0)" bash "$SCRIPT" | strip_ansi)
+case "$CLOCK" in
+  *[0-9][0-9]:[0-9][0-9]*) printf '  ok   a reset time renders on this platform'"'"'s date\n'; pass=$((pass + 1)) ;;
+  *) printf '  FAIL a reset time renders on this platform'"'"'s date\n       actual:   %s\n' "$CLOCK"; fail=$((fail + 1)) ;;
+esac
+
+# The status line never takes the index lock an agent's git may need.
+if grep -q '^export GIT_OPTIONAL_LOCKS=0$' "$SCRIPT"; then printf '  ok   git runs without optional locks\n'; pass=$((pass + 1))
+else printf '  FAIL git runs without optional locks\n'; fail=$((fail + 1)); fi
+
+# The launcher runs this catalogue's install still on disk, not the record's first entry.
+LCFG="$WORK/launch"; mkdir -p "$LCFG/plugins" "$LCFG/good/statusline" "$LCFG/other/statusline"
+printf '#!/bin/bash\necho good\n' > "$LCFG/good/statusline/statusline.sh"
+printf '#!/bin/bash\necho other\n' > "$LCFG/other/statusline/statusline.sh"
+printf '{"plugins":{"statusbar@elsewhere":[{"installPath":"%s"}],"statusbar@lounisbou":[{"installPath":"%s"},{"installPath":"%s"}]}}' \
+  "$LCFG/other" "$LCFG/gone" "$LCFG/good" > "$LCFG/plugins/installed_plugins.json"
+got=$(printf '{}' | CLAUDE_CONFIG_DIR="$LCFG" bash "$HERE/../statusline/launcher.sh")
+if [ "$got" = "good" ]; then printf '  ok   the launcher runs this catalogue'"'"'s install that still exists\n'; pass=$((pass + 1))
+else printf '  FAIL the launcher runs this catalogue'"'"'s install that still exists\n       actual:   %s\n' "$got"; fail=$((fail + 1)); fi
+
 echo "== independence: no credentials, no network =="
 
 # The core of the fix: not a trace of the old session-cookie mechanism.
@@ -384,6 +421,28 @@ check_json() {
 }
 
 echo "-- install --"
+
+CFG=$(fresh_config "")
+DEST=$(dest_for "$CFG")
+mkdir -p "$CFG/real"
+printf '{"statusLine":{"type":"command","command":"/other/line.sh"},"kept":1}' > "$CFG/real/settings.json"
+ln -s real/settings.json "$CFG/settings.json"
+out=$(CLAUDE_CONFIG_DIR="$CFG" bash "$INSTALL")
+if [ -L "$CFG/settings.json" ] && [ "$(jq -r .statusLine.command "$CFG/real/settings.json")" = "$DEST" ] && [ "$(jq -r .kept "$CFG/real/settings.json")" = "1" ]; then
+  printf '  ok   a symlinked settings.json stays a link, its target rewritten\n'; pass=$((pass + 1))
+else
+  printf '  FAIL a symlinked settings.json stays a link, its target rewritten\n'; fail=$((fail + 1))
+fi
+if printf '%s' "$out" | grep -qF 'replaced the previous statusLine: /other/line.sh'; then
+  printf '  ok   install names the foreign statusLine it replaced, and its backup\n'; pass=$((pass + 1))
+else
+  printf '  FAIL install names the foreign statusLine it replaced, and its backup\n'; fail=$((fail + 1))
+fi
+if [ -z "$(find "$CFG" "$CFG/real" -maxdepth 1 -name '.settings.json.*')" ]; then
+  printf '  ok   install leaves no temporary file beside settings.json\n'; pass=$((pass + 1))
+else
+  printf '  FAIL install leaves no temporary file beside settings.json\n'; fail=$((fail + 1))
+fi
 
 CFG=$(fresh_config "")
 DEST=$(dest_for "$CFG")
