@@ -3980,7 +3980,7 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
     import shutil
     cli_path = shutil.which(HOST_CLI) or HOST_CLI
     parts = ["cd %s" % shq(dir_),
-             # Marks this session as launcher-spawned: the module's push guard (hooks/guards.ts)
+             # Marks this session as launcher-spawned: the module's kill guard (hooks/guards.ts)
              # is active only where this is set, and the operator's own sessions never carry it.
              "export ORCHESTRATOR_SPAWNED=1",
              "printf '\\033]0;%%s\\007' %s" % shq(title),

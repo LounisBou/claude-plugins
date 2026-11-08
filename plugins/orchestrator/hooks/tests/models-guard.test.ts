@@ -82,7 +82,7 @@ function fakeDollar(launchName: string | null): { dollar: any; written: string[]
   return { dollar, written }
 }
 
-// The guard's own registration, told apart from the push guard's by its matcher.
+// The guard's own registration, told apart from the kill guard's by its matcher.
 function mounted(): { guard: Function; matcher: any; prompt: Function } {
   let guard: Function = () => undefined
   let matcher: any
