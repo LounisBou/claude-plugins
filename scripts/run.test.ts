@@ -14,6 +14,7 @@ import { run as matrix } from './plugin-matrix.ts'
 import { parseCeilings, run as prompts } from './prompts.ts'
 import { run as versionBump } from './version-bump.ts'
 import { copyOf, MARK, run as core } from './core.ts'
+import { dependenciesOf, escapingImports, run as deps, satisfies } from './deps.ts'
 
 interface Recorded extends Io {
   readonly lines: { out: string[]; err: string[] }
@@ -247,5 +248,68 @@ describe('core copies', () => {
     const io = recorder()
     assert.equal(core(root, ['--check'], io), 1)
     assert.match(io.lines.err[0] ?? '', /plugins\/alpha\/core differs/)
+  })
+})
+
+describe('dependency lint', () => {
+  const plain = (name: string, version: string, dependencies: unknown[] = []) =>
+    JSON.stringify({ ...JSON.parse(manifest(name, version)), dependencies })
+
+  function graphRepo(manifests: Record<string, string>): string {
+    const root = repo(Object.fromEntries(Object.keys(manifests).map(name => [name, '1.0.0'])))
+    for (const [name, text] of Object.entries(manifests)) writeFileSync(join(root, 'plugins', name, '.claude-plugin', 'plugin.json'), text)
+    return root
+  }
+
+  it('reads both forms of a dependency and refuses any other', () => {
+    assert.deepEqual(dependenciesOf({ dependencies: ['a@m', { name: 'b', marketplace: 'n', version: '>=1.0.0' }, { name: 'c', marketplace: 'n' }] }, 'x'), [
+      { name: 'a', marketplace: 'm', range: undefined },
+      { name: 'b', marketplace: 'n', range: '>=1.0.0' },
+      { name: 'c', marketplace: 'n', range: undefined },
+    ])
+    assert.deepEqual(dependenciesOf({}, 'x'), [])
+    assert.deepEqual(dependenciesOf({ dependencies: ['@'] }, 'x'), [{ name: '', marketplace: '', range: undefined }])
+    assert.throws(() => dependenciesOf({ dependencies: 'a' }, 'x'), /must be a list/)
+    assert.throws(() => dependenciesOf({ dependencies: [1] }, 'x'), /neither/)
+  })
+
+  it('reads a range with or without its patch, and an upper bound', () => {
+    assert.equal(satisfies('0.98.0', '>=0.49'), true)
+    assert.equal(satisfies('1.2.0', '>=1.0.0 <1.2.0'), false)
+    assert.equal(satisfies('1.1.9', '>=1.0.0 <1.2'), true)
+    assert.equal(satisfies('0.9.0', '>=1.0.0'), false)
+    assert.equal(satisfies('1.0.0', '^1.0.0'), undefined)
+  })
+
+  it('passes a sound graph, and an outside dependency without a range', () => {
+    const root = graphRepo({ base: plain('base', '1.2.0'), top: plain('top', '1.0.0', [{ name: 'base', marketplace: 'lounisbou', version: '>=1.0.0' }, 'tool@elsewhere']) })
+    assert.equal(deps(root, [], recorder()), 0)
+  })
+
+  it('names each broken rule', () => {
+    const root = graphRepo({
+      a: plain('a', '1.0.0', ['b@lounisbou']),
+      b: plain('b', '1.0.0', [{ name: 'a', marketplace: 'lounisbou', version: '>=2.0.0' }]),
+      c: plain('c', '1.0.0', [{ name: 'ghost', marketplace: 'lounisbou', version: '>=1.0.0' }, { name: 'a', marketplace: 'lounisbou', version: '~1' }]),
+    })
+    const io = recorder()
+    assert.equal(deps(root, [], io), 1)
+    assert.deepEqual(io.lines.err, [
+      'a: depends on b without a version range',
+      'b: depends on a >=2.0.0, which its version 1.0.0 does not satisfy',
+      'c: depends on ghost, which is not a plugin of this repository',
+      'c: "~1" is not a version range (">=a.b.c" or ">=a.b.c <x.y.z")',
+      'dependency cycle: a -> b -> a',
+    ])
+  })
+
+  it('refuses an import that leaves its plugin, and keeps the ones inside it', () => {
+    const root = repo({ alpha: '1.0.0' })
+    mkdirSync(join(root, 'plugins', 'alpha', 'hooks'))
+    writeFileSync(join(root, 'plugins', 'alpha', 'hooks', 'a.ts'), "import { x } from '../core/x.ts'\nimport type { Y } from '../../beta/y.ts'\nexport { z } from './z.ts'\nimport fs from 'node:fs'\n")
+    assert.deepEqual(escapingImports(readFileSync(join(root, 'plugins', 'alpha', 'hooks', 'a.ts'), 'utf8'), join(root, 'plugins', 'alpha', 'hooks', 'a.ts'), join(root, 'plugins', 'alpha')), ['../../beta/y.ts'])
+    const io = recorder()
+    assert.equal(deps(root, [], io), 1)
+    assert.deepEqual(io.lines.err, ['plugins/alpha/hooks/a.ts: imports ../../beta/y.ts, outside its plugin'])
   })
 })
