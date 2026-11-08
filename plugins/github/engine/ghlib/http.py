@@ -97,6 +97,16 @@ def _request(method, url, body, headers):
         return exc.code, parsed
 
 
+def _rate_limited(status, data):
+    """A refusal worth waiting out: a 429, or a 403 that says it is a rate limit. Any other 403 is
+    a permission, and asking again changes nothing; a rate-limited request was never applied, so
+    a retry of a POST writes nothing twice."""
+    if status == 429:
+        return True
+    message = (data.get("message") or "") if isinstance(data, dict) else ""
+    return status == 403 and "rate limit" in message.lower()
+
+
 def _call(method, path, body=None, accept="application/vnd.github+json"):
     slug = _slug(method, path)
     _record({"method": method, "path": path, "body": body})
@@ -119,7 +129,7 @@ def _call(method, path, body=None, accept="application/vnd.github+json"):
     }
     for attempt in range(_MAX_RETRIES):
         status, data = _request(method, API + path, body, headers)
-        if status in (403, 429) and attempt < _MAX_RETRIES - 1:
+        if _rate_limited(status, data) and attempt < _MAX_RETRIES - 1:
             time.sleep(2 ** attempt)
             continue
         # The last attempt falls through here, so the final response decides:
@@ -165,9 +175,14 @@ def graphql(query, variables):
         "Content-Type": "application/json",
         "User-Agent": "github-plugin",
     }
-    status, data = _request(
-        "POST", "https://api.github.com/graphql", {"query": query, "variables": variables}, headers
-    )
+    for attempt in range(_MAX_RETRIES):
+        status, data = _request(
+            "POST", "https://api.github.com/graphql", {"query": query, "variables": variables}, headers
+        )
+        if _rate_limited(status, data) and attempt < _MAX_RETRIES - 1:
+            time.sleep(2 ** attempt)
+            continue
+        break
     if status >= 400:
         _raise_for(status, data)
     if "errors" in data:

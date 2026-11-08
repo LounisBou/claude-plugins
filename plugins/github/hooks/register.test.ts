@@ -1,6 +1,7 @@
 import { expect, mock, test } from 'claude-code/testing'
 import { COMMANDS, READS, NEVER_GRANTED, NET_REFUSAL, WATCH_MS, bashNetRefusal, ciTransitions, register, selfReviewRefusal, writeNetRefusal } from './register.js'
 import { lint, NEGATIVE_PHRASES, proseLines, refusal, TITLE_MAX } from './writing.js'
+import { touchesRecords } from './ready.js'
 
 test('session.start registers the gh tool and the three commands', async ($, on) => {
   const registered: string[] = []
@@ -2573,4 +2574,10 @@ test('/github:protect says what failed', async ($, on) => {
     ? { value: { exitCode: 0, stdout: 'git@github.com:acme/thing.git\n', stderr: '' } }
     : { value: { exitCode: 3, stdout: '', stderr: 'Resource not accessible by integration' } }))
   expect(String((await $.command.run({ command: 'github:protect', args: '' } as any) as any).text)).toBe('github: protect-check failed: Resource not accessible by integration')
+})
+
+test('the records guard reads the words as the shell does', () => {
+  expect(touchesRecords('python3 /x/engine/rec""ord.py --kind review')).toBe(true)
+  expect(touchesRecords("cat ~/.claude/pr-rec'ords'/a/b/c.json")).toBe(true)
+  expect(touchesRecords('python3 scripts/report.py')).toBe(false)
 })
