@@ -9,6 +9,12 @@
 
 set -u
 
+# Every sort and comparison of the suite reads bytes, whatever the runner's locale: a UTF-8
+# collation of English puts `forbidden2.md` before `forbidden.md`. The character type is kept,
+# so text in « » and ⏎ reads as it does under the runner's own.
+if [ -n "${LC_ALL:-}" ]; then export LC_CTYPE="$LC_ALL"; unset LC_ALL; fi
+export LC_COLLATE=C
+
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 ORCH_REFS="$ROOT/skills/orchestrator/references"
 # Explicitly inside TMPDIR: the platform default lands in a directory a sandboxed
