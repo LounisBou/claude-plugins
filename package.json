@@ -18,7 +18,8 @@
     "deps": "node --experimental-strip-types --no-warnings scripts/deps.ts",
     "permissions": "node --experimental-strip-types --no-warnings scripts/permissions.ts",
     "rules": "node --experimental-strip-types --no-warnings scripts/rules.ts",
-    "context": "node --experimental-strip-types --no-warnings scripts/context.ts"
+    "context": "node --experimental-strip-types --no-warnings scripts/context.ts",
+    "outcome": "node --experimental-strip-types --no-warnings scripts/outcome.ts"
   },
   "devDependencies": {
     "@types/node": "22.15.21",
