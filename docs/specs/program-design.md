@@ -75,8 +75,25 @@ to this repository only once it is proved stable (`docs/migration.md`).
 | 5 | Security | 11, 12 | |
 | 6 | Platforms | 6 | Ratchet `ci/plugins.json` plugin by plugin. |
 | 7 | Plugin defects | 13 | One plugin per pull request, from the lists below. The orchestrator's urgent fixes run in its former repository and are imported; its refactoring is `orchestrator-refoundation-design.md`, and touches `plugins/orchestrator/` only once the urgent build has ended. |
-| 8 | Prompts and evals | 14, 15, 21, 22 | The spend cap of each eval run is the operator's, asked before any run. |
+| 8 | Prompts and evals | 14, 15, 21, 22 | Spend caps, set by the operator: « Eval spend caps » below. |
 | 9 | Configuration and cutover | 16, 17 | |
+
+## Eval spend caps (phase 8)
+
+Set by the operator, passed as `--max-cost-usd` or stopped by hand at the figure. The behaviour
+suites' baselines cost 0.31 to 0.42 USD a run of a case; the outcome figures are a first
+estimate, corrected after the pilot.
+
+| Run | Cap (USD) |
+|---|---:|
+| Behaviour suite, plugin arm, one run per case (after a rewrite) | 10 |
+| Behaviour suite, plugin arm, three runs per case (a baseline) | 30 |
+| Behaviour suite, both arms, three runs per case | 70 |
+| Outcome pilot: one replayed pull request, single session and orchestration | 20 |
+| Outcome measure: six replayed pull requests, one run per arm, each pull request and arm stopped at 10 | 120 |
+
+A run that would need more stops at its cap and is reported with what it measured; a higher
+cap is the operator's.
 
 ## Copied rules core replaces (goal 3)
 
