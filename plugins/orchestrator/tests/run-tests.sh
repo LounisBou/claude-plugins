@@ -9288,7 +9288,7 @@ cp "$COORD" "$CT/coordinator/scripts/"
 printf '#!/bin/bash\necho "workspace: cannot read the root" >&2\nexit 1\n' > "$CT/orchestrator/scripts/workspace.sh"
 check "a workspace list that fails is said, and exit 2" "unread checkouts: workspace: cannot read the root|exit 2" \
   "$(ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$CT/coordinator/scripts/coordinator.sh" facts 2>/dev/null | grep '^unread ')|$(ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$CT/coordinator/scripts/coordinator.sh" facts >/dev/null 2>&1; echo "exit $?")"
-cp "$ROOT/skills/orchestrator/scripts/workspace.sh" "$CT/orchestrator/scripts/workspace.sh"
+rm -rf "$CT/orchestrator" && ln -s "$ROOT/skills/orchestrator" "$CT/orchestrator"
 # With no host name, no process is a session: an empty list read as « no collision ».
 check "a host name that cannot be known is said, and exit 2" "unread sessions: the host's name is unknown: set ORCHESTRATOR_HOST_CLI|exit 2" \
   "$(env -u ORCHESTRATOR_HOST_CLI ORCHESTRATOR_WORKSPACES="$CWS" COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$CT/coordinator/scripts/coordinator.sh" facts 2>/dev/null | grep '^unread ')|$(env -u ORCHESTRATOR_HOST_CLI ORCHESTRATOR_WORKSPACES="$CWS" COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$CT/coordinator/scripts/coordinator.sh" facts >/dev/null 2>&1; echo "exit $?")"
