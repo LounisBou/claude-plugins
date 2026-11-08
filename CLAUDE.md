@@ -12,4 +12,7 @@ A monorepo of independent Claude Code plugins under `plugins/<name>/`.
 - A shipped change raises its plugin's version in `plugins/<name>/.claude-plugin/plugin.json`,
   then `npm run marketplace`. Never edit the catalogue's `plugins` list by hand.
 - Conventional commits, scoped by plugin (`fix(github): …`) or repository part (`ci`, `core`, `docs`).
+- This repository is in auto-merge: the session that opens a pull request merges it, with a
+  merge commit, once the repository rules and the blocking suites (`ci/plugins.json`) pass.
+  macOS suites report without blocking until they are proved green again.
 - The program in progress is `docs/specs/program-design.md`; its goals are the definition of done.
