@@ -89,6 +89,9 @@ it. `/github:doctor` then confirms everything is ready.
   button. While it is open it reads the PRs again every minute and after each
   write through the tool, and a toast says when a PR's CI ends in success or
   failure.
+- **`/github:protect [apply]`** — whether the default branch refuses a force-push and a
+  deletion on GitHub itself (a ruleset, or the classic branch protection); `apply` puts
+  the ruleset « protect the default branch » in place, administrators included.
 - **`/github:install`, `/github:doctor`** — set up `gh` and its sign-in
   (install only), run the dependency diagnostic and name its exit code with no
   model turn; where mods do not load, the markdown commands run the same
@@ -143,9 +146,8 @@ the branch puts `Not Ready` back. CI is read from GitHub: no check at all is
 green, a check that failed, still runs, was skipped, or is neutral on a draft
 is not. The other three are records, one small JSON file per run under
 `~/.claude/pr-records/<owner>/<name>/<head>/`, written by their producers:
-claude-review's auto-fix-loop for the review, `/norms:check` for the norms,
-`mcp__github__record` for the end-to-end run, and the orchestrator's ready
-step. A record counts only at the head it names, so a new commit voids them
+pr-review's auto-fix-loop for the review, `/norms:check` for the norms, and
+`mcp__github__record` for the end-to-end run. A record counts only at the head it names, so a new commit voids them
 all without anything deleted. `engine/REFERENCE.md` « Records » holds the
 contract; `engine/WRITING.md` « Ready pull requests » the rule.
 
@@ -223,13 +225,13 @@ or a MultiEdit under the records root, and a shell command that names it,
 a `pr-records/` path or `engine/record.py`, are refused with:
 
 ```
-github: records are written by their producers (claude-review's auto-fix-loop, /norms:check, the orchestrator's ready, mcp__github__record for E2E), never by hand.
+github: records are written by their producers (pr-review's auto-fix-loop, /norms:check, mcp__github__record for E2E), never by hand.
 ```
 
 The command is read as text, so a plain `ls` of the root is refused too; reading
 a record with the Read tool passes. `mcp__github__record` writes at the head the
 checkout and the pull request share, on a clean tree, one kind per caller: E2E
-for a session, the review for claude-review's hooks, the norms for the norms
+for a session, the review for pr-review's hooks, the norms for the norms
 plugin's. A waiver quotes words the operator typed in the session, or his answer
 recorded in the round about that pull request (an E2E question, a letter answer quoted as its
 choice's text, at least 8 characters), with their

@@ -149,6 +149,13 @@ to `RIGHT`). `commit_id` is the PR head, read by the tool. The request carries n
 | `image-upload` | `<file>... [--branch pr-assets] [--title T]...` | Store one or more images, return their URLs and markdown |
 | `auth-check` | | Verify the token |
 
+### The forge's protection
+
+| Subcommand | Arguments | Description |
+|---|---|---|
+| `protect-check` | | Whether the default branch refuses force-push and deletion |
+| `protect-apply` | | Put the ruleset refusing both in place, when missing |
+
 ### Auto-merge
 
 Answered by the mod, not by `gh.py`: the list is a file on this machine,
@@ -266,13 +273,13 @@ Requires push access to the repository.
 
 - It validates: the sha shape, the kind, `waived` for `e2e` only and only with a `--detail` that carries a date `YYYY-MM-DD`, a detail of at most 500 characters.
 - It writes the file under a temporary name in the same directory, then renames it. It prints the path, and exits 2 on a usage error. Standard library only, like the engine.
-- The producers find `<github root>` the way claude-review's `scripts/resolve_github.py` already does: the `installPath` of `github@lounisbou` (or `github@claude-github`) in `~/.claude/plugins/installed_plugins.json`, never a hand-built cache path.
+- The producers find `<github root>` the way pr-review's `scripts/resolve_github.py` already does: the `installPath` of `github@lounisbou` (or `github@claude-github`) in `~/.claude/plugins/installed_plugins.json`, never a hand-built cache path.
 
 ### Fields (one JSON object per file)
 
 ```json
 {"v": 1, "repo": "owner/name", "pr": 12, "head": "<40 hex>", "kind": "review",
- "result": "pass", "producer": "claude-review-auto-fix-loop", "detail": "clean at pass 3",
+ "result": "pass", "producer": "pr-review", "detail": "clean at pass 3",
  "session": "<CLAUDE_CODE_SESSION_ID or empty>", "at": "2026-11-01T10:00:00Z"}
 ```
 
@@ -288,10 +295,9 @@ Requires push access to the repository.
 
 | Producer | Kind | Where in its code | When, and with what |
 |---|---|---|---|
-| claude-review `auto-fix-loop` | review | `hooks/loop.ts`, `act()`, branch `findings` → `exit: clean`, and branch `begin_pass` → `exit: max_passes` | `exit: clean`: `pass`, detail `clean at pass <n>`. `exit: max_passes`: `fail`, detail `<k> findings left after <n> passes`. Repo from `git remote get-url origin`, head from `git rev-parse HEAD`, PR from `$.tool.call({tool: 'mcp__github__gh', command: 'pr-get', args: {format: 'pr-number'}})`. No record when tracked files are dirty (`git status --porcelain -uno` not empty) or the branch has no PR. The tool's answer then gains `record: none — <why>`, and SKILL.md Step 7 prints that line |
+| pr-review `auto-fix-loop` | review | `hooks/loop.ts`, `act()`, branch `findings` → `exit: clean`, and branch `begin_pass` → `exit: max_passes` | `exit: clean`: `pass`, detail `clean at pass <n>`. `exit: max_passes`: `fail`, detail `<k> findings left after <n> passes`. Repo from `git remote get-url origin`, head from `git rev-parse HEAD`, PR from `$.tool.call({tool: 'mcp__github__gh', command: 'pr-get', args: {format: 'pr-number'}})`. No record when tracked files are dirty (`git status --porcelain -uno` not empty) or the branch has no PR. The tool's answer then gains `record: none — <why>`, and SKILL.md Step 7 prints that line |
 | norms `/norms:check` | norms | New tool `mcp__norms__check_done` in a new `hooks/record.ts`, registered in `hooks/register.ts` | `commands/check.md` Step 5 (zero findings) and Step 8 call it with `{open, fixed, passed}`. Result `pass` when `open` is 0, `fail` otherwise. Head from `git rev-parse HEAD` at the call, so the commits of 7.4 are covered. Refused unless `/norms:check` computed its scope in this session (the `command.run` hook of `hooks/check.ts` sets that mark), and no record on a dirty tree or with no PR, as above |
-| orchestrator review round | review, norms, e2e | `skills/orchestrator/scripts/dispatch-record.sh`, subcommand `ready`, on its two green branches (« reviewed at » and « corrected and verified at ») | Three calls to `record.py` at `--head`: review `pass` (detail `reviewed at <h>` or `reviewed at <h>, corrected and verified at <h2>`), norms `pass` (detail `norms check tool` or `none`), e2e `pass`, or `waived` with the waiver or exemption words (detail = the E2E line as `ready` records it). `ready` gains `--pr <owner/repo>#<n>`, required, and the `--ui` row's PR stops being the only source. It refuses a head shorter than 40 hex and refuses with no review recorded. The printed label command stays |
-| any session that runs the E2E | e2e | New github tool `mcp__github__record` (module-only, outside `COMMANDS`) | `{pr, repo?, result: pass\|fail\|waived, detail}`. The module checks that the checkout's `HEAD` equals the PR head read by `pr-gate`, and that the tree is clean, then calls `record.py` with producer `session-e2e`. `waived` needs a detail found verbatim in a prompt the operator typed in this session (`composer` or `bridge` origin, kept by the module as `lastTyped` is today), or quoting his answer recorded in the round for that pull request (« Guards » below), and carrying a date. `review` and `norms` are not accepted from a session: they have their producers. Called from claude-review's hooks the tool writes `review`, from the norms plugin's `norms`, each its own kind only |
+| any session that runs the E2E | e2e | New github tool `mcp__github__record` (module-only, outside `COMMANDS`) | `{pr, repo?, result: pass\|fail\|waived, detail}`. The module checks that the checkout's `HEAD` equals the PR head read by `pr-gate`, and that the tree is clean, then calls `record.py` with producer `session-e2e`. `waived` needs a detail found verbatim in a prompt the operator typed in this session (`composer` or `bridge` origin, kept by the module as `lastTyped` is today), or quoting his answer recorded in the round for that pull request (« Guards » below), and carrying a date. `review` and `norms` are not accepted from a session: they have their producers. Called from pr-review's hooks the tool writes `review`, from the norms plugin's `norms`, each its own kind only |
 
 Not producers: `start-review` (a walkthrough the operator submits himself) and `process-comments` (answers to comments). A human `APPROVED` review on GitHub is no record.
 
@@ -399,12 +405,12 @@ naming that root, a `pr-records/` path or `engine/record.py`, are refused, whate
 does with it (a Read of a record passes):
 
 ```
-github: records are written by their producers (claude-review's auto-fix-loop, /norms:check, the orchestrator's ready, mcp__github__record for E2E), never by hand.
+github: records are written by their producers (pr-review's auto-fix-loop, /norms:check, mcp__github__record for E2E), never by hand.
 ```
 
 `mcp__github__record {pr, repo?, result, detail, kind?}` writes one record through
 `record.py`, at the head when the checkout's `HEAD` equals the one `pr-gate` reads and the
-tracked files are clean. A session writes `e2e` only (producer `session-e2e`); claude-review's
+tracked files are clean. A session writes `e2e` only (producer `session-e2e`); pr-review's
 hooks write `review`, the norms plugin's `norms`, any other kind refused with `github: <kind>
 records are written by their producer (…)`. `waived` needs a detail found verbatim in a
 prompt the operator typed in this session, or quoting an answer he gave through the pane, the
