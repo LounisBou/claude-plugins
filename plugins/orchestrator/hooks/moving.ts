@@ -17,6 +17,7 @@ import {
   type Arrival, type ManifestFile, type MoveMessage, type MoveRecord,
 } from './move.ts'
 import { messageOf, type Events, type Host, type On } from './host.ts'
+import { removeArgv, staleTemporaries, temporaryOf, withLockOver, writeAtomicOver, type StoreIo } from '../core/store-io.ts'
 
 export const SEND_TOOL = 'move_send'
 export const PROBE_TOOL = 'move_probe'
@@ -53,7 +54,7 @@ export function endsAfterMove(): boolean {
 }
 
 // The nouns the move holds.
-type Dollar = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'tool' | 'prompt'>
+type Dollar = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'tool' | 'prompt' | 'clock'>
 
 export function register(on: On<Dollar>): void {
   movedAndAcknowledged = new Set<string>()
@@ -389,7 +390,25 @@ export type SentMove = { move: string; to: string; peer?: string; chunk: number;
 async function keepSend($: Dollar, sent: SentMove): Promise<void> {
   const dir = await movesDir($)
   await run($, ['mkdir', '-p', dir], 5000)
-  await writeAtomic($, `${dir}/${sent.move}.json`, JSON.stringify(sent) + '\n')
+  const io = storeIo($)
+  const path = `${dir}/${sent.move}.json`
+  await withLockOver(io, path, () => writeAtomicOver(io, path, JSON.stringify(sent) + '\n'))
+}
+
+// The sender's record of a move read again and changed under its lock: `change` is handed the
+// record as the store holds it now and answers the record to write, or null to leave it. The
+// answer is what the store holds afterwards, null when it holds no such move.
+async function changeSent($: Dollar, move: string, change: (s: SentMove) => SentMove | null): Promise<SentMove | null> {
+  const io = storeIo($)
+  const path = `${await movesDir($)}/${move}.json`
+  return withLockOver(io, path, async () => {
+    const now = parseSent(await io.read(path), move)
+    if (!now) return null
+    const next = change(now)
+    if (!next) return now
+    await writeAtomicOver(io, path, JSON.stringify(next) + '\n')
+    return next
+  })
 }
 
 // Sends the manifest (when given), then the chunks (all of them, or the pairs asked for), then
@@ -558,7 +577,8 @@ async function route($: Dollar, receiving: Receiving, message: MoveMessage, from
       if (!s.peer) {
         // The first reply matched by name gives the address every later one must come from.
         s.peer = from
-        await keepSend($, s).catch(err => logLine($, `move ${s.move}: the receiver's address could not be kept: ${messageOf(err)}`))
+        await changeSent($, s.move, now => (now.peer ? null : { ...now, peer: from }))
+          .catch(err => logLine($, `move ${s.move}: the receiver's address could not be kept: ${messageOf(err)}`))
       }
       if (message.kind === 'missing') return answerMissing($, s, message)
       if (message.kind === 'done') return answerDone($, s, message)
@@ -654,6 +674,7 @@ async function heldOf($: Dollar, receiving: Receiving, move: string): Promise<He
     from: kept.from, fromName: typeof kept.fromName === 'string' ? kept.fromName : '', manifest, arrival,
     have: new Set(), lengths: new Map(), size: manifest.files.map(() => 0), acks: manifest.files.map(() => undefined), notified: false,
   }
+  await sweep($, dir)
   const entries: { name: string }[] = await $.fs.list(dir).catch(() => [])
   for (const { name } of entries) {
     const chunk = /^c-(\d+)-(\d+)$/.exec(name)
@@ -734,10 +755,16 @@ async function processFile($: Dollar, h: Held, file: number): Promise<void> {
     const pieces: string[] = []
     for (let index = 0; index < f.chunks; index++) pieces.push(String(await $.fs.read(`${dir}/c-${file}-${index}`)))
     const text = pieces.join('')
-    const staging = `${dir}/staging-${file}`
-    await writeAtomic($, staging, text)
-    const hash = await sha256Of($, staging)
-    await run($, ['rm', '-f', staging], 5000)
+    // The joined file is hashed from a temporary of the store's own shape, so a process killed
+    // before it is removed leaves what the next sweep removes.
+    const staging = temporaryOf(`${dir}/staging-${file}`, uniqueTag())
+    let hash: string | null
+    try {
+      await $.fs.write(staging, text)
+      hash = await sha256Of($, staging)
+    } finally {
+      await run($, removeArgv(staging), 5000)
+    }
     if (new TextEncoder().encode(text).length !== f.bytes) {
       outcome = { ok: false, reason: `${f.name}: ${new TextEncoder().encode(text).length} bytes arrived, ${f.bytes} announced` }
     } else if (hash !== f.sha256) {
@@ -745,23 +772,33 @@ async function processFile($: Dollar, h: Held, file: number): Promise<void> {
     } else {
       const target = await targetOf($)
       const rewritten = rewritePaths(text, arrivalPairs(h.manifest, h.arrival, target))
-      const path = `${h.arrival.briefDir}/${f.name}`
-      await run($, ['mkdir', '-p', h.arrival.briefDir], 5000)
-      if (await $.fs.exists(path)) {
-        const there = String(await $.fs.read(path))
-        outcome = there === rewritten ? { ok: true, reason: null } : { ok: false, reason: `${f.name}: a file with other content already stands at ${path}` }
-      } else {
-        await writeAtomic($, path, rewritten)
-        outcome = { ok: true, reason: null }
-      }
+      outcome = await land($, `${h.arrival.briefDir}/${f.name}`, f.name, rewritten)
     }
   } catch (err) {
     outcome = { ok: false, reason: `${f.name}: ${messageOf(err)}` }
   }
   h.acks[file] = outcome
   await writeAtomic($, `${dir}/ack-${file}.json`, JSON.stringify(outcome) + '\n')
+  // A file landed needs its chunks no more: its acknowledgment answers every later chunk of it.
+  if (outcome.ok) await run($, removeArgv(...Array.from({ length: f.chunks }, (_, index) => `${dir}/c-${file}-${index}`)), 5000)
   await sendAck($, h, file)
   if (h.acks.every(Boolean)) await finish($, h)
+}
+
+// A file written where it lands, under that path's lock, unless a file already stands there:
+// the same content is the same file landed before, any other is refused and left alone.
+async function land($: Dollar, path: string, label: string, text: string): Promise<{ ok: boolean; reason: string | null }> {
+  const dir = path.slice(0, path.lastIndexOf('/'))
+  const made = await run($, ['mkdir', '-p', dir], 5000)
+  if (!made || made.exitCode !== 0) return { ok: false, reason: `${label}: the directory ${dir} cannot be made` }
+  await sweep($, dir)
+  const io = storeIo($)
+  return withLockOver(io, path, async () => {
+    const there = await io.read(path)
+    if (there !== undefined) return there === text ? { ok: true, reason: null } : { ok: false, reason: `${label}: a file with other content already stands at ${path}` }
+    await writeAtomicOver(io, path, text)
+    return { ok: true, reason: null }
+  })
 }
 
 // Every file answered: « done », and, when all arrived whole, the arrival notice the
@@ -792,8 +829,13 @@ async function receiveSent($: Dollar, h: Held): Promise<void> {
 
 // The move as the sender kept it, or null when this session sent no such move.
 async function sentOf($: Dollar, move: string): Promise<SentMove | null> {
+  return parseSent(await $.fs.read(`${await movesDir($)}/${move}.json`).then(String, () => undefined), move)
+}
+
+function parseSent(text: string | undefined, move: string): SentMove | null {
+  if (text === undefined) return null
   try {
-    const kept: unknown = JSON.parse(String(await $.fs.read(`${await movesDir($)}/${move}.json`)))
+    const kept: unknown = JSON.parse(text)
     if (!kept || typeof kept !== 'object') return null
     const k = kept as Record<string, unknown>
     const ok = k['move'] === move && typeof k['to'] === 'string' && Number.isInteger(k['chunk']) && Number.isInteger(k['rounds'])
@@ -807,13 +849,17 @@ async function sentOf($: Dollar, move: string): Promise<SentMove | null> {
 // « Missing »: the chunks named are sent again, then « sent » once more, at most
 // MOVE_MISSING_ROUNDS answers per move; the answer after that ends the move as failed.
 async function answerMissing($: Dollar, s: SentMove, message: Extract<MoveMessage, { kind: 'missing' }>): Promise<void> {
-  if (s.rounds >= MOVE_MISSING_ROUNDS) {
-    return conclude($, s, `the receiver still misses chunks after ${MOVE_MISSING_ROUNDS} answers`)
-  }
-  s.rounds += 1
   let stopped: string | null
   try {
-    await keepSend($, s)
+    // The round is counted under the record's lock, read afresh: two answers never share one.
+    let over = false
+    const counted = await changeSent($, s.move, now => {
+      over = now.rounds >= MOVE_MISSING_ROUNDS || now.done !== undefined
+      return over ? null : { ...now, rounds: now.rounds + 1 }
+    })
+    if (!counted || counted.done) return
+    if (over) return conclude($, s, `the receiver still misses chunks after ${MOVE_MISSING_ROUNDS} answers`)
+    s.rounds = counted.rounds
     const asked = message.chunks.filter(([file, index]) => s.files[file] !== undefined && index < s.files[file].chunks)
     stopped = await sendAll($, s.to, s.move, null, s.record, s.files, s.chunk, asked)
   } catch (err) {
@@ -838,7 +884,8 @@ async function answerDone($: Dollar, s: SentMove, message: Extract<MoveMessage, 
 // The record kept again where the notice must go out whatever the store says: a write that fails
 // is logged.
 async function keepKnown($: Dollar, s: SentMove): Promise<void> {
-  await keepSend($, s).catch(err => logLine($, `move ${s.move}: the record could not be kept: ${messageOf(err)}`))
+  await changeSent($, s.move, now => ({ ...now, done: s.done! }))
+    .catch(err => logLine($, `move ${s.move}: the record could not be kept: ${messageOf(err)}`))
 }
 
 async function conclude($: Dollar, s: SentMove, reason: string): Promise<void> {
@@ -860,15 +907,34 @@ async function appendProbe($: Dollar, message: Extract<MoveMessage, { kind: 'pro
 
 // --- the store ---------------------------------------------------------------------------
 
-// Written atomically: a temporary file beside it, then one rename — $.fs.write is not atomic.
-async function writeAtomic($: Dollar, path: string, text: string): Promise<void> {
-  const tmp = `${path}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  await $.fs.write(tmp, text)
-  const moved = await $.process.run(['mv', '-f', tmp, path], { timeoutMs: 5000 })
-  if (!moved || moved.exitCode !== 0) {
-    await $.process.run(['rm', '-f', tmp], { timeoutMs: 5000 }).catch(() => undefined)
-    throw new Error(`the file ${path} could not be renamed into place`)
+// Core's store over this file's $ (store-io.ts): $.fs writes but cannot rename, remove or create
+// a file exclusively, so those run as processes; the lock is `<path>.lock`, every writer's.
+function storeIo($: Dollar): StoreIo {
+  return {
+    write: (path, text) => $.fs.write(path, text),
+    read: path => $.fs.read(path).then(text => String(text), () => undefined),
+    run: argv => $.process.run(argv, { timeoutMs: 5000 }),
+    mtimeMs: path => $.fs.stat(path).then(stat => stat.mtimeMs, () => undefined),
+    sleep: ms => $.clock.sleep(ms),
+    now: Date.now,
+    tag: uniqueTag,
   }
+}
+
+function uniqueTag(): string {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+}
+
+// Written in one rename through a temporary file of a unique name beside it: $.fs.write is not atomic.
+async function writeAtomic($: Dollar, path: string, text: string): Promise<void> {
+  await writeAtomicOver(storeIo($), path, text)
+}
+
+// The temporary files a writer killed between its write and its rename left in `dir`.
+async function sweep($: Dollar, dir: string): Promise<void> {
+  const entries = await $.fs.list(dir).catch(() => [])
+  const stale = staleTemporaries(dir, entries, Date.now())
+  if (stale.length > 0) await run($, removeArgv(...stale), 5000)
 }
 
 // The module's log: the config dir resolved here, the stamp names this half. Never throws.
