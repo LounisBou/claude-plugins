@@ -37,7 +37,10 @@ change: a change that crosses plugins is one pull request.
 - The graph is acyclic. A plugin never imports another plugin's source and never reads another
   plugin's private state.
 
-These rules are checked by the dependency lint (program goal 7), not by review.
+These rules are checked by `npm run deps`, not by review: a dependency on a plugin of this
+repository is declared `{ "name", "marketplace": "lounisbou", "version": ">=a.b.c" }`, its range
+holds for that plugin's current version, the graph has no cycle, and no TypeScript file
+imports a path outside its plugin. A dependency from another catalogue may omit its range.
 
 ## One method, many roles
 
@@ -82,6 +85,7 @@ because the host caches by version. A release is the merge; the tag `<name>--v<v
 |---|---|
 | strict types | `tsconfig.base.json`, coverage ratcheted in `tsconfig.json` |
 | tooling tests | `scripts/*.test.ts` |
+| dependencies declared, acyclic, no import across plugins | `npm run deps` |
 | every copy of core matches the source | `packages/core/src` |
 | catalogue matches the manifests | `plugins/*/.claude-plugin/plugin.json` |
 | shipped change raises the version | the same manifests, against the base branch |
