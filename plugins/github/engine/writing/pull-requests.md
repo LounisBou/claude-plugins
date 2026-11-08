@@ -1,30 +1,4 @@
-# Writing rules
-
-These are the rules this tool's operator applies before any text leaves the machine
-through `gh.py`: commit messages, pull request titles, pull request descriptions and
-review comments.
-
-## Commit messages
-
-Conventional Commits in every repository: `<type>[(<scope>)]: <description>`. Write in
-the imperative mood ("add", not "added" or "adds"). Add a body only when the why is not
-obvious from the diff itself. No trailer of any kind: no `Co-Authored-By`, no
-`Claude-Session`, no attribution of any form, no semicolon. A trailer is a line that
-opens with a `<word>-by:` label (`Co-Authored-By`, `Signed-off-by`, `Reviewed-by`, and
-`Drive-by` or `Stand-by` as well), `Claude-Session:` or `Change-Id:`, and the plugin
-refuses it in a description and a review comment. Other labelled lines (`Note:`,
-`Follow-up work:`) are none. No reference to a plan
-`phase`, an `agent`, an `AI`, an `orchestrator`, a `session`, a `brief` or any other
-workflow mechanics in any durable artifact (code, comment, doc, commit, PR) — the
-history must read as a developer's own work, in business and technical terms only. In
-the Claude plugins themselves, the `claude-*` repositories, these words name the
-plugin's object and are allowed. No information specific to GeoNative in a public
-repository (code, commit, title, description).
-
-Types: `feat`, `fix`, `chore`, `refactor`, `style`, `docs`, `test`, `perf`, `build`,
-`ci`. Examples: `feat(scraper): create TvShow nfo file`, `chore: add json5 dependency`,
-`refactor(dispatch): extract folder_for to resolver`, `fix(conf): add missing Config
-import`. Never a version prefix (`vX.Y.Z: …`): the version belongs to the release notes.
+# Pull requests and issues
 
 ## Pull request titles
 
@@ -38,16 +12,6 @@ belongs in the description.
 
 Too long: `test(device-server): stop the listen tests on their awaited event instead of a fixed timer`
 Right: `test(device-server): fix flaky listen tests`
-
-## References to pull requests and issues
-
-Name a pull request or an issue with its repository, always: `infra#195`,
-`api#1778`. Never a bare `#195`, never « PR #15 », and every item of a list
-carries its prefix, even in a table whose column names the repository. One number
-exists in several repositories and a bare one can send a merge or a review to the
-wrong PR. Only the formats GitHub resolves inside its own repository keep `(#N)`: a
-squashed commit title, a PR body, where a `PRs Dependency` or `Related PRs` item is the
-pull request's full URL.
 
 ## Pull request descriptions
 
@@ -214,18 +178,3 @@ Every CVE id in a pull request description is a markdown link to its advisory,
 `[CVE-2026-12345](<advisory URL>)`, the URL the audit prints for it: never bare and
 never in a code span. GitHub turns a bare CVE id into a link only when its own
 advisory database holds that advisory, and never one in a code span.
-
-## Review comments
-
-One main idea per comment, in plain language. The file and line anchor must be
-exact, verified against the current file — never trusted from an unverified source.
-A short, ready-to-paste suggestion accompanies the point. English on GitHub, with no
-semicolon. Every comment states plainly whether it is blocking or nice-to-have. No
-workflow vocabulary. Nothing is posted without the operator's explicit approval of
-that exact text. A thread a code change has already closed is answered by the
-change itself — a reply only says what the code cannot. Verify first, then ask how it
-works, in a two-developers tone, with no colon and no semicolon. On the operator's own
-PR a review item is fixed in code, not answered by a comment. Dependent PRs stack,
-never a follow-up fix PR. A commit to split off stays in the current PR.
-
-These rules come from the operator and apply to every repository this tool touches.

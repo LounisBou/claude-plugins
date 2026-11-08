@@ -1,4 +1,4 @@
-// The mechanical rules of engine/WRITING.md, checked on the text a write
+// The mechanical rules of engine/writing/, checked on the text a write
 // carries before it leaves the machine. Only what code can decide without
 // judgement is here: a semicolon in prose, a trailer of any kind, a title on
 // more than one line or far past « about sixty characters », a heading in a
@@ -14,7 +14,7 @@
 export type Violation = {
   // Where the text sits in the call: "title", "body" or "comments[2].body".
   field: string
-  // The rule as the model reads it, with the WRITING.md section it comes from.
+  // The rule as the model reads it, with the engine/writing/ section it comes from.
   rule: string
 }
 
@@ -94,12 +94,12 @@ function strip(line: string): string {
 const TRAILER = /^\s*([a-z]+(-[a-z]+)*-by|claude-session|change-id)\s*:/i
 const HEADING = /^ {0,3}#{1,6}(\s|$)/
 
-const SEMICOLON_RULE = 'no semicolon in prose (WRITING.md, « Pull request titles », « Pull request descriptions », « Review comments »); code in backticks or a fenced block may keep one'
-const TRAILER_RULE = 'no trailer of any kind, such as Co-Authored-By, Signed-off-by or Claude-Session (WRITING.md, « Commit messages »)'
-const TITLE_LINE_RULE = 'a title is one line (WRITING.md, « Pull request titles »)'
+const SEMICOLON_RULE = 'no semicolon in prose (writing/pull-requests.md and writing/comments.md); code in backticks or a fenced block may keep one'
+const TRAILER_RULE = 'no trailer of any kind, such as Co-Authored-By, Signed-off-by or Claude-Session (writing/commits.md)'
+const TITLE_LINE_RULE = 'a title is one line (writing/pull-requests.md, « Pull request titles »)'
 const TITLE_LENGTH_RULE = 'a title is about sixty characters at most, this one has '
-const HEADING_RULE = 'no heading of any kind in a pull request description, it starts with the summary text (WRITING.md, « Pull request descriptions »)'
-const TODO_RULE = 'a TODO Staging or TODO Prod item is a task-list checkbox, `- [ ] <step>`, never a bare `- ` bullet (WRITING.md, « Pull request descriptions »)'
+const HEADING_RULE = 'no heading of any kind in a pull request description, it starts with the summary text (writing/pull-requests.md, « Pull request descriptions »)'
+const TODO_RULE = 'a TODO Staging or TODO Prod item is a task-list checkbox, `- [ ] <step>`, never a bare `- ` bullet (writing/pull-requests.md, « Pull request descriptions »)'
 const TODO_LABEL = /^\*\*TODO (Staging|Prod):\*\*\s*$/
 // A bold label leading a line, `**Label:**`, alone or with text after it.
 const BOLD_LABEL = /^\*\*([^*]+):\*\*(.*)$/
@@ -120,8 +120,8 @@ function bareTodoItem(lines: string[]): boolean {
   return false
 }
 
-const TODO_ALONE_RULE = 'a TODO item stands alone, it never points to another item (« the same edit », « same as above », « likewise ») and writes the action in full (WRITING.md, « Pull request descriptions »)'
-const TODO_ONE_RULE = 'one checkbox, one action: an edit and the restart, reload or deploy that applies it are two checkboxes, never joined by « then » or « and run » (WRITING.md, « Pull request descriptions »)'
+const TODO_ALONE_RULE = 'a TODO item stands alone, it never points to another item (« the same edit », « same as above », « likewise ») and writes the action in full (writing/pull-requests.md, « Pull request descriptions »)'
+const TODO_ONE_RULE = 'one checkbox, one action: an edit and the restart, reload or deploy that applies it are two checkboxes, never joined by « then » or « and run » (writing/pull-requests.md, « Pull request descriptions »)'
 const POINTER = /\b(the same (edit|change|step|steps|command)|same as (above|before)|as above|as before|likewise)\b/i
 const JOINED = /\b(then|and run)\b/i
 
@@ -141,8 +141,8 @@ function todoItems(lines: string[]): string[] {
   return out
 }
 
-const CVE_LINK_RULE = 'a CVE id is a markdown link to its advisory, `[CVE-YYYY-NNNNN](<advisory URL>)`, never bare and never in a code span (WRITING.md, « Security update pull requests »)'
-const CVE_TABLE_RULE = 'a description whose first line names CVE ids has one table per advisory, with the Package, Advisory, Affected and Reference rows, its Advisory row naming the CVE id (WRITING.md, « Security update pull requests »)'
+const CVE_LINK_RULE = 'a CVE id is a markdown link to its advisory, `[CVE-YYYY-NNNNN](<advisory URL>)`, never bare and never in a code span (writing/pull-requests.md, « Security update pull requests »)'
+const CVE_TABLE_RULE = 'a description whose first line names CVE ids has one table per advisory, with the Package, Advisory, Affected and Reference rows, its Advisory row naming the CVE id (writing/pull-requests.md, « Security update pull requests »)'
 const CVE = /\bCVE-\d{4}-\d{4,}\b/gi
 const CVE_ID = /\bCVE-\d{4}-\d{4,}\b/i
 // An inline link, a title after its URL included, or a reference link.
@@ -195,13 +195,13 @@ function missingCveTables(lines: string[]): boolean {
 export const SECTIONS = ['TODO Staging', 'TODO Prod', 'PRs Dependency', 'Related PRs']
 
 // The phrasings that state what a pull request does not do, read in its
-// summary: WRITING.md, « State what the PR does, never what it does not do ».
+// summary: writing/pull-requests.md, « State what the PR does, never what it does not do ».
 export const NEGATIVE_PHRASES = [
   'unchanged', 'no dependency', 'does not', "doesn't", 'is not changed', 'left untouched',
   'no other pull request', 'without conflict',
 ]
 
-const DESCRIPTIONS = ' (WRITING.md, « Pull request descriptions »)'
+const DESCRIPTIONS = ' (writing/pull-requests.md, « Pull request descriptions »)'
 const MISSING_RULE = 'a pull request description ends with the four sections, missing here: '
 const ORDER_RULE = 'the four sections come in this order: ' + SECTIONS.join(', ') + ', each once' + DESCRIPTIONS
 const EMPTY_RULE = 'an empty section is written `**<Label>:** none` on the label\'s line, never a label with nothing after it' + DESCRIPTIONS
@@ -234,7 +234,7 @@ function withoutImages(line: string): string {
   return line.replace(/!\[[^\]]*\]\([^)]*\)/g, ' ').replace(/<[a-z][^>]*>/gi, ' ')
 }
 
-// A screenshot as WRITING.md gives it: its title in bold alone on its line,
+// A screenshot as writing/pull-requests.md gives it: its title in bold alone on its line,
 // with no colon at its end, which would make it a label, its image alone on
 // the next line.
 const SHOT_TITLE = /^\*\*([^*]+)\*\*$/
@@ -333,7 +333,7 @@ function lintField(kind: 'pr' | 'comment', field: string, text: string): Violati
   if (field === 'title') {
     if (/[\r\n]/.test(text.trim())) add(TITLE_LINE_RULE)
     const length = [...text.trim()].length
-    if (length > TITLE_MAX) add(TITLE_LENGTH_RULE + length + ' (WRITING.md, « Pull request titles »)')
+    if (length > TITLE_MAX) add(TITLE_LENGTH_RULE + length + ' (writing/pull-requests.md, « Pull request titles »)')
     if (strip(text).includes(';')) add(SEMICOLON_RULE)
     return found
   }

@@ -10,7 +10,9 @@
     "pr-review: process comments": ["pr-review/skills/process-comments/SKILL.md"],
     "norms: check": ["norms/commands/check.md"],
     "norms: one review agent": ["norms/agents/norms-diff-scope.md"],
-    "github: write a pull request": ["github/engine/WRITING.md"],
+    "github: write a pull request": ["github/engine/writing/pull-requests.md", "github/engine/writing/references.md"],
+    "github: write a commit": ["github/engine/writing/commits.md", "github/engine/writing/references.md"],
+    "github: write a comment": ["github/engine/writing/comments.md", "github/engine/writing/references.md"],
     "bugs-bot: resident agent": ["bugs-bot/agent/AGENT.md", "bugs-bot/skills/bugs-bot/SKILL.md"],
     "orchestrator: start": ["orchestrator/skills/orchestrator/SKILL.md"]
   }
