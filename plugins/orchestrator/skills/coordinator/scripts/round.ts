@@ -6,6 +6,8 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { withLock, writeAtomic } from '../../../core/store.ts'
+import { configDir } from '../../../core/paths.ts'
+import { consentPath, consentRecordOf } from '../../../core/consent-record.ts'
 import { die, moduleOf, Refusal, stateOf, utc, type Context } from './context.ts'
 
 type Fields = Record<string, unknown>
@@ -112,6 +114,35 @@ function isJson(text: string): boolean {
   }
 }
 
+/** A choice of an entry, as the module writes it. */
+function choicesOf(value: unknown): { letter: string; text: string }[] {
+  if (!Array.isArray(value)) return []
+  return value.flatMap(choice => {
+    const { letter, text } = (typeof choice === 'object' && choice !== null ? choice : {}) as Fields
+    return typeof letter === 'string' && typeof text === 'string' ? [{ letter, text }] : []
+  })
+}
+
+// The answer the coordinator relays to a question that asks the operator's consent, written as
+// that subject's consent record (core's consent-record.ts), the contract github reads in place
+// of the round. A record that cannot be written leaves the entry closed, and is said once.
+function recordConsent(ctx: Context, entry: Fields, answer: string): void {
+  if (entry['consent'] === undefined || typeof entry['id'] !== 'string' || typeof entry['question'] !== 'string') return
+  const answered = entry['answer'] as Fields
+  const record = consentRecordOf({
+    subject: entry['consent'], entry: entry['id'], question: entry['question'], answer,
+    choices: choicesOf(entry['choices']), by: 'coordinator', at: String(answered['at']),
+  })
+  if (record === undefined) return
+  const path = consentPath(configDir(ctx.env), record)
+  try {
+    mkdirSync(path.slice(0, path.lastIndexOf('/')), { recursive: true })
+    writeAtomic(path, `${JSON.stringify(record)}\n`)
+  } catch {
+    ctx.err(`coordinator: round-close: the consent of ${entry['id']} was not recorded in ${path}`)
+  }
+}
+
 const CLOSE_USAGE = 'round-close: usage: round-close <id> --answer "<text>" | --withdraw "<evidence>"'
 
 export function roundClose(ctx: Context, args: readonly string[]): number {
@@ -173,6 +204,7 @@ export function roundClose(ctx: Context, args: readonly string[]): number {
     return closed
   })
   forgetRelayed(ctx, closed)
+  if (answer !== undefined) recordConsent(ctx, closed, answer)
   ctx.out(`closed ${id}`)
   return 0
 }
