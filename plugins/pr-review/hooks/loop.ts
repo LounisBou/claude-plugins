@@ -10,15 +10,16 @@
 // types, an interrupted turn or a /clear ends the loop's hold.
 import { loop, resetLoop, MAX_PASSES } from './state.ts'
 import { GH_TOOL } from './policy.ts'
+import { REPORT_REQUEST, answerText, isBlocking, passFindings, reportOf } from './report.ts'
 
 export const LOOP_TOOL = 'loop'
 
 export const LOOP_DESCRIPTION =
   'pr-review: the state of /pr-review:auto-fix-loop. Actions: start {test_command} once before '
   + 'the first pass; begin_pass before each review (answers the pass number, or exit max_passes); '
-  + 'findings {keys, blocking} after each review, one key per finding as "<file>::<summary>" and '
-  + 'blocking the number of them that are Critical or Important (answers which keys are new and '
-  + 'which were seen; an empty list answers exit clean); fixed {key, sha, '
+  + 'findings {keys} after each review, one key per finding as "<file>::<summary>" (answers which '
+  + 'keys are new and which were seen; an empty list answers exit clean when every review agent '
+  + 'reported none, and the Critical and Important count is read from the agents\' own blocks); fixed {key, sha, '
   + 'description} after each commit; reverted {key, sha} after a revert; status for the summary. '
   + 'The answer that carries an exit also carries a record line: the review record left for the '
   + 'github plugin\'s ready guard, or why none was.'
@@ -57,14 +58,31 @@ export function act(e: any): Record<string, unknown> {
       return { exit: 'max_passes', ...summary() }
     }
     loop.pass += 1
+    loop.isReviewing = true
+    loop.reports = []
+    loop.lastFindings = 0
+    loop.lastBlocking = undefined
     return { pass: loop.pass, max_passes: MAX_PASSES, next: 'run the review, then report findings' }
   }
   if (action === 'findings') {
     // A clean exit records a pass: it must follow a review the loop counted, never the start.
     if (loop.pass === 0) return { error: 'no review pass has begun: call begin_pass, run the review, then report its findings' }
     const keys = strings(e.keys)
-    loop.lastFindings = keys.length
-    loop.lastBlocking = Number.isInteger(e.blocking) && e.blocking >= 0 ? e.blocking : undefined
+    const found = passFindings(loop.reports)
+    if (keys.length === 0 && found === undefined) {
+      const silent = loop.reports.filter((r) => r === null).length
+      return {
+        error: loop.reports.length === 0
+          ? 'no review agent ran in this pass: a clean exit is computed from the agents\' findings; launch the review agents, then report'
+          : `${silent} of ${loop.reports.length} review agents ended without their findings block: the pass cannot be found clean; call begin_pass and run the review again`,
+      }
+    }
+    if (keys.length === 0 && found !== undefined && found.length > 0) {
+      return { error: `the review agents reported ${found.length} finding(s) in this pass: report their keys` }
+    }
+    loop.isReviewing = false
+    loop.lastFindings = found?.length ?? keys.length
+    loop.lastBlocking = found?.filter(isBlocking).length
     if (keys.length === 0) {
       loop.isActive = false
       loop.exit = 'clean'
@@ -139,7 +157,7 @@ function repoOf(url: string): string | undefined {
 
 // The review record's result and detail for the exit the loop just reached.
 export function verdict(exit: string): { result: 'pass' | 'fail'; detail: string } | null {
-  if (exit === 'clean') return { result: 'pass', detail: `clean at pass ${loop.pass}` }
+  if (exit === 'clean') return { result: 'pass', detail: `clean at pass ${loop.pass}, ${loop.reports.length} review agents reporting no finding` }
   if (exit !== 'max_passes') return null
   const left = `${loop.lastFindings} findings left after ${loop.pass} passes`
   if (loop.lastBlocking === 0) return { result: 'pass', detail: `${left}, none Critical or Important` }
@@ -175,6 +193,27 @@ async function recordReview($: any, exit: string): Promise<string | null> {
 }
 
 export function register(on: any): void {
+  // Each agent a review pass launches is asked for its findings block, and its answer is read.
+  // The agent runs once: a failure is its answer, and leaves the pass without a count.
+  on('tool.call', { tool: 'Agent' }, async ($: any, e: any, next: any) => {
+    if (!loop.isActive || !loop.isReviewing) return next(e)
+    let answer: any
+    try {
+      answer = await next({ ...e, prompt: String(e.prompt ?? '') + REPORT_REQUEST })
+    } catch (err: any) {
+      loop.reports.push(null)
+      return { result: String(err?.message ?? err), isError: true }
+    }
+    let report: ReturnType<typeof reportOf> = null
+    try {
+      report = answer?.isError || answer?.deny ? null : reportOf(answerText(answer))
+    } catch {
+      // Unreadable: no count.
+    }
+    if (loop.isReviewing) loop.reports.push(report)
+    return answer
+  }).catch(async (_$: any, e: any, next: any) => next(e))
+
   on('tool.call', { tool: 'mcp__pr-review__loop' }, async ($: any, e: any) => {
     const before = loop.exit
     const answer = act(e)

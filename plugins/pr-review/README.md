@@ -117,9 +117,13 @@ and every skill keeps its own route.
   naming the pass. Any prompt the user types, or an interrupted turn, ends that hold.
 - **The review record.** When the loop ends, it leaves a review record at the pull
   request's head, written through the github plugin's `mcp__github__record`, for that
-  plugin's ready guard. A clean review writes `pass`. A loop stopped by the pass limit
-  writes `pass` when the last review left nothing Critical or Important, and `fail`
-  otherwise, or when the severity was not reported. It leaves none when the loop was
+  plugin's ready guard. The verdict is computed, not reported: during a pass, each
+  agent the session launches is asked to end with a JSON block of its findings, and
+  the module reads them. A clean exit needs every agent of the pass to report none;
+  an agent without a readable block (or one that fails) leaves the severity unknown.
+  A clean review writes `pass`. A loop stopped by the pass limit writes `pass` when
+  the last review's agents reported nothing Critical or Important, and `fail`
+  otherwise, or when the severity is unknown. It leaves none when the loop was
   released by the user, when the branch has no pull request, when tracked files have
   uncommitted changes, or when the github plugin is absent or older than 0.12.0. The
   loop's answer then says `record: none — <why>`.
