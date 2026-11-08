@@ -6,7 +6,8 @@
       "macos-latest"
     ],
     "cloudflare": [
-      "ubuntu-latest"
+      "ubuntu-latest",
+      "macos-latest"
     ],
     "github": [
       "ubuntu-latest",
