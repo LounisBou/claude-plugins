@@ -4,7 +4,8 @@
 // head. Pure functions only: register.ts reads GitHub, the records and the
 // session, and answers the calls.
 
-import { type EngineCall, engineCall, engineFlag, engineOption, gitSubcommand, simpleCommands } from './shell.ts'
+import { gitSubcommand, simpleCommands } from '../core/shell.ts'
+import { type EngineCall, engineCall, engineFlag, engineOption } from './shell.ts'
 
 // warn: an act that is not ready goes ahead with one warn line. enforce: it is
 // refused with what it misses.

@@ -13,6 +13,7 @@ import { render, run as marketplace } from './marketplace.ts'
 import { run as matrix } from './plugin-matrix.ts'
 import { parseCeilings, run as prompts } from './prompts.ts'
 import { run as versionBump } from './version-bump.ts'
+import { copyOf, MARK, run as core } from './core.ts'
 
 interface Recorded extends Io {
   readonly lines: { out: string[]; err: string[] }
@@ -213,5 +214,38 @@ describe('plugins library', () => {
     processIo.out('o')
     processIo.err('e')
     assert.deepEqual([log.mock.calls[0]?.arguments, error.mock.calls[0]?.arguments], [['o'], ['e']])
+  })
+})
+
+describe('core copies', () => {
+  function withCore(): string {
+    const root = repo({ alpha: '1.0.0', beta: '1.0.0' })
+    mkdirSync(join(root, 'packages', 'core', 'src'), { recursive: true })
+    writeFileSync(join(root, 'packages', 'core', 'src', 'a.ts'), 'export const A = 1\n')
+    writeFileSync(join(root, 'packages', 'core', 'src', 'a.test.ts'), 'test\n')
+    mkdirSync(join(root, 'plugins', 'alpha', 'core'))
+    return root
+  }
+
+  it('copies the modules, marked, and leaves the tests out', () => {
+    assert.deepEqual([...copyOf(new Map([['a.ts', 'x'], ['a.test.ts', 'y'], ['notes.md', 'z']]))], [['a.ts', `${MARK}x`]])
+  })
+
+  it('writes the copy into every plugin holding a core directory, then finds it current', () => {
+    const root = withCore()
+    const io = recorder()
+    assert.equal(core(root, [], io), 0)
+    assert.deepEqual(io.lines.out, ['plugins/alpha/core rewritten'])
+    assert.equal(readFileSync(join(root, 'plugins', 'alpha', 'core', 'a.ts'), 'utf8'), `${MARK}export const A = 1\n`)
+    assert.equal(core(root, ['--check'], recorder()), 0)
+  })
+
+  it('fails a check on a copy edited by hand', () => {
+    const root = withCore()
+    core(root, [], recorder())
+    writeFileSync(join(root, 'plugins', 'alpha', 'core', 'a.ts'), 'edited\n')
+    const io = recorder()
+    assert.equal(core(root, ['--check'], io), 1)
+    assert.match(io.lines.err[0] ?? '', /plugins\/alpha\/core differs/)
   })
 })

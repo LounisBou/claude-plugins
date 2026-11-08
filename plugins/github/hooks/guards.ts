@@ -4,7 +4,8 @@
 // the session, keeps the marks and answers the calls.
 
 import { carriesText, textFields } from './writing.ts'
-import { type EngineCall, engineCall, engineOption, engineStart, engineWords, gitSubcommand, simpleCommands } from './shell.ts'
+import { gitSubcommand, simpleCommands } from '../core/shell.ts'
+import { type EngineCall, engineCall, engineOption, engineStart, engineWords } from './shell.ts'
 
 // The file every author reads, under the plugin's root.
 export const WRITING_FILE = '/engine/WRITING.md'

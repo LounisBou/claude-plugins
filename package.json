@@ -13,7 +13,8 @@
     "marketplace": "node --experimental-strip-types --no-warnings scripts/marketplace.ts",
     "version-bump": "node --experimental-strip-types --no-warnings scripts/version-bump.ts",
     "plugin-matrix": "node --experimental-strip-types --no-warnings scripts/plugin-matrix.ts",
-    "prompts": "node --experimental-strip-types --no-warnings scripts/prompts.ts"
+    "prompts": "node --experimental-strip-types --no-warnings scripts/prompts.ts",
+    "core": "node --experimental-strip-types --no-warnings scripts/core.ts"
   },
   "devDependencies": {
     "@types/node": "22.15.21",

@@ -68,7 +68,7 @@ to this repository only once it is proved stable (`docs/migration.md`).
 |---|---|---|---|
 | 0 | Urgent risks | 1 | In the current repositories, re-imported here. |
 | 1 | Install from the monorepo | 2 | Verify the catalogue's relative sources on the operator's host, in the separate profile. |
-| 2 | Core | 3, 5, 18 | First the link verification (decision 0002), then the store, the paths, the name shapes, the plugin locator. One copy removed per pull request; each part enters at the coverage floor. |
+| 2 | Core | 3, 5, 18 | First the packaging of core (decision 0002), then the store, the paths, the name shapes, the plugin locator. One copy removed per pull request; each part enters at the coverage floor. |
 | 3 | Contracts and dependencies | 4, 7 | Every row of `docs/contracts.md`. |
 | 4 | Readiness and consent | 8, 9, 10 | github first (the gate), then each consumer. |
 | 4b | Method | 19, 20 | The `method` plugin from what the orchestrator and implement state today; then implement on it. |
@@ -80,7 +80,7 @@ to this repository only once it is proved stable (`docs/migration.md`).
 
 ## Copied rules core replaces (goal 3)
 
-- The shell tokenizer: `plugins/orchestrator/hooks/tokenizer.ts`, copied to `plugins/github/hooks/shell.ts`.
+- The shell reader: in core since github's copy moved there (`packages/core/src/shell.ts`); the orchestrator's `hooks/tokenizer.ts` follows once its urgent build has ended.
 - The push detector, four times: orchestrator's push guard, `plugins/github/hooks` (`bashPushes`),
   `plugins/norms/hooks/guards.ts`, `plugins/pr-review/hooks/policy.ts` (`runsGitPush`). Removed
   with goal 12 rather than unified.
