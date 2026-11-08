@@ -73,7 +73,7 @@ export function parseStatus(answer: string): Wait | null {
   const matched = STATUS_LINE.exec(machineLine(answer))
   if (!matched) return null
   const lines = answer.replace(/\s+$/, '').split('\n')
-  const kind = STATUS_KIND[matched[1].toLowerCase() as keyof typeof STATUS_KIND]
+  const kind = STATUS_KIND[(matched[1] ?? '').toLowerCase() as keyof typeof STATUS_KIND]
   return { kind, blocks: (matched[2] ?? '').trim(), question: lines.slice(0, -1).join('\n').trim() }
 }
 

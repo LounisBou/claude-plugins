@@ -76,7 +76,7 @@ export type RowSent = { band: number; waiting: string | null; blocks: string | n
 
 // A machine label as the pane shows it: the host name's own letters, cut, never empty.
 export function machineLabel(raw: string): string {
-  const label = raw.trim().split('.')[0].replace(/[^A-Za-z0-9_-]/g, '').slice(0, MACHINE_CAP)
+  const label = (raw.trim().split('.')[0] ?? '').replace(/[^A-Za-z0-9_-]/g, '').slice(0, MACHINE_CAP)
   return label || 'unknown'
 }
 
@@ -196,8 +196,10 @@ export function deliveryOf(text: string): Delivery {
   const wrapped = ENVELOPE.exec(text)
   if (!wrapped) return { from: null, fromName: null, body: text }
   const attrs: Record<string, string> = {}
-  for (const m of wrapped[1].matchAll(/([A-Za-z][\w-]*)="([^"]*)"/g)) attrs[m[1]] = m[2]
-  return { from: attrs['from'] || null, fromName: attrs['from-name'] || null, body: wrapped[2] }
+  for (const [, key, value] of (wrapped[1] ?? '').matchAll(/([A-Za-z][\w-]*)="([^"]*)"/g)) {
+    if (key !== undefined && value !== undefined) attrs[key] = value
+  }
+  return { from: attrs['from'] || null, fromName: attrs['from-name'] || null, body: wrapped[2] ?? '' }
 }
 
 // The deliveries a peer sends: another session's message, its model's or its module's.
@@ -233,26 +235,26 @@ export function parseRemoteRow(body: string): RemoteRow | null {
   const str = (v: unknown, cap: number) => typeof v === 'string' && v.length > 0 && v.length <= cap
   const num = (v: unknown, max: number) => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= max
   const stamp = (v: unknown) => str(v, STAMP_CAP) && Number.isFinite(Date.parse(v as string))
-  if (!str(o.name, NAME_CAP) || roleOf(o.name as string) !== 'orchestrator' || o.role !== 'orchestrator') return null
-  if (!num(o.context_tokens, NUMBER_CAP) || !num(o.window, NUMBER_CAP) || !num(o.context_percent, 100)) return null
-  if (!str(o.machine, MACHINE_CAP) || !/^[A-Za-z0-9_-]+$/.test(o.machine as string)) return null
-  if (!stamp(o.updated_at)) return null
-  if (o.waiting === null) {
-    if (o.blocks !== null || o.waiting_since !== null) return null
+  if (!str(o['name'], NAME_CAP) || roleOf(o['name'] as string) !== 'orchestrator' || o['role'] !== 'orchestrator') return null
+  if (!num(o['context_tokens'], NUMBER_CAP) || !num(o['window'], NUMBER_CAP) || !num(o['context_percent'], 100)) return null
+  if (!str(o['machine'], MACHINE_CAP) || !/^[A-Za-z0-9_-]+$/.test(o['machine'] as string)) return null
+  if (!stamp(o['updated_at'])) return null
+  if (o['waiting'] === null) {
+    if (o['blocks'] !== null || o['waiting_since'] !== null) return null
   } else {
-    if (o.waiting !== 'operator' && o.waiting !== 'done') return null
-    if (o.blocks !== null && !str(o.blocks, BLOCKS_CAP)) return null
-    if (o.waiting_since !== null && !stamp(o.waiting_since)) return null
+    if (o['waiting'] !== 'operator' && o['waiting'] !== 'done') return null
+    if (o['blocks'] !== null && !str(o['blocks'], BLOCKS_CAP)) return null
+    if (o['waiting_since'] !== null && !stamp(o['waiting_since'])) return null
   }
   if (carriesPrs) {
-    if (o.repo !== null && !repoShaped(o.repo)) return null
-    if (!Array.isArray(o.prs) || o.prs.length > PRS_CAP || !o.prs.every(prShaped)) return null
+    if (o['repo'] !== null && !repoShaped(o['repo'])) return null
+    if (!Array.isArray(o['prs']) || o['prs'].length > PRS_CAP || !o['prs'].every(prShaped)) return null
   }
-  if (/[\u0000-\u001f]/.test(String(o.name) + String(o.blocks ?? ''))) return null
+  if (/[\u0000-\u001f]/.test(String(o['name']) + String(o['blocks'] ?? ''))) return null
   return {
     ...(o as unknown as RemoteRow),
-    repo: carriesPrs ? o.repo as string | null : null,
-    prs: carriesPrs ? o.prs as string[] : [],
+    repo: carriesPrs ? o['repo'] as string | null : null,
+    prs: carriesPrs ? o['prs'] as string[] : [],
   }
 }
 
