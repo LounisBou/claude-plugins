@@ -42,7 +42,10 @@ DEFAULTS_DIR = os.environ.get("ORCHESTRATOR_ROUTING_DEFAULTS") or os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "defaults")
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 TIERS = ("deep", "standard", "light")
-TOKEN_KEYS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+# The cost rule, as data the hooks module prices the deck with: the JSON value after the marker.
+COST_RULE_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))))), "hooks", "usage.ts")
+COST_RULE_MARKER = "export const COST_RULE: CostRule = "
 
 
 def die(msg):
@@ -92,10 +95,41 @@ def session_transcripts(session):
     return found
 
 
-def message_usages(paths):
+def cost_rule():
+    """COST_RULE of hooks/usage.ts, checked to name what the arithmetic below reads."""
+    try:
+        with open(COST_RULE_FILE) as fh:
+            text = fh.read()
+        rule = json.JSONDecoder().raw_decode(text, text.index(COST_RULE_MARKER) + len(COST_RULE_MARKER))[0]
+        names = set(rule["tokens"])
+        ok = (rule.get("version") == 1 and isinstance(rule["per"], (int, float)) and rule["per"] > 0
+              and all(isinstance(p, list) and p and all(isinstance(k, str) for k in p) for p in rule["tokens"].values())
+              and set(rule["counted"]) <= names and set(rule["prompt"]) <= names
+              and all(isinstance(t["rate"], str) and set(t["plus"]) | set(t["minus"]) <= names for t in rule["terms"]))
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        ok = False
+    if not ok:
+        die("cost: %s holds no cost rule" % COST_RULE_FILE)
+    return rule
+
+
+def count_at(usage, path):
+    """The count at a path of the usage object: 0 where a step is missing or no number."""
+    value = usage
+    for key in path:
+        value = value.get(key) if isinstance(value, dict) else None
+    finite = isinstance(value, (int, float)) and not isinstance(value, bool) and value == value
+    return value if finite and abs(value) != float("inf") else 0
+
+
+def counts(usage, rule):
+    return {name: count_at(usage, path) for name, path in rule["tokens"].items()}
+
+
+def message_usages(paths, rule):
     """One usage per message id: the host writes one line per content block, and every one
-    of them repeats the whole message's usage. A message whose four token counts are all
-    zero is the host's own placeholder, not a model's work: it is neither priced nor named.
+    of them repeats the whole message's usage. A message whose counted tokens are all zero is
+    the host's own placeholder, not a model's work: it is neither priced nor named.
     """
     seen = {}
     anonymous = []
@@ -110,53 +144,66 @@ def message_usages(paths):
                 if not isinstance(msg, dict) or entry.get("type") != "assistant":
                     continue
                 usage, model = msg.get("usage"), msg.get("model")
-                if not isinstance(usage, dict) or not model or not any(
-                        usage.get(k) for k in TOKEN_KEYS):
+                if not isinstance(usage, dict) or not isinstance(model, str) or not model:
                     continue
-                if msg.get("id"):
-                    seen[msg["id"]] = (model, usage)
+                n = counts(usage, rule)
+                if not any(n[k] for k in rule["counted"]):
+                    continue
+                if isinstance(msg.get("id"), str) and msg["id"]:
+                    seen[msg["id"]] = (model, n)
                 else:
-                    anonymous.append((model, usage))
+                    anonymous.append((model, n))
     return list(seen.values()) + anonymous
 
 
-def message_cost(usage, price):
-    """A tiered price switches to its upper rates when the message's whole prompt - fresh
-    input, cache reads and cache writes - passes the threshold.
+def is_price(price, rule):
+    """Every base rate a number and, when tiered, a numeric threshold and numeric upper rates."""
+    num = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) != float("inf")
+    rates = [t["rate"] for t in rule["terms"]]
+    if not isinstance(price, dict) or not all(num(price.get(r)) for r in rates):
+        return False
+    above = price.get("above")
+    return above is None or (isinstance(above, dict) and num(above.get("tokens"))
+                             and all(r not in above or num(above[r]) for r in rates))
+
+
+def message_cost(n, price, rule):
+    """A tiered price switches to its upper rates when the message's prompt passes the
+    threshold; a rate the upper tier leaves out is the base one. None for no valid price.
     """
-    inp = usage.get("input_tokens", 0) or 0
-    out = usage.get("output_tokens", 0) or 0
-    read = usage.get("cache_read_input_tokens", 0) or 0
-    write = usage.get("cache_creation_input_tokens", 0) or 0
-    split = usage.get("cache_creation") or {}
-    hour = split.get("ephemeral_1h_input_tokens", 0) or 0
-    five = write - hour
+    if not is_price(price, rule):
+        return None
     rate = dict(price)
     above = price.get("above")
-    if above and inp + read + write > above["tokens"]:
+    if above and sum(n[k] for k in rule["prompt"]) > above["tokens"]:
         rate.update(above)
-    return (inp * rate["input"] + out * rate["output"] + read * rate["cache_read"]
-            + five * rate["cache_write_5m"] + hour * rate["cache_write_1h"]) / 1e6
+    cost = 0
+    for t in rule["terms"]:
+        cost += (sum(n[k] for k in t["plus"]) - sum(n[k] for k in t["minus"])) * rate[t["rate"]]
+    return cost / rule["per"]
 
 
 def measure(paths):
+    rule = cost_rule()
     prices = read_json(os.path.join(ROUTING_DIR, "prices.json"), {})
+    if not isinstance(prices, dict):
+        prices = {}
     out = {"cost_usd": 0.0, "models": {}, "tokens_in": 0, "tokens_out": 0,
            "cache_read": 0, "cache_write": 0}
-    usages = message_usages(paths)
+    usages = message_usages(paths, rule)
     if not usages:
         die("cost: no message carries usage in %s" % ", ".join(paths))
-    for model, usage in usages:
-        out["tokens_in"] += usage.get("input_tokens", 0) or 0
-        out["tokens_out"] += usage.get("output_tokens", 0) or 0
-        out["cache_read"] += usage.get("cache_read_input_tokens", 0) or 0
-        out["cache_write"] += usage.get("cache_creation_input_tokens", 0) or 0
-        price = prices.get(model)
-        if price is None:
+    for model, n in usages:
+        out["tokens_in"] += n["input"]
+        out["tokens_out"] += n["output"]
+        out["cache_read"] += n["cache_read"]
+        out["cache_write"] += n["cache_write"]
+        cost = message_cost(n, prices.get(model), rule)
+        if cost is None:
             out["models"][model] = None
             continue
         if out["models"].get(model, 0.0) is not None:
-            out["models"][model] = out["models"].get(model, 0.0) + message_cost(usage, price)
+            out["models"][model] = out["models"].get(model, 0.0) + cost
     for model, cost in out["models"].items():
         if cost is None:
             print("routing: no price for %s in %s" % (model, os.path.join(ROUTING_DIR, "prices.json")),
@@ -1151,7 +1198,8 @@ def host(pair, prompt, cwd, budget, mode):
     else:
         cost, incomplete = budget, True
     usage = res.get("usage") if isinstance(res.get("usage"), dict) else {}
-    tokens = {k: usage.get(k, 0) or 0 for k in TOKEN_KEYS} if usage else None
+    rule = cost_rule()
+    tokens = {rule["tokens"][k][0]: count_at(usage, rule["tokens"][k]) for k in rule["counted"]} if usage else None
     ok = not res.get("is_error") and res.get("subtype") == "success"
     return {"ok": ok, "models": models, "cost": cost, "incomplete": incomplete,
             "text": res.get("result") or "", "tokens": tokens, "duration": round(time.time() - started, 1)}
