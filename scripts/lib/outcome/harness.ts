@@ -115,6 +115,8 @@ export interface ArmResult {
 
 export interface Calibration {
   readonly referenceSuite: boolean
+  /** The suite's last lines when it fails on the merged result, else null. */
+  readonly referenceSuiteTail: string | null
   readonly referenceTests: readonly string[]
   readonly referenceTestsFailOnBase: boolean
 }
@@ -180,7 +182,7 @@ async function calibrate(task: Case, input: RunInput): Promise<Calibration> {
   const { bench } = input.ports
   const reference = join(input.workRoot, task.id, 'reference')
   await bench.prepare(reference, task.merge)
-  const referenceSuite = (await bench.suite(reference, task.plugin, input.signal)).passed
+  const suite = await bench.suite(reference, task.plugin, input.signal)
   const tests = await bench.referenceTests(task.base, task.merge, task.plugin)
   let referenceTestsFailOnBase = false
   if (tests.length > 0) {
@@ -189,7 +191,7 @@ async function calibrate(task: Case, input: RunInput): Promise<Calibration> {
     await bench.overlay(base, task.merge, tests)
     referenceTestsFailOnBase = !(await bench.suite(base, task.plugin, input.signal)).passed
   }
-  return { referenceSuite, referenceTests: tests, referenceTestsFailOnBase }
+  return { referenceSuite: suite.passed, referenceSuiteTail: suite.passed ? null : suite.tail, referenceTests: tests, referenceTestsFailOnBase }
 }
 
 interface Worked {

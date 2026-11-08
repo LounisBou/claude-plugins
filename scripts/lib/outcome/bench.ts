@@ -3,9 +3,10 @@
 // diff against the base; the plugin's suite run on it; and the reference's own tests laid over
 // it. Git and the suite run as argument vectors, never through a shell.
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import { ENV } from '../../../packages/core/src/env.ts'
 
 const run = promisify(execFile)
 const MAX_BUFFER = 64 * 1024 * 1024
@@ -77,8 +78,13 @@ function tail(text: string): string {
   return text.split('\n').filter(Boolean).slice(-TAIL_LINES).join('\n')
 }
 
-/** The bench over a local clone of the repository at `source`. */
-export function gitBench(source: string, suiteMs: number): Bench {
+/** Whether the plugin in `dir` holds TypeScript tests, which only the host's test kit runs. */
+export function hasHostTests(dir: string): boolean {
+  return readdirSync(dir, { recursive: true, encoding: 'utf8' }).some(path => path.endsWith('.test.ts') && !path.split('/').includes('node_modules'))
+}
+
+/** The bench over a local clone of the repository at `source`; `host` is the host's binary, for its test kit. */
+export function gitBench(source: string, suiteMs: number, host: string): Bench {
   return {
     async prepare(dir, commit) {
       await run('git', ['clone', '--quiet', '--shared', '--no-checkout', source, dir], { maxBuffer: MAX_BUFFER })
@@ -114,14 +120,25 @@ export function gitBench(source: string, suiteMs: number): Bench {
 
     async suite(dir, plugin, signal) {
       if (!/^[a-z][a-z0-9-]*$/.test(plugin)) throw new Error(`not a plugin name: ${JSON.stringify(plugin)}`)
-      const script = join('plugins', plugin, 'tests', 'run-tests.sh')
+      const root = join('plugins', plugin)
+      const script = join(root, 'tests', 'run-tests.sh')
       if (!existsSync(join(dir, script))) return { passed: false, tail: `no suite at ${script}` }
-      try {
-        const { stdout, stderr } = await run('bash', [script], { cwd: dir, signal, timeout: suiteMs, maxBuffer: MAX_BUFFER, encoding: 'utf8' })
-        return { passed: true, tail: tail(`${stdout}\n${stderr}`) }
-      } catch (error: unknown) {
-        return { passed: false, tail: tail(printed(error)) }
+      const steps: [string, string[]][] = [['bash', [script]]]
+      // The plugin's TypeScript tests import the host's kit: its own command runs them.
+      if (hasHostTests(join(dir, root))) steps.push([host, ['plugin', 'test', root]])
+      // As CI runs it: a suite that checks a contract with github finds the bench's own github.
+      const env = { ...process.env, [ENV.githubRoot]: join(dir, 'plugins', 'github') }
+      const printedLines: string[] = []
+      for (const [file, args] of steps) {
+        try {
+          const { stdout, stderr } = await run(file, args, { cwd: dir, env, signal, timeout: suiteMs, maxBuffer: MAX_BUFFER, encoding: 'utf8' })
+          printedLines.push(stdout, stderr)
+        } catch (error: unknown) {
+          printedLines.push(printed(error))
+          return { passed: false, tail: tail(printedLines.join('\n')) }
+        }
       }
+      return { passed: true, tail: tail(printedLines.join('\n')) }
     },
   }
 }

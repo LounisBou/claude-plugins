@@ -1,7 +1,7 @@
 // The outcome evals: merged pull requests replayed from their base by a single session and by
 // an orchestration, graded on what each leaves (evals/outcome/README.md).
 //
-//   npm run outcome -- dry-run --out <dir outside the checkout> [--case <id>]
+//   npm run outcome -- dry-run --out <dir outside the checkout> [--case <id>] [--host <binary>]
 //
 // A dry run replays the cases with stand-ins for the model: no money is spent, and it proves
 // the cases, the benches and the graders before a paid run.
@@ -16,7 +16,7 @@ import { filesJudge, oracleAgent, silentMeter } from './lib/outcome/stub.ts'
 import { processIo, type Io } from './lib/io.ts'
 import { isEntry } from './lib/plugins.ts'
 
-const USAGE = 'usage: outcome dry-run --out <dir outside the checkout> [--case <id>]'
+const USAGE = 'usage: outcome dry-run --out <dir outside the checkout> [--case <id>] [--host <binary>]'
 const SUITE_MS = 30 * 60 * 1000
 const ARM_MS = 90 * 60 * 1000
 
@@ -24,13 +24,15 @@ export interface Options {
   readonly mode: 'dry-run'
   readonly out: string
   readonly only: string | undefined
+  /** The host's binary: its test kit runs a plugin's TypeScript tests. */
+  readonly host: string
 }
 
 /** The options, or the line that says what is wrong with them. */
 export function parseOptions(root: string, args: readonly string[]): Options | string {
   let parsed
   try {
-    parsed = parseArgs({ args: [...args], allowPositionals: true, options: { out: { type: 'string' }, case: { type: 'string' } } })
+    parsed = parseArgs({ args: [...args], allowPositionals: true, options: { out: { type: 'string' }, case: { type: 'string' }, host: { type: 'string', default: 'claude' } } })
   } catch (error: unknown) {
     return error instanceof Error ? error.message : String(error)
   }
@@ -41,7 +43,7 @@ export function parseOptions(root: string, args: readonly string[]): Options | s
   const absolute = resolve(root, out)
   const inside = relative(resolve(root), absolute)
   if (inside === '' || (!inside.startsWith('..') && !isAbsolute(inside))) return `--out must be outside the checkout: ${absolute}`
-  return { mode, out: absolute, only: parsed.values.case }
+  return { mode, out: absolute, only: parsed.values.case, host: parsed.values.host }
 }
 
 function readJson(root: string, file: string): unknown {
@@ -62,7 +64,7 @@ export async function run(root: string, args: readonly string[], io: Io, signal:
   const cases = parseCases(readJson(root, CASES_FILE))
   const caps = parseCapsFile(readJson(root, CAPS_FILE)).runs.measure
   const ports: Ports = {
-    bench: gitBench(root, SUITE_MS),
+    bench: gitBench(root, SUITE_MS, options.host),
     agent: oracleAgent(),
     meter: silentMeter(),
     judge: filesJudge(),
