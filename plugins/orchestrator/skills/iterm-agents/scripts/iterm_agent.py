@@ -3940,6 +3940,40 @@ def cmd_list(_argv):
             print(line)
 
 
+def read_text(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+    except (OSError, ValueError):
+        return ""
+
+
+def succession_check(prompt):
+    """A successor is refused on a succession brief that misses an open item of the state (an
+    open dispatch row, pull request, running agent or pending question): the brief its prompt
+    names, read as the file whose first line is a succession brief's, is checked by
+    `succession.sh check` (decision 0007). A prompt that names no such file is not checked.
+    Answers the brief's path, or "" when the prompt names none."""
+    for word in re.findall(r"[^\s'\"`]+", prompt or ""):
+        path = os.path.expanduser(word.rstrip(".,;:"))
+        if not os.path.isfile(path) or not read_text(path).startswith("# Orchestrator succession brief"):
+            continue
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "orchestrator",
+                              "scripts", "succession.ts")
+        argv = ["node", "--no-warnings", script, "check", path]
+        if os.environ.get("CLAUDE_CODE_SESSION_ID"):
+            argv += ["--session", os.environ["CLAUDE_CODE_SESSION_ID"]]
+        try:
+            ran = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        except OSError as exc:
+            die("spawn: refused: the succession brief %s could not be checked (%s)" % (path, exc))
+        if ran.returncode != 0:
+            die("spawn: refused: the succession brief %s is not the state's; regenerate its Live "
+                "state with succession.sh live:\n%s" % (path, ran.stdout.decode("utf-8", "replace").strip()))
+        return os.path.abspath(path)
+    return ""
+
+
 def write_prompt_file(prompt, title):
     os.makedirs(PROMPTS_DIR, exist_ok=True)
     path = state_file_path("prompt", title, "txt")
@@ -4053,7 +4087,7 @@ def host_cuts(role):
 def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_file="",
                   account_connectors=False, gate_tokens=0, effort="", keep_tools=(),
                   drop_tools=(), keep_synced_skills=False, session=(), plugin_dirs=(),
-                  caller_plugins=None, reports_to=""):
+                  caller_plugins=None, reports_to="", brief=""):
     """The command iTerm2 runs in the new tab. It is HANDED to the app, never typed, so
     its length and its bytes stop being a hazard. No model argument at all when neither a
     tier nor an explicit identifier says which: the host's own default is the right
@@ -4082,6 +4116,10 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
         # names a live owner for this session's tty: a chain outlives its owner's tab, and an
         # orchestrator relaunched without --successor leaves its agents in a dead one.
         parts.insert(2, "export ORCHESTRATOR_REPORTS_TO=%s" % shq(reports_to))
+    if brief:
+        # The brief the session starts on, measured by the module's gauge at its first measure
+        # beside the starting context (the measure file's `start`).
+        parts.insert(2, "export ORCHESTRATOR_BRIEF=%s" % shq(brief))
     if not gate_tokens and title_role(title) == "Agent":
         gate_tokens = AGENT_GATE_TOKENS
     if gate_tokens:
@@ -4597,6 +4635,9 @@ def cmd_spawn(argv, pair_from=""):
         die("spawn: refused: no startup prompt: the host writes no transcript before a "
             "first prompt, so the session's mode cannot be read; give the brief with "
             "--prompt or --prompt-file")
+    start_brief = os.path.abspath(args.brief) if args.brief else ""
+    if args.successor:
+        start_brief = succession_check(args.prompt or read_text(args.prompt_file)) or start_brief
     if args.tier and args.model:
         die("spawn: --tier and --model are mutually exclusive")
     if args.inherit and (args.tier or args.model):
@@ -4805,7 +4846,8 @@ def cmd_spawn(argv, pair_from=""):
     launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control,
                            mcp_file, args.account_connectors, gate_tokens, effort,
                            args.keep_tool, args.drop_tool, args.keep_synced_skills,
-                           session_words, plugin_dirs, caller_plugins, args.orchestrator)
+                           session_words, plugin_dirs, caller_plugins, args.orchestrator,
+                           start_brief)
 
     if DRY_RUN:
         print("launch=%s" % launch)

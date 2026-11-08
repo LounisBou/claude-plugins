@@ -40,13 +40,14 @@ Measure, wait and close: `references/lifecycle.md`, « Succession — the succes
 
 ## Live state — written at the handover
 
-The hand-over copy of the state file's live part (status lives once, there), pruned by your predecessor to what is live, its finished journal archived in a file you are not asked to load. It replaces reading the journal. Over the cap, cut first where each pull request stands, then what each row has left.
+Generated from the state by `succession.sh live`: the open rows, pull requests, agents and questions are the state's, the next step and the notes your predecessor's. It replaces reading the journal.
 
 - Rows open (id, label, what remains): {{LIVE_ROWS}}
 - Pull requests open (number, head, where each stands): {{LIVE_PULL_REQUESTS}}
 - Agents running (name and reference, brief path): {{LIVE_AGENTS}}
 - The operator's open questions, each verbatim (its `Question i of N` block whole), with its round entry id, or `none`: {{LIVE_OPEN_QUESTIONS}}
 - The next step: {{LIVE_NEXT_STEP}}
+- Notes of judgment: {{LIVE_NOTES}}
 
 ## Standing context
 
