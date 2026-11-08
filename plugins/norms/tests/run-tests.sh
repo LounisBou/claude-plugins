@@ -207,7 +207,8 @@ mkrepo "$WORK/stack" main
 (cd "$WORK/stack" && $GIT checkout -q -b parent main && $GIT commit -q --allow-empty -m parent-work \
   && $GIT checkout -q -b child && $GIT commit -q --allow-empty -m child-work)
 want=$(cd "$WORK/stack" && git rev-parse parent)
-check "stacked PR resolves to its base branch" "$want" "$(FAKE_PR_BASE=parent base_in "$WORK/stack")"
+check "a stacked PR resolves to the base the module passes it" "$want" "$(base_in "$WORK/stack" parent)"
+check "the resolver never asks gh itself" "" "$(grep -nE '(^|[^_])gh ' "$BASE_SH" | grep -v '^[0-9]*:#')"
 check "explicit base wins over the PR base" "$(cd "$WORK/stack" && git rev-parse main)" \
   "$(FAKE_PR_BASE=parent base_in "$WORK/stack" main)"
 
