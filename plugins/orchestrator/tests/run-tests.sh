@@ -154,10 +154,10 @@ check "the old command namespace is gone" "" "$hits"
 # and 7-day windows together with stopping, throttling, dropping a tier or proposing one.
 BUDGET_TERMS='five_hour|seven_day|budget|rate_limits|quota|5-hour|7-day|five-hour|seven-day|usage limit'
 BUDGET_ACTIONS='stop|throttl|drop|downgrad|lower|pause|slow|propos|fall back|cheaper tier|lighter tier|switch|reduc|cheapest|ration|defer|cut back'
-budget_hits() { # <root>
+budget_hits() { # <root>: read on each line's text, never its path (calibration.py holds « ration »)
   ( cd "$1" && grep -rnIiE --exclude-dir=__pycache__ "$BUDGET_TERMS" skills commands templates hooks README.md docs/design.md 2>/dev/null \
     | sed -E 's/--max-budget-usd|--budget-usd|budget_usd|quota_before|quota_after|ORCHESTRATOR_QUOTA_FILE//g' \
-    | grep -iE "$BUDGET_TERMS" | grep -iE "$BUDGET_ACTIONS" || true )
+    | grep -iE "^[^:]*:[0-9]+:.*($BUDGET_TERMS)" | grep -iE "^[^:]*:[0-9]+:.*($BUDGET_ACTIONS)" || true )
 }
 check "no stop, throttle or tier drop on the usage budget in the plugin" "" "$(budget_hits "$ROOT")"
 # The guard proves it can still see one, and that the bench's fields and flags pass it.
@@ -10039,8 +10039,8 @@ check "show --detail reads a table written before the tables by task, a missing 
   "$(ORCHESTRATOR_STATE_DIR="$PS" python3 "$ROUTING" show --detail laravel 2>&1 | grep -c '^class=conversion-phase project=a-model/medium ')|$(ORCHESTRATOR_STATE_DIR="$PS" python3 "$ROUTING" show --detail laravel 2>&1 | grep -c '^  rung pair=a-model/low tasks=- pass_rate=0.5 p_best=- median_usd=- ci=-..- expected_usd=- off_model=-$')"
 
 # The size of a phase: one rule, the bucket a task is stamped with and the one `pick` is given.
-rcall() { # a python expression over the module as `m`, printed; a crash is read as its last traceback line
-  "$py" -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(eval(sys.argv[2]))' "$ROUTING" "$1" 2>&1 | tail -1; }
+rcall() { # a python expression over routing.py and calibration.py as `m`, printed; a crash is read as its last traceback line
+  "$py" -c 'import importlib.util,sys,types; s=importlib.util.spec_from_file_location("r",sys.argv[1]); c=importlib.util.module_from_spec(s); s.loader.exec_module(c); m=types.SimpleNamespace(**{**vars(sys.modules["routing"]), **vars(c)}); print(eval(sys.argv[2]))' "$CALIBRATION" "$1" 2>&1 | tail -1; }
 check "a phase of 3 files and 50 lines is small; one more file or one more line is large" "small|small|large|large" \
   "$(rcall 'm.size_bucket(3, 50)')|$(rcall 'm.size_bucket(0, 0)')|$(rcall 'm.size_bucket(4, 0)')|$(rcall 'm.size_bucket(0, 51)')"
 
