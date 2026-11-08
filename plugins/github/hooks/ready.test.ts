@@ -232,7 +232,7 @@ test('the refusals read as the guard documents them', () => {
   expect(notReadyRefusal('pr-merge', 'o/r', 12, HEAD, ['review: no record at 0123456', 'CI still running'])).toBe(
     'github: pr-merge refused on o/r#12 at 0123456: not ready. Missing: review: no record at 0123456, CI still running.'
     + ' A pull request is ready when a clean review, a passed norms check, passed E2E and green CI are all at its'
-    + ' current head (engine/WRITING.md « Ready pull requests »).')
+    + ' current head (engine/writing/pull-requests.md « Ready pull requests »).')
   expect(autoMergeRefusal('merge', 'o/r', 12)).toBe(
     'github: gh pr merge refused on o/r: this repository is not in auto-merge, so a merge or leaving draft needs the'
     + ' operator\'s explicit word. When he gave it, run mcp__github__gh pr-merge {"pr": 12} on o/r: it checks that'
