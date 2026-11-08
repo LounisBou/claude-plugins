@@ -410,7 +410,7 @@ export function carriesReady(gate: Gate): boolean {
 export function notReadyRefusal(act: string, repo: string, pr: number, head: string, missing: string[]): string {
   return 'github: ' + act + ' refused on ' + repo + '#' + pr + ' at ' + head7(head) + ': not ready. Missing: '
     + missing.join(', ') + '. A pull request is ready when a clean review, a passed norms check, passed E2E and'
-    + ' green CI are all at its current head (engine/WRITING.md « Ready pull requests »).'
+    + ' green CI are all at its current head (engine/writing/pull-requests.md « Ready pull requests »).'
 }
 
 // repo undefined: the call names no repository the guard could read.

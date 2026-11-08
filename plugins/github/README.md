@@ -47,7 +47,7 @@ it. `/github:doctor` then confirms everything is ready.
   `comment-delete`, nor where an explicit rule asks.
 - **Writing rules enforced** — before a title, a description or a comment
   leaves the machine, the mod checks the mechanical rules of
-  `engine/WRITING.md`: no semicolon in prose (code spans, fenced blocks and
+  `engine/writing/`: no semicolon in prose (code spans, fenced blocks and
   URLs are not prose), no trailer of any kind (`Co-Authored-By`,
   `Signed-off-by`, `Claude-Session`, any `<word>-by`, `Change-Id`), a
   title on one line and within 72 characters, no heading in a PR description,
@@ -100,8 +100,8 @@ it. `/github:doctor` then confirms everything is ready.
 The engine (`engine/gh.py` + `ghlib/`) is plain Python standard library; the
 mod (`hooks/register.ts`) is TypeScript loaded directly by Claude Code — no
 build step. Writing rules for commits, PR titles, descriptions and review
-comments live in `engine/WRITING.md`; the tool's description points Claude at
-both files.
+comments live in `engine/writing/`, one file per kind of text; the tool's description
+points Claude at them.
 
 Images are attached by committing them to a dedicated `pr-assets` branch
 through the Contents API, named after the SHA-256 of their bytes so the same
@@ -149,7 +149,7 @@ is not. The other three are records, one small JSON file per run under
 pr-review's auto-fix-loop for the review, `/norms:check` for the norms, and
 `mcp__github__record` for the end-to-end run. A record counts only at the head it names, so a new commit voids them
 all without anything deleted. `engine/REFERENCE.md` « Records » holds the
-contract; `engine/WRITING.md` « Ready pull requests » the rule.
+contract; `engine/writing/pull-requests.md` « Ready pull requests » the rule.
 
 When the CI does not run on a draft, the pull request leaves draft for it,
 still `Not Ready`, goes back to draft once the CI is green, then takes
@@ -166,17 +166,18 @@ environment brings the enforce phase forward, where it is refused.
 
 ## Guards
 
-**WRITING.md read.** Before a session writes a commit (`git commit`), opens, edits
+**Writing rules read.** Before a session writes a commit (`git commit`), opens, edits
 or comments a pull request or an issue (`gh pr create`, `gh issue create`, `gh pr
 comment`, `gh issue comment`, `gh pr review` with a body, `gh pr edit` and `gh
 issue edit` with a title or a body), or calls the tool with a text, it reads
-`engine/WRITING.md` whole: the Read tool from its first line to its last, or a
-Bash `cat` or `sed -n '1,$p'` of it. Each subagent reads for itself, and a
+the files of `engine/writing/` that its kind of text needs, whole: `commits.md`,
+`pull-requests.md` or `comments.md`, and `references.md`; the Read tool from a file's first
+line to its last, or a Bash `cat` or `sed -n '1,$p'` of it. Each subagent reads for itself, and a
 compaction asks for one more read. Commands are read word by word, so a message
 that only mentions one passes. Until then the call is refused with:
 
 ```
-github: read <root>/engine/WRITING.md with the Read tool, whole, before <command>: its rules (commit convention, references, PR titles and descriptions, comments, ready pull requests) apply to this text. Then run the same command again.
+github: read <root>/engine/writing/<file> and <root>/engine/writing/references.md with the Read tool, whole, before <command>: their rules apply to this text. Then run the same command again.
 ```
 
 A failure of the guard itself lets the call through with one transcript line,
@@ -193,7 +194,7 @@ the act is refused before anyone is asked, and a pull request still carrying
 `Ready` goes back to `Not Ready`:
 
 ```
-github: <act> refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>, <item>. A pull request is ready when a clean review, a passed norms check, passed E2E and green CI are all at its current head (engine/WRITING.md « Ready pull requests »).
+github: <act> refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>, <item>. A pull request is ready when a clean review, a passed norms check, passed E2E and green CI are all at its current head (engine/writing/pull-requests.md « Ready pull requests »).
 ```
 
 Under warn the act goes ahead with `github: <act> on <owner/name>#<n> is not

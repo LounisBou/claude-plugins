@@ -29,8 +29,7 @@ Example:
 
 `repo` (`owner/name`) overrides the `origin` remote.
 
-Before writing a commit message, a pull request title, a pull request description
-or a review comment, read `WRITING.md` beside this file.
+Before writing a text, read its rules in `writing/` beside this file.
 
 ## Subcommands
 
@@ -221,7 +220,7 @@ authenticates with browser session cookies rather than a scoped token. That rout
 deliberately not used: it would mean whole-account credentials on disk.
 
 `--title T` puts the screenshot's descriptive title above its image, as a bold line
-followed by the image with the title as alt text (`WRITING.md` « Pull request
+followed by the image with the title as alt text (`writing/pull-requests.md` « Pull request
 descriptions »): one line, trimmed, 100 characters or fewer, with no colon at its end. Asterisks and
 closing brackets are taken out of it, as they would break the bold line or the alt text. A title
 the description rules would refuse is refused too, so the block always passes them: a semicolon,
@@ -316,18 +315,19 @@ Never « external terminal ».
 
 ## Guards
 
-**WRITING.md read.** A commit (`git commit`), a pull request or an issue opened, edited
+**Writing rules read.** A commit (`git commit`), a pull request or an issue opened, edited
 with a title or a body, or commented (`gh pr create`, `gh issue create`, `gh pr
 comment`, `gh issue comment`, `gh pr review` with a body, `gh pr edit` and `gh issue
 edit` with a title or a body), and every call of this tool that carries a text, waits
-until `WRITING.md` beside this file was read whole in the context that writes it: the
-Read tool from its first line to its last, or a Bash `cat` or `sed -n '1,$p'` of it.
+until the files of `writing/` its kind of text needs, which the refusal names, were read
+whole in the context that writes it: the Read tool from a file's first line to its last, or
+a Bash `cat` or `sed -n '1,$p'` of it.
 Each subagent reads for itself, and a compaction asks for one more read. The command
 is read word by word, so a message or a body that only mentions one of these commands
 passes. Until then the call is refused with:
 
 ```
-github: read <root>/engine/WRITING.md with the Read tool, whole, before <command>: its rules (commit convention, references, PR titles and descriptions, comments, ready pull requests) apply to this text. Then run the same command again.
+github: read <root>/engine/writing/<file> and <root>/engine/writing/references.md with the Read tool, whole, before <command>: their rules apply to this text. Then run the same command again.
 ```
 
 **Ready.** `pr-ready`, `pr-merge`, `pr-readiness ready`, `label-add` with `Ready` and
@@ -345,7 +345,7 @@ is not ready either. Under the enforce phase the act is refused before any quest
 pull request still carrying `Ready` goes back to `Not Ready`:
 
 ```
-github: <act> refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>, <item>. A pull request is ready when a clean review, a passed norms check, passed E2E and green CI are all at its current head (engine/WRITING.md « Ready pull requests »).
+github: <act> refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>, <item>. A pull request is ready when a clean review, a passed norms check, passed E2E and green CI are all at its current head (engine/writing/pull-requests.md « Ready pull requests »).
 ```
 
 Under the warn phase, the one this release ships (`CLAUDE_GITHUB_READY_ENFORCE=1` brings
@@ -384,7 +384,7 @@ github: <gh pr merge | gh pr ready> refused on <owner/name>: this repository is 
 The engine run from Bash keeps the writing rules too: `pr-create`, `pr-comment`, a
 `pr-update` with a title or a body, and `review-submit`, `thread-reply`, `comment-edit`,
 `review-pending-create` and `review-pending-add` with a body file or a comments file wait for
-`WRITING.md` to be read, as `gh pr create`, `gh pr comment` and `gh pr edit` do, and the `--title` of `pr-create` and `pr-update`, and the
+the writing rules to be read, as `gh pr create`, `gh pr comment` and `gh pr edit` do, and the `--title` of `pr-create` and `pr-update`, and the
 file a `--body-file` names, are linted as the tool's call would be. An engine act whose
 pull request number cannot be read from the command (`pr-merge {}` fed by an `xargs`,
 `pr-merge "$PR"`) is refused in both phases, never read against the current branch's pull

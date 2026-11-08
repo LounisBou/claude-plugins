@@ -4,6 +4,6 @@
   "include": [
     "scripts/**/*.ts",
     "packages/*/src/**/*.ts",
-    "plugins/orchestrator/skills/orchestrator/scripts/**/*.ts"
+    "plugins/orchestrator/skills/*/scripts/**/*.ts"
   ]
 }
