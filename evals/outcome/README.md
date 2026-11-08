@@ -57,3 +57,29 @@ A dry run spends nothing: an oracle stands in for both arms (it leaves the merge
 and a judge that compares the files touched stands in for the model. It proves the cases,
 the benches, the calibration and the graders before a paid run. `<dir>/report.md` is the
 report to read, `<dir>/report.json` its record, `<dir>/work/` the benches.
+
+### The pilot and the measure
+
+On the operator's machine, from the repository root, after a dry run whose calibration holds:
+
+```bash
+npm run outcome -- pilot   --out <dir> --model <agent model> --judge-model <judge model>
+npm run outcome -- measure --out <dir> --model <agent model> --judge-model <judge model>
+```
+
+- The pilot replays the first case with both arms; the measure the first six. `--case <id>`
+  replays one case under the run's caps, the way a reserve replaces a case.
+- The models are named on the command line, never in the repository. Two runs compare only
+  on the same pair.
+- Each arm is the host's command line run headless in its bench, with its share of the cap
+  as the host's own budget. Its tools run unasked: the bench is a private clone without a
+  remote. The single arm runs with every installed orchestrator turned off; the
+  orchestration arm loads this checkout's `plugins/orchestrator`, the release measured, and
+  is asked through the orchestrator's skill.
+- An orchestration's sessions are metered through the orchestrator's `deck.json` (`--deck`
+  names another path): only the sessions opened after the arm started count, so the
+  operator's own sessions are never charged to it. When the arm ends or is stopped, the
+  sessions it opened that the deck still lists are closed by the launcher's close.
+- `--host <binary>` names the host's command line when it is not `claude` on the path.
+
+A run stopped at a cap still writes its report, with what it measured and why it stopped.
