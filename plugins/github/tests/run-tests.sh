@@ -1308,7 +1308,7 @@ before=$(find "$WORK/cfg" -type f | sort)
 inst >/dev/null 2>&1
 check "install.sh writes nothing" "$before" "$(find "$WORK/cfg" -type f | sort)"
 
-check "both commands declare a description" "2" \
+check "every command declares a description" "$(ls "$ROOT"/commands/*.md | wc -l | tr -d ' ')" \
   "$(grep -l '^description:' "$ROOT"/commands/*.md 2>/dev/null | wc -l | tr -d ' ')"
 
 check "no uninstall script exists" "" \
@@ -1572,22 +1572,16 @@ check "no attribution trailers in history" "0" \
 # or read as part of using the plugin, and the one file guaranteed to spell
 # out the search string in its own source.
 #
-# Two narrow exceptions. The hooks test files (hooks/*.test.ts) are
-# developer-only like this suite, and spell out the name to prove the record
-# tool tells the review's plugin apart. The one line of hooks/ready.ts that
-# defines REVIEW_PLUGIN carries the name the host installs claude-review
-# under, which is what a hook call's origin reports; every other line still
-# counts, so a refusal text or a doc naming the old plugin still fails here.
+# The review's plugin is pr-review in this repository; claude-review, the name it
+# carried in its own repository, is the old one. The hooks test files are
+# developer-only like this suite.
 old_name_hits=""
 for f in $(cd "$ROOT" && git ls-files); do
   case "$f" in
     tests/run-tests.sh) continue ;;
     hooks/*.test.ts) continue ;;
   esac
-  hit=$(grep -inE 'pr-review([^s]|$)' "$ROOT/$f" 2>/dev/null || true)
-  if [ "$f" = hooks/ready.ts ]; then
-    hit=$(printf '%s\n' "$hit" | grep -vE "^[0-9]+:export const REVIEW_PLUGIN = 'pr-review'$" || true)
-  fi
+  hit=$(grep -inE 'claude-review' "$ROOT/$f" 2>/dev/null || true)
   if [ -n "$hit" ]; then
     old_name_hits="$old_name_hits
 $f: $hit"
@@ -1810,6 +1804,40 @@ for line in open(sys.argv[1] + '/sent.jsonl'):
         print(row['method'], row['path'], json.dumps(row['body'], sort_keys=True))
 " "$F7" 2>/dev/null
 }
+
+echo "== The forge's protection =="
+
+protect_fix() {
+  new7 "protect-$1"
+  printf '%s' '{"default_branch":"main"}' > "$F7/GET_repos_acme_thing.json"
+  printf '%s' "$2" > "$F7/GET_repos_acme_thing_rules_branches_main__per_page=100.json"
+  printf '%s' "$3" > "$F7/GET_repos_acme_thing_branches_main_protection.json"
+  printf '%s' "$4" > "$F7/GET_repos_acme_thing_rulesets__per_page=100.json"
+}
+NONE='{"__status":404,"message":"Branch not protected"}'
+
+protect_fix bare '[]' "$NONE" '[]'
+check "protect-check names what a bare default branch allows" "unprotected main: force-push and deletion allowed
+force-push: allowed
+deletion: allowed" "$(gh7 protect-check)"
+check "protect-check writes nothing" "" "$(sent7)"
+gh7 protect-apply >/dev/null
+check "protect-apply creates the ruleset on the default branch, administrators included" \
+  'POST /repos/acme/thing/rulesets {"bypass_actors": [], "conditions": {"ref_name": {"exclude": [], "include": ["~DEFAULT_BRANCH"]}}, "enforcement": "active", "name": "protect the default branch", "rules": [{"type": "non_fast_forward"}, {"type": "deletion"}], "target": "branch"}' "$(sent7)"
+
+protect_fix held '[{"type":"non_fast_forward","ruleset_id":3},{"type":"deletion","ruleset_id":3}]' "$NONE" '[]'
+check "protect-check reads the rules a ruleset holds" "protected main
+force-push: refused by the ruleset
+deletion: refused by the ruleset" "$(gh7 protect-check)"
+check "protect-apply writes nothing when both are refused" "already protected main" "$(gh7 protect-apply | head -1)"
+check "protect-apply's no-op sends nothing" "" "$(sent7)"
+
+protect_fix classic '[]' '{"allow_force_pushes":{"enabled":false},"allow_deletions":{"enabled":true}}' '[{"id":9,"name":"protect the default branch"}]'
+check "protect-check reads the classic protection, and names what it leaves" "unprotected main: deletion allowed
+force-push: refused by the branch protection
+deletion: allowed" "$(gh7 protect-check)"
+gh7 protect-apply >/dev/null
+check "protect-apply updates its own ruleset rather than making a second" "PUT /repos/acme/thing/rulesets/9" "$(sent7 | cut -d' ' -f1-2)"
 
 new7 ensure-empty
 check "labels-ensure creates both labels on a bare repository" "created Ready

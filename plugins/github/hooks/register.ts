@@ -33,6 +33,7 @@ export const COMMANDS = [
   'pr-ready', 'pr-draft', 'label-add', 'label-remove', 'reviewer-add', 'reviewer-remove',
   'assignee-add', 'assignee-remove', 'labels-ensure', 'pr-readiness', 'issue-view', 'issue-list',
   'issue-search', 'pr-linked-issues', 'image-upload', 'auth-check', 'auto-merge-set', 'auto-merge-list',
+  'protect-check', 'protect-apply',
 ]
 
 // The subcommands this module answers without the engine: the list of
@@ -46,6 +47,7 @@ export const READS = new Set([
   'file-at-ref', 'pr-threads', 'pr-comments', 'pr-issue-comments', 'pr-reviews',
   'comment-resolved', 'comments-resolved-batch', 'review-pending', 'repo-review-comments',
   'issue-view', 'issue-list', 'issue-search', 'pr-linked-issues', 'auth-check', 'auto-merge-list',
+  'protect-check',
 ])
 
 export const TOOL = 'mcp__github__gh'
@@ -1259,7 +1261,7 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   const kind = e.kind === undefined || e.kind === null || e.kind === '' ? owned : String(e.kind)
   if (kind !== owned) {
     return {
-      deny: 'github: ' + kind + ' records are written by their producer (claude-review\'s auto-fix-loop for review,'
+      deny: 'github: ' + kind + ' records are written by their producer (pr-review\'s auto-fix-loop for review,'
         + ' /norms:check for norms): ' + (origin === 'engine' ? 'this tool' : origin) + ' writes ' + owned + ' only.',
     }
   }
@@ -1598,6 +1600,17 @@ export function register(on: any): void {
 
   // The markdown commands answered here without a model turn. A failure falls
   // back to the markdown, which runs the same script through the model.
+  // /github:protect [apply]: the default branch's force-push and deletion protection, read on
+  // the forge, and put in place on the operator's « apply ».
+  on('command.run', { command: 'github:protect' }, async ($: any, e: any) => {
+    const command = /\bapply\b/.test(String(e.args ?? '')) ? 'protect-apply' : 'protect-check'
+    try {
+      return { text: (await runGh($, command, {}, await targetRepo($, { repo: undefined, args: {} }))).trim() }
+    } catch (err: any) {
+      return { text: 'github: ' + command + ' failed: ' + String(err?.message ?? err).trim() }
+    }
+  }).catch(async ($: any, e: any, next: any) => next(e))
+
   on('command.run', { command: 'github:install' }, async ($: any) => ({ text: await diagnose($) }))
     .catch(async (_$: any, e: any, next: any) => next(e))
   on('command.run', { command: 'github:doctor' }, async ($: any) => ({ text: await diagnose($, true) }))

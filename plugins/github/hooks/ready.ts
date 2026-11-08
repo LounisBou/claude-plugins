@@ -464,8 +464,8 @@ export function warnLine(act: string, repo: string, pr: number | string, missing
     + ' Missing: ' + missing.join(', ')
 }
 
-export const RECORDS_REFUSAL = 'github: records are written by their producers (claude-review\'s auto-fix-loop,'
-  + ' /norms:check, the orchestrator\'s ready, mcp__github__record for E2E), never by hand.'
+export const RECORDS_REFUSAL = 'github: records are written by their producers (pr-review\'s auto-fix-loop,'
+  + ' /norms:check, mcp__github__record for E2E), never by hand.'
 
 // A path into the records, or to their directory itself: a message or a body
 // that only names the word is no path.
@@ -479,7 +479,7 @@ export function touchesRecords(line: string, root?: string): boolean {
 // The record kinds a caller of mcp__github__record may write, by the plugin
 // whose hook made the call: the model (the engine) and any other plugin write
 // only E2E, the review and the norms check have their own producers. The
-// review's plugin is claude-review, installed under the name its host gives it.
+// review's plugin is pr-review, installed under the name its host gives it.
 export const REVIEW_PLUGIN = 'pr-review'
 export const RECORD_PRODUCERS: Record<string, string> = { [REVIEW_PLUGIN]: 'review', norms: 'norms' }
 
