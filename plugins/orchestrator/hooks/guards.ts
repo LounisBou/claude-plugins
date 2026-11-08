@@ -2,11 +2,11 @@
 // The guards in-process, and the walks they walk. The context gate,
 // hooks/context-gate.sh ported: on every prompt of a session the
 // orchestration named, the fill the gauge measured, said to the model past the
-// gate — never a line the user must relay. The push guard beside it,
-// hooks/push-guard.sh ported: every Bash call of a session the launcher
-// spawned read for a force, every force but the rebase's lease refused. The
-// kill guard beside the push guard, on the same calls: every kill by name or
-// pattern refused, since a session kills only what it started, by pid. And
+// gate — never a line the user must relay. The kill guard beside it, on every
+// Bash call of a session the launcher spawned: every kill by name or pattern
+// refused, since a session kills only what it started, by pid. A forced push is
+// the forge's to refuse (github's `/github:protect`), never a reading of the
+// command's text here. And
 // the stop gate, hooks/stop_gate.py ported: a stop is held until something
 // will wake the orchestrator — a busy agent's idle notice, the answer to a
 // declared block, the end of a watched pull request's checks. The shell
@@ -25,7 +25,7 @@ import { tripGate, parseMeasure, measureFilePath } from './gauge-core.ts'
 import { takeDrift } from './gauge.ts'
 import { isEnding } from './naming.ts'
 import { oneQuestionRefusal, operatorWaitRefusal, asksTheOperator, QUESTION_BY_MESSAGE } from './one-question.ts'
-import { detectForces, detectPatternKills } from './tokenizer.ts'
+import { detectPatternKills } from './tokenizer.ts'
 import {
   refuse, withDeadline, isDegradedPass, type DegradedPass,
   listing, chainEntries, chainOwner, ownAgents, hostStatusOf, pullRequestOf, openRows, deferredRows, deferredIds, machineLine, projectCheckouts,
@@ -107,20 +107,8 @@ function setNames(env: { gate?: number; gateTokens?: number }): string[] {
   return names
 }
 
-// The push decision, hooks/push-guard.sh's refusal ported: nothing in a session
-// the launcher did not mark (its build command exports the marker), and in a
-// marked one every force but the rebase's lease refused. The denial text is
-// push-guard.sh:226 verbatim, the tokeniser's reason strings spliced where the
-// shell spliced its awk's — they are pinned equal by the tokeniser's fixtures.
-export function pushDecision(spawned: string | null | undefined, command: string): { deny: string } | null {
-  if (!spawned) return null                        // the operator's own sessions: untouched
-  const forces = detectForces(command)
-  if (forces.length === 0) return null
-  return { deny: `git push refused: this session was spawned by the launcher, and the only forced push allowed here is --force-with-lease=<branch>:<sha> with the sha you read. Seen: ${forces.join(', ')}. If the command only mentions a push, put text that mentions a push in a file (\`git commit -F\`, \`gh … --body-file\`).` }
-}
-
-// The kill decision, the push decision's twin: nothing in a session the launcher did not
-// mark, and in a marked one every kill by name or pattern refused — pkill, killall, a
+// The kill decision: nothing in a session the launcher did not mark (its build command
+// exports the marker), and in a marked one every kill by name or pattern refused — pkill, killall, a
 // kill whose pids come from a substitution other than `cat <file>` or from a lister
 // through xargs, a kill of every process or of a process group. A session kills only
 // what it started, by the pid it recorded in a file (`cmd & echo $! > <file>`, then
@@ -134,15 +122,12 @@ export function killDecision(spawned: string | null | undefined, command: string
   return { deny: `kill refused: this session was spawned by the launcher, and it kills only what it started, by the pid it recorded in a file (start it with \`cmd & echo $! > <file>\`, end it with \`kill $(cat <file>)\`). A kill by name or pattern can end other sessions' processes. Seen: ${kills.join(', ')}.` }
 }
 
-// The Bash guards' answer when they could not run whole: the mark as last read decides.
-// A session the launcher marked refuses its forced pushes and its kills by pattern as
-// the guards would; a mark never read refuses either with the reason the guard did not
-// finish — the safe side when nothing says which session this is; an operator's own
-// session is left alone.
+// The kill guard's answer when it could not run whole: the mark as last read decides.
+// A session the launcher marked refuses its kills by pattern as the guard would; a mark
+// never read refuses them with the reason the guard did not finish — the safe side when
+// nothing says which session this is; an operator's own session is left alone.
 export function guardFallback(mark: string | null | undefined, command: string, why: string): { deny: string } | null {
-  if (mark !== undefined) return pushDecision(mark, command) ?? killDecision(mark, command)
-  const forces = detectForces(command)
-  if (forces.length > 0) return { deny: `git push refused: the push guard could not read whether the launcher spawned this session (${why}), and a forced push waits until it can. Seen: ${forces.join(', ')}.` }
+  if (mark !== undefined) return killDecision(mark, command)
   const kills = detectPatternKills(command)
   if (kills.length === 0) return null
   return { deny: `kill refused: the kill guard could not read whether the launcher spawned this session (${why}), and a kill by name or pattern waits until it can. Seen: ${kills.join(', ')}.` }
@@ -302,7 +287,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     return awaitingAny(awaited.peers, Date.now())
   }
   // The launcher's mark, read once and kept: a re-entered call, or one past its
-  // budget, can no longer read the environment, and the push guard's net decides
+  // budget, can no longer read the environment, and the kill guard's net decides
   // on this instead. Undefined until the first read answers.
   let spawnedMark: string | null | undefined = undefined
   // The last prompt the operator typed in this session, keyed by its id like the memos
@@ -417,7 +402,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // never writes the operator's map — a Write, Edit or MultiEdit on it, or a Bash line that
   // writes it, is denied with the rule — unless the last prompt he typed in this session
   // names the map or a tier: then the binding is his word on the point. Mounted before the
-  // push guard, so a Bash call reaches it first; the session's role is read only for a call
+  // kill guard, so a Bash call reaches it first; the session's role is read only for a call
   // that writes the map. Never `ask`: under auto mode it goes to the mode's decider, not to him.
   on('tool.call', { tool: ['Write', 'Edit', 'MultiEdit', 'Bash'] }, async ($: any, e: any, next: (e: any) => any) => {
     const maps = mapPaths(await stateDir($), await configDir($))
@@ -438,9 +423,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     return next(e)
   })
 
-  // The push guard (push-guard.sh ported) and the kill guard beside it: the push
-  // decision answers first, the kill decision next, one deny for either.
-  // tool.call's input carries the tool's arguments beside the tool's name —
+  // The kill guard. tool.call's input carries the tool's arguments beside the tool's name —
   // `e.command`, never a nested `input` — and the deny the engine documents for
   // the event is `{ deny: reason }`, the decision's own shape already, the
   // matcher keeping it to Bash calls. The same hook watches for the successor's
@@ -456,7 +439,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       if (fallback) return fallback
       return next(e)
     }
-    const decision = pushDecision(spawnedMark, command) ?? killDecision(spawnedMark, command)
+    const decision = killDecision(spawnedMark, command)
     if (decision) return decision
     const out = await next(e)
     if (!e.agentId && isSuccessorSpawn(command) && out && !out.isError && !out.deny) {
@@ -472,8 +455,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     // call already run beneath is let through (next is replay-safe in a catch).
     // One not run yet — a re-entry, a guard past its budget — is decided on the
     // launcher's mark as last read: closed in a spawned session, open in one the
-    // operator started, and a forced push or a kill by pattern refused while the
-    // mark is unknown.
+    // operator started, and a kill by pattern refused while the mark is unknown.
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     if (next.called) return next(e)
     const fallback = guardFallback(spawnedMark, String(e.command ?? ''), next.error?.message ?? 'the guard did not finish')

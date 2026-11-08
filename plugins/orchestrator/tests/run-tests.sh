@@ -242,14 +242,14 @@ check "the operator's entry skill stays in the command menu" "0" \
   "$(grep -c '^user-invocable: false$' "$ROOT/skills/orchestrator/SKILL.md")"
 check "the audit brief merges nothing" "1" \
   "$(grep -c 'no label, no merge' "$ROOT/templates/agent-audit-brief.md")"
-# Rule 17 of the rules review had the two locks left to the tools, the push guard and the launcher's
+# Rule 17 of the rules review had the two locks left to the tools, forge protection and the launcher's
 # title-checked close. The operator's ruling of 2026-11-04, « restore everything and fix », after an
 # independent control, reverses that removal: his word lifts neither lock, so the rulebook
 # states them beside the sentence that lets his instruction replace the skill. Another route than
 # the launcher's takes the launcher's checks by hand, in lifecycle.md, which the core loop's launch
 # row sends every spawn to. Read with its line breaks folded.
 check "the rulebook keeps the two locks over his word and sends any route of a spawn to lifecycle.md" "1|yes|yes|yes" \
-  "$(tr '\n' ' ' < "$ROOT/skills/orchestrator/SKILL.md" | tr -s ' ' | grep -oF -- "Two locks hold whatever is said: the push guard and the title-checked tab close." | wc -l | tr -d ' ')|$(spells "$ROOT/skills/orchestrator/SKILL.md" '| Launch, verify, terminate, replace: before spawning by any route,')|$(spells "$ORCH_REFS/lifecycle.md" "the checks the launcher would have made run by hand on that route")|$(spells "$ORCH_REFS/lifecycle.md" "The launcher's mode and trust refusals are defaults a project's own method may lift.")"
+  "$(tr '\n' ' ' < "$ROOT/skills/orchestrator/SKILL.md" | tr -s ' ' | grep -oF -- "Two locks hold whatever is said: forge protection and the title-checked tab close." | wc -l | tr -d ' ')|$(spells "$ROOT/skills/orchestrator/SKILL.md" '| Launch, verify, terminate, replace: before spawning by any route,')|$(spells "$ORCH_REFS/lifecycle.md" "the checks the launcher would have made run by hand on that route")|$(spells "$ORCH_REFS/lifecycle.md" "The launcher's mode and trust refusals are defaults a project's own method may lift.")"
 check "the succession brief closes the predecessor's tab" "1" "$(grep -c 'CLOSE ITS TAB' "$ROOT/templates/orchestrator-succession-brief.md")"
 # Every agent that works in a checkout keeps its scratch where the close takes it. Rule 55 of the
 # rules review, on the ruling on topic 18: the phase brief no longer says it, the host names its
@@ -345,7 +345,7 @@ check "the review reference carries no rationalizations table" "0|0" \
   "$(grep -c "is green, I can take it out of draft" "$ORCH_REFS/review.md")|$(grep -c "a plain rebase on main will do" "$ORCH_REFS/review.md")"
 # « Red flags » and « Where the rest lives » left the rulebook (the operator's ruling on topic 7
 # of the rules review): each flag repeated a rule kept elsewhere, the force push refused by the
-# push guard (hooks/tests/push-guard.test.ts).
+# forge (/github:protect).
 check "the rulebook carries no red-flag list and no pointer list" "0|0" \
   "$(grep -c '^## Red flags' "$ROOT/skills/orchestrator/SKILL.md")|$(grep -c '^## Where the rest lives' "$ROOT/skills/orchestrator/SKILL.md")"
 # The rulebook is loaded whole at every start and every takeover: its size is bounded, and what
@@ -2822,7 +2822,7 @@ check "the prompt file's name carries its kind" "1" "$(basename "$file" | grep -
 check "the launch carries the decision mode" "1" "$(printf '%s' "$cmd" | grep -c -- '--permission-mode auto')"
 check "no tier and no map: no model argument" "0" "$(printf '%s' "$cmd" | grep -c -- '--model')"
 check "the launch changes into the working directory" "1" "$(printf '%s' "$cmd" | grep -c "^cd $WORK && ")"
-# Every spawn marks the session as launcher-spawned: the push-guard hook is active only
+# Every spawn marks the session as launcher-spawned: the kill guard is active only
 # where this is set, and the operator's own sessions never carry it (phase 3 ruling 5).
 check "the launch marks the session launcher-spawned" "1" "$(printf '%s' "$out" | grep -c 'export ORCHESTRATOR_SPAWNED=1')"
 # Named absolutely even though the tab now runs a login shell: a dotfile that breaks PATH
@@ -4693,11 +4693,6 @@ check "the sweep lets the new rule's figures through" "" \
 check "a bare 80 % is caught, the rule stated whole is not" "1" \
   "$(grep -rn -E "$BARE_RE" "$SWEEP" | grep -v -F "$GATE_RULE" | grep -c 'bare-eighty')"
 rm -rf "$SWEEP"
-
-# The push guard's hook cases — every forced form the awk tokeniser answered, the pinned
-# lease, the spawn marker, the degraded read, the wiring over a faked $ — moved module-side
-# with the guard: hooks/tests/tokenizer.test.ts (the fixtures, moved not shrunk) and
-# hooks/tests/push-guard.test.ts, run by the host's plugin test.
 
 echo "== draft guard =="
 # A failing check of a draft pull request is a draft guard when the job that produced it tests
