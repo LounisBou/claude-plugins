@@ -6,7 +6,7 @@ import { chmodSync, existsSync, rmSync, mkdirSync, mkdtempSync, readFileSync, wr
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
-import { run as outcome, parseOptions } from '../../outcome.ts'
+import { deckPath, run as outcome, parseOptions } from '../../outcome.ts'
 import type { Io } from '../io.ts'
 import { gitBench, isTestPath, printed, tail } from './bench.ts'
 import { parseCapsFile, parseCases, selectCases, type Case, type Caps } from './cases.ts'
@@ -54,8 +54,23 @@ function fixture(merged = '2'): Fixture {
 const quiet = (): void => undefined
 
 /** A stand-in for the host's binary: its test kit passes when the plugin's value is 2. */
+// Asked headless, it answers as the host does: an arm in a bench sets the value to 2, and every
+// answer carries a verdict a judge would give.
 const HOST = join(mkdtempSync(join(tmpdir(), 'outcome-host-')), 'host')
-writeFileSync(HOST, '#!/bin/bash\n[ "$1 $2" = "plugin test" ] || exit 9\n[ "$(cat "$3/value")" = 2 ]\n')
+writeFileSync(
+  HOST,
+  [
+    '#!/bin/bash',
+    'if [ "$1" = -p ]; then',
+    '  [ -d plugins/demo ] && printf "2\\n" > plugins/demo/value',
+    `  printf '%s' '${JSON.stringify({ subtype: 'success', is_error: false, total_cost_usd: 1.25, result: '{"matches": true, "reason": "r", "findings": [{"severity": "minor", "text": "t"}]}' })}'`,
+    '  exit 0',
+    'fi',
+    '[ "$1 $2" = "plugin test" ] || exit 9',
+    '[ "$(cat "$3/value")" = 2 ]',
+    '',
+  ].join('\n'),
+)
 chmodSync(HOST, 0o755)
 
 function ports(root: string, overrides: Partial<Ports> = {}): Ports {
@@ -366,9 +381,44 @@ describe('outcome evals: the command', () => {
     assert.match(String(parseOptions(root, ['dry-run', '--out', 'inside'])), /outside the checkout/)
     assert.match(String(parseOptions(root, ['dry-run', '--out', '.'])), /outside the checkout/)
     assert.match(String(parseOptions(root, ['dry-run'])), /usage/)
-    assert.match(String(parseOptions(root, ['measure', '--out', '/tmp/x'])), /usage/)
+    assert.match(String(parseOptions(root, ['replay', '--out', '/tmp/x'])), /usage/)
     assert.match(String(parseOptions(root, ['dry-run', '--out', '/tmp/x', '--nope'])), /nope/)
-    assert.deepEqual(parseOptions(root, ['dry-run', '--out', '/tmp/x', '--case', 'a']), { mode: 'dry-run', out: '/tmp/x', only: 'a', host: 'claude' })
+    assert.deepEqual(parseOptions(root, ['dry-run', '--out', '/tmp/x', '--case', 'a']), {
+      mode: 'dry-run',
+      out: '/tmp/x',
+      only: 'a',
+      host: 'claude',
+      model: undefined,
+      judgeModel: undefined,
+      deck: undefined,
+    })
+    assert.match(String(parseOptions(root, ['pilot', '--out', '/tmp/x', '--model', 'm'])), /needs --model and --judge-model/)
+    const measure = parseOptions(root, ['measure', '--out', '/tmp/x', '--model', 'm', '--judge-model', 'j'])
+    assert.equal(typeof measure === 'string' ? measure : measure.judgeModel, 'j')
+  })
+
+  it('runs a pilot through the host, under the pilot caps, with the arms and the judge it names', async () => {
+    const root = repository()
+    const out = join(mkdtempSync(join(tmpdir(), 'outcome-out-')), 'run')
+    const deck = join(mkdtempSync(join(tmpdir(), 'outcome-deck-')), 'deck.json')
+    const args = ['pilot', '--out', out, '--host', HOST, '--model', 'm', '--judge-model', 'j', '--deck', deck]
+    assert.equal(await outcome(root, args, recorder(), new AbortController().signal), 0)
+    const report: Report = JSON.parse(readFileSync(join(out, 'report.json'), 'utf8'))
+    assert.equal(report.mode, 'pilot')
+    for (const result of report.cases[0]?.arms ?? []) {
+      assert.equal(result.status, 'done')
+      assert.equal(result.grades?.referenceTests, true)
+      assert.equal(result.grades?.intent?.matches, true)
+      assert.deepEqual(result.grades?.review, { blocking: 0, minor: 1 })
+      assert.equal(result.costUsd, 3.75)
+    }
+    assert.equal(report.spentUsd, 7.5)
+    assert.ok('enabledPlugins' in JSON.parse(readFileSync(join(out, 'settings.json'), 'utf8')))
+  })
+
+  it("finds the deck under the orchestrator's state directory", () => {
+    assert.equal(deckPath({ ORCHESTRATOR_STATE_DIR: '/state' }), '/state/deck.json')
+    assert.equal(deckPath({ CLAUDE_CONFIG_DIR: '/config' }), '/config/claude-orchestrator/deck.json')
   })
 
   it('refuses a bad command line with its usage', async () => {
