@@ -2,7 +2,7 @@
 // N4: the walkthrough guards, each false-positive case they were narrowed for,
 // and the releases (the user's own words, an interrupted turn, another command).
 import { expect, test } from 'claude-code/testing'
-import { editDecision, pushDecision, commitDecision, promptCommand, register, resetGuards, guardState } from '../guards.ts'
+import { editDecision, pushQuestion, commitDecision, promptCommand, register, resetGuards, guardState } from '../guards.ts'
 import { register as registerAll } from '../register.ts'
 import { mount, hook, nextOf, fakeDollar } from './fakes.ts'
 
@@ -22,7 +22,7 @@ test('under /norms:check, fix and every other answer of the user\'s own let the 
 
 test('outside a norms command nothing is refused', () => {
   expect(editDecision(undefined, '2', 'src/a.ts')).toBeNull()
-  expect(pushDecision(undefined, 'ok', 'git push')).toBeNull()
+  expect(pushQuestion(undefined, 'git push')).toBeNull()
   expect(commitDecision(undefined, 'ok', 'git commit -m "norms"')).toBeNull()
 })
 
@@ -34,13 +34,12 @@ test('under /norms:learn only CONTRIBUTING.md is guarded, and only before add or
   expect(editDecision('learn', 'skip', 'src/a.ts')).toBeNull()
 })
 
-test('a push is refused unless the user\'s own words ask for it', () => {
-  expect(pushDecision('check', 'fix', 'git push origin feature')).toContain('never push')
-  expect(pushDecision('check', 'fix', 'git -C /repo push')).toContain('never push')
-  expect(pushDecision('learn', 'add', 'git add x && git push')).toContain('never push')
-  expect(pushDecision('check', 'fix it and push', 'git push')).toBeNull()
-  expect(pushDecision('check', 'fix', 'git log --grep=push')).toBeNull()
-  expect(pushDecision('check', 'fix', 'git stash push -m wip')).toBeNull()
+test('a push during a walkthrough asks the user; words in a prompt grant nothing', () => {
+  expect(pushQuestion('check', 'git push origin feature')).toContain('push now, during /norms:check?')
+  expect(pushQuestion('check', 'git -C /repo push')).toContain('git -C /repo push')
+  expect(pushQuestion('learn', 'git add x && git push')).toContain('/norms:learn')
+  expect(pushQuestion('check', 'git log --grep=push')).toBeNull()
+  expect(pushQuestion('check', 'git stash push -m wip')).toBeNull()
 })
 
 test('a commit message naming the check or its tooling is refused, unless the user used that word', () => {
@@ -114,8 +113,32 @@ test('the Bash guard refuses a push and a leaking commit, and passes the rest', 
   }
   expect(await bash('git push')).toContain('never push')
   expect(await bash('git commit -m "fix: norms finding"')).toContain('"norms"')
+  // « don't push » holds the word: it grants nothing, and with nobody to ask the push is refused.
+  await hook(hooks, 'prompt.submit').handler($, { text: "fix it, don't push", origin: { kind: 'composer' } }, nextOf().next)
+  expect(await bash('git push')).toContain('never push')
   expect(await bash('npm test')).toBe('ran')
   expect(await bash('git commit -m "fix(auth): rename usr"')).toBe('ran')
+})
+
+test('a push during a walkthrough goes through only on the user\'s own Allow', async () => {
+  resetGuards()
+  const hooks = mount(register)
+  const { $ } = fakeDollar({})
+  const asked: string[] = []
+  let reply = 'Deny'
+  $.ui = { ask: async (question: string) => { asked.push(question); return reply } }
+  await hook(hooks, 'command.run', { command: 'norms:check' }).handler($, { command: 'norms:check', args: '' }, nextOf().next)
+  const bash = async (command: string) => {
+    const { next, seen } = nextOf()
+    const out = await hook(hooks, 'tool.call', { tool: 'Bash' }).handler($, { tool: 'Bash', command }, next)
+    return seen.length ? 'ran' : out.deny
+  }
+  expect(await bash('git push origin feature')).toContain('never push')
+  reply = 'Allow'
+  expect(await bash('git push origin feature')).toBe('ran')
+  expect(asked.length).toBe(2)
+  expect(await bash('npm test')).toBe('ran')
+  expect(asked.length).toBe(2)
 })
 
 test('a guard that fails lets the call through', async () => {

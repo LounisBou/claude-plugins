@@ -8,12 +8,15 @@
 //   only when they are the command itself or "skip" (learn.md Step 8). Any
 //   other words the user types release the edit guard, since check.md treats
 //   them as discussion that may well end in "do it this way";
-// - `git push` is refused unless the user's last words say "push";
+// - `git push` asks the user, through the host's own question: Allow lets it
+//   through, anything else (Deny, nobody there to answer) refuses it. Words in
+//   a prompt never grant it: « don't push » holds the word too;
 // - under /norms:check, a commit message naming the check, the tooling or the
 //   TODO list is refused unless the user's last words use that word;
 // - an interrupted turn ends the mode, and so do /clear and any other slash
 //   command the user submits.
-// A guard that fails lets the call through: the markdown still states every rule.
+// A guard whose own code fails lets the call through: the markdown still states every rule.
+// The push guard is the exception: when nobody can be asked, the push is refused.
 
 export type Mode = 'check' | 'learn'
 
@@ -45,10 +48,21 @@ export function editDecision(mode: Mode | undefined, lastPrompt: string | undefi
 
 const PUSH = /(^|[\s;&|(])git(\s+(-C|-c)\s+\S+|\s+--?[\w-]+(=\S+)?)*\s+push(\s|$)/
 
-export function pushDecision(mode: Mode | undefined, lastPrompt: string | undefined, command: string): string | null {
+export const PUSH_REFUSAL = 'norms: never push during a norms walkthrough unless the user allows it when asked. The user pushes; remind them to.'
+
+// The question a push during a walkthrough asks the user, or null when no walkthrough guards it.
+export function pushQuestion(mode: Mode | undefined, command: string): string | null {
   if (!mode || !PUSH.test(command)) return null
-  if (lastPrompt !== undefined && /\bpush/i.test(lastPrompt)) return null
-  return 'norms: never push during a norms walkthrough. The user pushes; remind them to.'
+  return `norms: push now, during /norms:${mode}? ${command.trim().slice(0, 200)}`
+}
+
+// Whether the user allows the push: only their own Allow does; a failure to ask refuses.
+async function userAllows($: any, question: string): Promise<boolean> {
+  try {
+    return (await $.ui.ask(question, ['Allow', 'Deny'])) === 'Allow'
+  } catch {
+    return false
+  }
 }
 
 // What check.md 7.4 forbids in a commit message.
@@ -134,7 +148,9 @@ export function register(on: any): void {
 
   on('tool.call', { tool: 'Bash' }, async ($: any, e: any, next: any) => {
     const command = String(e.command ?? '')
-    const deny = pushDecision(mode, lastPrompt, command) ?? (e.agentId ? null : commitDecision(mode, lastPrompt, command))
+    const question = pushQuestion(mode, command)
+    if (question && !(await userAllows($, question))) return { deny: PUSH_REFUSAL }
+    const deny = e.agentId ? null : commitDecision(mode, lastPrompt, command)
     return deny ? { deny } : next(e)
   }).catch(pass)
 }
