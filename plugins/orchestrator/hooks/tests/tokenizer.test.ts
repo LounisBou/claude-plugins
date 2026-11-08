@@ -53,6 +53,10 @@ const refused = [
   // multibyte character shifts no token boundary.
   'echo $((1 << 2))\ngit push -f',
   'echo ✅ && git push -f',
+  // `||` is a list and `|&` a pipe of both streams: the push after either is read.
+  'a || git push -f',
+  'a |& git push -f',
+  'a |&git push -f',
 ]
 
 const accepted = [
