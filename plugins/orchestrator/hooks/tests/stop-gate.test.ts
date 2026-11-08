@@ -15,6 +15,7 @@ import {
   orchestrationOf, ownerOf, isOwnRecord, recordsWithOpenRows,
 } from '../stop-gate.ts'
 import { register as registerGuards } from '../guards.ts'
+import { register as registerWait, Declarations, parseDeclaration, withDeclaredWait, WAIT_TOOL } from '../wait.ts'
 import { logLineOf, blockOf } from './fakes.ts'
 import { roundEntry } from '../round.ts'
 import { register as registerNaming, END_TOOL } from '../naming.ts'
@@ -420,7 +421,8 @@ test('the remaining cases: idle agents and nothing to wake are flagged for the l
     case: 'malformed-machine-line',
     reason: 'Your last line is not the machine line: end the message with the line waiting: operator — blocks: <what it blocks>, or with waiting: done, '
       + 'or, if the operator deferred it, his ruling recorded: waiting: deferred — <n> items, as the message\'s last line, no markup. '
-      + 'waiting: tool — <what is watched> fits only while a command or monitor you started runs in the background.',
+      + 'waiting: tool — <what is watched> fits only while a command or monitor you started runs in the background. '
+      + 'Or declare it with declare_wait({kind: "operator" | "tool" | "done" | "deferred", blocks}), which the gate reads in place of the line.',
   })
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: your call?' })).toEqual({
     case: 'question-without-blocks',
@@ -2132,4 +2134,136 @@ test('the register\'s own record is held to its owner file too', async () => {
   expect(passed.answer).toBe(passed.passed)
   const own = fakeDollar({ records: [ROW], recordOwner: 'Orch : belt [a1b2c3]' })
   expect(((await stop(handlers['classic.Stop'], own.dollar, stopEvent(DONE))).answer as any).block).toContain('row r-12 (the report row) is open')
+})
+
+// --- the declared wait (hooks/wait.ts) ---------------------------------------------------------
+
+function waitMounted(): Record<string, Function> {
+  const handlers: Record<string, Function> = {}
+  registerWait((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
+    handlers[args[0]] = args[args.length - 1] as Function
+    return { catch: () => undefined }
+  }, new Declarations())
+  return handlers
+}
+
+// The stop as the engine chains it: the declared wait's handler first, then the gate.
+async function chainedStop(wait: Record<string, Function>, dollar: any, e: object) {
+  const gate = mounted().handlers['classic.Stop']
+  let passed: unknown = null
+  const answer = await wait['classic.Stop'](dollar, e, (x: unknown) => gate(dollar, x, (y: unknown) => { passed = y; return y }))
+  return { answer, passed }
+}
+
+const declare = (wait: Record<string, Function>, dollar: any, input: object) =>
+  wait['tool.call'](dollar, { tool: `mcp__orchestrator__${WAIT_TOOL}`, ...input })
+const turnStarts = (wait: Record<string, Function>, dollar: any) => wait['turn.start'](dollar, { turnId: 't' }, (x: unknown) => x)
+const NOTHING_RUNS = { background_tasks: [], session_crons: [] }
+
+test('a declaration is validated: a known kind, and what it blocks where the kind needs it', () => {
+  expect(parseDeclaration({ kind: 'operator', blocks: '  G3:\n the scope ' })).toEqual({ wait: { kind: 'operator', blocks: 'G3: the scope' } })
+  expect(parseDeclaration({ kind: 'tool', blocks: 'ci-watch.sh 12' })).toEqual({ wait: { kind: 'tool', blocks: 'ci-watch.sh 12' } })
+  expect(parseDeclaration({ kind: 'deferred', blocks: '2 items' })).toEqual({ wait: { kind: 'deferred', blocks: '2 items' } })
+  expect(parseDeclaration({ kind: 'done', blocks: 'whatever' })).toEqual({ wait: { kind: 'done', blocks: '' } })
+  for (const bad of [{}, { kind: 'later' }, { kind: 'operator' }, { kind: 'tool', blocks: ' ' }, { kind: 'deferred', blocks: 3 }, { kind: 'tool', blocks: 'x'.repeat(301) }]) {
+    expect('error' in parseDeclaration(bad)).toBe(true)
+  }
+})
+
+test('the declare_wait tool is registered at every start, and refused to a subagent and on a bad input', async () => {
+  const wait = waitMounted()
+  const tools: any[] = []
+  const { dollar } = fakeDollar({})
+  dollar.tool = { register: async (spec: unknown) => { tools.push(spec) } }
+  await wait['session.start'](dollar, {}, (x: unknown) => x)
+  expect(tools.map(t => [t.name, t.isDeferred])).toEqual([[WAIT_TOOL, false]])
+  expect((await declare(wait, dollar, { kind: 'done', agentId: 'a-1' })).isError).toBe(true)
+  expect((await declare(wait, dollar, { kind: 'soon' })).isError).toBe(true)
+  // Neither is a declaration: the stop reads the message alone.
+  const held = await chainedStop(wait, dollar, stopEvent({ last_assistant_message: 'stopped.', ...NOTHING_RUNS }))
+  expect(String((held.answer as any).block)).toContain('Nothing will wake you')
+})
+
+test('with no wait declared, the gate reads the last line, and its refusal teaches the call', async () => {
+  const wait = waitMounted()
+  const { dollar } = fakeDollar({})
+  const held = await chainedStop(wait, dollar, stopEvent({ last_assistant_message: 'stopped.', ...NOTHING_RUNS }))
+  expect(String((held.answer as any).block)).toContain('declare_wait(')
+  const done = await chainedStop(wait, dollar, stopEvent({ last_assistant_message: 'All of it shipped.\nwaiting: done', ...NOTHING_RUNS }))
+  expect(done.answer).toBe(done.passed)
+})
+
+test('a declared operator wait releases the stop whatever the last line says', async () => {
+  const wait = waitMounted()
+  const fx = fakeDollar({ records: ['{"id":"r-12","label":"the report row","state":"open"}\n'] })
+  expect((await declare(wait, fx.dollar, { kind: 'operator', blocks: 'G2: the scope' })).isError).toBeUndefined()
+  // The model's own line says done, which the open row would refuse: the declaration decides.
+  const passed = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: `${ASKED}\nwaiting: done`, ...NOTHING_RUNS }))
+  expect((passed.answer as any)?.block).toBeUndefined()
+  expect(fx.written.some(l => l.endsWith('| stop gate: check1 blocks G2: the scope'))).toBe(true)
+  // A declared operator wait that blocks nothing is refused as the line would be.
+  await declare(wait, fx.dollar, { kind: 'operator', blocks: 'nothing' })
+  const held = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: ASKED, ...NOTHING_RUNS }))
+  expect(String((held.answer as any).block)).toContain('blocks nothing')
+})
+
+test('a declared tool wait is held to the host\'s own list of work in flight', async () => {
+  const wait = waitMounted()
+  const fx = fakeDollar({ ps: NOTHING_PS })
+  await declare(wait, fx.dollar, { kind: 'tool', blocks: 'the deploy run' })
+  const held = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: 'Deploy started.', ...NOTHING_RUNS }))
+  expect(String((held.answer as any).block).startsWith('Nothing of yours runs in the background')).toBe(true)
+  const running = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: 'Deploy started.', background_tasks: [SHELL_TASK] }))
+  expect(running.answer).toBe(running.passed)
+  expect(fx.written.some(l => l.endsWith('| stop gate: check1 tool the deploy run'))).toBe(true)
+})
+
+test('a declared done is held to the open rows, and passes once none is', async () => {
+  const wait = waitMounted()
+  const open = fakeDollar({ records: ['{"id":"r-12","label":"the report row","state":"open"}\n'] })
+  await declare(wait, open.dollar, { kind: 'done' })
+  const held = await chainedStop(wait, open.dollar, stopEvent({ last_assistant_message: 'Shipped.', ...NOTHING_RUNS }))
+  expect(String((held.answer as any).block)).toContain('row r-12 (the report row) is open')
+  const none = fakeDollar({})
+  const passed = await chainedStop(wait, none.dollar, stopEvent({ last_assistant_message: 'Shipped.', ...NOTHING_RUNS }))
+  expect(passed.answer).toBe(passed.passed)
+})
+
+test('a declared deferred wait is refused when nothing is deferred, and passes on the right count', async () => {
+  const wait = waitMounted()
+  const none = fakeDollar({})
+  await declare(wait, none.dollar, { kind: 'deferred', blocks: '1 items' })
+  const held = await chainedStop(wait, none.dollar, stopEvent({ last_assistant_message: 'Put off.', ...NOTHING_RUNS }))
+  expect(String((held.answer as any).block)).toContain('Nothing is deferred')
+  const put = fakeDollar({ records: ['{"id":"r-12","label":"the report row","state":"open","deferred":"later, 2026-11-08"}\n'] })
+  const passed = await chainedStop(wait, put.dollar, stopEvent({ last_assistant_message: 'Put off.', ...NOTHING_RUNS }))
+  expect(passed.answer).toBe(passed.passed)
+})
+
+test('a wait declared in an earlier turn is stale and never read', async () => {
+  const wait = waitMounted()
+  const { dollar } = fakeDollar({})
+  await declare(wait, dollar, { kind: 'done' })
+  await turnStarts(wait, dollar)
+  const held = await chainedStop(wait, dollar, stopEvent({ last_assistant_message: 'stopped.', ...NOTHING_RUNS }))
+  expect(String((held.answer as any).block)).toContain('Nothing will wake you')
+  // A subagent's turn starting is not the session's: the declaration stands.
+  await declare(wait, dollar, { kind: 'done' })
+  await wait['turn.start'](dollar, { turnId: 's', agentId: 'a-1' }, (x: unknown) => x)
+  const passed = await chainedStop(wait, dollar, stopEvent({ last_assistant_message: 'stopped.', ...NOTHING_RUNS }))
+  expect(passed.answer).toBe(passed.passed)
+})
+
+test('the turn\'s end hands the declared wait to its readers, and shows the answer unchanged', async () => {
+  const wait = waitMounted()
+  const { dollar } = fakeDollar({})
+  await declare(wait, dollar, { kind: 'tool', blocks: 'ci-watch.sh 12' })
+  let seen = ''
+  const shown = await wait['turn.complete'](dollar, { reason: 'answer', answer: 'Watching.' }, (x: any) => { seen = x.answer; return { text: x.answer } })
+  expect(seen).toBe(withDeclaredWait('Watching.', { kind: 'tool', blocks: 'ci-watch.sh 12' }))
+  expect(machineLine(seen)).toBe('waiting: tool — ci-watch.sh 12')
+  expect(shown).toEqual({ text: 'Watching.' })
+  // An agent's end is not the session's.
+  await wait['turn.complete'](dollar, { reason: 'answer', answer: 'Done.', agentId: 'a-1' }, (x: any) => { seen = x.answer; return { text: x.answer } })
+  expect(seen).toBe('Done.')
 })

@@ -67,16 +67,39 @@ export async function withDeadline<T>(work: ((signal: AbortSignal) => Promise<T>
   }
 }
 
+// --- the declared wait (hooks/wait.ts) ----------------------------------------------------------
+
+// What a turn may declare will wake it, by `declare_wait({kind, blocks})`: a question for the
+// operator, a command or monitor of its own, every goal met, or only deferred work left.
+export const WAIT_KINDS = ['operator', 'tool', 'done', 'deferred'] as const
+export type WaitKind = typeof WAIT_KINDS[number]
+export type DeclaredWait = { kind: WaitKind; blocks: string }
+
+// The one machine line a declaration spells: the gate decides on it as on the line it replaces,
+// so a declared wait and a written one are held by the same checks.
+export function waitLine(wait: DeclaredWait): string {
+  switch (wait.kind) {
+    case 'operator': return `waiting: operator — blocks: ${wait.blocks}`
+    case 'tool': return `waiting: tool — ${wait.blocks}`
+    case 'deferred': return `waiting: deferred — ${wait.blocks}`
+    case 'done': return 'waiting: done'
+  }
+}
+
+// The sentence every refusal about the ending carries: the call that declares the wait.
+const DECLARE = 'Or declare it with declare_wait({kind: "operator" | "tool" | "done" | "deferred", blocks}), which the gate reads in place of the line.'
+
 // --- the refusal texts (stop_gate.py:126-146, verbatim but where the tool line changed them) -----------------------------------
 
 const MALFORMED = 'Your last line is not the machine line: end the message with the line '
   + 'waiting: operator — blocks: <what it blocks>, or with waiting: done, '
   + 'or, if the operator deferred it, his ruling recorded: waiting: deferred — <n> items, '
   + "as the message's last line, no markup. "
-  + 'waiting: tool — <what is watched> fits only while a command or monitor you started runs in the background.'
+  + 'waiting: tool — <what is watched> fits only while a command or monitor you started runs in the background. '
+  + DECLARE
 const DEFERRED_MALFORMED = 'Your last line is not the machine line: a deferred ending names what is deferred. '
   + "End the message with the line waiting: deferred — <n> items, <n> the deferred rows and goals together, "
-  + "as the message's last line, no markup."
+  + `as the message's last line, no markup. ${DECLARE}`
 // The lines that fit a turn, by what will wake it: what the two refusals below name.
 const BUSY_FITS = 'An agent of yours is busy: end on no machine line, its idle notice wakes you.'
 const OTHER_FITS = 'If a question for the operator truly blocks, end with the line waiting: operator — blocks: <what it blocks>; '
@@ -91,14 +114,14 @@ function fits(busy: boolean, running: readonly string[]): string {
 // A turn that ends on no machine line with nothing in flight, no agent busy and no notice awaited.
 const NOTHING = 'Nothing will wake you: nothing of yours runs in the background and no agent of yours is busy. '
   + 'Launch what you announced (an agent, or a command with run_in_background, then end with the line waiting: tool — <what is watched>), '
-  + `or end on the line that fits. ${OTHER_FITS} The line goes as the message's last line, no markup.`
+  + `or end on the line that fits. ${OTHER_FITS} The line goes as the message's last line, no markup. ${DECLARE}`
 // A tool line with nothing of the session's own in flight: no end and no event will come to wake it.
 const TOOL_NOT_RUNNING = 'Nothing of yours runs in the background: waiting: tool — <what is watched> fits only while '
   + 'a command, monitor or subagent you started still runs. Launch it with run_in_background, or end on the line that fits. '
-  + `${OTHER_FITS} The line goes as the message's last line, no markup.`
+  + `${OTHER_FITS} The line goes as the message's last line, no markup. ${DECLARE}`
 const blocksNothingReason = (busy: boolean, running: readonly string[]) =>
   'Your wait on the operator blocks nothing: that line is for a question he must answer. '
-  + `${fits(busy, running)} The line goes as the message's last line, no markup.`
+  + `${fits(busy, running)} The line goes as the message's last line, no markup. ${DECLARE}`
 const QUESTION = 'Your question blocks nothing declared: advance everything that can advance; its answer will come in a later turn.'
 const NOT_DONE_ONE = 'Not done: %s is still there. Finish it, or say what blocks it.'
 const NOT_DONE_MANY = 'Not done: %s are still there. Finish them, or say what blocks them.'
