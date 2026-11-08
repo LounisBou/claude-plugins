@@ -2,13 +2,13 @@
 // repository whose merged change has a test, stub agents, a stub meter and a stub judge.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, rmSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { run as outcome, parseOptions } from '../../outcome.ts'
 import type { Io } from '../io.ts'
-import { gitBench, isTestPath, printed } from './bench.ts'
+import { gitBench, isTestPath, printed, tail } from './bench.ts'
 import { parseCapsFile, parseCases, selectCases, type Case, type Caps } from './cases.ts'
 import { brief, overlap, runEvals, type Agent, type Judge, type Meter, type Ports, type Report } from './harness.ts'
 import { Ledger } from './ledger.ts'
@@ -53,8 +53,13 @@ function fixture(merged = '2'): Fixture {
 
 const quiet = (): void => undefined
 
+/** A stand-in for the host's binary: its test kit passes when the plugin's value is 2. */
+const HOST = join(mkdtempSync(join(tmpdir(), 'outcome-host-')), 'host')
+writeFileSync(HOST, '#!/bin/bash\n[ "$1 $2" = "plugin test" ] || exit 9\n[ "$(cat "$3/value")" = 2 ]\n')
+chmodSync(HOST, 0o755)
+
 function ports(root: string, overrides: Partial<Ports> = {}): Ports {
-  return { bench: gitBench(root, 60_000), agent: oracleAgent(), meter: silentMeter(), judge: filesJudge(), now: Date.now, log: quiet, pollMs: 5, armMs: 60_000, ...overrides }
+  return { bench: gitBench(root, 60_000, HOST), agent: oracleAgent(), meter: silentMeter(), judge: filesJudge(), now: Date.now, log: quiet, pollMs: 5, armMs: 60_000, ...overrides }
 }
 
 async function evaluate(fix: Fixture, overrides: Partial<Ports> = {}, caps: Caps = CAPS, signal = new AbortController().signal): Promise<Report> {
@@ -78,7 +83,7 @@ describe('outcome evals: a dry run', () => {
     assert.equal(report.stopped, null)
     const [entry] = report.cases
     assert.ok(entry)
-    assert.deepEqual(entry.calibration, { referenceSuite: true, referenceTests: ['plugins/demo/tests/value.check'], referenceTestsFailOnBase: true })
+    assert.deepEqual(entry.calibration, { referenceSuite: true, referenceSuiteTail: null, referenceTests: ['plugins/demo/tests/value.check'], referenceTestsFailOnBase: true })
     for (const result of entry.arms) {
       assert.equal(result.status, 'done')
       assert.equal(result.grades?.suite, true)
@@ -108,6 +113,7 @@ describe('outcome evals: a dry run', () => {
     const report = await evaluate(fixture('broken'))
     const entry = report.cases[0]
     assert.equal(entry?.calibration.referenceSuite, false)
+    assert.ok(markdown(report).includes(entry?.calibration.referenceSuiteTail ?? 'unreachable'))
     assert.equal(entry?.arms[0]?.grades?.suite, null)
     assert.equal(entry?.arms[0]?.grades?.referenceTests, null)
   })
@@ -278,6 +284,15 @@ describe('outcome evals: pieces', () => {
     assert.equal(printed({ stdout: 'out', stderr: 'err', code: 1 }), 'out\nerr')
   })
 
+  it('keeps the failing lines of a long suite output before its last ones', () => {
+    const output = ['  FAIL early check', ...Array.from({ length: 100 }, (_, n) => `  ok   check ${n}`), '1 failed'].join('\n')
+    const kept = tail(output).split('\n')
+    assert.equal(kept[0], '  FAIL early check')
+    assert.ok(kept.includes('1 failed'))
+    assert.equal(kept.at(-1), '  ok   check 99')
+    assert.ok(kept.length <= 40)
+  })
+
   it('measures the overlap of two sets of files', () => {
     assert.equal(overlap([], []), 1)
     assert.equal(overlap(['a', 'b'], ['b', 'c']), 1 / 3)
@@ -285,9 +300,22 @@ describe('outcome evals: pieces', () => {
 
   it('reports a missing suite as failing', async () => {
     const fix = fixture()
-    const bench = gitBench(fix.root, 60_000)
+    const bench = gitBench(fix.root, 60_000, HOST)
     assert.equal((await bench.suite(fix.root, 'nothing', new AbortController().signal)).passed, false)
     await assert.rejects(bench.suite(fix.root, '../x', new AbortController().signal), /not a plugin name/)
+  })
+
+  it("runs the host's test kit when the plugin holds TypeScript tests", async () => {
+    const fix = fixture()
+    const bench = gitBench(fix.root, 60_000, HOST)
+    const signal = new AbortController().signal
+    write(fix.root, 'plugins/demo/hooks/x.test.ts', '')
+    assert.equal((await bench.suite(fix.root, 'demo', signal)).passed, true)
+    write(fix.root, 'plugins/demo/value', '3\n')
+    rmSync(join(fix.root, 'plugins/demo/tests/value.check'))
+    const failed = await bench.suite(fix.root, 'demo', signal)
+    assert.equal(failed.passed, false)
+    assert.ok(failed.tail.includes('suite done'))
   })
 
   it('briefs both arms alike, naming the suite', () => {
@@ -340,7 +368,7 @@ describe('outcome evals: the command', () => {
     assert.match(String(parseOptions(root, ['dry-run'])), /usage/)
     assert.match(String(parseOptions(root, ['measure', '--out', '/tmp/x'])), /usage/)
     assert.match(String(parseOptions(root, ['dry-run', '--out', '/tmp/x', '--nope'])), /nope/)
-    assert.deepEqual(parseOptions(root, ['dry-run', '--out', '/tmp/x', '--case', 'a']), { mode: 'dry-run', out: '/tmp/x', only: 'a' })
+    assert.deepEqual(parseOptions(root, ['dry-run', '--out', '/tmp/x', '--case', 'a']), { mode: 'dry-run', out: '/tmp/x', only: 'a', host: 'claude' })
   })
 
   it('refuses a bad command line with its usage', async () => {

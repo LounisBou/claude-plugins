@@ -50,6 +50,9 @@ export function markdown(report: Report): string {
       `## ${entry.id} (#${entry.pr}, ${entry.plugin})`,
       '',
       `Calibration: the suite ${calibration.referenceSuite ? 'passes' : 'fails'} on the merged result; ${calibration.referenceTests.length} reference test files, ${calibration.referenceTestsFailOnBase ? 'failing' : 'not failing'} on the base.`,
+    )
+    if (calibration.referenceSuiteTail !== null) lines.push('', '```', calibration.referenceSuiteTail, '```')
+    lines.push(
       '',
       '| Arm | Status | USD | Seconds | Suite | Reference tests | Intent | Blocking / minor findings | Files | Overlap |',
       '|---|---|---:|---:|---|---|---|---|---:|---:|',
