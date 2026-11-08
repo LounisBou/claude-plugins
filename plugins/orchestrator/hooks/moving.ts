@@ -16,6 +16,7 @@ import {
   acknowledgedNotice, failedNotice, moveText, isMoveMarked, parseMoveMessage, chunkText, moveIdOf, checkManifestFiles, rewritePaths, arrivalOf, arrivalPairs, missingOf, arrivedNotice,
   type Arrival, type ManifestFile, type MoveMessage, type MoveRecord,
 } from './move.ts'
+import { messageOf, type Events, type Host, type On } from './host.ts'
 
 export const SEND_TOOL = 'move_send'
 export const PROBE_TOOL = 'move_probe'
@@ -51,9 +52,10 @@ export function endsAfterMove(): boolean {
   return movedAndAcknowledged.size > 0
 }
 
-type Dollar = any
+// The nouns the move holds.
+type Dollar = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'tool' | 'prompt'>
 
-export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
+export function register(on: On<Dollar>): void {
   movedAndAcknowledged = new Set<string>()
   // What the receiving half holds of each move, loaded from the store the first time a message
   // names it; and the chain each move's messages run down one at a time, since two chunks
@@ -62,7 +64,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   const chains = new Map<string, Promise<unknown>>()
   const receiving: Receiving = { held, chains, name: null, probes: new Map() }
 
-  on('session.start', {}, async ($: Dollar, e: any, next: (e: any) => any) => {
+  on('session.start', {}, async ($, e, next) => {
     try {
       await $.tool.register({
         name: SEND_TOOL,
@@ -100,10 +102,10 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       })
     } catch (err) {
       // A start never fails on a tool: the session runs without the move.
-      await logLine($, `move tools not registered: ${(err as Error).message}`)
+      await logLine($, `move tools not registered: ${messageOf(err)}`)
     }
     return next(e)
-  }).catch(async ($: Dollar, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
@@ -111,39 +113,39 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // A peer's delivery, read before it is queued. A marked move message is consumed whatever its
   // fate: it is the module's own, never a message for a model, and what it cannot act on is
   // dropped with one line in the log. Anything else passes through untouched.
-  on('session.receive', {}, async ($: Dollar, e: any, next: (e: any) => any) => {
+  on('session.receive', {}, async ($, e, next) => {
     if (e.agentId || !isPeerOrigin(e.origin) || typeof e.text !== 'string') return next(e)
     const delivery = deliveryOf(e.text)
     if (!isMoveMarked(delivery.body)) return next(e)
     try {
       await take($, receiving, delivery)
     } catch (err) {
-      await logLine($, `move: ${(err as Error).message}`)
+      await logLine($, `move: ${messageOf(err)}`)
     }
     return { consumed: 'orchestrator: a move message, handled by the module' }
-  }).catch(async ($: Dollar, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     // Only a move message is the module's to consume; a delivery it never looked at goes on.
     if (typeof e.text === 'string' && isMoveMarked(deliveryOf(e.text).body)) return { consumed: 'orchestrator: a move message, refused' }
     return next(e)
   })
 
-  on('tool.call', { tool: `mcp__orchestrator__${SEND_TOOL}` }, async ($: Dollar, e: any) => {
+  on('tool.call', { tool: `mcp__orchestrator__${SEND_TOOL}` }, async ($, e) => {
     if (e.agentId) return { result: MAIN_THREAD_ONLY, isError: true }
     const refused = await roleRefusal($)
     if (refused) return { result: refused, isError: true }
     return sendMove($, e)
-  }).catch(async ($: Dollar, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: 'the move could not be sent', isError: true }
   })
 
-  on('tool.call', { tool: `mcp__orchestrator__${PROBE_TOOL}` }, async ($: Dollar, e: any) => {
+  on('tool.call', { tool: `mcp__orchestrator__${PROBE_TOOL}` }, async ($, e) => {
     if (e.agentId) return { result: MAIN_THREAD_ONLY, isError: true }
     const refused = await roleRefusal($)
     if (refused) return { result: refused, isError: true }
     return sendProbes($, e, receiving)
-  }).catch(async ($: Dollar, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: 'the probes could not be sent', isError: true }
   })
@@ -246,26 +248,26 @@ const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 
 // The call's arguments as a record, or the reason they are refused. What the protocol bounds
 // (the name's shape, the paths, the order's length) is judged once the manifest is built.
-function inputOf(e: any): SendInput | string {
-  const text = (v: unknown) => typeof v === 'string' && v.length > 0
-  const list = (v: unknown) => Array.isArray(v) && v.every(item => typeof item === 'string')
-  if (!text(e.to) || e.to.length > ADDRESS_CAP || /[\u0000-\u001f\u007f]/.test(e.to)) return 'to: the receiving session\'s address or name is required'
-  if (!text(e.name)) return 'name: required'
-  if (!text(e.brief) || !e.brief.startsWith('/') || e.brief.endsWith('/')) return 'brief: an absolute path of a file is required'
-  if (!text(e.dir) || !e.dir.startsWith('/')) return 'dir: an absolute path is required'
-  if (!text(e.model)) return 'model: required'
-  if (typeof e.effort !== 'string' || !EFFORTS.includes(e.effort)) return `effort: one of ${EFFORTS.map(v => `"${v}"`).join(', ')}`
-  if (!list(e.prs)) return 'prs: a list of strings is required'
-  if (!list(e.checkouts) || !e.checkouts.every((c: string) => c.startsWith('/'))) return 'checkouts: a list of absolute paths is required'
-  if (!text(e.order)) return 'order: the operator\'s order is required'
-  const chunk = e.chunk === undefined ? MOVE_CHUNK_DEFAULT : e.chunk
-  if (!Number.isInteger(chunk) || chunk < 1 || chunk > CHUNK_MAX) return `chunk: a whole number from 1 to ${CHUNK_MAX}`
-  const record: MoveRecord = {
-    name: e.name, brief: e.brief, dir: e.dir, model: e.model, effort: e.effort, prs: e.prs, checkouts: e.checkouts,
-    git: null, order: e.order,
-  }
-  return { to: e.to, record, chunk }
+function inputOf(e: Events['tool.call']): SendInput | string {
+  const text = (v: unknown): v is string => typeof v === 'string' && v.length > 0
+  const list = (v: unknown): v is string[] => Array.isArray(v) && v.every(item => typeof item === 'string')
+  const { to, name, brief, dir, model, effort, prs, checkouts, order } = e
+  if (!text(to) || to.length > ADDRESS_CAP || /[\u0000-\u001f\u007f]/.test(to)) return 'to: the receiving session\'s address or name is required'
+  if (!text(name)) return 'name: required'
+  if (!text(brief) || !brief.startsWith('/') || brief.endsWith('/')) return 'brief: an absolute path of a file is required'
+  if (!text(dir) || !dir.startsWith('/')) return 'dir: an absolute path is required'
+  if (!text(model)) return 'model: required'
+  if (!isEffort(effort)) return `effort: one of ${EFFORTS.map(v => `"${v}"`).join(', ')}`
+  if (!list(prs)) return 'prs: a list of strings is required'
+  if (!list(checkouts) || !checkouts.every(c => c.startsWith('/'))) return 'checkouts: a list of absolute paths is required'
+  if (!text(order)) return 'order: the operator\'s order is required'
+  const chunk = e['chunk'] === undefined ? MOVE_CHUNK_DEFAULT : e['chunk']
+  if (typeof chunk !== 'number' || !Number.isInteger(chunk) || chunk < 1 || chunk > CHUNK_MAX) return `chunk: a whole number from 1 to ${CHUNK_MAX}`
+  const record: MoveRecord = { name, brief, dir, model, effort, prs, checkouts, git: null, order }
+  return { to, record, chunk }
 }
+
+const isEffort = (v: unknown): v is MoveRecord['effort'] => typeof v === 'string' && EFFORTS.includes(v)
 
 async function run($: Dollar, argv: string[], timeoutMs = RUN_MS): Promise<{ exitCode: number; stdout: string } | null> {
   try {
@@ -324,7 +326,7 @@ function recordRefusal(manifest: Manifest): string | null {
   return 'a field is out of shape: the name ("Orch : <subject>", no reference), the model, the effort, the pull requests, the paths or the order'
 }
 
-async function sendMove($: Dollar, e: any): Promise<{ result: string; isError?: true }> {
+async function sendMove($: Dollar, e: Events['tool.call']): Promise<{ result: string; isError?: true }> {
   const input = inputOf(e)
   if (typeof input === 'string') return failure(input)
   const { to, record, chunk } = input
@@ -338,7 +340,7 @@ async function sendMove($: Dollar, e: any): Promise<{ result: string; isError?: 
   try {
     listed = await $.fs.list(dir)
   } catch (err) {
-    return failure(`move refused, nothing sent: the directory ${dir} cannot be read (${(err as Error).message})`)
+    return failure(`move refused, nothing sent: the directory ${dir} cannot be read (${messageOf(err)})`)
   }
   const regular = listed.filter(entry => entry.kind === 'file' && !entry.isLink).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
   // The caps first, on the sizes the listing gives, before a byte is read.
@@ -353,7 +355,7 @@ async function sendMove($: Dollar, e: any): Promise<{ result: string; isError?: 
     try {
       text = String(await $.fs.read(path))
     } catch (err) {
-      return failure(`move refused, nothing sent: ${entry.name} cannot be read (${(err as Error).message})`)
+      return failure(`move refused, nothing sent: ${entry.name} cannot be read (${messageOf(err)})`)
     }
     const bytes = new TextEncoder().encode(text).length
     if (bytes !== entry.size || bytes > MOVE_FILE_CAP) return failure(`move refused, nothing sent: ${entry.name} is not plain text`)
@@ -401,7 +403,7 @@ async function sendAll(
       const sent = await $.session.send({ to, text: moveText(message) })
       return sent?.isDelivered ? null : `not delivered to ${to}: ${sent?.reason ?? 'no answer'}`
     } catch (err) {
-      return `not delivered to ${to}: ${(err as Error).message}`
+      return `not delivered to ${to}: ${messageOf(err)}`
     }
   }
   if (manifest) {
@@ -415,7 +417,7 @@ async function sendAll(
     try {
       pieces = chunkText(String(await $.fs.read(`${dir}/${f.name}`)), chunk)
     } catch (err) {
-      return `${f.name} cannot be read again (${(err as Error).message})`
+      return `${f.name} cannot be read again (${messageOf(err)})`
     }
     if (pieces.length !== f.chunks) return `${f.name} changed since it was announced`
     for (const [index, data] of pieces.entries()) {
@@ -429,26 +431,27 @@ async function sendAll(
 
 // --- the probes --------------------------------------------------------------------------
 
-async function sendProbes($: Dollar, e: any, receiving: Receiving): Promise<{ result: string; isError?: true }> {
-  if (typeof e.to !== 'string' || e.to.length === 0 || e.to.length > ADDRESS_CAP || /[\u0000-\u001f\u007f]/.test(e.to)) {
+async function sendProbes($: Dollar, e: Events['tool.call'], receiving: Receiving): Promise<{ result: string; isError?: true }> {
+  const to = e['to']
+  if (typeof to !== 'string' || to.length === 0 || to.length > ADDRESS_CAP || /[\u0000-\u001f\u007f]/.test(to)) {
     return failure('to: the receiving session\'s address or name is required')
   }
-  const sizes = e.sizes
+  const sizes = e['sizes']
   if (!Array.isArray(sizes) || sizes.length === 0 || sizes.length > PROBES_CAP
     || !sizes.every(size => Number.isInteger(size) && size >= 1 && size <= MOVE_TEXT_CAP)) {
     return failure(`sizes: one to ${PROBES_CAP} whole numbers from 1 to ${MOVE_TEXT_CAP}`)
   }
   const move = `probe-${Math.floor(Math.random() * 0xffffffffffff).toString(16).padStart(12, '0')}`
   const sent: number[] = []
-  receiving.probes.set(move, { to: e.to, peer: null })
+  receiving.probes.set(move, { to, peer: null })
   for (const size of sizes as number[]) {
-    const delivered = await $.session.send({ to: e.to, text: moveText({ kind: 'probe', move, size, data: 'x'.repeat(size) }) })
+    const delivered = await $.session.send({ to, text: moveText({ kind: 'probe', move, size, data: 'x'.repeat(size) }) })
     if (!delivered?.isDelivered) {
-      return failure(`probe ${size} not delivered to ${e.to}: ${delivered?.reason ?? 'no answer'}; sent before it: ${sent.join(', ') || 'none'}`)
+      return failure(`probe ${size} not delivered to ${to}: ${delivered?.reason ?? 'no answer'}; sent before it: ${sent.join(', ') || 'none'}`)
     }
     sent.push(size)
   }
-  return { result: `probes ${move} sent to ${e.to}: ${sent.join(', ')}. Each answer is appended to ${await movesDir($)}/probes.jsonl by the module.` }
+  return { result: `probes ${move} sent to ${to}: ${sent.join(', ')}. Each answer is appended to ${await movesDir($)}/probes.jsonl by the module.` }
 }
 
 // --- the receiver ------------------------------------------------------------------------
@@ -555,7 +558,7 @@ async function route($: Dollar, receiving: Receiving, message: MoveMessage, from
       if (!s.peer) {
         // The first reply matched by name gives the address every later one must come from.
         s.peer = from
-        await keepSend($, s).catch(err => logLine($, `move ${s.move}: the receiver's address could not be kept: ${(err as Error).message}`))
+        await keepSend($, s).catch(err => logLine($, `move ${s.move}: the receiver's address could not be kept: ${messageOf(err)}`))
       }
       if (message.kind === 'missing') return answerMissing($, s, message)
       if (message.kind === 'done') return answerDone($, s, message)
@@ -601,7 +604,7 @@ async function receiveManifest($: Dollar, receiving: Receiving, manifest: Manife
     for (const [file, ack] of known.acks.entries()) {
       if (!ack || ack.ok) continue
       known.acks[file] = undefined
-      for (let index = 0; index < manifest.files[file].chunks; index++) {
+      for (let index = 0; index < (manifest.files[file]?.chunks ?? 0); index++) {
         forget(known, file, index)
         stale.push(`${await movesDir($)}/${manifest.move}/c-${file}-${index}`)
       }
@@ -621,7 +624,7 @@ async function receiveManifest($: Dollar, receiving: Receiving, manifest: Manife
     if (!made || made.exitCode !== 0) throw new Error('the directory cannot be made')
     await writeAtomic($, `${dir}/manifest.json`, JSON.stringify({ from, fromName, manifest }) + '\n')
   } catch (err) {
-    return refuse($, `the manifest could not be stored here (${(err as Error).message})`, manifest.move, delivery)
+    return refuse($, `the manifest could not be stored here (${messageOf(err)})`, manifest.move, delivery)
   }
   receiving.held.set(manifest.move, {
     from, fromName, manifest, arrival, have: new Set(), lengths: new Map(), size: manifest.files.map(() => 0),
@@ -635,12 +638,14 @@ async function heldOf($: Dollar, receiving: Receiving, move: string): Promise<He
   const known = receiving.held.get(move)
   if (known) return known
   const dir = `${await movesDir($)}/${move}`
-  let kept: { from?: unknown; fromName?: unknown; manifest?: unknown }
+  let parsed: unknown
   try {
-    kept = JSON.parse(String(await $.fs.read(`${dir}/manifest.json`)))
+    parsed = JSON.parse(String(await $.fs.read(`${dir}/manifest.json`)))
   } catch {
     return null
   }
+  if (!parsed || typeof parsed !== 'object') return null
+  const kept: { from?: unknown; fromName?: unknown; manifest?: unknown } = parsed
   const manifest = typeof kept.manifest === 'object' && kept.manifest ? parseMoveMessage(moveText(kept.manifest as MoveMessage)) : null
   if (!manifest || manifest.kind !== 'manifest' || manifest.move !== move || typeof kept.from !== 'string') return null
   const arrival = arrivalOf(manifest, await targetOf($))
@@ -655,7 +660,7 @@ async function heldOf($: Dollar, receiving: Receiving, move: string): Promise<He
     if (chunk) {
       // What a chunk file holds is counted again: the bound on a file outlives the memory.
       const [file, index] = [Number(chunk[1]), Number(chunk[2])]
-      if (file < manifest.files.length && index < manifest.files[file].chunks) {
+      if (file < manifest.files.length && index < (manifest.files[file]?.chunks ?? 0)) {
         try {
           remember(h, file, index, String(await $.fs.read(`${dir}/${name}`)).length)
         } catch { /* an unreadable chunk is asked for again */ }
@@ -664,8 +669,9 @@ async function heldOf($: Dollar, receiving: Receiving, move: string): Promise<He
     const ack = /^ack-(\d+)\.json$/.exec(name)
     if (ack && Number(ack[1]) < h.acks.length) {
       try {
-        const a = JSON.parse(String(await $.fs.read(`${dir}/${name}`)))
-        if (typeof a.ok === 'boolean') h.acks[Number(ack[1])] = { ok: a.ok, reason: typeof a.reason === 'string' ? a.reason : null }
+        const a: unknown = JSON.parse(String(await $.fs.read(`${dir}/${name}`)))
+        const { ok, reason } = (a ?? {}) as { ok?: unknown; reason?: unknown }
+        if (typeof ok === 'boolean') h.acks[Number(ack[1])] = { ok, reason: typeof reason === 'string' ? reason : null }
       } catch { /* an unreadable acknowledgment is asked for again */ }
     }
     if (name === 'notified') h.notified = true
@@ -684,7 +690,7 @@ async function receiveChunk($: Dollar, h: Held, chunk: Extract<MoveMessage, { ki
   }
   const key = `${chunk.file}:${chunk.index}`
   if (!h.have.has(key)) {
-    if (h.size[chunk.file] + chunk.data.length > f.bytes) {
+    if ((h.size[chunk.file] ?? 0) + chunk.data.length > f.bytes) {
       return logLine($, `move: a chunk would pass the announced size of its file (${chunk.file}:${chunk.index}, ${f.bytes} bytes announced), dropped`)
     }
     await writeAtomic($, `${await movesDir($)}/${h.manifest.move}/c-${chunk.file}-${chunk.index}`, chunk.data)
@@ -700,13 +706,13 @@ function remember(h: Held, file: number, index: number, length: number): void {
   if (h.have.has(key)) return
   h.have.add(key)
   h.lengths.set(key, length)
-  h.size[file] += length
+  h.size[file] = (h.size[file] ?? 0) + length
 }
 
 function forget(h: Held, file: number, index: number): void {
   const key = `${file}:${index}`
   h.have.delete(key)
-  h.size[file] -= h.lengths.get(key) ?? 0
+  h.size[file] = (h.size[file] ?? 0) - (h.lengths.get(key) ?? 0)
   h.lengths.delete(key)
 }
 
@@ -721,6 +727,7 @@ async function sendAck($: Dollar, h: Held, file: number): Promise<void> {
 // content. The outcome is acknowledged either way.
 async function processFile($: Dollar, h: Held, file: number): Promise<void> {
   const f = h.manifest.files[file]
+  if (!f) return
   const dir = `${await movesDir($)}/${h.manifest.move}`
   let outcome: { ok: boolean; reason: string | null }
   try {
@@ -749,7 +756,7 @@ async function processFile($: Dollar, h: Held, file: number): Promise<void> {
       }
     }
   } catch (err) {
-    outcome = { ok: false, reason: `${f.name}: ${(err as Error).message}` }
+    outcome = { ok: false, reason: `${f.name}: ${messageOf(err)}` }
   }
   h.acks[file] = outcome
   await writeAtomic($, `${dir}/ack-${file}.json`, JSON.stringify(outcome) + '\n')
@@ -786,9 +793,11 @@ async function receiveSent($: Dollar, h: Held): Promise<void> {
 // The move as the sender kept it, or null when this session sent no such move.
 async function sentOf($: Dollar, move: string): Promise<SentMove | null> {
   try {
-    const kept = JSON.parse(String(await $.fs.read(`${await movesDir($)}/${move}.json`)))
-    const ok = kept && kept.move === move && typeof kept.to === 'string' && Number.isInteger(kept.chunk) && Number.isInteger(kept.rounds)
-      && kept.record && Array.isArray(kept.files) && (kept.peer === undefined || typeof kept.peer === 'string')
+    const kept: unknown = JSON.parse(String(await $.fs.read(`${await movesDir($)}/${move}.json`)))
+    if (!kept || typeof kept !== 'object') return null
+    const k = kept as Record<string, unknown>
+    const ok = k['move'] === move && typeof k['to'] === 'string' && Number.isInteger(k['chunk']) && Number.isInteger(k['rounds'])
+      && k['record'] && Array.isArray(k['files']) && (k['peer'] === undefined || typeof k['peer'] === 'string')
     return ok ? kept as SentMove : null
   } catch {
     return null
@@ -808,7 +817,7 @@ async function answerMissing($: Dollar, s: SentMove, message: Extract<MoveMessag
     const asked = message.chunks.filter(([file, index]) => s.files[file] !== undefined && index < s.files[file].chunks)
     stopped = await sendAll($, s.to, s.move, null, s.record, s.files, s.chunk, asked)
   } catch (err) {
-    stopped = (err as Error).message
+    stopped = messageOf(err)
   }
   // Nothing else will tell the sender's model: the move ends here, and the send resumes it.
   if (stopped) return conclude($, s, `the chunks asked for again were not all sent (${stopped}); ${RESUME}`)
@@ -829,7 +838,7 @@ async function answerDone($: Dollar, s: SentMove, message: Extract<MoveMessage, 
 // The record kept again where the notice must go out whatever the store says: a write that fails
 // is logged.
 async function keepKnown($: Dollar, s: SentMove): Promise<void> {
-  await keepSend($, s).catch(err => logLine($, `move ${s.move}: the record could not be kept: ${(err as Error).message}`))
+  await keepSend($, s).catch(err => logLine($, `move ${s.move}: the record could not be kept: ${messageOf(err)}`))
 }
 
 async function conclude($: Dollar, s: SentMove, reason: string): Promise<void> {
