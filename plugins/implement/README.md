@@ -70,9 +70,11 @@ it fails.
   sha it started from, and the head.
 
 A guard stays armed across turns, so a phase stopped on a question resumes
-under the same rules. It is released by another implement skill starting, the
-user naming the action in a prompt (`agent`, `commit`, `stage`), an interrupted turn, the conversation ending or being cleared, and
-`/implement:release-guard`. A shell line is read word by word: a guarded command
+under the same rules. It is released by another implement skill starting, an
+interrupted turn, the conversation ending or being cleared, and `/implement:release-guard`;
+a subagent during a phase runs on the user's Allow in the host's dialog, never on a word in a
+prompt. During a check, a shell line that writes into the tree (a redirection into a file,
+`sed -i`, `rm`, `cp`, `tee`…) is refused like an edit. A shell line is read word by word: a guarded command
 named inside quotes, a comment or a here-document is not a call.
 
 ## The artifact layout
