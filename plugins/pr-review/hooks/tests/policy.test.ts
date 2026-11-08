@@ -12,7 +12,7 @@ const bash = (command: string) => ({ tool: 'Bash', command })
 
 test('start-review: only the word fix grants an edit', () => {
   for (const yes of ['fix', 'fix all', 'Fix.', 'ok, fix it']) expect(grantsEdit('start-review', yes)).toBe(true)
-  for (const no of ['go ahead', 'yes', 'sure', 'makes sense', 'post', 'next', 'prefix', 'fixed?', '1', '3']) {
+  for (const no of ['go ahead', 'yes', 'sure', 'makes sense', 'post', 'next', 'prefix', 'fixed?', '1', '3', "don't fix this one", 'do not fix', 'why fix it', 'fix?', 'should I fix it?']) {
     expect(grantsEdit('start-review', no)).toBe(false)
   }
 })
@@ -21,7 +21,7 @@ test('process-comments: options 1 and 3 and their aliases grant an edit', () => 
   for (const yes of ['1', '3', '1.', '3 please', 'f', 'fr', 'FR', 'fix', 'fix only', 'fix & resolve', 'fix and resolve', 'fix no resolve', 'fix resolve']) {
     expect(grantsEdit('process-comments', yes)).toBe(true)
   }
-  for (const no of ['2', '4', '5', 'pass', 'pass & resolve', 'discuss', 'why', 'go ahead', 'p', 'pr']) {
+  for (const no of ['2', '4', '5', 'pass', 'pass & resolve', 'discuss', 'why', 'go ahead', 'p', 'pr', "don't fix", 'not 1', '1?']) {
     expect(grantsEdit('process-comments', no)).toBe(false)
   }
 })
@@ -30,16 +30,18 @@ test('process-comments: options 1 and 4 and their aliases grant a resolve, fix n
   for (const yes of ['1', '4', 'fr', 'pr', 'fix & resolve', 'fix resolve', 'fix and resolve', 'pass & resolve', 'resolve only', 'just resolve']) {
     expect(grantsResolve(yes)).toBe(true)
   }
-  for (const no of ['2', '3', '5', 'fix only', 'fix no resolve', 'f', 'pass', 'next']) expect(grantsResolve(no)).toBe(false)
+  for (const no of ['2', '3', '5', 'fix only', 'fix no resolve', 'f', 'pass', 'next', "don't resolve", 'never resolve it', 'resolve?']) expect(grantsResolve(no)).toBe(false)
 })
 
 test('publishing needs the two words post now; end review and stop review release', () => {
   expect(grantsPublish('post now')).toBe(true)
   expect(grantsPublish('Post now please')).toBe(true)
-  for (const no of ['post', 'post all', 'publish it', 'now post']) expect(grantsPublish(no)).toBe(false)
+  for (const no of ['post', 'post all', 'publish it', 'now post', "don't post now", 'why not post now', 'post now?']) expect(grantsPublish(no)).toBe(false)
+  expect(grantsPublish('ok, post now.')).toBe(true)
   expect(releases('end review')).toBe(true)
   expect(releases('ok, stop review now')).toBe(true)
   expect(releases('review ended')).toBe(false)
+  expect(releases("don't stop review")).toBe(false)
 })
 
 test('git push is read per command of a list, its subcommand after the global options', () => {
@@ -139,12 +141,12 @@ test('false positive (strict): consent in other words is refused, naming the wor
   expect(pushQuestion('start-review', bash('git push'))).toContain('push now?')
 })
 
-// Loose side: the matcher reads words, not intent; these grant although the user
-// may not have meant it. The skill's own rules still apply to the model.
-test('false positive (loose): a word in a negation or an aside still grants', () => {
-  expect(decide('start-review', edit('/repo/a.ts'), "don't fix this one")).toBeNull()
-  expect(decide('start-review', gh('pr-comment', { pr: 1 }), 'do not post now')).toBeNull()
-  expect(decide('process-comments', gh('thread-resolve', { thread_id: 'T' }), 'why not resolve it?')).toBeNull()
+// A grant is the command an answer starts with: a word in a negation, an aside or
+// a question grants nothing.
+test('a word in a negation, an aside or a question grants nothing', () => {
+  expect(decide('start-review', edit('/repo/a.ts'), "don't fix this one")).not.toBeNull()
+  expect(decide('start-review', gh('pr-comment', { pr: 1 }), 'do not post now')).not.toBeNull()
+  expect(decide('process-comments', gh('thread-resolve', { thread_id: 'T' }), 'why not resolve it?')).not.toBeNull()
 })
 
 test('the closing lines end a walkthrough, a translated heading does not', () => {
