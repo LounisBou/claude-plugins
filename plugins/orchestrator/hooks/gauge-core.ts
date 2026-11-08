@@ -40,8 +40,9 @@ export function parseMeasure(line: string): MeasureReading | null {
   // treats it as unmeasured rather than crashing (gate.py reuses the same rule).
   // A line that parses but lacks a figure is unmeasured too.
   try {
-    const reading = JSON.parse(line) as MeasureReading
-    return reading && hasFigures(reading) ? reading : null
+    const reading: unknown = JSON.parse(line)
+    if (typeof reading !== 'object' || reading === null || !hasFigures(reading)) return null
+    return reading as MeasureReading
   } catch {
     return null
   }
