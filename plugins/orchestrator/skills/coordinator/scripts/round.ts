@@ -6,7 +6,7 @@
 import { mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { withLock, writeAtomic } from '../../../core/store.ts'
-import { die, moduleOf, stateOf, utc, type Context } from './context.ts'
+import { die, moduleOf, Refusal, stateOf, utc, type Context } from './context.ts'
 
 type Fields = Record<string, unknown>
 
@@ -136,7 +136,16 @@ export function roundClose(ctx: Context, args: readonly string[]): number {
   const path = join(round, `${id}.json`)
   // Under the entry's lock (`<path>.lock`), the module's too: a pane answer or a withdrawal
   // written meanwhile is read here, never written over.
-  const closed = withLock(path, (): Fields => {
+  // A lock that cannot be taken is a write that cannot be made: refused as one.
+  const locked = <T>(work: () => T): T => {
+    try {
+      return withLock(path, work)
+    } catch (error) {
+      if (error instanceof Refusal) throw error
+      die(`round-close: cannot write ${path}`)
+    }
+  }
+  const closed = locked((): Fields => {
     const text = read(path)
     const entry = text === undefined ? undefined : object(text)
     if (entry === undefined || entry['id'] !== id) die(`round-close: no entry ${id} in ${round}`)
