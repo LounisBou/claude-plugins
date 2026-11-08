@@ -156,7 +156,8 @@ hooks/tests/agent-relay.test.ts      an agent's status line read into its wait, 
 hooks/tests/naming.test.ts           the self-name's shape, the tool declared at every start, the rename and the end run at the turn's completion and never from the call, the rename refused in a session the launcher opened, the end refused there unless its own move was acknowledged
 hooks/tests/commands.test.ts         the three answers' texts (the urgent first, the agents alone, the open rows and the tally), the sleeping list and its pass-through of drop, the dispatch row parser, and the wiring over a faked $: the three markdown spellings pinned as matchers, the store and record reads, the registry read under the state override and without it, the failed handler falling back to the markdown command and said; the engine entry answering through the kit's mocked env without a bottom
 hooks/tests/module-log.test.ts       the log line's argv and its cap; the append script itself is run by tests/run-tests.sh
-hooks/tests/fakes.ts                 what every faked $ answers the same way: the log line captured, a transcript window cut as bytes
+hooks/tests/fakes.ts                 what every faked $ answers the same way: the log line captured, a transcript window cut as bytes, the store's lock taken over the fake's files
+hooks/tests/golden-deck.ts           deck.json byte for byte, the format the Stream Deck reads
 hooks/tests/fixtures.ts              texts the pane met on the operator's machine, kept verbatim: an entry of two questions in his language, a blocks text whose references are glued by a slash
 hooks/tests/screen.ts                a tree laid out as the rows a terminal shows, border, padding, gap and margins counted: the count's check and the screens
 install.sh, uninstall.sh
@@ -179,6 +180,7 @@ tests/fixtures/routing/prices.json, tests/fixtures/routing/projects/-repo/s-1.js
 tests/fixtures/routing/trees/laravel/composer.json, tests/fixtures/routing/trees/laravel/artisan, tests/fixtures/routing/trees/plugin/.claude-plugin/plugin.json, tests/fixtures/routing/trees/plugin/run.sh, tests/fixtures/routing/trees/plugin/a.sh, tests/fixtures/routing/trees/plugin/b.py, tests/fixtures/routing/trees/pycli/pyproject.toml, tests/fixtures/routing/trees/pycli/bin/tool, tests/fixtures/routing/trees/jslib/package.json, tests/fixtures/routing/trees/jslib/index.js  four marker trees a profile is inferred from, for routing.py profile and pick
 tests/fixtures/routing/gh-stub.sh, tests/fixtures/routing/host-stub.sh  a forge and a headless host answering from the environment, for harvest, trial and bench
 docs/design.md                       this document
+docs/state.md                        the machine-wide state files, their writers and how each is written
 docs/specs/2026-10-01-stop-gate-design.md  the stop gate's approved spec
 docs/specs/2026-10-07-hooks-module-design.md  the hooks module's approved spec
 docs/plans/2026-10-07-hooks-module-plan.md     the hooks module's implementation plan
