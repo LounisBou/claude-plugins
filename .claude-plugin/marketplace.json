@@ -22,7 +22,7 @@
       "name": "cloudflare",
       "source": "./plugins/cloudflare",
       "description": "Cloudflare and the local Caddy from a native Claude Code tool: accounts by name, DNS, protections, cache, Workers and Caddy site blocks, with a backup before every write and publish in one command, facading a Python stdlib engine.",
-      "version": "0.5.1",
+      "version": "0.5.2",
       "author": {
         "name": "Lounis Bou"
       }

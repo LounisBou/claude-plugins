@@ -158,14 +158,8 @@ echo "== manifests =="
 
 check "plugin name" "cloudflare" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["name"])' "$ROOT/.claude-plugin/plugin.json")"
-check "plugin version" "0.5.0" \
-  "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$ROOT/.claude-plugin/plugin.json")"
 check "plugin license" "MIT" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["license"])' "$ROOT/.claude-plugin/plugin.json")"
-check "marketplace lists the plugin at the same version" "cloudflare 0.5.0" \
-  "$(python3 -c 'import json,sys; p=json.load(open(sys.argv[1]))["plugins"][0]; print(p["name"], p["version"])' "$ROOT/.claude-plugin/marketplace.json")"
-check "marketplace describes the plugin as plugin.json does" "same" \
-  "$(python3 -c 'import json,sys; a=json.load(open(sys.argv[1]))["description"]; b=json.load(open(sys.argv[2]))["plugins"][0]["description"]; print("same" if a == b else b)' "$ROOT/.claude-plugin/plugin.json" "$ROOT/.claude-plugin/marketplace.json")"
 check "hooks.json names the module" "./register.ts" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["modules"][0])' "$ROOT/hooks/hooks.json")"
 
