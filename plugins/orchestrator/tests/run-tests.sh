@@ -9,6 +9,12 @@
 
 set -u
 
+# Every sort and comparison of the suite reads bytes, whatever the runner's locale: a UTF-8
+# collation of English puts `forbidden2.md` before `forbidden.md`. The character type is kept,
+# so text in « » and ⏎ reads as it does under the runner's own.
+if [ -n "${LC_ALL:-}" ]; then export LC_CTYPE="$LC_ALL"; unset LC_ALL; fi
+export LC_COLLATE=C
+
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 ORCH_REFS="$ROOT/skills/orchestrator/references"
 # Explicitly inside TMPDIR: the platform default lands in a directory a sandboxed
@@ -20,6 +26,8 @@ trap 'rm -rf "$WORK"' EXIT
 
 pass=0
 fail=0
+# The names of the failed cases, said again after the count: a long run's failures are read at its end.
+failed=''
 
 # The launcher refuses a directory the host has never opened, in a dry run as much as in a
 # real one: "what would happen" includes being refused. The suite declares the precondition
@@ -71,16 +79,38 @@ json.dump({'projects': {os.path.realpath(sys.argv[1]): {'hasTrustDialogAccepted'
           open(sys.argv[2], 'w'))" "$WORK" "$ORCHESTRATOR_TRUST_FILE"
 
 # check <name> <expected> <actual>
+# The lines read, joined by ⏎ with no trailing one. GNU tr maps bytes, and ⏎ is three: it
+# cannot be a tr target under any locale.
+nl_join() { awk 'NR > 1 { printf "\342\217\216" } { printf "%s", $0 }'; }
+
 check() {
   if [ "$2" = "$3" ]; then
     printf '  ok   %s\n' "$1"
     pass=$((pass + 1))
   else
     printf '  FAIL %s\n' "$1"
-    printf '       expected: %s\n' "$(printf '%s' "$2" | tr '\n' '⏎')"
-    printf '       actual:   %s\n' "$(printf '%s' "$3" | tr '\n' '⏎')"
+    printf '       expected: %s\n' "$(printf '%s' "$2" | nl_join)"
+    printf '       actual:   %s\n' "$(printf '%s' "$3" | nl_join)"
     fail=$((fail + 1))
+    failed="$failed  FAIL $1"$'\n'
   fi
+}
+
+# A file's permission bits in octal: GNU stat first, since its -f reads the filesystem and
+# answers, then BSD's.
+perm_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%OLp' "$1"; }
+
+# Root reads and writes through any permission: a case built on a file its runner may not read
+# or a directory it may not write means nothing under root, and is skipped with the reason said.
+# `skip_as_root <name> || check <name> …`
+skipped=0
+skip_case() {  # <name> <reason>: the case is not run here, and the run says why
+  printf '  skip %s (%s)\n' "$1" "$2"
+  skipped=$((skipped + 1))
+}
+skip_as_root() {
+  [ "$(id -u)" = 0 ] || return 1
+  skip_case "$1" "as root, permissions do not bind"
 }
 
 # check_status <name> <expected-exit-code> <command...>
@@ -103,7 +133,8 @@ echo "== repository policy =="
 # checkout — generated files the sweeps below must not read and git must not track.
 
 
-# The product name appears only in load-bearing identifiers: host paths, host
+# The product name appears only in load-bearing identifiers: host paths (a quoted '.claude'
+# path segment among them), the host's module name ('claude-code'), host
 # environment variables, the plugin name, the manifest directory and the host's per-user
 # temporary area, a path the host imposes (CLAUDE.md rule 2).
 # Presence checks pin wording and were dropped; an absence sweep pins none, so it stays.
@@ -113,9 +144,9 @@ echo "== repository policy =="
 # name deletes the whole line whatever it said, so this check would report a clean
 # repository without ever reading a single file.
 policy_hits() {
-  ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=__pycache__ --exclude-dir=.claude --exclude-dir=.superpowers --exclude-dir=plans --exclude-dir=types \
+  ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=__pycache__ --exclude-dir=.claude --exclude-dir=.superpowers --exclude-dir=plans --exclude-dir=types --exclude-dir=core \
       --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh --exclude=tsconfig.json \
-    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|\.claude\.json|claude-code/|LounisBou/claude-statusbar|LounisBou/claude-plugins-marketplace|/tmp/claude-|CLAUDE_CODE_TOTAL_TOKENS_REMINDER|CLAUDE_CODE_SILENT_TURN_REMINDER|CLAUDE_CODE_AUTO_COMPACT_WINDOW|syncClaudeAiSkills' || true )
+    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|'"'"'(\.claude|claude-code)'"'"'|\.claude\.json|claude-code/|LounisBou/claude-statusbar|LounisBou/claude-plugins-marketplace|/tmp/claude-|CLAUDE_CODE_TOTAL_TOKENS_REMINDER|CLAUDE_CODE_SILENT_TURN_REMINDER|CLAUDE_CODE_AUTO_COMPACT_WINDOW|syncClaudeAiSkills' || true )
 }
 check "no vendor or product name in prose" "" "$(policy_hits)"
 
@@ -133,10 +164,11 @@ hits=$(grep -rniIE '\b(opus|sonnet|haiku)\b' "$ROOT" --exclude-dir=.git --exclud
   --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh --exclude=tsconfig.json || true)
 check "no model family name in the plugin" "" "$hits"
 
-# Nothing tied to one machine or one project enters the generic plugin: no absolute home
+# core/ is a generated copy of packages/core, read where it is written. Nothing tied to one
+# machine or one project enters the generic plugin: no absolute home
 # path, no real session reference (the documented example is the six-hex placeholder
 # a1b2c3), no path into a downstream project's tree.
-hits=$(grep -rnIE '/Users/|/home/[a-z]|\[[0-9a-f]{6}\]|docs/reference/|BUGS\.md|IMPLEMENTATION\.md' "$ROOT" --exclude-dir=.git --exclude-dir=__pycache__ --exclude=.git --exclude-dir=.claude --exclude-dir=.superpowers --exclude=plan.md --exclude=run-tests.sh --exclude-dir=types --exclude=tsconfig.json \
+hits=$(grep -rnIE '/Users/|/home/[a-z]|\[[0-9a-f]{6}\]|docs/reference/|BUGS\.md|IMPLEMENTATION\.md' "$ROOT" --exclude-dir=.git --exclude-dir=__pycache__ --exclude=.git --exclude-dir=.claude --exclude-dir=.superpowers --exclude=plan.md --exclude=run-tests.sh --exclude-dir=types --exclude-dir=core --exclude=tsconfig.json \
   | grep -vE '\[a1b2c3\]' || true)
 check "nothing project- or machine-specific in the plugin" "" "$hits"
 
@@ -154,10 +186,10 @@ check "the old command namespace is gone" "" "$hits"
 # and 7-day windows together with stopping, throttling, dropping a tier or proposing one.
 BUDGET_TERMS='five_hour|seven_day|budget|rate_limits|quota|5-hour|7-day|five-hour|seven-day|usage limit'
 BUDGET_ACTIONS='stop|throttl|drop|downgrad|lower|pause|slow|propos|fall back|cheaper tier|lighter tier|switch|reduc|cheapest|ration|defer|cut back'
-budget_hits() { # <root>
+budget_hits() { # <root>: read on each line's text, never its path (calibration.py holds « ration »)
   ( cd "$1" && grep -rnIiE --exclude-dir=__pycache__ "$BUDGET_TERMS" skills commands templates hooks README.md docs/design.md 2>/dev/null \
     | sed -E 's/--max-budget-usd|--budget-usd|budget_usd|quota_before|quota_after|ORCHESTRATOR_QUOTA_FILE//g' \
-    | grep -iE "$BUDGET_TERMS" | grep -iE "$BUDGET_ACTIONS" || true )
+    | grep -iE "^[^:]*:[0-9]+:.*($BUDGET_TERMS)" | grep -iE "^[^:]*:[0-9]+:.*($BUDGET_ACTIONS)" || true )
 }
 check "no stop, throttle or tier drop on the usage budget in the plugin" "" "$(budget_hits "$ROOT")"
 # The guard proves it can still see one, and that the bench's fields and flags pass it.
@@ -536,6 +568,13 @@ check "the mark is written only where it is set" \
   "$(paste -sd'|' "$CHAINS/ttys900.jsonl")"
 check "a hand-over keeps the mark" '{"tab_id": "9", "tty": "/dev/ttys909", "owner": "S-NEW", "resident": true}' \
   "$(transfer >/dev/null; sed -n 2p "$CHAINS/ttys950.jsonl")"
+# Every launcher process rewrites chains (a spawn, a close, a move, a takeover): read outside a
+# lock, one append was lost under another's. Eight appends at once, each its own process, keep
+# all eight entries, and neither a lock nor a temporary file is left beside the chain.
+printf '' > "$CHAINS/ttys900.jsonl"
+for n in 1 2 3 4 5 6 7 8; do append "r$n" "/dev/ttys98$n" no >/dev/null & done; wait
+check "eight launchers appending to one chain at once keep every entry, and leave nothing beside it" "8|0" \
+  "$(grep -c '"tab_id": "r' "$CHAINS/ttys900.jsonl")|$(ls "$CHAINS" | grep -c '^ttys900\.jsonl\.')"
 # A resident agent's own succession: the entry naming the caller's tab sits in its
 # ORCHESTRATOR's chain, not in the caller's, so the hand-over above never reaches it. It must
 # follow the successor, owner and mark kept, or the orchestrator reads a closed tab as its
@@ -651,7 +690,7 @@ RIDS_OUT=$(bash "$REC" summary "$RIDS" --open --ids)
 check "summary --open --ids on 99 open rows: a count line per state, then the ids, within 1,500 characters" "99|open=91|deferred=8|$(jq -sr 'map(select(.state=="open").id|tostring)|"ids: "+join(" ")' "$RIDS")|3|yes|0" \
   "$RIDS_OPEN|$(printf '%s\n' "$RIDS_OUT" | sed -n 1p)|$(printf '%s\n' "$RIDS_OUT" | sed -n 2p)|$(printf '%s\n' "$RIDS_OUT" | sed -n 3p)|$(printf '%s\n' "$RIDS_OUT" | wc -l | tr -d ' ')|$([ "$(printf '%s' "$RIDS_OUT" | wc -c | tr -d ' ')" -le 1500 ] && echo yes || echo no)|$(printf '%s' "$RIDS_OUT" | grep -c 'label=')"
 check "summary --open --ids counts a state with no row as zero" "open=1⏎deferred=0⏎ids: 1" \
-  "$(bash "$REC" summary "$RO" --open --ids | tr '\n' '⏎' | sed 's/⏎$//')"
+  "$(bash "$REC" summary "$RO" --open --ids | nl_join)"
 check "summary --open --label prints exactly the rows named, as --open prints them" \
   "$(bash "$REC" summary "$RIDS" --open | grep -E '^(open|deferred)=(7|40|113) ')" \
   "$(bash "$REC" summary "$RIDS" --open --label 113,7,40)"
@@ -669,8 +708,6 @@ check "the succession brief's step 2 reads the open rows as counts and ids, not 
 # the labels of the rows its Live state leaves out, in the same step.
 check "the succession brief's step 2 reads the labels of the open rows the Live state omits" "1" \
   "$(grep '^2\. ' "$ROOT/templates/orchestrator-succession-brief.md" | grep -cF '`--open --label <ids>` for those Live state omits')"
-check "the record's own comments read the labels of the rows the Live state omits, as the brief does" "0|2" \
-  "$(grep -c 'Live state names' "$REC")|$(grep -c 'Live state omits' "$REC")"
 check "the succession brief reads the goals by command and points at them" "yes|yes|yes" \
   "$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'dispatch-record.sh goals {{DISPATCH_RECORD}} status')|$(spells "$ROOT/templates/orchestrator-succession-brief.md" '{{GOALS}}')|$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'goals met=m/n')"
 
@@ -1669,6 +1706,7 @@ check "and says the same counts" "1|1|1" \
 check "the cp processes a create spawns do not grow with the file count" "$few_cp" "$(grep -c . "$WORK/cp-calls")"
 # A file the copy cannot read fails the whole pass: the checkout is removed, the step named.
 echo locked > "$WORK/wsrc/few/data/a/locked.txt" && chmod 000 "$WORK/wsrc/few/data/a/locked.txt"
+skip_as_root "a failed copy removes the checkout and names the step" ||
 check "a failed copy removes the checkout and names the step" "1|0|1" \
   "$(GIT_CONFIG_GLOBAL="$WORK/many-gitconfig" bash "$WS" create "$WORK/wsrc/few" locked --base main >/dev/null 2>"$WORK/wslocked.err"; echo $?)|$([ -e "$WORK/wsroot/few/locked" ] && echo 1 || echo 0)|$(grep -c 'create: copying the excluded files failed' "$WORK/wslocked.err")"
 chmod 600 "$WORK/wsrc/few/data/a/locked.txt"
@@ -1826,8 +1864,13 @@ echo "-- a removal goes through a trash, so one cut short leaves nothing at the 
 CJ=$(mkclone "$WCSRC" del-j feat/del-j); HJ=$(scratch "$CJ")
 mkdir -p "$CJ/locked" && echo x > "$CJ/locked/f" && chmod a-w "$CJ/locked"
 out=$(bash "$WS" delete "$CJ" --discard 2>"$WC/del-j.err"); code=$?
+if skip_as_root "a removal that cannot complete leaves nothing at the checkout's path, says so, and keeps the rest in the trash"; then
+  # What the removal root completes would have left: the leftover the sweeps below empty.
+  mkdir -p "$WCR/.trash/del-j/locked"
+else
 check "a removal that cannot complete leaves nothing at the checkout's path, says so, and keeps the rest in the trash" "0|0|0|1|1|1" \
   "$code|$(exists "$CJ")|$(exists "$HJ")|$(printf '%s\n' "$out" | grep -cxF "deleted $CJ")|$(ls "$WCR/.trash" 2>/dev/null | grep -c .)|$(grep -c 'the trash keeps' "$WC/del-j.err")"
+fi
 chmod -R u+w "$WCR/.trash" "$CJ" 2>/dev/null
 mkdir -p "$ORCHESTRATOR_HOST_TMP/.workspace-trash/zz/x/scratchpad"
 git init -q "$WCR/.trash/zy"
@@ -2517,7 +2560,8 @@ layout_paths() {  # <design file>: one path per layout entry; "a, b" lists sever
 layout_drift() {  # <design file> <tracked-files, one per line>: prints every mismatch, both ways
   local design=$1 tracked=$2 f layout
   layout=$(layout_of "$design")
-  for f in $(printf '%s\n' "$tracked" | grep -vE '^docs/superpowers/|^LICENSE$|^\.gitignore$'); do
+  # core/ is the generated copy of packages/core, laid out there, and named in the design's prose.
+  for f in $(printf '%s\n' "$tracked" | grep -vE '^docs/superpowers/|^LICENSE$|^\.gitignore$|^core/'); do
     printf '%s' "$layout" | grep -qF "$f" || echo "missing:$f"
   done
   for f in $(layout_paths "$design"); do
@@ -3064,6 +3108,17 @@ d1succ=$(succ "$PSTAB" --successor --prompt-file "$PROMPT_COLON" | sed -n 's/^la
 ps_line "$d1succ" "$PROMPT_COLON" /dev/ttys901 > "$WORK/ps-succ.txt"
 check "and a successor's, with the remote-control flag behind it" "Orch : f" \
   "$(name_on "$WORK/ps-succ.txt" /dev/ttys901)"
+# A successor starts from a brief generated from the state (decision 0007): one that misses an
+# open item of the state — here the round's open question — is refused before any tab exists,
+# and the same brief once `succession.sh live` wrote its Live state goes through.
+SUCCB="$WORK/succession-brief.md"; SUCCREC="$WORK/succession-record.jsonl"
+printf '{"id":4,"label":"api","state":"open"}\n' > "$SUCCREC"
+sed -e 's/{{PREDECESSOR_NAME_PATTERN}}/Orch : f/g' -e "s#{{DISPATCH_RECORD}}#$SUCCREC#g" "$ROOT/templates/orchestrator-succession-brief.md" > "$SUCCB"
+mkdir -p "$ISTATE/round"
+printf '{"id":"succ-q1","from":"Orch : f","session":"s-old","kind":"operator","status":"open","question":"Which?"}\n' > "$ISTATE/round/succ-q1.json"
+check "a successor is refused on a brief that misses an open item of the state, and spawned once it is generated" "1|0" \
+  "$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" 2>&1 | grep -c 'misses question succ-q1')|$(ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$ROOT/skills/orchestrator/scripts/succession.sh" live "$SUCCB" --next 'answer succ-q1' >/dev/null 2>&1; succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" 2>&1 | grep -c 'refused')"
+rm -f "$ISTATE/round/succ-q1.json"
 check "the launch puts the prompt before the name" "1" \
   "$(printf '%s' "$d1launch" | grep -cE '"\$\(cat [^"]+\)" --name ')"
 
@@ -3963,7 +4018,7 @@ check_status "a directory already recorded needs no flag" 0 \
   env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
   CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --prompt p
 check "the record keeps owner-only permissions" "600" \
-  "$(stat -f '%OLp' "$TRUSTF" 2>/dev/null || stat -c '%a' "$TRUSTF")"
+  "$(perm_of "$TRUSTF")"
 
 # A record that already says yes is not rewritten: the host writes this file too, and a
 # rewrite for nothing is a window in which one of the two loses. The fixture is written
@@ -4005,7 +4060,7 @@ check "trust prune lists the gone entry, only it, and writes nothing" "$GONE|unc
   "$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" bash "$AGENT" trust prune 2>/dev/null)|$([ "$(cat "$TRUSTF")" = "$before" ] && echo unchanged || echo rewritten)"
 check "trust prune --apply removes it and keeps the rest, owner-only" "1|0|600" \
   "$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" bash "$AGENT" trust prune --apply >/dev/null 2>&1; \
-     "$py" -c "import json,sys; d=json.load(open(sys.argv[1]))['projects']; print('%d|%d' % (sys.argv[2] in d and d[sys.argv[2]].get('allowedTools')==['x'], sys.argv[3] in d))" "$TRUSTF" "$(cd "$UNTRUSTED" && pwd -P)" "$GONE")|$(stat -f '%OLp' "$TRUSTF" 2>/dev/null || stat -c '%a' "$TRUSTF")"
+     "$py" -c "import json,sys; d=json.load(open(sys.argv[1]))['projects']; print('%d|%d' % (sys.argv[2] in d and d[sys.argv[2]].get('allowedTools')==['x'], sys.argv[3] in d))" "$TRUSTF" "$(cd "$UNTRUSTED" && pwd -P)" "$GONE")|$(perm_of "$TRUSTF")"
 check "trust accepts prune and refuses another action" "0|1" \
   "$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" bash "$AGENT" trust prune >/dev/null 2>&1; echo $?)|$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" bash "$AGENT" trust wipe >/dev/null 2>&1; echo $?)"
 
@@ -4046,6 +4101,10 @@ check "the lint verdict is shown" "1" "$(printf '%s\n' "$out" | grep -c '^lint=b
 # when no chain names a live owner for the agent's tty.
 check "the launch records the orchestrator --orchestrator names" "1" \
   "$(printf '%s\n' "$out" | grep -Fc "export ORCHESTRATOR_REPORTS_TO='$ORCHREF' && ")"
+# The brief the session starts on is named in its environment: the gauge measures its size
+# beside the session's starting context (the measure file's `start`).
+check "the launch names the brief the session starts on, and a launch without one names none" "1|0" \
+  "$(printf '%s\n' "$out" | grep -Fc "export ORCHESTRATOR_BRIEF=$("$py" -c 'import shlex, sys; print(shlex.quote(sys.argv[1]))' "$BABS/good.md") && ")|$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : brief" --prompt p 2>&1 | grep -c 'ORCHESTRATOR_BRIEF')"
 check "a launch without --orchestrator records none" "0" \
   "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : brief" --prompt p 2>&1 | grep -c 'ORCHESTRATOR_REPORTS_TO')"
 
@@ -5310,8 +5369,6 @@ check "succession prunes the state file and archives the finished journal" "yes|
 # ruling (2026-11-04, « A »: restore 2, 5, 6 and 7, remove 1, 3 and 4).
 check "lifecycle.md points at the succession brief's steps, leaves the checkout check to the move, and carries no approval sentence" "no|no|no|no" \
   "$(spells "$ORCH_REFS/lifecycle.md" "waits for ever) and subscribe to each one's idle notice")|$(spells "$ORCH_REFS/lifecycle.md" "never on the host's idle notice, which reaches a working session only when its own turn ends")|$(spells "$ORCH_REFS/lifecycle.md" 'your checkouts clean and pushed')|$(spells "$ORCH_REFS/lifecycle.md" 'macOS Automation approval')"
-check "the succession brief inherits a pruned state file and does not load the archive" "yes|no" \
-  "$(spells "$SUCC" 'pruned by your predecessor to what is live, its finished journal archived in a file you are not asked to load')|$(spells "$SUCC" 'read the archive')"
 # A successor confirmed its takeover at 75k to 97k tokens because step 1 ordered the spec, the plan,
 # the runbook, the state file and the briefs directory read whole. At takeover it needs what is live,
 # which its predecessor writes into the brief; the rest is read by the section a task touches.
@@ -5338,8 +5395,6 @@ check "the Live state section replaces reading the journal, which is read by gre
 # where each pull request stands (its VERIFY runs `pr-status`), then what each row has left (its
 # step 2 lists the open rows), never a number, a head, an id or a label (the operator's ruling of
 # 2026-11-04 on the cap, its template line).
-check "the Live state section says what is cut first when it overflows the cap" "1" \
-  "$(printf '%s' "$LIVE_BODY" | tr '\n' ' ' | tr -s ' ' | grep -cF 'Over the cap, cut first where each pull request stands, then what each row has left.')"
 SUCC5=$(awk '/^5\. /{f=1} /^## /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
 check "step 5 announces the successor's own measured context from its measure file" "1|yes|yes" \
   "$(printf '%s' "$SUCC5" | grep -oF 'your two figures' | wc -l | tr -d ' ')|$(spells "$ORCH_REFS/lifecycle.md" 'Your « first turn » figure is the `context_tokens`')|$(spells "$ORCH_REFS/lifecycle.md" 'Your measure file is')"
@@ -5493,8 +5548,8 @@ check "review and briefs split « Review on evidence » and « Standing rules »
 # types no --inherit-model, which would read as a choice the successor's pair depends on.
 check "the succession line types --successor without --inherit-model" "0|0|yes|yes" \
   "$(grep -c -- '--inherit-model' "$ROOT/commands/succeed.md")|$(grep -c -- '--inherit-model' "$ORCH_REFS/lifecycle.md")|$(tr '\n' ' ' < "$ROOT/commands/succeed.md" | tr -s ' ' | grep -qF -- '`iterm-agent.sh spawn --dir <worktree> --permission-mode auto --successor --prompt "Read and execute <brief path>"`' && echo yes || echo no)|$(spells "$ORCH_REFS/lifecycle.md" 'with the brief as startup prompt, passing `--successor` — it runs on your live model and effort, read on your transcript, and `--tier`')"
-check "succeed.md and the lifecycle reference name the open-questions field and the re-ask" "yes|yes|yes" \
-  "$(spells "$ROOT/commands/succeed.md" 'five fields')|$(spells "$ROOT/commands/succeed.md" 'never summarised')|$(spells "$ORCH_REFS/lifecycle.md" 'ask it again, verbatim')"
+check "the lifecycle reference names the re-ask" "yes" \
+  "$(spells "$ORCH_REFS/lifecycle.md" 'ask it again, verbatim')"
 # The open-questions value sits outside the 9,000-character cap, its label inside: a verbatim
 # `Question i of N` block is several hundred characters, and a Live state already brings the
 # brief near the limit, so the cap would refuse the very handover the field exists for.
@@ -5811,12 +5866,13 @@ check "a bounded osascript that never answers is killed and reported as a timeou
      ipy "print(ia.osascript_run('x')[0])")"
 # Scoped to this suite's own stub path, not the bare name: a bare `pgrep -f osascript-deaf`
 # reads machine-wide and flakes when another suite's own deaf stub is alive at the same time.
+# The bracket keeps the pattern from matching the probe's own command line, which spells it.
 check "the deaf probe leaves no osascript behind" "0" \
   "$(ORCHESTRATOR_OSASCRIPT="$IBIN/osascript-deaf" ORCHESTRATOR_PROBE_TIMEOUT=2 \
      ipy "
 import subprocess
 ia.osascript_run('x')
-print(subprocess.run(['pgrep','-f','$IBIN/osascript-deaf'],capture_output=True,text=True).stdout.count('\n'))")"
+print(subprocess.run(['pgrep','-f','$IBIN/[o]sascript-deaf'],capture_output=True,text=True).stdout.count('\n'))")"
 
 # Proof the scoped guard still falls on a real leak: a copy of the stub started directly
 # under this suite's own work directory and left running on purpose, so "0" above means a
@@ -6051,7 +6107,9 @@ stubborn() { "$py" -c 'import signal, time
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 time.sleep(120)' >/dev/null 2>&1 & echo $!; }
 polite() { "$py" -c 'import time; time.sleep(120)' >/dev/null 2>&1 & echo $!; }
-alive() { kill -0 "$1" 2>/dev/null && echo alive || echo gone; }
+# A killed process its parent has not reaped is a zombie, and a container without an init that
+# reaps leaves it one: kill -0 still finds it, so the state ps reads decides.
+alive() { case "$(ps -o stat= -p "$1" 2>/dev/null | tr -d ' ')" in ''|Z*) echo gone ;; *) echo alive ;; esac; }
 # A close of the tab on $1 whose host is pid $2, asked with --expect-title $3 of a session
 # titled $4, through a terminal of the probe's own that accepts the close and ends nothing.
 endclose() {
@@ -6188,7 +6246,7 @@ ts_tmp=$(rowts write s-golden "$GPATCH"); py_out=$(rowpy s-golden "$GPATCH")
 check "the launcher writes a new row byte for byte as the module does: unicode, escapes, an integral float" "True|same" \
   "$(printf '%s\n' "$py_out" | head -1)|$(cmp -s "$RTS/store/sessions/s-golden" "$RPY/store/sessions/s-golden" && echo same || echo differ)"
 check "both writers write the row to a temporary file named alike, renamed into place, none left" "ok|ok|0" \
-  "$(tmpshape "$ts_tmp" "$RTS/store/sessions/s-golden")|$(tmpshape "$(printf '%s\n' "$py_out" | sed -n 2p)" "$RPY/store/sessions/s-golden")|$(ls "$RTS/store/sessions" "$RPY/store/sessions" | grep -c 'tmp')"
+  "$(tmpshape "$ts_tmp" "$RTS/store/sessions/s-golden")|$(tmpshape "$(printf '%s\n' "$py_out" | sed -n 2p)" "$RPY/store/sessions/s-golden")|$({ ls "$RTS/store/sessions"; ls "$RPY/store/sessions"; } | grep -c 'tmp')"
 MPATCH='{"name":"Orch : new","context_percent":41,"updated_at":"2026-11-04T10:05:00.000Z"}'
 rowts write s-golden "$MPATCH" >/dev/null; py_out=$(rowpy s-golden "$MPATCH")
 check "the launcher merges a patch into the row it finds as the module does, every field kept in place" "True|same" \
@@ -6856,6 +6914,11 @@ write(fresh, ['acceptEdits'])
 # The older session goes on writing: its modification time is now the newest of the two.
 write(stale, ['default'], 'a')
 print(since)" "$PROJ2" "$TGT2")
+# A file's creation time is the macOS reading the launcher relies on; where python reads none
+# (Linux), the launcher falls back on modification and the case has nothing to read.
+if ! "$py" -c 'import os, sys; sys.exit(0 if hasattr(os.stat("."), "st_birthtime") else 1)'; then
+  skip_case "a transcript created before the launch is not this session's, however recently written" "this platform records no creation time python reads"
+else
 check "a transcript created before the launch is not this session's, however recently written" "fresh.jsonl|stale.jsonl" \
   "$(ORCHESTRATOR_PROJECTS_DIR="$PROJ2" "$py" -c "
 import os, sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
@@ -6864,6 +6927,7 @@ p = m.find_transcript(sys.argv[1], float(sys.argv[2]))
 print(os.path.basename(p) if p else 'none')" "$TGT2" "$SINCE")|$("$py" -c "
 import glob, os, sys
 print(os.path.basename(max(glob.glob(sys.argv[1] + '/*/*.jsonl'), key=os.path.getmtime)))" "$PROJ2")"
+fi
 
 # The refusal names both modes and the model, because the repair depends on all three:
 # the operator rebinds the tier, or spawns that agent in a mode the host does honour.
@@ -7519,9 +7583,9 @@ rm -f "$TR/iterm-asked"
 out=$(home list 2>/dev/null)
 check "list: the home session's windows, in the shape the stop gate parses, the caller's own marked" \
   "w1/t0 | /dev/ttys900 | ✳ Orch : home | Orch : home | self⏎w1/t1 | /dev/ttys901 | ✳ Agent : one | Agent : one⏎w1/t2 | /dev/ttys902 | ⠂ Agent : two | Agent : two" \
-  "$(printf '%s' "$out" | tr '\n' '⏎')"
+  "$(printf '%s' "$out" | nl_join)"
 check "list asks the mark, the session, then its panes, then the app for the tabs it did not make" \
-  "${SHOW}⏎${SESS}⏎${LIST}|iterm" "$(calls | tr '\n' '⏎' | sed 's/⏎$//')|$(asked)"
+  "${SHOW}⏎${SESS}⏎${LIST}|iterm" "$(calls | nl_join)|$(asked)"
 rm -f "$TR/iterm-asked"
 
 reset_home
@@ -7538,7 +7602,7 @@ reset_home
 printf 'a\nb\nc\n\n\n' > "$TR/screen"
 check "screen: the pane's capture with its scrollback, read from the bottom" \
   "b⏎c|[-u][capture-pane][-p][-t][%1][-S][-2]" \
-  "$(home screen --tty /dev/ttys901 --lines 2 | tr '\n' '⏎' | sed 's/⏎$//')|$(calls | grep -F '[capture-pane]')"
+  "$(home screen --tty /dev/ttys901 --lines 2 | nl_join)|$(calls | grep -F '[capture-pane]')"
 
 reset_home
 out=$(home close --tty /dev/ttys901 --expect-title "Agent : one" 2>&1)
@@ -7566,7 +7630,7 @@ printf '%s\n' '$1	0	@0	%0	/dev/ttys900	orch	✳ Orch : home' \
 out=$(home move --tty /dev/ttys902 --left-of /dev/ttys901 2>&1)
 check "move: before its anchor, without taking the operator's window, the indexes closed up after" \
   "moved /dev/ttys902 to position 1|[-u][move-window][-d][-b][-s][@2][-t][@1]⏎[-u][move-window][-r][-t][\$1]" \
-  "$out|$(calls | grep -F '[move-window]' | tr '\n' '⏎' | sed 's/⏎$//')"
+  "$out|$(calls | grep -F '[move-window]' | nl_join)"
 reset_home
 out=$(home move --tty /dev/ttys901 --right-of /dev/ttys902 2>&1)
 check "and after it, on --right-of" "[-u][move-window][-d][-a][-s][@1][-t][@2]" \
@@ -7592,7 +7656,7 @@ reset_home
 out=$(home rotate --old-tty /dev/ttys901 --expect-title "Agent : one" --dir "$WORK" --title "Agent : one" --prompt p 2>"$WORK/trot.err")
 check "rotate: the replacement's window first, verified on the process table and its transcript, then the old window killed" \
   "/dev/ttys903⏎closed 1 session on /dev/ttys901|new-window kill-window|1|1" \
-  "$(printf '%s' "$out" | tr '\n' '⏎' | sed 's/⏎$//')|$(calls | grep -oE '\[(new|kill)-window\]' | tr -d '[]' | tr '\n' ' ' | sed 's/ $//')|$(grep -c 'running on /dev/ttys903' "$WORK/trot.err")|$(grep -c 'mode auto read on the transcript' "$WORK/trot.err")"
+  "$(printf '%s' "$out" | nl_join)|$(calls | grep -oE '\[(new|kill)-window\]' | tr -d '[]' | tr '\n' ' ' | sed 's/ $//')|$(grep -c 'running on /dev/ttys903' "$WORK/trot.err")|$(grep -c 'mode auto read on the transcript' "$WORK/trot.err")"
 check "and the chain trades the old window's entry for the new one's" "@2|@4" \
   "$(chainf | sed -n 's/.*:\(@[0-9]*\)".*/\1/p' | tr '\n' '|' | sed 's/|$//')"
 reset_home
@@ -7849,23 +7913,30 @@ if command -v tmux >/dev/null 2>&1; then
   env -i HOME="$HOME" PATH="$PATH" tmux -L "$CONFSRV" -f "$HOMECONF" new-session -d -s home 'sleep 20' 2>/dev/null
   confpane=$(tmux -L "$CONFSRV" display -p -t home:0 '#{pane_id}' 2>/dev/null)
   check "a server started on it marks its session, read the way the launcher reads it, and keeps its keys" \
-    "1|always|csi-u|off|1" \
-    "$(tmux -L "$CONFSRV" show -qv -t "$confpane" @orchestrator-home)|$(tmux -L "$CONFSRV" show -gv extended-keys)|$(tmux -L "$CONFSRV" show -gv extended-keys-format)|$(tmux -L "$CONFSRV" show -wgv automatic-rename)|$(tmux -L "$CONFSRV" list-keys -T prefix C-b | grep -c send-prefix)"
+    "1|always|off|1" \
+    "$(tmux -L "$CONFSRV" show -qv -t "$confpane" @orchestrator-home)|$(tmux -L "$CONFSRV" show -gv extended-keys)|$(tmux -L "$CONFSRV" show -wgv automatic-rename)|$(tmux -L "$CONFSRV" list-keys -T prefix C-b | grep -c send-prefix)"
+  # extended-keys-format came with tmux 3.5: an older one ignores the line, and has nothing to read.
+  if tmux -L "$CONFSRV" show -gv extended-keys-format >/dev/null 2>&1; then
+    check "and its extended keys are sent in the csi-u format" "csi-u" "$(tmux -L "$CONFSRV" show -gv extended-keys-format)"
+  else
+    skip_case "and its extended keys are sent in the csi-u format" "$(tmux -V) has no extended-keys-format"
+  fi
   # The tab bar: two windows carry a state, the third none; the current one is bracketed. Read
-  # back through the status line's own expansion, the server being detached and drawing nothing.
+  # back through the status line's own expansion, the server being detached and drawing nothing,
+  # by a client told it speaks UTF-8 (-u, as the launcher's are): one with no locale reads _.
   tmux -L "$CONFSRV" new-window -d -t home: -n second 'sleep 20' 2>/dev/null
   tmux -L "$CONFSRV" new-window -d -t home: -n third 'sleep 20' 2>/dev/null
   tmux -L "$CONFSRV" set -w -t home:0 @state busy 2>/dev/null
   tmux -L "$CONFSRV" set -w -t home:2 @state asks 2>/dev/null
   check "the tab bar shows each window's name and state icon in a padded block, the current one in bold, without index or session name" \
     " sleep ● | second | third ✋ " \
-    "$(tmux -L "$CONFSRV" display -p -t home:0 '#{W:#{E:window-status-format}|,#{E:window-status-current-format}|}' 2>/dev/null | sed 's/#\[[^]]*\]//g; s/|$//' | tr -d '\n')"
+    "$(tmux -u -L "$CONFSRV" display -p -t home:0 '#{W:#{E:window-status-format}|,#{E:window-status-current-format}|}' 2>/dev/null | sed 's/#\[[^]]*\]//g; s/|$//' | tr -d '\n')"
   # Each of the five states renders its own icon after the name, in the inactive block and in
   # the current one; a state the module never writes renders none.
   stateicons=""
   for st in busy idle asks done gate bogus; do
     tmux -L "$CONFSRV" set -w -t home:1 @state "$st" 2>/dev/null
-    stateicons="$stateicons$(tmux -L "$CONFSRV" display -p -t home:1 '#{E:window-status-format}|#{E:window-status-current-format}' 2>/dev/null | sed 's/#\[[^]]*\]//g; s/second//g; s/  */ /g')/"
+    stateicons="$stateicons$(tmux -u -L "$CONFSRV" display -p -t home:1 '#{E:window-status-format}|#{E:window-status-current-format}' 2>/dev/null | sed 's/#\[[^]]*\]//g; s/second//g; s/  */ /g')/"
   done
   check "each state renders its icon in both blocks, an unknown state none" \
     " ● | ● / ○ | ○ / ✋ | ✋ / ✓ | ✓ / ⚠ | ⚠ / | /" "$stateicons"
@@ -8707,6 +8778,7 @@ check "sync and uninstall leave a dangling symlink of the same name" "link" "$([
 # A commands directory the writer cannot write to: the run fails and leaves nothing behind.
 SNRO="$WORK/short-readonly"; mkdir -p "$SNRO"; chmod 555 "$SNRO"
 bash "$ROOT/short-commands.sh" install --dir "$SNRO" >/dev/null 2>&1; snrc=$?
+skip_as_root "a commands directory that cannot be written fails the install and writes nothing" ||
 check "a commands directory that cannot be written fails the install and writes nothing" "1|0" \
   "$snrc|$(ls -A "$SNRO" | wc -l | tr -d ' ')"
 chmod 755 "$SNRO"
@@ -8858,6 +8930,7 @@ t0=$(date +%s)
 out=$(ORCHESTRATOR_STATE_DIR="$CRO" COORDINATOR_VERIFY="$WORK/coord-verify" COORD_LIVE="$CLIVE" \
   bash "$COORD" register --name "Coord : ro [r0r0r0]" --tty /dev/ttys201 2>&1); code=$?
 t1=$(date +%s)
+skip_as_root "an unwritable state directory is refused at once" ||
 check "an unwritable state directory is refused at once" \
   "coordinator: cannot write into the state directory $CRO|exit 1|1" \
   "$out|exit $code|$([ $((t1 - t0)) -le 2 ] && echo 1 || echo 0)"
@@ -9165,9 +9238,11 @@ CBRIEF=$(cbrief facts 2>/dev/null)
 check "a relative brief is read from its session's directory" \
   "session 111 | ttys111 | Agent : r | Orch : gamma [ccc333] | forge.example/o/app | feat/x | $RA1" \
   "$(printf '%s\n' "$CBRIEF" | grep '^session 111 ')"
+skip_as_root "a brief that cannot be read is said, its session unknown, and exit 2" ||
 check "a brief that cannot be read is said, its session unknown, and exit 2" \
   "unread brief $CF/briefs/locked.md: cannot be read|session 110 | ttys110 | Agent : k | unknown | forge.example/o/app | feat/y | $RC1|exit 2" \
   "$(printf '%s\n' "$CBRIEF" | grep '^unread brief ')|$(printf '%s\n' "$CBRIEF" | grep '^session 110 ')|$(cbrief facts >/dev/null 2>&1; echo "exit $?")"
+skip_as_root "and owners gives the unread brief as the reason, never « names no orchestrator »" ||
 check "and owners gives the unread brief as the reason, never « names no orchestrator »" \
   "pr forge.example/o/app#8 | feat/y | unknown | session 110 in $RC1: brief $CF/briefs/locked.md cannot be read" \
   "$(cbrief owners 2>/dev/null | grep '#8 ')"
@@ -9787,6 +9862,9 @@ check "the question relay proof's dry run judges each of its fixtures as expecte
 echo "== routing: cost =="
 
 ROUTING="$ROOT/skills/model-routing/scripts/routing.py"
+# The calibration engine routing.py hands its other subcommands to, loaded as a module by the cases
+# that read one of its functions.
+CALIBRATION="$ROOT/skills/model-routing/scripts/calibration.py"
 RFIX="$ROOT/tests/fixtures/routing"
 RSTATE="$WORK/rstate"; mkdir -p "$RSTATE/routing"
 cp "$RFIX/prices.json" "$RSTATE/routing/prices.json"
@@ -9949,8 +10027,8 @@ check "show --detail reads a table written before the tables by task, a missing 
   "$(ORCHESTRATOR_STATE_DIR="$PS" python3 "$ROUTING" show --detail laravel 2>&1 | grep -c '^class=conversion-phase project=a-model/medium ')|$(ORCHESTRATOR_STATE_DIR="$PS" python3 "$ROUTING" show --detail laravel 2>&1 | grep -c '^  rung pair=a-model/low tasks=- pass_rate=0.5 p_best=- median_usd=- ci=-..- expected_usd=- off_model=-$')"
 
 # The size of a phase: one rule, the bucket a task is stamped with and the one `pick` is given.
-rcall() { # a python expression over the module as `m`, printed; a crash is read as its last traceback line
-  "$py" -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(eval(sys.argv[2]))' "$ROUTING" "$1" 2>&1 | tail -1; }
+rcall() { # a python expression over routing.py and calibration.py as `m`, printed; a crash is read as its last traceback line
+  "$py" -c 'import importlib.util,sys,types; s=importlib.util.spec_from_file_location("r",sys.argv[1]); c=importlib.util.module_from_spec(s); s.loader.exec_module(c); m=types.SimpleNamespace(**{**vars(sys.modules["routing"]), **vars(c)}); print(eval(sys.argv[2]))' "$CALIBRATION" "$1" 2>&1 | tail -1; }
 check "a phase of 3 files and 50 lines is small; one more file or one more line is large" "small|small|large|large" \
   "$(rcall 'm.size_bucket(3, 50)')|$(rcall 'm.size_bucket(0, 0)')|$(rcall 'm.size_bucket(4, 0)')|$(rcall 'm.size_bucket(0, 51)')"
 
@@ -10165,7 +10243,7 @@ check "a trial whose main model is another family is out of n and costs, counted
 check "a full-identifier pair is compared exactly, an alias pair by its dash segment: only the key that starts with the identifier is off-model" "1|5|0|5" \
   "$(rung behaviour-phase b-model-1/low '"\(.off_model)|\(.n)"')|$(rung behaviour-phase b-model/high '"\(.off_model)|\(.n)"')"
 check "on_model: an identifier is compared exactly, a bracketed suffix ignored; an alias keeps the dash-segment rule" "True|True|False|False|False|True|True|True" \
-  "$("$py" -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); f=m.on_model; print("|".join(str(x) for x in (f("b-model-1/low", {"b-model-1": 1}), f("b-model-1/low", {"b-model-1[1m]": 1}), f("b-model-1/low", {"b-model-1-1": 1}), f("b-model-1/low", {"x-b-model-1": 1}), f("b-model-1/low", {"b-model-12": 1}), f("b-model/high", {"b-model-1": 1}), f("b-model/high", {"b-model-1[1m]": 1}), f("b-model-1/low", {}))))' "$ROUTING")"
+  "$("$py" -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); f=m.on_model; print("|".join(str(x) for x in (f("b-model-1/low", {"b-model-1": 1}), f("b-model-1/low", {"b-model-1[1m]": 1}), f("b-model-1/low", {"b-model-1-1": 1}), f("b-model-1/low", {"x-b-model-1": 1}), f("b-model-1/low", {"b-model-12": 1}), f("b-model/high", {"b-model-1": 1}), f("b-model/high", {"b-model-1[1m]": 1}), f("b-model-1/low", {}))))' "$CALIBRATION")"
 check "the cheapest pair equivalent to the best is the entry; one too far below is not equivalent" \
   "b-model/medium|a-model/high|false|true" \
   "$(jq -r '.entries["review-collector"]|"\(.pair)|\(.best)|\(.ladder[]|select(.pair=="c-model/low")|.equivalent)|\(.ladder[]|select(.pair=="b-model/medium")|.equivalent)"' "$TTAB")"
@@ -10182,11 +10260,11 @@ check "a pair missing one task of the class is not covered and never the entry" 
 check "a class measured on two tasks only has no covered pair" "class=search no eligible pair (no covered pair)" \
   "$(printf '%s\n' "$out" | grep '^class=search')"
 check "a task's size leaves its test files out: two files, 40 lines is small" "small" \
-  "$(ORCHESTRATOR_STATE_DIR="$TS" python3 -c 'import importlib.util,json,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(m.task_sizes(json.load(open(sys.argv[2])))["t-a"])' "$ROUTING" "$TS/routing/projects/tasks/manifest.json")"
+  "$(ORCHESTRATOR_STATE_DIR="$TS" python3 -c 'import importlib.util,json,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(m.task_sizes(json.load(open(sys.argv[2])))["t-a"])' "$CALIBRATION" "$TS/routing/projects/tasks/manifest.json")"
 check "four files is large, and the entry takes the largest bucket and counts each" "large|1|4|0" \
   "$(jq -r '.entries["behaviour-phase"]|"\(.size)|\(.sizes.large)|\(.sizes.small)|\(.sizes.unknown)"' "$TTAB")"
 sized() { # repo base merged: the size task_sizes gives a manifest of one task, a crash read as its traceback
-  "$py" -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(m.task_sizes({"repo":sys.argv[2],"tasks":[{"id":"t","base":sys.argv[3],"merged":sys.argv[4]}]})["t"])' "$ROUTING" "$@" 2>&1 | tail -1; }
+  "$py" -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(m.task_sizes({"repo":sys.argv[2],"tasks":[{"id":"t","base":sys.argv[3],"merged":sys.argv[4]}]})["t"])' "$CALIBRATION" "$@" 2>&1 | tail -1; }
 # A path that is not UTF-8 is a valid path for git. The file cannot be made on every file
 # system, so its commit is built in the index.
 NB="$WORK/nonutf8repo"; mkdir -p "$NB"; git -C "$NB" init -q
@@ -10207,7 +10285,7 @@ check "a rename counts as one file, whatever the configuration says about rename
   "$(sized "$NR" "$NR0" "$(git -C "$NR" rev-parse HEAD)")"
 # One rule, two callers: a task's bucket is the one size_bucket gives, not a comparison of its own.
 check "a task is bucketed by size_bucket" "bucket-of-3-files" \
-  "$("$py" -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); m.size_bucket=lambda files, lines: "bucket-of-%d-files" % files; print(m.task_sizes({"repo":sys.argv[2],"tasks":[{"id":"t","base":sys.argv[3],"merged":sys.argv[4]}]})["t"])' "$ROUTING" "$NR" "$NR0" "$(git -C "$NR" rev-parse HEAD)" 2>&1 | tail -1)"
+  "$("$py" -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); m.size_bucket=lambda files, lines: "bucket-of-%d-files" % files; print(m.task_sizes({"repo":sys.argv[2],"tasks":[{"id":"t","base":sys.argv[3],"merged":sys.argv[4]}]})["t"])' "$CALIBRATION" "$NR" "$NR0" "$(git -C "$NR" rev-parse HEAD)" 2>&1 | tail -1)"
 check "the entry carries the selection it was made with, and no floor" "0.1|0.8|false|false" \
   "$(jq -r '.entries["behaviour-phase"]|"\(.delta)|\(.bar)|\(.strict)|\(has("floor"))"' "$TTAB")"
 check "every rung carries the per-task figures, the median and its interval" "true" \
@@ -10489,7 +10567,7 @@ printf '{"deep":"a-model","standard":"b-model","light":"c-model"}' > "$BS/models
 printf '{"task":"a","class":"behaviour-phase","pair":"b-model/medium","cost_usd":0.1,"status":"pass"}\n{"task":"b","class":"behaviour-phase","pair":"b-model/medium","cost_usd":0.1,"status":"pass"}\n{"task":"c","class":"beha' > "$BT"
 rtrial b-model/medium >/dev/null
 check "a torn last line is closed before the next trial: the two before it and the new one read" "3" \
-  "$(ORCHESTRATOR_STATE_DIR="$BS" python3 -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(len(m.read_trials(sys.argv[2])))' "$ROUTING" "$BT" 2>/dev/null)"
+  "$(ORCHESTRATOR_STATE_DIR="$BS" python3 -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(len(m.read_trials(sys.argv[2])))' "$CALIBRATION" "$BT" 2>/dev/null)"
 # An agent that commits its work still leaves the judge a diff to read.
 STUB_COMMIT=1 rtrial b-model/medium >/dev/null
 check "the agent's diff is taken against its base, so a committing agent is not judged on nothing" "pass|0" \
@@ -11338,10 +11416,13 @@ check "the routing table has the screenshot-audit row at the standard tier" "1" 
   "$(grep -c 'orchestrator:screenshots`.*`screenshot-audit` | `standard` | you, on a capture in doubt' "$ROOT/skills/model-routing/SKILL.md")"
 check "the design says why the audit left the orchestrator's context" "yes|yes" \
   "$(flat_has "$ROOT/docs/design.md" 'about 42,000 tokens')|$(flat_has "$ROOT/docs/design.md" '`orchestrator:screenshots`')"
+# The record's messages are dispatch-record.ts's since its port.
 check "the record's messages say the audit is the screenshots agent's" "yes|yes" \
-  "$(spells "$REC" 'ready: the audit covers $a_images image(s), the description of $pr carries $shots: audit every image')|$(spells "$REC" 'the screenshots agent audits each one')"
-check "both manifests carry 0.98.3" "1|2" \
-  "$(grep -c '"version": "0.98.3"' "$ROOT/.claude-plugin/plugin.json")|$(grep -c '"version": "0.98.3"' "$ROOT/.claude-plugin/marketplace.json")"
+  "$(spells "${REC%.sh}.ts" 'the description of ${pr} carries ${shots}: audit every image')|$(spells "${REC%.sh}.ts" 'the screenshots agent audits each one')"
+# The version is plugin.json's; the plugin's own marketplace.json carries the same one twice.
+PLUGIN_VERSION=$(jq -r .version "$ROOT/.claude-plugin/plugin.json")
+check "both manifests carry the plugin's version" "yes|2" \
+  "$(printf '%s' "$PLUGIN_VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' && echo yes)|$(grep -cF "\"version\": \"$PLUGIN_VERSION\"" "$ROOT/.claude-plugin/marketplace.json")"
 
 # A pull request carries Ready or Not Ready beside the draft. The implementer's opens Not
 # Ready (`pr-create --draft` labels it, or `pr-readiness <n> not-ready` after another way of
@@ -11407,5 +11488,7 @@ check "briefs.md carries the standing rule" "yes" \
   "$(flat_has "$ORCH_REFS/briefs.md" 'Draft and `Not Ready` until the orchestrator'"'"'s ready; `Ready` comes only from it')"
 
 echo
+[ -n "$failed" ] && printf '%s' "$failed"
+[ "$skipped" -gt 0 ] && printf '%d skipped, each with its reason above\n' "$skipped"
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

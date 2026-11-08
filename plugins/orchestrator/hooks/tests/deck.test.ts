@@ -9,7 +9,8 @@ import { register, refreshUsage, writeDeck, TRANSCRIPT_RETRY_MS, type SessionRow
 import type { RemoteRow } from '../remote-row.ts'
 import type { RoundEntry } from '../round.ts'
 import { periodStarts } from '../usage.ts'
-import { logLineOf } from './fakes.ts'
+import { logLineOf, lockRun } from './fakes.ts'
+import { GOLDEN_DECK } from './golden-deck.ts'
 
 const NOW = Date.parse('2026-10-28T14:00:00Z')
 const AT = new Date(NOW - 30_000).toISOString()
@@ -152,6 +153,17 @@ test('the sleepers are read from sleeping.json; anything unreadable is none', ()
   expect(deckOf(input()).sleeping).toEqual([{ name: 'Orch : nap', since: AT, dir: '/w/nap', prs: ['acme/app#3 feat/x'] }])
   expect(deckOf(input({ sleepingText: '' })).sleeping).toEqual([])
   expect(deckOf(input({ sleepingText: '{"name":"x"}' })).sleeping).toEqual([])
+})
+
+test('the deck is byte for byte the format the Stream Deck reads', () => {
+  const local = input().local
+  const usage = {
+    day: { from: '2026-10-27T23:00:00.000Z', tokens: { input: 10, output: 20, cache_read: 30, cache_write: 40 }, cost_usd: 0.5 },
+    week: { from: '2026-10-25T23:00:00.000Z', tokens: { input: 100, output: 200, cache_read: 300, cache_write: 400 }, cost_usd: null },
+    at: AT,
+  }
+  const withUsage = { ...local, 'sessions/s-orch': { ...local['sessions/s-orch'], usage } }
+  expect(deckText(deckOf(input({ local: withUsage, gate: { gate: 40 } })))).toBe(GOLDEN_DECK)
 })
 
 test('the text is one line of JSON', () => {
@@ -308,6 +320,8 @@ function fake(id = 's-orch') {
     },
     process: {
       run: async (argv: readonly string[]) => {
+        const locked = lockRun(argv, files)
+        if (locked) return locked
         const log = logLineOf(argv)
         if (log !== null) {
           logged.push(log)
@@ -375,6 +389,28 @@ test('writeDeck writes nothing when the deck is not news', async () => {
   await writeDeck(fx.dollar)
   await writeDeck(fx.dollar)
   expect(fx.renames.length).toBeLessThanOrEqual(1)
+})
+
+test('writeDeck writes nothing over a deck another session already wrote, and the stamp\'s refresh is the machine\'s', async () => {
+  // Every session computes the same view of the same store: a process that never wrote the deck
+  // finds the file current and leaves it; one past DECK_REFRESH_MS is written again, by one of them.
+  const fx = fake()
+  await writeDeck(fx.dollar)
+  const written = JSON.parse(fx.files.get(DECK)!)
+  fx.renames.length = 0
+  fx.files.set(DECK, JSON.stringify({ ...written, generated_at: new Date(Date.now() - 5_000).toISOString() }) + '\n')
+  await writeDeck(fx.dollar)
+  expect(fx.renames).toEqual([])
+  fx.files.set(DECK, JSON.stringify({ ...written, generated_at: new Date(Date.now() - DECK_REFRESH_MS - 1_000).toISOString() }) + '\n')
+  await writeDeck(fx.dollar)
+  expect(fx.renames).toEqual([DECK])
+  // A deck of another content, or a file that holds no deck, is written over.
+  fx.renames.length = 0
+  fx.files.set(DECK, JSON.stringify({ ...written, machine: 'elsewhere', generated_at: new Date().toISOString() }) + '\n')
+  await writeDeck(fx.dollar)
+  fx.files.set(DECK, 'half a deck')
+  await writeDeck(fx.dollar)
+  expect(fx.renames).toEqual([DECK, DECK])
 })
 
 test('writeDeck reads no transcript: the usage is each row\'s', async () => {

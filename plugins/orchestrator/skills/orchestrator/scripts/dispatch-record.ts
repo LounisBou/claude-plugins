@@ -4,7 +4,7 @@
 //
 // Every write of the record, the registry and the exemption goes through core's store: a lock,
 // one rename, no temporary file left behind. The session-name shape is core's (names.ts).
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, realpathSync, rmSync, statSync, writeSync } from 'node:fs'
+import { closeSync, existsSync, linkSync, mkdirSync, openSync, readdirSync, realpathSync, rmSync, statSync, writeSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ROLES, parseSessionName, type Prefix } from '../../../core/names.ts'
@@ -207,18 +207,26 @@ const isDir = (path: string): boolean => {
   }
 }
 
-/** Creates `path` holding `content` only when nothing is there: of two first writers, one claim stands. */
+/**
+ * Creates `path` holding `content` only when nothing is there: of two first writers, one claim
+ * stands. The content is written beside it first and linked into place, so the file is never
+ * seen empty: another writer that read an empty owner file would take it over.
+ */
 function createOnly(path: string, content: string): boolean {
+  const tmp = `${path}.tmp-${process.pid}-${Math.random().toString(36).slice(2, 8)}`
   try {
-    const fd = openSync(path, 'wx', 0o644)
+    const fd = openSync(tmp, 'wx', 0o644)
     try {
       writeSync(fd, content)
     } finally {
       closeSync(fd)
     }
+    linkSync(tmp, path)
     return true
   } catch {
     return false
+  } finally {
+    rmSync(tmp, { force: true })
   }
 }
 

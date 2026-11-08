@@ -28,6 +28,8 @@ import {
 import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf, deferredIds, machineLine } from './stop-gate.ts'
 import { typedByOperator } from './models-guard.ts'
 import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
+import { configDirOf, gateThresholds } from '../core/env.ts'
+import { isTemporary, staleTemporaries, removeArgv, withLockOver, writeAtomicOver, type StoreIo } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
   parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, NO_STATUS_KEY, coordinatorOf, chainOwnerTty, waitLabel, waitParts,
@@ -44,7 +46,7 @@ import {
   answerLine, parseAnswer, answerAckLine, parseAnswerAck, isAnswer, isAnswerAck,
 } from './remote-round.ts'
 import { targetOf, homeArgv, stateArgv, windowOf, stateAfterTurn, stateAfterMeasure, TMUX_TIMEOUT_MS, type TabState, type TabTarget } from './tab-state.ts'
-import { deckOf, deckText, deckIsNews, DECK_FILE, type Deck, type DeckUsage } from './deck.ts'
+import { deckOf, deckText, deckIsNews, DECK_FILE, DECK_VERSION, type Deck, type DeckUsage } from './deck.ts'
 import { newBook, settle, ingest, rewind, forget, usageOf, appendedArgv, consumedOf, type Prices, type UsageBook } from './usage.ts'
 
 // One row per live session, the store's whole schema. `pid` is the session's host
@@ -320,16 +322,15 @@ export function wrapWords(text: string, width: number): string[] {
   return rows
 }
 
-// The config dir, this file's own resolution: $ never crosses an import, so
-// each domain that needs it spells the same two env reads itself.
+// The config dir and the scripts' state root (the launcher's chains, the coordinator's record),
+// core's rule and the module's (moduleDirOf) over this file's own reads of the variables: the host
+// wants each name literal where a module reads it.
 async function configDir($: any): Promise<string> {
-  return (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`
+  return configDirOf({ CLAUDE_CONFIG_DIR: await $.env.get('CLAUDE_CONFIG_DIR') }, String(await $.env.get('HOME') ?? ''))
 }
 
-// The scripts' state root (the launcher's chains, the coordinator's record): the
-// override first, else the config dir's claude-orchestrator.
 async function stateDir($: any): Promise<string> {
-  return (await $.env.get('ORCHESTRATOR_STATE_DIR')) ?? `${await configDir($)}/claude-orchestrator`
+  return moduleDirOf(await configDir($), await $.env.get('ORCHESTRATOR_STATE_DIR'))
 }
 
 // The store's root under the module's own directory (module-log.ts, moduleDirOf): one file per key.
@@ -416,23 +417,76 @@ export function withWait(row: SessionRow, waitText: string): SessionRow {
 }
 
 async function readWait($: any, id: string): Promise<WaitRecord | null> {
-  return parseWaitRecord(String(await $.fs.read(`${await storeOf($)}/${waitKey(id)}`).catch(() => '')))
+  const read = parseWaitRecord(String(await $.fs.read(`${await storeOf($)}/${waitKey(id)}`).catch(() => '')))
+  seenWaits.set(id, read)
+  return read
 }
 
-// Written atomically: a temporary file beside it, then one rename — $.fs.write is not
-// atomic, and a wait caught mid-write would read as none.
+// What this process last read or wrote of each wait file: the base of its next write's merge.
+const seenWaits = new Map<string, WaitRecord | null>()
+
+// A write of a wait file merged with what another process wrote since this one read it: the
+// file has writers in several processes (its session's relay, the coordinator's hooks forgetting
+// a fingerprint, `coordinator.sh round-close`), and a write computed from an older read put back
+// a fingerprint another had just forgotten. A field this write leaves as it read it, and that the
+// file now holds otherwise, keeps the file's value; every other field is this write's.
+export function mergeWait(seen: WaitRecord | null | undefined, now: WaitRecord | null, record: WaitRecord): WaitRecord {
+  if (!seen || !now) return record
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
+  const merged: Record<string, unknown> = { ...record }
+  const fields = (r: WaitRecord) => r as unknown as Record<string, unknown>
+  for (const key of new Set([...Object.keys(record), ...Object.keys(now), ...Object.keys(seen)])) {
+    const [was, is, mine] = [fields(seen)[key], fields(now)[key], fields(record)[key]]
+    if (same(mine, was) && !same(is, was)) {
+      if (is === undefined) delete merged[key]
+      else merged[key] = is
+    }
+  }
+  return merged as WaitRecord
+}
+
+// Written under the file's lock, merged (mergeWait), through a temporary file and one rename —
+// $.fs.write is not atomic, and a wait caught mid-write would read as none.
 async function writeWait($: any, id: string, record: WaitRecord): Promise<void> {
-  await writeAtomic($, `${await storeOf($)}/${waitKey(id)}`, JSON.stringify(record) + '\n')
+  const path = `${await storeOf($)}/${waitKey(id)}`
+  const io = storeIo($)
+  await withLockOver(io, path, async () => {
+    const merged = mergeWait(seenWaits.get(id), parseWaitRecord((await io.read(path)) ?? ''), record)
+    await writeAtomicOver(io, path, JSON.stringify(merged) + '\n')
+    seenWaits.set(id, merged)
+  })
+}
+
+// Core's store over this file's $ (store-io.ts): $.fs writes but cannot rename, remove or create
+// a file exclusively, so those run as processes; the lock is `<path>.lock`, every writer's.
+function storeIo($: any): StoreIo {
+  return {
+    write: (path, text) => $.fs.write(path, text),
+    read: path => $.fs.read(path).then((text: unknown) => String(text), () => undefined),
+    run: argv => $.process.run(argv, { timeoutMs: 5000 }),
+    mtimeMs: path => $.fs.stat(path).then((stat: { mtimeMs: number }) => Number(stat.mtimeMs), () => undefined),
+    sleep: ms => $.clock.sleep(ms),
+    now: Date.now,
+    tag: () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  }
 }
 
 async function writeAtomic($: any, path: string, text: string): Promise<void> {
-  const tmp = `${path}.tmp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-  await $.fs.write(tmp, text)
-  const moved = await $.process.run(['mv', '-f', tmp, path], { timeoutMs: 5000 })
-  if (!moved || moved.exitCode !== 0) {
-    await $.process.run(['rm', '-f', tmp], { timeoutMs: 5000 }).catch(() => undefined)
-    throw new Error(`the file ${path} could not be renamed into place`)
-  }
+  await writeAtomicOver(storeIo($), path, text)
+}
+
+// A round entry read again and written under its lock, so its writers on this machine — the pane
+// answering, its sender withdrawing or moving it, a delivery's outcome, the coordinator's script
+// closing it — never write over each other's change: `change` is handed the entry as it stands
+// (null when there is none, or it does not parse) and answers the entry to write, or null to
+// leave it. Answers what was written.
+async function changeEntry($: any, path: string, change: (entry: RoundEntry | null) => RoundEntry | null | Promise<RoundEntry | null>): Promise<RoundEntry | null> {
+  const io = storeIo($)
+  return withLockOver(io, path, async () => {
+    const next = await change(parseRoundEntry((await io.read(path)) ?? ''))
+    if (next) await writeAtomicOver(io, path, JSON.stringify(next) + '\n')
+    return next
+  })
 }
 
 // writeSession reads the key's file, merges the patch over what it finds and
@@ -504,17 +558,18 @@ function droppedReason(text: string, row: SessionRow | null, alive: StoreRead['a
 
 async function readStore($: any): Promise<StoreRead> {
   const dir = `${await storeOf($)}/sessions`
-  let entries: { name: string; kind: string }[]
+  let entries: { name: string; kind: string; mtimeMs?: number }[]
   try {
     entries = await $.fs.list(dir)
   } catch {
     return { rows: {}, dropped: new Map(), alive: new Set() }   // no store yet: nothing was ever written
   }
   const read: [string, string, SessionRow | null][] = []
+  // A temporary file is a row write in flight (writeAtomic): no second row, and removed only once
+  // it is older than any write takes (staleTemporaries), or a live writer's rename fails.
+  const stale = staleTemporaries(dir, entries, Date.now())
   for (const entry of entries) {
-    // A temporary file is a row write in flight (writeAtomic): no second row, and never
-    // removed here, or the writer's rename fails.
-    if (!entry || entry.kind !== 'file' || entry.name.includes('.tmp-')) continue
+    if (!entry || entry.kind !== 'file' || isTemporary(entry.name)) continue
     const text = String(await $.fs.read(`${dir}/${entry.name}`).catch(() => ''))
     const row = parseSessionRow(text)
     const waits = `${await storeOf($)}/waits/${entry.name}`
@@ -546,7 +601,9 @@ async function readStore($: any): Promise<StoreRead> {
   // A liveness read that failed removes nothing: its rows are drawn as alive
   // and the next read that answers sweeps the dead. Removing on it wiped the
   // whole store at every render the pane drew.
-  if (alive !== null && dead.length > 0) await $.process.run(['rm', '-f', ...dead], { timeoutMs: 5000 }).catch(() => undefined)
+  // A temporary file a dead writer left is removed whatever the liveness read gave.
+  const removed = [...stale, ...(alive !== null ? dead : [])]
+  if (removed.length > 0) await $.process.run(removeArgv(...removed), { timeoutMs: 5000 }).catch(() => undefined)
   if (alive !== null && gone.size > 0) await sweepGoneSenders($, gone)
   return { rows, dropped, alive }
 }
@@ -927,6 +984,22 @@ async function readIds($: any, path: string): Promise<string[]> {
   }
 }
 
+// Ids added to a list file under its lock, the list read again first: two coordinators at a
+// succession write the same lists, and a list written from an older read lost the other's ids.
+// Only the ids `keep` holds stay (the round's present entries), so the list never outgrows it.
+async function addIds($: any, path: string, ids: readonly string[], keep: (id: string) => boolean): Promise<void> {
+  const io = storeIo($)
+  await withLockOver(io, path, async () => {
+    let listed: string[] = []
+    try {
+      const read: unknown = JSON.parse((await io.read(path)) ?? '[]')
+      if (Array.isArray(read)) listed = read.filter((id): id is string => typeof id === 'string')
+    } catch { /* a list that does not parse is none */ }
+    const next = [...new Set([...listed.filter(keep), ...ids])]
+    await writeAtomicOver(io, path, JSON.stringify(next) + '\n')
+  })
+}
+
 // An entry the coordinator was shown: one its `coordinator.sh round` printed open
 // (`<state>/round-listed.json`, the script's own record) or one the module woke it for. Read by
 // the files, never by its model's memory: a question it presented and then saw settled
@@ -1176,7 +1249,7 @@ async function wakeForDue($: any): Promise<void> {
     await logLine($, `round wake: the host dropped the wake: ${String(taken.drop)}`)
     return
   }
-  await writeAtomic($, await wokenPath($), JSON.stringify([...woken, ...due.map(entry => entry.id)]) + '\n')
+  await addIds($, await wokenPath($), due.map(entry => entry.id), id => present.has(id))
 }
 
 // The entries the coordinator's conversation was told of, `<state>/round-told.json`, a JSON list
@@ -1203,7 +1276,7 @@ async function tellNew($: any, read: readonly RoundEntry[], present: ReadonlySet
     for (const entry of fresh) {
       $.ui.log(toldText(entry))
       told.push(entry.id)
-      await writeAtomic($, path, JSON.stringify(told) + '\n')
+      await addIds($, path, [entry.id], id => present.has(id))
     }
   } catch (err) {
     await logLine($, `round told: ${(err as Error).message}`)
@@ -1267,12 +1340,35 @@ async function recordedCoordinator($: any): Promise<{ tty: string | null; pid: s
 // starts it afresh, the host having dropped the old environment's timers with it.
 let wake: WakeMemory = { timer: null, generation: 0 }
 
+// The temporary files a writer killed between its write and its rename left (writeAtomic): every
+// directory the module writes in is listed at a session's start, which spawns nothing, and those
+// older than core's STALE_MS are removed in one process, none when there are none. The readers of
+// the store and of the round sweep their own directory at each read the same way.
+export const WRITTEN_DIRS = ['sessions', 'waits', 'gates', 'rows', 'answered', 'successors', 'remote']
+export async function sweepTemporaries($: any): Promise<string[]> {
+  const store = await storeOf($)
+  const state = await stateDir($)
+  const now = Date.now()
+  const stale: string[] = []
+  for (const dir of [...WRITTEN_DIRS.map(name => `${store}/${name}`), store, state, `${state}/round`]) {
+    stale.push(...staleTemporaries(dir, await $.fs.list(dir).catch(() => []), now))
+  }
+  if (stale.length > 0) await $.process.run(removeArgv(...stale), { timeoutMs: 5000 })
+  return stale
+}
+
 // The round's reading armed when the module loads — the host's session.start fires at a reload
 // too — so a reload with no turn after it still wakes the coordinator. Mounted beside the
 // supervision rather than in it, whose register holds no start handler: nothing is opened at a
 // start. Bounded, as the first start is awaited.
 export function registerWake(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
   on('session.start', {}, async ($: any, e: any, next: (e: any) => any) => {
+    try {
+      const swept = await withDeadline(sweepTemporaries($), RELAY_BOUND_MS)
+      if (isDegradedPass(swept)) await logLine($, `sweep: did not finish within ${RELAY_BOUND_MS} ms`)
+    } catch (err) {
+      await logLine($, `sweep: ${(err as Error).message}`)
+    }
     try {
       const self = await withDeadline(recordedCoordinator($), RELAY_BOUND_MS)
       if (isDegradedPass(self)) await logLine($, `round wake: did not finish within ${RELAY_BOUND_MS} ms`)
@@ -1396,7 +1492,12 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         // answer in time is quietly no new name and no repository — the
         // figures still land, and the next measure names the row.
         const walked = await walkWithinBound($, sessionId)
-        const origin = await withDeadline(repoOf($), await sideReadBoundMs($))
+        // The repository is the pane's own memory (ownRepo): read once it answers, not at every measure.
+        const origin = await withDeadline((async () => {
+          const repo = await (ownRepo ??= repoRead($))
+          if (repo === undefined) ownRepo = null
+          return repo ?? null
+        })(), await sideReadBoundMs($))
         await writeSession($, sessionId, {
           // A walk that did not finish leaves the row's name, role and pid as they were.
           ...(walked.known ? { role: roleOf(walked.name), name: walked.name } : {}),
@@ -2310,7 +2411,7 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
       await writeWait($, sessionId, { ...patch, relayed: key, name, pid })
       return
     }
-    await writeAtomic($, roundPath(await stateDir($), entry.id), JSON.stringify(entry) + '\n')
+    await changeEntry($, roundPath(await stateDir($), entry.id), () => entry)
     await writeWait($, sessionId, { ...patch, relayed: key, name, pid })
     // A coordinator told this entry closed at the prompt is told it is open again.
     if (sameWait && typed?.told?.includes(entry.id)) await tellReopened($, coordinator.to, entry)
@@ -2463,8 +2564,11 @@ async function keptChoices($: any, entry: RoundEntry): Promise<{ path: string; e
 // nothing else of it: written only when the mark changes.
 async function takeUrgent($: any, kept: { path: string; entry: RoundEntry }, entry: RoundEntry): Promise<void> {
   if (Boolean(kept.entry.urgent) === Boolean(entry.urgent)) return
-  const { urgent: _, ...plain } = kept.entry
-  await writeAtomic($, kept.path, JSON.stringify(entry.urgent ? { ...plain, urgent: true } : plain) + '\n')
+  await changeEntry($, kept.path, current => {
+    if (!current || Boolean(current.urgent) === Boolean(entry.urgent)) return null
+    const { urgent: _, ...plain } = current
+    return entry.urgent ? { ...plain, urgent: true } : plain
+  })
 }
 
 // The urgent mark of a wait that asks nothing, copied onto its session's open questions with
@@ -2472,7 +2576,7 @@ async function takeUrgent($: any, kept: { path: string; entry: RoundEntry }, ent
 async function markUrgent($: any, sessionId: string): Promise<void> {
   for (const { path, entry } of await readRound($)) {
     if (entry.session !== sessionId || entry.status !== 'open' || entry.urgent || !carriesChoices(entry)) continue
-    await writeAtomic($, path, JSON.stringify({ ...entry, urgent: true }) + '\n')
+    await changeEntry($, path, current => current && current.status === 'open' && !current.urgent ? { ...current, urgent: true } : null)
   }
 }
 
@@ -2503,8 +2607,11 @@ async function withdrawEntry($: any, sessionId: string, name: string, held: { bl
     const at = new Date().toISOString()
     const closed = await closesItself($, entry.id)
     const answer: RoundAnswer = { text: closed ? `withdrawn: ${TAB_ANSWER}` : TAB_ANSWER, by: 'tab', at }
-    await writeAtomic($, path, JSON.stringify({ ...entry, status: closed ? 'closed' : 'withdrawn', answer }) + '\n')
-    if (closed) settled.push({ entry, answer })
+    // Read again under the lock: an answer the pane wrote meanwhile stands.
+    const written = await changeEntry($, path, current =>
+      current && current.status === 'open' && current.session === sessionId ? { ...current, status: closed ? 'closed' : 'withdrawn', answer } : null)
+    if (!written) await logLine($, `round: ${entry.id} was settled meanwhile, left as it is`)
+    else if (closed) settled.push({ entry, answer })
   }
   if (matched === 0) await logLine($, `round: no open entry matched for ${name} since ${held.since ?? '?'}`)
   return settled
@@ -2537,18 +2644,22 @@ export async function answerFromPaneText($: any, pane: PaneMemory, asked: RoundE
 async function answerPart($: any, pane: PaneMemory, asked: RoundEntry, text: string, part: number): Promise<void> {
   const parts = entryQuestions(asked)
   if (parts.length < 2) return answerEntryFromPane($, pane, asked, text)
-  let answers: string[]
+  let answers: string[] | null = null
   try {
     const path = roundPath(await stateDir($), asked.id)
-    const entry = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
-    if (!entry || entry.status !== 'open') return
-    const given = entry.partial ?? []
-    if (part !== given.length || part >= parts.length) return
-    const number = parts[part].number
-    answers = [...given, `${number === null ? `Question ${part + 1}` : number}: ${text}`]
+    // Under the entry's lock: the answers kept so far are read again, and a part short of the
+    // last is written; the last one is written by the whole answer below.
+    await changeEntry($, path, entry => {
+      if (!entry || entry.status !== 'open') return null
+      const given = entry.partial ?? []
+      if (part !== given.length || part >= parts.length) return null
+      const number = parts[part].number
+      answers = [...given, `${number === null ? `Question ${part + 1}` : number}: ${text}`]
+      return answers.length < parts.length ? { ...entry, partial: answers } : null
+    })
+    if (answers === null) return
     forgetDraft(pane, `${asked.id}:${part + 1}`)
-    if (answers.length < parts.length) {
-      await writeAtomic($, path, JSON.stringify({ ...entry, partial: answers }) + '\n')
+    if ((answers as string[]).length < parts.length) {
       $.ui.invalidate('ui.render')
       return
     }
@@ -2556,7 +2667,7 @@ async function answerPart($: any, pane: PaneMemory, asked: RoundEntry, text: str
     await logLine($, `round: ${(err as Error).message}`)
     return
   }
-  return answerEntryFromPane($, pane, asked, answers.join(' · '))
+  return answerEntryFromPane($, pane, asked, (answers as string[]).join(' · '))
 }
 
 // A failed delivery to this machine, by its entry and the answer it carried.
@@ -2580,17 +2691,21 @@ async function answerEntryFromPane($: any, pane: PaneMemory, asked: RoundEntry, 
   pane.answering.add(asked.id)
   try {
     const path = roundPath(await stateDir($), asked.id)
-    const entry = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
-    if (!entry || entry.status !== 'open') return
     const at = new Date().toISOString()
     // The coordinator that was shown this question leaves it at once, in its own session: the
     // entry is closed here, in the same rename, and never waits on its round-close.
-    const closed = await shownToCoordinator($, entry.id)
+    const closed = await shownToCoordinator($, asked.id)
     const answer: RoundAnswer = { text: closed ? `${PANE_CLOSED}${text}` : text, by: 'pane', at }
-    // An answer to another machine is pending in the same write, then sent by its module.
-    const delivery: RoundDelivery | undefined = entry.origin ? { state: 'pending', at, attempts: 0 } : undefined
-    const answered: RoundEntry = { ...entry, status: closed ? 'closed' : 'answered', answer, ...(delivery ? { delivery } : {}) }
-    await writeAtomic($, path, JSON.stringify(answered) + '\n')
+    // Read again under the entry's lock: a question its sender withdrew meanwhile is left as it
+    // is. An answer to another machine is pending in the same write, then sent by its module.
+    let entry: RoundEntry | null = null
+    const answered = await changeEntry($, path, current => {
+      if (!current || current.status !== 'open') return null
+      entry = current
+      const delivery: RoundDelivery | undefined = current.origin ? { state: 'pending', at, attempts: 0 } : undefined
+      return { ...current, status: closed ? 'closed' : 'answered', answer, ...(delivery ? { delivery } : {}) }
+    })
+    if (!answered || !entry) return
     forgetDraft(pane, entry.id)
     if (entry.origin) await sendAnswer($, path, answered, text)
     else {
@@ -2629,16 +2744,16 @@ async function deliverLocal($: any, path: string, entry: RoundEntry, readable: s
   const by = answer.by === 'coordinator' ? 'coordinator' : 'pane'
   if (reason !== null) await logLine($, `round: the ${by}'s answer was not delivered to ${entry.from}: ${reason}`)
   if (reason === null && !entry.delivery) return
-  const now = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
-  if (!now || now.answer?.at !== answer.at || now.delivery?.state !== entry.delivery?.state) {
-    await logLine($, `round: the delivery of ${entry.id} moved during its send, left as it is`)
-    return
-  }
   const at = new Date().toISOString()
   const moved: RoundDelivery = reason === null
     ? { state: 'delivered', at, attempts: 1, answerAt: answer.at }
     : { state: 'failed', at, attempts: 1, answerAt: answer.at, reason }
-  await writeAtomic($, path, JSON.stringify({ ...now, delivery: moved }) + '\n')
+  const written = await changeEntry($, path, now =>
+    !now || now.answer?.at !== answer.at || now.delivery?.state !== entry.delivery?.state ? null : { ...now, delivery: moved })
+  if (!written) {
+    await logLine($, `round: the delivery of ${entry.id} moved during its send, left as it is`)
+    return
+  }
   if (reason !== null) $.ui.invalidate('ui.render')
 }
 
@@ -2646,11 +2761,12 @@ async function deliverLocal($: any, path: string, entry: RoundEntry, readable: s
 // written `failed` naming the mismatch, so that it is not left pending for ever.
 async function failMismatched($: any, path: string, entry: RoundEntry): Promise<void> {
   const was = entry.delivery!
-  const now = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
-  if (!now?.delivery || now.delivery.state !== 'pending' || now.answer?.at !== entry.answer?.at) return
   const reason = `the delivery was stamped for the answer of ${was.answerAt}, the entry holds the answer of ${entry.answer?.at}`
-  await logLine($, `round: ${entry.id}: ${reason}`)
-  await writeAtomic($, path, JSON.stringify({ ...now, delivery: { ...now.delivery, state: 'failed', at: new Date().toISOString(), reason } }) + '\n')
+  const written = await changeEntry($, path, now =>
+    !now?.delivery || now.delivery.state !== 'pending' || now.answer?.at !== entry.answer?.at
+      ? null
+      : { ...now, delivery: { ...now.delivery, state: 'failed', at: new Date().toISOString(), reason } })
+  if (written) await logLine($, `round: ${entry.id}: ${reason}`)
 }
 
 // The answers the coordinator closed in its tab, read at each round wake whether the pane is open
@@ -2688,17 +2804,17 @@ async function sendAnswer($: any, path: string, entry: RoundEntry, text: string)
   } catch (err) {
     reason = (err as Error).message
   }
-  const now = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
   const was = entry.delivery!
-  if (!now?.delivery || now.delivery.state !== was.state || now.delivery.attempts !== was.attempts) {
-    await logLine($, `round: the delivery of ${entry.id} moved during its send, left as it is`)
-    return
-  }
   const attempts = was.attempts + 1
   const moved: RoundDelivery = reason === null
     ? { state: 'sent', at: new Date().toISOString(), attempts }
     : { state: 'failed', at: new Date().toISOString(), attempts, reason }
-  await writeAtomic($, path, JSON.stringify({ ...now, delivery: moved }) + '\n')
+  const written = await changeEntry($, path, now =>
+    !now?.delivery || now.delivery.state !== was.state || now.delivery.attempts !== was.attempts ? null : { ...now, delivery: moved })
+  if (!written) {
+    await logLine($, `round: the delivery of ${entry.id} moved during its send, left as it is`)
+    return
+  }
   if (reason !== null) {
     await logLine($, `round: the pane's answer was not delivered to ${entry.from} on ${entry.origin!.machine}: ${reason}`)
     $.ui.invalidate('ui.render')
@@ -2720,10 +2836,12 @@ async function resendAnswers($: any): Promise<void> {
         await sendAnswer($, path, entry, entry.status === 'closed' && entry.answer.text.startsWith(PANE_CLOSED) ? entry.answer.text.slice(PANE_CLOSED.length) : entry.answer.text)
         continue
       }
-      const read = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
-      if (read?.delivery?.state !== delivery.state || read.delivery.attempts !== delivery.attempts) continue
       const reason = `no acknowledgment after ${ANSWER_SENDS} sends`
-      await writeAtomic($, path, JSON.stringify({ ...read, delivery: { state: 'failed', at: new Date().toISOString(), attempts: delivery.attempts, reason } }) + '\n')
+      const written = await changeEntry($, path, read =>
+        !read || read.delivery?.state !== delivery.state || read.delivery.attempts !== delivery.attempts
+          ? null
+          : { ...read, delivery: { state: 'failed', at: new Date().toISOString(), attempts: delivery.attempts, reason } })
+      if (!written) continue
       await logLine($, `round: the pane's answer to ${entry.from} on ${entry.origin.machine} failed: ${reason}`)
       $.ui.invalidate('ui.render')
     } catch (err) {
@@ -2813,10 +2931,10 @@ async function withdrawStale($: any, sessionId: string, current: string | null, 
     try {
       const closed = await closesItself($, entry.id)
       const answer: RoundAnswer = { text: closed ? `withdrawn: ${why}` : why, by: via ? 'message' : 'sender', at: new Date().toISOString(), ...via }
-      // Re-read just before the write: a move to a successor in between is never overwritten.
-      const fresh = parseRoundEntry(String(await $.fs.read(path).catch(() => '')))
-      if (!fresh || fresh.status !== 'open' || fresh.session !== sessionId) continue
-      await writeAtomic($, path, JSON.stringify({ ...fresh, status: closed ? 'closed' : via ? 'answered' : 'withdrawn', answer }) + '\n')
+      // Read again under the lock: a move to a successor or an answer in between is never overwritten.
+      const written = await changeEntry($, path, fresh =>
+        !fresh || fresh.status !== 'open' || fresh.session !== sessionId ? null : { ...fresh, status: closed ? 'closed' : via ? 'answered' : 'withdrawn', answer })
+      if (!written) continue
       await logLine($, `round: withdrawn by the sender: ${entry.id}`)
       await forgetRelayed($, entry)
       if (closed) settled.push({ entry, answer })
@@ -2833,16 +2951,18 @@ async function withdrawStale($: any, sessionId: string, current: string | null, 
 // written is no failure — nothing was ever asked.
 export async function readRound($: any): Promise<{ path: string; entry: RoundEntry }[]> {
   const dir = `${await stateDir($)}/round`
-  let listed: readonly { name: string; kind: string }[]
+  let listed: readonly { name: string; kind: string; mtimeMs?: number }[]
   try {
     listed = await $.fs.list(dir)
   } catch (err) {
     if (await $.fs.exists(dir).catch(() => true)) await logLine($, `round: cannot list ${dir}: ${(err as Error).message}`)
     return []
   }
+  const stale = staleTemporaries(dir, listed, Date.now())
+  if (stale.length > 0) await $.process.run(removeArgv(...stale), { timeoutMs: 5000 }).catch(() => undefined)
   const read: { path: string; entry: RoundEntry }[] = []
   for (const file of listed) {
-    if (!file || file.kind !== 'file' || !file.name.endsWith('.json') || file.name.includes('.tmp-')) continue
+    if (!file || file.kind !== 'file' || !file.name.endsWith('.json') || isTemporary(file.name)) continue
     const entry = parseRoundEntry(String(await $.fs.read(`${dir}/${file.name}`).catch(() => '')))
     if (entry) read.push({ path: `${dir}/${file.name}`, entry })
   }
@@ -2987,8 +3107,9 @@ async function moveToSuccessor($: any, sessionId: string, successor: LearntSucce
   for (const { path, entry } of await readRound($)) {
     if (entry.session !== sessionId || entry.status !== 'open') continue
     try {
-      await writeAtomic($, path, JSON.stringify({ ...entry, session, from: successor.name, movedFrom: sessionId }) + '\n')
-      await logLine($, `round: moved to the successor ${successor.name}: ${entry.id}`)
+      const written = await changeEntry($, path, fresh =>
+        !fresh || fresh.status !== 'open' || fresh.session !== sessionId ? null : { ...fresh, session, from: successor.name, movedFrom: sessionId })
+      if (written) await logLine($, `round: moved to the successor ${successor.name}: ${entry.id}`)
     } catch (err) {
       await logLine($, `round: ${(err as Error).message}`)
     }
@@ -3100,7 +3221,7 @@ async function receiveAsk($: any, delivery: Delivery): Promise<{ consumed: strin
     } else {
       const entry: RoundEntry = { ...asked.entry, origin: { machine: asked.machine, address: from } }
       step = 'the entry write'
-      await writeAtomic($, path, JSON.stringify(entry) + '\n')
+      await changeEntry($, path, () => entry)
       await logLine($, `round: entered from ${asked.machine}: ${entry.id}`)
       step = 'the supersede'
       await supersede($, entry)
@@ -3213,8 +3334,11 @@ async function receiveAnswerAck($: any, body: string): Promise<{ consumed: strin
       return { consumed: "orchestrator: an answer's acknowledgment, dropped" }
     }
     step = 'the entry write'
-    const { reason: _reason, ...delivery } = entry.delivery
-    await writeAtomic($, path, JSON.stringify({ ...entry, status: 'closed', delivery: { ...delivery, state: 'acked', at: new Date().toISOString() } }) + '\n')
+    await changeEntry($, path, now => {
+      if (!now?.delivery || now.delivery.state !== entry.delivery!.state) return null
+      const { reason: _reason, ...delivery } = now.delivery
+      return { ...now, status: 'closed', delivery: { ...delivery, state: 'acked', at: new Date().toISOString() } }
+    })
     step = 'the pane redraw'
     $.ui.invalidate('ui.render')
   } catch (err) {
@@ -3270,10 +3394,12 @@ export async function readRemoteRows($: any): Promise<RemoteRow[]> {
 }
 
 // The machine's deck (deck.ts): the store, the remote rows, the round, the chains and the
-// sleepers read once and written to the state directory's deck.json, only when it is news.
-// Bounded by its callers and never a failure of theirs: a deck that cannot be written is one
-// log line, and the next change writes it.
-let lastDeck: { deck: Deck; at: number } | null = null
+// sleepers read once and written to the state directory's deck.json, only when it is news against
+// the file as it stands, whichever session wrote it last: every session of the machine computes
+// the same view of the same store, so a view another one already wrote is not written again, and
+// the stamp's refresh (DECK_REFRESH_MS) is the machine's, not each session's. Bounded by its
+// callers and never a failure of theirs: a deck that cannot be written is one log line, and the
+// next change writes it.
 export async function writeDeck($: any): Promise<void> {
   const state = await stateDir($)
   const local = await readSessions($)
@@ -3296,9 +3422,20 @@ export async function writeDeck($: any): Promise<void> {
     sleepingText: String(await $.fs.read(`${state}/sleeping.json`).catch(() => '')),
     gate: await gateEnv($),
   })
-  if (!deckIsNews(deck, lastDeck, now)) return
-  await writeAtomic($, `${state}/${DECK_FILE}`, deckText(deck))
-  lastDeck = { deck, at: now }
+  const path = `${state}/${DECK_FILE}`
+  if (!deckIsNews(deck, writtenDeck(String(await $.fs.read(path).catch(() => ''))), now)) return
+  await writeAtomic($, path, deckText(deck))
+}
+
+// The deck a file holds, with the time it was generated, or null when it holds none of this version.
+function writtenDeck(text: string): { deck: Deck; at: number } | null {
+  try {
+    const deck = JSON.parse(text) as Deck
+    const at = Date.parse(String(deck?.generated_at))
+    return deck && deck.version === DECK_VERSION && Number.isFinite(at) ? { deck, at } : null
+  } catch {
+    return null
+  }
 }
 
 // The session's own usage (usage.ts): its transcript and its subagents', never another
@@ -3527,18 +3664,12 @@ export async function reportGate($: any, sessionId: string, name: string, tty: s
   else await logLine($, `gate: not delivered to ${addressLabel(to)}: ${sent?.reason ?? 'no answer'}`)
 }
 
-// The gate's thresholds from the environment, the gauge's own reading spelled again here
-// (the $ fence): a value that is no positive number stays undefined, and tripGate applies
-// the default itself.
+// The gate's thresholds (core's gateThresholds) over this file's reads of the variables.
 async function gateEnv($: any): Promise<{ gate?: number; gateTokens?: number }> {
-  const threshold = (raw: string | undefined) => {
-    const n = raw === undefined ? NaN : Number(raw)
-    return Number.isFinite(n) && n > 0 ? n : undefined
-  }
-  return {
-    gate: threshold(await $.env.get('ORCHESTRATOR_CONTEXT_GATE')),
-    gateTokens: threshold(await $.env.get('ORCHESTRATOR_CONTEXT_GATE_TOKENS')),
-  }
+  return gateThresholds({
+    ORCHESTRATOR_CONTEXT_GATE: await $.env.get('ORCHESTRATOR_CONTEXT_GATE'),
+    ORCHESTRATOR_CONTEXT_GATE_TOKENS: await $.env.get('ORCHESTRATOR_CONTEXT_GATE_TOKENS'),
+  })
 }
 
 // What each window of a home session shows, kept by the window it is written on (the server's
@@ -3676,11 +3807,7 @@ async function transcriptPathOf($: any, sessionId: string): Promise<string> {
 // when there is no origin: a session outside any checkout reports no
 // repository, never a failure. Bounded (REPO_READ_MS): it runs in the pane's
 // render, and a git that hangs held the render for the host's default 30 s.
-async function repoOf($: any): Promise<string | null> {
-  return (await repoRead($)) ?? null
-}
-
-// The same read, undefined when git gave no answer — it could not run, or was ended at its bound
+// Undefined when git gave no answer — it could not run, or was ended at its bound
 // before it said anything — a value the render does not keep. No origin, or no checkout, is git's
 // own answer: its `error:` or `fatal:` line.
 async function repoRead($: any): Promise<string | null | undefined> {

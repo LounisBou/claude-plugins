@@ -27,3 +27,15 @@ export function base64Of(bytes: Uint8Array): string {
   }
   return out + '\n'
 }
+
+// The store's lock as the module takes it (core's takeLockArgv, `sh -c '… set -C …' sh <path>.lock`):
+// an exclusive create, played over the fake's own file map — taken when no file holds the path,
+// refused while one does. The lock's release is the module's `rm -f <path>.lock`, which the
+// fake's rm answers; null for a run that is no lock.
+export function lockRun(argv: readonly string[], files: Map<string, string>): { exitCode: number; stdout: string; stderr: string } | null {
+  if (argv[0] !== 'sh' || argv[1] !== '-c' || !String(argv[2] ?? '').includes('set -C')) return null
+  const lock = String(argv[4])
+  if (files.has(lock)) return { exitCode: 1, stdout: '', stderr: `${lock}: file exists` }
+  files.set(lock, '1\n')
+  return { exitCode: 0, stdout: '', stderr: '' }
+}

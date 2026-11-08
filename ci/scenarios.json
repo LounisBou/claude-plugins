@@ -14,6 +14,7 @@
     "github: write a commit": ["github/engine/writing/commits.md", "github/engine/writing/references.md"],
     "github: write a comment": ["github/engine/writing/comments.md", "github/engine/writing/references.md"],
     "bugs-bot: resident agent": ["bugs-bot/agent/AGENT.md", "bugs-bot/skills/bugs-bot/SKILL.md"],
-    "orchestrator: start": ["orchestrator/skills/orchestrator/SKILL.md", "method/skills/lifecycle/SKILL.md"]
+    "orchestrator: start": ["orchestrator/skills/orchestrator/SKILL.md", "method/skills/lifecycle/SKILL.md"],
+    "orchestrator: succession": ["orchestrator/skills/orchestrator/SKILL.md", "method/skills/lifecycle/SKILL.md", "orchestrator/templates/orchestrator-succession-brief.md"]
   }
 }
