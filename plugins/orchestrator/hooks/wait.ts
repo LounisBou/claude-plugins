@@ -25,17 +25,19 @@ const KIND_NEEDS: Record<WaitKind, string> = {
 
 // The tool's input, validated: the declaration, or why it is none.
 export function parseDeclaration(input: unknown): { wait: DeclaredWait } | { error: string } {
-  const e = (input ?? {}) as { kind?: unknown; blocks?: unknown }
+  const e = (input ?? {}) as { kind?: unknown; blocks?: unknown; urgent?: unknown }
   if (typeof e.kind !== 'string' || !(WAIT_KINDS as readonly string[]).includes(e.kind)) {
     return { error: `kind is one of ${WAIT_KINDS.join(', ')}` }
   }
   const kind = e.kind as WaitKind
   if (e.blocks !== undefined && typeof e.blocks !== 'string') return { error: 'blocks is a string' }
+  if (e.urgent !== undefined && typeof e.urgent !== 'boolean') return { error: 'urgent is true or false' }
+  if (e.urgent === true && kind !== 'operator') return { error: 'only an operator wait is urgent' }
   const blocks = String(e.blocks ?? '').replace(/\s+/g, ' ').trim()
   if (kind === 'done') return { wait: { kind, blocks: '' } }
   if (blocks === '') return { error: `a ${kind} wait names in blocks ${KIND_NEEDS[kind]}` }
   if (blocks.length > BLOCKS_MAX) return { error: `blocks holds at most ${BLOCKS_MAX} characters` }
-  return { wait: { kind, blocks } }
+  return { wait: e.urgent === true ? { kind, blocks, urgent: true } : { kind, blocks } }
 }
 
 // The declarations of one session, by turn: a declaration is current only in the turn that
@@ -74,7 +76,7 @@ export function register(on: On, declarations: Declarations = new Declarations()
         name: WAIT_TOOL,
         isDeferred: false,
         description: 'Declares what will wake this session once its turn ends, before ending the turn: '
-          + '`operator` (a question the operator must answer; blocks: what it blocks), '
+          + '`operator` (a question the operator must answer; blocks: what it blocks; urgent: true to have it presented at once), '
           + '`tool` (a command, monitor or subagent you started in the background; blocks: what is watched), '
           + '`done` (every goal met or ruled out), `deferred` (only work the operator deferred is left; blocks: « <n> items »). '
           + 'The stop gate reads the declaration in place of your last line.',
@@ -83,6 +85,7 @@ export function register(on: On, declarations: Declarations = new Declarations()
           properties: {
             kind: { type: 'string', enum: [...WAIT_KINDS] },
             blocks: { type: 'string', maxLength: BLOCKS_MAX },
+            urgent: { type: 'boolean' },
           },
           required: ['kind'],
         },
