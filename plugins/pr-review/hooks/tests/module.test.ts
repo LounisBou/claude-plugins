@@ -216,6 +216,14 @@ test('the loop counts passes, sorts findings into new and seen, and ends clean',
   expect(clean.reverted).toEqual([{ sha: 'abc', key: 'a.ts::x' }])
 })
 
+test('findings before any pass are refused, so a loop cannot end clean without a review', () => {
+  act({ action: 'start' })
+  const early: any = act({ action: 'findings', keys: [] })
+  expect(early.error).toContain('call begin_pass')
+  expect(early.exit).toBeUndefined()
+  expect(act({ action: 'begin_pass' }).pass).toBe(1)
+})
+
 test('the loop ends after pass 5', () => {
   act({ action: 'start' })
   for (let i = 1; i <= 5; i++) {
