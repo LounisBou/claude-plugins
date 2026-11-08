@@ -4,6 +4,7 @@
 // head. Pure functions only: register.ts reads GitHub, the records and the
 // session, and answers the calls.
 
+import { accepts, KINDS, parsePrRecord, type Kind, type PrRecord } from '../core/pr-record.ts'
 import { gitSubcommand, simpleCommands } from '../core/shell.ts'
 import { type EngineCall, engineCall, engineFlag, engineOption } from './shell.ts'
 
@@ -51,7 +52,8 @@ export type Gate = {
 // One file of a head's records directory.
 export type RecordFile = { name: string; text: string }
 
-export const KINDS = ['review', 'norms', 'e2e'] as const
+// The record contract is core's (pr-record.json); its kinds are re-exported for the module's readers.
+export { KINDS } from '../core/pr-record.ts'
 
 // The labels, compared without regard to case as GitHub does.
 export const READY = 'ready'
@@ -350,33 +352,29 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string): str
   const missing: string[] = []
   if (gate.state !== 'open') missing.push('the pull request is ' + gate.state)
   if (sha && sha.toLowerCase() !== gate.head) missing.push('the head moved: ' + sha + ' given, ' + gate.head + ' on GitHub')
-  const latest = new Map<string, any>()
+  const latest = new Map<Kind, PrRecord>()
   const skipped: string[] = []
   for (const file of files) {
-    let record: any
+    let record: PrRecord | undefined
     try {
-      record = JSON.parse(file.text)
+      record = parsePrRecord(JSON.parse(file.text))
     } catch {
+      record = undefined
+    }
+    if (!record || record.head.toLowerCase() !== gate.head
+      || record.repo.toLowerCase() !== gate.repo.toLowerCase()
+      || record.pr !== Number(gate.pr)
+      || !file.name.startsWith(record.kind + '.')) {
       skipped.push(file.name)
       continue
     }
-    const kind = String(record?.kind ?? '')
-    if (!record || typeof record !== 'object' || !(KINDS as readonly string[]).includes(kind)
-      || String(record.head ?? '').toLowerCase() !== gate.head
-      || String(record.repo ?? '').toLowerCase() !== gate.repo.toLowerCase()
-      || Number(record.pr) !== Number(gate.pr)
-      || !file.name.startsWith(kind + '.') || typeof record.at !== 'string') {
-      skipped.push(file.name)
-      continue
-    }
-    const before = latest.get(kind)
-    if (!before || String(record.at) >= String(before.at)) latest.set(kind, record)
+    const before = latest.get(record.kind)
+    if (!before || record.at >= before.at) latest.set(record.kind, record)
   }
   let kindMissing = false
   for (const kind of KINDS) {
     const record = latest.get(kind)
-    const accepted = record && (record.result === 'pass' || (kind === 'e2e' && record.result === 'waived'))
-    if (accepted) continue
+    if (record && accepts(record)) continue
     kindMissing = true
     if (!record) missing.push(kind + ': no record at ' + head7(gate.head))
     else {

@@ -232,6 +232,11 @@ describe('core copies', () => {
     assert.deepEqual([...copyOf(new Map([['a.ts', 'x'], ['a.test.ts', 'y'], ['notes.md', 'z']]))], [['a.ts', `${MARK}x`]])
   })
 
+  it('writes each contract other languages read as a marked JSON file', () => {
+    const copy = copyOf(new Map(), { 'c.json': { version: 1 } })
+    assert.deepEqual(JSON.parse(copy.get('c.json') ?? ''), { $comment: 'Generated from packages/core/src by `npm run core`: edit the source, never this copy.', version: 1 })
+  })
+
   it('writes the copy into every plugin holding a core directory, then finds it current', () => {
     const root = withCore()
     const io = recorder()
