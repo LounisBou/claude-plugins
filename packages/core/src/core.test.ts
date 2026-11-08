@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, it } from 'node:test'
-import { ENV, isSpawned } from './env.ts'
+import { configDirOf, ENV, gateThresholds, isSpawned } from './env.ts'
 import { configDir, DeadlineExceeded, installRecordPath, locatePlugin, NotInstalled, parseSessionName, readText, recordedInstallPaths, sessionName, setting, stateDir, update, withDeadline, withLock, writeAtomic } from './index.ts'
 
 const scratch = (): string => mkdtempSync(join(tmpdir(), 'core-'))
@@ -176,6 +176,18 @@ describe('env', () => {
     assert.equal(isSpawned(''), false)
     assert.equal(isSpawned('1'), true)
     assert.equal(ENV.spawned, 'ORCHESTRATOR_SPAWNED')
+  })
+
+  it('resolves the configuration directory from values alone, for a caller without node', () => {
+    assert.equal(configDirOf({}, '/home/u/'), '/home/u/.claude')
+    assert.equal(configDirOf({ CLAUDE_CONFIG_DIR: '/c' }, '/home/u'), '/c')
+  })
+
+  it('reads a gate threshold only when it is a positive number', () => {
+    assert.deepEqual(gateThresholds({}), {})
+    assert.deepEqual(gateThresholds({ [ENV.gatePercent]: '40', [ENV.gateTokens]: '200000' }), { gate: 40, gateTokens: 200000 })
+    assert.deepEqual(gateThresholds({ [ENV.gatePercent]: '0', [ENV.gateTokens]: 'many' }), {})
+    assert.deepEqual(gateThresholds({ [ENV.gatePercent]: '-3', [ENV.gateTokens]: '' }), {})
   })
 })
 

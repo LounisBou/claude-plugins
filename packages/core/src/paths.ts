@@ -2,18 +2,13 @@
 // variable counts as unset everywhere, so no path is ever resolved against the filesystem root.
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { configDirOf, type Env } from './env.ts'
 
-export type Env = Readonly<Record<string, string | undefined>>
-
-/** The value of `name`, or undefined when it is unset or empty. */
-export function setting(env: Env, name: string): string | undefined {
-  const value = env[name]
-  return value === undefined || value === '' ? undefined : value
-}
+export { setting, type Env } from './env.ts'
 
 /** The host's configuration directory: CLAUDE_CONFIG_DIR, or ~/.claude. */
 export function configDir(env: Env, home: string = homedir()): string {
-  return setting(env, 'CLAUDE_CONFIG_DIR') ?? join(home, '.claude')
+  return configDirOf(env, home)
 }
 
 /** A plugin's own state directory, under the configuration directory. */

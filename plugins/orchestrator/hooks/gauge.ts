@@ -1,6 +1,10 @@
 // hooks/gauge.ts
-import { measureFilePath, hasFigures, type MeasureReading } from './gauge-core.ts'
+import { measureFilePath, hasFigures, parseMeasure, startOf, type MeasureReading, type MeasureStart } from './gauge-core.ts'
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
+import { messageOf, type Host, type On } from './host.ts'
+
+// The nouns the gauge holds.
+type Gauge = Host<'plugin' | 'env' | 'fs' | 'process' | 'session' | 'ui'>
 
 // Module memory only — a reload resets all three, by design (Review Focus 3): drift is
 // announced between two measures of the same load, never re-announced from a stale
@@ -13,6 +17,9 @@ let lastModel: string | null = null
 // context of the next prompt (takeDrift), the channel every gate line reaches the
 // model by — a toast alone fades in seconds, and nothing tells the model.
 let pendingDrift: string | null = null
+// Each session's start (gauge-core.ts, startOf): measured once, at its first figure, and kept
+// across a compaction; read back from its measure file after a reload of the module.
+const starts = new Map<string, MeasureStart>()
 
 // The store's input: null until the first measure of a load fills it — the usage
 // fields are optional in the shipped types before the first answered turn, so a null
@@ -36,12 +43,12 @@ export function driftAnnouncement(model: string, previous: string): string {
 
 // Exported for the guards: whatever reads the measure file from a handler resolves
 // the config dir through this same seam (the sandbox exposes no process global).
-export async function configDir($: any): Promise<string> {
+export async function configDir($: Host<'env'>): Promise<string> {
   return (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`
 }
 
 export async function writeMeasure(
-  $: { fs: { write(p: string, c: string): Promise<unknown> }; env: { get(name: string): Promise<string | undefined> } },
+  $: Host<'fs' | 'env'>,
   sessionId: string,
   reading: MeasureReading,
 ): Promise<void> {
@@ -50,27 +57,33 @@ export async function writeMeasure(
   await $.fs.write(measureFilePath(await configDir($), sessionId, await $.env.get('ORCHESTRATOR_MODULE_DIR')), JSON.stringify(reading) + '\n')
 }
 
-export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
-  on('session.measure', async ($: any, e: any, next: (e: any) => any) => {
+export function register(on: On<Gauge>): void {
+  on('session.measure', async ($, e, next) => {
     try {
       const usage = await $.session.usage()
       const model = await $.session.model()
-      const reading: MeasureReading = {
-        context_tokens: usage.context.tokens,
-        context_window: usage.context.window,
-        context_percent: usage.context.percent,
-        model: String(model ?? 'unavailable'),
-        updated_at: new Date().toISOString(),
-      }
+      const { tokens, window, percent } = usage.context
+      const updatedAt = new Date().toISOString()
       // Before the first answer the host has no token count yet — nor right after a
       // /clear or a compaction: nothing is written, and the next measure fills the
       // file. Figures kept from before are no longer this conversation's: the store's
       // row and the measure file stop showing them.
       const sessionId = e.sessionId ?? await $.session.id()
-      if (!hasFigures(reading)) {
+      if (tokens === undefined || percent === undefined
+        || !hasFigures({ context_tokens: tokens, context_window: window, context_percent: percent })) {
         if (current !== null) await forget($, sessionId)
         return next(e)
       }
+      const figures = { context_tokens: tokens, updated_at: updatedAt }
+      const reading: MeasureReading = {
+        context_tokens: tokens,
+        context_window: window,
+        context_percent: percent,
+        model: String(model ?? 'unavailable'),
+        updated_at: updatedAt,
+        start: starts.get(sessionId) ?? startOf(await keptStart($, sessionId), figures, await startBrief($)),
+      }
+      starts.set(sessionId, reading.start!)
       await writeMeasure($, sessionId, reading)
       if (lastModel !== null && lastModel !== reading.model) {
         pendingDrift = driftAnnouncement(reading.model, lastModel)
@@ -82,10 +95,10 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       $.ui.invalidate('ui.render')
     } catch (err) {
       // A measure that fails never blocks: the next turn measures again.
-      await logLine($, (err as Error).message)
+      await logLine($, messageOf(err))
     }
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     // The registered net the plan's every-handler rule asks validate to see:
     // the measure is let through, the state dir says why, and next is
     // replay-safe in a catch, called or not.
@@ -96,22 +109,23 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // with what it summarises, and the next answer measures again. The measure file is
   // emptied now — the gate reads it — so the next prompt is not told a fill the
   // conversation no longer has. A subagent's own compaction is not the session's.
-  on('session.compact', async ($: any, e: any, next: (e: any) => any) => {
+  on('session.compact', async ($, e, next) => {
     try {
       if (!e.agentId) await forget($, await $.session.id(), true)
     } catch (err) {
-      await logLine($, (err as Error).message)
+      await logLine($, messageOf(err))
     }
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
-  on('session.end', async ($: any, e: any, next: (e: any) => any) => {
+  on('session.end', async ($, e, next) => {
     // A /clear ends this conversation and starts another in the same process: the
     // figures in memory were the ended one's.
     current = null
     currentIn = null
+    starts.delete(e.sessionId ?? '')
     try {
       // $.fs offers no remove: an empty file reads as unmeasured everywhere, and
       // install.sh purges the stale ones.
@@ -119,10 +133,10 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     } catch (err) {
       // Never blocks the end; the failure is said — one line, the
       // every-handler-logs rule.
-      await logLine($, (err as Error).message)
+      await logLine($, messageOf(err))
     }
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     // The registered net the plan's every-handler rule asks validate to see:
     // the end is let through, the state dir says why, and next is replay-safe
     // in a catch, called or not.
@@ -131,10 +145,30 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   })
 }
 
+// The start a session's measure file already holds, when the module was reloaded since.
+async function keptStart($: Host<'fs' | 'env'>, sessionId: string): Promise<MeasureStart | undefined> {
+  try {
+    return parseMeasure(await $.fs.read(measureFilePath(await configDir($), sessionId, await $.env.get('ORCHESTRATOR_MODULE_DIR'))))?.start
+  } catch {
+    return undefined
+  }
+}
+
+// The brief the launcher started this session on, with its size; null when it names none.
+async function startBrief($: Host<'fs' | 'env'>): Promise<{ path: string; bytes: number | null } | null> {
+  const path = await $.env.get('ORCHESTRATOR_BRIEF')
+  if (!path) return null
+  try {
+    return { path, bytes: Number((await $.fs.stat(path)).size) }
+  } catch {
+    return { path, bytes: null }
+  }
+}
+
 // The figures of a conversation that no longer has them: memory, and the measure
 // file when they were this session's — another session's (a /clear's predecessor)
 // was emptied by its own end.
-async function forget($: any, sessionId: string, mine = currentIn === sessionId): Promise<void> {
+async function forget($: Host<'env' | 'fs' | 'ui'>, sessionId: string, mine = currentIn === sessionId): Promise<void> {
   current = null
   currentIn = null
   $.ui.invalidate('ui.render')
@@ -143,7 +177,7 @@ async function forget($: any, sessionId: string, mine = currentIn === sessionId)
 
 // One line appended to the module's log (module-log.ts): the stamp names the
 // half that failed. Never throws, never blocks the handler it serves.
-async function logLine($: any, message: string): Promise<void> {
+async function logLine($: Host<'plugin' | 'env' | 'process'>, message: string): Promise<void> {
   try {
     const config = await configDir($)
     await $.process.run(logArgv($.plugin.root, config, 'gauge', message, undefined, await $.env.get('ORCHESTRATOR_MODULE_DIR')), { timeoutMs: LOG_TIMEOUT_MS })

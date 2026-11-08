@@ -196,7 +196,7 @@ export function deckText(deck: Deck): string {
 export function deckIsNews(deck: Deck, last: { deck: Deck; at: number } | null, now: number): boolean {
   if (!last) return true
   if (now - last.at >= DECK_REFRESH_MS) return true
-  const unstamped = (key: string, value: any) =>
+  const unstamped = (key: string, value: unknown) =>
     (key === 'usage' || key === 'usage_totals') && value && typeof value === 'object' ? { ...value, at: '' } : value
   const content = (d: Deck) => JSON.stringify({ ...d, generated_at: '' }, unstamped)
   return content(deck) !== content(last.deck)
@@ -221,16 +221,19 @@ function sessionIdOf(key: string): string {
 // "prs","checkouts"}. Anything else is no sleeper, never a failure.
 function sleepingOf(text: string): DeckSleeping[] {
   try {
-    const parsed = JSON.parse(text)
+    const parsed: unknown = JSON.parse(text)
     if (!Array.isArray(parsed)) return []
-    return parsed
-      .filter((s: any) => s && typeof s.name === 'string')
-      .map((s: any) => ({
-        name: s.name,
-        since: typeof s.slept === 'string' ? s.slept : null,
-        dir: typeof s.dir === 'string' ? s.dir : null,
-        prs: Array.isArray(s.prs) ? s.prs.filter((p: unknown) => typeof p === 'string') : [],
-      }))
+    return parsed.flatMap((s: unknown) => {
+      if (!s || typeof s !== 'object') return []
+      const { name, slept, dir, prs } = s as Record<string, unknown>
+      if (typeof name !== 'string') return []
+      return [{
+        name,
+        since: typeof slept === 'string' ? slept : null,
+        dir: typeof dir === 'string' ? dir : null,
+        prs: Array.isArray(prs) ? prs.filter((p: unknown): p is string => typeof p === 'string') : [],
+      }]
+    })
   } catch {
     return []
   }

@@ -44,6 +44,8 @@ release left in front of it.
 
 ## 2. Layout
 
+The plugin's `core/` is the generated copy of the repository's `packages/core` (`npm run core`), laid out there and never edited here.
+
 ```
 .claude-plugin/plugin.json           name orchestrator, semver, MIT
 .claude-plugin/marketplace.json      name claude-orchestrator, single-plugin marketplace, source "./"
@@ -65,10 +67,18 @@ skills/orchestrator/scripts/dispatch-record.sh  one row per dispatch, and the ro
 skills/orchestrator/scripts/goals.py         the spec's goals of one build, read by the record and the stop gate
 skills/orchestrator/scripts/workspace.sh    launches workspace.ts beside it: a clone per phase with the project's local material; a pinned worktree per review round
 skills/orchestrator/scripts/rhythm.sh       an audit's net balance, from git alone
+skills/orchestrator/scripts/ci-watch.ts, skills/orchestrator/scripts/dispatch-record.ts, skills/orchestrator/scripts/rhythm.ts, skills/orchestrator/scripts/workspace.ts  what the shell launchers above run: each command of ci-watch.sh, dispatch-record.sh, rhythm.sh and workspace.sh, documented in the launcher's header
+skills/orchestrator/scripts/lib/process.ts  what those scripts reach outside themselves, the commands they run and the streams they write, passed in so a test stands in for each
+skills/orchestrator/scripts/ci-watch.spec.ts, skills/orchestrator/scripts/dispatch-record.spec.ts, skills/orchestrator/scripts/rhythm.spec.ts, skills/orchestrator/scripts/workspace.spec.ts, skills/orchestrator/scripts/short-commands.spec.ts, skills/orchestrator/scripts/lib/process.spec.ts  their node tests
+skills/orchestrator/scripts/succession.sh, skills/orchestrator/scripts/succession.ts, skills/orchestrator/scripts/succession.spec.ts  the succession brief's Live state generated from the state, and the check a successor's spawn runs
 skills/coordination/SKILL.md         the coordinator: answers from the facts, flags collisions, relays what is the operator's, its succession
 skills/coordinator/scripts/coordinator.sh  the coordinator's record, and the facts: register, clear, lookup, facts, owners; the sleeping orchestrators: sleep, sleeping, wake-done, drop; the round: round, round-close
+skills/coordinator/scripts/coordinator.ts  the coordinator's commands ported from coordinator.sh, which runs this file for each of them
+skills/coordinator/scripts/context.ts, skills/coordinator/scripts/liveness.ts, skills/coordinator/scripts/lock.ts, skills/coordinator/scripts/record.ts, skills/coordinator/scripts/round.ts, skills/coordinator/scripts/sleeping.ts  what those commands read from their process, whether a session is alive, the lock, the coordinator's record, the round's closing commands and the sleeping orchestrators
+skills/coordinator/scripts/fixture.ts, skills/coordinator/scripts/lock.spec.ts, skills/coordinator/scripts/record.spec.ts, skills/coordinator/scripts/round.spec.ts, skills/coordinator/scripts/sleeping.spec.ts  their node tests, on a context of their own
 skills/model-routing/SKILL.md        which model/effort pair a dispatch gets
-skills/model-routing/scripts/routing.py  what a session cost, a repository's profile, the pair a class is picked on, the bench of merged pull requests, and the tables calibrated from trials and record rows, generalised and exported
+skills/model-routing/scripts/routing.py  the entry point of every routing subcommand: what a session cost under the cost rule, a repository's profile, and the pair a class is picked on from the tables, else the tier map
+skills/model-routing/scripts/calibration.py  the calibration engine routing.py hands its other subcommands to: the bench of merged pull requests, and the tables calibrated from trials and record rows, generalised, shown and exported
 skills/model-routing/defaults/README.md  what the shipped tier/effort tables are and how they are made
 skills/model-routing/references/calibration.md  how the routing tables are measured, generalised and exported, in the operator's order
 skills/model-routing/references/judge-rubric.md  the fixed rubric a bench judge grades a mechanically passing trial by
@@ -99,6 +109,7 @@ commands/sleeping.md                 lists the orchestrators paused on the opera
 short-names.tsv                      each command's short name beside its file: the table the installer writes the user commands from, and brief-lint reads
 short-commands.sh                    launches skills/orchestrator/scripts/short-commands.ts, which writes the short names as user commands, each a copy of its plugin command with the plugin root spelled out and a marker line: install, uninstall, and the module's sync of the copies an update left on an earlier root; a file without the marker is never touched
 hooks/hooks.json                     declares the hooks module, and nothing else
+hooks/host.ts                        the part of the host's API the strict hooks call, as types only
 hooks/register.ts                    the hooks module's entry point: mounts the domains as they land, the gauge before the store that reads its figure
 hooks/gauge-core.ts                  the measurement rules, pure: the double gate, the measure file path, tolerant parsing
 hooks/gauge.ts                       measures the context into one file per session on session events, and announces model drift
@@ -154,7 +165,8 @@ hooks/tests/agent-relay.test.ts      an agent's status line read into its wait, 
 hooks/tests/naming.test.ts           the self-name's shape, the tool declared at every start, the rename and the end run at the turn's completion and never from the call, the rename refused in a session the launcher opened, the end refused there unless its own move was acknowledged
 hooks/tests/commands.test.ts         the three answers' texts (the urgent first, the agents alone, the open rows and the tally), the sleeping list and its pass-through of drop, the dispatch row parser, and the wiring over a faked $: the three markdown spellings pinned as matchers, the store and record reads, the registry read under the state override and without it, the failed handler falling back to the markdown command and said; the engine entry answering through the kit's mocked env without a bottom
 hooks/tests/module-log.test.ts       the log line's argv and its cap; the append script itself is run by tests/run-tests.sh
-hooks/tests/fakes.ts                 what every faked $ answers the same way: the log line captured, a transcript window cut as bytes
+hooks/tests/fakes.ts                 what every faked $ answers the same way: the log line captured, a transcript window cut as bytes, the store's lock taken over the fake's files
+hooks/tests/golden-deck.ts           deck.json byte for byte, the format the Stream Deck reads
 hooks/tests/fixtures.ts              texts the pane met on the operator's machine, kept verbatim: an entry of two questions in his language, a blocks text whose references are glued by a slash
 hooks/tests/screen.ts                a tree laid out as the rows a terminal shows, border, padding, gap and margins counted: the count's check and the screens
 install.sh, uninstall.sh
@@ -177,6 +189,7 @@ tests/fixtures/routing/prices.json, tests/fixtures/routing/projects/-repo/s-1.js
 tests/fixtures/routing/trees/laravel/composer.json, tests/fixtures/routing/trees/laravel/artisan, tests/fixtures/routing/trees/plugin/.claude-plugin/plugin.json, tests/fixtures/routing/trees/plugin/run.sh, tests/fixtures/routing/trees/plugin/a.sh, tests/fixtures/routing/trees/plugin/b.py, tests/fixtures/routing/trees/pycli/pyproject.toml, tests/fixtures/routing/trees/pycli/bin/tool, tests/fixtures/routing/trees/jslib/package.json, tests/fixtures/routing/trees/jslib/index.js  four marker trees a profile is inferred from, for routing.py profile and pick
 tests/fixtures/routing/gh-stub.sh, tests/fixtures/routing/host-stub.sh  a forge and a headless host answering from the environment, for harvest, trial and bench
 docs/design.md                       this document
+docs/state.md                        the machine-wide state files, their writers and how each is written
 docs/specs/2026-10-01-stop-gate-design.md  the stop gate's approved spec
 docs/specs/2026-10-07-hooks-module-design.md  the hooks module's approved spec
 docs/plans/2026-10-07-hooks-module-plan.md     the hooks module's implementation plan

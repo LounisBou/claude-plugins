@@ -65,14 +65,14 @@ const LETTERS = 'ABCDE'
 // An entry holding several numbered questions (questionParts) records its first one's: the
 // pane reads every question's own from the text (entryQuestions).
 export function parseChoices(question: string): { choices: RoundChoice[]; recommendation: string | null } {
-  return readChoices(questionParts(question)[0])
+  return readChoices(questionParts(question)[0] ?? '')
 }
 
 function readChoices(question: string): { choices: RoundChoice[]; recommendation: string | null } {
   const lines = question.split('\n')
   const found = lines.flatMap(line => {
     const matched = CHOICE.exec(line)
-    return matched ? [{ letter: matched[1], text: matched[2] }] : []
+    return matched ? [{ letter: matched[1] ?? '', text: matched[2] ?? '' }] : []
   })
   const lettered = found.length >= 2 && found.length <= LETTERS.length && found.every((choice, i) => choice.letter === LETTERS[i])
   const choices = lettered ? found : []
@@ -144,14 +144,14 @@ export function questionShape(question: string, choices: readonly RoundChoice[])
   let recommendation: QuestionField | null = null
   let current: QuestionField | null = null
   for (let i = header + 1; i < lines.length; i++) {
-    const line = lines[i]
+    const line = lines[i] ?? ''
     if (choiceAt(line)) {
       current = null
       continue
     }
     const field = FIELD.exec(line)
     if (field) {
-      const read = { label: field[1].trim(), separator: /^\s/.test(field[2]) ? ' : ' : ': ', text: field[3] }
+      const read = { label: (field[1] ?? '').trim(), separator: /^\s/.test(field[2] ?? '') ? ' : ' : ': ', text: field[3] ?? '' }
       if (lastChoice >= 0 && i > lastChoice) {
         const letter = NAMES_LETTER.exec(read.text)?.[1]
         if (letter && choices.some(choice => choice.letter === letter)) {
@@ -169,7 +169,7 @@ export function questionShape(question: string, choices: readonly RoundChoice[])
     else if (current) current.text = current.text === '' ? line.trim() : `${current.text}\n${line.trim()}`
   }
   if (fields.length === 0) return null
-  return { number: header >= 0 ? NUMBER.exec(lines[header])![1].trim() : null, fields, recommendation }
+  return { number: header >= 0 ? NUMBER.exec(lines[header] ?? '')?.[1]?.trim() ?? null : null, fields, recommendation }
 }
 
 // The question's text as the pane draws it: the emphasis markers around a span — `**x**`,
@@ -220,7 +220,7 @@ export type PrReference = { at: number; text: string; repo: string; number: numb
 export function prReferences(text: string): PrReference[] {
   return [...text.matchAll(/(?:([A-Za-z0-9_.-]+)\/)?([A-Za-z0-9_.-]+)#(\d+)/g)].flatMap(found => {
     const owner = found[1]?.replace(/^[.-]+/, '')
-    const repo = found[2].replace(/^[.-]+/, '')
+    const repo = (found[2] ?? '').replace(/^[.-]+/, '')
     if (repo === '') return []
     const start = found.index! + found[0].length - `${repo}#${found[3]}`.length - (owner ? owner.length + 1 : 0)
     return [{ at: start, text: text.slice(start, found.index! + found[0].length), repo, number: Number(found[3]), ...(owner ? { owner } : {}) }]
@@ -235,9 +235,10 @@ export function repositoryOwners(addresses: readonly (string | null | undefined)
   const ambiguous = new Set<string>()
   for (const address of addresses) {
     const found = /^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)(?:#\d+)?$/.exec(address ?? '')
-    if (!found) continue
-    if (owners.has(found[2]) && owners.get(found[2]) !== found[1]) ambiguous.add(found[2])
-    else owners.set(found[2], found[1])
+    const [, owner, name] = found ?? []
+    if (owner === undefined || name === undefined) continue
+    if (owners.has(name) && owners.get(name) !== owner) ambiguous.add(name)
+    else owners.set(name, owner)
   }
   for (const name of ambiguous) owners.delete(name)
   return owners
@@ -340,7 +341,7 @@ export function asksNothing(entry: Pick<RoundEntry, 'question' | 'choices' | 're
 // labelled field; a status report ends otherwise and stays a line.
 export function endsAsQuestion(entry: Pick<RoundEntry, 'question'>): boolean {
   const lines = entry.question.split('\n').map(line => line.trim()).filter(line => line !== '')
-  return lines.length > 0 && lines[lines.length - 1].endsWith('?')
+  return lines.length > 0 && (lines.at(-1) ?? '').endsWith('?')
 }
 
 // What the pane draws as a card: an operator entry that asks something, by its shape or by its
@@ -366,8 +367,8 @@ export function paneQuestions(entries: readonly RoundEntry[]): RoundEntry[] {
     .filter(isPaneQuestion)
     .map(entry => ({ entry, first: entryQuestions(entry)[0] }))
   return [
-    ...read.filter(({ first }) => first.choices.length > 0),
-    ...read.filter(({ first }) => first.choices.length === 0),
+    ...read.filter(({ first }) => (first?.choices.length ?? 0) > 0),
+    ...read.filter(({ first }) => (first?.choices.length ?? 0) === 0),
   ].map(({ entry }) => entry)
 }
 

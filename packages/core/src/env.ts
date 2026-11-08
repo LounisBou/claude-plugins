@@ -17,3 +17,30 @@ export const ENV = {
 export function isSpawned(value: string | undefined): boolean {
   return value !== undefined && value !== ''
 }
+
+export type Env = Readonly<Record<string, string | undefined>>
+
+/** The value of `name`, or undefined when it is unset or empty. */
+export function setting(env: Env, name: string): string | undefined {
+  const value = env[name]
+  return value === undefined || value === '' ? undefined : value
+}
+
+/** The host's configuration directory: CLAUDE_CONFIG_DIR, or `.claude` under `home`. */
+export function configDirOf(env: Env, home: string): string {
+  return setting(env, 'CLAUDE_CONFIG_DIR') ?? `${home.replace(/\/+$/, '')}/.claude`
+}
+
+/**
+ * The context gate's thresholds from the values of ENV.gatePercent and ENV.gateTokens: a value
+ * that is no positive number is unset, and the reader applies its default.
+ */
+export function gateThresholds(env: Env): { gate?: number; gateTokens?: number } {
+  const threshold = (raw: string | undefined): number | undefined => {
+    const n = raw === undefined ? NaN : Number(raw)
+    return Number.isFinite(n) && n > 0 ? n : undefined
+  }
+  const gate = threshold(env[ENV.gatePercent])
+  const gateTokens = threshold(env[ENV.gateTokens])
+  return { ...(gate === undefined ? {} : { gate }), ...(gateTokens === undefined ? {} : { gateTokens }) }
+}
