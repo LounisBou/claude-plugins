@@ -1,6 +1,6 @@
 // hooks/host.ts
 // The part of the host's API the module's strict files call, as types only: each noun and event
-// spelled as the host declares it ('claude-code', the declarations Claude Code writes beside a
+// spelled as the host declares it ('claude-code', the declarations the host writes beside a
 // loaded mod), narrowed to what is used. The host's declarations are written per build on the
 // operator's machine and are no file of this repository, so the strict check reads these; the
 // host's own `$` and events are wider, never narrower, than what is named here. A file names

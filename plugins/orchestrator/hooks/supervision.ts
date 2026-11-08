@@ -417,13 +417,44 @@ export function withWait(row: SessionRow, waitText: string): SessionRow {
 }
 
 async function readWait($: any, id: string): Promise<WaitRecord | null> {
-  return parseWaitRecord(String(await $.fs.read(`${await storeOf($)}/${waitKey(id)}`).catch(() => '')))
+  const read = parseWaitRecord(String(await $.fs.read(`${await storeOf($)}/${waitKey(id)}`).catch(() => '')))
+  seenWaits.set(id, read)
+  return read
 }
 
-// Written atomically: a temporary file beside it, then one rename — $.fs.write is not
-// atomic, and a wait caught mid-write would read as none.
+// What this process last read or wrote of each wait file: the base of its next write's merge.
+const seenWaits = new Map<string, WaitRecord | null>()
+
+// A write of a wait file merged with what another process wrote since this one read it: the
+// file has writers in several processes (its session's relay, the coordinator's hooks forgetting
+// a fingerprint, `coordinator.sh round-close`), and a write computed from an older read put back
+// a fingerprint another had just forgotten. A field this write leaves as it read it, and that the
+// file now holds otherwise, keeps the file's value; every other field is this write's.
+export function mergeWait(seen: WaitRecord | null | undefined, now: WaitRecord | null, record: WaitRecord): WaitRecord {
+  if (!seen || !now) return record
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
+  const merged: Record<string, unknown> = { ...record }
+  const fields = (r: WaitRecord) => r as unknown as Record<string, unknown>
+  for (const key of new Set([...Object.keys(record), ...Object.keys(now), ...Object.keys(seen)])) {
+    const [was, is, mine] = [fields(seen)[key], fields(now)[key], fields(record)[key]]
+    if (same(mine, was) && !same(is, was)) {
+      if (is === undefined) delete merged[key]
+      else merged[key] = is
+    }
+  }
+  return merged as WaitRecord
+}
+
+// Written under the file's lock, merged (mergeWait), through a temporary file and one rename —
+// $.fs.write is not atomic, and a wait caught mid-write would read as none.
 async function writeWait($: any, id: string, record: WaitRecord): Promise<void> {
-  await writeAtomic($, `${await storeOf($)}/${waitKey(id)}`, JSON.stringify(record) + '\n')
+  const path = `${await storeOf($)}/${waitKey(id)}`
+  const io = storeIo($)
+  await withLockOver(io, path, async () => {
+    const merged = mergeWait(seenWaits.get(id), parseWaitRecord((await io.read(path)) ?? ''), record)
+    await writeAtomicOver(io, path, JSON.stringify(merged) + '\n')
+    seenWaits.set(id, merged)
+  })
 }
 
 // Core's store over this file's $ (store-io.ts): $.fs writes but cannot rename, remove or create
@@ -953,6 +984,22 @@ async function readIds($: any, path: string): Promise<string[]> {
   }
 }
 
+// Ids added to a list file under its lock, the list read again first: two coordinators at a
+// succession write the same lists, and a list written from an older read lost the other's ids.
+// Only the ids `keep` holds stay (the round's present entries), so the list never outgrows it.
+async function addIds($: any, path: string, ids: readonly string[], keep: (id: string) => boolean): Promise<void> {
+  const io = storeIo($)
+  await withLockOver(io, path, async () => {
+    let listed: string[] = []
+    try {
+      const read: unknown = JSON.parse((await io.read(path)) ?? '[]')
+      if (Array.isArray(read)) listed = read.filter((id): id is string => typeof id === 'string')
+    } catch { /* a list that does not parse is none */ }
+    const next = [...new Set([...listed.filter(keep), ...ids])]
+    await writeAtomicOver(io, path, JSON.stringify(next) + '\n')
+  })
+}
+
 // An entry the coordinator was shown: one its `coordinator.sh round` printed open
 // (`<state>/round-listed.json`, the script's own record) or one the module woke it for. Read by
 // the files, never by its model's memory: a question it presented and then saw settled
@@ -1202,7 +1249,7 @@ async function wakeForDue($: any): Promise<void> {
     await logLine($, `round wake: the host dropped the wake: ${String(taken.drop)}`)
     return
   }
-  await writeAtomic($, await wokenPath($), JSON.stringify([...woken, ...due.map(entry => entry.id)]) + '\n')
+  await addIds($, await wokenPath($), due.map(entry => entry.id), id => present.has(id))
 }
 
 // The entries the coordinator's conversation was told of, `<state>/round-told.json`, a JSON list
@@ -1229,7 +1276,7 @@ async function tellNew($: any, read: readonly RoundEntry[], present: ReadonlySet
     for (const entry of fresh) {
       $.ui.log(toldText(entry))
       told.push(entry.id)
-      await writeAtomic($, path, JSON.stringify(told) + '\n')
+      await addIds($, path, [entry.id], id => present.has(id))
     }
   } catch (err) {
     await logLine($, `round told: ${(err as Error).message}`)

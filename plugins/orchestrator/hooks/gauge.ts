@@ -1,5 +1,5 @@
 // hooks/gauge.ts
-import { measureFilePath, hasFigures, type MeasureReading } from './gauge-core.ts'
+import { measureFilePath, hasFigures, parseMeasure, startOf, type MeasureReading, type MeasureStart } from './gauge-core.ts'
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
 import { messageOf, type Host, type On } from './host.ts'
 
@@ -17,6 +17,9 @@ let lastModel: string | null = null
 // context of the next prompt (takeDrift), the channel every gate line reaches the
 // model by — a toast alone fades in seconds, and nothing tells the model.
 let pendingDrift: string | null = null
+// Each session's start (gauge-core.ts, startOf): measured once, at its first figure, and kept
+// across a compaction; read back from its measure file after a reload of the module.
+const starts = new Map<string, MeasureStart>()
 
 // The store's input: null until the first measure of a load fills it — the usage
 // fields are optional in the shipped types before the first answered turn, so a null
@@ -71,13 +74,16 @@ export function register(on: On<Gauge>): void {
         if (current !== null) await forget($, sessionId)
         return next(e)
       }
+      const figures = { context_tokens: tokens, updated_at: updatedAt }
       const reading: MeasureReading = {
         context_tokens: tokens,
         context_window: window,
         context_percent: percent,
         model: String(model ?? 'unavailable'),
         updated_at: updatedAt,
+        start: starts.get(sessionId) ?? startOf(await keptStart($, sessionId), figures, await startBrief($)),
       }
+      starts.set(sessionId, reading.start!)
       await writeMeasure($, sessionId, reading)
       if (lastModel !== null && lastModel !== reading.model) {
         pendingDrift = driftAnnouncement(reading.model, lastModel)
@@ -119,6 +125,7 @@ export function register(on: On<Gauge>): void {
     // figures in memory were the ended one's.
     current = null
     currentIn = null
+    starts.delete(e.sessionId ?? '')
     try {
       // $.fs offers no remove: an empty file reads as unmeasured everywhere, and
       // install.sh purges the stale ones.
@@ -136,6 +143,26 @@ export function register(on: On<Gauge>): void {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
+}
+
+// The start a session's measure file already holds, when the module was reloaded since.
+async function keptStart($: Host<'fs' | 'env'>, sessionId: string): Promise<MeasureStart | undefined> {
+  try {
+    return parseMeasure(await $.fs.read(measureFilePath(await configDir($), sessionId, await $.env.get('ORCHESTRATOR_MODULE_DIR'))))?.start
+  } catch {
+    return undefined
+  }
+}
+
+// The brief the launcher started this session on, with its size; null when it names none.
+async function startBrief($: Host<'fs' | 'env'>): Promise<{ path: string; bytes: number | null } | null> {
+  const path = await $.env.get('ORCHESTRATOR_BRIEF')
+  if (!path) return null
+  try {
+    return { path, bytes: Number((await $.fs.stat(path)).size) }
+  } catch {
+    return { path, bytes: null }
+  }
 }
 
 // The figures of a conversation that no longer has them: memory, and the measure

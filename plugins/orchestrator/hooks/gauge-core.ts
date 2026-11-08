@@ -6,6 +6,20 @@ import { moduleDirOf } from './module-log.ts'
 export type MeasureReading = {
   context_tokens: number; context_window: number; context_percent: number
   model: string; updated_at: string
+  // The session's start: its first figure, and the brief it was started on with its size
+  // (the launcher's ORCHESTRATOR_BRIEF), kept on every later measure of the session.
+  start?: MeasureStart
+}
+
+export type MeasureStart = { tokens: number; at: string; brief: string | null; brief_bytes: number | null }
+
+// The start a measure carries: the one the session already holds, else this measure's own.
+export function startOf(
+  kept: MeasureStart | null | undefined,
+  reading: { context_tokens: number; updated_at: string },
+  brief: { path: string; bytes: number | null } | null,
+): MeasureStart {
+  return kept ?? { tokens: reading.context_tokens, at: reading.updated_at, brief: brief?.path ?? null, brief_bytes: brief?.bytes ?? null }
 }
 
 // The gate is a token count no reported window moves: the smaller of the session's gate in

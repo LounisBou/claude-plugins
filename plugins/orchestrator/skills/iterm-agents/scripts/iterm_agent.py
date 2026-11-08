@@ -1779,18 +1779,105 @@ def chain_prune(keep):
                 pass
 
 
+# Core's store convention, read as data (core/store.json): a file several processes rewrite is
+# changed under the lock `<path>.lock` holding the holder's pid, a lock older than the stale age
+# being a holder that died, and written through a temporary file of a unique name, renamed into
+# place. The module's writers of the same files keep the same names.
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "core", "store.json"),
+          encoding="utf-8") as _fh:
+    STORE = json.load(_fh)
+_HELD = set()
+LOCK_WAIT_S = 5.0
+
+
+class path_lock:
+    """Holds the lock of `path` for the length of a `with`; a path this process already holds
+    is held again without waiting. Gives up after LOCK_WAIT_S, raising: the change is not made."""
+
+    def __init__(self, path):
+        self.path = path
+        self.mine = False
+
+    def __enter__(self):
+        if self.path in _HELD:
+            return self
+        lock = self.path + STORE["lock_suffix"]
+        os.makedirs(os.path.dirname(lock) or ".", exist_ok=True)
+        deadline = time.time() + LOCK_WAIT_S
+        while True:
+            try:
+                fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                os.write(fd, b"%d\n" % os.getpid())
+                os.close(fd)
+                break
+            except FileExistsError:
+                try:
+                    age = time.time() - os.stat(lock).st_mtime
+                except FileNotFoundError:
+                    continue
+                if age * 1000 > STORE["stale_ms"]:
+                    try:
+                        os.remove(lock)
+                    except FileNotFoundError:
+                        pass
+                    continue
+                if time.time() >= deadline:
+                    raise RuntimeError("%s stayed locked by another process" % self.path)
+                time.sleep(0.02)
+        _HELD.add(self.path)
+        self.mine = True
+        return self
+
+    def __exit__(self, *exc):
+        if self.mine:
+            _HELD.discard(self.path)
+            try:
+                os.remove(self.path + STORE["lock_suffix"])
+            except FileNotFoundError:
+                pass
+        return False
+
+
 def chain_write(tty, entries):
     os.makedirs(CHAINS_DIR, exist_ok=True)
     chain_prune({tty, self_tty() or ""})
     path = chain_path(tty)
-    tmp = path + ".tmp"
-    with open(tmp, "w") as fh:
-        for e in entries:
-            line = {"tab_id": e["tab_id"], "tty": e["tty"], "owner": e.get("owner", "")}
-            if is_resident(e):
-                line["resident"] = True
-            fh.write(json.dumps(line) + "\n")
-    os.replace(tmp, path)
+    tmp = "%s%s%d-%s" % (path, STORE["temporary_mark"], os.getpid(), uuid.uuid4().hex[:8])
+    try:
+        with open(tmp, "x") as fh:
+            for e in entries:
+                line = {"tab_id": e["tab_id"], "tty": e["tty"], "owner": e.get("owner", "")}
+                if is_resident(e):
+                    line["resident"] = True
+                fh.write(json.dumps(line) + "\n")
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def chain_change(tty, change):
+    """The chain read again and written under its lock: `change` takes the entries as they
+    stand and answers those to write, or None to leave the file as it is. Every launcher
+    process rewrites chains (a spawn, a close, a move, a takeover): read outside the lock,
+    one's change was lost under another's."""
+    with path_lock(chain_path(tty)):
+        entries = chain_read(tty)
+        changed = change(entries)
+        if changed is not None:
+            chain_write(tty, changed)
+        return changed
+
+
+def chain_drop(tty, tab_ids):
+    """The entries naming those tabs removed from the chain; an entry written meanwhile stays."""
+    gone = set(tab_ids)
+    if gone:
+        chain_change(tty, lambda entries: [e for e in entries if e["tab_id"] not in gone]
+                     if any(e["tab_id"] in gone for e in entries) else None)
 
 
 def is_resident(entry):
@@ -1800,8 +1887,8 @@ def is_resident(entry):
 
 
 def chain_append(tty, tab_id, new_tty, owner, resident=False):
-    chain_write(tty, chain_read(tty) + [{"tab_id": tab_id, "tty": new_tty, "owner": owner,
-                                         "resident": resident}])
+    chain_change(tty, lambda entries: entries + [{"tab_id": tab_id, "tty": new_tty, "owner": owner,
+                                                  "resident": resident}])
 
 
 def chain_transfer(old_tty, old_owner, new_tty, new_owner, merge=False):
@@ -1815,17 +1902,20 @@ def chain_transfer(old_tty, old_owner, new_tty, new_owner, merge=False):
     (`merge`) comes after the successor has launched agents of its own: they are kept, and the
     predecessor's follow them. The predecessor's file is removed: its tty's other occupants
     are gone, and a file left behind is a chain no live session owns."""
-    moved = chain_owned(chain_read(old_tty), old_owner)
-    own = chain_owned(chain_read(new_tty), new_owner) if merge and new_owner else []
-    have = {e["tab_id"] for e in own}
-    chain_write(new_tty, own + [{"tab_id": e["tab_id"], "tty": e["tty"], "owner": new_owner,
-                                 "resident": is_resident(e)}
-                                for e in moved if e["tab_id"] not in have])
-    if old_tty != new_tty:
-        try:
-            os.remove(chain_path(old_tty))
-        except OSError:
-            pass
+    # Both files under their locks, taken in one order so two transfers never wait on each other.
+    first, second = sorted({chain_path(old_tty), chain_path(new_tty)}) + [None] * (old_tty == new_tty)
+    with path_lock(first), path_lock(second or first):
+        moved = chain_owned(chain_read(old_tty), old_owner)
+        own = chain_owned(chain_read(new_tty), new_owner) if merge and new_owner else []
+        have = {e["tab_id"] for e in own}
+        chain_write(new_tty, own + [{"tab_id": e["tab_id"], "tty": e["tty"], "owner": new_owner,
+                                     "resident": is_resident(e)}
+                                    for e in moved if e["tab_id"] not in have])
+        if old_tty != new_tty:
+            try:
+                os.remove(chain_path(old_tty))
+            except OSError:
+                pass
     return len(moved)
 
 
@@ -1925,11 +2015,7 @@ def chain_drop_tab(tab_id):
     for name in os.listdir(CHAINS_DIR):
         if not name.endswith(".jsonl"):
             continue
-        tty = "/dev/" + name[:-len(".jsonl")]
-        entries = chain_read(tty)
-        kept = [e for e in entries if e["tab_id"] != tab_id]
-        if len(kept) != len(entries):
-            chain_write(tty, kept)
+        chain_drop("/dev/" + name[:-len(".jsonl")], [tab_id])
 
 
 def chain_repoint_tab(old_tab_id, new_tab_id, new_tty):
@@ -1946,16 +2032,17 @@ def chain_repoint_tab(old_tab_id, new_tab_id, new_tty):
     for name in os.listdir(CHAINS_DIR):
         if not name.endswith(".jsonl"):
             continue
-        tty = "/dev/" + name[:-len(".jsonl")]
-        entries = chain_read(tty)
-        hit = [e for e in entries if e["tab_id"] == old_tab_id]
-        if not hit:
-            continue
-        for e in hit:
-            e["tab_id"] = new_tab_id
-            e["tty"] = new_tty
-        chain_write(tty, entries)
-        count += len(hit)
+        hits = []
+
+        def repoint(entries):
+            hit = [e for e in entries if e["tab_id"] == old_tab_id]
+            for e in hit:
+                e["tab_id"] = new_tab_id
+                e["tty"] = new_tty
+            hits.append(len(hit))
+            return entries if hit else None
+        chain_change("/dev/" + name[:-len(".jsonl")], repoint)
+        count += sum(hits)
     return count
 
 
@@ -2002,7 +2089,7 @@ async def chain_anchor(app, own_tty, owner=None):
     entries = chain_read(own_tty)
     kept = [e for e in chain_owned(entries, owner) if e["tab_id"] in live]
     if len(kept) != len(entries):
-        chain_write(own_tty, kept)
+        chain_drop(own_tty, {e["tab_id"] for e in entries} - {e["tab_id"] for e in kept})
     group = None
     if win is not None:
         group = chain_group(win.tabs, own_tab.tab_id, {e["tab_id"] for e in kept})
@@ -2311,8 +2398,8 @@ class Terminal:
         raise NotImplementedError
 
     def chain_state(self, own):
-        """`(chain_anchor, entries to write or None)`: a terminal never writes the chain, so
-        what its reading of the live sessions keeps is handed to the launcher, which does."""
+        """`(chain_anchor, tab ids to drop or None)`: a terminal never writes the chain, so
+        what its reading of the live sessions drops is handed to the launcher, which does."""
         return self.chain_anchor(own), None
 
     def survives(self, stable_id):
@@ -2768,9 +2855,9 @@ class TmuxTerminal(Terminal):
         return "tmux:%s:%s" % (self.socket, pane.pane), self.stable_id(pane.window)
 
     def chain_state(self, own):
-        """`(anchor tty, entries to write)`, checked on the window id, never the tty, like
-        the iTerm anchor. A terminal never writes the chain: the entries are the launcher's
-        to write, and are None when nothing is to change. Only an entry the caller wrote, whose
+        """`(anchor tty, tab ids to drop)`, checked on the window id, never the tty, like
+        the iTerm anchor. A terminal never writes the chain: the drop is the launcher's to
+        make (chain_drop), and is None when nothing is to change. Only an entry the caller wrote, whose
         id is a tmux window's and whose window is gone, is dropped: an entry another occupant
         wrote, or one naming an iTerm2 tab, is not this listing's to judge. A listing with
         no pane in it proves nothing, and drops nothing."""
@@ -2791,7 +2878,7 @@ class TmuxTerminal(Terminal):
             if entry["tab_id"] in live:
                 anchor = live[entry["tab_id"]]
                 break
-        return anchor, (kept if len(kept) != len(entries) else None)
+        return anchor, ({e["tab_id"] for e in entries if gone(e)} if len(kept) != len(entries) else None)
 
     def chain_anchor(self, own):
         return self.chain_state(own)[0]
@@ -3853,6 +3940,40 @@ def cmd_list(_argv):
             print(line)
 
 
+def read_text(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
+    except (OSError, ValueError):
+        return ""
+
+
+def succession_check(prompt):
+    """A successor is refused on a succession brief that misses an open item of the state (an
+    open dispatch row, pull request, running agent or pending question): the brief its prompt
+    names, read as the file whose first line is a succession brief's, is checked by
+    `succession.sh check` (decision 0007). A prompt that names no such file is not checked.
+    Answers the brief's path, or "" when the prompt names none."""
+    for word in re.findall(r"[^\s'\"`]+", prompt or ""):
+        path = os.path.expanduser(word.rstrip(".,;:"))
+        if not os.path.isfile(path) or not read_text(path).startswith("# Orchestrator succession brief"):
+            continue
+        script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "orchestrator",
+                              "scripts", "succession.ts")
+        argv = ["node", "--no-warnings", script, "check", path]
+        if os.environ.get("CLAUDE_CODE_SESSION_ID"):
+            argv += ["--session", os.environ["CLAUDE_CODE_SESSION_ID"]]
+        try:
+            ran = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        except OSError as exc:
+            die("spawn: refused: the succession brief %s could not be checked (%s)" % (path, exc))
+        if ran.returncode != 0:
+            die("spawn: refused: the succession brief %s is not the state's; regenerate its Live "
+                "state with succession.sh live:\n%s" % (path, ran.stdout.decode("utf-8", "replace").strip()))
+        return os.path.abspath(path)
+    return ""
+
+
 def write_prompt_file(prompt, title):
     os.makedirs(PROMPTS_DIR, exist_ok=True)
     path = state_file_path("prompt", title, "txt")
@@ -3966,7 +4087,7 @@ def host_cuts(role):
 def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_file="",
                   account_connectors=False, gate_tokens=0, effort="", keep_tools=(),
                   drop_tools=(), keep_synced_skills=False, session=(), plugin_dirs=(),
-                  caller_plugins=None, reports_to=""):
+                  caller_plugins=None, reports_to="", brief=""):
     """The command iTerm2 runs in the new tab. It is HANDED to the app, never typed, so
     its length and its bytes stop being a hazard. No model argument at all when neither a
     tier nor an explicit identifier says which: the host's own default is the right
@@ -3995,6 +4116,10 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
         # names a live owner for this session's tty: a chain outlives its owner's tab, and an
         # orchestrator relaunched without --successor leaves its agents in a dead one.
         parts.insert(2, "export ORCHESTRATOR_REPORTS_TO=%s" % shq(reports_to))
+    if brief:
+        # The brief the session starts on, measured by the module's gauge at its first measure
+        # beside the starting context (the measure file's `start`).
+        parts.insert(2, "export ORCHESTRATOR_BRIEF=%s" % shq(brief))
     if not gate_tokens and title_role(title) == "Agent":
         gate_tokens = AGENT_GATE_TOKENS
     if gate_tokens:
@@ -4510,6 +4635,9 @@ def cmd_spawn(argv, pair_from=""):
         die("spawn: refused: no startup prompt: the host writes no transcript before a "
             "first prompt, so the session's mode cannot be read; give the brief with "
             "--prompt or --prompt-file")
+    start_brief = os.path.abspath(args.brief) if args.brief else ""
+    if args.successor:
+        start_brief = succession_check(args.prompt or read_text(args.prompt_file)) or start_brief
     if args.tier and args.model:
         die("spawn: --tier and --model are mutually exclusive")
     if args.inherit and (args.tier or args.model):
@@ -4634,10 +4762,10 @@ def cmd_spawn(argv, pair_from=""):
                 chain = chain_owned(chain_read(own), SELF_ID)
                 anchor = chain[-1]["tty"] if chain else "self"
             else:
-                anchor, kept = term.chain_state(own)
+                anchor, gone = term.chain_state(own)
                 anchor = anchor or own
-                if kept is not None:
-                    chain_write(own, kept)
+                if gone is not None:
+                    chain_drop(own, gone)
     elif anchor == "leftmost":
         if not own and not DRY_RUN:
             die("spawn: --coordinator-successor: cannot resolve this session's own tty")
@@ -4718,7 +4846,8 @@ def cmd_spawn(argv, pair_from=""):
     launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control,
                            mcp_file, args.account_connectors, gate_tokens, effort,
                            args.keep_tool, args.drop_tool, args.keep_synced_skills,
-                           session_words, plugin_dirs, caller_plugins, args.orchestrator)
+                           session_words, plugin_dirs, caller_plugins, args.orchestrator,
+                           start_brief)
 
     if DRY_RUN:
         print("launch=%s" % launch)

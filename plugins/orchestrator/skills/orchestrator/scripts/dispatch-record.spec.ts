@@ -84,7 +84,7 @@ test('the jq readings: text, order, groups, ids', () => {
 })
 
 test('session names: the house shape is core\'s', () => {
-  assert.equal(orchForm('  Orch: build [abc123] '), 'Orch : build')
+  assert.equal(orchForm('  Orch: build [a1b2c3] '), 'Orch : build')
   assert.equal(orchForm('Orch :build'), 'Orch : build')
   assert.equal(orchForm('Agent : x'), 'Agent : x')
   assert.equal(orchForm('Orch: a subject far longer than twenty-five'), 'Orch: a subject far longer than twenty-five')

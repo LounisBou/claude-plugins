@@ -84,17 +84,20 @@ export function forgetRelayed(ctx: Context, entry: Fields): void {
   if (session === '') return
   const wait = join(moduleOf(ctx.env), 'store', 'waits', storeKey(session))
   if (!isFile(wait)) return
-  const text = read(wait)
-  const fields = text === undefined ? undefined : object(text)
-  if (fields === undefined) {
-    // A wait file of another shape is no wait of this entry's; only one unreadable is said.
-    if (text === undefined || !isJson(text)) ctx.err(`coordinator: round-close: cannot read ${wait}, its fingerprint is not forgotten`)
-    return
-  }
-  if (fields['relayed'] !== entryFingerprint(entry)) return
-  const { typed: _typed, ...rest } = fields
+  // Under the wait file's lock, the module's too: its session's relay rewrites the file.
   try {
-    writeAtomic(wait, `${JSON.stringify({ ...rest, relayed: null })}\n`)
+    withLock(wait, () => {
+      const text = read(wait)
+      const fields = text === undefined ? undefined : object(text)
+      if (fields === undefined) {
+        // A wait file of another shape is no wait of this entry's; only one unreadable is said.
+        if (text === undefined || !isJson(text)) ctx.err(`coordinator: round-close: cannot read ${wait}, its fingerprint is not forgotten`)
+        return
+      }
+      if (fields['relayed'] !== entryFingerprint(entry)) return
+      const { typed: _typed, ...rest } = fields
+      writeAtomic(wait, `${JSON.stringify({ ...rest, relayed: null })}\n`)
+    })
   } catch {
     ctx.err(`coordinator: round-close: cannot write ${wait}, its fingerprint is not forgotten`)
   }
@@ -189,19 +192,29 @@ export function roundArchive(ctx: Context, args: readonly string[]): number {
   for (const name of names) {
     const path = join(round, name)
     if (!name.endsWith('.json') || !isFile(path)) continue
-    const text = read(path)
-    if (text === undefined || parseEntry(text)?.['status'] !== 'closed') continue
+    // Under the entry's lock: an entry reopened or answered meanwhile is read here, and stays.
+    let archived = false
     try {
-      mkdirSync(join(round, 'archive'), { recursive: true })
-    } catch {
-      die(`round-archive: cannot create ${join(round, 'archive')}`)
-    }
-    try {
-      renameSync(path, join(round, 'archive', name))
-    } catch {
+      archived = withLock(path, () => {
+        const text = read(path)
+        if (text === undefined || parseEntry(text)?.['status'] !== 'closed') return false
+        try {
+          mkdirSync(join(round, 'archive'), { recursive: true })
+        } catch {
+          die(`round-archive: cannot create ${join(round, 'archive')}`)
+        }
+        try {
+          renameSync(path, join(round, 'archive', name))
+        } catch {
+          die(`round-archive: cannot move ${path}`)
+        }
+        return true
+      })
+    } catch (error) {
+      if (error instanceof Refusal) throw error
       die(`round-archive: cannot move ${path}`)
     }
-    moved++
+    if (archived) moved++
   }
   // A write that died between its temporary file and the rename leaves the temporary behind;
   // one a day old is no write in flight.

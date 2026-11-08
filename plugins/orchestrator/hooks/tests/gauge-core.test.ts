@@ -268,3 +268,47 @@ test('a session end that cannot purge the measure file is said, and blocks nothi
   expect(written[0]).toContain('| gauge |')
   expect(written[0]).toContain('EIO')
 })
+
+// Each role's starting context, and the brief it started on with its size, measured at every
+// start: the first figure of a session is kept in its measure file on every later measure, read
+// back after a reload of the module, and the launcher's ORCHESTRATOR_BRIEF names the brief.
+test('the measure file keeps the session\'s start: its first figure and the brief it started on', async () => {
+  const handlers: Record<string, Function> = {}
+  registerGauge((...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => {
+    handlers[args[0]] = args[args.length - 1] as Function
+    return { catch: () => undefined }
+  })
+  const files = new Map<string, string>([['/w/brief.md', 'x'.repeat(4321)]])
+  const usage = { context: { tokens: 21000, window: 1000000, percent: 2 } }
+  const $ = (id: string, env: Record<string, string>) => ({
+    session: { id: async () => id, usage: async () => usage, model: async () => 'a-model' },
+    env: { get: async (name: string) => ({ HOME: '/tmp/h', ...env } as Record<string, string>)[name] },
+    fs: {
+      read: async (p: string) => { if (!files.has(p)) throw new Error('ENOENT'); return files.get(p)! },
+      write: async (p: string, text: string) => { files.set(p, text) },
+      stat: async (p: string) => { if (!files.has(p)) throw new Error('ENOENT'); return { size: files.get(p)!.length } },
+    },
+    plugin: { name: 'orchestrator', root: '/plugins/orch-root' },
+    process: { run: async () => ({ exitCode: 0, stdout: '', stderr: '' }) },
+    ui: { toast: () => undefined, invalidate: () => undefined },
+  })
+  const measure = (dollar: object) => handlers['session.measure'](dollar, { context: usage.context }, (x: unknown) => x)
+  const fileOf = (id: string) => JSON.parse(files.get(`/tmp/h/.claude/claude-orchestrator/measure/${id}.json`)!)
+  await measure($('s-start', { ORCHESTRATOR_BRIEF: '/w/brief.md' }))
+  usage.context = { tokens: 90000, window: 1000000, percent: 9 }
+  await measure($('s-start', { ORCHESTRATOR_BRIEF: '/w/brief.md' }))
+  const kept = fileOf('s-start')
+  expect(kept.context_tokens).toBe(90000)
+  expect(kept.start.tokens).toBe(21000)
+  expect(kept.start.brief).toBe('/w/brief.md')
+  expect(kept.start.brief_bytes).toBe(4321)
+  // A session the module never measured, whose file holds a start (a reload): the start is kept.
+  files.set('/tmp/h/.claude/claude-orchestrator/measure/s-reloaded.json', JSON.stringify({ ...kept, start: { ...kept.start, tokens: 7 } }) + '\n')
+  await measure($('s-reloaded', {}))
+  expect(fileOf('s-reloaded').start.tokens).toBe(7)
+  // A session started on no brief, or on one that cannot be read.
+  await measure($('s-plain', {}))
+  expect(fileOf('s-plain').start).toMatchObject({ tokens: 90000, brief: null, brief_bytes: null })
+  await measure($('s-gone', { ORCHESTRATOR_BRIEF: '/w/gone.md' }))
+  expect(fileOf('s-gone').start).toMatchObject({ brief: '/w/gone.md', brief_bytes: null })
+})
