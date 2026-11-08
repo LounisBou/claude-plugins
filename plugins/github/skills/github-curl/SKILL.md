@@ -37,5 +37,5 @@ which this route does not use.
 
 Text bodies always travel by file: write the body to a file and pass
 `--body-file`, never the text as an argument. Before writing a commit message,
-a pull request title, a pull request description or a review comment, read
-`${CLAUDE_PLUGIN_ROOT}/engine/WRITING.md`.
+a pull request title, a pull request description or a review comment, read its
+rules in `${CLAUDE_PLUGIN_ROOT}/engine/writing/`.

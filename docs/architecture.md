@@ -11,6 +11,7 @@ decision that shaped this file, with its reason, is under `decisions/`.
 packages/core/                    the shared library: paths, store, deadlines, names, plugin locator
 plugins/<name>/                   one installable plugin per directory, named as its manifest
 scripts/                          the repository's own tooling, strict TypeScript, tested
+evals/outcome/                    the outcome evals' cases and spend caps, read by scripts/outcome.ts
 ci/plugins.json                   where each plugin's suite blocks the build
 docs/                             architecture, conventions, contracts, decisions, specs
 ```

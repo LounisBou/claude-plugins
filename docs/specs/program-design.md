@@ -89,8 +89,9 @@ estimate, corrected after the pilot.
 | Behaviour suite, plugin arm, one run per case (after a rewrite) | 10 |
 | Behaviour suite, plugin arm, three runs per case (a baseline) | 30 |
 | Behaviour suite, both arms, three runs per case | 70 |
-| Outcome pilot: one replayed pull request, single session and orchestration | 20 |
-| Outcome measure: six replayed pull requests, one run per arm, each pull request and arm stopped at 10 | 120 |
+
+The outcome pilot (one replayed pull request, both arms) and the outcome measure (six, one run
+per arm) are capped in `evals/outcome/caps.json`, which the harness reads and stops at.
 
 A run that would need more stops at its cap and is reported with what it measured; a higher
 cap is the operator's.

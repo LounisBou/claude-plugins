@@ -1,14 +1,32 @@
-// The decisions of the guard « WRITING.md read »: which call authors a text
-// that engine/WRITING.md governs, and which read puts that file in the
-// reader's context. Pure functions only: register.ts holds the $ that reads
+// The decisions of the guard « writing rules read »: which call authors a text
+// that engine/writing/ governs, which of its files that text needs, and which
+// read puts a file in the reader's context. Pure functions only: register.ts holds the $ that reads
 // the session, keeps the marks and answers the calls.
 
 import { carriesText, textFields } from './writing.ts'
 import { gitSubcommand, simpleCommands } from '../core/shell.ts'
 import { type EngineCall, engineCall, engineOption, engineStart, engineWords } from './shell.ts'
 
-// The file every author reads, under the plugin's root.
-export const WRITING_FILE = '/engine/WRITING.md'
+// The writing rules, under the plugin's root: one file per kind of text, and the
+// references every kind follows.
+export const WRITING_DIR = '/engine/writing'
+export const WRITING_FILES = ['commits.md', 'pull-requests.md', 'comments.md', 'references.md'] as const
+export type WritingFile = (typeof WRITING_FILES)[number]
+
+// The files a text needs read, by the authoring command that writes it: a
+// commit its convention, a pull request's or an issue's title and description
+// theirs, anything else (a comment, a review, a reply) the comments' rules.
+const DESCRIBED = /^(gh\.py )?(pr-create|pr-update|issue-create|issue-edit)$|^gh (pr|issue) (create|edit)$/
+export function writingFilesFor(command: string): WritingFile[] {
+  if (command === 'git commit') return ['commits.md', 'references.md']
+  if (DESCRIBED.test(command)) return ['pull-requests.md', 'references.md']
+  return ['comments.md', 'references.md']
+}
+
+// The writing file a path names under a root, or undefined.
+export function writingFileAt(path: string, root: string): WritingFile | undefined {
+  return WRITING_FILES.find((name) => path === normalise(root + WRITING_DIR + '/' + name))
+}
 
 // The text flags of gh pr review, and those of gh pr edit and gh issue edit.
 const REVIEW_TEXT = ['-b', '--body', '-F', '--body-file']
@@ -34,7 +52,7 @@ function ghWords(argv: string[]): { noun: string; verb: string; flags: string[] 
   return named.length === 2 ? { noun: named[0], verb: named[1], flags: argv.slice(k) } : undefined
 }
 
-// The engine subcommands that write a text WRITING.md governs, as gh pr create,
+// The engine subcommands that write a text engine/writing/ governs, as gh pr create,
 // comment and edit do: a pr-update writes one only through its title or its body.
 // A review and a comment subcommand writes one through the file that holds it.
 const FILE_TEXT_COMMANDS = new Set([
@@ -52,7 +70,7 @@ function engineAuthoring(call: EngineCall): string | undefined {
 }
 
 // The authoring command one simple command runs, as the refusal names it, or
-// undefined when it writes no text WRITING.md governs.
+// undefined when it writes no text engine/writing/ governs.
 export function authoringCommand(argv: string[]): string | undefined {
   const git = gitSubcommand(argv)
   if (git && argv[git.at] === 'commit') return 'git commit'
@@ -276,8 +294,8 @@ export function readerKey(session: string, agentId?: string): string {
   return session + '\n' + (agentId ?? 'main')
 }
 
-export function unreadRefusal(root: string, command: string): string {
-  return 'github: read ' + root + WRITING_FILE + ' with the Read tool, whole, before ' + command
-    + ': its rules (commit convention, references, PR titles and descriptions, comments, ready pull requests)'
-    + ' apply to this text. Then run the same command again.'
+export function unreadRefusal(root: string, command: string, missing: readonly WritingFile[]): string {
+  const paths = missing.map((name) => root + WRITING_DIR + '/' + name)
+  return 'github: read ' + paths.join(' and ') + ' with the Read tool, whole, before ' + command
+    + ': ' + (paths.length > 1 ? 'their' : 'its') + ' rules apply to this text. Then run the same command again.'
 }

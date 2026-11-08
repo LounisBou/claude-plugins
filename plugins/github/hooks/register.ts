@@ -7,7 +7,7 @@ import { atom, read, update } from 'claude-code'
 import type { GithubPane, GithubPaneRow } from '../types'
 import { lint, refusal, textFields } from './writing.ts'
 import {
-  WRITING_FILE, bashAuthoring, bashTexts, lineCount, normalise, printsWhole, readerKey, readsWhole, toolAuthoring,
+  type WritingFile, bashAuthoring, bashTexts, lineCount, normalise, printsWhole, readerKey, readsWhole, toolAuthoring, writingFileAt, writingFilesFor,
   unreadRefusal,
 } from './guards.ts'
 import {
@@ -77,7 +77,7 @@ async function runGh(
  * and puts a write to the person. An ask from an explicit rule always asks.
  * Where nobody can answer (a -p run) the ask rejects and the call is refused.
  *
- * Between the verdict and the run come the house rules of engine/WRITING.md:
+ * Between the verdict and the run come the house rules of engine/writing/:
  * the mechanical ones refuse a text before it leaves the machine, and the
  * approvals the file reserves to the person (a pull request out of draft, a
  * merge) are asked whatever the settings allow.
@@ -217,29 +217,31 @@ async function ask($: any, question: string, options: string[], command: string)
   return 'the user refused gh ' + command
 }
 
-// ---- the guard « WRITING.md read » ----
+// ---- the guard « writing rules read » ----
 
 /*
- * Every text engine/WRITING.md governs (a commit, a pull request, a comment, a
- * review) waits until its author read the file whole in the context that
- * writes it. A whole Read of the loaded version's file marks the reader, the
- * session and the loop within it, and so do a Bash cat or sed -n '1,$p' of it,
- * and, in a checkout of this plugin, a Read of the checkout's copy. A
- * compaction of that loop clears its mark, as the text left its context, and
- * a reload of the module clears them all: both cost one more Read. A failure
- * of the guard itself never holds a text back: the writing rules still run.
+ * Every text engine/writing/ governs (a commit, a pull request, a comment, a
+ * review) waits until its author read, whole and in the context that writes
+ * it, the files that kind of text needs (writingFilesFor). A whole Read of one
+ * of the loaded version's files marks it for the reader, the session and the
+ * loop within it, and so does a Bash cat or sed -n '1,$p' of it, and, in a
+ * checkout of this plugin, a Read of the checkout's copy. A compaction of that
+ * loop clears its marks, as the text left its context, and a reload of the
+ * module clears them all: both cost one more Read. A failure of the guard
+ * itself never holds a text back: the writing rules still run.
  */
 
-// The readers who hold WRITING.md in their context, by readerKey, and those
-// whose read of it could not be marked: a failure of the guard, which lets
-// their texts through rather than hold them back for ever.
-const readers = new Map<string, 'read' | 'marking failed'>()
+// The files each reader holds in its context, by readerKey, and the readers
+// whose read could not be marked: a failure of the guard, which lets their
+// texts through rather than hold them back for ever.
+const readers = new Map<string, Set<WritingFile>>()
+const unmarked = new Set<string>()
 
-// The repository whose checkout carries the file as its own engine/WRITING.md.
+// The repository whose checkout carries the files as its own engine/writing/.
 export const PLUGIN_REPOSITORY = 'lounisbou/claude-github'
 
 function guardFailed($: any, err: any): undefined {
-  $.ui.log('github: the WRITING.md guard failed and let the call through: ' + String(err?.message ?? err))
+  $.ui.log('github: the writing rules guard failed and let the call through: ' + String(err?.message ?? err))
   return undefined
 }
 
@@ -251,45 +253,52 @@ async function sessionId($: any): Promise<string> {
   return id
 }
 
-// The refusal for an authoring command whose reader has not read the file,
-// or undefined: no authoring, a reader who read it, or a guard failure.
+// The refusal for an authoring command whose reader has not read the files
+// its text needs, or undefined: no authoring, a reader who read them, or a
+// guard failure.
 async function writingUnread($: any, command: string | undefined, agentId?: string): Promise<string | undefined> {
   if (!command) return undefined
   try {
-    const state = readers.get(readerKey(await sessionId($), agentId))
-    if (state === 'read') return undefined
-    if (state === 'marking failed') return guardFailed($, 'a read of WRITING.md could not be marked')
-    return unreadRefusal($.plugin.root, command)
+    const key = readerKey(await sessionId($), agentId)
+    const read = readers.get(key)
+    const missing = writingFilesFor(command).filter((name) => !read?.has(name))
+    if (missing.length === 0) return undefined
+    if (unmarked.has(key)) return guardFailed($, 'a read of the writing rules could not be marked')
+    return unreadRefusal($.plugin.root, command, missing)
   } catch (err) {
     return guardFailed($, err)
   }
 }
 
-// Whether a path is a WRITING.md this reader may read for the rules: the
+// The writing file a path is, when this reader may read it for the rules: the
 // loaded version's, or the session's checkout's when it is this plugin. Any
 // other file costs one string comparison.
-async function isWritingFile($: any, path: unknown): Promise<boolean> {
-  if (typeof path !== 'string' || !path.endsWith('WRITING.md')) return false
+async function writingFileOf($: any, path: unknown): Promise<WritingFile | undefined> {
+  if (typeof path !== 'string' || !path.includes('writing/')) return undefined
   const dir = String(await $.session.cwd())
   const file = normalise(path, dir)
-  if (file === normalise($.plugin.root + WRITING_FILE)) return true
-  if (file !== normalise(dir + WRITING_FILE)) return false
+  const loaded = writingFileAt(file, $.plugin.root)
+  if (loaded) return loaded
+  const own = writingFileAt(file, dir)
+  if (!own) return undefined
   const r = await $.process.run(['git', 'remote', 'get-url', 'origin'], { timeoutMs: 10_000 })
   const match = r.exitCode === 0 ? GITHUB_ORIGIN.exec(String(r.stdout).trim()) : null
-  return match !== null && (match[1] + '/' + match[2]).toLowerCase() === PLUGIN_REPOSITORY
+  return match !== null && (match[1] + '/' + match[2]).toLowerCase() === PLUGIN_REPOSITORY ? own : undefined
 }
 
-async function markReader($: any, agentId?: string): Promise<void> {
-  readers.set(readerKey(await sessionId($), agentId), 'read')
+async function markReader($: any, name: WritingFile, agentId?: string): Promise<void> {
+  const key = readerKey(await sessionId($), agentId)
+  const read = readers.get(key) ?? new Set<WritingFile>()
+  read.add(name)
+  readers.set(key, read)
 }
 
-// A read of the file that could not be marked: logged, and its reader let
-// through until a compaction, unless an earlier read marked it.
+// A read that could not be marked: logged, and its reader let through until a
+// compaction for the files no earlier read marked.
 async function markFailed($: any, err: any, agentId?: string): Promise<void> {
   guardFailed($, err)
   try {
-    const key = readerKey(await sessionId($), agentId)
-    if (readers.get(key) !== 'read') readers.set(key, 'marking failed')
+    unmarked.add(readerKey(await sessionId($), agentId))
   } catch {
     // No reader to name: writingUnread fails on the same session id and lets the call through.
   }
@@ -309,7 +318,7 @@ function describe(e: any): string {
 // time, as neither can be taken back.
 export const NEVER_GRANTED = new Set(['pr-merge', 'comment-delete'])
 
-// The approvals WRITING.md reserves to the person, asked whatever a rule or
+// The approvals engine/writing/ reserves to the person, asked whatever a rule or
 // the mode allows: a pull request leaves draft and is merged only on his word,
 // except in a repository he put in auto-merge (autoMerge), where nothing is reserved. The
 // description of his own draft is published and edited without asking, under
@@ -662,7 +671,7 @@ export async function diagnose($: any, check = false): Promise<string> {
 
 /*
  * A pull request is ready when a clean review, a passed norms check, passed
- * E2E and green CI all stand at its current head (engine/WRITING.md « Ready
+ * E2E and green CI all stand at its current head (engine/writing/pull-requests.md « Ready
  * pull requests »). Marking it Ready, taking it out of draft and merging it
  * need the four, through the tool and through Bash alike. Under the warn
  * phase an act that is not ready goes ahead with one warn line, under the
@@ -1388,8 +1397,8 @@ export function register(on: any): void {
         'GitHub API: pull requests, review threads, comments, reviews, labels, '
         + 'issues, search, image uploads. Before first use, Read '
         + root + '/engine/REFERENCE.md for every subcommand. Before authoring any '
-        + 'PR title, body, comment, review or commit message, Read '
-        + root + '/engine/WRITING.md. Pass positionals by their documented name '
+        + 'PR title, body, comment, review or commit message, Read its rules in '
+        + root + '/engine/writing/ (commits.md, pull-requests.md or comments.md, and references.md). Pass positionals by their documented name '
         + '(pr-checks: {"pr": 12}); other keys become --flags; text bodies go in "body".',
       inputSchema: {
         type: 'object',
@@ -1496,9 +1505,8 @@ export function register(on: any): void {
     const result = await next(e)
     try {
       const printed = printsWhole(e.command)
-      if (printed && !failed(result) && await isWritingFile($, printed)) {
-        await markReader($, e.agentId)
-      }
+      const name = printed && !failed(result) ? await writingFileOf($, printed) : undefined
+      if (name) await markReader($, name, e.agentId)
     } catch (err) {
       await markFailed($, err, e.agentId)
     }
@@ -1549,15 +1557,16 @@ export function register(on: any): void {
   on('tool.call', { tool: 'Read' }, async ($: any, e: any, next: any) => {
     const result = await next(e)
     try {
-      if (!failed(result) && !result.result?.file?.truncatedByTokenCap
-        && await isWritingFile($, e.file_path)) {
+      const name = !failed(result) && !result.result?.file?.truncatedByTokenCap
+        ? await writingFileOf($, e.file_path) : undefined
+      if (name) {
         // The file's length as the Read counted it, else read from the file,
         // and only when a limit makes it matter.
         let total = result.result?.file?.totalLines
         if (typeof total !== 'number' && e.limit !== undefined && e.limit !== null) {
           total = lineCount(String(await $.fs.read(normalise(e.file_path))))
         }
-        if (readsWhole(e.offset, e.limit, () => Number(total))) await markReader($, e.agentId)
+        if (readsWhole(e.offset, e.limit, () => Number(total))) await markReader($, name, e.agentId)
       }
     } catch (err) {
       await markFailed($, err, e.agentId)
@@ -1568,7 +1577,9 @@ export function register(on: any): void {
   // Cleared as the compaction starts: one that is vetoed costs one more Read.
   on('session.compact', async ($: any, e: any, next: any) => {
     try {
-      readers.delete(readerKey(await sessionId($), e.agentId))
+      const key = readerKey(await sessionId($), e.agentId)
+      readers.delete(key)
+      unmarked.delete(key)
     } catch (err) {
       guardFailed($, err)
     }

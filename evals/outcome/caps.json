@@ -1,0 +1,8 @@
+{
+  "$comment": "The outcome evals' spend caps in US dollars, set by the operator; the harness stops at each. runUsd: the whole run; caseArmUsd: one arm on one case, its two judgments included; judgeUsd: one judgment; cases: how many cases of cases.json the run replays, in order.",
+  "version": 1,
+  "runs": {
+    "pilot": { "runUsd": 20, "caseArmUsd": 10, "judgeUsd": 1, "cases": 1 },
+    "measure": { "runUsd": 120, "caseArmUsd": 10, "judgeUsd": 1, "cases": 6 }
+  }
+}

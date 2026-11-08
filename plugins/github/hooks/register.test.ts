@@ -66,7 +66,7 @@ async function stubMod(
   on('session.id', () => ({ value: session }))
   on('session.cwd', () => ({ value: '/work' }))
   stubRead(on)
-  // The dialog a $.ui.ask raises and the Read of WRITING.md are themselves
+  // The dialog a $.ui.ask raises and the Reads of the writing rules are themselves
   // checked: they must not meet the verdict meant for the gh call.
   on('tool.check', (_$: any, e: any) => (e.tool === 'AskUserQuestion' || e.tool === 'Read' ? { decision: 'allow' } : verdict))
   on('tool.register', () => ({ value: undefined }))
@@ -91,11 +91,19 @@ const ROOT = decodeURIComponent(new URL('..', import.meta.url).pathname).replace
 // The path whose Read fails, when a test sets one.
 let failingRead = ''
 
-// A session started as one that authors starts: engine/WRITING.md read whole
-// before its first text (the guard « WRITING.md read »).
+// The writing rules' files, and every one read whole by a reader (the guard
+// « writing rules read »).
+const writingFile = (name = 'commits.md') => ROOT + '/engine/writing/' + name
+const RULE_FILES = ['commits.md', 'pull-requests.md', 'comments.md', 'references.md']
+async function readRules($: any, extra: Record<string, unknown> = {}) {
+  for (const name of RULE_FILES) await $.tool.call({ tool: 'Read', file_path: writingFile(name), ...extra })
+}
+
+// A session started as one that authors starts: the writing rules read whole
+// before its first text.
 async function startReading($: any) {
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
-  await $.tool.call({ tool: 'Read', file_path: ROOT + '/engine/WRITING.md' })
+  await readRules($)
 }
 
 // The Read tool, answering every file as one of 222 lines, failingRead excepted.
@@ -550,7 +558,7 @@ test('a truncated engine output says so', async ($, on) => {
   expect(out).toEqual({ result: 'diff\n[output cut at 4 MiB]' })
 })
 
-// ---- WRITING.md's mechanical rules (writing.ts) ----
+// ---- the writing rules' mechanical checks (writing.ts) ----
 
 // The four sections every pull request description ends with, each empty.
 const NONE = '**TODO Staging:** none\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:** none'
@@ -852,7 +860,7 @@ test('screenshots with a plain caption are part of a description', () => {
   expect(lint('pr-create', { title: 't', body: body.replace(', the page unchanged at 320 px', '') })).toEqual([])
 })
 
-// Two screenshots in the format WRITING.md gives: each a bold title alone on
+// Two screenshots in the format writing/pull-requests.md gives: each a bold title alone on
 // its line, its image on the next, a `---` with a blank line before it between them.
 const DESKTOP_SHOT = '**Devices list, desktop 1440 px, after**\n![Devices list, desktop 1440 px, after](https://github.com/user-attachments/assets/1.png)'
 const MOBILE_SHOT = '**Devices list, mobile 390 px, after**\n![Devices list, mobile 390 px, after](https://github.com/user-attachments/assets/2.png)'
@@ -1689,7 +1697,7 @@ test('a grant on the origin repository holds for its directory and its session o
   await reply()
   cwd = '/work'
   session = freshSession()
-  await $.tool.call({ tool: 'Read', file_path: ROOT + '/engine/WRITING.md' })
+  await readRules($)
   await reply()
   expect(asked.length).toBe(3)
   expect(runs.length).toBe(2)
@@ -1853,7 +1861,7 @@ test('/github:doctor falls back to the markdown command when the script cannot r
   expect(out.text).toBe('markdown ran')
 })
 
-// ---- the guard « WRITING.md read » ----
+// ---- the guard « writing rules read » ----
 
 // A session that has read nothing yet. bash: the command lines the Bash tool
 // ran. logs: $.ui.log lines.
@@ -1874,30 +1882,36 @@ async function stubGuard(
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
 }
 
-const writingFile = () => ROOT + '/engine/WRITING.md'
-
-test('a fresh session\'s git commit is refused with the path, and passes once WRITING.md is read whole', async ($, on) => {
+test('a fresh session\'s git commit is refused with the paths, and passes once commits.md and references.md are read whole', async ($, on) => {
   const bash: string[] = []
   await stubGuard($, on, [], bash)
 
   const out: any = await $.tool.call({ tool: 'Bash', command: 'git commit -m "fix: x"' })
-  expect(JSON.stringify(out)).toContain('github: read ' + writingFile() + ' with the Read tool, whole, before git commit: its rules')
+  expect(JSON.stringify(out)).toContain('github: read ' + writingFile() + ' and ' + writingFile('references.md'))
   expect(JSON.stringify(out)).toContain('Then run the same command again.')
   expect(bash).toEqual([])
 
   await $.tool.call({ tool: 'Read', file_path: writingFile() })
+  const half: any = await $.tool.call({ tool: 'Bash', command: 'git commit -m "fix: x"' })
+  expect(half.deny).toBe('github: read ' + writingFile('references.md') + ' with the Read tool, whole, before git commit:'
+    + ' its rules apply to this text. Then run the same command again.')
+  await $.tool.call({ tool: 'Read', file_path: writingFile('references.md') })
   const again: any = await $.tool.call({ tool: 'Bash', command: 'git commit -m "fix: x"' })
   expect(again.deny).toBeUndefined()
   expect(bash).toEqual(['git commit -m "fix: x"'])
 })
 
-test('the refusal names every rule WRITING.md holds, ready pull requests included', async ($, on) => {
+test('the refusal names the files the kind of text needs, and only those', async ($, on) => {
   await stubGuard($, on, [], [])
+  await $.tool.call({ tool: 'Read', file_path: writingFile('comments.md') })
 
   const out: any = await $.tool.call({ tool: 'Bash', command: 'git commit -m "fix: x"' })
-  expect(out.deny).toBe('github: read ' + writingFile() + ' with the Read tool, whole, before git commit: its rules'
-    + ' (commit convention, references, PR titles and descriptions, comments, ready pull requests)'
-    + ' apply to this text. Then run the same command again.')
+  expect(out.deny).toBe('github: read ' + writingFile() + ' and ' + writingFile('references.md')
+    + ' with the Read tool, whole, before git commit: their rules apply to this text. Then run the same command again.')
+  const pr: any = await $.tool.call({ tool: 'Bash', command: 'gh pr create --title t --body b' })
+  expect(pr.deny).toContain('github: read ' + writingFile('pull-requests.md') + ' and ' + writingFile('references.md') + ' with')
+  const comment: any = await $.tool.call({ tool: 'Bash', command: 'gh pr comment 3 -b x' })
+  expect(comment.deny).toContain('github: read ' + writingFile('references.md') + ' with')
 })
 
 test('git\'s global options and a wrapper before git commit are read through', async ($, on) => {
@@ -2036,10 +2050,11 @@ test('a gh pr create inside bash -c is refused unread', async ($, on) => {
 test('a Read from line 40, a Read short of the end, another version\'s file and a failed Read do not mark', async ($, on) => {
   const bash: string[] = []
   await stubGuard($, on, [], bash)
+  await $.tool.call({ tool: 'Read', file_path: writingFile('references.md') })
 
   await $.tool.call({ tool: 'Read', file_path: writingFile(), offset: 40 })
   await $.tool.call({ tool: 'Read', file_path: writingFile(), limit: 100 })
-  await $.tool.call({ tool: 'Read', file_path: '/cache/github/0.9.0/engine/WRITING.md' })
+  await $.tool.call({ tool: 'Read', file_path: '/cache/github/0.9.0/engine/writing/commits.md' })
   failingRead = writingFile()
   try {
     await $.tool.call({ tool: 'Read', file_path: writingFile() })
@@ -2058,11 +2073,11 @@ test('a subagent is refused although the main thread read the file, and reads fo
   const bash: string[] = []
   await stubGuard($, on, [], bash)
 
-  await $.tool.call({ tool: 'Read', file_path: writingFile() })
+  await readRules($)
   const out: any = await $.tool.call({ tool: 'Bash', command: 'git commit -m x', agentId: 'a1' })
   expect(JSON.stringify(out)).toContain('before git commit:')
 
-  await $.tool.call({ tool: 'Read', file_path: writingFile(), agentId: 'a1' })
+  await readRules($, { agentId: 'a1' })
   const now: any = await $.tool.call({ tool: 'Bash', command: 'git commit -m x', agentId: 'a1' })
   expect(now.deny).toBeUndefined()
 })
@@ -2071,7 +2086,7 @@ test('after a compaction the main thread is refused again', async ($, on) => {
   const bash: string[] = []
   await stubGuard($, on, [], bash)
 
-  await $.tool.call({ tool: 'Read', file_path: writingFile() })
+  await readRules($)
   await $.session.compact({})
   const out: any = await $.tool.call({ tool: 'Bash', command: 'git commit -m x' })
   expect(JSON.stringify(out)).toContain('before git commit:')
@@ -2097,7 +2112,8 @@ test('the tool\'s pr-update without text passes unread, with a body it is refuse
   expect(base).toEqual({ result: 'ok' })
   // A semicolon the lint would refuse: the guard answers first.
   const body: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-update', args: { pr: 1, body: 'New; text' } })
-  expect(JSON.stringify(body)).toContain('github: read ' + writingFile() + ' with the Read tool, whole, before pr-update:')
+  expect(JSON.stringify(body)).toContain('github: read ' + writingFile('pull-requests.md') + ' and ' + writingFile('references.md')
+    + ' with the Read tool, whole, before pr-update:')
   expect(runs.length).toBe(1)
 })
 
@@ -2116,7 +2132,9 @@ test('every other authoring subcommand of the tool is refused unread when it car
   ]
   for (const [command, args] of calls) {
     const out: any = await $.tool.call({ tool: 'mcp__github__gh', command, args })
-    expect(JSON.stringify(out), command).toContain('github: read ' + writingFile() + ' with the Read tool, whole, before ' + command + ':')
+    const kind = command === 'pr-create' ? 'pull-requests.md' : 'comments.md'
+    expect(JSON.stringify(out), command).toContain('github: read ' + writingFile(kind) + ' and ' + writingFile('references.md')
+      + ' with the Read tool, whole, before ' + command + ':')
   }
   expect(runs.length).toBe(0)
 })
@@ -2129,7 +2147,7 @@ test('a deny verdict on the tool still answers before the guard', async ($, on) 
 
   const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-comment', args: { pr: 1, body: 'x' } })
   expect(JSON.stringify(out)).toContain('denied by mcp__github__gh')
-  expect(JSON.stringify(out)).not.toContain('WRITING.md')
+  expect(JSON.stringify(out)).not.toContain('engine/writing')
 })
 
 test('a tokeniser that throws lets the command through, with one log line', async ($, on) => {
@@ -2143,7 +2161,7 @@ test('a tokeniser that throws lets the command through, with one log line', asyn
   expect(out.deny).toBeUndefined()
   expect(bash.length).toBe(1)
   expect(logs.length).toBe(1)
-  expect(logs[0]).toContain('github: the WRITING.md guard failed and let the call through')
+  expect(logs[0]).toContain('github: the writing rules guard failed and let the call through')
 })
 
 test('an unreadable session id lets the command through, with one log line', async ($, on) => {
@@ -2201,7 +2219,7 @@ test('a session with no id authors with one log line, and what it reads marks no
   const out: any = await $.tool.call({ tool: 'Bash', command: 'git commit -m x' })
   expect(out.deny).toBeUndefined()
   expect(logs.length).toBe(1)
-  expect(logs[0]).toContain('github: the WRITING.md guard failed and let the call through')
+  expect(logs[0]).toContain('github: the writing rules guard failed and let the call through')
 
   // Another session with no id passes on the guard's failure again, not on the
   // first one's Read, and a session whose id is the text "undefined" read nothing.
@@ -2227,13 +2245,14 @@ test('a Read whose marking fails lets the next authoring through, with a log lin
   expect(out.deny).toBeUndefined()
   expect(bash).toEqual(['git commit -m x'])
   expect(logs.length).toBe(2)
-  expect(logs[1]).toContain('github: the WRITING.md guard failed and let the call through')
+  expect(logs[1]).toContain('github: the writing rules guard failed and let the call through')
 })
 
 test('a Read with a limit and no length counts the file: short of its lines it does not mark, up to them it does', async ($, on) => {
   const bash: string[] = []
   const session = freshSession()
   await stubBare($, on, bash, [], () => session, 'one\ntwo\nthree\nfour\nfive\n')
+  await $.tool.call({ tool: 'Read', file_path: writingFile('references.md') })
 
   await $.tool.call({ tool: 'Read', file_path: writingFile(), limit: 4 })
   const out: any = await $.tool.call({ tool: 'Bash', command: 'git commit -m x' })
@@ -2249,6 +2268,7 @@ for (const read of ['cat ', 'sed -n \'1,$p\' ']) {
   test('a Bash ' + read.trim() + ' of the file marks the reader', async ($, on) => {
     const bash: string[] = []
     await stubGuard($, on, [], bash)
+    await $.tool.call({ tool: 'Read', file_path: writingFile('references.md') })
 
     await $.tool.call({ tool: 'Bash', command: read + writingFile() })
     const out: any = await $.tool.call({ tool: 'Bash', command: 'git commit -m x' })
@@ -2261,6 +2281,7 @@ for (const read of ['cat ', 'sed -n \'1,$p\' ']) {
 
 test('a head, a sed of the first lines, a cut cat and a cat with an option do not mark', async ($, on) => {
   await stubGuard($, on, [], [])
+  await $.tool.call({ tool: 'Read', file_path: writingFile('references.md') })
   for (const command of [
     'head -400 ' + writingFile(),
     'sed -n \'1,40p\' ' + writingFile(),
@@ -2282,6 +2303,7 @@ test('a failed cat of the file does not mark', async ($, on) => {
     return e.command.startsWith('cat ') ? { result, isError: true } : { result }
   })
   await $.session.start({ surface: 'terminal', isInteractive: true, cwd: '/work' })
+  await $.tool.call({ tool: 'Read', file_path: writingFile('references.md') })
 
   await $.tool.call({ tool: 'Bash', command: 'cat ' + writingFile() })
   const out: any = await $.tool.call({ tool: 'Bash', command: 'git commit -m x' })
@@ -2293,33 +2315,35 @@ const origin = (url: string) => (e: any) => (e.argv[0] === 'git'
   ? { exitCode: 0, stdout: url + '\n', stderr: '' }
   : { exitCode: 0, stdout: 'ok', stderr: '' })
 
-test('a whole Read of the checkout\'s WRITING.md marks the reader when the checkout is claude-github', async ($, on) => {
+test('a whole Read of the checkout\'s writing rules marks the reader when the checkout is claude-github', async ($, on) => {
   const bash: string[] = []
   await stubGuard($, on, [], bash, [], origin('git@github.com:LounisBou/claude-github.git'))
 
-  await $.tool.call({ tool: 'Read', file_path: '/work/engine/WRITING.md' })
+  await $.tool.call({ tool: 'Read', file_path: '/work/engine/writing/commits.md' })
+  await $.tool.call({ tool: 'Read', file_path: '/work/engine/writing/references.md' })
   const out: any = await $.tool.call({ tool: 'Bash', command: 'git commit -m x' })
   expect(out.deny).toBeUndefined()
 })
 
-test('a Read of another checkout\'s engine/WRITING.md does not mark', async ($, on) => {
+test('a Read of another checkout\'s engine/writing/ does not mark', async ($, on) => {
   const bash: string[] = []
   await stubGuard($, on, [], bash, [], origin('https://github.com/acme/thing.git'))
 
-  await $.tool.call({ tool: 'Read', file_path: '/work/engine/WRITING.md' })
+  await $.tool.call({ tool: 'Read', file_path: '/work/engine/writing/commits.md' })
+  await $.tool.call({ tool: 'Read', file_path: '/work/engine/writing/references.md' })
   const out: any = await $.tool.call({ tool: 'Bash', command: 'git commit -m x' })
   expect(JSON.stringify(out)).toContain('before git commit:')
 })
 
 // ---- the writing rules on the Bash path ----
 
-// A session that has read WRITING.md, whose Bash runs nothing and whose files
+// A session that has read the writing rules, whose Bash runs nothing and whose files
 // are the ones given, by absolute path. bash: the command lines that ran.
 async function stubBashLint($: any, on: any, bash: string[], asked: string[], answer: string, files: Record<string, string> = {}) {
   stubAsk(on, asked, answer)
   on('fs.read', (_$: any, e: any) => (e.path in files ? { value: files[e.path] } : { deny: 'ENOENT ' + e.path }))
   await stubGuard($, on, [], bash)
-  await $.tool.call({ tool: 'Read', file_path: writingFile() })
+  await readRules($)
 }
 
 test('a gh pr create whose body file breaks a rule is refused once, then sendable as it is', async ($, on) => {
@@ -2509,7 +2533,7 @@ test('a body file the hook cannot read lets the command through, with one log li
   stubAsk(on, [], 'Deny')
   on('fs.read', (_$: any, e: any) => ({ deny: 'EACCES ' + e.path }))
   await stubGuard($, on, [], bash, logs)
-  await $.tool.call({ tool: 'Read', file_path: writingFile() })
+  await readRules($)
   logs.length = 0
 
   const command = 'gh pr edit 3 --body-file /locked.md'

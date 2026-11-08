@@ -1215,83 +1215,33 @@ check "the fallback skill defers to the native tool" "1" \
 
 echo "== writing rules =="
 
-WRITINGDOC="$ROOT/engine/WRITING.md"
-
-check "WRITING.md exists" "yes" "$([ -f "$WRITINGDOC" ] && echo yes || echo no)"
-
-# Fence-aware: a "## " inside a fenced example (the PR description template)
-# is not a section heading of the document itself.
-headings=$(python3 - "$WRITINGDOC" <<'PYHEAD'
-import sys
-FENCE = chr(96) * 3
-in_fence = False
-found = []
-for line in open(sys.argv[1], encoding="utf-8"):
-    stripped = line.rstrip("\n")
-    if stripped.startswith(FENCE):
-        in_fence = not in_fence
-        continue
-    if in_fence:
-        continue
-    if stripped.startswith("## "):
-        found.append(stripped[3:])
-print(" | ".join(found))
-PYHEAD
-)
-check "WRITING.md headings are in order" \
-  "Commit messages | Pull request titles | References to pull requests and issues | Pull request descriptions | Ready pull requests | Security update pull requests | Review comments" \
-  "$headings"
-
-check "REFERENCE.md points at WRITING.md" "1" \
-  "$(grep -cF 'read `WRITING.md` beside this file' "$SKILLDOC")"
-
-for needle in '--draft' '**TODO Staging:**' '**TODO Prod:**' '**PRs Dependency:**' '**Related PRs:**' 'TODO Staging or TODO Prod item is a task-list checkbox' 'A TODO item stands alone' '"do the same edit"' 'the value before and after' 'checkbox, one action' 'never joined by "then" or "and run"' 'follow-up' 'mandatory' 'kept apart' 'no semicolon' 'published and edited without asking' 'heading' '| Advisory |' 'locked at' 'one table per advisory' 'is a markdown link to its advisory'; do
-  check "WRITING.md mentions '$needle'" "1" \
-    "$(grep -qF -- "$needle" "$WRITINGDOC" && echo 1 || echo 0)"
+# One file per kind of text, and the references every kind follows: the
+# guard « writing rules read » names these paths (hooks/guards.ts).
+for name in commits.md pull-requests.md comments.md references.md; do
+  check "engine/writing/$name exists" "yes" "$([ -f "$ROOT/engine/writing/$name" ] && echo yes || echo no)"
 done
-
-for needle in 'leaves draft only once it is ready (see « Ready' 'A pull request is ready when four things hold at its current head commit' 'Ready belongs to one head' 'A push to the pull request'"'"'s branch puts `Not Ready` back' 'see REFERENCE.md « Records »' 'When the CI does not run on a draft, the pull request leaves draft for it,' 'goes back to draft once the CI is green, then takes `Ready`' 'CI is read from GitHub'; do
-  check "WRITING.md Ready pull requests mentions '$needle'" "1" \
-    "$(python3 -c 'import sys; print(1 if sys.argv[1] in open(sys.argv[2], encoding="utf-8").read() else 0)' "$needle" "$WRITINGDOC")"
-done
-
-for needle in 'Each screenshot is its descriptive title in bold, alone on its line' 'with no colon at its end' 'separated by a `---` line with a blank line before it' 'other than the `---` between two screenshots'; do
-  check "WRITING.md screenshots mention '$needle'" "1" \
-    "$(grep -qF -- "$needle" "$WRITINGDOC" && echo 1 || echo 0)"
-done
-check "WRITING.md asks for no plain caption under a screenshot" "0" "$(grep -c 'plain caption' "$WRITINGDOC")"
 check "REFERENCE.md gives the image title bound" "1" \
   "$(grep -qF -- '100 characters or fewer' "$SKILLDOC" && echo 1 || echo 0)"
 
-titles_concise=$(python3 - "$WRITINGDOC" <<'PYTITLES'
-import sys
-lines = open(sys.argv[1], encoding="utf-8").read().splitlines()
-start = lines.index("## Pull request titles")
-end = next(i for i in range(start + 1, len(lines)) if lines[i].startswith("## "))
-section = "\n".join(lines[start:end])
-print(1 if "concise" in section else 0)
-PYTITLES
-)
-check "titles section says short and concise" "1" "$titles_concise"
-
-# Same fence-aware pass, counting ";" instead of "## " lines.
-semicolons=$(python3 - "$WRITINGDOC" <<'PYSEMI'
+# Fence-aware: a ";" inside a fenced example is code, not prose.
+semicolons=$(python3 - "$ROOT"/engine/writing/*.md <<'PYSEMI'
 import sys
 FENCE = chr(96) * 3
-in_fence = False
 count = 0
-for line in open(sys.argv[1], encoding="utf-8"):
-    stripped = line.rstrip("\n")
-    if stripped.startswith(FENCE):
-        in_fence = not in_fence
-        continue
-    if in_fence:
-        continue
-    count += stripped.count(";")
+for path in sys.argv[1:]:
+    in_fence = False
+    for line in open(path, encoding="utf-8"):
+        stripped = line.rstrip("\n")
+        if stripped.startswith(FENCE):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        count += stripped.count(";")
 print(count)
 PYSEMI
 )
-check "no semicolon outside fences in WRITING.md" "0" "$semicolons"
+check "no semicolon outside fences in the writing rules" "0" "$semicolons"
 
 
 echo "== install =="

@@ -1,9 +1,9 @@
 // hooks/usage.ts
 // A session's token use and what it would cost at API list prices, for the deck (deck.ts):
 // the machine runs on a subscription, so the figure is an equivalent, never a bill. The cost
-// rule is routing.py's (message_usages, message_cost, measure) spelled again over transcript
-// lines, and tests/run-tests.sh holds the two to the same tokens and cost on one fixture.
-// Pure on purpose, and importing nothing but types: the suite runs it outside the host.
+// rule is data, COST_RULE below, which routing.py's `cost` reads too; the code here only
+// reads a transcript line by it and keeps the sums. Pure on purpose, and importing nothing
+// but types: the suite runs it outside the host.
 //
 // The sums are kept current by a book per session: per transcript file the offset already
 // read, and one record per message, so a deck write reads only the lines appended since the
@@ -12,20 +12,61 @@ import type { DeckPeriod, DeckTokens, DeckUsage } from './deck.ts'
 
 export const USAGE_TIMEZONE = 'Europe/Paris'
 
-export type Rates = { input: number; output: number; cache_read: number; cache_write_5m: number; cache_write_1h: number }
+// --- the cost rule, as data -------------------------------------------------------------
+// Which usage counts a message carries, which rate each count is priced at, and which counts
+// make the prompt a tiered price is judged on. routing.py's `cost` reads this same literal
+// (docs/conventions.md, « Between languages, a rule travels as data »): a hooks module
+// imports no JSON, so the data sits here, and everything from the brace after the marker
+// `COST_RULE: CostRule = ` to its closing brace is JSON. The prices are the operator's, in
+// routing/prices.json under the state directory.
+
+// The counts a record keeps, each read at a path of the message's usage.
+export type TokenName = 'input' | 'output' | 'cache_read' | 'cache_write' | 'hour'
+export type RateName = 'input' | 'output' | 'cache_read' | 'cache_write_5m' | 'cache_write_1h'
+export type CostRule = {
+  version: 1
+  // Rates are per this many tokens.
+  per: number
+  tokens: Record<TokenName, string[]>
+  // A message whose counts here are all zero is the host's placeholder, not a model's work.
+  counted: TokenName[]
+  // Each rate times the sum of `plus` less the sum of `minus`.
+  terms: { rate: RateName; plus: TokenName[]; minus: TokenName[] }[]
+  // A tiered price switches to its upper rates when these counts pass its threshold.
+  prompt: TokenName[]
+}
+
+export const COST_RULE: CostRule = {
+  "version": 1,
+  "per": 1000000,
+  "tokens": {
+    "input": ["input_tokens"],
+    "output": ["output_tokens"],
+    "cache_read": ["cache_read_input_tokens"],
+    "cache_write": ["cache_creation_input_tokens"],
+    "hour": ["cache_creation", "ephemeral_1h_input_tokens"]
+  },
+  "counted": ["input", "output", "cache_read", "cache_write"],
+  "terms": [
+    { "rate": "input", "plus": ["input"], "minus": [] },
+    { "rate": "output", "plus": ["output"], "minus": [] },
+    { "rate": "cache_read", "plus": ["cache_read"], "minus": [] },
+    { "rate": "cache_write_5m", "plus": ["cache_write"], "minus": ["hour"] },
+    { "rate": "cache_write_1h", "plus": ["hour"], "minus": [] }
+  ],
+  "prompt": ["input", "cache_read", "cache_write"]
+}
+
+export type Rates = Record<RateName, number>
 export type Price = Rates & { above?: Rates & { tokens: number } }
 // routing/prices.json under the state directory: model identifier → its rates per million tokens.
 export type Prices = Record<string, Price>
 
-// One message's usage: `cache_write` holds both durations, `hour` the 1-hour share of it.
-export type UsageRecord = {
+// One message's usage, the counts COST_RULE names: `cache_write` holds both durations, `hour`
+// the 1-hour share of it.
+export type UsageRecord = Record<TokenName, number> & {
   model: string
   at: number                    // the entry's timestamp in ms; NaN when it has none, in no period
-  input: number
-  output: number
-  cache_read: number
-  cache_write: number
-  hour: number
 }
 
 type Sums = { from: number; tokens: DeckTokens; cost: number; unpriced: number }
@@ -46,10 +87,20 @@ export type UsageBook = {
 
 const count = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
 
+// The count at a path of the usage object: 0 where any step is missing or no finite number.
+function countAt(usage: any, path: string[]): number {
+  let value = usage
+  for (const key of path) value = value && typeof value === 'object' ? value[key] : undefined
+  return count(value)
+}
+
+const TOKENS = Object.keys(COST_RULE.tokens) as TokenName[]
+const sumOf = (record: UsageRecord, names: TokenName[]): number => names.reduce((total, name) => total + record[name], 0)
+
 // The record a transcript line carries, with the message id it is kept under (null when the
 // message has none: each such line is a message of its own). The host writes one line per
-// content block and every one repeats the whole message's usage; a message whose four token
-// counts are zero is the host's placeholder, not a model's work.
+// content block and every one repeats the whole message's usage; a message whose counted
+// tokens are all zero is the host's placeholder, not a model's work.
 export function recordOf(line: string): { id: string | null; record: UsageRecord } | null {
   try {
     return recordOfEntry(JSON.parse(line))
@@ -64,24 +115,17 @@ function recordOfEntry(entry: any): { id: string | null; record: UsageRecord } |
   const usage = message.usage
   const model = message.model
   if (!usage || typeof usage !== 'object' || typeof model !== 'string' || model === '') return null
-  const record: UsageRecord = {
-    model,
-    at: typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN,
-    input: count(usage.input_tokens),
-    output: count(usage.output_tokens),
-    cache_read: count(usage.cache_read_input_tokens),
-    cache_write: count(usage.cache_creation_input_tokens),
-    hour: count(usage.cache_creation && typeof usage.cache_creation === 'object' ? usage.cache_creation.ephemeral_1h_input_tokens : 0),
-  }
-  if (!record.input && !record.output && !record.cache_read && !record.cache_write) return null
+  const record = { model, at: typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN } as UsageRecord
+  for (const name of TOKENS) record[name] = countAt(usage, COST_RULE.tokens[name])
+  if (COST_RULE.counted.every(name => !record[name])) return null
   const id = typeof message.id === 'string' && message.id !== '' ? message.id : null
   return { id, record }
 }
 
-const RATES = ['input', 'output', 'cache_read', 'cache_write_5m', 'cache_write_1h'] as const
+const RATES = COST_RULE.terms.map(term => term.rate)
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value)
 
-// A price entry routing.py can price: every base rate a finite number and, when it is tiered,
+// A price entry the rule can price: every base rate a finite number and, when it is tiered,
 // a finite threshold and finite upper rates. Anything else prices nothing: null, never NaN.
 function isPrice(price: Price): boolean {
   if (!price || typeof price !== 'object' || !RATES.every(name => finite(price[name]))) return false
@@ -90,15 +134,14 @@ function isPrice(price: Price): boolean {
   return typeof above === 'object' && finite(above.tokens) && RATES.every(name => above[name] === undefined || finite(above[name]))
 }
 
-// A tiered price switches to its upper rates when the message's whole prompt (fresh input,
-// cache reads and cache writes) passes the threshold; a rate the upper tier leaves out is the
-// base one, as routing.py's rate.update has it.
+// A tiered price switches to its upper rates when the message's prompt passes the threshold;
+// a rate the upper tier leaves out is the base one.
 export function messageCost(record: UsageRecord, price: Price): number | null {
   if (!isPrice(price)) return null
-  const rate: Rates = price.above && record.input + record.cache_read + record.cache_write > price.above.tokens ? { ...price, ...price.above } : price
-  const five = record.cache_write - record.hour
-  return (record.input * rate.input + record.output * rate.output + record.cache_read * rate.cache_read
-    + five * rate.cache_write_5m + record.hour * rate.cache_write_1h) / 1e6
+  const rate: Rates = price.above && sumOf(record, COST_RULE.prompt) > price.above.tokens ? { ...price, ...price.above } : price
+  let cost = 0
+  for (const term of COST_RULE.terms) cost += (sumOf(record, term.plus) - sumOf(record, term.minus)) * rate[term.rate]
+  return cost / COST_RULE.per
 }
 
 function emptySums(from: number): Sums {
