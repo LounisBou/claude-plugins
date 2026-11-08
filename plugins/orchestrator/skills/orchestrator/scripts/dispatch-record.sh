@@ -46,16 +46,9 @@
 # ready only when a review session read ITS head (either side may abbreviate the other, from
 # 7 characters) and the project's own norms check ran there - or when the head is the one
 # correction round that review produced, which the orchestrator verified on the artifact.
-# That rule was written in the rulebook and in the review brief, and was still broken twice
-# in one day by a reader's opinion of the norms file standing in for the tool. A rule only
-# prose carries is applied from memory, and memory forgets it; a project's own method is
-# free to make `ready` refuse what this default only warns about.
-#
-# `fixed` and `ready` no longer die on a missing review, and `fixed` no longer dies on a
-# second correction round: each records what it was given, prints a warning naming what is
-# missing, and exits 0. Only this repository's own two locks - forge protection and the
-# title-verified close - stay refusals a project's method cannot lift; this is not one of
-# them.
+# A row with no review is refused, as the github ready gate refuses a pull request with no
+# review at its head. `fixed` with no review, or a second time, records what it was given
+# and warns.
 #
 # `surface` and `ready` carry a third: a pull request that changes what a user sees carries
 # screenshots of it. The rule was in the rulebook, the phase brief and the review brief, and

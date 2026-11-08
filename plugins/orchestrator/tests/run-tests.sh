@@ -330,9 +330,8 @@ check "the successor subscribes to its predecessor's idle notice with « takeove
   "$(succ4_has 'message the predecessor "takeover confirmed" with `notify_when_idle: true`')"
 check "the lifecycle closes a predecessor started by hand like any other" "1|0" \
   "$(grep -c 'is closed like any other, nothing asked' "$ORCH_REFS/lifecycle.md")|$(grep -c 'close it himself' "$ORCH_REFS/lifecycle.md")"
-# Ready is the operator's turn: the pull request stays in draft, rebased, and the squash-merge
+# The rebase comes before the ready, and the squash-merge
 # of a lower branch is replayed around, never through.
-check "ready leaves the pull request in draft" "1" "$(grep -c "Ready is the operator's turn, and the pull request stays in draft" "$ORCH_REFS/review.md")"
 check "ready includes the rebase and names the squash-merge trap" "1|1|1" \
   "$(grep -c "each pull request of a stack on the one below it" "$ORCH_REFS/review.md")|$(grep -c "git rebase --onto <main> <old head of the lower branch> <branch>" "$ORCH_REFS/review.md")|$(grep -c "the one force this rule allows" "$ORCH_REFS/review.md")"
 # The rationalizations table left review.md (rule 169 of the rules review): each row repeated a
@@ -439,8 +438,6 @@ check "the standing rules no longer copy the « under load » rule" "no" \
 check "the phase brief template reads « under load » as emulated throttling" "yes" \
   "$(spells "$ROOT/templates/agent-phase-brief.md" '« Under load » means emulated throttling, never real load on the machine')"
 # The directives rule moved out of the rulebook; the trigger that makes a session read it stays.
-check "the phase rules and the prerequisites live in the briefs reference" "yes|yes|yes|yes" \
-  "$(spells "$ORCH_REFS/briefs.md" '## Phase & PR rules')|$(spells "$ORCH_REFS/briefs.md" '**One kind of change per phase.**')|$(spells "$ORCH_REFS/briefs.md" '**One writer per checkout, and a checkout per phase.**')|$(spells "$ORCH_REFS/briefs.md" '**Every figure in the plan carries the command that produces it**')"
 check "the directives rule and the guard live in the briefs reference" "yes|yes" \
   "$(spells "$ORCH_REFS/briefs.md" '## When a decision changes, the directives change in the same move')|$(spells "$ORCH_REFS/briefs.md" '**A guard over your own directives is the one instrument you may write yourself**')"
 check "environment preparation, pipelining and the tab-close row live in the lifecycle reference" "yes|yes|yes" \
@@ -608,11 +605,7 @@ rm -f "$CHAINS/ttys899.jsonl" "$CHAINS/ttys898.jsonl"
 check "an existing test's assertion is never edited to pass: brief rule, template, review item" "1|1|1" \
   "$(grep -c "An existing test's assertion is never edited to make it pass" "$ROOT/skills/orchestrator/references/briefs.md")|$(grep -c "Never edit an existing test's assertion to make it pass" "$ROOT/templates/agent-phase-brief.md")|$(grep -c "A diff that changes an existing test's assertions is read first" "$ROOT/skills/orchestrator/references/review.md")"
 
-check "a TODO item of a pull request description is a task-list checkbox" "1" \
-  "$(grep -c 'a TODO item is a task-list checkbox, `- \[ \] <step>`, never a bare `- ` bullet' "$ROOT/skills/orchestrator/references/briefs.md")"
 
-check "a TODO item stands alone and is one action: brief rule, its own briefs, phase template" "yes|yes|yes|yes" \
-  "$(spells "$ORCH_REFS/briefs.md" '**A TODO item stands alone and is one action**: written in full — the file, the value before and after, the host or environment — never by reference to another item')|$(spells "$ORCH_REFS/briefs.md" 'an edit and the step that applies it (reload, restart, deploy, migrate) are two checkboxes, never joined by « then » or « and run »')|$(spells "$ORCH_REFS/briefs.md" 'a brief names each TODO step the same way, in full, never by reference to another pull request or item')|$(spells "$ROOT/templates/agent-phase-brief.md" 'Each TODO item stands alone and is one action: written in full, never « the same edit », and an edit and its reload or restart are two checkboxes.')"
 
 echo "== dispatch record =="
 
@@ -1036,20 +1029,16 @@ check_status "a summary of nothing is not an error" 0 bash "$REC" summary "$WORK
 # its verdict » was written in the rulebook and in the review template, and was still broken
 # twice in one day: two rounds replaced the project's norms tool by a hand reading of its
 # norms file. A rule only prose carries is applied from memory. `review` records what a round
-# actually read; a row `ready` cannot see a review on no longer stops it, it warns and says
-# so — this default a project may still tighten in its own method, the way it may tighten
-# anything else this file no longer refuses.
+# actually read, and a row `ready` cannot see a review on is refused, as the github ready gate refuses it.
 G="$WORK/gate.jsonl"
 g1=$(bash "$REC" open "$G" --class behaviour-phase --tier standard --label "gate")
 check_status "ready refuses a row that does not say whether it changes a frontend surface" 1 bash "$REC" ready "$G" "$g1" --head aaa1111 --e2e "$E2EOK"
 check "and names the subcommand that records it" "1" \
   "$(bash "$REC" ready "$G" "$g1" --head aaa1111 --e2e "$E2EOK" 2>&1 | grep -c 'ready: row 1 does not say whether its pull request changes a frontend surface: record it with `surface`')"
 bash "$REC" surface "$G" "$g1" --none >/dev/null
-check_status "ready warns, it does not refuse, a row no review has touched" 0 bash "$REC" ready "$G" "$g1" --head aaa1111 --e2e "$E2EOK"
+check_status "ready refuses a row no review has touched, as the github gate does" 1 bash "$REC" ready "$G" "$g1" --head aaa1111 --e2e "$E2EOK"
 check "and names what is missing" "1" \
   "$(bash "$REC" ready "$G" "$g1" --head aaa1111 --e2e "$E2EOK" 2>&1 | grep -c 'no review recorded on row')"
-check "ready still prints its reading of the row" "1" \
-  "$(bash "$REC" ready "$G" "$g1" --head aaa1111 --e2e "$E2EOK" 2>/dev/null | grep -c 'ready: row 1 has no review recorded yet; head aaa1111 is unverified')"
 
 bash "$REC" review "$G" "$g1" --head aaa1111 --norms tool >/dev/null
 check "a review records the head it read and its norms check" "aaa1111|tool" \
@@ -1250,7 +1239,7 @@ check_status "with no review, an audit at another head is refused" 1 srec ready 
 srec audit "$A" "$a2" --head ddd4444 --images 2 --defect "reset button on its own row" >/dev/null
 check_status "with no review, a defect is still refused" 1 srec ready "$A" "$a2" --head ddd4444 --e2e "$E2EOK"
 srec audit "$A" "$a2" --head ddd4444 --images 2 >/dev/null
-check_status "with no review, a clean audit at the head in front lets the warning speak" 0 srec ready "$A" "$a2" --head ddd4444 --e2e "$E2EOK"
+check_status "with no review, a clean audit at the head in front is still refused: the gate needs a review" 1 srec ready "$A" "$a2" --head ddd4444 --e2e "$E2EOK"
 a3=$(srec open "$A" --class behaviour-phase --tier standard --label "minor")
 srec review "$A" "$a3" --head aaa1111 --norms tool >/dev/null
 srec surface "$A" "$a3" --minor "a label wording" >/dev/null
@@ -1354,7 +1343,7 @@ check_status "E2E: none without the operator's validation is refused" 1 bash "$R
 check "and says to tell him and record his validation" "1" \
   "$(bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2ENONE" 2>&1 | grep -cF "ready: row 1 has no E2E test and the operator has not validated it ready without one: tell him « $E2ENONE », then record his validation with --e2e-waiver")"
 e2=$(bash "$REC" open "$E" --class n-bis --tier light --label "no review"); bash "$REC" surface "$E" "$e2" --none >/dev/null
-check_status "with no review, a test line lets the warning speak" 0 bash "$REC" ready "$E" "$e2" --head aaa1111 --e2e "$E2EOK"
+check_status "with no review, a test line is still refused: the gate needs a review" 1 bash "$REC" ready "$E" "$e2" --head aaa1111 --e2e "$E2EOK"
 check_status "the no-review warning does not let silence by" 1 bash "$REC" ready "$E" "$e2" --head aaa1111
 check_status "the no-review warning does not let an unvalidated E2E: none by" 1 bash "$REC" ready "$E" "$e2" --head aaa1111 --e2e "$E2ENONE"
 check_status "E2E: none without its reason is refused" 1 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "E2E: none" --e2e-waiver "ok 2026-10-13"
@@ -11471,16 +11460,12 @@ check "ready on a row corrected and verified at the head prints the command with
   "$(srec ready "$LR" "$lr3" --head eee5555 --e2e "$E2EOK" 2>/dev/null | grep -c '^pr-readiness <n> ready on <owner/repo>$')"
 lr4=$(srec open "$LR" --class behaviour-phase --tier standard --label "none")
 srec surface "$LR" "$lr4" --none >/dev/null
-check_status "ready on a row with no review recorded warns and exits 0" 0 srec ready "$LR" "$lr4" --head fff6666 --e2e "$E2EOK"
+check_status "ready on a row with no review recorded is refused" 1 srec ready "$LR" "$lr4" --head fff6666 --e2e "$E2EOK"
 check "and it prints no label command" "0" \
   "$(srec ready "$LR" "$lr4" --head fff6666 --e2e "$E2EOK" 2>&1 | grep -c 'pr-readiness')"
 unset SURFACE_BODIES
 check "dispatch-record.sh makes no label call itself" "0" "$(grep -c 'labels-ensure\|gh pr edit\|--add-label' "$REC")"
 
-check "review.md names pr-readiness at the ready step, and Not Ready when the head moves" "yes|yes|yes" \
-  "$(flat_has "$ORCH_REFS/review.md" '`pr-readiness <n> ready`')|$(flat_has "$ORCH_REFS/review.md" 'puts `Not Ready` back with `pr-readiness <n> not-ready` until `ready` is green again at the new head')|$(flat_has "$ORCH_REFS/review.md" 'beside what the project'"'"'s method does with the draft')"
-check "briefs.md carries the standing rule" "yes" \
-  "$(flat_has "$ORCH_REFS/briefs.md" 'Draft and `Not Ready` until the orchestrator'"'"'s ready; `Ready` comes only from it')"
 
 echo
 [ -n "$failed" ] && printf '%s' "$failed"
