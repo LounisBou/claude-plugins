@@ -3,7 +3,8 @@
   "blocking": {
     "bugs-bot": [],
     "cloudflare": [
-      "ubuntu-latest"
+      "ubuntu-latest",
+      "macos-latest"
     ],
     "github": [
       "ubuntu-latest",
