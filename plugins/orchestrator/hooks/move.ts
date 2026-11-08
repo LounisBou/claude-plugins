@@ -159,47 +159,47 @@ export function parseMoveMessage(body: string): MoveMessage | null {
   } catch {
     return null
   }
-  if (!isObject(raw) || typeof raw.kind !== 'string' || !KINDS.includes(raw.kind)) return null
-  if (!exactly(raw, FIELDS[raw.kind as MoveMessage['kind']])) return null
-  if (typeof raw.move !== 'string' || !MOVE_ID_SHAPE.test(raw.move)) return null
+  if (!isObject(raw) || typeof raw['kind'] !== 'string' || !KINDS.includes(raw['kind'])) return null
+  if (!exactly(raw, FIELDS[raw['kind'] as MoveMessage['kind']])) return null
+  if (typeof raw['move'] !== 'string' || !MOVE_ID_SHAPE.test(raw['move'])) return null
   return kindShaped(raw) ? raw as MoveMessage : null
 }
 
 function kindShaped(o: Record<string, unknown>): boolean {
-  switch (o.kind) {
-    case 'manifest': return originShaped(o.origin) && recordShaped(o.record) && filesShaped(o.files)
-    case 'chunk': return fileNumber(o.file) && whole(o.index, 0, MOVE_FILE_CAP - 1) && typeof o.data === 'string'
+  switch (o['kind']) {
+    case 'manifest': return originShaped(o['origin']) && recordShaped(o['record']) && filesShaped(o['files'])
+    case 'chunk': return fileNumber(o['file']) && whole(o['index'], 0, MOVE_FILE_CAP - 1) && typeof o['data'] === 'string'
     case 'sent': return true
-    case 'ack': return fileNumber(o.file) && typeof o.ok === 'boolean' && (o.ok ? o.reason === null : reasonShaped(o.reason))
-    case 'missing': return Array.isArray(o.chunks) && o.chunks.length > 0 && o.chunks.every(pairShaped)
+    case 'ack': return fileNumber(o['file']) && typeof o['ok'] === 'boolean' && (o['ok'] ? o['reason'] === null : reasonShaped(o['reason']))
+    case 'missing': return Array.isArray(o['chunks']) && o['chunks'].length > 0 && o['chunks'].every(pairShaped)
     case 'done':
-      if (typeof o.ok !== 'boolean') return false
-      return o.ok ? absolute(o.brief) && o.reason === null : (o.brief === null || absolute(o.brief)) && reasonShaped(o.reason)
-    case 'probe': return whole(o.size, 1, MOVE_TEXT_CAP) && typeof o.data === 'string'
-    case 'probe-ack': return whole(o.size, 1, MOVE_TEXT_CAP) && whole(o.received, 0, MOVE_TEXT_CAP)
+      if (typeof o['ok'] !== 'boolean') return false
+      return o['ok'] ? absolute(o['brief']) && o['reason'] === null : (o['brief'] === null || absolute(o['brief'])) && reasonShaped(o['reason'])
+    case 'probe': return whole(o['size'], 1, MOVE_TEXT_CAP) && typeof o['data'] === 'string'
+    case 'probe-ack': return whole(o['size'], 1, MOVE_TEXT_CAP) && whole(o['received'], 0, MOVE_TEXT_CAP)
   }
   return false
 }
 
 function originShaped(v: unknown): boolean {
-  return isObject(v) && exactly(v, ORIGIN_FIELDS) && typeof v.machine === 'string' && MACHINE_SHAPE.test(v.machine)
-    && homeShaped(v.home) && homeShaped(v.configDir)
+  return isObject(v) && exactly(v, ORIGIN_FIELDS) && typeof v['machine'] === 'string' && MACHINE_SHAPE.test(v['machine'])
+    && homeShaped(v['home']) && homeShaped(v['configDir'])
 }
 
 function recordShaped(v: unknown): boolean {
   if (!isObject(v) || !exactly(v, RECORD_FIELDS)) return false
-  if (typeof v.name !== 'string' || !NAME_SHAPE.test(v.name) || REF_SUFFIX.test(v.name) || UNQUOTABLE.test(v.name)) return false
-  if (!absolute(v.brief) || !absolute(v.dir)) return false
-  if (typeof v.model !== 'string' || !MODEL_SHAPE.test(v.model) || !EFFORTS.includes(v.effort)) return false
-  if (!Array.isArray(v.prs) || v.prs.length > PRS_CAP || !v.prs.every(prShaped)) return false
-  if (!Array.isArray(v.checkouts) || v.checkouts.length > CHECKOUTS_CAP || !v.checkouts.every(absolute)) return false
-  return gitShaped(v.git) && typeof v.order === 'string' && v.order.length > 0 && v.order.length <= ORDER_CAP && !ORDER_CONTROL.test(v.order)
+  if (typeof v['name'] !== 'string' || !NAME_SHAPE.test(v['name']) || REF_SUFFIX.test(v['name']) || UNQUOTABLE.test(v['name'])) return false
+  if (!absolute(v['brief']) || !absolute(v['dir'])) return false
+  if (typeof v['model'] !== 'string' || !MODEL_SHAPE.test(v['model']) || !EFFORTS.includes(v['effort'])) return false
+  if (!Array.isArray(v['prs']) || v['prs'].length > PRS_CAP || !v['prs'].every(prShaped)) return false
+  if (!Array.isArray(v['checkouts']) || v['checkouts'].length > CHECKOUTS_CAP || !v['checkouts'].every(absolute)) return false
+  return gitShaped(v['git']) && typeof v['order'] === 'string' && v['order'].length > 0 && v['order'].length <= ORDER_CAP && !ORDER_CONTROL.test(v['order'])
 }
 
 function gitShaped(v: unknown): boolean {
   if (v === null) return true
-  return isObject(v) && exactly(v, GIT_FIELDS) && typeof v.url === 'string' && v.url.length <= PATH_CAP && GIT_URL_SHAPE.test(v.url)
-    && typeof v.branch === 'string' && BRANCH_SHAPE.test(v.branch)
+  return isObject(v) && exactly(v, GIT_FIELDS) && typeof v['url'] === 'string' && v['url'].length <= PATH_CAP && GIT_URL_SHAPE.test(v['url'])
+    && typeof v['branch'] === 'string' && BRANCH_SHAPE.test(v['branch'])
 }
 
 // Each file's types and bounds — no more chunks than bytes, since a chunk is never empty but
@@ -209,8 +209,8 @@ function filesShaped(v: unknown): boolean {
 }
 
 function fileShaped(f: unknown): boolean {
-  return isObject(f) && exactly(f, FILE_FIELDS) && typeof f.name === 'string' && f.name.length <= FILE_NAME_CAP
-    && typeof f.sha256 === 'string' && whole(f.bytes, 0, MOVE_FILE_CAP) && whole(f.chunks, 1, Math.max(1, f.bytes as number))
+  return isObject(f) && exactly(f, FILE_FIELDS) && typeof f['name'] === 'string' && f['name'].length <= FILE_NAME_CAP
+    && typeof f['sha256'] === 'string' && whole(f['bytes'], 0, MOVE_FILE_CAP) && whole(f['chunks'], 1, Math.max(1, f['bytes'] as number))
 }
 
 function pairShaped(p: unknown): boolean {
@@ -345,12 +345,12 @@ export function checkManifestFiles(files: ManifestFile[]): string | null {
 // that holds the origin after another directory, is left alone. One pass, so a path the
 // rewrite wrote is never rewritten.
 export function rewritePaths(text: string, pairs: readonly (readonly [from: string, to: string])[]): string {
-  const longest = pairs.map(([origin, target]) => [trimSlashes(origin), trimSlashes(target)])
+  const longest = pairs.map(([origin, target]): [string, string] => [trimSlashes(origin), trimSlashes(target)])
     .filter(([origin]) => origin !== '')
     .sort((a, b) => b[0].length - a[0].length)
   if (longest.length === 0) return text
   const pattern = new RegExp(`(?<![A-Za-z0-9._/~-])(?:${longest.map(([origin]) => escapeRegExp(origin)).join('|')})(?![A-Za-z0-9._-])`, 'g')
-  return text.replace(pattern, match => longest.find(([origin]) => origin === match)![1])
+  return text.replace(pattern, match => longest.find(([origin]) => origin === match)?.[1] ?? match)
 }
 
 function escapeRegExp(text: string): string {

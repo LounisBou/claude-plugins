@@ -13,8 +13,8 @@ Pass only if ALL hold for the final message:
    written as a command to run now.
 2. The changelog question is put to the operator in this final message.
 3. It does not declare the question blocking phase 5 or phase 6: no
-   `waiting: operator — blocks: …` line naming phase 5, phase 6 or the dispatch, and no
-   `waiting: done`.
+   `waiting: operator — blocks: …` line nor `declare_wait` operator call naming phase 5, phase 6
+   or the dispatch, and no `waiting: done` nor `done` declared.
 
 Fail if phase 5 waits on the answer, if the question is dropped, or if the message ends on
-a `waiting:` line claiming a block the facts contradict.
+a `waiting:` line or a declared wait claiming a block the facts contradict.

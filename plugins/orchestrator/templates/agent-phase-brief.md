@@ -78,4 +78,5 @@ Non-goals:
 ## 8. Resource envelope
 
 - Kill what you start, delete what you build, and prove it with `ps` and `ls` before your final report.
+- Kill only what you started, by the pid you recorded in a file (`cmd & echo $! > <file>`, then `kill $(cat <file>)`): `pkill`, `killall` and `kill $(pgrep …)` are refused in a launched session.
 {{RESOURCE_ENVELOPE}}

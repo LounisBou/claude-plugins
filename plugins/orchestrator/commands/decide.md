@@ -20,7 +20,7 @@ question ends its turn as step 2 says, and the module forwards it.
 The first says in three to five sentences what you work on, for its round of its own where
 your questions come together.
 Its pane shows each one, the coordinator's tab when the pane is closed;
-end on `waiting: operator (urgent) — blocks: …` only for what step 1 calls urgent.
+declare it with `declare_wait` and `urgent: true` only for what step 1 calls urgent.
 Its answer, verbatim and dated, is his ruling, recorded as step 4 says. **And each question is
 written in full in your own chat too**: his ruling of 2026-11-03, « […] but also and at the
 same time in their own chat […], in both. »
@@ -65,8 +65,8 @@ operator's pane draws these fields alone.
 - `_Choices_ :`, then two to four, one per line as `- **A** : <text>`, each with its COST
   and GAIN, each a materially different piece of work — never shades of one option.
 - `_Recommendation_ : A — <its reason in one sentence>`: exactly one, after the choices.
-- Close with « You decide: A or B? » (the letters offered), then the machine line, plain
-  text, as the message's last line: `waiting: operator — blocks: <the question>`. Split references in `blocks:` by `, `, never `/`. END THE TURN. Nothing else in
+- Close with « You decide: A or B? » (the letters offered), then call
+  `declare_wait({kind: "operator", blocks: "<the question>"})`. Split references in `blocks` by `, `, never `/`. END THE TURN. Nothing else in
   that message but the « Recorded » line of the answer just given: no status, no other
   question, no agent report.
 
@@ -91,7 +91,7 @@ question before it is presented.
    reads it. A ruling that defers work (« later, when I say so ») is recorded with
    `dispatch-record.sh defer <record> <id> --ruling "<his words, dated>"` for a row and
    `dispatch-record.sh goals <record> defer <G> --ruling "<his words, dated>"` for a goal, never left
-   open as a question: the turn then ends on `waiting: deferred — <n> items`, which asks him nothing.
+   open as a question: the turn then declares `declare_wait({kind: "deferred", blocks: "<n> items"})`, which asks him nothing.
 3. Relay it at once, showing nothing of it, to the agent whose STOP it answers, if any — `SendMessage`,
    the ruling verbatim, dated (`date -u +%FT%TZ`, pasted), « the operator ruled » — and mark
    it « relayed » in `decision-round.md`.

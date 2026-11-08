@@ -59,20 +59,22 @@ export function unquoted(raw: string): string | null {
 export function titleOf(line: string): string | null {
   const m = line.match(/"customTitle"\s*:\s*"((?:[^"\\]|\\.)*)"/)
   if (!m) return null
-  return unquoted(JSON.parse(`"${m[1]}"`) as string)
+  const decoded: unknown = JSON.parse(`"${m[1] ?? ''}"`)
+  return typeof decoded === 'string' ? unquoted(decoded) : null
 }
 
 // The host's own record of a live session (<config>/sessions/<pid>.json): its
 // id, its name as the rename stored it — unquoted, the rule above — and its
 // status. Null for a text that is no such record.
 export function hostRecordOf(text: string): { sessionId: string | null; name: string | null; status: 'idle' | 'busy' | null } | null {
-  let record: { sessionId?: unknown; name?: unknown; status?: unknown }
+  let parsed: unknown
   try {
-    record = JSON.parse(text)
+    parsed = JSON.parse(text)
   } catch {
     return null
   }
-  if (!record || typeof record !== 'object') return null
+  if (!parsed || typeof parsed !== 'object') return null
+  const record: { sessionId?: unknown; name?: unknown; status?: unknown } = parsed
   return {
     sessionId: typeof record.sessionId === 'string' ? record.sessionId : null,
     name: typeof record.name === 'string' ? unquoted(record.name) : null,
@@ -111,7 +113,7 @@ export function processRows(out: string): { pid: string; command: string }[] {
   const rows: { pid: string; command: string }[] = []
   for (const line of out.split('\n')) {
     const m = /^\s*(\d+)\s+(.*\S)/.exec(line)
-    if (m) rows.push({ pid: m[1], command: m[2] })
+    if (m) rows.push({ pid: m[1] ?? '', command: m[2] ?? '' })
   }
   return rows
 }
@@ -176,7 +178,7 @@ async function findHost(
     if (record) recorded.push({ ...row, record })
   }
   if (recorded.length > 0) {
-    if (!sessionId) return { host: recorded[0], foreign: false }
+    if (!sessionId) return { host: recorded[0] ?? null, foreign: false }
     const own = recorded.find(p => p.record?.sessionId === sessionId)
       ?? recorded.find(p => p.record?.sessionId === null) ?? null
     return { host: own, foreign: own === null }
@@ -221,7 +223,8 @@ export async function scanTail(
       if (index > 0 && cut < 0) continue
       const lines = decoder.decode(chunk.slice(cut + 1)).split('\n')
       for (let i = lines.length - 1; i >= 0; i--) {
-        if (matches(lines[i])) return { line: lines[i], complete: true }
+        const line = lines[i]
+        if (line !== undefined && matches(line)) return { line, complete: true }
       }
     }
     return { line: null, complete: first === 0 }

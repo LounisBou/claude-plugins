@@ -3,6 +3,13 @@
   "extends": "./tsconfig.base.json",
   "include": [
     "scripts/**/*.ts",
-    "packages/*/src/**/*.ts"
+    "packages/*/src/**/*.ts",
+    "plugins/orchestrator/skills/*/scripts/**/*.ts",
+    "plugins/orchestrator/hooks/models-guard.ts",
+    "plugins/orchestrator/hooks/module-log.ts",
+    "plugins/orchestrator/hooks/session-name.ts",
+    "plugins/orchestrator/hooks/short-names.ts",
+    "plugins/orchestrator/hooks/gauge-core.ts",
+    "plugins/orchestrator/hooks/move.ts"
   ]
 }

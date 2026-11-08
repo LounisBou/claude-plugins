@@ -368,10 +368,10 @@ check "the core loop's hand-over row names the predecessor's succession and send
 # Work the operator deferred ends a turn on its own machine line, never on a question to him:
 # the rulebook, the decision round and the gate's reasons name it.
 check "the rulebook, the decision round and the gate's reasons name waiting: deferred" "yes|yes|yes|yes" \
-  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'waiting: deferred — <n> items')|$(spells "$ROOT/commands/decide.md" 'waiting: deferred — <n> items')|$(spells "$ROOT/hooks/stop-gate.ts" 'end on waiting: deferred — <n> items')|$(spells "$ROOT/commands/decide.md" 'dispatch-record.sh defer <record> <id> --ruling')"
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" '`deferred` (blocks: `<n> items`)')|$(spells "$ROOT/commands/decide.md" 'declare_wait({kind: "deferred", blocks: "<n> items"})')|$(spells "$ROOT/hooks/stop-gate.ts" 'end on waiting: deferred — <n> items')|$(spells "$ROOT/commands/decide.md" 'dispatch-record.sh defer <record> <id> --ruling')"
 # The rulebook teaches one count of the deferred items: the id list it used to teach is gone.
 check "the rulebook teaches the items count, never the id list" "yes|no" \
-  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'waiting: deferred — <n> items')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'waiting: deferred — <ids>')"
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" '`deferred` (blocks: `<n> items`)')|$(spells "$ROOT/skills/orchestrator/SKILL.md" 'waiting: deferred — <ids>')"
 # Every operator question stays in full in the orchestrator's own chat until he answers it, as
 # well as in the coordinator's round (the operator's ruling of 2026-11-03): the decision round,
 # the rulebook and the coordinator's skill each carry the rule.
@@ -444,7 +444,7 @@ check "the succession brief, the references and the routing skill carry none of 
 # glues two of them into a name it cannot resolve: the rulebook tells the orchestrator to split
 # them by a comma.
 check "the decision round splits the references of a blocks text by commas, never a slash" "yes" \
-  "$(spells "$ROOT/commands/decide.md" 'Split references in `blocks:` by `, `, never `/`.')"
+  "$(spells "$ROOT/commands/decide.md" 'Split references in `blocks` by `, `, never `/`.')"
 # Rule 221: the stop gate refuses a bare question on its own (hooks/tests/stop-gate.test.ts, « A
 # bare question still blocks nothing declared »), and the operator ruled the sentence out
 # (2026-11-04, « A »: restore 2, 5, 6 and 7, remove 1, 3 and 4). Topic 3's urgent wait is pinned
@@ -730,7 +730,7 @@ check "the succession brief reads the goals by command and points at them" "yes|
 # Done is the spec's goals, said where each session reads it: the rulebook's machine line, the
 # prerequisites, the decision round's announcement, and the routing skill's map rule.
 check "the rulebook, the prerequisites, decide and the routing skill carry the goals and the map rule" "yes|yes|yes|yes|yes" \
-  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'every goal in `goals.md` met or ruled out by him → waiting: done.')|$(spells "$ORCH_REFS/briefs.md" 'and a `goals.md` beside the dispatch record, every goal of the spec in a phase or ruled out by the operator')|$(spells "$ROOT/commands/decide.md" '« N questions, back to back. Goals: m/n met, open: G3, G4. »')|$(spells "$ROOT/skills/model-routing/SKILL.md" "A pair \`pick\` returns for one class or one project goes in the brief, the record and \`calibrate\`'s project table, never in \`models.json\`")|$(spells "$ORCH_REFS/briefs.md" 'A plan section that moves goal work after the build is a goal without a phase: put it to him.')"
+  "$(spells "$ROOT/skills/orchestrator/SKILL.md" 'every goal in `goals.md` met or ruled out by him, `done`.')|$(spells "$ORCH_REFS/briefs.md" 'and a `goals.md` beside the dispatch record, every goal of the spec in a phase or ruled out by the operator')|$(spells "$ROOT/commands/decide.md" '« N questions, back to back. Goals: m/n met, open: G3, G4. »')|$(spells "$ROOT/skills/model-routing/SKILL.md" "A pair \`pick\` returns for one class or one project goes in the brief, the record and \`calibrate\`'s project table, never in \`models.json\`")|$(spells "$ORCH_REFS/briefs.md" 'A plan section that moves goal work after the build is a goal without a phase: put it to him.')"
 
 # Every subcommand registers its record under the session, by absolute path, once. The
 # state directory is the hook's: the hook reads the same file for the same session id.
@@ -3811,7 +3811,7 @@ check "the design no longer leaves a dead sender's questions to the pane" "no" \
 # question reaching the pane, or the coordinator's tab with the pane closed, and the asker's chat.
 check "the rulebooks say a question the pane shows is not asked twice, when it falls due, and how a wait is marked urgent" \
   "yes|yes|yes|yes|yes|yes|yes|yes|yes|yes|yes" \
-  "$(spells "$COORDSKILL" '**A question the pane shows is not asked twice.**')|$(spells "$COORDSKILL" 'ended on `waiting: operator (urgent) — blocks: …`, or your pane is closed. Whether he keeps the')|$(spells "$COORDSKILL" 'he lifts that hold: they stay open, in the pane and in the round; an urgent one you signal in')|$(spells "$ROOT/commands/decide.md" 'compaction, in asking order: the urgent first (a production fault, a detected')|$(spells "$COORDSKILL" '(« [module] … now due in this tab »)')|$(spells "$COORDSKILL" 'tab while the pane still showed it, by one `round-close`; neither is presented again.')|$(spells "$ROOT/commands/decide.md" 'end on `waiting: operator (urgent) — blocks: …` only for')|$(spells "$ROOT/commands/decide.md" '« already done: <evidence> », dropped from the count (N in the header drops with it),')|$(spells "$ROOT/commands/decide.md" 'a settled item is never asked.')|$(spells "$ROOT/docs/design.md" 'A question the pane shows is not asked twice, on the operator')|$(spells "$ROOT/docs/design.md" 'submits to its own session one « [module] … now due in this tab »')"
+  "$(spells "$COORDSKILL" '**A question the pane shows is not asked twice.**')|$(spells "$COORDSKILL" 'declared its wait on the operator urgent, or your pane is closed. Whether he keeps the')|$(spells "$COORDSKILL" 'he lifts that hold: they stay open, in the pane and in the round; an urgent one you signal in')|$(spells "$ROOT/commands/decide.md" 'compaction, in asking order: the urgent first (a production fault, a detected')|$(spells "$COORDSKILL" '(« [module] … now due in this tab »)')|$(spells "$COORDSKILL" 'tab while the pane still showed it, by one `round-close`; neither is presented again.')|$(spells "$ROOT/commands/decide.md" 'declare it with `declare_wait` and `urgent: true` only for')|$(spells "$ROOT/commands/decide.md" '« already done: <evidence> », dropped from the count (N in the header drops with it),')|$(spells "$ROOT/commands/decide.md" 'a settled item is never asked.')|$(spells "$ROOT/docs/design.md" 'A question the pane shows is not asked twice, on the operator')|$(spells "$ROOT/docs/design.md" 'submits to its own session one « [module] … now due in this tab »')"
 # The coordinator's own decision round takes every orchestrator's open questions in the order
 # `round --by-urgency` prints, points at decide.md for the round's shape, and relays each ruling.
 CDECIDE="$ROOT/commands/coordinator-decide.md"
@@ -5355,10 +5355,10 @@ two_lines_only() {
     | xargs grep -LF -- 'waiting: tool' | sed "s#^$ROOT/##"
 }
 check "no text offers only the wait on the operator and done" "" "$(two_lines_only)"
-# The question of a decision round ends on the machine line: the stop gate refuses a turn
-# whose last line is a bare question.
-check "a decision round's question ends on the operator's machine line" "yes" \
-  "$(spells "$ROOT/commands/decide.md" 'text, as the message'"'"'s last line: `waiting: operator — blocks: <the question>`')"
+# The question of a decision round ends on a declared wait on the operator: the stop gate refuses
+# a turn that ends on a bare question.
+check "a decision round's question ends on a declared operator wait" "yes" \
+  "$(spells "$ROOT/commands/decide.md" '`declare_wait({kind: "operator", blocks: "<the question>"})`')"
 check "a relayed ruling is dated by a command, pasted, never from memory" "yes|no" \
   "$(spells "$ROOT/commands/decide.md" 'the ruling verbatim, dated (`date -u +%FT%TZ`, pasted),')|$(spells "$ROOT/commands/decide.md" 'the ruling verbatim, dated,')"
 # The operator's time: a round is a wave of questions back to back, nothing relayed or launched
@@ -11429,8 +11429,8 @@ check "the design says why the audit left the orchestrator's context" "yes|yes" 
   "$(flat_has "$ROOT/docs/design.md" 'about 42,000 tokens')|$(flat_has "$ROOT/docs/design.md" '`orchestrator:screenshots`')"
 check "the record's messages say the audit is the screenshots agent's" "yes|yes" \
   "$(spells "$REC" 'ready: the audit covers $a_images image(s), the description of $pr carries $shots: audit every image')|$(spells "$REC" 'the screenshots agent audits each one')"
-check "both manifests carry 0.98.2" "1|2" \
-  "$(grep -c '"version": "0.98.2"' "$ROOT/.claude-plugin/plugin.json")|$(grep -c '"version": "0.98.2"' "$ROOT/.claude-plugin/marketplace.json")"
+check "both manifests carry 0.98.3" "1|2" \
+  "$(grep -c '"version": "0.98.3"' "$ROOT/.claude-plugin/plugin.json")|$(grep -c '"version": "0.98.3"' "$ROOT/.claude-plugin/marketplace.json")"
 
 # A pull request carries Ready or Not Ready beside the draft. The implementer's opens Not
 # Ready (`pr-create --draft` labels it, or `pr-readiness <n> not-ready` after another way of
