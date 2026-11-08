@@ -382,7 +382,7 @@ def build_table(scope, trials, sizes, aliases):
     entries, lines = {}, []
     for cls in sorted({t["class"] for t in trials}):
         entry, note = select_entry(cls, stats_of([t for t in trials if t["class"] == cls], aliases),
-                                   cls in sizes)
+                                   cls in STRICT_CLASSES, sizes)
         if entry:
             entries[cls] = entry
         lines.append(entry_line(cls, entry, note))
@@ -462,7 +462,7 @@ def cmd_harvest(argv):
     skipped = []
     for pr in a.pr:
         try:
-            r = subprocess.run(["pr", "view", str(pr), "--json", "title,body,mergeCommit"],
+            r = subprocess.run([GH_CLI, "pr", "view", str(pr), "--json", "title,body,mergeCommit"],
                                cwd=repo, capture_output=True, text=True)
             info = json.loads(r.stdout) if r.returncode == 0 else None
         except (OSError, ValueError):
@@ -641,7 +641,7 @@ def host(pair, prompt, cwd, budget, mode):
     `incomplete`, or the cap would undercount what was spent.
     """
     model, effort = parse_pair(pair)
-    cmd = ["-p", "--model", model, "--effort", effort, "--permission-mode", mode,
+    cmd = [HOST_CLI, "-p", "--model", model, "--effort", effort, "--permission-mode", mode,
            "--output-format", "json", "--no-session-persistence", "--setting-sources", "project",
            "--max-budget-usd", "%.2f" % budget]
     started = time.time()
@@ -1086,7 +1086,7 @@ def cmd_bench(argv):
                              if tid in tasks and t["class"] == cls and pr not in out], aliases)
 
         def selected():
-            return select_entry(cls, class_stats(), cls in {})
+            return select_entry(cls, class_stats(), cls in STRICT_CLASSES, {})
 
         def repeat(only=None):
             """Reps 2..--reps on every task for the best pair and for each covered pair of the
@@ -1182,7 +1182,7 @@ def fold(scope, projects, aliases):
             own = [t for slug, p, t in pooled_trials
                    if p == pair and (not qualifies or slug in where[pair])]
             pooled[pair] = dict(stats_of(own, aliases)[pair], covered=qualifies, held_back=pair in held)
-        entry, _ = select_entry(cls, pooled, cls in sizes)
+        entry, _ = select_entry(cls, pooled, cls in STRICT_CLASSES, sizes)
         if entry:
             entries[cls] = entry
     return {"scope": scope, "generated": datetime.date.today().isoformat(), "entries": entries}
