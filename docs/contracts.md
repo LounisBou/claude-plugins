@@ -8,7 +8,7 @@ defect.
 
 | Contract | Owner | Read by | Today | Target |
 |---|---|---|---|---|
-| Measure file (`measure/<session>.json`): fill, window, model | orchestrator | statusbar, bugs-bot, the launcher | untyped JSON; statusbar re-derives the gate in bash | typed in `core`; statusbar shows the owner's `past_gate` instead of recomputing it |
+| Measure file (`measure/<session>.json`): fill, window, model, the session's `start` (its first figure, the brief it started on and its size) | orchestrator | statusbar, bugs-bot, the launcher | untyped JSON; statusbar re-derives the gate in bash | typed in `core`; statusbar shows the owner's `past_gate` instead of recomputing it |
 | Plan state file (`IMPLEMENTATION.md`): header, `\| phase \| title \| status \| milestone \|` rows | method | implement (orchestrator to come) | **typed in core** (`method.ts`: `parseState`, `markRow`, `nextRow`); format in `plugins/method/skills/lifecycle/references/plan.md` | the orchestrator's plans read through the same functions |
 | Report status line (`status: done\|blocked\|question — …`) | method | implement (orchestrator's relay to come) | **typed in core** (`method.ts`: `reportStatus`); implement's skills end on it | the orchestrator's `parseStatus` replaced by `reportStatus` |
 | `deck.json` | orchestrator | Stream Deck (outside) | versioned JSON, a view of the state store held byte for byte by a golden test; each session writes it only when it differs from the file, and the minute's refresh is the machine's (orchestrator 0.98.11) | the same format, a view of the state store, one writer, rate-limited |

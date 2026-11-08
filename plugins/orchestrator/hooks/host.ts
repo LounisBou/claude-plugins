@@ -14,7 +14,7 @@ export type SessionContextUsage = { tokens?: number; window: number; percent?: n
 type Nouns = {
   plugin: { root: string }
   env: { get(name: string): Promise<string | undefined> }
-  fs: { write(path: string, text: string): Promise<void> }
+  fs: { write(path: string, text: string): Promise<void>; read(path: string): Promise<string>; stat(path: string): Promise<{ size: number }> }
   process: { run(argv: readonly string[], init?: ProcessRunInit): Promise<ProcessRunResult> }
   session: { id(): Promise<string>; model(): Promise<string>; usage(): Promise<{ context: SessionContextUsage }> }
   ui: { toast(text: string): void; invalidate(event: 'ui.render'): void }

@@ -4136,6 +4136,10 @@ check "the lint verdict is shown" "1" "$(printf '%s\n' "$out" | grep -c '^lint=b
 # when no chain names a live owner for the agent's tty.
 check "the launch records the orchestrator --orchestrator names" "1" \
   "$(printf '%s\n' "$out" | grep -Fc "export ORCHESTRATOR_REPORTS_TO='$ORCHREF' && ")"
+# The brief the session starts on is named in its environment: the gauge measures its size
+# beside the session's starting context (the measure file's `start`).
+check "the launch names the brief the session starts on, and a launch without one names none" "1|0" \
+  "$(printf '%s\n' "$out" | grep -Fc "export ORCHESTRATOR_BRIEF='$BABS/good.md' && ")|$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : brief" --prompt p 2>&1 | grep -c 'ORCHESTRATOR_BRIEF')"
 check "a launch without --orchestrator records none" "0" \
   "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : brief" --prompt p 2>&1 | grep -c 'ORCHESTRATOR_REPORTS_TO')"
 
