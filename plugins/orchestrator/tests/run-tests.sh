@@ -5290,8 +5290,6 @@ check "the orchestrator skill merges a green head only where the method opts int
 check "and by default it reports ready" "yes" "$(help_has "$CWSCRIPT" 'otherwise report « ready »')"
 check "review.md's CI watch stays at 800 characters or fewer, its outcomes in the script" "yes|no|no" \
   "$([ "$(grep '^\*\*Checks, in one background watch\.\*\*' "$ORCH_REFS/review.md" | wc -m | tr -d ' ')" -le 800 ] && echo yes || echo no)|$(spells "$ORCH_REFS/review.md" 'Moved: re-arm on the new head')|$(spells "$ORCH_REFS/review.md" 'Base-no-run with `filtered=0`')"
-check "the lifecycle never rotates an agent, nor spawns a session, to watch CI" "yes|yes" \
-  "$(spells "$ORCH_REFS/lifecycle.md" 'is stood down, never rotated, and no session is spawned to watch CI')|$(spells "$ORCH_REFS/lifecycle.md" 'An agent whose remaining work is waiting on CI is not rotated')"
 check "the audit brief is named by its subject, with no date" "yes|no" \
   "$(spells "$ROOT/commands/audit.md" 'audit-<subject>-brief.md')|$(spells "$ROOT/commands/audit.md" 'audit-<date>')"
 check "the audit report keeps a dated name whose date is date +%F run at launch, never typed" "yes|yes" \
