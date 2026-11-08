@@ -1,0 +1,217 @@
+// The scripts' `run` functions against real temporary repositories: the file and git paths
+// the pure functions of scripts.test.ts do not reach.
+import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { describe, it, type TestContext } from 'node:test'
+import { processIo, type Io } from './lib/io.ts'
+import { compareVersions, isEntry, parseManifest } from './lib/plugins.ts'
+import { render, run as marketplace } from './marketplace.ts'
+import { run as matrix } from './plugin-matrix.ts'
+import { parseCeilings, run as prompts } from './prompts.ts'
+import { run as versionBump } from './version-bump.ts'
+
+interface Recorded extends Io {
+  readonly lines: { out: string[]; err: string[] }
+}
+
+function recorder(env: Record<string, string> = {}): Recorded {
+  const lines = { out: [] as string[], err: [] as string[] }
+  return { lines, out: line => lines.out.push(line), err: line => lines.err.push(line), env }
+}
+
+function manifest(name: string, version = '1.0.0'): string {
+  return JSON.stringify({ name, version, description: `The ${name} plugin.`, author: { name: 'A' } })
+}
+
+/** A repository holding the given plugins, each with a manifest and one shipped file. */
+function repo(plugins: Record<string, string>): string {
+  const root = mkdtempSync(join(tmpdir(), 'repo-'))
+  for (const [name, version] of Object.entries(plugins)) {
+    mkdirSync(join(root, 'plugins', name, '.claude-plugin'), { recursive: true })
+    writeFileSync(join(root, 'plugins', name, '.claude-plugin', 'plugin.json'), manifest(name, version))
+    writeFileSync(join(root, 'plugins', name, 'skill.md'), 'A short prompt.\n')
+  }
+  mkdirSync(join(root, '.claude-plugin'))
+  writeFileSync(join(root, '.claude-plugin', 'marketplace.json'), JSON.stringify({ name: 'm', plugins: [] }))
+  mkdirSync(join(root, 'ci'))
+  return root
+}
+
+function git(root: string, ...args: string[]): void {
+  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', ...args], { cwd: root, stdio: 'ignore' })
+}
+
+describe('marketplace run', () => {
+  it('rewrites a stale catalogue, then finds it current', () => {
+    const root = repo({ alpha: '1.0.0' })
+    const io = recorder()
+    assert.equal(marketplace(root, [], io), 0)
+    assert.deepEqual(io.lines.out, ['.claude-plugin/marketplace.json rewritten'])
+    assert.equal(JSON.parse(readFileSync(join(root, '.claude-plugin', 'marketplace.json'), 'utf8')).plugins[0].source, './plugins/alpha')
+    assert.equal(marketplace(root, ['--check'], recorder()), 0)
+  })
+
+  it('fails a check on a stale catalogue and writes nothing', () => {
+    const root = repo({ alpha: '1.0.0' })
+    const io = recorder()
+    assert.equal(marketplace(root, ['--check'], io), 1)
+    assert.match(io.lines.err[0] ?? '', /out of date/)
+    assert.deepEqual(JSON.parse(readFileSync(join(root, '.claude-plugin', 'marketplace.json'), 'utf8')).plugins, [])
+  })
+})
+
+describe('marketplace render', () => {
+  it('refuses a catalogue that is not an object', () => {
+    assert.throws(() => render([], []), /is not an object/)
+  })
+})
+
+describe('version-bump run', () => {
+  function committed(): string {
+    const root = repo({ alpha: '1.0.0', beta: '2.0.0' })
+    git(root, 'init', '-q', '-b', 'main')
+    git(root, 'add', '.')
+    git(root, 'commit', '-q', '-m', 'base')
+    git(root, 'checkout', '-q', '-b', 'change')
+    return root
+  }
+
+  it('asks for its base', () => {
+    const io = recorder()
+    assert.equal(versionBump('.', [], io), 2)
+    assert.deepEqual(io.lines.err, ['usage: version-bump <base-ref>'])
+  })
+
+  it('refuses a shipped change at the same version', () => {
+    const root = committed()
+    writeFileSync(join(root, 'plugins', 'alpha', 'skill.md'), 'Changed.\n')
+    git(root, 'commit', '-q', '-am', 'change')
+    const io = recorder()
+    assert.equal(versionBump(root, ['main'], io), 1)
+    assert.deepEqual(io.lines.err, ['alpha: ships a change at 1.0.0, not above 1.0.0'])
+  })
+
+  it('accepts the change once the version is raised, and a new plugin', () => {
+    const root = committed()
+    writeFileSync(join(root, 'plugins', 'alpha', 'skill.md'), 'Changed.\n')
+    writeFileSync(join(root, 'plugins', 'alpha', '.claude-plugin', 'plugin.json'), manifest('alpha', '1.1.0'))
+    mkdirSync(join(root, 'plugins', 'gamma', '.claude-plugin'), { recursive: true })
+    writeFileSync(join(root, 'plugins', 'gamma', '.claude-plugin', 'plugin.json'), manifest('gamma'))
+    git(root, 'add', '.')
+    git(root, 'commit', '-q', '-m', 'change')
+    assert.equal(versionBump(root, ['main'], recorder()), 0)
+  })
+})
+
+describe('plugin-matrix run', () => {
+  it('prints the matrix and appends it to the GitHub output file', () => {
+    const root = repo({ alpha: '1.0.0' })
+    writeFileSync(join(root, 'ci', 'plugins.json'), JSON.stringify({ blocking: { alpha: ['macos-latest'] } }))
+    const output = join(root, 'github-output')
+    const io = recorder({ GITHUB_OUTPUT: output })
+    assert.equal(matrix(root, [], io), 0)
+    const line = '{"include":[{"plugin":"alpha","os":"ubuntu-latest","blocking":false},{"plugin":"alpha","os":"macos-latest","blocking":true}]}'
+    assert.deepEqual(io.lines.out, [line])
+    assert.equal(readFileSync(output, 'utf8'), `matrix=${line}\n`)
+  })
+
+  it('prints only, outside GitHub', () => {
+    const root = repo({ alpha: '1.0.0' })
+    writeFileSync(join(root, 'ci', 'plugins.json'), JSON.stringify({ blocking: { alpha: [] } }))
+    assert.equal(matrix(root, [], recorder()), 0)
+  })
+
+  it('refuses a malformed table', () => {
+    assert.throws(() => matrix(repoWithTable('[]'), [], recorder()), /expected \{ "blocking"/)
+  })
+
+  function repoWithTable(text: string): string {
+    const root = repo({ alpha: '1.0.0' })
+    writeFileSync(join(root, 'ci', 'plugins.json'), text)
+    return root
+  }
+})
+
+describe('prompts run', () => {
+  const sentence = 'every agent reads its brief before it acts and never guesses the state of the branch.'
+
+  function withPrompts(ceilings: unknown): string {
+    const root = repo({ alpha: '1.0.0', beta: '1.0.0' })
+    writeFileSync(join(root, 'plugins', 'alpha', 'skill.md'), `${sentence}\n`)
+    mkdirSync(join(root, 'plugins', 'beta', 'docs'))
+    writeFileSync(join(root, 'plugins', 'beta', 'skill.md'), `${sentence}\n`)
+    writeFileSync(join(root, 'plugins', 'beta', 'docs', 'design.md'), `${sentence}\n`)
+    writeFileSync(join(root, 'ci', 'prompts.json'), JSON.stringify(ceilings))
+    return root
+  }
+
+  it('passes under its ceilings and names each sentence said twice', () => {
+    const io = recorder()
+    assert.equal(prompts(withPrompts({ budgets: { alpha: 100, beta: 100 }, duplicates: 1 }), [], io), 0)
+    assert.equal(io.lines.err.length, 0)
+    assert.match(io.lines.out[0] ?? '', /^said 2×: .* in plugins\/alpha\/skill\.md, plugins\/beta\/skill\.md$/)
+  })
+
+  it('fails over a ceiling and lowers nothing', () => {
+    const root = withPrompts({ budgets: { alpha: 1, beta: 100 }, duplicates: 1 })
+    const io = recorder()
+    assert.equal(prompts(root, ['--lower'], io), 1)
+    assert.match(io.lines.err[0] ?? '', /^alpha: \d+ prompt tokens, over its budget of 1$/)
+    assert.equal(JSON.parse(readFileSync(join(root, 'ci', 'prompts.json'), 'utf8')).budgets.alpha, 1)
+  })
+
+  it('lowers the ceilings to the measure and keeps the authored fields', () => {
+    const root = withPrompts({ $comment: 'kept', budgets: { alpha: 100, beta: 100 }, duplicates: 5 })
+    assert.equal(prompts(root, ['--lower'], recorder()), 0)
+    const written = JSON.parse(readFileSync(join(root, 'ci', 'prompts.json'), 'utf8'))
+    assert.deepEqual(written, { $comment: 'kept', budgets: { alpha: 22, beta: 22 }, duplicates: 1 })
+  })
+
+  it('refuses malformed ceilings', () => {
+    assert.throws(() => parseCeilings([]), /expected/)
+    assert.throws(() => parseCeilings({ budgets: { alpha: 'many' }, duplicates: 0 }), /budget of "alpha" is not a number/)
+  })
+})
+
+describe('plugins library', () => {
+  it('keeps an author email, refuses an author that is not an object', () => {
+    assert.deepEqual(parseManifest(JSON.parse(manifest('alpha')), 'alpha').author, { name: 'A' })
+    assert.equal(parseManifest({ ...JSON.parse(manifest('alpha')), author: { name: 'A', email: 'a@example.com' } }, 'alpha').author.email, 'a@example.com')
+    assert.throws(() => parseManifest({ ...JSON.parse(manifest('alpha')), author: 'A' }, 'alpha'), /"author" must be an object/)
+    assert.throws(() => parseManifest('alpha', 'alpha'), /not an object/)
+  })
+
+  it('orders by major, then minor, then patch', () => {
+    assert.ok(compareVersions('2.0.0', '1.9.9') > 0)
+    assert.ok(compareVersions('1.2.3', '1.2.4') < 0)
+  })
+
+  it('refuses to order a malformed version', () => {
+    assert.throws(() => compareVersions('1.0', '1.0.0'), /MAJOR\.MINOR\.PATCH/)
+  })
+
+  it('knows the script node was started with', () => {
+    const script = process.argv[1]
+    assert.ok(script !== undefined && isEntry(pathToFileURL(script).href))
+    assert.ok(!isEntry('file:///elsewhere.ts'))
+    const argv = process.argv
+    process.argv = argv.slice(0, 1)
+    try {
+      assert.ok(!isEntry('file:///elsewhere.ts'))
+    } finally {
+      process.argv = argv
+    }
+  })
+
+  it('writes through the process streams', (t: TestContext) => {
+    const log = t.mock.method(console, 'log', () => {})
+    const error = t.mock.method(console, 'error', () => {})
+    processIo.out('o')
+    processIo.err('e')
+    assert.deepEqual([log.mock.calls[0]?.arguments, error.mock.calls[0]?.arguments], [['o'], ['e']])
+  })
+})

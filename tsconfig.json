@@ -1,0 +1,5 @@
+{
+  "$comment": "What the strict check covers today. A plugin's TypeScript joins `include` the day it passes; it never leaves (docs/conventions.md, « Ratchets »).",
+  "extends": "./tsconfig.base.json",
+  "include": ["scripts/**/*.ts"]
+}
