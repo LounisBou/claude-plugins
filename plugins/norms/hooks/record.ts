@@ -32,10 +32,12 @@ export const CHECK_DONE_SCHEMA = {
 // The scope /norms:check computed in this session: its head and the time. A
 // module variable, like the scope cache: a reload loses it and asks for a new
 // /norms:check.
-let mark: { head: string; at: number } | undefined
+// The files the check read are kept with it: a commit made after the check (the fix commits of
+// check.md 7.4) may only touch them, or the record would vouch for code the check never read.
+let mark: { head: string; at: number; files: ReadonlySet<string> } | undefined
 
-export function markScope(head: string): void {
-  mark = { head, at: Date.now() }
+export function markScope(head: string, files: readonly string[] = []): void {
+  mark = { head, at: Date.now(), files: new Set(files) }
 }
 
 export function resetMark(): void {
@@ -69,7 +71,8 @@ function textOf(answer: any): { text: string } | { why: string } {
 }
 
 export async function checkDone($: any, input: any): Promise<{ result: string; isError?: boolean }> {
-  if (!mark) return { result: 'norms: run /norms:check first: the record follows its own scope', isError: true }
+  const checked = mark
+  if (!checked) return { result: 'norms: run /norms:check first: the record follows its own scope', isError: true }
   const open = count(input?.open)
   const fixed = count(input?.fixed)
   const passed = count(input?.passed)
@@ -84,6 +87,14 @@ export async function checkDone($: any, input: any): Promise<{ result: string; i
     // At the call, not at the scope: the fix commits of check.md 7.4 are in it.
     const head = (await git($, ['git', 'rev-parse', 'HEAD'])).trim()
     if (!head) return { result: none('the checkout has no commit') }
+    if (head !== checked.head) {
+      const changed = (await git($, ['git', 'diff', '--name-only', checked.head, head])).split('\n').map(f => f.trim()).filter(Boolean)
+      const unread = changed.filter(f => !checked.files.has(f))
+      if (unread.length > 0) {
+        const named = unread.slice(0, 5).join(', ') + (unread.length > 5 ? ', …' : '')
+        return { result: none(`commits since the check touch files it did not read (${named}): run /norms:check again`) }
+      }
+    }
     const repo = repoOf(await git($, ['git', 'remote', 'get-url', 'origin']))
     if (!repo) return { result: none('the origin remote names no GitHub repository') }
     let numberText: string
