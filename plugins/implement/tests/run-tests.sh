@@ -101,7 +101,8 @@ for skill in feature phase check close prepare; do
   check "$skill frontmatter names itself" "$skill" "$(awk '/^name:/{print $2; exit}' "$doc" 2>/dev/null)"
   check "$skill runs the preflight first" "1" "$(grep -c 'scripts/preflight.sh' "$doc" 2>/dev/null || echo 0)"
   check "$skill hard-codes no language" "" "$(grep -o 'French' "$doc" 2>/dev/null || true)"
-  check "$skill has no accented character" "" "$(grep -o '[àâäéèêëïîôöùûüçÀÂÄÉÈÊËÏÎÔÖÙÛÜÇœŒ]' "$doc" 2>/dev/null | sort -u | tr '\n' ',' || true)"
+  # Read as UTF-8 by python, so the locale the suite runs under changes nothing.
+  check "$skill has no accented character" "" "$(python3 -c 'import re,sys; print(",".join(sorted(set(re.findall("[À-ÖØ-öø-ÿœŒ]", open(sys.argv[1], encoding="utf-8").read())))))' "$doc" 2>/dev/null)"
   check "$skill has no common French words" "" "$(grep -Eiow 'vous|nous|avec|chemin|fichier|sont|une|titre' "$doc" 2>/dev/null | sort -u | tr '\n' ',' || true)"
   check "$skill reaches no other plugin's cache" "" "$(grep -o 'plugins/cache' "$doc" 2>/dev/null || true)"
   # Commands, not substrings. The bracket classes make the match begin and end on a

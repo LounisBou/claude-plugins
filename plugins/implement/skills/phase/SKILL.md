@@ -207,9 +207,8 @@ NEVER mark a phase done while its check is red or its gate is untested
 Read-only search subagents are the one exception, and they read; they do not write.
 
 With this plugin's hooks module loaded, the first line is also held at the call: a
-subagent other than `Explore` is refused there, from this skill's start until another
-implement skill starts, the user asks for a subagent in a prompt, interrupts the turn,
-or runs `/implement:release-guard`. A refusal is a stop to report, never a wall to go
+subagent other than `Explore` runs only on the user's Allow, from this skill's start until
+another implement skill starts, the turn is interrupted, or `/implement:release-guard`. A refusal is a stop to report, never a wall to go
 around.
 
 This skill's own steps end at the branch. A push and a draft pull request need no consent;

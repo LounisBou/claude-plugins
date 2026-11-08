@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { gitSubcommand, simpleCommands } from './shell.ts'
+import { gitSubcommand, redirectsToFile, simpleCommands } from './shell.ts'
 
 const commands = (line: string): string[][] => simpleCommands(line)
 
@@ -47,5 +47,12 @@ describe('gitSubcommand', () => {
     assert.equal(gitSubcommand(['gh', 'pr']), undefined)
     assert.equal(gitSubcommand(['git', '--version']), undefined)
     assert.equal(gitSubcommand([]), undefined)
+  })
+})
+
+describe('redirectsToFile', () => {
+  it('sees a write into a file, and not a stream, /dev/null or a quoted >', () => {
+    for (const line of ['git diff > out.txt', 'echo a >> notes.md', 'cmd >| f', 'x 2> err.log', 'a && b>f']) assert.equal(redirectsToFile(line), true, line)
+    for (const line of ['git diff 2>&1', 'cmd > /dev/null 2>&1', 'cmd 2>/dev/null', 'echo "a > b"', "grep '>' f", 'echo a\\>b', 'cmd >&2']) assert.equal(redirectsToFile(line), false, line)
   })
 })

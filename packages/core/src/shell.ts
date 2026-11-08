@@ -9,7 +9,7 @@
 const RESERVED = new Set(['!', 'if', 'then', 'else', 'elif', 'do', 'while', 'until', 'time'])
 // Commands that wrap the real one: everything until a word that is not an option
 // of the wrapper is skipped before the real command is read.
-const WRAPPER = new Set(['env', 'command', 'builtin', 'exec', 'nohup', 'nice', 'timeout', 'gtimeout', 'sudo', 'xargs'])
+const WRAPPER = new Set(['env', 'command', 'builtin', 'exec', 'nohup', 'nice', 'timeout', 'gtimeout', 'sudo', 'xargs', 'rtk'])
 // A wrapper's options that take a value, keyed "wrapper option".
 const VALUED = new Set([
   'env -u', 'env -C', 'env -S', 'nice -n', 'timeout -s', 'timeout -k', 'gtimeout -s', 'gtimeout -k',
@@ -244,4 +244,32 @@ function tokenize(command: string): string[][] {
   flushWord(); flushCmd()
   while (d > 0) pop()
   return found
+}
+
+/**
+ * Whether a command line redirects output into a file: a `>`, `>>` or `>|` outside quotes whose
+ * target is neither `/dev/null` nor another stream (`&1`, `&2`). The tokens of `simpleCommands`
+ * carry no redirection, so a guard that must refuse a write asks this as well.
+ */
+export function redirectsToFile(line: string): boolean {
+  let quote: string | undefined
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i]
+    if (quote) {
+      if (c === '\\' && quote === '"') i++
+      else if (c === quote) quote = undefined
+      continue
+    }
+    if (c === '\\') { i++; continue }
+    if (c === "'" || c === '"') { quote = c; continue }
+    if (c !== '>') continue
+    let j = i + 1
+    if (line[j] === '>' || line[j] === '|') j++
+    while (line[j] === ' ' || line[j] === '\t') j++
+    if (line[j] === '&') { i = j; continue }
+    const target = /^[^\s;&|<>()]*/.exec(line.slice(j))?.[0] ?? ''
+    if (target.replace(/^['"]|['"]$/g, '') !== '/dev/null') return true
+    i = j + target.length - 1
+  }
+  return false
 }
