@@ -7988,20 +7988,21 @@ if command -v tmux >/dev/null 2>&1; then
     skip_case "and its extended keys are sent in the csi-u format" "$(tmux -V) has no extended-keys-format"
   fi
   # The tab bar: two windows carry a state, the third none; the current one is bracketed. Read
-  # back through the status line's own expansion, the server being detached and drawing nothing.
+  # back through the status line's own expansion, the server being detached and drawing nothing,
+  # by a client told it speaks UTF-8 (-u, as the launcher's are): one with no locale reads _.
   tmux -L "$CONFSRV" new-window -d -t home: -n second 'sleep 20' 2>/dev/null
   tmux -L "$CONFSRV" new-window -d -t home: -n third 'sleep 20' 2>/dev/null
   tmux -L "$CONFSRV" set -w -t home:0 @state busy 2>/dev/null
   tmux -L "$CONFSRV" set -w -t home:2 @state asks 2>/dev/null
   check "the tab bar shows each window's name and state icon in a padded block, the current one in bold, without index or session name" \
     " sleep ● | second | third ✋ " \
-    "$(tmux -L "$CONFSRV" display -p -t home:0 '#{W:#{E:window-status-format}|,#{E:window-status-current-format}|}' 2>/dev/null | sed 's/#\[[^]]*\]//g; s/|$//' | tr -d '\n')"
+    "$(tmux -u -L "$CONFSRV" display -p -t home:0 '#{W:#{E:window-status-format}|,#{E:window-status-current-format}|}' 2>/dev/null | sed 's/#\[[^]]*\]//g; s/|$//' | tr -d '\n')"
   # Each of the five states renders its own icon after the name, in the inactive block and in
   # the current one; a state the module never writes renders none.
   stateicons=""
   for st in busy idle asks done gate bogus; do
     tmux -L "$CONFSRV" set -w -t home:1 @state "$st" 2>/dev/null
-    stateicons="$stateicons$(tmux -L "$CONFSRV" display -p -t home:1 '#{E:window-status-format}|#{E:window-status-current-format}' 2>/dev/null | sed 's/#\[[^]]*\]//g; s/second//g; s/  */ /g')/"
+    stateicons="$stateicons$(tmux -u -L "$CONFSRV" display -p -t home:1 '#{E:window-status-format}|#{E:window-status-current-format}' 2>/dev/null | sed 's/#\[[^]]*\]//g; s/second//g; s/  */ /g')/"
   done
   check "each state renders its icon in both blocks, an unknown state none" \
     " ● | ● / ○ | ○ / ✋ | ✋ / ✓ | ✓ / ⚠ | ⚠ / | /" "$stateicons"
