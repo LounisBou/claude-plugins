@@ -10,6 +10,10 @@
 // writes, the one every name walk reads.
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
 import { endsAfterMove } from './moving.ts'
+import { messageOf, reasonOf, type Host, type On } from './host.ts'
+
+// The nouns naming holds.
+type Held = Host<'plugin' | 'env' | 'process' | 'session' | 'tool' | 'command' | 'prompt'>
 
 // The tool's short name: the model calls it as mcp__orchestrator__rename_session.
 export const RENAME_TOOL = 'rename_session'
@@ -66,7 +70,7 @@ export function checkName(raw: unknown): { name: string } | { refused: string } 
   return { refused: `a session names itself "Orch : <subject>" or "Coord : <subject>", the subject at most 25 characters and neither starting nor ending with a space, got "${name}"` }
 }
 
-export function register(on: (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }) {
+export function register(on: On<Held>): void {
   // Module memory: the name asked during this turn, run at its completion. A
   // second call in the same turn replaces the first — the last word stands.
   let pending: string | null = null
@@ -81,7 +85,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // session's subagent once renamed its agent « Coord : norms check… », a
   // second coordinator every listing then counted. It sees the end tool alone, which
   // it may use only once its own move was acknowledged.
-  on('session.start', {}, async ($: any, e: any, next: (e: any) => any) => {
+  on('session.start', {}, async ($, e, next) => {
     try {
       const spawned = Boolean(await $.env.get('ORCHESTRATOR_SPAWNED'))
       if (!spawned) {
@@ -106,24 +110,24 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       })
     } catch (err) {
       // A start never fails on the tool: the session runs, unnamed by itself.
-      await logLine($, `rename tool not registered: ${(err as Error).message}`)
+      await logLine($, `rename tool not registered: ${messageOf(err)}`)
     }
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
-  on('tool.call', { tool: `mcp__orchestrator__${RENAME_TOOL}` }, async ($: any, e: any) => {
+  on('tool.call', { tool: `mcp__orchestrator__${RENAME_TOOL}` }, async ($, e) => {
     if (e.agentId) return { result: MAIN_THREAD_ONLY, isError: true }
     if (await $.env.get('ORCHESTRATOR_SPAWNED')) {
       return { result: 'this session was named by the launcher and keeps that name', isError: true }
     }
-    const checked = checkName(e.name)
+    const checked = checkName(e['name'])
     if ('refused' in checked) return { result: checked.refused, isError: true }
     pending = checked.name
     return { result: `This session is renamed "${checked.name}" when this turn ends.` }
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: 'the rename could not be recorded; hand the operator the /rename line instead', isError: true }
   })
@@ -131,18 +135,18 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   // While a rename waits for the turn's end, a call that would hand an agent the old
   // name is refused: the main thread's own, the one the rename was asked from.
   for (const tool of ['Bash', 'SendMessage']) {
-    on('tool.call', { tool }, async ($: any, e: any, next: (e: any) => any) => {
-      if (pending !== null && !e.agentId && addressesAnAgent(tool, String(e.command ?? ''))) {
+    on('tool.call', { tool }, async ($, e, next) => {
+      if (pending !== null && !e.agentId && addressesAnAgent(tool, String(e['command'] ?? ''))) {
         return { deny: heldForName(pending) }
       }
       return next(e)
-    }).catch(async ($: any, e: any, next: any) => {
+    }).catch(async ($, e, next) => {
       await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
       return next(e)
     })
   }
 
-  on('tool.call', { tool: `mcp__orchestrator__${END_TOOL}` }, async ($: any, e: any) => {
+  on('tool.call', { tool: `mcp__orchestrator__${END_TOOL}` }, async ($, e) => {
     if (e.agentId) return { result: MAIN_THREAD_ONLY, isError: true }
     if (await $.env.get('ORCHESTRATOR_SPAWNED') && !endsAfterMove()) {
       return { result: 'this session was opened by the launcher; its successor closes its tab', isError: true }
@@ -150,12 +154,12 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     ending = true
     endAsked = true
     return { result: 'This session ends when this turn ends.' }
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: 'the end could not be recorded', isError: true }
   })
 
-  on('turn.complete', async ($: any, e: any, next: (e: any) => any) => {
+  on('turn.complete', async ($, e, next) => {
     // A subagent's turn completes inside the main one: what the main loop asked waits
     // for the main loop's own completion, never run while the turn still waits on it.
     if (e.agentId) return next(e)
@@ -173,14 +177,14 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // Not awaited: the run is queued until the session is idle, which this
       // very completion is still holding. Its failure is said in the log.
       $.command.run({ command: 'rename', args: name })
-        .catch((err: unknown) => logLine($, `rename to "${name}" failed: ${String((err as Error)?.message ?? err)}`))
+        .catch((err: unknown) => logLine($, `rename to "${name}" failed: ${reasonOf(err)}`))
       // An orchestrator moves into its home session here, where it is resumed anyway:
       // the launcher starts the home server whose window 0 resumes this very session,
       // and the tab that shows it, then this session ends and window 0 takes over with
       // the resume's prompt. Anything but a move leaves the session where it is.
       if (!ending && name.startsWith('Orch : ') && await movedHome($, name)) {
         $.command.run({ command: 'exit' })
-          .catch((err: unknown) => logLine($, `exit after the move into the home session failed: ${String((err as Error)?.message ?? err)}`))
+          .catch((err: unknown) => logLine($, `exit after the move into the home session failed: ${reasonOf(err)}`))
         return next(e)
       }
       // Then the turn that resumes it, queued behind the rename: a session started
@@ -188,17 +192,17 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // a session that also asked to end — it leaves.
       if (!ending) {
         $.prompt.submit({ text: resumeText(name) })
-          .catch((err: unknown) => logLine($, `the resume under "${name}" failed: ${String((err as Error)?.message ?? err)}`))
+          .catch((err: unknown) => logLine($, `the resume under "${name}" failed: ${reasonOf(err)}`))
       }
     }
     if (ending) {
       ending = false
       // Queued after any rename, run once the session is idle.
       $.command.run({ command: 'exit' })
-        .catch((err: unknown) => logLine($, `exit failed: ${String((err as Error)?.message ?? err)}`))
+        .catch((err: unknown) => logLine($, `exit failed: ${reasonOf(err)}`))
     }
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
@@ -214,11 +218,11 @@ export function homeArgv(root: string, sessionId: string, name: string): string[
 
 // Whether the launcher moved this session (`moved: …` on its first line). A session it
 // keeps (`stay: …`) and a move that failed both stay where they are; a failure is logged.
-async function movedHome($: any, name: string): Promise<boolean> {
+async function movedHome($: Host<'plugin' | 'env' | 'process' | 'session'>, name: string): Promise<boolean> {
   try {
     const sessionId = await $.session.id()
     const done = await $.process.run(homeArgv($.plugin.root, sessionId, name), { timeoutMs: HOME_MOVE_MS })
-    const first = String(done?.stdout ?? '').split('\n')[0]
+    const first = String(done?.stdout ?? '').split('\n')[0] ?? ''
     if (done?.exitCode === 0 && first.startsWith('moved: ')) {
       await logLine($, `moved into its home session: ${first.slice('moved: '.length)}`)
       return true
@@ -227,14 +231,14 @@ async function movedHome($: any, name: string): Promise<boolean> {
       await logLine($, `the move into a home session failed, the session stays where it is: ${String(done?.stderr ?? '').trim().split('\n').pop() || `exit ${done?.exitCode}`}`)
     }
   } catch (err) {
-    await logLine($, `the move into a home session could not run, the session stays where it is: ${String((err as Error)?.message ?? err)}`)
+    await logLine($, `the move into a home session could not run, the session stays where it is: ${reasonOf(err)}`)
   }
   return false
 }
 
 // The domains' log shape: the config dir resolved here ($ never crosses an
 // import), the stamp names this half. Never throws.
-async function logLine($: any, message: string): Promise<void> {
+async function logLine($: Host<'plugin' | 'env' | 'process'>, message: string): Promise<void> {
   try {
     const config = (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`
     await $.process.run(logArgv($.plugin.root, config, 'naming', message, undefined, await $.env.get('ORCHESTRATOR_MODULE_DIR')), { timeoutMs: LOG_TIMEOUT_MS })

@@ -69,7 +69,8 @@ skills/orchestrator/scripts/succession.sh, skills/orchestrator/scripts/successio
 skills/coordination/SKILL.md         the coordinator: answers from the facts, flags collisions, relays what is the operator's, its succession
 skills/coordinator/scripts/coordinator.sh  the coordinator's record, and the facts: register, clear, lookup, facts, owners; the sleeping orchestrators: sleep, sleeping, wake-done, drop; the round: round, round-close
 skills/model-routing/SKILL.md        which model/effort pair a dispatch gets
-skills/model-routing/scripts/routing.py  what a session cost, a repository's profile, the pair a class is picked on, the bench of merged pull requests, and the tables calibrated from trials and record rows, generalised and exported
+skills/model-routing/scripts/routing.py  the entry point of every routing subcommand: what a session cost under the cost rule, a repository's profile, and the pair a class is picked on from the tables, else the tier map
+skills/model-routing/scripts/calibration.py  the calibration engine routing.py hands its other subcommands to: the bench of merged pull requests, and the tables calibrated from trials and record rows, generalised, shown and exported
 skills/model-routing/defaults/README.md  what the shipped tier/effort tables are and how they are made
 skills/model-routing/references/calibration.md  how the routing tables are measured, generalised and exported, in the operator's order
 skills/model-routing/references/judge-rubric.md  the fixed rubric a bench judge grades a mechanically passing trial by

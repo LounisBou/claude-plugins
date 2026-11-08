@@ -10,6 +10,10 @@
 // stop and of the turn's end sees. The model's own line, when it wrote one, no longer decides.
 import { waitLine, WAIT_KINDS, type DeclaredWait, type WaitKind } from './stop-gate.ts'
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
+import { messageOf, type Host, type On } from './host.ts'
+
+// The nouns the declaration holds.
+type Held = Host<'plugin' | 'env' | 'process' | 'tool'>
 
 export const WAIT_TOOL = 'declare_wait'
 
@@ -65,12 +69,10 @@ export function withDeclaredWait(message: string, wait: DeclaredWait | null): st
   return wait === null ? message : `${message.replace(/\s+$/, '')}\n\n${waitLine(wait)}`
 }
 
-type On = (...args: [event: string, handler: Function] | [event: string, matcher: object, handler: Function]) => { catch(handler: Function): void }
-
 // Mounted before the guards and the supervision: a chain answers in registration order, so the
 // stop gate and the turn's end read the message this module hands on.
-export function register(on: On, declarations: Declarations = new Declarations()) {
-  on('session.start', {}, async ($: any, e: any, next: (e: any) => any) => {
+export function register(on: On<Held>, declarations: Declarations = new Declarations()): void {
+  on('session.start', {}, async ($, e, next) => {
     try {
       await $.tool.register({
         name: WAIT_TOOL,
@@ -92,58 +94,58 @@ export function register(on: On, declarations: Declarations = new Declarations()
       })
     } catch (err) {
       // A start never fails on the tool: the last line still declares the wait.
-      await logLine($, `${WAIT_TOOL} not registered: ${(err as Error).message}`)
+      await logLine($, `${WAIT_TOOL} not registered: ${messageOf(err)}`)
     }
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
-  on('turn.start', {}, async ($: any, e: any, next: (e: any) => any) => {
+  on('turn.start', {}, async ($, e, next) => {
     if (e.agentId === undefined) declarations.turnStarted()
     return next(e)
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
-  on('tool.call', { tool: `mcp__orchestrator__${WAIT_TOOL}` }, async ($: any, e: any) => {
+  on('tool.call', { tool: `mcp__orchestrator__${WAIT_TOOL}` }, async ($, e) => {
     // A subagent's turn is not the session's: its end wakes the session, not a wait of its own.
     if (e.agentId) return { result: `${WAIT_TOOL} is the main session's: a subagent ends its turn by answering.`, isError: true }
     const parsed = parseDeclaration(e)
     if ('error' in parsed) return { result: parsed.error, isError: true }
     declarations.declare(parsed.wait)
     return { result: `Wait declared: ${waitLine(parsed.wait)}. End the turn now.` }
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return { result: `the wait could not be declared; the module's log says why`, isError: true }
   })
 
-  on('classic.Stop', {}, async ($: any, e: any, next: (e: any) => any) => {
+  on('classic.Stop', {}, async ($, e, next) => {
     const wait = declarations.current()
     if (wait === null) return next(e)
     return next({ ...e, last_assistant_message: withDeclaredWait(String(e.last_assistant_message ?? ''), wait) })
-  }).catch(async ($: any, e: any, next: any) => {
+  }).catch(async ($, e, next) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 
-  on('turn.complete', {}, async ($: any, e: any, next: (e: any) => any) => {
+  on('turn.complete', {}, async ($, e, next) => {
     const wait = e.agentId === undefined ? declarations.current() : null
     if (wait === null) return next(e)
     const handed = withDeclaredWait(String(e.answer ?? ''), wait)
     const result = await next({ ...e, answer: handed })
     // The line is the readers' beneath, never shown: a text the chain left as handed is the answer's own.
-    return result && typeof result === 'object' && result.text === handed ? { ...result, text: String(e.answer ?? '') } : result
-  }).catch(async ($: any, e: any, next: any) => {
+    return result && typeof result === 'object' && 'text' in result && result.text === handed ? { ...result, text: String(e.answer ?? '') } : result
+  }).catch(async ($, e, next) => {
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
 }
 
 // One line appended to the module's log (module-log.ts). Never throws.
-async function logLine($: any, message: string): Promise<void> {
+async function logLine($: Host<'plugin' | 'env' | 'process'>, message: string): Promise<void> {
   try {
     const config = (await $.env.get('CLAUDE_CONFIG_DIR')) || `${await $.env.get('HOME')}/.claude`
     await $.process.run(logArgv($.plugin.root, config, 'wait', message, undefined, await $.env.get('ORCHESTRATOR_MODULE_DIR')), { timeoutMs: LOG_TIMEOUT_MS })
