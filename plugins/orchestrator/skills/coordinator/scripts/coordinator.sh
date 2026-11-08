@@ -645,10 +645,11 @@ cmd_facts() {
     waiting_rows
     remote_lines
 
+    # Joined on the count, never on `k in l`: mawk creates l[k] for the assignment before it reads the test.
     {
-        awk -F'\t' '$3 != "HEAD" && $3 != "-" { k = $2 "\t" $3; c[k]++; l[k] = (k in l) ? l[k] ", " $1 : $1 }
+        awk -F'\t' '$3 != "HEAD" && $3 != "-" { k = $2 "\t" $3; c[k]++; l[k] = (c[k] > 1) ? l[k] ", " $1 : $1 }
             END { for (k in c) if (c[k] > 1) { split(k, a, "\t"); print "collision checkouts | " a[1] " | " a[2] " | " l[k] } }' "$T/places" | sort
-        awk -F'\t' '$5 != "-" && $6 != "HEAD" && $6 != "-" { k = $5 "\t" $6; c[k]++; v = $1 " " $3; l[k] = (k in l) ? l[k] ", " v : v }
+        awk -F'\t' '$5 != "-" && $6 != "HEAD" && $6 != "-" { k = $5 "\t" $6; c[k]++; v = $1 " " $3; l[k] = (c[k] > 1) ? l[k] ", " v : v }
             END { for (k in c) if (c[k] > 1) { split(k, a, "\t"); print "collision sessions | " a[1] " | " a[2] " | " l[k] } }' "$T/sessions" | sort
         awk -F'\t' '{ n++; l = (n > 1) ? l ", " $1 : $1 } END { if (n > 1) print "collision heavy | " l }' "$T/heavy"
         pr_collisions

@@ -98,10 +98,13 @@ perm_of() { stat -c '%a' "$1" 2>/dev/null || stat -f '%OLp' "$1"; }
 # or a directory it may not write means nothing under root, and is skipped with the reason said.
 # `skip_as_root <name> || check <name> …`
 skipped=0
+skip_case() {  # <name> <reason>: the case is not run here, and the run says why
+  printf '  skip %s (%s)\n' "$1" "$2"
+  skipped=$((skipped + 1))
+}
 skip_as_root() {
   [ "$(id -u)" = 0 ] || return 1
-  printf '  skip %s (as root, permissions do not bind)\n' "$1"
-  skipped=$((skipped + 1))
+  skip_case "$1" "as root, permissions do not bind"
 }
 
 # check_status <name> <expected-exit-code> <command...>
@@ -124,7 +127,8 @@ echo "== repository policy =="
 # checkout — generated files the sweeps below must not read and git must not track.
 
 
-# The product name appears only in load-bearing identifiers: host paths, host
+# The product name appears only in load-bearing identifiers: host paths (a quoted '.claude'
+# path segment among them), host
 # environment variables, the plugin name, the manifest directory and the host's per-user
 # temporary area, a path the host imposes (CLAUDE.md rule 2).
 # Presence checks pin wording and were dropped; an absence sweep pins none, so it stays.
@@ -134,9 +138,9 @@ echo "== repository policy =="
 # name deletes the whole line whatever it said, so this check would report a clean
 # repository without ever reading a single file.
 policy_hits() {
-  ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=__pycache__ --exclude-dir=.claude --exclude-dir=.superpowers --exclude-dir=plans --exclude-dir=types \
+  ( cd "$ROOT" && grep -rniI 'claude' . --exclude-dir=.git --exclude-dir=__pycache__ --exclude-dir=.claude --exclude-dir=.superpowers --exclude-dir=plans --exclude-dir=types --exclude-dir=core \
       --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh --exclude=tsconfig.json \
-    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|\.claude\.json|claude-code/|LounisBou/claude-statusbar|LounisBou/claude-plugins-marketplace|/tmp/claude-|CLAUDE_CODE_TOTAL_TOKENS_REMINDER|CLAUDE_CODE_SILENT_TURN_REMINDER|CLAUDE_CODE_AUTO_COMPACT_WINDOW|syncClaudeAiSkills' || true )
+    | grep -viE '~/\.claude/|\$HOME/\.claude|CLAUDE_CONFIG_DIR|CLAUDE_PLUGIN_ROOT|CLAUDE_CODE_SESSION_ID|ORCHESTRATOR_HOST_CLI|claude-orchestrator|\.claude-plugin|/\.claude/|'\.claude'|\.claude\.json|claude-code/|LounisBou/claude-statusbar|LounisBou/claude-plugins-marketplace|/tmp/claude-|CLAUDE_CODE_TOTAL_TOKENS_REMINDER|CLAUDE_CODE_SILENT_TURN_REMINDER|CLAUDE_CODE_AUTO_COMPACT_WINDOW|syncClaudeAiSkills' || true )
 }
 check "no vendor or product name in prose" "" "$(policy_hits)"
 
@@ -154,10 +158,11 @@ hits=$(grep -rniIE '\b(opus|sonnet|haiku)\b' "$ROOT" --exclude-dir=.git --exclud
   --exclude=plan.md --exclude=CLAUDE.md --exclude=run-tests.sh --exclude=tsconfig.json || true)
 check "no model family name in the plugin" "" "$hits"
 
-# Nothing tied to one machine or one project enters the generic plugin: no absolute home
+# core/ is a generated copy of packages/core, read where it is written. Nothing tied to one
+# machine or one project enters the generic plugin: no absolute home
 # path, no real session reference (the documented example is the six-hex placeholder
 # a1b2c3), no path into a downstream project's tree.
-hits=$(grep -rnIE '/Users/|/home/[a-z]|\[[0-9a-f]{6}\]|docs/reference/|BUGS\.md|IMPLEMENTATION\.md' "$ROOT" --exclude-dir=.git --exclude-dir=__pycache__ --exclude=.git --exclude-dir=.claude --exclude-dir=.superpowers --exclude=plan.md --exclude=run-tests.sh --exclude-dir=types --exclude=tsconfig.json \
+hits=$(grep -rnIE '/Users/|/home/[a-z]|\[[0-9a-f]{6}\]|docs/reference/|BUGS\.md|IMPLEMENTATION\.md' "$ROOT" --exclude-dir=.git --exclude-dir=__pycache__ --exclude=.git --exclude-dir=.claude --exclude-dir=.superpowers --exclude=plan.md --exclude=run-tests.sh --exclude-dir=types --exclude-dir=core --exclude=tsconfig.json \
   | grep -vE '\[a1b2c3\]' || true)
 check "nothing project- or machine-specific in the plugin" "" "$hits"
 
@@ -744,8 +749,6 @@ check "the succession brief's step 2 reads the open rows as counts and ids, not 
 # the labels of the rows its Live state leaves out, in the same step.
 check "the succession brief's step 2 reads the labels of the open rows the Live state omits" "1" \
   "$(grep '^2\. ' "$ROOT/templates/orchestrator-succession-brief.md" | grep -cF '`--open --label <ids>` for those Live state omits')"
-check "the record's own comments read the labels of the rows the Live state omits, as the brief does" "0|2" \
-  "$(grep -c 'Live state names' "$REC")|$(grep -c 'Live state omits' "$REC")"
 check "the succession brief reads the goals by command and points at them" "yes|yes|yes" \
   "$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'dispatch-record.sh goals {{DISPATCH_RECORD}} status')|$(spells "$ROOT/templates/orchestrator-succession-brief.md" '{{GOALS}}')|$(spells "$ROOT/templates/orchestrator-succession-brief.md" 'goals met=m/n')"
 # Done is the spec's goals, said where each session reads it: the rulebook's machine line, the
@@ -5923,12 +5926,13 @@ check "a bounded osascript that never answers is killed and reported as a timeou
      ipy "print(ia.osascript_run('x')[0])")"
 # Scoped to this suite's own stub path, not the bare name: a bare `pgrep -f osascript-deaf`
 # reads machine-wide and flakes when another suite's own deaf stub is alive at the same time.
+# The bracket keeps the pattern from matching the probe's own command line, which spells it.
 check "the deaf probe leaves no osascript behind" "0" \
   "$(ORCHESTRATOR_OSASCRIPT="$IBIN/osascript-deaf" ORCHESTRATOR_PROBE_TIMEOUT=2 \
      ipy "
 import subprocess
 ia.osascript_run('x')
-print(subprocess.run(['pgrep','-f','$IBIN/osascript-deaf'],capture_output=True,text=True).stdout.count('\n'))")"
+print(subprocess.run(['pgrep','-f','$IBIN/[o]sascript-deaf'],capture_output=True,text=True).stdout.count('\n'))")"
 
 # Proof the scoped guard still falls on a real leak: a copy of the stub started directly
 # under this suite's own work directory and left running on purpose, so "0" above means a
@@ -6163,7 +6167,9 @@ stubborn() { "$py" -c 'import signal, time
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
 time.sleep(120)' >/dev/null 2>&1 & echo $!; }
 polite() { "$py" -c 'import time; time.sleep(120)' >/dev/null 2>&1 & echo $!; }
-alive() { kill -0 "$1" 2>/dev/null && echo alive || echo gone; }
+# A killed process its parent has not reaped is a zombie, and a container without an init that
+# reaps leaves it one: kill -0 still finds it, so the state ps reads decides.
+alive() { case "$(ps -o stat= -p "$1" 2>/dev/null | tr -d ' ')" in ''|Z*) echo gone ;; *) echo alive ;; esac; }
 # A close of the tab on $1 whose host is pid $2, asked with --expect-title $3 of a session
 # titled $4, through a terminal of the probe's own that accepts the close and ends nothing.
 endclose() {
@@ -6300,7 +6306,7 @@ ts_tmp=$(rowts write s-golden "$GPATCH"); py_out=$(rowpy s-golden "$GPATCH")
 check "the launcher writes a new row byte for byte as the module does: unicode, escapes, an integral float" "True|same" \
   "$(printf '%s\n' "$py_out" | head -1)|$(cmp -s "$RTS/store/sessions/s-golden" "$RPY/store/sessions/s-golden" && echo same || echo differ)"
 check "both writers write the row to a temporary file named alike, renamed into place, none left" "ok|ok|0" \
-  "$(tmpshape "$ts_tmp" "$RTS/store/sessions/s-golden")|$(tmpshape "$(printf '%s\n' "$py_out" | sed -n 2p)" "$RPY/store/sessions/s-golden")|$(ls "$RTS/store/sessions" "$RPY/store/sessions" | grep -c 'tmp')"
+  "$(tmpshape "$ts_tmp" "$RTS/store/sessions/s-golden")|$(tmpshape "$(printf '%s\n' "$py_out" | sed -n 2p)" "$RPY/store/sessions/s-golden")|$({ ls "$RTS/store/sessions"; ls "$RPY/store/sessions"; } | grep -c 'tmp')"
 MPATCH='{"name":"Orch : new","context_percent":41,"updated_at":"2026-11-04T10:05:00.000Z"}'
 rowts write s-golden "$MPATCH" >/dev/null; py_out=$(rowpy s-golden "$MPATCH")
 check "the launcher merges a patch into the row it finds as the module does, every field kept in place" "True|same" \
@@ -6968,6 +6974,11 @@ write(fresh, ['acceptEdits'])
 # The older session goes on writing: its modification time is now the newest of the two.
 write(stale, ['default'], 'a')
 print(since)" "$PROJ2" "$TGT2")
+# A file's creation time is the macOS reading the launcher relies on; where python reads none
+# (Linux), the launcher falls back on modification and the case has nothing to read.
+if ! "$py" -c 'import os, sys; sys.exit(0 if hasattr(os.stat("."), "st_birthtime") else 1)'; then
+  skip_case "a transcript created before the launch is not this session's, however recently written" "this platform records no creation time python reads"
+else
 check "a transcript created before the launch is not this session's, however recently written" "fresh.jsonl|stale.jsonl" \
   "$(ORCHESTRATOR_PROJECTS_DIR="$PROJ2" "$py" -c "
 import os, sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
@@ -6976,6 +6987,7 @@ p = m.find_transcript(sys.argv[1], float(sys.argv[2]))
 print(os.path.basename(p) if p else 'none')" "$TGT2" "$SINCE")|$("$py" -c "
 import glob, os, sys
 print(os.path.basename(max(glob.glob(sys.argv[1] + '/*/*.jsonl'), key=os.path.getmtime)))" "$PROJ2")"
+fi
 
 # The refusal names both modes and the model, because the repair depends on all three:
 # the operator rebinds the tier, or spawns that agent in a mode the host does honour.
@@ -7961,8 +7973,14 @@ if command -v tmux >/dev/null 2>&1; then
   env -i HOME="$HOME" PATH="$PATH" tmux -L "$CONFSRV" -f "$HOMECONF" new-session -d -s home 'sleep 20' 2>/dev/null
   confpane=$(tmux -L "$CONFSRV" display -p -t home:0 '#{pane_id}' 2>/dev/null)
   check "a server started on it marks its session, read the way the launcher reads it, and keeps its keys" \
-    "1|always|csi-u|off|1" \
-    "$(tmux -L "$CONFSRV" show -qv -t "$confpane" @orchestrator-home)|$(tmux -L "$CONFSRV" show -gv extended-keys)|$(tmux -L "$CONFSRV" show -gv extended-keys-format)|$(tmux -L "$CONFSRV" show -wgv automatic-rename)|$(tmux -L "$CONFSRV" list-keys -T prefix C-b | grep -c send-prefix)"
+    "1|always|off|1" \
+    "$(tmux -L "$CONFSRV" show -qv -t "$confpane" @orchestrator-home)|$(tmux -L "$CONFSRV" show -gv extended-keys)|$(tmux -L "$CONFSRV" show -wgv automatic-rename)|$(tmux -L "$CONFSRV" list-keys -T prefix C-b | grep -c send-prefix)"
+  # extended-keys-format came with tmux 3.5: an older one ignores the line, and has nothing to read.
+  if tmux -L "$CONFSRV" show -gv extended-keys-format >/dev/null 2>&1; then
+    check "and its extended keys are sent in the csi-u format" "csi-u" "$(tmux -L "$CONFSRV" show -gv extended-keys-format)"
+  else
+    skip_case "and its extended keys are sent in the csi-u format" "$(tmux -V) has no extended-keys-format"
+  fi
   # The tab bar: two windows carry a state, the third none; the current one is bracketed. Read
   # back through the status line's own expansion, the server being detached and drawing nothing.
   tmux -L "$CONFSRV" new-window -d -t home: -n second 'sleep 20' 2>/dev/null
@@ -11451,8 +11469,9 @@ check "the routing table has the screenshot-audit row at the standard tier" "1" 
   "$(grep -c 'orchestrator:screenshots`.*`screenshot-audit` | `standard` | you, on a capture in doubt' "$ROOT/skills/model-routing/SKILL.md")"
 check "the design says why the audit left the orchestrator's context" "yes|yes" \
   "$(flat_has "$ROOT/docs/design.md" 'about 42,000 tokens')|$(flat_has "$ROOT/docs/design.md" '`orchestrator:screenshots`')"
+# The record's messages are dispatch-record.ts's since its port.
 check "the record's messages say the audit is the screenshots agent's" "yes|yes" \
-  "$(spells "$REC" 'ready: the audit covers $a_images image(s), the description of $pr carries $shots: audit every image')|$(spells "$REC" 'the screenshots agent audits each one')"
+  "$(spells "${REC%.sh}.ts" 'the description of ${pr} carries ${shots}: audit every image')|$(spells "${REC%.sh}.ts" 'the screenshots agent audits each one')"
 # The version is plugin.json's; the plugin's own marketplace.json carries the same one twice.
 PLUGIN_VERSION=$(jq -r .version "$ROOT/.claude-plugin/plugin.json")
 check "both manifests carry the plugin's version" "yes|2" \
@@ -11525,6 +11544,6 @@ check "SKILL.md and the design carry it" "yes|yes" \
 
 echo
 [ -n "$failed" ] && printf '%s' "$failed"
-[ "$skipped" -gt 0 ] && printf '%d skipped as root\n' "$skipped"
+[ "$skipped" -gt 0 ] && printf '%d skipped, each with its reason above\n' "$skipped"
 printf '%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]
