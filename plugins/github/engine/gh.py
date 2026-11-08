@@ -14,9 +14,9 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from ghlib import assets, comments, errors, fmt, issues, meta, pending, pr, repo, reviews, stdinjson  # noqa: E402
+from ghlib import assets, comments, errors, fmt, issues, meta, pending, pr, protect, repo, reviews, stdinjson  # noqa: E402
 
-_MODULES = (pr, comments, reviews, meta, pending, issues, assets)
+_MODULES = (pr, comments, reviews, meta, pending, issues, assets, protect)
 
 
 class _ArgumentParser(argparse.ArgumentParser):

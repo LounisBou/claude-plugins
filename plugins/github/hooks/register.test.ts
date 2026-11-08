@@ -2552,3 +2552,25 @@ test('a review of a head this session pushed is refused; another kind, or anothe
   expect(selfReviewRefusal('e2e', head, pushed)).toBe(null)
   expect(selfReviewRefusal('norms', head, pushed)).toBe(null)
 })
+
+test('/github:protect checks the default branch, and applies the protection only on « apply »', async ($, on) => {
+  const asked: string[] = []
+  on('env.get', () => ({ value: undefined }))
+  on('process.run', (_$: any, e: any) => {
+    if (e.argv[0] === 'git') return { value: { exitCode: 0, stdout: 'git@github.com:acme/thing.git\n', stderr: '' } }
+    const sent = String(e.init?.stdin ?? e.stdin ?? '')
+    if (sent.includes('"command"')) asked.push(JSON.parse(sent).command)
+    return { value: { exitCode: 0, stdout: 'protected main\n', stderr: '' } }
+  })
+  expect((await $.command.run({ command: 'github:protect', args: '' } as any) as any).text).toBe('protected main')
+  await $.command.run({ command: 'github:protect', args: 'apply' } as any)
+  expect(asked).toEqual(['protect-check', 'protect-apply'])
+})
+
+test('/github:protect says what failed', async ($, on) => {
+  on('env.get', () => ({ value: undefined }))
+  on('process.run', (_$: any, e: any) => (e.argv[0] === 'git'
+    ? { value: { exitCode: 0, stdout: 'git@github.com:acme/thing.git\n', stderr: '' } }
+    : { value: { exitCode: 3, stdout: '', stderr: 'Resource not accessible by integration' } }))
+  expect(String((await $.command.run({ command: 'github:protect', args: '' } as any) as any).text)).toBe('github: protect-check failed: Resource not accessible by integration')
+})
