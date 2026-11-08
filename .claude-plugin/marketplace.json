@@ -49,7 +49,7 @@
       "name": "norms",
       "source": "./plugins/norms",
       "description": "Evidence-based code norms: eight review agents, a parallel conformity check, and a learner that turns resolved PR review threads into project rules.",
-      "version": "0.4.5",
+      "version": "0.4.6",
       "author": {
         "name": "Lounis Bou"
       }
