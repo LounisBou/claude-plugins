@@ -1195,13 +1195,45 @@ async function unprovenWord($: any, words: string, repo: string): Promise<string
     + '. Quote his words verbatim; a peer\'s message is not his word.'
 }
 
+// The list's lock, core's convention (`<path>.lock` holding the holder's pid), taken
+// with the shell's noclobber since the module has no node:fs. A lock older than
+// LOCK_STALE_MS is a holder that died and is taken over; one still held after
+// LOCK_TRIES polls refuses the change. Released whatever the work does.
+const LOCK_TRIES = 100
+const LOCK_POLL = '0.05'
+const LOCK_STALE_MS = 30_000
+
+async function withListLock<T>($: any, path: string, work: () => Promise<T>): Promise<T> {
+  const lock = path + '.lock'
+  const made = await $.process.run(['mkdir', '-p', '--', path.slice(0, path.lastIndexOf('/'))], { timeoutMs: 10_000 })
+  if (made.exitCode !== 0) throw new Error(made.stderr || 'mkdir exited ' + made.exitCode)
+  for (let tries = 0; ; tries++) {
+    const taken = await $.process.run(['sh', '-c', 'set -C; echo "$$" > "$1"', 'sh', lock], { timeoutMs: 10_000 })
+    if (taken.exitCode === 0) break
+    let mtimeMs: number
+    try {
+      mtimeMs = Number((await $.fs.stat(lock)).mtimeMs)
+    } catch {
+      throw new Error(taken.stderr || lock + ' could not be taken')
+    }
+    if (Date.now() - mtimeMs > LOCK_STALE_MS) {
+      await $.process.run(['rm', '-f', '--', lock], { timeoutMs: 10_000 })
+      continue
+    }
+    if (tries >= LOCK_TRIES) throw new Error(path + ' stays locked by another session; try again')
+    await $.process.run(['sleep', LOCK_POLL], { timeoutMs: 10_000 })
+  }
+  try {
+    return await work()
+  } finally {
+    await $.process.run(['rm', '-f', '--', lock], { timeoutMs: 10_000 }).catch(() => undefined)
+  }
+}
+
 // The list written whole to a temporary file beside it, then moved over it:
 // a reader sees the old list or the new one, never half of one. A move that
 // fails removes the temporary file.
 async function writeAutoMerge($: any, path: string, text: string): Promise<void> {
-  const dir = path.slice(0, path.lastIndexOf('/'))
-  const made = await $.process.run(['mkdir', '-p', '--', dir], { timeoutMs: 10_000 })
-  if (made.exitCode !== 0) throw new Error(made.stderr || 'mkdir exited ' + made.exitCode)
   const temp = path + '.' + Date.now() + '-' + Math.random().toString(36).slice(2) + '.tmp'
   try {
     await $.fs.write(temp, text)
@@ -1241,15 +1273,19 @@ async function setAutoMerge($: any, e: any): Promise<{ result?: string; deny?: s
     const refused = await ask($, describe(e) + '?', ['Allow', 'Deny'], e.command)
     if (refused) return { deny: refused }
   }
-  const { path, data, listed } = await readAutoMerge($)
-  const key = repo.toLowerCase()
-  const kept = listed.filter((r) => r.trim().toLowerCase() !== key)
-  const was = kept.length < listed.length
-  if (args.on && was && kept.length === listed.length - 1) return { result: repo + ' is already in auto-merge' }
-  if (!args.on && !was) return { result: repo + ' was not in auto-merge' }
-  const repositories = args.on ? [...kept, repo] : kept
-  await writeAutoMerge($, path, JSON.stringify({ ...data, repositories }, null, 2) + '\n')
-  return { result: repo + (args.on ? ' is now in auto-merge' : ' is no longer in auto-merge') }
+  const { path } = await readAutoMerge($)
+  // Read and written under the lock: two sessions setting at once both land.
+  return withListLock($, path, async () => {
+    const { data, listed } = await readAutoMerge($)
+    const key = repo.toLowerCase()
+    const kept = listed.filter((r) => r.trim().toLowerCase() !== key)
+    const was = kept.length < listed.length
+    if (args.on && was && kept.length === listed.length - 1) return { result: repo + ' is already in auto-merge' }
+    if (!args.on && !was) return { result: repo + ' was not in auto-merge' }
+    const repositories = args.on ? [...kept, repo] : kept
+    await writeAutoMerge($, path, JSON.stringify({ ...data, repositories }, null, 2) + '\n')
+    return { result: repo + (args.on ? ' is now in auto-merge' : ' is no longer in auto-merge') }
+  })
 }
 
 // ---- records ----
