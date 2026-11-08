@@ -230,4 +230,6 @@ changes the graded outcome. The runs are the operator's, on his machine.
 | 9. End a turn by declaring its wait | none: the stop gate holds it, and its refusal teaches the call |
 | 10. Directives follow decisions | none yet |
 
-Principles 6 and 10 have no case yet: each is a candidate for a case or for removal.
+| The mode: an argument or a dialog answer, never inferred; `investigate` loads no lifecycle | none yet |
+
+Principles 6 and 10 and the mode have no case yet: each is a candidate for a case or for removal.

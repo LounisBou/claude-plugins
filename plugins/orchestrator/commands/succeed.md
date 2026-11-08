@@ -27,7 +27,7 @@ Then:
 
 1. `iterm-agent.sh list` — your own row, `self`: its tty, your home server (the first
    comma-separated field of `printenv TMUX`, `none` on tabs), the launcher's path and the
-   scripts directory fill the brief's predecessor placeholders.
+   scripts directory fill the brief's predecessor placeholders, and your own mode its `{{MODE}}`.
 2. **Lint it.** `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <brief path>`;
    any finding is repaired before the spawn, a known false positive is named.
 3. `iterm-agent.sh spawn --dir <worktree> --permission-mode auto

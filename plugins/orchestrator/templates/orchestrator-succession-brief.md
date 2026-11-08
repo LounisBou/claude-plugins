@@ -2,7 +2,7 @@
 
 # Instructions
 
-You are the SUCCESSOR ORCHESTRATOR of `{{PREDECESSOR_NAME_PATTERN}}`. Load `orchestrator:orchestrator` after step 1's reading and follow it: it is the rulebook.
+You are the SUCCESSOR ORCHESTRATOR of `{{PREDECESSOR_NAME_PATTERN}}`. Load the rulebook, `orchestrator:orchestrator` with the argument `{{MODE}}`, after step 1.
 
 ## The operator's word comes first, and it is answered
 

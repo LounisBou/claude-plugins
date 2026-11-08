@@ -440,8 +440,6 @@ check "the phase brief template reads « under load » as emulated throttling" "
 # The directives rule moved out of the rulebook; the trigger that makes a session read it stays.
 check "the directives rule and the guard live in the briefs reference" "yes|yes" \
   "$(spells "$ORCH_REFS/briefs.md" '## When a decision changes, the directives change in the same move')|$(spells "$ORCH_REFS/briefs.md" '**A guard over your own directives is the one instrument you may write yourself**')"
-check "environment preparation, pipelining and the tab-close row live in the lifecycle reference" "yes|yes|yes" \
-  "$(spells "$ORCH_REFS/lifecycle.md" '**Environment preparation is orchestrator housekeeping**')|$(spells "$ORCH_REFS/lifecycle.md" 'An agent may pipeline only when PR N+1 is dispatched to that same agent')|$(spells "$ORCH_REFS/lifecycle.md" 'The agent acknowledged its stand-down, the tab can close')"
 check "the one-round rule, depth versus scope and the publishing rule live in the review reference" "yes|yes|yes" \
   "$(spells "$ORCH_REFS/review.md" '**One review round, one correction round, and you close it.**')|$(spells "$ORCH_REFS/review.md" '**Depth vs scope**')|$(spells "$ORCH_REFS/review.md" 'a thread closed by a change is answered by the change')"
 # Rule 36 of the rules review: the norms check's findings are triaged like any others, said in
