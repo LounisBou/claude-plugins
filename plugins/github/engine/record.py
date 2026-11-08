@@ -16,15 +16,21 @@ import re
 import sys
 import tempfile
 
-KINDS = ("review", "norms", "e2e")
-RESULTS = ("pass", "fail", "waived")
-DETAIL_MAX = 500
+# The record contract is core's: the same data file every TypeScript reader loads.
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "core", "pr-record.json"), encoding="utf-8") as _fh:
+    _CONTRACT = json.load(_fh)
+
+VERSION = _CONTRACT["version"]
+KINDS = tuple(_CONTRACT["kinds"])
+RESULTS = tuple(_CONTRACT["results"])
+WAIVABLE = _CONTRACT["waivable"]
+DETAIL_MAX = _CONTRACT["detail_max"]
 USAGE_EXIT = 2
 
-_HEAD = re.compile(r"^[0-9a-fA-F]{40}$")
-_PART = re.compile(r"^[A-Za-z0-9_.-]+$")
-_PRODUCER = re.compile(r"^[a-z0-9-]+$")
-_DATE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+_HEAD = re.compile(_CONTRACT["patterns"]["head"])
+_PART = re.compile(_CONTRACT["patterns"]["repo_part"])
+_PRODUCER = re.compile(_CONTRACT["patterns"]["producer"])
+_DATE = re.compile(_CONTRACT["patterns"]["waiver_date"])
 
 
 class UsageError(Exception):
@@ -67,14 +73,14 @@ def validate(args):
     if len(args.detail) > DETAIL_MAX:
         raise UsageError("--detail is %d characters, at most %d" % (len(args.detail), DETAIL_MAX))
     if args.result == "waived":
-        if args.kind != "e2e":
-            raise UsageError("only an e2e record can be waived")
+        if args.kind != WAIVABLE:
+            raise UsageError("only an %s record can be waived" % WAIVABLE)
         if not _DATE.search(args.detail):
             raise UsageError("a waiver needs a --detail carrying its date, YYYY-MM-DD")
     session = args.session if args.session is not None else os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     now = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0)
     return {
-        "v": 1,
+        "v": VERSION,
         "repo": args.repo.lower(),
         "pr": args.pr,
         "head": args.head.lower(),
