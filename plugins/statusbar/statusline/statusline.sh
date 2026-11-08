@@ -16,9 +16,19 @@
 # ${CLAUDE_CONFIG_DIR:-$HOME/.claude}, the same directory install.sh uses.
 
 config_file="${STATUSBAR_CONFIG:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusline-config.txt}"
+# The settings are data, never code: only `KNOWN_KEY=0|1` lines are read, the rest is ignored.
 if [ -f "$config_file" ]; then
-  source "$config_file"
+  while IFS='=' read -r key value || [ -n "$key" ]; do
+    value=${value%$'\r'}
+    case "$key" in
+      SHOW_DIRECTORY|SHOW_BRANCH|SHOW_USAGE|SHOW_PROGRESS_BAR|SHOW_RESET_TIME|SHOW_SEVEN_DAY|SHOW_PR|SHOW_MODEL|\
+      SHOW_CONTEXT|SHOW_CONTEXT_TOKENS|SHOW_GIT_STATUS|SHOW_SESSION_NAME|SHOW_LINES_CHANGED|RESET_COUNTDOWN)
+        case "$value" in 0|1) printf -v "$key" '%s' "$value" ;; esac ;;
+    esac
+  done < "$config_file"
 fi
+# A status line runs beside agents: it never takes the index lock they may need.
+export GIT_OPTIONAL_LOCKS=0
 show_dir=${SHOW_DIRECTORY:-1}
 show_branch=${SHOW_BRANCH:-1}
 show_usage=${SHOW_USAGE:-1}
@@ -118,16 +128,19 @@ make_bar() {
 # Local time, honouring the system 12h/24h preference.
 # LC_ALL=C matters: under some locales %p renders empty and 20:30 would come
 # out as 08:30.
+# An epoch in a format: BSD date (-r <epoch>), else GNU date (-d @<epoch>).
+epoch_date() { date -r "$1" "$2" 2>/dev/null || date -d "@$1" "$2" 2>/dev/null; }
+
 fmt_time() {
   if [ "$(defaults read -g AppleICUForce24HourTime 2>/dev/null)" = "1" ]; then
-    date -r "$1" "+%H:%M" 2>/dev/null
+    epoch_date "$1" "+%H:%M"
   else
-    LC_ALL=C date -r "$1" "+%I:%M %p" 2>/dev/null
+    LC_ALL=C epoch_date "$1" "+%I:%M %p"
   fi
 }
 
 # The 7-day reset lands days away, so a date reads better than a clock time.
-fmt_date() { date -r "$1" "+%d/%m" 2>/dev/null; }
+fmt_date() { epoch_date "$1" "+%d/%m"; }
 
 # Time left before an epoch: "3d" (rounded to the day), "2h13", "47m".
 fmt_countdown() {

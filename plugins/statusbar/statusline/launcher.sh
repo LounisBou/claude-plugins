@@ -7,11 +7,12 @@
 config_dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
-active=$(jq -r '[.plugins // {} | to_entries[] | select(.key | startswith("statusbar@") or startswith("claude-statusbar@"))
-                 | .value[0].installPath // empty] | first // empty' \
+# Every recorded install, this catalogue's first: the first one still on disk runs.
+while IFS= read -r active; do
+  [ -n "$active" ] && [ -f "$active/statusline/statusline.sh" ] && exec bash "$active/statusline/statusline.sh"
+done < <(jq -r '.plugins // {} | to_entries
+                | sort_by(if .key == "statusbar@lounisbou" then 0 elif (.key | startswith("statusbar@")) then 1 else 2 end)[]
+                | select(.key | startswith("statusbar@") or startswith("claude-statusbar@"))
+                | .value[]? | .installPath? // empty' \
          "$config_dir/plugins/installed_plugins.json" 2>/dev/null)
-
-if [ -n "$active" ] && [ -f "$active/statusline/statusline.sh" ]; then
-  exec bash "$active/statusline/statusline.sh"
-fi
 exec bash "$here/statusline-core.sh"
