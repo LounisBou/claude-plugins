@@ -8,7 +8,7 @@ decision that shaped this file, with its reason, is under `decisions/`.
 
 ```
 .claude-plugin/marketplace.json   the catalogue: authored header, generated plugin list
-packages/core/                    the shared library (planned: docs/specs/program-design.md, goal 3)
+packages/core/                    the shared library: paths, store, deadlines, names, plugin locator
 plugins/<name>/                   one installable plugin per directory, named as its manifest
 scripts/                          the repository's own tooling, strict TypeScript, tested
 ci/plugins.json                   where each plugin's suite blocks the build
