@@ -32,7 +32,8 @@ export function pendingQuestion(sessionId: string, entries: readonly RoundEntry[
     .filter(entry => entry.status === 'open')
     .filter(entry => askedPart(entry) !== null)
     .sort((a, b) => (a.since < b.since ? -1 : a.since > b.since ? 1 : 0))
-  if (open.length > 0) return { entry: open[0], blocks: open[0].blocks ?? '', since: open[0].since }
+  const first = open[0]
+  if (first) return { entry: first, blocks: first.blocks ?? '', since: first.since }
   const held = wait ? heldQuestion(wait) ?? sentQuestion(wait) : null
   if (!held || held.blocks === '') return null
   if (own.some(entry => entry.blocks === held.blocks && entry.since === held.since)) return null
