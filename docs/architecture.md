@@ -50,10 +50,9 @@ reports into its inputs, statusbar shows its state. cloudflare stands outside it
 ## Packaging
 
 The host installs a plugin by copying its directory into its cache: nothing outside
-`plugins/<name>/` exists at run time. `core` therefore reaches each plugin as a link inside
-the plugin's directory, which the host follows when it copies; whether the installed host
-follows it is the first thing the program verifies (decision 0002), and the fallback is a copy
-made at release by a script.
+`plugins/<name>/` exists at run time. `core` therefore reaches each plugin as a generated copy
+in its `core/` directory, written by `npm run core` and checked identical to the source by CI
+(decision 0002). A plugin imports `../core/<module>.ts`; nobody edits the copy.
 
 ## State
 
@@ -83,6 +82,7 @@ because the host caches by version. A release is the merge; the tag `<name>--v<v
 |---|---|
 | strict types | `tsconfig.base.json`, coverage ratcheted in `tsconfig.json` |
 | tooling tests | `scripts/*.test.ts` |
+| every copy of core matches the source | `packages/core/src` |
 | catalogue matches the manifests | `plugins/*/.claude-plugin/plugin.json` |
 | shipped change raises the version | the same manifests, against the base branch |
 | the coverage floor | `npm test` thresholds |

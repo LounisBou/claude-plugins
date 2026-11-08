@@ -33,6 +33,8 @@ jobs:
         run: npm test
       - name: prompt budgets and duplicates only fall
         run: npm run -s prompts > /dev/null
+      - name: every plugin's copy of core matches the source
+        run: npm run core -- --check
       - name: catalogue matches the manifests
         run: npm run marketplace -- --check
       - name: a shipped change raises its plugin's version

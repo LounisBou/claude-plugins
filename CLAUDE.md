@@ -7,6 +7,8 @@ A monorepo of independent Claude Code plugins under `plugins/<name>/`.
   anything another plugin reads.
 - Every change: `npm run typecheck`, `npm test`, `npm run marketplace -- --check`, and the
   suite of each plugin touched (`plugins/<name>/tests/run-tests.sh`).
+- Shared code is edited in `packages/core/src` only, then `npm run core` rewrites each plugin's
+  `core/` copy; never edit a copy.
 - A shipped change raises its plugin's version in `plugins/<name>/.claude-plugin/plugin.json`,
   then `npm run marketplace`. Never edit the catalogue's `plugins` list by hand.
 - Conventional commits, scoped by plugin (`fix(github): …`) or repository part (`ci`, `core`, `docs`).

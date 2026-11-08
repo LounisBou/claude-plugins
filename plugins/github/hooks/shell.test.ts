@@ -3,7 +3,8 @@
 // check over its argv, then the cases of its one change (bash -c, sh -c and
 // zsh -c read again, one level deep).
 import { expect, test } from 'claude-code/testing'
-import { engineCall, gitSubcommand, simpleCommands } from './shell.ts'
+import { gitSubcommand, simpleCommands } from '../core/shell.ts'
+import { engineCall } from './shell.ts'
 
 // push options that take a value: `git push --repo x --force-with-lease` still forces.
 const PUSHVALUED = new Set(['--repo', '--push-option', '--receive-pack', '--exec'])

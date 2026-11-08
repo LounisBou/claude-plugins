@@ -3,3 +3,4 @@ export { readText, update, withLock, writeAtomic, type LockOptions } from './sto
 export { DeadlineExceeded, withDeadline } from './deadline.ts'
 export { parseSessionName, ROLES, sessionName, type Prefix, type Role, type SessionName } from './names.ts'
 export { installRecordPath, locatePlugin, NotInstalled } from './locate.ts'
+export { gitSubcommand, simpleCommands } from './shell.ts'
