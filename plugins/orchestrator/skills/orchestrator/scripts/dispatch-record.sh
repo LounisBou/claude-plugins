@@ -14,14 +14,18 @@
 #   dispatch-record.sh undefer <record> <id>
 #   dispatch-record.sh escaped <record> <id>      (a defect got past this row's review)
 #   dispatch-record.sh cost    <record> <id> --session <session id> [--recount]   (adds that session's measured cost)
-#   dispatch-record.sh summary <record> [--open]
+#   dispatch-record.sh summary <record> [--open [--ids | --label <id>[,<id>...]]]
 #   dispatch-record.sh goals   <record> init --spec <path>|none [--aim "<text>"] [--goal "<text>"]... [--replace]
 #   dispatch-record.sh goals   <record> status | plan <G> --phase "<text>" | met <G> --evidence "<token>"...
 #   dispatch-record.sh goals   <record> rule-out <G> --ruling "<his words>" | defer <G> --ruling "<his words, dated>"
 #   dispatch-record.sh goals   <record> reopen <G> | check [--json]
 #
 # `open` prints the row id. `summary --open` prints only the open rows, for a takeover that
-# has no use for the statistics. A row (or a goal) the operator deferred stays open and carries
+# has no use for the statistics. `--ids` narrows it to one `<state>=<count>` line per state, then
+# `ids: <id> <id> ...`, no label; `--label <ids>` prints the full line of the open rows named,
+# nothing else, and says on stderr which named row is closed or absent. A successor reads the
+# counts and the ids, then the labels of the rows its Live state omits: 99 open rows printed
+# whole once cost a birth 25,371 characters. A row (or a goal) the operator deferred stays open and carries
 # his ruling; the summary shows it as `deferred=` with that ruling, and the stop gate takes the
 # ending `waiting: deferred — <n> items`, n the deferred rows and goals together, once every row
 # and goal still open is one. The record is JSON lines: appendable, greppable, and read back
@@ -279,6 +283,48 @@ head_option() {
     echo "$head"
 }
 
+# without_code: stdin to stdout, minus what Markdown renders as code - fenced blocks (``` or
+# ~~~, closed by a fence of the same character at least as long, or by the end of the text)
+# and inline code spans (a run of backticks closed by a run of the same length on the same
+# line; a run with no match stays literal). Indented code blocks are not handled. Two more
+# limits: a fence inside a list item or a blockquote is not recognised, and a code span
+# running over two lines is not either. An `<img` in those still counts.
+without_code() {
+    awk '
+    function run(s, i, ch,   j) { j = i; while (substr(s, j, 1) == ch) j++; return j - i }
+    function strip(s,   out, i, n, k, m, found, L) {
+        out = ""; i = 1; L = length(s)
+        while (i <= L) {
+            # A backtick preceded by a backslash is an escaped literal, and opens no span.
+            if (substr(s, i, 1) != "`" || (i > 1 && substr(s, i - 1, 1) == "\\")) { out = out substr(s, i, 1); i++; continue }
+            n = run(s, i, "`"); k = i + n; found = 0
+            while (k <= L) {
+                if (substr(s, k, 1) == "`") {
+                    m = run(s, k, "`")
+                    if (m == n) { found = 1; break }
+                    k += m
+                } else k++
+            }
+            if (found) { out = out " "; i = k + n } else { out = out substr(s, i, n); i += n }
+        }
+        return out
+    }
+    {
+        line = $0; t = line; sub(/^ ? ? ?/, "", t); c = substr(t, 1, 1)
+        if (infence) {
+            n = run(t, 1, fch)
+            rest = substr(t, n + 1)
+            if (c == fch && n >= flen && rest ~ /^[ \t\r]*$/) infence = 0
+            next
+        }
+        if (c == "`" || c == "~") {
+            n = run(t, 1, c)
+            if (n >= 3 && !(c == "`" && index(substr(t, n + 1), "`"))) { infence = 1; fch = c; flen = n; next }
+        }
+        print strip(line)
+    }'
+}
+
 # same_commit <recorded> <head>: either side may abbreviate the other; the shorter one must
 # still identify a commit.
 same_commit() {
@@ -475,7 +521,9 @@ ready)
             body=$(gh pr view "${pr##*#}" -R "${pr%#*}" --json body -q .body 2>/dev/null) \
                 || die "ready: could not read the description of $pr: its screenshots are unverified, not ready"
             # A markdown image or an HTML one, which is what an uploaded attachment becomes.
-            shots=$(printf '%s\n' "$body" | grep -oiE '!\[[^]]*\]\([^)]+\)|<img[[:space:]]' | wc -l | tr -d ' ')
+            # Code is text to Markdown, so an `<img` written in a code span or a fenced block
+            # is no image: `without_code` drops both before the count.
+            shots=$(printf '%s\n' "$body" | without_code | grep -oiE '!\[[^]]*\]\([^)]+\)|<img[[:space:]]' | wc -l | tr -d ' ')
             [ "$shots" -gt 0 ] || die "ready: $pr changes a frontend surface and its description carries no screenshot: not ready"
             # Counted is not looked at: the screenshots agent's audit of every image, at a head
             # the rules below accept, with no defect seen.
@@ -674,13 +722,39 @@ summary)
     # A deferred row is still open work, but the operator's ruling is what it waits on.
     OPEN_ROWS='.[] | select(.state == "open")
         | if .deferred then "deferred=\(.id) label=\(.label) ruling=\(.deferred)" else "open=\(.id) label=\(.label)" end'
-    only_open=0
-    case "${3:-}" in
-        "") ;;
-        --open) only_open=1 ;;
-        *) die "summary: unknown argument ${3} (expected --open)" ;;
-    esac
+    only_open=0; ids_only=0; label_ids=""
+    shift 2
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --open) only_open=1 ;;
+            --ids) ids_only=1 ;;
+            --label)
+                [[ "${2:-}" =~ ^[0-9]+(,[0-9]+)*$ ]] || die "summary: --label needs the row ids, comma-separated (--label 3,7)"
+                label_ids="$2"; shift ;;
+            *) die "summary: unknown argument $1 (expected --open, --ids or --label <id>[,<id>...])" ;;
+        esac
+        shift
+    done
+    { [ "$ids_only" = 0 ] && [ -z "$label_ids" ]; } || [ "$only_open" = 1 ] || die "summary: --ids and --label read the open rows: add --open"
+    [ "$ids_only" = 0 ] || [ -z "$label_ids" ] || die "summary: --ids and --label are two readings: run one, then the other"
     [ -f "$record" ] || { echo "dispatch-record: no record at $record"; exit 0; }
+    if [ "$ids_only" = 1 ]; then
+        jq -sr 'map(select(.state == "open"))
+            | "open=\(map(select(.deferred | not)) | length)",
+              "deferred=\(map(select(.deferred)) | length)",
+              "ids: \(map(.id | tostring) | join(" "))"' "$record"
+        exit $?
+    fi
+    if [ -n "$label_ids" ]; then
+        ids_json="[$label_ids]"
+        jq -sr --argjson ids "$ids_json" "[.[] | select(.id as \$i | any(\$ids[]; . == \$i))] | $OPEN_ROWS" "$record" || exit $?
+        # A row asked for, one the Live state omits, that is closed or absent is a stale hand-over:
+        # said, never printed.
+        while IFS= read -r gone; do
+            [ -n "$gone" ] && warn "summary: row $gone is not open in $record"
+        done < <(jq -sr --argjson ids "$ids_json" '[.[] | select(.state == "open") | .id] as $open | $ids[] | select(. as $i | $open | any(. == $i) | not)' "$record")
+        exit 0
+    fi
     if [ "$only_open" = 1 ]; then
         jq -sr "$OPEN_ROWS" "$record"
         exit $?

@@ -9,7 +9,7 @@
 // measure's side reads bounded so a walk that cannot answer in time costs the row
 // its name, never the measure.
 import { expect, test } from 'claude-code/testing'
-import { agentPaneRows, answerFromPane, paneRows, readRound, roundLines, scrollTrack, wrapWords, register as registerSupervision, registerWake, registerPaneTool, SUPERVISION_TOOL, PANE_MAIN_THREAD_ONLY, type SessionRow } from '../supervision.ts'
+import { agentPaneRows, answerFromPane, paneRows, readRound, roundLines, scrollTrack, wrapWords, register as registerSupervision, registerWake, registerPaneTool, registerCloseRelay, runsRoundClose, SUPERVISION_TOOL, PANE_MAIN_THREAD_ONLY, type SessionRow } from '../supervision.ts'
 import { paneQuestions, waitsInTab, type RoundEntry } from '../round.ts'
 import { hostRecordOf } from '../session-name.ts'
 import { register as registerAll } from '../register.ts'
@@ -138,6 +138,7 @@ type Fx = {
   state: Map<string, unknown>
   submitted: string[]
   tools: { name: string; isDeferred?: boolean; inputSchema?: unknown }[]
+  notices: string[]
 }
 
 function fakeDollar(over: {
@@ -161,6 +162,8 @@ function fakeDollar(over: {
   const submitted: string[] = []
   // The tools the module registered at a start.
   const tools: { name: string; isDeferred?: boolean; inputSchema?: unknown }[] = []
+  // The lines the module drew in its session's transcript ($.ui.log): no model turn.
+  const notices: string[] = []
   // The host's $.state for the session: it outlives the module's own variables.
   const state = new Map<string, unknown>()
   const dollar = {
@@ -276,6 +279,7 @@ function fakeDollar(over: {
       },
       panes: async () => [...open].map(id => ({ id, title: '' })),
       toast: () => undefined,
+      log: (text: string) => { notices.push(text) },
       invalidate: (what: string) => { invalidated.push(what) },
       focus: async (args: { requestId: string; key: string }) => {
         focused.push(args)
@@ -299,7 +303,7 @@ function fakeDollar(over: {
       }),
     },
   }
-  return { dollar, files, ran, written, opened, closed, env, timers, invalidated, focused, scrolled, later, state, submitted, tools }
+  return { dollar, files, ran, written, opened, closed, env, timers, invalidated, focused, scrolled, later, state, submitted, tools, notices }
 }
 
 function mounted(register: (on: any) => void): {
@@ -2545,6 +2549,92 @@ test('an answer round-close wrote reaches its sender once, at the round\'s readi
   expect(sent.length).toBe(1)
 })
 
+// The operator's ruling 6.1 of 2026-10-31: a question settled meanwhile is withdrawn on the
+// evidence read on the artifact, and its sender is told — that it was withdrawn and why, never
+// that the operator answered it.
+function withdrawnByCoordinator(asked: RoundEntry, evidence: string): RoundEntry {
+  const closed = closedByCoordinator(asked, `withdrawn: settled meanwhile — ${evidence}`)
+  return { ...closed, answer: { ...closed.answer!, evidence } } as RoundEntry
+}
+
+test('a question round-close --withdraw closed tells its sender it was withdrawn, with the evidence, never that it was answered', async () => {
+  const asked = withdrawnByCoordinator(entry('Orch : a', minutesAgo(1), { session: 'sa' }), '#12 merged at 10:04Z')
+  const { fx, tick } = await wakingCoordinator([asked])
+  const sent = sends(fx)
+  await tick()
+  expect(sent).toEqual([{
+    to: { sessionId: 'sa' },
+    text: `[module] The coordinator withdrew your question since ${asked.since}, settled meanwhile: #12 merged at 10:04Z (blocks: phase 3)`,
+  }])
+  expect(storedIn(fx, asked.id).delivery!.state).toBe('delivered')
+})
+
+test('a question round-close --withdraw closed from another machine carries the withdrawal in its marked line', async () => {
+  const asked = withdrawnByCoordinator(remoteEntry({ since: minutesAgo(1) }), '#12 merged at 10:04Z')
+  const { fx, tick } = await wakingCoordinator([asked])
+  const sent = sends(fx)
+  await tick()
+  expect(sent.length).toBe(1)
+  expect(sent[0].text).toContain(`The coordinator withdrew your question since ${asked.since}, settled meanwhile: #12 merged at 10:04Z`)
+  expect(sent[0].text).not.toContain('The operator answered')
+})
+
+// The operator's ruling 6.3 of 2026-10-31: each ruling relayed at once by the module, nothing
+// shown between questions — the answer a round-close wrote is sent once the command has run in
+// the coordinator's tab, not at the round's next reading up to 30 seconds later.
+const roundClose = (id: string) => ({ command: `bash "/plugins/orchestrator/skills/coordinator/scripts/coordinator.sh" round-close ${id} --answer 'A, ship it'` })
+const ranBash = async () => ({ result: 'closed' })
+
+test('an answer round-close wrote reaches its sender as soon as the command has run, before the round\'s next reading, and once', async () => {
+  const asked = closedByCoordinator(entry('Orch : a', minutesAgo(1), { session: 'sa' }))
+  const { fx, tick } = await wakingCoordinator([asked])
+  const sent = sends(fx)
+  const call = mounted(registerCloseRelay).handlers['tool.call']
+  expect(await call(fx.dollar, roundClose(asked.id), ranBash)).toEqual({ result: 'closed' })
+  expect(sent.map(s => s.text)).toEqual([`[module] The operator answered through the coordinator at ${asked.answer!.at} — A, ship it (question since ${asked.since}, blocks: phase 3)`])
+  expect(storedIn(fx, asked.id).delivery!.state).toBe('delivered')
+  await tick()
+  expect(sent.length).toBe(1)
+})
+
+test('a Bash command that runs no round-close, one refused, or one in a session that is no coordinator, delivers nothing until the reading', async () => {
+  const asked = closedByCoordinator(entry('Orch : a', minutesAgo(1), { session: 'sa' }))
+  const { fx, tick } = await wakingCoordinator([asked])
+  const sent = sends(fx)
+  const call = mounted(registerCloseRelay).handlers['tool.call']
+  await call(fx.dollar, { command: 'bash coordinator.sh round' }, ranBash)
+  await call(fx.dollar, roundClose(asked.id), async () => ({ deny: 'refused' }))
+  const orch = fakeDollar({ launchName: 'Orch : belt' })
+  orch.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
+  const elsewhere: unknown[] = []
+  orch.dollar.session.send = async (args: unknown) => { elsewhere.push(args); return { isDelivered: true } }
+  await call(orch.dollar, roundClose(asked.id), ranBash)
+  expect([sent.length, elsewhere.length]).toEqual([0, 0])
+  await tick()
+  expect(sent.length).toBe(1)
+})
+
+test('a round-close relayed while the round\'s reading runs sends its answer once', async () => {
+  const asked = closedByCoordinator(entry('Orch : a', minutesAgo(1), { session: 'sa' }))
+  const { fx, tick } = await wakingCoordinator([asked])
+  const sent = sends(fx)
+  const call = mounted(registerCloseRelay).handlers['tool.call']
+  await Promise.all([tick(), call(fx.dollar, roundClose(asked.id), ranBash)])
+  expect(sent.length).toBe(1)
+  expect(storedIn(fx, asked.id).delivery!.state).toBe('delivered')
+})
+
+test('the relay watches Bash calls and reads a round-close however the script is named', () => {
+  expect(mounted(registerCloseRelay).matchers['tool.call']).toEqual({ tool: 'Bash' })
+  for (const command of [
+    'bash "${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh" round-close a-1 --withdraw "#12 merged"',
+    "/p/skills/coordinator/scripts/coordinator.sh round-close a-1 --answer 'B'",
+    'coordinator.sh round 2>&1; coordinator.sh round-close a-1 --answer A',
+  ]) expect(runsRoundClose(command)).toBe(true)
+  for (const command of ['coordinator.sh round', 'coordinator.sh round-archive', 'echo round-close', 'grep -n round-close coordinator.sh'])
+    expect(runsRoundClose(command)).toBe(false)
+})
+
 test('an answer round-close wrote that the host refuses is written failed on disk, sent once, and a fresh module\'s pane says it', async () => {
   const asked = closedByCoordinator(entry('Orch : low', minutesAgo(1), { session: 'low' }))
   const { fx, tick } = await wakingCoordinator([asked])
@@ -2628,4 +2718,386 @@ test('an orchestrator\'s pane in tmux lists the agents its own pane spawned, not
   }
   expect(await paneText('%3')).toContain('Agent : belt-p3')
   expect(await paneText('%4')).toContain('no agent running')
+})
+
+// --- each new question told to the coordinator's conversation ---------------------------------
+
+// The operator's ruling of 2026-11-04 (« B »): one line per new question in the coordinator's
+// conversation, pane open or not, read from the round alone.
+test('with the pane open, a new question is told to the coordinator once, one line naming its sender and what it blocks, without its text; a second reading tells nothing', async () => {
+  const asked = entry('Orch : a', minutesAgo(1), { session: 'sa', question: '_Question_ : Ship the secret plan?', blocks: 'the release of phase 4' })
+  const urgent = entry('Orch : b', minutesAgo(2), { session: 'sb', urgent: true })
+  // From the round alone: a sender with no row is told too, and nothing waits on the pane's list.
+  const rowless = entry('Orch : c', minutesAgo(3), { session: 'sc' })
+  const answered = entry('Orch : d', minutesAgo(4), { session: 'sd', status: 'answered' })
+  const done = entry('Orch : e', minutesAgo(5), { session: 'se', kind: 'done', blocks: null })
+  const { fx, tick } = await wakingCoordinator([asked, urgent, rowless, answered, done])
+  fx.files.delete(`${SESSIONS}/sc`)
+  expect(fx.files.has(PANE_FILE)).toBe(true)
+  await tick()
+  expect(fx.notices.sort()).toEqual([
+    'Question pending from Orch : a — blocks: the release of phase 4',
+    'Question pending from Orch : b — blocks: phase 3 (urgent)',
+    'Question pending from Orch : c — blocks: phase 3',
+  ])
+  expect(fx.notices.some(line => line.includes('Ship the secret plan'))).toBe(false)
+  // Only the urgent one wakes the model's turn, as before: the told lines start none.
+  expect(fx.submitted.length).toBe(1)
+  await tick()
+  expect(fx.notices.length).toBe(3)
+  // A reload, or a successor over the same state directory, tells none again; a new entry is told.
+  const later = entry('Orch : a', minutesAgo(0), { session: 'sa', blocks: 'phase 5' })
+  fx.files.set(`${ROUND}/${later.id}.json`, JSON.stringify(later) + '\n')
+  await mounted(registerSupervision).handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
+  await tick()
+  expect(fx.notices.slice(3)).toEqual(['Question pending from Orch : a — blocks: phase 5'])
+})
+
+test('with the pane closed each new question is told as well, beside its due wake', async () => {
+  const fresh = entry('Orch : a', minutesAgo(1), { session: 'sa' })
+  const { fx, tick } = await wakingCoordinator([fresh], { paneClosed: true })
+  await tick()
+  expect(fx.notices).toEqual(['Question pending from Orch : a — blocks: phase 3'])
+  expect(fx.submitted.length).toBe(1)
+})
+
+test('a told line the host refuses is one log line, is told again at the next reading, and never holds the due wake', async () => {
+  const urgent = entry('Orch : a', minutesAgo(1), { session: 'sa', urgent: true })
+  const { fx, tick } = await wakingCoordinator([urgent])
+  const log = fx.dollar.ui.log
+  fx.dollar.ui.log = () => { throw new Error('no transcript') }
+  await tick()
+  expect(fx.submitted.length).toBe(1)
+  expect(fx.written.filter(l => l.endsWith('| supervision | round told: no transcript')).length).toBe(1)
+  fx.dollar.ui.log = log
+  await tick()
+  expect(fx.notices).toEqual(['Question pending from Orch : a — blocks: phase 3 (urgent)'])
+})
+
+// A host that refuses the second line of a reading: the first was drawn, and is never drawn again.
+test('a told line drawn before one the host refuses is recorded, and told once', async () => {
+  const first = entry('Orch : a', minutesAgo(2), { session: 'sa' })
+  const second = entry('Orch : b', minutesAgo(1), { session: 'sb' })
+  const { fx, tick } = await wakingCoordinator([first, second])
+  const log = fx.dollar.ui.log
+  let calls = 0
+  fx.dollar.ui.log = (line: string) => {
+    if (++calls === 2) throw new Error('no transcript')
+    return log(line)
+  }
+  await tick()
+  expect(fx.notices.length).toBe(1)
+  fx.dollar.ui.log = log
+  await tick()
+  expect(fx.notices.sort()).toEqual(['Question pending from Orch : a — blocks: phase 3', 'Question pending from Orch : b — blocks: phase 3'])
+})
+
+// --- what the pane leaves out, and what it shows, said in its log ---------------------------------
+
+// The 2026-11-04 case: a question neither in the pane nor in the coordinator's tab, and nothing on
+// disk saying which step lost it. Each open question a render leaves out is logged once with its
+// reason, each one it takes in is logged once at its first drawing, and the wake says which one no
+// render showed.
+const loggedLines = (fx: Fx, line: string) => fx.written.filter(l => l.endsWith(`| supervision | ${line}`)).length
+const redraw = (fx: Fx, handlers: Record<string, Function>) => handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
+
+test('an open question whose sender has no row is logged once as not drawn, with its reason', async () => {
+  const fx = fakeDollar({ launchName: 'Coord : main' })
+  fx.files.set(`${SESSIONS}/live`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : live' })) + '\n')
+  // Idle for two hours with no pid: stale by the old rule, removed, and its sender not judged gone.
+  fx.files.set(`${SESSIONS}/idle`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : idle', updated_at: minutesAgo(120) })) + '\n')
+  fx.files.set(`${SESSIONS}/half`, '{"role": "orchestr')
+  const shown = entry('Orch : live', '2026-11-04T15:20:00.000Z', { session: 'live', choices: CHOICES })
+  const orphan = entry('Orch : orphan', '2026-11-04T15:21:00.000Z', { session: 'nobody' })
+  const idle = entry('Orch : idle', '2026-11-04T15:22:00.000Z', { session: 'idle' })
+  const half = entry('Orch : half', '2026-11-04T15:23:00.000Z', { session: 'half' })
+  const nameless = entry('Orch : old', '2026-11-04T15:24:00.000Z', { session: '' })
+  const answered = entry('Orch : gone', '2026-11-04T15:25:00.000Z', { session: 'gone', status: 'answered' })
+  const done = entry('Orch : done', '2026-11-04T15:26:00.000Z', { session: 'gone', kind: 'done', blocks: null })
+  for (const e of [shown, orphan, idle, half, nameless, answered, done]) fx.files.set(`${ROUND}/${e.id}.json`, JSON.stringify(e) + '\n')
+  const { handlers } = mounted(registerSupervision)
+  await coordinatorRender(fx, handlers)
+  await redraw(fx, handlers)
+  expect(loggedLines(fx, `pane: ${orphan.id} not drawn: no row for its sender nobody`)).toBe(1)
+  expect(loggedLines(fx, `pane: ${idle.id} not drawn: its sender's row idle was dropped: stale, no pid and no measure for an hour`)).toBe(1)
+  expect(loggedLines(fx, `pane: ${half.id} not drawn: its sender's row half was dropped: unreadable`)).toBe(1)
+  expect(loggedLines(fx, `pane: ${nameless.id} not drawn: names no session`)).toBe(1)
+  // The idle row was removed by the first read: the second says so, once, in its own words.
+  expect(loggedLines(fx, `pane: ${idle.id} not drawn: no row for its sender idle`)).toBe(1)
+  expect(fx.written.filter(l => l.includes('not drawn')).length).toBe(5)
+  for (const quiet of [shown, answered, done]) expect(fx.written.some(l => l.includes(`${quiet.id} not drawn`))).toBe(false)
+})
+
+test('a stale row with a pid is named by its pid and tty when its question is left out', async () => {
+  const fx = fakeDollar({ launchName: 'Coord : main' })
+  fx.files.set(`${SESSIONS}/dead`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch : dead' }), pid: '4242', tty: '/dev/ttys004' }) + '\n')
+  const asked = entry('Orch : dead', '2026-11-04T15:20:00.000Z', { session: 'dead' })
+  fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
+  // The entry is withdrawn by the sweep of its dead sender: the pane leaves nothing open unsaid.
+  const fresh = fakeDollar({ launchName: 'Coord : main' })
+  fresh.files.set(`${SESSIONS}/half`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch : half' }), pid: '4242', tty: '/dev/ttys004' }) + '\n')
+  fresh.dollar.process.run = ((run: Function) => async (argv: readonly string[], init?: object) =>
+    // A read that keeps the entry open: the sweep's round write fails, as an unwritable round does.
+    argv[0] === 'mv' && String(argv[3]).startsWith(ROUND) ? { exitCode: 1, stdout: '', stderr: 'denied' } : run(argv, init))(fresh.dollar.process.run)
+  fresh.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify({ ...asked, session: 'half' }) + '\n')
+  await coordinatorRender(fresh)
+  expect(loggedLines(fresh, `pane: ${asked.id} not drawn: its sender's row half was dropped: stale pid 4242: not running on /dev/ttys004`)).toBe(1)
+  await coordinatorRender(fx)
+  expect(JSON.parse(String(fx.files.get(`${ROUND}/${asked.id}.json`))).status).toBe('withdrawn')
+})
+
+test('a question drawn for the first time is logged once as shown, never at a redraw', async () => {
+  const first = entry('Orch : low', '2026-11-04T15:20:00.000Z', { session: 'low', choices: CHOICES })
+  const second = entry('Orch : low', '2026-11-04T15:21:00.000Z', { session: 'low' })
+  const { fx, render, handlers } = await askingPane([first, second])
+  await render()
+  await render()
+  expect(loggedLines(fx, `pane: shown ${first.id}`)).toBe(1)
+  // The second is in the count the title draws, so it is shown too.
+  expect(loggedLines(fx, `pane: shown ${second.id}`)).toBe(1)
+  const third = entry('Orch : low', '2026-11-04T15:22:00.000Z', { session: 'low' })
+  fx.files.set(`${ROUND}/${third.id}.json`, JSON.stringify(third) + '\n')
+  await redraw(fx, handlers)
+  await redraw(fx, handlers)
+  expect(loggedLines(fx, `pane: shown ${third.id}`)).toBe(1)
+  expect(fx.written.filter(l => l.includes('pane: shown')).length).toBe(3)
+})
+
+test('a question no render showed within 30 s is logged by the wake once, with the last render\'s time', async () => {
+  const unseen = entry('Orch : a', '2026-11-04T15:23:00.000Z', { session: 'sa', at: new Date(Date.now() - 31000).toISOString() })
+  const young = entry('Orch : b', '2026-11-04T15:24:00.000Z', { session: 'sb', at: new Date(Date.now() - 5000).toISOString() })
+  const { fx, handlers, tick } = await wakingCoordinator([unseen, young])
+  await tick()
+  expect(fx.written.filter(l => l.includes(`round wake: ${unseen.id} open `)).length).toBe(1)
+  expect(fx.written.find(l => l.includes(`round wake: ${unseen.id} open `))).toMatch(/open 3\d s, never drawn by the pane \(last render none\)$/)
+  expect(fx.written.some(l => l.includes(`round wake: ${young.id}`))).toBe(false)
+  await tick()
+  expect(fx.written.filter(l => l.includes(`round wake: ${unseen.id}`)).length).toBe(1)
+  // A render that showed the question: the wake never names it.
+  const shownOne = entry('Orch : c', '2026-11-04T15:25:00.000Z', { session: 'sc', at: new Date(Date.now() - 40000).toISOString() })
+  fx.files.set(`${ROUND}/${shownOne.id}.json`, JSON.stringify(shownOne) + '\n')
+  fx.files.set(`${SESSIONS}/sc`, JSON.stringify(row({ role: 'orchestrator', name: shownOne.from })) + '\n')
+  await redraw(fx, handlers)
+  // A render that left one out: the wake gives that render's time.
+  const left = entry('Orch : d', '2026-11-04T15:26:00.000Z', { session: 'sd', at: new Date(Date.now() - 40000).toISOString() })
+  fx.files.set(`${ROUND}/${left.id}.json`, JSON.stringify(left) + '\n')
+  await tick()
+  expect(fx.written.some(l => l.includes(`round wake: ${shownOne.id}`))).toBe(false)
+  expect(fx.written.find(l => l.includes(`round wake: ${left.id} open `))).toMatch(/never drawn by the pane \(last render \d{4}-\d\d-\d\dT[\d:.]+Z\)$/)
+  // With the pane closed the question is due in the tab: no render is owed, nothing is said.
+  const closed = await wakingCoordinator([{ ...unseen, id: 'closed-pane' }], { paneClosed: true })
+  await closed.tick()
+  expect(closed.fx.written.some(l => l.includes('never drawn'))).toBe(false)
+})
+
+// --- a question moved to a successor not measured yet ------------------------------------------
+
+// (d2): a successor has no row until its first turn ends, minutes after the move; its session runs
+// all the same, and the host's own record of it says so.
+test('an entry moved to a successor not measured yet is drawn', async () => {
+  const moved = entry('Orch : belt-2', '2026-11-04T17:10:00.000Z', { session: 's-two', movedFrom: 's-old', choices: CHOICES })
+  const drawnWith = async (record: object | null) => {
+    const fx = fakeDollar({ launchName: 'Coord : main' })
+    fx.files.set(`${ROUND}/${moved.id}.json`, JSON.stringify(moved) + '\n')
+    if (record) fx.files.set(`${HOME}/.claude/sessions/${(record as { pid: number }).pid}.json`, JSON.stringify(record))
+    return { fx, tree: JSON.stringify(await coordinatorRender(fx)) }
+  }
+  const live = await drawnWith({ pid: 777, sessionId: 's-two', name: 'Orch : belt-2' })
+  expect(live.tree).toContain('Questions for you — 1 pending')
+  expect(loggedLines(live.fx, `pane: shown ${moved.id}`)).toBe(1)
+  // The host's record of a process that no longer runs, or of another session, is no successor.
+  for (const record of [{ pid: 999, sessionId: 's-two', name: 'Orch : belt-2' }, { pid: 777, sessionId: 's-other', name: 'Orch : belt-2' }, null]) {
+    const { fx, tree } = await drawnWith(record)
+    expect(tree).not.toContain('pending')
+    expect(loggedLines(fx, `pane: ${moved.id} not drawn: no row for its sender s-two`)).toBe(1)
+  }
+  // An entry no successor took, its session with no row, is not drawn on a live record alone.
+  const fx = fakeDollar({ launchName: 'Coord : main' })
+  const plain = { ...moved }
+  delete plain.movedFrom
+  fx.files.set(`${ROUND}/${plain.id}.json`, JSON.stringify(plain) + '\n')
+  fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ pid: 777, sessionId: 's-two' }))
+  expect(JSON.stringify(await coordinatorRender(fx))).not.toContain('pending')
+})
+
+// A move whose successor's session was not resolved names none: the host's record of a live
+// session of the successor's name draws it, the predecessor's own record never.
+test('an entry moved to a successor by its name alone is drawn while a live session of that name runs', async () => {
+  const moved = entry('Orch : belt-2', '2026-11-04T17:10:00.000Z', { session: '', movedFrom: 's-old', choices: CHOICES })
+  const drawnWith = async (record: object | null) => {
+    const fx = fakeDollar({ launchName: 'Coord : main' })
+    fx.files.set(`${ROUND}/${moved.id}.json`, JSON.stringify(moved) + '\n')
+    if (record) fx.files.set(`${HOME}/.claude/sessions/${(record as { pid: number }).pid}.json`, JSON.stringify(record))
+    return { fx, tree: JSON.stringify(await coordinatorRender(fx)) }
+  }
+  const live = await drawnWith({ pid: 777, sessionId: 's-two', name: 'Orch : belt-2' })
+  expect(live.tree).toContain('Questions for you — 1 pending')
+  expect(loggedLines(live.fx, `pane: shown ${moved.id}`)).toBe(1)
+  for (const record of [{ pid: 999, sessionId: 's-two', name: 'Orch : belt-2' }, { pid: 777, sessionId: 's-old', name: 'Orch : belt-2' }, { pid: 777, sessionId: 's-two', name: 'Orch : other' }, null]) {
+    const { tree } = await drawnWith(record)
+    expect(tree).not.toContain('pending')
+  }
+})
+
+// D2 of the round-2 verdict: no withdrawal nor move matches an entry naming no session, so the
+// read that judges it by its successor's name closes it once no session of that name runs.
+test('an entry moved to a successor by its name alone stays open while a session of that name runs, and is withdrawn once none does', async () => {
+  const moved = entry('Orch : belt-2', '2026-11-04T17:10:00.000Z', { session: '', movedFrom: 's-old', choices: CHOICES })
+  const nameless = entry('Orch : belt-2', '2026-11-04T17:11:00.000Z', { session: '' })
+  const fx = fakeDollar({ launchName: 'Coord : main' })
+  for (const e of [moved, nameless]) fx.files.set(`${ROUND}/${e.id}.json`, JSON.stringify(e) + '\n')
+  const record = `${HOME}/.claude/sessions/777.json`
+  fx.files.set(record, JSON.stringify({ pid: 777, sessionId: 's-two', name: 'Orch : belt-2' }))
+  const statusOf = (e: RoundEntry) => JSON.parse(String(fx.files.get(`${ROUND}/${e.id}.json`)))
+  const { handlers } = mounted(registerSupervision)
+  expect(JSON.stringify(await coordinatorRender(fx, handlers))).toContain('Questions for you — 1 pending')
+  await redraw(fx, handlers)
+  expect(statusOf(moved).status).toBe('open')
+  // The successor's process ends, its record left behind: a process table that cannot be read
+  // judges nothing, and the entry stays open and drawn.
+  fx.files.set(record, JSON.stringify({ pid: 999, sessionId: 's-two', name: 'Orch : belt-2' }))
+  const run = fx.dollar.process.run
+  fx.dollar.process.run = async (argv: readonly string[], init?: object) =>
+    argv[0] === 'ps' && argv[1] === '-A' ? { exitCode: 1, stdout: '', stderr: 'denied' } : run(argv, init)
+  expect(JSON.stringify(await redraw(fx, handlers))).toContain('Questions for you — 1 pending')
+  expect(statusOf(moved).status).toBe('open')
+  // A registry that cannot be listed says nothing of who runs: the entry stays open.
+  fx.dollar.process.run = run
+  const list = fx.dollar.fs.list
+  fx.dollar.fs.list = async (dir: string) => {
+    if (dir === `${HOME}/.claude/sessions`) throw new Error('EACCES')
+    return list(dir)
+  }
+  await redraw(fx, handlers)
+  expect(statusOf(moved).status).toBe('open')
+  // Both read: no session of that name runs, the entry is withdrawn by its sender.
+  fx.dollar.fs.list = list
+  await redraw(fx, handlers)
+  expect(statusOf(moved).status).toBe('withdrawn')
+  expect(statusOf(moved).answer.by).toBe('sender')
+  // An entry no succession moved is not judged by a name.
+  expect(statusOf(nameless).status).toBe('open')
+})
+
+test('an entry moved to a successor by its name alone is due in the tab with the pane closed', async () => {
+  const moved = entry('Orch : belt-2', minutesAgo(1), { session: '', movedFrom: 's-old' })
+  const { fx, tick } = await wakingCoordinator([moved], { paneClosed: true })
+  fx.files.delete(`${SESSIONS}/`)
+  fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ pid: 777, sessionId: 's-two', name: 'Orch : belt-2' }))
+  await tick()
+  expect(fx.submitted.length).toBe(1)
+  expect(fx.submitted[0]).toContain('Orch : belt-2')
+})
+
+test('an entry moved to a successor not measured yet is due in the tab with the pane closed', async () => {
+  const moved = entry('Orch : belt-2', minutesAgo(1), { session: 's-two', movedFrom: 's-old' })
+  const { fx, tick } = await wakingCoordinator([moved], { paneClosed: true })
+  fx.files.delete(`${SESSIONS}/s-two`)
+  fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ pid: 777, sessionId: 's-two', name: 'Orch : belt-2' }))
+  await tick()
+  expect(fx.submitted.length).toBe(1)
+  expect(fx.submitted[0]).toContain('Orch : belt-2')
+})
+
+// --- the render's own reads, bounded ---------------------------------------------------------
+
+test('a git that hangs holds no render: the origin read is bounded, and a render past its bound is logged with its duration', async () => {
+  const fx = fakeDollar({ launchName: 'Coord : main' })
+  fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : low' })) + '\n')
+  const run = fx.dollar.process.run
+  let skew = 0
+  const asked: (object | undefined)[] = []
+  fx.dollar.process.run = async (argv: readonly string[], init?: { timeoutMs?: number }) => {
+    if (argv[0] !== 'git') return run(argv, init)
+    asked.push(init)
+    // A git that never answers: the host ends it at the bound given, else never.
+    if (typeof init?.timeoutMs !== 'number') return new Promise(() => undefined)
+    skew += init.timeoutMs
+    throw new Error(`still running after ${init.timeoutMs} ms`)
+  }
+  fx.dollar.clock.now = async () => Date.now() + skew
+  {
+    const hung = new Promise(resolve => setTimeout(() => resolve('hung'), 1000))
+    const { handlers } = mounted(registerSupervision)
+    const tree = await Promise.race([coordinatorRender(fx, handlers), hung])
+    expect(tree).not.toBe('hung')
+    expect(JSON.stringify(tree)).toContain('Orch : low')
+    expect((asked[0] as { timeoutMs: number }).timeoutMs).toBeLessThanOrEqual(2000)
+    // A render whose reads took longer than its bound says so, once, with its duration: here the
+    // process listing its live row's pid sends the store's read to.
+    fx.files.set(`${SESSIONS}/low`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch : low' }), pid: '501' }) + '\n')
+    fx.dollar.process.run = async (argv: readonly string[], init?: { timeoutMs?: number }) => {
+      if (argv[0] === 'ps') skew += 6000
+      return run(argv, init)
+    }
+    await redraw(fx, handlers)
+    expect(fx.written.filter(l => /\| supervision \| pane: the render took 6\d{3} ms, past its bound of 5000 ms$/.test(l)).length).toBe(1)
+    expect(fx.written.filter(l => l.includes('pane: the render took')).length).toBe(1)
+  }
+})
+
+// A pane redraws every few seconds: a render past its bound is said once per crossing of it, not
+// at every redraw while the reads stay slow.
+test('renders past their bound are logged once per crossing of it', async () => {
+  const fx = fakeDollar({ launchName: 'Coord : main' })
+  fx.files.set(`${SESSIONS}/low`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch : low' }), pid: '501' }) + '\n')
+  const run = fx.dollar.process.run
+  let skew = 0
+  let slow = true
+  fx.dollar.process.run = async (argv: readonly string[], init?: { timeoutMs?: number }) => {
+    if (argv[0] === 'ps' && slow) skew += 6000
+    return run(argv, init)
+  }
+  fx.dollar.clock.now = async () => Date.now() + skew
+  const { handlers } = mounted(registerSupervision)
+  await coordinatorRender(fx, handlers)
+  await redraw(fx, handlers)
+  await redraw(fx, handlers)
+  const said = () => fx.written.filter(l => l.includes('pane: the render took')).length
+  expect(said()).toBe(1)
+  slow = false
+  await redraw(fx, handlers)
+  slow = true
+  await redraw(fx, handlers)
+  await redraw(fx, handlers)
+  expect(said()).toBe(2)
+})
+
+// This session's repository is read once and kept: a read that timed out is no answer, and the
+// next render reads it again, while one that answered is never read twice.
+test('an origin read that timed out is read again at the next render, one that answered is kept', async () => {
+  const fx = fakeDollar({ launchName: 'Coord : main' })
+  fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : low' })) + '\n')
+  let gits = 0
+  let answer: 'thrown' | 'ended' | 'none' | 'origin' = 'thrown'
+  const gitAnswering = (run: Function) => async (argv: readonly string[], init?: { timeoutMs?: number }) => {
+    if (argv[0] !== 'git') return run(argv, init)
+    gits++
+    if (answer === 'thrown') throw new Error(`still running after ${init?.timeoutMs} ms`)
+    // Ended at its bound by a signal, before it printed a word.
+    if (answer === 'ended') return { exitCode: 143, stdout: '', stderr: '' }
+    if (answer === 'none') return { exitCode: 2, stdout: '', stderr: "error: No such remote 'origin'\n" }
+    return { exitCode: 0, stdout: 'git@github.com:Owner/repo.git\n', stderr: '' }
+  }
+  fx.dollar.process.run = gitAnswering(fx.dollar.process.run)
+  const { handlers } = mounted(registerSupervision)
+  await coordinatorRender(fx, handlers)
+  expect(gits).toBe(1)
+  answer = 'ended'
+  await redraw(fx, handlers)
+  expect(gits).toBe(2)
+  answer = 'origin'
+  await redraw(fx, handlers)
+  expect(gits).toBe(3)
+  await redraw(fx, handlers)
+  expect(gits).toBe(3)
+  // No origin is an answer too: kept, never read again.
+  const bare = fakeDollar({ launchName: 'Coord : main' })
+  bare.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : low' })) + '\n')
+  bare.dollar.process.run = gitAnswering(bare.dollar.process.run)
+  answer = 'none'
+  const fresh = mounted(registerSupervision).handlers
+  await coordinatorRender(bare, fresh)
+  await redraw(bare, fresh)
+  expect(gits).toBe(4)
 })

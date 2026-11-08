@@ -10,7 +10,7 @@ user-invocable: false
 
 `${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh` drives the places agents run in — windows of the orchestrator's tmux home session, and iTerm2 tabs through the app's own API — so an orchestrator can spawn, verify, close, move and rotate implementer sessions without the user touching the keyboard. The launch is HANDED to the terminal, never typed into a shell. Closing a window or a tab KILLS its session — treat close as destructive and follow the safety order below. **Spawning is the orchestrator's act, not the user's**: the brief is written, the session is spawned in the same move, and the spawn is verified on the process, never on the script's word.
 
-Its commands are `list`, `spawn`, `verify`, `screen`, `close`, `move`, `rotate`, `resolve-tier`, `trust prune` and `tools`. **Before typing any of them, read `references/commands.md`** — each command's synopsis, flags and refusals, and how the launcher builds a tab; **when one fails, hangs or says on stderr that a fallback served it, read its « When iTerm2 does not answer »**.
+Its commands are `list`, `spawn`, `verify`, `screen`, `close`, `move`, `rotate`, `resolve-tier`, `pair`, `trust prune` and `tools`. **Before typing any of them, read `references/commands.md`** — each command's synopsis, flags and refusals, and how the launcher builds a tab; **when one fails, hangs or says on stderr that a fallback served it, read its « When iTerm2 does not answer »**.
 
 ## Reading the tabs
 
@@ -60,7 +60,9 @@ Name an anchor when you know a better place than that default, and name the one 
 4. **No startup dialog may stand between the launch and the brief.** `--trust` is for a checkout you prepared yourself, never for anything else; the launch loads the catalogue's default set plus `--mcp`, and `--account-connectors` every connector of the operator's account (`references/commands.md` says how each dialog is pre-answered). Any other startup question (a migration notice) is read in the tab's contents and answered through the tab — a session stuck on a dialog is not launched, whatever the script printed.
 5. Rely on that verification and on the module's reports, not on a first message. An agent idle before its work is reported is inspected, not waited for: `verify` for the process, `list` for the tab, and `screen --tty` for what that tab is showing right now — how you tell an agent stopped on a question from one at work.
 
-**A tier nobody bound is not an error**: `spawn` types no model argument and the host applies its default. What to do about it is `orchestrator:model-routing`'s, « Pairs, tiers and the map ».
+**Every launched session carries its model and its effort** (decision 3 of `docs/agent-dispatches.md`): an agent's pair is yours to name, `--tier <t>` or `--model <id> --effort <level>`, and a succession of any role runs on its predecessor's live pair, read on its transcript. How a tier's effort is chosen is `orchestrator:model-routing`, « Pairs, tiers and the map », and each form's flags and refusals are in `references/commands.md`.
+
+**A tier nobody bound is not an error**: `spawn` types no model argument and the host applies its default model, at the tier's effort. What to do about it is `orchestrator:model-routing`'s, « Pairs, tiers and the map ».
 
 ## The tools a session is given
 

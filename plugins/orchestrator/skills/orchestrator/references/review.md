@@ -3,9 +3,15 @@
 Read before dispatching a review or comments round, before a verdict on a delivery, before you record a review or correction round, or tell the operator a pull request is ready, and before the rebase and push once ready. The gate and the both-readings rule are in SKILL.md, « Thresholds »; the rules a verdict never crosses — one review round and one correction round, ready as the operator's turn — are the first section below; the rest is how the round is run.
 
 - Thresholds a verdict never crosses
-- Review on evidence — the checks, the record, the rebase once ready
+- Review on evidence
+  - The checks
+  - The record
+  - Checks, in one background watch
+  - The rebase, once ready
+  - The deepest method, from the first round
+  - The verdict message
 - Review rounds run in disposable sessions — review, publishing, comments
-- The cost of a round
+  - The cost of a round
 - Depth vs scope
 
 ## Thresholds a verdict never crosses
@@ -19,6 +25,8 @@ They hold at every step of the loop, whatever the rest of this file adds.
 **The label follows the ready.** When you declare a pull request ready (its `ready` record green, the rebase done), put `Ready` on it with the github tool, `pr-readiness <n> ready`, in the same move and beside what the project's method does with the draft (left draft for the operator, or what its own method says: undrafted and merged under auto-merge, shipped ready); `dispatch-record.sh ready` prints that command. A head that moves after that — a rebase, a fixup, a correction — puts `Not Ready` back with `pr-readiness <n> not-ready` until `ready` is green again at the new head.
 
 ## Review on evidence
+
+### The checks
 
 For each delivery, run yourself (read-only):
 1. Git layout: branches, bases, commit messages; diffs disjoint between stacked PRs.
@@ -36,13 +44,23 @@ For each delivery, run yourself (read-only):
 13. **A diff that changes an existing test's assertions is read first.** Most edits that game a suite land in its test files. Each such change is a finding, kept unless the brief or a ruling ordered it: a weakened expectation, a removed case, a widened tolerance, a test skipped.
 14. **Every pull request carries an E2E test the reviewer replays, or says plainly it has none.** The implementer's report carries `E2E: <test path(s)> — <command> — passed` — a backend test against the service brought up in a container, a frontend one a Playwright test committed in the project's test tree — or `E2E: none — <reason>` (`references/briefs.md`, standing rules). The review replays the test, or judges the reason; a report with no E2E line is a finding, and the pull request is not ready: silence is not allowed. A pull request with `E2E: none` is not ready on your word: tell the operator « no E2E test — <reason> », and it is ready once he has validated it ready without one — unless he has exempted every pull request of your session, and then you decide alone, without telling him. `ready` takes the line (`--e2e`), refuses silence, and refuses `E2E: none` without his validation (`--e2e-waiver "<his words, dated>"`) or his session exemption (`dispatch-record.sh exempt <record> --e2e "<his words, dated>"`).
 
+### The record
+
 **And the round ends on the record, not on memory.** The review round is recorded with `dispatch-record.sh review <record> <id> --head <sha> --norms tool|none`, the correction round you verified once with `dispatch-record.sh fixed <record> <id> --head <sha>`, and a pull request is declared ready only after `dispatch-record.sh ready <record> <id> --head <sha> --e2e "<the E2E line>"` exits 0 at the head in front of you (`orchestrator:model-routing`, « The record », says what each records and refuses). The gate sees nothing beyond those facts: whether your triage was right, whether the correction was verified and whether the operator approved are yours, and a green `ready` is not an approved pull request.
+
+### Checks, in one background watch
 
 **Checks, in one background watch.** When a pull request you own is opened or its head moves, start `ci-watch.sh <n>` (`skills/orchestrator/scripts/ci-watch.sh`, by the absolute path of the plugin's installed copy) with `run_in_background` and a timeout of 7 200 000 ms: one per pull request, never two. Its exit wakes you with one line, and the script's header says what each line asks of you, « What the caller does ». Never a foreground watch, never a loop on `gh pr view` or `gh pr checks`, never a wait for MERGED of your own; an agent never watches CI, and no session is spawned or rotated to watch it.
 
+### The rebase, once ready
+
 **The rebase, once ready.** A rebase or merge of the base whose conflicts are mechanical (no behaviour decided) is yours, done in place in a checkout and never by a spawned session; one that decides behaviour goes to a correction session. `ready` is read at the verified head, BEFORE the rebase, since the rebase moves the head without adding anything to review; a rebase whose conflicts you resolved is verified like the correction round, by you — `git range-diff` against the verified head shows the resolution and nothing else, and the test suite runs on the new head. **The squash-merge trap**: once a lower pull request of a stack is squash-merged, its commits exist on the main branch under no name you can rebase over; the next branch is rebased by replaying ONLY its own commits onto the main branch — `git rebase --onto <main> <old head of the lower branch> <branch>` — never the lower branch's original commits, which come back as conflicts or as duplicates. The rebase is pushed with `--force-with-lease=<branch>:<sha read>`, the lease on the head you read; it is the one force this rule allows, and the plugin's push guard refuses any other in a session the launcher spawned.
 
+### The deepest method, from the first round
+
 **Where the deepest method applies: from the FIRST round.** If the real proof is to build the artifact and use it (walk the interface, drive the API, load the data), do it in the review round itself, against a control built from the previous head. There is no later round to build in: a reading now and a build afterwards is a second review round. The round's readers — inside its ONE review session, never the implementer's and never one session per lens — read a copy pinned at the head under review, a detached worktree of your own checkout (`workspace.sh pin <source> <round> <head>`), never a clone, which is for a writer; `workspace.sh delete` takes it when the round is judged. **A review round is a fresh reader, not a fresh lens**. The repair is read by you, not by a second round: a round's sharpest defect sits inside the fix it ordered, which is why your verification of the correction round reads the artifact, never the report alone, and mutates what the verdict rests on where you have not seen that test fall. **The correction round is closed only when every kept item arrives with the reading that closes it** — or with a sentence saying what the fixtures cannot show, which is an honest answer and a fast one.
+
+### The verdict message
 
 Verdict message back: findings list (fix items), approved decisions (say so explicitly), and answers to every question the agent flagged. Approve or dispatch N-bis; never silently accept. A stale figure during a repair round is not a finding.
 

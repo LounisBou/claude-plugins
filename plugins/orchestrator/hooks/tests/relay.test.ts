@@ -5,7 +5,7 @@
 // twice, none without a coordinator, none from a session that is no orchestrator, and a
 // write or a send that fails never holding the turn's end.
 import { expect, test } from 'claude-code/testing'
-import { parseWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel, waitParts, heldQuestion, withdrawalText, RELAY_CAP } from '../relay.ts'
+import { parseWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel, waitParts, heldQuestion, withdrawalText, confirmsTakeover, RELAY_CAP } from '../relay.ts'
 import { paneQuestions, waitsInTab, roundEntry, type RoundEntry } from '../round.ts'
 import { answerFromPane, paneAnswerText, settledText, reopenedText, withdrawOnTyped, parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
@@ -1439,6 +1439,32 @@ test('a successor not found on this machine is recorded by its name: the entries
   await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
   const moved = entries(fx).find(e => e.id === asked.id)!
   expect([moved.status, moved.session, moved.from]).toEqual(['open', '', 'Orch : belt-2'])
+})
+
+// A successor whose session the registry did not name yet when its « takeover confirmed » came:
+// the move resolves it again, or the moved entry names no session, never drawn nor due.
+test('a successor the registry names only after its « takeover confirmed » is resolved at the move', async () => {
+  const { chains, fx, asked, other, settled } = await senderWithEntries()
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch : belt-2'))
+  successorRunning(fx)
+  await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
+  expectMoved(fx, asked, other, settled)
+})
+
+// The successor's real word of 2026-11-04T17:15:27Z: the phrase, then its report on the same
+// line. Read as no takeover, the hand-over withdrew the open questions instead of moving them.
+const TAKEOVER_REPORT = 'takeover confirmed — Orch : belt-2 [a1b2c3] holds the orchestration; the agents are re-addressed and the round is read.'
+
+test('takeover confirmed followed by the successor\'s report confirms the takeover', async () => {
+  expect(confirmsTakeover(TAKEOVER_REPORT)).toBe(true)
+  expect(confirmsTakeover(`**Takeover confirmed**: ${TAKEOVER_REPORT.slice(19)}\nNext line.`)).toBe(true)
+  expect(confirmsTakeover('takeover confirmedly')).toBe(false)
+  expect(confirmsTakeover('the takeover confirmed')).toBe(false)
+  const { chains, fx, asked, other, settled } = await senderWithEntries()
+  successorRunning(fx)
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch : belt-2', TAKEOVER_REPORT))
+  await drive(chains, 'session.send', fx.dollar, { to: 'Orch : belt-2', text: 'handed over', origin: { kind: 'model' } })
+  expectMoved(fx, asked, other, settled)
 })
 
 test('the successor\'s own wait file is left as it is by the move', async () => {

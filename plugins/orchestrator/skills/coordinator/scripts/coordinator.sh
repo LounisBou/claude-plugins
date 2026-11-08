@@ -8,7 +8,7 @@
 #                            works in, then the collisions among them
 #   coordinator.sh owners    each open pull request of those repositories, traced to its orchestrator
 #   coordinator.sh sleep --name "Orch : <subject>" --brief <path> --dir <path> --model <id>
-#                        [--effort <level>] [--session <id>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
+#                        --effort <level> [--session <id>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
 #                            records a paused orchestrator as sleeping, once its tab is closed;
 #                            prints "sleeping <name>"
 #   coordinator.sh sleeping  one line per sleeping orchestrator; nothing when none sleeps
@@ -17,9 +17,13 @@
 #   coordinator.sh drop --name "Orch : <subject>"        abandons one for good: removes its record
 #                            and moves its brief into an abandoned/ directory beside it
 #   coordinator.sh round [--by-urgency]   the round's entries still to be ruled: the open ones,
-#                            then the withdrawn; --by-urgency puts the urgent first, then the oldest
+#                            then the answered, then the withdrawn, the urgent first, each level
+#                            grouped by sender
+#                            (--by-urgency prints the same order)
 #   coordinator.sh round-close <id> --answer "<text>"   closes one entry with the answer relayed;
 #                            prints "closed <id>"
+#   coordinator.sh round-close <id> --withdraw "<evidence>"   closes one entry settled meanwhile,
+#                            on the evidence read on the artifact; prints "closed <id>"
 #   coordinator.sh round-archive   moves every closed entry into round/archive/; prints
 #                            "archived <n>"
 #
@@ -46,7 +50,8 @@
 #                              the forge, a remote row that is no JSON row
 # sleeping prints, one per sleeping orchestrator, in the order they went to sleep:
 #   sleeping <name> | since <UTC time> | <directory> | prs <repository>#<n> <branch>, ... or none
-#     | checkouts <path>, ... or none | brief <path> | model <id> | effort <level or default>
+#     | checkouts <path>, ... or none | brief <path> | model <id> | effort <level>, or none for a
+#     record a pause wrote before an effort was required (its wake passes neither)
 #     [ | session <id>]: the session the close of its home session read, which the wake resumes
 # round prints, for each entry whose status is open, then for each answered one (chosen in the
 # coordinator's pane and sent to the asking orchestrator), then for each withdrawn one, a line
@@ -58,9 +63,9 @@
 # it waits. COORDINATOR_NOW, when the suite pins one, must be a UTC time. The entries are read from
 # <state>/round/<id>.json, one JSON entry per file, written whole by the hooks module at the end
 # of a turn of an orchestrator on this machine (hooks/round.ts); a file that does not parse is
-# skipped. Each set is in the round's order: grouped by sender, the groups by their earliest
-# wait, each in the order its waits began. round --by-urgency prints the same lines, each set
-# ordered urgent entries first, then by start, across senders. An answered entry's lines end on
+# skipped. Each set is in the round's order: the urgent entries first, then the others; within
+# each level grouped by sender, the groups by their earliest wait in it, each in the order its
+# waits began. round --by-urgency prints the same lines in the same order. An answered entry's lines end on
 #     answered from the pane at <UTC time>: <letter> : <choice text>
 # and those of an entry its sender withdrew on
 #     withdrawn by the sender at <UTC time>: <why>
@@ -73,10 +78,14 @@
 # is printed, so the entry is closed with it.
 # round records the ids of the open entries it printed in <state>/round-listed.json (record_listed).
 # round-close rewrites the entry with status closed and the answer {text, by "coordinator", at},
-# in one rename, and refuses an id with no entry. An entry still open and of kind operator, whose sender waits on that
+# in one rename, and refuses an id with no entry. With --withdraw the answer's text is
+# « withdrawn: settled meanwhile — <evidence> » and the answer also holds the evidence, so the
+# module tells the sender its question was withdrawn, with the evidence, never that it was answered. An entry still open and of kind operator, whose sender waits on that
 # answer, also gets its delivery pending, stamped as the answer ({state "pending", at, attempts 0},
-# with answerAt for a sender on this machine): the coordinator's hooks module sends the answer at
-# its next round reading and writes the outcome there, so the close is the one gesture.
+# with answerAt for a sender on this machine): the coordinator's
+# hooks module sends the answer as soon as that round-close has run in the coordinator's session,
+# and any answer still pending at its next round reading, and writes the outcome there, so the
+# close is the one gesture.
 # round-archive moves each entry file of <state>/round/ whose status is closed into
 # <state>/round/archive/ (created when absent), each in one rename; open, answered and withdrawn
 # entries stay, and so does a file that does not parse. Nothing reads the archive: round and
@@ -354,14 +363,17 @@ cmd_sleep() {
         esac
     done
     [ -n "$name" ] && [ -n "$brief" ] && [ -n "$dir" ] && [ -n "$model" ] \
-        || die 'sleep: usage: sleep --name "Orch : <subject>" --brief <path> --dir <path> --model <id> [--effort <level>] [--session <id>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...'
+        || die 'sleep: usage: sleep --name "Orch : <subject>" --brief <path> --dir <path> --model <id> --effort <level> [--session <id>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...'
     printf '%s' "$name" | grep -qE "$ORCH_NAME_SHAPE" && ! printf '%s' "$name" | grep -qE ' \[[0-9A-Za-z]+\]$' \
         || die "sleep: refused: the name reads \"Orch : <subject>\", without its reference, the subject at most 25 characters, got '$name'"
     case "$brief" in /*) ;; *) die "sleep: refused: the brief's path must be absolute, got $brief" ;; esac
     [ -f "$brief" ] && [ -r "$brief" ] || die "sleep: refused: the brief $brief cannot be read: a wake starts on it"
     case "$dir" in /*) ;; *) die "sleep: refused: the directory must be absolute, got $dir" ;; esac
     [ -d "$dir" ] || die "sleep: refused: the directory $dir does not exist: a wake starts in it"
-    case "$effort" in ""|low|medium|high|xhigh|max) ;; *) die "sleep: refused: unknown effort $effort (low, medium, high, xhigh or max)" ;; esac
+    # The effort travels with the model: a pause recorded without it would wake its orchestrator
+    # at an effort nobody chose. The paused orchestrator reads both with `iterm-agent.sh pair`.
+    [ -n "$effort" ] || die "sleep: refused: no effort: a pause records the model with its effort, --effort <level> (the paused orchestrator reads both with iterm-agent.sh pair)"
+    case "$effort" in low|medium|high|xhigh|max) ;; *) die "sleep: refused: unknown effort $effort (low, medium, high, xhigh or max)" ;; esac
     [ -z "$session" ] || printf '%s' "$session" | grep -qE '^[0-9A-Za-z-]+$' \
         || die "sleep: refused: a session id reads letters, digits and hyphens, got '$session'"
     lock sleep
@@ -382,7 +394,7 @@ cmd_sleeping() {
     [ $# -eq 0 ] || die "sleeping: unexpected argument $1"
     local all
     all=$(sleeping_read) || exit 1
-    jq -r '.[] | "sleeping \(.name) | since \(.slept) | \(.dir) | prs \(if (.prs | length) > 0 then (.prs | join(", ")) else "none" end) | checkouts \(if (.checkouts | length) > 0 then (.checkouts | join(", ")) else "none" end) | brief \(.brief) | model \(.model) | effort \(if .effort == "" then "default" else .effort end)\(if (.session // "") != "" then " | session \(.session)" else "" end)"' <<< "$all"
+    jq -r '.[] | "sleeping \(.name) | since \(.slept) | \(.dir) | prs \(if (.prs | length) > 0 then (.prs | join(", ")) else "none" end) | checkouts \(if (.checkouts | length) > 0 then (.checkouts | join(", ")) else "none" end) | brief \(.brief) | model \(.model) | effort \(if (.effort // "") == "" then "none" else .effort end)\(if (.session // "") != "" then " | session \(.session)" else "" end)"' <<< "$all"
 }
 
 # remove_sleeping <name> <subcommand>: the array without that name, or a refusal when it
@@ -794,10 +806,11 @@ pane_open() {
 }
 
 cmd_round() {
-    local by_urgency=false pane=false
+    local pane=false
     while [ $# -gt 0 ]; do
         case "$1" in
-            --by-urgency) by_urgency=true; shift ;;
+            # Still accepted: the decision round asks for it, and it prints the one order.
+            --by-urgency) shift ;;
             *) die "round: unexpected argument $1" ;;
         esac
     done
@@ -811,20 +824,20 @@ cmd_round() {
     entries=$(round_entries)
     # An entry whose sender's sessions file is absent keeps its place, and its header says the
     # sender is gone: the session ended with its question still open.
-    printf '%s\n' "$entries" | jq -s -r --argjson live "$(live_sessions)" --argjson pane "$pane" --argjson by_urgency "$by_urgency" '
-        # The round order (hooks/round.ts openEntries): grouped by sender, the groups by their
-        # earliest wait, each in the order its waits began.
-        def ordered: (sort_by(.since) | reduce .[] as $e ({}; if has($e.from) then . else .[$e.from] = $e.since end)) as $first
+    printf '%s\n' "$entries" | jq -s -r --argjson live "$(live_sessions)" --argjson pane "$pane" '
+        # Grouped by sender, the groups by their earliest wait, each in the order its waits began.
+        def grouped: (sort_by(.since) | reduce .[] as $e ({}; if has($e.from) then . else .[$e.from] = $e.since end)) as $first
             | sort_by([$first[.from], .from, .since, .id]);
-        # The order of a decision round over every orchestrator: urgent first, then by start.
-        def by_urgency: sort_by([(.urgent == true | not), .since, .id]);
+        # The round order (hooks/round.ts openEntries), the operator ruling of 2026-10-31 (6.2): the
+        # urgent first, then the others, each level grouped by sender.
+        def ordered: group_by(if .urgent == true then 0 else 1 end) | map(grouped) | add // [];
         # The sender is gone when its sessions file is absent; an entry naming no session is not judged.
         def gone: .session | if type == "string" and . != "" then gsub("[^A-Za-z0-9._-]"; "_") as $key | $live | any(. == $key) | not else false end;
         # An open question is due in the tab of the coordinator when its sender marked it urgent, or
         # when no pane of the coordinator is open (hooks/round.ts isDue).
         def due: .status == "open" and .kind == "operator" and (.urgent == true or ($pane | not));
         # The open entries, then those the operator answered from the pane, then the withdrawn.
-        ([("open", "answered", "withdrawn") as $status | map(select(.status == $status)) | if $by_urgency then by_urgency else ordered end] | add)[]
+        ([("open", "answered", "withdrawn") as $status | map(select(.status == $status)) | ordered] | add)[]
         | (if gone then " | sender gone" else "" end) as $gone
         | (if due then " | due" else "" end) as $due
         | "round \(.id) | \(.kind) | from \(.from) | since \(.since) | blocks: \(.blocks // "-") | \(.status)\($due)\($gone)",
@@ -898,22 +911,28 @@ forget_relayed() {
 }
 
 cmd_round_close() {
-    local id="${1:-}" answer="" has_answer=0
-    [ -n "$id" ] && shift || die 'round-close: usage: round-close <id> --answer "<text>"'
+    local id="${1:-}" answer="" has_answer=0 evidence="" has_evidence=0
+    local usage='round-close: usage: round-close <id> --answer "<text>" | --withdraw "<evidence>"'
+    [ -n "$id" ] && shift || die "$usage"
     while [ $# -gt 0 ]; do
         case "$1" in
             --answer) [ $# -ge 2 ] || die "round-close: --answer needs a value"; answer="$2"; has_answer=1; shift 2 ;;
+            --withdraw) [ $# -ge 2 ] && [ -n "$2" ] || die "round-close: --withdraw needs the evidence read on the artifact"
+                evidence="$2"; has_evidence=1; shift 2 ;;
             *) die "round-close: unknown option $1" ;;
         esac
     done
-    [ "$has_answer" = 1 ] || die 'round-close: usage: round-close <id> --answer "<text>"'
+    [ $((has_answer + has_evidence)) = 1 ] || die "$usage"
     # An id names a file of the round, never a path: the module's ids are sanitised the same way.
     printf '%s' "$id" | grep -qE '^[A-Za-z0-9._-]+$' && [ "$id" != . ] && [ "$id" != .. ] \
         || die "round-close: no entry $id in $ROUND"
     local path="$ROUND/$id.json" closed tmp
-    closed=$(jq -c --arg id "$id" --arg text "$answer" --arg at "$(now)" \
+    # A withdrawal is closed as an answer is, its evidence kept beside the text: the module tells
+    # the sender its question was withdrawn, never that the operator answered it.
+    [ "$has_evidence" = 1 ] && answer="withdrawn: settled meanwhile — $evidence"
+    closed=$(jq -c --arg id "$id" --arg text "$answer" --arg at "$(now)" --arg evidence "$evidence" --argjson withdraw "$has_evidence" \
         'select(type == "object" and .id == $id) | (.status == "open") as $open
-         | .status = "closed" | .answer = {text: $text, by: "coordinator", at: $at}
+         | .status = "closed" | .answer = ({text: $text, by: "coordinator", at: $at} + (if $withdraw == 1 then {evidence: $evidence} else {} end))
          | if $open and .kind == "operator" then .delivery = ({state: "pending", at: $at, attempts: 0} + (if .origin then {} else {answerAt: $at} end)) else . end' \
         "$path" 2>/dev/null) && [ -n "$closed" ] || die "round-close: no entry $id in $ROUND"
     # As the module writes it: a temporary file beside it, then one rename.

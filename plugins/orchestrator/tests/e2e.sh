@@ -136,7 +136,33 @@ check "the session inherits a login shell's PATH" "1" \
 # THE assertion this whole script exists for: the tier named at dispatch is the model the
 # live process carries. Everything else can be read from a dry run; this cannot.
 got=$(ps -t "${TTY#/dev/}" -o command= 2>/dev/null | grep -oE -- '--model [^ ]+' | awk '{print $2}')
-check "the live process carries the tier's model" "$bound" "$got"
+check "the live process carries the tier's model" "${bound%%/*}" "$got"
+
+# Every launched session carries its effort as well (decision 3): the one the dry run of the
+# same spawn names is on the live process line, and the session's first main-thread request,
+# on its own transcript, runs at it — the host honoured the flag, not only received it.
+want_effort=$(ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" spawn --dir "$WSDIR" --tier "$tier" --title "Agent : e2e probe" \
+      --prompt p 2>/dev/null | sed -n 's/^effort=//p')
+got_effort=$(ps -t "${TTY#/dev/}" -o command= 2>/dev/null | grep -oE -- '--effort [^ ]+' | awk '{print $2}')
+check "the live process carries the tier's effort" "$want_effort" "$got_effort"
+probe_sid=$(python3 -c 'import json,os,sys; print(json.load(open(os.path.join(os.environ.get("CLAUDE_CONFIG_DIR") or os.path.expanduser("~/.claude"), "sessions", sys.argv[1] + ".json"))).get("sessionId", ""))' "$pid" 2>/dev/null)
+first_effort=""
+waited=0
+while [ -z "$first_effort" ] && [ $waited -lt 60 ]; do
+  first_effort=$(python3 -c '
+import glob, json, os, sys
+for path in glob.glob(os.path.join(os.path.expanduser("~/.claude/projects"), "*", sys.argv[1] + ".jsonl")):
+    for line in open(path, errors="replace"):
+        try:
+            e = json.loads(line)
+        except ValueError:
+            continue
+        if e.get("type") == "api-request" and e.get("querySource") == "repl_main_thread":
+            print(((e.get("params") or {}).get("output_config") or {}).get("effort", "")); sys.exit(0)
+' "$probe_sid" 2>/dev/null)
+  [ -n "$first_effort" ] || { sleep 1; waited=$((waited+1)); }
+done
+check "its transcript's first request runs at that effort" "$want_effort" "$first_effort"
 
 # The session's working directory is the checkout, read from the process, not assumed.
 check "the session runs in its checkout" "1" \
@@ -154,7 +180,7 @@ check "the tab landed immediately right of its anchor" "$((pos_self + 1))" "$pos
 # having no tty of its own to resolve `self` against, leaves `me` empty — two different
 # causes the block below must tell apart instead of reporting one for the other.
 me_err=$(mktemp "$SANDBOX/self-probe.XXXXXX")
-me=$(ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" spawn --dir "$SANDBOX/repo" --title "Agent : e2e self" --trust \
+me=$(ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title "Agent : e2e self" --trust \
       --prompt "Do nothing." --right-of self 2>"$me_err" | sed -n 's/^self=//p')
 if [ -n "$me" ]; then
   # The caller's own row, marked: the reading an orchestrator goes without when it takes the
@@ -177,7 +203,8 @@ if [ -n "$me" ]; then
   # caller, left of the agents, and the agents' entries move under its tty. It is spawned
   # with NO title, because a successor carries the caller's own name (§39): the name column
   # of the listing is where that is read back, and it is the only instrument that reads it.
-  succ_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --trust \
+  # No tier either: a successor runs on its caller's live model and effort (decision 3).
+  succ_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --trust \
         --prompt "Do nothing." --successor 2>&1)
   SUCC=$(printf '%s' "$succ_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
   pos_me=$(bash "$AGENT" list | grep -n "$me" | cut -d: -f1)
@@ -204,14 +231,15 @@ rm -f "$me_err"
 
 # An auditor is placed immediately LEFT of its caller (§52), and read back after the spawn:
 # the launch reports done only when the real order says so. The caller is `$me`, the tab this
-# script runs in; the auditor needs a model on record for this session, and a shell that has
-# none is refused by the launcher, which is a fact to state, not a failure of the placement.
+# script runs in; the auditor needs this session's model and effort, read on its transcript,
+# and a shell that has none is refused by the launcher, which is a fact to state, not a
+# failure of the placement.
 if [ -n "$me" ]; then
   aud_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --auditor --title "Audit : e2e probe" --trust \
         --prompt "Do nothing." 2>&1)
   AUD=$(printf '%s' "$aud_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
-  if [ -z "$AUD" ] && printf '%s' "$aud_out" | grep -q '/orchestrator-install'; then
-    echo "  skip the auditor: no model on record for this session"
+  if [ -z "$AUD" ] && printf '%s' "$aud_out" | grep -q 'they cannot be read'; then
+    echo "  skip the auditor: this session's model and effort cannot be read"
   else
     check "an auditor spawn returns a tty" "yes" \
       "$(printf '%s' "$AUD" | grep -qE '^/dev/tty' && echo yes || printf 'no tty; spawn said: %s' "$(printf '%s' "$aud_out" | tail -2 | tr '\n' ' ')")"

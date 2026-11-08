@@ -447,6 +447,15 @@ test('a brief that is not among the files, an empty directory and a bad field ar
   expect(fx.sent).toEqual([])
 })
 
+test('a move record with an empty effort is refused', async () => {
+  const h = mounted()
+  const fx = sender()
+  const answer = await h['tool.call:move_send'](fx.dollar, sendInput(fx, { effort: '' }))
+  expect(answer.isError).toBe(true)
+  expect(answer.result).toBe('effort: one of "low", "medium", "high", "xhigh", "max"')
+  expect(fx.sent).toEqual([])
+})
+
 test('a send the peer cannot be reached for is an error, and the move is kept to be sent again', async () => {
   const h = mounted()
   const fx = sender({ unreachable: [ADDRESS_B] })

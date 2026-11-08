@@ -74,7 +74,7 @@ to this repository only once it is proved stable (`docs/migration.md`).
 | 4b | Method | 19, 20 | The `method` plugin from what the orchestrator and implement state today; then implement on it. |
 | 5 | Security | 11, 12 | |
 | 6 | Platforms | 6 | Ratchet `ci/plugins.json` plugin by plugin. |
-| 7 | Plugin defects | 13 | One plugin per pull request, from the lists below. The orchestrator's urgent fixes run in its former repository and are imported; its refactoring is `orchestrator-refoundation-design.md`, and touches `plugins/orchestrator/` only once the urgent build has ended. |
+| 7 | Plugin defects | 13 | One plugin per pull request, from the lists below. The orchestrator's urgent fixes run in its former repository and are imported the same day; its refactoring is `orchestrator-refoundation-design.md`, run here alongside. |
 | 8 | Prompts and evals | 14, 15, 21, 22 | Spend caps, set by the operator: « Eval spend caps » below. |
 | 9 | Configuration and cutover | 16, 17 | |
 
@@ -97,7 +97,7 @@ cap is the operator's.
 
 ## Copied rules core replaces (goal 3)
 
-- The shell reader: in core since github's copy moved there (`packages/core/src/shell.ts`); the orchestrator's `hooks/tokenizer.ts` follows once its urgent build has ended.
+- The shell reader: in core since github's copy moved there (`packages/core/src/shell.ts`); the orchestrator's `hooks/tokenizer.ts` follows in its refoundation.
 - The push detector, four times: orchestrator's push guard, `plugins/github/hooks` (`bashPushes`),
   `plugins/norms/hooks/guards.ts`, `plugins/pr-review/hooks/policy.ts` (`runsGitPush`). Removed
   with goal 12 rather than unified.

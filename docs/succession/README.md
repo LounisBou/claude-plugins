@@ -24,9 +24,9 @@ Every one of them was given explicitly; none is reopened.
 - **Keep**: the orchestrator's iTerm sessions and home session, `deck.json`'s format, the spawn
   without approval, the launcher's trust write (made safe, not removed), the context gauge.
 - **The orchestrator is the operator's**: its urgent fixes run in the old
-  `LounisBou/claude-orchestrator` repository by the operator's own orchestrator; this repository
-  does not touch `plugins/orchestrator/` until the operator says its urgent build is over. Then
-  its refoundation is `docs/specs/orchestrator-refoundation-design.md`.
+  `LounisBou/claude-orchestrator` repository by the operator's own orchestrator, each imported
+  here the same day; its refoundation (`docs/specs/orchestrator-refoundation-design.md`) runs
+  here alongside. Last import: `b55da76` (0.98.2).
 - A PR or an issue is always named with its repository: `claude-plugins#24`, never `#24`.
 
 ## State by phase (main at `349e5bb`)

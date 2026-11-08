@@ -3,12 +3,18 @@
 # implementation beside it, which drives iTerm2 through the app's own API.
 #
 #   iterm-agent.sh list
-#   iterm-agent.sh spawn --dir <path> [--tier deep|standard|light | --model <id> | --inherit-model]
+#   iterm-agent.sh spawn --dir <path> (--tier deep|standard|light | --model <id> --effort <level> | --inherit-model)
 #                        [--effort low|medium|high|xhigh|max] [--permission-mode auto] [--title <t>]
 #                        (--prompt <text> | --prompt-file <path> | --brief <path> --orchestrator <name>)
 #                        [--left-of <tty> | --right-of <tty> | --right-of self | --successor] [--no-verify]
 #                        [--gate-tokens <positive integer>] [--resident]
 #                        [--keep-tool <name>] [--drop-tool <name>] [--keep-synced-skills]
+#     Every launch carries its model and its effort: an agent's are its orchestrator's (a tier,
+#     whose effort is the map's, else the plugin's shipped one, else for deep the caller's own;
+#     or --model with --effort), and an agent given neither --tier nor --model is refused. A
+#     succession of any role (--successor, --auditor, --coordinator-successor, an inheriting
+#     spawn, a rotation given no pair) runs on its predecessor's live pair, read on its
+#     transcript; --tier, --model and --effort are refused beside --successor.
 #     An agent given no placement flag is placed as --right-of self: after the caller's last
 #     agent while that tab is still contiguous with the caller's group, otherwise directly
 #     right of the caller, never at the window's end.
@@ -26,18 +32,20 @@
 #     ORCHESTRATOR_CONTEXT_GATE_TOKENS beside ORCHESTRATOR_SPAWNED. Absent, nothing is
 #     exported and the default holds. With --brief, the startup prompt also says the gate.
 #   iterm-agent.sh spawn --dir <path> --auditor --title "Audit : <subject>" (--prompt <text> | --prompt-file <path>)
-#     the caller's auditor: left of the caller, its model, remote control on, no chain
+#     the caller's auditor: left of the caller, its model and effort, remote control on, no chain
 #   iterm-agent.sh spawn --dir <path> --coordinator-successor --title "Coord : <subject>" (--prompt <text> | --prompt-file <path>)
-#     the coordinator's own successor: first place of the caller's window, its model,
+#     the coordinator's own successor: first place of the caller's window, its model and effort,
 #     remote control on, no chain
-#   iterm-agent.sh spawn --dir <path> --wake --title "Orch : <subject>" --model <id> [--effort <level>] [--resume <session id>] (--prompt <text> | --prompt-file <path>)
-#     a paused orchestrator relaunched: its recorded name, model and effort, remote control on,
+#   iterm-agent.sh spawn --dir <path> --wake --title "Orch : <subject>" [--model <id> --effort <level>] [--resume <session id>] (--prompt <text> | --prompt-file <path>)
+#     a paused orchestrator relaunched: its recorded name; the pair its resumed transcript
+#     holds, else its recorded model and effort, else the host's default; remote control on,
 #     no chain, in window 0 of a home session of its own shown by a tab immediately right of
 #     the caller; --resume brings back its recorded conversation
 #     (--open makes its home session the same way, the server named after the id it is given)
-#   iterm-agent.sh spawn --open --title "Orch : <subject>" --dir <path> [--tier <t> | --model <id> | --inherit-model] [--effort <level>] (--prompt <text> | --prompt-file <path>)
+#   iterm-agent.sh spawn --open --title "Orch : <subject>" --dir <path> [--model <id> --effort <level>] (--prompt <text> | --prompt-file <path>)
 #     a new orchestrator opened on the operator's order, by a coordinator or an orchestrator
-#     only: immediately right of the caller, the deep tier unless told, remote control on,
+#     only: immediately right of the caller, the pair the order names or the host's default
+#     (a model alone, a tier and --inherit-model are refused), remote control on,
 #     no chain. `--open` comes right after `spawn`: that is the form the rule every
 #     `install.sh` run writes names
 #   iterm-agent.sh home --session <id> --name "Orch : <subject>" [--prompt <text>]
@@ -55,11 +63,17 @@
 #     what a session is given and what each item costs per call, from a transcript
 #   iterm-agent.sh verify --tty /dev/ttysNNN [--pid <pid>]
 #   iterm-agent.sh resolve-tier <deep|standard|light>
+#   iterm-agent.sh pair
+#     the calling session's model and effort now, read on its transcript:
+#     `model=<model> effort=<level>`, or exit 1 and the reason
 #   iterm-agent.sh close --tty /dev/ttysNNN [--expect-title <substring>] [--keep-checkout]
 #     a tab that shows a home session ends its whole server first, every window of it proved
 #     gone, and prints `home: ended the server <name> …, session <id>` after its first line
+#     window 0 of a home session is closed only by takeover: close refuses it, before any kill
 #   iterm-agent.sh move --tty /dev/ttysNNN (--left-of <tty> | --right-of <tty> | --right-of self | --leftmost)
 #   iterm-agent.sh rotate --old-tty /dev/ttysNNN [--expect-title <s>] <spawn options...>
+#     given no --tier and no --model, the replacement runs on the rotated agent's live pair
+#     window 0 of a home session is refused before anything is spawned: only takeover closes it
 #   iterm-agent.sh trust prune [--apply]
 #     list, then remove with --apply, the trust entries whose directory is gone
 #

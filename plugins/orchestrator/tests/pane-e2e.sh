@@ -486,7 +486,8 @@ check "reopened by the file's own prefixed name, the pane draws every pending qu
 
 # The short names as the installer writes them, here as project commands: the typeahead draws
 # one name per row and one row per description, and the copy of `/orchestrator-supervision`, the
-# one command of both roles (the operator's ruling 229, « B »), toggles the pane. The host also reads the operator's real ~/.claude/commands (HOME is kept
+# one command of both roles (the operator's ruling 229, « B »), toggles the pane. The host also
+# reads the operator's real ~/.claude/commands (HOME is kept
 # for its login), so the rows of the operator's own copies may be drawn too: the checks count
 # a wrapped description only on the rows of the sandbox's names, and need two rows at least,
 # so they hold whether or not the real copies exist. A row of the list starts with its name;

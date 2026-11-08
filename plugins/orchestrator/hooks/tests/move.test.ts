@@ -544,14 +544,17 @@ test('the arrival notice says when there is no git, no pull request, and the def
   expect(text).toContain('effort default')
 })
 
-test('the opening command gives the effort after the model, and no effort at all for the default', () => {
+// A record from a peer that kept no effort (0.98.0 wrote '') carries half a pair, which the
+// launcher's opening refuses: the arrival types neither, and the host's default applies.
+test('the opening command gives the effort after the model, and neither for the default effort', () => {
   const opening = (effort: MoveRecord['effort']) => {
     const m = manifest({ record: record({ effort }) })
     return arrivedNotice(m, arrivalOf(m, LINUX) as Arrival, 'Coord : ops', LAUNCHER).split('\n').pop()!
   }
   expect(opening('max')).toContain(' --model a-model --effort max --prompt "')
-  expect(opening('')).toContain(' --model a-model --prompt "')
+  expect(opening('')).toContain(' --permission-mode auto --prompt "')
   expect(opening('').includes('--effort')).toBe(false)
+  expect(opening('').includes('--model')).toBe(false)
 })
 
 test('the opening command quotes a directory with a space and a model with a variant suffix', () => {

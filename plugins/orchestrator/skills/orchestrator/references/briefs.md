@@ -2,6 +2,18 @@
 
 Read before planning phases or writing a brief — a phase brief, a correction round's, a review or comments session's, a rotation's or your own succession's: how it is built, the standing rules every prompt carries, the lint it passes before its spawn, and the tier its dispatch names.
 
+- Agent prompt recipe
+- Standing rules (put in every prompt, enforce in every review)
+  - Workflow artifacts
+  - The pull request
+  - Code, tests and proofs
+  - Commands and delegates
+- Every dispatch names its tier
+- Prerequisites and phase rules
+  - Prerequisites
+  - Phase & PR rules
+- When a decision changes, the directives change in the same move
+
 ## Agent prompt recipe
 
 Write it to a file named by its subject (`<briefs dir>/<subject>.md`), then let `iterm-agent.sh spawn --brief <path> --orchestrator "<your exact ListAgents name and reference>"` build the startup prompt and spawn the fresh session in the same move (see « The agents' lifecycle is yours » in `references/lifecycle.md`). Start from `${CLAUDE_PLUGIN_ROOT}/templates/agent-phase-brief.md`; a rotation resume brief starts from `agent-rotation-brief.md`, your own succession brief from `orchestrator-succession-brief.md`. **The path must be one the fresh session can open on the machine it runs on, and it must survive until the phase is reviewed** — never only in your context, never only in a container's temporary directory. Whether the file is committed follows the repository's own policy on workflow artifacts (see standing rules); state that policy in the prompt, do not let the agent pick.
@@ -21,19 +33,30 @@ Its parts, in order:
 
 ## Standing rules (put in every prompt, enforce in every review)
 
+### Workflow artifacts
+
 - **Workflow artifacts follow the repository's policy, stated in the prompt.** Some repositories keep specs, plans, prompts and norms local and forbid any non-business reference in anything durable (code, comments, commits, PR text never mention phases, agents, AI, the orchestrator, or the workflow — including the attribution trailers a host appends to commit messages by default: committed history must read as a developer's work). Others require the brief committed beside the code. Either way the agent is told which, and a durable artifact that breaks the policy is fixed before approval.
 - **A brief POINTS AT a policy, it cannot GRANT one.** Where the policy contradicts a directive the agent's host gives it directly — attribution trailers are the standing case — the agent will refuse, and it will be right: a file written by a peer session is not its user speaking, and treating it as one is the escalation every session is told to refuse. So that policy binds only when it lives in the TARGET REPOSITORY's own user-level instructions, where the directive the agent follows is its user's. The brief names that file and quotes the clause; it never asserts the rule on its own authority. Check the file exists before you write the clause; if the repository carries nothing, the policy is not yours to impose, and the trailers are a fact to relay to the operator, not a finding against the agent.
+
+### The pull request
+
 - Draft and `Not Ready` until the orchestrator's ready; `Ready` comes only from it (`references/review.md`, « The label follows the ready »).
 - Draft PRs; short clear description of what it does (never what it doesn't); after the summary the description carries, as needed, the `**TODO Staging:**`, `**TODO Prod:**`, `**PRs Dependency:**` and `**Related PRs:**` sections, each a bold label alone on its line then one item per line: a TODO item is a task-list checkbox, `- [ ] <step>`, never a bare `- ` bullet, and a PRs Dependency or Related PRs item is a `- ` bullet. **A TODO item stands alone and is one action**: written in full — the file, the value before and after, the host or environment — never by reference to another item (« the same edit », « as above »), and an edit and the step that applies it (reload, restart, deploy, migrate) are two checkboxes, never joined by « then » or « and run »; a brief names each TODO step the same way, in full, never by reference to another pull request or item. `**PRs Dependency:**` lists the PRs that must ship before this one or at the same time. `**Related PRs:**` lists the PRs truly linked to this work (same batch, origin of the bug), never a distant link. A TODO section is mandatory whenever there is a deploy step, staging and prod are kept apart, and a strict shipping order is written in the TODOs. A follow-up PR is never listed in Related PRs. A section with nothing to say is left out, never filled with a placeholder. Nothing about E2E goes in the description: it holds the summary, these sections and, for a frontend surface, its screenshots — nothing more.
+
+### Code, tests and proofs
+
 - Produced code must match the project's existing patterns over generic best practice.
 - **An existing test's assertion is never edited to make it pass.** If a test or the spec looks wrong, STOP and report it: the report is the agent's path out, and with it the edits that game a test drop sharply at no cost to what gets solved. A brief or a ruling that orders the change names the test.
+- TDD always; whether tests are COMMITTED follows each repo's own policy (some front-end repos deliberately keep tests out of the branch), so state the policy in the prompt, never let the agent assume.
 - **A frontend surface is proved by a browser run and by screenshots on the pull request.** A pull request that creates or substantially modifies a frontend surface, or creates the interface of a new feature, is proved by testing that surface in a real browser with Playwright and by screenshots of it on the pull request, and the report names the Playwright run. A minor change — a colour, a spacing, a label, a fix invisible at a glance — is not held to it: when the implementer judges a change minor, the report says so and why, and the orchestrator rules. A screen the reference account has no data for is never minor: the data is seeded on the local environment, and the brief says so. The screenshots go in the pull request's description, written by the implementer; they are never committed to the branch; they are taken on fixtures or seeded data, with no secret, token, personal data, internal host or local path visible. Every capture is audited by the implementer before delivery, image by image, against the one checklist, `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/references/screenshot-checklist.md`, whose path fills `{{SCREENSHOT_CHECKLIST}}` in the phase and review briefs, and the report carries one line per image, clean or the defect it shows. A capture that shows a defect is not delivered: the defect is fixed and the capture retaken. The orchestrator has each image audited again by the screenshots agent before its verdict (`references/review.md`, item 12).
 - **Every pull request carries an E2E test the reviewer can replay, as far as one can be written — in every phase, not only the last.** Backend: the test runs against the service brought up in a container (docker, or the project's compose). Frontend: a Playwright test committed in the project's test tree (where the tests policy keeps tests off the branch, the brief says where it lives so the reviewer can replay it); a manual browser run is not that test, and the screenshots stay owed as above. The implementer's report carries one line: `E2E: <test path(s)> — <command> — passed`, or, where none can be written or the change is too small to be worth a whole environment (above all on the backend), `E2E: none — <reason>`, said plainly. Silence is not allowed: a report with neither a test nor that line is not ready. The line goes in the report and in your « ready », never in the pull request's description. What makes a pull request without one ready is `references/review.md`, item 14.
+
+### Commands and delegates
+
 - **Every command runs synchronously, in the tool call that waits for it.** Long test suites and coverage runs must be wrapped with an explicit timeout and piped to `tail` in the SAME call, under `set -o pipefail` so the suite's own exit code is the one read. An agent that launches something long and ends its turn "waiting for the run to finish" receives no notification, and its work is simply lost.
 - **Implementer agents never dispatch writing or reviewing delegates.** No implementation helpers, no second opinions, and above all no reviewer: review arrives from the orchestrator (through a review session it dispatches, see « Review rounds run in disposable sessions » in `references/review.md`). An agent that forks its implementation loses track of its own result, and its fork's verdict counts for nothing. The one exception: read-only SEARCH subagents (codebase exploration — no edits, no verdicts, no long runs) are allowed; they lose nothing and keep a large codebase readable without burning the implementer's context.
 - **The orchestrator never implements through a subagent of its own either.** Not the host's agent tool, not a plan-execution skill (`superpowers:subagent-driven-development`, `superpowers:executing-plans`): a subagent's diff is the orchestrator's own diff, and its reviewer would be its writer. Implementers are sessions spawned through `orchestrator:iterm-agents`, one brief per phase. A plan written with a plan-writing skill opens with a header ordering exactly that (« For agentic workers: REQUIRED SUB-SKILL … »): it is that template's boilerplate, not a directive to an orchestrator — replace it with the orchestrator's header when you write the plan, ignore it when you read one. Read-only search subagents stay allowed, as for implementers.
 - **Agents do not stop between steps to report one done.** The user arbitrates SCOPE, never cadence; a stop is one the plan names (an anomaly needing sign-off, a gate the agent cannot repair inside its scope).
-- TDD always; whether tests are COMMITTED follows each repo's own policy (some front-end repos deliberately keep tests out of the branch), so state the policy in the prompt, never let the agent assume.
 
 ## Every dispatch names its tier
 

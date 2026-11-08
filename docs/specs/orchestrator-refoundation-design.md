@@ -53,8 +53,10 @@ operator works.
 The urgent fixes run first in the former repository (`docs/specs/urgent-fixes-design.md` of
 `LounisBou/claude-orchestrator`): the stop gate's order, the liveness reads, the stale gauge
 reading, the coordinator's collision lines, the permission-mode allowlist, the locked trust
-write. They are imported here by `git subtree pull`. Until that build has ended, no pull request
-of this one touches `plugins/orchestrator/`: the two would conflict.
+write. The operator keeps using the former repository's plugin meanwhile: each urgent fix
+merged there is imported here the same day (`git diff <last imported> <merged> --binary | git apply
+--index --directory=plugins/orchestrator`), and this build runs alongside, a conflict resolved at
+the import.
 
 Defects this build owns (line numbers at 0.98.0, relative to `plugins/orchestrator/`):
 

@@ -270,6 +270,29 @@ test('the open entries come grouped by sender, the groups by their earliest wait
   expect(openEntries([])).toEqual([])
 })
 
+// The operator's ruling of 2026-10-31 (6.2): urgent first, then grouped by orchestrator within each
+// level, oldest first.
+test('an urgent question of a later sender comes first, and within each level its sender\'s questions stay together', () => {
+  const urgent = (e: RoundEntry): RoundEntry => ({ ...e, urgent: true })
+  const entries = [
+    entry('Orch : a', '2026-10-18T10:00:00.000Z'),
+    urgent(entry('Orch : b', '2026-10-18T10:01:00.000Z')),
+    entry('Orch : b', '2026-10-18T10:02:00.000Z'),
+    urgent(entry('Orch : a', '2026-10-18T10:03:00.000Z')),
+    entry('Orch : b', '2026-10-18T10:06:00.000Z'),
+    entry('Orch : a', '2026-10-18T10:07:00.000Z'),
+    urgent(entry('Orch : a', '2026-10-18T10:04:00.000Z', 'answered')),
+  ]
+  expect(openEntries(entries).map(e => `${e.from} ${e.since.slice(11, 16)}${e.urgent ? ' urgent' : ''}`)).toEqual([
+    'Orch : b 10:01 urgent',
+    'Orch : a 10:03 urgent',
+    'Orch : a 10:00',
+    'Orch : a 10:07',
+    'Orch : b 10:02',
+    'Orch : b 10:06',
+  ])
+})
+
 // --- several questions in one entry ------------------------------------------------------------
 
 test('an entry holding two numbered questions is split at each numbering line, the first keeping what precedes it', () => {

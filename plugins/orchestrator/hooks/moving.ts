@@ -75,8 +75,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
             name: { type: 'string', description: 'The moved orchestrator\'s name, "Orch : <subject>", with no reference' },
             brief: { type: 'string', description: 'Absolute path of its brief, on this machine; the files beside it travel' },
             dir: { type: 'string', description: 'Absolute path of its working directory, on this machine' },
-            model: { type: 'string', description: 'The model it runs on' },
-            effort: { type: 'string', enum: ['', 'low', 'medium', 'high', 'xhigh', 'max'], description: 'The effort it runs at, or "" for the default' },
+            model: { type: 'string', description: 'The model it runs on, as `iterm-agent.sh pair` reads it' },
+            effort: { type: 'string', enum: ['low', 'medium', 'high', 'xhigh', 'max'], description: 'The effort it runs at, as `iterm-agent.sh pair` reads it' },
             prs: { type: 'array', items: { type: 'string' }, description: 'Its pull requests, one line each' },
             checkouts: { type: 'array', items: { type: 'string' }, description: 'Absolute paths of its checkouts on this machine; each must be clean and pushed' },
             order: { type: 'string', description: "The operator's order, verbatim and dated" },
@@ -237,7 +237,9 @@ type SendInput = { to: string; record: MoveRecord; chunk: number }
 // What the sender's model is told to do when a move stopped midway.
 const RESUME = 'call move_send again with the same arguments to resume it'
 
-const EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max']
+// The effort is never empty: an opened orchestrator carries its model with its effort, and
+// the sender reads both with `iterm-agent.sh pair` rather than declaring a default.
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 
 // The call's arguments as a record, or the reason they are refused. What the protocol bounds
 // (the name's shape, the paths, the order's length) is judged once the manifest is built.

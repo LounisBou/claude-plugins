@@ -29,11 +29,12 @@
 # the sandbox: its state (ORCHESTRATOR_STATE_DIR, the chain and the launch files among it) and
 # the module's own files (ORCHESTRATOR_MODULE_DIR). What the host itself keeps of a session it
 # ran is its own bookkeeping: the transcript directory of the sandbox's work path is removed at
-# the end, and the prompt history keeps its lines naming the sandbox, which the script only
-# counts. The sandbox lives under ORCHESTRATOR_E2E_DIR (/tmp by default), a directory the host
-# already trusts: the script never accepts the trust question, and refuses to go on when a
-# host asks it. It skips itself without tmux, jq or the host. The banner's plan is the
-# operator's: ORCHESTRATOR_E2E_PLAN=Ultra on a machine whose banner reads so.
+# the end (copied first into the sandbox with --keep), and the prompt history keeps its lines
+# naming the sandbox, which the script only counts. The sandbox lives under ORCHESTRATOR_E2E_DIR
+# (/tmp by default), a directory the host already trusts: the script never accepts the trust
+# question, and refuses to go on when a host asks it. It skips itself without tmux, jq or the
+# host. The banner's plan is the operator's: ORCHESTRATOR_E2E_PLAN=Ultra on a machine whose
+# banner reads so.
 
 set -uo pipefail
 
@@ -96,6 +97,8 @@ cleanup() {
   sleep 2
   local transcripts
   transcripts=$(printf '%s' "$WORKDIR" | sed 's/[^A-Za-z0-9]/-/g')
+  # A kept run keeps what its hosts wrote too, copied into the sandbox before it is removed.
+  [ "$KEEP" = 1 ] && [ -d "$HOSTDIR/projects/$transcripts" ] && cp -R "$HOSTDIR/projects/$transcripts" "$SANDBOX/transcripts"
   case "$transcripts" in *-tmux-e2e-*-work) rm -rf "${HOSTDIR:?}/projects/$transcripts" ;; esac
   rm -f "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/$SERVER" "/private/tmp/tmux-$(id -u)/$SERVER"
   [ "$KEEP" = 1 ] || rm -rf "$SANDBOX"
@@ -186,12 +189,20 @@ wait_for() { # <pane> <text> <seconds>
 # The host's reply: a line the host marks with its bullet and that carries the word, in
 # whatever case it answers.
 REPLY_RE() { printf '^[[:space:]]*⏺.*%s' "$1"; }
+# A wait that ends without the reply leaves the pane as it stood then in the sandbox, under
+# the word, with the times (UTC) the wait started and the capture was taken.
 wait_reply() { # <pane> <word> <seconds>
-  local i=0
+  local i=0 started
+  started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   while [ $i -lt $(($3 * 2)) ]; do
     screen_of "$1" | grep -qiE "$(REPLY_RE "$2")" && return 0
     sleep 0.5; i=$((i + 1))
   done
+  mkdir -p "$SANDBOX/missed"
+  { printf 'pane: %s\nword: %s\nwait started: %s\ncaptured: %s\n\n' "$1" "$2" "$started" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    case "$1" in *::*) tmux -L "${1%%::*}" capture-pane -p -S - -t "${1#*::}" ;; *) tm capture-pane -p -S - -t "$1" ;; esac
+  } > "$SANDBOX/missed/$2.txt" 2>&1
+  echo "missed reply: $1 captured in $SANDBOX/missed/$2.txt"
   return 1
 }
 
@@ -235,6 +246,19 @@ prompt() { printf 'Reply with these words joined by hyphens, in lower case, and 
 agent() { # <title> <word>: an agent spawned as the orchestrator spawns one
   launcher 90 spawn --dir "$WORKDIR" --tier light --permission-mode acceptEdits --title "$1" \
     --prompt "$(prompt "$2")" --right-of self
+}
+
+# Every test host's command line, read while it runs: none may lack remoteControlAtStartup=false
+# or carry --remote-control. Offenders accumulate; the last check reads them.
+RC_SEEN=0; RC_BAD=()
+audit_rc() {
+  local line
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    RC_SEEN=$((RC_SEEN + 1))
+    case "$line" in *'"remoteControlAtStartup":false'*) ;; *) RC_BAD+=("no setting: ${line:0:90}") ;; esac
+    case "$line" in *--remote-control*) RC_BAD+=("remote control: ${line:0:90}") ;; esac
+  done < <(ps -axo command= 2>/dev/null | grep -- '--setting-sources project' | grep -v 'grep\|tmux-e2e')
 }
 
 echo "== the switch =="
@@ -322,19 +346,6 @@ check "the chain holds the replacement's window alone" "tmux:$SOCKET:$W3 $THREE"
   "$(chain | jq -r '"\(.tab_id) \(.tty)"' | paste -sd'|' -)"
 check "window 0 is still the current window" "0 orch 1" "$(windows | awk '$1 == 0 { print $1, $3, $4 }')"
 
-# Every test host's command line, read while it runs: none may lack remoteControlAtStartup=false
-# or carry --remote-control. Offenders accumulate; the last check reads them.
-RC_SEEN=0; RC_BAD=()
-audit_rc() {
-  local line
-  while IFS= read -r line; do
-    [ -n "$line" ] || continue
-    RC_SEEN=$((RC_SEEN + 1))
-    case "$line" in *'"remoteControlAtStartup":false'*) ;; *) RC_BAD+=("no setting: ${line:0:90}") ;; esac
-    case "$line" in *--remote-control*) RC_BAD+=("remote control: ${line:0:90}") ;; esac
-  done < <(ps -axo command= 2>/dev/null | grep -- '--setting-sources project' | grep -v 'grep\|tmux-e2e')
-}
-
 # The session a host process on a tty registered, and how many live processes hold it.
 sid_on() { # <tty>
   local pid
@@ -382,6 +393,11 @@ check "the session to move replied within 90s" "1" "$CONV_REPLIED"
 CSID=$(sid_on "$CONV_TTY"); CHOME="orch-$(printf '%s' "$CSID" | tr -cd '0-9A-Za-z' | cut -c1-8)"
 HOMES+=("$CHOME")
 CLINES=$(lines_of "$CSID")
+# The move resumes the session on the pair its transcript holds, the model id the host wrote and
+# not the alias the session was launched with: read it there, before the move.
+CONV_PAIR=$(jq -r 'select(.type == "api-request" and .querySource == "repl_main_thread") | "\(.params.model) \(.params.output_config.effort)"' \
+  "$TRANSCRIPTS/$CSID.jsonl" 2>/dev/null | tail -1)
+[ -n "$CONV_PAIR" ] || { echo "refused: the moved session's transcript holds no main-thread request" >&2; exit 1; }
 LT=plain:0; LENV=(ORCHESTRATOR_HOME_NO_TAB=1 ORCHESTRATOR_TEST_RUN=1 "ORCHESTRATOR_HOST_CLI=$REAL_HOST")
 launcher 30 home --session "$CSID" --name "Orch : e2e conv" --prompt "$(recall)"
 check "the move starts the home server named after the session, window 0 named after the orchestrator, the mark set by the conf" \
@@ -395,7 +411,7 @@ if wait_host "$CHOME_TTY" 150; then CUP=1; else CUP=0; fi
 check "the old process ended and window 0 resumed the session" "0|1" "$(hosts_on "$CONV_TTY")|$CUP"
 CLINE=$(ps -t "${CHOME_TTY#/dev/}" -o command= 2>/dev/null | grep -- '--setting-sources project' | head -1)
 check "window 0 replays the launch: its settings, model and mode, the session resumed under the orchestrator's name" "1|1|1|1|1" \
-  "$(printf '%s' "$CLINE" | grep -c -- '--setting-sources project')|$(printf '%s' "$CLINE" | grep -c -- "--model $MODEL")|$(printf '%s' "$CLINE" | grep -c -- '--permission-mode acceptEdits')|$(printf '%s' "$CLINE" | grep -c -- "--resume $CSID")|$(printf '%s' "$CLINE" | grep -c -- '--name Orch : e2e conv$')"
+  "$(printf '%s' "$CLINE" | grep -c -- '--setting-sources project')|$(printf '%s' "$CLINE" | grep -cF -- "--model ${CONV_PAIR% *} --effort ${CONV_PAIR#* }")|$(printf '%s' "$CLINE" | grep -c -- '--permission-mode acceptEdits')|$(printf '%s' "$CLINE" | grep -c -- "--resume $CSID")|$(printf '%s' "$CLINE" | grep -c -- '--name Orch : e2e conv$')"
 resumed_or_exit "$CHOME::home:0"
 if wait_reply "$CHOME::home:0" ready-conv-e2e 120; then CRECALL=1; else CRECALL=0; fi
 audit_rc
@@ -406,7 +422,7 @@ check "one live session holds the id, under the orchestrator's name, and its tra
 echo "== open, pause and wake, from the coordinator's own place =="
 jq -n --arg tty "$COORD_TTY" '{tty: $tty, name: "Coord : e2e"}' > "$STATE/coordinator.json"
 LENV=(ORCHESTRATOR_HOME_NO_TAB=1 ORCHESTRATOR_TEST_RUN=1)
-launcher 120 spawn --open --dir "$WORKDIR" --tier light --permission-mode acceptEdits --title "Orch : e2e open" \
+launcher 120 spawn --open --dir "$WORKDIR" --model "$MODEL" --effort low --permission-mode acceptEdits --title "Orch : e2e open" \
   --prompt "$(prompt E2E-OPEN-READY)"
 OPEN_TTY=$(out | tail -1)
 OHOME=$(sed -n 's/^spawn: home server \([^ ,]*\),.*/\1/p' "$STEP.err" | head -1)
@@ -430,10 +446,10 @@ check "the pause ends the server, names the session window 0 ran, and leaves no 
   "$PAUSED|$(hosts_on "$OPEN_TTY")|$(pgrep -f -- "-L $OHOME" | grep -c .)|$(tmux -L "$OHOME" has-session 2>/dev/null && echo 0 || echo 1)"
 printf 'b\n' > "$SANDBOX/run/brief.md"
 ORCHESTRATOR_STATE_DIR="$STATE" bash "$ROOT/skills/coordinator/scripts/coordinator.sh" sleep --name "Orch : e2e open" \
-  --brief "$SANDBOX/run/brief.md" --dir "$WORKDIR" --model "$MODEL" --session "$OSID" >/dev/null 2>&1
+  --brief "$SANDBOX/run/brief.md" --dir "$WORKDIR" --model "$MODEL" --effort low --session "$OSID" >/dev/null 2>&1
 check "the sleeping record keeps the session" "1" \
   "$(ORCHESTRATOR_STATE_DIR="$STATE" bash "$ROOT/skills/coordinator/scripts/coordinator.sh" sleeping 2>/dev/null | grep -c "session $OSID\$")"
-launcher 120 spawn --wake --dir "$WORKDIR" --title "Orch : e2e open" --model "$MODEL" --permission-mode acceptEdits \
+launcher 120 spawn --wake --dir "$WORKDIR" --title "Orch : e2e open" --model "$MODEL" --effort low --permission-mode acceptEdits \
   --resume "$OSID" --prompt "$(recall)"
 WAKE_TTY=$(out | tail -1)
 check "the wake resumes the recorded session in window 0 of a new home server" "0|$WAKE_TTY|1" \
@@ -449,8 +465,18 @@ LENV=()
 echo "== the successor: a window of the same session, then window 0 =="
 tm rename-window -t home:0 "Orch : e2e lead"
 LT=home:0
-launcher 120 spawn --successor --dir "$WORKDIR" --tier light --permission-mode acceptEdits --title "Orch : e2e lead" \
+# A succession runs on its caller's live pair, read on the caller's transcript. Window 0 is
+# started under `env -i`, with no session id and no transcript: give it one, a fixture whose
+# last main-thread request names the pair, under the host's projects directory so the run's
+# cleanup removes it with the rest.
+LEAD_SID=e2e-lead-$$
+mkdir -p "$TRANSCRIPTS"
+printf '{"type":"api-request","sessionId":"%s","querySource":"repl_main_thread","params":{"model":"%s","output_config":{"effort":"low"}}}\n' \
+  "$LEAD_SID" "$MODEL" > "$TRANSCRIPTS/$LEAD_SID.jsonl"
+LENV=(CLAUDE_CODE_SESSION_ID="$LEAD_SID" ORCHESTRATOR_PROJECTS_DIR="$HOSTDIR/projects")
+launcher 120 spawn --successor --dir "$WORKDIR" --permission-mode acceptEdits --title "Orch : e2e lead" \
   --no-remote-control --prompt "$(prompt E2E-HEIR-READY)"
+LENV=()
 HEIR=$(out | tail -1)
 HEIR_PANE=$(tm list-panes -s -t home -F '#{pane_tty} #{pane_id}' | awk -v t="$HEIR" '$1 == t { print $2 }')
 HEIR_WIN=$(tm list-panes -s -t home -F '#{pane_tty} #{window_id}' | awk -v t="$HEIR" '$1 == t { print $2 }')

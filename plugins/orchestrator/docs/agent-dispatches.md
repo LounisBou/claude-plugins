@@ -22,9 +22,9 @@ This file does not hold:
 
 | Tier | Binding | Serves | What re-checks it |
 |---|---|---|---|
-| `deep` | the top family, at the operator's default effort (high) | orchestrators, successors, decision rounds, contract-defining phases, the final verification, the bench's judge | nothing downstream |
-| `standard` | the middle family at effort high | behaviour and conversion phases, correction rounds, review collectors and lenses, comments agents | the test suite, then the review round |
-| `light` | the smallest family at effort medium | read-only search | the search itself: it finds or it does not |
+| `deep` | the top family, at the effort its calling orchestrator runs at now | orchestrators, successors, decision rounds, contract-defining phases, the final verification, the bench's judge | nothing downstream |
+| `standard` | the middle family at effort high, shipped by the plugin | behaviour and conversion phases, correction rounds, review collectors and lenses, comments agents | the test suite, then the review round |
+| `light` | the smallest family at effort medium, shipped by the plugin | read-only search | the search itself: it finds or it does not |
 
 The class of each kind of work and its tier: `skills/model-routing/SKILL.md`, « The table ».
 
@@ -46,29 +46,60 @@ The class of each kind of work and its tier: `skills/model-routing/SKILL.md`, «
 - Why: the orchestrator follows the work closely; the operator, who follows it from a
   distance, said it may see better than he does which model the work needs.
 
-### 3. The top family's default effort is high
+### 3. Every launched session carries its model and its effort
 
-- Since: 2026-10-12, the operator (calibration decision O2).
-- Choice: the operator's default effort for the top family is `high`. It applies to every
-  session on that family that names no effort, the `deep` tier's agents included, since the
-  map binds that tier to the family alone.
-- Why: on short, well-specified work the effort moves the cost far more than the quality.
-- Evidence: published figures for the top family on a subset of SWE-bench Pro, per resolved
-  task: low 87.4 % at 0.12 USD, medium 92.8 % at 0.22, high 95.3 % at 0.29, xhigh 96.7 % at
-  0.74; the same source calls gaps under about five points run noise. On the bugs-bot
-  project's bench the top family passed at every effort, its cost rising from 0.18 USD at low
-  to 1.09 USD at max.
-- Superseded: `xhigh`, until 2026-10-12.
+- Since: 2026-11-04, the operator. His rule, relayed verbatim by the audit session:
+  « agents' model and effort are decided by the orchestrator; orchestrators inherit the model
+  and effort of their predecessor; same for auditors and the coordinator. The default model
+  applies only to sessions he launches by hand. If not, it is a critical bug. » His rulings
+  on it the same day, in English: an agent an orchestrator launches gets its default from
+  that orchestrator; an orchestrator, a coordinator or an auditor he launches himself runs at
+  the effort he sets; a succession always inherits its predecessor's effort, whatever the
+  role; the tier efforts ship in the plugin; an agent named with neither a tier nor a model
+  is refused; an orchestrator the coordinator opens keeps the host's default for the
+  session unless his order names a model and an effort.
+- Choice: no launch leaves the effort to the host's setting, except an opening or a wake with
+  nothing to read, where the operator's own default is the point.
+  - A succession of any role — an orchestrator's or an auditor's successor, an auditor, the
+    coordinator's successor, an agent's rotation given no pair — runs on its predecessor's
+    live model and effort, read on the predecessor's transcript: the last request of its
+    main thread names both. `--tier`, `--model` and `--effort` are refused beside
+    `--successor`; nothing is a default, and a pair that cannot be read refuses the launch.
+  - An agent's pair is its orchestrator's: a tier, or `--model` with `--effort`. A tier the
+    map binds a model alone runs at the effort the plugin ships for it, `standard` high and
+    `light` medium (choices 4 and 5); `deep` runs at the calling orchestrator's own live
+    effort. An effort the map binds wins over both. A model without an effort, and an agent
+    with neither a tier nor a model, are refused.
+  - An opened orchestrator types the model and the effort its order names, or neither. A
+    woken one resumes on the pair its resumed transcript holds, else its recorded pair, else
+    the host's default; it is never asked of the operator at the wake.
+  - The home move resumes on the session's pair read on its transcript, not on its launch line.
+- Why: the host's effort setting is the operator's default for new sessions, and he changes
+  it by typing an effort command in any tab: every session launched since ran at that level,
+  whatever its orchestrator, its tier or its predecessor ran at.
+- Rule: `skills/iterm-agents/SKILL.md`, « Safety order for a launch », and `skills/model-routing/SKILL.md`.
+- Superseded: « The top family's default effort is high », until 2026-11-04 — since
+  2026-10-12, the operator (calibration decision O2): « the operator's default effort for the
+  top family is `high`. It applies to every session on that family that names no effort, the
+  `deep` tier's agents included, since the map binds that tier to the family alone. » Its
+  evidence stays the reason the shipped efforts are not the top ones: published figures for
+  the top family on a subset of SWE-bench Pro, per resolved task: low 87.4 % at 0.12 USD,
+  medium 92.8 % at 0.22, high 95.3 % at 0.29, xhigh 96.7 % at 0.74; the same source calls
+  gaps under about five points run noise. On the bugs-bot project's bench the top family
+  passed at every effort, its cost rising from 0.18 USD at low to 1.09 USD at max. Before it:
+  `xhigh`, until 2026-10-12.
 
 ### 4. The standard tier runs the middle family at effort high
 
-- Since: 2026-10-12, the operator.
+- Since: 2026-10-12, the operator; shipped by the plugin as the tier's effort since 2026-11-04
+  (choice 3).
 - Why: on this repository's bench the middle family passed 10 trials of 10 at high and 7 of
   10 at medium. It holds until the profile and global tables say otherwise.
 
 ### 5. The light tier runs the smallest family at effort medium
 
-- Since: 2026-10-12, the operator (calibration decision O3).
+- Since: 2026-10-12, the operator (calibration decision O3); shipped by the plugin as the
+  tier's effort since 2026-11-04 (choice 3).
 - Why: a search is checked at once, and a miss costs one more search: the cheapest tier
   belongs where an error is cheapest to see.
 - Evidence: published rates per million tokens, input and output: the middle family 2 and
@@ -86,14 +117,18 @@ The class of each kind of work and its tier: `skills/model-routing/SKILL.md`, «
 - Why: the auto mode's classifier is the operator's guard over work nobody watches;
   acceptEdits is the guarded mode where auto does not exist.
 
-### 7. A successor inherits its orchestrator's current model
+### 7. A successor inherits its orchestrator's current model and effort
 
-- Since: 2026-09-10, the operator.
-- Choice: an orchestrator has no tier. Its successor runs the model the orchestrator runs
-  now, read from the session's own measurement, never from a launch file or the map, and the
-  successor's first statement of its model is checked.
-- Why: a session's model can change while it runs; only its current reading is the
-  operator's choice.
+- Since: 2026-09-10, the operator; the effort, and the transcript as the source, since
+  2026-11-04 (choice 3).
+- Choice: an orchestrator has no tier. Its successor runs the model and the effort the
+  orchestrator runs now, read on the orchestrator's own transcript (its last main-thread
+  request), never from a launch file or the map, and the successor's first statement of its
+  model is checked.
+- Why: a session's model and effort can change while it runs; only its current reading is
+  the operator's choice. The transcript follows a change within the turn that makes it, and
+  exists for a session launched by hand or without the plugin.
+- Superseded: the model alone, read from the hooks module's measure file, until 2026-11-04.
 
 ### 8. A table serves the cheapest pair equivalent to the best
 
