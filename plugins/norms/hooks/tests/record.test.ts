@@ -171,12 +171,31 @@ test('the head is read at the call: a commit made after the scope does not refus
     if (key === 'git rev-parse HEAD') return { exitCode: 0, stdout: NEW_HEAD + '\n', stderr: '' }
     if (key === 'git status --porcelain -uno') return { exitCode: 0, stdout: '', stderr: '' }
     if (key === 'git remote get-url origin') return { exitCode: 0, stdout: 'https://github.com/o/r.git\n', stderr: '' }
+    if (key === `git diff --name-only ${HEAD} ${NEW_HEAD}`) return { exitCode: 0, stdout: 'src/a.ts\n', stderr: '' }
     return { exitCode: 1, stdout: '', stderr: 'unexpected run: ' + key }
   }
   const out = await m.done($, { open: 0, fixed: 1, passed: 0 })
   expect(argvs.filter(a => a === 'git rev-parse HEAD').length).toBe(afterScope + 1)
   expect(out.result).toBe('record: ' + WRITTEN)
   expect(recordCalls(calls).length).toBe(1)
+})
+
+test('a commit after the scope that touches a file the check did not read refuses the record', async () => {
+  resetMark(); resetCache()
+  const calls: any[] = []
+  const { $ } = setup({}, {}, calls)
+  const m = mounted()
+  await m.scope($)
+  ;($ as any).process.run = async (argv: readonly string[]) => {
+    const key = argv.join(' ')
+    if (key === 'git rev-parse HEAD') return { exitCode: 0, stdout: NEW_HEAD + '\n', stderr: '' }
+    if (key === 'git status --porcelain -uno') return { exitCode: 0, stdout: '', stderr: '' }
+    if (key === `git diff --name-only ${HEAD} ${NEW_HEAD}`) return { exitCode: 0, stdout: 'src/a.ts\nsrc/unread.ts\n', stderr: '' }
+    return { exitCode: 1, stdout: '', stderr: 'unexpected run: ' + key }
+  }
+  const out = await m.done($, { open: 0, fixed: 1, passed: 0 })
+  expect(out.result).toBe('record: none — commits since the check touch files it did not read (src/unread.ts): run /norms:check again')
+  expect(recordCalls(calls)).toEqual([])
 })
 
 test('counts that are not whole numbers are refused', async () => {

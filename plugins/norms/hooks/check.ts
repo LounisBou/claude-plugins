@@ -84,7 +84,7 @@ async function withScope($: any, words: string): Promise<string> {
   const spawned: unknown = await $.env.get('ORCHESTRATOR_SPAWNED').catch(() => undefined)
   const block = scopeBlock(scope, args, refs, args.auto === true || isSpawned(typeof spawned === 'string' ? spawned : undefined))
   // Last, so the mark means the block is delivered.
-  markScope(scope.head)
+  markScope(scope.head, Object.values(scope.files).flat())
   const typed = words.trim()
   return (typed ? typed + '\n\n' : '') + block
 }
