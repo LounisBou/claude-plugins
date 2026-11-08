@@ -86,6 +86,16 @@ test('a sync that never answers never holds the start past the bound', async () 
   expect(hung.written.some(l => l.includes('| short-commands | short commands not synced: did not finish within 40 ms'))).toBe(true)
 })
 
+test('a sync that answers after the bound writes nothing after the timeout\'s own line', async () => {
+  const late = fakeDollar({ run: () => new Promise(resolve => setTimeout(() => resolve({ exitCode: 1, stdout: '', stderr: 'late\n' }), 60)) })
+  const next = Object.assign((x: unknown) => passed(x), { budget: { ms: 1500, remainingMs: 10 } })
+  expect(await startHook().handler(late.dollar, start, next)).toEqual({ passed: start })
+  await new Promise(resolve => setTimeout(resolve, 120))
+  // Cancelled at the deadline: the sync's own failure line never lands after the timeout's.
+  expect(late.written.filter(l => l.includes('| short-commands |')).map(l => l.split('| short-commands | ')[1]))
+    .toEqual(['short commands not synced: did not finish within 10 ms'])
+})
+
 test('an empty config dir is an unset one: the sync reads the home directory\'s', async () => {
   const fx = fakeDollar({ env: { CLAUDE_CONFIG_DIR: '' } })
   await startHook().handler(fx.dollar, start, passed)

@@ -12,6 +12,8 @@
 // and the last assistant message — so the handler reads them off the event and
 // this file never waits on anything.
 
+import { withDeadline as cancelAtDeadline, DeadlineExceeded } from '../core/deadline.ts'
+
 // --- the decision shapes -----------------------------------------------------------------
 
 // The classic decision `{"decision":"block","reason":…}` answers through the
@@ -53,13 +55,15 @@ export function isDegradedPass(value: unknown): value is DegradedPass {
   return typeof value === 'object' && value !== null && (value as { degraded?: unknown }).degraded === true
 }
 
-export async function withDeadline<T>(work: Promise<T>, ms: number): Promise<T | DegradedPass> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const timeout = new Promise<DegradedPass>((resolve) => { timer = setTimeout(() => resolve(DEGRADED), ms) })
+// The work is cancelled at the deadline (core's deadline, the one implementation): it is handed
+// a signal aborted when the deadline wins, and checks it before any step that writes. A promise
+// already started cannot be cancelled: that form is kept only for the callers not ported yet.
+export async function withDeadline<T>(work: ((signal: AbortSignal) => Promise<T>) | Promise<T>, ms: number): Promise<T | DegradedPass> {
   try {
-    return await Promise.race([work, timeout])
-  } finally {
-    clearTimeout(timer)
+    return await cancelAtDeadline(ms, typeof work === 'function' ? work : () => work)
+  } catch (err) {
+    if (err instanceof DeadlineExceeded) return DEGRADED
+    throw err
   }
 }
 
