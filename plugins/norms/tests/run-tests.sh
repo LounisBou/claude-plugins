@@ -262,6 +262,19 @@ check "the automatic mode counts only the ERROR findings as open" "yes" \
 check "the automatic mode asks no question and edits no code" "yes" \
   "$(grep -q -F 'Ask no question (no `AskUserQuestion`), wait for no one, edit no code' "$ROOT/commands/check.md" && echo yes || echo no)"
 
+echo "== the host loads the module =="
+
+# The host refuses a whole hooks module for one defect (a second session.end hook without a
+# matcher, a state key it cannot list, a state the manifest's types do not declare), and then
+# registers none of its tools. Only the host's own validator sees it. Without `claude` the
+# check fails: it does not skip.
+if command -v claude >/dev/null 2>&1; then
+  check_status "the host validates the plugin" 0 claude plugin validate "$ROOT"
+  check_status "the module's tests pass in the host's kit" 0 claude plugin test "$ROOT"
+else
+  check "claude is on PATH, to validate the module" "found" "absent"
+fi
+
 echo
 echo "$pass passed, $fail failed"
 [ "$fail" -eq 0 ]
