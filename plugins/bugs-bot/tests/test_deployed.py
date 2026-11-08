@@ -145,3 +145,26 @@ def test_the_check_reads_no_standard_input_and_leads_its_own_process_group(run, 
     assert run("deployed", COMMIT) == 0
     assert seen["stdin"] == subprocess.DEVNULL
     assert seen["start_new_session"] is True
+
+
+def test_a_check_from_a_versioned_project_file_is_refused(run, bound, tmp_path, capsys):
+    out = tmp_path / "ran"
+    set_check(f'touch "{out}"')
+    subprocess.run(["git", "init", "-q"], check=True)
+    subprocess.run(["git", "add", "-f", ".bugs-bot.json"], check=True)
+
+    assert run("deployed", COMMIT) == 1
+
+    assert "is versioned" in capsys.readouterr().err
+    assert not out.exists()
+
+
+def test_a_check_from_a_project_file_others_can_write_is_refused(run, bound, tmp_path, capsys):
+    out = tmp_path / "ran"
+    set_check(f'touch "{out}"')
+    os.chmod(".bugs-bot.json", 0o666)
+
+    assert run("deployed", COMMIT) == 1
+
+    assert "writable by you alone" in capsys.readouterr().err
+    assert not out.exists()
