@@ -20,8 +20,8 @@ Preconditions, verify each before acting:
   `succession.sh live <brief path> --next "<the next step>"`, with at most five `--note` of
   judgment; each note of the last generation is promoted into an artifact
   (`--promote <n>=<path>`) or dropped. The script overwrites the previous handover's Live state,
-  and the spawn refuses a brief that misses an open item. The brief stays within 9,000
-  characters, the open-questions value apart.
+  and the spawn refuses a brief that misses an open item.
+  The brief stays within 9,000 characters, the open-questions value apart.
 
 Then:
 

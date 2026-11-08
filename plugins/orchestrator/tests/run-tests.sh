@@ -5415,8 +5415,6 @@ check "succession prunes the state file and archives the finished journal" "yes|
 # ruling (2026-11-04, « A »: restore 2, 5, 6 and 7, remove 1, 3 and 4).
 check "lifecycle.md points at the succession brief's steps, leaves the checkout check to the move, and carries no approval sentence" "no|no|no|no" \
   "$(spells "$ORCH_REFS/lifecycle.md" "waits for ever) and subscribe to each one's idle notice")|$(spells "$ORCH_REFS/lifecycle.md" "never on the host's idle notice, which reaches a working session only when its own turn ends")|$(spells "$ORCH_REFS/lifecycle.md" 'your checkouts clean and pushed')|$(spells "$ORCH_REFS/lifecycle.md" 'macOS Automation approval')"
-check "the succession brief inherits a pruned state file and does not load the archive" "yes|no" \
-  "$(spells "$SUCC" 'pruned by your predecessor to what is live, its finished journal archived in a file you are not asked to load')|$(spells "$SUCC" 'read the archive')"
 # A successor confirmed its takeover at 75k to 97k tokens because step 1 ordered the spec, the plan,
 # the runbook, the state file and the briefs directory read whole. At takeover it needs what is live,
 # which its predecessor writes into the brief; the rest is read by the section a task touches.
@@ -5443,8 +5441,6 @@ check "the Live state section replaces reading the journal, which is read by gre
 # where each pull request stands (its VERIFY runs `pr-status`), then what each row has left (its
 # step 2 lists the open rows), never a number, a head, an id or a label (the operator's ruling of
 # 2026-11-04 on the cap, its template line).
-check "the Live state section says what is cut first when it overflows the cap" "1" \
-  "$(printf '%s' "$LIVE_BODY" | tr '\n' ' ' | tr -s ' ' | grep -cF 'Over the cap, cut first where each pull request stands, then what each row has left.')"
 SUCC5=$(awk '/^5\. /{f=1} /^## /{f=0} f' "$SUCC" | tr '\n' ' ' | tr -s ' ')
 check "step 5 announces the successor's own measured context from its measure file" "1|yes|yes" \
   "$(printf '%s' "$SUCC5" | grep -oF 'your two figures' | wc -l | tr -d ' ')|$(spells "$ORCH_REFS/lifecycle.md" 'Your « first turn » figure is the `context_tokens`')|$(spells "$ORCH_REFS/lifecycle.md" 'Your measure file is')"

@@ -2,7 +2,7 @@
 
 Every file the orchestrator writes under its state root (`<config dir>/claude-orchestrator/`,
 `ORCHESTRATOR_STATE_DIR` and `ORCHESTRATOR_MODULE_DIR` overriding it), who writes it, and how.
-Goal 1 of `docs/specs/orchestrator-refoundation-design.md`: every such fact is kept by core's
+Goal 1 of the orchestrator's refoundation design (the repository's specs): every such fact is kept by core's
 store (a lock `<path>.lock`, a unique temporary name, one rename). A hooks module has no
 `node:fs`; it reaches the same convention through `core/store-io.ts` over its own `$`, a script
 through `core/store.ts`. A temporary file older than core's `STALE_MS` was left by a writer
