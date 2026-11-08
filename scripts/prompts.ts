@@ -12,7 +12,7 @@ import { isEntry, isRecord, PLUGINS_DIR, readPlugins } from './lib/plugins.ts'
 export const CEILINGS_PATH = join('ci', 'prompts.json')
 
 /** Files under a plugin that no model reads: for people, for tests, for the record. */
-const NOT_PROMPT = [/^README\.md$/, /^CHANGELOG\.md$/, /^LICENSE/, /^docs\//, /^tests\//, /^evals\//, /^trigger-evals\//, /(^|\/)node_modules\//]
+const NOT_PROMPT = [/^README\.md$/, /^CHANGELOG\.md$/, /^LICENSE/, /^docs\//, /^tests\//, /^evals\//, /^trigger-evals\//, /(^|\/)node_modules\//, /(^|\/)\.pytest_cache\//]
 
 /** A sentence shorter than this is a phrase, and phrases may recur. */
 const MIN_WORDS = 12

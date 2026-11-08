@@ -2,7 +2,7 @@
 // N4: the walkthrough guards, each false-positive case they were narrowed for,
 // and the releases (the user's own words, an interrupted turn, another command).
 import { expect, test } from 'claude-code/testing'
-import { editDecision, pushQuestion, commitDecision, promptCommand, register, resetGuards, guardState } from '../guards.ts'
+import { agentBashDecision, AGENT_WRITE_REFUSAL, editDecision, pushQuestion, commitDecision, promptCommand, register, resetGuards, guardState } from '../guards.ts'
 import { register as registerAll } from '../register.ts'
 import { mount, hook, nextOf, fakeDollar } from './fakes.ts'
 
@@ -192,4 +192,33 @@ test('promptCommand names the command of a slash prompt and nothing else', () =>
   expect(promptCommand('  /commit')).toBe('commit')
   expect(promptCommand('/src/a.ts')).toBeUndefined()
   expect(promptCommand('fix')).toBeUndefined()
+})
+
+test('during a walkthrough a review agent\'s shell line only reads', () => {
+  for (const line of [
+    'git diff abc...HEAD -- src/a.ts', 'git -C /repo log --oneline -5', 'git branch --show-current',
+    'BASE=$("/p/scripts/resolve_base.sh")', 'grep -n foo src/a.ts | head -5', 'cat a.ts 2>/dev/null', 'git diff 2>&1 | wc -l',
+    'sed -n 1,20p a.ts', 'find . -name "*.ts"',
+  ]) expect(agentBashDecision('check', line)).toBe(null)
+  for (const line of [
+    'git diff > /tmp/x', 'echo hi >> a.ts', 'sed -i s/a/b/ a.ts', 'rm -rf src', 'git commit -m x', 'git branch -D main',
+    'cat a | tee b', 'find . -delete', 'python3 -c "open(\'x\',\'w\')"', 'echo $(rm x)', 'git push',
+  ]) expect(agentBashDecision('check', line)).toBe(AGENT_WRITE_REFUSAL)
+  expect(agentBashDecision(undefined, 'rm -rf src')).toBe(null)
+})
+
+test('the Bash hook holds a subagent to reading during a check, and leaves the main loop and other times alone', async () => {
+  resetGuards()
+  const hooks = mount(register)
+  const { $ } = fakeDollar({})
+  const bash = async (command: string, agentId?: string) => {
+    const { next, seen } = nextOf()
+    const out = await hook(hooks, 'tool.call', { tool: 'Bash' }).handler($, { tool: 'Bash', command, agentId }, next)
+    return seen.length ? 'ran' : out.deny
+  }
+  expect(await bash('rm -rf build', 'agent-1')).toBe('ran')
+  await hook(hooks, 'command.run', { command: 'norms:check' }).handler($, { command: 'norms:check', args: '' }, nextOf().next)
+  expect(await bash('git diff main...HEAD', 'agent-1')).toBe('ran')
+  expect(await bash('rm -rf build', 'agent-1')).toBe(AGENT_WRITE_REFUSAL)
+  expect(await bash('rm -rf build')).toBe('ran')
 })

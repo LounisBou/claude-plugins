@@ -28,6 +28,20 @@ async function run($: any, argv: string[]): Promise<string> {
 
 const lines = (s: string) => s.split('\n').map(l => l.trim()).filter(Boolean)
 
+// The base branch of the current branch's pull request, asked of the github plugin (its
+// mcp__github__gh contract), or undefined: no pull request, no plugin, an unreadable answer.
+export async function pullRequestBase($: any): Promise<string | undefined> {
+  try {
+    const answer = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-get', args: {} })
+    if (answer?.deny || answer?.isError) return undefined
+    const pulls = JSON.parse(String(answer?.result ?? answer?.text ?? ''))
+    const ref = Array.isArray(pulls) ? pulls[0]?.base?.ref : undefined
+    return typeof ref === 'string' && /^[\w./-]+$/.test(ref) ? ref : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export async function computeScope($: any, baseArg?: string): Promise<Scope> {
   const resolver = `${$.plugin.root}/scripts/resolve_base.sh`
   const base = (await run($, ['bash', resolver, ...(baseArg ? [baseArg] : [])])).trim()
@@ -78,7 +92,8 @@ export const SKILL_MATCHER = { tool: 'Skill', skill: /^\/?norms:check$/ }
 // the agents and marked for the record, and its block appended to the words.
 async function withScope($: any, words: string): Promise<string> {
   const args = parseCheckArgs(words)
-  const scope = await computeScope($, args.base)
+  // No base named: the pull request's, through the github plugin; the agents reuse it from the cache.
+  const scope = await computeScope($, args.base ?? (await pullRequestBase($)))
   cached = { scope, at: Date.now() }
   const refs = await checkPaths($, args.paths)
   const spawned: unknown = await $.env.get('ORCHESTRATOR_SPAWNED').catch(() => undefined)

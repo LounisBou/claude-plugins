@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -100,22 +103,32 @@ class Registry:
         if not PROJECT_ID.fullmatch(project):
             raise BugsError(f"project must match [a-z0-9-]+, got {project!r}")
         key = _key_of(_text_of(channel, chat_id))  # as it will read back
-        entries = self.entries()
-        holder = entries.get(key)
-        if holder is not None and holder.project != project:
-            raise BugsError(f"{channel} chat {chat_id} already belongs to project {holder.project}")
-        entries = {k: e for k, e in entries.items() if e.project != project}
-        entries[key] = Entry(project, repo)
-        self._write(entries)
+        with self._locked():
+            entries = self.entries()
+            holder = entries.get(key)
+            if holder is not None and holder.project != project:
+                raise BugsError(f"{channel} chat {chat_id} already belongs to project {holder.project}")
+            entries = {k: e for k, e in entries.items() if e.project != project}
+            entries[key] = Entry(project, repo)
+            self._write(entries)
 
     def remove(self, project: str) -> bool:
         """Drop a project's entry; ``True`` when there was one."""
-        entries = self.entries()
-        kept = {k: e for k, e in entries.items() if e.project != project}
-        if len(kept) == len(entries):
-            return False
-        self._write(kept)
-        return True
+        with self._locked():
+            entries = self.entries()
+            kept = {k: e for k, e in entries.items() if e.project != project}
+            if len(kept) == len(entries):
+                return False
+            self._write(kept)
+            return True
+
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        """An exclusive ``flock`` on ``<registry>.lock`` across a read-modify-write: no update is lost."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.path.with_name(self.path.name + ".lock"), "a") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)  # released when the file is closed
+            yield
 
     def _write(self, entries: dict[Key, Entry]) -> None:
         write_json(self.path, {_text_of(*key): {"project": e.project, "repo": str(e.repo)} for key, e in entries.items()})
