@@ -87,10 +87,14 @@ export type UsageBook = {
 
 const count = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0)
 
+// A field of a value read from outside: undefined unless the value is an object.
+const fieldOf = (value: unknown, key: string): unknown =>
+  value && typeof value === 'object' ? (value as Record<string, unknown>)[key] : undefined
+
 // The count at a path of the usage object: 0 where any step is missing or no finite number.
-function countAt(usage: any, path: string[]): number {
+function countAt(usage: unknown, path: string[]): number {
   let value = usage
-  for (const key of path) value = value && typeof value === 'object' ? value[key] : undefined
+  for (const key of path) value = fieldOf(value, key)
   return count(value)
 }
 
@@ -109,16 +113,18 @@ export function recordOf(line: string): { id: string | null; record: UsageRecord
   }
 }
 
-function recordOfEntry(entry: any): { id: string | null; record: UsageRecord } | null {
-  const message = entry && typeof entry === 'object' ? entry.message : null
-  if (!message || typeof message !== 'object' || Array.isArray(message) || entry.type !== 'assistant') return null
-  const usage = message.usage
-  const model = message.model
+function recordOfEntry(entry: unknown): { id: string | null; record: UsageRecord } | null {
+  const message = fieldOf(entry, 'message')
+  if (!message || typeof message !== 'object' || Array.isArray(message) || fieldOf(entry, 'type') !== 'assistant') return null
+  const usage = fieldOf(message, 'usage')
+  const model = fieldOf(message, 'model')
   if (!usage || typeof usage !== 'object' || typeof model !== 'string' || model === '') return null
-  const record = { model, at: typeof entry.timestamp === 'string' ? Date.parse(entry.timestamp) : NaN } as UsageRecord
+  const timestamp = fieldOf(entry, 'timestamp')
+  const record = { model, at: typeof timestamp === 'string' ? Date.parse(timestamp) : NaN } as UsageRecord
   for (const name of TOKENS) record[name] = countAt(usage, COST_RULE.tokens[name])
   if (COST_RULE.counted.every(name => !record[name])) return null
-  const id = typeof message.id === 'string' && message.id !== '' ? message.id : null
+  const messageId = fieldOf(message, 'id')
+  const id = typeof messageId === 'string' && messageId !== '' ? messageId : null
   return { id, record }
 }
 
@@ -129,9 +135,10 @@ const finite = (value: unknown): value is number => typeof value === 'number' &&
 // a finite threshold and finite upper rates. Anything else prices nothing: null, never NaN.
 function isPrice(price: Price): boolean {
   if (!price || typeof price !== 'object' || !RATES.every(name => finite(price[name]))) return false
-  const above: any = price.above
+  const above: unknown = price.above
   if (above === undefined || above === null) return true
-  return typeof above === 'object' && finite(above.tokens) && RATES.every(name => above[name] === undefined || finite(above[name]))
+  return typeof above === 'object' && finite(fieldOf(above, 'tokens'))
+    && RATES.every(name => fieldOf(above, name) === undefined || finite(fieldOf(above, name)))
 }
 
 // A tiered price switches to its upper rates when the message's prompt passes the threshold;
@@ -182,9 +189,10 @@ const PARTS = new Intl.DateTimeFormat('en-US', {
 
 // The Paris wall clock at `ms`, read as if it were UTC.
 function wallOf(ms: number): number {
-  const parts: Record<string, number> = {}
-  for (const part of PARTS.formatToParts(new Date(ms))) if (part.type !== 'literal') parts[part.type] = Number(part.value)
-  return Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second)
+  const parts = new Map<string, number>()
+  for (const part of PARTS.formatToParts(new Date(ms))) if (part.type !== 'literal') parts.set(part.type, Number(part.value))
+  const at = (type: string) => parts.get(type) ?? NaN
+  return Date.UTC(at('year'), at('month') - 1, at('day'), at('hour'), at('minute'), at('second'))
 }
 
 // The instant Paris reads 00:00 on that calendar day (month from 0, day may overflow). The
