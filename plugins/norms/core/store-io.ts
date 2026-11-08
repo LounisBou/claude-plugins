@@ -10,19 +10,25 @@
 /** A lock or a temporary file older than this was left by a process that died. */
 export const STALE_MS = 30_000
 
+/**
+ * The convention as data, for a writer in another language (`store.json` in each plugin's copy):
+ * the same lock and temporary names, the same age past which a holder is dead.
+ */
+export const STORE_CONTRACT = { version: 1, lock_suffix: '.lock', temporary_mark: '.tmp-', stale_ms: STALE_MS } as const
+
 /** The lock of `path`, the same for every writer of it, whatever its language. */
 export function lockOf(path: string): string {
-  return `${path}.lock`
+  return `${path}${STORE_CONTRACT.lock_suffix}`
 }
 
 /** The temporary file a write of `path` goes through: beside it, named by a unique `tag`. */
 export function temporaryOf(path: string, tag: string): string {
-  return `${path}.tmp-${tag}`
+  return `${path}${STORE_CONTRACT.temporary_mark}${tag}`
 }
 
 /** Whether a directory entry is a write in flight (or left by a dead writer), never a record. */
 export function isTemporary(name: string): boolean {
-  return name.includes('.tmp-')
+  return name.includes(STORE_CONTRACT.temporary_mark)
 }
 
 /** The entries of `dir` a dead writer left: temporary files older than `staleMs`, as paths. */
