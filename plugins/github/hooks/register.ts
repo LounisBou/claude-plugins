@@ -328,6 +328,27 @@ export const AUTO_MERGE_FILE = 'auto-merge.json'
 export const AUTO_MERGE_WORD = /auto[-\s]?merge/i
 // The list's path in any plugin's data directory, for the Write and Edit guard.
 const AUTO_MERGE_PATH = /\/\.claude\/plugins\/data\/[^/]+\/auto-merge\.json$/
+
+// What a guard's net refuses when the guard itself failed: only what the guard protects, judged
+// from the call alone (no state can be read once the hook has thrown); the rest goes through.
+export const NET_REFUSAL = 'github: its guard failed on this call, which it protects; nothing was run. Try again, or run /github:doctor.'
+
+// Opening a draft and returning a pull request to draft reach no reviewer and no merge.
+const HARMLESS_ACTS: ReadonlySet<string> = new Set(['create-draft', 'redraft'])
+
+export function bashNetRefusal(command: string): string | null {
+  try {
+    if (touchesRecords(command) || command.includes(AUTO_MERGE_FILE)) return NET_REFUSAL
+    return bashActs(command).some((act) => !HARMLESS_ACTS.has(act.kind)) ? NET_REFUSAL : null
+  } catch {
+    // Unreadable: refused only when it may name what the guard protects.
+    return /\b(gh|git)\b|pr-records|auto-merge/.test(command) ? NET_REFUSAL : null
+  }
+}
+
+export function writeNetRefusal(path: string): string | null {
+  return path.includes('/pr-records/') || path.endsWith('/pr-records') || AUTO_MERGE_PATH.test(path) ? NET_REFUSAL : null
+}
 export const AUTO_MERGE_REFUSAL = 'github: the auto-merge list changes only through mcp__github__gh auto-merge-set,'
   + ' on the operator\'s words quoted verbatim ({"repo": "owner/name", "on": true|false, "words": "..."});'
   + ' auto-merge-list prints it.'
@@ -1432,7 +1453,10 @@ export function register(on: any): void {
       await followPushes($, String(e.command))
     }
     return result
-  }).catch(async (_$: any, e: any, next: any) => next(e))
+  }).catch(async (_$: any, e: any, next: any) => {
+    const refusal = bashNetRefusal(String(e?.command ?? ''))
+    return refusal === null ? next(e) : { deny: refusal }
+  })
 
   // The records are written by their producers only, the auto-merge list by auto-merge-set only.
   for (const tool of ['Write', 'Edit', 'MultiEdit']) {
@@ -1447,7 +1471,10 @@ export function register(on: any): void {
         return { deny: AUTO_MERGE_REFUSAL }
       }
       return next(e)
-    }).catch(async (_$: any, e: any, next: any) => next(e))
+    }).catch(async (_$: any, e: any, next: any) => {
+      const refusal = writeNetRefusal(String(e?.file_path ?? ''))
+      return refusal === null ? next(e) : { deny: refusal }
+    })
   }
 
   on('tool.call', { tool: RECORD_TOOL }, async ($: any, e: any, next: any) => {
