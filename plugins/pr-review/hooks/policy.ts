@@ -22,27 +22,40 @@ const SCRATCH = /^(\/private)?\/tmp\/claude-pr-review-[^/]*(\/|$)/
 // The tools that change a file.
 const EDITORS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit'])
 
-// The words that end a walkthrough's guards at once, whatever the skill.
-const RELEASE = /\b(end|stop) review\b/i
-
-// A user's answer, lowercased, its first token stripped of punctuation: "1.",
-// "3 please" and "FR" read as 1, 3 and fr.
-function firstToken(prompt: string): string {
-  return (prompt.trim().toLowerCase().split(/\s+/)[0] ?? '').replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '')
+/*
+ * A user's answer as a menu answer: lowercased, trimmed, a leading « ok », « yes »
+ * or « oui » and its comma dropped, trailing punctuation dropped. A question is no
+ * answer: "fix?" asks, it does not decide. A grant is the command the answer starts
+ * with, never a word inside it: "don't fix this one" and "why not post now" grant
+ * nothing.
+ */
+function answerOf(prompt: string): string | null {
+  const text = prompt.trim().toLowerCase()
+  if (text.endsWith('?')) return null
+  return text.replace(/^(ok|okay|yes|oui)\b[\s,.!:-]*/, '').replace(/[\s.!,;:]+$/, '')
 }
 
-const has = (prompt: string, re: RegExp): boolean => re.test(prompt)
+// The answer's first token, stripped of punctuation: "1.", "3 please" and "FR" read as 1, 3 and fr.
+function firstToken(answer: string): string {
+  return (answer.split(/\s+/)[0] ?? '').replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, '')
+}
+
+const starts = (prompt: string, re: RegExp): boolean => {
+  const answer = answerOf(prompt)
+  return answer !== null && re.test(answer)
+}
 
 /*
- * The edit grant. start-review: the literal word "fix" ("fix", "fix all").
+ * The edit grant. start-review: the answer "fix" ("fix", "fix all", "fix it").
  * process-comments: option 1 or 3, or an alias the skill's input table lists
  * ("fix & resolve", "fix resolve", "fr", "fix and resolve", "fix only", "fix",
- * "f", "fix no resolve"): each carries the word fix, or is 1, 3, f or fr.
+ * "f", "fix no resolve"): each starts with the word fix, or is 1, 3, f or fr.
  */
 export function grantsEdit(skill: Skill, prompt: string): boolean {
-  if (has(prompt, /\bfix\b/i)) return true
+  if (starts(prompt, /^fix\b/)) return true
   if (skill !== 'process-comments') return false
-  return ['1', '3', 'f', 'fr'].includes(firstToken(prompt))
+  const answer = answerOf(prompt)
+  return answer !== null && ['1', '3', 'f', 'fr'].includes(firstToken(answer))
 }
 
 /*
@@ -52,12 +65,15 @@ export function grantsEdit(skill: Skill, prompt: string): boolean {
  * the thread open.
  */
 export function grantsResolve(prompt: string): boolean {
-  if (['1', '4', 'fr', 'pr'].includes(firstToken(prompt))) return true
-  return has(prompt, /\bresolve\b/i) && !has(prompt, /\bno resolve\b/i)
+  const answer = answerOf(prompt)
+  if (answer === null) return false
+  if (['1', '4', 'fr', 'pr'].includes(firstToken(answer))) return true
+  return /^((fix|pass)\s*(&|and)?\s*resolve|resolve( only)?|just resolve)\b/.test(answer)
 }
 
-export const grantsPublish = (prompt: string): boolean => has(prompt, /\bpost now\b/i)
-export const releases = (prompt: string): boolean => has(prompt, RELEASE)
+export const grantsPublish = (prompt: string): boolean => starts(prompt, /^post now\b/)
+// The words that end a walkthrough's guards at once, whatever the skill.
+export const releases = (prompt: string): boolean => starts(prompt, /^(end|stop) review\b/)
 
 /*
  * Whether a shell command runs `git push`. Each command of a list or a pipe is
