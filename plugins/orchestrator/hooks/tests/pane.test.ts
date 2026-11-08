@@ -13,7 +13,7 @@ import { agentPaneRows, answerFromPane, paneRows, readRound, roundLines, scrollT
 import { paneQuestions, waitsInTab, type RoundEntry } from '../round.ts'
 import { hostRecordOf } from '../session-name.ts'
 import { register as registerAll } from '../register.ts'
-import { logLineOf, blockOf } from './fakes.ts'
+import { logLineOf, blockOf, lockRun } from './fakes.ts'
 import { drawScreen, textOf } from './screen.ts'
 import { TWO_QUESTIONS, GLUED_BLOCKS, FIRST_A, FIRST_B, SECOND_A, SECOND_B } from './fixtures.ts'
 
@@ -215,6 +215,8 @@ function fakeDollar(over: {
     },
     process: {
       run: async (argv: readonly string[]) => {
+        const locked = lockRun(argv, files)
+        if (locked) return locked
         const line = logLineOf(argv)
         if (line !== null) {
           written.push(line)
@@ -1296,6 +1298,47 @@ test('an entry whose session has no live row on this machine is answered by its 
   const pane = { opened: null, ticker: null, other: new Set<string>(), writing: null, undelivered: new Map(), answering: new Set<string>() }
   await answerFromPane(fx.dollar, pane, asked, CHOICES[0])
   expect(sent.map(s => s.to)).toEqual(['Orch : far'])
+})
+
+// The race the round's writers run on one entry (another process: the sender withdrawing it, the
+// coordinator's round-close): it starts the moment the pane reads the entry, and keeps core's
+// convention, writing under the entry's lock what it read open. Without the pane's lock it wrote
+// « withdrawn » between the pane's read and its write, and the pane's « answered » erased it.
+test('a withdrawal racing the pane\'s answer on one entry is never written over: one of them wins whole', async () => {
+  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const { fx, sent } = await askingPane([asked])
+  const path = `${ROUND}/${asked.id}.json`
+  const lock = `${path}.lock`
+  const read = fx.dollar.fs.read
+  let rival: Promise<boolean> | null = null
+  fx.dollar.fs.read = async (p: string) => {
+    const text = await read(p)
+    if (p === path && !rival) {
+      rival = (async () => {
+        for (let spins = 0; fx.files.has(lock) && spins < 100_000; spins++) await Promise.resolve()
+        if (fx.files.has(lock)) return false
+        fx.files.set(lock, 'rival\n')
+        try {
+          const now = JSON.parse(String(fx.files.get(path))) as RoundEntry
+          if (now.status !== 'open') return false
+          fx.files.set(path, JSON.stringify({ ...now, status: 'withdrawn', answer: { text: 'superseded', by: 'sender', at: '2026-10-18T10:09:00.000Z' } }) + '\n')
+          return true
+        } finally {
+          fx.files.delete(lock)
+        }
+      })()
+      for (let i = 0; i < 20; i++) await Promise.resolve()
+    }
+    return text
+  }
+  const pane = { opened: null, ticker: null, other: new Set<string>(), writing: null, undelivered: new Map(), answering: new Set<string>() }
+  await answerFromPane(fx.dollar, pane, asked, CHOICES[0])
+  const withdrew = await rival
+  const final = JSON.parse(String(fx.files.get(path))) as RoundEntry
+  expect(final.status).toBe(withdrew ? 'withdrawn' : 'answered')
+  // The pane's answer was sent only when it was the one written.
+  expect(sent.length).toBe(withdrew ? 0 : 1)
+  expect(fx.files.has(lock)).toBe(false)
 })
 
 test('an entry recorded before entries carried a session is answered by its sender\'s name', async () => {

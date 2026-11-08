@@ -13,7 +13,7 @@ import {
 import { paneRows, sendRow, readRemoteRows, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
 import { ASK_MARKER, parseAsk } from '../remote-round.ts'
-import { logLineOf } from './fakes.ts'
+import { logLineOf, lockRun } from './fakes.ts'
 
 const HOME = '/tmp/h'
 const STORE = `${HOME}/.claude/claude-orchestrator/store`
@@ -67,6 +67,8 @@ function fake(over: { learnt?: boolean; local?: boolean; refuseAddress?: boolean
     },
     process: {
       run: async (argv: readonly string[]) => {
+        const locked = lockRun(argv, files)
+        if (locked) return locked
         const line = logLineOf(argv)
         if (line !== null) logged.push(line)
         if (argv[0] === 'hostname') return { exitCode: 0, stdout: 'bench-mac.local\n', stderr: '' }
