@@ -96,6 +96,8 @@ changed by a pull request that edits this file and the code it governs together.
 - Each plugin has a budget of prompt tokens and the repository a ceiling of sentences said
   more than once, both held by CI (`ci/prompts.json`, `npm run prompts`); they only fall.
 - A rule enters a prompt only when an eval shows it changes an outcome, and it replaces one.
+- `npm run rules` lists the rules a prompt states that neither code holds nor an eval names: a
+  rule left to prose alone is a candidate for a guard, an eval, or removal.
 
 ## Changes and releases
 

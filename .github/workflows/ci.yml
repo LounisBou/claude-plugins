@@ -33,6 +33,9 @@ jobs:
         run: npm test
       - name: prompt budgets and duplicates only fall
         run: npm run -s prompts > /dev/null
+      - name: the rules a prompt states that nothing holds (a report)
+        run: |
+          { echo '### Rules held by prose alone'; echo; npm run -s rules | sed -n '1,11p'; } >> "$GITHUB_STEP_SUMMARY"
       - name: dependencies declared with a range, no cycle, no import outside its plugin
         run: npm run deps
       - name: no committed permission grant, every installer rule listed
