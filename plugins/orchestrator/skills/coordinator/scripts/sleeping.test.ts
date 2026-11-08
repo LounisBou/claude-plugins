@@ -36,7 +36,7 @@ describe('sleep', () => {
     const { brief, dir } = project(f)
     const base = ['--brief', brief, '--dir', dir, '--model', 'm', '--effort', 'high']
     const cases: Array<[string[], string]> = [
-      [['--name', 'Orch : b [abc123]', ...base], "sleep: refused: the name reads \"Orch : <subject>\", without its reference, the subject at most 25 characters, got 'Orch : b [abc123]'"],
+      [['--name', 'Orch : b [a1b2c3]', ...base], "sleep: refused: the name reads \"Orch : <subject>\", without its reference, the subject at most 25 characters, got 'Orch : b [a1b2c3]'"],
       [['--name', 'Agent : b', ...base], "sleep: refused: the name reads \"Orch : <subject>\", without its reference, the subject at most 25 characters, got 'Agent : b'"],
       [['--name', 'Orch : b', '--brief', 'rel.md', '--dir', dir, '--model', 'm'], "sleep: refused: the brief's path must be absolute, got rel.md"],
       [['--name', 'Orch : b', '--brief', join(dir, 'gone.md'), '--dir', dir, '--model', 'm'], `sleep: refused: the brief ${join(dir, 'gone.md')} cannot be read: a wake starts on it`],
@@ -150,7 +150,7 @@ describe('sleeping, wake-done and drop', () => {
     assert.equal(isSleeperName('Orch : a subject of exactly 25'.slice(0, 32)), true)
     assert.equal(isSleeperName('Orch : a subject longer than twenty-five'), false)
     assert.equal(isSleeperName('Orch :  padded'), false)
-    assert.equal(isSleeperName('Orch : b [abc123]'), false)
+    assert.equal(isSleeperName('Orch : b [a1b2c3]'), false)
     assert.equal(isSleeperName('Coord : b'), false)
   })
 })

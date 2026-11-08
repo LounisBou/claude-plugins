@@ -22,9 +22,9 @@ function record(state: string): unknown {
 describe('register', () => {
   it('records the name, the tty, the start and the pid the check names, then says so', () => {
     const f = withCheck({ '/dev/ttys101': 5100 })
-    assert.equal(main(f.ctx, ['register', '--name', 'Coord : one [aaa111]', '--tty', '/dev/ttys101']), 0)
-    assert.deepEqual(f.out, ['registered Coord : one [aaa111]'])
-    assert.deepEqual(record(f.state), { name: 'Coord : one [aaa111]', tty: '/dev/ttys101', started: '2026-10-18T10:06:07Z', pid: 5100 })
+    assert.equal(main(f.ctx, ['register', '--name', 'Coord : one [a1b2c3]', '--tty', '/dev/ttys101']), 0)
+    assert.deepEqual(f.out, ['registered Coord : one [a1b2c3]'])
+    assert.deepEqual(record(f.state), { name: 'Coord : one [a1b2c3]', tty: '/dev/ttys101', started: '2026-10-18T10:06:07Z', pid: 5100 })
     assert.equal(existsSync(join(f.state, 'coordinator.lock')), false)
   })
 
