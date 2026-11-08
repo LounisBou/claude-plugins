@@ -405,3 +405,24 @@ export function bashNamesTokenFile(command: string, file: string, home: string):
 export function typedNamesTokenFile(typed: string | null): boolean {
   return Boolean(typed && /\.env\b/.test(typed))
 }
+
+/*
+ * What a guard's net refuses when the guard itself failed, judged from the call alone (no
+ * state, no file, no variable can be read once the hook has thrown): a call that posts to the
+ * group, and a call that may reach the token file. The rest goes through.
+ */
+export const NET_DENIAL = 'bugs-bot guard: the guard failed on this call, which posts to the group or reaches the token '
+  + 'file; nothing was run. Try again; `bugs-bot doctor` checks the install.'
+
+export function bashNetDenial(command: string): string | null {
+  if (/bugs-bot\S*\s+(reply|edit|post|done)\b/.test(command)) return NET_DENIAL
+  return bashNamesTokenFile(command, '', '') ? NET_DENIAL : null
+}
+
+export function toolNetDenial(command: string): string | null {
+  return POSTING.has(command) ? NET_DENIAL : null
+}
+
+export function readNetDenial(target: string): string | null {
+  return /(^|\/)\.bugs-bot(\/\.env)?\/?$/.test(target) || /(^|\/)\.env$/.test(target) ? NET_DENIAL : null
+}
