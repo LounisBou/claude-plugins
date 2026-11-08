@@ -3,20 +3,14 @@
   "blocking": {
     "bugs-bot": [],
     "cloudflare": [],
-    "github": [
-      "macos-latest"
-    ],
+    "github": [],
     "implement": [],
     "norms": [
-      "macos-latest",
       "ubuntu-latest"
     ],
     "orchestrator": [],
-    "pr-review": [
-      "macos-latest"
-    ],
+    "pr-review": [],
     "statusbar": [
-      "macos-latest",
       "ubuntu-latest"
     ]
   }
