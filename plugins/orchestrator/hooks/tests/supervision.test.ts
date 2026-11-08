@@ -473,6 +473,19 @@ test('a read of the store closes the open entries of a sender whose row it remov
   expect(JSON.parse(files.get(`${ROUND}/${killed}.json`)!).answer.by).toBe('sender')
 })
 
+// A sender that learnt its successor and was killed before its hand-over or its session end: the
+// read that removes its row moves its open entries to the successor, as its end would have.
+test('a read of the store moves the open entries of a removed sender that learnt its successor, and withdraws none', async () => {
+  const { dollar, files } = fakeDollar({ alive: ['501'] })
+  await writeSession(dollar, 'killed', { role: 'orchestrator', name: 'Orch : killed', pid: '502' })
+  files.set(`${STATE}/store/successors/killed`, JSON.stringify({ name: 'Orch : next', from: null, session: 'next', at: SENT }) + '\n')
+  const id = openEntry(files, 'killed', 'operator')
+  await readSessions(dollar)
+  const after = parseRoundEntry(files.get(`${ROUND}/${id}.json`)!)
+  expect([after?.status, after?.session, after?.from, after?.movedFrom]).toEqual(['open', 'next', 'Orch : next', 'killed'])
+  expect(files.has(`${STATE}/store/successors/killed`)).toBe(false)
+})
+
 test('a liveness read that fails does not close the entry of a row it keeps', async () => {
   const { dollar, files } = fakeDollar({ alive: ['501'], psFails: 'exit' })
   await writeSession(dollar, 'kept', { role: 'orchestrator', name: 'Orch : kept', pid: '502' })
@@ -489,6 +502,23 @@ test('a row idle past the stale bound with no pid is removed, and its sender kee
   await readSessions(dollar)
   expect(files.has(`${SESSIONS}/idle`)).toBe(false)
   expect(statusOf(files, id)).toBe('open')
+})
+
+// D1 of the round-2 verdict: the idle row's removal keeps the successor its session learnt, so
+// that session, living on and ending later, moves its questions to the successor.
+test('a row removed for idleness alone keeps its learnt successor, and its later end moves its entries', async () => {
+  const chains = mounted(register)
+  const { dollar, files } = fakeDollar({ alive: ['501'] })
+  const idle = new Date(Date.now() - 2 * 3600000).toISOString()
+  await writeSession(dollar, 'idle', { role: 'orchestrator', name: 'Orch : idle', updated_at: idle })
+  files.set(`${STATE}/store/successors/idle`, JSON.stringify({ name: 'Orch : next', from: null, session: 'next', at: SENT }) + '\n')
+  const id = openEntry(files, 'idle', 'operator')
+  await readSessions(dollar)
+  expect(files.has(`${SESSIONS}/idle`)).toBe(false)
+  expect(files.has(`${STATE}/store/successors/idle`)).toBe(true)
+  await drive(chains, 'session.end', dollar, { sessionId: 'idle' })
+  const after = parseRoundEntry(files.get(`${ROUND}/${id}.json`)!)
+  expect([after?.status, after?.session, after?.from, after?.movedFrom]).toEqual(['open', 'next', 'Orch : next', 'idle'])
 })
 
 test('an entry moved to a successor between the read and the withdraw is not overwritten', async () => {

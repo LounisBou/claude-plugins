@@ -97,6 +97,11 @@ TIERS = ("deep", "standard", "light")
 # The host's effort levels. A tier may bind one with its model: effort moves token spend
 # as much as the model family does.
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
+# The effort an agent's tier runs at when the operator's map binds the tier a model alone
+# (decision 3 of docs/agent-dispatches.md, dated there). The deep tier has none of its own:
+# it runs at the effort its calling orchestrator runs at now, read on that orchestrator's
+# transcript. An effort the map binds wins over both.
+SHIPPED_TIER_EFFORTS = {"standard": "high", "light": "medium"}
 EFFORT_LIST = "low, medium, high, xhigh or max"
 # A title reads `Orch : <subject>` or `Agent : <subject>`: two roles, and a subject of at
 # most twenty-five characters. It is the session's NAME (§24), so it is the operator's
@@ -119,6 +124,11 @@ TITLE_SHAPE = re.compile(r"^(Orch|Agent) : \S(.{0,23}\S)?\Z")
 # anchor: a title is a claim about what a session is, and the launcher holds it to that.
 AUDIT_TITLE_SHAPE = re.compile(r"^Audit : \S(.{0,23}\S)?\Z")
 AUDIT_ROLE = "Audit :"
+# An auditor's NAME, as a succession derives it from the caller: the strict title above, or
+# one whose role word carries a qualifier, « Audit neutre : <subject> », the name an auditor
+# the operator launches by hand may take. Accepted only where the name is read, never typed:
+# a typed audit title is still the strict one, under --auditor alone.
+AUDIT_NAME_SHAPE = re.compile(r"^Audit(?: [^\s:]+)* : \S(.{0,23}\S)?\Z")
 # The coordinator's own successor's title, and ONLY that spawn's. The coordinator sits above
 # every orchestrator on the machine, so the operator tells its tab apart from an auditor's or
 # an agent's the same way: by the role word. `Coord :` is accepted under
@@ -1467,38 +1477,83 @@ def warn_versioned(tier, value):
               % (tier, value, parts[n - 1] + (suffix or "")), file=sys.stderr)
 
 
-# What the hooks module's measure file holds when the host gave it no model.
+# What the host may name in place of a model it could not read: a sentinel, never a model to
+# type, and typed as `--model` it starts the successor on a guess or not at all.
 UNAVAILABLE_MODEL = "unavailable"
+# What marks the main thread's requests in a transcript: the host logs every request it
+# sends with its pair, and only these are the session's own conversation; a compaction, a
+# title or a subagent sends its own requests, on pairs of their own.
+MAIN_THREAD = "repl_main_thread"
 
 
-def inherited_model():
-    """The model the CALLING session runs on now, from the hooks module's measure file —
-    not the launch line, which the operator may have moved away from. A succession must
-    not guess a model and the operator forbids a default (§27)."""
-    sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
-    # The measure file is the module's own artifact: it lives under the config dir and
-    # nowhere else (gauge.ts resolves it through CLAUDE_CONFIG_DIR alone). STATE_DIR is
-    # NOT read here — it honors ORCHESTRATOR_STATE_DIR, the override the stop gate's
-    # shared roots (records, chains, CI logs) answer to, and the measure file is not one
-    # of them: under the override it is still written under the config dir.
-    config_dir = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.path.expanduser("~"), ".claude")
-    path = (os.path.join(config_dir, "claude-orchestrator", "measure", sid + ".json")
-            if sid else "<CLAUDE_CODE_SESSION_ID unset>")
-    model = ""
+class PairUnreadable(Exception):
+    """A session's model and effort could not be read: the message names the transcript read,
+    or where it was looked for, and what was missing."""
+
+
+def read_pair(session_id):
+    """`(model, effort, path)` of the session `session_id` NOW: the last main-thread request
+    its transcript holds, its `params.model` and `params.output_config.effort`.
+
+    The transcript, and not the launch line, the measure file or the host's settings: the
+    host writes each request there with its pair as it sends it, so the reading follows a
+    `/model` or an `/effort` typed since the launch, exists for a session launched by hand or
+    without the plugin, and is current within the turn that asks (the measure file is
+    written only when a turn ends). It is the host's own format, not a documented one: so
+    nothing here falls back on anything. No transcript, no main-thread request, no model or
+    no effort, and PairUnreadable says which, naming the file."""
+    if not session_id:
+        raise PairUnreadable("no session id to read a pair for (CLAUDE_CODE_SESSION_ID unset)")
+    # The newest of its transcripts: a session resumed from another checkout has one under
+    # each, and its requests go to the one written last.
+    path = transcript_of_session(session_id)
+    if not path:
+        raise PairUnreadable("no transcript for session %s under %s" % (session_id, PROJECTS_DIR))
+    last = None
     try:
-        with open(path) as fh:
-            model = json.load(fh).get("model") or ""
-    except Exception:
-        pass
-    # The module records `unavailable` when the host gave it no model: a sentinel, not a
-    # model, and typed as `--model` it starts the successor on a guess or not at all.
+        with open(path, errors="replace") as fh:
+            for line in fh:
+                # Most lines are not requests: the cheap test first, the parse only for those.
+                if MAIN_THREAD not in line or "api-request" not in line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except ValueError:
+                    continue
+                if (isinstance(entry, dict) and entry.get("type") == "api-request"
+                        and entry.get("querySource") == MAIN_THREAD):
+                    last = entry
+    except OSError as exc:
+        raise PairUnreadable("%s cannot be read (%s)" % (path, exc.strerror or exc))
+    if last is None:
+        raise PairUnreadable("%s holds no main-thread request" % path)
+    params = last.get("params") if isinstance(last.get("params"), dict) else {}
+    model = params.get("model")
+    config = params.get("output_config") if isinstance(params.get("output_config"), dict) else {}
+    effort = config.get("effort")
     if not isinstance(model, str) or model.strip() in ("", UNAVAILABLE_MODEL):
-        model = ""
-    if not model:
-        die("spawn: --inherit-model: no model recorded for this session (%s) — the hooks "
-            "module writes the measure file each turn: load the plugin, take one turn, "
-            "then retry" % path)
-    return model
+        raise PairUnreadable("%s: its last main-thread request names no model" % path)
+    if effort not in EFFORTS:
+        raise PairUnreadable("%s: its last main-thread request names no effort (got %r, "
+                             "expected %s)" % (path, effort, EFFORT_LIST))
+    return model.strip(), effort, path
+
+
+def caller_pair(session_id):
+    """`(model, effort)` the session `session_id` runs on now (read_pair); raises
+    PairUnreadable with the transcript path and what was missing."""
+    model, effort, _ = read_pair(session_id)
+    return model, effort
+
+
+def own_pair(what):
+    """`(model, effort, path)` of the CALLING session, or a refusal of `what` saying why: a
+    succession must not guess a pair, and none is a default (decision 3)."""
+    try:
+        return read_pair(os.environ.get("CLAUDE_CODE_SESSION_ID", ""))
+    except PairUnreadable as exc:
+        die("spawn: refused: %s runs on your live model and effort, and they cannot be read: "
+            "%s" % (what, exc))
 
 
 # --- ps, which the API does not answer -------------------------------------------
@@ -1815,7 +1870,7 @@ def audit_name_on(tty):
     chain, so « not in the chain » cannot tell it from a stranger's tab, and a stale entry
     on a recycled tty could make it look like an agent (§52)."""
     name = session_name_on(tty)
-    if name and name != UNREADABLE_NAME and name.startswith(AUDIT_ROLE):
+    if name and name != UNREADABLE_NAME and title_role(name) == "Audit":
         return name
     return None
 
@@ -2783,8 +2838,11 @@ class TmuxTerminal(Terminal):
 
     def close(self, tty, expect):
         """Guarded on the window's name, fixed at its making, rather than on a title the
-        host rewrites as it works."""
+        host rewrites as it works. Window 0 is the orchestrator's place: only a takeover puts
+        a successor there, so a close of it is refused before anything is killed."""
         pane = self.window_of(tty, "close")
+        if pane.index == "0":
+            refuse_window_zero("close", tty, pane.name)
         if expect and stable_title(expect) not in stable_title(pane.name):
             die("close: refused: the window on %s is named '%s', which does not contain '%s'"
                 % (tty, pane.name, expect))
@@ -2893,6 +2951,14 @@ def terminal_for(tty):
                                                     chosen.panes(every=True)):
         return ITERM
     return chosen
+
+
+def refuse_window_zero(what, tty, name):
+    """The refusal of a close or a rotation of window 0 of a home session, said before anything
+    is killed or spawned: only a takeover puts a successor at index 0, and it is named."""
+    die("%s: refused: the window on %s is window 0, the orchestrator's place in this home "
+        "session: a successor takes it with takeover --tty %s --expect-title \"%s\", which also "
+        "puts its own window at index 0" % (what, tty, tty, name))
 
 
 # --- the orchestrator's home session ------------------------------------------------
@@ -3035,6 +3101,20 @@ def resume_words(args, session_id, name, prompt):
             raise ValueError("the session was started with %s, an option the move does not "
                              "know how to replay" % option)
     return kept + ["--resume", session_id] + ([prompt] if prompt else []) + ["--name", name]
+
+
+def with_pair(words, model, effort):
+    """`words` with every `--model` and `--effort` they carry replaced by `model` and `effort`,
+    typed first."""
+    kept, i = [], 0
+    while i < len(words):
+        option, eq, _ = words[i].partition("=")
+        if option in ("--model", "--effort"):
+            i += 1 if eq else 2
+            continue
+        kept.append(words[i])
+        i += 1
+    return ["--model", model, "--effort", effort] + kept
 
 
 def host_argv(pid):
@@ -3562,6 +3642,14 @@ def cmd_home(argv):
         resume = resume_words(words[1:], args.session, args.name, args.prompt)
     except ValueError as exc:
         die("home: %s; the session stays where it is" % exc)
+    # The launch line says what was asked at the launch; a `/model` or an `/effort` typed
+    # since is on the transcript alone. The move resumes on the pair the session runs on now.
+    try:
+        model, effort = caller_pair(args.session)
+    except PairUnreadable as exc:
+        print("stay: the session's model and effort cannot be read (%s)" % exc)
+        return
+    resume = with_pair(resume, model, effort)
     cwd = record.get("cwd") or ""
     if not os.path.isdir(cwd):
         die("home: the session's directory '%s' is not there; the session stays where it is"
@@ -3774,9 +3862,12 @@ def write_prompt_file(prompt, title):
 
 
 def title_role(title):
-    """`Orch`, `Coord`, `Audit` or `Agent` when the title names one, else empty."""
+    """`Orch`, `Coord`, `Audit` or `Agent` when the title names one, else empty. A qualified
+    auditor's name (« Audit neutre : <subject> ») is an auditor's too."""
     found = ROLE_PREFIX.match(title)
-    return found.group(1) if found else ""
+    if found:
+        return found.group(1)
+    return "Audit" if AUDIT_NAME_SHAPE.match(title) else ""
 
 
 def default_removed(role):
@@ -3798,14 +3889,18 @@ def removed_tools(title, keep=(), drop=()):
 _plugin_dir_said = []
 
 
-def caller_plugin_launch():
+def caller_plugin_launch(plugin_set=False):
     """`(plugin_dirs, enabled_plugins)` of the calling host's own launch: each `--plugin-dir`
     it was started with, and the `enabledPlugins` entries of its `--settings`. A session run
     on a plugin directory is tested on it, and an agent it spawns would otherwise load the
     installed plugin, whose hooks write none of what the tested one writes. Empty for a caller
     that is not a registered host session or has no plugin directory, which leaves the launch
     as it always was. A launch that cannot be read is said once on stderr and also leaves it
-    so: a spawn is never refused for it."""
+    so: a spawn is never refused for it.
+
+    `plugin_set` is an auditor's successor's: it keeps its predecessor's plugin set with or
+    without a plugin directory, as it keeps its pair. An auditor the operator runs without
+    the plugin stays neutral across its successions."""
     sid = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
     pid, record = session_record(sid) if sid else (None, None)
     if not pid:
@@ -3836,7 +3931,7 @@ def caller_plugin_launch():
         elif value:
             dirs.append(value if os.path.isabs(value) or not cwd
                         else os.path.normpath(os.path.join(cwd, value)))
-    if not dirs:
+    if not dirs and not plugin_set:
         return [], {}
     enabled = {}
     for word in settings_words:
@@ -3957,9 +4052,10 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
         settings["enableAllProjectMcpServers"] = True
     if not keep_synced_skills:
         settings[SYNCED_SKILLS_SETTING] = False
-    # The caller's enabledPlugins, so the tested plugin stays the one that loads. Under the
-    # launcher's own entries for the same plugin, and no other key of the caller's settings.
-    if plugin_dirs and caller_plugins:
+    # The caller's enabledPlugins, so the tested plugin stays the one that loads (or, for an
+    # auditor's successor, the plugin set its predecessor ran on). Under the launcher's own
+    # entries for the same plugin, and no other key of the caller's settings.
+    if caller_plugins:
         settings["enabledPlugins"] = dict(caller_plugins, **settings.get("enabledPlugins", {}))
     settings.update(host_cuts(title_role(title)))
     cli += ["--settings", shq(json.dumps(settings, separators=(",", ":")))]
@@ -4081,7 +4177,62 @@ def anchor_after_probe(found, anchor, own):
     die("spawn: no session found on %s" % anchor)
 
 
-def cmd_spawn(argv):
+def tier_pair(tier, effort_flag, bound):
+    """`(model, effort, source)` of an agent's tier: the model of the map's binding `bound`
+    (what resolve_tier_pair answered for it), with the effort of the flag, else the
+    binding's, else the plugin's shipped effort for the tier, else, for the deep tier, the
+    calling orchestrator's own live effort, whose transcript the source then names."""
+    model, effort = bound
+    if effort_flag:
+        return model, effort_flag, "flag"
+    if not effort:
+        effort = SHIPPED_TIER_EFFORTS.get(tier, "")
+    if not effort:
+        _, effort, path = own_pair("the deep tier's agent")
+        return model, effort, "tier %s, effort from transcript %s" % (tier, path)
+    return model, effort, "tier %s" % tier
+
+
+def pair_of_launch(args, auditor_successor, pair_from=""):
+    """`(model, effort, source)` the launch types, for every way in (decision 3). An empty
+    model and effort is the host's default, typed as nothing, and only an opening or a wake
+    with nothing to read gets it."""
+    succession = (args.successor or auditor_successor or args.auditor
+                  or args.coordinator_successor or args.inherit)
+    if succession:
+        # A succession of any role runs on its caller's live pair, with or without the flag:
+        # the successor of an orchestrator or of an auditor, an auditor, the coordinator's
+        # successor, and an agent spawned with --inherit-model.
+        model, effort, path = args.caller_pair or own_pair(
+            "a successor, an auditor or an inheriting spawn")
+        return model, effort, "transcript %s" % path
+    if args.wake:
+        if args.resume:
+            try:
+                model, effort, path = read_pair(args.resume)
+                return model, effort, "transcript %s" % path
+            except PairUnreadable as exc:
+                print("spawn: the resumed session's pair cannot be read (%s)" % exc,
+                      file=sys.stderr)
+        if args.model:
+            return args.model, args.effort, "record"
+        return "", "", "host default"
+    if args.tier:
+        return tier_pair(args.tier, args.effort, args.tier_bound)
+    if args.model:
+        if not args.effort:
+            die("spawn: refused: --model needs --effort: an agent's effort is the "
+                "orchestrator's to name")
+        return args.model, args.effort, pair_from or "flag"
+    if args.open_:
+        return "", "", "host default"
+    die("spawn: refused: an agent needs --tier or --model (with --effort): an agent's model "
+        "and effort are its orchestrator's to name")
+
+
+def cmd_spawn(argv, pair_from=""):
+    """`pair_from` is a rotation's: the source of the model and effort it passes on as flags,
+    read on the rotated agent's transcript, so the launch says where they came from."""
     p = argparse.ArgumentParser(prog="spawn", add_help=False)
     p.add_argument("--dir")
     p.add_argument("--model", default="")
@@ -4159,7 +4310,7 @@ def cmd_spawn(argv):
             if given:
                 die("spawn: refused: %s is not a coordinator-successor's: it lands at the "
                     "first place of your window, reads \"Coord : <subject>\", runs on your "
-                    "model and comes up under remote control" % flag)
+                    "model and effort and comes up under remote control" % flag)
         if not args.title:
             die('spawn: refused: --coordinator-successor needs --title "Coord : <subject>"')
         if not COORD_TITLE_SHAPE.match(args.title):
@@ -4189,9 +4340,13 @@ def cmd_spawn(argv):
                 or re.search(r" \[[0-9A-Za-z]+\]\Z", args.title)):
             die('spawn: refused: --wake needs the recorded name, --title "Orch : <subject>" '
                 "without its reference, got '%s'" % args.title)
-        if not args.model:
-            die("spawn: refused: --wake needs the recorded model, --model <id>: a wake never "
-                "guesses the model its orchestrator ran on")
+        # A record is a model with its effort, or nothing: a model alone would start the
+        # orchestrator at an effort nobody chose. With nothing, the resumed transcript's pair
+        # or the host's default applies, and nothing is asked of the operator at a wake.
+        if bool(args.model) != bool(args.effort):
+            die("spawn: refused: --wake takes the recorded model with its recorded effort, "
+                "--model <id> --effort <level>, or neither: a wake never guesses the effort, "
+                "nor the model, its orchestrator ran on")
     if args.resume and not args.wake:
         die("spawn: refused: --resume is a wake's: it names the session a paused orchestrator "
             "resumes")
@@ -4209,18 +4364,27 @@ def cmd_spawn(argv):
         # A new orchestrator opened on the operator's order, by the coordinator or by an
         # orchestrator the coordinator relayed that order to on another machine: under its own
         # name, right of its caller, in no chain, under remote control like any orchestrator.
-        # Only a coordinator or an orchestrator opens one: an agent never does.
+        # Only a coordinator or an orchestrator opens one: an agent never does. Its pair is
+        # the one the order names, or the host's default: a tier, or the caller's own pair,
+        # would be a pair nobody ordered.
         for flag, given in (("--successor", args.successor), ("--auditor", args.auditor),
                             ("--coordinator-successor", args.coordinator_successor),
-                            ("--wake", args.wake), ("--left-of", args.left_of),
+                            ("--wake", args.wake), ("--tier", args.tier),
+                            ("--inherit-model", args.inherit), ("--left-of", args.left_of),
                             ("--right-of", args.right_of), ("--title-free", args.title_free),
                             ("--resident", args.resident), ("--brief", args.brief),
                             ("--orchestrator", args.orchestrator),
                             ("--no-remote-control", not args.remote_control)):
             if given:
                 die("spawn: refused: %s is not an opening's: an opened orchestrator runs under "
-                    "its own name, lands immediately right of you, joins no chain, reads its "
+                    "its own name, on the model and the effort its order names or the host's "
+                    "default, lands immediately right of you, joins no chain, reads its "
                     "brief from its prompt and comes up under remote control" % flag)
+        if bool(args.model) != bool(args.effort):
+            # The operator's order names a model and an effort, or neither and the host's
+            # default for the session applies: half a pair is a guess at the other half.
+            die("spawn: refused: an opening types the model and the effort the order names, "
+                "--model <id> --effort <level>, or neither (the host's default applies)")
         if (not args.title.startswith("Orch : ") or not TITLE_SHAPE.match(args.title)
                 or re.search(r" \[[0-9A-Za-z]+\]\Z", args.title)):
             die('spawn: refused: --open needs the new orchestrator\'s name, --title '
@@ -4243,14 +4407,14 @@ def cmd_spawn(argv):
             if given:
                 die("spawn: refused: %s is not an auditor's: an auditor lands immediately "
                     "left of its caller, reads \"Audit : <subject>\", runs on the caller's "
-                    "model and comes up under remote control" % flag)
+                    "model and effort and comes up under remote control" % flag)
         if not args.title:
             die('spawn: refused: --auditor needs --title "Audit : <subject>"')
         if not AUDIT_TITLE_SHAPE.match(args.title):
             die("spawn: refused: an auditor's title reads \"Audit : <subject>\", the subject "
                 "at most 25 characters and neither starting nor ending with a space, got '%s'"
                 % args.title)
-    elif args.title.startswith(AUDIT_ROLE):
+    elif args.title.startswith(AUDIT_ROLE) or AUDIT_NAME_SHAPE.match(args.title):
         die("spawn: refused: an audit title is an auditor's; spawn it with --auditor, which "
             "places it beside you, keeps it out of every chain and brings it up under remote "
             "control on your model")
@@ -4350,21 +4514,19 @@ def cmd_spawn(argv):
         die("spawn: --tier and --model are mutually exclusive")
     if args.inherit and (args.tier or args.model):
         die("spawn: --inherit-model is exclusive with --tier and --model")
+    if args.inherit and args.effort:
+        die("spawn: --inherit-model reads the caller's effort with its model; drop --effort")
     if args.effort and args.effort not in EFFORTS:
         die("spawn: unknown effort: %s (expected %s)" % (args.effort, EFFORT_LIST))
-    model, effort = args.model, args.effort
-    if args.tier:
-        model, map_effort = resolve_tier_pair(args.tier)
-        effort = args.effort or map_effort
-    elif args.open_ and not args.model and not args.inherit:
-        # An orchestrator's class is the deep tier: its judgment is re-read by nobody.
-        model, map_effort = resolve_tier_pair("deep")
-        effort = args.effort or map_effort
-    if args.inherit or args.auditor or args.coordinator_successor:
-        # An auditor, and the coordinator's own successor, read with the judgment of the
-        # session that spawns them: the caller's model, like a successor's, whether or not
-        # the flag was typed (§52).
-        model = inherited_model()
+    # The tier is resolved before the anchor and the title are checked, as it always was: a
+    # tier that does not resolve is refused first, and carrying the pair must not change
+    # which refusal comes first. Read once, so a map's warning is said once.
+    args.tier_bound = resolve_tier_pair(args.tier) if args.tier else None
+    # So is the caller's pair, for the launches that always read it there: an inheriting
+    # agent, an auditor and the coordinator's successor.
+    args.caller_pair = (own_pair("a successor, an auditor or an inheriting spawn")
+                        if args.inherit or args.auditor or args.coordinator_successor
+                        else None)
     # The anchor first, before a prompt file is written or a trust record changed: an
     # anchor that is not there is a refusal, and a refusal must leave nothing behind.
     side = "right" if args.right_of else "left"
@@ -4392,10 +4554,11 @@ def cmd_spawn(argv):
             die("spawn: refused: the caller's session name cannot be read from the process "
                 "table — a launch that places its prompt after --name loses the boundary "
                 'between the two; pass --title "Orch : <subject>"')
-        if AUDIT_TITLE_SHAPE.match(title):
+        if AUDIT_NAME_SHAPE.match(title):
             # An auditor kept on past its report succeeds at its gate (§9.4): its successor
             # carries its name, as an orchestrator's does. Only a DERIVED audit title gets
             # here; a typed one was refused above, so `Audit :` is still no one's to claim.
+            # The qualified form (« Audit neutre : <subject> ») is an auditor's name too.
             auditor_successor = True
         elif not TITLE_SHAPE.match(title):
             # The derived name answers to the same shape as a typed one: a caller named
@@ -4443,10 +4606,16 @@ def cmd_spawn(argv):
                             ("--no-remote-control", not args.remote_control)):
             if given:
                 die("spawn: refused: %s is not an auditor's successor's: it runs on your "
-                    "model and comes up under remote control under your name" % flag)
-        # Read with the judgment of the session it replaces, whether or not --inherit-model
-        # was typed, exactly like the auditor it succeeds (§52).
-        model = inherited_model()
+                    "model and effort and comes up under remote control under your name" % flag)
+    if args.successor:
+        # A succession of any role runs on its caller's live pair (decision 3): a tier, a
+        # model or an effort beside it would replace the predecessor's with another.
+        for flag, given in (("--tier", args.tier), ("--model", args.model),
+                            ("--effort", args.effort)):
+            if given:
+                die("spawn: refused: %s is not a successor's: a successor runs on your live "
+                    "model and effort, read on your transcript" % flag)
+    model, effort, pair_source = pair_of_launch(args, auditor_successor, pair_from)
     if anchor == "self" and defaulted and not own and not DRY_RUN:
         # The default must not turn a spawn that worked into a refusal: a caller with no
         # readable tty (a plain shell) gets the old placement, and is told why. An explicit
@@ -4545,7 +4714,7 @@ def cmd_spawn(argv):
             session_words = ("--session-id", new_id)
         socket = home_socket(session_words[1]) if not session_words[1].startswith("<") \
             else HOME_SOCKET_PREFIX + "<new>"
-    plugin_dirs, caller_plugins = caller_plugin_launch()
+    plugin_dirs, caller_plugins = caller_plugin_launch(auditor_successor)
     launch = build_command(args.dir, title, model, args.mode, prompt_file, remote_control,
                            mcp_file, args.account_connectors, gate_tokens, effort,
                            args.keep_tool, args.drop_tool, args.keep_synced_skills,
@@ -4553,6 +4722,8 @@ def cmd_spawn(argv):
 
     if DRY_RUN:
         print("launch=%s" % launch)
+        print("effort=%s" % (effort or "none"))
+        print("pair_source=%s" % pair_source)
         print("prompt_file=%s" % prompt_file)
         if args.brief:
             print("prompt=%s" % brief_prompt)
@@ -4591,6 +4762,9 @@ def cmd_spawn(argv):
 
     script = write_launch_script(launch, title)
     command = "%s -l %s" % (LOGIN_SHELL, script)
+    print("spawn: model %s, effort %s, from %s" % (model or "the host's default",
+                                                    effort or "the host's default", pair_source),
+          file=sys.stderr)
 
     made = {"terminal": term}
     if anchor == "leftmost":
@@ -4981,6 +5155,28 @@ def cmd_move(argv):
     print("moved %s to position %s" % (args.tty, idx))
 
 
+def rotated_session(tty):
+    """The session id of the host on `tty`, from the host's own registry of its pid, or
+    empty."""
+    pid = host_cli_on(tty)
+    record = host_registry(pid) if pid and str(pid).isdigit() else None
+    sid = record.get("sessionId") if record else ""
+    return sid if isinstance(sid, str) else ""
+
+
+def cmd_pair(argv):
+    """The calling session's model and effort now, read on its transcript (read_pair):
+    `model=<m> effort=<e>`, or exit 1 with the reason. Read-only: an orchestrator answers a
+    pause with it, and a move's record is filled from it, rather than declaring either."""
+    if argv:
+        die("pair: takes no argument; it reads the calling session's own transcript")
+    try:
+        model, effort = caller_pair(os.environ.get("CLAUDE_CODE_SESSION_ID", ""))
+    except PairUnreadable as exc:
+        die("pair: %s" % exc)
+    print("model=%s effort=%s" % (model, effort))
+
+
 def cmd_rotate(argv):
     p = argparse.ArgumentParser(prog="rotate", add_help=False)
     p.add_argument("--old-tty", dest="old_tty")
@@ -5021,10 +5217,33 @@ def cmd_rotate(argv):
                 "and is not rotated (pass --force to rotate it anyway)" % (args.old_tty, audit))
         print("rotate: forced: %s is an auditor's tab ('%s')" % (args.old_tty, audit),
               file=sys.stderr)
+    # Window 0 of a home session is the orchestrator's place. The close below refuses it, but
+    # only after the replacement has spawned, which would leave that replacement running with
+    # nothing to close the old window: the refusal is read here, before the spawn.
+    chosen = terminal()
+    if isinstance(chosen, TmuxTerminal):
+        pane = chosen.lookup(args.old_tty)
+        if pane is not None and pane.index == "0":
+            refuse_window_zero("rotate", args.old_tty, pane.name)
+    # A rotation is a succession: given no pair, the replacement runs on the ROTATED agent's
+    # live model and effort, read on that agent's transcript — not on its tier's, which its
+    # orchestrator may have escalated since. A tier, or a model with its effort, is the
+    # orchestrator naming the pair, and the spawn types it as named.
+    pair_from = ""
+    named = ("--tier", "--model", "--effort", "--inherit-model")
+    if not any(word.partition("=")[0] in named for word in rest):
+        sid = rotated_session(args.old_tty)
+        try:
+            model, effort, path = read_pair(sid)
+        except PairUnreadable as exc:
+            die("rotate: refused: the agent on %s runs on a model and an effort that cannot be "
+                "read (%s); pass --tier, or --model with --effort" % (args.old_tty, exc))
+        rest = rest + ["--model", model, "--effort", effort]
+        pair_from = "transcript %s" % path
     # The spawn verifies the replacement is RUNNING before anything is closed: a rotation
     # that killed the old agent on a spawn that never started would leave zero agents,
     # which is the one outcome this order exists to prevent.
-    cmd_spawn(rest)
+    cmd_spawn(rest, pair_from)
     # The replacement works in the same checkout: a rotation deletes nothing.
     close_args = ["--tty", args.old_tty, "--keep-checkout"]
     if args.expect:
@@ -5043,8 +5262,14 @@ def transcript_of_session(sid):
     and the file is named by the id, so the id alone finds it wherever the session ran."""
     if not re.fullmatch(r"[0-9A-Za-z._-]+", sid):
         return None
-    hits = glob.glob(os.path.join(PROJECTS_DIR, "*", sid + ".jsonl"))
-    return max(hits, key=os.path.getmtime) if hits else None
+    dated = []
+    for path in glob.glob(os.path.join(PROJECTS_DIR, "*", sid + ".jsonl")):
+        try:
+            dated.append((os.path.getmtime(path), path))
+        except OSError:
+            # Removed between the listing and the read of its time: not a transcript any more.
+            continue
+    return max(dated)[1] if dated else None
 
 
 def read_offered(path):
@@ -5206,13 +5431,13 @@ COMMANDS = {
     "move": cmd_move, "rotate": cmd_rotate, "resolve-tier": cmd_resolve_tier,
     "screen": cmd_screen, "trust": cmd_trust, "tools": cmd_tools,
     "home": cmd_home, "home-release": cmd_home_release, "takeover": cmd_takeover,
-    "home-watch": cmd_home_watch,
+    "home-watch": cmd_home_watch, "pair": cmd_pair,
 }
 
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
-        die("usage: iterm-agent.sh {list|spawn|verify|screen|resolve-tier|close|move|rotate|trust|tools|home|home-release|takeover} [options] (see header)")
+        die("usage: iterm-agent.sh {list|spawn|verify|screen|resolve-tier|pair|close|move|rotate|trust|tools|home|home-release|takeover} [options] (see header)")
     COMMANDS[sys.argv[1]](sys.argv[2:])
 
 

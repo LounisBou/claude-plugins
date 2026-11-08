@@ -29,6 +29,11 @@ export CLAUDE_CODE_SESSION_ID=s-dry
 unset TMUX TMUX_PANE
 mkdir -p "$CLAUDE_CONFIG_DIR/claude-orchestrator/measure"
 printf '{"model":"a-model"}\n' > "$CLAUDE_CONFIG_DIR/claude-orchestrator/measure/s-dry.json"
+# The caller's live pair, on its transcript: a succession runs on it, and no measure file is read.
+export ORCHESTRATOR_PROJECTS_DIR="$WORK/projects"
+mkdir -p "$ORCHESTRATOR_PROJECTS_DIR/p"
+printf '{"type":"api-request","sessionId":"s-dry","querySource":"repl_main_thread","params":{"model":"a-model","output_config":{"effort":"high"}}}\n' \
+  > "$ORCHESTRATOR_PROJECTS_DIR/p/s-dry.jsonl"
 export ORCHESTRATOR_LOGIN_SHELL=/bin/sh
 export ORCHESTRATOR_DRY_RUN=1
 export ORCHESTRATOR_SELF_TTY=/dev/ttys900
@@ -58,33 +63,33 @@ spawn() { bash "$AGENT" spawn --dir "$WORK" "$@"; }
 chain() { printf '%s\n' "$1" > "$STATE/chains/ttys900.jsonl"; }
 
 main() {
-show "agent, no anchor" spawn --title "Agent : a" --prompt p
-show "agent, right of self, no chain" spawn --title "Agent : a" --prompt p --right-of self
+show "agent, no anchor" spawn --tier light --title "Agent : a" --prompt p
+show "agent, right of self, no chain" spawn --tier light --title "Agent : a" --prompt p --right-of self
 chain '{"tab_id":"t-1","tty":"/dev/ttys901","owner":"S-ME"}
 {"tab_id":"t-2","tty":"/dev/ttys902","owner":"S-ME"}
 {"tab_id":"t-3","tty":"/dev/ttys903","owner":"S-OTHER"}'
-show "agent, right of self, chain of two" spawn --title "Agent : a" --prompt p --right-of self
-show "agent, left of self, chain ignored" spawn --title "Agent : a" --prompt p --left-of self
-show "agent, explicit right anchor" spawn --title "Agent : a" --prompt p --right-of /dev/ttys555
-show "agent, explicit left anchor" spawn --title "Agent : a" --prompt p --left-of /dev/ttys555
-show "agent, two anchors refused" spawn --title "Agent : a" --prompt p --left-of /dev/ttys001 --right-of self
+show "agent, right of self, chain of two" spawn --tier light --title "Agent : a" --prompt p --right-of self
+show "agent, left of self, chain ignored" spawn --tier light --title "Agent : a" --prompt p --left-of self
+show "agent, explicit right anchor" spawn --tier light --title "Agent : a" --prompt p --right-of /dev/ttys555
+show "agent, explicit left anchor" spawn --tier light --title "Agent : a" --prompt p --left-of /dev/ttys555
+show "agent, two anchors refused" spawn --tier light --title "Agent : a" --prompt p --left-of /dev/ttys001 --right-of self
 chain 'not json'
-show "agent, corrupt chain" spawn --title "Agent : a" --prompt p --right-of self
+show "agent, corrupt chain" spawn --tier light --title "Agent : a" --prompt p --right-of self
 rm -f "$STATE/chains/ttys900.jsonl"
-show "agent, resident" spawn --title "Agent : a" --prompt p --resident
-show "agent, no verify, trust" spawn --title "Agent : a" --prompt p --no-verify --trust
-show "agent, free title" spawn --title-free --title "odd" --prompt p
-show "agent, bad title refused" spawn --title "odd" --prompt p
+show "agent, resident" spawn --tier light --title "Agent : a" --prompt p --resident
+show "agent, no verify, trust" spawn --tier light --title "Agent : a" --prompt p --no-verify --trust
+show "agent, free title" spawn --tier light --title-free --title "odd" --prompt p
+show "agent, bad title refused" spawn --tier light --title "odd" --prompt p
 show "agent, tier" spawn --title "Agent : a" --prompt p --tier standard --effort low
-show "agent, model" spawn --title "Agent : a" --prompt p --model a-model --permission-mode acceptEdits
+show "agent, model" spawn --title "Agent : a" --prompt p --model a-model --effort high --permission-mode acceptEdits
 show "agent, inherit model" spawn --title "Agent : a" --prompt p --inherit-model
-show "agent, gate tokens" spawn --title "Agent : a" --prompt p --gate-tokens 200000
-show "agent, tools kept and dropped" spawn --title "Agent : a" --prompt p --keep-tool Workflow --drop-tool Foo --keep-synced-skills
-show "agent, account connectors" spawn --title "Agent : a" --prompt p --account-connectors
-show "agent, no remote control" spawn --title "Agent : a" --prompt p --no-remote-control
-show "agent, brief" spawn --title "Agent : a" --brief "$WORK/brief.md" --orchestrator "Orch : f [a1b2c3]"
-show "agent, prompt file" spawn --title "Agent : a" --prompt-file "$WORK/brief.md"
-show "agent, no prompt refused" spawn --title "Agent : a"
+show "agent, gate tokens" spawn --tier light --title "Agent : a" --prompt p --gate-tokens 200000
+show "agent, tools kept and dropped" spawn --tier light --title "Agent : a" --prompt p --keep-tool Workflow --drop-tool Foo --keep-synced-skills
+show "agent, account connectors" spawn --tier light --title "Agent : a" --prompt p --account-connectors
+show "agent, no remote control" spawn --tier light --title "Agent : a" --prompt p --no-remote-control
+show "agent, brief" spawn --tier light --title "Agent : a" --brief "$WORK/brief.md" --orchestrator "Orch : f [a1b2c3]"
+show "agent, prompt file" spawn --tier light --title "Agent : a" --prompt-file "$WORK/brief.md"
+show "agent, no prompt refused" spawn --tier light --title "Agent : a"
 show "successor, derived name" spawn --successor --prompt p
 show "successor, typed name" spawn --successor --title "Orch : g" --prompt p
 show "successor, no remote control" spawn --successor --prompt p --no-remote-control
@@ -96,23 +101,23 @@ show "auditor, tier refused" spawn --auditor --title "Audit : tm" --prompt p --t
 show "coordinator successor" spawn --coordinator-successor --title "Coord : c" --prompt p
 export ORCHESTRATOR_PS_TABLE="$PS_ORCH"
 show "wake" spawn --wake --title "Orch : w" --prompt p --model a-model --effort high
-show "a resumed wake" spawn --wake --title "Orch : w" --prompt p --model a-model --resume abcdef12-3456-4789-8abc-def012345678
-show "resume without wake refused" spawn --title "Agent : a" --prompt p --resume abcdef12
+show "a resumed wake" spawn --wake --title "Orch : w" --prompt p --model a-model --effort high --resume abcdef12-3456-4789-8abc-def012345678
+show "resume without wake refused" spawn --tier light --title "Agent : a" --prompt p --resume abcdef12
 show "open" spawn --open --title "Orch : o" --prompt p
 show "open, tier" spawn --open --title "Orch : o" --prompt p --tier deep
 export ORCHESTRATOR_MODELS_MAP="$WORK/models.json"
 show "open, bound deep tier" spawn --open --title "Orch : o" --prompt p
 export ORCHESTRATOR_MCP_CATALOGUE="$WORK/mcp.json"
-show "agent, mcp default" spawn --title "Agent : a" --prompt p
-show "agent, mcp named" spawn --title "Agent : a" --prompt p --mcp b
-show "agent, mcp none" spawn --title "Agent : a" --prompt p --mcp none
+show "agent, mcp default" spawn --tier light --title "Agent : a" --prompt p
+show "agent, mcp named" spawn --tier light --title "Agent : a" --prompt p --mcp b
+show "agent, mcp none" spawn --tier light --title "Agent : a" --prompt p --mcp none
 export ORCHESTRATOR_PS_TABLE="$PS_AUDIT"
 show "close" bash "$AGENT" close --tty /dev/ttys901 --expect-title "Agent : x"
 show "close, keep checkout" bash "$AGENT" close --tty /dev/ttys901 --keep-checkout
-show "rotate" bash "$AGENT" rotate --old-tty /dev/ttys901 --expect-title "Agent : x" --dir "$WORK" --title "Agent : r" --prompt p
-show "rotate, auditor refused" bash "$AGENT" rotate --old-tty /dev/ttys950 --dir "$WORK" --title "Agent : r" --prompt p
-show "rotate, auditor forced" bash "$AGENT" rotate --old-tty /dev/ttys950 --force --dir "$WORK" --title "Agent : r" --prompt p
-show "rotate, coordinator refused" bash "$AGENT" rotate --old-tty /dev/ttys951 --dir "$WORK" --title "Agent : r" --prompt p
+show "rotate" bash "$AGENT" rotate --tier light --old-tty /dev/ttys901 --expect-title "Agent : x" --dir "$WORK" --title "Agent : r" --prompt p
+show "rotate, auditor refused" bash "$AGENT" rotate --tier light --old-tty /dev/ttys950 --dir "$WORK" --title "Agent : r" --prompt p
+show "rotate, auditor forced" bash "$AGENT" rotate --tier light --old-tty /dev/ttys950 --force --dir "$WORK" --title "Agent : r" --prompt p
+show "rotate, coordinator refused" bash "$AGENT" rotate --tier light --old-tty /dev/ttys951 --dir "$WORK" --title "Agent : r" --prompt p
 show "rotate, successor refused" bash "$AGENT" rotate --old-tty /dev/ttys901 --successor --dir "$WORK" --title "Agent : r" --prompt p
 chain '{"tab_id":"2","tty":"/dev/ttys901","owner":"S-ME"}'
 show "move, own agent right of self" bash "$AGENT" move --tty /dev/ttys901 --right-of self

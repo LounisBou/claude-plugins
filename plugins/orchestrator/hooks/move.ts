@@ -425,16 +425,19 @@ export function arrivedNotice(manifest: Extract<MoveMessage, { kind: 'manifest' 
   const { name, model, effort, prs, git, order } = manifest.record
   const count = manifest.files.length
   const from = fromName.length <= FROM_NAME_CAP ? literal(fromName) : `a sender whose name runs past ${FROM_NAME_CAP} characters`
+  // A model without its effort is half a pair, which the launcher's opening refuses: a record
+  // from a peer that kept no effort opens on the host's default, model and effort both.
+  const pair = effort ? ` --model ${shellWord(model)} --effort ${effort}` : ''
   return [
     `[module] ${name} arrived from ${literal(manifest.origin.machine)}, sent by ${from}: its ${count} ${count === 1 ? 'file is' : 'files are'} written in ${arrival.briefDir}.`,
     `brief: ${arrival.brief}`,
     `dir: ${arrival.dir}`,
     `git: ${git ? `${literal(git.url)}, branch ${literal(git.branch)}, as the sender reports it` : 'none, its directory is no checkout'}`,
-    `model: ${model}, effort ${effort || 'default'}`,
+    `model: ${model}, effort ${effort || "default: the opening types neither, the host's default applies"}`,
     `pull requests: ${prs.length > 0 ? prs.map(literal).join(', ') : 'none'}`,
     `the operator's order, verbatim: ${literal(order)}`,
     'Open it as the order says, with this command alone and nothing before it:',
-    `${launcher} spawn --open --title "${name}" --dir ${shellWord(arrival.dir)} --permission-mode auto --model ${shellWord(model)}${effort ? ` --effort ${effort}` : ''} --prompt "Read and execute ${arrival.brief}"`,
+    `${launcher} spawn --open --title "${name}" --dir ${shellWord(arrival.dir)} --permission-mode auto${pair} --prompt "Read and execute ${arrival.brief}"`,
   ].join('\n')
 }
 

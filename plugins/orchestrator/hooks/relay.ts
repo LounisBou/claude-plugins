@@ -56,9 +56,12 @@ export function handsOver(text: string): boolean {
 }
 
 // A successor's word to its predecessor, « takeover confirmed » (the succession brief), read on
-// the text's first line, its markup dropped as handsOver drops it.
+// the text's first line, its markup dropped as handsOver drops it. The phrase opens the line and
+// anything may follow it: a successor reports on the same line (« takeover confirmed — <its name>
+// holds the orchestration; … », 2026-11-04), and a whole-line match read that as no takeover, so
+// the hand-over withdrew the open questions it should have moved.
 export function confirmsTakeover(text: string): boolean {
-  return /^takeover confirmed$/i.test(machineLine(text.split('\n').find(line => line.trim() !== '') ?? ''))
+  return /^takeover confirmed\b/i.test(machineLine(text.split('\n').find(line => line.trim() !== '') ?? ''))
 }
 
 // An agent's last line, its brief's own: `status: done|blocked|question — <one line>`,

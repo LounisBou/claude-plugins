@@ -124,8 +124,7 @@ The hooks module measures every session in-process. After each turn the host
 fires a measure event that carries the fill itself — tokens, window,
 percentage, the model that answered — and the module writes one line to
 `~/.claude/claude-orchestrator/measure/<session-id>.json`, the only file
-external processes read: the launcher's `--inherit-model` takes the model from
-it, and any tool of your own can read the figures the same way.
+external processes read: any tool of your own can read the figures the same way.
 
 ```bash
 cat ~/.claude/claude-orchestrator/measure/$CLAUDE_CODE_SESSION_ID.json

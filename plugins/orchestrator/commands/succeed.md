@@ -9,24 +9,32 @@ Execute the orchestrator succession described in
 Preconditions, verify each before acting:
 
 - the moment is quiet: no verdict pending, no agent mid-delivery;
-- the project state file is current — status lives once, there;
+- the project state file is current — status lives once, there — and pruned (lifecycle
+  item 0);
+- the orchestration's rulings file, `<briefs dir>/rulings.md`, exists and holds every ruling still
+  standing, each dated and quoted, the brief's « Standing rulings » line naming it;
 - the standing succession brief exists; otherwise instantiate
   `${CLAUDE_PLUGIN_ROOT}/templates/orchestrator-succession-brief.md` into the
   project's briefs directory, filling every `{{PLACEHOLDER}}`, never a brief written by hand;
-- its « Live state » section is filled now, from the state file's live part: its six fields
+- its « Live state » section is filled now, from the state file's live part: its five fields
   are rewritten, the predecessor overwrites the previous handover's Live state, never appends.
   The open questions are the round's open entries of this session and its questions no answer
   of his has settled, verbatim, never summarised; `none` only after reading the round. The
-  brief stays within 10,000 characters, the open-questions value apart.
+  brief stays within 9,000 characters, the open-questions value apart.
 
 Then:
 
-1. `iterm-agent.sh list` — note your own tty.
+1. `iterm-agent.sh list` — your own row, `self`: its tty, your home server (the first
+   comma-separated field of `printenv TMUX`, `none` on tabs), the launcher's path and the
+   scripts directory fill the brief's predecessor placeholders.
 2. **Lint it.** `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <brief path>`;
    any finding is repaired before the spawn, a known false positive is named.
-3. `iterm-agent.sh spawn --dir <worktree> --inherit-model --permission-mode auto
+3. `iterm-agent.sh spawn --dir <worktree> --permission-mode auto
    --successor --prompt "Read and execute <brief path>"` — the operator's
    decision mode, or the successor stops at its first prompt in a tab nobody watches.
+   The successor runs on this session's live model and effort, read on its transcript;
+   `--tier`, `--model` and `--effort` are refused beside `--successor`, and a pair that
+   cannot be read refuses the spawn.
    No title: `--successor` takes THIS session's own name, so the successor is the same
    `Orch : <subject>` with a reference of its own, which is what every brief cites. Where the
    launcher reads no such name, it says to type one: pass `--title "<this session's current

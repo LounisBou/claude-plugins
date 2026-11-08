@@ -43,7 +43,7 @@ and no file written (this brief aside) — the exchange with your predecessor ex
   repository), then spawn — no title, it takes yours:
 
   ```
-  {{ITERM_AGENT_SH}} spawn --dir {{REPOSITORY}} --successor --inherit-model --permission-mode auto --prompt "Read and execute <succession brief path>"
+  {{ITERM_AGENT_SH}} spawn --dir {{REPOSITORY}} --successor --permission-mode auto --prompt "Read and execute <succession brief path>"
   ```
 
   Next, tell the operator in one line that you are handing over: to whom, and what is still

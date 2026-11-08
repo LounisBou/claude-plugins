@@ -15,8 +15,9 @@ export type RoundChoice = { letter: string; text: string }   // letter: one of '
 // (`round-close`, `closed`), the operator in the sender's own tab or the sender itself — a later
 // turn waiting on something else, a newer question, its session's end or its hand-over
 // (`withdrawn`). An answer relayed by another session's message is `by: 'message'` (`answered`),
-// with that session's name in `author`.
-export type RoundAnswer = { text: string; by: 'pane' | 'coordinator' | 'tab' | 'sender' | 'message'; at: string; author?: string }
+// with that session's name in `author`. A question the coordinator withdrew as settled meanwhile
+// (`round-close --withdraw`) is closed by it, with the evidence it read on the artifact in `evidence`.
+export type RoundAnswer = { text: string; by: 'pane' | 'coordinator' | 'tab' | 'sender' | 'message'; at: string; author?: string; evidence?: string }
 export type RoundEntry = {
   id: string                    // `${sanitised session id}-${fingerprint(wait)}`, its wait unmarked, sanitised as supervision.ts sanitises store ids
   from: string                  // the sender's name (what relayText puts after « reply with SendMessage to: »), the answer's address when `session` is not live here
@@ -313,15 +314,19 @@ export function roundPath(stateDir: string, id: string): string {
   return `${stateDir}/round/${id}.json`
 }
 
-// The open entries in the round's own order (the coordination skill's): grouped by sender,
-// so one orchestrator's questions stay together; the groups by their earliest wait, each in
-// the order its waits began. The stamps are the module's own ISO strings, compared as text.
+// The open entries in the round's own order, the operator's ruling of 2026-10-31 (6.2): the
+// urgent first, then the others; within each level grouped by sender, so one orchestrator's
+// questions stay together, the groups by their earliest wait in that level, each in the order its
+// waits began. `coordinator.sh round` prints the same order, with or without --by-urgency. The
+// stamps are the module's own ISO strings, compared as text.
 export function openEntries(entries: readonly RoundEntry[]): RoundEntry[] {
   const open = entries.filter(entry => entry.status === 'open')
   const bySince = (a: RoundEntry, b: RoundEntry) => (a.since < b.since ? -1 : a.since > b.since ? 1 : 0)
-  const groups = new Map<string, RoundEntry[]>()
-  for (const entry of [...open].sort(bySince)) groups.set(entry.from, [...(groups.get(entry.from) ?? []), entry])
-  return [...groups.values()].flat()
+  return [true, false].flatMap(urgent => {
+    const groups = new Map<string, RoundEntry[]>()
+    for (const entry of open.filter(e => (e.urgent === true) === urgent).sort(bySince)) groups.set(entry.from, [...(groups.get(entry.from) ?? []), entry])
+    return [...groups.values()].flat()
+  })
 }
 
 // A wait whose text asks nothing the pane could offer: no question of it carries a lettered
@@ -384,12 +389,19 @@ export function waitSummary(entry: Pick<RoundEntry, 'blocks' | 'question'>): str
 // An open question is due in the coordinator's tab when its sender marked it urgent, or when no
 // pane of the coordinator is open to show it, the operator's ruling of 2026-10-24: whether he
 // keeps the pane open decides where a question goes, and an open pane shows it for as long as
-// it waits. `coordinator.sh round` marks the same entries `due`. A closing proposal is no
+// it waits. `coordinator.sh round` marks the same entries `due`. Due or not, each new question is
+// also told in one line to the coordinator's conversation (toldText), his ruling of 2026-11-04. A closing proposal is no
 // question: the pane cannot rule it, and the tab always presents it. `now` is kept for the
 // callers, the rule reading no age.
 export function isDue(entry: RoundEntry, _now: number, paneOpen: boolean): boolean {
   if (entry.status !== 'open' || entry.kind !== 'operator') return false
   return entry.urgent === true || !paneOpen
+}
+
+// The one line the coordinator's conversation shows for a new question, pane open or not: its
+// sender and what it blocks, never the question's text, which the round and the pane hold.
+export function toldText(entry: Pick<RoundEntry, 'from' | 'blocks' | 'urgent'>): string {
+  return `Question pending from ${entry.from} — blocks: ${(entry.blocks ?? '').trim() || '-'}${entry.urgent ? ' (urgent)' : ''}`
 }
 
 // The coordinator's wake for the questions just due: a report, never an order — it names them,

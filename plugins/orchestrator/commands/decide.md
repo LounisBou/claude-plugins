@@ -83,10 +83,10 @@ question before it is presented.
 ## 4. On the answer, in the same turn and in this order
 
 1. « Recorded: <the ruling in one line> » — the user sees their decision written back.
-2. Write the ruling where it lives: the project's state file or memory, the register
-   entry, the plan — the durable place, never only the chat, or the next session
-   relitigates it. Only the user's ruling is written
-   there; a proposal never is. A ruling that rules out a goal is written with
+2. Write the ruling first to the orchestration's rulings file, verbatim and dated
+   (`references/lifecycle.md`, « Prune the state file before you hand over »), then where
+   it applies: the state file or memory, the register entry, the plan — never only the
+   chat, or the next session relitigates it. Only the user's ruling is written there. A ruling that rules out a goal is written with
    `dispatch-record.sh goals <record> rule-out <G> --ruling "<his words>"`, so the stop gate
    reads it. A ruling that defers work (« later, when I say so ») is recorded with
    `dispatch-record.sh defer <record> <id> --ruling "<his words, dated>"` for a row and
@@ -103,7 +103,7 @@ question before it is presented.
 
 If ANYTHING else was shown to the user between a question and its answer — a status line
 you had to write, a notice the host printed — re-present the question IN FULL, in step 2's whole shape, never « as above » or a pointer. A question the user must scroll back to find is a question answered
-wrong. Until he answers, every turn re-presents it so: the stop gate refuses any other end.
+wrong. Until he answers, every turn re-presents it so: the stop gate logs any turn without it.
 
 ## 6. A ruling is not reopened
 
@@ -124,8 +124,7 @@ context, appended to the round. Never re-argue a ruled question inside another o
 4. When no question is left: in one short list, where each ruling was written (file, entry),
    which agent was told, what was launched — and the round ends.
 
-Rules that hold throughout: one question per message, the next one presented the moment
-the last is answered; nothing launched or reported inside a wave, each ruling relayed at once; explanation
+Rules that hold throughout: nothing launched or reported inside a wave, each ruling relayed at once; explanation
 before options; nothing decided on their behalf.
 
 $ARGUMENTS
