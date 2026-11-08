@@ -51,7 +51,14 @@ export type MoveRecord = {
   order: string                // the operator's order, verbatim and dated
 }
 export type Origin = { machine: string; home: string; configDir: string }
-export type ManifestFile = { name: string; bytes: number; sha256: string; chunks: number }  // name: a base name in dirname(brief)
+// A file of the brief's directory is named by its base name there. A file that lives elsewhere —
+// the dispatch record the brief names, its owner and its goals — also carries its absolute path
+// on the origin (`at`, whose base name is `name`), and lands at that path rewritten onto the
+// target. A manifest with no such file is the one an earlier version sends and reads.
+export type ManifestFile = { name: string; bytes: number; sha256: string; chunks: number; at?: string }
+
+// The most files one move lands outside its briefs directory: a record, its owner and its goals.
+export const MOVE_PLACED_CAP = 3
 
 // A move's messages, one marked line each: the sender's manifest, chunks and « sent »; the
 // receiver's acknowledgment of each file, its « missing » list and its « done »; and the
@@ -209,7 +216,11 @@ function filesShaped(v: unknown): boolean {
 }
 
 function fileShaped(f: unknown): boolean {
-  return isObject(f) && exactly(f, FILE_FIELDS) && typeof f['name'] === 'string' && f['name'].length <= FILE_NAME_CAP
+  if (!isObject(f)) return false
+  const placed = exactly(f, [...FILE_FIELDS, 'at'])
+  if (!placed && !exactly(f, FILE_FIELDS)) return false
+  if (placed && !(absolute(f['at']) && f['at'].slice(f['at'].lastIndexOf('/') + 1) === f['name'])) return false
+  return typeof f['name'] === 'string' && f['name'].length <= FILE_NAME_CAP
     && typeof f['sha256'] === 'string' && whole(f['bytes'], 0, MOVE_FILE_CAP) && whole(f['chunks'], 1, Math.max(1, f['bytes'] as number))
 }
 
@@ -288,7 +299,7 @@ export function moveIdOf(record: MoveRecord, files: ManifestFile[]): string {
   const canonical = JSON.stringify([
     record.name, record.brief, record.dir, record.model, record.effort, record.prs, record.checkouts,
     record.git ? [record.git.url, record.git.branch] : null, record.order,
-    files.map(f => [f.name, f.bytes, f.sha256, f.chunks]),
+    files.map(f => (f.at === undefined ? [f.name, f.bytes, f.sha256, f.chunks] : [f.name, f.bytes, f.sha256, f.chunks, f.at])),
   ])
   return `${slugOf(record.name)}-${hex48(canonical)}`
 }
@@ -325,14 +336,18 @@ export function checkManifestFiles(files: ManifestFile[]): string | null {
   let chunks = 0
   for (const [i, f] of files.entries()) {
     if (!FILE_NAME_SHAPE.test(f.name) || f.name === '.' || f.name === '..') return `file ${i}: its name is no plain base name`
-    if (seen.has(f.name.toLowerCase())) return `${f.name}: a duplicate name`
-    seen.add(f.name.toLowerCase())
+    // A file of the brief's directory is keyed by its name, a file placed elsewhere by its path.
+    const key = f.at === undefined ? f.name.toLowerCase() : `/${f.at.toLowerCase()}`
+    if (seen.has(key)) return `${f.at ?? f.name}: a duplicate name`
+    seen.add(key)
     if (!(f.bytes <= MOVE_FILE_CAP)) return `${f.name}: ${f.bytes} bytes, more than ${MOVE_FILE_CAP}`
     if (!SHA256_SHAPE.test(f.sha256)) return `${f.name}: its sha256 is not 64 lowercase hex digits`
     if (!(f.chunks >= 1)) return `${f.name}: ${f.chunks} chunks, fewer than one`
     total += f.bytes
     chunks += f.chunks
   }
+  const placed = files.filter(f => f.at !== undefined).length
+  if (placed > MOVE_PLACED_CAP) return `${placed} files placed outside the briefs directory, more than ${MOVE_PLACED_CAP}`
   if (total > MOVE_TOTAL_CAP) return `${total} bytes in all, more than ${MOVE_TOTAL_CAP}`
   if (chunks > MOVE_CHUNKS_CAP) return `${chunks} chunks in all, more than ${MOVE_CHUNKS_CAP}`
   return null
@@ -359,7 +374,8 @@ function escapeRegExp(text: string): string {
 
 // Where a move lands on the receiving machine: the briefs directory that takes every file, the
 // brief in it, and the record's paths rewritten.
-export type Arrival = { briefDir: string; brief: string; dir: string; checkouts: string[] }
+// `places` holds, file by file, where a file placed outside the briefs directory lands, null for one of it.
+export type Arrival = { briefDir: string; brief: string; dir: string; checkouts: string[]; places: (string | null)[] }
 
 // The arrival, or the reason the move is refused. The move's id is the one its record and
 // files give. Every file lands in the target's own briefs directory, named after the move's
@@ -372,7 +388,7 @@ export function arrivalOf(manifest: Extract<MoveMessage, { kind: 'manifest' }>, 
   if (!record.brief.startsWith('/')) return { refused: `the brief is no absolute path: ${record.brief}` }
   if (record.brief.endsWith('/')) return { refused: `the brief names a directory, not a file: ${record.brief}` }
   const name = record.brief.slice(record.brief.lastIndexOf('/') + 1)
-  if (!manifest.files.some(f => f.name === name)) return { refused: `the brief ${name} is not among the files` }
+  if (!manifest.files.some(f => f.name === name && f.at === undefined)) return { refused: `the brief ${name} is not among the files` }
   const home = trimSlashes(target.home)
   if (home === '') return { refused: 'the target\'s home is empty or the root' }
   const briefDir = `${trimSlashes(target.configDir)}/claude-orchestrator/briefs/${manifest.move.replace(MOVE_ID_HASH, '')}`
@@ -383,7 +399,25 @@ export function arrivalOf(manifest: Extract<MoveMessage, { kind: 'manifest' }>, 
   if (refusal) return { refused: refusal }
   const files = checkManifestFiles(manifest.files)
   if (files !== null) return { refused: files }
-  return { briefDir, brief: `${briefDir}/${name}`, dir, checkouts }
+  const places = manifest.files.map(f => (f.at === undefined ? null : rewritePaths(f.at, pairs)))
+  const briefsRoot = `${trimSlashes(target.configDir)}/claude-orchestrator/briefs`
+  const misplaced = places.map(path => (path === null ? null : placeRefusal(path, home, briefsRoot, [dir, ...checkouts]))).find(r => r !== null)
+  if (misplaced) return { refused: misplaced }
+  return { briefDir, brief: `${briefDir}/${name}`, dir, checkouts, places }
+}
+
+// Why a file placed outside the briefs directory cannot land at `path`, or null when it can: under
+// the target's briefs, or strictly under its home where no name is hidden (no dot file or dot
+// directory a shell or a key reads), never with '..', and never inside the working directory or a
+// checkout, which git rebuilds and a file landed first would keep from cloning.
+function placeRefusal(path: string, home: string, briefsRoot: string, checkouts: string[]): string | null {
+  if (path.split('/').includes('..')) return `the file ${path} climbs with '..'`
+  const inside = checkouts.find(checkout => path.startsWith(`${trimSlashes(checkout)}/`))
+  if (inside !== undefined) return `the file ${path} lies in ${inside}, which git rebuilds`
+  if (path.startsWith(`${briefsRoot}/`)) return null
+  if (!path.startsWith(`${home}/`)) return `the file ${path} is not strictly under ${home}`
+  if (path.slice(home.length + 1).split('/').some(part => part.startsWith('.'))) return `the file ${path} is hidden under ${home}`
+  return null
 }
 
 // Why a rewritten directory or checkout cannot be the arrival's, or null when it can: the
@@ -435,6 +469,7 @@ export function arrivedNotice(manifest: Extract<MoveMessage, { kind: 'manifest' 
     `git: ${git ? `${literal(git.url)}, branch ${literal(git.branch)}, as the sender reports it` : 'none, its directory is no checkout'}`,
     `model: ${model}, effort ${effort || "default: the opening types neither, the host's default applies"}`,
     `pull requests: ${prs.length > 0 ? prs.map(literal).join(', ') : 'none'}`,
+    ...(arrival.places.some(place => place !== null) ? [`also written outside its briefs directory: ${arrival.places.filter(place => place !== null).join(', ')}`] : []),
     `the operator's order, verbatim: ${literal(order)}`,
     'Open it as the order says, with this command alone and nothing before it:',
     `${launcher} spawn --open --title "${name}" --dir ${shellWord(arrival.dir)} --permission-mode auto${pair} --prompt "Read and execute ${arrival.brief}"`,

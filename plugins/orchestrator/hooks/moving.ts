@@ -17,6 +17,7 @@ import {
   type Arrival, type ManifestFile, type MoveMessage, type MoveRecord,
 } from './move.ts'
 import { messageOf, type Events, type Host, type On } from './host.ts'
+import { recordFiles, recordNamedIn } from '../skills/orchestrator/scripts/lib/record-paths.ts'
 import { removeArgv, staleTemporaries, temporaryOf, withLockOver, writeAtomicOver, type StoreIo } from '../core/store-io.ts'
 
 export const SEND_TOOL = 'move_send'
@@ -317,6 +318,44 @@ async function gitOf($: Dollar, dir: string): Promise<{ git: { url: string; bran
 
 type Manifest = Extract<MoveMessage, { kind: 'manifest' }>
 
+// The files of the dispatch record the brief names that live outside its directory — the record,
+// its owner, its goals — each that exists as a regular file, to travel with the brief. One that
+// lies in the working directory or a checkout is git's to carry: it must be tracked there, or the
+// move is refused, since nothing else would bring it to the other machine.
+async function placedFiles(
+  $: Dollar, record: MoveRecord, dir: string, inDir: readonly string[],
+): Promise<{ files: { name: string; kind: string; size: number; at: string }[] } | { refused: string }> {
+  let brief: string
+  try {
+    brief = String(await $.fs.read(record.brief))
+  } catch {
+    return { files: [] }
+  }
+  const named = recordNamedIn(brief)
+  if (!named.startsWith('/')) return { files: [] }
+  const files: { name: string; kind: string; size: number; at: string }[] = []
+  for (const path of recordFiles(named)) {
+    const name = path.slice(path.lastIndexOf('/') + 1)
+    if (path === `${dir}/${name}` && inDir.includes(name)) continue
+    let size: number
+    try {
+      const stat = await $.fs.stat(path)
+      if (stat.kind !== 'file') continue
+      size = stat.size
+    } catch {
+      continue
+    }
+    const checkout = [record.dir, ...record.checkouts].find(c => path.startsWith(`${c.replace(/\/+$/, '')}/`))
+    if (checkout !== undefined) {
+      const tracked = await run($, ['git', '-C', checkout, 'ls-files', '--error-unmatch', '--', path], GIT_MS)
+      if (tracked?.exitCode === 0) continue
+      return { refused: `the dispatch record's file ${path} lies in ${checkout} and git does not track it: move the record beside the brief, and its line in the brief with it` }
+    }
+    files.push({ name, kind: 'file', size, at: path })
+  }
+  return { files }
+}
+
 // The reason a record is refused by the protocol's own shapes, found by taking the git field
 // away and then judging the rest, so the reason names what is wrong.
 function recordRefusal(manifest: Manifest): string | null {
@@ -349,9 +388,11 @@ async function sendMove($: Dollar, e: Events['tool.call']): Promise<{ result: st
   const capped = checkManifestFiles(sketch)
   if (capped) return failure(`move refused, nothing sent: ${capped}`)
   if (!regular.some(entry => entry.name === briefName)) return failure(`move refused, nothing sent: the brief ${briefName} is not a regular file of ${dir}`)
+  const placed = await placedFiles($, record, dir, regular.map(entry => entry.name))
+  if ('refused' in placed) return failure(`move refused, nothing sent: ${placed.refused}`)
   const files: ManifestFile[] = []
-  for (const entry of regular) {
-    const path = `${dir}/${entry.name}`
+  for (const entry of [...regular.map(e => ({ ...e, at: undefined as string | undefined })), ...placed.files]) {
+    const path = entry.at ?? `${dir}/${entry.name}`
     let text: string
     try {
       text = String(await $.fs.read(path))
@@ -362,7 +403,8 @@ async function sendMove($: Dollar, e: Events['tool.call']): Promise<{ result: st
     if (bytes !== entry.size || bytes > MOVE_FILE_CAP) return failure(`move refused, nothing sent: ${entry.name} is not plain text`)
     const hash = await sha256Of($, path)
     if (!hash) return failure(`move refused, nothing sent: neither shasum nor sha256sum answered for ${entry.name}`)
-    files.push({ name: entry.name, bytes, sha256: hash, chunks: chunkText(text, chunk).length })
+    const chunks = chunkText(text, chunk).length
+    files.push(entry.at === undefined ? { name: entry.name, bytes, sha256: hash, chunks } : { name: entry.name, bytes, sha256: hash, chunks, at: entry.at })
   }
   const git = await gitOf($, record.dir)
   if ('refused' in git) return failure(`move refused, nothing sent: ${git.refused}`)
@@ -434,7 +476,7 @@ async function sendAll(
     if (only !== null && !only.some(([n]) => n === file)) continue
     let pieces: string[]
     try {
-      pieces = chunkText(String(await $.fs.read(`${dir}/${f.name}`)), chunk)
+      pieces = chunkText(String(await $.fs.read(f.at ?? `${dir}/${f.name}`)), chunk)
     } catch (err) {
       return `${f.name} cannot be read again (${messageOf(err)})`
     }
@@ -772,7 +814,7 @@ async function processFile($: Dollar, h: Held, file: number): Promise<void> {
     } else {
       const target = await targetOf($)
       const rewritten = rewritePaths(text, arrivalPairs(h.manifest, h.arrival, target))
-      outcome = await land($, `${h.arrival.briefDir}/${f.name}`, f.name, rewritten)
+      outcome = await land($, h.arrival.places[file] ?? `${h.arrival.briefDir}/${f.name}`, f.name, rewritten)
     }
   } catch (err) {
     outcome = { ok: false, reason: `${f.name}: ${messageOf(err)}` }
