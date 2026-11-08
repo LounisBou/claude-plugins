@@ -53,11 +53,13 @@ jobs:
         run: npm run version-bump -- origin/${{ github.base_ref }}
       - id: matrix
         name: plugin matrix
-        run: npm run -s plugin-matrix
+        # A pull request runs Linux, for the plugins it changes; main runs every cell.
+        run: npm run -s plugin-matrix -- ${{ github.event_name == 'pull_request' && format('--pull-request origin/{0}', github.base_ref) || '' }}
 
   plugin:
     name: ${{ matrix.plugin }} on ${{ matrix.os }}${{ !matrix.blocking && ' (not yet blocking)' || '' }}
     needs: repository
+    if: needs.repository.outputs.matrix != '{"include":[]}'
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.repository.outputs.matrix) }}

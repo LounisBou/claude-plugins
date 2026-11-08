@@ -3,7 +3,12 @@
 // platforms listed as blocking for it. A platform joins a plugin's list the day its suite is
 // green there, and never leaves it (docs/conventions.md, « Ratchets »).
 //
-//   npm run plugin-matrix   prints the matrix; appends it to $GITHUB_OUTPUT when set
+// A pull request runs the Linux cells of the plugins it changes: a change outside plugins/ runs
+// every plugin, a change of documentation alone none. macOS runs after the merge, on main.
+//
+//   npm run plugin-matrix                        prints the matrix; appends it to $GITHUB_OUTPUT when set
+//   npm run plugin-matrix -- --pull-request <base>   the matrix of a pull request against <base>
+import { execFileSync } from 'node:child_process'
 import { appendFileSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { processIo, type Io } from './lib/io.ts'
@@ -47,9 +52,35 @@ export function matrixOf(blocking: ReadonlyMap<string, ReadonlySet<Platform>>): 
   return [...blocking].flatMap(([plugin, platforms]) => PLATFORMS.map(os => ({ plugin, os, blocking: platforms.has(os) })))
 }
 
-export function run(root: string, _args: readonly string[], io: Io): number {
+// Files no plugin reads: their change runs no suite.
+const DOCUMENTATION = [/^docs\//, /^[^/]+\.md$/]
+
+/** The plugins a change of `changed` (paths from the root) asks to test. */
+export function touchedPlugins(changed: readonly string[], plugins: readonly string[]): string[] {
+  const touched = new Set<string>()
+  for (const path of changed) {
+    if (DOCUMENTATION.some(pattern => pattern.test(path))) continue
+    const name = /^plugins\/([^/]+)\//.exec(path)?.[1]
+    if (name === undefined) return [...plugins]
+    if (plugins.includes(name)) touched.add(name)
+  }
+  return plugins.filter(plugin => touched.has(plugin))
+}
+
+/** The cells a pull request runs: Linux, for the plugins it touches. */
+export function pullRequestCells(matrix: readonly Cell[], touched: readonly string[]): Cell[] {
+  return matrix.filter(cell => cell.os === 'ubuntu-latest' && touched.includes(cell.plugin))
+}
+
+export function run(root: string, args: readonly string[], io: Io): number {
   const plugins = readPlugins(root).map(plugin => plugin.dir)
-  const matrix = matrixOf(parseBlocking(JSON.parse(readFileSync(join(root, 'ci', 'plugins.json'), 'utf8')), plugins))
+  let matrix = matrixOf(parseBlocking(JSON.parse(readFileSync(join(root, 'ci', 'plugins.json'), 'utf8')), plugins))
+  if (args[0] === '--pull-request') {
+    if (args[1] === undefined) throw new Error('--pull-request needs the base ref')
+    const changed = execFileSync('git', ['diff', '--name-only', `${args[1]}...HEAD`], { cwd: root, encoding: 'utf8' })
+      .split('\n').filter(line => line !== '')
+    matrix = pullRequestCells(matrix, touchedPlugins(changed, plugins))
+  }
   const line = JSON.stringify({ include: matrix })
   io.out(line)
   const output = io.env['GITHUB_OUTPUT']

@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { compareVersions, parseManifest, readPlugins } from './lib/plugins.ts'
 import { entryOf, render } from './marketplace.ts'
-import { matrixOf, parseBlocking } from './plugin-matrix.ts'
+import { matrixOf, parseBlocking, pullRequestCells, touchedPlugins } from './plugin-matrix.ts'
 import { breaches, isPromptPath, measure } from './prompts.ts'
 import { missingBumps, shippedChanges } from './version-bump.ts'
 
@@ -91,6 +91,18 @@ describe('plugin matrix', () => {
 
   it('refuses an unknown platform', () => {
     assert.throws(() => parseBlocking({ blocking: { alpha: ['windows-latest'] } }, ['alpha']), /unknown platform/)
+  })
+
+  it('tests the plugins a change touches, every one for a change outside plugins/, none for documentation', () => {
+    const plugins = ['alpha', 'beta']
+    assert.deepEqual(touchedPlugins(['plugins/beta/x.sh'], plugins), ['beta'])
+    assert.deepEqual(touchedPlugins(['plugins/beta/x.sh', 'packages/core/src/a.ts'], plugins), plugins)
+    assert.deepEqual(touchedPlugins(['docs/a.md', 'README.md', 'plugins/ghost/x'], plugins), [])
+  })
+
+  it('runs a pull request on Linux only', () => {
+    const matrix = matrixOf(parseBlocking({ blocking: { alpha: ['macos-latest'], beta: [] } }, ['alpha', 'beta']))
+    assert.deepEqual(pullRequestCells(matrix, ['alpha']), [{ plugin: 'alpha', os: 'ubuntu-latest', blocking: false }])
   })
 })
 
