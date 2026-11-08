@@ -75,8 +75,25 @@ to this repository only once it is proved stable (`docs/migration.md`).
 | 5 | Security | 11, 12 | |
 | 6 | Platforms | 6 | Ratchet `ci/plugins.json` plugin by plugin. |
 | 7 | Plugin defects | 13 | One plugin per pull request, from the lists below. The orchestrator's urgent fixes run in its former repository and are imported; its refactoring is `orchestrator-refoundation-design.md`, and touches `plugins/orchestrator/` only once the urgent build has ended. |
-| 8 | Prompts and evals | 14, 15, 21, 22 | The spend cap of each eval run is the operator's, asked before any run. |
+| 8 | Prompts and evals | 14, 15, 21, 22 | Spend caps, set by the operator: « Eval spend caps » below. |
 | 9 | Configuration and cutover | 16, 17 | |
+
+## Eval spend caps (phase 8)
+
+Set by the operator, passed as `--max-cost-usd` or stopped by hand at the figure. The behaviour
+suites' baselines cost 0.31 to 0.42 USD a run of a case; the outcome figures are a first
+estimate, corrected after the pilot.
+
+| Run | Cap (USD) |
+|---|---:|
+| Behaviour suite, plugin arm, one run per case (after a rewrite) | 10 |
+| Behaviour suite, plugin arm, three runs per case (a baseline) | 30 |
+| Behaviour suite, both arms, three runs per case | 70 |
+| Outcome pilot: one replayed pull request, single session and orchestration | 20 |
+| Outcome measure: six replayed pull requests, one run per arm, each pull request and arm stopped at 10 | 120 |
+
+A run that would need more stops at its cap and is reported with what it measured; a higher
+cap is the operator's.
 
 ## Copied rules core replaces (goal 3)
 
@@ -104,7 +121,7 @@ Line numbers are at import. « Suspected » items are confirmed by a reading, th
 - `.claude/settings.json` pre-approves `gh pr merge:*` and `git merge:*`. (Phase 0.)
 - `tests/run-tests.sh:419,1832,2120`: `stat -f … || stat -c` reads filesystem data on GNU.
 - `tests/run-tests.sh:1792-1805` asserts the wording and line counts of `docs/caddy`.
-- Suspected: `restore` replays whatever account, zone and data a backup file carries; the default env file `~/.env` turns any token-shaped variable into an account.
+- `restore` replays whatever account, zone and data a backup file carries. (The env file suspicion is dropped: an account is made only from a variable named `<NAME>_CLOUDFLARE_API_TOKEN`.)
 
 **bugs-bot**
 - `bugs_bot/agent.py:223`: `deploy_check` runs with `shell=True` from `.bugs-bot.json`, under the blanket `Bash(bugs-bot:*)` rule. (Phase 0.)
