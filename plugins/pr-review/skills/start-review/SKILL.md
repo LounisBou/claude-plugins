@@ -78,12 +78,13 @@ another route around a refusal.
 
 **When `mcp__github__gh` is not in your tool list** (a session where plugin
 modules do not load, such as `claude -p`), send the same request to the same
-engine from Bash. Write the request object with the Write tool to
-`/tmp/claude-pr-review-request.json`, then run:
+engine from Bash, the request object on standard input, no file in between:
 
 ```bash
 GH_ROOT=$(python3 "${CLAUDE_PLUGIN_ROOT}/scripts/resolve_github.py") || exit 1
-python3 "$GH_ROOT/engine/gh.py" --stdin-json < /tmp/claude-pr-review-request.json
+python3 "$GH_ROOT/engine/gh.py" --stdin-json <<'PR_REVIEW_REQUEST'
+<the request object, as JSON>
+PR_REVIEW_REQUEST
 ```
 
 `${CLAUDE_PLUGIN_ROOT}` names this plugin and reaches no sibling, so the resolver
