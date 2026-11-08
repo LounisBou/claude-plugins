@@ -44,6 +44,8 @@ release left in front of it.
 
 ## 2. Layout
 
+The plugin's `core/` is the generated copy of the repository's `packages/core` (`npm run core`), laid out there and never edited here.
+
 ```
 .claude-plugin/plugin.json           name orchestrator, semver, MIT
 .claude-plugin/marketplace.json      name claude-orchestrator, single-plugin marketplace, source "./"
@@ -105,7 +107,6 @@ commands/coordinator-decide.md       the coordinator's decision round over every
 commands/sleeping.md                 lists the orchestrators paused on the operator's word, the list answered by the module; drop abandons one after one confirmation
 short-names.tsv                      each command's short name beside its file: the table the installer writes the user commands from, and brief-lint reads
 short-commands.sh                    launches skills/orchestrator/scripts/short-commands.ts, which writes the short names as user commands, each a copy of its plugin command with the plugin root spelled out and a marker line: install, uninstall, and the module's sync of the copies an update left on an earlier root; a file without the marker is never touched
-core/data.ts, core/deadline.ts, core/env.ts, core/index.ts, core/install-record.ts, core/locate.ts, core/method.ts, core/names.ts, core/paths.ts, core/pr-record.json, core/pr-record.ts, core/shell.ts, core/store.ts  the generated copy of the repository's packages/core (npm run core), never edited here
 hooks/hooks.json                     declares the hooks module, and nothing else
 hooks/host.ts                        the part of the host's API the strict hooks call, as types only
 hooks/register.ts                    the hooks module's entry point: mounts the domains as they land, the gauge before the store that reads its figure

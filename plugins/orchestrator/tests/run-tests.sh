@@ -2611,7 +2611,8 @@ layout_paths() {  # <design file>: one path per layout entry; "a, b" lists sever
 layout_drift() {  # <design file> <tracked-files, one per line>: prints every mismatch, both ways
   local design=$1 tracked=$2 f layout
   layout=$(layout_of "$design")
-  for f in $(printf '%s\n' "$tracked" | grep -vE '^docs/superpowers/|^LICENSE$|^\.gitignore$'); do
+  # core/ is the generated copy of packages/core, laid out there, and named in the design's prose.
+  for f in $(printf '%s\n' "$tracked" | grep -vE '^docs/superpowers/|^LICENSE$|^\.gitignore$|^core/'); do
     printf '%s' "$layout" | grep -qF "$f" || echo "missing:$f"
   done
   for f in $(layout_paths "$design"); do
