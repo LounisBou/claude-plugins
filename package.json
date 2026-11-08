@@ -16,7 +16,8 @@
     "prompts": "node --experimental-strip-types --no-warnings scripts/prompts.ts",
     "core": "node --experimental-strip-types --no-warnings scripts/core.ts",
     "deps": "node --experimental-strip-types --no-warnings scripts/deps.ts",
-    "permissions": "node --experimental-strip-types --no-warnings scripts/permissions.ts"
+    "permissions": "node --experimental-strip-types --no-warnings scripts/permissions.ts",
+    "context": "node --experimental-strip-types --no-warnings scripts/context.ts"
   },
   "devDependencies": {
     "@types/node": "22.15.21",
