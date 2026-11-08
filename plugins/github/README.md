@@ -132,7 +132,7 @@ The list changes only through the tool, on the operator's word:
 `auto-merge-set {"repo": "owner/name", "on": true|false, "words": "<his words>"}`
 adds or removes a repository when `words` names auto-merge (« auto-merge », « auto
 merge » or « automerge ») and is found verbatim in a prompt he typed or in his answer
-recorded in the round, and `auto-merge-list` prints it. A Write,
+in a consent record of auto-merge on that repository, and `auto-merge-list` prints it. A Write,
 an Edit or a shell command on the file is refused. A prompt he types that speaks
 of auto-merge reminds the session to call `auto-merge-set`.
 
@@ -232,11 +232,10 @@ github: records are written by their producers (pr-review's auto-fix-loop, /norm
 The command is read as text, so a plain `ls` of the root is refused too; reading
 a record with the Read tool passes. `mcp__github__record` writes at the head the
 checkout and the pull request share, on a clean tree, one kind per caller: E2E
-for a session, the review for pr-review's hooks, the norms for the norms
-plugin's. A waiver quotes words the operator typed in the session, or his answer
-recorded in the round about that pull request (an E2E question, a letter answer quoted as its
-choice's text, at least 8 characters), with their
-date. Once a
+for a session, each other kind for the plugin the record contract names its
+producer. A waiver quotes words the operator typed in the session, or his answer
+in a consent record of an E2E waiver of that pull request (core's
+`consent-record.ts`, at least 8 characters), with their date. Once a
 day at most, the start of a session prunes the head directories whose newest
 record is older than 90 days.
 

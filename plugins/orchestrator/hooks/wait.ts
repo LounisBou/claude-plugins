@@ -10,6 +10,7 @@
 // stop and of the turn's end sees. The model's own line, when it wrote one, no longer decides.
 import { waitLine, WAIT_KINDS, type DeclaredWait, type WaitKind } from './stop-gate.ts'
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
+import { CONSENT_KINDS, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
 import { messageOf, type Host, type On } from './host.ts'
 
 // The nouns the declaration holds.
@@ -29,7 +30,7 @@ const KIND_NEEDS: Record<WaitKind, string> = {
 
 // The tool's input, validated: the declaration, or why it is none.
 export function parseDeclaration(input: unknown): { wait: DeclaredWait } | { error: string } {
-  const e = (input ?? {}) as { kind?: unknown; blocks?: unknown; urgent?: unknown }
+  const e = (input ?? {}) as { kind?: unknown; blocks?: unknown; urgent?: unknown; consent?: unknown }
   if (typeof e.kind !== 'string' || !(WAIT_KINDS as readonly string[]).includes(e.kind)) {
     return { error: `kind is one of ${WAIT_KINDS.join(', ')}` }
   }
@@ -37,11 +38,16 @@ export function parseDeclaration(input: unknown): { wait: DeclaredWait } | { err
   if (e.blocks !== undefined && typeof e.blocks !== 'string') return { error: 'blocks is a string' }
   if (e.urgent !== undefined && typeof e.urgent !== 'boolean') return { error: 'urgent is true or false' }
   if (e.urgent === true && kind !== 'operator') return { error: 'only an operator wait is urgent' }
+  const consent = e.consent === undefined ? undefined : parseConsentSubject(e.consent)
+  if (e.consent !== undefined && kind !== 'operator') return { error: 'only an operator question asks consent' }
+  if (e.consent !== undefined && consent === undefined) {
+    return { error: 'consent is {"kind": "e2e-waiver", "repo": "owner/name", "pr": <n>} or {"kind": "auto-merge", "repo": "owner/name"}' }
+  }
   const blocks = String(e.blocks ?? '').replace(/\s+/g, ' ').trim()
   if (kind === 'done') return { wait: { kind, blocks: '' } }
   if (blocks === '') return { error: `a ${kind} wait names in blocks ${KIND_NEEDS[kind]}` }
   if (blocks.length > BLOCKS_MAX) return { error: `blocks holds at most ${BLOCKS_MAX} characters` }
-  return { wait: e.urgent === true ? { kind, blocks, urgent: true } : { kind, blocks } }
+  return { wait: { kind, blocks, ...(e.urgent === true ? { urgent: true as const } : {}), ...(consent ? { consent } : {}) } }
 }
 
 // The declarations of one session, by turn: a declaration is current only in the turn that
@@ -64,6 +70,16 @@ export class Declarations {
   }
 }
 
+// The declarations of this session's main thread, which the relay reads too: the subject a
+// question asks consent on rides with its round entry (supervision.ts).
+export const DECLARATIONS = new Declarations()
+
+// The subject the current turn's operator question asks consent on, or null.
+export function declaredConsent(declarations: Declarations = DECLARATIONS): ConsentSubject | null {
+  const wait = declarations.current()
+  return wait?.kind === 'operator' ? wait.consent ?? null : null
+}
+
 // The message as the gate and the turn's end read it: the declaration's line written last.
 export function withDeclaredWait(message: string, wait: DeclaredWait | null): string {
   return wait === null ? message : `${message.replace(/\s+$/, '')}\n\n${waitLine(wait)}`
@@ -71,7 +87,7 @@ export function withDeclaredWait(message: string, wait: DeclaredWait | null): st
 
 // Mounted before the guards and the supervision: a chain answers in registration order, so the
 // stop gate and the turn's end read the message this module hands on.
-export function register(on: On<Held>, declarations: Declarations = new Declarations()): void {
+export function register(on: On<Held>, declarations: Declarations = DECLARATIONS): void {
   on('session.start', {}, async ($, e, next) => {
     try {
       await $.tool.register({
@@ -81,6 +97,8 @@ export function register(on: On<Held>, declarations: Declarations = new Declarat
           + '`operator` (a question the operator must answer; blocks: what it blocks; urgent: true to have it presented at once), '
           + '`tool` (a command, monitor or subagent you started in the background; blocks: what is watched), '
           + '`done` (every goal met or ruled out), `deferred` (only work the operator deferred is left; blocks: « <n> items »). '
+          + 'An operator question that asks his consent to waive E2E on a pull request, or to put a repository in or out of auto-merge, '
+          + 'names it in consent: {kind: "e2e-waiver", repo, pr} or {kind: "auto-merge", repo}; his answer is then recorded as that consent. '
           + 'The stop gate reads the declaration in place of your last line.',
         inputSchema: {
           type: 'object',
@@ -88,6 +106,11 @@ export function register(on: On<Held>, declarations: Declarations = new Declarat
             kind: { type: 'string', enum: [...WAIT_KINDS] },
             blocks: { type: 'string', maxLength: BLOCKS_MAX },
             urgent: { type: 'boolean' },
+            consent: {
+              type: 'object',
+              properties: { kind: { type: 'string', enum: [...CONSENT_KINDS] }, repo: { type: 'string' }, pr: { type: 'integer' } },
+              required: ['kind', 'repo'],
+            },
           },
           required: ['kind'],
         },

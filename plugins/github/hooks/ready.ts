@@ -4,7 +4,7 @@
 // head. Pure functions only: register.ts reads GitHub, the records and the
 // session, and answers the calls.
 
-import { accepts, KINDS, parsePrRecord, type Kind, type PrRecord } from '../core/pr-record.ts'
+import { accepts, KINDS, kindFor, parsePrRecord, producerOf, type Kind, type PrRecord } from '../core/pr-record.ts'
 import { gitSubcommand, simpleCommands } from '../core/shell.ts'
 import { type EngineCall, engineCall, engineFlag, engineOption } from './shell.ts'
 
@@ -464,8 +464,8 @@ export function warnLine(act: string, repo: string, pr: number | string, missing
     + ' Missing: ' + missing.join(', ')
 }
 
-export const RECORDS_REFUSAL = 'github: records are written by their producers (pr-review\'s auto-fix-loop,'
-  + ' /norms:check, mcp__github__record for E2E), never by hand.'
+export const RECORDS_REFUSAL = 'github: records are written by their producers\' tools, and E2E by mcp__github__record,'
+  + ' never by hand.'
 
 // A path into the records, or to their directory itself: a message or a body
 // that only names the word is no path.
@@ -478,15 +478,19 @@ export function touchesRecords(line: string, root?: string): boolean {
   return names(line) || simpleCommands(line).some((argv) => argv.some(names))
 }
 
-// The record kinds a caller of mcp__github__record may write, by the plugin
-// whose hook made the call: the model (the engine) and any other plugin write
-// only E2E, the review and the norms check have their own producers. The
-// review's plugin is pr-review, installed under the name its host gives it.
-export const REVIEW_PLUGIN = 'pr-review'
-export const RECORD_PRODUCERS: Record<string, string> = { [REVIEW_PLUGIN]: 'review', norms: 'norms' }
-
+// The record kind a caller of mcp__github__record may write, by the plugin whose hook made the
+// call: the one the record contract names it the producer of, the open kind (E2E) for the model
+// (the engine) and any other plugin.
 export function recordKindFor(origin: string): string {
-  return RECORD_PRODUCERS[origin] ?? 'e2e'
+  return kindFor(origin)
+}
+
+// The refusal of a record of a kind its caller does not write, naming the producer the contract declares.
+export function kindRefusal(kind: string, origin: string, owned: string): string {
+  const producer = producerOf(kind)
+  const by = producer ? ' (' + producer.plugin + ', ' + producer.tool + ')' : ''
+  return 'github: ' + kind + ' records are written by their producer' + by + ': '
+    + (origin === 'engine' ? 'this tool' : origin) + ' writes ' + owned + ' only.'
 }
 
 // A plugin's name as a producer slug.

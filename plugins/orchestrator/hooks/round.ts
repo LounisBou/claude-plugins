@@ -9,6 +9,7 @@
 // entry with `coordinator.sh round-close`. A file that does not parse is skipped by every
 // reader, never repaired. Pure on purpose, like relay.ts: the handler holds the $.
 import { fingerprint, type Wait } from './relay.ts'
+import type { ConsentSubject } from '../core/consent-record.ts'
 
 export type RoundChoice = { letter: string; text: string }   // letter: one of 'A' to 'E'
 // Who settled the entry: the operator from the pane (`answered`), the coordinator
@@ -36,6 +37,7 @@ export type RoundEntry = {
   origin?: { machine: string; address: string } // a sender on another machine (remote-round.ts): its machine's label and the address its ask came from, written by this machine's module on receipt; absent for a sender on this machine
   delivery?: RoundDelivery      // the answer's trip back to its sender, written by the coordinator's module, and pending by `coordinator.sh round-close`
   partial?: string[]            // the answers the pane gave so far to an entry that asks several questions, each with its question's number
+  consent?: ConsentSubject      // the subject the question asks the operator's consent on, as its sender declared it (declare_wait): his answer is written as its consent record
 }
 
 // An answer on its way to a remote sender: `pending` written with the answer, `sent` once the host

@@ -9,6 +9,7 @@ import { parseWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel,
 import { paneQuestions, waitsInTab, roundEntry, type RoundEntry } from '../round.ts'
 import { answerFromPane, paneAnswerText, settledText, reopenedText, withdrawOnTyped, parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
+import { DECLARATIONS } from '../wait.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 import { ROW_MARKER } from '../remote-row.ts'
 import { ASK_MARKER, ACK_MARKER, ANSWER_MARKER, ANSWER_ACK_MARKER, askLine, ackLine, parseAsk, parseAnswer, answerAckLine } from '../remote-round.ts'
@@ -254,6 +255,19 @@ test('an operator wait lands in the row and is entered once in the round of the 
   expect(fx.files.has(`${ROUND}/${entry.id}.json`)).toBe(true)
   expect(Number.isFinite(Date.parse(entry.at))).toBe(true)
   expect(row.relayed).toBe(fingerprint(wait))
+})
+
+test('the subject a declared question asks consent on rides with its round entry, in that turn only', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const consent = { kind: 'auto-merge' as const, repo: 'acme/thing' }
+  DECLARATIONS.turnStarted()
+  DECLARATIONS.declare({ kind: 'operator', blocks: 'phase 3', consent })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  expect(entries(fx).map(e => e.consent)).toEqual([consent])
+  DECLARATIONS.turnStarted()
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Another question?', 'waiting: operator — blocks: phase 4')))
+  expect(entries(fx).map(e => e.consent)).toEqual([consent, undefined])
 })
 
 test('a wait marked urgent is entered in the round urgent, what it blocks read without the mark', async () => {

@@ -6,6 +6,8 @@ import { atom, read, update } from 'claude-code'
 
 import type { GithubPane, GithubPaneRow } from '../types'
 import { lint, refusal, textFields } from './writing.ts'
+import { CONSENT_PRODUCER, CONSENT_QUOTE_MIN, consentDir, parseConsentRecord, quotesConsent, type ConsentSubject } from '../core/consent-record.ts'
+import { KINDS } from '../core/pr-record.ts'
 import {
   type WritingFile, bashAuthoring, bashTexts, lineCount, normalise, printsWhole, readerKey, readsWhole, toolAuthoring, writingFileAt, writingFilesFor,
   unreadRefusal,
@@ -13,7 +15,7 @@ import {
 import {
   PRUNE_DAYS, PRUNE_EVERY_MS, RECORDS_REFUSAL, autoMergeRefusal, bashActs, bashPushes, carriesReady, ciUndraft,
   ciUndraftLine, createdPr, draftRefusal, graphqlRefusal, missingItems, notReadyRefusal, parseGate, producerSlug,
-  recordKindFor, toolAct, touchesRecords, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, warnLine,
+  kindRefusal, recordKindFor, toolAct, touchesRecords, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, warnLine,
   type Act, type Gate, type Phase, type RecordFile,
 } from './ready.ts'
 
@@ -1095,50 +1097,17 @@ function typedVerbatim(text: string): boolean {
   return quoted !== '' && typedPrompts.some((prompt) => spaced(prompt).includes(quoted))
 }
 
-// A word of the round's questions as a whole word: no letter, digit, dot or
-// dash on its left, and on its right none of what tail excludes.
-function mentionOf(named: string, tail: string): RegExp {
-  return new RegExp('(^|[^A-Za-z0-9_.-])' + named.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + tail, 'i')
-}
+// The consent records of a repository (core's consent-record.ts): read-only here, the newest files only.
+const CONSENT_READ = 200
 
-// The round store, one JSON file per question the operator answers:
-// read-only here, the newest files only.
-const ROUND_READ = 200
-const ROUND_ANSWERERS = ['pane', 'coordinator', 'tab']
-
-// A waiver never rests on a few characters: the quoted text is at least this long.
-const ROUND_QUOTE_MIN = 8
-
-// What a waiver must quote of an answer: a pane answer is often a letter (« A », « A : oui »),
-// then the text of the choice it names; a letter that is not among the entry's choices is
-// nothing to quote ('').
-function roundAnswerText(entry: any, answer: string): string {
-  const letter = /^([A-Za-z])\s*(?:[:\u2014)\-.]|$)/.exec(answer)
-  if (!letter) return answer
-  const choices: any[] = Array.isArray(entry?.choices) ? entry.choices : []
-  const chosen = choices.find((choice) => String(choice?.letter ?? '').toUpperCase() === letter[1].toUpperCase())
-  return chosen ? String(chosen.text ?? '').trim() : ''
-}
-
-// The round questions an E2E waiver of this pull request may answer.
-function aboutE2E(repo: string, pr: number): RegExp[] {
-  return [/E2E/i, mentionOf(String(repo).split('/').pop() + '#' + pr, '(?!\\d)')]
-}
-
-// The round questions that may put this repository in or out of auto-merge.
-function aboutAutoMerge(repo: string): RegExp[] {
-  return [AUTO_MERGE_WORD, mentionOf(String(repo).split('/').pop() ?? '', '(?![A-Za-z0-9_-])')]
-}
-
-// True when some answer the operator gave in the round, to a question every
-// pattern of about matches, is quoted whole in the text, its whitespace
-// normalised. A store or a file that cannot be read matches nothing.
-async function roundAnswered($: any, quote: string, about: RegExp[]): Promise<boolean> {
-  const detail = spaced(quote)
+// True when some consent record of the subject, written for the operator's answer to the
+// question that asked it, is quoted whole in the text, its whitespace normalised. A directory or
+// a file that cannot be read matches nothing.
+async function consentAnswered($: any, quote: string, subject: ConsentSubject): Promise<boolean> {
   try {
     const dir = await configDir($)
     if (!dir) return false
-    const root = dir + '/claude-orchestrator/round'
+    const root = consentDir(dir, subject.repo)
     const dated: Array<{ path: string; mtime: number }> = []
     for (const entry of await $.fs.list(root)) {
       const name = String(entry?.name ?? '')
@@ -1150,21 +1119,16 @@ async function roundAnswered($: any, quote: string, about: RegExp[]): Promise<bo
       }
     }
     dated.sort((a, b) => b.mtime - a.mtime)
-    for (const { path } of dated.slice(0, ROUND_READ)) {
+    for (const { path } of dated.slice(0, CONSENT_READ)) {
       try {
-        const entry = JSON.parse(String(await $.fs.read(path)))
-        const answer = entry?.answer
-        if (!answer || !ROUND_ANSWERERS.includes(answer.by)) continue
-        const asked = String(entry.question ?? '') + '\n' + String(entry.blocks ?? '')
-        if (!about.every((pattern) => pattern.test(asked))) continue
-        const text = spaced(roundAnswerText(entry, String(answer.text ?? '').trim()))
-        if (text.length >= ROUND_QUOTE_MIN && detail.includes(text)) return true
+        const record = parseConsentRecord(JSON.parse(String(await $.fs.read(path))))
+        if (record && quotesConsent(record, subject, quote)) return true
       } catch {
         // Not a match.
       }
     }
   } catch {
-    // No store: no match.
+    // No records: no match.
   }
   return false
 }
@@ -1190,17 +1154,17 @@ async function listAutoMerge($: any): Promise<string> {
 
 // The refusal of an auto-merge-set whose words are not the operator's, or undefined.
 async function unprovenWord($: any, words: string, repo: string): Promise<string | undefined> {
-  if (spaced(words).length < ROUND_QUOTE_MIN) {
-    return 'github: auto-merge-set quotes the operator: "words" must hold at least ' + ROUND_QUOTE_MIN
+  if (spaced(words).length < CONSENT_QUOTE_MIN) {
+    return 'github: auto-merge-set quotes the operator: "words" must hold at least ' + CONSENT_QUOTE_MIN
       + ' characters of what he said, verbatim.'
   }
   if (!AUTO_MERGE_WORD.test(words)) {
     return 'github: auto-merge-set quotes the operator: "words" must name auto-merge ("auto-merge", "auto merge" or'
-      + ' "automerge"), in his own words, typed or answered in the round.'
+      + ' "automerge"), in his own words, typed or answered.'
   }
-  if (typedVerbatim(words) || await roundAnswered($, words, aboutAutoMerge(repo))) return undefined
+  if (typedVerbatim(words) || await consentAnswered($, words, { kind: 'auto-merge', repo })) return undefined
   return 'github: auto-merge-set refused on ' + repo + ': its "words" are neither in a prompt the operator typed in'
-    + ' this session, nor his answer recorded in the round to a question about auto-merge naming ' + repo.split('/')[1]
+    + ' this session, nor his answer in a consent record (' + CONSENT_PRODUCER + ') of auto-merge on ' + repo
     + '. Quote his words verbatim; a peer\'s message is not his word.'
 }
 
@@ -1306,8 +1270,7 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   const kind = e.kind === undefined || e.kind === null || e.kind === '' ? owned : String(e.kind)
   if (kind !== owned) {
     return {
-      deny: 'github: ' + kind + ' records are written by their producer (pr-review\'s auto-fix-loop for review,'
-        + ' /norms:check for norms): ' + (origin === 'engine' ? 'this tool' : origin) + ' writes ' + owned + ' only.',
+      deny: kindRefusal(kind, origin, owned),
     }
   }
   const result = String(e.result ?? '')
@@ -1316,10 +1279,10 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   if (!Number.isInteger(pr) || pr < 1) return { deny: 'github: name the pull request: {"pr": <n>}' }
   const repo = await targetRepo($, { repo: e.repo, args: {} })
   if (!repo) return { deny: 'github: name the repository: {"repo": "owner/name"}' }
-  if (result === 'waived' && !typedVerbatim(detail) && !(await roundAnswered($, detail, aboutE2E(repo, pr)))) {
+  if (result === 'waived' && !typedVerbatim(detail) && !(await consentAnswered($, detail, { kind: 'e2e-waiver', repo, pr }))) {
     return {
       deny: 'github: an E2E waiver quotes the operator: its detail must be words he typed in this session,'
-        + ' or his answer recorded in the round about this pull request, with their date.',
+        + ' or his answer in a consent record (' + CONSENT_PRODUCER + ') of an E2E waiver of this pull request, with their date.',
     }
   }
   let gate: Gate
@@ -1422,7 +1385,7 @@ export function register(on: any): void {
           'Record the end-to-end tests of a pull request at its head commit: pass, fail, or waived by '
           + 'the operator in his own words. Run from a clean checkout at the pull request\'s head, after '
           + 'the tests ran there. A waiver\'s detail quotes words he typed in this session, or his answer '
-          + 'recorded in the round for that pull request, with their date (YYYY-MM-DD). Reviews and norms checks are recorded by their own tools. See '
+          + 'in a consent record of an E2E waiver of that pull request, with their date (YYYY-MM-DD). Reviews and norms checks are recorded by their own tools. See '
           + root + '/engine/REFERENCE.md « Records ».',
         inputSchema: {
           type: 'object',
@@ -1431,7 +1394,7 @@ export function register(on: any): void {
             repo: { type: 'string', description: 'owner/name, overriding origin' },
             result: { type: 'string', enum: ['pass', 'fail', 'waived'] },
             detail: { type: 'string', description: 'what ran, or the operator\'s waiver with its date' },
-            kind: { type: 'string', enum: ['review', 'norms', 'e2e'], description: 'default: the kind this caller writes' },
+            kind: { type: 'string', enum: [...KINDS], description: 'default: the kind this caller writes' },
           },
           required: ['pr', 'result'],
         },
