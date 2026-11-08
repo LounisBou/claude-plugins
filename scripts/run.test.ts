@@ -131,6 +131,20 @@ describe('plugin-matrix run', () => {
     assert.throws(() => matrix(repoWithTable('[]'), [], recorder()), /expected \{ "blocking"/)
   })
 
+  it('runs a pull request on Linux, for the plugins it changes', () => {
+    const root = repo({ alpha: '1.0.0', beta: '1.0.0' })
+    writeFileSync(join(root, 'ci', 'plugins.json'), JSON.stringify({ blocking: { alpha: ['ubuntu-latest', 'macos-latest'], beta: [] } }))
+    git(root, 'init', '-q', '-b', 'main')
+    git(root, 'add', '.')
+    git(root, 'commit', '-q', '-m', 'base')
+    writeFileSync(join(root, 'plugins', 'alpha', 'skill.md'), 'Changed.\n')
+    git(root, 'commit', '-q', '-am', 'change')
+    const io = recorder()
+    assert.equal(matrix(root, ['--pull-request', 'main~1'], io), 0)
+    assert.deepEqual(io.lines.out, ['{"include":[{"plugin":"alpha","os":"ubuntu-latest","blocking":true}]}'])
+    assert.throws(() => matrix(root, ['--pull-request'], recorder()), /needs the base ref/)
+  })
+
   function repoWithTable(text: string): string {
     const root = repo({ alpha: '1.0.0' })
     writeFileSync(join(root, 'ci', 'plugins.json'), text)
