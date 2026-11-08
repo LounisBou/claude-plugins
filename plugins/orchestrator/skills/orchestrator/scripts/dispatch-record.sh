@@ -53,7 +53,7 @@
 #
 # `fixed` and `ready` no longer die on a missing review, and `fixed` no longer dies on a
 # second correction round: each records what it was given, prints a warning naming what is
-# missing, and exits 0. Only this repository's own two locks - the push guard and the
+# missing, and exits 0. Only this repository's own two locks - forge protection and the
 # title-verified close - stay refusals a project's method cannot lift; this is not one of
 # them.
 #

@@ -1,31 +1,20 @@
 // hooks/tokenizer.ts
-// Ported from the awk tokeniser in hooks/push-guard.sh. The specification is the
-// header comment of that script: the command line is tokenised the way the shell
-// reads it, and only a command whose first word is git followed by its global
-// options and `push` is read for a force. The awk source stays in the repo until
-// Task 12; the sets below are its BEGIN block verbatim, and the functions follow
-// the awk's, same behaviour, same order:
+// The command line read the way the shell reads it, for the kill guard. scan() splits the
+// line into simple commands and hands each to a reader:
 //   push()/pop()     — the depth stack with each opener's closer
 //   flushWord()      — a finished word joins the current simple command
 //   flushCmd()       — a finished simple command goes to the reader scan() was given
 //   arith()          — skip $((...)) whole, it may contain `<<`
 //   heredoc()        — read <<[-]"delim" and fast-forward past its body lines
-//   scan()           — the main pass: the line read once, each simple command handed
-//                      to a reader
 //   programOf()      — assignments, then wrappers (skipping their options and
 //                      their option arguments), to the command's own program
-//   forcesOf()       — git + valued global options + `push` + valued push
-//                      options, and the force rules on the remaining words
-// Everything else — non-git commands, heredoc bodies, comments, text in quotes
-// that is an argument not an option — is data and never a force.
+// Heredoc bodies, comments and text in quotes that is an argument are data.
 //
-// The reading of the line is shared: scan() splits it into simple commands and hands
-// each to a reader. detectForces reads the pushes; detectPatternKills reads the kills
-// by name or pattern, and needs two facts the push does not — what each command
-// substitution among a command's words held (the substitution's own words are a
-// deeper command, so the outer word is lost to the words list), and which programs
-// fed the pipe the command reads from. It also reads the string of a shell's `-c` and
-// of eval as a command line of its own, which the push reading does not.
+// detectPatternKills reads the kills by name or pattern, and needs two facts beyond the
+// words — what each command substitution among a command's words held (the
+// substitution's own words are a deeper command, so the outer word is lost to the words
+// list), and which programs fed the pipe the command reads from. It also reads the string
+// of a shell's `-c` and of eval as a command line of its own.
 
 // Words that end a simple command or open a group: skipped in command position
 // the way an assignment is. The awk's own list, kept exactly — the shell's
@@ -35,7 +24,7 @@ const RESERVED = new Set(['!', 'if', 'then', 'else', 'elif', 'do', 'while', 'unt
 // Commands that wrap the real one: everything until a word that is not an option
 // of the wrapper is skipped before the real command is read.
 const WRAPPER = new Set(['env', 'command', 'builtin', 'exec', 'nohup', 'nice', 'timeout', 'gtimeout', 'sudo', 'xargs'])
-// A wrapper's options that take a value: `env -u X git push -f` pushes. Keyed
+// A wrapper's options that take a value: `env -u X pkill y` kills. Keyed
 // "wrapper option", the awk's two-part index joined.
 const VALUED = new Set([
   'env -u', 'env -C', 'env -S', 'nice -n', 'timeout -s', 'timeout -k', 'gtimeout -s', 'gtimeout -k',
@@ -44,10 +33,6 @@ const VALUED = new Set([
 ])
 // The same without `xargs -I`: see detectPatternKills.
 const VALUED_BRACELESS = new Set([...VALUED].filter(o => o !== 'xargs -I'))
-// git global options that take a value: `git -C /tmp/r push --force` pushes.
-const GITVALUED = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env'])
-// push options that take a value: `git push --repo x --force-with-lease` still forces.
-const PUSHVALUED = new Set(['--repo', '--push-option', '--receive-pack', '--exec'])
 
 // One simple command as scan() hands it over: its words, the simple commands each
 // command substitution among them held (one entry per substitution), and the programs
@@ -97,14 +82,6 @@ function baseName(word: string): string {
   return word.replace(/^.*\//, '')
 }
 
-export function detectForces(command: string): string[] {
-  const found: string[] = []
-  // Dedup is exact where the awk's was substring — a deliberate widening: the module's « Seen: … » can name a reason the shell guard suppressed; verdicts identical.
-  const seen = (reason: string) => { if (!found.includes(reason)) found.push(reason) }
-  scan(command, ({ words }) => forcesOf(words, seen))
-  return found
-}
-
 // Programs that list processes: what `xargs kill` kills by pattern when one feeds it.
 const LISTERS = new Set(['pgrep', 'pidof', 'lsof', 'ps'])
 // Shells that run a command line given as a string after `-c`.
@@ -121,8 +98,7 @@ const STRING_DEPTH = 4
 // is a `command -v` lookup, which runs nothing. Words in quotes,
 // heredocs and arguments of other programs are data, but for the string a shell runs
 // after `-c` and the words eval runs: those are command lines themselves and read as
-// such, STRING_DEPTH nested at most. The push reading does not read them, detectForces
-// stays on the words of the line.
+// such, STRING_DEPTH nested at most.
 export function detectPatternKills(command: string): string[] {
   const found: string[] = []
   const seen = (reason: string) => { if (!found.includes(reason)) found.push(reason) }
@@ -197,53 +173,6 @@ function stringOf(program: string, args: string[]): string | null {
     if (/^-[A-Za-z]*c$/.test(args[j])) return args[j + 1] ?? null
   }
   return null
-}
-
-function prefixOf(name: string, full: string, min: number): boolean {
-  return name.length >= min && full.indexOf(name) === 0
-}
-
-// The force rules on one simple command: the awk's analyze() once its wrappers are
-// skipped — git + valued global options + `push` + valued push options, then the
-// force rules on the remaining words.
-function forcesOf(w: string[], seen: (reason: string) => void): void {
-  const n = w.length
-  let { k } = programOf(w)
-  if (k > n || !/^(.*\/)?git$/.test(w[k - 1])) return
-  for (k++; k <= n && w[k - 1].startsWith('-'); k++) { if (GITVALUED.has(w[k - 1])) k++ }
-  if (k > n || w[k - 1] !== 'push') return
-  let skip = 0
-  let ddash = 0
-  for (k++; k <= n; k++) {
-    const word = w[k - 1]
-    if (skip) { skip = 0; continue }
-    if (!ddash && word === '--') { ddash = 1; continue }
-    if (!ddash && /^--/.test(word)) {
-      const eq = word.indexOf('=') + 1
-      const name = eq ? word.slice(0, eq - 1) : word
-      const val = eq ? word.slice(eq) : ''
-      if (prefixOf(name, '--force', 4)) seen('--force')
-      else if (prefixOf(name, '--force-with-lease', 9)) {
-        // The pinned form is a shape, not a length: `<branch>:<sha>` with a
-        // non-empty sha, exactly the awk's rule — the spec says "not of the
-        // form =<branch>:<sha>", and a hex-length limit would refuse the
-        // 64-character object ids of a SHA-256 repository.
-        if (!eq || !/^[^:= \t\n]+:[^ \t\n]+$/.test(val)) seen('--force-with-lease without <branch>:<sha>')
-      }
-      else if (prefixOf(name, '--mirror', 4)) seen('--mirror')
-      else if (!eq && PUSHVALUED.has(name)) skip = 1
-      continue
-    }
-    if (!ddash && /^-./.test(word)) {
-      for (let j = 2; j <= word.length; j++) {
-        const ch = word.charAt(j - 1)
-        if (ch === 'f') seen('-f')
-        if (ch === 'o') { if (j === word.length) skip = 1; break }
-      }
-      continue
-    }
-    if (/^\+/.test(word)) seen('a +<refspec>')
-  }
 }
 
 // The shared reading: every simple command of the line, in order, to onCommand.

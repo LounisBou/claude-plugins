@@ -348,7 +348,7 @@ test('a wide kill and a kill by lookup name themselves each', () => {
 })
 
 // The decision: nothing in a session the launcher did not mark, a refusal in a
-// marked one, the push guard's shape.
+// marked one.
 const DENY_START = 'kill refused: this session was spawned by the launcher'
 
 test('a marked session refuses a kill by pattern and names the pid it should keep', () => {
@@ -392,7 +392,7 @@ test('a mark as last read decides the fallback: closed when marked, open when th
   expect(guardFallback(null, 'pkill -f vite', 'x')).toBeNull()
 })
 
-// The wiring half, faked the push guard's way: the whole of the reduced $.
+// The wiring half: the whole of the reduced $ faked.
 const HOME = '/tmp/h'
 
 function fakeDollar(setup: { spawned?: string; noEnv?: boolean }): { dollar: any; written: string[] } {
@@ -479,11 +479,13 @@ test("an unmarked session's kill by pattern reaches the tool untouched", async (
   expect(answer).toBe(e)
 })
 
-test('the push guard still answers first for a forced push', async () => {
+test("a marked session's forced push reaches the tool: the forge refuses it, not a reading of its text", async () => {
   const { handlers } = mounted()
   const { dollar } = fakeDollar({ spawned: '1' })
-  const { answer } = await callBash(handlers['tool.call'], dollar, bashCall('git push --force origin main; pkill -f vite'))
-  expect((answer as any).deny).toContain('git push refused')
+  const e = bashCall('git push --force origin main')
+  const { answer, passedThrough } = await callBash(handlers['tool.call'], dollar, e)
+  expect(passedThrough).toBe(e)
+  expect(answer).toBe(e)
 })
 
 test('a handler that cannot read its marker refuses a kill by pattern alone, with the reason', async () => {

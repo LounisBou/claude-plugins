@@ -240,7 +240,7 @@ check "the operator's entry skill stays in the command menu" "0" \
   "$(grep -c '^user-invocable: false$' "$ROOT/skills/orchestrator/SKILL.md")"
 check "the audit brief merges nothing" "1" \
   "$(grep -c 'no label, no merge' "$ROOT/templates/agent-audit-brief.md")"
-# Rule 17 of the rules review had the two locks left to the tools, the push guard and the launcher's
+# Rule 17 of the rules review had the two locks left to the tools, forge protection and the launcher's
 # title-checked close. The operator's ruling of 2026-11-04, « restore everything and fix », after an
 # independent control, reverses that removal: his word lifts neither lock, so the rulebook
 # states them beside the sentence that lets his instruction replace the skill. Another route than
@@ -2764,7 +2764,7 @@ check "the prompt file's name carries its kind" "1" "$(basename "$file" | grep -
 check "the launch carries the decision mode" "1" "$(printf '%s' "$cmd" | grep -c -- '--permission-mode auto')"
 check "no tier and no map: no model argument" "0" "$(printf '%s' "$cmd" | grep -c -- '--model')"
 check "the launch changes into the working directory" "1" "$(printf '%s' "$cmd" | grep -c "^cd $WORK && ")"
-# Every spawn marks the session as launcher-spawned: the push-guard hook is active only
+# Every spawn marks the session as launcher-spawned: the kill guard is active only
 # where this is set, and the operator's own sessions never carry it (phase 3 ruling 5).
 check "the launch marks the session launcher-spawned" "1" "$(printf '%s' "$out" | grep -c 'export ORCHESTRATOR_SPAWNED=1')"
 # Named absolutely even though the tab now runs a login shell: a dotfile that breaks PATH
@@ -4617,11 +4617,6 @@ check "the sweep lets the new rule's figures through" "" \
 check "a bare 80 % is caught, the rule stated whole is not" "1" \
   "$(grep -rn -E "$BARE_RE" "$SWEEP" | grep -v -F "$GATE_RULE" | grep -c 'bare-eighty')"
 rm -rf "$SWEEP"
-
-# The push guard's hook cases — every forced form the awk tokeniser answered, the pinned
-# lease, the spawn marker, the degraded read, the wiring over a faked $ — moved module-side
-# with the guard: hooks/tests/tokenizer.test.ts (the fixtures, moved not shrunk) and
-# hooks/tests/push-guard.test.ts, run by the host's plugin test.
 
 echo "== draft guard =="
 # A failing check of a draft pull request is a draft guard when the job that produced it tests
