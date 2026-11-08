@@ -60,6 +60,8 @@ export function act(e: any): Record<string, unknown> {
     return { pass: loop.pass, max_passes: MAX_PASSES, next: 'run the review, then report findings' }
   }
   if (action === 'findings') {
+    // A clean exit records a pass: it must follow a review the loop counted, never the start.
+    if (loop.pass === 0) return { error: 'no review pass has begun: call begin_pass, run the review, then report its findings' }
     const keys = strings(e.keys)
     loop.lastFindings = keys.length
     loop.lastBlocking = Number.isInteger(e.blocking) && e.blocking >= 0 ? e.blocking : undefined
