@@ -63,7 +63,7 @@ skills/orchestrator/scripts/ci-watch.sh      the one wait on a pull request's ch
 skills/orchestrator/scripts/draft_guard.py     which failing checks of a draft pull request are draft guards, read from the job's own definition
 skills/orchestrator/scripts/dispatch-record.sh  one row per dispatch, and the routing signal
 skills/orchestrator/scripts/goals.py         the spec's goals of one build, read by the record and the stop gate
-skills/orchestrator/scripts/workspace.sh    a clone per phase with the project's local material; a pinned worktree per review round
+skills/orchestrator/scripts/workspace.sh    launches workspace.ts beside it: a clone per phase with the project's local material; a pinned worktree per review round
 skills/orchestrator/scripts/rhythm.sh       an audit's net balance, from git alone
 skills/coordination/SKILL.md         the coordinator: answers from the facts, flags collisions, relays what is the operator's, its succession
 skills/coordinator/scripts/coordinator.sh  the coordinator's record, and the facts: register, clear, lookup, facts, owners; the sleeping orchestrators: sleep, sleeping, wake-done, drop; the round: round, round-close
@@ -97,7 +97,7 @@ commands/coordinator-end.md          ends the coordinator on the operator's word
 commands/coordinator-decide.md       the coordinator's decision round over every orchestrator's open questions, urgent first, then grouped by orchestrator, the oldest group first
 commands/sleeping.md                 lists the orchestrators paused on the operator's word, the list answered by the module; drop abandons one after one confirmation
 short-names.tsv                      each command's short name beside its file: the table the installer writes the user commands from, and brief-lint reads
-short-commands.sh                    writes the short names as user commands, each a copy of its plugin command with the plugin root spelled out and a marker line: install, uninstall, and the module's sync of the copies an update left on an earlier root; a file without the marker is never touched
+short-commands.sh                    launches skills/orchestrator/scripts/short-commands.ts, which writes the short names as user commands, each a copy of its plugin command with the plugin root spelled out and a marker line: install, uninstall, and the module's sync of the copies an update left on an earlier root; a file without the marker is never touched
 hooks/hooks.json                     declares the hooks module, and nothing else
 hooks/register.ts                    the hooks module's entry point: mounts the domains as they land, the gauge before the store that reads its figure
 hooks/gauge-core.ts                  the measurement rules, pure: the double gate, the measure file path, tolerant parsing
@@ -654,7 +654,7 @@ A launch carrying neither `--prompt` nor `--prompt-file` (nor `--brief`, which b
 
 Two rules of the method were held by discipline alone. « One writer per repository » queued every dispatch behind the orchestrator's own checkout, and a sandbox that should let an implementer write under one root could not, because a git worktree writes into its source's `.git`. A clone contains everything it touches, and a clone per phase turns the one-writer rule into a fact (`skills/orchestrator/references/briefs.md`, « Prerequisites and phase rules »). A clone carries only what git tracks, so the project's local material — its settings directory (never the operator's own `settings.local.json`, which stays his), what its exclude file keeps out of history, what its manifest names (`skills/orchestrator/scripts/workspace.sh`, its header comment) — is copied as part of making the checkout, not as a step after it, which by hand was done only sometimes. What is left out on purpose: several implementers on one repository, a `--workspace` flag, and cleanup by age.
 
-`skills/orchestrator/scripts/workspace.sh`, bash 3.2 like its neighbours; the root is `ORCHESTRATOR_WORKSPACES`, else `~/dev/workspaces`, and a checkout lives at `<root>/<repository name>/<name>`.
+`skills/orchestrator/scripts/workspace.sh`, a launcher of `workspace.ts` beside it; the root is `ORCHESTRATOR_WORKSPACES`, else `~/dev/workspaces`, and a checkout lives at `<root>/<repository name>/<name>`.
 
 - `create <source> <name> [--base <ref>]` prints the checkout's path on stdout and nothing else there. It refuses a source that is not a git repository, a name outside `[A-Za-z0-9._-]`, a target that already exists (a stale checkout is deleted on purpose, never overwritten) and a base the source does not know. It clones from the local repository, points the clone's `origin` at the source's `origin` so the implementer's push reaches the real remote, copies the local material, and leaves nothing half-made: a copy that fails removes the clone and names the error.
 - `delete <path> [--discard]` refuses a path outside the root, always. It refuses a dirty tree or a commit on no remote branch unless `--discard` is given, the guard that keeps a shelved phase's work from vanishing before anyone said so.
