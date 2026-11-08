@@ -10729,8 +10729,15 @@ check "a grid naming one model twice, by identifier and by alias, runs it once" 
   "$(wc -l < "$B4T" | tr -d ' ')|$(last_line "$out")"
 if [ -f "$WORK/aliases.bench.bak" ]; then cp "$WORK/aliases.bench.bak" "$BS/routing/aliases.json"; else rm -f "$BS/routing/aliases.json"; fi
 : > "$BT"
+# The cap holds during the run: a trial starts only when its worst cost (the manifest's 1.25
+# and the judge's 2.00) fits beside what is spent and the worst of the trials in flight.
 out=$(rb --grid b-model/medium,c-model/medium --max-usd 0.15 --concurrency 1)
-check "the cap stops new trials and says what is left" "1" "$(printf '%s\n' "$out" | tail -1 | grep -c '^bench: spent=0.24 trials=2 unmeasured=2 pruned=0$')"
+check "a trial whose worst cost does not fit under the cap never starts" "bench: spent=0.00 trials=0 unmeasured=4 pruned=0" \
+  "$(printf '%s\n' "$out" | tail -1)"
+: > "$BT"
+out=$(rb --grid b-model/medium,c-model/medium --max-usd 3.5 --concurrency 2)
+check "the cap stops new trials once the next one's worst cost passes it, and says what is left" \
+  "bench: spent=0.36 trials=3 unmeasured=1 pruned=0" "$(printf '%s\n' "$out" | tail -1)"
 : > "$BT"
 out=$(rb --grid b-model/medium,c-model/medium --max-usd 100 --reps 1 --concurrency 2)
 check "two trials at once measure the same grid" "6|0" \
