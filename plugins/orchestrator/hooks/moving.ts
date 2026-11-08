@@ -14,7 +14,7 @@ import { machineLabel, deliveryOf, isPeerOrigin, type Delivery } from './remote-
 import {
   MOVE_CHUNK_DEFAULT, MOVE_TEXT_CAP, MOVE_FILE_CAP, MOVE_MISSING_ROUNDS,
   acknowledgedNotice, failedNotice, moveText, isMoveMarked, parseMoveMessage, chunkText, moveIdOf, checkManifestFiles, rewritePaths, arrivalOf, arrivalPairs, missingOf, arrivedNotice,
-  type Arrival, type ManifestFile, type MoveMessage, type MoveRecord,
+  type Arrival, type Cleaned, type ManifestFile, type MoveMessage, type MoveRecord,
 } from './move.ts'
 import { messageOf, type Events, type Host, type On } from './host.ts'
 import { recordFiles, recordNamedIn } from '../skills/orchestrator/scripts/lib/record-paths.ts'
@@ -919,8 +919,45 @@ async function answerDone($: Dollar, s: SentMove, message: Extract<MoveMessage, 
   await keepKnown($, s)
   // The name is read afresh, not from the memo: the end is allowed on what the session is called now.
   if (await nameOf($) === s.record.name) movedAndAcknowledged.add(s.record.name)
-  $.prompt.submit({ text: acknowledgedNotice(s.record, s.to, message.brief ?? '') })
+  const cleaned = await cleanSource($, s)
+  const wakeDone = await sleepsHere($, s.record.name)
+    ? `${$.plugin.root}/skills/coordinator/scripts/coordinator.sh wake-done --name "${s.record.name}"` : null
+  $.prompt.submit({ text: acknowledgedNotice(s.record, s.to, message.brief ?? '', cleaned, wakeDone) })
     .catch((err: unknown) => logLine($, `move ${s.move}: the notice was not submitted: ${String((err as Error)?.message ?? err)}`))
+}
+
+// The source cleaned once the receiver acknowledged every file: each file sent is removed while it
+// still holds what was sent, so a file changed since is kept and named; the brief's directory goes
+// when nothing else is left in it. Never before the acknowledgment: until then the source is the
+// only whole copy.
+async function cleanSource($: Dollar, s: SentMove): Promise<Cleaned> {
+  const dir = s.record.brief.slice(0, s.record.brief.lastIndexOf('/')) || '/'
+  const cleaned: Cleaned = { removed: 0, kept: [] }
+  for (const f of s.files) {
+    const path = f.at ?? `${dir}/${f.name}`
+    if (!(await $.fs.exists(path).catch(() => true))) continue
+    if (await sha256Of($, path) !== f.sha256) {
+      cleaned.kept.push(path)
+      continue
+    }
+    const out = await run($, removeArgv(path), 5000)
+    if (out?.exitCode === 0) cleaned.removed += 1
+    else cleaned.kept.push(path)
+  }
+  await run($, ['rmdir', '--', dir], 5000)
+  return cleaned
+}
+
+// Whether this machine's coordinator keeps an orchestrator of that name asleep (coordinator.sh's
+// sleeping.json): its record is the coordinator's to remove, under its own lock.
+async function sleepsHere($: Dollar, name: string): Promise<boolean> {
+  const state = (await $.env.get('ORCHESTRATOR_STATE_DIR')) ?? `${await configDir($)}/claude-orchestrator`
+  try {
+    const all: unknown = JSON.parse(String(await $.fs.read(`${state}/sleeping.json`)))
+    return Array.isArray(all) && all.some(one => typeof one === 'object' && one !== null && (one as Record<string, unknown>)['name'] === name)
+  } catch {
+    return false
+  }
 }
 
 // The record kept again where the notice must go out whatever the store says: a write that fails

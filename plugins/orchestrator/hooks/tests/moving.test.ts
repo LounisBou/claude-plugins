@@ -500,7 +500,7 @@ test('« sent » with a chunk missing is answered missing, naming exactly it; th
   expect(a.sent.slice(before).every(m => m.to === ADDRESS_B)).toBe(true)
   // Delivered, the move completes and is acknowledged once on each side.
   await settle(a, ha, b, hb)
-  expect(a.submits).toEqual([{ text: acknowledgedNotice(manifest.record, ADDRESS_B, (arrivalOf(manifest, TARGET_B) as any).brief) }])
+  expect(a.submits).toEqual([{ text: acknowledgedNotice(manifest.record, ADDRESS_B, (arrivalOf(manifest, TARGET_B) as any).brief, { removed: 2, kept: [] }, null) }])
   expect(b.submits.length).toBe(1)
 })
 
@@ -535,7 +535,7 @@ test('done ok gives the sender\'s model the acknowledgment once; done not ok, th
   expect(a.submits).toEqual([])
   await receive(ha, a, ok, peer)
   await receive(ha, a, ok, peer)
-  expect(a.submits).toEqual([{ text: acknowledgedNotice(manifest.record, ADDRESS_B, brief) }])
+  expect(a.submits).toEqual([{ text: acknowledgedNotice(manifest.record, ADDRESS_B, brief, { removed: 2, kept: [] }, null) }])
   const other = await sentMessages()
   await receive(other.ha, other.a, textOf({ kind: 'done', move: other.manifest.move, ok: false, brief: null, reason: 'a file stands there with other content' }), peer)
   expect(other.a.submits).toEqual([{ text: failedNotice(other.manifest.record, ADDRESS_B, 'a file stands there with other content') }])
@@ -593,7 +593,7 @@ test('a whole move between two machines: the files land, each side\'s model read
   const arrival = arrivalOf(manifest, TARGET_B) as any
   expect(b.files.get(arrival.brief)).toBe(BRIEF_ARRIVED)
   expect(b.submits).toEqual([{ text: arrivedNotice(manifest, arrival, 'Orch : belt', LAUNCHER) }])
-  expect(a.submits).toEqual([{ text: acknowledgedNotice(manifest.record, ADDRESS_B, arrival.brief) }])
+  expect(a.submits).toEqual([{ text: acknowledgedNotice(manifest.record, ADDRESS_B, arrival.brief, { removed: 2, kept: [] }, null) }])
   expect(a.logged.length + b.logged.length).toBe(0)
 })
 
@@ -875,7 +875,7 @@ test('a store write that fails when the move is answered is logged, and the noti
   ok.fx.faults.writes.push('.json')
   const brief = `${HOME_B}/.claude/claude-orchestrator/briefs/belt/${BRIEF_NAME}`
   await receive(ok.moving, ok.fx, textOf({ kind: 'done', move: manifest.move, ok: true, brief, reason: null }), peer)
-  expect(ok.fx.submits).toEqual([{ text: acknowledgedNotice(manifest.record, ADDRESS_B, brief) }])
+  expect(ok.fx.submits).toEqual([{ text: acknowledgedNotice(manifest.record, ADDRESS_B, brief, { removed: 2, kept: [] }, null) }])
   expect(ok.fx.logged.length).toBeGreaterThan(0)
   expect(await ok.naming[`tool.call:${END_TOOL}`](ok.fx.dollar, {})).toEqual({ result: 'This session ends when this turn ends.' })
   const failed = await sentMessages()

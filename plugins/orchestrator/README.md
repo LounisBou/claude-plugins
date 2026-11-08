@@ -205,6 +205,19 @@ next read. A new `at` alone is no reason to write the file again.
 4. Context is a gate at the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000; 160,000 on 200,000: never dispatch a phase to an agent past it, and an agent crossing it mid-work finishes the unit and stops. Rotation is a resume brief for a fresh session.
 5. Succession is the orchestrator's to trigger, at a quiet moment, with a standing pointer-based brief; the successor verifies the state on the artifacts, re-identifies itself to the agents, confirms the takeover, then closes the predecessor's tab (in a home session, takes its window 0).
 
+## Moving an orchestrator to another machine
+
+One step: in the coordinator's tab, say which orchestrator goes to which machine, for example
+« move Orch : belt to mac-b ». The coordinator relays the order to a live `Orch :` session on
+that machine, and the orchestrator (or the coordinator, for one asleep) sends its files with
+`move_send`; the module on each side does the rest without a model turn: the files cross as
+checked chunks over the host's peer messages, never through git, land on the other machine
+through the store, the source's copy is removed once the other side acknowledged it, and the
+receiving orchestrator opens the arrival. Both machines run the same version of this plugin,
+and every checkout the orchestrator works in is committed and pushed first: its code travels
+by git. What travels and what each machine rebuilds is in `docs/state.md`, « What a move
+carries ».
+
 ## Where agents run
 
 An orchestrator's tab is a real terminal holding a tmux session of its own, its
