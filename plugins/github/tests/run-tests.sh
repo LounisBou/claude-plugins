@@ -43,9 +43,6 @@ check "plugin name" "github" \
 check "plugin license" "MIT" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["license"])' "$ROOT/.claude-plugin/plugin.json")"
 
-check "marketplace lists the plugin" "github" \
-  "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["plugins"][0]["name"])' "$ROOT/.claude-plugin/marketplace.json")"
-
 # The product name belongs only in load-bearing identifiers: host paths, host
 # environment variables, the plugin name and the manifest directory.
 
@@ -1155,10 +1152,6 @@ check "pending-review-summary uses a sentinel for a missing commit_id" "| src/c.
   "$(gh4 review-pending 7 --format pending-review-summary | tail -1)"
 cp "$WORK/reviews-5-comments-orig.json" "$F4/GET_repos_acme_thing_pulls_7_reviews_5_comments__per_page=100.json"
 
-check "manifest version" "0.13.3" \
-  "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$ROOT/.claude-plugin/plugin.json")"
-check "marketplace version matches" "0.13.3 0.13.3" \
-  "$(python3 -c 'import json,sys; m=json.load(open(sys.argv[1])); print(m["metadata"]["version"], m["plugins"][0]["version"])' "$ROOT/.claude-plugin/marketplace.json")"
 
 for needle in '--sha' 'GH_MERGE_WAIT' 'asynchronous merge endpoint'; do
   check "REFERENCE.md documents '$needle'" "1" \

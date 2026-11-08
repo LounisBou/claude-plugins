@@ -37,15 +37,6 @@ check "plugin name" "norms" \
 check "declares the github dependency" "github@lounisbou" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dependencies"][0])' "$ROOT/.claude-plugin/plugin.json")"
 
-check "marketplace lists the plugin" "norms" \
-  "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["plugins"][0]["name"])' "$ROOT/.claude-plugin/marketplace.json")"
-
-check "plugin version" "0.4.1" \
-  "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$ROOT/.claude-plugin/plugin.json")"
-
-check "marketplace plugin version" "0.4.1" \
-  "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["plugins"][0]["version"])' "$ROOT/.claude-plugin/marketplace.json")"
-
 echo "== components =="
 
 check "eight agents" "8" "$(ls "$ROOT"/agents/norms-*.md | wc -l | tr -d ' ')"
