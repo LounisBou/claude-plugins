@@ -9874,6 +9874,9 @@ check "the question relay proof's dry run judges each of its fixtures as expecte
 echo "== routing: cost =="
 
 ROUTING="$ROOT/skills/model-routing/scripts/routing.py"
+# The calibration engine routing.py hands its other subcommands to, loaded as a module by the cases
+# that read one of its functions.
+CALIBRATION="$ROOT/skills/model-routing/scripts/calibration.py"
 RFIX="$ROOT/tests/fixtures/routing"
 RSTATE="$WORK/rstate"; mkdir -p "$RSTATE/routing"
 cp "$RFIX/prices.json" "$RSTATE/routing/prices.json"
@@ -10252,7 +10255,7 @@ check "a trial whose main model is another family is out of n and costs, counted
 check "a full-identifier pair is compared exactly, an alias pair by its dash segment: only the key that starts with the identifier is off-model" "1|5|0|5" \
   "$(rung behaviour-phase b-model-1/low '"\(.off_model)|\(.n)"')|$(rung behaviour-phase b-model/high '"\(.off_model)|\(.n)"')"
 check "on_model: an identifier is compared exactly, a bracketed suffix ignored; an alias keeps the dash-segment rule" "True|True|False|False|False|True|True|True" \
-  "$("$py" -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); f=m.on_model; print("|".join(str(x) for x in (f("b-model-1/low", {"b-model-1": 1}), f("b-model-1/low", {"b-model-1[1m]": 1}), f("b-model-1/low", {"b-model-1-1": 1}), f("b-model-1/low", {"x-b-model-1": 1}), f("b-model-1/low", {"b-model-12": 1}), f("b-model/high", {"b-model-1": 1}), f("b-model/high", {"b-model-1[1m]": 1}), f("b-model-1/low", {}))))' "$ROUTING")"
+  "$("$py" -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); f=m.on_model; print("|".join(str(x) for x in (f("b-model-1/low", {"b-model-1": 1}), f("b-model-1/low", {"b-model-1[1m]": 1}), f("b-model-1/low", {"b-model-1-1": 1}), f("b-model-1/low", {"x-b-model-1": 1}), f("b-model-1/low", {"b-model-12": 1}), f("b-model/high", {"b-model-1": 1}), f("b-model/high", {"b-model-1[1m]": 1}), f("b-model-1/low", {}))))' "$CALIBRATION")"
 check "the cheapest pair equivalent to the best is the entry; one too far below is not equivalent" \
   "b-model/medium|a-model/high|false|true" \
   "$(jq -r '.entries["review-collector"]|"\(.pair)|\(.best)|\(.ladder[]|select(.pair=="c-model/low")|.equivalent)|\(.ladder[]|select(.pair=="b-model/medium")|.equivalent)"' "$TTAB")"
@@ -10269,11 +10272,11 @@ check "a pair missing one task of the class is not covered and never the entry" 
 check "a class measured on two tasks only has no covered pair" "class=search no eligible pair (no covered pair)" \
   "$(printf '%s\n' "$out" | grep '^class=search')"
 check "a task's size leaves its test files out: two files, 40 lines is small" "small" \
-  "$(ORCHESTRATOR_STATE_DIR="$TS" python3 -c 'import importlib.util,json,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(m.task_sizes(json.load(open(sys.argv[2])))["t-a"])' "$ROUTING" "$TS/routing/projects/tasks/manifest.json")"
+  "$(ORCHESTRATOR_STATE_DIR="$TS" python3 -c 'import importlib.util,json,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(m.task_sizes(json.load(open(sys.argv[2])))["t-a"])' "$CALIBRATION" "$TS/routing/projects/tasks/manifest.json")"
 check "four files is large, and the entry takes the largest bucket and counts each" "large|1|4|0" \
   "$(jq -r '.entries["behaviour-phase"]|"\(.size)|\(.sizes.large)|\(.sizes.small)|\(.sizes.unknown)"' "$TTAB")"
 sized() { # repo base merged: the size task_sizes gives a manifest of one task, a crash read as its traceback
-  "$py" -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(m.task_sizes({"repo":sys.argv[2],"tasks":[{"id":"t","base":sys.argv[3],"merged":sys.argv[4]}]})["t"])' "$ROUTING" "$@" 2>&1 | tail -1; }
+  "$py" -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(m.task_sizes({"repo":sys.argv[2],"tasks":[{"id":"t","base":sys.argv[3],"merged":sys.argv[4]}]})["t"])' "$CALIBRATION" "$@" 2>&1 | tail -1; }
 # A path that is not UTF-8 is a valid path for git. The file cannot be made on every file
 # system, so its commit is built in the index.
 NB="$WORK/nonutf8repo"; mkdir -p "$NB"; git -C "$NB" init -q
@@ -10294,7 +10297,7 @@ check "a rename counts as one file, whatever the configuration says about rename
   "$(sized "$NR" "$NR0" "$(git -C "$NR" rev-parse HEAD)")"
 # One rule, two callers: a task's bucket is the one size_bucket gives, not a comparison of its own.
 check "a task is bucketed by size_bucket" "bucket-of-3-files" \
-  "$("$py" -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); m.size_bucket=lambda files, lines: "bucket-of-%d-files" % files; print(m.task_sizes({"repo":sys.argv[2],"tasks":[{"id":"t","base":sys.argv[3],"merged":sys.argv[4]}]})["t"])' "$ROUTING" "$NR" "$NR0" "$(git -C "$NR" rev-parse HEAD)" 2>&1 | tail -1)"
+  "$("$py" -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); m.size_bucket=lambda files, lines: "bucket-of-%d-files" % files; print(m.task_sizes({"repo":sys.argv[2],"tasks":[{"id":"t","base":sys.argv[3],"merged":sys.argv[4]}]})["t"])' "$CALIBRATION" "$NR" "$NR0" "$(git -C "$NR" rev-parse HEAD)" 2>&1 | tail -1)"
 check "the entry carries the selection it was made with, and no floor" "0.1|0.8|false|false" \
   "$(jq -r '.entries["behaviour-phase"]|"\(.delta)|\(.bar)|\(.strict)|\(has("floor"))"' "$TTAB")"
 check "every rung carries the per-task figures, the median and its interval" "true" \
@@ -10576,7 +10579,7 @@ printf '{"deep":"a-model","standard":"b-model","light":"c-model"}' > "$BS/models
 printf '{"task":"a","class":"behaviour-phase","pair":"b-model/medium","cost_usd":0.1,"status":"pass"}\n{"task":"b","class":"behaviour-phase","pair":"b-model/medium","cost_usd":0.1,"status":"pass"}\n{"task":"c","class":"beha' > "$BT"
 rtrial b-model/medium >/dev/null
 check "a torn last line is closed before the next trial: the two before it and the new one read" "3" \
-  "$(ORCHESTRATOR_STATE_DIR="$BS" python3 -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(len(m.read_trials(sys.argv[2])))' "$ROUTING" "$BT" 2>/dev/null)"
+  "$(ORCHESTRATOR_STATE_DIR="$BS" python3 -c 'import importlib.util,sys; s=importlib.util.spec_from_file_location("r",sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(len(m.read_trials(sys.argv[2])))' "$CALIBRATION" "$BT" 2>/dev/null)"
 # An agent that commits its work still leaves the judge a diff to read.
 STUB_COMMIT=1 rtrial b-model/medium >/dev/null
 check "the agent's diff is taken against its base, so a committing agent is not judged on nothing" "pass|0" \
