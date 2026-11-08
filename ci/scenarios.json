@@ -1,0 +1,17 @@
+{
+  "$comment": "The context each scenario puts in front of a model, as the prompt files it loads (paths under plugins/). npm run context sums their tokens; CI shows each pull request's difference by scenario. A scenario names what a session of that kind reads in full; a reference read on demand is listed only where the scenario writes that artifact.",
+  "scenarios": {
+    "implement: plan a feature": ["method/skills/lifecycle/SKILL.md", "method/skills/lifecycle/references/plan.md", "implement/skills/feature/SKILL.md"],
+    "implement: run a phase": ["method/skills/lifecycle/SKILL.md", "implement/skills/phase/SKILL.md", "method/skills/lifecycle/references/report.md"],
+    "implement: check a delivery": ["method/skills/lifecycle/SKILL.md", "implement/skills/check/SKILL.md"],
+    "implement: close": ["method/skills/lifecycle/SKILL.md", "implement/skills/close/SKILL.md", "method/skills/lifecycle/references/report.md"],
+    "pr-review: reviewer session": ["method/skills/lifecycle/SKILL.md", "pr-review/skills/auto-fix-loop/SKILL.md"],
+    "pr-review: walkthrough": ["pr-review/skills/start-review/SKILL.md"],
+    "pr-review: process comments": ["pr-review/skills/process-comments/SKILL.md"],
+    "norms: check": ["norms/commands/check.md"],
+    "norms: one review agent": ["norms/agents/norms-diff-scope.md"],
+    "github: write a pull request": ["github/engine/WRITING.md"],
+    "bugs-bot: resident agent": ["bugs-bot/agent/AGENT.md", "bugs-bot/skills/bugs-bot/SKILL.md"],
+    "orchestrator: start": ["orchestrator/skills/orchestrator/SKILL.md"]
+  }
+}
