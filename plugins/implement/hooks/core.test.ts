@@ -197,12 +197,21 @@ describe('the guards', () => {
     }
   })
 
-  test('the user\'s own words release the subagent refusal', () => {
-    expect(agentDecision(onTyped(phase, 'use a subagent for the tests'), 'general-purpose')).toBeNull()
-    // Asked in the prompt that starts the skill, before the skill is armed.
-    expect(agentDecision(armedBy(onTyped(IDLE, 'run implement:phase, with an agent'), 'phase'), 'general-purpose')).toBeNull()
-    // A later prompt that names nothing arms it again.
-    expect(agentDecision(onTyped(onTyped(phase, 'use an agent'), 'continue'), 'general-purpose')).toContain('writes the work itself')
+  test('words in a prompt release no subagent refusal: « don\'t use an agent » names one too', () => {
+    for (const typed of ['use a subagent for the tests', "don't use an agent", 'run implement:phase, with an agent']) {
+      expect(agentDecision(onTyped(phase, typed), 'general-purpose')).toContain('writes the work itself')
+    }
+    expect(agentDecision(armedBy(onTyped(IDLE, 'run implement:phase, with an agent'), 'phase'), 'general-purpose')).toContain('writes the work itself')
+  })
+
+  test('a check refuses a shell line that writes into the tree, and lets the gate run', () => {
+    const checking = armedBy(IDLE, 'check')
+    for (const line of ['sed -i s/a/b/ src/a.ts', 'git diff > fix.patch', 'echo x >> README.md', 'rm src/a.ts', 'cp a b', 'cat a | tee b', 'perl -pi -e s/a/b/ f']) {
+      expect(bashDecision(checking, line)).toContain('implement:check edits, stages and commits nothing')
+    }
+    for (const line of ['npm test', 'bash tests/run-tests.sh 2>&1', 'git diff abc..HEAD --stat', 'grep -n x src/a.ts', 'sed -n 1,5p a.ts', 'pytest -q > /dev/null']) {
+      expect(bashDecision(checking, line)).toBeNull()
+    }
   })
 
   test('an aborted turn releases everything, an answered one keeps a phase armed', () => {

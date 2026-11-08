@@ -20,6 +20,7 @@ export function skillOf(key: string): SkillName | null {
 // The method's state-file format, owned by the method plugin and parsed in core.
 export { markRow, nextRow, parseState, twoDigits, ROW_STATUSES as STATUSES, type Row, type State } from '../core/method.ts'
 import type { Row, State } from '../core/method.ts'
+import { gitSubcommand, redirectsToFile, simpleCommands } from '../core/shell.ts'
 
 // ── The branch, the mode, the ignore guard ───────────────────────────────────
 
@@ -133,167 +134,25 @@ export function stateLine(s: Snapshot): string {
 
 // ── The shell reader ─────────────────────────────────────────────────────────
 
-// The index of the `)` closing the `(` at `open`, quotes skipped.
-function closingParen(src: string, open: number): number {
-  let depth = 0
-  for (let i = open; i < src.length; i++) {
-    const c = src[i]
-    if (c === '\\') { i++; continue }
-    if (c === "'") { const j = src.indexOf("'", i + 1); i = j < 0 ? src.length : j; continue }
-    if (c === '"') {
-      for (i++; i < src.length && src[i] !== '"'; i++) if (src[i] === '\\') i++
-      continue
-    }
-    if (c === '(') depth++
-    if (c === ')' && --depth === 0) return i
-  }
-  return src.length
-}
+// core's reader, the one every plugin reads a command line with: quoting, heredocs, wrappers,
+// assignments, and `sh -c` read again. `eval` joins its words into a line read the same way.
+export { simpleCommands } from '../core/shell.ts'
 
-// The line index after every pending here-document body, from `at` (the start
-// of the line that follows the operator's).
-function skipHeredocs(src: string, at: number, pending: readonly { delim: string; strip: boolean }[]): number {
-  let i = at
-  for (const doc of pending) {
-    while (i < src.length) {
-      const end = src.indexOf('\n', i)
-      const line = src.slice(i, end < 0 ? src.length : end)
-      i = end < 0 ? src.length : end + 1
-      if ((doc.strip ? line.replace(/^\t+/, '') : line) === doc.delim) break
-    }
-  }
-  return i
-}
-
-// A shell line as its simple commands, each a list of words with the quotes
-// removed. Quoted text never starts a command, a here-document body or a
-// comment is no command at all, and $( ) and backticks are commands of their
-// own wherever they stand, a double-quoted string included.
-export function simpleCommands(src: string, depth = 0): string[][] {
-  const out: string[][] = []
-  if (depth > 8) return out
-  let words: string[] = []
-  let word = ''
-  let inWord = false
-  let pending: { delim: string; strip: boolean }[] = []
-  const endWord = () => { if (inWord) words.push(word); word = ''; inWord = false }
-  const endCommand = () => { endWord(); if (words.length > 0) out.push(words); words = [] }
-  const nested = (body: string) => { for (const c of simpleCommands(body, depth + 1)) out.push(c) }
-  let i = 0
-  while (i < src.length) {
-    const c = src[i]
-    if (c === '\\') {
-      if (src[i + 1] !== '\n') { word += src[i + 1] ?? ''; inWord = true }
-      i += 2
-      continue
-    }
-    if (c === "'") {
-      const j = src.indexOf("'", i + 1)
-      const end = j < 0 ? src.length : j
-      word += src.slice(i + 1, end); inWord = true; i = end + 1
-      continue
-    }
-    if (c === '"') {
-      inWord = true
-      for (i++; i < src.length && src[i] !== '"';) {
-        if (src[i] === '\\' && i + 1 < src.length) { word += src[i + 1]; i += 2; continue }
-        if (src[i] === '$' && src[i + 1] === '(') { const end = closingParen(src, i + 1); nested(src.slice(i + 2, end)); i = end + 1; continue }
-        if (src[i] === '`') { const j = src.indexOf('`', i + 1); const end = j < 0 ? src.length : j; nested(src.slice(i + 1, end)); i = end + 1; continue }
-        word += src[i]; i++
-      }
-      i++
-      continue
-    }
-    if (c === '$' && src[i + 1] === '(') {
-      const end = closingParen(src, i + 1)
-      nested(src.slice(i + 2, end)); inWord = true; i = end + 1
-      continue
-    }
-    if (c === '`') {
-      const j = src.indexOf('`', i + 1)
-      const end = j < 0 ? src.length : j
-      nested(src.slice(i + 1, end)); inWord = true; i = end + 1
-      continue
-    }
-    if (c === '#' && !inWord) {
-      const j = src.indexOf('\n', i)
-      i = j < 0 ? src.length : j
-      continue
-    }
-    if (c === '\n') {
-      endCommand(); i++
-      if (pending.length > 0) { i = skipHeredocs(src, i, pending); pending = [] }
-      continue
-    }
-    if (c === '<' && src[i + 1] === '<' && src[i + 2] !== '<') {
-      endWord()
-      let k = i + 2
-      let strip = false
-      if (src[k] === '-') { strip = true; k++ }
-      while (src[k] === ' ' || src[k] === '\t') k++
-      let delim = ''
-      while (k < src.length && !/[\s;&|<>()]/.test(src[k])) {
-        if (src[k] === "'" || src[k] === '"') {
-          const j = src.indexOf(src[k], k + 1)
-          const end = j < 0 ? src.length : j
-          delim += src.slice(k + 1, end); k = end + 1
-        } else if (src[k] === '\\') { delim += src[k + 1] ?? ''; k += 2 } else { delim += src[k]; k++ }
-      }
-      if (delim !== '') pending.push({ delim, strip })
-      i = k
-      continue
-    }
-    if (c === ';' || c === '&' || c === '|' || c === '(' || c === ')') { endCommand(); i++; continue }
-    if (c === ' ' || c === '\t' || c === '<' || c === '>') { endWord(); i++; continue }
-    word += c; inWord = true; i++
-  }
-  endCommand()
-  return out
-}
-
-// What a line does that a guard reads: a write to the index or the history.
+// What a command line does that implement:check refuses: stage or commit.
 export type Action = 'stage' | 'commit'
 
-const PREFIXES = new Set(['sudo', 'command', 'builtin', 'exec', 'nohup', 'time', 'rtk', 'nice', 'env', 'xargs',
-  'then', 'do', 'else', 'elif', 'if', 'while', 'until', '!', '{', '}'])
-const SHELLS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh'])
-const GIT_OPTIONS_WITH_VALUE = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env', '--exec-path'])
-const base = (word: string) => word.slice(word.lastIndexOf('/') + 1)
-
-function actionsOf(words: readonly string[], depth: number): Action[] {
-  let w = [...words]
-  // Assignments and the words that only run what follows them.
-  for (;;) {
-    if (w.length === 0) return []
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(w[0])) { w = w.slice(1); continue }
-    if (PREFIXES.has(base(w[0]))) {
-      w = w.slice(1)
-      while (w.length > 0 && w[0].startsWith('-')) w = w.slice(1)
-      continue
-    }
-    break
-  }
-  const head = base(w[0])
-  if (SHELLS.has(head)) {
-    const flag = w.findIndex((word, k) => k > 0 && /^-[A-Za-z]*c[A-Za-z]*$/.test(word))
-    return flag > 0 && w[flag + 1] !== undefined ? shellActions(w[flag + 1], depth + 1) : []
-  }
-  if (head === 'eval') return shellActions(w.slice(1).join(' '), depth + 1)
-  if (head === 'git') {
-    let k = 1
-    while (k < w.length && w[k].startsWith('-')) k += GIT_OPTIONS_WITH_VALUE.has(w[k]) ? 2 : 1
-    switch (w[k]) {
-      case 'add': return ['stage']
-      case 'commit': return ['commit']
-      default: return []
-    }
-  }
+function actionsOf(argv: readonly string[], depth: number): Action[] {
+  if ((argv[0] ?? '').split('/').pop() === 'eval') return shellActions(argv.slice(1).join(' '), depth + 1)
+  const at = gitSubcommand(argv)?.at
+  if (at === undefined) return []
+  if (argv[at] === 'add') return ['stage']
+  if (argv[at] === 'commit') return ['commit']
   return []
 }
 
 export function shellActions(command: string, depth = 0): Action[] {
   if (depth > 8) return []
-  return simpleCommands(command, depth).flatMap(words => actionsOf(words, depth))
+  return simpleCommands(command).flatMap(argv => actionsOf(argv, depth))
 }
 
 // ── The guards ───────────────────────────────────────────────────────────────
@@ -341,19 +200,8 @@ export function isVerdict(answer: string): boolean {
   return VERDICT_TABLE.test(answer) && VERDICT_LINE.test(answer)
 }
 
-// The user's own words that release one refusal: the action named in plain
-// words.
-const ASKED: Record<Action | 'agent', RegExp> = {
-  'stage': /\b(stage|commit)/i,
-  'commit': /\bcommit/i,
-  'agent': /\b(sub-?)?agents?\b/i,
-}
-export function userAsked(what: Action | 'agent', typed: string): boolean {
-  return ASKED[what].test(typed)
-}
-
 const LABEL: Record<Action, string> = { 'stage': 'git add', 'commit': 'git commit' }
-const RELEASE = 'The user releases it by asking for it in a prompt, or with /implement:release-guard.'
+const RELEASE = 'Words in a prompt release nothing: a subagent runs when the user allows it when asked, and /implement:release-guard releases every guard.'
 
 export function checkDeny(what: string): string {
   return `implement:check edits, stages and commits nothing: ${what} refused by the implement plugin. Name the defect as a FAIL row; the repair belongs to the caller once the verdict line (PASS, or FAIL: <rows>) is written under the table. ${RELEASE}`
@@ -364,19 +212,30 @@ export function agentDeny(type: string): string {
 
 export const READ_ONLY_AGENTS = new Set(['Explore'])
 
-export function bashDecision(g: Guard, command: string): string | null {
-  const actions = shellActions(command)
-  if (g.checking) {
-    const write = actions.find(a => a === 'stage' || a === 'commit')
-    if (write) return checkDeny(LABEL[write])
-  }
+// The commands of a line that write into the tree implement:check reads: a file removed,
+// moved, copied over, created, or edited in place.
+const WRITERS = new Set(['tee', 'rm', 'mv', 'cp', 'touch', 'truncate', 'ln', 'install', 'dd', 'patch', 'rmdir'])
+
+function writesTree(argv: readonly string[]): string | null {
+  const name = (argv[0] ?? '').split('/').pop() ?? ''
+  if (WRITERS.has(name)) return name
+  if ((name === 'sed' || name === 'perl') && argv.some(a => /^-[A-Za-z]*i/.test(a) || a.startsWith('--in-place'))) return `${name} -i`
   return null
+}
+
+export function bashDecision(g: Guard, command: string): string | null {
+  if (!g.checking) return null
+  const write = shellActions(command).find(a => a === 'stage' || a === 'commit')
+  if (write) return checkDeny(LABEL[write])
+  if (redirectsToFile(command)) return checkDeny('a redirection into a file')
+  const writer = simpleCommands(command).map(writesTree).find(w => w !== null)
+  return writer ? checkDeny(writer) : null
 }
 
 export function agentDecision(g: Guard, subagentType: unknown): string | null {
   if (g.outer !== 'phase') return null
   const type = typeof subagentType === 'string' && subagentType !== '' ? subagentType : 'general-purpose'
-  if (READ_ONLY_AGENTS.has(type) || userAsked('agent', g.typed)) return null
+  if (READ_ONLY_AGENTS.has(type)) return null
   return agentDeny(type)
 }
 
