@@ -33,6 +33,10 @@ jobs:
         run: npm test
       - name: prompt budgets and duplicates only fall
         run: npm run -s prompts > /dev/null
+      - name: context by scenario, and this pull request's difference
+        run: |
+          base="origin/${{ github.base_ref || 'main' }}"
+          { echo '### Context by scenario'; echo; npm run -s context -- --base "$base"; } >> "$GITHUB_STEP_SUMMARY"
       - name: the rules a prompt states that nothing holds (a report)
         run: |
           { echo '### Rules held by prose alone'; echo; npm run -s rules | sed -n '1,11p'; } >> "$GITHUB_STEP_SUMMARY"
