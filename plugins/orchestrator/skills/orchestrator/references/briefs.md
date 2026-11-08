@@ -61,7 +61,7 @@ Its parts, in order:
 
 ## Every dispatch names its tier
 
-At the dispatch gate you read the context against the gate of SKILL.md, « Thresholds », then choose the model/effort pair the work needs. `orchestrator:model-routing` is the aid to that decision: the table informs, you decide, and you write your choice and its reason in the brief. The tier and the reading that chose it go into the brief, so the agent can tell you when the work outgrew them; the brief names the servers the session was given where it names the tier, so an agent never reaches for a tool it was not given.
+At the dispatch gate you read the agent's fill on `/orchestrator-status` against the gate the module reports, then choose the model/effort pair the work needs. `orchestrator:model-routing` is the aid to that decision: the table informs, you decide, and you write your choice and its reason in the brief. The tier and the reading that chose it go into the brief, so the agent can tell you when the work outgrew them; the brief names the servers the session was given where it names the tier, so an agent never reaches for a tool it was not given.
 
 ## Prerequisites and phase rules
 

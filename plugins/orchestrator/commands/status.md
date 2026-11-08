@@ -19,7 +19,7 @@ host then runs this body as a prompt.
    one JSON line the module writes on every gauge pass — and keep its figures.
 4. Present one table: session, context %, tokens, window, model, updated. Mark
    sessions past the gate — the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000; 160,000 on 200,000 — with ⚠: that is the pre-dispatch and mid-work
-   gate of the orchestrator skill, « Thresholds ».
+   gate.
 
 Session ids are not agent names. If the user needs the mapping, ask each live
 agent for its `CLAUDE_CODE_SESSION_ID` through `SendMessage`.

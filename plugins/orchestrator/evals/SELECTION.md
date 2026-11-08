@@ -210,3 +210,24 @@ branches.
 | `--trust` refused on a directory it had not prepared | refused `--trust` on a directory it had not prepared, 3 of 3 | none |
 
 These rules are no longer measured here, and the reason is the one above.
+
+## The kernel's principles, and the case that ablates each
+
+Each principle of `skills/orchestrator/SKILL.md` is tested by ablation: the case runs with the
+kernel whole and with that principle removed, and the principle stays only where removing it
+changes the graded outcome. The runs are the operator's, on his machine.
+
+| principle | ablated by |
+|---|---|
+| 1. Never implement, not even through a subagent | `dispatches-a-fix-never-writes-it` |
+| 2. Verify on the artifact, never on a report | `states-only-what-an-output-printed`, `declares-ready-only-on-a-green-record` |
+| 3. The operator's word comes first | `answers-the-third-ask-missed`, `answers-the-third-ask-unanswered`, `names-the-departure-then-obeys` |
+| 4. Re-read before you ask, propose or report | `rereads-the-artifact-before-answering` |
+| 5. What you can run is yours to run | `launches-the-announced-agent-when-refused`, `asks-and-dispatches-in-one-turn` |
+| 6. Read how an agent works, not only what it says | none yet |
+| 7. The fill is measured, never estimated | `dispatches-past-the-gate-to-a-fresh-session` |
+| 8. Kill what you start, delete what you build | `commits-or-drops-before-closing` (the close proved on `ps`) |
+| 9. End a turn by declaring its wait | none: the stop gate holds it, and its refusal teaches the call |
+| 10. Directives follow decisions | none yet |
+
+Principles 6 and 10 have no case yet: each is a candidate for a case or for removal.
