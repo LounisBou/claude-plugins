@@ -85,7 +85,7 @@
       "name": "statusbar",
       "source": "./plugins/statusbar",
       "description": "Two-line status bar: directory, git, PR, model, session, context and 5h/7d quotas. No network, no credentials.",
-      "version": "2.1.0",
+      "version": "2.2.0",
       "author": {
         "name": "Lounis Bou"
       }

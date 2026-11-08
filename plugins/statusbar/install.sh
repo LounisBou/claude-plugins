@@ -205,10 +205,20 @@ else
   else
     mkdir -p "$BACKUP_DIR"
     [ -f "$BACKUP_DIR/settings.json.before" ] || cp "$SETTINGS" "$BACKUP_DIR/settings.json.before"
-    tmp=$(mktemp)
-    jq --arg cmd "$DEST" '.statusLine = {type: "command", command: $cmd, padding: 0}' \
-       "$SETTINGS" > "$tmp"
-    chmod 600 "$tmp"; mv "$tmp" "$SETTINGS"
+    # A symlinked settings.json stays a link: the file it points at is the one rewritten.
+    target="$SETTINGS"
+    while [ -L "$target" ]; do
+      link=$(readlink "$target")
+      case "$link" in /*) target="$link" ;; *) target="$(dirname "$target")/$link" ;; esac
+    done
+    # One rename in the file's own directory: a reader never sees half a file.
+    tmp=$(mktemp "$(dirname "$target")/.settings.json.XXXXXX")
+    if jq --arg cmd "$DEST" '.statusLine = {type: "command", command: $cmd, padding: 0}' "$target" > "$tmp"; then
+      chmod 600 "$tmp"; mv "$tmp" "$target"
+    else
+      rm -f "$tmp"; echo "  $SETTINGS could not be rewritten, left as it was." >&2; exit 1
+    fi
+    [ -n "$current" ] && say "replaced the previous statusLine: $current (backup: $BACKUP_DIR/settings.json.before)"
     say "statusLine → $DEST"
   fi
 fi
