@@ -1779,18 +1779,105 @@ def chain_prune(keep):
                 pass
 
 
+# Core's store convention, read as data (core/store.json): a file several processes rewrite is
+# changed under the lock `<path>.lock` holding the holder's pid, a lock older than the stale age
+# being a holder that died, and written through a temporary file of a unique name, renamed into
+# place. The module's writers of the same files keep the same names.
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "core", "store.json"),
+          encoding="utf-8") as _fh:
+    STORE = json.load(_fh)
+_HELD = set()
+LOCK_WAIT_S = 5.0
+
+
+class path_lock:
+    """Holds the lock of `path` for the length of a `with`; a path this process already holds
+    is held again without waiting. Gives up after LOCK_WAIT_S, raising: the change is not made."""
+
+    def __init__(self, path):
+        self.path = path
+        self.mine = False
+
+    def __enter__(self):
+        if self.path in _HELD:
+            return self
+        lock = self.path + STORE["lock_suffix"]
+        os.makedirs(os.path.dirname(lock) or ".", exist_ok=True)
+        deadline = time.time() + LOCK_WAIT_S
+        while True:
+            try:
+                fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                os.write(fd, b"%d\n" % os.getpid())
+                os.close(fd)
+                break
+            except FileExistsError:
+                try:
+                    age = time.time() - os.stat(lock).st_mtime
+                except FileNotFoundError:
+                    continue
+                if age * 1000 > STORE["stale_ms"]:
+                    try:
+                        os.remove(lock)
+                    except FileNotFoundError:
+                        pass
+                    continue
+                if time.time() >= deadline:
+                    raise RuntimeError("%s stayed locked by another process" % self.path)
+                time.sleep(0.02)
+        _HELD.add(self.path)
+        self.mine = True
+        return self
+
+    def __exit__(self, *exc):
+        if self.mine:
+            _HELD.discard(self.path)
+            try:
+                os.remove(self.path + STORE["lock_suffix"])
+            except FileNotFoundError:
+                pass
+        return False
+
+
 def chain_write(tty, entries):
     os.makedirs(CHAINS_DIR, exist_ok=True)
     chain_prune({tty, self_tty() or ""})
     path = chain_path(tty)
-    tmp = path + ".tmp"
-    with open(tmp, "w") as fh:
-        for e in entries:
-            line = {"tab_id": e["tab_id"], "tty": e["tty"], "owner": e.get("owner", "")}
-            if is_resident(e):
-                line["resident"] = True
-            fh.write(json.dumps(line) + "\n")
-    os.replace(tmp, path)
+    tmp = "%s%s%d-%s" % (path, STORE["temporary_mark"], os.getpid(), uuid.uuid4().hex[:8])
+    try:
+        with open(tmp, "x") as fh:
+            for e in entries:
+                line = {"tab_id": e["tab_id"], "tty": e["tty"], "owner": e.get("owner", "")}
+                if is_resident(e):
+                    line["resident"] = True
+                fh.write(json.dumps(line) + "\n")
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def chain_change(tty, change):
+    """The chain read again and written under its lock: `change` takes the entries as they
+    stand and answers those to write, or None to leave the file as it is. Every launcher
+    process rewrites chains (a spawn, a close, a move, a takeover): read outside the lock,
+    one's change was lost under another's."""
+    with path_lock(chain_path(tty)):
+        entries = chain_read(tty)
+        changed = change(entries)
+        if changed is not None:
+            chain_write(tty, changed)
+        return changed
+
+
+def chain_drop(tty, tab_ids):
+    """The entries naming those tabs removed from the chain; an entry written meanwhile stays."""
+    gone = set(tab_ids)
+    if gone:
+        chain_change(tty, lambda entries: [e for e in entries if e["tab_id"] not in gone]
+                     if any(e["tab_id"] in gone for e in entries) else None)
 
 
 def is_resident(entry):
@@ -1800,8 +1887,8 @@ def is_resident(entry):
 
 
 def chain_append(tty, tab_id, new_tty, owner, resident=False):
-    chain_write(tty, chain_read(tty) + [{"tab_id": tab_id, "tty": new_tty, "owner": owner,
-                                         "resident": resident}])
+    chain_change(tty, lambda entries: entries + [{"tab_id": tab_id, "tty": new_tty, "owner": owner,
+                                                  "resident": resident}])
 
 
 def chain_transfer(old_tty, old_owner, new_tty, new_owner, merge=False):
@@ -1815,17 +1902,20 @@ def chain_transfer(old_tty, old_owner, new_tty, new_owner, merge=False):
     (`merge`) comes after the successor has launched agents of its own: they are kept, and the
     predecessor's follow them. The predecessor's file is removed: its tty's other occupants
     are gone, and a file left behind is a chain no live session owns."""
-    moved = chain_owned(chain_read(old_tty), old_owner)
-    own = chain_owned(chain_read(new_tty), new_owner) if merge and new_owner else []
-    have = {e["tab_id"] for e in own}
-    chain_write(new_tty, own + [{"tab_id": e["tab_id"], "tty": e["tty"], "owner": new_owner,
-                                 "resident": is_resident(e)}
-                                for e in moved if e["tab_id"] not in have])
-    if old_tty != new_tty:
-        try:
-            os.remove(chain_path(old_tty))
-        except OSError:
-            pass
+    # Both files under their locks, taken in one order so two transfers never wait on each other.
+    first, second = sorted({chain_path(old_tty), chain_path(new_tty)}) + [None] * (old_tty == new_tty)
+    with path_lock(first), path_lock(second or first):
+        moved = chain_owned(chain_read(old_tty), old_owner)
+        own = chain_owned(chain_read(new_tty), new_owner) if merge and new_owner else []
+        have = {e["tab_id"] for e in own}
+        chain_write(new_tty, own + [{"tab_id": e["tab_id"], "tty": e["tty"], "owner": new_owner,
+                                     "resident": is_resident(e)}
+                                    for e in moved if e["tab_id"] not in have])
+        if old_tty != new_tty:
+            try:
+                os.remove(chain_path(old_tty))
+            except OSError:
+                pass
     return len(moved)
 
 
@@ -1925,11 +2015,7 @@ def chain_drop_tab(tab_id):
     for name in os.listdir(CHAINS_DIR):
         if not name.endswith(".jsonl"):
             continue
-        tty = "/dev/" + name[:-len(".jsonl")]
-        entries = chain_read(tty)
-        kept = [e for e in entries if e["tab_id"] != tab_id]
-        if len(kept) != len(entries):
-            chain_write(tty, kept)
+        chain_drop("/dev/" + name[:-len(".jsonl")], [tab_id])
 
 
 def chain_repoint_tab(old_tab_id, new_tab_id, new_tty):
@@ -1946,16 +2032,17 @@ def chain_repoint_tab(old_tab_id, new_tab_id, new_tty):
     for name in os.listdir(CHAINS_DIR):
         if not name.endswith(".jsonl"):
             continue
-        tty = "/dev/" + name[:-len(".jsonl")]
-        entries = chain_read(tty)
-        hit = [e for e in entries if e["tab_id"] == old_tab_id]
-        if not hit:
-            continue
-        for e in hit:
-            e["tab_id"] = new_tab_id
-            e["tty"] = new_tty
-        chain_write(tty, entries)
-        count += len(hit)
+        hits = []
+
+        def repoint(entries):
+            hit = [e for e in entries if e["tab_id"] == old_tab_id]
+            for e in hit:
+                e["tab_id"] = new_tab_id
+                e["tty"] = new_tty
+            hits.append(len(hit))
+            return entries if hit else None
+        chain_change("/dev/" + name[:-len(".jsonl")], repoint)
+        count += sum(hits)
     return count
 
 
@@ -2002,7 +2089,7 @@ async def chain_anchor(app, own_tty, owner=None):
     entries = chain_read(own_tty)
     kept = [e for e in chain_owned(entries, owner) if e["tab_id"] in live]
     if len(kept) != len(entries):
-        chain_write(own_tty, kept)
+        chain_drop(own_tty, {e["tab_id"] for e in entries} - {e["tab_id"] for e in kept})
     group = None
     if win is not None:
         group = chain_group(win.tabs, own_tab.tab_id, {e["tab_id"] for e in kept})
@@ -2311,8 +2398,8 @@ class Terminal:
         raise NotImplementedError
 
     def chain_state(self, own):
-        """`(chain_anchor, entries to write or None)`: a terminal never writes the chain, so
-        what its reading of the live sessions keeps is handed to the launcher, which does."""
+        """`(chain_anchor, tab ids to drop or None)`: a terminal never writes the chain, so
+        what its reading of the live sessions drops is handed to the launcher, which does."""
         return self.chain_anchor(own), None
 
     def survives(self, stable_id):
@@ -2768,9 +2855,9 @@ class TmuxTerminal(Terminal):
         return "tmux:%s:%s" % (self.socket, pane.pane), self.stable_id(pane.window)
 
     def chain_state(self, own):
-        """`(anchor tty, entries to write)`, checked on the window id, never the tty, like
-        the iTerm anchor. A terminal never writes the chain: the entries are the launcher's
-        to write, and are None when nothing is to change. Only an entry the caller wrote, whose
+        """`(anchor tty, tab ids to drop)`, checked on the window id, never the tty, like
+        the iTerm anchor. A terminal never writes the chain: the drop is the launcher's to
+        make (chain_drop), and is None when nothing is to change. Only an entry the caller wrote, whose
         id is a tmux window's and whose window is gone, is dropped: an entry another occupant
         wrote, or one naming an iTerm2 tab, is not this listing's to judge. A listing with
         no pane in it proves nothing, and drops nothing."""
@@ -2791,7 +2878,7 @@ class TmuxTerminal(Terminal):
             if entry["tab_id"] in live:
                 anchor = live[entry["tab_id"]]
                 break
-        return anchor, (kept if len(kept) != len(entries) else None)
+        return anchor, ({e["tab_id"] for e in entries if gone(e)} if len(kept) != len(entries) else None)
 
     def chain_anchor(self, own):
         return self.chain_state(own)[0]
@@ -4634,10 +4721,10 @@ def cmd_spawn(argv, pair_from=""):
                 chain = chain_owned(chain_read(own), SELF_ID)
                 anchor = chain[-1]["tty"] if chain else "self"
             else:
-                anchor, kept = term.chain_state(own)
+                anchor, gone = term.chain_state(own)
                 anchor = anchor or own
-                if kept is not None:
-                    chain_write(own, kept)
+                if gone is not None:
+                    chain_drop(own, gone)
     elif anchor == "leftmost":
         if not own and not DRY_RUN:
             die("spawn: --coordinator-successor: cannot resolve this session's own tty")

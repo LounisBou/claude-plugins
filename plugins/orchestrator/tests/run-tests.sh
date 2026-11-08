@@ -590,6 +590,13 @@ check "the mark is written only where it is set" \
   "$(paste -sd'|' "$CHAINS/ttys900.jsonl")"
 check "a hand-over keeps the mark" '{"tab_id": "9", "tty": "/dev/ttys909", "owner": "S-NEW", "resident": true}' \
   "$(transfer >/dev/null; sed -n 2p "$CHAINS/ttys950.jsonl")"
+# Every launcher process rewrites chains (a spawn, a close, a move, a takeover): read outside a
+# lock, one append was lost under another's. Eight appends at once, each its own process, keep
+# all eight entries, and neither a lock nor a temporary file is left beside the chain.
+printf '' > "$CHAINS/ttys900.jsonl"
+for n in 1 2 3 4 5 6 7 8; do append "r$n" "/dev/ttys98$n" no >/dev/null & done; wait
+check "eight launchers appending to one chain at once keep every entry, and leave nothing beside it" "8|0" \
+  "$(grep -c '"tab_id": "r' "$CHAINS/ttys900.jsonl")|$(ls "$CHAINS" | grep -c '^ttys900\.jsonl\.')"
 # A resident agent's own succession: the entry naming the caller's tab sits in its
 # ORCHESTRATOR's chain, not in the caller's, so the hand-over above never reaches it. It must
 # follow the successor, owner and mark kept, or the orchestrator reads a closed tab as its

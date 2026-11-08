@@ -17,15 +17,16 @@ Python launcher.
 | `store/sessions/<id>` | the session's own hooks (measure, usage); any reader removes a dead row | one writer, one rename |
 | `store/gates/<id>`, `store/rows/<id>`, `store/answered/<id>`, `store/successors/<id>` | the session's own hooks | one writer, one rename (gates: a plain write) |
 | `store/remote/<name>` | the receiving session; any reader removes a stale row | one rename, no read-modify-write |
-| `round/<id>.json` | the hooks of every session (sender, pane, delivery, successor move); `coordinator.sh round-close` | read-modify-write under the entry's lock |
+| `round/<id>.json` | the hooks of every session (sender, pane, delivery, successor move); `coordinator.sh round-close` and `round-archive` | read-modify-write under the entry's lock |
+| `store/waits/<id>` | the session's own relay; the coordinator's hooks and `round-close`, forgetting a fingerprint | under the file's lock; a write merged with what another process changed since this one read it (`mergeWait`) |
+| `chains/<tty>.jsonl` | every launcher process (spawn, close, move, takeover) | read-modify-write under the chain's lock (`chain_change`), a unique temporary name |
+| `round-woken.json`, `round-told.json` | the coordinator's hooks (two at a succession) | ids added under the file's lock, the list read again first |
+| `store/coordinator-learnt` | every orchestrator's hooks | replaced whole, one rename: the last coordinator learnt |
 | `deck.json` | every session | a view of the store, written only when it differs from the file or the file's stamp is a minute old (`DECK_REFRESH_MS`); format fixed by `hooks/tests/golden-deck.ts` |
 | `sleeping.json`, `coordinator.json` | the coordinator's scripts | under the coordinator's lock |
 | dispatch records, `records/<session>` | `dispatch-record.ts` | under core's lock |
 | `measure/<id>.json` | the session's own gauge | one writer, plain write, read as unmeasured when partial |
 | module log, `close.log`, `store/moves/probes.jsonl` | every process | appends |
 
-Still written by several processes with an unlocked read-modify-write, to be moved onto the
-store next: `store/waits/<id>` (the sender's relay, the coordinator's hooks, `round-close`),
-`chains/<tty>.jsonl` (every launcher process, through one fixed temporary name),
-`store/coordinator-learnt`, `round-woken.json` and `round-told.json` (two coordinators
-overlapping at a succession), and `round-close`'s archive, which moves an entry without its lock.
+A writer in another language reads the convention as data, `core/store.json` (the launcher,
+`iterm_agent.py`, `path_lock`).
