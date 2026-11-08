@@ -14,14 +14,16 @@ pass=0
 fail=0
 
 # check <name> <expected> <actual>
+# GNU tr is not multibyte: join lines with a visible mark through python.
+joinlines() { python3 -c 'import sys; sys.stdout.write(sys.stdin.read().replace("\n", "⏎"))'; }
 check() {
   if [ "$2" = "$3" ]; then
     printf '  ok   %s\n' "$1"
     pass=$((pass + 1))
   else
     printf '  FAIL %s\n' "$1"
-    printf '       expected: %s\n' "$(printf '%s' "$2" | tr '\n' '⏎')"
-    printf '       actual:   %s\n' "$(printf '%s' "$3" | tr '\n' '⏎')"
+    printf '       expected: %s\n' "$(printf '%s' "$2" | joinlines)"
+    printf '       actual:   %s\n' "$(printf '%s' "$3" | joinlines)"
     fail=$((fail + 1))
   fi
 }
@@ -63,7 +65,7 @@ settings '{"enabledPlugins":{"superpowers@claude-plugins-official":true}}'
 check_status "outside a git repository exits 13" 13 env HOME="$WORK" PREFLIGHT_SETTINGS="$WORK/cfg/settings.json" bash -c "cd '$WORK' && bash '$PF'"
 check "outside a git repository, a skill's preflight prints its error and fix" \
   "error: not a git repository with a current branch⏎fix:   run this from inside a git repository, on a branch" \
-  "$(env HOME="$WORK" PREFLIGHT_SETTINGS="$WORK/cfg/settings.json" bash -c "cd '$WORK' && bash '$PF'" 2>&1 >/dev/null | tr '\n' '⏎' | sed 's/⏎$//')"
+  "$(env HOME="$WORK" PREFLIGHT_SETTINGS="$WORK/cfg/settings.json" bash -c "cd '$WORK' && bash '$PF'" 2>&1 >/dev/null | joinlines | sed 's/⏎$//')"
 check_status "outside a git repository, --deps-only (install, doctor) passes" 0 env HOME="$WORK" PREFLIGHT_SETTINGS="$WORK/cfg/settings.json" bash -c "cd '$WORK' && bash '$PF' --deps-only"
 settings '{"enabledPlugins":{}}'
 check_status "outside a git repository, --deps-only still exits 10 on a missing dependency" 10 env HOME="$WORK" PREFLIGHT_SETTINGS="$WORK/cfg/settings.json" bash -c "cd '$WORK' && bash '$PF' --deps-only"

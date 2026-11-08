@@ -1,7 +1,10 @@
 {
   "$comment": "Where each plugin's suite blocks the build. A platform is added the day the suite is green there, and never removed (docs/conventions.md, « Ratchets »).",
   "blocking": {
-    "bugs-bot": [],
+    "bugs-bot": [
+      "ubuntu-latest",
+      "macos-latest"
+    ],
     "cloudflare": [
       "ubuntu-latest"
     ],
@@ -9,7 +12,10 @@
       "ubuntu-latest",
       "macos-latest"
     ],
-    "implement": [],
+    "implement": [
+      "ubuntu-latest",
+      "macos-latest"
+    ],
     "method": [
       "ubuntu-latest",
       "macos-latest"
