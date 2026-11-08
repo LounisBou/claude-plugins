@@ -1,12 +1,12 @@
 // hooks/tests/kill-guard.test.ts
-// The kill guard: what the tokeniser reads as a kill by name or pattern, the
+// The kill guard: what pattern-kills.ts reads as a kill by name or pattern, the
 // decision a launched session gets, and the wiring that serves it — the Bash
 // handler's deny, the tool never asked. A session kills only what it started, by
 // the pid it recorded in a file; `kill <pid>`, `kill $pid` and `kill $(cat <file>)`
 // are that, and pass.
 import { expect, test } from 'claude-code/testing'
 import { guardFallback, killDecision, register as registerGuards } from '../guards.ts'
-import { detectPatternKills } from '../tokenizer.ts'
+import { detectPatternKills } from '../pattern-kills.ts'
 import { logLineOf } from './fakes.ts'
 
 // Kills by name or pattern: the program is pkill or killall, or kill takes its pids
