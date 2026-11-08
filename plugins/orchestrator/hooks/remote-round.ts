@@ -100,17 +100,17 @@ export function parseAsk(body: string): { entry: RoundEntry; machine: string } |
   const keys = Object.keys(o)
   const urgent = keys.includes('urgent')
   if (keys.length !== FIELDS.length + (urgent ? 1 : 0) || !FIELDS.every(field => keys.includes(field))) return null
-  if (urgent && (o.urgent !== true || o.kind !== 'operator')) return null
-  if (!line(o.from, NAME_CAP) || roleOf(o.from as string) !== 'orchestrator') return null
-  if (!line(o.session, SESSION_CAP) || !idOf(o.id, o.session as string)) return null
-  if (!stamp(o.since) || !stamp(o.at)) return null
-  if (o.kind === 'operator') {
-    if (!line(o.blocks, BLOCKS_CAP)) return null
-  } else if (o.kind !== 'done' || o.blocks !== null) return null
-  if (typeof o.question !== 'string' || o.question.length > QUESTION_CAP) return null
-  if (!Array.isArray(o.choices) || !(o.recommendation === null || typeof o.recommendation === 'string')) return null
-  if (o.status !== 'open' || o.answer !== null) return null
-  if (!line(o.machine, MACHINE_CAP) || !/^[A-Za-z0-9_-]+$/.test(o.machine as string)) return null
+  if (urgent && (o['urgent'] !== true || o['kind'] !== 'operator')) return null
+  if (!line(o['from'], NAME_CAP) || roleOf(o['from'] as string) !== 'orchestrator') return null
+  if (!line(o['session'], SESSION_CAP) || !idOf(o['id'], o['session'] as string)) return null
+  if (!stamp(o['since']) || !stamp(o['at'])) return null
+  if (o['kind'] === 'operator') {
+    if (!line(o['blocks'], BLOCKS_CAP)) return null
+  } else if (o['kind'] !== 'done' || o['blocks'] !== null) return null
+  if (typeof o['question'] !== 'string' || o['question'].length > QUESTION_CAP) return null
+  if (!Array.isArray(o['choices']) || !(o['recommendation'] === null || typeof o['recommendation'] === 'string')) return null
+  if (o['status'] !== 'open' || o['answer'] !== null) return null
+  if (!line(o['machine'], MACHINE_CAP) || !/^[A-Za-z0-9_-]+$/.test(o['machine'] as string)) return null
   const { machine, ...entry } = o as unknown as RoundEntry & { machine: string }
   return { entry: { ...entry, ...parseChoices(entry.question) }, machine }
 }
@@ -123,8 +123,8 @@ export function ackLine(id: string, since: string): string {
 
 export function parseAck(body: string): { id: string; since: string } | null {
   const o = markedObject(body, ACK_MARKER, ACK_LINE_CAP)
-  if (!o || Object.keys(o).length !== 2 || !anId(o.id) || !stamp(o.since)) return null
-  return { id: o.id as string, since: o.since as string }
+  if (!o || Object.keys(o).length !== 2 || !anId(o['id']) || !stamp(o['since'])) return null
+  return { id: o['id'] as string, since: o['since'] as string }
 }
 
 // The operator's answer to an entry, sent back to the machine it came from: the marker and one
@@ -154,9 +154,9 @@ export function parseAnswer(body: string): { id: string; since: string; text: st
   const readable = text.slice(cut + 1)
   if (readable.trim() === '' || readable.length > READABLE_CAP) return null
   const o = markedObject(text.slice(0, cut), ANSWER_MARKER, ANSWER_LINE_CAP)
-  if (!o || Object.keys(o).length !== 4 || !anId(o.id) || !stamp(o.since) || !stamp(o.at)) return null
-  if (typeof o.text !== 'string' || o.text === '' || o.text.length > ANSWER_TEXT_CAP) return null
-  return { id: o.id as string, since: o.since as string, text: o.text, at: o.at as string, readable }
+  if (!o || Object.keys(o).length !== 4 || !anId(o['id']) || !stamp(o['since']) || !stamp(o['at'])) return null
+  if (typeof o['text'] !== 'string' || o['text'] === '' || o['text'].length > ANSWER_TEXT_CAP) return null
+  return { id: o['id'] as string, since: o['since'] as string, text: o['text'], at: o['at'] as string, readable }
 }
 
 // The answer's acknowledgment, by the entry's id and since: a late one of an older answer to the
@@ -167,8 +167,8 @@ export function answerAckLine(id: string, since: string): string {
 
 export function parseAnswerAck(body: string): { id: string; since: string } | null {
   const o = markedObject(body, ANSWER_ACK_MARKER, ANSWER_ACK_LINE_CAP)
-  if (!o || Object.keys(o).length !== 2 || !anId(o.id) || !stamp(o.since)) return null
-  return { id: o.id as string, since: o.since as string }
+  if (!o || Object.keys(o).length !== 2 || !anId(o['id']) || !stamp(o['since'])) return null
+  return { id: o['id'] as string, since: o['since'] as string }
 }
 
 function anId(v: unknown): boolean {
