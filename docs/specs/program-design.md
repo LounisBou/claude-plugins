@@ -121,7 +121,7 @@ Line numbers are at import. « Suspected » items are confirmed by a reading, th
 - `.claude/settings.json` pre-approves `gh pr merge:*` and `git merge:*`. (Phase 0.)
 - `tests/run-tests.sh:419,1832,2120`: `stat -f … || stat -c` reads filesystem data on GNU.
 - `tests/run-tests.sh:1792-1805` asserts the wording and line counts of `docs/caddy`.
-- Suspected: `restore` replays whatever account, zone and data a backup file carries; the default env file `~/.env` turns any token-shaped variable into an account.
+- `restore` replays whatever account, zone and data a backup file carries. (The env file suspicion is dropped: an account is made only from a variable named `<NAME>_CLOUDFLARE_API_TOKEN`.)
 
 **bugs-bot**
 - `bugs_bot/agent.py:223`: `deploy_check` runs with `shell=True` from `.bugs-bot.json`, under the blanket `Bash(bugs-bot:*)` rule. (Phase 0.)
