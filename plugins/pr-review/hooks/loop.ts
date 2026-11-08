@@ -15,8 +15,8 @@ import { REPORT_REQUEST, answerText, isBlocking, passFindings, reportOf } from '
 export const LOOP_TOOL = 'loop'
 
 export const LOOP_DESCRIPTION =
-  'pr-review: the state of /pr-review:auto-fix-loop. Actions: start {test_command} once before '
-  + 'the first pass; begin_pass before each review (answers the pass number, or exit max_passes); '
+  'pr-review: the state of /pr-review:auto-fix-loop. Actions: start {test_command, review_only} once before '
+  + 'the first pass (review_only: a reviewer\'s loop, one pass and no fix, its first findings end it with exit reviewed); begin_pass before each review (answers the pass number, or exit max_passes); '
   + 'findings {keys} after each review, one key per finding as "<file>::<summary>" (answers which '
   + 'keys are new and which were seen; an empty list answers exit clean when every review agent '
   + 'reported none, and the Critical and Important count is read from the agents\' own blocks); fixed {key, sha, '
@@ -43,7 +43,8 @@ const strings = (value: unknown): string[] =>
 export function act(e: any): Record<string, unknown> {
   const action = String(e?.action ?? '')
   if (action === 'start') {
-    resetLoop(String(e.test_command ?? '').trim())
+    resetLoop(String(e.test_command ?? '').trim(), e.review_only === true)
+    if (loop.isReviewOnly) return { pass: 0, max_passes: 1, next: 'call begin_pass, run the review, report its findings: no fix is made, the loop ends there' }
     return { pass: 0, max_passes: MAX_PASSES, next: 'call begin_pass, then run the review' }
   }
   if (action === 'status') return summary()
@@ -87,6 +88,12 @@ export function act(e: any): Record<string, unknown> {
       loop.isActive = false
       loop.exit = 'clean'
       return { exit: 'clean', ...summary() }
+    }
+    if (loop.isReviewOnly) {
+      loop.seen.push(...keys)
+      loop.isActive = false
+      loop.exit = 'reviewed'
+      return { exit: 'reviewed', ...summary() }
     }
     const seen = keys.filter((k) => loop.seen.includes(k))
     const fresh = keys.filter((k) => !loop.seen.includes(k))
@@ -137,6 +144,7 @@ export const LOOP_SCHEMA = {
   properties: {
     action: { type: 'string', enum: ['start', 'begin_pass', 'findings', 'fixed', 'reverted', 'status'] },
     test_command: { type: 'string' },
+    review_only: { type: 'boolean', description: 'start: a reviewer\'s loop, run by a session that did not write the code: one pass, no fix; its findings are the verdict' },
     keys: { type: 'array', items: { type: 'string' } },
     blocking: { type: 'integer', description: 'findings: how many of the keys are Critical or Important' },
     key: { type: 'string' },
@@ -158,6 +166,12 @@ function repoOf(url: string): string | undefined {
 // The review record's result and detail for the exit the loop just reached.
 export function verdict(exit: string): { result: 'pass' | 'fail'; detail: string } | null {
   if (exit === 'clean') return { result: 'pass', detail: `clean at pass ${loop.pass}, ${loop.reports.length} review agents reporting no finding` }
+  if (exit === 'reviewed') {
+    const found = `${loop.lastFindings} findings`
+    if (loop.lastBlocking === 0) return { result: 'pass', detail: `reviewed: ${found}, none Critical or Important` }
+    if (loop.lastBlocking === undefined) return { result: 'fail', detail: `reviewed: ${found}, severity unknown` }
+    return { result: 'fail', detail: `reviewed: ${found}, ${loop.lastBlocking} Critical or Important: ${loop.seen.join('; ')}`.slice(0, 500) }
+  }
   if (exit !== 'max_passes') return null
   const left = `${loop.lastFindings} findings left after ${loop.pass} passes`
   if (loop.lastBlocking === 0) return { result: 'pass', detail: `${left}, none Critical or Important` }

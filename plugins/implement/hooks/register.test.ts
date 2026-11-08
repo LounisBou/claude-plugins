@@ -317,3 +317,68 @@ test('a skill points at the method until the session loads it, then no more', as
   expect((await $.skill.prompt({ skill: 'method:lifecycle', text: 'KERNEL' })).text).toBe('KERNEL')
   expect((await skill($, 'phase')).text).not.toContain(METHOD_LINE)
 })
+
+// ── /implement:review ────────────────────────────────────────────────────────
+
+const RECORD = JSON.stringify({ plugins: { 'orchestrator@lounisbou': [{ installPath: '/cache/orchestrator/0.60.0' }] } })
+const LAUNCHER = '/cache/orchestrator/0.60.0/skills/iterm-agents/scripts/iterm-agent.sh'
+
+// A machine: its system, its install record, whether the launcher exists, what it answers.
+function machine(on: any, m: { system: string; record?: string; launcher?: boolean; spawn?: { exitCode: number; stdout: string; stderr: string }; branch?: string }) {
+  const runs: string[][] = []
+  const ok = (stdout = '') => ({ value: { exitCode: 0, stdout, stderr: '' } })
+  on('env.get', (_$: any, e: any) => ({ value: { HOME: '/home/op' }[e.name as string] }))
+  on('fs.read', (_$: any, e: any) => (e.path === '/home/op/.claude/plugins/installed_plugins.json' && m.record !== undefined ? { value: m.record } : { deny: 'ENOENT' }))
+  on('fs.exists', (_$: any, e: any) => ({ value: m.launcher === true && e.path === LAUNCHER }))
+  on('process.run', (_$: any, e: any) => {
+    runs.push([...e.argv])
+    const args = e.argv.join(' ')
+    if (args === 'git branch --show-current') return ok(m.branch ?? 'feat/demo')
+    if (args === 'git rev-parse --show-toplevel') return ok('/work')
+    if (args === 'uname -s') return ok(m.system)
+    if (e.argv[0] === LAUNCHER) return { value: m.spawn ?? { exitCode: 0, stdout: 'spawned\n/dev/ttys004', stderr: '' } }
+    return ok()
+  })
+  return runs
+}
+
+const review = ($: any) => $.command.run({ command: 'implement:review', args: '' } as any)
+
+test('on macOS with the orchestrator, the reviewer opens in iTerm through its launcher', async ($, on) => {
+  const runs = machine(on, { system: 'Darwin', record: RECORD, launcher: true })
+  const out: any = await review($)
+  const spawn = runs.find(argv => argv[0] === LAUNCHER) ?? []
+  expect(spawn.slice(0, 6)).toEqual([LAUNCHER, 'spawn', '--dir', '/work', '--title', 'Agent : review demo'])
+  expect(spawn[7]).toContain('"review_only": true')
+  expect(String(out.text)).toContain('launched in iTerm on /dev/ttys004')
+})
+
+test('a launcher that refuses is said as it stands, and nothing is launched another way', async ($, on) => {
+  const runs = machine(on, { system: 'Darwin', record: RECORD, launcher: true, spawn: { exitCode: 2, stdout: '', stderr: 'no iTerm2 running' } })
+  const out: any = await review($)
+  expect(String(out.text)).toContain('The launcher refused the reviewer (exit 2): no iTerm2 running')
+  expect(runs.some(argv => argv[0] === 'sh')).toBe(false)
+})
+
+test('elsewhere, or without the launcher, the reviewer runs headless with its report in a log', async ($, on) => {
+  const runs = machine(on, { system: 'Linux', record: RECORD, launcher: true })
+  const out: any = await review($)
+  const headless = runs.find(argv => argv[0] === 'sh') ?? []
+  expect(headless[2]).toContain('claude -p "$1" --permission-mode auto')
+  expect(headless[5]).toBe('/work/.git/implement-review.log')
+  expect(runs.some(argv => argv[0] === LAUNCHER)).toBe(false)
+  expect(String(out.text)).toContain('launched headless')
+})
+
+test('a macOS without the orchestrator installed runs the reviewer headless too', async ($, on) => {
+  const runs = machine(on, { system: 'Darwin' })
+  await review($)
+  expect(runs.some(argv => argv[0] === 'sh')).toBe(true)
+})
+
+test('outside a branch, nothing is launched', async ($, on) => {
+  const runs = machine(on, { system: 'Linux', branch: '' })
+  const out: any = await review($)
+  expect(String(out.text)).toContain('needs a git repository on a branch')
+  expect(runs.some(argv => argv[0] === 'sh')).toBe(false)
+})

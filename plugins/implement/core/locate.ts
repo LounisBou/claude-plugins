@@ -5,6 +5,7 @@ import { existsSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { configDir, setting, type Env } from './paths.ts'
 import { readText } from './store.ts'
+import { recordedInstallPaths } from './install-record.ts'
 
 export class NotInstalled extends Error {
   /** What to do about it, one command when there is one. */
@@ -37,29 +38,13 @@ export function locatePlugin(plugin: string, marketplaces: readonly string[], en
   const recordPath = installRecordPath(env, options.home)
   const text = readText(recordPath)
   if (text === undefined) throw new NotInstalled(`no install record at ${recordPath}`, install)
-  let record: unknown
-  try {
-    record = JSON.parse(text)
-  } catch {
-    throw new NotInstalled(`the install record is not JSON: ${recordPath}`, install)
-  }
-  const plugins = isRecord(record) ? record['plugins'] : undefined
-  if (!isRecord(plugins)) throw new NotInstalled(`the install record has no plugins: ${recordPath}`, install)
-  for (const marketplace of marketplaces) {
-    const entries = plugins[`${plugin}@${marketplace}`]
-    if (!Array.isArray(entries)) continue
-    for (const entry of entries) {
-      const path = isRecord(entry) ? entry['installPath'] : undefined
-      if (typeof path === 'string' && path !== '' && isDirectory(path)) return path
-    }
-  }
+  const recorded = recordedInstallPaths(text, plugin, marketplaces)
+  if ('problem' in recorded) throw new NotInstalled(`${recorded.problem}: ${recordPath}`, install)
+  const found = recorded.paths.find(isDirectory)
+  if (found !== undefined) return found
   throw new NotInstalled(`the ${plugin} plugin is not installed (looked for ${marketplaces.map(m => `${plugin}@${m}`).join(', ')})`, install)
 }
 
 function isDirectory(path: string): boolean {
   return existsSync(path) && statSync(path).isDirectory()
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }

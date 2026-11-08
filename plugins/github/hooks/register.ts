@@ -508,6 +508,15 @@ const pane = atom({ plugin: 'github', key: 'pane' } as const, { rows: [], error:
 
 // Names this module registered; a taken name is left to its owner.
 const ownedCommands = new Set<string>()
+// The heads this session pushed: its review of one of them is no review (method, « review on evidence »).
+const pushedHeads = new Set<string>()
+
+// A review record refused when the session writing it pushed the head it reviews.
+export function selfReviewRefusal(kind: string, head: string, pushed: ReadonlySet<string>): string | null {
+  if (kind !== 'review' || !pushed.has(head)) return null
+  return 'github: this session pushed ' + head.slice(0, 7) + ': a review is made by another session, never by the one that'
+    + ' wrote or pushed the code. Run the review from another session (implement: /implement:review).'
+}
 // The last prompt the user typed (at the terminal or through the bridge): a
 // text found in it verbatim is the user's own words, never refused.
 let lastTyped = ''
@@ -991,6 +1000,17 @@ function stdoutOf(result: any): string {
 // A push moves the head of the branches it names: a pull request of theirs
 // that carries Ready goes back to Not Ready. A branch or a repository read
 // with any doubt is left alone, with one line saying so.
+// After a push this session ran, its checkout's head is one it pushed.
+async function notePushedHead($: any, line: string): Promise<void> {
+  try {
+    if (bashPushes(line).pushes.length === 0) return
+    const head = await $.process.run(['git', 'rev-parse', 'HEAD'], { timeoutMs: 10_000 })
+    if (head.exitCode === 0) pushedHeads.add(String(head.stdout).trim().toLowerCase())
+  } catch {
+    // Unread: the head is not known as pushed here.
+  }
+}
+
 async function followPushes($: any, line: string): Promise<void> {
   const { pushes, moves } = bashPushes(line)
   for (const push of pushes) {
@@ -1270,6 +1290,8 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   if (status.exitCode !== 0 || String(status.stdout).trim() !== '') {
     return { deny: 'github: the tracked files have changes: a record is written on a clean checkout of the head.' }
   }
+  const selfReview = selfReviewRefusal(kind, gate.head, pushedHeads)
+  if (selfReview) return { deny: selfReview }
   let session = ''
   try {
     session = String(await $.session.id() ?? '')
@@ -1451,6 +1473,7 @@ export function register(on: any): void {
         }
       }
       await followPushes($, String(e.command))
+      await notePushedHead($, String(e.command))
     }
     return result
   }).catch(async (_$: any, e: any, next: any) => {

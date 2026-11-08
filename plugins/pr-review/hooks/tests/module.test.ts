@@ -540,3 +540,40 @@ test('a review agent that fails runs once, and its pass cannot end clean', async
   const answer = await loopCall($, { action: 'findings', keys: [] })
   expect(String(answer.result)).toContain('1 of 1 review agents ended without their findings block')
 })
+
+test('a reviewer\'s loop ends at its first findings, fixes nothing, and records them as the verdict', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireRecord(on, stubs)
+  await loopCall($, { action: 'start', review_only: true })
+  await loopCall($, { action: 'begin_pass' })
+  await review($, [{ severity: 'important' }, { severity: 'suggestion' }])
+  const out = await loopCall($, { action: 'findings', keys: ['a.ts::null deref', 'b.ts::naming'] })
+  expect(String(out.result)).toContain('"exit": "reviewed"')
+  expect(stubs.records[0].result).toBe('fail')
+  expect(stubs.records[0].detail).toBe('reviewed: 2 findings, 1 Critical or Important: a.ts::null deref; b.ts::naming')
+})
+
+test('a reviewer\'s loop with only suggestions passes, and a clean one passes as clean', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireRecord(on, stubs)
+  await loopCall($, { action: 'start', review_only: true })
+  await loopCall($, { action: 'begin_pass' })
+  await review($, [{ severity: 'suggestion' }])
+  await loopCall($, { action: 'findings', keys: ['b.ts::naming'] })
+  expect(stubs.records[0]).toEqual({ pr: 12, repo: 'LounisBou/claude-review', kind: 'review', result: 'pass', detail: 'reviewed: 1 findings, none Critical or Important' })
+  await loopCall($, { action: 'start', review_only: true })
+  await loopCall($, { action: 'begin_pass' })
+  await review($, [])
+  await loopCall($, { action: 'findings', keys: [] })
+  expect(stubs.records[1].result).toBe('pass')
+})
+
+test('a reviewer\'s loop whose agent gave no block records fail, severity unknown', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireRecord(on, stubs)
+  await loopCall($, { action: 'start', review_only: true })
+  await loopCall($, { action: 'begin_pass' })
+  await review($)
+  await loopCall($, { action: 'findings', keys: ['a::b'] })
+  expect(stubs.records[0].detail).toBe('reviewed: 1 findings, severity unknown')
+})

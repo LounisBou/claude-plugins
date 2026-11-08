@@ -74,19 +74,9 @@ the responsibility for it. The guard reads `docs/features/probe`, not
 `docs/features`: before the directory exists, `check-ignore` on the bare path reads
 not ignored, while the inner path is matched by every form the pattern takes.
 
-`IMPLEMENTATION.md` is the only source of truth for progress. Its header holds the
-codename, the title, the branch, the bump type, the artifacts mode and the base
-commit; its table is one row per phase:
-
-```
-| phase | title | status | milestone |
-|---|---|---|---|
-| 01 | the skeleton | done | 82525e4 |
-| 02 | the core | doing | 9f31a0c |
-| 03 | the cycle | todo |  |
-```
-
-Status is `todo`, `doing` or `done`. The milestone column carries a sha from the
+`IMPLEMENTATION.md` is the only source of truth for progress, in the method's
+state-file shape: a header, then one row per phase, status `todo`, `doing` or `done`.
+The milestone column carries a sha from the
 moment a phase is under way: while the row is `doing` it holds the commit the
 sub-phase being written started from, rewritten before each one, and when the row
 turns `done` it holds the last commit of the phase. A `todo` row leaves it empty. A

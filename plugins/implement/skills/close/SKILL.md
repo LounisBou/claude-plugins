@@ -31,7 +31,9 @@ NEVER touch a version file when the bump type is none
 ```
 
 This skill's own steps end at the branch. A push and a draft pull request need no consent;
-taking it out of draft and the merge follow the method's ready gate and consent rules.
+taking it out of draft and the merge follow the method's ready gate and consent rules. Once
+the pull request is open at its final head, run `/implement:review`: the review is made by
+another session, never by this one.
 
 ---
 

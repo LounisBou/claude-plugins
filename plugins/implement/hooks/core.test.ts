@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'claude-code/testing'
+import { candidateLaunchers, lastLine, reviewerPrompt, reviewerTitle } from './review.ts'
 import {
   IDLE, armedBy, agentDecision, bandLine, bandOf, bandSegments, bashDecision, checkDeny, codenameOf, doctorText, editDecision,
   ignoreVerdict, isVerdict, markRow, modeOf, nextRow, onTurnEnd, onTyped, parseState,
@@ -331,5 +332,19 @@ describe('the band pieces', () => {
     const line = bandLine(b, withoutBase + 3)
     expect(line).toBe('implement:phase demo · phase 02/03 doing: the… · head fedcba9')
     expect(line.length).toBe(withoutBase + 3)
+  })
+})
+
+describe('the reviewer', () => {
+  test('its title fits the session-name shape, its prompt asks for the reviewer\'s loop', () => {
+    expect(reviewerTitle('demo')).toBe('Agent : review demo')
+    expect(reviewerTitle('a-very-long-codename-for-a-feature')).toBe('Agent : review a-very-long-codena')
+    expect(reviewerPrompt('feat/demo')).toContain('branch feat/demo')
+    expect(reviewerPrompt('feat/demo')).toContain('you change no code')
+  })
+  test('the launcher is looked for in every recorded install, none from a broken record', () => {
+    expect(candidateLaunchers(JSON.stringify({ plugins: { 'orchestrator@lounisbou': [{ installPath: '/a/' }] } }))).toEqual(['/a/skills/iterm-agents/scripts/iterm-agent.sh'])
+    expect(candidateLaunchers('{')).toEqual([])
+    expect(lastLine('one\ntwo\n')).toBe('two')
   })
 })

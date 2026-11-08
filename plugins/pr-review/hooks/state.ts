@@ -47,15 +47,17 @@ export type Loop = {
   isRecorded: boolean
   // Whether a review runs: from begin_pass to the findings the loop accepts.
   isReviewing: boolean
+  // A reviewer's loop: one pass, no fix, its findings are the verdict.
+  isReviewOnly: boolean
   // What each review agent of the pass returned, null for one without a readable block.
   reports: (Finding[] | null)[]
 }
 
 export const MAX_PASSES = 5
 
-export const loop: Loop = { isActive: false, pass: 0, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false, isReviewing: false, reports: [] }
+export const loop: Loop = { isActive: false, pass: 0, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false, isReviewing: false, isReviewOnly: false, reports: [] }
 
-export function resetLoop(testCommand: string): void {
+export function resetLoop(testCommand: string, isReviewOnly = false): void {
   loop.isActive = true
   loop.pass = 0
   loop.testCommand = testCommand
@@ -66,6 +68,7 @@ export function resetLoop(testCommand: string): void {
   loop.exit = undefined
   loop.isRecorded = false
   loop.isReviewing = false
+  loop.isReviewOnly = isReviewOnly
   loop.reports = []
 }
 
