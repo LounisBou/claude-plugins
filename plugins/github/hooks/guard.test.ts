@@ -134,6 +134,18 @@ async function world($: any, on: any, w: World = {}): Promise<Seen> {
       if (seen.warnLog !== undefined && /cat >> /.test(e.argv.join(' '))) seen.warnLog += String(e.init?.stdin ?? '')
       return { value: { exitCode: 0, stdout: '', stderr: '' } }
     }
+    if (e.argv[0] === 'sh' && e.argv[2] === 'set -C; echo "$$" > "$1"') {
+      // The list's lock, taken with noclobber: refused while the file is there.
+      seen.runs.push({ argv: e.argv })
+      const lock = e.argv[4]
+      if (lock in seen.files || lock in tree) return { value: { exitCode: 1, stdout: '', stderr: 'sh: cannot overwrite existing file' } }
+      seen.files[lock] = '4242\n'
+      return { value: { exitCode: 0, stdout: '', stderr: '' } }
+    }
+    if (e.argv[0] === 'sleep') {
+      seen.runs.push({ argv: e.argv })
+      return { value: { exitCode: 0, stdout: '', stderr: '' } }
+    }
     if (e.argv[0] === 'mv' || e.argv[0] === 'rm' || e.argv[0] === 'mkdir') {
       seen.runs.push({ argv: e.argv })
       const [from, to] = e.argv.slice(-2)
@@ -142,7 +154,10 @@ async function world($: any, on: any, w: World = {}): Promise<Seen> {
         seen.files[to] = seen.files[from]
         delete seen.files[from]
       }
-      if (e.argv[0] === 'rm') delete seen.files[to]
+      if (e.argv[0] === 'rm') {
+        delete seen.files[to]
+        delete tree[to]
+      }
       return { value: { exitCode: 0, stdout: '', stderr: '' } }
     }
     const stdin = JSON.parse(e.init?.stdin ?? '{}')
@@ -1373,6 +1388,40 @@ test('a move that fails removes the temporary file and leaves the list as it was
   expect(out.isError).toBe(true)
   expect(out.result).toContain('EACCES')
   expect(Object.keys(seen.files)).toEqual([AUTO_MERGE])
+  expect(listed(seen)).toEqual(['acme/other'])
+})
+
+const LOCK = AUTO_MERGE + '.lock'
+const lockRuns = (seen: Seen) => seen.runs.filter((r) => r.argv?.includes(LOCK)).map((r) => r.argv[0])
+
+test('auto-merge-set reads and writes the list holding its lock, and releases it', async ($, on) => {
+  const seen = await world($, on, { autoMerge: ['acme/other'] })
+  await typed($, HIS_WORDS)
+  const out: any = await $.tool.call(setAutoMerge(true, HIS_WORDS))
+  expect(out.isError).toBeUndefined()
+  expect(lockRuns(seen)).toEqual(['sh', 'rm'])
+  expect(seen.runs.findIndex((r) => r.argv?.[0] === 'sh')).toBeLessThan(seen.runs.findIndex((r) => r.argv?.[0] === 'mv'))
+  expect(Object.keys(seen.files)).toEqual([AUTO_MERGE])
+  expect(listed(seen)).toEqual(['acme/other', 'acme/thing'])
+})
+
+test('a lock left by a holder that died is taken over', async ($, on) => {
+  const seen = await world($, on, { autoMerge: ['acme/other'], tree: { [LOCK]: { kind: 'file', mtimeMs: 0 } } })
+  await typed($, HIS_WORDS)
+  const out: any = await $.tool.call(setAutoMerge(true, HIS_WORDS))
+  expect(out.isError).toBeUndefined()
+  expect(lockRuns(seen)).toEqual(['sh', 'rm', 'sh', 'rm'])
+  expect(listed(seen)).toEqual(['acme/other', 'acme/thing'])
+})
+
+test('a lock another session holds refuses the change, and stays its own', async ($, on) => {
+  const seen = await world($, on, { autoMerge: ['acme/other'], tree: { [LOCK]: { kind: 'file', mtimeMs: Date.now() } } })
+  await typed($, HIS_WORDS)
+  const out: any = await $.tool.call(setAutoMerge(true, HIS_WORDS))
+  expect(out.isError).toBe(true)
+  expect(out.result).toContain('stays locked by another session')
+  expect(lockRuns(seen)).not.toContain('rm')
+  expect(seen.runs.some((r) => r.argv?.[0] === 'mv')).toBe(false)
   expect(listed(seen)).toEqual(['acme/other'])
 })
 
