@@ -1,5 +1,5 @@
 import { expect, mock, test } from 'claude-code/testing'
-import { COMMANDS, READS, NEVER_GRANTED, WATCH_MS, ciTransitions, register } from './register.js'
+import { COMMANDS, READS, NEVER_GRANTED, NET_REFUSAL, WATCH_MS, bashNetRefusal, ciTransitions, register, writeNetRefusal } from './register.js'
 import { lint, NEGATIVE_PHRASES, proseLines, refusal, TITLE_MAX } from './writing.js'
 
 test('session.start registers the gh tool and the three commands', async ($, on) => {
@@ -2530,4 +2530,16 @@ test('a body in a heredoc substitution is read and linted', async ($, on) => {
   const ok: any = await $.tool.call({ tool: 'Bash', command: good })
   expect(ok.deny).toBeUndefined()
   expect(bash).toEqual([good])
+})
+
+test('a failed guard refuses, from the call alone, what it protects and lets the rest through', () => {
+  for (const command of ['gh pr merge 5', 'gh pr ready 5', 'gh pr create --title t', 'cat ~/.claude/plugins/data/github/pr-records/1.json', 'echo [] > ~/.claude/plugins/data/github/auto-merge.json']) {
+    expect(bashNetRefusal(command)).toBe(NET_REFUSAL)
+  }
+  for (const command of ['git status', 'gh pr create --draft --title t', 'gh pr ready 5 --undo', 'npm test']) {
+    expect(bashNetRefusal(command)).toBe(null)
+  }
+  expect(writeNetRefusal('/h/.claude/plugins/data/github/pr-records/1.json')).toBe(NET_REFUSAL)
+  expect(writeNetRefusal('/h/.claude/plugins/data/github/auto-merge.json')).toBe(NET_REFUSAL)
+  expect(writeNetRefusal('/work/src/app.ts')).toBe(null)
 })
