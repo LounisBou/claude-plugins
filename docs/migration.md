@@ -26,7 +26,10 @@ A second host profile, so the two installs never share hooks or state:
 CLAUDE_CONFIG_DIR=~/.claude-next claude
 ```
 
-In that profile only, add this repository's catalogue and install the plugins from it. The
+In that profile only, add this repository's catalogue and the official one, then install the
+plugins from this one: implement depends on `superpowers` and pr-review requires
+`pr-review-toolkit`, both from the official catalogue, which the host does not add by itself.
+Sign in once in the profile: it shares no credentials with the main one. The
 catalogue keeps the name `lounisbou` (decision 0001): the profile isolates it, and installed
 names (`orchestrator@lounisbou`) never change. The profile's configuration is the `next`
 branch of the operator's configuration repository, adapted as this program changes commands,
