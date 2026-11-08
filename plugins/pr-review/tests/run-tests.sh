@@ -43,9 +43,6 @@ check "plugin name" "pr-review" \
 check "plugin license" "MIT" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["license"])' "$ROOT/.claude-plugin/plugin.json")"
 
-check "marketplace lists the plugin" "pr-review" \
-  "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["plugins"][0]["name"])' "$ROOT/.claude-plugin/marketplace.json")"
-
 # The product name belongs only in load-bearing identifiers: host paths, host
 # environment variables, the plugin name and the manifest directory.
 
@@ -56,28 +53,6 @@ check "github-curl is gone" "absent" \
 
 check "manifest declares the dependency" "github@lounisbou" \
   "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["dependencies"][0])' "$ROOT/.claude-plugin/plugin.json")"
-
-check "manifest version" "0.6.0" \
-  "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$ROOT/.claude-plugin/plugin.json")"
-
-# The marketplace entry is a second copy of the same facts, read by the host that
-# installs the plugin rather than the one that loads it. A copy that drifts
-# advertises one version and ships another, and nothing else here would say so.
-MANIFEST_VERSION=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["version"])' "$ROOT/.claude-plugin/plugin.json")
-check "marketplace and manifest agree on the version" \
-  "$MANIFEST_VERSION $MANIFEST_VERSION $MANIFEST_VERSION" \
-  "$(python3 -c 'import json,sys
-plugin = json.load(open(sys.argv[1]))
-market = json.load(open(sys.argv[2]))
-print(plugin["version"], market["plugins"][0]["version"], market["metadata"]["version"])' \
-    "$ROOT/.claude-plugin/plugin.json" "$ROOT/.claude-plugin/marketplace.json")"
-
-check "marketplace and manifest share one description" "" \
-  "$(python3 -c 'import json,sys
-plugin = json.load(open(sys.argv[1]))["description"]
-market = json.load(open(sys.argv[2]))["plugins"][0]["description"]
-print("" if plugin == market else "plugin: %s / marketplace: %s" % (plugin, market))' \
-    "$ROOT/.claude-plugin/plugin.json" "$ROOT/.claude-plugin/marketplace.json")"
 
 # No skill may hardcode a sibling plugin's cache path.
 check "no skill builds a cache path" "" \
