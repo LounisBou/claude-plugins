@@ -26,7 +26,8 @@
       "macos-latest"
     ],
     "orchestrator": [
-      "ubuntu-latest"
+      "ubuntu-latest",
+      "macos-latest"
     ],
     "pr-review": [
       "ubuntu-latest",
