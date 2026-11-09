@@ -396,8 +396,11 @@ for skill in start-review auto-fix-loop process-comments; do
   # actual French prose instead: any accented Latin character at all (plain
   # English technical writing has none), plus a handful of common French
   # words that do not occur in English technical writing.
+  # One fixed string per character, not a bracket class: under the C locale a class reads
+  # each byte of a multibyte character apart and matches the bytes of a dash or a quote, so
+  # the check runs under it whatever the caller's locale.
   check "$skill has no French accented characters" "" \
-    "$(grep -o '[àâäéèêëïîôöùûüçÀÂÄÉÈÊËÏÎÔÖÙÛÜÇœŒ]' "$doc" 2>/dev/null | sort -u | tr '\n' ',' || true)"
+    "$(printf '%s\n' à â ä é è ê ë ï î ô ö ù û ü ç À Â Ä É È Ê Ë Ï Î Ô Ö Ù Û Ü Ç œ Œ | LC_ALL=C grep -oF -f - "$doc" 2>/dev/null | sort -u | tr '\n' ',' || true)"
 
   check "$skill has no common French words" "" \
     "$(grep -Eiow 'vous|nous|avec|chemin|fichier|sont|une|titre' "$doc" 2>/dev/null | sort -u | tr '\n' ',' || true)"
