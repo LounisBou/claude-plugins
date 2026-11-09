@@ -234,7 +234,8 @@ done
 check "the session-only skills are hidden from the command menu" "" "$hidden_skills_missing"
 # The kernel names, for each moment, the file read then: every one it names exists.
 kernel_dead=$(grep -oE '`(references|commands)/[a-z-]+\.md`' "$ROOT/skills/orchestrator/SKILL.md" | tr -d '`' | sort -u | while read -r f; do
-  case "$f" in references/*) [ -f "$ROOT/skills/orchestrator/$f" ] ;; *) [ -f "$ROOT/$f" ] ;; esac || echo "$f"; done)
+  if [ "${f#references/}" != "$f" ]; then base="$ROOT/skills/orchestrator"; else base="$ROOT"; fi
+  [ -f "$base/$f" ] || echo "$f"; done)
 check "every file the kernel names for a moment exists" "" "$kernel_dead"
 check "the operator's entry skill stays in the command menu" "0" \
   "$(grep -c '^user-invocable: false$' "$ROOT/skills/orchestrator/SKILL.md")"
