@@ -5005,7 +5005,8 @@ def cmd_spawn(argv, pair_from=""):
 
 # The bench's own tmux directory, where its home server's socket is made.
 BENCH_TMUX = "tmux"
-# A unix socket's address holds 104 bytes on macOS (108 on Linux), the terminating one included.
+# A unix socket's address holds 104 bytes on macOS (108 on Linux), the terminating one included:
+# a path is counted in bytes, whatever the characters that make them.
 SOCKET_PATH_MAX = 103
 BENCH_SOCKET_SHAPE = re.compile(r"^%s[0-9A-Za-z]{1,8}\Z" % re.escape(HOME_SOCKET_PREFIX))
 
@@ -5016,8 +5017,10 @@ def under(parent, child):
 
 
 def bench_root(path, what):
-    """The real path of the bench `path`: an absolute path to a directory that is neither the
-    root nor the operator's home."""
+    """The real path of the bench `path`: an absolute path to a directory a run owns. A bench
+    sits at least two levels below the root and never at or above the operator's home, so the
+    root, a top-level directory (the temporary directory among them, where it is a link to
+    one), the home and every directory above it are refused."""
     if not path:
         die("%s: --bench is required" % what)
     if not os.path.isabs(path):
@@ -5025,7 +5028,9 @@ def bench_root(path, what):
     real = os.path.realpath(path)
     if not os.path.isdir(real):
         die("%s: refused: --bench '%s' is not a directory" % (what, path))
-    if real == os.path.dirname(real) or real == os.path.realpath(os.path.expanduser("~")):
+    home = os.path.realpath(os.path.expanduser("~"))
+    top_levels = {os.path.realpath(os.path.join(os.sep, name)) for name in os.listdir(os.sep)}
+    if real in top_levels or os.path.commonpath([real, home]) == real:
         die("%s: refused: '%s' is not a bench: it holds more than a run's files" % (what, real))
     return real
 
@@ -5038,9 +5043,10 @@ def bench_server(bench, socket, what):
     path = home_socket_path(socket)
     if not under(bench, os.path.realpath(path)):
         die("%s: refused: the socket %s leads out of the bench %s" % (what, path, bench))
-    if len(path) > SOCKET_PATH_MAX:
+    size = len(os.fsencode(path))
+    if size > SOCKET_PATH_MAX:
         die("%s: refused: the socket path is too long for a socket's address (%d > %d): %s; "
-            "name a shorter bench" % (what, len(path), SOCKET_PATH_MAX, path))
+            "name a shorter bench" % (what, size, SOCKET_PATH_MAX, path))
     return path
 
 
