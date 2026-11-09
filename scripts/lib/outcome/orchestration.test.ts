@@ -117,7 +117,7 @@ describe('outcome evals: opening the orchestration', () => {
     const [request] = launcher.opened
     assert.equal(request?.bench, '/b')
     assert.equal(request?.dir, '/b/work/a-case/orchestration')
-    assert.equal(request?.title, 'Orch : eval a-case')
+    assert.equal(request?.title, 'Orch: eval a-case')
     assert.deepEqual(request?.pluginDirs, ['/o', '/d'])
     assert.equal(request?.settingsFile, '/s.json')
     assert.equal(request?.model, 'm')
@@ -134,11 +134,11 @@ describe('outcome evals: opening the orchestration', () => {
   })
 
   it('names the session after the case, cut to what a session name holds', () => {
-    assert.equal(benchTitle('a-case'), 'Orch : eval a-case')
+    assert.equal(benchTitle('a-case'), 'Orch: eval a-case')
     const long = benchTitle('github-auto-merge-list-under-a-lock')
-    assert.equal(long, 'Orch : eval github-auto-merge-li')
-    assert.ok(long.length <= 'Orch : '.length + 25)
-    assert.equal(benchTitle('x'.repeat(19) + ' y'), `Orch : eval ${'x'.repeat(19)}`)
+    assert.equal(long, 'Orch: eval github-auto-merge-li')
+    assert.ok(long.length <= 'Orch: '.length + 25)
+    assert.equal(benchTitle('x'.repeat(19) + ' y'), `Orch: eval ${'x'.repeat(19)}`)
   })
 
   it('refuses a bench whose socket would not fit an address, before any arm', () => {
@@ -364,12 +364,12 @@ describe('outcome evals: the launcher on the checkout', () => {
   it('opens a bench orchestrator, reads its panes and closes it, through the checkout’s own launcher', async () => {
     const { dir, log, launcher } = fakeBinaries()
     const bench = join(dir, 'bench')
-    const home = await launcher.open({ bench, dir: join(bench, 'work'), title: 'Orch : eval x', pluginDirs: ['/o', '/d'], settingsFile: '/s.json', prompt: 'p', model: 'm' })
+    const home = await launcher.open({ bench, dir: join(bench, 'work'), title: 'Orch: eval x', pluginDirs: ['/o', '/d'], settingsFile: '/s.json', prompt: 'p', model: 'm' })
     assert.deepEqual(home, HOME)
     assert.deepEqual(await launcher.panes(bench, home.socket), [{ window: 0, id: '%0', tty: '/dev/ttys100' }, { window: 1, id: '%7', tty: '/dev/ttys107' }])
     assert.equal(await launcher.close(bench, home.socket), GONE)
     const [open, panes, close] = readFileSync(log, 'utf8').trim().split('\n')
-    assert.match(open ?? '', /^bench-open --bench .*bench --dir .*work --title Orch : eval x --plugin-dir \/o --plugin-dir \/d --settings \/s\.json --prompt-file \S+prompt\.txt --model m --trust\|/)
+    assert.match(open ?? '', /^bench-open --bench .*bench --dir .*work --title Orch: eval x --plugin-dir \/o --plugin-dir \/d --settings \/s\.json --prompt-file \S+prompt\.txt --model m --trust\|/)
     assert.match(panes ?? '', /^-L orch-abc12345 list-panes -a -F #\{window_index\} #\{pane_id\} #\{pane_tty\}\|.*\|TMUX=.*bench\/tmux$/)
     assert.match(close ?? '', /^close --bench .*bench --socket orch-abc12345\|/)
     assert.equal(readFileSync(/--prompt-file (\S+) /u.exec(open ?? '')?.[1] ?? '', 'utf8'), 'p')
