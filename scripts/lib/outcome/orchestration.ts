@@ -25,6 +25,8 @@ const PANES_MS = 15_000
 export const STARTUP_MS = 10 * 60_000
 /** A meter that still reads nothing this long after the first agent opened cannot see the bench. */
 export const METER_BLIND_MS = 10 * 60_000
+/** Closes of a home still read running before it is reported left open: the first, and one retry. */
+const CLOSE_ATTEMPTS = 2
 /** Failed reads of the home in a row that end the arm: one alone may be a slow or busy server. */
 const PANES_FAILURES_MAX = 3
 
@@ -209,9 +211,6 @@ export interface OrchestrationOptions {
   readonly ttys: Set<string>
 }
 
-/** The launcher's answer to a close of a home that is not running. */
-const NOT_RUNNING = /is not running/u
-
 function sleep(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise(resolve => {
     const timer = setTimeout(done, ms)
@@ -325,12 +324,19 @@ export function orchestrationAgent(options: OrchestrationOptions): Agent {
       } catch (error: unknown) {
         problem = `the orchestration could not be followed: ${messageOf(error)}`
       } finally {
-        // The home ends whole, the orchestrator's window and its agents' with it; the second call
-        // is the proof that none is left.
+        // The home ends whole, the orchestrator's window and its agents' with it; its server read
+        // gone is the proof that none is left, and a home still read is closed once more.
         try {
-          await launcher.close(bench, home.socket)
-          const left = await launcher.close(bench, home.socket)
-          if (!NOT_RUNNING.test(left)) problem = [problem, `sessions are left open: ${left}`].filter(part => part !== null).join('; ')
+          let left: Pane[] | null | Error = null
+          for (let attempt = 0; attempt < CLOSE_ATTEMPTS; attempt++) {
+            await launcher.close(bench, home.socket)
+            left = await readPanes()
+            if (left === null) break
+          }
+          if (left !== null) {
+            const what = left instanceof Error ? `the home server ${home.socket} cannot be read: ${left.message}` : `${left.length} pane(s) of the home server ${home.socket}`
+            problem = [problem, `sessions are left open: ${what}`].filter(part => part !== null).join('; ')
+          }
         } catch (error: unknown) {
           problem = [problem, `could not close the home: ${messageOf(error)}`].filter(part => part !== null).join('; ')
         }

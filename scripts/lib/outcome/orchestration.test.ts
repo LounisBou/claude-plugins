@@ -46,8 +46,8 @@ interface Fake extends Launcher {
   panesSeen: number
 }
 
-/** A launcher whose panes and close answers are scripted. */
-function fakeLauncher(script: { panes?: (poll: number) => Pane[] | null; open?: () => Promise<BenchHome>; close?: (call: number) => string | Error; servers?: string[] } = {}): Fake {
+/** A launcher whose panes and close answers are scripted; its home is gone after `closesToEnd` closes. */
+function fakeLauncher(script: { panes?: (poll: number) => Pane[] | null; open?: () => Promise<BenchHome>; close?: (call: number) => string | Error; servers?: string[]; closesToEnd?: number } = {}): Fake {
   const fake: Fake = {
     opened: [],
     closed: [],
@@ -59,6 +59,7 @@ function fakeLauncher(script: { panes?: (poll: number) => Pane[] | null; open?: 
     async panes(bench, socket) {
       assert.equal(bench, BENCH, 'the panes are read in the arm’s bench')
       assert.equal(socket, HOME.socket, 'the panes are read on the home’s server')
+      if (fake.closed.length >= (script.closesToEnd ?? 1)) return null
       return (script.panes ?? (() => [{ window: 0, id: '%0', tty: '/dev/ttys100' }]))(fake.panesSeen++)
     },
     async servers(bench) {
@@ -68,7 +69,7 @@ function fakeLauncher(script: { panes?: (poll: number) => Pane[] | null; open?: 
     async close(bench, socket) {
       assert.equal(bench, BENCH, 'the home is closed in the arm’s bench')
       fake.closed.push(socket)
-      const answer = script.close === undefined ? (fake.closed.length === 1 ? 'closed 1 session(s)' : GONE) : script.close(fake.closed.length)
+      const answer = script.close === undefined ? 'closed 1 session(s)' : script.close(fake.closed.length)
       if (answer instanceof Error) throw answer
       return answer
     },
@@ -220,14 +221,14 @@ describe('outcome evals: deciding the orchestration is over', () => {
     const run = await agent(launcher, () => jsonl([prompt(), said('Working.')])).run(input(controller.signal))
     assert.equal(run.error, null)
     assert.equal(run.orchestration?.agentsOpened, 1)
-    assert.equal(launcher.closed.length, 2)
+    assert.equal(launcher.closed.length, 1)
   })
 
   it('reports an orchestrator whose home ended before it was over', async () => {
     const launcher = fakeLauncher({ panes: poll => (poll < 2 ? [{ window: 0, id: '%0', tty: '/dev/ttys100' }] : null) })
     const run = await agent(launcher, () => jsonl([prompt(), said('Working.')])).run(input())
     assert.match(run.error ?? '', /home ended before the orchestration was over/)
-    assert.equal(launcher.closed.length, 2)
+    assert.equal(launcher.closed.length, 1)
   })
 
   it('goes on through a failed read of the home, followed by good ones', async () => {
@@ -308,22 +309,30 @@ describe('outcome evals: deciding the orchestration is over', () => {
     const launcher = fakeLauncher()
     const run = await agent(launcher, () => { throw new Error('unreadable') }).run(input())
     assert.match(run.error ?? '', /unreadable/)
-    assert.equal(launcher.closed.length, 2)
+    assert.equal(launcher.closed.length, 1)
   })
 })
 
 describe('outcome evals: closing the orchestration', () => {
-  it('closes the home, then asks again and finds none left', async () => {
+  it('closes the home once when its server then reads gone', async () => {
     const launcher = fakeLauncher()
+    const run = await agent(launcher, () => ended('done')).run(input())
+    assert.deepEqual(launcher.closed, ['orch-abc12345'])
+    assert.equal(run.error, null)
+  })
+
+  it('closes the home a second time when the first close left it running', async () => {
+    const launcher = fakeLauncher({ closesToEnd: 2 })
     const run = await agent(launcher, () => ended('done')).run(input())
     assert.deepEqual(launcher.closed, ['orch-abc12345', 'orch-abc12345'])
     assert.equal(run.error, null)
   })
 
-  it('reports sessions left running after the close', async () => {
-    const launcher = fakeLauncher({ close: () => 'closed 2 session(s) of the home server orch-abc12345' })
+  it('reports sessions left running after the second close, with the panes left', async () => {
+    const launcher = fakeLauncher({ closesToEnd: Infinity, panes: () => [{ window: 0, id: '%0', tty: '/dev/ttys100' }, { window: 2, id: '%2', tty: '/dev/ttys102' }] })
     const run = await agent(launcher, () => ended('done')).run(input())
-    assert.match(run.error ?? '', /sessions are left open: closed 2 session\(s\)/)
+    assert.equal(launcher.closed.length, 2)
+    assert.match(run.error ?? '', /sessions are left open: 2 pane\(s\) of the home server orch-abc12345/)
     assert.equal(run.orchestration?.askedOperator, null)
   })
 

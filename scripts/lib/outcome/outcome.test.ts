@@ -525,11 +525,11 @@ describe('outcome evals: the command', () => {
         )
         return { socket: 'orch-abc12345', tty: '/dev/ttys009', session }
       },
-      panes: async () => [{ window: 0, id: '%0', tty: '/dev/ttys100' }, { window: 1, id: '%1', tty: '/dev/ttys101' }],
+      panes: async () => (closed.length > 0 ? null : [{ window: 0, id: '%0', tty: '/dev/ttys100' }, { window: 1, id: '%1', tty: '/dev/ttys101' }]),
       servers: async () => [],
       async close(_bench, socket) {
         closed.push(socket)
-        return closed.length === 1 ? 'closed 2 session(s)' : 'closed 0 session(s): the home server orch-abc12345 is not running'
+        return 'closed 2 session(s)'
       },
     }
   }
@@ -562,7 +562,7 @@ describe('outcome evals: the command', () => {
     assert.equal(request?.title, 'Orch : eval value-is-two')
     assert.equal(request?.settingsFile, join(out, 'settings.json'))
     assert.deepEqual(request?.pluginDirs, [join(root, 'plugins', 'orchestrator'), join(root, 'plugins', 'method')])
-    assert.equal(launcher.closed.length, 2)
+    assert.equal(launcher.closed.length, 1)
   })
 
   it('refuses a paid run whose bench is too long for the orchestration arm\u2019s socket, before any arm', async () => {
