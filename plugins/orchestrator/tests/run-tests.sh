@@ -3537,6 +3537,10 @@ OPREC="$WORK/opstate-rec"; mkdir -p "$OPREC/chains"
 printf '{"name":"Coord: hand","tty":"/dev/ttys900"}\n' > "$OPREC/coordinator.json"
 check "a coordinator opened by hand, named only by its own record, opens one" "1" \
   "$(OPST="$OPREC" opn - --open --title 'Orch: x' | grep -c '^open=yes$')"
+OPRECOLD="$WORK/opstate-rec-former"; mkdir -p "$OPRECOLD/chains"
+printf '{"name":"Coord : hand","tty":"/dev/ttys900"}\n' > "$OPRECOLD/coordinator.json"
+check "a coordinator whose record reads the former « Coord : hand » opens one too" "1" \
+  "$(OPST="$OPRECOLD" opn - --open --title 'Orch: x' | grep -c '^open=yes$')"
 check "an opening needs an orchestrator's title, with no reference" "1|1" \
   "$(opn 'Coord: ops' --open --title 'Agent: x' | grep -c -- "--open needs the new orchestrator's name")|$(opn 'Coord: ops' --open --title 'Orch: x [abc123]' >/dev/null 2>&1; echo $?)"
 for OPFLAG in --successor --auditor --wake '--right-of self' '--left-of /dev/ttys555' --title-free --resident --no-remote-control; do

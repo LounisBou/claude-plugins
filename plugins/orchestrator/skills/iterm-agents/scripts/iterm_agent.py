@@ -2029,7 +2029,7 @@ def registered_coord_on(tty):
     if not isinstance(record, dict) or record.get("tty") != tty:
         return None
     name = record.get("name")
-    return name if isinstance(name, str) and name else COORD_ROLE
+    return current_name(name) if isinstance(name, str) and name else COORD_ROLE
 
 
 def opener_name():
