@@ -4,7 +4,7 @@
 // done or waits on an operator who is not there, then closed with its agents and proved gone.
 // What decides is pure and tested here against a fake launcher; the processes are a thin layer.
 import { execFile } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { sessionName } from '../../../packages/core/src/names.ts'
@@ -94,6 +94,8 @@ export interface Launcher {
   open(request: OpenRequest): Promise<BenchHome>
   /** The panes of the home, or null when its server is not running. */
   panes(bench: string, socket: string): Promise<Pane[] | null>
+  /** The home servers whose sockets are under the bench, a half-made one included. */
+  servers(bench: string): Promise<string[]>
   /** Ends the home with every window of it; its answer says whether it was running. */
   close(bench: string, socket: string): Promise<string>
 }
@@ -155,6 +157,16 @@ export function benchLauncher(options: LauncherOptions): Launcher {
         if (match?.[1] !== undefined && match[2] !== undefined) panes.push({ window: Number(match[1]), id: match[2] })
       }
       return panes
+    },
+    async servers(bench) {
+      const root = join(bench, 'tmux')
+      if (!existsSync(root)) return []
+      const found = new Set<string>()
+      for (const dir of readdirSync(root)) {
+        if (!/^tmux-\d+$/u.test(dir)) continue
+        for (const name of readdirSync(join(root, dir))) if (SOCKET_SHAPE.test(name)) found.add(name)
+      }
+      return [...found].sort()
     },
     async close(bench, socket) {
       if (!SOCKET_SHAPE.test(socket)) throw new Error(`not a home server the launcher makes: ${JSON.stringify(socket)}`)
@@ -219,7 +231,16 @@ export function orchestrationAgent(options: OrchestrationOptions): Agent {
           model: options.model,
         })
       } catch (error: unknown) {
-        return { costUsd: null, error: `could not open the orchestrator: ${messageOf(error)}` }
+        // A launcher that failed or timed out may have left a home server up, a paid host in it.
+        const problems = [`could not open the orchestrator: ${messageOf(error)}`]
+        try {
+          for (const socket of await launcher.servers(bench)) {
+            await launcher.close(bench, socket).catch((failure: unknown) => problems.push(`could not close the home ${socket}: ${messageOf(failure)}`))
+          }
+        } catch (failure: unknown) {
+          problems.push(`could not list the bench's home servers: ${messageOf(failure)}`)
+        }
+        return { costUsd: null, error: problems.join('; ') }
       }
 
       const agents = new Set<string>()

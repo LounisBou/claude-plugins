@@ -516,6 +516,7 @@ describe('outcome evals: the command', () => {
         return { socket: 'orch-abc12345', tty: '/dev/ttys009', session }
       },
       panes: async () => [{ window: 0, id: '%0' }, { window: 1, id: '%1' }],
+      servers: async () => [],
       async close(_bench, socket) {
         closed.push(socket)
         return closed.length === 1 ? 'closed 2 session(s)' : 'closed 0 session(s): the home server orch-abc12345 is not running'

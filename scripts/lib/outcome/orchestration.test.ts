@@ -44,7 +44,7 @@ interface Fake extends Launcher {
 }
 
 /** A launcher whose panes and close answers are scripted. */
-function fakeLauncher(script: { panes?: (poll: number) => Pane[] | null; open?: () => Promise<BenchHome>; close?: (call: number) => string | Error } = {}): Fake {
+function fakeLauncher(script: { panes?: (poll: number) => Pane[] | null; open?: () => Promise<BenchHome>; close?: (call: number) => string | Error; servers?: string[] } = {}): Fake {
   const fake: Fake = {
     opened: [],
     closed: [],
@@ -57,6 +57,10 @@ function fakeLauncher(script: { panes?: (poll: number) => Pane[] | null; open?: 
       assert.equal(bench, BENCH, 'the panes are read in the arm’s bench')
       assert.equal(socket, HOME.socket, 'the panes are read on the home’s server')
       return (script.panes ?? (() => [{ window: 0, id: '%0' }]))(fake.panesSeen++)
+    },
+    async servers(bench) {
+      assert.equal(bench, BENCH, 'the servers listed are the arm’s bench’s')
+      return script.servers ?? []
     },
     async close(bench, socket) {
       assert.equal(bench, BENCH, 'the home is closed in the arm’s bench')
@@ -134,6 +138,15 @@ describe('outcome evals: opening the orchestration', () => {
     const run = await agent(launcher, () => null).run(input())
     assert.deepEqual(run, { costUsd: null, error: 'could not open the orchestrator: bench-open: refused: x' })
     assert.deepEqual(launcher.closed, [])
+  })
+
+  it('closes a home the launcher left half made when it failed to open', async () => {
+    const launcher = fakeLauncher({ open: async () => { throw new Error('timed out') }, servers: ['orch-half1', 'orch-half2'], close: () => GONE })
+    const run = await agent(launcher, () => null).run(input())
+    assert.deepEqual(launcher.closed, ['orch-half1', 'orch-half2'])
+    assert.equal(run.error, 'could not open the orchestrator: timed out')
+    const refused = fakeLauncher({ open: async () => { throw new Error('timed out') }, servers: ['orch-half1'], close: () => new Error('busy') })
+    assert.equal((await agent(refused, () => null).run(input())).error, 'could not open the orchestrator: timed out; could not close the home orch-half1: busy')
   })
 })
 
@@ -291,6 +304,15 @@ describe('outcome evals: the launcher on the checkout', () => {
     const bench = join(dir, 'bench')
     await launcher.open({ bench, dir: bench, title: 't', pluginDirs: ['/o'], settingsFile: '/s', prompt: 'p', model: 'm' })
     assert.match(readFileSync(log, 'utf8'), /^bench-open .*--trust\|TRUST=\|/)
+  })
+
+  it('lists the home servers of the bench, and nothing else', async () => {
+    const { dir, launcher } = fakeBinaries()
+    const bench = join(dir, 'bench')
+    assert.deepEqual(await launcher.servers(bench), [])
+    mkdirSync(join(bench, 'tmux', 'tmux-501'), { recursive: true })
+    for (const name of ['orch-abc12345', 'default', 'orch-toolongname']) writeFileSync(join(bench, 'tmux', 'tmux-501', name), '')
+    assert.deepEqual(await launcher.servers(bench), ['orch-abc12345'])
   })
 
   it('refuses a launcher answer that names no home, and a socket that is not one the launcher makes', async () => {
