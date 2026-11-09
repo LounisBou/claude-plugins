@@ -14,11 +14,19 @@
 // - under /norms:check, a commit message naming the check, the tooling or the
 //   TODO list is refused unless the user's last words use that word;
 // - an interrupted turn ends the mode, and so do /clear and any other slash
-//   command the user submits.
+//   command the user submits;
+// - the mode is armed by the typed command (command.run) or by the main loop's Skill
+//   tool call that runs it, which no slash prompt follows: that one also ends at the
+//   check's check_done once it wrote its record (a refused call leaves the guards
+//   armed). A spawned session (ORCHESTRATOR_SPAWNED) has nobody to walk through, so
+//   its Skill call arms nothing; the words of the call never disarm a guard.
 // A guard whose own code fails lets the call through: the markdown still states every rule.
 // The push guard is the exception: when nobody can be asked, the push is refused.
 
 import { gitSubcommand, simpleCommands } from '../core/shell.ts'
+import { isSpawned } from '../core/env.ts'
+import { SKILL_MATCHER as CHECK_SKILL_MATCHER } from './check.ts'
+import { clearMark } from './record.ts'
 
 export type Mode = 'check' | 'learn'
 
@@ -119,14 +127,25 @@ const USER_ORIGINS = ['composer', 'bridge', 'sdk']
 
 let mode: Mode | undefined
 let lastPrompt: string | undefined
+// The mode was armed by a Skill tool call, which no slash prompt follows: it ends at the
+// check's last act too.
+let viaSkill = false
 
 export function resetGuards(): void {
   mode = undefined
   lastPrompt = undefined
+  viaSkill = false
 }
 
 export function guardState(): { mode: Mode | undefined; lastPrompt: string | undefined } {
   return { mode, lastPrompt }
+}
+
+// The check's last act, once its record is written (hooks/record.ts calls it from the
+// check_done tool, which answers the call itself, so no hook stands before it), ends the
+// mode no slash prompt will end: the one a Skill tool call armed.
+export function endSkillCheck(): void {
+  if (viaSkill && mode === 'check') resetGuards()
 }
 
 const pass = ($: any, e: any, next: any) => next(e)
@@ -142,11 +161,35 @@ export function promptCommand(text: string): string | undefined {
   return m ? m[1] : undefined
 }
 
+// The Skill tool calls that run a norms command. The check's own matcher is reused;
+// /norms:learn has the same shape.
+const LEARN_SKILL_MATCHER = { tool: 'Skill', skill: /^\/?norms:learn$/ }
+
+// Whether the session was spawned, so nobody types in it. An unreadable variable is no
+// variable: the guards arm.
+async function spawned($: any): Promise<boolean> {
+  const value: unknown = await Promise.resolve().then(() => $.env.get('ORCHESTRATOR_SPAWNED')).catch(() => undefined)
+  return isSpawned(typeof value === 'string' ? value : undefined)
+}
+
 export function register(on: any): void {
   for (const [command, armed] of Object.entries(MODES)) {
     on('command.run', { command }, async ($: any, e: any, next: any) => {
       mode = armed
       lastPrompt = `/${command} ${String(e.args ?? '')}`.trim()
+      viaSkill = false
+      return next(e)
+    }).catch(pass)
+  }
+
+  // Run by a session through the Skill tool: the host runs no command.run, so the mode is
+  // armed at the tool call, for the main loop only.
+  for (const [matcher, armed] of [[CHECK_SKILL_MATCHER, 'check'], [LEARN_SKILL_MATCHER, 'learn']] as const) {
+    on('tool.call', matcher, async ($: any, e: any, next: any) => {
+      if (e.agentId || await spawned($)) return next(e)
+      mode = armed
+      lastPrompt = `/norms:${armed} ${String(e.args ?? '')}`.trim()
+      viaSkill = true
       return next(e)
     }).catch(pass)
   }
@@ -165,8 +208,10 @@ export function register(on: any): void {
     return next(e)
   }).catch(pass)
 
+  // The module's one session.end hook: the host refuses a second one without a matcher.
   on('session.end', async ($: any, e: any, next: any) => {
     resetGuards()
+    await clearMark($)
     return next(e)
   }).catch(pass)
 

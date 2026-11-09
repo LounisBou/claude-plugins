@@ -12,6 +12,17 @@
     "waived"
   ],
   "waivable": "e2e",
+  "producers": {
+    "review": {
+      "plugin": "pr-review",
+      "tool": "its auto-fix-loop"
+    },
+    "norms": {
+      "plugin": "norms",
+      "tool": "/norms:check"
+    }
+  },
+  "open": "e2e",
   "detail_max": 500,
   "patterns": {
     "head": "^[0-9a-fA-F]{40}$",

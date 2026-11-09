@@ -56,6 +56,33 @@ describe('round-close', () => {
     assert.deepEqual(json(far)['delivery'], { state: 'pending', at: AT, attempts: 0 })
   })
 
+  it('records the answer to a question that asks consent as its subject\'s consent record, and none on a withdrawal', () => {
+    const config = join(fixture().root, 'config')
+    const f = fixture({ env: { CLAUDE_CONFIG_DIR: config } })
+    const consent = { kind: 'e2e-waiver', repo: 'Acme/Thing', pr: 12 }
+    put(f, 'c', entry('c', { consent, question: 'Waive E2E on thing#12?', choices: [{ letter: 'A', text: 'waive it, docs only' }] }))
+    put(f, 'w', entry('w', { consent }))
+    put(f, 'n', entry('n'))
+    assert.equal(main(f.ctx, ['round-close', 'c', '--answer', 'A : waive it, docs only']), 0)
+    assert.equal(main(f.ctx, ['round-close', 'w', '--withdraw', '#12 merged']), 0)
+    assert.equal(main(f.ctx, ['round-close', 'n', '--answer', 'go ahead with it']), 0)
+    const dir = join(config, 'consents', 'acme', 'thing')
+    assert.deepEqual(readdirSync(dir), ['c.json'])
+    assert.deepEqual(json(join(dir, 'c.json')), {
+      v: 1, subject: consent, entry: 'c', question: 'Waive E2E on thing#12?', answer: 'waive it, docs only', by: 'coordinator', at: AT,
+    })
+  })
+
+  it('closes the entry all the same when its consent record cannot be written, and says so', () => {
+    const blocker = join(fixture().root, 'file')
+    writeFileSync(blocker, '')
+    const f = fixture({ env: { CLAUDE_CONFIG_DIR: blocker } })
+    const path = put(f, 'c', entry('c', { consent: { kind: 'auto-merge', repo: 'acme/thing' } }))
+    assert.equal(main(f.ctx, ['round-close', 'c', '--answer', 'thing in auto-merge, yes']), 0)
+    assert.equal(json(path)['status'], 'closed')
+    assert.ok(f.err.some(line => line.includes('the consent of c was not recorded')))
+  })
+
   it('withdraws on evidence, kept beside the text', () => {
     const f = fixture()
     const path = put(f, 'w', entry('w'))

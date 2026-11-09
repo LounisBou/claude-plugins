@@ -29,6 +29,8 @@ import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf, 
 import { typedByOperator } from './models-guard.ts'
 import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
 import { configDirOf, gateThresholds } from '../core/env.ts'
+import { consentPath, consentRecordOf, parseConsentSubject, type Answerer } from '../core/consent-record.ts'
+import { declaredConsent } from './wait.ts'
 import { isTemporary, staleTemporaries, removeArgv, withLockOver, writeAtomicOver, type StoreIo } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
@@ -2402,7 +2404,8 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
   // A coordinator on this machine reads its round: the wait is entered there, and its model
   // is not woken for it. The fingerprint is kept once the entry is in place, as a delivery's.
   if (coordinator?.local && wait && patch) {
-    const entry = roundEntry(sessionId, name, wait, patch.waiting_since!, new Date().toISOString())
+    const consent = role === 'orchestrator' && wait.kind === 'operator' ? declaredConsent() : null
+    const entry = withConsent(roundEntry(sessionId, name, wait, patch.waiting_since!, new Date().toISOString()), consent)
     const kept = entry.kind === 'operator' && entry.choices.length === 0 ? await keptChoices($, entry) : null
     if (kept) {
       // The same wait, its text now a note: the entry keeps its choices and takes the urgent mark
@@ -2617,6 +2620,29 @@ async function withdrawEntry($: any, sessionId: string, name: string, held: { bl
   return settled
 }
 
+// The entry with the subject its question asks consent on, when its sender declared one.
+export function withConsent(entry: RoundEntry, consent: RoundEntry['consent'] | null): RoundEntry {
+  return consent ? { ...entry, consent } : entry
+}
+
+// The operator's answer to an entry that asks his consent, written as that subject's consent
+// record (core's consent-record.ts), the contract github reads in place of the round. An entry
+// that asks none, an answer with nothing to quote, or a write that fails leaves the answer as it
+// is: the failure is one log line.
+export async function writeConsent($: any, entry: RoundEntry, text: string, by: Answerer, at: string): Promise<void> {
+  if (!entry.consent) return
+  const record = consentRecordOf({ subject: entry.consent, entry: entry.id, question: entry.question, answer: text, choices: entry.choices, by, at })
+  if (!record) return
+  try {
+    const path = consentPath(await configDir($), record)
+    const made = await $.process.run(['mkdir', '-p', '--', path.slice(0, path.lastIndexOf('/'))], { timeoutMs: 5000 })
+    if (made.exitCode !== 0) throw new Error(made.stderr || `mkdir exited ${made.exitCode}`)
+    await writeAtomic($, path, JSON.stringify(record) + '\n')
+  } catch (err) {
+    await logLine($, `round: the consent of ${entry.id} was not recorded: ${(err as Error).message}`)
+  }
+}
+
 // A choice pressed in the coordinator's pane: the entry, read again so a question settled
 // meanwhile is left as it is, becomes answered by the pane, written whole and renamed into
 // place, and the asking orchestrator's own session is sent the operator's choice (senderAddress).
@@ -2706,6 +2732,7 @@ async function answerEntryFromPane($: any, pane: PaneMemory, asked: RoundEntry, 
       return { ...current, status: closed ? 'closed' : 'answered', answer, ...(delivery ? { delivery } : {}) }
     })
     if (!answered || !entry) return
+    await writeConsent($, entry, text, 'pane', at)
     forgetDraft(pane, entry.id)
     if (entry.origin) await sendAnswer($, path, answered, text)
     else {
@@ -2981,7 +3008,8 @@ export function parseRoundEntry(text: string): RoundEntry | null {
     const nullable = [e.blocks, e.recommendation].every(field => field === null || typeof field === 'string')
     const known = (e.kind === 'operator' || e.kind === 'done') && ROUND_STATUSES.includes(e.status)
     const partial = e.partial === undefined || (Array.isArray(e.partial) && e.partial.every((answer: unknown) => typeof answer === 'string'))
-    return texts && choices && nullable && known && partial && deliveryRead(e) ? e as RoundEntry : null
+    const consent = e.consent === undefined || parseConsentSubject(e.consent) !== undefined
+    return texts && choices && nullable && known && partial && consent && deliveryRead(e) ? e as RoundEntry : null
   } catch {
     return null
   }
