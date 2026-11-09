@@ -8,14 +8,18 @@ the cutover, what « stable » means, and what the cutover changes.
 
 - The eight current repositories are **frozen**. They receive only urgent fixes: a security
   risk, or a defect that blocks the operator's work.
-- An urgent fix is made small in the current repository, then imported here the same day:
+- An urgent fix is made small in the current repository, then imported here the same day, in
+  a pull request whose commit names the former repository's commits. Where the plugin's code
+  here still matches, the fix is applied as a patch:
 
   ```bash
-  git subtree pull --prefix=plugins/<name> https://github.com/LounisBou/<repository> main
+  git -C <former checkout> diff <last imported> <merged> --binary \
+    | git apply --index --directory=plugins/<name>
   ```
 
-  (`<repository>` is the plugin's former repository: `claude-<name>`, `claude-review` for
-  `pr-review`.)
+  Where this repository has moved on, the fix's intent is re-implemented on the current
+  design, with its tests. (`<former checkout>` is the plugin's former repository:
+  `claude-<name>`, `claude-review` for `pr-review`.)
 - Every other change is made here only.
 
 ## Using this repository before the cutover
