@@ -30,6 +30,7 @@ Python launcher.
 | `store/moves/<move>/` | the session that receives the move, its messages one at a time | one rename per file (the manifest, each chunk, each acknowledgment); a file's chunks removed once it landed |
 | `briefs/<subject>/<file>` landed by a move, and a dispatch record kept elsewhere landed at its path | the receiving session | under the landed path's lock, one rename; a file already there with other content is refused and left alone |
 | module log, `close.log`, `store/moves/probes.jsonl` | every process | appends |
+| `<config dir>/consents/<owner>/<name>/<entry>.json`, outside the state root: the consent record contract the github plugin reads (the repository's contracts document) | the hooks of the session whose pane takes the operator's answer to a question that asked his consent, or `coordinator.sh round-close` relaying it | one file per question, one rename |
 
 A writer in another language reads the convention as data, `core/store.json` (the launcher,
 `iterm_agent.py`, `path_lock`).

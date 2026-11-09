@@ -1,4 +1,4 @@
-# claude-orchestrator
+# orchestrator
 
 One session supervises implementer sessions instead of writing code itself:
 it writes their briefs, reviews every delivery on the artifact rather than on
@@ -11,7 +11,7 @@ session can read without depending on a particular status bar.
 
 | Piece | What it does |
 |---|---|
-| skill `orchestrator` | The rulebook: phase and PR rules, the agent prompt recipe, the agents' lifecycle (the orchestrator launches, verifies, controls, terminates and replaces them), review on evidence, review rounds run in disposable sessions, what a round costs and the three ways to shorten it, context rotation, the orchestrator's own succession, shared-machine discipline. Its `workspace.sh` makes a clone per phase (`create`) and a pinned worktree per review round (`pin`, `--pr <n>` recording the pull request it reviews), deletes either together with the host's temporary directory it used (`delete`), and sweeps the leftovers whose pull request is merged or closed (`sweep`) — never a dirty tree, unpushed commits, a pin whose head is on no branch, or a directory a live process works in. |
+| skill `orchestrator` | The rulebook, started in a mode given as its argument: `build` (a spec delivered as pull requests; it loads the `method` plugin's `method:lifecycle`, which owns the lifecycle, done and the formats) or `investigate` (debugging or analysis: no goals, phases or ready gate); with no mode it asks once. Ten principles, then the references read at the moment of the action: phase and PR rules, the agent prompt recipe, the agents' lifecycle (the orchestrator launches, verifies, controls, terminates and replaces them), review on evidence, review rounds run in disposable sessions, what a round costs and the three ways to shorten it, context rotation, the orchestrator's own succession, shared-machine discipline. Its `workspace.sh` makes a clone per phase (`create`) and a pinned worktree per review round (`pin`, `--pr <n>` recording the pull request it reviews), deletes either together with the host's temporary directory it used (`delete`), and sweeps the leftovers whose pull request is merged or closed (`sweep`) — never a dirty tree, unpushed commits, a pin whose head is on no branch, or a directory a live process works in. |
 | skill `iterm-agents` | `list`, `spawn`, `verify`, `resolve-tier`, `close`, `move`, `rotate` iTerm2 tabs running agent sessions, through the app's own API rather than by typing into a shell. Placement anchors on a tty or on `self` — after the caller's last open agent, so a window reads as launch order. The prompt goes to a file and the typed command stays short; the tab runs the launch through the operator's login shell, so the agent inherits the full PATH; spawn waits for the host CLI on the new tty and fails loudly otherwise; tty-exact close with a title guard, which also deletes the stood-down session's checkout once its process is proved gone (`--keep-checkout` opts out); spawn-and-verify before close on rotate. |
 | skill `model-routing` | Which model/effort pair a dispatch gets: pay for judgment nothing downstream re-checks. A table by class of work, five readings for the cases off the table, escalation as a rotation, and the false-economy rule. Dispatches run on a measured model/effort pair, picked from the most specific table that has one. Its `routing.py` measures what a session cost, benches a project's merged pull requests on a grid of pairs, and calibrates a table per project, then per profile and globally. Measured tables stay in the operator's state directory and name models; only tier/effort defaults ship in the plugin. |
 | skill `coordination` | The coordinator's role, outside every orchestration on one machine: answers from the facts, flags collisions to both sides, gates nothing, relays to the operator what is his. The orchestrator's and the auditor's skills say nothing of it. |
@@ -25,7 +25,8 @@ session can read without depending on a particular status bar.
 | module gate `prompt.submit` | The context gate enforced in-process by the hooks module: at or past the smaller of 300,000 tokens (30 %) and 80 % of the reported window: 300,000 on 1,000,000; 160,000 on 200,000 (`ORCHESTRATOR_CONTEXT_GATE`, `ORCHESTRATOR_CONTEXT_GATE_TOKENS`), every prompt of an orchestration session (named `Orch :`, `Agent :`, `Audit :` or `Coord :`) carries the line fitted to its role — succeed, or finish the unit and stop; unmeasured, it says so once. A session with no role name — started by hand and never renamed — gets neither line. A change of the model answering a session is said to the model in front of its next prompt, in every session. |
 | module gate `tool.call` (Bash) | The kill guard enforced in-process by the hooks module, in sessions the launcher spawned only: a kill by name or pattern is refused, a kill by the recorded pid passes; the operator's own sessions are untouched. A forced push is refused by the forge (`/github:protect`). |
 | module gate `tool.call` (Write, Edit, MultiEdit, Bash) | The tier map's guard: in a session of the orchestration (its name gives it a role), a write of `models.json` in the state directory is denied with the rule that the map is the operator's, unless the last prompt he typed in that session names the map or a tier. Reads pass. |
-| hook `Stop` | The stop gate enforced in-process by the hooks module, in an orchestrator's session only (its name, launched or renamed, starts with `Orch :`): the stop is refused, at most once per turn, unless something will wake the orchestrator — a busy agent of its own, a command or monitor it started in the background still running (a `ci-watch.sh` among them; its last line may then read `waiting: tool — <what is watched>`, refused when nothing of its own runs), a blocking question declared on the message's last line (`waiting: operator — blocks: <what it blocks>`, honoured before an idle agent's stand-down is asked; one that blocks « nothing », « none » or the like is refused, and never entered in a coordinator's round), or `waiting: done` with nothing left (no checkout, no agent, no open dispatch-record row, and every goal of the spec in the `goals.md` beside each registered record met with evidence on disk or ruled out in the operator's words; the first such done over a new content of the file shows him the table once) — or it has handed over: its last line `handed over`, or `waiting: done` once its successor's spawn succeeded or its `end_session` was accepted. Short of a declared blocking question, an idle agent of its own whose pull request is open or merged refuses the stop until it is stood down. Then each watched pull request of the session's repository whose ci-watch log shows checks pending or failing refuses the stop with the real state, once per watch (keyed on its log's first line): pending once, failing once per failing set — one with a `ci-watch.sh` process alive for it excepted, since that watch will wake the orchestrator. When its checks let the stop pass, it also runs `workspace.sh sweep` within what is left of its deadline, at most once per ten minutes, and logs each deletion. Its own failures let the stop pass and are logged in the module's log. |
+| module tools | Registered by the hooks module in every session: `declare_wait` (the turn's wait, above; an `operator` question that asks the operator's consent to waive E2E on a pull request or to put a repository in or out of auto-merge names it in `consent`, and his answer is written as a consent record, `<config dir>/consents/<owner>/<name>/<entry>.json`, which the github plugin reads), `rename_session` (an orchestrator or coordinator takes its role name), `end_session`, `supervision` (the pane, below), `answered-by-message` (an orchestrator withdraws a question answered by a peer's message), `move_send` and `move_probe` (« Moving an orchestrator to another machine », below). |
+| hook `Stop` | The stop gate enforced in-process by the hooks module, in an orchestrator's session only (its name, launched or renamed, starts with `Orch :`). The turn declares what will wake it with the module's `declare_wait` tool (`operator`, `tool`, `done` or `deferred`, with what it blocks); a turn that declared nothing is still read by its last line (`waiting: …`). The stop is refused, at most once per turn, unless something will wake the orchestrator — a busy agent of its own, a command or monitor it started in the background still running (a `ci-watch.sh` among them; a `tool` wait is refused when nothing of its own runs), a blocking question for the operator (an `operator` wait, honoured before an idle agent's stand-down is asked; one that blocks « nothing », « none » or the like is refused, and never entered in a coordinator's round), or `waiting: done` with nothing left (no checkout, no agent, no open dispatch-record row, and every goal of the spec in the `goals.md` beside each registered record met with evidence on disk or ruled out in the operator's words; the first such done over a new content of the file shows him the table once) — or it has handed over: its last line `handed over`, or `waiting: done` once its successor's spawn succeeded or its `end_session` was accepted. Short of a declared blocking question, an idle agent of its own whose pull request is open or merged refuses the stop until it is stood down. Then each watched pull request of the session's repository whose ci-watch log shows checks pending or failing refuses the stop with the real state, once per watch (keyed on its log's first line): pending once, failing once per failing set — one with a `ci-watch.sh` process alive for it excepted, since that watch will wake the orchestrator. When its checks let the stop pass, it also runs `workspace.sh sweep` within what is left of its deadline, at most once per ten minutes, and logs each deletion. Its own failures let the stop pass and are logged in the module's log. |
 | `deck.json` | The machine's supervision as one versioned file for programs outside the host (D3vDeck, the Stream Deck plugin): the coordinator, the orchestrators local and remote with their pull requests in flight, each agent under the orchestrator its chain names, the fill against the gate, the waits, the round's open questions and the sleepers, and each session's token use with its API-equivalent cost for the day and the week. Written by the hooks module in one rename under the state directory, on every change the pane would show and at least once a minute, so a reader can tell a live file from a frozen one. See « The deck file » below. |
 | `/orchestrator-agents` | The running implementer agents with their measured context, the most urgent first, answered by the hooks module without a model turn; the ask of each agent and its verification on the artifact are the command body's steps, run by hand or when that answer fails. |
 | `/orchestrator-progress` | The goals line of each record's `goals.md` (`goals met=m/n … open=…`), the dispatch rows still open and the record's tally, answered by the hooks module without a model turn; the full report — done, in flight, remaining, decisions pending, the orchestrator's own context — is the command body's steps, run by hand or when that answer fails. |
@@ -52,49 +53,25 @@ purpose, because it costs tokens and needs the app running.
 
 ## Install
 
+From the `lounisbou` catalogue (this repository's root; its migration document says how it is
+used before the cutover):
+
 ```
-/plugin marketplace add LounisBou/claude-plugins-marketplace
 /plugin install orchestrator@lounisbou
-/orchestrator:install
+/orchestrator-install
 ```
 
-The last step creates the state directory, unwires any tap a previous install
-left in front of your status line, writes the short names (`/coordinator`,
-`/orchestrator-status` and the rest) as user commands, and needs the host at 2.1.287 or later (the
-hooks module's events). The gauge itself needs no wiring: the module measures
-every session in-process, and a session restart makes it take effect.
-
-This release was tested against the host at 2.1.295.
-
-## Upgrade from 0.48
-
-A slash command runs the `install.sh` of the plugin version the session loaded. Run
-`/orchestrator-install` before 0.49.0 is delivered and restarted into, and the 0.48
-installer runs instead: it finds its tap "already wired" and keeps it, so nothing is
-unwired and nothing is purged, yet the run looks like success. The order is therefore:
-
-1. Merge the release pull request (#162).
-2. Push the tag `orchestrator--v0.49.0`.
-3. Merge the bugs-bot release (its #27), then the two catalogue pull requests (#21, #22).
-4. Update the catalogue, then both plugins:
-
-   ```
-   /plugin marketplace update lounisbou
-   /plugin update orchestrator@lounisbou
-   /plugin update bugs-bot@lounisbou
-   ```
-
-5. Restart the session, so the slash command resolves to the 0.49.0 installer.
-6. Run `/orchestrator:install`. It takes the tap off the status line and keeps the
-   command that followed it exactly as written, `$HOME` or `~` spelling included. It then
-   removes the old pipeline's files and the measure files of sessions that ended over a
-   week ago.
-7. Restart every running session: until it restarts, a session keeps the hooks of the
-   version it loaded.
+The plugin depends on `method` from the same catalogue, which `build` mode loads. The last
+step creates the state directory, unwires any tap a previous install left in front of your
+status line, writes the short names (`/coordinator`, `/orchestrator-status` and the rest) as
+user commands, and needs the host at 2.1.287 or later (the hooks module's events). The gauge
+itself needs no wiring: the module measures every session in-process, and a session restart
+makes it take effect.
 
 ## Requirements
 
 - `bash` 3.2 (the version macOS ships), `jq`
+- `node` 22.18 or later: the scripts' launchers run their TypeScript directly
 - `python3` for the tab tooling's environment
 - for `model-routing`: bind `deep`, `standard` and `light` in
   `~/.claude/claude-orchestrator/models.json` (the installer creates it empty) to the
@@ -124,12 +101,15 @@ The hooks module measures every session in-process. After each turn the host
 fires a measure event that carries the fill itself — tokens, window,
 percentage, the model that answered — and the module writes one line to
 `~/.claude/claude-orchestrator/measure/<session-id>.json`, the only file
-external processes read: any tool of your own can read the figures the same way.
+external processes read: any tool of your own can read the figures the same way. `start`
+keeps the session's first figure and, for a session the launcher opened, the brief it started
+on and its size, so each start is measured.
 
 ```bash
 cat ~/.claude/claude-orchestrator/measure/$CLAUDE_CODE_SESSION_ID.json
 # {"context_tokens":91000,"context_window":250000,"context_percent":36.4,
-#  "model":"...","updated_at":"..."}
+#  "model":"...","updated_at":"...",
+#  "start":{"tokens":42000,"at":"...","brief":"/path/to/brief.md","brief_bytes":6100}}
 ```
 
 Past the gate —
@@ -148,8 +128,8 @@ program that draws the supervision elsewhere. Its shape is `hooks/deck.ts`'s `De
 
 ```jsonc
 {
-  "version": 2, "generated_at": "…", "machine": "mbp",
-  "coordinator": { "key": "sessions/…", "name": "Coord : …", "tty": "/dev/ttys001", "repo": null,
+  "version": 3, "generated_at": "…", "machine": "mbp",
+  "coordinator": { "key": "sessions/…", "name": "Coord : …", "tty": "/dev/ttys001", "tmux": null, "repo": null,
                    "context": { "percent": 12, "tokens": 120000, "window": 1000000, "past_gate": false },
                    "waiting": null, "updated_at": "…",
                    "usage": { "day":  { "from": "2026-10-28T23:00:00.000Z",
@@ -168,7 +148,7 @@ program that draws the supervision elsewhere. Its shape is `hooks/deck.ts`'s `De
 ```
 
 A remote orchestrator has `machine` set and `tty` null: there is no tab to focus on this
-machine. `waiting.kind` is `operator` or `done`; `urgent` is true when the sender marked its
+machine. `tmux` names a session's window in a home session (`<session>:@N.%N`), null elsewhere. `waiting.kind` is `operator` or `done`; `urgent` is true when the sender marked its
 open question so. Orchestrators come sorted by name.
 
 `usage` is what a session spent, read from its transcript and its subagents' transcripts:
