@@ -25,7 +25,7 @@ on one machine.
 ## Install (once per machine)
 
 ```
-/plugin marketplace add LounisBou/claude-plugins-marketplace
+/plugin marketplace add LounisBou/claude-plugins
 /plugin install bugs-bot@lounisbou
 /bugs-bot:install
 ```
@@ -62,6 +62,11 @@ its bot token is missing from `~/.bugs-bot/.env`: `init` asks you, once, to run
 `bugs-bot token --channel <telegram|slack> --set` in a terminal of your own. It reads the token with a
 hidden prompt and writes it at mode 0600; the token never goes through the session, a command line or
 any output. Then `init` binds the group.
+
+A project may name a deploy check (`--deploy-check`), the shell command `bugs-bot deployed <commit>`
+runs to tell whether a fix is served, with the commit in `BUGS_BOT_COMMIT`, never in the command
+text. It runs only from a project file that is yours alone: not versioned, owned by you and
+writable by nobody else (`init` writes it so); any other is refused before anything runs.
 
 ## Python
 
@@ -139,6 +144,7 @@ refuses to run over a non-empty project directory.
 ## Tests
 
 ```
+tests/run-tests.sh        # the suite's entry point, as CI runs it: python3 -m pytest -q
 python3 -m pytest -q      # no network, no PM2, no real ~/.bugs-bot: every location is overridden
 claude plugin test .      # the hooks module, against the host's own engine, every child and file faked
 claude plugin validate .  # the manifest and what the module hooks

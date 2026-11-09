@@ -1,10 +1,14 @@
-# Status line v3 — approved design
+# Status line v3 — design
 
-> **Archive document.** The original design spec, kept for the reasoning it
-> records. The paths it cites (`~/.claude/statusline-command.sh`) have changed
-> since the extraction into a plugin — see the README.
+> **Shipped.** The design of the bar's second version, kept for the reasoning it
+> records; the README describes the bar as it is. Since this design: the script
+> is `statusline/statusline.sh`, installed as `statusbar/statusline-core.sh`
+> behind the entry point `statusbar/statusline.sh` (the former
+> `~/.claude/statusline-command.sh` is archived by the installer); a quota at
+> 80 % or more also carries `⚠`; the tokens are shown against the orchestrator's
+> context gate in an orchestration session; the settings file is read as data.
 
-Date: 2026-07-28 · Status: approved, implementation followed immediately.
+Date: 2026-07-28 · Status: shipped.
 
 ## Goal
 

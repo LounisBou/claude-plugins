@@ -10,8 +10,13 @@ from Bash.
 
 ## Install
 
-Install the `cloudflare` plugin from its marketplace, then run
-`/cloudflare:install`. The plugin needs python3 3.9 or later and one API token
+```
+/plugin marketplace add LounisBou/claude-plugins
+/plugin install cloudflare@lounisbou
+/cloudflare:install
+```
+
+The plugin needs python3 3.9 or later and one API token
 per Cloudflare account; `/cloudflare:doctor` checks python3, the config file,
 the accounts found and each account's token, says which families of commands
 each token cannot read or write, and, with a `caddy` section, that the caddy
@@ -219,7 +224,10 @@ Before every zone write the engine saves what the write touches (the records
 of the names, the whole ruleset entrypoint, the settings or access rules, a Worker script's content, a zone's routes) to `backup_dir/<account>/<zone>/<UTC timestamp>-<kind>.json`, and the
 write's output ends with `backup: <path>`. A backup that cannot be written
 stops the write. `backups` lists them; `restore <path>` brings those names
-back to the saved records, after saving the current ones.
+back to the saved records, after saving the current ones. A backup replays only
+where it was taken: the file must lie under `backup_dir`, at the
+`<account>/<zone>/` it names, so a file moved or edited cannot replay onto
+another account or zone.
 
 ## Tests
 

@@ -13,7 +13,7 @@
       "name": "bugs-bot",
       "source": "./plugins/bugs-bot",
       "description": "A Telegram or Slack bug-report relay for Claude Code: one bot, one group or channel and one agent per project.",
-      "version": "0.4.3",
+      "version": "0.4.4",
       "author": {
         "name": "Lounis Bou"
       }
@@ -22,7 +22,7 @@
       "name": "cloudflare",
       "source": "./plugins/cloudflare",
       "description": "Cloudflare and the local Caddy from a native Claude Code tool: accounts by name, DNS, protections, cache, Workers and Caddy site blocks, with a backup before every write and publish in one command, facading a Python stdlib engine.",
-      "version": "0.5.3",
+      "version": "0.5.4",
       "author": {
         "name": "Lounis Bou"
       }
@@ -85,7 +85,7 @@
       "name": "statusbar",
       "source": "./plugins/statusbar",
       "description": "Two-line status bar: directory, git, PR, model, session, context and 5h/7d quotas. No network, no credentials.",
-      "version": "2.2.0",
+      "version": "2.2.1",
       "author": {
         "name": "Lounis Bou"
       }
