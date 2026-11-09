@@ -109,6 +109,13 @@ export function parseRecord(content: string): Row[] {
 
 const serialize = (rows: readonly Row[]): string => rows.map(row => `${JSON.stringify(row)}\n`).join('')
 
+/** A class's former name, still read on the rows written under it. */
+const FORMER_CLASSES: Readonly<Record<string, string>> = { 'n-bis': 'corrective' }
+
+const currentClass = (name: string): string => (Object.hasOwn(FORMER_CLASSES, name) ? FORMER_CLASSES[name] ?? name : name)
+
+const withCurrentClass = (row: Row): Row => (typeof row['class'] === 'string' ? { ...row, class: currentClass(row['class']) } : row)
+
 /** A row id as `--argjson` reads it: a JSON number, else no id of any row. */
 export function parseId(id: string): number | undefined {
   try {
@@ -485,7 +492,7 @@ export function stateRoot(env: Env): string {
 
 async function open(ctx: Context, args: readonly string[]): Promise<void> {
   const found = options(ctx, 'open', args, ['--class', '--tier', '--model', '--effort', '--label'], ['--cascade', '--explore'])
-  const klass = last(found, '--class')
+  const klass = currentClass(last(found, '--class'))
   const tier = last(found, '--tier')
   const model = last(found, '--model')
   const effort = last(found, '--effort')
@@ -795,7 +802,8 @@ function groups(rows: readonly Row[]): Group[] {
 }
 
 /** The statistics of a record: per class and key, escapes, cascades, explorations, then the open rows. */
-export function summaryLines(rows: readonly Row[]): string[] {
+export function summaryLines(recorded: readonly Row[]): string[] {
+  const rows = recorded.map(withCurrentClass)
   const lines: string[] = []
   const all = groups(rows).map(g => {
     const n = g.rows.length

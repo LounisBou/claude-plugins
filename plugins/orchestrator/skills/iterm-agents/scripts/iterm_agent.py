@@ -361,6 +361,33 @@ def refuse_made(made, msg):
     die("%s; %s" % (msg, closed_clause(closed, tty)))
 
 
+def await_host(tty, dir_, launch_epoch, made, what):
+    """Wait up to SPAWN_TIMEOUT seconds for the session just launched on `tty` to start, and
+    say how it was seen; the launch is refused, as `refuse_made` refuses one, when it never
+    started. `what` names the command in the lines it prints.
+
+    The process table is one reading of « it started », not the only one: a session that
+    wrote its transcript in the launch directory since the launch has started, whatever its
+    process line says. Declaring it dead there closed a working agent."""
+    waited = 0
+    pid = None
+    while waited < SPAWN_TIMEOUT:
+        pid = cli_pid_on_tty(tty)
+        if pid:
+            break
+        time.sleep(1)
+        waited += 1
+    if pid:
+        print("%s: %s running on %s (pid %s)" % (what, HOST_CLI, tty, pid), file=sys.stderr)
+        return
+    transcript = find_transcript(dir_, launch_epoch)
+    if not transcript:
+        refuse_made(made, "%s: %s never started on %s after %ss"
+                    % (what, HOST_CLI, tty, SPAWN_TIMEOUT))
+    print("%s: no process on %s matched %s, but the session wrote %s since the launch: it "
+          "started" % (what, tty, HOST_CLI, transcript), file=sys.stderr)
+
+
 def last_lines(lines, n):
     """The last `n` lines of a reading, its trailing blanks dropped.
 
@@ -4261,28 +4288,71 @@ def directory_is_trusted(path):
     return bool(entry.get("hasTrustDialogAccepted"))
 
 
-def grant_directory_trust(path):
+# The copy of the record kept beside it before a change, replaced by each change.
+TRUST_BACKUP_SUFFIX = ".orchestrator-bak"
+
+
+def grant_directory_trust(path, what="spawn"):
     """Record the trust the operator would otherwise be asked for, for ONE directory.
 
     Only ever for a checkout the orchestrator prepared itself, which is why it takes an
     explicit flag: preparing the environment is the orchestrator's housekeeping, and
-    granting trust to a tree it did not prepare is not."""
+    granting trust to a tree it did not prepare is not.
+
+    The record is the operator's (docs/conventions.md): changed under its lock, the record it
+    replaces kept beside it, in one rename, and only for the key this adds."""
     real = os.path.realpath(path)
     try:
-        with open(TRUST_FILE) as fh:
-            data = json.load(fh)
-    except FileNotFoundError:
-        data = {}
-    except Exception as exc:
-        die("spawn: cannot read %s to grant trust: %s" % (TRUST_FILE, exc))
-    projects = data.setdefault("projects", {})
-    entry = projects.setdefault(real, {})
-    entry["hasTrustDialogAccepted"] = True
-    tmp = TRUST_FILE + ".orchestrator-tmp"
-    with open(tmp, "w") as fh:
-        json.dump(data, fh, indent=2)
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, TRUST_FILE)
+        with path_lock(TRUST_FILE):
+            try:
+                with open(TRUST_FILE, "rb") as fh:
+                    kept = fh.read()
+                data = json.loads(kept)
+            except FileNotFoundError:
+                kept, data = None, {}
+            except Exception as exc:
+                die("%s: cannot read %s to grant trust: %s" % (what, TRUST_FILE, exc))
+            projects = data.setdefault("projects", {})
+            entry = projects.setdefault(real, {})
+            entry["hasTrustDialogAccepted"] = True
+            if kept is not None:
+                fd = os.open(TRUST_FILE + TRUST_BACKUP_SUFFIX,
+                             os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "wb") as fh:
+                    fh.write(kept)
+                os.chmod(TRUST_FILE + TRUST_BACKUP_SUFFIX, 0o600)
+            tmp = TRUST_FILE + ".orchestrator-tmp"
+            with open(tmp, "w") as fh:
+                json.dump(data, fh, indent=2)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, TRUST_FILE)
+    except RuntimeError as exc:
+        die("%s: cannot record trust for %s: %s" % (what, real, exc))
+
+
+def settle_trust(path, grant, what):
+    """What the host's trust record says of `path`, for a launch that must not stop on the
+    workspace question: `already`, `recorded` (granted, for a directory the caller prepared),
+    `unread` (the record cannot be read, said on stderr), else a refusal. `what` names the
+    command in the lines it prints. The one ladder every launch into a directory climbs."""
+    trusted = directory_is_trusted(path)
+    if trusted is True:
+        # Never rewrite a record that already says yes: the host writes this file too, and
+        # a rewrite for nothing is a window in which one of the two loses an entry.
+        return "already"
+    if grant:
+        grant_directory_trust(path, what)
+        return "recorded"
+    real = os.path.realpath(path)
+    if trusted is None:
+        # A gate that cannot measure lets the launch through AND says so (§31).
+        print("%s: the trust record %s cannot be read, so whether the host trusts %s is "
+              "unknown; launching anyway. Pass --trust for a directory you prepared, or open "
+              "the directory once yourself." % (what, TRUST_FILE, real), file=sys.stderr)
+        return "unread"
+    die("%s: the host has not been told to trust %s, so the session would stop on its "
+        "workspace question and never read its prompt. Pass --trust for a directory you "
+        "prepared, or open the directory once yourself." % (what, real))
 
 
 def anchor_after_probe(found, anchor, own):
@@ -4793,25 +4863,7 @@ def cmd_spawn(argv, pair_from=""):
     # question must leave nothing behind — a prompt file written ahead of it survived every
     # refusal and piled up under the state directory's prompts/ for a directory that was
     # never launched into.
-    trusted = directory_is_trusted(args.dir)
-    if trusted is True:
-        # Never rewrite a record that already says yes: the host writes this file too, and
-        # a rewrite for nothing is a window in which one of the two loses an entry.
-        trust_state = "already"
-    elif args.trust:
-        grant_directory_trust(args.dir)
-        trust_state = "recorded"
-    elif trusted is None:
-        # A gate that cannot measure lets the launch through AND says so (§31).
-        trust_state = "unread"
-        print("spawn: the trust record %s cannot be read, so whether the host trusts %s is "
-              "unknown; launching anyway. Pass --trust for a checkout you prepared, or open "
-              "the directory once yourself." % (TRUST_FILE, os.path.realpath(args.dir)),
-              file=sys.stderr)
-    else:
-        die("spawn: the host has not been told to trust %s, so the session would stop on "
-            "its workspace question and never read its brief. Pass --trust for a checkout "
-            "you prepared, or open the directory once yourself." % os.path.realpath(args.dir))
+    trust_state = settle_trust(args.dir, args.trust, "spawn")
 
     # After the trust check and before the prompt file, in the order a refusal wants: the
     # catalogue and the names are read first, so a refusal on either leaves no file behind.
@@ -4948,26 +5000,7 @@ def cmd_spawn(argv, pair_from=""):
             print(line)
 
     if args.verify:
-        waited = 0
-        pid = None
-        while waited < SPAWN_TIMEOUT:
-            pid = cli_pid_on_tty(new_tty)
-            if pid:
-                break
-            time.sleep(1)
-            waited += 1
-        if pid:
-            print("spawn: %s running on %s (pid %s)" % (HOST_CLI, new_tty, pid), file=sys.stderr)
-        else:
-            # The process table is one reading of « it started », not the only one: a session
-            # that wrote its transcript in the launch directory since the launch has started,
-            # whatever its process line says. Declaring it dead there closed a working agent.
-            transcript = find_transcript(args.dir, launch_epoch)
-            if not transcript:
-                refuse_made(made, "spawn: %s never started on %s after %ss"
-                            % (HOST_CLI, new_tty, SPAWN_TIMEOUT))
-            print("spawn: no process on %s matched %s, but the session wrote %s since the "
-                  "launch: it started" % (new_tty, HOST_CLI, transcript), file=sys.stderr)
+        await_host(new_tty, args.dir, launch_epoch, made, "spawn")
         # « The host CLI runs on the tty » is not « the session is launched »: a session
         # that runs and waits for a click is not. The mode asked for is carried on the
         # process line and honoured for some models and not others, so the mode the session
@@ -4986,18 +5019,21 @@ def cmd_spawn(argv, pair_from=""):
 # --- a bench opening ------------------------------------------------------------------
 #
 # A harness (the outcome evals') opens an orchestrator it drives with no operator, on a bench
-# of its own: a directory the caller names and everything the opening makes sits inside. The
-# home server's socket lives in the bench's own tmux directory, so no server of the machine
-# is touched and a tab is never asked for; the orchestrator runs in window 0 of a home session
-# marked like any other, so the agents it spawns are windows of that session. The caller gives
-# the plugin directories and the settings the orchestrator runs on, since it is no host session
-# whose launch they could be read from. No remote control. `close --bench --socket` ends the
-# home, every window of it. This is not an opening on the operator's order (`spawn --open`),
-# whose guards are untouched: it is the caller's own bench, and it refuses anything outside.
+# of its own: a directory the caller names. The home server and its socket, in the bench's own
+# tmux directory, and the orchestrator's working directory sit inside the bench, so no server
+# of the machine is touched and a tab is never asked for. The launch script, the prompt, the
+# servers' file and `close.log` go to the launcher's state directory, as for any launch. The
+# orchestrator runs in window 0 of a home session marked like any other, so the agents it
+# spawns are windows of that session. The caller gives the plugin directories and the settings
+# the orchestrator runs on, since it is no host session whose launch they could be read from.
+# No remote control. `close --bench --socket` ends the home, every window of it. This is not an
+# opening on the operator's order (`spawn --open`), whose guards are untouched: it is the
+# caller's own bench, and it refuses anything outside.
 
 # The bench's own tmux directory, where its home server's socket is made.
 BENCH_TMUX = "tmux"
-# A unix socket's address holds 104 bytes on macOS (108 on Linux), the terminating one included.
+# A unix socket's address holds 104 bytes on macOS (108 on Linux), the terminating one included:
+# a path is counted in bytes, whatever the characters that make them.
 SOCKET_PATH_MAX = 103
 BENCH_SOCKET_SHAPE = re.compile(r"^%s[0-9A-Za-z]{1,8}\Z" % re.escape(HOME_SOCKET_PREFIX))
 
@@ -5008,8 +5044,10 @@ def under(parent, child):
 
 
 def bench_root(path, what):
-    """The real path of the bench `path`: an absolute path to a directory that is neither the
-    root nor the operator's home."""
+    """The real path of the bench `path`: an absolute path to a directory a run owns. A bench
+    sits at least two levels below the root and never at or above the operator's home, so the
+    root, a top-level directory (the temporary directory among them, where it is a link to
+    one), the home and every directory above it are refused."""
     if not path:
         die("%s: --bench is required" % what)
     if not os.path.isabs(path):
@@ -5017,7 +5055,9 @@ def bench_root(path, what):
     real = os.path.realpath(path)
     if not os.path.isdir(real):
         die("%s: refused: --bench '%s' is not a directory" % (what, path))
-    if real == os.path.dirname(real) or real == os.path.realpath(os.path.expanduser("~")):
+    home = os.path.realpath(os.path.expanduser("~"))
+    top_levels = {os.path.realpath(os.path.join(os.sep, name)) for name in os.listdir(os.sep)}
+    if real in top_levels or os.path.commonpath([real, home]) == real:
         die("%s: refused: '%s' is not a bench: it holds more than a run's files" % (what, real))
     return real
 
@@ -5030,29 +5070,11 @@ def bench_server(bench, socket, what):
     path = home_socket_path(socket)
     if not under(bench, os.path.realpath(path)):
         die("%s: refused: the socket %s leads out of the bench %s" % (what, path, bench))
-    if len(path) > SOCKET_PATH_MAX:
+    size = len(os.fsencode(path))
+    if size > SOCKET_PATH_MAX:
         die("%s: refused: the socket path is too long for a socket's address (%d > %d): %s; "
-            "name a shorter bench" % (what, len(path), SOCKET_PATH_MAX, path))
+            "name a shorter bench" % (what, size, SOCKET_PATH_MAX, path))
     return path
-
-
-def require_trust(path, grant, what):
-    """What the host's trust record says of `path`, for a launch that must not stop on the
-    workspace question: `already`, `recorded` (granted, for a directory the caller made),
-    `unread` (the record cannot be read, said on stderr), else a refusal."""
-    trusted = directory_is_trusted(path)
-    if trusted is True:
-        return "already"
-    if grant:
-        grant_directory_trust(path)
-        return "recorded"
-    if trusted is None:
-        print("%s: the trust record %s cannot be read, so whether the host trusts %s is "
-              "unknown; launching anyway" % (what, TRUST_FILE, path), file=sys.stderr)
-        return "unread"
-    die("%s: refused: the host has not been told to trust %s, so the session would stop on "
-        "its workspace question and never read its prompt. Pass --trust for a directory the "
-        "caller made" % (what, path))
 
 
 def cmd_bench_open(argv):
@@ -5120,11 +5142,23 @@ def cmd_bench_open(argv):
     catalogue = read_catalogue()
     servers = select_servers(args.mcp, catalogue)
 
+    # The trust question is asked before any file is written, as for a spawn: a refusal leaves
+    # nothing behind. A dry run touches nothing, and names the files a real opening would write.
+    if not DRY_RUN:
+        trust_state = settle_trust(work, args.trust, "bench-open")
+    mcp_file = ""
+    if servers:
+        mcp_file = (state_file_path("mcp", title, "json") if DRY_RUN
+                    else write_mcp_file(servers, catalogue, title))
+    prompt_file = args.prompt_file
+    if not prompt_file:
+        prompt_file = (state_file_path("prompt", title, "txt") if DRY_RUN
+                       else write_prompt_file(args.prompt, title))
+    launch = build_command(work, title, args.model, args.mode, prompt_file, "", mcp_file, False,
+                           0, args.effort, (), (), False, ("--session-id", session),
+                           args.plugin_dir, None, "", "", extra)
+
     if DRY_RUN:
-        launch = build_command(work, title, args.model, args.mode, args.prompt_file or
-                               state_file_path("prompt", title, "txt"), "", "", False, 0,
-                               args.effort, (), (), False, ("--session-id", session),
-                               args.plugin_dir, None, "", "", extra)
         print("bench=%s" % bench)
         print("launch=%s" % launch)
         print("home_server=%s" % socket)
@@ -5137,12 +5171,6 @@ def cmd_bench_open(argv):
         print("remote_control=no")
         return
 
-    trust_state = require_trust(work, args.trust, "bench-open")
-    mcp_file = write_mcp_file(servers, catalogue, title) if servers else ""
-    prompt_file = args.prompt_file or write_prompt_file(args.prompt, title)
-    launch = build_command(work, title, args.model, args.mode, prompt_file, "", mcp_file, False,
-                           0, args.effort, (), (), False, ("--session-id", session),
-                           args.plugin_dir, None, "", "", extra)
     script = write_launch_script(launch, title)
     os.makedirs(os.path.join(bench, BENCH_TMUX), mode=0o700, exist_ok=True)
     print("bench-open: model %s, effort %s, trust %s"
@@ -5152,13 +5180,7 @@ def cmd_bench_open(argv):
     pane_tty = make_home(socket, title, work, "%s -l %s" % (LOGIN_SHELL, script), "bench-open")
     made = {"terminal": NO_TAB, "home": socket, "tty": pane_tty}
     if args.verify:
-        waited = 0
-        while waited < SPAWN_TIMEOUT and not cli_pid_on_tty(pane_tty):
-            time.sleep(1)
-            waited += 1
-        if not cli_pid_on_tty(pane_tty):
-            refuse_made(made, "bench-open: %s never started on %s after %ss"
-                        % (HOST_CLI, pane_tty, SPAWN_TIMEOUT))
+        await_host(pane_tty, work, launch_epoch, made, "bench-open")
         print(verify_mode(work, launch_epoch, args.mode, args.model, made), file=sys.stderr)
     print("socket=%s" % socket)
     print("tty=%s" % pane_tty)
