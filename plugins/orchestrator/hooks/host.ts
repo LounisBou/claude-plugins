@@ -9,9 +9,9 @@
 export type ProcessRunInit = { cwd?: string; env?: Record<string, string>; stdin?: string; timeoutMs?: number }
 export type ProcessRunResult = { exitCode: number; stdout: string; stderr: string }
 
-export type FsEntry = { name: string; kind: 'file' | 'dir' | 'other'; size: number; isLink: boolean }
+export type FsEntry = { name: string; kind: 'file' | 'dir' | 'other'; size: number; isLink: boolean; mtimeMs?: number }
 
-export type FsStat = { kind: 'file' | 'dir' | 'other'; size: number; realPath?: string }
+export type FsStat = { kind: 'file' | 'dir' | 'other'; size: number; realPath?: string; mtimeMs?: number }
 
 export type SessionSendResult = { isDelivered: true; reason?: undefined } | { isDelivered: false; reason: string }
 
@@ -38,6 +38,7 @@ type Nouns = {
   tool: { register(tool: ToolSpec): Promise<unknown> }
   command: { run(args: { command: string; args?: string }): Promise<unknown> }
   prompt: { submit(input: { text: string }): Promise<unknown> }
+  clock: { sleep(ms: number): Promise<void> }
 }
 
 export type ToolSpec = { name: string; description: string; inputSchema?: Record<string, unknown>; isDeferred?: boolean }

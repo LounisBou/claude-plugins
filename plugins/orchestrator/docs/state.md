@@ -26,6 +26,9 @@ Python launcher.
 | `sleeping.json`, `coordinator.json` | the coordinator's scripts | under the coordinator's lock |
 | dispatch records, `records/<session>` | `dispatch-record.ts` | under core's lock |
 | `measure/<id>.json` | the session's own gauge | one writer, plain write, read as unmeasured when partial |
+| `store/moves/<move>.json` | the session that sent the move (`hooks/moving.ts`) | read-modify-write under the file's lock: the receiver's address pinned, a round of « missing » counted, the outcome |
+| `store/moves/<move>/` | the session that receives the move, its messages one at a time | one rename per file (the manifest, each chunk, each acknowledgment); a file's chunks removed once it landed |
+| `briefs/<subject>/<file>` landed by a move | the receiving session | under the landed path's lock, one rename; a file already there with other content is refused and left alone |
 | module log, `close.log`, `store/moves/probes.jsonl` | every process | appends |
 
 A writer in another language reads the convention as data, `core/store.json` (the launcher,
