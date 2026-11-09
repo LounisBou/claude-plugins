@@ -333,6 +333,9 @@ test('summary: the statistics and the open rows, or one reading of them', async 
   assert.match(await cli(['summary', r, '--label', 'x']), /--label needs the row ids/)
   assert.match(await cli(['summary', r, '--bogus']), /unknown argument --bogus/)
   assert.deepEqual(summaryLines([]), [])
+  // A row written under the corrective class's former name reads as the class it stands for.
+  assert.deepEqual(summaryLines([{ id: 1, class: 'n-bis', tier: 'light', rounds: 1, state: 'closed' }, { id: 2, class: 'corrective', tier: 'light', rounds: 1, state: 'closed' }]),
+    ['class=corrective tier=light dispatches=2 closed=2 rounds_avg=1'])
 })
 
 test('goals: handed to goals.py, the record registered from its first write', async () => {

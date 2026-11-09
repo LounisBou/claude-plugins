@@ -644,20 +644,25 @@ check "a dispatch closed without a round reads as one round" "1" "$(bash "$REC" 
 # round is a drop that did not pay, and the summary says so rather than leaving it to be
 # noticed. Two dispatches of the same class, both needing two rounds.
 for i in 1 2; do
-  n=$(bash "$REC" open "$R" --class n-bis --tier light)
+  n=$(bash "$REC" open "$R" --class corrective --tier light)
   bash "$REC" round "$R" "$n" >/dev/null; bash "$REC" round "$R" "$n" >/dev/null
   bash "$REC" close "$R" "$n" --verdict approved >/dev/null
 done
 check "a class that costs more than one round is signalled" "1" \
-  "$(bash "$REC" summary "$R" | grep -c '^signal=n-bis at light averages 2 rounds')"
+  "$(bash "$REC" summary "$R" | grep -c '^signal=corrective at light averages 2 rounds')"
 check "a class that closes in one round raises no signal" "0" \
   "$(bash "$REC" summary "$R" | grep -c 'signal=conversion-phase')"
+# A row written before the corrective class was renamed names it `n-bis`: read as `corrective`.
+LC="$WORK/legacy-class.jsonl"
+printf '{"id":1,"opened":"2026-01-01T00:00:00Z","class":"n-bis","tier":"light","label":"","rounds":2,"state":"closed","verdict":"approved","cascade":false}\n' > "$LC"
+check "a row naming the class n-bis, its former name, reads as corrective" "1|1|0" \
+  "$(bash "$REC" summary "$LC" | grep -c '^class=corrective tier=light dispatches=1 closed=1 rounds_avg=2$')|$(bash "$REC" summary "$LC" | grep -c '^signal=corrective at light')|$(bash "$REC" summary "$LC" | grep -c 'n-bis')"
 
 # The open rows are work, not history: `summary` lists them, so a successor reading the
 # record sees what was deferred and never dispatched.
 RO="$WORK/open-rows.jsonl"
 bash "$REC" open "$RO" --class behaviour-phase --tier standard --label "plan after the round" >/dev/null
-bash "$REC" open "$RO" --class n-bis --tier light --label "second" >/dev/null
+bash "$REC" open "$RO" --class corrective --tier light --label "second" >/dev/null
 bash "$REC" close "$RO" 2 --verdict ruled-out >/dev/null
 check "summary lists the open rows with their id and label, and only them" "open=1 label=plan after the round" \
   "$(bash "$REC" summary "$RO" | grep '^open=')"
@@ -718,7 +723,7 @@ rec_with() {  # <session id> <args...>, run from the record's directory with a r
   local sid="$1"; shift
   ( cd "$RD" && CLAUDE_CODE_SESSION_ID="$sid" ORCHESTRATOR_STATE_DIR="$RS" bash "$REC" "$@" 2>/dev/null )
 }
-rec_with s-open open dispatch.jsonl --class n-bis --tier light --label l >/dev/null
+rec_with s-open open dispatch.jsonl --class corrective --tier light --label l >/dev/null
 RDREAL="$(cd "$RD" && pwd -P)"
 check "open registers the record by its absolute path" "$RDREAL/dispatch.jsonl" "$(cat "$RS/records/s-open" 2>/dev/null)"
 rec_with s-round round dispatch.jsonl 1
@@ -733,13 +738,13 @@ for sid in s-round s-review s-fixed s-ready s-escaped s-close; do
 done
 rec_with s-open summary dispatch.jsonl >/dev/null; rec_with s-open round dispatch.jsonl 1; ( cd "$RD" && CLAUDE_CODE_SESSION_ID=s-open ORCHESTRATOR_STATE_DIR="$RS" bash "$REC" summary "$RR" >/dev/null )
 check "a record is registered once, whichever way its path is spelled" "1" "$(grep -c . "$RS/records/s-open")"
-rec_with s-open open "$WORK/second.jsonl" --class n-bis --tier light >/dev/null
+rec_with s-open open "$WORK/second.jsonl" --class corrective --tier light >/dev/null
 check "a second record is added on its own line" "2" "$(grep -c . "$RS/records/s-open")"
 RS2="$WORK/rec-state-none"
 ( cd "$RD" && env -u CLAUDE_CODE_SESSION_ID ORCHESTRATOR_STATE_DIR="$RS2" bash "$REC" summary dispatch.jsonl >/dev/null 2>&1 )
 check "without a session id nothing is registered" "no" "$([ -e "$RS2" ] && echo yes || echo no)"
-check "a state directory that cannot be written never fails the command" "0|class=n-bis" \
-  "$(cd "$RD" && out=$(CLAUDE_CODE_SESSION_ID=s-x ORCHESTRATOR_STATE_DIR=/dev/null/nope bash "$REC" summary dispatch.jsonl 2>/dev/null); echo "$?|$(printf '%s' "$out" | head -1 | cut -c1-11)")"
+check "a state directory that cannot be written never fails the command" "0|class=corrective" \
+  "$(cd "$RD" && out=$(CLAUDE_CODE_SESSION_ID=s-x ORCHESTRATOR_STATE_DIR=/dev/null/nope bash "$REC" summary dispatch.jsonl 2>/dev/null); echo "$?|$(printf '%s' "$out" | head -1 | cut -c1-16)")"
 check "a failing command keeps its own exit code" "1" "$(cd "$RD" && CLAUDE_CODE_SESSION_ID=s-y ORCHESTRATOR_STATE_DIR="$RS" bash "$REC" close dispatch.jsonl 99 --verdict ok >/dev/null 2>&1; echo $?)"
 
 # The spec's goals, beside the record. A build was declared done against its plan while the
@@ -1345,7 +1350,7 @@ check_status "a waiver beside a test line is refused" 1 bash "$REC" ready "$E" "
 check_status "E2E: none without the operator's validation is refused" 1 bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2ENONE"
 check "and says to tell him and record his validation" "1" \
   "$(bash "$REC" ready "$E" "$e1" --head aaa1111 --e2e "$E2ENONE" 2>&1 | grep -cF "ready: row 1 has no E2E test and the operator has not validated it ready without one: tell him « $E2ENONE », then record his validation with --e2e-waiver")"
-e2=$(bash "$REC" open "$E" --class n-bis --tier light --label "no review"); bash "$REC" surface "$E" "$e2" --none >/dev/null
+e2=$(bash "$REC" open "$E" --class corrective --tier light --label "no review"); bash "$REC" surface "$E" "$e2" --none >/dev/null
 check_status "with no review, a test line is still refused: the gate needs a review" 1 bash "$REC" ready "$E" "$e2" --head aaa1111 --e2e "$E2EOK"
 check_status "the no-review warning does not let silence by" 1 bash "$REC" ready "$E" "$e2" --head aaa1111
 check_status "the no-review warning does not let an unvalidated E2E: none by" 1 bash "$REC" ready "$E" "$e2" --head aaa1111 --e2e "$E2ENONE"
@@ -1434,9 +1439,9 @@ crec close "$PR" "$p1" --verdict approved >/dev/null
 check "summary prints the pair and its average cost" "1" \
   "$(crec summary "$PR" | grep -c '^class=behaviour-phase pair=a-model/medium dispatches=1 closed=1 rounds_avg=0 cost_avg=0.1701$')"
 # A pair row with no effort ran on the host's default: it says so rather than print a pair cut short.
-crec open "$WORK/pair-noeffort.jsonl" --class n-bis --model b-model >/dev/null
+crec open "$WORK/pair-noeffort.jsonl" --class corrective --model b-model >/dev/null
 check "a pair row without an effort groups as the host's default" "1" \
-  "$(crec summary "$WORK/pair-noeffort.jsonl" | grep -c '^class=n-bis pair=b-model/default dispatches=1 closed=0 rounds_avg=0$')"
+  "$(crec summary "$WORK/pair-noeffort.jsonl" | grep -c '^class=corrective pair=b-model/default dispatches=1 closed=0 rounds_avg=0$')"
 check_status "open refuses an unknown effort" 1 crec open "$PR" --class x --model a-model --effort huge
 check_status "open wants a tier or a model" 1 crec open "$PR" --class x
 check_status "an effort without a model is refused" 1 crec open "$PR" --class x --tier light --effort low
@@ -1494,13 +1499,13 @@ check "an incomplete cost stays out of the average" "1" \
 e1=$(crec open "$PR" --class conversion-phase --model a-model --effort low --explore)
 crec round "$PR" "$e1" >/dev/null; crec round "$PR" "$e1" >/dev/null; crec close "$PR" "$e1" --verdict approved >/dev/null
 check "an exploration that cost a corrective round freezes its class" "1" "$(crec summary "$PR" | grep -c '^frozen=conversion-phase$')"
-for i in 1 2 3; do e=$(crec open "$PR" --class n-bis --model a-model --effort low --explore); crec round "$PR" "$e" >/dev/null; crec close "$PR" "$e" --verdict approved >/dev/null; done
-check "three explorations closed in one round promote the pair" "1" "$(crec summary "$PR" | grep -c '^promote=n-bis a-model/low$')"
-for i in 1 2 3; do e=$(crec open "$WORK/pair-noeffort.jsonl" --class n-bis --model b-model --explore); crec round "$WORK/pair-noeffort.jsonl" "$e" >/dev/null; crec close "$WORK/pair-noeffort.jsonl" "$e" --verdict approved >/dev/null; done
+for i in 1 2 3; do e=$(crec open "$PR" --class corrective --model a-model --effort low --explore); crec round "$PR" "$e" >/dev/null; crec close "$PR" "$e" --verdict approved >/dev/null; done
+check "three explorations closed in one round promote the pair" "1" "$(crec summary "$PR" | grep -c '^promote=corrective a-model/low$')"
+for i in 1 2 3; do e=$(crec open "$WORK/pair-noeffort.jsonl" --class corrective --model b-model --explore); crec round "$WORK/pair-noeffort.jsonl" "$e" >/dev/null; crec close "$WORK/pair-noeffort.jsonl" "$e" --verdict approved >/dev/null; done
 check "three explorations of a pair with no effort promote it as the host's default" "1" \
-  "$(crec summary "$WORK/pair-noeffort.jsonl" | grep -c '^promote=n-bis b-model/default$')"
+  "$(crec summary "$WORK/pair-noeffort.jsonl" | grep -c '^promote=corrective b-model/default$')"
 check "an escaped defect on an exploration freezes its class too" "1|0" \
-  "$(crec escaped "$PR" "$e" >/dev/null; crec summary "$PR" | grep -c '^frozen=n-bis$')|$(crec summary "$PR" | grep -c '^promote=n-bis')"
+  "$(crec escaped "$PR" "$e" >/dev/null; crec summary "$PR" | grep -c '^frozen=corrective$')|$(crec summary "$PR" | grep -c '^promote=corrective')"
 
 echo "== workspace =="
 
@@ -9949,25 +9954,25 @@ printf '{"deep":"a-model","standard":{"model":"b-model","effort":"medium"},"ligh
 printf '{"slug":"laravel","repo":"%s","profile":"php/laravel-app","tasks":[]}' "$T/laravel" > "$PS/routing/projects/laravel/manifest.json"
 DEF="$WORK/defaults"; mkdir -p "$DEF"
 rpick() { ORCHESTRATOR_STATE_DIR="$PS" ORCHESTRATOR_ROUTING_DEFAULTS="$DEF" python3 "$ROUTING" pick --repo "$T/laravel" "$@"; }
-check "nothing measured: the tier table through the map" $'pair=b-model/medium source=tier-table\nnbis=b-model/high' "$(rpick --class behaviour-phase)"
+check "nothing measured: the tier table through the map" $'pair=b-model/medium source=tier-table\ncorrective=b-model/high' "$(rpick --class behaviour-phase)"
 check "nothing measured, a tier bound to a model alone" "pair=c-model source=tier-table" "$(rpick --class search)"
 mv "$PS/models.json" "$PS/models.json.off"
 check "nothing measured and nothing bound: the host's default" "pair=host-default source=tier-table" "$(rpick --class search)"
 mv "$PS/models.json.off" "$PS/models.json"
 printf '{"scope":"global","entries":{"behaviour-phase":{"pair":"light/high"}}}' > "$DEF/global.json"
-check "a shipped default resolves its tier through the map" $'pair=c-model/high source=shipped:global\nnbis=c-model/xhigh' "$(rpick --class behaviour-phase)"
+check "a shipped default resolves its tier through the map" $'pair=c-model/high source=shipped:global\ncorrective=c-model/xhigh' "$(rpick --class behaviour-phase)"
 printf '{"scope":"profile:php/laravel-app","entries":{"behaviour-phase":{"pair":"deep/low"}}}' > "$DEF/profile-php-laravel-app.json"
-check "a shipped profile default beats the shipped global one" $'pair=a-model/low source=shipped:profile:php/laravel-app\nnbis=a-model/medium' "$(rpick --class behaviour-phase)"
+check "a shipped profile default beats the shipped global one" $'pair=a-model/low source=shipped:profile:php/laravel-app\ncorrective=a-model/medium' "$(rpick --class behaviour-phase)"
 printf '{"scope":"profile:php/laravel-app","entries":{"behaviour-phase":{"pair":"nonsense/low"}}}' > "$DEF/profile-php-laravel-app.json"
-check "a shipped default on a tier the map does not bind falls through" $'pair=c-model/high source=shipped:global\nnbis=c-model/xhigh' "$(rpick --class behaviour-phase)"
+check "a shipped default on a tier the map does not bind falls through" $'pair=c-model/high source=shipped:global\ncorrective=c-model/xhigh' "$(rpick --class behaviour-phase)"
 printf '{"scope":"global","entries":{"behaviour-phase":{"pair":"c-model/medium","models":["c-model-1"]}}}' > "$PS/routing/tables/global.json"
-check "the local global table beats the shipped defaults" $'pair=c-model/medium source=global\nnbis=c-model/high' "$(rpick --class behaviour-phase)"
+check "the local global table beats the shipped defaults" $'pair=c-model/medium source=global\ncorrective=c-model/high' "$(rpick --class behaviour-phase)"
 printf '{"scope":"profile:php/laravel-app","entries":{"behaviour-phase":{"pair":"b-model/low","models":["b-model-1"]}}}' > "$PS/routing/tables/profile-php-laravel-app.json"
-check "the profile table beats the global one" $'pair=b-model/low source=profile:php/laravel-app\nnbis=b-model/medium' "$(rpick --class behaviour-phase)"
+check "the profile table beats the global one" $'pair=b-model/low source=profile:php/laravel-app\ncorrective=b-model/medium' "$(rpick --class behaviour-phase)"
 printf '{"scope":"project:laravel","entries":{"behaviour-phase":{"pair":"a-model/low","models":["a-model-1"],"floor":0.9,"ladder":[{"pair":"a-model/low","n":6,"pass_rate":1.0,"eligible":true}]},"conversion-phase":{"pair":"a-model/medium","models":["a-model-1"],"floor":0.9,"ladder":[{"pair":"a-model/low","n":8,"pass_rate":0.5,"eligible":false},{"pair":"a-model/medium","n":8,"pass_rate":1.0,"eligible":true}]},"comments":{"pair":"a-model/high","models":["a-model-1"],"floor":0.9,"ladder":[{"pair":"a-model/low","n":6,"pass_rate":1.0,"eligible":true},{"pair":"a-model/medium","n":8,"pass_rate":0.5,"eligible":false},{"pair":"a-model/high","n":6,"pass_rate":1.0,"eligible":true}]},"review-collector":{"pair":"a-model/high","models":["a-model-1"],"floor":0.9,"ladder":[{"pair":"a-model/low","n":6,"pass_rate":1.0,"eligible":true},{"pair":"a-model/medium","n":6,"pass_rate":1.0,"eligible":true},{"pair":"a-model/high","n":6,"pass_rate":1.0,"eligible":true}]},"review-lens":{"pair":"a-model/high","models":["a-model-1"],"floor":0.9,"ladder":[{"pair":"a-model/low","n":6,"pass_rate":1.0,"eligible":true},{"pair":"a-model/medium","n":2,"pass_rate":1.0,"eligible":false},{"pair":"a-model/high","n":6,"pass_rate":1.0,"eligible":true}]},"contract-phase":{"pair":"a-model/high","models":["a-model-1"]}}}' > "$PS/routing/tables/project-laravel.json"
-check "the project table beats them all" $'pair=a-model/low source=project:laravel\nnbis=a-model/medium' "$(rpick --class behaviour-phase)"
+check "the project table beats them all" $'pair=a-model/low source=project:laravel\ncorrective=a-model/medium' "$(rpick --class behaviour-phase)"
 printf '{"a-model":"a-model-2"}' > "$PS/routing/aliases.json"
-check "an entry measured on another identifier is flagged stale" $'pair=a-model/low source=project:laravel stale\nnbis=a-model/medium' "$(rpick --class behaviour-phase)"
+check "an entry measured on another identifier is flagged stale" $'pair=a-model/low source=project:laravel stale\ncorrective=a-model/medium' "$(rpick --class behaviour-phase)"
 check_status "an unknown class is a refusal" 1 rpick --class nonsense
 # Exploration: three one-round closes at the class's pair, none escaped, and a class that may be explored.
 ER="$WORK/explore.jsonl"; : > "$ER"
@@ -9982,6 +9987,8 @@ check "an escaped defect at the class's pair closes the exploration" "2" \
   "$({ cat "$ER"; printf '{"id":4,"class":"behaviour-phase","model":"a-model","effort":"low","rounds":1,"state":"closed","escaped":true}\n'; } > "$WORK/esc.jsonl"; rpick --class behaviour-phase --record "$WORK/esc.jsonl" | wc -l | tr -d ' ')"
 check "a failed exploration freezes the class for the build" "2" \
   "$({ cat "$ER"; printf '{"id":5,"class":"behaviour-phase","model":"b-model","effort":"low","rounds":2,"state":"closed","explore":true}\n'; } > "$WORK/frozen.jsonl"; rpick --class behaviour-phase --record "$WORK/frozen.jsonl" | wc -l | tr -d ' ')"
+check "record rows naming the class n-bis, its former name, count for corrective" "explore=b-model/low" \
+  "$(for i in 1 2 3; do printf '{"id":%d,"class":"n-bis","model":"b-model","effort":"medium","rounds":1,"state":"closed"}\n' "$i"; done > "$WORK/legacy-explore.jsonl"; rpick --class corrective --record "$WORK/legacy-explore.jsonl" | sed -n 2p)"
 check "a notch the ladder measured below the floor is never offered" "2" \
   "$(for i in 1 2 3; do printf '{"id":%d,"class":"conversion-phase","model":"a-model","effort":"medium","rounds":1,"state":"closed"}\n' "$i"; done > "$WORK/conv.jsonl"; rpick --class conversion-phase --record "$WORK/conv.jsonl" | wc -l | tr -d ' ')"
 hi3() { for i in 1 2 3; do printf '{"id":%d,"class":"%s","model":"a-model","effort":"high","rounds":1,"state":"closed"}\n' "$i" "$1"; done; }
@@ -10019,13 +10026,13 @@ rcall() { # a python expression over routing.py and calibration.py as `m`, print
 check "a phase of 3 files and 50 lines is small; one more file or one more line is large" "small|small|large|large" \
   "$(rcall 'm.size_bucket(3, 50)')|$(rcall 'm.size_bucket(0, 0)')|$(rcall 'm.size_bucket(4, 0)')|$(rcall 'm.size_bucket(0, 51)')"
 
-# The N-bis pair: the corrective round runs one effort notch above its phase (the round is the
+# The corrective pair: the corrective round runs one effort notch above its phase (the round is the
 # retry: cheap first, escalate on failure). The top effort has no notch above, so it stays.
 check "the notch up is the next effort of the same family, and the top stays" "a-model/medium|a-model/high|a-model/xhigh|a-model/max|a-model/max" \
-  "$(rcall 'm.nbis_pair("a-model/low")')|$(rcall 'm.nbis_pair("a-model/medium")')|$(rcall 'm.nbis_pair("a-model/high")')|$(rcall 'm.nbis_pair("a-model/xhigh")')|$(rcall 'm.nbis_pair("a-model/max")')"
+  "$(rcall 'm.corrective_pair("a-model/low")')|$(rcall 'm.corrective_pair("a-model/medium")')|$(rcall 'm.corrective_pair("a-model/high")')|$(rcall 'm.corrective_pair("a-model/xhigh")')|$(rcall 'm.corrective_pair("a-model/max")')"
 check "a pair with no effort, or one the efforts do not list, has no notch up" "None|None|None" \
-  "$(rcall 'm.nbis_pair("a-model")')|$(rcall 'm.nbis_pair("host-default")')|$(rcall 'm.nbis_pair("a-model/ultra")')"
-check "the notch up comes last, after the explore line" $'explore=b-model/low\nnbis=a-model/medium' \
+  "$(rcall 'm.corrective_pair("a-model")')|$(rcall 'm.corrective_pair("host-default")')|$(rcall 'm.corrective_pair("a-model/ultra")')"
+check "the notch up comes last, after the explore line" $'explore=b-model/low\ncorrective=a-model/medium' \
   "$(rpick --class behaviour-phase --record "$ER" | sed -n 2,3p)"
 check "and nothing follows it" "3" "$(rpick --class behaviour-phase --record "$ER" | wc -l | tr -d ' ')"
 
@@ -10038,34 +10045,46 @@ printf '{"a-model":"a-model-2","b-model":"b-model-2"}' > "$ZS/routing/aliases.js
 printf '{"scope":"project:laravel","entries":{"behaviour-phase":{"pair":"a-model/low","size":"small"},"conversion-phase":{"pair":"a-model/medium"},"comments":{"pair":"a-model/high","size":"large","models":["a-model-1"]},"review-lens":{"pair":"a-model/low","size":"small"}}}' > "$ZS/routing/tables/project-laravel.json"
 printf '{"scope":"profile:php/laravel-app","entries":{"behaviour-phase":{"pair":"b-model/low","size":"large"},"conversion-phase":{"pair":"b-model/medium","size":"large","models":["b-model-1"]},"review-lens":{"pair":"b-model/low","size":"small"}}}' > "$ZS/routing/tables/profile-php-laravel-app.json"
 printf '{"scope":"global","entries":{"behaviour-phase":{"pair":"c-model/medium","size":"small"},"review-lens":{"pair":"c-model/low","size":"small"}}}' > "$ZS/routing/tables/global.json"
-printf '{"scope":"profile:php/laravel-app","entries":{"search":{"pair":"nonsense/low","size":"small"},"n-bis":{"pair":"standard/low","size":"small"}}}' > "$ZD/profile-php-laravel-app.json"
-printf '{"scope":"global","entries":{"search":{"pair":"deep/high","size":"large"},"n-bis":{"pair":"standard/high","size":"small"}}}' > "$ZD/global.json"
+printf '{"scope":"profile:php/laravel-app","entries":{"search":{"pair":"nonsense/low","size":"small"},"corrective":{"pair":"standard/low","size":"small"}}}' > "$ZD/profile-php-laravel-app.json"
+printf '{"scope":"global","entries":{"search":{"pair":"deep/high","size":"large"},"corrective":{"pair":"standard/high","size":"small"}}}' > "$ZD/global.json"
 zpick() { ORCHESTRATOR_STATE_DIR="$ZS" ORCHESTRATOR_ROUTING_DEFAULTS="$ZD" python3 "$ROUTING" pick --repo "$T/laravel" "$@"; }
-check "a small phase takes the project's entry measured on small work" $'pair=a-model/low source=project:laravel size=small\nnbis=a-model/medium' \
+check "a small phase takes the project's entry measured on small work" $'pair=a-model/low source=project:laravel size=small\ncorrective=a-model/medium' \
   "$(zpick --class behaviour-phase --files 2 --lines 40)"
 check "3 files and 50 lines, and nothing at all, are still a small phase" "size=small|size=small" \
   "$(zpick --class behaviour-phase --files 3 --lines 50 | grep -o 'size=[a-z]*')|$(zpick --class behaviour-phase --files 0 --lines 0 | grep -o 'size=[a-z]*')"
-check "a large phase by its files skips an entry measured on small work and says which scope" $'pair=b-model/low source=profile:php/laravel-app size=large beyond=project:laravel\nnbis=b-model/medium' \
+check "a large phase by its files skips an entry measured on small work and says which scope" $'pair=b-model/low source=profile:php/laravel-app size=large beyond=project:laravel\ncorrective=b-model/medium' \
   "$(zpick --class behaviour-phase --files 4 --lines 10)"
-check "a large phase by its lines falls through the same way" $'pair=b-model/low source=profile:php/laravel-app size=large beyond=project:laravel\nnbis=b-model/medium' \
+check "a large phase by its lines falls through the same way" $'pair=b-model/low source=profile:php/laravel-app size=large beyond=project:laravel\ncorrective=b-model/medium' \
   "$(zpick --class behaviour-phase --files 1 --lines 51)"
-check "without the options pick reads no size: the project's entry, no size= and no beyond=" $'pair=a-model/low source=project:laravel\nnbis=a-model/medium' \
+check "without the options pick reads no size: the project's entry, no size= and no beyond=" $'pair=a-model/low source=project:laravel\ncorrective=a-model/medium' \
   "$(zpick --class behaviour-phase)"
-check "a table written before the stamp reads as unknown size: skipped by a large phase" $'pair=b-model/medium source=profile:php/laravel-app stale size=large beyond=project:laravel\nnbis=b-model/high' \
+check "a table written before the stamp reads as unknown size: skipped by a large phase" $'pair=b-model/medium source=profile:php/laravel-app stale size=large beyond=project:laravel\ncorrective=b-model/high' \
   "$(zpick --class conversion-phase --files 9 --lines 9)"
-check "and it serves a small phase" $'pair=a-model/medium source=project:laravel size=small\nnbis=a-model/high' \
+check "and it serves a small phase" $'pair=a-model/medium source=project:laravel size=small\ncorrective=a-model/high' \
   "$(zpick --class conversion-phase --files 1 --lines 1)"
-check "a large phase with no entry measured on large work lands on the tier table, naming the first scope skipped" $'pair=b-model/medium source=tier-table size=large beyond=project:laravel\nnbis=b-model/high' \
+check "a large phase with no entry measured on large work lands on the tier table, naming the first scope skipped" $'pair=b-model/medium source=tier-table size=large beyond=project:laravel\ncorrective=b-model/high' \
   "$(zpick --class review-lens --files 9 --lines 9)"
-check "a project entry measured on large work serves a large phase, nothing skipped" $'pair=a-model/high source=project:laravel stale size=large\nnbis=a-model/xhigh' \
+check "a project entry measured on large work serves a large phase, nothing skipped" $'pair=a-model/high source=project:laravel stale size=large\ncorrective=a-model/xhigh' \
   "$(zpick --class comments --files 9 --lines 9)"
 check "a shipped entry measured on large work serves a large phase through the map, a shipped tier the map does not bind never being a beyond" \
-  $'pair=a-model/high source=shipped:global size=large\nnbis=a-model/xhigh' "$(zpick --class search --files 9 --lines 9)"
-check "a shipped entry measured on small work is skipped by a large phase, the first one named" $'pair=b-model/medium source=tier-table size=large beyond=shipped:profile:php/laravel-app\nnbis=b-model/high' \
-  "$(zpick --class n-bis --files 9 --lines 9)"
-check "and serves a small phase" $'pair=b-model/low source=shipped:profile:php/laravel-app size=small\nnbis=b-model/medium' \
-  "$(zpick --class n-bis --files 1 --lines 1)"
-check "the explore line keeps its place when the phase is sized" $'pair=a-model/low source=project:laravel size=small\nexplore=b-model/low\nnbis=a-model/medium' \
+  $'pair=a-model/high source=shipped:global size=large\ncorrective=a-model/xhigh' "$(zpick --class search --files 9 --lines 9)"
+check "a shipped entry measured on small work is skipped by a large phase, the first one named" $'pair=b-model/medium source=tier-table size=large beyond=shipped:profile:php/laravel-app\ncorrective=b-model/high' \
+  "$(zpick --class corrective --files 9 --lines 9)"
+check "and serves a small phase" $'pair=b-model/low source=shipped:profile:php/laravel-app size=small\ncorrective=b-model/medium' \
+  "$(zpick --class corrective --files 1 --lines 1)"
+# A table written before the corrective class was renamed keys it `n-bis`: read as `corrective`,
+# the current key winning when a table holds both; the former name on the command line too.
+LS="$WORK/lstate"; mkdir -p "$LS/routing/tables" "$LS/routing/projects/laravel"
+cp "$PS/models.json" "$LS/models.json"; cp "$PS/routing/projects/laravel/manifest.json" "$LS/routing/projects/laravel/manifest.json"
+lpick() { ORCHESTRATOR_STATE_DIR="$LS" ORCHESTRATOR_ROUTING_DEFAULTS="$DEF" python3 "$ROUTING" pick --repo "$T/laravel" "$@"; }
+printf '{"scope":"project:laravel","entries":{"n-bis":{"pair":"a-model/low"}}}' > "$LS/routing/tables/project-laravel.json"
+check "a table keying the class n-bis, its former name, serves corrective" $'pair=a-model/low source=project:laravel\ncorrective=a-model/medium' \
+  "$(lpick --class corrective)"
+check "the former name on the command line picks the same pair" $'pair=a-model/low source=project:laravel\ncorrective=a-model/medium' \
+  "$(lpick --class n-bis)"
+printf '{"scope":"project:laravel","entries":{"n-bis":{"pair":"a-model/low"},"corrective":{"pair":"a-model/high"}}}' > "$LS/routing/tables/project-laravel.json"
+check "a table holding both names reads the current one" "pair=a-model/high source=project:laravel" "$(lpick --class corrective | sed -n 1p)"
+check "the explore line keeps its place when the phase is sized" $'pair=a-model/low source=project:laravel size=small\nexplore=b-model/low\ncorrective=a-model/medium' \
   "$(zpick --class behaviour-phase --files 2 --lines 40 --record "$ER")"
 check "--files without --lines is a refusal that says they go together" "exit 1|ERROR: pick: --files and --lines go together" \
   "$(zpick --class behaviour-phase --files 3 >/dev/null 2>&1; echo "exit $?")|$(zpick --class behaviour-phase --files 3 2>&1)"
@@ -10139,24 +10158,30 @@ check "the operator's config sets the selection" "class=behaviour-phase pair=c-m
   "$(rcal demo 2>/dev/null | grep '^class=behaviour-phase' | cut -d' ' -f1-2)"
 rm "$CS/routing/config.json"
 # A class with no bench task: fewer than six trials covers no pair.
-: > "$TR"; for i in 1 2 3; do trial n-bis c-model/low pass 0.01 ""; done
-check "fewer than six trials is never eligible" "class=n-bis no eligible pair (no covered pair)" "$(rcal demo)"
+: > "$TR"; for i in 1 2 3; do trial corrective c-model/low pass 0.01 ""; done
+check "fewer than six trials is never eligible" "class=corrective no eligible pair (no covered pair)" "$(rcal demo)"
 check "and the class gets no entry" "0" "$(jq '.entries|length' "$CS/routing/tables/project-demo.json")"
 # Record rows count as trials: closed in one round and not escaped is a pass.
 RR="$WORK/calrec.jsonl"; : > "$RR"
-for i in 1 2 3 4 5 6; do printf '{"id":%d,"class":"n-bis","model":"c-model","effort":"low","rounds":1,"state":"closed","cost_usd":0.02,"sessions":["s"],"cost_incomplete":false}\n' "$i" >> "$RR"; done
+for i in 1 2 3 4 5 6; do printf '{"id":%d,"class":"corrective","model":"c-model","effort":"low","rounds":1,"state":"closed","cost_usd":0.02,"sessions":["s"],"cost_incomplete":false}\n' "$i" >> "$RR"; done
 # Left out: an open row, a row with no measured cost, an incomplete cost, a tier row, a row with no effort.
-printf '{"id":7,"class":"n-bis","model":"c-model","effort":"low","rounds":0,"state":"open","cost_usd":0,"sessions":[],"cost_incomplete":false}\n' >> "$RR"
-printf '{"id":8,"class":"n-bis","model":"c-model","effort":"low","rounds":1,"state":"closed","cost_usd":0,"sessions":[],"cost_incomplete":false}\n' >> "$RR"
-printf '{"id":9,"class":"n-bis","model":"c-model","effort":"low","rounds":1,"state":"closed","cost_usd":5,"sessions":["s"],"cost_incomplete":true}\n' >> "$RR"
-printf '{"id":10,"class":"n-bis","tier":"light","rounds":1,"state":"closed"}\n' >> "$RR"
-printf '{"id":11,"class":"n-bis","model":"c-model","effort":"","rounds":1,"state":"closed","cost_usd":5,"sessions":["s"],"cost_incomplete":false}\n' >> "$RR"
-check "record rows complete the measurement" "class=n-bis pair=c-model/low pass_rate=1.0 n=9 expected_usd=0.0167 p_best=1.0 size=unknown" \
+printf '{"id":7,"class":"corrective","model":"c-model","effort":"low","rounds":0,"state":"open","cost_usd":0,"sessions":[],"cost_incomplete":false}\n' >> "$RR"
+printf '{"id":8,"class":"corrective","model":"c-model","effort":"low","rounds":1,"state":"closed","cost_usd":0,"sessions":[],"cost_incomplete":false}\n' >> "$RR"
+printf '{"id":9,"class":"corrective","model":"c-model","effort":"low","rounds":1,"state":"closed","cost_usd":5,"sessions":["s"],"cost_incomplete":true}\n' >> "$RR"
+printf '{"id":10,"class":"corrective","tier":"light","rounds":1,"state":"closed"}\n' >> "$RR"
+printf '{"id":11,"class":"corrective","model":"c-model","effort":"","rounds":1,"state":"closed","cost_usd":5,"sessions":["s"],"cost_incomplete":false}\n' >> "$RR"
+check "record rows complete the measurement" "class=corrective pair=c-model/low pass_rate=1.0 n=9 expected_usd=0.0167 p_best=1.0 size=unknown" \
   "$(rcal demo --from-record "$RR")"
-printf '{"id":12,"class":"n-bis","model":"c-model","effort":"low","rounds":2,"state":"closed","cost_usd":0.02,"sessions":["s"],"cost_incomplete":false}\n' >> "$RR"
-printf '{"id":13,"class":"n-bis","model":"c-model","effort":"low","rounds":1,"state":"closed","cost_usd":0.02,"sessions":["s"],"cost_incomplete":false,"escaped":true}\n' >> "$RR"
+# Trials and record rows written before the class was renamed name it `n-bis`: read as `corrective`.
+cp "$TR" "$WORK/trials.keep"; sed 's/"class":"corrective"/"class":"n-bis"/' "$WORK/trials.keep" > "$TR"
+sed 's/"class":"corrective"/"class":"n-bis"/' "$RR" > "$WORK/calrec-legacy.jsonl"
+check "trials and record rows naming the class n-bis, its former name, calibrate corrective" "class=corrective pair=c-model/low pass_rate=1.0 n=9 expected_usd=0.0167 p_best=1.0 size=unknown|corrective" \
+  "$(rcal demo --from-record "$WORK/calrec-legacy.jsonl")|$(jq -r '.entries|keys|join(",")' "$CS/routing/tables/project-demo.json")"
+mv "$WORK/trials.keep" "$TR"
+printf '{"id":12,"class":"corrective","model":"c-model","effort":"low","rounds":2,"state":"closed","cost_usd":0.02,"sessions":["s"],"cost_incomplete":false}\n' >> "$RR"
+printf '{"id":13,"class":"corrective","model":"c-model","effort":"low","rounds":1,"state":"closed","cost_usd":0.02,"sessions":["s"],"cost_incomplete":false,"escaped":true}\n' >> "$RR"
 # Nine passes in eleven: a posterior median of 0.78, below the bar: both rows read as failures.
-check "a corrective round or an escaped defect grades a row as a failure" "class=n-bis no eligible pair (best c-model/low weak)" \
+check "a corrective round or an escaped defect grades a row as a failure" "class=corrective no eligible pair (best c-model/low weak)" \
   "$(rcal demo --from-record "$RR")"
 : > "$TR"
 check_status "no trial and no record row is a refusal" 1 rcal demo
@@ -10907,10 +10932,10 @@ check "a task made ready again brings its trials back, and nothing is said when 
 # Every trial on a voided task: only the record rows are left to calibrate on.
 printf '{"slug":"cnt2","repo":"/nonexistent","profile":"x/y","tasks":[{"id":"t1","status":"void"}]}' > "$WORK/cnt2.json"
 mkdir -p "$QS/routing/projects/cnt2"; cp "$WORK/cnt2.json" "$QS/routing/projects/cnt2/manifest.json"
-for i in 1 2 3; do printf '{"task":"t1","class":"n-bis","pair":"c-model/low","rep":1,"models":{"c-model-1":0.1},"cost_usd":0.1,"status":"pass"}\n' >> "$QS/routing/projects/cnt2/trials.jsonl"; done
+for i in 1 2 3; do printf '{"task":"t1","class":"corrective","pair":"c-model/low","rep":1,"models":{"c-model-1":0.1},"cost_usd":0.1,"status":"pass"}\n' >> "$QS/routing/projects/cnt2/trials.jsonl"; done
 RR2="$WORK/cnt-rec.jsonl"; : > "$RR2"
-for i in 1 2 3 4 5 6; do printf '{"id":%d,"class":"n-bis","model":"c-model","effort":"low","rounds":1,"state":"closed","cost_usd":0.02,"sessions":["s"],"cost_incomplete":false}\n' "$i" >> "$RR2"; done
-check "trials all left out, the record rows still calibrate" "class=n-bis pair=c-model/low pass_rate=1.0 n=6 expected_usd=0.02 p_best=1.0 size=unknown" \
+for i in 1 2 3 4 5 6; do printf '{"id":%d,"class":"corrective","model":"c-model","effort":"low","rounds":1,"state":"closed","cost_usd":0.02,"sessions":["s"],"cost_incomplete":false}\n' "$i" >> "$RR2"; done
+check "trials all left out, the record rows still calibrate" "class=corrective pair=c-model/low pass_rate=1.0 n=6 expected_usd=0.02 p_best=1.0 size=unknown" \
   "$(ORCHESTRATOR_STATE_DIR="$QS" python3 "$ROUTING" calibrate cnt2 --from-record "$RR2" 2>/dev/null)"
 check_status "and with no record row either, calibrate has nothing to read" 1 env ORCHESTRATOR_STATE_DIR="$QS" python3 "$ROUTING" calibrate cnt2
 # Every trial left out and no record row either: the table those trials built goes with them, or
@@ -11037,7 +11062,7 @@ out=$(rg generalize)
 check "projects of unknown language get no profile table, and still count globally" "no|global projects=5 classes=2" \
   "$([ -f "$GS/routing/tables/profile-unknown-library.json" ] && echo yes || echo no)|$(printf '%s\n' "$out" | grep '^global')"
 UT="$WORK/unknown-tree"; mkdir -p "$UT"
-check "a third project of unknown language is served by the global table" $'pair=c-model/low source=global\nnbis=c-model/medium' \
+check "a third project of unknown language is served by the global table" $'pair=c-model/low source=global\ncorrective=c-model/medium' \
   "$(ORCHESTRATOR_STATE_DIR="$GS" ORCHESTRATOR_ROUTING_DEFAULTS="$WORK/no-defaults" python3 "$ROUTING" pick --repo "$UT" --class search)"
 
 # One weak trial does not hold a pair back: r3 has a single failed trial of c-model/medium.
@@ -11059,7 +11084,7 @@ printf '{"deep":"a-model","standard":"b-model","light":"c-model"}' > "$XS/models
 printf '{"scope":"global","entries":{"behaviour-phase":{"pair":"standard/high","floor":0.9,"n":6,"pass_rate":1.0,"ladder":[{"pair":"light/high","n":6,"pass_rate":0.5,"eligible":false},{"pair":"standard/high","n":6,"pass_rate":1.0,"eligible":true}]}}}' > "$XD/global.json"
 for i in 1 2 3; do printf '{"id":%d,"class":"behaviour-phase","model":"b-model","effort":"high","rounds":1,"state":"closed"}\n' "$i"; done > "$WORK/x.jsonl"
 xpick() { ORCHESTRATOR_STATE_DIR="$XS" ORCHESTRATOR_ROUTING_DEFAULTS="$XD" python3 "$ROUTING" pick --repo "$UT" --class behaviour-phase --record "$WORK/x.jsonl"; }
-check "a shipped rung measured below the floor, read through the map, is no notch" $'pair=b-model/high source=shipped:global\nnbis=b-model/xhigh' "$(xpick)"
+check "a shipped rung measured below the floor, read through the map, is no notch" $'pair=b-model/high source=shipped:global\ncorrective=b-model/xhigh' "$(xpick)"
 printf '{"deep":"a-model","standard":"b-model"}' > "$XS/models.json"
 check "a shipped rung on an unbound tier is skipped: the effort notch stands" "explore=b-model/medium" "$(xpick | sed -n 2p)"
 
@@ -11117,13 +11142,13 @@ check "the routing skill leaves the notch to pick, and names no floor" "yes|no|n
   "$(spells "$MR" 'allows a try one notch below')|$(spells "$MR" 'measured and found not equivalent to the best')|$(spells "$MR" 'measured below the floor')"
 check "the skill passes the phase's size to pick: both options, and the two thresholds of the readings" "yes|yes|yes|yes" \
   "$(spells "$MR" '--files')|$(spells "$MR" '--lines')|$(spells "$MR" 'files > 3')|$(spells "$MR" 'lines > 50')"
-check "the skill says what beyond= means for the brief, and that a correction round runs at nbis=" "yes|yes|yes" \
-  "$(spells "$MR" 'size=large beyond=<scope>')|$(spells "$MR" 'nbis=')|$(spells "$MR" '--class n-bis')"
-check "the skill says an n-bis call's own pair is the round's, not its nbis= line" "yes" "$(spells "$MR" "its \`nbis=\` line is not read")"
+check "the skill says what beyond= means for the brief, and that a correction round runs at corrective=" "yes|yes|yes" \
+  "$(spells "$MR" 'size=large beyond=<scope>')|$(spells "$MR" 'corrective=')|$(spells "$MR" '--class corrective')"
+check "the skill says a corrective call's own pair is the round's, not its corrective= line" "yes" "$(spells "$MR" "its \`corrective=\` line is not read")"
 check "the skill puts a search exploration, summary in the brief, before a phase beyond every measured size" "yes|yes" \
   "$(spells "$MR" 'beyond every measured size')|$(carries "$MR" 'read-only search exploration')"
 check "the calibration reference states pick's options and its lines" "yes|yes|yes" \
-  "$(spells "$MRC" '--files <n> --lines <n>')|$(spells "$MRC" 'size=large beyond=<scope>')|$(spells "$MRC" 'nbis=<pair>')"
+  "$(spells "$MRC" '--files <n> --lines <n>')|$(spells "$MRC" 'size=large beyond=<scope>')|$(spells "$MRC" 'corrective=<pair>')"
 check "the calibration reference says ready runs the merged commit's tests, what void is for, and that a table counts only ready tasks" "yes|yes|yes|yes|yes" \
   "$(spells "$MRC" '`ready` proves each task passable before it is benched')|$(spells "$MRC" '`void <slug> <task-id>... --reason <text>`')|$(spells "$MRC" 'whose tests assert behaviour the brief never')|$(spells "$MRC" '**Ready tasks only.**')|$(spells "$MRC" 'excluded <n> trial(s) of task(s) not ready: <ids>')"
 check "the dispatch log holds the correction round's notch and the size rule" "yes|yes" \
