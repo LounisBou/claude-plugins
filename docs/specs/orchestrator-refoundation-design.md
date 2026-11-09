@@ -56,7 +56,8 @@ reading, the coordinator's collision lines, the permission-mode allowlist, the l
 write. The operator keeps using the former repository's plugin meanwhile: each urgent fix
 merged there is imported here the same day (`git diff <last imported> <merged> --binary | git apply
 --index --directory=plugins/orchestrator`), and this build runs alongside, a conflict resolved at
-the import.
+the import. The last import is the former repository's `9b7da58` (its 0.98.3
+suite check), claude-plugins#53.
 
 Defects this build owns (line numbers at 0.98.0, relative to `plugins/orchestrator/`):
 
@@ -69,6 +70,29 @@ Defects this build owns (line numbers at 0.98.0, relative to `plugins/orchestrat
 - Suspected, to confirm or drop with a reading: lost updates on round entries between the
   pane answer and a withdrawal; `close` by a recycled tty; ignored files outside the
   `workspace.sh delete` guard; handlers past the host's budget.
+
+## State on main (2026-11-09)
+
+Read from the code at orchestrator 0.99.3. Pull requests are this repository's.
+
+| Goal | State | Evidence | Open, and why |
+|---|---|---|---|
+| 1 | met | the hooks' store on core (`core/store.ts`, `store-io.ts`); `deck.json` (version 3) a view held byte for byte by `hooks/tests/golden-deck.ts`, written only when it differs or is a minute old (#66, #70) | `round/` and `chains/` sit outside `store/`, written under the store's lock convention |
+| 2 | met, with its transition | `declare_wait` (`hooks/wait.ts`), taught in place of the last line (#57, #60) | the stop gate still reads the last line of a turn that declared nothing (`stop-gate.ts`), as « Constraints » allows; removing it is the transition's end |
+| 3 | partly met | ported to TypeScript: `ci-watch`, `dispatch-record`, `rhythm`, `workspace`, `short-commands`, `succession` and the coordinator's record, round and sleep commands (#43, #45, #46, #48, #50, #56, #58, #63, #69) | eight hook files are under the strict check; `supervision.ts`, `stop-gate.ts`, `guards.ts`, `moving.ts`, `wait.ts` and others are not. Bash with logic remains in `coordinator.sh`, `brief-lint.sh`, `install.sh`; Python with logic in `iterm_agent.py` (not a thin adapter), `goals.py`, `draft_guard.py`, `routing.py`, `calibration.py` |
+| 4 | met in code | `hooks/move.ts`, `hooks/moving.ts` on core's store; the dispatch record kept outside the briefs directory travels; the source is cleaned once the target acknowledged it (#59, #76, #80, #81) | proved over a simulated pair of machines (`hooks/tests/move-e2e.test.ts`); no run between two real machines is recorded |
+| 5 | met | no push guard in `hooks/guards.ts`; force-push held by github's `/github:protect` (#72) | — |
+| 6 | met | `withDeadline` cancels through an `AbortSignal` (`stop-gate.ts`); temporary files older than `STALE_MS` swept (#55, #70) | — |
+| 7 | partly met | the suite blocks on Linux, as root and as a normal user (#65) | on macOS the suite stops at a bash 3.2 parse error (`tests/run-tests.sh:237`); macOS joins `ci/plugins.json` once it is green there |
+| 8 | partly met | ten principles, no dated quotation, on `method:lifecycle` (#67); `npm run context`: 1,960 tokens at a `build` start, 1,290 at an `investigate` start | no principle has been tested by ablation |
+| 9 | not met | the harness, cases and caps (`evals/outcome/`, `npm run outcome`; #42, #47, #49) | no pilot or measure has run; paid runs are the operator's, under `evals/outcome/caps.json` |
+| 10 | partly met | the calibration engine moved to `calibration.py` (#68); one price table, `routing/prices.json` in the state directory; the cost rule is data in `hooks/usage.ts`; `bench --max-usd` reserves the worst case before each run (#44, #62) | `routing.py` still holds `profile` and `pick` beside the cost rule |
+| 11 | met | « Your mode » in `skills/orchestrator/SKILL.md`: `build` loads `method:lifecycle`, `investigate` does not; both starts are scenarios of `ci/scenarios.json` (#74, #75) | — |
+| 12 | met | `succession.sh live` generates the brief from the state, its notes capped and promoted or dropped; `succession.sh check` refuses a brief that misses an open item, and the launcher runs it (#71) | — |
+| 13 | met | the measure file's `start` (the first figure, the brief and its size; `hooks/gauge-core.ts`) (#61, #71) | — |
+
+Phases 1, 2, 4, 5, 10 and 11 are done; 3, 6, 8 and 9 are partly done, for the reasons above; 7
+waits on the operator's paid runs.
 
 ## Constraints
 
