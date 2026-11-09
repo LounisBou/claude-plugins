@@ -4288,28 +4288,71 @@ def directory_is_trusted(path):
     return bool(entry.get("hasTrustDialogAccepted"))
 
 
-def grant_directory_trust(path):
+# The copy of the record kept beside it before a change, replaced by each change.
+TRUST_BACKUP_SUFFIX = ".orchestrator-bak"
+
+
+def grant_directory_trust(path, what="spawn"):
     """Record the trust the operator would otherwise be asked for, for ONE directory.
 
     Only ever for a checkout the orchestrator prepared itself, which is why it takes an
     explicit flag: preparing the environment is the orchestrator's housekeeping, and
-    granting trust to a tree it did not prepare is not."""
+    granting trust to a tree it did not prepare is not.
+
+    The record is the operator's (docs/conventions.md): changed under its lock, the record it
+    replaces kept beside it, in one rename, and only for the key this adds."""
     real = os.path.realpath(path)
     try:
-        with open(TRUST_FILE) as fh:
-            data = json.load(fh)
-    except FileNotFoundError:
-        data = {}
-    except Exception as exc:
-        die("spawn: cannot read %s to grant trust: %s" % (TRUST_FILE, exc))
-    projects = data.setdefault("projects", {})
-    entry = projects.setdefault(real, {})
-    entry["hasTrustDialogAccepted"] = True
-    tmp = TRUST_FILE + ".orchestrator-tmp"
-    with open(tmp, "w") as fh:
-        json.dump(data, fh, indent=2)
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, TRUST_FILE)
+        with path_lock(TRUST_FILE):
+            try:
+                with open(TRUST_FILE, "rb") as fh:
+                    kept = fh.read()
+                data = json.loads(kept)
+            except FileNotFoundError:
+                kept, data = None, {}
+            except Exception as exc:
+                die("%s: cannot read %s to grant trust: %s" % (what, TRUST_FILE, exc))
+            projects = data.setdefault("projects", {})
+            entry = projects.setdefault(real, {})
+            entry["hasTrustDialogAccepted"] = True
+            if kept is not None:
+                fd = os.open(TRUST_FILE + TRUST_BACKUP_SUFFIX,
+                             os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+                with os.fdopen(fd, "wb") as fh:
+                    fh.write(kept)
+                os.chmod(TRUST_FILE + TRUST_BACKUP_SUFFIX, 0o600)
+            tmp = TRUST_FILE + ".orchestrator-tmp"
+            with open(tmp, "w") as fh:
+                json.dump(data, fh, indent=2)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, TRUST_FILE)
+    except RuntimeError as exc:
+        die("%s: cannot record trust for %s: %s" % (what, real, exc))
+
+
+def settle_trust(path, grant, what):
+    """What the host's trust record says of `path`, for a launch that must not stop on the
+    workspace question: `already`, `recorded` (granted, for a directory the caller prepared),
+    `unread` (the record cannot be read, said on stderr), else a refusal. `what` names the
+    command in the lines it prints. The one ladder every launch into a directory climbs."""
+    trusted = directory_is_trusted(path)
+    if trusted is True:
+        # Never rewrite a record that already says yes: the host writes this file too, and
+        # a rewrite for nothing is a window in which one of the two loses an entry.
+        return "already"
+    if grant:
+        grant_directory_trust(path, what)
+        return "recorded"
+    real = os.path.realpath(path)
+    if trusted is None:
+        # A gate that cannot measure lets the launch through AND says so (§31).
+        print("%s: the trust record %s cannot be read, so whether the host trusts %s is "
+              "unknown; launching anyway. Pass --trust for a directory you prepared, or open "
+              "the directory once yourself." % (what, TRUST_FILE, real), file=sys.stderr)
+        return "unread"
+    die("%s: the host has not been told to trust %s, so the session would stop on its "
+        "workspace question and never read its prompt. Pass --trust for a directory you "
+        "prepared, or open the directory once yourself." % (what, real))
 
 
 def anchor_after_probe(found, anchor, own):
@@ -4820,25 +4863,7 @@ def cmd_spawn(argv, pair_from=""):
     # question must leave nothing behind — a prompt file written ahead of it survived every
     # refusal and piled up under the state directory's prompts/ for a directory that was
     # never launched into.
-    trusted = directory_is_trusted(args.dir)
-    if trusted is True:
-        # Never rewrite a record that already says yes: the host writes this file too, and
-        # a rewrite for nothing is a window in which one of the two loses an entry.
-        trust_state = "already"
-    elif args.trust:
-        grant_directory_trust(args.dir)
-        trust_state = "recorded"
-    elif trusted is None:
-        # A gate that cannot measure lets the launch through AND says so (§31).
-        trust_state = "unread"
-        print("spawn: the trust record %s cannot be read, so whether the host trusts %s is "
-              "unknown; launching anyway. Pass --trust for a checkout you prepared, or open "
-              "the directory once yourself." % (TRUST_FILE, os.path.realpath(args.dir)),
-              file=sys.stderr)
-    else:
-        die("spawn: the host has not been told to trust %s, so the session would stop on "
-            "its workspace question and never read its brief. Pass --trust for a checkout "
-            "you prepared, or open the directory once yourself." % os.path.realpath(args.dir))
+    trust_state = settle_trust(args.dir, args.trust, "spawn")
 
     # After the trust check and before the prompt file, in the order a refusal wants: the
     # catalogue and the names are read first, so a refusal on either leaves no file behind.
@@ -5050,25 +5075,6 @@ def bench_server(bench, socket, what):
     return path
 
 
-def require_trust(path, grant, what):
-    """What the host's trust record says of `path`, for a launch that must not stop on the
-    workspace question: `already`, `recorded` (granted, for a directory the caller made),
-    `unread` (the record cannot be read, said on stderr), else a refusal."""
-    trusted = directory_is_trusted(path)
-    if trusted is True:
-        return "already"
-    if grant:
-        grant_directory_trust(path)
-        return "recorded"
-    if trusted is None:
-        print("%s: the trust record %s cannot be read, so whether the host trusts %s is "
-              "unknown; launching anyway" % (what, TRUST_FILE, path), file=sys.stderr)
-        return "unread"
-    die("%s: refused: the host has not been told to trust %s, so the session would stop on "
-        "its workspace question and never read its prompt. Pass --trust for a directory the "
-        "caller made" % (what, path))
-
-
 def cmd_bench_open(argv):
     """Open an orchestrator on a bench: its home server on a socket inside the bench, the
     orchestrator in window 0, no tab, no remote control, the plugin directories and the
@@ -5134,11 +5140,23 @@ def cmd_bench_open(argv):
     catalogue = read_catalogue()
     servers = select_servers(args.mcp, catalogue)
 
+    # The trust question is asked before any file is written, as for a spawn: a refusal leaves
+    # nothing behind. A dry run touches nothing, and names the files a real opening would write.
+    if not DRY_RUN:
+        trust_state = settle_trust(work, args.trust, "bench-open")
+    mcp_file = ""
+    if servers:
+        mcp_file = (state_file_path("mcp", title, "json") if DRY_RUN
+                    else write_mcp_file(servers, catalogue, title))
+    prompt_file = args.prompt_file
+    if not prompt_file:
+        prompt_file = (state_file_path("prompt", title, "txt") if DRY_RUN
+                       else write_prompt_file(args.prompt, title))
+    launch = build_command(work, title, args.model, args.mode, prompt_file, "", mcp_file, False,
+                           0, args.effort, (), (), False, ("--session-id", session),
+                           args.plugin_dir, None, "", "", extra)
+
     if DRY_RUN:
-        launch = build_command(work, title, args.model, args.mode, args.prompt_file or
-                               state_file_path("prompt", title, "txt"), "", "", False, 0,
-                               args.effort, (), (), False, ("--session-id", session),
-                               args.plugin_dir, None, "", "", extra)
         print("bench=%s" % bench)
         print("launch=%s" % launch)
         print("home_server=%s" % socket)
@@ -5151,12 +5169,6 @@ def cmd_bench_open(argv):
         print("remote_control=no")
         return
 
-    trust_state = require_trust(work, args.trust, "bench-open")
-    mcp_file = write_mcp_file(servers, catalogue, title) if servers else ""
-    prompt_file = args.prompt_file or write_prompt_file(args.prompt, title)
-    launch = build_command(work, title, args.model, args.mode, prompt_file, "", mcp_file, False,
-                           0, args.effort, (), (), False, ("--session-id", session),
-                           args.plugin_dir, None, "", "", extra)
     script = write_launch_script(launch, title)
     os.makedirs(os.path.join(bench, BENCH_TMUX), mode=0o700, exist_ok=True)
     print("bench-open: model %s, effort %s, trust %s"
