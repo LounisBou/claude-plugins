@@ -39,12 +39,10 @@ describe('outcome evals: the orchestrator transcript', () => {
     assert.equal(refused.wait, null)
   })
 
-  it('falls back on the last waiting line of a turn that declared nothing', () => {
-    assert.deepEqual(readTranscript(jsonl([prompt(), said('text\nwaiting: done')])).wait, { kind: 'done', blocks: '' })
-    assert.deepEqual(readTranscript(jsonl([prompt(), said('waiting: operator — blocks: pick one\n')])).wait, { kind: 'operator', blocks: 'pick one' })
-    assert.deepEqual(readTranscript(jsonl([prompt(), said('waiting: operator (urgent) — blocks: now')])).wait, { kind: 'operator', blocks: 'now' })
-    assert.deepEqual(readTranscript(jsonl([prompt(), said('waiting: tool — a monitor')])).wait, { kind: 'tool', blocks: 'a monitor' })
-    assert.equal(readTranscript(jsonl([prompt(), said('waiting: done is what I would say\nbut not yet')])).wait, null)
+  it('reads no wait from the wording of a last line: only a declaration decides', () => {
+    assert.equal(readTranscript(jsonl([prompt(), said('text\nwaiting: done')])).wait, null)
+    assert.equal(readTranscript(jsonl([prompt(), said('waiting: operator — blocks: pick one\n')])).wait, null)
+    assert.equal(readTranscript(jsonl([prompt(), said('waiting: tool — a monitor')])).wait, null)
     assert.equal(readTranscript(jsonl([prompt(), said('nothing to declare')])).wait, null)
   })
 

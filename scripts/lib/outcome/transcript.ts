@@ -1,7 +1,7 @@
 // The orchestrator session's transcript, read for what the harness decides on. A turn's wait is
 // the structured act `declare_wait` made in that turn (docs/conventions.md, « Guards and
-// consent »); only a turn that declared none is read on its last `waiting: …` line. The decisions
-// the orchestrator took in place of the operator are the lines it wrote as `Decision: …`.
+// consent »), never the wording of its last line. The decisions the orchestrator took in place
+// of the operator are the lines it wrote as `Decision: …`.
 import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -33,16 +33,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const isKind = (value: unknown): value is WaitKind => WAIT_KINDS.some(kind => kind === value)
 
-const WAITING_LINE = /^waiting: (operator|tool|done|deferred)(?: \(urgent\))?(?: — (?:blocks: )?(.*))?$/u
 const DECISION_LINE = /^[\s>*-]*Decision: (.+?) (?:→|->) (.+?)\s*$/u
-
-/** The wait a `waiting: …` line spells, or null. */
-function waitOfLine(line: string): Wait | null {
-  const match = WAITING_LINE.exec(line.trim())
-  const kind = match?.[1]
-  if (!isKind(kind)) return null
-  return { kind, blocks: (match?.[2] ?? '').trim() }
-}
 
 function waitOfInput(input: unknown): Wait | null {
   if (!isRecord(input) || !isKind(input['kind'])) return null
@@ -80,14 +71,12 @@ export function readTranscript(text: string): Reading {
   const decisions: string[] = []
   // The state of the turn being read: a user message that is no tool result starts the next one.
   let declared: Wait | null = null
-  let lastText = ''
   const calls = new Map<string, Wait | null>()
   for (const { type, message } of messages) {
     const blocks = blocksOf(message)
     if (type === 'user') {
       if (!blocks.some(block => block['type'] === 'tool_result')) {
         declared = null
-        lastText = ''
         calls.clear()
         continue
       }
@@ -100,7 +89,6 @@ export function readTranscript(text: string): Reading {
     }
     for (const block of blocks) {
       if (block['type'] === 'text' && typeof block['text'] === 'string') {
-        lastText = block['text']
         for (const line of block['text'].split('\n')) {
           const match = DECISION_LINE.exec(line)
           const decision = match === null ? null : `${match[1]} → ${match[2]}`
@@ -115,9 +103,7 @@ export function readTranscript(text: string): Reading {
   }
   const last = messages.at(-1)
   const idle = last?.type === 'assistant' && last.message['stop_reason'] === 'end_turn'
-  const lines = lastText.split('\n').filter(line => line.trim() !== '')
-  const written = lines.length === 0 ? null : waitOfLine(lines[lines.length - 1] ?? '')
-  const wait = declared ?? (messages.length === 0 ? null : written)
+  const wait = declared
   return { idle, wait, decisions, signature: `${messages.length}|${idle}|${wait?.kind ?? '-'}|${wait?.blocks ?? ''}` }
 }
 
