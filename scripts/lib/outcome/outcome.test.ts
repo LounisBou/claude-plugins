@@ -217,6 +217,16 @@ describe('outcome evals: an orchestration driven as a session', () => {
     assert.equal(single?.grades?.notes.includes('no commit in the graded checkout'), false)
   })
 
+  it('does not grade an orchestration its driver could not grade, and says why', async () => {
+    const report = await evaluate(fixture(), { agent: driven({ agentsOpened: 0, decisions: [], askedOperator: null, notGraded: 'the orchestrator did not start' }) })
+    const result = report.cases[0]?.arms[1]
+    assert.equal(result?.status, 'not-graded')
+    assert.equal(result?.reason, 'not graded: the orchestrator did not start')
+    assert.equal(result?.grades, null)
+    const failed = await evaluate(fixture(), { agent: driven({ agentsOpened: 2, decisions: [], askedOperator: null, notGraded: 'the meter cannot see the bench' }, { error: 'could not close the home: x' }) })
+    assert.equal(failed.cases[0]?.arms[1]?.reason, 'not graded: the meter cannot see the bench (could not close the home: x)')
+  })
+
   it('ends on the question it put to the operator, and grades what it left', async () => {
     const asked = { agentsOpened: 1, decisions: [], askedOperator: 'merge or wait?' }
     const result = (await evaluate(fixture(), { agent: driven(asked) })).cases[0]?.arms[1]

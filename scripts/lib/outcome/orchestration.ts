@@ -21,6 +21,8 @@ const SUBJECT_MAX = 25
 const OPEN_MS = 240_000
 const CLOSE_MS = 120_000
 const PANES_MS = 15_000
+/** An orchestrator that has neither declared a wait nor opened an agent by then has not started. */
+export const STARTUP_MS = 10 * 60_000
 /** Failed reads of the home in a row that end the arm: one alone may be a slow or busy server. */
 const PANES_FAILURES_MAX = 3
 
@@ -195,6 +197,8 @@ export interface OrchestrationOptions {
   readonly transcript: (session: string) => string | null
   /** How often the home and the transcript are read. */
   readonly pollMs: number
+  /** The clock the arm's bounded waits are read on. */
+  readonly now?: () => number
 }
 
 /** The launcher's answer to a close of a home that is not running. */
@@ -217,6 +221,7 @@ const messageOf = (error: unknown): string => (error instanceof Error ? error.me
 /** The orchestration arm: one interactive orchestrator session in a detached home, closed whatever happens. */
 export function orchestrationAgent(options: OrchestrationOptions): Agent {
   const { launcher, bench } = options
+  const now = options.now ?? Date.now
   return {
     async run({ case: task, dir, prompt, signal }): Promise<AgentRun> {
       let home: BenchHome
@@ -243,9 +248,12 @@ export function orchestrationAgent(options: OrchestrationOptions): Agent {
         return { costUsd: null, error: problems.join('; ') }
       }
 
+      const opened = now()
       const agents = new Set<string>()
       let decisions: readonly string[] = []
       let askedOperator: string | null = null
+      let notGraded: string | undefined
+      let declared = false
       let problem: string | null = null
       // A read of the home that fails is told from one that finds it gone, and neither ends the arm alone.
       const readPanes = (): Promise<Pane[] | null | Error> => launcher.panes(bench, home.socket).catch((error: unknown) => new Error(messageOf(error)))
@@ -265,6 +273,7 @@ export function orchestrationAgent(options: OrchestrationOptions): Agent {
           const text = options.transcript(home.session)
           const reading = text === null ? null : readTranscript(text)
           if (reading !== null) decisions = reading.decisions
+          if (reading !== null && reading.wait !== null) declared = true
           const kind = reading?.idle === true ? reading.wait?.kind : undefined
           if (reading !== null && (kind === 'done' || kind === 'operator')) {
             if (previous === reading.signature) {
@@ -274,6 +283,10 @@ export function orchestrationAgent(options: OrchestrationOptions): Agent {
             previous = reading.signature
           } else {
             previous = null
+          }
+          if (!declared && agents.size === 0 && now() - opened >= STARTUP_MS) {
+            notGraded = 'the orchestrator did not start'
+            break
           }
           if (failures >= PANES_FAILURES_MAX) {
             problem = panes instanceof Error ? `the orchestration could not be followed: ${panes.message}` : 'the orchestrator’s home ended before the orchestration was over'
@@ -296,7 +309,7 @@ export function orchestrationAgent(options: OrchestrationOptions): Agent {
           problem = [problem, `could not close the home: ${messageOf(error)}`].filter(part => part !== null).join('; ')
         }
       }
-      const orchestration: OrchestrationRun = { agentsOpened: agents.size, decisions, askedOperator }
+      const orchestration: OrchestrationRun = { agentsOpened: agents.size, decisions, askedOperator, ...(notGraded === undefined ? {} : { notGraded }) }
       return { costUsd: null, error: problem, orchestration }
     },
   }

@@ -18,6 +18,8 @@ export interface OrchestrationRun {
   readonly decisions: readonly string[]
   /** The question of the turn that ended waiting on the operator, or null. */
   readonly askedOperator: string | null
+  /** Why the driver ended the arm with nothing to grade; absent when it has something. */
+  readonly notGraded?: string
 }
 
 export interface AgentRun {
@@ -218,6 +220,7 @@ interface Worked {
 }
 
 /**
+ * An orchestration its driver could not grade is not graded, an error of its close said beside.
  * An orchestration that opened no agent measured a single session: it is not graded, whatever
  * stopped it. One that ended on a question for the operator is stopped there, and graded on
  * what it left. An error or a cancellation stays what it is.
@@ -225,7 +228,12 @@ interface Worked {
 function asOrchestration(worked: Worked, orchestration: OrchestrationRun | undefined): Worked {
   if (orchestration === undefined) return worked
   const kept = { ...worked, orchestration }
-  if (worked.status === 'error' || worked.status === 'cancelled') return kept
+  if (worked.status === 'cancelled') return kept
+  if (orchestration.notGraded !== undefined) {
+    const error = worked.status === 'error' ? ` (${worked.reason ?? ''})` : ''
+    return { ...kept, status: 'not-graded', reason: `not graded: ${orchestration.notGraded}${error}` }
+  }
+  if (worked.status === 'error') return kept
   if (orchestration.agentsOpened === 0) {
     return { ...kept, status: 'not-graded', reason: `not graded: no agent opened${worked.reason === null ? '' : ` (${worked.reason})`}` }
   }

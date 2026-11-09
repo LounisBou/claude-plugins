@@ -13,6 +13,7 @@ import {
   benchTitle,
   NO_OPERATOR,
   orchestrationAgent,
+  STARTUP_MS,
   startupPrompt,
   type BenchHome,
   type Launcher,
@@ -73,9 +74,10 @@ function fakeLauncher(script: { panes?: (poll: number) => Pane[] | null; open?: 
   return fake
 }
 
-function agent(launcher: Launcher, transcript: (poll: number) => string | null) {
+function agent(launcher: Launcher, transcript: (poll: number) => string | null, now?: () => number) {
   let poll = 0
   return orchestrationAgent({
+    ...(now === undefined ? {} : { now }),
     bench: BENCH,
     model: 'm',
     orchestratorDir: '/o',
@@ -235,6 +237,26 @@ describe('outcome evals: deciding the orchestration is over', () => {
     const throwing = fakeLauncher({ panes: () => { throw new Error('tmux timed out') } })
     const failed = await agent(throwing, () => jsonl([prompt(), said('Working.')])).run(input())
     assert.match(failed.error ?? '', /could not be followed: tmux timed out/)
+  })
+
+  it('ends an orchestrator that never declared a wait nor opened an agent, as not graded', async () => {
+    const minutes = (): (() => number) => {
+      let calls = 0
+      return () => calls++ * 60_000
+    }
+    const launcher = fakeLauncher()
+    let last = 0
+    const run = await agent(launcher, poll => (last = poll, jsonl([prompt(), said('Unknown skill.')])), minutes()).run(input())
+    assert.equal(run.error, null)
+    assert.equal(run.orchestration?.notGraded, 'the orchestrator did not start')
+    assert.ok(last >= STARTUP_MS / 60_000 - 2 && last <= STARTUP_MS / 60_000 + 1, `ended at poll ${last}`)
+    assert.ok(launcher.closed.length >= 1)
+    // one that declared a wait, or opened an agent, has started
+    const waiting = await agent(fakeLauncher(), poll => (poll < 20 ? ended('tool', 'a monitor') : ended('done')), minutes()).run(input())
+    assert.equal(waiting.orchestration?.notGraded, undefined)
+    const spawned = fakeLauncher({ panes: () => [{ window: 0, id: '%0' }, { window: 1, id: '%1' }] })
+    const working = await agent(spawned, poll => (poll < 20 ? jsonl([prompt(), said('Working.')]) : ended('done')), minutes()).run(input())
+    assert.equal(working.orchestration?.notGraded, undefined)
   })
 
   it('closes the home even when reading the transcript fails', async () => {
