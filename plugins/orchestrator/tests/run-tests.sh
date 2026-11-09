@@ -26,7 +26,7 @@ export TMPDIR="${TMPDIR%/}"
 # it has a directory.
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")
 [ -d "${WORK}" ] || { echo "cannot create a working directory under ${TMPDIR:-/tmp}" >&2; exit 1; }
-trap 'rm -rf "$WORK"' EXIT
+trap 'rm -rf "$WORK" ${SHORTTMP:+"$SHORTTMP"}' EXIT
 
 pass=0
 fail=0
@@ -157,7 +157,7 @@ check "no vendor or product name in prose" "" "$(policy_hits)"
 # The guard proves it can still SEE one: a file planted with a violation must show up in
 # the very same function, or "no hits" proves nothing.
 PROBE="$ROOT/.policy-probe-$$.md"
-trap 'rm -rf "$WORK"; rm -f "$PROBE"' EXIT
+trap 'rm -rf "$WORK" ${SHORTTMP:+"$SHORTTMP"}; rm -f "$PROBE"' EXIT
 printf 'PRODUCT NAME IN PROSE\n' | sed 's/PRODUCT NAME/Claude/' > "$PROBE"
 seen=$(policy_hits | grep -c 'policy-probe' || true)
 rm -f "$PROBE"
@@ -7957,12 +7957,16 @@ cat > "$HR/tmux" <<'SH'
 #!/bin/bash
 d=$(dirname "$0")
 { for a in "$@"; do printf '[%s]' "$a"; done; printf '\n'; } >> "$d/calls"
+printf '%s\n' "${TMUX_TMPDIR-unset}" >> "$d/tmpdir"
 [ "$1" = -u ] && shift
 [ "$1" = -L ] && shift 2
 [ "$1" = -f ] && shift 2
 case "$1" in
   show) [ -f "$d/mark" ] && cat "$d/mark"; exit 0 ;;
-  new-session) [ -f "$d/new-err" ] && { cat "$d/new-err" >&2; exit 1; }; printf '%s\n' "${@: -1}" > "$d/window0"; exit 0 ;;
+  new-session) [ -f "$d/new-err" ] && { cat "$d/new-err" >&2; exit 1; }; printf '%s\n' "${@: -1}" > "$d/window0"
+    # The host a session starts writes its transcript: one the case staged is put in place now,
+    # after the launcher took the launch's time.
+    [ -f "$d/transcript" ] && cp "$d/transcript" "$(cat "$d/transcript-to")"; exit 0 ;;
   display-message) echo /dev/ttys960 ;;
   list-clients) [ -f "$d/clients" ] && cat "$d/clients"; exit 0 ;;
   has-session) exit 1 ;;
@@ -7984,7 +7988,7 @@ homecmd() { # the launcher's `home`, from a plain tab outside tmux unless HTMUX 
     ORCHESTRATOR_STATE_DIR="$WORK/homestate" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_LOGIN_SHELL=/bin/sh ORCHESTRATOR_HOST_CLI=/opt/x/host \
     "$@"; }
 hcalls() { sed "s#$WORK#@WORK@#g; s#$ROOT#@ROOT@#g; s#-[0-9]\{13\}\.#-@TIME@.#g" "$HR/calls" 2>/dev/null; }
-reset_homerec() { rm -f "$HR/calls" "$HR/mark" "$HR/clients" "$HR/window0" "$HR/kill-err" "$HR/panes-err" "$HR/panes"; rm -rf "$WORK/homestate"; }
+reset_homerec() { rm -f "$HR/calls" "$HR/tmpdir" "$HR/mark" "$HR/clients" "$HR/window0" "$HR/kill-err" "$HR/panes-err" "$HR/panes"; rm -rf "$WORK/homestate"; }
 
 reset_homerec
 out=$(homecmd env ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" home --session "$HSID" --name "Orch : conv" --prompt "Go on" 2>&1)
@@ -8410,6 +8414,268 @@ check "a paused orchestrator's record carries its session, and its line says it"
   "$(ORCHESTRATOR_STATE_DIR="$SLST" bash "$ROOT/skills/coordinator/scripts/coordinator.sh" sleeping | grep -c '| effort high | session abcdef12-3456-4789-8abc-def012345678$')"
 check "a session id that is not one is refused" "1" \
   "$(ORCHESTRATOR_STATE_DIR="$SLST" bash "$ROOT/skills/coordinator/scripts/coordinator.sh" sleep --name "Orch : v" --brief "$SLST/brief.md" --dir "$WORK" --model a-model --effort high --session 'x y' 2>&1 | grep -c 'refused: a session id')"
+
+echo "== iterm-agents: a bench opening, a detached orchestrator for a harness =="
+# The outcome evals' harness opens an orchestrator it drives with no operator: its home server
+# on a socket under the bench the caller names, no tab, no remote control, the plugin
+# directories and the settings it is given, and a close that ends every window of the home.
+# The recorder stands in for tmux; nothing here reaches the app.
+# A socket's address holds about a hundred bytes, and the platform's temporary directory can use
+# most of them: the bench is made under a short one, and the cases are skipped where none is.
+SHORTTMP=$(mktemp -d /tmp/ob.XXXXXX 2>/dev/null) || SHORTTMP=''
+if [ -z "$SHORTTMP" ]; then skip_case "a bench opening and its close" "no short temporary directory under /tmp"; else
+BENCH="$SHORTTMP/bench"; mkdir -p "$BENCH/clone" "$WORK/benchplug/a/.claude-plugin" "$WORK/benchplug/b/.claude-plugin"
+printf '{}\n' > "$WORK/benchplug/a/.claude-plugin/plugin.json"
+printf '{}\n' > "$WORK/benchplug/b/.claude-plugin/plugin.json"
+printf '{"enabledPlugins":{"orchestrator@lounisbou":false},"remoteControlAtStartup":true}\n' > "$BENCH/settings.json"
+BID=0badc0de-1111-4222-8333-444455556666
+benchrun() { # the launcher from a plain process: no tmux pane, no host session, the recorder for tmux
+  env -u TMUX -u TMUX_PANE -u ORCHESTRATOR_SELF_TTY -u ORCHESTRATOR_PS_TABLE -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_TMUX="$HR/tmux" \
+    ORCHESTRATOR_STATE_DIR="$WORK/benchstate" ORCHESTRATOR_LOGIN_SHELL=/bin/sh ORCHESTRATOR_HOST_CLI=/opt/x/host \
+    ORCHESTRATOR_NEW_SESSION_ID="$BID" ORCHESTRATOR_SPAWN_TIMEOUT=1 ORCHESTRATOR_CLOSE_TIMEOUT=1 ORCHESTRATOR_MODE_TIMEOUT=1 "$@" 2>&1; }
+BENCH_OPEN=(bench-open --bench "$BENCH" --dir "$BENCH/clone" --title "Orch : eval x" --plugin-dir "$WORK/benchplug/a" --plugin-dir "$WORK/benchplug/b" --settings "$BENCH/settings.json" --prompt "go" --trust)
+BENCH_REAL=$(cd "$BENCH" && pwd -P)
+
+reset_homerec
+out=$(benchrun env ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" "${BENCH_OPEN[@]}")
+check "the dry run names the server after the session, its socket under the bench, and shows no tab" \
+  "orch-0badc0de|$BENCH_REAL/tmux/tmux-$(id -u)/orch-0badc0de|none|no" \
+  "$(sfield "$out" home_server)|$(sfield "$out" socket_path)|$(sfield "$out" tab)|$(sfield "$out" remote_control)"
+launch=$(sfield "$out" launch)
+check "its launch loads the plugin directories it is given, in order, under remote control off" \
+  "1|1|0" \
+  "$(printf '%s' "$launch" | grep -c -- "--plugin-dir '*$WORK/benchplug/a'* --plugin-dir '*$WORK/benchplug/b'* ")|$(printf '%s' "$launch" | grep -c -- "'--session-id' $BID")|$(printf '%s' "$launch" | grep -c -- '--remote-control')"
+check "and the settings file's keys with the launcher's own over them" "1|1|0" \
+  "$(printf '%s' "$launch" | grep -c '"enabledPlugins":{"orchestrator@lounisbou":false}')|$(printf '%s' "$launch" | grep -c '"remoteControlAtStartup":false')|$(printf '%s' "$launch" | grep -c '"remoteControlAtStartup":true')"
+check "and the dry run touched no tmux and made no directory" "|no" "$(hcalls)|$([ -e "$BENCH/tmux" ] && echo yes || echo no)"
+
+reset_homerec
+out=$(benchrun bash "$AGENT" "${BENCH_OPEN[@]}" --no-verify)
+check "an opening starts the home server on window 0 and prints where it is" \
+  "0|orch-0badc0de|/dev/ttys960|$BID" \
+  "0|$(sfield "$out" socket)|$(sfield "$out" tty)|$(sfield "$out" session)"
+check "the server is started with the plugin's configuration, window 0 named by the title, in the clone" \
+  "[-u][-L][orch-0badc0de][-f][@ROOT@/skills/iterm-agents/tmux/home.conf][new-session][-d][-s][home][-n][Orch : eval x][-c][$BENCH_REAL/clone]" \
+  "$(hcalls | head -1 | sed 's/\]\[\/bin\/sh -l .*$/]/')"
+check "and every call goes to the server under the bench, never another" "1|$BENCH_REAL/tmux" \
+  "$(sort -u "$HR/tmpdir" | wc -l | tr -d ' ')|$(sort -u "$HR/tmpdir")"
+check "window 0 runs the launch with the session id the server is named after" "1" \
+  "$(grep -c -- "'--session-id' $BID " "$(sed 's/^\/bin\/sh -l //' "$HR/window0")")"
+
+reset_homerec
+out=$(benchrun bash "$AGENT" "${BENCH_OPEN[@]}")
+check "a host that never starts ends the server and the opening fails" "1|1|1" \
+  "$(printf '%s' "$out" | grep -c 'never started on /dev/ttys960')|$(hcalls | grep -c '\[kill-server\]')|$(printf '%s' "$out" | grep -c 'ERROR')"
+
+# The verification is the one a spawn makes: the host seen on window 0's tty, its mode read on
+# its transcript; and a transcript written in the clone since the launch is a start as well,
+# whatever the process table says. The transcript is staged for the recorder to put in place
+# when the server is made, after the launch's time was taken.
+BSESS="$WORK/projects/bench"; mkdir -p "$BSESS"
+stage_transcript() { # <mode>: the transcript the host writes once it is launched, in the clone
+  printf '{"permissionMode":"%s"}\n{"type":"user","cwd":"%s"}\n' "$1" "$BENCH_REAL/clone" > "$HR/transcript"
+  printf '%s' "$BSESS/$BID.jsonl" > "$HR/transcript-to"; rm -f "$BSESS/$BID.jsonl"
+}
+unstage_transcript() { rm -f "$HR/transcript" "$HR/transcript-to" "$BSESS/$BID.jsonl"; }
+printf '/dev/ttys960 9001 /opt/x/host --name Orch\n' > "$WORK/bench-ps-host"
+: > "$WORK/bench-ps-none"
+reset_homerec; stage_transcript auto
+out=$(benchrun env ORCHESTRATOR_PS_TABLE="$WORK/bench-ps-host" bash "$AGENT" "${BENCH_OPEN[@]}"; echo "exit=$?")
+unstage_transcript
+check "a host seen on window 0 whose mode is read is an opening, and it prints where it is" \
+  "0|1|1|orch-0badc0de|/dev/ttys960|$BID|0" \
+  "$(sfield "$out" exit)|$(printf '%s' "$out" | grep -c 'running on /dev/ttys960 (pid 9001)')|$(printf '%s' "$out" | grep -c 'mode auto read on the transcript')|$(sfield "$out" socket)|$(sfield "$out" tty)|$(sfield "$out" session)|$(hcalls | grep -c '\[kill-server\]')"
+reset_homerec; stage_transcript auto
+out=$(benchrun env ORCHESTRATOR_PS_TABLE="$WORK/bench-ps-none" bash "$AGENT" "${BENCH_OPEN[@]}"; echo "exit=$?")
+unstage_transcript
+check "a session that wrote its transcript in the clone has started, whatever the process table says" \
+  "0|1|orch-0badc0de|0" \
+  "$(sfield "$out" exit)|$(printf '%s' "$out" | grep -c 'no process on /dev/ttys960 matched .*but the session wrote .*since the launch: it started')|$(sfield "$out" socket)|$(hcalls | grep -c '\[kill-server\]')"
+
+# The guard: the socket and the directory sit under the bench the caller names.
+refused() { # <name> <expected fragment> <bench-open arguments...>: refused before any tmux call
+  local name="$1" fragment="$2"; shift 2
+  reset_homerec
+  local res; res=$(benchrun bash "$AGENT" bench-open "$@" --no-verify; echo "exit=$?")
+  check "$name" "1|1|0" \
+    "$(sfield "$res" exit)|$(printf '%s' "$res" | grep -c -- "$fragment")|$(hcalls | wc -l | tr -d ' ')"
+}
+COMMON=(--plugin-dir "$WORK/benchplug/a" --settings "$BENCH/settings.json" --prompt go --title "Orch : eval x")
+mkdir -p "$WORK/outside"; ln -sfn "$WORK/outside" "$BENCH/escape"
+refused "a directory outside the bench is refused" "must be inside the bench" --bench "$BENCH" --dir "$WORK/outside" "${COMMON[@]}"
+refused "so is the bench itself" "must be inside the bench" --bench "$BENCH" --dir "$BENCH" "${COMMON[@]}"
+refused "and a link that leads out of it" "must be inside the bench" --bench "$BENCH" --dir "$BENCH/escape" "${COMMON[@]}"
+refused "a bench that is not an absolute path" "must be an absolute path" --bench "bench" --dir "$BENCH/clone" "${COMMON[@]}"
+refused "a bench that is not a directory" "is not a directory" --bench "$WORK/nowhere" --dir "$WORK/nowhere/clone" "${COMMON[@]}"
+refused "the root as a bench" "is not a bench" --bench / --dir "$BENCH/clone" "${COMMON[@]}"
+mkdir -p "$SHORTTMP/benchlink/clone"; ln -sfn "$WORK/outside" "$SHORTTMP/benchlink/tmux"
+refused "a tmux directory that is a link out of the bench" "leads out of the bench" --bench "$SHORTTMP/benchlink" --dir "$SHORTTMP/benchlink/clone" "${COMMON[@]}"
+DEEP="$SHORTTMP/bench-$(printf 'x%.0s' $(seq 1 80))"; mkdir -p "$DEEP/clone"
+refused "a socket path longer than a socket's address" "too long" --bench "$DEEP" --dir "$DEEP/clone" "${COMMON[@]}"
+refused "an agent's title" "needs the orchestrator's name" --bench "$BENCH" --dir "$BENCH/clone" --plugin-dir "$WORK/benchplug/a" --prompt go --title "Agent : eval x"
+refused "a title that names no subject" "needs the orchestrator's name" --bench "$BENCH" --dir "$BENCH/clone" --plugin-dir "$WORK/benchplug/a" --prompt go --title "Orch : "
+refused "no plugin directory" "needs a --plugin-dir" --bench "$BENCH" --dir "$BENCH/clone" --prompt go --title "Orch : eval x"
+refused "a plugin directory that holds no plugin" "is not a plugin" --bench "$BENCH" --dir "$BENCH/clone" --plugin-dir "$WORK/outside" --prompt go --title "Orch : eval x"
+refused "a plugin directory that is not absolute" "is not an absolute" --bench "$BENCH" --dir "$BENCH/clone" --plugin-dir "benchplug/a" --prompt go --title "Orch : eval x"
+printf '[1]\n' > "$WORK/benchplug/array.json"
+refused "a settings file that is not an object" "is not a JSON object" --bench "$BENCH" --dir "$BENCH/clone" --plugin-dir "$WORK/benchplug/a" --settings "$WORK/benchplug/array.json" --prompt go --title "Orch : eval x"
+refused "a settings file that cannot be read" "cannot be read" --bench "$BENCH" --dir "$BENCH/clone" --plugin-dir "$WORK/benchplug/a" --settings "$WORK/nowhere.json" --prompt go --title "Orch : eval x"
+refused "no startup prompt" "needs a startup prompt" --bench "$BENCH" --dir "$BENCH/clone" --plugin-dir "$WORK/benchplug/a" --title "Orch : eval x"
+refused "an option it does not know, remote control among them" "unknown option --remote-control" --bench "$BENCH" --dir "$BENCH/clone" "${COMMON[@]}" --remote-control
+rm -rf "$DEEP" "$BENCH/escape" "$SHORTTMP/benchlink"
+
+# A socket's address is counted in bytes, the terminating one aside: 103 are accepted and 104
+# are not, whatever the characters that make them. The benches are made under the short
+# directory, each named so that its socket's path has the length asked for.
+SHORTREAL=$(cd "$SHORTTMP" && pwd -P)
+SOCKTAIL="/tmux/tmux-$(id -u)/orch-0badc0de"
+bytes_of() { printf '%s' "$1" | LC_ALL=C wc -c | tr -d ' '; }
+sock_bench() { # <bytes> [leading characters]: a made bench whose socket's path is that many bytes long
+  local fixed name
+  fixed=$(( $(bytes_of "$SHORTREAL") + 1 + $(bytes_of "$SOCKTAIL") ))
+  name="${2:-}$(printf 'x%.0s' $(seq 1 $(( $1 - fixed - $(bytes_of "${2:-}") ))))"
+  mkdir -p "$SHORTREAL/$name/clone"; printf '%s' "$SHORTREAL/$name"
+}
+socket_edge() { # <bytes> [leading characters]: the dry run of an opening on such a bench
+  local b; b=$(sock_bench "$@")
+  out=$(benchrun env ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" bench-open --bench "$b" --dir "$b/clone" "${COMMON[@]}"; echo "exit=$?")
+  rm -rf "$b"
+}
+socket_edge 103
+check "a socket path of 103 bytes is accepted" "0|103" "$(sfield "$out" exit)|$(bytes_of "$(sfield "$out" socket_path)")"
+socket_edge 104
+check "and one of 104 is refused, the count in the refusal" "1|1" \
+  "$(sfield "$out" exit)|$(printf '%s' "$out" | grep -c 'too long for a socket.s address (104 > 103)')"
+socket_edge 103 ééééééééééé
+check "103 bytes of fewer characters are accepted" "0|103" "$(sfield "$out" exit)|$(bytes_of "$(sfield "$out" socket_path)")"
+socket_edge 104 ééééééééééé
+check "and 104 bytes of fewer characters are refused: the bytes are counted, not the characters" "1|1" \
+  "$(sfield "$out" exit)|$(printf '%s' "$out" | grep -c 'too long for a socket.s address (104 > 103)')"
+
+# The bench is a directory the harness made for its run: never the root, a top-level directory
+# (the temporary directory among them, where it is a link to one), the operator's home or
+# anything above it. Below the home, a bench is fine.
+HOMEUP="$SHORTREAL/hm"; HOMEDIR="$HOMEUP/mid/home"; mkdir -p "$HOMEDIR/bench/clone"
+HOME="$HOMEDIR" refused "the parent of the operator's home is not a bench" "is not a bench" --bench "$HOMEUP/mid" --dir "$HOMEDIR/bench/clone" "${COMMON[@]}"
+HOME="$HOMEDIR" refused "nor is a directory higher up" "is not a bench" --bench "$HOMEUP" --dir "$HOMEDIR/bench/clone" "${COMMON[@]}"
+HOME="$HOMEDIR" refused "nor is the home itself" "is not a bench" --bench "$HOMEDIR" --dir "$HOMEDIR/bench/clone" "${COMMON[@]}"
+refused "nor is the temporary directory" "is not a bench" --bench /tmp --dir "$BENCH/clone" "${COMMON[@]}"
+refused "nor a top-level directory" "is not a bench" --bench /usr --dir "$BENCH/clone" "${COMMON[@]}"
+out=$(benchrun env HOME="$HOMEDIR" ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" bench-open --bench "$HOMEDIR/bench" --dir "$HOMEDIR/bench/clone" "${COMMON[@]}"; echo "exit=$?")
+check "a bench below the operator's home is accepted" "0" "$(sfield "$out" exit)"
+rm -rf "$HOMEUP"
+
+# The trust question is the spawn's: a directory the host does not know is refused before
+# anything is made, one it knows needs no flag and its record is left as it is, and --trust
+# records it, under the lock, the record it replaced kept beside it.
+BENCH_OPEN_PLAIN=("${BENCH_OPEN[@]:0:$((${#BENCH_OPEN[@]} - 1))}") # the same words without --trust, the last one
+BTRUST="$WORK/bench-trust.json"
+btrust_open() { # <more words...>: a real opening against this case's own trust record
+  reset_homerec; rm -rf "$WORK/benchstate"
+  benchrun env ORCHESTRATOR_TRUST_FILE="$BTRUST" bash "$AGENT" "${BENCH_OPEN_PLAIN[@]}" --no-verify "$@"
+}
+printf '{"projects":{}}' > "$BTRUST"
+out=$(btrust_open; echo "exit=$?")
+check "a directory the host has not been told to trust is refused before anything is made" "1|1|1|0|0|{\"projects\":{}}" \
+  "$(sfield "$out" exit)|$(printf '%s' "$out" | grep -c 'has not been told to trust')|$(printf '%s' "$out" | grep -c -- '--trust')|$(hcalls | wc -l | tr -d ' ')|$(find "$WORK/benchstate/prompts" -type f 2>/dev/null | wc -l | tr -d ' ')|$(cat "$BTRUST")"
+compact="{\"projects\":{\"$BENCH_REAL/clone\":{\"hasTrustDialogAccepted\":true}}}"
+printf '%s' "$compact" > "$BTRUST"; rm -f "$BTRUST.orchestrator-bak"
+out=$(btrust_open; echo "exit=$?")
+check "one it already trusts is opened with no flag, its record untouched, and the opening says so" "0|1|orch-0badc0de|$compact|none" \
+  "$(sfield "$out" exit)|$(printf '%s' "$out" | grep -c 'trust already')|$(sfield "$out" socket)|$(cat "$BTRUST")|$([ -e "$BTRUST.orchestrator-bak" ] && echo kept || echo none)"
+printf '{"projects":{"/elsewhere":{"hasTrustDialogAccepted":true}},"other":1}' > "$BTRUST"; before=$(cat "$BTRUST")
+out=$(btrust_open --trust; echo "exit=$?")
+check "--trust records it beside the entries it finds, and the opening says so" "0|1|1|1|1" \
+  "$(sfield "$out" exit)|$(printf '%s' "$out" | grep -c 'trust recorded')|$("$py" -c "import json,sys; d=json.load(open(sys.argv[1])); print(int(d['projects'][sys.argv[2]]['hasTrustDialogAccepted'] is True))" "$BTRUST" "$BENCH_REAL/clone")|$("$py" -c "import json,sys; d=json.load(open(sys.argv[1])); print(int(d['projects']['/elsewhere']['hasTrustDialogAccepted'] is True and d['other'] == 1))" "$BTRUST")|$([ ! -e "$BTRUST.lock" ] && echo 1 || echo 0)"
+check "the record it replaced is kept beside it, owner-only, as it was" "$before|600|600" \
+  "$(cat "$BTRUST.orchestrator-bak")|$(perm_of "$BTRUST.orchestrator-bak")|$(perm_of "$BTRUST")"
+# A change that waits for a lock another process holds gives up and makes none.
+printf '{"projects":{}}' > "$BTRUST"; : > "$BTRUST.lock"
+out=$(btrust_open --trust; echo "exit=$?")
+check "a record locked by another process is not written, and the opening is refused" "1|1|{\"projects\":{}}|0" \
+  "$(sfield "$out" exit)|$(printf '%s' "$out" | grep -c 'stayed locked by another process')|$(cat "$BTRUST")|$(hcalls | wc -l | tr -d ' ')"
+rm -f "$BTRUST.lock" "$BTRUST.orchestrator-bak"
+# The spawn calls the same writer: its record is kept the same way.
+printf '{"projects":{"/elsewhere":{"hasTrustDialogAccepted":true}}}' > "$BTRUST"; before=$(cat "$BTRUST")
+env ORCHESTRATOR_TRUST_FILE="$BTRUST" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" CLAUDE_CODE_SESSION_ID=s-suite \
+  bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --trust --prompt p >/dev/null 2>&1
+check "and so is a spawn's, which records the directory the same way" "$before|1" \
+  "$(cat "$BTRUST.orchestrator-bak" 2>/dev/null)|$("$py" -c "import json,sys,os; print(int(json.load(open(sys.argv[1]))['projects'][os.path.realpath(sys.argv[2])]['hasTrustDialogAccepted'] is True))" "$BTRUST" "$UNTRUSTED")"
+rm -f "$BTRUST" "$BTRUST.orchestrator-bak"
+
+# The dry run is the launch: the command it prints is the one the opening runs, the servers'
+# configuration included, up to the files' timestamps.
+BCAT="$WORK/bench-mcp.json"; printf '{"servers":{"a":{"command":"a-cmd"},"b":{"command":"b-cmd"}},"default":["a"]}\n' > "$BCAT"
+stamps() { sed 's/-[0-9]\{13\}\./-@T@./g'; }
+reset_homerec
+out=$(benchrun env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_MCP_CATALOGUE="$BCAT" bash "$AGENT" "${BENCH_OPEN[@]}" --mcp b)
+dry=$(sfield "$out" launch | stamps)
+benchrun env ORCHESTRATOR_MCP_CATALOGUE="$BCAT" bash "$AGENT" "${BENCH_OPEN[@]}" --mcp b --no-verify >/dev/null
+real=$(tail -n +2 "$(sed 's/^\/bin\/sh -l //' "$HR/window0")" | stamps)
+check "the dry run prints the launch the opening runs, the servers' file among its words" "$real|1|a,b" \
+  "$dry|$(printf '%s' "$dry" | grep -c -- '--mcp-config ')|$(sfield "$out" mcp)"
+
+# The opening of an orchestrator from a session stays what it was: the guards of --open hold.
+res=$(env -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_STATE_DIR="$WORK/benchstate" ORCHESTRATOR_LOGIN_SHELL=/bin/sh ORCHESTRATOR_HOST_CLI=/opt/x/host bash "$AGENT" spawn --open --title "Orch : eval x" --dir "$BENCH/clone" --prompt go --no-remote-control 2>&1; echo "exit=$?")
+check "a plain spawn --open is still refused the remote-control switch it never had" "1|1" \
+  "$(sfield "$res" exit)|$(printf '%s' "$res" | grep -c 'not an opening')"
+
+# The close: every window of the home, proved gone.
+reset_homerec; printf '0 /dev/ttys961\n1 /dev/ttys962\n' > "$HR/panes"
+mkdir -p "$BENCH/tmux/tmux-$(id -u)"; : > "$BENCH/tmux/tmux-$(id -u)/orch-0badc0de"
+out=$(benchrun bash "$AGENT" close --bench "$BENCH" --socket orch-0badc0de; echo "exit=$?")
+check "and the socket file the server left behind is removed" "gone" \
+  "$([ -e "$BENCH/tmux/tmux-$(id -u)/orch-0badc0de" ] && echo left || echo gone)"
+check "a close ends the home server and every window of it, and says how many" \
+  "0|[-u][-L][orch-0badc0de][list-panes][-a][-F][#{window_index} #{pane_tty}]|[-u][-L][orch-0badc0de][kill-server]|[-u][-L][orch-0badc0de][has-session]|closed 2 session(s) of the home server orch-0badc0de" \
+  "$(sfield "$out" exit)|$(hcalls | paste -sd'|' -)|$(printf '%s' "$out" | grep '^closed')"
+check "its calls go to the server under the bench" "$BENCH_REAL/tmux" "$(sort -u "$HR/tmpdir")"
+reset_homerec; printf 'no server running on /x\n' > "$HR/panes-err"
+out=$(benchrun bash "$AGENT" close --bench "$BENCH" --socket orch-0badc0de; echo "exit=$?")
+check "a home that is not running is closed already, and nothing is killed" "0|0|1" \
+  "$(sfield "$out" exit)|$(hcalls | grep -c 'kill-server')|$(printf '%s' "$out" | grep -c 'is not running')"
+printf '/dev/ttys961 9001 /opt/x/host --name Orch\n' > "$WORK/bench-ps"
+reset_homerec; printf '0 /dev/ttys961\n' > "$HR/panes"
+out=$(benchrun env ORCHESTRATOR_PS_TABLE="$WORK/bench-ps" bash "$AGENT" close --bench "$BENCH" --socket orch-0badc0de; echo "exit=$?")
+check "a host that survives the end of its server fails the close and is named" "1|1" \
+  "$(sfield "$out" exit)|$(printf '%s' "$out" | grep -c 'a host still runs on /dev/ttys961')"
+reset_homerec
+for bad in "my-own" "orch-" "orch-../../x" "orch-123456789"; do
+  out=$(benchrun bash "$AGENT" close --bench "$BENCH" --socket "$bad"; echo "exit=$?")
+  check "a close of the socket '$bad' is refused before tmux is asked" "1|0" "$(sfield "$out" exit)|$(hcalls | wc -l | tr -d ' ')"
+done
+out=$(benchrun bash "$AGENT" close --bench "$BENCH" --socket orch-0badc0de --tty /dev/ttys001; echo "exit=$?")
+check "a bench close takes no tty" "1|1" "$(sfield "$out" exit)|$(printf '%s' "$out" | grep -c 'takes no --tty')"
+out=$(benchrun bash "$AGENT" close --bench "$BENCH"; echo "exit=$?")
+check "and needs its socket" "1|1" "$(sfield "$out" exit)|$(printf '%s' "$out" | grep -c 'needs --socket')"
+out=$(benchrun bash "$AGENT" close --bench "$WORK/nowhere" --socket orch-0badc0de; echo "exit=$?")
+check "and a bench that is not a directory" "1|1" "$(sfield "$out" exit)|$(printf '%s' "$out" | grep -c 'is not a directory')"
+reset_homerec
+out=$(benchrun bash "$AGENT" close --socket orch-0badc0de; echo "exit=$?")
+check "a socket named with no bench is refused before tmux is asked" "1|1|0" \
+  "$(sfield "$out" exit)|$(printf '%s' "$out" | grep -c 'needs --bench')|$(hcalls | wc -l | tr -d ' ')"
+# A server that still answers on its socket, whose panes cannot be listed, is not ended and the
+# close says so: the socket is held by a process of the case's own, which ends when the case
+# says so, and its pid is kept in a file.
+ALIVE="$BENCH/tmux/tmux-$(id -u)/orch-0badc0de"; mkdir -p "$(dirname "$ALIVE")"; rm -f "$ALIVE" "$WORK/alive.pid" "$WORK/alive.stop"
+"$py" -c "
+import os, socket, sys, time
+path, pidfile, stop = sys.argv[1:4]
+s = socket.socket(socket.AF_UNIX); s.bind(path); s.listen(1)
+open(pidfile, 'w').write(str(os.getpid()))
+deadline = time.time() + 60
+while time.time() < deadline and not os.path.exists(stop):
+    time.sleep(0.1)
+s.close()" "$ALIVE" "$WORK/alive.pid" "$WORK/alive.stop" &
+ALIVEJOB=$!
+for _ in $(seq 1 100); do [ -s "$WORK/alive.pid" ] && break; sleep 0.1; done
+reset_homerec; printf 'error connecting to the server\n' > "$HR/panes-err"
+out=$(benchrun bash "$AGENT" close --bench "$BENCH" --socket orch-0badc0de; echo "exit=$?")
+: > "$WORK/alive.stop"; wait "$ALIVEJOB"; rm -f "$ALIVE" "$WORK/alive.pid" "$WORK/alive.stop"
+check "a server that still answers and cannot be listed is not ended, and the close says so" "1|1|0" \
+  "$(sfield "$out" exit)|$(printf '%s' "$out" | grep -c 'cannot be listed.*it was NOT ended')|$(hcalls | grep -c '\[kill-server\]')"
+rm -rf "$SHORTTMP"
+fi
 
 echo "== install =="
 
