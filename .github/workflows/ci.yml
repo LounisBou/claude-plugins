@@ -90,8 +90,11 @@ jobs:
           LC_ALL: en_US.UTF-8
           BLOCKING: ${{ matrix.blocking }}
         # A suite not yet green here reports its failure as a warning, so the pull request is red
-        # only when a blocking check fails.
+        # only when a blocking check fails. The warning quotes the suite's last line: a count of
+        # failed cases reads apart from a suite that died before its summary.
         run: |
-          if plugins/${{ matrix.plugin }}/tests/run-tests.sh; then exit 0; fi
+          set -o pipefail
+          if plugins/${{ matrix.plugin }}/tests/run-tests.sh 2>&1 | tee "$RUNNER_TEMP/suite.log"; then exit 0; fi
           if [ "$BLOCKING" = true ]; then exit 1; fi
-          echo "::warning title=${{ matrix.plugin }} on ${{ matrix.os }}::the suite fails here; it does not block until it is green (ci/plugins.json)"
+          last=$(tail -n 1 "$RUNNER_TEMP/suite.log")
+          echo "::warning title=${{ matrix.plugin }} on ${{ matrix.os }}::the suite fails here, its last line: ${last}; it does not block until it is green (ci/plugins.json)"
