@@ -66,8 +66,38 @@ test('a chunk lost on the wire is asked for again, and the files land whole on t
   expect(leftovers(a)).toEqual([])
   expect(leftovers(b)).toEqual([])
   expect([...b.files.keys()].filter(p => /\/c-\d+-\d+$/.test(p))).toEqual([])
-  // The source is left as it was until it is told otherwise.
-  expect(sourceFiles(a)).toEqual(before)
+  // Acknowledged, the source holds no more of what it sent; what never travelled (a link, a
+  // sub-directory) is left where it was.
+  expect([...sourceFiles(a).keys()].sort()).toEqual([`${a.briefs}/belt/linked.md`, `${a.briefs}/belt/old/inner.md`])
+  expect(before.has(`${a.briefs}/belt/${BRIEF_NAME}`)).toBe(true)
+})
+
+test('the source is cleaned only after the acknowledgment, and keeps a file changed since it was sent', async () => {
+  const { a, b, ha, hb } = await sent()
+  const notes = `${a.briefs}/belt/notes.txt`
+  // Everything but the receiver's « done » crosses: the source keeps every file.
+  await settle(a, ha, b, hb, (text, from) => (from === 'b' && kind(text) === 'done' ? [] : [text]))
+  expect(a.files.has(`${a.briefs}/belt/${BRIEF_NAME}`)).toBe(true)
+  expect(a.files.has(notes)).toBe(true)
+  // The notes change on the source; the « done » is answered again at the next « sent ».
+  a.files.set(notes, 'written after the send\n')
+  await hb['session.receive'](b.dollar, { origin: { kind: 'peer', plugin: 'orchestrator' }, text: `<cross-session-message from="${a.address}" from-name="Orch : belt" from-mode="prompting">\n${moveText({ kind: 'sent', move: (parseMoveMessage(a.sent[0].text) as Extract<MoveMessage, { kind: 'manifest' }>).move })}\n</cross-session-message>` }, async (e: any) => e)
+  await settle(a, ha, b, hb)
+  expect(a.files.has(`${a.briefs}/belt/${BRIEF_NAME}`)).toBe(false)
+  expect(a.files.get(notes)).toBe('written after the send\n')
+  expect(a.submits.length).toBe(1)
+  expect(a.submits[0].text).toContain('1 of its files here removed')
+  expect(a.submits[0].text).toContain(notes)
+})
+
+test('a coordinator that moved an orchestrator it keeps asleep is given the command that removes its record', async () => {
+  const { a, b, ha, hb } = await sent()
+  a.files.set(`${a.config}/claude-orchestrator/sleeping.json`, JSON.stringify([{ name: 'Orch : belt', brief: `${a.briefs}/belt/${BRIEF_NAME}` }]))
+  await settle(a, ha, b, hb)
+  expect(a.submits[0].text).toContain('coordinator.sh wake-done --name "Orch : belt"')
+  const other = await sent()
+  await settle(other.a, other.ha, other.b, other.hb)
+  expect(other.a.submits[0].text).not.toContain('wake-done')
 })
 
 test('every message delivered twice lands each file once and tells each model once', async () => {

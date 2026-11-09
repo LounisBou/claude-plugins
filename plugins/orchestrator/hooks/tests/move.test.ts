@@ -677,11 +677,17 @@ test('an order with line breaks is read back as it was given, and written on one
 
 test('the sender is told the move acknowledged, with where the brief now is', () => {
   const brief = `${LINUX.configDir}/orchestrator/briefs/app/belt.md`
-  const text = acknowledgedNotice(record(), 'Orch : far', brief)
+  const text = acknowledgedNotice(record(), 'Orch : far', brief, { removed: 2, kept: [] }, null)
   expect(text.startsWith('[module] Orch : belt ')).toBe(true)
   expect(text).toContain('Orch : far')
   expect(text).toContain(brief)
   expect(text.includes('\n')).toBe(false)
+  // A file kept is named as a JSON string, so no name opens a line of its own; the sleeping
+  // record's command is given whole.
+  const kept = acknowledgedNotice(record(), 'Orch : far', brief, { removed: 1, kept: ['/w/a\nb.md'] }, '/p/coordinator.sh wake-done --name "Orch : belt"')
+  expect(kept.includes('\n')).toBe(false)
+  expect(kept).toContain(JSON.stringify('/w/a\nb.md'))
+  expect(kept).toContain('/p/coordinator.sh wake-done --name "Orch : belt"')
 })
 
 test('the sender is told the move failed, with its reason', () => {

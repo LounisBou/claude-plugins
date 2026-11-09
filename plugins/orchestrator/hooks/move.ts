@@ -489,9 +489,17 @@ function literal(text: string): string {
   return JSON.stringify(text).replace(/[\u0085\u2028\u2029]/g, c => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`)
 }
 
-// What the sender's model reads when the receiver acknowledged every file.
-export function acknowledgedNotice(record: MoveRecord, to: string, brief: string): string {
-  return `[module] ${record.name} moved to ${to}: every file arrived and was acknowledged, its brief there is ${brief}. Its files here are left as they were.`
+// What the source holds of a move once the receiver acknowledged it: the files removed, and those
+// kept because they changed since they were sent (or could not be removed).
+export type Cleaned = { removed: number; kept: string[] }
+
+// What the sender's model reads when the receiver acknowledged every file: where the brief now is,
+// what was removed here, and, for an orchestrator this machine's coordinator keeps asleep, the
+// command that removes its sleeping record.
+export function acknowledgedNotice(record: MoveRecord, to: string, brief: string, cleaned: Cleaned, wakeDone: string | null): string {
+  const kept = cleaned.kept.length > 0 ? `; kept, changed since they were sent: ${cleaned.kept.map(literal).join(', ')}` : ''
+  const sleeping = wakeDone ? ` Its sleeping record here is removed by: ${wakeDone}` : ''
+  return `[module] ${record.name} moved to ${to}: every file arrived and was acknowledged, its brief there is ${brief}. ${cleaned.removed} of its files here removed${kept}.${sleeping}`
 }
 
 // What the sender's model reads when the move failed: the receiver's reason, or its own, as a

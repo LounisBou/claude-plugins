@@ -33,3 +33,28 @@ Python launcher.
 
 A writer in another language reads the convention as data, `core/store.json` (the launcher,
 `iterm_agent.py`, `path_lock`).
+
+## What a move carries
+
+An orchestrator moved to another machine (`hooks/moving.ts`) continues there from what travels
+over the peer messages, checked chunk by chunk and file by file, and rebuilds the rest. Nothing
+of it goes through git but its code.
+
+| Fact | On the target |
+|---|---|
+| its brief's directory: the brief, the standing succession brief (whose Live state holds its open rows, pull requests and the operator's open questions verbatim), the rulings, every regular file beside them | carried, landed in `briefs/<subject>/`, the origin's paths rewritten |
+| its dispatch record, the record's owner and goals, wherever the brief's « Dispatch record » line puts them | carried beside the brief when they lie in its directory; carried by their path when they lie elsewhere, landed at that path rewritten; by git when they lie in a checkout git tracks, and the move refused when git does not |
+| its name, model, effort, pull requests, working directory, checkouts, remote and branch, the operator's order | carried in the manifest, read by the arrival notice |
+| its code | by git: every checkout clean and pushed before anything is sent |
+| its round entries and its wait (`round/<id>.json`, `store/waits/<id>`) | rebuilt: they are keyed by the id of a session that ends on the source. Its open questions travel in the succession brief and are asked again at its first turn there, which enters them in that machine's round |
+| its deck row and store rows (`store/sessions/<id>`, `store/rows/<id>`) | rebuilt at its first measure there: they hold a pid and a tty of the source |
+| its chain (`chains/<tty>.jsonl`) | not carried: it names ttys of the source; its agents are stood down before a move, and the arrival opens in no chain |
+| its records' paths (`records/<session>`) | rebuilt at its first read of its record, as its owner |
+| its CI watches, measure files and usage | rebuilt by the woken session |
+| credentials (the forge's login, keys, the host's own configuration) | never carried: each machine keeps its own |
+
+A file is never landed outside the target's home, under a hidden name there, or inside a
+checkout git rebuilds; a file already standing with other content is refused and left alone.
+The source's copy is removed only once the target acknowledged every file, and a file changed
+since it was sent is kept and named.
+
