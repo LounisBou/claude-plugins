@@ -346,8 +346,8 @@ describe('the band pieces', () => {
 
 describe('the reviewer', () => {
   test('its title fits the session-name shape, its prompt asks for the reviewer\'s loop', () => {
-    expect(reviewerTitle('demo')).toBe('Agent : review demo')
-    expect(reviewerTitle('a-very-long-codename-for-a-feature')).toBe('Agent : review a-very-long-codena')
+    expect(reviewerTitle('demo')).toBe('Agent: review demo')
+    expect(reviewerTitle('a-very-long-codename-for-a-feature')).toBe('Agent: review a-very-long-codena')
     expect(reviewerPrompt('feat/demo')).toContain('branch feat/demo')
     expect(reviewerPrompt('feat/demo')).toContain('you change no code')
   })

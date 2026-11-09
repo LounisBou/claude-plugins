@@ -22,7 +22,7 @@ function asked(over: Partial<{ question: string; urgent: boolean; kind: 'operato
   const wait = over.kind === 'done'
     ? { kind: 'done' as const, question }
     : { kind: 'operator' as const, blocks: 'phase 3', question, ...(over.urgent ? { urgent: true as const } : {}) }
-  return roundEntry('s-remote', 'Orch : belt', wait, SINCE, AT)
+  return roundEntry('s-remote', 'Orch: belt', wait, SINCE, AT)
 }
 
 // The line's object, changed by `edit`, sent again under the marker.
@@ -79,7 +79,7 @@ const refusals: [string, string][] = [
   ['an operator wait blocking nothing', edited(o => { o.blocks = null })],
   ['a question of a wrong type', edited(o => { o.question = 12 })],
   ['a stamp that is none', edited(o => { o.since = 'yesterday' })],
-  ['a sender that is no orchestrator', edited(o => { o.from = 'Coord : ops' })],
+  ['a sender that is no orchestrator', edited(o => { o.from = 'Coord: ops' })],
   ['a machine of other letters', edited(o => { o.machine = 'far/../x' })],
   ['an urgent mark other than true', edited(o => { o.urgent = false })],
   ['choices of a wrong type', edited(o => { o.choices = 'A' })],
@@ -103,10 +103,10 @@ test('the acknowledgment names the ask it answers: its id and its since, checked
 })
 
 test('control characters in what a wait blocks or who asks never make its ask refused', () => {
-  const entry = { ...asked(), blocks: 'phase\t3\nnext\u0001', from: 'Orch : be\tlt' }
+  const entry = { ...asked(), blocks: 'phase\t3\nnext\u0001', from: 'Orch: be\tlt' }
   const read = parseAsk(askLine(entry, 'far'))
   expect(read?.entry.blocks).toBe('phase 3 next ')
-  expect(read?.entry.from).toBe('Orch : be lt')
+  expect(read?.entry.from).toBe('Orch: be lt')
 })
 
 // --- the answer, carried back to the sender, and its acknowledgment ---------------------------

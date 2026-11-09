@@ -9,8 +9,8 @@ import pytest
 
 from conftest import REPO_ROOT
 
-LAUNCHER = "Orch : TM frontend [9a3971]"
-PREDECESSOR = "Agent : TM Bugs [4f2c1a]"
+LAUNCHER = "Orch: TM frontend [9a3971]"
+PREDECESSOR = "Agent: TM Bugs [4f2c1a]"
 TTY = "/dev/ttys002"
 AGENT_MD = REPO_ROOT / "agent" / "AGENT.md"
 

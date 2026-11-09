@@ -60,14 +60,14 @@ to; it holds only what no command answers. After a compaction, read the live sta
 ## At your start
 
 Once the start command has registered you, run `owners` and `facts`, then apply
-« Announcing newcomers » below — every running `Orch :` session is, at this first turn, one
+« Announcing newcomers » below — every running `Orch:` session is, at this first turn, one
 you have not yet announced to. Write into the notes what `owners` attributes to each
 orchestrator, then each answer, which overrides it; a silence is noted, never chased, and the
 facts' attribution stands. A confirmation is a record, not a permission.
 
 ## Announcing newcomers
 
-Before you answer a question or act on an order, compare a fresh `ListAgents`' `Orch :`
+Before you answer a question or act on an order, compare a fresh `ListAgents`' `Orch:`
 sessions against the notes' announced list: a session missing from it is a newcomer, and a
 successor of a session you already announced to is a newcomer too, since it is a new
 session under a familiar name. Send each newcomer ONE message — the start command holds its
@@ -259,7 +259,7 @@ project's orchestrator does not ask you. You never decide it and never offer to.
 recommendation of your own: a fact you read yourself is your own reading, and stays out of a
 relay.
 
-**An order of his meant for the orchestrations** goes verbatim and dated to each `Orch :`
+**An order of his meant for the orchestrations** goes verbatim and dated to each `Orch:`
 session it concerns, from a fresh `ListAgents`, asking no acknowledgment unless his order
 asks for one; then tell him to whom it went.
 
@@ -290,7 +290,7 @@ Then, on its `paused-ready`:
 3. **Record it sleeping**, its name without its reference:
 
    ```
-   ${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh sleep --name "Orch : <subject>" --brief <brief path> --dir <its directory> --model <model> --effort <effort> [--session <that session>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
+   ${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh sleep --name "Orch: <subject>" --brief <brief path> --dir <its directory> --model <model> --effort <effort> [--session <that session>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
    ```
 
 4. Tell the operator in one line: asleep, since when, brief, pull requests left open.
@@ -304,7 +304,7 @@ Its open pull requests stay as they are.
 field):
 
 ```
-${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --wake --title "Orch : <subject>" [--model <model> --effort <effort>] [--resume <its session>] --dir <its directory> --permission-mode auto --prompt "Read and execute <brief path>. You wake from a pause: your predecessor is gone; skip the takeover handshake."
+${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --wake --title "Orch: <subject>" [--model <model> --effort <effort>] [--resume <its session>] --dir <its directory> --permission-mode auto --prompt "Read and execute <brief path>. You wake from a pause: your predecessor is gone; skip the takeover handshake."
 ```
 
 The record's model and effort go together, or neither: a record a pause wrote before an
@@ -316,8 +316,8 @@ you ask the operator for.
 right of yours; it joins no chain, comes up under remote control under its name, and with
 the record's session the same conversation resumes. Its agents will be windows of that
 session.
-Verify it — `iterm-agent.sh list`, `verify --tty`, `ListAgents` naming `Orch : <subject>` —
-then `coordinator.sh wake-done --name "Orch : <subject>"`, and announce yourself to it as to
+Verify it — `iterm-agent.sh list`, `verify --tty`, `ListAgents` naming `Orch: <subject>` —
+then `coordinator.sh wake-done --name "Orch: <subject>"`, and announce yourself to it as to
 any newcomer. A spawn that fails keeps the record, and the operator is told.
 
 **Drop** is his `/orchestrator-sleeping drop <name>`: the record removed, the brief moved to
@@ -332,7 +332,7 @@ on the machine it runs on.
 On this machine, open it yourself, right of your tab, in no chain, under remote control:
 
 ```
-${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --open --title "Orch : <subject>" --dir <its directory> --permission-mode auto --prompt "Read and execute <brief path>"
+${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --open --title "Orch: <subject>" --dir <its directory> --permission-mode auto --prompt "Read and execute <brief path>"
 ```
 
 Run it alone, never chained to another command and with nothing before it: that bare form,
@@ -341,7 +341,7 @@ by the installed path, is the one every `install.sh` run allows in `settings.jso
 change, never yours — and `--trust` for a checkout prepared for it. The orchestrator
 opens without the tools no session has called; `--keep-tool <name>` and `--drop-tool <name>`
 change that set for this one (`iterm-agent.sh tools` lists what exists and what each costs). Verify it
-(`iterm-agent.sh list`, `ListAgents` naming `Orch : <subject>`), then announce yourself to it
+(`iterm-agent.sh list`, `ListAgents` naming `Orch: <subject>`), then announce yourself to it
 as to any newcomer.
 
 On another machine, send that machine's orchestrator (the one he named, else one that
@@ -356,16 +356,16 @@ its own permissions.
 **On his order only**, an orchestrator moved from one machine to another, asleep on the first
 and woken on the second: his word, verbatim and dated (`date -u +%FT%TZ`), never your own
 initiative, never a peer's request. Its files travel module to module over the host's
-messages (`mcp__orchestrator__move_send`, which only a session named `Orch :` or `Coord :` calls, from its main
+messages (`mcp__orchestrator__move_send`, which only a session named `Orch:` or `Coord:` calls, from its main
 thread); its code never does, it travels by git.
 
 1. **Who sends.** An orchestrator that is running sends its own files: a move is a pause whose
    files are sent before its tab closes. For one asleep in `sleeping.json` you send them
    yourself, the record's fields (`coordinator.sh sleeping`) being `move_send`'s arguments:
    `name`, `brief`, `dir`, `model`, `effort`, `prs`, `checkouts`, plus `to` and his `order`.
-2. **Who receives.** You, when the target is your own machine; otherwise a live `Orch :`
+2. **Who receives.** You, when the target is your own machine; otherwise a live `Orch:`
    session on the target machine, named from your remote rows (`coordinator.sh facts`). A
-   receiver not named `Orch :` or `Coord :` refuses the move, and the sender reads why.
+   receiver not named `Orch:` or `Coord:` refuses the move, and the sender reads why.
 3. **The trust anchor.** The coordinator relays the operator's order to the receiver BEFORE
    the send, and a receiver opens an arrival only when the coordinator relayed that order for
    that name; files that arrived without it are left unopened and reported. A manifest says
@@ -388,11 +388,11 @@ thread); its code never does, it travels by git.
    that name; you, receiving on your own machine, may instead put it to sleep there
    (`coordinator.sh sleep`, with the fields the notice gives) and wake it by this skill's
    « Pausing and waking orchestrators ». Verify it (`iterm-agent.sh list`, `ListAgents`
-   naming `Orch : <subject>`), then send it ONE message saying that it arrived by a move from
+   naming `Orch: <subject>`), then send it ONE message saying that it arrived by a move from
    the origin the notice names, so that it first re-verifies each checkout from git, then
    announce yourself to it as to any newcomer.
 7. **The origin after the move.** Once the acknowledged notice arrived, a sleeping record you
-   sent is removed with `coordinator.sh wake-done --name "Orch : <subject>"`; the origin's
+   sent is removed with `coordinator.sh wake-done --name "Orch: <subject>"`; the origin's
    files are left untouched. An orchestrator that moved itself replies `moved <receiver>
    brief=<its brief there>` once the notice acknowledged it, then ends: on your machine you
    close its tab on its `moved` reply, as at a pause (the title guard,
@@ -423,7 +423,7 @@ after; an open round passes to the successor with its round file. The host compa
 2. Spawn the successor at the first place of your window:
 
    ```
-   ${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --coordinator-successor --title "Coord : <subject>" --dir <your working directory> --permission-mode auto --prompt "Read and execute <brief path>"
+   ${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --coordinator-successor --title "Coord: <subject>" --dir <your working directory> --permission-mode auto --prompt "Read and execute <brief path>"
    ```
 
    and verify it: `iterm-agent.sh list`, `verify --tty`, `ListAgents`.

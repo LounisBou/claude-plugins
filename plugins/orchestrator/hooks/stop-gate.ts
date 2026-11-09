@@ -695,7 +695,7 @@ const REFERENCE = / \[[^\]\s]+\]$/
 export function orchestrationOf(name: string | null | undefined): string | null {
   const bare = (name ?? '').trim().replace(REFERENCE, '').trim()
   const subject = /^Orch ?: *(\S.*)$/.exec(bare)?.[1]
-  return subject ? `Orch : ${subject}` : null
+  return subject ? `Orch: ${subject}` : null
 }
 
 // The owner an owner file names: its first line, as the orchestration when it reads as one,

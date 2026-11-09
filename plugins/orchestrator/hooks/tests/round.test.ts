@@ -92,10 +92,10 @@ const AT = '2026-10-18T18:46:00.000Z'
 
 test('an operator wait becomes an open entry: its sender, its question, its choices', () => {
   const wait: Wait = { kind: 'operator', blocks: 'phase 3', question: DECIDE }
-  const entry = roundEntry('s-one', 'Orch : belt [a1b2c3]', wait, SINCE, AT)
+  const entry = roundEntry('s-one', 'Orch: belt [a1b2c3]', wait, SINCE, AT)
   expect(entry).toEqual({
     id: `s-one-${fingerprint(wait)}`,
-    from: 'Orch : belt [a1b2c3]',
+    from: 'Orch: belt [a1b2c3]',
     session: 's-one',
     kind: 'operator',
     since: SINCE,
@@ -110,8 +110,8 @@ test('an operator wait becomes an open entry: its sender, its question, its choi
 })
 
 test('an urgent wait becomes an urgent entry, a plain one does not, and both land on the same id', () => {
-  const urgent = roundEntry('s-one', 'Orch : belt', parseWait('Prod is down.\nwaiting: operator (urgent) — blocks: x')!, SINCE, AT)
-  const plain = roundEntry('s-one', 'Orch : belt', parseWait('Prod is down.\nwaiting: operator — blocks: x')!, SINCE, AT)
+  const urgent = roundEntry('s-one', 'Orch: belt', parseWait('Prod is down.\nwaiting: operator (urgent) — blocks: x')!, SINCE, AT)
+  const plain = roundEntry('s-one', 'Orch: belt', parseWait('Prod is down.\nwaiting: operator — blocks: x')!, SINCE, AT)
   expect(urgent.urgent).toBe(true)
   expect(plain.urgent).toBeUndefined()
   expect(urgent.id).toBe(plain.id)
@@ -119,7 +119,7 @@ test('an urgent wait becomes an urgent entry, a plain one does not, and both lan
 
 test('with the pane open only an urgent question is due, however old; with no pane every open question is; nothing else is', () => {
   const now = Date.parse('2026-10-24T12:00:00.000Z')
-  const at = (since: string, over: Partial<RoundEntry> = {}) => ({ ...roundEntry('s-one', 'Orch : belt', { kind: 'operator', blocks: 'x', question: 'q' }, since, AT), ...over })
+  const at = (since: string, over: Partial<RoundEntry> = {}) => ({ ...roundEntry('s-one', 'Orch: belt', { kind: 'operator', blocks: 'x', question: 'q' }, since, AT), ...over })
   expect(isDue(at('2026-10-24T11:59:00.000Z', { urgent: true }), now, true)).toBe(true)
   expect(isDue(at('2026-10-24T09:00:00.000Z'), now, true)).toBe(false)
   expect(isDue(at('2026-10-24T11:45:00.000Z'), now, true)).toBe(false)
@@ -130,7 +130,7 @@ test('with the pane open only an urgent question is due, however old; with no pa
 })
 
 test('done is an entry with nothing blocked', () => {
-  const entry = roundEntry('s-one', 'Orch : belt', { kind: 'done', question: 'Everything merged.' }, SINCE, AT)
+  const entry = roundEntry('s-one', 'Orch: belt', { kind: 'done', question: 'Everything merged.' }, SINCE, AT)
   expect(entry.kind).toBe('done')
   expect(entry.blocks).toBeNull()
   expect(entry.question).toBe('Everything merged.')
@@ -141,26 +141,26 @@ test('done is an entry with nothing blocked', () => {
 
 test('the id is sanitised as the store sanitises its keys', () => {
   const wait: Wait = { kind: 'operator', blocks: 'phase 3', question: '' }
-  expect(roundEntry('a/b c:d', 'Orch : belt', wait, SINCE, AT).id).toBe(`a_b_c_d-${fingerprint(wait)}`)
-  expect(roundEntry('a/b c:d', 'Orch : belt', wait, SINCE, AT).session).toBe('a/b c:d')
+  expect(roundEntry('a/b c:d', 'Orch: belt', wait, SINCE, AT).id).toBe(`a_b_c_d-${fingerprint(wait)}`)
+  expect(roundEntry('a/b c:d', 'Orch: belt', wait, SINCE, AT).session).toBe('a/b c:d')
 })
 
 test('the entry keeps the whole question; the message a remote coordinator receives is still cut, the cut said', () => {
   const long = 'x'.repeat(RELAY_CAP + 10)
   const wait: Wait = { kind: 'operator', blocks: 'phase 3', question: long }
-  const entry = roundEntry('s-one', 'Orch : belt', wait, SINCE, AT)
+  const entry = roundEntry('s-one', 'Orch: belt', wait, SINCE, AT)
   expect(entry.question).toBe(long)
-  expect(relayText('Orch : belt', wait, SINCE).endsWith(`\n\n${'x'.repeat(RELAY_CAP)}\n[cut at ${RELAY_CAP} of ${RELAY_CAP + 10} characters]`)).toBe(true)
+  expect(relayText('Orch: belt', wait, SINCE).endsWith(`\n\n${'x'.repeat(RELAY_CAP)}\n[cut at ${RELAY_CAP} of ${RELAY_CAP + 10} characters]`)).toBe(true)
 })
 
 test('a 2,500-character question is kept whole in its entry', () => {
   const question = `Question 1 of 1 — ${'the whole context, word for word. '.repeat(73)}`.slice(0, 2500)
   expect(question.length).toBe(2500)
-  expect(roundEntry('s-one', 'Orch : belt', { kind: 'operator', blocks: 'phase 3', question }, SINCE, AT).question).toBe(question)
+  expect(roundEntry('s-one', 'Orch: belt', { kind: 'operator', blocks: 'phase 3', question }, SINCE, AT).question).toBe(question)
 })
 
 test('the question as the pane shows it leaves out the choice lines and the recommendation it draws below', () => {
-  const entry = roundEntry('s-one', 'Orch : belt', { kind: 'operator', blocks: 'phase 3', question: DECIDE }, SINCE, AT)
+  const entry = roundEntry('s-one', 'Orch: belt', { kind: 'operator', blocks: 'phase 3', question: DECIDE }, SINCE, AT)
   expect(questionBody(entry)).toBe([
     'Question 1 of 1 — merge the scraper pull request now?',
     '_Context._ It is green and reviewed.',
@@ -224,18 +224,18 @@ test('a recommendation label of several words is read by parseChoices too, and d
 
 test('the id of a wait\'s entry is the one its entry carries', () => {
   const wait: Wait = { kind: 'operator', blocks: 'phase 3', question: DECIDE }
-  expect(roundEntryId('a/b', wait)).toBe(roundEntry('a/b', 'Orch : belt', wait, SINCE, AT).id)
+  expect(roundEntryId('a/b', wait)).toBe(roundEntry('a/b', 'Orch: belt', wait, SINCE, AT).id)
 })
 
 test('the choices of a question cut past the cap are still read', () => {
   const question = `${'x'.repeat(RELAY_CAP)}\n- **A** : one\n- **B** : two\n_Recommendation_ : B`
-  const entry = roundEntry('s-one', 'Orch : belt', { kind: 'operator', blocks: 'phase 3', question }, SINCE, AT)
+  const entry = roundEntry('s-one', 'Orch: belt', { kind: 'operator', blocks: 'phase 3', question }, SINCE, AT)
   expect(entry.choices.map(c => c.letter)).toEqual(['A', 'B'])
   expect(entry.recommendation).toBe('B')
 })
 
 test('an agent\'s wait is no round entry', () => {
-  expect(() => roundEntry('s-one', 'Agent : belt', { kind: 'question', blocks: 'x', question: 'y' }, SINCE, AT)).toThrow()
+  expect(() => roundEntry('s-one', 'Agent: belt', { kind: 'question', blocks: 'x', question: 'y' }, SINCE, AT)).toThrow()
 })
 
 test('the entry file sits in the round directory of the state directory', () => {
@@ -253,19 +253,19 @@ function entry(from: string, since: string, status: RoundEntry['status'] = 'open
 
 test('the open entries come grouped by sender, the groups by their earliest wait, each in its own order', () => {
   const entries = [
-    entry('Orch : b', '2026-10-18T10:05:00.000Z'),
-    entry('Orch : a', '2026-10-18T10:03:00.000Z'),
-    entry('Orch : b', '2026-10-18T10:01:00.000Z'),
-    entry('Orch : c', '2026-10-18T10:00:00.000Z', 'closed'),
-    entry('Orch : a', '2026-10-18T10:02:00.000Z', 'withdrawn'),
-    entry('Orch : a', '2026-10-18T10:04:00.000Z', 'answered'),
-    entry('Orch : c', '2026-10-18T10:06:00.000Z', 'open', 'done'),
+    entry('Orch: b', '2026-10-18T10:05:00.000Z'),
+    entry('Orch: a', '2026-10-18T10:03:00.000Z'),
+    entry('Orch: b', '2026-10-18T10:01:00.000Z'),
+    entry('Orch: c', '2026-10-18T10:00:00.000Z', 'closed'),
+    entry('Orch: a', '2026-10-18T10:02:00.000Z', 'withdrawn'),
+    entry('Orch: a', '2026-10-18T10:04:00.000Z', 'answered'),
+    entry('Orch: c', '2026-10-18T10:06:00.000Z', 'open', 'done'),
   ]
   expect(openEntries(entries).map(e => `${e.from} ${e.since.slice(11, 16)}`)).toEqual([
-    'Orch : b 10:01',
-    'Orch : b 10:05',
-    'Orch : a 10:03',
-    'Orch : c 10:06',
+    'Orch: b 10:01',
+    'Orch: b 10:05',
+    'Orch: a 10:03',
+    'Orch: c 10:06',
   ])
   expect(openEntries([])).toEqual([])
 })
@@ -275,21 +275,21 @@ test('the open entries come grouped by sender, the groups by their earliest wait
 test('an urgent question of a later sender comes first, and within each level its sender\'s questions stay together', () => {
   const urgent = (e: RoundEntry): RoundEntry => ({ ...e, urgent: true })
   const entries = [
-    entry('Orch : a', '2026-10-18T10:00:00.000Z'),
-    urgent(entry('Orch : b', '2026-10-18T10:01:00.000Z')),
-    entry('Orch : b', '2026-10-18T10:02:00.000Z'),
-    urgent(entry('Orch : a', '2026-10-18T10:03:00.000Z')),
-    entry('Orch : b', '2026-10-18T10:06:00.000Z'),
-    entry('Orch : a', '2026-10-18T10:07:00.000Z'),
-    urgent(entry('Orch : a', '2026-10-18T10:04:00.000Z', 'answered')),
+    entry('Orch: a', '2026-10-18T10:00:00.000Z'),
+    urgent(entry('Orch: b', '2026-10-18T10:01:00.000Z')),
+    entry('Orch: b', '2026-10-18T10:02:00.000Z'),
+    urgent(entry('Orch: a', '2026-10-18T10:03:00.000Z')),
+    entry('Orch: b', '2026-10-18T10:06:00.000Z'),
+    entry('Orch: a', '2026-10-18T10:07:00.000Z'),
+    urgent(entry('Orch: a', '2026-10-18T10:04:00.000Z', 'answered')),
   ]
   expect(openEntries(entries).map(e => `${e.from} ${e.since.slice(11, 16)}${e.urgent ? ' urgent' : ''}`)).toEqual([
-    'Orch : b 10:01 urgent',
-    'Orch : a 10:03 urgent',
-    'Orch : a 10:00',
-    'Orch : a 10:07',
-    'Orch : b 10:02',
-    'Orch : b 10:06',
+    'Orch: b 10:01 urgent',
+    'Orch: a 10:03 urgent',
+    'Orch: a 10:00',
+    'Orch: a 10:07',
+    'Orch: b 10:02',
+    'Orch: b 10:06',
   ])
 })
 
@@ -324,7 +324,7 @@ test('the real entry of two questions gives each its own choices, recommendation
 
 test('the entry of two questions records the first one\'s choices, so the round reads it as a question with choices', () => {
   const wait: Wait = { kind: 'operator', blocks: 'the version', question: TWO_QUESTIONS }
-  const entry = roundEntry('s-1', 'Orch : s', wait, '2026-10-25T11:52:50.299Z', '2026-10-25T11:52:50.302Z')
+  const entry = roundEntry('s-1', 'Orch: s', wait, '2026-10-25T11:52:50.299Z', '2026-10-25T11:52:50.302Z')
   expect(entry.question).toBe(TWO_QUESTIONS)
   expect(entry.choices.map(c => c.letter)).toEqual(['A', 'B'])
   expect(entry.choices[0].text.startsWith('1.15.0, puis des 1.x.')).toBe(true)

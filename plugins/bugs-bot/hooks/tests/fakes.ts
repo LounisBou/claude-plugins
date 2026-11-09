@@ -3,10 +3,10 @@
 // the module, registered once per test through `on`.
 
 export const ROOT_LISTING = [
-  'This session is Orch : demo [a1b2c3] — the name other sessions use to message it (it is not listed below; a message to it would be a message to yourself).',
+  'This session is Orch: demo [a1b2c3] — the name other sessions use to message it (it is not listed below; a message to it would be a message to yourself).',
   '',
   'Peer sessions (1):',
-  '  Agent : other work [d4e5f6]  ·  interactive  ·  busy  ·  started 1h ago',
+  '  Agent: other work [d4e5f6]  ·  interactive  ·  busy  ·  started 1h ago',
 ].join('\n')
 
 export type Run = { argv: string[]; cwd?: string; timeoutMs?: number }

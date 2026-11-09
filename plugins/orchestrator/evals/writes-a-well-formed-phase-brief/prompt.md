@@ -11,9 +11,9 @@ checkout of `inventory`.
 
 Facts for the brief:
 
-- Your ListAgents listing shows these sessions: `Orch : inventory [a3k9c2]` (you),
-  `Orch : inventory-old [77m1d0]` (a stopped predecessor, still listed),
-  `Agent : inventory p4 [c01p22]`.
+- Your ListAgents listing shows these sessions: `Orch: inventory [a3k9c2]` (you),
+  `Orch: inventory-old [77m1d0]` (a stopped predecessor, still listed),
+  `Agent: inventory p4 [c01p22]`.
 - The orchestrator plugin is installed at
   `/opt/dev-home/.claude/plugins/cache/lounisbou/orchestrator/0.34.0`.
 - The project's test suite, `npm test`, takes about twenty minutes.

@@ -11,6 +11,7 @@
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
 import { endsAfterMove } from './moving.ts'
 import { messageOf, reasonOf, type Host, type On } from './host.ts'
+import { currentSessionName, parseSessionName } from '../core/names.ts'
 
 // The nouns naming holds.
 type Held = Host<'plugin' | 'env' | 'process' | 'session' | 'tool' | 'command' | 'prompt'>
@@ -29,8 +30,9 @@ export const END_TOOL = 'end_session'
 // The names a session takes for itself: the two roles a session the operator
 // starts by hand declares. An agent and an auditor are named by the launcher at
 // spawn, never by themselves. The subject is the launcher's own shape: at most
-// twenty-five characters, neither starting nor ending with a space.
-const SELF_NAME = /^(Orch|Coord) : (\S(?:.{0,23}\S)?)$/
+// twenty-five characters, neither starting nor ending with a space. The shape is core's; a name
+// asked in the former shape, a blank before the colon, is taken written the current way.
+const SELF_ROLES: ReadonlySet<string> = new Set(['orchestrator', 'coordinator'])
 
 // The name as asked, or why it is refused: the refusal names the shape, so the
 // model's next call can be the right one.
@@ -66,8 +68,9 @@ export const resumeText = (name: string) => `Your name "${name}" is taken. Conti
 
 export function checkName(raw: unknown): { name: string } | { refused: string } {
   const name = typeof raw === 'string' ? raw : ''
-  if (SELF_NAME.test(name)) return { name }
-  return { refused: `a session names itself "Orch : <subject>" or "Coord : <subject>", the subject at most 25 characters and neither starting nor ending with a space, got "${name}"` }
+  const role = parseSessionName(name)?.role
+  if (role !== undefined && SELF_ROLES.has(role)) return { name: currentSessionName(name) }
+  return { refused: `a session names itself "Orch: <subject>" or "Coord: <subject>", the subject at most 25 characters and neither starting nor ending with a space, got "${name}"` }
 }
 
 export function register(on: On<Held>): void {
@@ -82,7 +85,7 @@ export function register(on: On<Held>): void {
   // first would hand the operator the /rename line instead.
   // A session the launcher opened — an agent, a review session, a successor —
   // carries the name it was launched with, and never sees the rename tool: a review
-  // session's subagent once renamed its agent « Coord : norms check… », a
+  // session's subagent once renamed its agent « Coord: norms check… », a
   // second coordinator every listing then counted. It sees the end tool alone, which
   // it may use only once its own move was acknowledged.
   on('session.start', {}, async ($, e, next) => {
@@ -92,10 +95,10 @@ export function register(on: On<Held>): void {
         await $.tool.register({
           name: RENAME_TOOL,
           isDeferred: false,
-          description: 'Renames this session to its role name, "Orch : <subject>" or "Coord : <subject>" (subject at most 25 characters). The name is taken when the current turn ends.',
+          description: 'Renames this session to its role name, "Orch: <subject>" or "Coord: <subject>" (subject at most 25 characters). The name is taken when the current turn ends.',
           inputSchema: {
             type: 'object',
-            properties: { name: { type: 'string', description: 'The full name, e.g. "Orch : <subject>"' } },
+            properties: { name: { type: 'string', description: 'The full name, e.g. "Orch: <subject>"' } },
             required: ['name'],
           },
         })
@@ -182,7 +185,7 @@ export function register(on: On<Held>): void {
       // the launcher starts the home server whose window 0 resumes this very session,
       // and the tab that shows it, then this session ends and window 0 takes over with
       // the resume's prompt. Anything but a move leaves the session where it is.
-      if (!ending && name.startsWith('Orch : ') && await movedHome($, name)) {
+      if (!ending && name.startsWith('Orch: ') && await movedHome($, name)) {
         $.command.run({ command: 'exit' })
           .catch((err: unknown) => logLine($, `exit after the move into the home session failed: ${reasonOf(err)}`))
         return next(e)

@@ -7,14 +7,14 @@
 #   coordinator.sh facts     the sessions, checkouts and heavy runs of every repository a session
 #                            works in, then the collisions among them
 #   coordinator.sh owners    each open pull request of those repositories, traced to its orchestrator
-#   coordinator.sh sleep --name "Orch : <subject>" --brief <path> --dir <path> --model <id>
+#   coordinator.sh sleep --name "Orch: <subject>" --brief <path> --dir <path> --model <id>
 #                        --effort <level> [--session <id>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...
 #                            records a paused orchestrator as sleeping, once its tab is closed;
 #                            prints "sleeping <name>"
 #   coordinator.sh sleeping  one line per sleeping orchestrator; nothing when none sleeps
-#   coordinator.sh wake-done --name "Orch : <subject>"   removes the record of one woken, its
+#   coordinator.sh wake-done --name "Orch: <subject>"   removes the record of one woken, its
 #                            spawn verified; prints "woken <name>"
-#   coordinator.sh drop --name "Orch : <subject>"        abandons one for good: removes its record
+#   coordinator.sh drop --name "Orch: <subject>"        abandons one for good: removes its record
 #                            and moves its brief into an abandoned/ directory beside it
 #   coordinator.sh round [--by-urgency]   the round's entries still to be ruled: the open ones,
 #                            then the answered, then the withdrawn, the urgent first, each level
@@ -115,7 +115,7 @@
 #
 # The chain an owner is read along: the pull request's head branch, the checkouts on it, the
 # host sessions working there, and the orchestrator each one names — itself when its title
-# is `Orch : …`, else the address its brief gives (« orchestrator is the session **`…`** »,
+# is `Orch: …`, else the address its brief gives (« orchestrator is the session **`…`** »,
 # a relative brief read from the session's directory), else the one its startup prompt
 # gives; « unknown » where the chain breaks or allows two answers. A repository is its
 # origin's address without scheme, user or `.git`, so a checkout and its source are one
@@ -250,13 +250,14 @@ brief_orchestrator() {
     if [ -n "$brief" ] && [ -e "$brief" ]; then
         if [ -f "$brief" ] && [ -r "$brief" ]; then
             found=$(grep -o 'rchestrator is the session \*\*`[^`]*`' "$brief" | head -1 | sed 's/.*`\(.*\)`$/\1/')
-            [ -n "$found" ] && { orch="$found"; return; }
+            [ -n "$found" ] && { orch=$(printf '%s' "$found" | sed 's/^Orch : /Orch: /'); return; }
         else
             unread "brief $brief: cannot be read"
             why="brief $brief cannot be read"
         fi
     fi
-    orch=$(printf '%s' "$1" | sed -n 's/.*[Yy]our orchestrator is \(Orch : [^][]*\[[0-9A-Za-z]*\]\).*/\1/p')
+    # A brief written before the change names it in the former shape, `Orch : x`: read the current way.
+    orch=$(printf '%s' "$1" | sed -n 's/.*[Yy]our orchestrator is \(Orch \{0,1\}: [^][]*\[[0-9A-Za-z]*\]\).*/\1/p' | sed 's/^Orch : /Orch: /')
     [ -n "$orch" ] || orch=unknown
 }
 
@@ -340,7 +341,8 @@ read_facts() {
         fi
         title=$(printf '%s' "$cmd" | sed -n 's/.* --name \(.*\)$/\1/p' | sed 's/ --remote-control .*//')
         case "$title" in
-            "Orch : "*) orch="$title"; why=- ;;
+            "Orch: "*) orch="$title"; why=- ;;
+            "Orch : "*) orch="Orch: ${title#Orch : }"; why=- ;;
             *) brief_orchestrator "$cmd" "$cwd" ;;
         esac
         printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$pid" "$tty" "${title:--}" "$orch" "$repo" "$branch" "$top" "$why" >> "$T/sessions"

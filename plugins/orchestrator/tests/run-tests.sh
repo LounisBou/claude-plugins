@@ -481,7 +481,7 @@ echo "== agent chain (dry run) =="
 # to it. A dry run reads the chain and never writes it: there is no tab to record.
 AGENT="$ROOT/skills/iterm-agents/scripts/iterm-agent.sh"
 CHAINS="$WORK/istate/chains"; mkdir -p "$CHAINS"
-chain_spawn() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate" ORCHESTRATOR_SELF_TTY=/dev/ttys900 bash "$AGENT" spawn --dir "$WORK" --title "Agent : chain" --prompt p $(needs_tier "$@") "$@" 2>&1; }
+chain_spawn() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/istate" ORCHESTRATOR_SELF_TTY=/dev/ttys900 bash "$AGENT" spawn --dir "$WORK" --title "Agent: chain" --prompt p $(needs_tier "$@") "$@" 2>&1; }
 out=$(chain_spawn --right-of self)
 check "the dry run names the caller's tty" "1" "$(printf '%s' "$out" | grep -c '^self=/dev/ttys900$')"
 check "no chain: self is the anchor" "1" "$(printf '%s' "$out" | grep -c '^anchor=self$')"
@@ -554,7 +554,7 @@ check "a predecessor with no agents hands over an empty chain" "0|0" "$(transfer
 check "--resident is said by the dry run, and its absence too" "1|1" \
   "$(chain_spawn --resident | grep -c '^resident=yes$')|$(chain_spawn | grep -c '^resident=no$')"
 check "--resident is an agent's only: a successor or an auditor joins no chain to mark" "1|1" \
-  "$(chain_spawn --resident --successor | grep -c 'spawn: refused: --resident marks an agent of your chain')|$(chain_spawn --resident --auditor --title 'Audit : x' | grep -c 'spawn: refused: --resident marks an agent of your chain')"
+  "$(chain_spawn --resident --successor | grep -c 'spawn: refused: --resident marks an agent of your chain')|$(chain_spawn --resident --auditor --title 'Audit: x' | grep -c 'spawn: refused: --resident marks an agent of your chain')"
 append() { ORCHESTRATOR_STATE_DIR="$WORK/istate" "$py" -c "
 import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
 import iterm_agent as m
@@ -844,10 +844,10 @@ mkdir -p "$OW" "$OWCFG/sessions" "$OWST"
 host_session() {  # <pid> <session id> <name>
   jq -nc --argjson p "$1" --arg s "$2" --arg n "$3" '{pid:$p,sessionId:$s,name:$n,updatedAt:$p}' > "$OWCFG/sessions/$1.json"
 }
-host_session 101 o-alpha "Orch : alpha"
-host_session 102 o-beta "Orch : beta"
-host_session 103 o-alpha-next "Orch : alpha"
-host_session 104 o-agent "Agent : some task"
+host_session 101 o-alpha "Orch: alpha"
+host_session 102 o-beta "Orch: beta"
+host_session 103 o-alpha-next "Orch: alpha"
+host_session 104 o-agent "Agent: some task"
 as_session() {  # <session id> <dispatch-record.sh args...>
   local sid="$1"; shift
   CLAUDE_CODE_SESSION_ID="$sid" CLAUDE_CONFIG_DIR="$OWCFG" ORCHESTRATOR_STATE_DIR="$OWST" bash "$REC" "$@"
@@ -855,7 +855,7 @@ as_session() {  # <session id> <dispatch-record.sh args...>
 bash "$REC" goals "$OWR" init --spec none >/dev/null
 check "a session's read of an unowned record claims nothing" "no" \
   "$(as_session o-alpha summary "$OWR" >/dev/null 2>&1; as_session o-alpha goals "$OWR" status >/dev/null 2>&1; [ -e "$OWR.owner" ] && echo yes || echo no)"
-check "the first write names the record's owner: the orchestration's name" "1|Orch : alpha" \
+check "the first write names the record's owner: the orchestration's name" "1|Orch: alpha" \
   "$(as_session o-alpha open "$OWR" --class x --tier light --label mine 2>/dev/null)|$(cat "$OWR.owner" 2>/dev/null)"
 check "a read from another orchestration is free and registers nothing" "0|yes|no" \
   "$(as_session o-beta summary "$OWR" >/dev/null 2>&1; echo $?)|$(as_session o-beta summary "$OWR" 2>/dev/null | grep -q '^open=1 label=mine' && echo yes || echo no)|$([ -e "$OWST/records/o-beta" ] && echo yes || echo no)"
@@ -871,33 +871,33 @@ for sub in "open $OWR --class x --tier light" "round $OWR 1" "review $OWR 1 --he
   "goals $OWR rule-out G1 --ruling r" "goals $OWR defer G1 --ruling r-2026-11-03" "goals $OWR reopen G1"; do
   # shellcheck disable=SC2086
   out=$(as_session o-beta $sub 2>&1 >/dev/null); code=$?
-  case "$out" in *"$OWR"*"Orch : alpha"*) named=named ;; *) named=unnamed ;; esac
+  case "$out" in *"$OWR"*"Orch: alpha"*) named=named ;; *) named=unnamed ;; esac
   OWREFUSED="$OWREFUSED ${sub%% *}:$code:$named"
 done
 check "every write from another orchestration is refused, naming the record and its owner" \
   " open:1:named round:1:named review:1:named fixed:1:named surface:1:named audit:1:named ready:1:named exempt:1:named close:1:named defer:1:named undefer:1:named escaped:1:named cost:1:named goals:1:named goals:1:named goals:1:named goals:1:named goals:1:named goals:1:named" \
   "$OWREFUSED"
-check "a refused write leaves the record, its owner and its goals as they were, and registers nothing" "yes|no|Orch : alpha" \
+check "a refused write leaves the record, its owner and its goals as they were, and registers nothing" "yes|no|Orch: alpha" \
   "$([ "$OWBEFORE" = "$(cksum < "$OWR")|$(cksum < "$OWR.owner")|$(cksum < "$OW/goals.md")" ] && echo yes || echo no)|$([ -e "$OWST/records/o-beta" ] && echo yes || echo no)|$(cat "$OWR.owner")"
 check "the owner's successor (same name, new session) writes" "yes" \
   "$(as_session o-alpha-next round "$OWR" 1 >/dev/null 2>&1 && jq -r 'select(.id==1)|.rounds' "$OWR" | grep -qx 1 && echo yes || echo no)"
-check "the owner's own write is accepted and the owner file is unchanged" "0|Orch : alpha" \
+check "the owner's own write is accepted and the owner file is unchanged" "0|Orch: alpha" \
   "$(as_session o-alpha close "$OWR" 1 --verdict ok >/dev/null 2>&1; echo $?)|$(cat "$OWR.owner")"
 check "a session whose orchestration cannot be told is refused on an owned record" "1|1" \
   "$(as_session o-agent round "$OWR" 1 >/dev/null 2>&1; echo $?)|$(as_session o-unknown round "$OWR" 1 >/dev/null 2>&1; echo $?)"
 check "a shell outside any session writes an owned record, as the operator's own" "0" \
   "$(env -u CLAUDE_CODE_SESSION_ID ORCHESTRATOR_STATE_DIR="$OWST" bash "$REC" escaped "$OWR" 1 >/dev/null 2>&1; echo $?)"
-check "an owner file is one line, the name alone" "1|Orch : alpha" "$(wc -l < "$OWR.owner" | tr -d ' ')|$(cat "$OWR.owner")"
+check "an owner file is one line, the name alone" "1|Orch: alpha" "$(wc -l < "$OWR.owner" | tr -d ' ')|$(cat "$OWR.owner")"
 
 # A successor reads the record at takeover: a read by the owner (the same name, a new session)
 # registers it, so the gate answers for its rows from then on. A read by any other does not.
-host_session 106 o-alpha-third "Orch : alpha"
+host_session 106 o-alpha-third "Orch: alpha"
 OWREAL="$(cd "$OW" && pwd -P)/dispatch.jsonl"
 as_session o-alpha-third summary "$OWR" --open >/dev/null 2>&1
 check "a read by the owner's successor registers the record" "$OWREAL" "$(cat "$OWST/records/o-alpha-third" 2>/dev/null)"
 as_session o-alpha-third goals "$OWR" status >/dev/null 2>&1
 check "a goals read by the owner registers it once" "1" "$(grep -c . "$OWST/records/o-alpha-third" 2>/dev/null)"
-host_session 108 o-alpha-check "Orch : alpha"
+host_session 108 o-alpha-check "Orch: alpha"
 as_session o-alpha-check goals "$OWR" check >/dev/null 2>&1
 check "a goals check by the owner registers the record alone" "$OWREAL" "$(cat "$OWST/records/o-alpha-check" 2>/dev/null)"
 OWU="$OW/unowned/dispatch.jsonl"; mkdir -p "$OW/unowned"
@@ -914,15 +914,21 @@ bash "$REC" goals "$OWL" init --spec none >/dev/null
 bash "$REC" open "$OWL" --class x --tier light --label old >/dev/null
 check "a legacy record stays unowned for a read, a session with no name and a failed write" "no|no|no" \
   "$(as_session o-beta summary "$OWL" >/dev/null 2>&1; [ -e "$OWL.owner" ] && echo yes || echo no)|$(as_session o-agent round "$OWL" 1 >/dev/null 2>&1; [ -e "$OWL.owner" ] && echo yes || echo no)|$(as_session o-beta close "$OWL" 99 --verdict v >/dev/null 2>&1; [ -e "$OWL.owner" ] && echo yes || echo no)"
-check "a legacy record's first write claims it for the writer; the other is then refused" "0|Orch : beta|1" \
+check "a legacy record's first write claims it for the writer; the other is then refused" "0|Orch: beta|1" \
   "$(as_session o-beta round "$OWL" 1 >/dev/null 2>&1; echo $?)|$(cat "$OWL.owner" 2>/dev/null)|$(as_session o-alpha round "$OWL" 1 >/dev/null 2>&1; echo $?)"
 OWG="$OW/goalsfirst/dispatch.jsonl"
 as_session o-alpha goals "$OWG" init --spec none >/dev/null 2>&1
-check "goals init, before any row, claims the record" "Orch : alpha" "$(cat "$OWG.owner" 2>/dev/null)"
+check "goals init, before any row, claims the record" "Orch: alpha" "$(cat "$OWG.owner" 2>/dev/null)"
 OWQ="$OW/spaced/dispatch.jsonl"
 host_session 105 o-colon "Orch: gamma"
 as_session o-colon goals "$OWQ" init --spec none >/dev/null 2>&1
-check "an owner is written in the house shape, « Orch : <subject> », whichever way the name is spelled" "Orch : gamma" "$(cat "$OWQ.owner" 2>/dev/null)"
+check "an owner is written in the house shape, « Orch: <subject> », whichever way the name is spelled" "Orch: gamma" "$(cat "$OWQ.owner" 2>/dev/null)"
+# An owner file written before the change carries the former shape: the same orchestration.
+OWF="$OW/former/dispatch.jsonl"; mkdir -p "$OW/former"
+bash "$REC" goals "$OWF" init --spec none >/dev/null; bash "$REC" open "$OWF" --class x --tier light >/dev/null
+printf 'Orch : beta\n' > "$OWF.owner"
+check "an owner file reading « Orch : beta », the former shape, is the orchestration « Orch: beta »" "0|1" \
+  "$(as_session o-beta round "$OWF" 1 >/dev/null 2>&1; echo $?)|$(as_session o-alpha round "$OWF" 1 >/dev/null 2>&1; echo $?)"
 
 # Two first writers at once: the claim is made before the write, so one wins and the other is
 # refused with its write not made, never both through.
@@ -941,22 +947,22 @@ check "two first writers at once: one is refused, and only the winner's write is
 OWE="$OW/emptyowner/dispatch.jsonl"; mkdir -p "$OW/emptyowner"
 bash "$REC" goals "$OWE" init --spec none >/dev/null; bash "$REC" open "$OWE" --class x --tier light >/dev/null
 : > "$OWE.owner"
-check "an empty owner file is read as absent: the first write claims the record" "0|Orch : beta|1" \
+check "an empty owner file is read as absent: the first write claims the record" "0|Orch: beta|1" \
   "$(as_session o-beta round "$OWE" 1 >/dev/null 2>&1; echo $?)|$(cat "$OWE.owner" 2>/dev/null)|$(as_session o-alpha round "$OWE" 1 >/dev/null 2>&1; echo $?)"
 
 # Two host records for one session id: the newest (`updatedAt`) names the orchestration, whichever
 # file comes first.
-jq -nc '{pid:109,sessionId:"o-renamed",name:"Orch : new-name",updatedAt:900}' > "$OWCFG/sessions/109.json"
-jq -nc '{pid:110,sessionId:"o-renamed",name:"Orch : old-name",updatedAt:100}' > "$OWCFG/sessions/110.json"
+jq -nc '{pid:109,sessionId:"o-renamed",name:"Orch: new-name",updatedAt:900}' > "$OWCFG/sessions/109.json"
+jq -nc '{pid:110,sessionId:"o-renamed",name:"Orch: old-name",updatedAt:100}' > "$OWCFG/sessions/110.json"
 OWN="$OW/newest/dispatch.jsonl"; mkdir -p "$OW/newest"
 as_session o-renamed goals "$OWN" init --spec none >/dev/null 2>&1
-check "of two host records for one session, the newest names the orchestration" "Orch : new-name" "$(cat "$OWN.owner" 2>/dev/null)"
+check "of two host records for one session, the newest names the orchestration" "Orch: new-name" "$(cat "$OWN.owner" 2>/dev/null)"
 
 # A name with two spaces before its reference is still the owner's name once the reference is off.
-host_session 107 o-spaced "Orch : delta  [ab12]"
+host_session 107 o-spaced "Orch: delta  [ab12]"
 OWS="$OW/refspaced/dispatch.jsonl"; mkdir -p "$OW/refspaced"
 as_session o-spaced goals "$OWS" init --spec none >/dev/null 2>&1
-check "a reference set off by two spaces leaves no trailing space in the owner, and the owner writes" "Orch : delta|0" \
+check "a reference set off by two spaces leaves no trailing space in the owner, and the owner writes" "Orch: delta|0" \
   "$(cat "$OWS.owner" 2>/dev/null)|$(as_session o-spaced goals "$OWS" init --spec none --replace >/dev/null 2>&1; echo $?)"
 
 # A ruling that defers work (« later, when I say so ») is recorded, not left as a question: a row
@@ -2112,7 +2118,7 @@ ok_brief "$B/slashpath.md"; printf 'Run `/orchestrator:status`, read `/nowhere/a
 check "a path with a colon is still a path" "1" "$(bash "$LINT" "$B/slashpath.md" 2>&1 | grep -c 'path does not exist: /nowhere/at/all:x/spec.md')"
 # The plugin's own commands are reached by their short names too, `/orchestrator-<name>` and
 # `/coordinator[-<name>]`: no path either. A path under such a word is still a path.
-ok_brief "$B/short.md"; printf 'Run `/orchestrator-status`, then `/coordinator`, `/coordinator-end` and `/orchestrator-sleeping drop Orch : x`.\n' >> "$B/short.md"
+ok_brief "$B/short.md"; printf 'Run `/orchestrator-status`, then `/coordinator`, `/coordinator-end` and `/orchestrator-sleeping drop Orch: x`.\n' >> "$B/short.md"
 check_status "the plugin's short command names are not paths" 0 bash "$LINT" "$B/short.md"
 check "they raise no path finding" "0" "$(bash "$LINT" "$B/short.md" 2>&1 | grep -c 'path does not exist')"
 ok_brief "$B/shortpath.md"; printf 'Read `/orchestrator-x/y`.\n' >> "$B/shortpath.md"
@@ -2329,7 +2335,7 @@ echo "== iterm-agents: a name read from the process table is held to the shape (
 # and a launch that puts its prompt AFTER --name leaves a boundary nothing can recover.
 # The launcher puts --name LAST for exactly that reason; a session launched otherwise is
 # read as unreadable rather than given a name invented by where the words happened to stop.
-# Observed: three sessions listed as « Agent : mock layer Read and execute /Users/…/BRIEF.md.
+# Observed: three sessions listed as « Agent: mock layer Read and execute /Users/…/BRIEF.md.
 # Your orchestrator is … » — a whole brief in the column that says who a session is.
 namefile="$WORK/ps-names.txt"
 name_of() { printf '%s\n' "$2" > "$namefile"
@@ -2339,12 +2345,12 @@ import iterm_agent as ia
 n = ia.session_name_on('$1')
 print('(unreadable)' if n == ia.UNREADABLE_NAME else (n or '(none)'))"; }
 
-check "the launcher's own shape, --name last, reads back whole" "Agent : phase 2" \
-  "$(name_of /dev/ttys901 '/dev/ttys901 /opt/x/claude --permission-mode auto --name Agent : phase 2')"
-check "a name followed by another option stops at it" "Orch : plugin family" \
-  "$(name_of /dev/ttys901 '/dev/ttys901 /opt/x/claude --name Orch : plugin family --permission-mode auto')"
+check "the launcher's own shape, --name last, reads back whole" "Agent: phase 2" \
+  "$(name_of /dev/ttys901 '/dev/ttys901 /opt/x/claude --permission-mode auto --name Agent: phase 2')"
+check "a name followed by another option stops at it" "Orch: plugin family" \
+  "$(name_of /dev/ttys901 '/dev/ttys901 /opt/x/claude --name Orch: plugin family --permission-mode auto')"
 check "a prompt run into the name is not reported as a name" "(unreadable)" \
-  "$(name_of /dev/ttys901 '/dev/ttys901 /opt/x/claude --name Agent : mock layer Read and execute /Users/izno/BRIEF.md. Your orchestrator is Orch : TM frontend')"
+  "$(name_of /dev/ttys901 '/dev/ttys901 /opt/x/claude --name Agent: mock layer Read and execute /Users/izno/BRIEF.md. Your orchestrator is Orch: TM frontend')"
 check "a name under another convention is still read back whole" "steward-successor" \
   "$(name_of /dev/ttys901 '/dev/ttys901 /opt/x/claude --name steward-successor')"
 check "and the older role word too, so the successor's refusal can quote it" "Orchestrator : f" \
@@ -2741,7 +2747,7 @@ AGENT="$ROOT/skills/iterm-agents/scripts/iterm-agent.sh"
 ISTATE="$WORK/istate"
 long=$(printf 'x%.0s' $(seq 1 3000))
 prompt="Read « this » — é \"quoted\" back\\slash $long"
-out=$(LC_ALL=C ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : B-1 — é" --prompt "$prompt" 2>&1)
+out=$(LC_ALL=C ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: B-1 — é" --prompt "$prompt" 2>&1)
 code=$?
 check "dry-run spawn under LC_ALL=C exits 0" "0" "$code"
 cmd=${out#*launch=}; cmd=${cmd%%$'\n'*}
@@ -2753,7 +2759,7 @@ check "the prompt file holds the prompt byte for byte" "$prompt" \
   "$(LC_ALL=C ORCHESTRATOR_STATE_DIR="$ISTATE" "$(command -v python3)" -c "
 import sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
 import iterm_agent as ia
-print(open(ia.write_prompt_file(sys.argv[1], sys.argv[2]), encoding='utf-8').read(), end='')" "$prompt" "Agent : B-1 — é")"
+print(open(ia.write_prompt_file(sys.argv[1], sys.argv[2]), encoding='utf-8').read(), end='')" "$prompt" "Agent: B-1 — é")"
 check "the prompt file lives under the state directory" "yes" "$([ "${file#"$ISTATE"/prompts/}" != "$file" ] && echo yes || echo "$file")"
 # §45: the prompt file carries its kind in its name, so the three files a launch leaves
 # under prompts/ sort by kind like the two already did.
@@ -2774,18 +2780,18 @@ check "the launch execs the CLI by absolute path" "1" "$(printf '%s' "$cmd" | gr
 # is still named absolutely inside the launch: finding the program must not depend on the
 # operator's dotfiles, only the session's environment does.
 check "the tab runs the launch through a login shell" "1" "$(printf '%s' "$out" | grep -c '^program=.* -l <launch-file>$')"
-check "the login shell is the operator's" "1" "$(env ORCHESTRATOR_LOGIN_SHELL=/bin/bash ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : shell" --prompt p 2>&1 | grep -c '^program=/bin/bash -l ')"
-check "the launch text itself is unchanged by the shell" "1" "$(env ORCHESTRATOR_LOGIN_SHELL=/bin/bash ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : shell" --prompt p 2>&1 | sed -n 's/^launch=//p' | grep -cE '^cd .* && .* && exec /[^ ]+/')"
+check "the login shell is the operator's" "1" "$(env ORCHESTRATOR_LOGIN_SHELL=/bin/bash ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: shell" --prompt p 2>&1 | grep -c '^program=/bin/bash -l ')"
+check "the launch text itself is unchanged by the shell" "1" "$(env ORCHESTRATOR_LOGIN_SHELL=/bin/bash ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: shell" --prompt p 2>&1 | sed -n 's/^launch=//p' | grep -cE '^cd .* && .* && exec /[^ ]+/')"
 
 # The title is the session's NAME, not a tab label the shell overwrites: two sessions in one
 # checkout otherwise share the host's stem and differ by a reference nobody reads at a
 # glance (observed: an implementer listed under its orchestrator's own name). Non-ASCII
 # bytes travel like the prompt does — quoted by the shell's own rules.
-check "the launch names the session after its title" "1" "$(printf '%s' "$cmd" | grep -c -- "--name 'Agent : B-1 — é'")"
+check "the launch names the session after its title" "1" "$(printf '%s' "$cmd" | grep -c -- "--name 'Agent: B-1 — é'")"
 # The title is the operator's format and the launcher holds every spawn to it: a successor
 # once came up as `steward-successor` in every listing, because the launcher took whatever
 # was typed and the house format was nowhere (§39). The name is SHORT and it has two roles
-# (§42): `Orch : <subject>` for an orchestrator and its successor, `Agent : <subject>` for
+# (§42): `Orch: <subject>` for an orchestrator and its successor, `Agent: <subject>` for
 # anything an orchestrator spawns, the subject at most twenty-five characters — the
 # operator read his window and could not tell one agent from another at a glance.
 # `--title-free` is the escape for a probe that names its tab otherwise, and the dry run
@@ -2793,7 +2799,7 @@ check "the launch names the session after its title" "1" "$(printf '%s' "$cmd" |
 # An orchestrator's launch, read through its one plain door: its successor, spawned by an
 # orchestrator caller and without remote control, whose launch line is a plain spawn's.
 ORCHVPS="$WORK/ps-orch-vehicle.txt"
-printf '/dev/ttys900 claude --name Orch : f\n' > "$ORCHVPS"
+printf '/dev/ttys900 claude --name Orch: f\n' > "$ORCHVPS"
 orchv() { ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$ORCHVPS" "$@"; }
 shaped() {
   case " $* " in
@@ -2803,14 +2809,14 @@ shaped() {
   CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" $(needs_tier "$@") "$@" 2>&1
 }
 check "a shaped title names the session" "1" \
-  "$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : x'")"
+  "$(shaped --title 'Agent: x' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent: x'")"
 check "and so does an orchestrator's" "1" \
-  "$(orchv shaped --title 'Orch : x' --successor --no-remote-control | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch : x'")"
+  "$(orchv shaped --title 'Orch: x' --successor --no-remote-control | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch: x'")"
 check "and so does a probe's" "1" \
-  "$(shaped --title 'Agent : anchor' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : anchor'")"
-check "the dry run says which name it passes" "1" "$(shaped --title 'Agent : anchor' | grep -c '^name=Agent : anchor$')"
+  "$(shaped --title 'Agent: anchor' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent: anchor'")"
+check "the dry run says which name it passes" "1" "$(shaped --title 'Agent: anchor' | grep -c '^name=Agent: anchor$')"
 check "a title without the shape is refused, and the reason names the shape and the cap" "1|1" \
-  "$(shaped --title foo >/dev/null 2>&1; echo $?)|$(shaped --title foo | grep -c 'a title reads "Orch : <subject>" or "Agent : <subject>", the subject at most 25 characters and neither starting nor ending with a space, got .foo.')"
+  "$(shaped --title foo >/dev/null 2>&1; echo $?)|$(shaped --title foo | grep -c 'a title reads "Orch: <subject>" or "Agent: <subject>", the subject at most 25 characters and neither starting nor ending with a space, got .foo.')"
 # The older roles are the ones the operator could not read, so they are refused like any
 # other unshaped title: the spelled-out role words are gone from the launcher, not merely
 # from the documents.
@@ -2820,24 +2826,24 @@ check "an older role is refused too" "1|1" \
 D42SUB25=$(printf 'x%.0s' $(seq 1 25))
 D42SUB26=$(printf 'x%.0s' $(seq 1 26))
 check "a subject of 25 characters is accepted, of 26 refused" "1|1" \
-  "$(shaped --title "Agent : $D42SUB25" | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : $D42SUB25'")|$(shaped --title "Agent : $D42SUB26" >/dev/null 2>&1; echo $?)"
+  "$(shaped --title "Agent: $D42SUB25" | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent: $D42SUB25'")|$(shaped --title "Agent: $D42SUB26" >/dev/null 2>&1; echo $?)"
 # §45: a subject neither starts nor ends on a space — a listing then shows a name that
 # reads as empty, or one the operator cannot tell from its trimmed twin. Spaces inside the
 # subject stay allowed, and the cap is unchanged.
 check "a subject that is a single space is refused, and the reason names the space rule" "1|1" \
-  "$(shaped --title 'Agent :  ' >/dev/null 2>&1; echo $?)|$(shaped --title 'Agent :  ' | grep -c 'neither starting nor ending with a space')"
+  "$(shaped --title 'Agent:  ' >/dev/null 2>&1; echo $?)|$(shaped --title 'Agent:  ' | grep -c 'neither starting nor ending with a space')"
 check "a subject ending on a space is refused" "1|1" \
-  "$(shaped --title 'Agent : x ' >/dev/null 2>&1; echo $?)|$(shaped --title 'Agent : x ' | grep -c 'neither starting nor ending with a space')"
+  "$(shaped --title 'Agent: x ' >/dev/null 2>&1; echo $?)|$(shaped --title 'Agent: x ' | grep -c 'neither starting nor ending with a space')"
 check "a subject starting on a space is refused" "1|1" \
-  "$(shaped --title 'Agent :  x' >/dev/null 2>&1; echo $?)|$(shaped --title 'Agent :  x' | grep -c 'neither starting nor ending with a space')"
+  "$(shaped --title 'Agent:  x' >/dev/null 2>&1; echo $?)|$(shaped --title 'Agent:  x' | grep -c 'neither starting nor ending with a space')"
 check "a space inside the subject stays allowed" "1" \
-  "$(shaped --title 'Agent : x y' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : x y'")"
+  "$(shaped --title 'Agent: x y' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent: x y'")"
 # A name is one line. The shape's end anchor also matches BEFORE a trailing newline in this
-# language, so `Agent : x` followed by one passed it — and the guard the older code spent on
+# language, so `Agent: x` followed by one passed it — and the guard the older code spent on
 # a newline in a derived name was retired with that code, leaving nothing behind it. The
 # title is written into the launch and read back out of the process table: a second line
 # there is not a name, it is whatever follows one.
-D42NL="Agent : x
+D42NL="Agent: x
 "
 check "a title carrying a trailing newline is refused" "1|1" \
   "$(shaped --title "$D42NL" >/dev/null 2>&1; echo $?)|$(shaped --title "$D42NL" | grep -c 'a title reads')"
@@ -2856,7 +2862,7 @@ check "--title-free with no title keeps the old default" "1" \
 check "a dashed value is quoted, not read as an option" "1" \
   "$(shaped --title-free --title=--evil | sed -n 's/^launch=//p' | grep -c -- "--name '--evil'")"
 check "a shaped title still reads as today" "1" \
-  "$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent : x'")"
+  "$(shaped --title 'Agent: x' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent: x'")"
 
 # `%r` renders a title with an apostrophe wrapped in double quotes instead of single ones,
 # so the refusal's own literal quoting shifted with what the operator typed. `got '<title>'`
@@ -2884,7 +2890,7 @@ mcpd() {
     *) set -- --prompt p "$@" ;;
   esac
   CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$CAT" \
-  bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' $(needs_tier "$@") "$@" 2>&1
+  bash "$AGENT" spawn --dir "$WORK" --title 'Agent: x' $(needs_tier "$@") "$@" 2>&1
 }
 nocat() {
   case " $* " in
@@ -2892,7 +2898,7 @@ nocat() {
     *) set -- --prompt p "$@" ;;
   esac
   CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$NOCAT" \
-  bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' $(needs_tier "$@") "$@" 2>&1
+  bash "$AGENT" spawn --dir "$WORK" --title 'Agent: x' $(needs_tier "$@") "$@" 2>&1
 }
 # The file the launch names is read back, not assumed: the launch line says a path, the
 # content says which servers the session will actually load.
@@ -2937,7 +2943,7 @@ check "no catalogue and no --mcp: strict, no file, and a line on stderr" "1|0|no
 # same reasoning the tier map's own refusal was written on.
 BADCAT="$WORK/mcp-bad.json"; printf '["a","b"]\n' > "$BADCAT"
 check "a catalogue that is not one is refused, and the refusal names the shape" "1|1" \
-  "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADCAT" bash "$AGENT" spawn --tier light --dir "$WORK" --title 'Agent : x' --prompt p >/dev/null 2>&1; echo $?)|$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADCAT" bash "$AGENT" spawn --tier light --dir "$WORK" --title 'Agent : x' --prompt p 2>&1 | grep -c -- "$BADCAT does not read as a server catalogue (a \"servers\" object and a \"default\" list)")"
+  "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADCAT" bash "$AGENT" spawn --tier light --dir "$WORK" --title 'Agent: x' --prompt p >/dev/null 2>&1; echo $?)|$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADCAT" bash "$AGENT" spawn --tier light --dir "$WORK" --title 'Agent: x' --prompt p 2>&1 | grep -c -- "$BADCAT does not read as a server catalogue (a \"servers\" object and a \"default\" list)")"
 # A default naming a server the catalogue does not hold is not caught by the shape check
 # above (both fields still read as an object and a list): the launch would silently drop
 # the unknown name and give the agent a set the operator never wrote. Refused instead, and
@@ -2945,7 +2951,7 @@ check "a catalogue that is not one is refused, and the refusal names the shape" 
 BADDEF="$WORK/mcp-bad-default.json"
 printf '{"servers":{"a":{"command":"a-cmd"}},"default":["a","zzz"]}\n' > "$BADDEF"
 check "a default name absent from servers is refused; one fully held still launches" "1|1|1" \
-  "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADDEF" bash "$AGENT" spawn --tier light --dir "$WORK" --mcp a --title 'Agent : x' --prompt p >/dev/null 2>&1; echo $?)|$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADDEF" bash "$AGENT" spawn --tier light --dir "$WORK" --mcp a --title 'Agent : x' --prompt p 2>&1 | grep -c -- "the catalogue $BADDEF lists 'zzz' in default but not in servers")|$(mcpd | sed -n 's/^launch=//p' | grep -c -- '--mcp-config ')"
+  "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADDEF" bash "$AGENT" spawn --tier light --dir "$WORK" --mcp a --title 'Agent: x' --prompt p >/dev/null 2>&1; echo $?)|$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MCP_CATALOGUE="$BADDEF" bash "$AGENT" spawn --tier light --dir "$WORK" --mcp a --title 'Agent: x' --prompt p 2>&1 | grep -c -- "the catalogue $BADDEF lists 'zzz' in default but not in servers")|$(mcpd | sed -n 's/^launch=//p' | grep -c -- '--mcp-config ')"
 # Every asked name is checked against the catalogue BEFORE `none` short-circuits the
 # selection: a typo beside `none` used to select nothing and say nothing, which is how a
 # caller who mistyped one name among several would never learn it.
@@ -2993,7 +2999,7 @@ check "--account-connectors with no catalogue still drops strict and pre-answers
 # client as well as from the tab, and an agent is driven by its orchestrator alone (§39).
 # The table is a file here; a live run reads `ps`.
 PSTAB="$WORK/ps-table.txt"
-printf '/dev/ttys900 /opt/x/host --name Orch : f --permission-mode auto\n' > "$PSTAB"
+printf '/dev/ttys900 /opt/x/host --name Orch: f --permission-mode auto\n' > "$PSTAB"
 PSNONAME="$WORK/ps-noname.txt"
 printf '/dev/ttys900 /opt/x/host --permission-mode auto\n' > "$PSNONAME"
 succ() {
@@ -3006,21 +3012,21 @@ succ() {
   ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$t" bash "$AGENT" spawn --dir "$WORK" $(needs_tier "$@") "$@" 2>&1
 }
 check "a successor with no title takes the caller's session name" "1" \
-  "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch : f'")"
+  "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch: f'")"
 check "and comes up under remote control, under that name" "1" \
-  "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- "--remote-control 'Orch : f'")"
+  "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- "--remote-control 'Orch: f'")"
 check "--no-remote-control drops the flag and keeps the name" "0|1" \
-  "$(succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -c -- '--remote-control')|$(succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch : f'")"
+  "$(succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -c -- '--remote-control')|$(succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch: f'")"
 check "a plain spawn never carries remote control" "0" \
-  "$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- '--remote-control')"
+  "$(shaped --title 'Agent: x' | sed -n 's/^launch=//p' | grep -c -- '--remote-control')"
 # The host starts remote control for every new session by default (a server-side rollout
 # decides when nothing is set). An agent is driven by its orchestrator alone, so it comes
 # up with the setting that turns that default off; only a successor carries the flag
 # instead, never both.
 check "a plain spawn carries the setting off, and no --remote-control" "1|0" \
-  "$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -Fc -- "--settings '{\"remoteControlAtStartup\":false,\"syncClaudeAiSkills\":false,\"awaySummaryEnabled\":false,\"env\":{\"CLAUDE_CODE_TOTAL_TOKENS_REMINDER\":\"off\",\"CLAUDE_CODE_SILENT_TURN_REMINDER\":\"0\"}}'")|$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- '--remote-control')"
+  "$(shaped --title 'Agent: x' | sed -n 's/^launch=//p' | grep -Fc -- "--settings '{\"remoteControlAtStartup\":false,\"syncClaudeAiSkills\":false,\"awaySummaryEnabled\":false,\"env\":{\"CLAUDE_CODE_TOTAL_TOKENS_REMINDER\":\"off\",\"CLAUDE_CODE_SILENT_TURN_REMINDER\":\"0\"}}'")|$(shaped --title 'Agent: x' | sed -n 's/^launch=//p' | grep -c -- '--remote-control')"
 check "a successor carries the flag, and not the setting" "1|0" \
-  "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- "--remote-control 'Orch : f'")|$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- 'remoteControlAtStartup')"
+  "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- "--remote-control 'Orch: f'")|$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | grep -c -- 'remoteControlAtStartup')"
 check "--successor --no-remote-control carries the setting" "1" \
   "$(succ "$PSTAB" --successor --no-remote-control | sed -n 's/^launch=//p' | grep -Fc -- "--settings '{\"remoteControlAtStartup\":false,\"syncClaudeAiSkills\":false,\"env\":{\"CLAUDE_CODE_TOTAL_TOKENS_REMINDER\":\"off\"}}'")"
 check "a caller launched without a name cannot derive one" "1|1" \
@@ -3036,22 +3042,22 @@ printf '/dev/ttys900 /opt/x/host --name Orchestrator : %s --permission-mode auto
 PSOLD="$WORK/ps-old.txt"
 printf '/dev/ttys900 /opt/x/host --name Orchestrator : f --permission-mode auto\n' > "$PSOLD"
 PSSHORT="$WORK/ps-short.txt"
-printf '/dev/ttys900 /opt/x/host --name Orch : %s --permission-mode auto\n' "$(printf 'x%.0s' $(seq 1 25))" > "$PSSHORT"
+printf '/dev/ttys900 /opt/x/host --name Orch: %s --permission-mode auto\n' "$(printf 'x%.0s' $(seq 1 25))" > "$PSSHORT"
 PSLONGSUB="$WORK/ps-long-subject.txt"
-printf '/dev/ttys900 /opt/x/host --name Orch : %s --permission-mode auto\n' "$(printf 'x%.0s' $(seq 1 26))" > "$PSLONGSUB"
+printf '/dev/ttys900 /opt/x/host --name Orch: %s --permission-mode auto\n' "$(printf 'x%.0s' $(seq 1 26))" > "$PSLONGSUB"
 # §39 changed this refusal's WORDS and not its verdict: a launch line is past anything a
-# name can be, so it is not read back as one at all, and « does not read Orch : <subject> »
+# name can be, so it is not read back as one at all, and « does not read Orch: <subject> »
 # was saying the wrong thing about a string nobody could read in the first place.
 check "a derived name that is a launch line is refused as unreadable" "1|1" \
   "$(succ "$PSLONG" --successor >/dev/null 2>&1; echo $?)|$(succ "$PSLONG" --successor | grep -c "session name cannot be read from the process table")"
 check "a caller named under the older convention derives nothing" "1|1" \
-  "$(succ "$PSOLD" --successor >/dev/null 2>&1; echo $?)|$(succ "$PSOLD" --successor | grep -c "the caller's session name 'Orchestrator : f' does not read .Orch : <subject>.; pass --title .Orch : <subject>.")"
+  "$(succ "$PSOLD" --successor >/dev/null 2>&1; echo $?)|$(succ "$PSOLD" --successor | grep -c "the caller's session name 'Orchestrator : f' does not read .Orch: <subject>.; pass --title .Orch: <subject>.")"
 check "a derived subject of 25 characters still derives, of 26 is refused" "1|1" \
-  "$(succ "$PSSHORT" --successor | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch : $(printf 'x%.0s' $(seq 1 25))'")|$(succ "$PSLONGSUB" --successor >/dev/null 2>&1; echo $?)"
+  "$(succ "$PSSHORT" --successor | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch: $(printf 'x%.0s' $(seq 1 25))'")|$(succ "$PSLONGSUB" --successor >/dev/null 2>&1; echo $?)"
 # An orchestrator's title is a successor's, and a plain anchor lands after the chain: the
 # tab the operator found at the far right of his window, inheriting nothing (§39).
 check "an orchestrator's title on a plain anchor is refused" "1|1" \
-  "$(shaped --title 'Orch : f' --right-of self | grep -c "an orchestrator's title is a successor's")|$(shaped --title 'Orch : f' --left-of /dev/ttys555 | grep -c 'spawn it with --successor')"
+  "$(shaped --title 'Orch: f' --right-of self | grep -c "an orchestrator's title is a successor's")|$(shaped --title 'Orch: f' --left-of /dev/ttys555 | grep -c 'spawn it with --successor')"
 # A successor is named after its caller by definition; --title-free asks for the ESCAPE
 # from that shape, which does not apply to a name the launcher derives itself.
 check "--successor with --title-free is refused" "1|1" \
@@ -3062,7 +3068,7 @@ name_on() { ORCHESTRATOR_PS_TABLE="$1" "$py" -c "
 import sys; sys.path.insert(0,'$ROOT/skills/iterm-agents/scripts')
 import iterm_agent as m
 print(m.session_name_on(sys.argv[1]))" "$2"; }
-check "the table gives the name the host process was launched with" "Orch : f" "$(name_on "$PSTAB" /dev/ttys900)"
+check "the table gives the name the host process was launched with" "Orch: f" "$(name_on "$PSTAB" /dev/ttys900)"
 check "a process launched without a name reads as none" "None" "$(name_on "$PSNONAME" /dev/ttys900)"
 check "a tty the table does not name reads as none" "None" "$(name_on "$PSTAB" /dev/ttys555)"
 # The host keeps a session's current name in its registry, and a rename changes the
@@ -3070,18 +3076,18 @@ check "a tty the table does not name reads as none" "None" "$(name_on "$PSTAB" /
 # default) » and its successor was refused for having no name.
 NCFG="$WORK/namecfg"; mkdir -p "$NCFG/sessions"
 printf '/dev/ttys900 5151 claude --resume x\n' > "$WORK/ps-reg.txt"
-printf '/dev/ttys900 5252 claude --name Agent : old\n' > "$WORK/ps-reg-argv.txt"
+printf '/dev/ttys900 5252 claude --name Agent: old\n' > "$WORK/ps-reg-argv.txt"
 printf '{"pid":5151,"name":"\xe2\x80\x9cOrch : g\xe2\x80\x9d"}\n' > "$NCFG/sessions/5151.json"
 printf '{"pid":5252,"name":""}\n' > "$NCFG/sessions/5252.json"
-check "a registry file names the session, its quotes stripped" "Orch : g" \
+check "a registry file names the session, its quotes stripped" "Orch: g" \
   "$(CLAUDE_CONFIG_DIR="$NCFG" name_on "$WORK/ps-reg.txt" /dev/ttys900)"
-check "an empty registry name falls back to the launch name" "Agent : old" \
+check "an empty registry name falls back to the launch name" "Agent: old" \
   "$(CLAUDE_CONFIG_DIR="$NCFG" name_on "$WORK/ps-reg-argv.txt" /dev/ttys900)"
-printf '{"pid":5252,"name":"Agent : renamed"}\n' > "$NCFG/sessions/5252.json"
-check "and a registry name wins over the launch name" "Agent : renamed" \
+printf '{"pid":5252,"name":"Agent: renamed"}\n' > "$NCFG/sessions/5252.json"
+check "and a registry name wins over the launch name" "Agent: renamed" \
   "$(CLAUDE_CONFIG_DIR="$NCFG" name_on "$WORK/ps-reg-argv.txt" /dev/ttys900)"
 check "a successor of a session named only in the registry takes that name" "1" \
-  "$(CLAUDE_CONFIG_DIR="$NCFG" succ "$WORK/ps-reg.txt" --successor | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch : g'")"
+  "$(CLAUDE_CONFIG_DIR="$NCFG" succ "$WORK/ps-reg.txt" --successor | sed -n 's/^launch=//p' | grep -c -- "--name 'Orch: g'")"
 
 # What the dry run could not see and the live round did: `ps` shows a command line with
 # the shell's quoting gone, so whatever FOLLOWS --name runs into the name. The prompt sat
@@ -3096,23 +3102,23 @@ argv = shlex.split(launch.split(' && ')[-1])[1:]
 argv = [open(prompt_file).read().strip() if a.startswith('\$(cat ') else a for a in argv]
 print('%s %s' % (tty, ' '.join(argv)))" "$1" "$2" "$3"; }
 PROMPT_COLON="$WORK/prompt-colon.txt"
-printf 'Read and execute /tmp/brief.md. Your orchestrator is Orch : plugin family [abc123].\n' > "$PROMPT_COLON"
-d1launch=$(shaped --title 'Agent : x' --prompt-file "$PROMPT_COLON" | sed -n 's/^launch=//p')
+printf 'Read and execute /tmp/brief.md. Your orchestrator is Orch: plugin family [abc123].\n' > "$PROMPT_COLON"
+d1launch=$(shaped --title 'Agent: x' --prompt-file "$PROMPT_COLON" | sed -n 's/^launch=//p')
 ps_line "$d1launch" "$PROMPT_COLON" /dev/ttys900 > "$WORK/ps-launched.txt"
-check "the name a spawn leaves in the process table is the title, and stops there" "Agent : x" \
+check "the name a spawn leaves in the process table is the title, and stops there" "Agent: x" \
   "$(name_on "$WORK/ps-launched.txt" /dev/ttys900)"
 d1succ=$(succ "$PSTAB" --successor --prompt-file "$PROMPT_COLON" | sed -n 's/^launch=//p')
 ps_line "$d1succ" "$PROMPT_COLON" /dev/ttys901 > "$WORK/ps-succ.txt"
-check "and a successor's, with the remote-control flag behind it" "Orch : f" \
+check "and a successor's, with the remote-control flag behind it" "Orch: f" \
   "$(name_on "$WORK/ps-succ.txt" /dev/ttys901)"
 # A successor starts from a brief generated from the state (decision 0007): one that misses an
 # open item of the state — here the round's open question — is refused before any tab exists,
 # and the same brief once `succession.sh live` wrote its Live state goes through.
 SUCCB="$WORK/succession-brief.md"; SUCCREC="$WORK/succession-record.jsonl"
 printf '{"id":4,"label":"api","state":"open"}\n' > "$SUCCREC"
-sed -e 's/{{PREDECESSOR_NAME_PATTERN}}/Orch : f/g' -e "s#{{DISPATCH_RECORD}}#$SUCCREC#g" "$ROOT/templates/orchestrator-succession-brief.md" > "$SUCCB"
+sed -e 's/{{PREDECESSOR_NAME_PATTERN}}/Orch: f/g' -e "s#{{DISPATCH_RECORD}}#$SUCCREC#g" "$ROOT/templates/orchestrator-succession-brief.md" > "$SUCCB"
 mkdir -p "$ISTATE/round"
-printf '{"id":"succ-q1","from":"Orch : f","session":"s-old","kind":"operator","status":"open","question":"Which?"}\n' > "$ISTATE/round/succ-q1.json"
+printf '{"id":"succ-q1","from":"Orch: f","session":"s-old","kind":"operator","status":"open","question":"Which?"}\n' > "$ISTATE/round/succ-q1.json"
 check "a successor is refused on a brief that misses an open item of the state, and spawned once it is generated" "1|0" \
   "$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" 2>&1 | grep -c 'misses question succ-q1')|$(ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$ROOT/skills/orchestrator/scripts/succession.sh" live "$SUCCB" --next 'answer succ-q1' >/dev/null 2>&1; succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" 2>&1 | grep -c 'refused')"
 rm -f "$ISTATE/round/succ-q1.json"
@@ -3128,7 +3134,7 @@ import iterm_agent as m
 print(m.row_for(1, 2, '/dev/ttys900', sys.argv[1], None if sys.argv[2] == '-' else sys.argv[2],
                 sys.argv[3] == 'self', sys.argv[4] == 'hidden'))" "$1" "$2" "$3" "$4"; }
 check "the row carries the tab title, the session name and the caller's own mark" \
-  'w1/t2 | /dev/ttys900 | ✳ T | Agent : x | self' "$(row '✳ T' 'Agent : x' self visible)"
+  'w1/t2 | /dev/ttys900 | ✳ T | Agent: x | self' "$(row '✳ T' 'Agent: x' self visible)"
 check "a session launched without a name says so, and a hidden pane still says hidden" \
   'w1/t2 | /dev/ttys900 | ✳ T | (host default) | hidden' "$(row '✳ T' - other hidden)"
 
@@ -3170,7 +3176,7 @@ check "--leftmost moves a tab out of the caller's chain too, with the warning na
 # its caller, the chain ignored — on the caller's model and under remote control under its
 # own title; but it takes no chain and joins none: the orchestrator it audits keeps its
 # agents, and the auditor is nobody's agent. Its title is REQUIRED and reads
-# `Audit : <subject>`, a shape refused everywhere but under --auditor.
+# `Audit: <subject>`, a shape refused everywhere but under --auditor.
 AUDSTATE="$WORK/audstate"; AUDCFG="$WORK/audcfg"
 # The auditor inherits the caller's model from the measure file, and that file is the
 # module's own artifact: it is read under the config dir (CLAUDE_CONFIG_DIR, else the
@@ -3183,55 +3189,55 @@ printf '{"tab_id":"7","tty":"/dev/ttys901","owner":"S-ME"}\n' > "$AUDSTATE/chain
 aud() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" CLAUDE_CONFIG_DIR="$AUDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
   ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-aud bash "$AGENT" spawn --dir "$WORK" --prompt p $(needs_tier "$@") "$@" 2>&1; }
 audl() { aud "$@" | sed -n 's/^launch=//p'; }
-AUDOUT=$(aud --auditor --title 'Audit : tm')
+AUDOUT=$(aud --auditor --title 'Audit: tm')
 AUDLAUNCH=$(printf '%s' "$AUDOUT" | sed -n 's/^launch=//p')
 check "an auditor is named by its title and comes up under remote control under it" "1|1" \
-  "$(printf '%s' "$AUDLAUNCH" | grep -c -- "--name 'Audit : tm'")|$(printf '%s' "$AUDLAUNCH" | grep -c -- "--remote-control 'Audit : tm'")"
+  "$(printf '%s' "$AUDLAUNCH" | grep -c -- "--name 'Audit: tm'")|$(printf '%s' "$AUDLAUNCH" | grep -c -- "--remote-control 'Audit: tm'")"
 check "and without the setting that turns remote control off" "0" "$(printf '%s' "$AUDLAUNCH" | grep -c -- 'remoteControlAtStartup')"
 check "an auditor runs on the caller's model with no flag to ask for it" "1" "$(printf '%s' "$AUDLAUNCH" | grep -c -- '--model aud-model')"
 check "an auditor anchors on self, past no agent, and the dry run says what it is" "1|1|1" \
   "$(printf '%s' "$AUDOUT" | grep -c '^anchor=self$')|$(printf '%s' "$AUDOUT" | grep -c '^auditor=yes$')|$(printf '%s' "$AUDOUT" | grep -c '^successor=no$')"
 check "an auditor sits on the LEFT of its caller; a successor and a plain anchor stay RIGHT" "left|right|right" \
-  "$(printf '%s' "$AUDOUT" | sed -n 's/^side=//p')|$(aud --title 'Orch : f' --successor | sed -n 's/^side=//p')|$(aud --title 'Agent : x' --right-of self | sed -n 's/^side=//p')"
+  "$(printf '%s' "$AUDOUT" | sed -n 's/^side=//p')|$(aud --title 'Orch: f' --successor | sed -n 's/^side=//p')|$(aud --title 'Agent: x' --right-of self | sed -n 's/^side=//p')"
 check "where a plain spawn from the same caller anchors after its last agent" "1" \
-  "$(aud --title 'Agent : x' --right-of self | grep -c '^anchor=/dev/ttys901$')"
+  "$(aud --title 'Agent: x' --right-of self | grep -c '^anchor=/dev/ttys901$')"
 check "a chain is appended to by an agent, handed over by a successor, left alone by an auditor" "append|transfer|none" \
-  "$(aud --title 'Agent : x' --right-of self | sed -n 's/^chain=//p')|$(aud --title 'Orch : f' --successor | sed -n 's/^chain=//p')|$(printf '%s' "$AUDOUT" | sed -n 's/^chain=//p')"
+  "$(aud --title 'Agent: x' --right-of self | sed -n 's/^chain=//p')|$(aud --title 'Orch: f' --successor | sed -n 's/^chain=//p')|$(printf '%s' "$AUDOUT" | sed -n 's/^chain=//p')"
 check "an auditor without a title is refused, and the reason names the shape" "1|1" \
-  "$(aud --auditor >/dev/null 2>&1; echo $?)|$(aud --auditor | grep -c -- '--auditor needs --title "Audit : <subject>"')"
+  "$(aud --auditor >/dev/null 2>&1; echo $?)|$(aud --auditor | grep -c -- '--auditor needs --title "Audit: <subject>"')"
 AUD25=$(printf 'x%.0s' $(seq 1 25)); AUD26=$(printf 'x%.0s' $(seq 1 26))
 check "an auditor's subject of 25 characters is accepted, of 26 refused" "1|1" \
-  "$(audl --auditor --title "Audit : $AUD25" | grep -c -- "--name 'Audit : $AUD25'")|$(aud --auditor --title "Audit : $AUD26" >/dev/null 2>&1; echo $?)"
+  "$(audl --auditor --title "Audit: $AUD25" | grep -c -- "--name 'Audit: $AUD25'")|$(aud --auditor --title "Audit: $AUD26" >/dev/null 2>&1; echo $?)"
 check "an auditor under an agent's or an orchestrator's title is refused" "1|1|1" \
-  "$(aud --auditor --title 'Agent : x' >/dev/null 2>&1; echo $?)|$(aud --auditor --title 'Orch : x' >/dev/null 2>&1; echo $?)|$(aud --auditor --title 'Agent : x' | grep -c "an auditor's title reads \"Audit : <subject>\"")"
+  "$(aud --auditor --title 'Agent: x' >/dev/null 2>&1; echo $?)|$(aud --auditor --title 'Orch: x' >/dev/null 2>&1; echo $?)|$(aud --auditor --title 'Agent: x' | grep -c "an auditor's title reads \"Audit: <subject>\"")"
 check "an audit title is refused without --auditor: plain, anchored, free, successor" "1|1|1|1" \
-  "$(aud --title 'Audit : x' | grep -c "an audit title is an auditor's")|$(aud --title 'Audit : x' --right-of self | grep -c "an audit title is an auditor's")|$(aud --title-free --title 'Audit : x' | grep -c "an audit title is an auditor's")|$(aud --successor --title 'Audit : x' | grep -c "an audit title is an auditor's")"
-check "and that refusal exits 1" "1" "$(aud --title 'Audit : x' >/dev/null 2>&1; echo $?)"
+  "$(aud --title 'Audit: x' | grep -c "an audit title is an auditor's")|$(aud --title 'Audit: x' --right-of self | grep -c "an audit title is an auditor's")|$(aud --title-free --title 'Audit: x' | grep -c "an audit title is an auditor's")|$(aud --successor --title 'Audit: x' | grep -c "an audit title is an auditor's")"
+check "and that refusal exits 1" "1" "$(aud --title 'Audit: x' >/dev/null 2>&1; echo $?)"
 for AUDFLAG in --successor '--right-of self' '--left-of /dev/ttys555' --title-free '--tier deep' '--model m' --no-remote-control; do
   # shellcheck disable=SC2086 # the flag and its value are two words on purpose
   check "an auditor refuses $AUDFLAG" "1|1" \
-    "$(aud --auditor --title 'Audit : x' $AUDFLAG >/dev/null 2>&1; echo $?)|$(aud --auditor --title 'Audit : x' $AUDFLAG | grep -c "is not an auditor's")"
+    "$(aud --auditor --title 'Audit: x' $AUDFLAG >/dev/null 2>&1; echo $?)|$(aud --auditor --title 'Audit: x' $AUDFLAG | grep -c "is not an auditor's")"
 done
 check "an auditor with no readable pair is refused, naming where its transcript was looked for" "1" \
-  "$(CLAUDE_CODE_SESSION_ID=s-aud-none ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" bash "$AGENT" spawn --dir "$WORK" --auditor --title 'Audit : x' --prompt p 2>&1 | grep -cF "no transcript for session s-aud-none under $ORCHESTRATOR_PROJECTS_DIR")"
+  "$(CLAUDE_CODE_SESSION_ID=s-aud-none ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" bash "$AGENT" spawn --dir "$WORK" --auditor --title 'Audit: x' --prompt p 2>&1 | grep -cF "no transcript for session s-aud-none under $ORCHESTRATOR_PROJECTS_DIR")"
 check "--inherit-model beside --auditor asks for what is already implied" "1" \
-  "$(audl --auditor --inherit-model --title 'Audit : x' | grep -c -- '--model aud-model')"
+  "$(audl --auditor --inherit-model --title 'Audit: x' | grep -c -- '--model aud-model')"
 
 # An auditor kept on past its report succeeds at its gate (§9.4, §52): `spawn --successor` from
-# a session named `Audit : <subject>` derives that name like it does for `Orch :`, lands
+# a session named `Audit: <subject>` derives that name like it does for `Orch:`, lands
 # immediately right of the caller (so, once the predecessor's tab is closed, in the auditor's
 # own place left of its orchestrator), runs on the caller's model under remote control, and
 # takes and hands no chain: an auditor has none, and written into one it would anchor an
 # orchestrator's next agent.
 PSAUDTAB="$WORK/ps-audit-succ.txt"
-printf '/dev/ttys900 /opt/x/host --name Audit : tm --permission-mode auto\n' > "$PSAUDTAB"
+printf '/dev/ttys900 /opt/x/host --name Audit: tm --permission-mode auto\n' > "$PSAUDTAB"
 audsucc() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" CLAUDE_CONFIG_DIR="$AUDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
   ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-aud ORCHESTRATOR_PS_TABLE="${AUDPS:-$PSAUDTAB}" \
   bash "$AGENT" spawn --dir "$WORK" --prompt p $(needs_tier "$@") "$@" 2>&1; }
 AUDSUCCOUT=$(audsucc --successor --inherit-model --permission-mode auto)
 AUDSUCCLAUNCH=$(printf '%s' "$AUDSUCCOUT" | sed -n 's/^launch=//p')
 check "an auditor's successor takes the caller's name and comes up under remote control under it" "1|1|0" \
-  "$(printf '%s' "$AUDSUCCLAUNCH" | grep -c -- "--name 'Audit : tm'")|$(printf '%s' "$AUDSUCCLAUNCH" | grep -c -- "--remote-control 'Audit : tm'")|$(printf '%s' "$AUDSUCCLAUNCH" | grep -c -- 'remoteControlAtStartup')"
+  "$(printf '%s' "$AUDSUCCLAUNCH" | grep -c -- "--name 'Audit: tm'")|$(printf '%s' "$AUDSUCCLAUNCH" | grep -c -- "--remote-control 'Audit: tm'")|$(printf '%s' "$AUDSUCCLAUNCH" | grep -c -- 'remoteControlAtStartup')"
 check "it runs on the caller's model, with the flag or without" "1|1" \
   "$(printf '%s' "$AUDSUCCLAUNCH" | grep -c -- '--model aud-model')|$(audsucc --successor | sed -n 's/^launch=//p' | grep -c -- '--model aud-model')"
 check "it lands immediately right of the caller, past no agent of any chain" "right|1" \
@@ -3241,14 +3247,14 @@ check "it takes and hands no chain, and is not an auditor's spawn" "none|yes|no"
 check "an orchestrator's successor from the same state still hands the chain over" "transfer" \
   "$(succ "$PSTAB" --successor | sed -n 's/^chain=//p')"
 check "a typed audit title is still refused beside --successor, and a 26-character subject is refused" "1|1" \
-  "$(audsucc --successor --title 'Audit : x' | grep -c "an audit title is an auditor's")|$(printf '/dev/ttys900 /opt/x/host --name Audit : %s --permission-mode auto\n' "$AUD26" > "$WORK/ps-audit-long.txt"; AUDPS="$WORK/ps-audit-long.txt"; audsucc --successor >/dev/null 2>&1; echo $?)"
+  "$(audsucc --successor --title 'Audit: x' | grep -c "an audit title is an auditor's")|$(printf '/dev/ttys900 /opt/x/host --name Audit: %s --permission-mode auto\n' "$AUD26" > "$WORK/ps-audit-long.txt"; AUDPS="$WORK/ps-audit-long.txt"; audsucc --successor >/dev/null 2>&1; echo $?)"
 # The 25-character subject is the longest an auditor's title takes: it is ACCEPTED as a
 # successor, under the caller's name, right of it, in no chain. That half falls with the auditor
 # branch removed, which the refusal of 26 alone does not (it fails either title shape).
-printf '/dev/ttys900 /opt/x/host --name Audit : %s --permission-mode auto\n' "$AUD25" > "$WORK/ps-audit-25.txt"
+printf '/dev/ttys900 /opt/x/host --name Audit: %s --permission-mode auto\n' "$AUD25" > "$WORK/ps-audit-25.txt"
 AUD25OUT=$(AUDPS="$WORK/ps-audit-25.txt"; audsucc --successor)
 check "a 25-character subject is accepted as a successor: the caller's name, right of it, in no chain" "1|right|none" \
-  "$(printf '%s' "$AUD25OUT" | grep -c "^name=Audit : $AUD25\$")|$(printf '%s' "$AUD25OUT" | sed -n 's/^side=//p')|$(printf '%s' "$AUD25OUT" | sed -n 's/^chain=//p')"
+  "$(printf '%s' "$AUD25OUT" | grep -c "^name=Audit: $AUD25\$")|$(printf '%s' "$AUD25OUT" | sed -n 's/^side=//p')|$(printf '%s' "$AUD25OUT" | sed -n 's/^chain=//p')"
 # An auditor's successor runs on the caller's model and comes up under remote control under its
 # name: a tier, a model or no remote control beside --successor is refused, one flag at a time.
 for AUDSUCCFLAG in "--tier standard" "--model a-model" "--no-remote-control"; do
@@ -3388,7 +3394,7 @@ code = 0
 with open('$WORK/aud-spawn.out', 'w') as out, open('$WORK/aud-spawn.err', 'w') as err, \
      contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
     try:
-        m.cmd_spawn(['--dir', '$WORK', '--prompt', 'p', '--auditor', '--title', 'Audit : tm',
+        m.cmd_spawn(['--dir', '$WORK', '--prompt', 'p', '--auditor', '--title', 'Audit: tm',
                      '--trust', '--no-verify'])
     except SystemExit as exc:
         code = exc.code or 0
@@ -3408,13 +3414,13 @@ check "the API-less rung: no placement warning on stderr, the API-not-available 
 # `rotate` and `move` treat an auditor's tab as not the caller's to replace or place: it is
 # read by its NAME in the process table, so a stale chain entry naming it moves nothing.
 PSAUD="$WORK/ps-audit.txt"
-printf '/dev/ttys950 /opt/x/claude --name Audit : tm\n/dev/ttys901 /opt/x/claude --name Agent : x\n' > "$PSAUD"
+printf '/dev/ttys950 /opt/x/claude --name Audit: tm\n/dev/ttys901 /opt/x/claude --name Agent: x\n' > "$PSAUD"
 audrot() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" ORCHESTRATOR_PS_TABLE="$PSAUD" \
-  bash "$AGENT" rotate --dir "$WORK" --title "Agent : rotated" --prompt p $(needs_tier "$@") "$@" 2>&1; }
+  bash "$AGENT" rotate --dir "$WORK" --title "Agent: rotated" --prompt p $(needs_tier "$@") "$@" 2>&1; }
 check "rotate refuses --auditor" "1" "$(audrot --old-tty /dev/ttys901 --auditor | grep -c -- '--auditor is not a rotation')"
 AUDROT=$(audrot --old-tty /dev/ttys950)
 check "rotate refuses an auditor's tab before it spawns anything" "0|1|1" \
-  "$(printf '%s' "$AUDROT" | grep -c '^launch=')|$(printf '%s' "$AUDROT" | grep -c "rotate: refused: /dev/ttys950 is an auditor's tab ('Audit : tm')")|$(audrot --old-tty /dev/ttys950 >/dev/null 2>&1; echo $?)"
+  "$(printf '%s' "$AUDROT" | grep -c '^launch=')|$(printf '%s' "$AUDROT" | grep -c "rotate: refused: /dev/ttys950 is an auditor's tab ('Audit: tm')")|$(audrot --old-tty /dev/ttys950 >/dev/null 2>&1; echo $?)"
 check "--force rotates it, and says so" "1|1" \
   "$(audrot --old-tty /dev/ttys950 --force | tail -1 | grep -c '^close=/dev/ttys950')|$(audrot --old-tty /dev/ttys950 --force | grep -c "^rotate: forced: /dev/ttys950 is an auditor's tab")"
 check "an agent's tab still rotates without --force" "1" "$(audrot --old-tty /dev/ttys901 | tail -1 | grep -c '^close=/dev/ttys901')"
@@ -3422,11 +3428,11 @@ printf '{"tab_id":"8","tty":"/dev/ttys950","owner":"S-ME"}\n' >> "$AUDSTATE/chai
 audmv() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$AUDSTATE" ORCHESTRATOR_SELF_TTY="${AUDSELF:-/dev/ttys900}" \
   ORCHESTRATOR_SELF_ID=S-ME ORCHESTRATOR_PS_TABLE="$PSAUD" bash "$AGENT" move "$@" 2>&1; }
 check "an auditor's tab is not moved, even with a stale chain entry naming it" "1|1" \
-  "$(audmv --tty /dev/ttys950 --right-of self >/dev/null 2>&1; echo $?)|$(audmv --tty /dev/ttys950 --right-of self | grep -c "move: refused: /dev/ttys950 is an auditor's tab ('Audit : tm'), not this session's to place (pass --force to move it anyway)")"
+  "$(audmv --tty /dev/ttys950 --right-of self >/dev/null 2>&1; echo $?)|$(audmv --tty /dev/ttys950 --right-of self | grep -c "move: refused: /dev/ttys950 is an auditor's tab ('Audit: tm'), not this session's to place (pass --force to move it anyway)")"
 check "--force moves it, and says so" "0|1" \
   "$(audmv --tty /dev/ttys950 --right-of self --force >/dev/null 2>&1; echo $?)|$(audmv --tty /dev/ttys950 --right-of self --force | grep -c "^move: forced: /dev/ttys950 is an auditor's tab")"
 check "an auditor's tab is not moved leftmost either" "1|1" \
-  "$(audmv --tty /dev/ttys950 --leftmost >/dev/null 2>&1; echo $?)|$(audmv --tty /dev/ttys950 --leftmost | grep -c "move: refused: /dev/ttys950 is an auditor's tab ('Audit : tm'), not this session's to place (pass --force to move it anyway)")"
+  "$(audmv --tty /dev/ttys950 --leftmost >/dev/null 2>&1; echo $?)|$(audmv --tty /dev/ttys950 --leftmost | grep -c "move: refused: /dev/ttys950 is an auditor's tab ('Audit: tm'), not this session's to place (pass --force to move it anyway)")"
 check "--force moves it leftmost too, and says so" "0|1" \
   "$(audmv --tty /dev/ttys950 --leftmost --force >/dev/null 2>&1; echo $?)|$(audmv --tty /dev/ttys950 --leftmost --force | grep -c "^move: forced: /dev/ttys950 is an auditor's tab")"
 check "an agent of the chain still moves" "1" "$(audmv --tty /dev/ttys901 --right-of self | grep -c '^move=/dev/ttys901 right_of=/dev/ttys900$')"
@@ -3437,75 +3443,75 @@ check "an auditor places its own tab" "1" \
 # neither an auditor nor an agent: it lands at the FIRST place of the caller's window (not
 # merely beside it), the chain ignored — on the caller's model and under remote control
 # under its own title; it takes no chain and joins none. Its title is REQUIRED and reads
-# `Coord : <subject>`, a shape refused everywhere but under --coordinator-successor.
+# `Coord: <subject>`, a shape refused everywhere but under --coordinator-successor.
 CRDSTATE="$WORK/crdstate"; CRDCFG="$WORK/crdcfg"
 mkdir -p "$CRDSTATE/chains" "$CRDCFG/claude-orchestrator/measure"
 printf '{"context_tokens":21000,"context_window":200000,"context_percent":10,"model":"crd-model","updated_at":"2026-10-10T00:00:00Z"}\n' > "$CRDCFG/claude-orchestrator/measure/s-crd.json"
 pair_transcript s-crd crd-model high
 printf '{"tab_id":"7","tty":"/dev/ttys901","owner":"S-ME"}\n' > "$CRDSTATE/chains/ttys900.jsonl"
 # The caller reads as an orchestrator: a wake takes --open's caller rule.
-CRDCALLER="$WORK/ps-crdcaller.txt"; printf '/dev/ttys900 claude --name Orch : f\n' > "$CRDCALLER"
+CRDCALLER="$WORK/ps-crdcaller.txt"; printf '/dev/ttys900 claude --name Orch: f\n' > "$CRDCALLER"
 crd() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" CLAUDE_CONFIG_DIR="$CRDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
   ORCHESTRATOR_PS_TABLE="$CRDCALLER" \
   ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-crd bash "$AGENT" spawn --dir "$WORK" --prompt p $(needs_tier "$@") "$@" 2>&1; }
 crdl() { crd "$@" | sed -n 's/^launch=//p'; }
-CRDOUT=$(crd --coordinator-successor --title 'Coord : ops')
+CRDOUT=$(crd --coordinator-successor --title 'Coord: ops')
 CRDLAUNCH=$(printf '%s' "$CRDOUT" | sed -n 's/^launch=//p')
 check "the coordinator's successor is named by its title and comes up under remote control under it" "1|1" \
-  "$(printf '%s' "$CRDLAUNCH" | grep -c -- "--name 'Coord : ops'")|$(printf '%s' "$CRDLAUNCH" | grep -c -- "--remote-control 'Coord : ops'")"
+  "$(printf '%s' "$CRDLAUNCH" | grep -c -- "--name 'Coord: ops'")|$(printf '%s' "$CRDLAUNCH" | grep -c -- "--remote-control 'Coord: ops'")"
 check "and without the setting that turns remote control off" "0" "$(printf '%s' "$CRDLAUNCH" | grep -c -- 'remoteControlAtStartup')"
 check "the coordinator's successor runs on the caller's model with no flag to ask for it" "1" "$(printf '%s' "$CRDLAUNCH" | grep -c -- '--model crd-model')"
 check "it lands at the first place of the caller's window, joins no chain, and the dry run says what it is" "1|1|1|1" \
   "$(printf '%s' "$CRDOUT" | grep -c '^anchor=leftmost$')|$(printf '%s' "$CRDOUT" | grep -c '^side=left$')|$(printf '%s' "$CRDOUT" | grep -c '^coordinator_successor=yes$')|$(printf '%s' "$CRDOUT" | grep -c '^chain=none$')"
 check "a coordinator-successor without a title is refused, and the reason names the shape" "1|1" \
-  "$(crd --coordinator-successor >/dev/null 2>&1; echo $?)|$(crd --coordinator-successor | grep -c -- '--coordinator-successor needs --title "Coord : <subject>"')"
+  "$(crd --coordinator-successor >/dev/null 2>&1; echo $?)|$(crd --coordinator-successor | grep -c -- '--coordinator-successor needs --title "Coord: <subject>"')"
 CRD25=$(printf 'x%.0s' $(seq 1 25)); CRD26=$(printf 'x%.0s' $(seq 1 26))
 check "a coordinator's subject of 25 characters is accepted, of 26 refused" "1|1" \
-  "$(crdl --coordinator-successor --title "Coord : $CRD25" | grep -c -- "--name 'Coord : $CRD25'")|$(crd --coordinator-successor --title "Coord : $CRD26" >/dev/null 2>&1; echo $?)"
+  "$(crdl --coordinator-successor --title "Coord: $CRD25" | grep -c -- "--name 'Coord: $CRD25'")|$(crd --coordinator-successor --title "Coord: $CRD26" >/dev/null 2>&1; echo $?)"
 check "a coordinator-successor under an agent's or an orchestrator's title is refused" "1|1|1" \
-  "$(crd --coordinator-successor --title 'Agent : x' >/dev/null 2>&1; echo $?)|$(crd --coordinator-successor --title 'Orch : x' >/dev/null 2>&1; echo $?)|$(crd --coordinator-successor --title 'Agent : x' | grep -c "the coordinator's title reads \"Coord : <subject>\"")"
+  "$(crd --coordinator-successor --title 'Agent: x' >/dev/null 2>&1; echo $?)|$(crd --coordinator-successor --title 'Orch: x' >/dev/null 2>&1; echo $?)|$(crd --coordinator-successor --title 'Agent: x' | grep -c "the coordinator's title reads \"Coord: <subject>\"")"
 check "a Coord title is refused without --coordinator-successor: plain, anchored, free, successor" "1|1|1|1" \
-  "$(crd --title 'Coord : x' | grep -c 'a "Coord :" title is the coordinator')|$(crd --title 'Coord : x' --right-of self | grep -c 'a "Coord :" title is the coordinator')|$(crd --title-free --title 'Coord : x' | grep -c 'a "Coord :" title is the coordinator')|$(crd --successor --title 'Coord : x' | grep -c 'a "Coord :" title is the coordinator')"
-check "and that refusal exits 1" "1" "$(crd --title 'Coord : x' >/dev/null 2>&1; echo $?)"
+  "$(crd --title 'Coord: x' | grep -c 'a "Coord:" title is the coordinator')|$(crd --title 'Coord: x' --right-of self | grep -c 'a "Coord:" title is the coordinator')|$(crd --title-free --title 'Coord: x' | grep -c 'a "Coord:" title is the coordinator')|$(crd --successor --title 'Coord: x' | grep -c 'a "Coord:" title is the coordinator')"
+check "and that refusal exits 1" "1" "$(crd --title 'Coord: x' >/dev/null 2>&1; echo $?)"
 for CRDFLAG in --successor --auditor '--left-of /dev/ttys555' '--right-of self' \
     --title-free '--tier deep' '--model m' --no-remote-control; do
   # shellcheck disable=SC2086 # the flag and its value are two words on purpose
   check "a coordinator-successor refuses $CRDFLAG" "1|1" \
-    "$(crd --coordinator-successor --title 'Coord : x' $CRDFLAG >/dev/null 2>&1; echo $?)|$(crd --coordinator-successor --title 'Coord : x' $CRDFLAG | grep -c "is not a coordinator-successor's")"
+    "$(crd --coordinator-successor --title 'Coord: x' $CRDFLAG >/dev/null 2>&1; echo $?)|$(crd --coordinator-successor --title 'Coord: x' $CRDFLAG | grep -c "is not a coordinator-successor's")"
 done
 check "a coordinator-successor with no readable pair is refused, naming where its transcript was looked for" "1" \
-  "$(CLAUDE_CODE_SESSION_ID=s-crd-none ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" bash "$AGENT" spawn --dir "$WORK" --coordinator-successor --title 'Coord : x' --prompt p 2>&1 | grep -cF "no transcript for session s-crd-none under $ORCHESTRATOR_PROJECTS_DIR")"
+  "$(CLAUDE_CODE_SESSION_ID=s-crd-none ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" bash "$AGENT" spawn --dir "$WORK" --coordinator-successor --title 'Coord: x' --prompt p 2>&1 | grep -cF "no transcript for session s-crd-none under $ORCHESTRATOR_PROJECTS_DIR")"
 check "--inherit-model beside --coordinator-successor asks for what is already implied" "1" \
-  "$(crdl --coordinator-successor --inherit-model --title 'Coord : x' | grep -c -- '--model crd-model')"
+  "$(crdl --coordinator-successor --inherit-model --title 'Coord: x' | grep -c -- '--model crd-model')"
 
 # `rotate` and `move` treat the coordinator's tab as not the caller's to replace or place,
 # exactly like an auditor's: read by its NAME in the process table, so a stale chain entry
 # naming it moves nothing.
 PSCRD="$WORK/ps-coord.txt"
-printf '/dev/ttys950 /opt/x/claude --name Coord : ops\n/dev/ttys901 /opt/x/claude --name Agent : x\n' > "$PSCRD"
+printf '/dev/ttys950 /opt/x/claude --name Coord: ops\n/dev/ttys901 /opt/x/claude --name Agent: x\n' > "$PSCRD"
 crdrot() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" ORCHESTRATOR_PS_TABLE="$PSCRD" \
-  bash "$AGENT" rotate --dir "$WORK" --title "Agent : rotated" --prompt p $(needs_tier "$@") "$@" 2>&1; }
+  bash "$AGENT" rotate --dir "$WORK" --title "Agent: rotated" --prompt p $(needs_tier "$@") "$@" 2>&1; }
 check "rotate refuses --coordinator-successor" "1" "$(crdrot --old-tty /dev/ttys901 --coordinator-successor | grep -c -- '--coordinator-successor is not a rotation')"
 CRDROT=$(crdrot --old-tty /dev/ttys950)
 check "rotate refuses the coordinator's tab before it spawns anything" "0|1|1" \
-  "$(printf '%s' "$CRDROT" | grep -c '^launch=')|$(printf '%s' "$CRDROT" | grep -c "rotate: refused: /dev/ttys950 is the coordinator's tab ('Coord : ops')")|$(crdrot --old-tty /dev/ttys950 >/dev/null 2>&1; echo $?)"
+  "$(printf '%s' "$CRDROT" | grep -c '^launch=')|$(printf '%s' "$CRDROT" | grep -c "rotate: refused: /dev/ttys950 is the coordinator's tab ('Coord: ops')")|$(crdrot --old-tty /dev/ttys950 >/dev/null 2>&1; echo $?)"
 check "--force rotates it, and says so" "1|1" \
   "$(crdrot --old-tty /dev/ttys950 --force | tail -1 | grep -c '^close=/dev/ttys950')|$(crdrot --old-tty /dev/ttys950 --force | grep -c "^rotate: forced: /dev/ttys950 is the coordinator's tab")"
 # A paused orchestrator is relaunched with --wake: its recorded name, model and effort, right
 # of the caller, in no chain, under remote control. Nothing is guessed: no model, no wake.
-WKOUT=$(crd --wake --title 'Orch : alpha' --model a-model --effort high)
+WKOUT=$(crd --wake --title 'Orch: alpha' --model a-model --effort high)
 WKLAUNCH=$(printf '%s' "$WKOUT" | sed -n 's/^launch=//p')
 check "a wake runs under its recorded name, model and effort, under remote control" "1|1|1|1" \
-  "$(printf '%s' "$WKLAUNCH" | grep -c -- "--name 'Orch : alpha'")|$(printf '%s' "$WKLAUNCH" | grep -c -- '--model a-model --effort high')|$(printf '%s' "$WKLAUNCH" | grep -c -- "--remote-control 'Orch : alpha'")|$(printf '%s' "$WKOUT" | grep -c '^wake=yes$')"
+  "$(printf '%s' "$WKLAUNCH" | grep -c -- "--name 'Orch: alpha'")|$(printf '%s' "$WKLAUNCH" | grep -c -- '--model a-model --effort high')|$(printf '%s' "$WKLAUNCH" | grep -c -- "--remote-control 'Orch: alpha'")|$(printf '%s' "$WKOUT" | grep -c '^wake=yes$')"
 check "a wake lands right of its caller and joins no chain" "1|1|1" \
   "$(printf '%s' "$WKOUT" | grep -c '^side=right$')|$(printf '%s' "$WKOUT" | grep -c '^anchor=self$')|$(printf '%s' "$WKOUT" | grep -c '^chain=none$')"
 check "a wake with no pair to read runs on the host's default, and under another title it is refused" "0|none|host default|1|1" \
-  "$(crd --wake --title 'Orch : alpha' | sed -n 's/^launch=//p' | grep -c -- '--model')|$(crd --wake --title 'Orch : alpha' | sed -n 's/^effort=//p')|$(crd --wake --title 'Orch : alpha' | sed -n 's/^pair_source=//p')|$(crd --wake --title 'Agent : alpha' --model m | grep -c -- '--wake needs the recorded name')|$(crd --wake --title 'Orch : alpha [abc123]' --model m >/dev/null 2>&1; echo $?)"
+  "$(crd --wake --title 'Orch: alpha' | sed -n 's/^launch=//p' | grep -c -- '--model')|$(crd --wake --title 'Orch: alpha' | sed -n 's/^effort=//p')|$(crd --wake --title 'Orch: alpha' | sed -n 's/^pair_source=//p')|$(crd --wake --title 'Agent: alpha' --model m | grep -c -- '--wake needs the recorded name')|$(crd --wake --title 'Orch: alpha [abc123]' --model m >/dev/null 2>&1; echo $?)"
 for WKFLAG in --successor --auditor '--right-of self' --title-free '--tier deep' --inherit-model --resident --no-remote-control; do
   # shellcheck disable=SC2086 # the flag and its value are two words on purpose
-  check "a wake refuses $WKFLAG" "1|1" "$(crd --wake --title 'Orch : x' --model m $WKFLAG >/dev/null 2>&1; echo $?)|$(crd --wake --title 'Orch : x' --model m $WKFLAG | grep -c "is not a wake's")"
+  check "a wake refuses $WKFLAG" "1|1" "$(crd --wake --title 'Orch: x' --model m $WKFLAG >/dev/null 2>&1; echo $?)|$(crd --wake --title 'Orch: x' --model m $WKFLAG | grep -c "is not a wake's")"
 done
-check "a wake beside --coordinator-successor is refused" "1" "$(crd --wake --coordinator-successor --title 'Orch : x' --model m >/dev/null 2>&1; echo $?)"
+check "a wake beside --coordinator-successor is refused" "1" "$(crd --wake --coordinator-successor --title 'Orch: x' --model m >/dev/null 2>&1; echo $?)"
 check "rotate refuses --wake" "1" "$(crdrot --old-tty /dev/ttys901 --wake | grep -c -- '--wake is not a rotation')"
 # A new orchestrator opened on the operator's order: by a coordinator or an orchestrator only,
 # read by the caller's name, right of it, in no chain, under remote control, on the deep tier
@@ -3517,68 +3523,68 @@ opn() { local caller="$1"; shift
   ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="${OPST:-$OPSTATE}" CLAUDE_CONFIG_DIR="$CRDCFG" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
   ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-crd ORCHESTRATOR_PS_TABLE="$OPPS" ORCHESTRATOR_TIER_DEEP=deep-model \
   bash "$AGENT" spawn --dir "$WORK" --prompt p $(needs_tier "$@") "$@" 2>&1; }
-OPOUT=$(opn 'Coord : ops' --open --title 'Orch : sync logs')
+OPOUT=$(opn 'Coord: ops' --open --title 'Orch: sync logs')
 OPLAUNCH=$(printf '%s' "$OPOUT" | sed -n 's/^launch=//p')
 check "an opening by the coordinator runs under its title, on the host's default pair, under remote control" "1|0|1|1" \
-  "$(printf '%s' "$OPLAUNCH" | grep -c -- "--name 'Orch : sync logs'")|$(printf '%s' "$OPLAUNCH" | grep -c -- '--model deep-model')|$(printf '%s' "$OPLAUNCH" | grep -c -- "--remote-control 'Orch : sync logs'")|$(printf '%s' "$OPOUT" | grep -c '^open=yes$')"
+  "$(printf '%s' "$OPLAUNCH" | grep -c -- "--name 'Orch: sync logs'")|$(printf '%s' "$OPLAUNCH" | grep -c -- '--model deep-model')|$(printf '%s' "$OPLAUNCH" | grep -c -- "--remote-control 'Orch: sync logs'")|$(printf '%s' "$OPOUT" | grep -c '^open=yes$')"
 check "an opened orchestrator lands right of its caller and joins no chain" "1|1|1" \
   "$(printf '%s' "$OPOUT" | grep -c '^side=right$')|$(printf '%s' "$OPOUT" | grep -c '^anchor=self$')|$(printf '%s' "$OPOUT" | grep -c '^chain=none$')"
 check "an orchestrator opens one too, and a model it names wins over the tier" "1|1" \
-  "$(opn 'Orch : gateway' --open --title 'Orch : x' | grep -c '^open=yes$')|$(opn 'Orch : gateway' --open --title 'Orch : x' --model a-model --effort high | sed -n 's/^launch=//p' | grep -c -- '--model a-model')"
+  "$(opn 'Orch: gateway' --open --title 'Orch: x' | grep -c '^open=yes$')|$(opn 'Orch: gateway' --open --title 'Orch: x' --model a-model --effort high | sed -n 's/^launch=//p' | grep -c -- '--model a-model')"
 check "an agent, an auditor or a session with no name never opens one" "1|1|1|1" \
-  "$(opn 'Agent : x' --open --title 'Orch : x' >/dev/null 2>&1; echo $?)|$(opn 'Agent : x' --open --title 'Orch : x' | grep -c 'an agent never opens an orchestrator')|$(opn 'Audit : x' --open --title 'Orch : x' | grep -c 'an agent never opens an orchestrator')|$(opn - --open --title 'Orch : x' | grep -c "this session reads 'no name'")"
+  "$(opn 'Agent: x' --open --title 'Orch: x' >/dev/null 2>&1; echo $?)|$(opn 'Agent: x' --open --title 'Orch: x' | grep -c 'an agent never opens an orchestrator')|$(opn 'Audit: x' --open --title 'Orch: x' | grep -c 'an agent never opens an orchestrator')|$(opn - --open --title 'Orch: x' | grep -c "this session reads 'no name'")"
 OPREC="$WORK/opstate-rec"; mkdir -p "$OPREC/chains"
-printf '{"name":"Coord : hand","tty":"/dev/ttys900"}\n' > "$OPREC/coordinator.json"
+printf '{"name":"Coord: hand","tty":"/dev/ttys900"}\n' > "$OPREC/coordinator.json"
 check "a coordinator opened by hand, named only by its own record, opens one" "1" \
-  "$(OPST="$OPREC" opn - --open --title 'Orch : x' | grep -c '^open=yes$')"
+  "$(OPST="$OPREC" opn - --open --title 'Orch: x' | grep -c '^open=yes$')"
 check "an opening needs an orchestrator's title, with no reference" "1|1" \
-  "$(opn 'Coord : ops' --open --title 'Agent : x' | grep -c -- "--open needs the new orchestrator's name")|$(opn 'Coord : ops' --open --title 'Orch : x [abc123]' >/dev/null 2>&1; echo $?)"
+  "$(opn 'Coord: ops' --open --title 'Agent: x' | grep -c -- "--open needs the new orchestrator's name")|$(opn 'Coord: ops' --open --title 'Orch: x [abc123]' >/dev/null 2>&1; echo $?)"
 for OPFLAG in --successor --auditor --wake '--right-of self' '--left-of /dev/ttys555' --title-free --resident --no-remote-control; do
   # shellcheck disable=SC2086 # the flag and its value are two words on purpose
-  check "an opening refuses $OPFLAG" "1|0" "$(opn 'Coord : ops' --open --title 'Orch : x' $OPFLAG >/dev/null 2>&1; echo $?)|$(opn 'Coord : ops' --open --title 'Orch : x' $OPFLAG | grep -c '^launch=')"
+  check "an opening refuses $OPFLAG" "1|0" "$(opn 'Coord: ops' --open --title 'Orch: x' $OPFLAG >/dev/null 2>&1; echo $?)|$(opn 'Coord: ops' --open --title 'Orch: x' $OPFLAG | grep -c '^launch=')"
 done
 check "rotate refuses --open" "1" "$(crdrot --old-tty /dev/ttys901 --open | grep -c -- '--open is not a rotation')"
 check "an opening refuses a tier: its pair is the order's or the host's default" "1|0" \
-  "$(ORCHESTRATOR_TIER_STANDARD=std-model opn 'Coord : ops' --open --title 'Orch : x' --tier standard | grep -c -- "--tier is not an opening's")|$(ORCHESTRATOR_TIER_STANDARD=std-model opn 'Coord : ops' --open --title 'Orch : x' --tier standard | grep -c '^launch=')"
+  "$(ORCHESTRATOR_TIER_STANDARD=std-model opn 'Coord: ops' --open --title 'Orch: x' --tier standard | grep -c -- "--tier is not an opening's")|$(ORCHESTRATOR_TIER_STANDARD=std-model opn 'Coord: ops' --open --title 'Orch: x' --tier standard | grep -c '^launch=')"
 # Outside a dry run the caller is read from the real process table: the suite's two
 # stand-ins would let any session name itself the coordinator. The directory does not
 # exist, so a launcher that let the stand-ins through still stops short of a tab.
 check "outside a dry run, an opening refuses the suite's stand-ins for the caller" "1|1" \
-  "$(env -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_STATE_DIR="$OPSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$OPPS" bash "$AGENT" spawn --open --title 'Orch : x' --dir "$WORK/no-such-dir" --prompt p 2>&1 | grep -c 'are for tests and dry runs')|$(env -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_STATE_DIR="$OPSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 bash "$AGENT" spawn --open --title 'Orch : x' --dir "$WORK/no-such-dir" --prompt p 2>&1 | grep -c 'are for tests and dry runs')"
+  "$(env -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_STATE_DIR="$OPSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$OPPS" bash "$AGENT" spawn --open --title 'Orch: x' --dir "$WORK/no-such-dir" --prompt p 2>&1 | grep -c 'are for tests and dry runs')|$(env -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_STATE_DIR="$OPSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 bash "$AGENT" spawn --open --title 'Orch: x' --dir "$WORK/no-such-dir" --prompt p 2>&1 | grep -c 'are for tests and dry runs')"
 check "outside a dry run, a wake refuses the same stand-ins, and names itself" "1|1|1" \
-  "$(env -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_STATE_DIR="$OPSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$OPPS" bash "$AGENT" spawn --wake --title 'Orch : x' --model a-model --effort high --dir "$WORK/no-such-dir" --prompt p 2>&1 | grep -c 'are for tests and dry runs')|$(env -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_STATE_DIR="$OPSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 bash "$AGENT" spawn --wake --title 'Orch : x' --model a-model --effort high --dir "$WORK/no-such-dir" --prompt p 2>&1 | grep -c -- '--wake reads its caller')|$(env -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_STATE_DIR="$OPSTATE" ORCHESTRATOR_PS_TABLE="$OPPS" bash "$AGENT" spawn --wake --title 'Orch : x' --model a-model --effort high --dir "$WORK/no-such-dir" --prompt p 2>&1 | grep -c 'are for tests and dry runs')"
+  "$(env -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_STATE_DIR="$OPSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$OPPS" bash "$AGENT" spawn --wake --title 'Orch: x' --model a-model --effort high --dir "$WORK/no-such-dir" --prompt p 2>&1 | grep -c 'are for tests and dry runs')|$(env -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_STATE_DIR="$OPSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 bash "$AGENT" spawn --wake --title 'Orch: x' --model a-model --effort high --dir "$WORK/no-such-dir" --prompt p 2>&1 | grep -c -- '--wake reads its caller')|$(env -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_STATE_DIR="$OPSTATE" ORCHESTRATOR_PS_TABLE="$OPPS" bash "$AGENT" spawn --wake --title 'Orch: x' --model a-model --effort high --dir "$WORK/no-such-dir" --prompt p 2>&1 | grep -c 'are for tests and dry runs')"
 check "the coordination skill opens on his order, by the bare command, and relays it to another machine" "yes|yes|yes|yes|yes" \
-  "$(spells "$ROOT/skills/coordination/SKILL.md" 'operator told you to open, pause or wake')|$(spells "$ROOT/skills/coordination/SKILL.md" 'spawn --open --title "Orch : <subject>"')|$(spells "$ROOT/skills/coordination/SKILL.md" 'answer that he should do it himself')|$(spells "$ROOT/skills/coordination/SKILL.md" 'Run it alone, never chained to another command')|$(spells "$ROOT/skills/coordination/SKILL.md" 'Never ask a session to change')"
+  "$(spells "$ROOT/skills/coordination/SKILL.md" 'operator told you to open, pause or wake')|$(spells "$ROOT/skills/coordination/SKILL.md" 'spawn --open --title "Orch: <subject>"')|$(spells "$ROOT/skills/coordination/SKILL.md" 'answer that he should do it himself')|$(spells "$ROOT/skills/coordination/SKILL.md" 'Run it alone, never chained to another command')|$(spells "$ROOT/skills/coordination/SKILL.md" 'Never ask a session to change')"
 check "an orchestrator runs a relayed opening and never edits its own permissions" "yes|yes|yes" \
-  "$(spells "$ORCH_REFS/lifecycle.md" "**An opening, on the operator's word.**")|$(spells "$ORCH_REFS/lifecycle.md" 'iterm-agent.sh spawn --open --title "Orch : <subject>"')|$(spells "$ORCH_REFS/lifecycle.md" 'You never edit your own permissions')"
+  "$(spells "$ORCH_REFS/lifecycle.md" "**An opening, on the operator's word.**")|$(spells "$ORCH_REFS/lifecycle.md" 'iterm-agent.sh spawn --open --title "Orch: <subject>"')|$(spells "$ORCH_REFS/lifecycle.md" 'You never edit your own permissions')"
 check "an agent's tab still rotates without --force" "1" "$(crdrot --old-tty /dev/ttys901 | tail -1 | grep -c '^close=/dev/ttys901')"
 # The first coordinator is opened by hand and names itself through a rename, which never
 # reaches argv: named only in the host registry, or only in the coordinator's own record,
 # its tab is still not an agent to rotate or to move.
 CRDREGCFG="$WORK/crdregcfg"; mkdir -p "$CRDREGCFG/sessions"
-printf '{"pid":6161,"name":"Coord : hand"}\n' > "$CRDREGCFG/sessions/6161.json"
+printf '{"pid":6161,"name":"Coord: hand"}\n' > "$CRDREGCFG/sessions/6161.json"
 printf '/dev/ttys951 6161 claude --resume x\n/dev/ttys952 6262 claude --resume y\n' > "$WORK/ps-coord-reg.txt"
 crdregrot() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" CLAUDE_CONFIG_DIR="$CRDREGCFG" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$1" ORCHESTRATOR_PS_TABLE="$WORK/ps-coord-reg.txt" \
-  bash "$AGENT" rotate --dir "$WORK" --title "Agent : rotated" --prompt p --tier light --old-tty "$2" 2>&1; }
+  bash "$AGENT" rotate --dir "$WORK" --title "Agent: rotated" --prompt p --tier light --old-tty "$2" 2>&1; }
 CRDREGROT=$(crdregrot "$CRDSTATE" /dev/ttys951)
 check "rotate refuses a coordinator named only in the host registry" "0|1" \
-  "$(printf '%s' "$CRDREGROT" | grep -c '^launch=')|$(printf '%s' "$CRDREGROT" | grep -c "rotate: refused: /dev/ttys951 is the coordinator's tab ('Coord : hand')")"
+  "$(printf '%s' "$CRDREGROT" | grep -c '^launch=')|$(printf '%s' "$CRDREGROT" | grep -c "rotate: refused: /dev/ttys951 is the coordinator's tab ('Coord: hand')")"
 CRDRECSTATE="$WORK/crdrecstate"; mkdir -p "$CRDRECSTATE"
-printf '{"name":"Coord : rec [abc123]","tty":"/dev/ttys952"}\n' > "$CRDRECSTATE/coordinator.json"
+printf '{"name":"Coord: rec [abc123]","tty":"/dev/ttys952"}\n' > "$CRDRECSTATE/coordinator.json"
 CRDRECROT=$(crdregrot "$CRDRECSTATE" /dev/ttys952)
 check "rotate refuses the tty the coordinator's record registers" "0|1" \
-  "$(printf '%s' "$CRDRECROT" | grep -c '^launch=')|$(printf '%s' "$CRDRECROT" | grep -c "rotate: refused: /dev/ttys952 is the coordinator's tab ('Coord : rec \[abc123\]')")"
+  "$(printf '%s' "$CRDRECROT" | grep -c '^launch=')|$(printf '%s' "$CRDRECROT" | grep -c "rotate: refused: /dev/ttys952 is the coordinator's tab ('Coord: rec \[abc123\]')")"
 check "and move names it, forced or not" "1|1" \
   "$(CLAUDE_CONFIG_DIR="$CRDREGCFG" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDRECSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_SELF_ID=S-ME ORCHESTRATOR_PS_TABLE="$WORK/ps-coord-reg.txt" bash "$AGENT" move --tty /dev/ttys952 --right-of self 2>&1 | grep -c "move: refused: /dev/ttys952 is the coordinator's tab")|$(CLAUDE_CONFIG_DIR="$CRDREGCFG" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDRECSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_SELF_ID=S-ME ORCHESTRATOR_PS_TABLE="$WORK/ps-coord-reg.txt" bash "$AGENT" move --tty /dev/ttys952 --right-of self --force 2>&1 | grep -c "^move: forced: /dev/ttys952 is the coordinator's tab")"
 printf '{"tab_id":"9","tty":"/dev/ttys950","owner":"S-ME"}\n' >> "$CRDSTATE/chains/ttys900.jsonl"
 crdmv() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$CRDSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys900 \
   ORCHESTRATOR_SELF_ID=S-ME ORCHESTRATOR_PS_TABLE="$PSCRD" bash "$AGENT" move "$@" 2>&1; }
 check "the coordinator's tab is not moved, even with a stale chain entry naming it" "1|1" \
-  "$(crdmv --tty /dev/ttys950 --right-of self >/dev/null 2>&1; echo $?)|$(crdmv --tty /dev/ttys950 --right-of self | grep -c "move: refused: /dev/ttys950 is the coordinator's tab ('Coord : ops'), not this session's to place (pass --force to move it anyway)")"
+  "$(crdmv --tty /dev/ttys950 --right-of self >/dev/null 2>&1; echo $?)|$(crdmv --tty /dev/ttys950 --right-of self | grep -c "move: refused: /dev/ttys950 is the coordinator's tab ('Coord: ops'), not this session's to place (pass --force to move it anyway)")"
 check "--force moves it, and says so" "0|1" \
   "$(crdmv --tty /dev/ttys950 --right-of self --force >/dev/null 2>&1; echo $?)|$(crdmv --tty /dev/ttys950 --right-of self --force | grep -c "^move: forced: /dev/ttys950 is the coordinator's tab")"
 check "the coordinator's tab is not moved leftmost either" "1|1" \
-  "$(crdmv --tty /dev/ttys950 --leftmost >/dev/null 2>&1; echo $?)|$(crdmv --tty /dev/ttys950 --leftmost | grep -c "move: refused: /dev/ttys950 is the coordinator's tab ('Coord : ops'), not this session's to place (pass --force to move it anyway)")"
+  "$(crdmv --tty /dev/ttys950 --leftmost >/dev/null 2>&1; echo $?)|$(crdmv --tty /dev/ttys950 --leftmost | grep -c "move: refused: /dev/ttys950 is the coordinator's tab ('Coord: ops'), not this session's to place (pass --force to move it anyway)")"
 check "--force moves it leftmost too, and says so" "0|1" \
   "$(crdmv --tty /dev/ttys950 --leftmost --force >/dev/null 2>&1; echo $?)|$(crdmv --tty /dev/ttys950 --leftmost --force | grep -c "^move: forced: /dev/ttys950 is the coordinator's tab")"
 check "an agent of the chain still moves" "1" "$(crdmv --tty /dev/ttys901 --right-of self | grep -c '^move=/dev/ttys901 right_of=/dev/ttys900$')"
@@ -3634,7 +3640,7 @@ coord_outside_routing() {
     tolower(p) ~ /coordinat/ && p !~ /^\*\*While a coordinator runs/ { print FILENAME }' "$@"
 }
 check "the start command and the successor's brief explain the coordinator's placement" "yes|yes|yes|yes" \
-  "$(spells "$ROOT/commands/coordinator.md" '--coordinator-successor --title')|$(spells "$ROOT/commands/coordinator.md" 'refuse a tab whose session is named `Coord :` unless `--force`')|$(spells "$ROOT/templates/coordinator-succession-brief.md" 'your own successor is spawned with')|$(spells "$ROOT/templates/coordinator-succession-brief.md" '`--coordinator-successor`, in the rulebook')"
+  "$(spells "$ROOT/commands/coordinator.md" '--coordinator-successor --title')|$(spells "$ROOT/commands/coordinator.md" 'refuse a tab whose session is named `Coord:` unless `--force`')|$(spells "$ROOT/templates/coordinator-succession-brief.md" 'your own successor is spawned with')|$(spells "$ROOT/templates/coordinator-succession-brief.md" '`--coordinator-successor`, in the rulebook')"
 check "the entry point's header lists both new forms" "yes|yes" \
   "$(spells "$ITERMSH" '--coordinator-successor')|$(spells "$ITERMSH" '--leftmost')"
 
@@ -3806,12 +3812,12 @@ coordspawn() { eval "set -- $COORDSPAWN"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_ST
   ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-crd bash "$AGENT" spawn $(needs_tier "$@") "$@" 2>&1; }
 COORDSPAWNOUT=$(if [ -n "$COORDSPAWN" ]; then coordspawn; else echo "no spawn line"; fi)
 check "the skill's succession spawn line is one the launcher runs as the coordinator's successor" "1|1|1|1" \
-  "$(printf '%s' "$COORDSPAWNOUT" | grep -c '^coordinator_successor=yes$')|$(printf '%s' "$COORDSPAWNOUT" | grep -c '^anchor=leftmost$')|$(printf '%s' "$COORDSPAWNOUT" | grep -c '^chain=none$')|$(printf '%s' "$COORDSPAWNOUT" | sed -n 's/^launch=//p' | grep -c -- "--name 'Coord : ops'")"
+  "$(printf '%s' "$COORDSPAWNOUT" | grep -c '^coordinator_successor=yes$')|$(printf '%s' "$COORDSPAWNOUT" | grep -c '^anchor=leftmost$')|$(printf '%s' "$COORDSPAWNOUT" | grep -c '^chain=none$')|$(printf '%s' "$COORDSPAWNOUT" | sed -n 's/^launch=//p' | grep -c -- "--name 'Coord: ops'")"
 
 # The start renames itself through the plugin's tool before it registers, and places its tab.
 COORDLINE() { grep -n -m1 -F -- "$2" "$1" | cut -d: -f1; }
 check "the start renames itself before it registers" "1" \
-  "$([ "$(COORDLINE "$COORDCMD" 'Call `mcp__orchestrator__rename_session` with `Coord : <subject>`')" -lt "$(COORDLINE "$COORDCMD" 'coordinator.sh register --name')" ] 2>/dev/null && echo 1 || echo 0)"
+  "$([ "$(COORDLINE "$COORDCMD" 'Call `mcp__orchestrator__rename_session` with `Coord: <subject>`')" -lt "$(COORDLINE "$COORDCMD" 'coordinator.sh register --name')" ] 2>/dev/null && echo 1 || echo 0)"
 # The orchestrator's rename lands when its turn ends: a spawn in the same turn would carry
 # the directory-stem name into every brief, so the rulebook ends the turn on the call, and
 # the module refuses the spawn or the message made before it, then resumes the session.
@@ -3837,7 +3843,7 @@ check "the end checks this session is the recorded coordinator before it clears"
 # The successor's brief: register refuses while the predecessor runs, so the order is fixed —
 # close by title, prove on ps, THEN register. Filled, it lints clean like every template.
 check "the successor closes its predecessor's tab by title before it registers" "yes|1|yes" \
-  "$(spells "$COORDTPL" 'close --tty {{PREDECESSOR_TTY}} --expect-title "Coord :"')|$([ "$(COORDLINE "$COORDTPL" 'close --tty {{PREDECESSOR_TTY}}')" -lt "$(COORDLINE "$COORDTPL" 'register --name')" ] 2>/dev/null && echo 1 || echo 0)|$(spells "$COORDTPL" '`ps -t <that tty without /dev/>`')"
+  "$(spells "$COORDTPL" 'close --tty {{PREDECESSOR_TTY}} --expect-title "Coord:"')|$([ "$(COORDLINE "$COORDTPL" 'close --tty {{PREDECESSOR_TTY}}')" -lt "$(COORDLINE "$COORDTPL" 'register --name')" ] 2>/dev/null && echo 1 || echo 0)|$(spells "$COORDTPL" '`ps -t <that tty without /dev/>`')"
 # A coordinator started by hand is closed too, nothing asked: its title is the host's, the
 # host may refuse the close, and the end it then asks for is proved on the tty, not on list.
 check "the coordinator's successor closes a hand-started predecessor, with the end_session fallback" "yes|yes|yes|yes" \
@@ -3847,7 +3853,7 @@ check "the coordinator calls end_session when its successor asks" "yes" \
 COORDFILLED="$WORK/coordinator-brief-filled.md"
 mkdir -p "$WORK/coord-fill/coordinator" "$WORK/coord-fill/scratch"; : > "$WORK/coord-fill/coordinator/notes.md"; : > "$WORK/coord-fill/scratch/decision-round.md"
 if [ -f "$COORDTPL" ]; then
-  sed -E -e 's#\{\{PREDECESSOR\}\}#Coord : ops [a1b2c3]#g' -e 's#\{\{PREDECESSOR_TTY\}\}#/dev/ttys950#g' -e 's#\{\{SUBJECT\}\}#ops#g' \
+  sed -E -e 's#\{\{PREDECESSOR\}\}#Coord: ops [a1b2c3]#g' -e 's#\{\{PREDECESSOR_TTY\}\}#/dev/ttys950#g' -e 's#\{\{SUBJECT\}\}#ops#g' \
     -e "s#\{\{STATE_DIR\}\}#$WORK/coord-fill#g" -e "s#\{\{NOTES_FILE\}\}#$WORK/coord-fill/coordinator/notes.md#g" -e "s#\{\{ROUND_FILE\}\}#$WORK/coord-fill/scratch/decision-round.md#g" \
     -e "s#\{\{COORDINATOR_SH\}\}#$ROOT/skills/coordinator/scripts/coordinator.sh#g" -e "s#\{\{ITERM_AGENT_SH\}\}#$AGENT#g" \
     -e 's#\{\{[A-Z_]+\}\}#$WORK#g' "$COORDTPL" > "$COORDFILLED"
@@ -3870,7 +3876,7 @@ audspawn() { eval "set -- $AUDSPAWN"; ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_
   ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CODE_SESSION_ID=s-aud bash "$AGENT" spawn $(needs_tier "$@") "$@" 2>&1; }
 AUDSPAWNOUT=$(if [ -n "$AUDSPAWN" ]; then audspawn; else echo "no spawn line"; fi)
 check "the command's spawn line is one the launcher runs as an auditor" "1|1|1|1" \
-  "$(printf '%s' "$AUDSPAWNOUT" | grep -c '^auditor=yes$')|$(printf '%s' "$AUDSPAWNOUT" | grep -c '^name=Audit : tm$')|$(printf '%s' "$AUDSPAWNOUT" | grep -c '^chain=none$')|$(printf '%s' "$AUDSPAWNOUT" | sed -n 's/^launch=//p' | grep -c -- "--permission-mode auto")"
+  "$(printf '%s' "$AUDSPAWNOUT" | grep -c '^auditor=yes$')|$(printf '%s' "$AUDSPAWNOUT" | grep -c '^name=Audit: tm$')|$(printf '%s' "$AUDSPAWNOUT" | grep -c '^chain=none$')|$(printf '%s' "$AUDSPAWNOUT" | sed -n 's/^launch=//p' | grep -c -- "--permission-mode auto")"
 check "and it carries neither a tier, nor a successor's flag, nor an anchor" "0" \
   "$(printf '%s' "$AUDSPAWN" | grep -cE -- '--tier|--successor|--right-of|--left-of')"
 
@@ -3904,10 +3910,10 @@ AUDBRIEFSPAWN=$(grep -m1 -o '{{ITERM_AGENT_SH}} spawn .*' "$AUDSUCCTPL" 2>/dev/n
 audbriefspawn() { eval "set -- $AUDBRIEFSPAWN"; audsucc "$@"; }
 AUDBRIEFSPAWNOUT=$(if [ -n "$AUDBRIEFSPAWN" ]; then audbriefspawn; else echo "no spawn line"; fi)
 check "the succession template's spawn line is one the launcher runs as an auditor's succession" "1|none|1" \
-  "$(printf '%s' "$AUDBRIEFSPAWNOUT" | grep -c '^name=Audit : tm$')|$(printf '%s' "$AUDBRIEFSPAWNOUT" | sed -n 's/^chain=//p')|$(printf '%s' "$AUDBRIEFSPAWNOUT" | sed -n 's/^launch=//p' | grep -c -- "--permission-mode auto")"
+  "$(printf '%s' "$AUDBRIEFSPAWNOUT" | grep -c '^name=Audit: tm$')|$(printf '%s' "$AUDBRIEFSPAWNOUT" | sed -n 's/^chain=//p')|$(printf '%s' "$AUDBRIEFSPAWNOUT" | sed -n 's/^launch=//p' | grep -c -- "--permission-mode auto")"
 AUDFILLED="$WORK/audit-brief-filled.md"
 if [ -f "$AUDBRIEF" ]; then
-  sed -E -e 's#\{\{ORCHESTRATOR_NAME\}\}#Orch : f [a1b2c3]#g' -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$AUDBRIEF" > "$AUDFILLED"
+  sed -E -e 's#\{\{ORCHESTRATOR_NAME\}\}#Orch: f [a1b2c3]#g' -e "s#\{\{[A-Z_]+\}\}#$WORK#g" "$AUDBRIEF" > "$AUDFILLED"
 fi
 check "the audit brief, every placeholder filled, lints clean" "yes|0" \
   "$([ -s "$AUDFILLED" ] && echo yes || echo no)|$(bash "$ROOT/skills/orchestrator/scripts/brief-lint.sh" "$AUDFILLED" >/dev/null 2>&1; echo $?)"
@@ -3938,7 +3944,7 @@ check "the auditor's succession brief exists, with its placeholders" \
   "{{ITERM_AGENT_SH}} {{OPERATOR_WORK}} {{PREDECESSOR_TTY}} {{PREDECESSOR}} {{PROJECT}} {{REPORT_PATH}} {{REPOSITORY}} {{SUBJECT}} {{SUCCESSION_TEMPLATE}}" \
   "$(grep -oE '\{\{[A-Z_]+\}\}' "$AUDSUCCTPL" 2>/dev/null | sort -u | paste -sd' ' -)"
 check "it makes the successor confirm, wait for « handed over », close the tab by title, prove it, tell the operator" "1|1|1|1|1" \
-  "$(grep -c 'Message `{{PREDECESSOR}}` « takeover confirmed »' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'Until then it forwards you what still reaches it' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c -- 'close --tty {{PREDECESSOR_TTY}} --expect-title "Audit : {{SUBJECT}}"' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'ps -t ' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'Tell the operator' "$AUDSUCCTPL" 2>/dev/null)"
+  "$(grep -c 'Message `{{PREDECESSOR}}` « takeover confirmed »' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'Until then it forwards you what still reaches it' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c -- 'close --tty {{PREDECESSOR_TTY}} --expect-title "Audit: {{SUBJECT}}"' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'ps -t ' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'Tell the operator' "$AUDSUCCTPL" 2>/dev/null)"
 check "and keeps the audit's terms: one report, not rewritten, nothing applied, no session messaged but the predecessor" "1|1|1" \
   "$(grep -c 'not to rewrite' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'apply nothing' "$AUDSUCCTPL" 2>/dev/null)|$(grep -c 'no session messaged' "$AUDSUCCTPL" 2>/dev/null)"
 # A successor can succeed again: it restates the spawn line in full and finds its own name,
@@ -3965,9 +3971,9 @@ check "the design document has the audit's numbered section" "1" \
   "$(grep -c '^## 52\. The audit of an orchestrator$' "$ROOT/docs/design.md")"
 
 printf 'a prompt\n' > "$file"
-out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : prompt" --prompt-file "$file" 2>&1)
+out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: prompt" --prompt-file "$file" 2>&1)
 check "--prompt-file reuses the given file" "1" "$(printf '%s' "$out" | grep -c "prompt_file=$file")"
-out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : prompt" --prompt "a prompt" 2>&1)
+out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: prompt" --prompt "a prompt" 2>&1)
 cmd=${out#*launch=}; cmd=${cmd%%$'\n'*}
 check "--prompt: the server flag is still there" "1" "$(printf '%s' "$cmd" | grep -c -- '--strict-mcp-config')"
 check_status "--prompt and --prompt-file together are refused" 1 env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --prompt x --prompt-file "$file"
@@ -3976,17 +3982,17 @@ check_status "--prompt and --prompt-file together are refused" 1 env ORCHESTRATO
 # no transcript before a first prompt), so it is refused before any tab is made rather than
 # spending the mode timeout finding that out.
 check_status "a promptless spawn is refused before any tab is made" 1 \
-  env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : prompt"
-noprompt=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : prompt" 2>&1)
+  env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: prompt"
+noprompt=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: prompt" 2>&1)
 check "and says why, before any dry-run launch line" "1|0" \
   "$(printf '%s' "$noprompt" | grep -c 'no startup prompt')|$(printf '%s' "$noprompt" | grep -c '^launch=')"
 check_status "--no-verify does not lift the promptless refusal" 1 \
-  env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : prompt" --no-verify
+  env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: prompt" --no-verify
 check_status "a promptless rotation is refused the same way, the old session never touched" 1 \
   env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-  bash "$AGENT" rotate --tier light --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated"
+  bash "$AGENT" rotate --tier light --old-tty /dev/ttys999 --dir "$WORK" --title "Agent: rotated"
 rotnoprompt=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-  bash "$AGENT" rotate --tier light --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" 2>&1)
+  bash "$AGENT" rotate --tier light --old-tty /dev/ttys999 --dir "$WORK" --title "Agent: rotated" 2>&1)
 check "and no close of the old tty is even attempted" "0" "$(printf '%s' "$rotnoprompt" | grep -c '^close=')"
 check_status "verify on a tty nobody has exits 1" 1 bash "$AGENT" verify --tty /dev/ttys999
 check "screen without a tty says which option is missing" "ERROR: screen: --tty is required" \
@@ -4002,18 +4008,18 @@ TRUSTF="$WORK/trust.json"; printf '{"projects":{}}' > "$TRUSTF"
 UNTRUSTED="$WORK/untrusted"; mkdir -p "$UNTRUSTED"
 check_status "an untrusted directory is refused before a tab is made" 1 \
   env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-  CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --prompt p
+  CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent: trust" --tier deep --prompt p
 check "the refusal says how to proceed" "1" \
   "$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-     CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --prompt p 2>&1 | grep -c -- '--trust')"
+     CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent: trust" --tier deep --prompt p 2>&1 | grep -c -- '--trust')"
 check_status "--trust records it and proceeds" 0 \
   env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-  CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --trust --prompt p
+  CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent: trust" --tier deep --trust --prompt p
 check "the record now holds the directory" "true" \
   "$("$py" -c "import json,os,sys; d=json.load(open(sys.argv[1])); print(str(d['projects'].get(os.path.realpath(sys.argv[2]),{}).get('hasTrustDialogAccepted')).lower())" "$TRUSTF" "$UNTRUSTED")"
 check_status "a directory already recorded needs no flag" 0 \
   env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-  CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --prompt p
+  CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent: trust" --tier deep --prompt p
 check "the record keeps owner-only permissions" "600" \
   "$(perm_of "$TRUSTF")"
 
@@ -4023,17 +4029,17 @@ check "the record keeps owner-only permissions" "600" \
 compact="{\"projects\":{\"$(cd "$UNTRUSTED" && pwd -P)\":{\"hasTrustDialogAccepted\":true}}}"
 printf '%s' "$compact" > "$TRUSTF"
 out=$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-      CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --trust --prompt p 2>&1)
+      CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent: trust" --tier deep --trust --prompt p 2>&1)
 check "--trust on a recorded directory does not rewrite the record" "$compact" "$(cat "$TRUSTF")"
 check "and the dry run says the record already held it" "1" "$(printf '%s' "$out" | grep -c '^trust=already$')"
 check "--trust on an unrecorded directory says it recorded it" "1" \
   "$(printf '{"projects":{}}' > "$TRUSTF"; env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-     CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --trust --prompt p 2>&1 | grep -c '^trust=recorded$')"
+     CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent: trust" --tier deep --trust --prompt p 2>&1 | grep -c '^trust=recorded$')"
 # A record the launcher cannot read is a gate that cannot measure: it lets the launch
 # through AND says so, instead of launching past a question nobody will see.
 printf '{not json' > "$WORK/trust-garbage.json"
 out=$(env ORCHESTRATOR_TRUST_FILE="$WORK/trust-garbage.json" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
-      CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --prompt p 2>&1); code=$?
+      CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent: trust" --tier deep --prompt p 2>&1); code=$?
 check "an unreadable record lets the launch through" "0" "$code"
 check "and says so, naming the flag" "1|1" \
   "$(printf '%s' "$out" | grep -c 'cannot be read')|$(printf '%s' "$out" | grep -c '^trust=unread$')"
@@ -4043,7 +4049,7 @@ D8STATE=$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")
 D8TRUST="$WORK/trust-d8.json"; printf '{"projects":{}}' > "$D8TRUST"
 D8DIR="$WORK/untrusted-d8"; mkdir -p "$D8DIR"
 env ORCHESTRATOR_TRUST_FILE="$D8TRUST" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$D8STATE" \
-  bash "$AGENT" spawn --tier light --dir "$D8DIR" --title "Agent : trust" --prompt "hello" >/dev/null 2>&1
+  bash "$AGENT" spawn --tier light --dir "$D8DIR" --title "Agent: trust" --prompt "hello" >/dev/null 2>&1
 check "the trust refusal leaves no prompt file" "0" \
   "$(find "$D8STATE/prompts" -type f 2>/dev/null | wc -l | tr -d ' ')"
 rm -rf "$D8STATE"
@@ -4089,8 +4095,8 @@ ORCHREF='project-70 [a1b2c3]'
 # double slash the test's own $TMPDIR can carry is collapsed, but no symlink is resolved
 # (unlike `pwd -P`, which would turn `/tmp` into `/private/tmp` and never match).
 BABS=$(cd "$B" && pwd)
-out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : brief" --brief "$B/good.md" --orchestrator "$ORCHREF" 2>&1)
-check_status "a lint-clean brief spawns" 0 env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : brief" --brief "$B/good.md" --orchestrator "$ORCHREF"
+out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: brief" --brief "$B/good.md" --orchestrator "$ORCHREF" 2>&1)
+check_status "a lint-clean brief spawns" 0 env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: brief" --brief "$B/good.md" --orchestrator "$ORCHREF"
 check "the built prompt reads exactly" "1" \
   "$(printf '%s\n' "$out" | grep -Fc "prompt=Read and execute $BABS/good.md. Your orchestrator is $ORCHREF.")"
 check "the lint verdict is shown" "1" "$(printf '%s\n' "$out" | grep -c '^lint=brief-lint: .*0 findings$')"
@@ -4101,9 +4107,9 @@ check "the launch records the orchestrator --orchestrator names" "1" \
 # The brief the session starts on is named in its environment: the gauge measures its size
 # beside the session's starting context (the measure file's `start`).
 check "the launch names the brief the session starts on, and a launch without one names none" "1|0" \
-  "$(printf '%s\n' "$out" | grep -Fc "export ORCHESTRATOR_BRIEF=$("$py" -c 'import shlex, sys; print(shlex.quote(sys.argv[1]))' "$BABS/good.md") && ")|$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : brief" --prompt p 2>&1 | grep -c 'ORCHESTRATOR_BRIEF')"
+  "$(printf '%s\n' "$out" | grep -Fc "export ORCHESTRATOR_BRIEF=$("$py" -c 'import shlex, sys; print(shlex.quote(sys.argv[1]))' "$BABS/good.md") && ")|$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: brief" --prompt p 2>&1 | grep -c 'ORCHESTRATOR_BRIEF')"
 check "a launch without --orchestrator records none" "0" \
-  "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : brief" --prompt p 2>&1 | grep -c 'ORCHESTRATOR_REPORTS_TO')"
+  "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: brief" --prompt p 2>&1 | grep -c 'ORCHESTRATOR_REPORTS_TO')"
 
 # The launch recipe the lifecycle reference teaches, its placeholders filled, is a spawn the
 # launcher takes: an agent's tier is its orchestrator's to name, and a recipe without one is
@@ -4119,7 +4125,7 @@ check "the lifecycle's launch recipe, filled, passes the launcher's dry run" "0|
 # followed) — `pwd -P`, not the `pwd` used above for an already-absolute path, which
 # `os.path.abspath` only normalises lexically and never touches a symlink in.
 BPHYS=$(cd "$B" && pwd -P)
-out=$(cd "$B" && ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : brief" --brief good.md --orchestrator "$ORCHREF" 2>&1)
+out=$(cd "$B" && ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: brief" --brief good.md --orchestrator "$ORCHREF" 2>&1)
 check "a relative brief path resolves absolute in the prompt" "1" \
   "$(printf '%s\n' "$out" | grep -Fc "prompt=Read and execute $BPHYS/good.md.")"
 
@@ -4127,14 +4133,14 @@ check "a relative brief path resolves absolute in the prompt" "1" \
 # variable beside ORCHESTRATOR_SPAWNED, so the hooks and the status line the host starts
 # inherit it. Without the option an agent's launch exports 240,000; any other role exports
 # nothing and the 300,000 default holds.
-gspawn() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent : gate" $(needs_tier "$@") "$@" 2>&1; }
+gspawn() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --title "Agent: gate" $(needs_tier "$@") "$@" 2>&1; }
 out=$(gspawn --prompt p --gate-tokens 200000)
 check "--gate-tokens exports the gate in the launch" "1" "$(printf '%s\n' "$out" | grep -c '^launch=.*export ORCHESTRATOR_CONTEXT_GATE_TOKENS=200000 && ')"
 check "without --gate-tokens an agent's launch exports the 240000 gate" "1" "$(gspawn --prompt p | grep -c '^launch=.*export ORCHESTRATOR_CONTEXT_GATE_TOKENS=240000 && ')"
 check "--gate-tokens on an agent wins over the 240000 default" "1|0" \
   "$(gspawn --prompt p --gate-tokens 150000 | grep -c '^launch=.*export ORCHESTRATOR_CONTEXT_GATE_TOKENS=150000 && ')|$(gspawn --prompt p --gate-tokens 150000 | grep -c 'GATE_TOKENS=240000')"
 check "an orchestrator's, an auditor's and a coordinator's launch export no gate" "0|0|0" \
-  "$(orchv gspawn --title 'Orch : gate' --successor --no-remote-control --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE_TOKENS')|$(gspawn --title 'Audit : gate' --auditor --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE_TOKENS')|$(gspawn --title 'Coord : gate' --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE_TOKENS')"
+  "$(orchv gspawn --title 'Orch: gate' --successor --no-remote-control --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE_TOKENS')|$(gspawn --title 'Audit: gate' --auditor --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE_TOKENS')|$(gspawn --title 'Coord: gate' --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE_TOKENS')"
 for bad in 0 -5 abc 1.5 ""; do
   badout=$(gspawn --prompt p --gate-tokens "$bad"); badcode=$?
   check "--gate-tokens '$bad' is refused, nothing launched" "1|0|1" \
@@ -4145,30 +4151,30 @@ check "with --brief the startup prompt says the gate" "1" \
   "$(printf '%s\n' "$out" | grep -Fc "prompt=Read and execute $BABS/good.md. Your orchestrator is $ORCHREF. Your context gate is the smaller of 200000 tokens and 80 % of the reported window.")"
 check "without --gate-tokens the startup prompt says no gate" "0" \
   "$(gspawn --brief "$B/good.md" --orchestrator "$ORCHREF" | grep -c 'Your context gate')"
-out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_PS_TABLE=/dev/null bash "$AGENT" rotate --tier light --old-tty /dev/ttys901 --dir "$WORK" --title "Agent : gate" --prompt p --gate-tokens 200000 2>&1)
+out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_PS_TABLE=/dev/null bash "$AGENT" rotate --tier light --old-tty /dev/ttys901 --dir "$WORK" --title "Agent: gate" --prompt p --gate-tokens 200000 2>&1)
 check "rotate passes --gate-tokens to the replacement" "1" "$(printf '%s\n' "$out" | grep -c '^launch=.*export ORCHESTRATOR_CONTEXT_GATE_TOKENS=200000 && ')"
 
 check_status "--brief with --prompt is mutually exclusive" 1 \
-  env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : brief" --brief "$B/good.md" --orchestrator "$ORCHREF" --prompt x
+  env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: brief" --brief "$B/good.md" --orchestrator "$ORCHREF" --prompt x
 check_status "--brief with --prompt-file is mutually exclusive" 1 \
-  env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : brief" --brief "$B/good.md" --orchestrator "$ORCHREF" --prompt-file "$B/good.md"
+  env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: brief" --brief "$B/good.md" --orchestrator "$ORCHREF" --prompt-file "$B/good.md"
 check_status "--brief without --orchestrator is refused" 1 \
-  env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : brief" --brief "$B/good.md"
+  env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: brief" --brief "$B/good.md"
 check_status "a brief that does not exist refuses the spawn" 1 \
-  env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : brief" --brief "$B/absent.md" --orchestrator "$ORCHREF"
+  env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: brief" --brief "$B/absent.md" --orchestrator "$ORCHREF"
 
 # A brief with a lint finding no longer refuses the spawn: the finding prints as a
 # warning on stderr and the launch goes on, prompt built and all.
-out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : brief" --brief "$B/placeholder.md" --orchestrator "$ORCHREF" 2>&1); code=$?
+out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: brief" --brief "$B/placeholder.md" --orchestrator "$ORCHREF" 2>&1); code=$?
 check "a brief with a lint finding still spawns" "0" "$code"
 # Twice in the combined stream: once in the stderr warning, once in the dry run's own
 # "lint=" introspection field, which a refusal used to make unreachable.
 check "the finding is printed" "2" "$(printf '%s\n' "$out" | grep -c 'unfilled placeholder')"
 check "the finding is a warning on stderr, and the launch still built a prompt" "1|1" \
-  "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : brief" --brief "$B/placeholder.md" --orchestrator "$ORCHREF" 2>&1 1>/dev/null | grep -c 'unfilled placeholder')|$(printf '%s\n' "$out" | grep -c '^prompt=Read and execute')"
+  "$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: brief" --brief "$B/placeholder.md" --orchestrator "$ORCHREF" 2>&1 1>/dev/null | grep -c 'unfilled placeholder')|$(printf '%s\n' "$out" | grep -c '^prompt=Read and execute')"
 
 D9STATE=$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")
-ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$D9STATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : brief" --brief "$B/placeholder.md" --orchestrator "$ORCHREF" >/dev/null 2>&1
+ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$D9STATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: brief" --brief "$B/placeholder.md" --orchestrator "$ORCHREF" >/dev/null 2>&1
 check "a dry run still writes no prompt file, warning or not" "0" \
   "$(find "$D9STATE/prompts" -type f 2>/dev/null | wc -l | tr -d ' ')"
 rm -rf "$D9STATE"
@@ -4176,14 +4182,14 @@ rm -rf "$D9STATE"
 # A dry run touches nothing: a passing `spawn --brief`, a `--prompt` and a spawn with
 # servers each name the files a real launch would write, and none is written.
 D11STATE=$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")
-d11out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$D11STATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : brief" --brief "$B/good.md" --orchestrator "$ORCHREF" 2>&1)
+d11out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$D11STATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: brief" --brief "$B/good.md" --orchestrator "$ORCHREF" 2>&1)
 check "a passing brief dry run writes nothing under the state directory" "0|1" \
   "$(find "$D11STATE" -type f | wc -l | tr -d ' ')|$(printf '%s\n' "$d11out" | grep -c "^prompt_file=$D11STATE/prompts/prompt-")"
-ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$D11STATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : prompt" --prompt p >/dev/null 2>&1
+ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$D11STATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: prompt" --prompt p >/dev/null 2>&1
 check "a --prompt dry run writes nothing either" "0" "$(find "$D11STATE" -type f | wc -l | tr -d ' ')"
 D11CAT="$D11STATE-cat.json"
 printf '{"servers":{"a":{"command":"a-cmd"}},"default":["a"]}\n' > "$D11CAT"
-d11out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$D11STATE" ORCHESTRATOR_MCP_CATALOGUE="$D11CAT" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent : mcp" --prompt p 2>&1)
+d11out=$(ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$D11STATE" ORCHESTRATOR_MCP_CATALOGUE="$D11CAT" bash "$AGENT" spawn --tier light --dir "$WORK" --title "Agent: mcp" --prompt p 2>&1)
 check "nor a dry run with servers, which still names its file" "0|1" \
   "$(find "$D11STATE" -type f | wc -l | tr -d ' ')|$(printf '%s\n' "$d11out" | grep -c "^mcp_file=$D11STATE/prompts/mcp-")"
 rm -rf "$D11STATE" "$D11CAT"
@@ -4223,7 +4229,7 @@ check "a versioned override warns once and still resolves to it" "1|a-model-5-5"
 check "a versioned id with a variant suffix warns, the suffix kept on the alias" "1" \
   "$(env ORCHESTRATOR_MODELS_MAP="$MAP" ORCHESTRATOR_TIER_DEEP='a-model-5-5[1m]' bash "$AGENT" resolve-tier deep 2>&1 >/dev/null | grep -cF 'bind it to the family alias model[1m] instead')"
 check "a versioned binding warns at spawn and still launches it" "1|1" \
-  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$VMAP" CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' --prompt p --tier deep 2>&1 | grep -c 'versioned identifier')|$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$VMAP" CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' --prompt p --tier deep 2>/dev/null | grep -c -- '--model a-model-5-5 ')"
+  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$VMAP" CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$WORK" --title 'Agent: x' --prompt p --tier deep 2>&1 | grep -c 'versioned identifier')|$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$VMAP" CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" spawn --dir "$WORK" --title 'Agent: x' --prompt p --tier deep 2>/dev/null | grep -c -- '--model a-model-5-5 ')"
 # A map the operator wrote and jq cannot read is NOT an unbound tier. Treating the two
 # alike routes every dispatch to the host default while the orchestrator reports the tier
 # it believes it asked for — a missing comma, and the whole routing is quietly advisory.
@@ -4250,7 +4256,7 @@ check "a map with no bindings resolves to nothing" "" \
 # must not with a broken one).
 check_status "a broken map stops the spawn" 1 \
   env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$WORK/broken.json" \
-  bash "$AGENT" spawn --dir "$WORK" --title "Agent : x" --tier deep --prompt p
+  bash "$AGENT" spawn --dir "$WORK" --title "Agent: x" --tier deep --prompt p
 
 check "a missing map is an all-empty map" "" \
   "$(env ORCHESTRATOR_MODELS_MAP="$WORK/absent.json" bash "$AGENT" resolve-tier standard)"
@@ -4277,24 +4283,24 @@ check "an unknown effort in the map is a refusal" \
 printf '{"deep":{"effort":"high"}}' > "$WORK/no-model.json"
 check_status "an object without a model is a refusal" 1 \
   env ORCHESTRATOR_MODELS_MAP="$WORK/no-model.json" bash "$AGENT" resolve-tier deep
-pcmd() { env CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$PMAP" bash "$AGENT" spawn --dir "$WORK" --title 'Agent : x' --prompt p $(needs_tier "$@") "$@" 2>/dev/null; }
+pcmd() { env CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$PMAP" bash "$AGENT" spawn --dir "$WORK" --title 'Agent: x' --prompt p $(needs_tier "$@") "$@" 2>/dev/null; }
 check "a pair tier types the model then the effort" "1" "$(pcmd --tier deep | grep -c -- '--model a-model --effort high')"
 check "an explicit effort wins over the map's" "1" "$(pcmd --tier deep --effort low | grep -c -- '--effort low')"
 check "an explicit effort with an explicit model" "1" "$(pcmd --model z-model --effort medium | grep -c -- '--model z-model --effort medium')"
 check "a tier bound without an effort types the shipped tier effort" "1" "$(pcmd --tier standard | grep -c -- '--model b-model --effort high')"
 check "an unknown effort on spawn is a refusal" \
   "ERROR: spawn: unknown effort: huge (expected low, medium, high, xhigh or max)" \
-  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title 'Agent : x' --prompt p --effort huge 2>&1 | tail -1)"
+  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title 'Agent: x' --prompt p --effort huge 2>&1 | tail -1)"
 check "an auditor refuses an effort: it runs as its caller runs" "1" \
-  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --auditor --title 'Audit : x' --prompt p --effort low 2>&1 | grep -c -- 'refused: --effort is not an auditor')"
+  "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" spawn --dir "$WORK" --auditor --title 'Audit: x' --prompt p --effort low 2>&1 | grep -c -- 'refused: --effort is not an auditor')"
 check "rotate forwards the effort to the spawn" "1" \
   "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$PMAP" \
-      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" --tier deep --effort max --prompt p 2>&1 | grep -c -- '--model a-model --effort max')"
+      bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent: rotated" --tier deep --effort max --prompt p 2>&1 | grep -c -- '--model a-model --effort max')"
 
 tcmd() {
   local out
   out=$(env CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
-    bash "$AGENT" spawn --dir "$WORK" --title "Agent : tier" --prompt p $(needs_tier "$@") "$@" 2>&1)
+    bash "$AGENT" spawn --dir "$WORK" --title "Agent: tier" --prompt p $(needs_tier "$@") "$@" 2>&1)
   out=${out#*launch=}; printf '%s' "${out%%$'\n'*}"
 }
 check "a bound tier is typed as the model argument" "1" "$(tcmd --tier deep | grep -c -- '--model a-model')"
@@ -4314,11 +4320,11 @@ printf '{"context_tokens":21000,"context_window":200000,"context_percent":10,"mo
 inh() { local sid=$1; shift; CLAUDE_CODE_SESSION_ID="$sid" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" CLAUDE_CONFIG_DIR="$ICFG" \
   bash "$AGENT" spawn --dir "$WORK" $(needs_tier "$@") "$@" 2>&1; }
 check "inherit-model types the calling session's model" "1" \
-  "$(orchv inh s-inh --title "Orch : heir" --successor --no-remote-control --inherit-model --prompt p | sed -n 's/^launch=//p' | grep -c -- '--model a-model')"
+  "$(orchv inh s-inh --title "Orch: heir" --successor --no-remote-control --inherit-model --prompt p | sed -n 's/^launch=//p' | grep -c -- '--model a-model')"
 printf '{"context_tokens":21000,"context_window":200000,"context_percent":10,"model":"override-root-model","updated_at":"2026-10-10T00:00:00Z"}\n' > "$ISTATE/measure/s-ovr.json"
 printf '{"context_tokens":21000,"context_window":200000,"context_percent":10,"model":"config-root-model","updated_at":"2026-10-10T00:00:00Z"}\n' > "$ICFG/claude-orchestrator/measure/s-ovr.json"
 pair_transcript s-ovr t-model xhigh
-INHOVR=$(inh s-ovr --title 'Agent : x' --inherit-model --prompt p)
+INHOVR=$(inh s-ovr --title 'Agent: x' --inherit-model --prompt p)
 check "the pair is read on the transcript, never on a measure file under the config dir or the state override" "1|0|0|transcript $ORCHESTRATOR_PROJECTS_DIR/p/s-ovr.jsonl" \
   "$(printf '%s' "$INHOVR" | sed -n 's/^launch=//p' | grep -c -- '--model t-model --effort xhigh')|$(printf '%s' "$INHOVR" | grep -c 'config-root-model')|$(printf '%s' "$INHOVR" | grep -c 'override-root-model')|$(printf '%s' "$INHOVR" | sed -n 's/^pair_source=//p')"
 check "inherit-model with no transcript refuses and names where it looked" "1" \
@@ -4328,7 +4334,7 @@ check "inherit-model with no transcript refuses and names where it looked" "1" \
 printf '{"context_tokens":21000,"context_window":200000,"context_percent":10,"model":"unavailable","updated_at":"2026-10-10T00:00:00Z"}\n' > "$ICFG/claude-orchestrator/measure/s-unav.json"
 pair_transcript s-unav unavailable high
 check "inherit-model refuses the unavailable sentinel, as if no model were recorded" "0|1" \
-  "$(orchv inh s-unav --title "Orch : heir" --successor --no-remote-control --inherit-model --prompt p | grep -c -- '--model unavailable')|$(orchv inh s-unav --title "Orch : heir" --successor --no-remote-control --inherit-model --prompt p | grep -c 'its last main-thread request names no model')"
+  "$(orchv inh s-unav --title "Orch: heir" --successor --no-remote-control --inherit-model --prompt p | grep -c -- '--model unavailable')|$(orchv inh s-unav --title "Orch: heir" --successor --no-remote-control --inherit-model --prompt p | grep -c 'its last main-thread request names no model')"
 check "inherit-model is exclusive with a tier" "1" \
   "$(inh s-inh --inherit-model --tier deep --prompt p | grep -c 'exclusive')"
 check_status "an unknown tier is refused at spawn" 1 \
@@ -4338,10 +4344,10 @@ check_status "an unknown tier is refused at spawn" 1 \
 # suite already checks that rotate inherits the spawn's verification.
 check "rotate forwards the tier to the spawn" "1" \
   "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
-      CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" --tier deep --prompt p 2>&1 | grep -c -- '--model a-model')"
+      CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent: rotated" --tier deep --prompt p 2>&1 | grep -c -- '--model a-model')"
 check "rotate closes the old tab only after the spawn" "1" \
   "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
-      CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" --tier deep --prompt p 2>&1 | tail -1 | grep -c '^close=/dev/ttys999')"
+      CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent: rotated" --tier deep --prompt p 2>&1 | tail -1 | grep -c '^close=/dev/ttys999')"
 
 # Every launched session carries its model and its effort (decision 3). A succession of any
 # role runs on its caller's LIVE pair, read on the caller's transcript: the last request of
@@ -4360,17 +4366,17 @@ e7() { local ps="$1"; shift
   bash "$AGENT" spawn --dir "$WORK" --prompt p "$@" 2>&1; }
 e7l() { e7 "$@" | sed -n 's/^launch=//p'; }
 e7f() { printf '%s\n' "$1" | sed -n "s/^$2=//p"; }
-E7ORCH="$WORK/ps-e7-orch.txt"; printf '/dev/ttys900 claude --name Orch : f\n' > "$E7ORCH"
-E7AUD="$WORK/ps-e7-aud.txt"; printf '/dev/ttys900 claude --name Audit : tm\n' > "$E7AUD"
+E7ORCH="$WORK/ps-e7-orch.txt"; printf '/dev/ttys900 claude --name Orch: f\n' > "$E7ORCH"
+E7AUD="$WORK/ps-e7-aud.txt"; printf '/dev/ttys900 claude --name Audit: tm\n' > "$E7AUD"
 E7NEUTRAL="$WORK/ps-e7-neutral.txt"; printf '/dev/ttys900 claude --name Audit neutre : f\n' > "$E7NEUTRAL"
-E7COORD="$WORK/ps-e7-coord.txt"; printf '/dev/ttys900 claude --name Coord : ops\n' > "$E7COORD"
+E7COORD="$WORK/ps-e7-coord.txt"; printf '/dev/ttys900 claude --name Coord: ops\n' > "$E7COORD"
 E7SUCC=$(e7 "$E7ORCH" --successor)
 check "a successor runs on its caller's model and effort, read from its transcript" "1|0|0|xhigh|transcript $E7TR" \
   "$(printf '%s' "$E7SUCC" | sed -n 's/^launch=//p' | grep -c -- '--model t-model --effort xhigh')|$(printf '%s' "$E7SUCC" | grep -c -- 'a-model')|$(printf '%s' "$E7SUCC" | grep -c -- 'x-small')|$(e7f "$E7SUCC" effort)|$(e7f "$E7SUCC" pair_source)"
 check "inherit-model types the caller's model and effort" "1|0" \
-  "$(e7l "$E7ORCH" --title 'Agent : x' --inherit-model | grep -c -- '--model t-model --effort xhigh')|$(e7l "$E7ORCH" --title 'Agent : x' --inherit-model | grep -c -- 'a-model')"
+  "$(e7l "$E7ORCH" --title 'Agent: x' --inherit-model | grep -c -- '--model t-model --effort xhigh')|$(e7l "$E7ORCH" --title 'Agent: x' --inherit-model | grep -c -- 'a-model')"
 check "an auditor runs on the caller's model and effort with no flag to ask for it" "1" \
-  "$(e7l "$E7ORCH" --auditor --title 'Audit : tm' | grep -c -- '--model t-model --effort xhigh')"
+  "$(e7l "$E7ORCH" --auditor --title 'Audit: tm' | grep -c -- '--model t-model --effort xhigh')"
 check "an auditor's successor runs on the caller's model and effort" "1" \
   "$(e7l "$E7AUD" --successor | grep -c -- '--model t-model --effort xhigh')"
 E7NOUT=$(e7 "$E7NEUTRAL" --successor)
@@ -4384,10 +4390,10 @@ check "a qualified auditor's subject of 26 characters derives nothing" "1" \
 printf '{"pid":%s,"sessionId":"s-e7","cwd":"%s","name":"Audit neutre : f"}\n' "$$" "$WORK" > "$E7CFG/sessions/$$.json"
 E7NARGV='["/opt/x/host","--settings","{\"enabledPlugins\":{\"orchestrator@lounisbou\":false}}","--name","Audit neutre : f"]'
 check "an auditor's successor keeps its predecessor's plugin set; an agent of the same caller gets none" "1|0" \
-  "$(ORCHESTRATOR_HOST_ARGV="$E7NARGV" e7l "$E7NEUTRAL" --successor | grep -c '"enabledPlugins":{"orchestrator@lounisbou":false}')|$(ORCHESTRATOR_HOST_ARGV="$E7NARGV" e7l "$E7ORCH" --title 'Agent : x' --tier light | grep -c 'enabledPlugins')"
+  "$(ORCHESTRATOR_HOST_ARGV="$E7NARGV" e7l "$E7NEUTRAL" --successor | grep -c '"enabledPlugins":{"orchestrator@lounisbou":false}')|$(ORCHESTRATOR_HOST_ARGV="$E7NARGV" e7l "$E7ORCH" --title 'Agent: x' --tier light | grep -c 'enabledPlugins')"
 rm -f "$E7CFG/sessions/$$.json"
 check "the coordinator's successor runs on the caller's model and effort" "1" \
-  "$(e7l "$E7COORD" --coordinator-successor --title 'Coord : x' | grep -c -- '--model t-model --effort xhigh')"
+  "$(e7l "$E7COORD" --coordinator-successor --title 'Coord: x' | grep -c -- '--model t-model --effort xhigh')"
 for E7FLAG in '--tier deep' '--model m' '--effort low'; do
   # shellcheck disable=SC2086 # the flag and its value are two words on purpose
   check "a successor refuses ${E7FLAG%% *}" "1|1|0" \
@@ -4395,58 +4401,58 @@ for E7FLAG in '--tier deep' '--model m' '--effort low'; do
 done
 # An opened orchestrator runs on the host's default unless the order names a model and an
 # effort; a model alone is no pair.
-E7OPEN=$(ORCHESTRATOR_TIER_DEEP=deep-model e7 "$E7COORD" --open --title 'Orch : x')
+E7OPEN=$(ORCHESTRATOR_TIER_DEEP=deep-model e7 "$E7COORD" --open --title 'Orch: x')
 check "an opened orchestrator types no pair unless the order names one" "0|0|none|host default" \
   "$(printf '%s' "$E7OPEN" | sed -n 's/^launch=//p' | grep -c -- '--model')|$(printf '%s' "$E7OPEN" | sed -n 's/^launch=//p' | grep -c -- '--effort')|$(e7f "$E7OPEN" effort)|$(e7f "$E7OPEN" pair_source)"
 check "an opening given a model and an effort types them; a model alone is refused" "1|flag|1|1" \
-  "$(e7l "$E7COORD" --open --title 'Orch : x' --model b-model --effort low | grep -c -- '--model b-model --effort low')|$(e7f "$(e7 "$E7COORD" --open --title 'Orch : x' --model b-model --effort low)" pair_source)|$(e7 "$E7COORD" --open --title 'Orch : x' --model b-model >/dev/null 2>&1; echo $?)|$(e7 "$E7COORD" --open --title 'Orch : x' --model b-model | grep -c -- '--effort')"
+  "$(e7l "$E7COORD" --open --title 'Orch: x' --model b-model --effort low | grep -c -- '--model b-model --effort low')|$(e7f "$(e7 "$E7COORD" --open --title 'Orch: x' --model b-model --effort low)" pair_source)|$(e7 "$E7COORD" --open --title 'Orch: x' --model b-model >/dev/null 2>&1; echo $?)|$(e7 "$E7COORD" --open --title 'Orch: x' --model b-model | grep -c -- '--effort')"
 # A tier, or the caller's own pair, is a pair the order did not name: both are refused.
 for E7FLAG in '--tier deep' --inherit-model; do
   # shellcheck disable=SC2086 # the flag and its value are two words on purpose
   check "an opening refuses ${E7FLAG%% *}" "1|1|0" \
-    "$(e7 "$E7COORD" --open --title 'Orch : x' $E7FLAG >/dev/null 2>&1; echo $?)|$(e7 "$E7COORD" --open --title 'Orch : x' $E7FLAG | grep -c "is not an opening's")|$(e7 "$E7COORD" --open --title 'Orch : x' $E7FLAG | grep -c '^launch=')"
+    "$(e7 "$E7COORD" --open --title 'Orch: x' $E7FLAG >/dev/null 2>&1; echo $?)|$(e7 "$E7COORD" --open --title 'Orch: x' $E7FLAG | grep -c "is not an opening's")|$(e7 "$E7COORD" --open --title 'Orch: x' $E7FLAG | grep -c '^launch=')"
 done
 # A wake: the pair read in the resumed session's own transcript; else its recorded pair;
 # else the host's default. A recorded model without its effort is refused, never guessed.
 pair_transcript s-e7-slept r-model max
-E7WAKE=$(e7 "$E7ORCH" --wake --title 'Orch : w' --resume s-e7-slept --model a-model --effort low)
+E7WAKE=$(e7 "$E7ORCH" --wake --title 'Orch: w' --resume s-e7-slept --model a-model --effort low)
 check "a wake that resumes a session runs on that session's pair" "1|0|transcript $ORCHESTRATOR_PROJECTS_DIR/p/s-e7-slept.jsonl" \
   "$(printf '%s' "$E7WAKE" | sed -n 's/^launch=//p' | grep -c -- '--model r-model --effort max')|$(printf '%s' "$E7WAKE" | sed -n 's/^launch=//p' | grep -c -- 'a-model')|$(e7f "$E7WAKE" pair_source)"
-E7WNONE=$(e7 "$E7ORCH" --wake --title 'Orch : w')
+E7WNONE=$(e7 "$E7ORCH" --wake --title 'Orch: w')
 check "a wake with no transcript pair types none" "0|0|host default" \
   "$(printf '%s' "$E7WNONE" | sed -n 's/^launch=//p' | grep -c -- '--model')|$(printf '%s' "$E7WNONE" | sed -n 's/^launch=//p' | grep -c -- '--effort')|$(e7f "$E7WNONE" pair_source)"
 check "a wake on its recorded pair says so" "1|record" \
-  "$(e7l "$E7ORCH" --wake --title 'Orch : w' --model a-model --effort high | grep -c -- '--model a-model --effort high')|$(e7f "$(e7 "$E7ORCH" --wake --title 'Orch : w' --model a-model --effort high)" pair_source)"
+  "$(e7l "$E7ORCH" --wake --title 'Orch: w' --model a-model --effort high | grep -c -- '--model a-model --effort high')|$(e7f "$(e7 "$E7ORCH" --wake --title 'Orch: w' --model a-model --effort high)" pair_source)"
 check "a wake without a recorded effort is refused" "1|1" \
-  "$(e7 "$E7ORCH" --wake --title 'Orch : w' --model a-model >/dev/null 2>&1; echo $?)|$(e7 "$E7ORCH" --wake --title 'Orch : w' --model a-model | grep -c 'never guesses the effort')"
+  "$(e7 "$E7ORCH" --wake --title 'Orch: w' --model a-model >/dev/null 2>&1; echo $?)|$(e7 "$E7ORCH" --wake --title 'Orch: w' --model a-model | grep -c 'never guesses the effort')"
 # An agent's pair is its orchestrator's: a tier, or a model with its effort. The plugin ships
 # the tier efforts the map does not bind (standard high, light medium); deep runs at the
 # calling orchestrator's own effort; an effort the map binds wins over both.
 E7PMAP="$WORK/e7-pair-map.json"
 printf '{"deep":"a-model","standard":"b-model","light":{"model":"c-model"}}' > "$E7PMAP"
 check "a tier bound without an effort types the shipped tier effort; deep, the caller's" "1|1|1|tier standard" \
-  "$(E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent : x' --tier standard | grep -c -- '--model b-model --effort high')|$(E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent : x' --tier light | grep -c -- '--model c-model --effort medium')|$(E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent : x' --tier deep | grep -c -- '--model a-model --effort xhigh')|$(e7f "$(E7MAP="$E7PMAP" e7 "$E7ORCH" --title 'Agent : x' --tier standard)" pair_source)"
+  "$(E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier standard | grep -c -- '--model b-model --effort high')|$(E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier light | grep -c -- '--model c-model --effort medium')|$(E7MAP="$E7PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier deep | grep -c -- '--model a-model --effort xhigh')|$(e7f "$(E7MAP="$E7PMAP" e7 "$E7ORCH" --title 'Agent: x' --tier standard)" pair_source)"
 check "a deep agent at its orchestrator's effort names the transcript the effort came from" "tier deep, effort from transcript $E7TR|tier light" \
-  "$(e7f "$(E7MAP="$E7PMAP" e7 "$E7ORCH" --title 'Agent : x' --tier deep)" pair_source)|$(e7f "$(E7MAP="$E7PMAP" e7 "$E7ORCH" --title 'Agent : x' --tier light)" pair_source)"
+  "$(e7f "$(E7MAP="$E7PMAP" e7 "$E7ORCH" --title 'Agent: x' --tier deep)" pair_source)|$(e7f "$(E7MAP="$E7PMAP" e7 "$E7ORCH" --title 'Agent: x' --tier light)" pair_source)"
 check "an effort the map binds wins over the shipped one" "1" \
-  "$(E7MAP="$PMAP" e7l "$E7ORCH" --title 'Agent : x' --tier deep | grep -c -- '--model a-model --effort high')"
+  "$(E7MAP="$PMAP" e7l "$E7ORCH" --title 'Agent: x' --tier deep | grep -c -- '--model a-model --effort high')"
 check "an agent's explicit model without an effort is refused" "1|1|0" \
-  "$(e7 "$E7ORCH" --title 'Agent : x' --model z-model >/dev/null 2>&1; echo $?)|$(e7 "$E7ORCH" --title 'Agent : x' --model z-model | grep -c "an agent's effort is the orchestrator's to name")|$(e7 "$E7ORCH" --title 'Agent : x' --model z-model | grep -c '^launch=')"
+  "$(e7 "$E7ORCH" --title 'Agent: x' --model z-model >/dev/null 2>&1; echo $?)|$(e7 "$E7ORCH" --title 'Agent: x' --model z-model | grep -c "an agent's effort is the orchestrator's to name")|$(e7 "$E7ORCH" --title 'Agent: x' --model z-model | grep -c '^launch=')"
 check "an agent's model without an effort is refused by the words --model needs --effort" "1|1" \
-  "$(e7 "$E7ORCH" --title 'Agent : x' --model z-model --effort '' >/dev/null 2>&1; echo $?)|$(e7 "$E7ORCH" --title 'Agent : x' --model z-model | grep -c -- '--model needs --effort')"
+  "$(e7 "$E7ORCH" --title 'Agent: x' --model z-model --effort '' >/dev/null 2>&1; echo $?)|$(e7 "$E7ORCH" --title 'Agent: x' --model z-model | grep -c -- '--model needs --effort')"
 check "an inheriting spawn given an effort is refused: the caller's effort comes with its model" "1|1|0" \
-  "$(e7 "$E7ORCH" --title 'Agent : x' --inherit-model --effort low >/dev/null 2>&1; echo $?)|$(e7 "$E7ORCH" --title 'Agent : x' --inherit-model --effort low | grep -c -- '--inherit-model reads the caller.s effort with its model; drop --effort')|$(e7 "$E7ORCH" --title 'Agent : x' --inherit-model --effort low | grep -c '^launch=')"
+  "$(e7 "$E7ORCH" --title 'Agent: x' --inherit-model --effort low >/dev/null 2>&1; echo $?)|$(e7 "$E7ORCH" --title 'Agent: x' --inherit-model --effort low | grep -c -- '--inherit-model reads the caller.s effort with its model; drop --effort')|$(e7 "$E7ORCH" --title 'Agent: x' --inherit-model --effort low | grep -c '^launch=')"
 check "an agent with no tier and no model is refused, naming both" "1|1" \
-  "$(e7 "$E7ORCH" --title 'Agent : x' >/dev/null 2>&1; echo $?)|$(e7 "$E7ORCH" --title 'Agent : x' | grep -c -- 'needs --tier or --model')"
+  "$(e7 "$E7ORCH" --title 'Agent: x' >/dev/null 2>&1; echo $?)|$(e7 "$E7ORCH" --title 'Agent: x' | grep -c -- 'needs --tier or --model')"
 check "an agent's model and effort typed are a flag's pair" "flag|medium" \
-  "$(e7f "$(e7 "$E7ORCH" --title 'Agent : x' --model z-model --effort medium)" pair_source)|$(e7f "$(e7 "$E7ORCH" --title 'Agent : x' --model z-model --effort medium)" effort)"
+  "$(e7f "$(e7 "$E7ORCH" --title 'Agent: x' --model z-model --effort medium)" pair_source)|$(e7f "$(e7 "$E7ORCH" --title 'Agent: x' --model z-model --effort medium)" effort)"
 # A rotation is a succession: with no pair given it types the ROTATED agent's live pair, read
 # on that agent's transcript; a tier or a model with its effort is the orchestrator naming one.
-printf '/dev/ttys901 7171 claude --name Agent : old\n' > "$WORK/ps-e7-rot.txt"
-printf '{"pid":7171,"sessionId":"s-e7-rot","cwd":"%s","name":"Agent : old"}\n' "$WORK" > "$E7CFG/sessions/7171.json"
+printf '/dev/ttys901 7171 claude --name Agent: old\n' > "$WORK/ps-e7-rot.txt"
+printf '{"pid":7171,"sessionId":"s-e7-rot","cwd":"%s","name":"Agent: old"}\n' "$WORK" > "$E7CFG/sessions/7171.json"
 pair_transcript s-e7-rot r-model medium
 e7rot() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$E7STATE" CLAUDE_CONFIG_DIR="$E7CFG" ORCHESTRATOR_PS_TABLE="$WORK/ps-e7-rot.txt" \
-  CLAUDE_CODE_SESSION_ID=s-e7 ORCHESTRATOR_MODELS_MAP="$E7PMAP" bash "$AGENT" rotate --old-tty /dev/ttys901 --dir "$WORK" --title "Agent : old" --prompt p "$@" 2>&1; }
+  CLAUDE_CODE_SESSION_ID=s-e7 ORCHESTRATOR_MODELS_MAP="$E7PMAP" bash "$AGENT" rotate --old-tty /dev/ttys901 --dir "$WORK" --title "Agent: old" --prompt p "$@" 2>&1; }
 E7ROT=$(e7rot)
 check "a rotation without a pair types the rotated agent's live pair" "1|transcript $ORCHESTRATOR_PROJECTS_DIR/p/s-e7-rot.jsonl" \
   "$(printf '%s' "$E7ROT" | sed -n 's/^launch=//p' | grep -c -- '--model r-model --effort medium')|$(e7f "$E7ROT" pair_source)"
@@ -4506,24 +4512,24 @@ ROTDIR="$WORK/rot-untrusted"; mkdir -p "$ROTDIR"
 printf '{"projects":{}}' > "$TRUSTF"
 check "rotate forwards --trust to the spawn, which records it" "true" \
   "$(env ORCHESTRATOR_TRUST_FILE="$TRUSTF" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" \
-      CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$ROTDIR" --title "Agent : rotated" --tier deep --trust --prompt p >/dev/null 2>&1; \
+      CLAUDE_CODE_SESSION_ID=s-suite bash "$AGENT" rotate --old-tty /dev/ttys999 --dir "$ROTDIR" --title "Agent: rotated" --tier deep --trust --prompt p >/dev/null 2>&1; \
      "$py" -c "import json,os,sys; d=json.load(open(sys.argv[1])); print(str(d['projects'].get(os.path.realpath(sys.argv[2]),{}).get('hasTrustDialogAccepted')).lower())" "$TRUSTF" "$ROTDIR")"
 # The rotation forwards --mcp too: an agent that needed a server is replaced by one that
 # still has it. It is not in the refused list below, and the dry run is where the
 # forwarding is read (§42) — with the name, since the flag carries one now.
 check "rotate forwards --mcp to the spawn, with its name" "a,b" \
   "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" ORCHESTRATOR_MCP_CATALOGUE="$CAT" \
-      bash "$AGENT" rotate --tier light --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" --mcp b --prompt p 2>&1 | sed -n 's/^mcp=//p')"
+      bash "$AGENT" rotate --tier light --old-tty /dev/ttys999 --dir "$WORK" --title "Agent: rotated" --mcp b --prompt p 2>&1 | sed -n 's/^mcp=//p')"
 # rotate forwards --account-connectors like any other spawn option: a replaced agent that
 # needed the account's connectors is replaced by one that still has them.
 check "rotate forwards --account-connectors to the spawn" "0" \
   "$(env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" ORCHESTRATOR_MODELS_MAP="$MAP" ORCHESTRATOR_MCP_CATALOGUE="$CAT" \
-      bash "$AGENT" rotate --tier light --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" --account-connectors --prompt p 2>&1 | sed -n 's/^launch=//p' | grep -c -- '--strict-mcp-config')"
+      bash "$AGENT" rotate --tier light --old-tty /dev/ttys999 --dir "$WORK" --title "Agent: rotated" --account-connectors --prompt p 2>&1 | sed -n 's/^launch=//p' | grep -c -- '--strict-mcp-config')"
 # A rotation replaces an agent with a titled agent; a successor, an escape from the title
 # shape, or a plain agent stripped of remote control are none of that — each is refused
 # before the replacement is spawned.
 rot_refuse() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$AGENT" \
-  rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent : rotated" "$@" 2>&1; }
+  rotate --old-tty /dev/ttys999 --dir "$WORK" --title "Agent: rotated" "$@" 2>&1; }
 check "rotate refuses --successor" "1" \
   "$(rot_refuse --successor | grep -c -- '--successor is not a rotation')"
 check "rotate refuses --title-free" "1" \
@@ -5441,7 +5447,7 @@ printf '%s\n' '# Standing rulings' '' \
 # file replaced both — and what this fill proves is the size limit over a full brief. Each path
 # is one that exists, short and the same on every machine, so the count does not move with the
 # length of the temporary directory the suite runs in.
-sed -E -e 's#\{\{PROJECT\}\}#scratch#g' -e 's#\{\{PREDECESSOR_NAME_PATTERN\}\}#Orch : scratch#g' -e 's#\{\{SCRIPTS\}\}#/tmp#g' -e "s#\{\{RULINGS_FILE\}\}#$SUCCRULINGS#g" \
+sed -E -e 's#\{\{PROJECT\}\}#scratch#g' -e 's#\{\{PREDECESSOR_NAME_PATTERN\}\}#Orch: scratch#g' -e 's#\{\{SCRIPTS\}\}#/tmp#g' -e "s#\{\{RULINGS_FILE\}\}#$SUCCRULINGS#g" \
   -e 's#\{\{LIVE_[A-Z_]+\}\}#none open#g' -e 's#\{\{[A-Z_]+\}\}#/tmp#g' "$SUCC" > "$SUCCFILL"
 # Measured as the lint measures: the open-questions field's value is left out, its label counted.
 check "a succession brief, every placeholder filled, lints clean and stays under 9,000 characters" "0|yes" \
@@ -5700,7 +5706,7 @@ check "the rulings check binds a succession brief only" "0" "$(bash "$LINT" "$SU
 # carries the launcher's close, and a brief whose reader is the one handed over from is not held.
 SUCCHAND="$WORK/succession-by-hand.md"
 cat > "$SUCCHAND" <<'BRIEF'
-# Handover: you are Orch : scratch
+# Handover: you are Orch: scratch
 
 You succeed the session Orch: scratch.
 
@@ -5771,9 +5777,9 @@ print([r for r in asyncio.run(ia.list_rows(app)) if 'ttys802' in r][0])" "$ROOT/
 # ...and the caller's own row, and no other, so an orchestrator reads which tab is its own
 # before it anchors, moves or closes anything (§38). The name beside the title is the one
 # the host process was launched with; the stub's other pane was launched with none.
-printf '/dev/ttys801 /opt/x/host --name Orch : f --permission-mode auto\n' > "$WORK/ps-stub.txt"
+printf '/dev/ttys801 /opt/x/host --name Orch: f --permission-mode auto\n' > "$WORK/ps-stub.txt"
 check "the listing marks the caller's own row, names it, and marks no other" \
-  "w1/t1 | /dev/ttys801 | visible one | Orch : f | self|0" \
+  "w1/t1 | /dev/ttys801 | visible one | Orch: f | self|0" \
   "$(ORCHESTRATOR_SELF_TTY=/dev/ttys801 ORCHESTRATOR_PS_TABLE="$WORK/ps-stub.txt" "$py" -c "$STUB
 rows=asyncio.run(ia.list_rows(app))
 print('%s|%d' % ([r for r in rows if 'ttys801' in r][0], len([r for r in rows if 'ttys802' in r and '| self' in r])))" "$ROOT/skills/iterm-agents/scripts")"
@@ -5933,14 +5939,14 @@ echo "== iterm-agents: the AppleScript close compares the title before it closes
 # The rung used to send `close s` and read the name afterwards, so a refused title had
 # already closed the tab. The stub appends every script it is sent and answers with a title.
 AS_CLOSE_LOG="$WORK/as-close-sent.applescript"
-printf '#!/bin/bash\ncat >> "%s"\necho "Agent : other"\n' "$AS_CLOSE_LOG" > "$IBIN/osascript-title"
+printf '#!/bin/bash\ncat >> "%s"\necho "Agent: other"\n' "$AS_CLOSE_LOG" > "$IBIN/osascript-title"
 chmod +x "$IBIN/osascript-title"
 : > "$AS_CLOSE_LOG"
-res=$(ORCHESTRATOR_OSASCRIPT="$IBIN/osascript-title" ipy "ia.as_close('/dev/ttys901', 'Agent : fake')" 2>&1)
+res=$(ORCHESTRATOR_OSASCRIPT="$IBIN/osascript-title" ipy "ia.as_close('/dev/ttys901', 'Agent: fake')" 2>&1)
 check "a close whose title differs is refused" "1" "$(printf '%s' "$res" | grep -c 'close: refused')"
 check "and no script that closes a session was sent" "0" "$(grep -c 'close s' "$AS_CLOSE_LOG")"
 : > "$AS_CLOSE_LOG"
-ORCHESTRATOR_OSASCRIPT="$IBIN/osascript-title" ipy "ia.as_close('/dev/ttys901', 'Agent : other')" >/dev/null 2>&1
+ORCHESTRATOR_OSASCRIPT="$IBIN/osascript-title" ipy "ia.as_close('/dev/ttys901', 'Agent: other')" >/dev/null 2>&1
 check "a close whose title matches is sent" "1" "$(grep -c 'close s' "$AS_CLOSE_LOG")"
 
 echo "== iterm-agents: a self-anchor the app cannot resolve is lost, not fatal (§51) =="
@@ -5999,7 +6005,7 @@ echo "== iterm-agents: a close is proved on the process table (§46) =="
 # `close` printed « closed 1 session » on a session whose process was still running, and the
 # operator read that line as a fact. The API's acknowledgement is that the request was taken,
 # not that the session is gone; only the process table answers that.
-printf '/dev/ttys901 /opt/x/claude --name Agent : survivor\n' > "$WORK/ps-alive.txt"
+printf '/dev/ttys901 /opt/x/claude --name Agent: survivor\n' > "$WORK/ps-alive.txt"
 : > "$WORK/ps-empty.txt"
 check "a session still in the process table is not reported closed" "still there" \
   "$(ORCHESTRATOR_PS_TABLE="$WORK/ps-alive.txt" ipy \
@@ -6023,7 +6029,7 @@ check "and what survived is named, so the operator reads which process held on" 
 # host registered its pid, or when its program's basename is HOST_CLI's or that of what
 # HOST_CLI resolves to.
 printf '/dev/ttys901 claude --resume x\n' > "$WORK/ps-bare.txt"
-printf '/dev/ttys901 /opt/homebrew/bin/claude --name Agent : x\n' > "$WORK/ps-binary.txt"
+printf '/dev/ttys901 /opt/homebrew/bin/claude --name Agent: x\n' > "$WORK/ps-binary.txt"
 printf '/dev/ttys901 4242 node /opt/lib/cli.js --resume x\n' > "$WORK/ps-node.txt"
 printf '/dev/ttys901 -zsh\n' > "$WORK/ps-shell.txt"
 mkdir -p "$WORK/wrapbin" "$WORK/hostcfg/sessions"
@@ -6037,7 +6043,7 @@ check "an absolute HOST_CLI matches a bare host row" "host" "$(hostp /opt/homebr
 check "a wrapper path matches the binary's row" "host" "$(hostp "$WORK/wrapbin/claude" "$WORK/ps-binary.txt")"
 check "a link to the wrapper matches through what it resolves to" "host" "$(hostp "$WORK/wrapbin/host-link" "$WORK/ps-binary.txt")"
 check "a wrapper named otherwise does not match on argv alone" "none" "$(hostp "$WORK/wrapbin/run-host.sh" "$WORK/ps-node.txt")"
-printf '{"pid":4242,"sessionId":"s-reg","name":"Agent : x"}\n' > "$WORK/hostcfg/sessions/4242.json"
+printf '{"pid":4242,"sessionId":"s-reg","name":"Agent: x"}\n' > "$WORK/hostcfg/sessions/4242.json"
 check "a pid the host registered is the host, whatever its argv" "host" "$(hostp "$WORK/wrapbin/run-host.sh" "$WORK/ps-node.txt")"
 check "a shell on the tty is not the host" "none" "$(hostp /opt/homebrew/bin/claude "$WORK/ps-shell.txt")"
 check "verify reads a bare host row under an absolute HOST_CLI" "0" \
@@ -6103,7 +6109,7 @@ alive() { case "$(ps -o stat= -p "$1" 2>/dev/null | tr -d ' ')" in ''|Z*) echo g
 # A close of the tab on $1 whose host is pid $2, asked with --expect-title $3 of a session
 # titled $4, through a terminal of the probe's own that accepts the close and ends nothing.
 endclose() {
-  printf '/dev/%s %s /opt/x/a-host --name Agent : fake\n' "$1" "$2" > "$WORK/ps-end.txt"
+  printf '/dev/%s %s /opt/x/a-host --name Agent: fake\n' "$1" "$2" > "$WORK/ps-end.txt"
   ORCHESTRATOR_PS_TABLE="$WORK/ps-end.txt" ORCHESTRATOR_STATE_DIR="$ESTATE" \
   ORCHESTRATOR_CLOSE_TIMEOUT=1 ORCHESTRATOR_TERM_GRACE=1 ORCHESTRATOR_KILL_GRACE=3 \
   CLAUDE_CONFIG_DIR="$WORK/end-cfg" ipy "
@@ -6119,18 +6125,18 @@ print('proved gone')" 2>&1
 }
 : > "$ESTATE/close.log"
 sp=$(stubborn)
-out=$(endclose ttys961 "$sp" "Agent : fake" "Agent : fake")
+out=$(endclose ttys961 "$sp" "Agent: fake" "Agent: fake")
 check "a host that ignores SIGTERM is sent SIGKILL, and the close is proved on its pid" "1|1|1|gone" \
   "$(printf '%s' "$out" | grep -c "SIGTERM sent to $sp")|$(printf '%s' "$out" | grep -c "SIGKILL sent to $sp")|$(printf '%s' "$out" | grep -c '^proved gone$')|$(alive "$sp")"
 check "each step of the escalation is logged in the state directory" "1|1|1" \
   "$(grep -c "still running on /dev/ttys961 after 1s" "$ESTATE/close.log")|$(grep -c "SIGTERM sent to $sp" "$ESTATE/close.log")|$(grep -c "SIGKILL sent to $sp" "$ESTATE/close.log")"
 pp=$(polite)
-out=$(endclose ttys962 "$pp" "Agent : fake" "Agent : fake")
+out=$(endclose ttys962 "$pp" "Agent: fake" "Agent: fake")
 check "a host that dies of SIGTERM is never sent SIGKILL" "1|0|1|gone" \
   "$(printf '%s' "$out" | grep -c "SIGTERM sent to $pp")|$(printf '%s' "$out" | grep -c 'SIGKILL')|$(printf '%s' "$out" | grep -c '^proved gone$')|$(alive "$pp")"
 # The title guard is first: a session whose title was not checked is sent nothing.
 sg=$(stubborn)
-out=$(endclose ttys963 "$sg" "Agent : other" "Agent : fake")
+out=$(endclose ttys963 "$sg" "Agent: other" "Agent: fake")
 check "a close refused by its title signals nothing" "1|0|alive" \
   "$(printf '%s' "$out" | grep -c 'close: refused')|$(printf '%s' "$out" | grep -c 'SIG')|$(alive "$sg")"
 # A pid is a number the system hands out again: the start time read before the close is
@@ -6172,9 +6178,9 @@ print('|'.join(r))")"
 # signalled, and a row of another tty or a pid gone is named nowhere.
 LSTATE="$WORK/linger-state"; LMOD="$WORK/linger-module"
 mkdir -p "$LSTATE" "$LMOD/store/sessions"
-printf '%s\n' '{"role":"orchestrator","name":"Orch : ghost","pid":"56717","tty":"/dev/ttys964","updated_at":"2026-01-01T00:00:00Z"}' > "$LMOD/store/sessions/ghost"
-printf '%s\n' '{"role":"agent","name":"Agent : other","pid":"56800","tty":"/dev/ttys965","updated_at":"2026-01-01T00:00:00Z"}' > "$LMOD/store/sessions/other"
-printf '/dev/ttys964 56717 /opt/x/a-host --name Orch : ghost\n' > "$WORK/ps-linger.txt"
+printf '%s\n' '{"role":"orchestrator","name":"Orch: ghost","pid":"56717","tty":"/dev/ttys964","updated_at":"2026-01-01T00:00:00Z"}' > "$LMOD/store/sessions/ghost"
+printf '%s\n' '{"role":"agent","name":"Agent: other","pid":"56800","tty":"/dev/ttys965","updated_at":"2026-01-01T00:00:00Z"}' > "$LMOD/store/sessions/other"
+printf '/dev/ttys964 56717 /opt/x/a-host --name Orch: ghost\n' > "$WORK/ps-linger.txt"
 lingerclose() {
   env -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_PS_TABLE="$WORK/ps-linger.txt" ORCHESTRATOR_STATE_DIR="$LSTATE" \
   ORCHESTRATOR_MODULE_DIR="$LMOD" ORCHESTRATOR_CLOSE_TIMEOUT=1 CLAUDE_CONFIG_DIR="$WORK/end-cfg" "$py" -c "
@@ -6188,7 +6194,7 @@ ia.terminal_for = lambda tty: Accepting()
 ia.os.kill = lambda pid, sig: (_ for _ in ()).throw(AssertionError('signalled %s' % pid))
 ia.process_state = lambda pid: $1
 try:
-    ia.cmd_close(['--tty', '/dev/ttys964', '--expect-title', 'Orch : ghost', '--keep-checkout'])
+    ia.cmd_close(['--tty', '/dev/ttys964', '--expect-title', 'Orch: ghost', '--keep-checkout'])
 except SystemExit as exc:
     print('exit %s' % exc.code)
 else:
@@ -6206,7 +6212,7 @@ check "the pids a close names are the store's rows on its tty, an unreadable row
 # A row write in flight is a temporary file beside the rows (the module's writeAtomic, the
 # launcher's row_write): never a row whose pid a close names.
 check "a temporary file beside the store's rows names no pid to a close" "56717" \
-  "$(printf '%s\n' '{"role":"agent","name":"Agent : late","pid":"56999","tty":"/dev/ttys964","updated_at":"2026-01-01T00:00:00Z"}' > "$LMOD/store/sessions/late.tmp-1-abcdef"; ORCHESTRATOR_MODULE_DIR="$LMOD" ipy "print(','.join(ia.recorded_pids({'/dev/ttys964'})))")"
+  "$(printf '%s\n' '{"role":"agent","name":"Agent: late","pid":"56999","tty":"/dev/ttys964","updated_at":"2026-01-01T00:00:00Z"}' > "$LMOD/store/sessions/late.tmp-1-abcdef"; ORCHESTRATOR_MODULE_DIR="$LMOD" ipy "print(','.join(ia.recorded_pids({'/dev/ttys964'})))")"
 rm -f "$LMOD/store/sessions/late.tmp-1-abcdef"
 
 # The store's row, written by the launcher as the hooks module writes it: the same key, the
@@ -6231,13 +6237,13 @@ print("\n".join(moved))' 2>&1
 # The pid the merge case finds in its row runs nowhere: the stand-in lists another one.
 printf 'ttys002 5151 sh\n' > "$WORK/ps-row-none.txt"
 tmpshape() { case "${1#"$2".tmp-}" in "$1") echo "no temp" ;; *) printf '%s' "${1#"$2".tmp-}" | grep -qE '^[0-9]{13}-[0-9a-z]{1,6}$' && echo ok || echo "bad: $1" ;; esac; }
-GPATCH='{"role":"agent","name":"Agent : \u00e9 \u2713 \ud83d\ude00 \"q\"\t\\ \u0001","pid":"4242","tty":"/dev/ttys001","context_percent":12.5,"context_tokens":3.0,"busy":false,"updated_at":"2026-11-04T10:00:00.000Z"}'
+GPATCH='{"role":"agent","name":"Agent: \u00e9 \u2713 \ud83d\ude00 \"q\"\t\\ \u0001","pid":"4242","tty":"/dev/ttys001","context_percent":12.5,"context_tokens":3.0,"busy":false,"updated_at":"2026-11-04T10:00:00.000Z"}'
 ts_tmp=$(rowts write s-golden "$GPATCH"); py_out=$(rowpy s-golden "$GPATCH")
 check "the launcher writes a new row byte for byte as the module does: unicode, escapes, an integral float" "True|same" \
   "$(printf '%s\n' "$py_out" | head -1)|$(cmp -s "$RTS/store/sessions/s-golden" "$RPY/store/sessions/s-golden" && echo same || echo differ)"
 check "both writers write the row to a temporary file named alike, renamed into place, none left" "ok|ok|0" \
   "$(tmpshape "$ts_tmp" "$RTS/store/sessions/s-golden")|$(tmpshape "$(printf '%s\n' "$py_out" | sed -n 2p)" "$RPY/store/sessions/s-golden")|$({ ls "$RTS/store/sessions"; ls "$RPY/store/sessions"; } | grep -c 'tmp')"
-MPATCH='{"name":"Orch : new","context_percent":41,"updated_at":"2026-11-04T10:05:00.000Z"}'
+MPATCH='{"name":"Orch: new","context_percent":41,"updated_at":"2026-11-04T10:05:00.000Z"}'
 rowts write s-golden "$MPATCH" >/dev/null; py_out=$(rowpy s-golden "$MPATCH")
 check "the launcher merges a patch into the row it finds as the module does, every field kept in place" "True|same" \
   "$(printf '%s\n' "$py_out" | head -1)|$(cmp -s "$RTS/store/sessions/s-golden" "$RPY/store/sessions/s-golden" && echo same || echo differ)"
@@ -6250,26 +6256,26 @@ check "a patch with no stamp is stamped with the write's own time, in the module
   "$(cmp -s "$RTS/store/sessions/a_____b" "$RPY/store/sessions/a_____b" && echo same || echo differ)|$(rowts write s-stamp '{"role":"agent"}' >/dev/null; jq -r .updated_at "$RTS/store/sessions/s-stamp" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$' && echo ok)|$(rowpy s-stamp '{"role":"agent"}' >/dev/null; jq -r .updated_at "$RPY/store/sessions/s-stamp" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}Z$' && echo ok)"
 # row_read: the module's row parser, a row without a stamp being no row.
 RRD="$WORK/row-read"; mkdir -p "$RRD/store/sessions"
-printf '%s\n' '{"role":"agent","name":"Agent : read","updated_at":"2026-11-04T10:00:00.000Z"}' > "$RRD/store/sessions/s-ok"
+printf '%s\n' '{"role":"agent","name":"Agent: read","updated_at":"2026-11-04T10:00:00.000Z"}' > "$RRD/store/sessions/s-ok"
 printf '{"role":"agent","name' > "$RRD/store/sessions/s-torn"
 printf '%s\n' '{"role":"agent"}' > "$RRD/store/sessions/s-nostamp"
 printf '%s\n' '["not", "a row"]' > "$RRD/store/sessions/s-list"
-check "row_read reads a row, and none from an absent, torn, unstamped or non-object file" "Agent : read|None|None|None|None" \
+check "row_read reads a row, and none from an absent, torn, unstamped or non-object file" "Agent: read|None|None|None|None" \
   "$(ORCHESTRATOR_MODULE_DIR="$RRD" ipy "print('|'.join(str(r and r.get('name')) for r in map(ia.row_read, ('s-ok', 's-absent', 's-torn', 's-nostamp', 's-list'))))" 2>&1)"
 # The launcher writes a row only before its host starts (a birth) or once it is gone (an end):
 # never over a row whose pid runs live, by the module's own rule (runsLive), on the stand-in
 # table. A table that cannot be read proves no death.
 RREF="$WORK/row-refuse"; mkdir -p "$RREF/store/sessions"
 printf '/dev/ttys001 4242 /opt/x/a-host\nttys002 5151 sh\n' > "$WORK/ps-row.txt"
-seedrow() { printf '{"role":"agent","name":"Agent : %s","pid":"%s","tty":"%s","updated_at":"2026-11-04T09:00:00.000Z"}\n' "$1" "$2" "$3" > "$RREF/store/sessions/$1"; }
+seedrow() { printf '{"role":"agent","name":"Agent: %s","pid":"%s","tty":"%s","updated_at":"2026-11-04T09:00:00.000Z"}\n' "$1" "$2" "$3" > "$RREF/store/sessions/$1"; }
 seedrow live 4242 /dev/ttys001; seedrow moved 4242 /dev/ttys009; seedrow dead 7777 /dev/ttys001
-rowwrite() { ORCHESTRATOR_MODULE_DIR="$RREF" ORCHESTRATOR_PS_TABLE="${3:-$WORK/ps-row.txt}" ipy "print(ia.row_write('$1', {'name': 'Agent : new'}, '$2'))" 2>&1; }
-check "a birth or an end over a row whose pid runs live is refused, the row left as it was" "False|False|Agent : live" \
+rowwrite() { ORCHESTRATOR_MODULE_DIR="$RREF" ORCHESTRATOR_PS_TABLE="${3:-$WORK/ps-row.txt}" ipy "print(ia.row_write('$1', {'name': 'Agent: new'}, '$2'))" 2>&1; }
+check "a birth or an end over a row whose pid runs live is refused, the row left as it was" "False|False|Agent: live" \
   "$(rowwrite live birth)|$(rowwrite live end)|$(jq -r .name "$RREF/store/sessions/live")"
-check "a row whose pid runs on another tty, or no longer runs, is written over" "True|True|Agent : new|Agent : new" \
+check "a row whose pid runs on another tty, or no longer runs, is written over" "True|True|Agent: new|Agent: new" \
   "$(rowwrite moved birth)|$(rowwrite dead end)|$(jq -r .name "$RREF/store/sessions/moved")|$(jq -r .name "$RREF/store/sessions/dead")"
-printf '{"role":"agent","name":"Agent : nopid","updated_at":"2026-11-04T09:00:00.000Z"}\n' > "$RREF/store/sessions/nopid"
-check "an unreadable table refuses a row that names a pid, and none is read for a row without one" "False|True|True|Agent : live" \
+printf '{"role":"agent","name":"Agent: nopid","updated_at":"2026-11-04T09:00:00.000Z"}\n' > "$RREF/store/sessions/nopid"
+check "an unreadable table refuses a row that names a pid, and none is read for a row without one" "False|True|True|Agent: live" \
   "$(rowwrite live birth "$WORK/no-such-table")|$(rowwrite nopid birth "$WORK/no-such-table")|$(rowwrite fresh birth "$WORK/no-such-table")|$(jq -r .name "$RREF/store/sessions/live")"
 check "a write that is neither a birth nor an end is an error, and writes nothing" "ValueError|absent" \
   "$(ORCHESTRATOR_MODULE_DIR="$RREF" ipy "
@@ -6286,24 +6292,24 @@ def refuse(src, dst):
     raise OSError('rename refused')
 replace = ia.os.replace
 ia.os.replace = refuse
-failed = ia.row_write('s-fail', {'name': 'Agent : fail'}, 'birth')
+failed = ia.row_write('s-fail', {'name': 'Agent: fail'}, 'birth')
 ia.os.replace = replace
 ia.time.time = lambda: 1.0
 ia.os.urandom = lambda n: bytes(n)
-print('%s|%s' % (failed, ia.row_write('s-taken', {'name': 'Agent : taken'}, 'birth')))" 2>"$WORK/row-fail.err")
+print('%s|%s' % (failed, ia.row_write('s-taken', {'name': 'Agent: taken'}, 'birth')))" 2>"$WORK/row-fail.err")
 check "a write whose rename fails, or whose temporary name is taken, is False and said, no row and none of its temporary files left" \
   "False|False|2|0|other" \
   "$out|$(grep -c '^row: the row .* could not be written: ' "$WORK/row-fail.err")|$(ls "$RFAIL/store/sessions" | grep -cvx 's-taken\.tmp-1000-000000')|$(cat "$RFAIL/store/sessions/s-taken.tmp-1000-000000" 2>/dev/null || echo gone)"
 # A row file that holds no row the module parses proves no death: the launcher leaves it byte
 # for byte, and so a file it cannot even stat. Known absent, or known empty (the module's end
 # when its removal fails, deleteSession), it is written.
-printf '{"role":"agent","name":"Agent : torn' > "$RREF/store/sessions/torn"
+printf '{"role":"agent","name":"Agent: torn' > "$RREF/store/sessions/torn"
 cp "$RREF/store/sessions/torn" "$WORK/row-torn.orig"
 : > "$RREF/store/sessions/emptied"
 ln -s looped "$RREF/store/sessions/looped"
 out=$(rowwrite torn birth; rowwrite torn end; rowwrite looped birth)
 check "a row file that does not parse, or cannot be read, is refused, said, and left as it is; an absent or empty one is written" \
-  "3|3|same|looped|True|True|Agent : new|Agent : new" \
+  "3|3|same|looped|True|True|Agent: new|Agent: new" \
   "$(printf '%s\n' "$out" | grep -cx False)|$(printf '%s\n' "$out" | grep -c '^row: the row .* could not be read, left as it is$')|$(cmp -s "$RREF/store/sessions/torn" "$WORK/row-torn.orig" && echo same || echo differ)|$(readlink "$RREF/store/sessions/looped")|$(rowwrite emptied birth)|$(rowwrite unborn end)|$(jq -r .name "$RREF/store/sessions/emptied")|$(jq -r .name "$RREF/store/sessions/unborn")"
 # process_table and runs_live: the module's livePids and runsLive, ported. The table is the
 # machine's listing (ps -A -o pid=,stat=,tty=), or the stand-in, whose lines carry no state.
@@ -6400,7 +6406,7 @@ os.waitpid(child, 0)")"
 # host of each window is waited for, then escalated, never left to the server's end alone.
 sh0=$(stubborn); sh1=$(stubborn)
 printf '{"pid":%s,"sessionId":"s-home-end"}\n' "$sh0" > "$WORK/end-cfg/sessions/$sh0.json"
-printf '/dev/ttys964 %s /opt/x/a-host --name Orch : x\n/dev/ttys965 %s /opt/x/a-host --name Agent : y\n' \
+printf '/dev/ttys964 %s /opt/x/a-host --name Orch: x\n/dev/ttys965 %s /opt/x/a-host --name Agent: y\n' \
   "$sh0" "$sh1" > "$WORK/ps-end.txt"
 out=$(ORCHESTRATOR_PS_TABLE="$WORK/ps-end.txt" ORCHESTRATOR_STATE_DIR="$ESTATE" ORCHESTRATOR_CLOSE_TIMEOUT=1 \
   ORCHESTRATOR_TERM_GRACE=1 ORCHESTRATOR_KILL_GRACE=3 CLAUDE_CONFIG_DIR="$WORK/end-cfg" ipy "
@@ -6409,14 +6415,14 @@ print(ia.end_home('orch-suite-none-$$', 'close', ([('0', '/dev/ttys964'), ('1', 
 check "ending a home server ends the host of every window, SIGKILL included" "1|1|gone|gone" \
   "$(printf '%s' "$out" | grep -c "SIGKILL sent to $sh0")|$(printf '%s' "$out" | grep -c "SIGKILL sent to $sh1")|$(alive "$sh0")|$(alive "$sh1")"
 st=$(stubborn)
-printf '/dev/ttys966 %s /opt/x/a-host --name Orch : x\n' "$st" > "$WORK/ps-end.txt"
+printf '/dev/ttys966 %s /opt/x/a-host --name Orch: x\n' "$st" > "$WORK/ps-end.txt"
 out=$(ORCHESTRATOR_PS_TABLE="$WORK/ps-end.txt" ORCHESTRATOR_STATE_DIR="$ESTATE" ORCHESTRATOR_CLOSE_TIMEOUT=1 \
   ORCHESTRATOR_TERM_GRACE=1 ORCHESTRATOR_KILL_GRACE=3 CLAUDE_CONFIG_DIR="$WORK/end-cfg" ipy "
 P = ia.Pane
 class Home:
     def window_of(self, tty, what):
-        return P('home', '0', '@1', '%1', tty, 'Orch : x', '') if tty == '/dev/ttys966' \
-            else P('home', '2', '@3', '%3', tty, 'Orch : x', '')
+        return P('home', '0', '@1', '%1', tty, 'Orch: x', '') if tty == '/dev/ttys966' \
+            else P('home', '2', '@3', '%3', tty, 'Orch: x', '')
     def kill(self, window, what): pass
     def survives(self, stable_id): return False
     def stable_id(self, window): return 'tmux:s:' + window
@@ -6425,7 +6431,7 @@ ia.TmuxTerminal = Home
 ia.in_home_session = lambda: True
 ia.self_tty = lambda: '/dev/ttys967'
 ia.tmux_out = lambda args, what: '0'
-ia.cmd_takeover(['--tty', '/dev/ttys966', '--expect-title', 'Orch : x'])" 2>&1)
+ia.cmd_takeover(['--tty', '/dev/ttys966', '--expect-title', 'Orch: x'])" 2>&1)
 check "a successor's takeover ends its predecessor's host before it takes window 0" "1|1|gone" \
   "$(printf '%s' "$out" | grep -c "SIGKILL sent to $st")|$(printf '%s' "$out" | grep -c '^took window 0')|$(alive "$st")"
 kill -9 "$sh0" "$sh1" "$st" "$sp" "$pp" 2>/dev/null
@@ -6456,9 +6462,9 @@ if command -v tmux >/dev/null 2>&1; then
   hserver() { hsrv has-session -t home 2>/dev/null && echo up || echo down; }
   # The server is started by the launcher's own make_home, as every home server is: armed
   # there, it would exit at once, no client being attached yet.
-  ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.make_home('$HSRV', 'Orch : x', '$WORK', 'sleep $HMARK', 'suite')" >/dev/null 2>&1
-  hsrv new-window -d -t home: -n 'Agent : a' "sleep $HMARK" 2>/dev/null
-  hsrv new-window -d -t home: -n 'Agent : b' "sleep $HMARK" 2>/dev/null
+  ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "ia.make_home('$HSRV', 'Orch: x', '$WORK', 'sleep $HMARK', 'suite')" >/dev/null 2>&1
+  hsrv new-window -d -t home: -n 'Agent: a' "sleep $HMARK" 2>/dev/null
+  hsrv new-window -d -t home: -n 'Agent: b' "sleep $HMARK" 2>/dev/null
   sleep 1
   check "a home server started detached is not ended for having no client yet" "up|3" "$(hserver)|$(hpanes)"
   TERM=xterm-256color "$py" "$WORK/ptyclient.py" tmux -L "$HSRV" attach -t home >/dev/null 2>&1 &
@@ -6495,7 +6501,7 @@ if command -v tmux >/dev/null 2>&1; then
   TRMARK=$((4600 + $$ % 1000))
   trsrv() { env -u TMUX -u TMUX_PANE tmux -L "$TRSRV" "$@"; }
   tpy() { ORCHESTRATOR_STATE_DIR="$TSTATE_E" ORCHESTRATOR_TMUX="$(command -v tmux)" ipy "$1"; }
-  tpy "ia.make_home('$TRSRV', 'Orch : x', '$WORK', 'sleep $TRMARK', 'suite')" >/dev/null 2>&1
+  tpy "ia.make_home('$TRSRV', 'Orch: x', '$WORK', 'sleep $TRMARK', 'suite')" >/dev/null 2>&1
   TERM=xterm-256color "$py" "$WORK/ptyclient.py" tmux -L "$TRSRV" attach -t home >/dev/null 2>&1 &
   trclient=$!
   i=0; while [ "$(trsrv list-clients 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
@@ -6512,7 +6518,7 @@ if command -v tmux >/dev/null 2>&1; then
   # A close command ends the server itself: one line with the cause close, and no second one
   # from the watcher, which is told by the file the command leaves.
   : > "$TSTATE_E/close.log"
-  tpy "ia.make_home('$TRSRV', 'Orch : x', '$WORK', 'sleep $TRMARK', 'suite')" >/dev/null 2>&1
+  tpy "ia.make_home('$TRSRV', 'Orch: x', '$WORK', 'sleep $TRMARK', 'suite')" >/dev/null 2>&1
   TERM=xterm-256color "$py" "$WORK/ptyclient.py" tmux -L "$TRSRV" attach -t home >/dev/null 2>&1 &
   trclient=$!
   i=0; while [ "$(trsrv list-clients 2>/dev/null | wc -l | tr -d ' ')" = 0 ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i+1)); done
@@ -6601,7 +6607,7 @@ ia.ITERM = Maker()
 ia.client_on = lambda socket, tty: calls.append('client') or True
 ia.arm_home = lambda socket, what: calls.append('arm') or True
 ia.start_home_watch = lambda socket, tty: None
-ia.open_home_tab('orch-suite', 'Orch : x', '', 'spawn')
+ia.open_home_tab('orch-suite', 'Orch: x', '', 'spawn')
 print(','.join(calls[1:]))")"
 check "and starts no watcher of its own: the suite's stand-in server has none to watch" "0" \
   "$(pgrep -f 'home-watch --socket orch-suite' | wc -l | tr -d ' ')"
@@ -6616,7 +6622,7 @@ ia.client_on = lambda socket, tty: True
 ia.arm_home = lambda socket, what: False
 ia.kill_home = lambda socket: said.append('ended') or True
 try:
-    ia.open_home_tab('orch-suite', 'Orch : x', '', 'spawn')
+    ia.open_home_tab('orch-suite', 'Orch: x', '', 'spawn')
 except SystemExit:
     pass
 print(said and '|'.join(said))" 2>&1 | grep -c 'closing the tab would not end it')|$(ipy "
@@ -6629,7 +6635,7 @@ ia.client_on = lambda socket, tty: True
 ia.arm_home = lambda socket, what: False
 ia.kill_home = lambda socket: said.append('ended') or True
 try:
-    ia.open_home_tab('orch-suite', 'Orch : x', '', 'spawn')
+    ia.open_home_tab('orch-suite', 'Orch: x', '', 'spawn')
 except SystemExit:
     pass
 print('|'.join(said))" 2>/dev/null)"
@@ -7075,7 +7081,7 @@ print("ERR:" + " ".join(err.getvalue().split()))
 PYEOF
 PSPAWN="$WORK/ps-spawn"; mkdir -p "$PSPAWN"
 : > "$PSPAWN/none"
-printf '/dev/ttys902 claude --name Agent : x\n' > "$PSPAWN/running"
+printf '/dev/ttys902 claude --name Agent: x\n' > "$PSPAWN/running"
 sprobe() { local scenario="$1" state="$WORK/spawnstate-$1" ps="$2" tty="$3"; shift 3
   rm -rf "$state"; mkdir -p "$state/chains"
   printf '{"tab_id":"2","tty":"/dev/ttys802","owner":"S-OWN"}\n' > "$state/chains/ttys801.jsonl"
@@ -7084,36 +7090,36 @@ sprobe() { local scenario="$1" state="$WORK/spawnstate-$1" ps="$2" tty="$3"; shi
     ORCHESTRATOR_PS_TABLE="$PSPAWN/$ps" "$py" "$WORK/spawn_probe.py" "$ROOT/skills/iterm-agents/scripts" \
     "$scenario" "$WORK" $(needs_tier "$@") "$@" 2>&1; }
 sfield() { printf '%s\n' "$1" | sed -n "s/^$2[=:]//p"; }
-res=$(sprobe never none /dev/ttys801 --title "Agent : x")
+res=$(sprobe never none /dev/ttys801 --title "Agent: x")
 check "a spawn that never started closes its tab, prints its tty, and leaves the chain untouched" \
   "1|['/dev/ttys902']|['1', '2']|[('2', 'S-OWN')]|1" \
   "$(sfield "$res" exit)|$(sfield "$res" stdout)|$(sfield "$res" tabs)|$(sfield "$res" own)|$(sfield "$res" ERR | grep -c 'never started on /dev/ttys902 after 1s; the tab was closed')"
-res=$(sprobe succnever none /dev/ttys801 --successor --title "Orch : heir")
+res=$(sprobe succnever none /dev/ttys801 --successor --title "Orch: heir")
 check "a successor that never started takes no chain and re-points no entry" \
   "1|['1', '2']|[('2', 'S-OWN')]|absent" \
   "$(sfield "$res" exit)|$(sfield "$res" tabs)|$(sfield "$res" own)|$(sfield "$res" new)"
-res=$(sprobe neverstuck none /dev/ttys801 --title "Agent : x")
+res=$(sprobe neverstuck none /dev/ttys801 --title "Agent: x")
 check "a close that fails is said, with the command that closes the tab" "1|1" \
   "$(sfield "$res" exit)|$(sfield "$res" ERR | grep -c 'the tab on /dev/ttys902 was NOT closed: close it with close --tty /dev/ttys902')"
-res=$(sprobe agent running /dev/ttys801 --title "Agent : x")
+res=$(sprobe agent running /dev/ttys801 --title "Agent: x")
 check "a verified agent is appended to its caller's chain, and its tty printed last" \
   "0|['/dev/ttys902']|[('2', 'S-OWN'), ('NEW', 'S-OWN')]" \
   "$(sfield "$res" exit)|$(sfield "$res" stdout)|$(sfield "$res" own)"
-res=$(sprobe succ running /dev/ttys801 --successor --title "Orch : heir")
+res=$(sprobe succ running /dev/ttys801 --successor --title "Orch: heir")
 check "a verified successor takes the chain" "0|absent|[('2', 'S-NEW')]" \
   "$(sfield "$res" exit)|$(sfield "$res" own)|$(sfield "$res" new)"
-res=$(sprobe transcript none /dev/ttys801 --title "Agent : x")
+res=$(sprobe transcript none /dev/ttys801 --title "Agent: x")
 check "a session that wrote its transcript has started, whatever the process table says" \
   "0|[('2', 'S-OWN'), ('NEW', 'S-OWN')]|1" \
   "$(sfield "$res" exit)|$(sfield "$res" own)|$(sfield "$res" ERR | grep -c 'but the session wrote /x/t.jsonl since the launch: it started')"
-res=$(sprobe outside running /dev/ttys999 --successor --title "Orch : heir")
+res=$(sprobe outside running /dev/ttys999 --successor --title "Orch: heir")
 check "a caller the app does not know writes no chain entry, hands none over, and says so" \
   "0|[('7', 'S-STRANGER')]|absent|1" \
   "$(sfield "$res" exit)|$(sfield "$res" outside)|$(sfield "$res" new)|$(sfield "$res" ERR | grep -c 'the chain was not updated (the transfer was skipped)')"
-res=$(sprobe raise none /dev/ttys801 --title "Agent : x")
+res=$(sprobe raise none /dev/ttys801 --title "Agent: x")
 check "a failure after the tab exists closes it and says what failed" "1|['1', '2']|1" \
   "$(sfield "$res" exit)|$(sfield "$res" tabs)|$(sfield "$res" ERR | grep -c 'then the terminal failed: the tab vanished; the tab was closed')"
-res=$(BACKEND=applescript sprobe ascript none /dev/ttys801 --title "Agent : x")
+res=$(BACKEND=applescript sprobe ascript none /dev/ttys801 --title "Agent: x")
 check "the AppleScript rung says it keeps no chain, and a refusal there closes by tty" \
   "1|['/dev/ttys902']|[('2', 'S-OWN')]|1|1" \
   "$(sfield "$res" exit)|$(sfield "$res" bytty)|$(sfield "$res" own)|$(sfield "$res" ERR | grep -c 'this rung keeps no chain, so the chain was not updated (the append was skipped)')|$(sfield "$res" ERR | grep -c 'the tab was closed')"
@@ -7154,7 +7160,7 @@ try:
         elif scenario in ("stranger", "mine"):
             ia.cmd_move(["--tty", "/dev/ttys901", "--right-of", "/dev/ttys555"])
         else:
-            ia.cmd_spawn(["--dir", workdir, "--prompt", "p", "--title", "Agent : x", "--no-verify", "--tier", "light"]
+            ia.cmd_spawn(["--dir", workdir, "--prompt", "p", "--title", "Agent: x", "--no-verify", "--tier", "light"]
                          + (["--right-of", "self"] if scenario == "beside" else []))
 except SystemExit as e:
     code = e.code
@@ -7259,7 +7265,7 @@ print("rows=%s" % "~".join(out.getvalue().strip().splitlines()))
 print("ERR:" + " ".join(err.getvalue().split()))
 PYEOF
 PLACEPS="$WORK/ps-place.txt"
-printf '/dev/ttys801 claude --name Orch : own\n/dev/ttys802 claude --name Agent : a\n/dev/ttys803 claude --name Orch : other\n/dev/ttys804 claude --name Agent : b\n/dev/ttys902 claude --name Agent : x\n' > "$PLACEPS"
+printf '/dev/ttys801 claude --name Orch: own\n/dev/ttys802 claude --name Agent: a\n/dev/ttys803 claude --name Orch: other\n/dev/ttys804 claude --name Agent: b\n/dev/ttys902 claude --name Agent: x\n' > "$PLACEPS"
 pprobe() { local layout="$1" state="$WORK/placestate"; shift
   ORCHESTRATOR_BACKEND=api ORCHESTRATOR_STATE_DIR="$state" ORCHESTRATOR_SELF_TTY=/dev/ttys801 \
     ORCHESTRATOR_PS_TABLE="$PLACEPS" "$py" "$WORK/place_probe.py" "$ROOT/skills/iterm-agents/scripts" \
@@ -7267,44 +7273,44 @@ pprobe() { local layout="$1" state="$WORK/placestate"; shift
 pchain() { rm -rf "$WORK/placestate"; mkdir -p "$WORK/placestate/chains"
   [ -n "$1" ] && printf '%s\n' "$1" > "$WORK/placestate/chains/ttys801.jsonl"; return 0; }
 pchain ''
-res=$(pprobe '1:S-OWN:801,3:S-OTHER:803' --title "Agent : x")
+res=$(pprobe '1:S-OWN:801,3:S-OTHER:803' --title "Agent: x")
 check "an agent given no place, its caller's chain empty, lands right of its caller, not at the window's end" \
   "0|1,NEW,3" "$(sfield "$res" exit)|$(sfield "$res" tabs)"
 pchain '{"tab_id":"2","tty":"/dev/ttys802","owner":"S-OWN"}'
-res=$(pprobe '1:S-OWN:801,2:S-AG:802,3:S-OTHER:803' --title "Agent : x")
+res=$(pprobe '1:S-OWN:801,2:S-AG:802,3:S-OTHER:803' --title "Agent: x")
 check "an agent given no place lands after its caller's last agent" \
   "0|1,2,NEW,3" "$(sfield "$res" exit)|$(sfield "$res" tabs)"
 pchain '{"tab_id":"2","tty":"/dev/ttys802","owner":"S-OWN"}'
-res=$(pprobe '1:S-OWN:801,2:S-AG:802,3:S-OTHER:803' --title "Agent : x" --right-of self)
+res=$(pprobe '1:S-OWN:801,2:S-AG:802,3:S-OTHER:803' --title "Agent: x" --right-of self)
 check "--right-of self lands after the last agent while it is contiguous with its caller's group" \
   "0|1,2,NEW,3" "$(sfield "$res" exit)|$(sfield "$res" tabs)"
 pchain '{"tab_id":"2","tty":"/dev/ttys802","owner":"S-OWN"}'
-res=$(pprobe '1:S-OWN:801,3:S-OTHER:803,2:S-AG:802' --title "Agent : x" --right-of self)
+res=$(pprobe '1:S-OWN:801,3:S-OTHER:803,2:S-AG:802' --title "Agent: x" --right-of self)
 check "--right-of self lands directly right of its caller once the last agent sits apart from its group" \
   "0|1,NEW,3,2" "$(sfield "$res" exit)|$(sfield "$res" tabs)"
 pchain '{"tab_id":"2","tty":"/dev/ttys802","owner":"S-OWN"}
 {"tab_id":"4","tty":"/dev/ttys804","owner":"S-OWN"}'
-res=$(pprobe '1:S-OWN:801,2:S-AG:802,3:S-OTHER:803,4:S-AG4:804' --title "Agent : x")
+res=$(pprobe '1:S-OWN:801,2:S-AG:802,3:S-OTHER:803,4:S-AG4:804' --title "Agent: x")
 check "and so does an agent given no place, whose last agent is past a stranger's tab" \
   "0|1,2,NEW,3,4" "$(sfield "$res" exit)|$(sfield "$res" tabs)"
 pchain '{"tab_id":"2","tty":"/dev/ttys802","owner":"S-OWN"}
 {"tab_id":"4","tty":"/dev/ttys804","owner":"S-OWN"}'
-res=$(pprobe '1:S-OWN:801,3:S-OTHER:803,2:S-AG:802,4:S-AG4:804' --title "Agent : x")
+res=$(pprobe '1:S-OWN:801,3:S-OTHER:803,2:S-AG:802,4:S-AG4:804' --title "Agent: x")
 check "an agent given no place lands directly right of its caller when none of its agents is in the group" \
   "0|1,NEW,3,2,4" "$(sfield "$res" exit)|$(sfield "$res" tabs)"
 
 # A caller with no readable tty: the default placement falls back to the window's end and says
 # so, while an explicit --right-of self keeps refusing.
 pchain ''
-res=$(PROBE_NO_TTY=1 pprobe '1:S-OWN:801,3:S-OTHER:803' --title "Agent : x")
+res=$(PROBE_NO_TTY=1 pprobe '1:S-OWN:801,3:S-OTHER:803' --title "Agent: x")
 check "an agent given no place, its caller's tty unreadable, lands at the window's end and says why" \
   "0|1,3,NEW|1" "$(sfield "$res" exit)|$(sfield "$res" tabs)|$(sfield "$res" ERR | grep -c "own tty cannot be resolved")"
-res=$(PROBE_NO_TTY=1 pprobe '1:S-OWN:801,3:S-OTHER:803' --title "Agent : x" --right-of self)
+res=$(PROBE_NO_TTY=1 pprobe '1:S-OWN:801,3:S-OTHER:803' --title "Agent: x" --right-of self)
 check "while an explicit --right-of self is still refused" \
   "1|1" "$(sfield "$res" exit)|$(sfield "$res" ERR | grep -c "cannot resolve this session's own tty")"
 
 # An orchestrator tab has three ways in. The auditor's relaunch of an orchestrator, a plain
-# spawn under an `Orch :` title, landed at the window's end and became the auditor's agent.
+# spawn under an `Orch:` title, landed at the window's end and became the auditor's agent.
 # The auditor's own successor runs on its model, read from the measure file the module writes.
 mkdir -p "$WORK/orchcfg/claude-orchestrator/measure"
 printf '{"model":"a-model"}\n' > "$WORK/orchcfg/claude-orchestrator/measure/s-orch.json"
@@ -7313,29 +7319,29 @@ orchp() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$WORK/orchstate" ORCHES
   ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CONFIG_DIR="$WORK/orchcfg" CLAUDE_CODE_SESSION_ID=s-orch \
   ORCHESTRATOR_PS_TABLE="$1" bash "$AGENT" spawn --dir "$WORK" --prompt p $(needs_tier "${@:2}") "${@:2}" 2>&1; }
 ORCHPS="$WORK/ps-orchcaller.txt"; AUDPS="$WORK/ps-audcaller.txt"
-printf '/dev/ttys900 claude --name Orch : f\n' > "$ORCHPS"
-printf '/dev/ttys900 claude --name Audit : f\n' > "$AUDPS"
+printf '/dev/ttys900 claude --name Orch: f\n' > "$ORCHPS"
+printf '/dev/ttys900 claude --name Audit: f\n' > "$AUDPS"
 check "a plain spawn titled Orch is refused, naming the successor, the opening and the wake" "1|1" \
-  "$(orchp "$ORCHPS" --title 'Orch : x' >/dev/null 2>&1; echo $?)|$(orchp "$ORCHPS" --title 'Orch : x' | grep -c "an orchestrator's tab is opened only as a successor (--successor), an opened orchestrator (--open) or a woken one (--wake)")"
+  "$(orchp "$ORCHPS" --title 'Orch: x' >/dev/null 2>&1; echo $?)|$(orchp "$ORCHPS" --title 'Orch: x' | grep -c "an orchestrator's tab is opened only as a successor (--successor), an opened orchestrator (--open) or a woken one (--wake)")"
 check "and so is one under --title-free" "1" \
-  "$(orchp "$ORCHPS" --title 'Orch : x' --title-free >/dev/null 2>&1; echo $?)"
+  "$(orchp "$ORCHPS" --title 'Orch: x' --title-free >/dev/null 2>&1; echo $?)"
 check "an orchestrator's successor under an Orch title is still launched" "0|transfer" \
-  "$(orchp "$ORCHPS" --title 'Orch : g' --successor >/dev/null 2>&1; echo $?)|$(orchp "$ORCHPS" --title 'Orch : g' --successor | sed -n 's/^chain=//p')"
+  "$(orchp "$ORCHPS" --title 'Orch: g' --successor >/dev/null 2>&1; echo $?)|$(orchp "$ORCHPS" --title 'Orch: g' --successor | sed -n 's/^chain=//p')"
 check "an auditor's spawn titled Orch is refused as a successor and as a wake" "1|1|1" \
-  "$(orchp "$AUDPS" --title 'Orch : x' --successor >/dev/null 2>&1; echo $?)|$(orchp "$AUDPS" --title 'Orch : x' --wake --model a-model --effort high >/dev/null 2>&1; echo $?)|$(orchp "$AUDPS" --title 'Orch : x' --successor | grep -c "its only successor is its own audit session, --successor without --title")"
+  "$(orchp "$AUDPS" --title 'Orch: x' --successor >/dev/null 2>&1; echo $?)|$(orchp "$AUDPS" --title 'Orch: x' --wake --model a-model --effort high >/dev/null 2>&1; echo $?)|$(orchp "$AUDPS" --title 'Orch: x' --successor | grep -c "its only successor is its own audit session, --successor without --title")"
 check "an auditor's wake of an orchestrator is refused with a message naming the flags that apply" "1" \
-  "$(orchp "$AUDPS" --title 'Orch : x' --wake --model a-model --effort high | grep -c "opens no orchestrator tab with --wake or an Orch title, and --open is a coordinator's or an orchestrator's; its only successor is its own audit session, --successor without --title")"
+  "$(orchp "$AUDPS" --title 'Orch: x' --wake --model a-model --effort high | grep -c "opens no orchestrator tab with --wake or an Orch title, and --open is a coordinator's or an orchestrator's; its only successor is its own audit session, --successor without --title")"
 printf '/dev/ttys900 claude\n' > "$WORK/ps-unnamed.txt"
 check "an auditor whose name cannot be read is refused all the same, by the marker its launch exports" "1|1|0" \
-  "$(ORCHESTRATOR_AUDITOR=1 orchp "$WORK/ps-unnamed.txt" --title 'Orch : x' --wake --model a-model --effort high | grep -c "this session is not an orchestrator's or a coordinator's")|$(orchp "$ORCHPS" --auditor --title 'Audit : tm' | grep -c '^launch=.*export ORCHESTRATOR_AUDITOR=1 && ')|$(orchp "$ORCHPS" --title 'Agent : x' | grep -c 'ORCHESTRATOR_AUDITOR')"
+  "$(ORCHESTRATOR_AUDITOR=1 orchp "$WORK/ps-unnamed.txt" --title 'Orch: x' --wake --model a-model --effort high | grep -c "this session is not an orchestrator's or a coordinator's")|$(orchp "$ORCHPS" --auditor --title 'Audit: tm' | grep -c '^launch=.*export ORCHESTRATOR_AUDITOR=1 && ')|$(orchp "$ORCHPS" --title 'Agent: x' | grep -c 'ORCHESTRATOR_AUDITOR')"
 check "an auditor's spawn stays out of the chain and left of its caller, a woken orchestrator's out of the chain" "1|1|1" \
-  "$(orchp "$ORCHPS" --auditor --title 'Audit : tm' | grep -c '^chain=none$')|$(orchp "$ORCHPS" --auditor --title 'Audit : tm' | grep -c '^side=left$')|$(orchp "$ORCHPS" --title 'Orch : x' --wake --model a-model --effort high | grep -c '^chain=none$')"
+  "$(orchp "$ORCHPS" --auditor --title 'Audit: tm' | grep -c '^chain=none$')|$(orchp "$ORCHPS" --auditor --title 'Audit: tm' | grep -c '^side=left$')|$(orchp "$ORCHPS" --title 'Orch: x' --wake --model a-model --effort high | grep -c '^chain=none$')"
 NEUTRALPS="$WORK/ps-neutralcaller.txt"; AGENTPS="$WORK/ps-agentcaller.txt"
 printf '/dev/ttys900 claude --name Audit neutre : f\n' > "$NEUTRALPS"
-printf '/dev/ttys900 claude --name Agent : f\n' > "$AGENTPS"
+printf '/dev/ttys900 claude --name Agent: f\n' > "$AGENTPS"
 check "a wake from a session named otherwise is refused before any tab exists, the orchestrator's still goes" "1|0|1|0" \
-  "$(orchp "$NEUTRALPS" --title 'Orch : x' --wake --model a-model --effort high | grep -c "this session is not an orchestrator's or a coordinator's")|$(orchp "$NEUTRALPS" --title 'Orch : x' --wake --model a-model --effort high | grep -c '^launch=')|$(orchp "$AGENTPS" --title 'Orch : x' --wake --model a-model --effort high | grep -c "an agent never wakes an orchestrator")|$(orchp "$ORCHPS" --title 'Orch : x' --wake --model a-model --effort high >/dev/null 2>&1; echo $?)"
-# A coordinator opened by hand and renamed carries a readable name that is not `Coord : `;
+  "$(orchp "$NEUTRALPS" --title 'Orch: x' --wake --model a-model --effort high | grep -c "this session is not an orchestrator's or a coordinator's")|$(orchp "$NEUTRALPS" --title 'Orch: x' --wake --model a-model --effort high | grep -c '^launch=')|$(orchp "$AGENTPS" --title 'Orch: x' --wake --model a-model --effort high | grep -c "an agent never wakes an orchestrator")|$(orchp "$ORCHPS" --title 'Orch: x' --wake --model a-model --effort high >/dev/null 2>&1; echo $?)"
+# A coordinator opened by hand and renamed carries a readable name that is not `Coord: `;
 # only its own record places it on the tty. The auditor guard reads that record too.
 RENSTATE="$WORK/orchstate-renamed"; mkdir -p "$RENSTATE/chains"
 printf '{"name":"geonative-fix","tty":"/dev/ttys900"}\n' > "$RENSTATE/coordinator.json"
@@ -7344,14 +7350,14 @@ renamed() { ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$1" ORCHESTRATOR_SELF
   ORCHESTRATOR_SELF_ID=S-ME CLAUDE_CONFIG_DIR="$WORK/orchcfg" CLAUDE_CODE_SESSION_ID=s-orch \
   ORCHESTRATOR_PS_TABLE="$WORK/ps-renamedcoord.txt" bash "$AGENT" spawn --dir "$WORK" --prompt p $(needs_tier "${@:2}") "${@:2}" 2>&1; }
 check "a coordinator renamed away from Coord is no auditor to the guard: its record names it, a stranger of that name is still refused" "0|1" \
-  "$(renamed "$RENSTATE" --title 'Orch : x' --successor >/dev/null 2>&1; echo $?)|$(renamed "$WORK/orchstate" --title 'Orch : x' --successor | grep -c "this session is")"
+  "$(renamed "$RENSTATE" --title 'Orch: x' --successor >/dev/null 2>&1; echo $?)|$(renamed "$WORK/orchstate" --title 'Orch: x' --successor | grep -c "this session is")"
 check "the refusal names what the caller is not, whatever its name, and the tail naming the flags stays" "1|1|0" \
-  "$(renamed "$WORK/orchstate" --title 'Orch : x' --wake --model a-model --effort high | grep -c "this session is not an orchestrator's or a coordinator's ('geonative-fix')")|$(renamed "$WORK/orchstate" --title 'Orch : x' --wake --model a-model --effort high | grep -c "opens no orchestrator tab with --wake or an Orch title, and --open is a coordinator's or an orchestrator's; its only successor is its own audit session, --successor without --title")|$(renamed "$WORK/orchstate" --title 'Orch : x' --wake --model a-model --effort high | grep -c "an auditor's")"
+  "$(renamed "$WORK/orchstate" --title 'Orch: x' --wake --model a-model --effort high | grep -c "this session is not an orchestrator's or a coordinator's ('geonative-fix')")|$(renamed "$WORK/orchstate" --title 'Orch: x' --wake --model a-model --effort high | grep -c "opens no orchestrator tab with --wake or an Orch title, and --open is a coordinator's or an orchestrator's; its only successor is its own audit session, --successor without --title")|$(renamed "$WORK/orchstate" --title 'Orch: x' --wake --model a-model --effort high | grep -c "an auditor's")"
 check "an auditor named otherwise opens no orchestrator tab as a successor either" "1" \
-  "$(orchp "$NEUTRALPS" --title 'Orch : x' --successor | grep -c "Audit neutre : f")"
+  "$(orchp "$NEUTRALPS" --title 'Orch: x' --successor | grep -c "Audit neutre : f")"
 check "an auditor's --open is refused, as an agent's is" "1|1" \
-  "$(orchp "$AUDPS" --title 'Orch : x' --open >/dev/null 2>&1; echo $?)|$(orchp "$AUDPS" --title 'Orch : x' --open | grep -c 'an agent never opens an orchestrator')"
-check "while the auditor's own successor is launched" "0|Audit : f" \
+  "$(orchp "$AUDPS" --title 'Orch: x' --open >/dev/null 2>&1; echo $?)|$(orchp "$AUDPS" --title 'Orch: x' --open | grep -c 'an agent never opens an orchestrator')"
+check "while the auditor's own successor is launched" "0|Audit: f" \
   "$(orchp "$AUDPS" --successor >/dev/null 2>&1; echo $?)|$(orchp "$AUDPS" --successor | sed -n 's/^name=//p')"
 
 # A successor takes its predecessor's chain whole, and the predecessor's file goes, so no
@@ -7371,15 +7377,15 @@ check "a successor's chain takes the predecessor's agents, and the predecessor's
 TKSTATE="$WORK/takeoverstate"; rm -rf "$TKSTATE"; mkdir -p "$TKSTATE/chains"
 printf '{"tab_id":"tmux:/s:@4","tty":"/dev/ttys804","owner":"tmux:/s:%%1"}\n' > "$TKSTATE/chains/ttys966.jsonl"
 printf '{"tab_id":"tmux:/s:@2","tty":"/dev/ttys802","owner":"tmux:/s:%%3"}\n' > "$TKSTATE/chains/ttys967.jsonl"
-printf '/dev/ttys967 claude --name Orch : x\n/dev/ttys802 claude --name Agent : a\n/dev/ttys804 claude --name Agent : b\n' > "$WORK/ps-takeover.txt"
+printf '/dev/ttys967 claude --name Orch: x\n/dev/ttys802 claude --name Agent: a\n/dev/ttys804 claude --name Agent: b\n' > "$WORK/ps-takeover.txt"
 res=$(ORCHESTRATOR_STATE_DIR="$TKSTATE" ORCHESTRATOR_PS_TABLE="$WORK/ps-takeover.txt" TMUX=/s,1,0 TMUX_PANE=%3 "$py" -c "
 import sys; sys.path.insert(0, sys.argv[1])
 import iterm_agent as ia
 P = ia.Pane
 class Home:
     def window_of(self, tty, what):
-        return P('home', '0', '@1', '%1', tty, 'Orch : x', '') if tty == '/dev/ttys966' \
-            else P('home', '2', '@3', '%3', tty, 'Orch : x', '')
+        return P('home', '0', '@1', '%1', tty, 'Orch: x', '') if tty == '/dev/ttys966' \
+            else P('home', '2', '@3', '%3', tty, 'Orch: x', '')
     def kill(self, window, what): pass
     def survives(self, stable_id): return False
     def stable_id(self, window): return 'tmux:/s:' + window
@@ -7390,7 +7396,7 @@ ia.self_tty = lambda: '/dev/ttys967'
 ia.tmux_out = lambda args, what: '0'
 ia.host_identity = lambda tty: None
 ia.wait_gone = lambda tty, timeout=None: None
-ia.cmd_takeover(['--tty', '/dev/ttys966', '--expect-title', 'Orch : x'])" "$ROOT/skills/iterm-agents/scripts" 2>&1)
+ia.cmd_takeover(['--tty', '/dev/ttys966', '--expect-title', 'Orch: x'])" "$ROOT/skills/iterm-agents/scripts" 2>&1)
 check "a takeover hands the predecessor's agents to the successor and removes the predecessor's chain" \
   "1|tmux:/s:@2,tmux:/s:@4|absent" \
   "$(printf '%s' "$res" | grep -c '^took window 0')|$(jq -r .tab_id "$TKSTATE/chains/ttys967.jsonl" | paste -sd, -)|$([ -e "$TKSTATE/chains/ttys966.jsonl" ] && echo present || echo absent)"
@@ -7442,7 +7448,7 @@ check "a file whose owner carries a host with no readable name is kept" "present
   "$(printf '/dev/ttys016 claude\n' > "$WORK/ps-prune-bare.txt"; prune_run "$WORK/ps-prune-bare.txt" >/dev/null; [ -e "$PRSTATE/chains/ttys016.jsonl" ] && echo present || echo absent)"
 # A home orchestrator's tab carries only the tmux client; its host runs on the server's pane.
 prune_seed
-printf '/dev/ttys016 tmux -L orch-abc123 attach\n/dev/ttys950 claude --name Orch : home\n' > "$WORK/ps-prune-home.txt"
+printf '/dev/ttys016 tmux -L orch-abc123 attach\n/dev/ttys950 claude --name Orch: home\n' > "$WORK/ps-prune-home.txt"
 prune_home() { ORCHESTRATOR_STATE_DIR="$PRSTATE" ORCHESTRATOR_SELF_TTY=/dev/ttys801 ORCHESTRATOR_PS_TABLE="$WORK/ps-prune-home.txt" "$py" -c "
 import sys; sys.path.insert(0, sys.argv[1])
 import iterm_agent as ia
@@ -7453,7 +7459,7 @@ check "the chain of a tab carrying the client of a live home server is kept when
   "$(prune_home 0 | tail -1)"
 prune_seed
 check "and pruned when the host on window 0 is not an orchestrator's" "absent" \
-  "$(printf '/dev/ttys016 tmux -L orch-abc123 attach\n/dev/ttys950 claude --name Agent : home\n' > "$WORK/ps-prune-home.txt"; prune_home 0 | tail -1)"
+  "$(printf '/dev/ttys016 tmux -L orch-abc123 attach\n/dev/ttys950 claude --name Agent: home\n' > "$WORK/ps-prune-home.txt"; prune_home 0 | tail -1)"
 prune_seed
 check "and prunes nothing when the process table cannot be read" \
   "ttys015.jsonl,ttys016.jsonl,ttys801.jsonl,ttys802.jsonl,ttys803.jsonl,ttys804.jsonl" "$(prune_run "$WORK/no-such-ps-table")"
@@ -7515,12 +7521,12 @@ reset_home() { # the home session: the orchestrator in window 0, two agents, a s
   rm -rf "$TSTATE" "$TR/projects" "$TR/calls" "$TR/panes.moved"
   mkdir -p "$TSTATE/chains"
   printf '1\n' > "$TR/mark"
-  printf '%s\n' '$1	0	@0	%0	/dev/ttys900	orch	✳ Orch : home' \
-    '$1	1	@1	%1	/dev/ttys901	Agent : one	✳ Agent : one' \
-    '$1	2	@2	%2	/dev/ttys902	Agent : two	⠂ Agent : two' \
+  printf '%s\n' '$1	0	@0	%0	/dev/ttys900	orch	✳ Orch: home' \
+    '$1	1	@1	%1	/dev/ttys901	Agent: one	✳ Agent: one' \
+    '$1	2	@2	%2	/dev/ttys902	Agent: two	⠂ Agent: two' \
     '$2	0	@3	%3	/dev/ttys950	other	✳ elsewhere' > "$TR/panes"
-  printf '%s\n' '/dev/ttys900 claude --name Orch : home' '/dev/ttys901 claude --name Agent : one' \
-    '/dev/ttys902 claude --name Agent : two' '/dev/ttys950 claude --name Agent : stranger' > "$TR/ps"
+  printf '%s\n' '/dev/ttys900 claude --name Orch: home' '/dev/ttys901 claude --name Agent: one' \
+    '/dev/ttys902 claude --name Agent: two' '/dev/ttys950 claude --name Agent: stranger' > "$TR/ps"
   printf '@4 %%4 /dev/ttys903\n' > "$TR/new"
   printf '{"tab_id":"tmux:%s:@1","tty":"/dev/ttys901","owner":"tmux:%s:%%0"}\n{"tab_id":"tmux:%s:@2","tty":"/dev/ttys902","owner":"tmux:%s:%%0"}\n' \
     "$TSOCK" "$TSOCK" "$TSOCK" "$TSOCK" > "$TSTATE/chains/ttys900.jsonl"
@@ -7572,16 +7578,16 @@ reset_home
 rm -f "$TR/iterm-asked"
 out=$(home list 2>/dev/null)
 check "list: the home session's windows, in the shape the stop gate parses, the caller's own marked" \
-  "w1/t0 | /dev/ttys900 | ✳ Orch : home | Orch : home | self⏎w1/t1 | /dev/ttys901 | ✳ Agent : one | Agent : one⏎w1/t2 | /dev/ttys902 | ⠂ Agent : two | Agent : two" \
+  "w1/t0 | /dev/ttys900 | ✳ Orch: home | Orch: home | self⏎w1/t1 | /dev/ttys901 | ✳ Agent: one | Agent: one⏎w1/t2 | /dev/ttys902 | ⠂ Agent: two | Agent: two" \
   "$(printf '%s' "$out" | nl_join)"
 check "list asks the mark, the session, then its panes, then the app for the tabs it did not make" \
   "${SHOW}⏎${SESS}⏎${LIST}|iterm" "$(calls | nl_join)|$(asked)"
 rm -f "$TR/iterm-asked"
 
 reset_home
-out=$(home spawn --dir "$WORK" --title "Agent : three" --prompt p --right-of self --no-verify 2>"$WORK/tspawn.err")
+out=$(home spawn --dir "$WORK" --title "Agent: three" --prompt p --right-of self --no-verify 2>"$WORK/tspawn.err")
 check "spawn: a window of the home session, detached, named, its ids and tty printed back, the launch file as its program" \
-  "/dev/ttys903|[-u][new-window][-d][-t][\$1:][-n][Agent : three][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Agent---three-@TIME@.sh]|none" \
+  "/dev/ttys903|[-u][new-window][-d][-t][\$1:][-n][Agent: three][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Agent---three-@TIME@.sh]|none" \
   "$out|$(calls | grep -F '[new-window]')|$(asked)"
 check "and the chain entry names the window by the server's socket and its id, owned by the caller's pane" \
   "{\"tab_id\": \"tmux:$TSOCK:@4\", \"tty\": \"/dev/ttys903\", \"owner\": \"tmux:$TSOCK:%0\"}" "$(chainf | tail -1)"
@@ -7595,14 +7601,14 @@ check "screen: the pane's capture with its scrollback, read from the bottom" \
   "$(home screen --tty /dev/ttys901 --lines 2 | nl_join)|$(calls | grep -F '[capture-pane]')"
 
 reset_home
-out=$(home close --tty /dev/ttys901 --expect-title "Agent : one" 2>&1)
+out=$(home close --tty /dev/ttys901 --expect-title "Agent: one" 2>&1)
 check "close: the window killed by its id, proved gone from the process table, its chain entry dropped" \
   "closed 1 session on /dev/ttys901|[-u][kill-window][-t][@1]|0|0|1" \
   "$(printf '%s\n' "$out" | grep '^closed')|$(calls | grep -F '[kill-window]')|$(grep -c ttys901 "$TR/ps")|$(chainf | grep -c '@1')|$(chainf | grep -c '@2')"
 reset_home
-out=$(home close --tty /dev/ttys902 --expect-title "Agent : one" 2>&1)
+out=$(home close --tty /dev/ttys902 --expect-title "Agent: one" 2>&1)
 check "a window whose name does not hold the expected words is not killed" "1|0" \
-  "$(printf '%s' "$out" | grep -c "close: refused: the window on /dev/ttys902 is named 'Agent : two', which does not contain 'Agent : one'")|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c "close: refused: the window on /dev/ttys902 is named 'Agent: two', which does not contain 'Agent: one'")|$(calls | grep -c '\[kill-window\]')"
 reset_home
 out=$(home close --tty /dev/ttys950 2>&1)
 check "nor is a window of another session" "1|0" \
@@ -7614,9 +7620,9 @@ check "and a tty no window of the server runs on is an iTerm2 tab's, asked of th
 rm -f "$TR/iterm-asked"
 
 reset_home
-printf '%s\n' '$1	0	@0	%0	/dev/ttys900	orch	✳ Orch : home' \
-  '$1	1	@2	%2	/dev/ttys902	Agent : two	⠂ Agent : two' \
-  '$1	2	@1	%1	/dev/ttys901	Agent : one	✳ Agent : one' > "$TR/panes.moved"
+printf '%s\n' '$1	0	@0	%0	/dev/ttys900	orch	✳ Orch: home' \
+  '$1	1	@2	%2	/dev/ttys902	Agent: two	⠂ Agent: two' \
+  '$1	2	@1	%1	/dev/ttys901	Agent: one	✳ Agent: one' > "$TR/panes.moved"
 out=$(home move --tty /dev/ttys902 --left-of /dev/ttys901 2>&1)
 check "move: before its anchor, without taking the operator's window, the indexes closed up after" \
   "moved /dev/ttys902 to position 1|[-u][move-window][-d][-b][-s][@2][-t][@1]⏎[-u][move-window][-r][-t][\$1]" \
@@ -7643,14 +7649,14 @@ check "a window whose id the caller's chain does not hold is moved with a warnin
   "$(printf '%s' "$out" | grep -c 'is not in this session.s chain: moved anyway')|$(calls | grep -c '\[move-window\]')"
 
 reset_home
-out=$(home rotate --old-tty /dev/ttys901 --expect-title "Agent : one" --dir "$WORK" --title "Agent : one" --prompt p 2>"$WORK/trot.err")
+out=$(home rotate --old-tty /dev/ttys901 --expect-title "Agent: one" --dir "$WORK" --title "Agent: one" --prompt p 2>"$WORK/trot.err")
 check "rotate: the replacement's window first, verified on the process table and its transcript, then the old window killed" \
   "/dev/ttys903⏎closed 1 session on /dev/ttys901|new-window kill-window|1|1" \
   "$(printf '%s' "$out" | nl_join)|$(calls | grep -oE '\[(new|kill)-window\]' | tr -d '[]' | tr '\n' ' ' | sed 's/ $//')|$(grep -c 'running on /dev/ttys903' "$WORK/trot.err")|$(grep -c 'mode auto read on the transcript' "$WORK/trot.err")"
 check "and the chain trades the old window's entry for the new one's" "@2|@4" \
   "$(chainf | sed -n 's/.*:\(@[0-9]*\)".*/\1/p' | tr '\n' '|' | sed 's/|$//')"
 reset_home
-out=$(REC_NO_HOST=1 home spawn --dir "$WORK" --title "Agent : dud" --prompt p --right-of self 2>&1)
+out=$(REC_NO_HOST=1 home spawn --dir "$WORK" --title "Agent: dud" --prompt p --right-of self 2>&1)
 check "a window whose session never started is killed by its own id, and the chain is left as it was" \
   "1|[-u][kill-window][-t][@4]|2" \
   "$(printf '%s' "$out" | grep -c 'never started on /dev/ttys903 after 2s; the tab was closed')|$(calls | grep -F '[kill-window]')|$(chainf | wc -l | tr -d ' ')"
@@ -7673,10 +7679,10 @@ printf '#!/bin/bash\necho x >> "%s/bad-calls"\necho "no server running on /tmp/x
 printf '#!/bin/bash\nsleep 5\n' > "$TR/tmux-slow"
 chmod +x "$TR/tmux-bad" "$TR/tmux-slow"
 reset_home; rm -f "$TR/bad-calls" "$TR/iterm-asked"
-out=$(REC_TMUX="$TR/tmux-bad" home spawn --dir "$WORK" --title "Agent : bad" --prompt p --right-of self --no-verify 2>&1)
+out=$(REC_TMUX="$TR/tmux-bad" home spawn --dir "$WORK" --title "Agent: bad" --prompt p --right-of self --no-verify 2>&1)
 check "a tmux that refuses is asked once more, then dies naming the refusal, and no tab is made" "2|1|none" \
   "$(wc -l < "$TR/bad-calls" | tr -d ' ')|$(printf '%s' "$out" | grep -c 'ERROR: tmux: the home session.s mark cannot be read from pane %0 (refused: no server running')|$(asked)"
-out=$(ORCHESTRATOR_PROBE_TIMEOUT=1 REC_TMUX="$TR/tmux-slow" home spawn --dir "$WORK" --title "Agent : slow" --prompt p --right-of self --no-verify 2>&1)
+out=$(ORCHESTRATOR_PROBE_TIMEOUT=1 REC_TMUX="$TR/tmux-slow" home spawn --dir "$WORK" --title "Agent: slow" --prompt p --right-of self --no-verify 2>&1)
 check "a tmux that times out dies naming the timeout, and no tab is made" "1|none" \
   "$(printf '%s' "$out" | grep -c '(timed out after 1s)')|$(asked)"
 
@@ -7690,11 +7696,11 @@ chain_mixed() {
     "{\"tab_id\": \"tmux:$TSOCK:@8\", \"tty\": \"/dev/ttys908\", \"owner\": \"tmux:$TSOCK:%7\"}" > "$TSTATE/chains/ttys900.jsonl"
 }
 reset_home; chain_mixed
-out=$(home spawn --dir "$WORK" --title "Agent : three" --prompt p --right-of self --no-verify 2>&1)
+out=$(home spawn --dir "$WORK" --title "Agent: three" --prompt p --right-of self --no-verify 2>&1)
 check "a spawn drops the caller's gone window and keeps an iTerm2 tab's entry and another owner's" "0|1|1|1|1|0" \
   "$(printf '%s' "$out" | grep -c '^ERROR')|$(chainf | grep -c '"tab_id": "7"')|$(chainf | grep -c '@1"')|$(chainf | grep -c '@8"')|$(chainf | grep -c '@4"')|$(chainf | grep -c '@9"')"
 reset_home; chain_mixed
-out=$(REC_PANES_RAW=' ' home spawn --dir "$WORK" --title "Agent : three" --prompt p --right-of self --no-verify 2>&1)
+out=$(REC_PANES_RAW=' ' home spawn --dir "$WORK" --title "Agent: three" --prompt p --right-of self --no-verify 2>&1)
 check "a listing with no pane in it prunes nothing" "4" "$(chainf | grep -c 'tab_id' | awk '{ print $1 - 1 }')"
 
 # A listing that cannot be read is refused; one bad line among good ones is a warning.
@@ -7707,11 +7713,11 @@ check "one unparsable line among good ones is one warning, the good ones still l
 
 # A window whose answer does not split is killed by its id before the death.
 reset_home
-out=$(REC_NEW_RAW='@7 %7' home spawn --dir "$WORK" --title "Agent : odd" --prompt p --right-of self --no-verify 2>&1)
+out=$(REC_NEW_RAW='@7 %7' home spawn --dir "$WORK" --title "Agent: odd" --prompt p --right-of self --no-verify 2>&1)
 check "a window made and answered in too few fields is killed by its id, then the spawn dies" "1|1" \
   "$(calls | grep -c '^\[-u\]\[kill-window\]\[-t\]\[@7\]$')|$(printf '%s' "$out" | grep -c 'ERROR: spawn: tmux made a window and answered')"
 reset_home
-out=$(REC_NEW_RAW='weird' home spawn --dir "$WORK" --title "Agent : odd" --prompt p --right-of self --no-verify 2>&1)
+out=$(REC_NEW_RAW='weird' home spawn --dir "$WORK" --title "Agent: odd" --prompt p --right-of self --no-verify 2>&1)
 check "an answer with no window id kills nothing" "0" "$(calls | grep -c '\[kill-window\]')"
 
 # A window already gone is closed; any other refusal is a failure with its message.
@@ -7730,14 +7736,14 @@ out=$(REC_RENUMBER_ERR="no such session" home move --tty /dev/ttys902 --left-of 
 check "a failed renumbering says the window was already moved, and where" "1" \
   "$(printf '%s' "$out" | grep -c 'ERROR: move: the window @2 was already moved before @1')"
 reset_home
-printf '%s\n' '$1	0	@0	%0	/dev/ttys900	orch	Orch' '$1	1	@1	%1	/dev/ttys901	Agent : one	one' > "$TR/panes.moved"
+printf '%s\n' '$1	0	@0	%0	/dev/ttys900	orch	Orch' '$1	1	@1	%1	/dev/ttys901	Agent: one	one' > "$TR/panes.moved"
 out=$(home move --tty /dev/ttys902 --left-of /dev/ttys901 2>&1)
 check "a moved window missing from the listing afterwards dies with a message" "1" \
   "$(printf '%s' "$out" | grep -c 'ERROR: move: the window @2 was moved before @1, and is no longer in the session')"
 
 # The session is never the current one by accident.
 reset_home
-out=$(REC_SESSION=garbage home spawn --dir "$WORK" --title "Agent : three" --prompt p --right-of self --no-verify 2>&1)
+out=$(REC_SESSION=garbage home spawn --dir "$WORK" --title "Agent: three" --prompt p --right-of self --no-verify 2>&1)
 check "a session id that is none dies before any window is made" "1|0" \
   "$(printf '%s' "$out" | grep -c "ERROR: tmux: the session of pane %0 was answered 'garbage'")|$(calls | grep -c '\[new-window\]')"
 
@@ -7754,7 +7760,7 @@ reset_home; rm -f "$TR/iterm-asked"
 ORCHESTRATOR_PROJECTS_DIR="$TR/projects" pair_transcript s-suite s-model high
 out=$(home spawn --dir "$WORK" --successor --prompt p 2>"$WORK/tsucc.err")
 check "a successor spawned from a home session is a window of that session under the caller's name, and iTerm2 is never asked" \
-  "/dev/ttys903|[-u][new-window][-d][-t][\$1:][-n][Orch : home][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Orch---home-@TIME@.sh]|none" \
+  "/dev/ttys903|[-u][new-window][-d][-t][\$1:][-n][Orch: home][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Orch---home-@TIME@.sh]|none" \
   "$out|$(calls | grep -F '[new-window]')|$(asked)"
 check "the chain is handed over keyed on the successor's pane: its tty's file, the successor's tmux owner, never an app id" \
   "{\"tab_id\": \"tmux:$TSOCK:@1\", \"tty\": \"/dev/ttys901\", \"owner\": \"tmux:$TSOCK:%4\"}|{\"tab_id\": \"tmux:$TSOCK:@2\", \"tty\": \"/dev/ttys902\", \"owner\": \"tmux:$TSOCK:%4\"}|0|1" \
@@ -7768,13 +7774,13 @@ heir() { # <subcommand and options>: the launcher, called from the successor's w
     ORCHESTRATOR_SAMPLE=/usr/bin/false ORCHESTRATOR_APP_PID=1 ORCHESTRATOR_SELF_TTY=/dev/ttys903 ORCHESTRATOR_STATE_DIR="$TSTATE" \
     ORCHESTRATOR_PS_TABLE="$TR/ps" ORCHESTRATOR_CLOSE_TIMEOUT=1 bash "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" "$@"; }
 reset_home
-printf '%s\n' '$1	9	@4	%4	/dev/ttys903	Orch : home	✳ Orch : home' >> "$TR/panes"
-printf '/dev/ttys903 claude --name Orch : home\n' >> "$TR/ps"
-printf '%s\n' '$1	0	@0	%0	/dev/ttys900	Orch : home	✳ Orch : home' '$1	1	@1	%1	/dev/ttys901	Agent : one	✳ Agent : one' \
-  '$1	2	@2	%2	/dev/ttys902	Agent : two	⠂ Agent : two' '$2	0	@3	%3	/dev/ttys950	other	✳ elsewhere' \
-  '$1	9	@4	%4	/dev/ttys903	Orch : home	✳ Orch : home' > "$TR/panes"
+printf '%s\n' '$1	9	@4	%4	/dev/ttys903	Orch: home	✳ Orch: home' >> "$TR/panes"
+printf '/dev/ttys903 claude --name Orch: home\n' >> "$TR/ps"
+printf '%s\n' '$1	0	@0	%0	/dev/ttys900	Orch: home	✳ Orch: home' '$1	1	@1	%1	/dev/ttys901	Agent: one	✳ Agent: one' \
+  '$1	2	@2	%2	/dev/ttys902	Agent: two	⠂ Agent: two' '$2	0	@3	%3	/dev/ttys950	other	✳ elsewhere' \
+  '$1	9	@4	%4	/dev/ttys903	Orch: home	✳ Orch: home' > "$TR/panes"
 rm -f "$TR/calls"
-out=$(heir takeover --tty /dev/ttys900 --expect-title "Orch : home" 2>&1)
+out=$(heir takeover --tty /dev/ttys900 --expect-title "Orch: home" 2>&1)
 check "takeover kills window 0 by its id, proved gone, and moves the successor to index 0 detached" \
   "took window 0: the predecessor's window @0 on /dev/ttys900 was closed|[-u][kill-window][-t][@0]|[-u][move-window][-d][-s][@4][-t][\$1:0]|0|0" \
   "$out|$(calls | grep -F '[kill-window]')|$(calls | grep -F '[move-window]')|$(calls | grep -c '\[select-window\]')|$(grep -c ttys900 "$TR/ps")"
@@ -7783,26 +7789,26 @@ check "a takeover writes its dated line: the socket, the cause takeover and the 
 # A TMUX value that names no socket gives the takeover no socket to write: no line, rather than a
 # line that reads « window 0 of  ended ».
 reset_home
-printf '%s\n' '$1	0	@0	%0	/dev/ttys900	Orch : home	✳ Orch : home' '$1	9	@4	%4	/dev/ttys903	Orch : home	✳ Orch : home' > "$TR/panes"
-printf '/dev/ttys903 claude --name Orch : home\n' >> "$TR/ps"
+printf '%s\n' '$1	0	@0	%0	/dev/ttys900	Orch: home	✳ Orch: home' '$1	9	@4	%4	/dev/ttys903	Orch: home	✳ Orch: home' > "$TR/panes"
+printf '/dev/ttys903 claude --name Orch: home\n' >> "$TR/ps"
 rm -f "$TR/calls"
 out=$(TMUX=",4242,1" TMUX_PANE=%4 ORCHESTRATOR_TMUX="$TR/tmux" ORCHESTRATOR_OSASCRIPT="$TR/osascript" \
     ORCHESTRATOR_SAMPLE=/usr/bin/false ORCHESTRATOR_APP_PID=1 ORCHESTRATOR_SELF_TTY=/dev/ttys903 ORCHESTRATOR_STATE_DIR="$TSTATE" \
-    ORCHESTRATOR_PS_TABLE="$TR/ps" ORCHESTRATOR_CLOSE_TIMEOUT=1 bash "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" takeover --tty /dev/ttys900 --expect-title "Orch : home" 2>&1)
+    ORCHESTRATOR_PS_TABLE="$TR/ps" ORCHESTRATOR_CLOSE_TIMEOUT=1 bash "$ROOT/skills/iterm-agents/scripts/iterm-agent.sh" takeover --tty /dev/ttys900 --expect-title "Orch: home" 2>&1)
 check "a takeover that knows no socket writes no line: the window is taken and close.log holds no empty name" "1|0" \
   "$(printf '%s' "$out" | grep -c '^took window 0:')|$(cat "$TSTATE/close.log" 2>/dev/null | grep -c 'window 0 of  ended')"
 reset_home
-printf '%s\n' '$1	0	@0	%0	/dev/ttys900	Orch : home	✳ Orch : home' '$1	9	@4	%4	/dev/ttys903	Orch : home	✳ Orch : home' > "$TR/panes"
-printf '/dev/ttys903 claude --name Orch : home\n' >> "$TR/ps"
+printf '%s\n' '$1	0	@0	%0	/dev/ttys900	Orch: home	✳ Orch: home' '$1	9	@4	%4	/dev/ttys903	Orch: home	✳ Orch: home' > "$TR/panes"
+printf '/dev/ttys903 claude --name Orch: home\n' >> "$TR/ps"
 rm -f "$TR/calls"
-out=$(REC_ACTIVE=1 heir takeover --tty /dev/ttys900 --expect-title "Orch : home" 2>&1)
+out=$(REC_ACTIVE=1 heir takeover --tty /dev/ttys900 --expect-title "Orch: home" 2>&1)
 check "and selects window 0 only when the operator was on it" "[-u][select-window][-t][@4]" "$(calls | grep -F '[select-window]')"
 reset_home
-printf '%s\n' '$1	0	@0	%0	/dev/ttys900	Orch : home	✳ Orch : home' '$1	1	@1	%1	/dev/ttys901	Agent : one	✳ Agent : one' '$1	9	@4	%4	/dev/ttys903	Orch : home	✳ Orch : home' > "$TR/panes"
+printf '%s\n' '$1	0	@0	%0	/dev/ttys900	Orch: home	✳ Orch: home' '$1	1	@1	%1	/dev/ttys901	Agent: one	✳ Agent: one' '$1	9	@4	%4	/dev/ttys903	Orch: home	✳ Orch: home' > "$TR/panes"
 rm -f "$TR/calls"
-out=$(heir takeover --tty /dev/ttys900 --expect-title "Orch : other" 2>&1)
+out=$(heir takeover --tty /dev/ttys900 --expect-title "Orch: other" 2>&1)
 check "a window 0 whose name does not hold the expected words is not killed" "1|0" \
-  "$(printf '%s' "$out" | grep -c "takeover: refused: the window on /dev/ttys900 is named 'Orch : home', which does not contain 'Orch : other'")|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c "takeover: refused: the window on /dev/ttys900 is named 'Orch: home', which does not contain 'Orch: other'")|$(calls | grep -c '\[kill-window\]')"
 rm -f "$TR/calls"
 out=$(heir takeover --tty /dev/ttys901 2>&1)
 check "an agent's window is not the predecessor's place" "1|0" \
@@ -7814,18 +7820,18 @@ check "nor is the successor's own window" "1|0" \
 # close is the wrong command for window 0 of a home session: refused before anything is killed
 # or moved, and the refusal names takeover, the one command that puts a successor at index 0.
 rm -f "$TR/calls"
-out=$(heir close --tty /dev/ttys900 --expect-title "Orch : home" 2>&1)
+out=$(heir close --tty /dev/ttys900 --expect-title "Orch: home" 2>&1)
 rc=$?
 check "close on window 0 of a home session is refused before anything is killed, and names takeover" "1|1|0|0" \
-  "$(printf '%s' "$out" | grep -c 'close: refused: the window on /dev/ttys900 is window 0, the orchestrator.s place in this home session: a successor takes it with takeover --tty /dev/ttys900 --expect-title "Orch : home", which also puts its own window at index 0')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[kill-window\]')|$(calls | grep -c '\[move-window\]')"
+  "$(printf '%s' "$out" | grep -c 'close: refused: the window on /dev/ttys900 is window 0, the orchestrator.s place in this home session: a successor takes it with takeover --tty /dev/ttys900 --expect-title "Orch: home", which also puts its own window at index 0')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[kill-window\]')|$(calls | grep -c '\[move-window\]')"
 # rotate closes the old window only after its replacement has spawned, so a close that refuses
 # window 0 would leave the replacement running with nothing to close: the rotation refuses window
 # 0 first, before anything is spawned or killed, with the refusal close gives and the same command.
 rm -f "$TR/calls"
-out=$(heir rotate --old-tty /dev/ttys900 --expect-title "Orch : home" --dir "$WORK" --title "Agent : rotated" --tier light --prompt p 2>&1)
+out=$(heir rotate --old-tty /dev/ttys900 --expect-title "Orch: home" --dir "$WORK" --title "Agent: rotated" --tier light --prompt p 2>&1)
 rc=$?
 check "rotate on window 0 of a home session is refused before anything is spawned or killed, and names takeover" "1|1|0|0" \
-  "$(printf '%s' "$out" | grep -c 'rotate: refused: the window on /dev/ttys900 is window 0, the orchestrator.s place in this home session: a successor takes it with takeover --tty /dev/ttys900 --expect-title "Orch : home", which also puts its own window at index 0')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -c '\[kill-window\]')"
+  "$(printf '%s' "$out" | grep -c 'rotate: refused: the window on /dev/ttys900 is window 0, the orchestrator.s place in this home session: a successor takes it with takeover --tty /dev/ttys900 --expect-title "Orch: home", which also puts its own window at index 0')|$([ "$rc" -ne 0 ] && echo 1 || echo 0)|$(calls | grep -c '\[new-window\]')|$(calls | grep -c '\[kill-window\]')"
 # The coordinator's pause close is a close on a home tab's tty, which is not a pane of this
 # server: it takes the home server's road, never window 0's refusal, and kills no window. The
 # whole close (tab and server ended) is pinned beside the home close tests.
@@ -7840,17 +7846,17 @@ grep -v '^/dev/ttys970 ' "$TR/ps" > "$TR/ps.tmp" && mv "$TR/ps.tmp" "$TR/ps"
 # the predecessor's window goes with it.
 takeover_setup() {
   reset_home
-  printf '%s\n' '$1	0	@0	%0	/dev/ttys900	Orch : home	✳ Orch : home' '$1	1	@1	%1	/dev/ttys901	Agent : one	✳ Agent : one' \
-    '$1	9	@4	%4	/dev/ttys903	Orch : home	✳ Orch : home' > "$TR/panes"
-  printf '/dev/ttys903 %s --name Orch : home\n' "$(awk 'NR == 1 { print $2 }' "$TR/ps")" >> "$TR/ps"
+  printf '%s\n' '$1	0	@0	%0	/dev/ttys900	Orch: home	✳ Orch: home' '$1	1	@1	%1	/dev/ttys901	Agent: one	✳ Agent: one' \
+    '$1	9	@4	%4	/dev/ttys903	Orch: home	✳ Orch: home' > "$TR/panes"
+  printf '/dev/ttys903 %s --name Orch: home\n' "$(awk 'NR == 1 { print $2 }' "$TR/ps")" >> "$TR/ps"
   rm -f "$TR/calls"
 }
 takeover_setup
-out=$(REC_KEEP_HOST=1 heir takeover --tty /dev/ttys900 --expect-title "Orch : home" 2>&1)
+out=$(REC_KEEP_HOST=1 heir takeover --tty /dev/ttys900 --expect-title "Orch: home" 2>&1)
 check "a host still on the tty after the kill stops the takeover: it dies and window 0 is not taken" "1|1|0" \
   "$(printf '%s' "$out" | grep -c 'takeover: the window @0 was killed and .* still runs on /dev/ttys900; window 0 was not taken')|$(calls | grep -c '\[kill-window\]')|$(calls | grep -c '\[move-window\]')"
 takeover_setup
-out=$(REC_KEEP_WINDOW=1 heir takeover --tty /dev/ttys900 --expect-title "Orch : home" 2>&1)
+out=$(REC_KEEP_WINDOW=1 heir takeover --tty /dev/ttys900 --expect-title "Orch: home" 2>&1)
 check "a window still listed by the server after the kill stops it too" "1|1|0" \
   "$(printf '%s' "$out" | grep -c 'takeover: the window @0 is still there; window 0 was not taken')|$(calls | grep -c '\[kill-window\]')|$(calls | grep -c '\[move-window\]')"
 takeover_setup
@@ -7859,7 +7865,7 @@ check "a takeover without the expected title is refused before anything is kille
   "$(printf '%s' "$out" | grep -c 'takeover: --expect-title is required')|$(calls | grep -c '\[kill-window\]')|$(calls | grep -c '\[move-window\]')"
 takeover_setup
 printf '{"tab_id":"tmux:%s:@0","tty":"/dev/ttys905","owner":"tmux:%s:%%9"}\n{"tab_id":"tmux:%s:@7","tty":"/dev/ttys906","owner":"tmux:%s:%%9"}\n' "$TSOCK" "$TSOCK" "$TSOCK" "$TSOCK" > "$TSTATE/chains/ttys905.jsonl"
-out=$(heir takeover --tty /dev/ttys900 --expect-title "Orch : home" 2>&1)
+out=$(heir takeover --tty /dev/ttys900 --expect-title "Orch: home" 2>&1)
 check "the chain entry naming the predecessor's window is dropped by the takeover, the others kept" "0|1" \
   "$(grep -c "tmux:$TSOCK:@0\"" "$TSTATE/chains/ttys905.jsonl" 2>/dev/null)|$(grep -c "tmux:$TSOCK:@7\"" "$TSTATE/chains/ttys905.jsonl" 2>/dev/null)"
 
@@ -7885,7 +7891,7 @@ check "nothing but blanks reads as nothing" '[]' \
 # A dry run reads no transcript: there is no session to have come up in any mode, and the
 # line says the check was skipped rather than passed.
 check "the dry run skips the reading and says so" "1" \
-  "$(shaped --title 'Agent : x' | grep -c '^mode_check=skipped$')"
+  "$(shaped --title 'Agent: x' | grep -c '^mode_check=skipped$')"
 
 echo "== iterm-agents: the home server's configuration =="
 # Read by home servers alone, through `-f`: the keys the host needs (Shift-Enter as a newline
@@ -7974,11 +7980,11 @@ SH
 chmod +x "$HR/tmux"
 HSID=abcdef12-3456-4789-8abc-def012345678
 HCONF="$WORK/homeconfig"; mkdir -p "$HCONF/sessions"
-printf '{"pid":%s,"sessionId":"%s","cwd":"%s","name":"Agent : start"}\n' "$$" "$HSID" "$WORK" > "$HCONF/sessions/$$.json"
+printf '{"pid":%s,"sessionId":"%s","cwd":"%s","name":"Agent: start"}\n' "$$" "$HSID" "$WORK" > "$HCONF/sessions/$$.json"
 # The launch line asked for a-model at the host's default effort; the session runs on t-model
 # at xhigh now, as its transcript says, and that is the pair the move resumes on.
 pair_transcript "$HSID" t-model xhigh
-HARGV='["/opt/x/host","--model","a-model","--permission-mode","auto","--settings","{\"k\":1}","--strict-mcp-config","--mcp-config","/m/a.json","--name","Agent : start","the first prompt"]'
+HARGV='["/opt/x/host","--model","a-model","--permission-mode","auto","--settings","{\"k\":1}","--strict-mcp-config","--mcp-config","/m/a.json","--name","Agent: start","the first prompt"]'
 homecmd() { # the launcher's `home`, from a plain tab outside tmux unless HTMUX names a pane's server
   env -u TMUX -u TMUX_PANE ${HTMUX:+TMUX="$HTMUX" TMUX_PANE=%0} CLAUDE_CONFIG_DIR="$HCONF" ORCHESTRATOR_HOST_ARGV="${HARGV_OVERRIDE:-$HARGV}" ORCHESTRATOR_TMUX="$HR/tmux" \
     ORCHESTRATOR_STATE_DIR="$WORK/homestate" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_LOGIN_SHELL=/bin/sh ORCHESTRATOR_HOST_CLI=/opt/x/host \
@@ -7987,18 +7993,18 @@ hcalls() { sed "s#$WORK#@WORK@#g; s#$ROOT#@ROOT@#g; s#-[0-9]\{13\}\.#-@TIME@.#g"
 reset_homerec() { rm -f "$HR/calls" "$HR/mark" "$HR/clients" "$HR/window0" "$HR/kill-err" "$HR/panes-err" "$HR/panes"; rm -rf "$WORK/homestate"; }
 
 reset_homerec
-out=$(homecmd env ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" home --session "$HSID" --name "Orch : conv" --prompt "Go on" 2>&1)
+out=$(homecmd env ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" home --session "$HSID" --name "Orch: conv" --prompt "Go on" 2>&1)
 check "the dry run names the server after the session, its conf, and window 0 after the orchestrator" \
-  "orch-abcdef12|skills/iterm-agents/tmux/home.conf|Orch : conv|right of /dev/ttys900" \
+  "orch-abcdef12|skills/iterm-agents/tmux/home.conf|Orch: conv|right of /dev/ttys900" \
   "$(sfield "$out" home_server)|$(sfield "$out" home_conf)|$(sfield "$out" home_window0)|$(sfield "$out" home_tab)"
-HOSTLINE="/opt/x/host --model t-model --effort xhigh --permission-mode auto --settings '{\"k\":1}' --strict-mcp-config --mcp-config /m/a.json --resume $HSID 'Go on' --name 'Orch : conv'"
+HOSTLINE="/opt/x/host --model t-model --effort xhigh --permission-mode auto --settings '{\"k\":1}' --strict-mcp-config --mcp-config /m/a.json --resume $HSID 'Go on' --name 'Orch: conv'"
 BYHAND=$("$py" -c 'import shlex,sys; print(shlex.quote(sys.argv[1]))' "cd $WORK && $HOSTLINE")
 check "window 0 waits for the old process, runs the resume on the session's current model and effort, read on its transcript, and the launch's mode, settings and servers under its name, releases the old tab through a watcher once the resumed host is proved, and names the failure of a resume that fails" \
   "cd $WORK && i=0 && while kill -0 $$ 2>/dev/null; do if [ \$i -ge 600 ]; then echo 'the session did not end in its old place: it goes on there'; sleep 10; exit 1; fi; sleep 0.2; i=\$((i+1)); done; pane=\$(tty); $ROOT/skills/iterm-agents/scripts/iterm-agent.sh home-release --tty /dev/ttys900 --session-id '<old-tab-session-id>' --pane-tty \"\$pane\" --resumed $HSID >> $WORK/homestate/home-release.log 2>&1 & watcher=\$!; $HOSTLINE; rc=\$?; [ \$rc -eq 0 ] && exit 0; kill \$watcher 2>/dev/null; printf 'the resume of session %s failed (exit %s); resume it by hand: %s\\n' $HSID \"\$rc\" $BYHAND; exec \"\${SHELL:-/bin/sh}\" -l" \
   "$(sfield "$out" home_launch)"
 check "and the dry run touched no tmux" "" "$(hcalls)"
 mv "$ORCHESTRATOR_PROJECTS_DIR/p/$HSID.jsonl" "$WORK/hsid-transcript.jsonl"
-out=$(homecmd env ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" home --session "$HSID" --name "Orch : conv" --prompt "Go on" 2>&1)
+out=$(homecmd env ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" home --session "$HSID" --name "Orch: conv" --prompt "Go on" 2>&1)
 check "a session whose pair cannot be read stays where it is, and says why" "1|0" \
   "$(printf '%s' "$out" | grep -c "^stay: the session's model and effort cannot be read (no transcript for session $HSID")|$(printf '%s' "$out" | grep -c '^home_launch=')"
 mv "$WORK/hsid-transcript.jsonl" "$ORCHESTRATOR_PROJECTS_DIR/p/$HSID.jsonl"
@@ -8006,17 +8012,17 @@ mv "$WORK/hsid-transcript.jsonl" "$ORCHESTRATOR_PROJECTS_DIR/p/$HSID.jsonl"
 # An agent spawned by a caller that runs on a plugin directory runs on the same one: the
 # caller's --plugin-dir options and the enabledPlugins entries of its --settings travel into
 # the agent's launch, and nothing else of those settings.
-PLUGARGV='["/opt/x/host","--plugin-dir","/p/pin","--plugin-dir","/p/two","--settings","{\"enabledPlugins\":{\"orchestrator@lounisbou\":false},\"env\":{\"K\":\"v\"}}","--name","Orch : f"]'
+PLUGARGV='["/opt/x/host","--plugin-dir","/p/pin","--plugin-dir","/p/two","--settings","{\"enabledPlugins\":{\"orchestrator@lounisbou\":false},\"env\":{\"K\":\"v\"}}","--name","Orch: f"]'
 plugspawn() { # the caller's words in $1, then the spawn's own options
   local words="$1"; shift
   env CLAUDE_CONFIG_DIR="$HCONF" CLAUDE_CODE_SESSION_ID="$HSID" ORCHESTRATOR_HOST_ARGV="$words" ORCHESTRATOR_DRY_RUN=1 \
     ORCHESTRATOR_STATE_DIR="$WORK/homestate" ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_LOGIN_SHELL=/bin/sh \
-    ORCHESTRATOR_HOST_CLI=/opt/x/host bash "$AGENT" spawn --dir "$WORK" --title "Agent : plug" --prompt p $(needs_tier "$@") "$@"; }
+    ORCHESTRATOR_HOST_CLI=/opt/x/host bash "$AGENT" spawn --dir "$WORK" --title "Agent: plug" --prompt p $(needs_tier "$@") "$@"; }
 out=$(plugspawn "$PLUGARGV" 2>&1)
 check "an agent's launch carries the caller's plugin directories and its enabledPlugins entries, no other key of its settings" \
   "1|1|1|0" \
   "$(printf '%s' "$out" | grep -c -- "--plugin-dir /p/pin --plugin-dir /p/two ")|$(printf '%s' "$out" | grep -c '"enabledPlugins":{"orchestrator@lounisbou":false}')|$(printf '%s' "$out" | sed -n 's/^launch=//p' | grep -c -- '--settings')|$(printf '%s' "$out" | grep -c '"K":"v"')"
-out=$(plugspawn '["/opt/x/host","--settings","{\"enabledPlugins\":{\"x@y\":false}}","--name","Orch : f"]' 2>&1)
+out=$(plugspawn '["/opt/x/host","--settings","{\"enabledPlugins\":{\"x@y\":false}}","--name","Orch: f"]' 2>&1)
 check "a caller without a plugin directory gets the launch it always got" "0|0" \
   "$(printf '%s' "$out" | grep -c -- '--plugin-dir')|$(printf '%s' "$out" | grep -c 'enabledPlugins')"
 out2=$(plugspawn '[]' 2>/dev/null; echo "exit=$?")
@@ -8062,12 +8068,12 @@ PYEOF
 hprobe() { homecmd "$py" "$WORK/home_probe.py" "$ROOT/skills/iterm-agents/scripts" "$1" "$HR" "$HSID" "${2:-Orch : conv}" 2>&1; }
 reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
 res=$(hprobe ok)
-NEWS="[-u][-L][orch-abcdef12][-f][@ROOT@/skills/iterm-agents/tmux/home.conf][new-session][-d][-s][home][-n][Orch : conv][-c][@WORK@][/bin/sh -l @WORK@/homestate/prompts/home-Orch---conv-@TIME@.sh]"
+NEWS="[-u][-L][orch-abcdef12][-f][@ROOT@/skills/iterm-agents/tmux/home.conf][new-session][-d][-s][home][-n][Orch: conv][-c][@WORK@][/bin/sh -l @WORK@/homestate/prompts/home-Orch---conv-@TIME@.sh]"
 check "the move starts the home server with its conf, window 0 named after the orchestrator, then reads window 0's tty and the tab's client, then sets the server to exit with its tab" \
   "0|$NEWS|[-u][-L][orch-abcdef12][display-message][-p][-t][home:0][#{pane_tty}]|[-u][-L][orch-abcdef12][list-clients][-F][#{client_tty}]|[-u][-L][orch-abcdef12][set-option][-s][exit-unattached][on]" \
   "$(sfield "$res" exit)|$(hcalls | paste -sd'|' -)"
 check "the old tab is read first, the new one is made right of it under the orchestrator's name, and the move says where" \
-  "identity /dev/ttys900,create beside /dev/ttys900 right Orch : conv|moved: orch-abcdef12, shown on /dev/ttys970" \
+  "identity /dev/ttys900,create beside /dev/ttys900 right Orch: conv|moved: orch-abcdef12, shown on /dev/ttys970" \
   "$(sfield "$res" calls)|$(sfield "$res" OUT)"
 check "window 0 closes the old tab by the id read before the move, and the new tab runs the client of the home server alone" \
   "1|1" \
@@ -8118,7 +8124,7 @@ check "a printing session is never moved" "1|0" "$(sfield "$res" exit)|$(hcalls 
 reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
 res=$(ORCHESTRATOR_HOME_NO_TAB=1 hprobe ok)
 check "the no-tab variable without the test marker is ignored: a tab is made and shows the server, one line says so" \
-  "0|create beside /dev/ttys900 right Orch : conv|moved: orch-abcdef12, shown on /dev/ttys970|1" \
+  "0|create beside /dev/ttys900 right Orch: conv|moved: orch-abcdef12, shown on /dev/ttys970|1" \
   "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep create)|$(sfield "$res" OUT)|$(sfield "$res" ERR | grep -o 'ORCHESTRATOR_HOME_NO_TAB is ignored' | wc -l | tr -d ' ')"
 reset_homerec
 res=$(ORCHESTRATOR_HOME_NO_TAB=1 ORCHESTRATOR_TEST_RUN=1 hprobe ok)
@@ -8133,7 +8139,7 @@ printf '#!/bin/sh\necho "$@" >> "%s/host-args"\n[ "${STUB_RC:-0}" -eq 0 ] && : >
 printf '#!/bin/sh\ni=0\nwhile [ ! -f "%s/host-ran" ] && [ $i -lt 20 ]; do sleep 0.1; i=$((i+1)); done\n[ -f "%s/host-ran" ] && echo "$@" >> "%s/released"\nexit 0\n' "$RUNL" "$RUNL" "$RUNL" > "$RUNL/launcher"
 chmod +x "$RUNL/host" "$RUNL/launcher"
 reset_homerec
-out=$(homecmd env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_HOST_CLI="$RUNL/host" bash "$AGENT" home --session "$HSID" --name "Orch : conv" --prompt "Go on" 2>&1)
+out=$(homecmd env ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_HOST_CLI="$RUNL/host" bash "$AGENT" home --session "$HSID" --name "Orch: conv" --prompt "Go on" 2>&1)
 sfield "$out" home_launch | sed "s#kill -0 $$ #kill -0 999999999 #; s#$ROOT/skills/iterm-agents/scripts/iterm-agent.sh#$RUNL/launcher#" > "$RUNL/launch.sh"
 mkdir -p "$WORK/homestate"
 (cd "$RUNL" && STUB_RC=1 SHELL=/bin/echo sh "$RUNL/launch.sh" > "$RUNL/failed.out" 2>&1); sleep 1
@@ -8190,7 +8196,7 @@ check "or once the host's registry has the resumed session alive" "0|close" "$(s
 res=$(rprobe ok "00000000-0000-4000-8000-000000000000" "")
 check "no host on window 0 and no registry entry: the old tab is left open and the release says the resume never showed" "1||1" \
   "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" ERR | grep -c "the resumed session 00000000-0000-4000-8000-000000000000 never showed on /dev/ttys961 after 0s; the tab on /dev/ttys900 is left open")"
-res=$(rprobe ok "$HSID" "/dev/ttys900 /opt/x/host --name Orch : conv
+res=$(rprobe ok "$HSID" "/dev/ttys900 /opt/x/host --name Orch: conv
 /dev/ttys961 /opt/x/host --resume $HSID
 ")
 check "a host still on the old tab's tty leaves it open" "1||1" \
@@ -8205,7 +8211,7 @@ check "a tab already closed is said so, and nothing is closed twice" "0||home-re
   "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" OUT)"
 
 # Never for anyone but an orchestrator, never twice.
-for who in "Coord : c" "Audit : a" "Agent : x"; do
+for who in "Coord: c" "Audit: a" "Agent: x"; do
   reset_homerec
   res=$(hprobe ok "$who")
   check "a session named '$who' stays where it is, and tmux is never asked" "0|1|" \
@@ -8226,15 +8232,15 @@ rw() { "$py" -c "
 import json, sys; sys.path.insert(0, '$ROOT/skills/iterm-agents/scripts')
 import iterm_agent as ia
 try:
-    print(json.dumps(ia.resume_words(json.loads(sys.argv[1]), 'S', 'Orch : n', 'go')))
+    print(json.dumps(ia.resume_words(json.loads(sys.argv[1]), 'S', 'Orch: n', 'go')))
 except ValueError as e:
     print('refused: %s' % e)" "$1"; }
 check "a resume drops the old resume, the session id, the continue flag, the old name and the first prompt" \
-  '["--model", "m", "--resume", "S", "go", "--name", "Orch : n"]' \
-  "$(rw '["--resume","OLD","-c","--session-id","X","--fork-session","-n","Agent : a","--model","m","hello"]')"
+  '["--model", "m", "--resume", "S", "go", "--name", "Orch: n"]' \
+  "$(rw '["--resume","OLD","-c","--session-id","X","--fork-session","-n","Agent: a","--model","m","hello"]')"
 check "an option of many values keeps them all, an optional value is kept when given, an = form stays one word" \
-  '["--disallowedTools", "A", "B", "--remote-control", "Orch : r", "--effort=high", "--resume", "S", "go", "--name", "Orch : n"]' \
-  "$(rw '["--disallowedTools","A","B","--remote-control","Orch : r","--effort=high"]')"
+  '["--disallowedTools", "A", "B", "--remote-control", "Orch: r", "--effort=high", "--resume", "S", "go", "--name", "Orch: n"]' \
+  "$(rw '["--disallowedTools","A","B","--remote-control","Orch: r","--effort=high"]')"
 check "an option that takes a value and has none is refused" "refused: --model has no value" "$(rw '["--model"]')"
 
 echo "== iterm-agents: the coordinator opens, pauses and wakes an orchestrator in its home session =="
@@ -8268,8 +8274,8 @@ ia.CLOSE_TIMEOUT = 0
 real_client_on = ia.client_on
 ia.client_on = lambda socket, tty: (setattr(ia, "SPAWN_TIMEOUT", 0), real_client_on(socket, tty), setattr(ia, "SPAWN_TIMEOUT", 1))[1]
 ia.self_tty = lambda: "/dev/ttys900"
-ia.session_name_on = lambda tty: "Coord : c" if tty == "/dev/ttys900" else None
-ia.iterm_title = lambda tty: "✳ Orch : w"
+ia.session_name_on = lambda tty: "Coord: c" if tty == "/dev/ttys900" else None
+ia.iterm_title = lambda tty: "✳ Orch: w"
 ia.cli_pid_on_tty = lambda tty: "4242" if scenario != "never" else None
 ia.host_registry = lambda pid: {"sessionId": "abcdef12-3456-4789-8abc-def012345678"} if pid == "4242" else None
 ia.wait_gone = lambda tty, timeout=None: None
@@ -8299,52 +8305,52 @@ life() { # <scenario> <argv as JSON>
 lcalls() { hcalls | sed "s#$WORK/lifestate#@STATE@#g"; }
 
 reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
-res=$(life ok "[\"spawn\",\"--open\",\"--dir\",\"$WORK\",\"--title\",\"Orch : o\",\"--prompt\",\"p\",\"--no-verify\"]")
+res=$(life ok "[\"spawn\",\"--open\",\"--dir\",\"$WORK\",\"--title\",\"Orch: o\",\"--prompt\",\"p\",\"--no-verify\"]")
 check "an opened orchestrator starts in window 0 of a server named after the id it is given, then a tab right of the caller's shows it" \
-  "0|[-u][-L][orch-0badc0de][-f][@ROOT@/skills/iterm-agents/tmux/home.conf][new-session][-d][-s][home][-n][Orch : o][-c][@WORK@]|create beside /dev/ttys900 right Orch : o|/dev/ttys960" \
+  "0|[-u][-L][orch-0badc0de][-f][@ROOT@/skills/iterm-agents/tmux/home.conf][new-session][-d][-s][home][-n][Orch: o][-c][@WORK@]|create beside /dev/ttys900 right Orch: o|/dev/ttys960" \
   "$(sfield "$res" exit)|$(hcalls | head -1 | sed 's/\]\[\/bin\/sh -l .*$/]/')|$(sfield "$res" calls)|$(sfield "$res" OUT)"
 check "its window 0 runs the launch with the id the server is named after" "1" \
   "$(grep -c -- "'--session-id' 0badc0de-1111-4222-8333-444455556666 " "$(sed 's/^\/bin\/sh -l //' "$HR/window0")")"
 reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
-res=$(life ok "[\"spawn\",\"--wake\",\"--dir\",\"$WORK\",\"--title\",\"Orch : w\",\"--model\",\"a-model\",\"--effort\",\"high\",\"--prompt\",\"p\",\"--resume\",\"abcdef12-3456-4789-8abc-def012345678\",\"--no-verify\"]")
+res=$(life ok "[\"spawn\",\"--wake\",\"--dir\",\"$WORK\",\"--title\",\"Orch: w\",\"--model\",\"a-model\",\"--effort\",\"high\",\"--prompt\",\"p\",\"--resume\",\"abcdef12-3456-4789-8abc-def012345678\",\"--no-verify\"]")
 check "a woken orchestrator resumes its recorded session in window 0 of a new home session, shown right of the caller" \
-  "0|[-u][-L][orch-abcdef12][-f]|create beside /dev/ttys900 right Orch : w|1" \
+  "0|[-u][-L][orch-abcdef12][-f]|create beside /dev/ttys900 right Orch: w|1" \
   "$(sfield "$res" exit)|$(hcalls | head -1 | sed 's/\[-f\].*$/[-f]/')|$(sfield "$res" calls)|$(grep -c -- "'--resume' abcdef12-3456-4789-8abc-def012345678 " "$(sed 's/^\/bin\/sh -l //' "$HR/window0")")"
 # Verified on window 0, where the host runs: its mode read on what the resumed transcript
 # gained since the launch, never on the conversation's first launch.
 reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
 mkdir -p "$LIFEPROJ/p"; printf '{"permissionMode":"default"}\n' > "$LIFEPROJ/p/abcdef12-3456-4789-8abc-def012345678.jsonl"
-res=$(life ok "[\"spawn\",\"--wake\",\"--dir\",\"$WORK\",\"--title\",\"Orch : w\",\"--model\",\"a-model\",\"--effort\",\"high\",\"--prompt\",\"p\",\"--resume\",\"abcdef12-3456-4789-8abc-def012345678\",\"--permission-mode\",\"default\"]")
+res=$(life ok "[\"spawn\",\"--wake\",\"--dir\",\"$WORK\",\"--title\",\"Orch: w\",\"--model\",\"a-model\",\"--effort\",\"high\",\"--prompt\",\"p\",\"--resume\",\"abcdef12-3456-4789-8abc-def012345678\",\"--permission-mode\",\"default\"]")
 check "a wake whose resumed transcript gains no mode is refused: the tab closed and the server ended, and the old mode is not taken for the new" \
   "1|close_made NEW-SESSION|1|1" \
   "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep close_made)|$(hcalls | grep -c '\[kill-server\]')|$(sfield "$res" ERR | grep -c 'gained no entry carrying a mode')"
 reset_homerec
-res=$(life ok "[\"spawn\",\"--wake\",\"--dir\",\"$WORK\",\"--title\",\"Orch : w\",\"--model\",\"a-model\",\"--effort\",\"high\",\"--prompt\",\"p\",\"--no-verify\"]")
+res=$(life ok "[\"spawn\",\"--wake\",\"--dir\",\"$WORK\",\"--title\",\"Orch: w\",\"--model\",\"a-model\",\"--effort\",\"high\",\"--prompt\",\"p\",\"--no-verify\"]")
 check "a tab that shows no client of the woken orchestrator's server is closed and the server ended" "1|1|1" \
   "$(sfield "$res" exit)|$(hcalls | grep -c '\[kill-server\]')|$(sfield "$res" ERR | grep -c 'shows no client of the home server orch-0badc0de')"
 # Without a tab (ORCHESTRATOR_HOME_NO_TAB, as the move has it): the server alone, which a live
 # run drives without the app; a refusal then ends the server and asks the app nothing.
 reset_homerec
-res=$(LIFE_PROBES=1 ORCHESTRATOR_HOME_NO_TAB=1 ORCHESTRATOR_TEST_RUN=1 life ok "[\"spawn\",\"--wake\",\"--dir\",\"$WORK\",\"--title\",\"Orch : w\",\"--model\",\"a-model\",\"--effort\",\"high\",\"--prompt\",\"p\",\"--resume\",\"abcdef12-3456-4789-8abc-def012345678\",\"--no-verify\"]")
+res=$(LIFE_PROBES=1 ORCHESTRATOR_HOME_NO_TAB=1 ORCHESTRATOR_TEST_RUN=1 life ok "[\"spawn\",\"--wake\",\"--dir\",\"$WORK\",\"--title\",\"Orch: w\",\"--model\",\"a-model\",\"--effort\",\"high\",\"--prompt\",\"p\",\"--resume\",\"abcdef12-3456-4789-8abc-def012345678\",\"--no-verify\"]")
 check "a wake without a tab starts its home server, makes no tab and says how to attach" "0|[-u][-L][orch-abcdef12][-f]||1|/dev/ttys960" \
   "$(sfield "$res" exit)|$(hcalls | head -1 | sed 's/\[-f\].*$/[-f]/')|$(sfield "$res" calls)|$(sfield "$res" ERR | grep -c 'no tab: attach with .* -L orch-abcdef12 attach')|$(sfield "$res" OUT)"
 reset_homerec
-res=$(LIFE_PROBES=1 ORCHESTRATOR_HOME_NO_TAB=1 ORCHESTRATOR_TEST_RUN=1 life never "[\"spawn\",\"--wake\",\"--dir\",\"$WORK\",\"--title\",\"Orch : w\",\"--model\",\"a-model\",\"--effort\",\"high\",\"--prompt\",\"p\",\"--resume\",\"abcdef12-3456-4789-8abc-def012345678\"]")
+res=$(LIFE_PROBES=1 ORCHESTRATOR_HOME_NO_TAB=1 ORCHESTRATOR_TEST_RUN=1 life never "[\"spawn\",\"--wake\",\"--dir\",\"$WORK\",\"--title\",\"Orch: w\",\"--model\",\"a-model\",\"--effort\",\"high\",\"--prompt\",\"p\",\"--resume\",\"abcdef12-3456-4789-8abc-def012345678\"]")
 check "and one that never starts ends the server, the app never asked" "1||1" \
   "$(sfield "$res" exit)|$(sfield "$res" calls)|$(hcalls | grep -c '\[kill-server\]')"
 
 # The no-tab variable alone is ignored for a wake as for a move: the tab is made.
 reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
-res=$(ORCHESTRATOR_HOME_NO_TAB=1 life ok "[\"spawn\",\"--wake\",\"--dir\",\"$WORK\",\"--title\",\"Orch : w\",\"--model\",\"a-model\",\"--effort\",\"high\",\"--prompt\",\"p\",\"--resume\",\"abcdef12-3456-4789-8abc-def012345678\",\"--no-verify\"]")
-check "a wake with the no-tab variable and no test marker still makes the tab, and says the variable is ignored" "0|create beside /dev/ttys900 right Orch : w|/dev/ttys960|1" \
+res=$(ORCHESTRATOR_HOME_NO_TAB=1 life ok "[\"spawn\",\"--wake\",\"--dir\",\"$WORK\",\"--title\",\"Orch: w\",\"--model\",\"a-model\",\"--effort\",\"high\",\"--prompt\",\"p\",\"--resume\",\"abcdef12-3456-4789-8abc-def012345678\",\"--no-verify\"]")
+check "a wake with the no-tab variable and no test marker still makes the tab, and says the variable is ignored" "0|create beside /dev/ttys900 right Orch: w|/dev/ttys960|1" \
   "$(sfield "$res" exit)|$(sfield "$res" calls)|$(sfield "$res" OUT)|$(sfield "$res" ERR | grep -c 'ORCHESTRATOR_HOME_NO_TAB is ignored')"
 reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
-res=$(ORCHESTRATOR_HOME_NO_TAB=1 life ok "[\"spawn\",\"--open\",\"--dir\",\"$WORK\",\"--title\",\"Orch : o\",\"--prompt\",\"p\",\"--no-verify\"]")
-check "and so does an open" "0|create beside /dev/ttys900 right Orch : o" "$(sfield "$res" exit)|$(sfield "$res" calls)"
+res=$(ORCHESTRATOR_HOME_NO_TAB=1 life ok "[\"spawn\",\"--open\",\"--dir\",\"$WORK\",\"--title\",\"Orch: o\",\"--prompt\",\"p\",\"--no-verify\"]")
+check "and so does an open" "0|create beside /dev/ttys900 right Orch: o" "$(sfield "$res" exit)|$(sfield "$res" calls)"
 
 # A server tmux refuses to kill is not « ended »: the message names its socket and says so.
 reset_homerec; printf 'server busy\n' > "$HR/kill-err"
-res=$(life ok "[\"spawn\",\"--wake\",\"--dir\",\"$WORK\",\"--title\",\"Orch : w\",\"--model\",\"a-model\",\"--effort\",\"high\",\"--prompt\",\"p\",\"--no-verify\"]")
+res=$(life ok "[\"spawn\",\"--wake\",\"--dir\",\"$WORK\",\"--title\",\"Orch: w\",\"--model\",\"a-model\",\"--effort\",\"high\",\"--prompt\",\"p\",\"--no-verify\"]")
 check "a tab with no client and a kill-server that fails says the server was NOT ended, and names its socket" "1|1|0" \
   "$(sfield "$res" exit)|$(sfield "$res" ERR | grep -c "the server was NOT ended: end it with $HR/tmux -L orch-0badc0de kill-server")|$(sfield "$res" ERR | grep -c 'the server was ended')"
 
@@ -8352,12 +8358,12 @@ check "a tab with no client and a kill-server that fails says the server was NOT
 # home session: the server is ended, proved, then the tab.
 printf '/dev/ttys970 9001 tmux -u -L orch-abcdef12 attach -t home\n' > "$WORK/life-ps"
 reset_homerec
-res=$(LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch : w"]')
+res=$(LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
 check "closing a tab that shows a home session ends its whole server, then says the session window 0 ran" \
   "0|[-u][-L][orch-abcdef12][list-panes][-a][-F][#{window_index} #{pane_tty}]|[-u][-L][orch-abcdef12][kill-server]|[-u][-L][orch-abcdef12][has-session]|closed 1 session on /dev/ttys970|home: ended the server orch-abcdef12 and its 0 window(s)" \
   "$(sfield "$res" exit)|$(hcalls | paste -sd'|' -)|$(sfield "$res" OUT)"
 reset_homerec
-res=$(LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch : other"]')
+res=$(LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: other"]')
 check "a title that does not match refuses before the server is touched" "1|0" \
   "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-server')"
 reset_homerec
@@ -8377,39 +8383,39 @@ print(ia.home_of_tab('/dev/ttys970'))")"
 # A pause records the session window 0 ran, for the wake to resume: a server whose window 0
 # session cannot be read is not ended, and the refusal says why.
 reset_homerec; printf 'no server running on /tmp/x\n' > "$HR/panes-err"
-res=$(LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch : w"]')
+res=$(LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
 check "a pause whose panes cannot be listed refuses, the server is not killed and the refusal names why" "1|0|1|1" \
   "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-server')|$(sfield "$res" ERR | grep -c 'cannot be read: tmux refused to list its panes')|$(sfield "$res" ERR | grep -c 'the server was NOT ended and the orchestrator stays where it is')"
 reset_homerec; printf '1 /dev/ttys962\n' > "$HR/panes"
-res=$(LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch : w"]')
+res=$(LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
 check "and one with no window 0 refuses the same way" "1|0|1" \
   "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-server')|$(sfield "$res" ERR | grep -c 'no host of window 0 was found on the server')"
 reset_homerec; printf '0 /dev/ttys961\n1 /dev/ttys962\n' > "$HR/panes"
-res=$(LIFE_PS="$WORK/life-ps" life never '["close","--tty","/dev/ttys970","--expect-title","Orch : w"]')
+res=$(LIFE_PS="$WORK/life-ps" life never '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
 check "and one whose window 0 runs no host whose session can be read refuses, naming the pane" "1|0|1" \
   "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-server')|$(sfield "$res" ERR | grep -c 'window 0 on /dev/ttys961 runs no host whose session can be read')"
 reset_homerec; printf '0 /dev/ttys961\n1 /dev/ttys962\n' > "$HR/panes"
-res=$(LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch : w"]')
+res=$(LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
 check "with window 0's session read, the server is ended and the home line carries the session and every window" "0|1|home: ended the server orch-abcdef12 and its 2 window(s), session abcdef12-3456-4789-8abc-def012345678" \
   "$(sfield "$res" exit)|$(hcalls | grep -c 'kill-server')|$(sfield "$res" OUT | tr '|' '\n' | grep '^home:')"
 
 # A home tab's close ends with what the ordinary close ends with: the checkout the orchestrator
 # worked in is deleted, unless it is kept.
 reset_homerec; printf '0 /dev/ttys961\n' > "$HR/panes"
-res=$(LIFE_CWD=/co/proj/work LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch : w"]')
+res=$(LIFE_CWD=/co/proj/work LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w"]')
 check "closing a home tab deletes the checkout window 0 worked in, after the server is gone" "0|delete_checkout /co/proj/work|closed 1 session on /dev/ttys970" \
   "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep delete_checkout)|$(sfield "$res" OUT | tr '|' '\n' | grep '^closed')"
 reset_homerec; printf '0 /dev/ttys961\n' > "$HR/panes"
-res=$(LIFE_CWD=/co/proj/work LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch : w","--keep-checkout"]')
+res=$(LIFE_CWD=/co/proj/work LIFE_PS="$WORK/life-ps" life ok '["close","--tty","/dev/ttys970","--expect-title","Orch: w","--keep-checkout"]')
 check "and --keep-checkout keeps it" "0|0" "$(sfield "$res" exit)|$(sfield "$res" calls | tr ',' '\n' | grep -c delete_checkout)"
 
 # The sleeping record keeps the session the close read, for the wake to resume.
 SLST="$WORK/sleepstate"; mkdir -p "$SLST"; printf 'b\n' > "$SLST/brief.md"
-ORCHESTRATOR_STATE_DIR="$SLST" bash "$ROOT/skills/coordinator/scripts/coordinator.sh" sleep --name "Orch : w" --brief "$SLST/brief.md" --dir "$WORK" --model a-model --effort high --session abcdef12-3456-4789-8abc-def012345678 >/dev/null 2>&1
+ORCHESTRATOR_STATE_DIR="$SLST" bash "$ROOT/skills/coordinator/scripts/coordinator.sh" sleep --name "Orch: w" --brief "$SLST/brief.md" --dir "$WORK" --model a-model --effort high --session abcdef12-3456-4789-8abc-def012345678 >/dev/null 2>&1
 check "a paused orchestrator's record carries its session, and its line says it" "1" \
   "$(ORCHESTRATOR_STATE_DIR="$SLST" bash "$ROOT/skills/coordinator/scripts/coordinator.sh" sleeping | grep -c '| effort high | session abcdef12-3456-4789-8abc-def012345678$')"
 check "a session id that is not one is refused" "1" \
-  "$(ORCHESTRATOR_STATE_DIR="$SLST" bash "$ROOT/skills/coordinator/scripts/coordinator.sh" sleep --name "Orch : v" --brief "$SLST/brief.md" --dir "$WORK" --model a-model --effort high --session 'x y' 2>&1 | grep -c 'refused: a session id')"
+  "$(ORCHESTRATOR_STATE_DIR="$SLST" bash "$ROOT/skills/coordinator/scripts/coordinator.sh" sleep --name "Orch: v" --brief "$SLST/brief.md" --dir "$WORK" --model a-model --effort high --session 'x y' 2>&1 | grep -c 'refused: a session id')"
 
 echo "== install =="
 
@@ -8851,9 +8857,9 @@ coord_status() { coord "$@" >/dev/null 2>&1; echo "exit $?"; }
 live() { printf '%s\n' "$@" > "$CLIVE"; }
 CREC="$CS/coordinator.json"
 
-out=$(coord register --name "Coord : one [aaa111]" --tty /dev/ttys101 2>"$WORK/coord.err")
-check "register prints what it recorded" "registered Coord : one [aaa111]" "$out"
-check "register writes the name and the tty" "Coord : one [aaa111]|/dev/ttys101" \
+out=$(coord register --name "Coord: one [aaa111]" --tty /dev/ttys101 2>"$WORK/coord.err")
+check "register prints what it recorded" "registered Coord: one [aaa111]" "$out"
+check "register writes the name and the tty" "Coord: one [aaa111]|/dev/ttys101" \
   "$(jq -r '[.name,.tty]|join("|")' "$CREC" 2>/dev/null)"
 check "register stamps the start in UTC" "1" \
   "$(jq -r '.started' "$CREC" 2>/dev/null | grep -cE '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$')"
@@ -8861,29 +8867,29 @@ check "register leaves no lock behind" "0" "$([ -e "$CS/coordinator.lock" ] && e
 
 live /dev/ttys101
 check "a second register is refused while the recorded one runs" "exit 1" \
-  "$(coord_status register --name "Coord : two [bbb222]" --tty /dev/ttys102)"
+  "$(coord_status register --name "Coord: two [bbb222]" --tty /dev/ttys102)"
 check "the refusal names the live coordinator" \
-  "coordinator: refused: a live coordinator is recorded: Coord : one [aaa111] on /dev/ttys101" \
-  "$(coord register --name "Coord : two [bbb222]" --tty /dev/ttys102 2>&1 >/dev/null)"
-check "a refused register leaves the live record alone" "Coord : one [aaa111]" "$(jq -r .name "$CREC")"
+  "coordinator: refused: a live coordinator is recorded: Coord: one [aaa111] on /dev/ttys101" \
+  "$(coord register --name "Coord: two [bbb222]" --tty /dev/ttys102 2>&1 >/dev/null)"
+check "a refused register leaves the live record alone" "Coord: one [aaa111]" "$(jq -r .name "$CREC")"
 
 live
-out=$(coord register --name "Coord : two [bbb222]" --tty /dev/ttys102 2>"$WORK/coord.err")
-check "a record whose tty no longer runs the host is replaced" "registered Coord : two [bbb222]|/dev/ttys102" \
+out=$(coord register --name "Coord: two [bbb222]" --tty /dev/ttys102 2>"$WORK/coord.err")
+check "a record whose tty no longer runs the host is replaced" "registered Coord: two [bbb222]|/dev/ttys102" \
   "$out|$(jq -r .tty "$CREC")"
-check "and the replacement is said" "coordinator: replaced a stale record: Coord : one [aaa111]" \
+check "and the replacement is said" "coordinator: replaced a stale record: Coord: one [aaa111]" \
   "$(cat "$WORK/coord.err")"
 
 # The record is written before it is announced: one that cannot be written is no
 # registration, and one that cannot be read is replaced like a stale one.
 cp "$CREC" "$WORK/coord-rec"
 echo 'not json' > "$CREC"
-out=$(coord register --name "Coord : r [r00001]" --tty /dev/ttys110 2>"$WORK/coord.err")
+out=$(coord register --name "Coord: r [r00001]" --tty /dev/ttys110 2>"$WORK/coord.err")
 check "a corrupt record is replaced as an unreadable one" \
-  "registered Coord : r [r00001]|coordinator: replaced a stale record: an unreadable record|Coord : r [r00001]" \
+  "registered Coord: r [r00001]|coordinator: replaced a stale record: an unreadable record|Coord: r [r00001]" \
   "$out|$(cat "$WORK/coord.err")|$(jq -r .name "$CREC")"
 rm -f "$CREC" && mkdir "$CREC"
-out=$(coord register --name "Coord : r [r00001]" --tty /dev/ttys110 2>"$WORK/coord.err"); code=$?
+out=$(coord register --name "Coord: r [r00001]" --tty /dev/ttys110 2>"$WORK/coord.err"); code=$?
 check "a record that cannot be written is no registration" "|exit 1" "$out|exit $code"
 check "and the failure is said" "coordinator: cannot write $CREC: it is a directory" "$(cat "$WORK/coord.err")"
 rmdir "$CREC" && cp "$WORK/coord-rec" "$CREC"
@@ -8894,7 +8900,7 @@ rmdir "$CREC" && cp "$WORK/coord-rec" "$CREC"
 CLOCK="$CS/coordinator.lock"
 mkdir "$CLOCK" && echo "$$ registration" > "$CLOCK/holder"
 t0=$(date +%s)
-out=$(coord register --name "Coord : three [ccc333]" --tty /dev/ttys103 2>&1 >/dev/null)
+out=$(coord register --name "Coord: three [ccc333]" --tty /dev/ttys103 2>&1 >/dev/null)
 t1=$(date +%s)
 check "a register that cannot take the lock is refused, naming the lock and its holder" \
   "coordinator: refused: a registration holds the lock: $CLOCK held by pid $$ (running): remove $CLOCK" "$out"
@@ -8908,11 +8914,11 @@ sh -c 'exit 0' & deadpid=$!; wait "$deadpid"
 echo "$deadpid" > "$CLOCK/holder"
 check "a holder whose operation is unknown is not guessed" \
   "coordinator: refused: the coordinator's lock is held: $CLOCK held by pid $deadpid (dead): remove $CLOCK|exit 1" \
-  "$(coord register --name "Coord : three [ccc333]" --tty /dev/ttys103 2>&1)|$(coord_status register --name "Coord : three [ccc333]" --tty /dev/ttys103)"
+  "$(coord register --name "Coord: three [ccc333]" --tty /dev/ttys103 2>&1)|$(coord_status register --name "Coord: three [ccc333]" --tty /dev/ttys103)"
 rm -f "$CLOCK/holder"
 check "a lock with no holder recorded is refused all the same" \
   "coordinator: refused: the coordinator's lock is held: $CLOCK names no holder: remove $CLOCK" \
-  "$(coord register --name "Coord : three [ccc333]" --tty /dev/ttys103 2>&1)"
+  "$(coord register --name "Coord: three [ccc333]" --tty /dev/ttys103 2>&1)"
 rmdir "$CLOCK"
 
 # A state directory that cannot be written is refused at once, not after five seconds.
@@ -8920,7 +8926,7 @@ CRO="$WORK/coord-ro"
 mkdir -p "$CRO" && chmod 555 "$CRO"
 t0=$(date +%s)
 out=$(ORCHESTRATOR_STATE_DIR="$CRO" COORDINATOR_VERIFY="$WORK/coord-verify" COORD_LIVE="$CLIVE" \
-  bash "$COORD" register --name "Coord : ro [r0r0r0]" --tty /dev/ttys201 2>&1); code=$?
+  bash "$COORD" register --name "Coord: ro [r0r0r0]" --tty /dev/ttys201 2>&1); code=$?
 t1=$(date +%s)
 skip_as_root "an unwritable state directory is refused at once" ||
 check "an unwritable state directory is refused at once" \
@@ -8931,8 +8937,8 @@ chmod 755 "$CRO"
 # Two registrations at the same instant: exactly one records itself, the other is refused.
 coord clear
 live /dev/ttys104 /dev/ttys105
-coord register --name "Coord : four [ddd444]" --tty /dev/ttys104 > "$WORK/coord-r1" 2>&1 &
-coord register --name "Coord : five [eee555]" --tty /dev/ttys105 > "$WORK/coord-r2" 2>&1 &
+coord register --name "Coord: four [ddd444]" --tty /dev/ttys104 > "$WORK/coord-r1" 2>&1 &
+coord register --name "Coord: five [eee555]" --tty /dev/ttys105 > "$WORK/coord-r2" 2>&1 &
 wait
 check "two concurrent registers: one recorded, one refused" "1|1" \
   "$(cat "$WORK/coord-r1" "$WORK/coord-r2" | grep -c '^registered ')|$(cat "$WORK/coord-r1" "$WORK/coord-r2" | grep -c 'refused')"
@@ -8944,11 +8950,11 @@ check "clear with no record is not an error" "exit 0" "$(coord_status clear)"
 check "lookup with no record prints nothing and says nothing" "|exit 0" \
   "$(coord lookup 2>&1)|$(coord_status lookup)"
 live /dev/ttys106
-coord register --name "Coord : six [fff666]" --tty /dev/ttys106 >/dev/null 2>&1
-check "lookup prints the live coordinator's name" "Coord : six [fff666]" "$(coord lookup 2>/dev/null)"
+coord register --name "Coord: six [fff666]" --tty /dev/ttys106 >/dev/null 2>&1
+check "lookup prints the live coordinator's name" "Coord: six [fff666]" "$(coord lookup 2>/dev/null)"
 live
 check "lookup of a dead coordinator prints nothing" "|exit 0" "$(coord lookup 2>/dev/null)|$(coord_status lookup)"
-check "and names the stale record on the error stream" "coordinator: stale record: Coord : six [fff666] on /dev/ttys106" \
+check "and names the stale record on the error stream" "coordinator: stale record: Coord: six [fff666] on /dev/ttys106" \
   "$(coord lookup 2>&1 >/dev/null)"
 coord clear
 
@@ -8970,57 +8976,57 @@ chmod +x "$WORK/coord-verify-pid"
 cpid() { ORCHESTRATOR_STATE_DIR="$CS" COORD_PIDS="$CPIDS" COORDINATOR_VERIFY="$WORK/coord-verify-pid" bash "$COORD" "$@"; }
 cpid_status() { cpid "$@" >/dev/null 2>&1; echo "exit $?"; }
 printf '/dev/ttys120 4001\n' > "$CPIDS"
-cpid register --name "Coord : pid [p00001]" --tty /dev/ttys120 >/dev/null 2>&1
+cpid register --name "Coord: pid [p00001]" --tty /dev/ttys120 >/dev/null 2>&1
 check "register records the pid of the host CLI on the tty" "4001" "$(jq -r .pid "$CREC")"
-check "the same pid still running keeps the record alive" "Coord : pid [p00001]|exit 1" \
-  "$(cpid lookup 2>/dev/null)|$(cpid_status register --name "Coord : two [p00002]" --tty /dev/ttys121)"
+check "the same pid still running keeps the record alive" "Coord: pid [p00001]|exit 1" \
+  "$(cpid lookup 2>/dev/null)|$(cpid_status register --name "Coord: two [p00002]" --tty /dev/ttys121)"
 printf '/dev/ttys120 4002\n' > "$CPIDS"
 check "another pid on the recorded tty reads as a stale record" \
-  "|coordinator: stale record: Coord : pid [p00001] on /dev/ttys120" \
+  "|coordinator: stale record: Coord: pid [p00001] on /dev/ttys120" \
   "$(cpid lookup 2>/dev/null)|$(cpid lookup 2>&1 >/dev/null)"
-out=$(cpid register --name "Coord : next [p00003]" --tty /dev/ttys121 2>"$WORK/coord.err")
+out=$(cpid register --name "Coord: next [p00003]" --tty /dev/ttys121 2>"$WORK/coord.err")
 check "register replaces a record whose tty was reused" \
-  "registered Coord : next [p00003]|coordinator: replaced a stale record: Coord : pid [p00001]" \
+  "registered Coord: next [p00003]|coordinator: replaced a stale record: Coord: pid [p00001]" \
   "$out|$(cat "$WORK/coord.err")"
 # A record written before the pid was kept is read by its tty alone.
-jq -n '{name:"Coord : old [p00004]", tty:"/dev/ttys122", started:"2026-01-01T00:00:00Z"}' > "$CREC"
+jq -n '{name:"Coord: old [p00004]", tty:"/dev/ttys122", started:"2026-01-01T00:00:00Z"}' > "$CREC"
 printf '/dev/ttys122 4003\n' > "$CPIDS"
-check "a record with no pid keeps the tty-only reading" "Coord : old [p00004]" "$(cpid lookup 2>/dev/null)"
+check "a record with no pid keeps the tty-only reading" "Coord: old [p00004]" "$(cpid lookup 2>/dev/null)"
 printf '' > "$CPIDS"
-check "and is stale once nothing runs on its tty" "|coordinator: stale record: Coord : old [p00004] on /dev/ttys122" \
+check "and is stale once nothing runs on its tty" "|coordinator: stale record: Coord: old [p00004] on /dev/ttys122" \
   "$(cpid lookup 2>/dev/null)|$(cpid lookup 2>&1 >/dev/null)"
 coord clear
 # A tty that runs a host CLI but gives no pid is recorded without one, and the register says so.
 live /dev/ttys123
-out=$(coord register --name "Coord : nopid [p00005]" --tty /dev/ttys123 2>"$WORK/coord.err")
+out=$(coord register --name "Coord: nopid [p00005]" --tty /dev/ttys123 2>"$WORK/coord.err")
 check "a register that finds no pid on the tty records none and says so in one line" \
-  "registered Coord : nopid [p00005]|null|coordinator: no process id found on /dev/ttys123: the record is written without one" \
+  "registered Coord: nopid [p00005]|null|coordinator: no process id found on /dev/ttys123: the record is written without one" \
   "$out|$(jq -r '.pid' "$CREC")|$(cat "$WORK/coord.err")"
 coord clear
 # Against the real launcher: the « (pid N) » that register parses is the text verify prints.
 creal() { ORCHESTRATOR_STATE_DIR="$CS" ORCHESTRATOR_HOST_CLI=a-host ORCHESTRATOR_PS_TABLE="$WORK/ps-two.txt" \
   CLAUDE_CONFIG_DIR="$WORK/hostcfg" bash "$COORD" "$@"; }
-creal register --name "Coord : real [p00006]" --tty /dev/ttys901 >/dev/null 2>&1
+creal register --name "Coord: real [p00006]" --tty /dev/ttys901 >/dev/null 2>&1
 check "register records the pid the real launcher's verify prints" "5100" "$(jq -r .pid "$CREC")"
-check "and the record is alive for that pid" "Coord : real [p00006]" "$(creal lookup 2>/dev/null)"
+check "and the record is alive for that pid" "Coord: real [p00006]" "$(creal lookup 2>/dev/null)"
 jq '.pid = 5101' "$CREC" > "$WORK/coord-rec2" && cp "$WORK/coord-rec2" "$CREC"
-check "a recorded pid that is the tty's second host CLI is alive" "Coord : real [p00006]" "$(creal lookup 2>/dev/null)"
+check "a recorded pid that is the tty's second host CLI is alive" "Coord: real [p00006]" "$(creal lookup 2>/dev/null)"
 jq '.pid = 9999' "$CREC" > "$WORK/coord-rec2" && cp "$WORK/coord-rec2" "$CREC"
 check "a recorded pid the real launcher does not find on the tty is stale" \
-  "|coordinator: stale record: Coord : real [p00006] on /dev/ttys901" "$(creal lookup 2>/dev/null)|$(creal lookup 2>&1 >/dev/null)"
+  "|coordinator: stale record: Coord: real [p00006] on /dev/ttys901" "$(creal lookup 2>/dev/null)|$(creal lookup 2>&1 >/dev/null)"
 coord clear
 
 # Liveness: an error of the check is no « dead ». Its own « not running », exit 1 and
 # silent, is the only answer read as dead.
 live /dev/ttys106
-coord register --name "Coord : six [fff666]" --tty /dev/ttys106 >/dev/null 2>&1
+coord register --name "Coord: six [fff666]" --tty /dev/ttys106 >/dev/null 2>&1
 cvar() { ORCHESTRATOR_STATE_DIR="$CS" COORD_LIVE="$CLIVE" COORDINATOR_VERIFY="$1" bash "$COORD" "${@:2}"; }
 cvar_status() { cvar "$@" >/dev/null 2>&1; echo "exit $?"; }
 check "a missing liveness command is said, exit 1 from lookup" \
   "coordinator: the liveness command $WORK/no-verify is missing or not executable|exit 1" \
   "$(cvar "$WORK/no-verify" lookup 2>&1)|$(cvar_status "$WORK/no-verify" lookup)"
-check "and from register, the record kept" "exit 1|Coord : six [fff666]" \
-  "$(cvar_status "$WORK/no-verify" register --name "Coord : x [xxx000]" --tty /dev/ttys107)|$(jq -r .name "$CREC")"
+check "and from register, the record kept" "exit 1|Coord: six [fff666]" \
+  "$(cvar_status "$WORK/no-verify" register --name "Coord: x [xxx000]" --tty /dev/ttys107)|$(jq -r .name "$CREC")"
 printf '#!/bin/bash\necho "cannot read the process table" >&2\nexit 1\n' > "$WORK/coord-verify-err"
 chmod +x "$WORK/coord-verify-err"
 check "a liveness check that fails is not read as dead" \
@@ -9030,7 +9036,7 @@ check "a liveness check that fails is not read as dead" \
 # lock, by a liveness check that register runs while it holds it.
 printf '#!/bin/bash\ncat "$ORCHESTRATOR_STATE_DIR/coordinator.lock/holder" > "$COORD_PEEK"\nexit 1\n' > "$WORK/coord-verify-peek"
 chmod +x "$WORK/coord-verify-peek"
-COORD_PEEK="$WORK/coord-peek" cvar "$WORK/coord-verify-peek" register --name "Coord : seven [ggg777]" --tty /dev/ttys108 >/dev/null 2>&1
+COORD_PEEK="$WORK/coord-peek" cvar "$WORK/coord-verify-peek" register --name "Coord: seven [ggg777]" --tty /dev/ttys108 >/dev/null 2>&1
 check "the lock's holder records its pid and its operation" "1" "$(grep -cE '^[0-9]+ registration$' "$WORK/coord-peek" 2>/dev/null)"
 coord clear
 check "the ledger's commands are gone" "exit 1|exit 1|exit 1" \
@@ -9057,16 +9063,16 @@ mkrepo "$CWS/none/n2" feat/x git@forge.example:o/none.git
 real() { (cd "$1" && pwd -P); }
 RSRC=$(real "$CF/src/app"); RA1=$(real "$CWS/app/a1"); RB1=$(real "$CWS/app/b1"); RC1=$(real "$CWS/app/c1")
 RIDLE=$(real "$CWS/app/idle"); RO1=$(real "$CWS/other/o1"); RO2=$(real "$CWS/other/o2")
-printf 'The phase.\n\n- Your orchestrator is the session **`Orch : alpha [aaa111]`** — that exact name.\n' > "$CF/briefs/a1.md"
+printf 'The phase.\n\n- Your orchestrator is the session **`Orch: alpha [aaa111]`** — that exact name.\n' > "$CF/briefs/a1.md"
 printf 'A brief that names no orchestrator.\n' > "$CF/briefs/c1.md"
 cat > "$CF/ps" <<PS
-100 1 ttys100 /usr/bin/hostcli --model m Read and execute $CF/briefs/orch.md --name Orch : alpha --remote-control Orch : alpha
-101 1 ttys101 /usr/bin/hostcli --model m Read and execute $CF/briefs/a1.md. Your orchestrator is Orch : wrong [zzz999]. --name Agent : a1
-102 1 ttys102 hostcli Read and execute $CF/briefs/gone.md. Your orchestrator is Orch : beta [bbb222]; handshake first. --name Agent : b1
-103 1 ttys103 /usr/bin/hostcli Read and execute $CF/briefs/c1.md --name Agent : c1
+100 1 ttys100 /usr/bin/hostcli --model m Read and execute $CF/briefs/orch.md --name Orch: alpha --remote-control Orch: alpha
+101 1 ttys101 /usr/bin/hostcli --model m Read and execute $CF/briefs/a1.md. Your orchestrator is Orch: wrong [zzz999]. --name Agent: a1
+102 1 ttys102 hostcli Read and execute $CF/briefs/gone.md. Your orchestrator is Orch: beta [bbb222]; handshake first. --name Agent: b1
+103 1 ttys103 /usr/bin/hostcli Read and execute $CF/briefs/c1.md --name Agent: c1
 104 1 ?? /usr/bin/hostcli --print a job with no tty
 105 1 ttys105 /usr/bin/vim notes.md
-106 1 ttys106 /usr/bin/hostcli Read and execute $CF/briefs/gone.md. Your orchestrator is Orch : gamma [ccc333]. --name Agent : o1
+106 1 ttys106 /usr/bin/hostcli Read and execute $CF/briefs/gone.md. Your orchestrator is Orch: gamma [ccc333]. --name Agent: o1
 200 1 ttys100 bash ./tests/run-tests.sh
 201 200 ttys100 bash ./tests/run-tests.sh
 300 1 ttys101 timeout 595 /usr/bin/hostcli plugin eval . --case x
@@ -9095,9 +9101,9 @@ chmod +x "$CF/forge"
 # The hooks module's wait files, as facts reads them for the orchestrators waiting at a turn's
 # end: a live one waiting on the operator, one whose pid is gone, a cleared wait, a broken file.
 CCFG="$WORK/coord-config"; CSTORE="$CCFG/claude-orchestrator/store/waits"; mkdir -p "$CSTORE"
-printf '%s\n' '{"name":"Orch : alpha","pid":"100","waiting":"operator","blocks":"phase 3","waiting_since":"2026-10-14T09:45:16.000Z","relayed":null}' > "$CSTORE/s-alpha"
-printf '%s\n' '{"name":"Orch : gone","pid":"999","waiting":"operator","blocks":"x","waiting_since":"y"}' > "$CSTORE/s-gone"
-printf '%s\n' '{"name":"Orch : beta","pid":"101","waiting":null,"blocks":null,"waiting_since":null}' > "$CSTORE/s-beta"
+printf '%s\n' '{"name":"Orch: alpha","pid":"100","waiting":"operator","blocks":"phase 3","waiting_since":"2026-10-14T09:45:16.000Z","relayed":null}' > "$CSTORE/s-alpha"
+printf '%s\n' '{"name":"Orch: gone","pid":"999","waiting":"operator","blocks":"x","waiting_since":"y"}' > "$CSTORE/s-gone"
+printf '%s\n' '{"name":"Orch: beta","pid":"101","waiting":null,"blocks":null,"waiting_since":null}' > "$CSTORE/s-beta"
 printf 'not json\n' > "$CSTORE/s-broken"
 cfacts() {
   CLAUDE_CONFIG_DIR="$CCFG" ORCHESTRATOR_STATE_DIR="$CS" ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli \
@@ -9109,10 +9115,21 @@ FACTS=$(cfacts facts 2>/dev/null)
 OWNERS=$(cfacts owners 2>/dev/null)
 
 check "facts lists each host session on a tty with its title, its orchestrator, its repository and branch" \
-  "session 100 | ttys100 | Orch : alpha | Orch : alpha | forge.example/o/app | main | $RSRC|session 101 | ttys101 | Agent : a1 | Orch : alpha [aaa111] | forge.example/o/app | feat/x | $RA1|session 102 | ttys102 | Agent : b1 | Orch : beta [bbb222] | forge.example/o/app | feat/x | $RB1|session 103 | ttys103 | Agent : c1 | unknown | forge.example/o/app | feat/y | $RC1|session 106 | ttys106 | Agent : o1 | Orch : gamma [ccc333] | forge.example/o/other | feat/x | $RO1" \
+  "session 100 | ttys100 | Orch: alpha | Orch: alpha | forge.example/o/app | main | $RSRC|session 101 | ttys101 | Agent: a1 | Orch: alpha [aaa111] | forge.example/o/app | feat/x | $RA1|session 102 | ttys102 | Agent: b1 | Orch: beta [bbb222] | forge.example/o/app | feat/x | $RB1|session 103 | ttys103 | Agent: c1 | unknown | forge.example/o/app | feat/y | $RC1|session 106 | ttys106 | Agent: o1 | Orch: gamma [ccc333] | forge.example/o/other | feat/x | $RO1" \
   "$(printf '%s\n' "$FACTS" | grep '^session ' | tr '\n' '|' | sed 's/|$//')"
 check "a job with no tty, a process that is not the host and an evaluation's host are no sessions" "0|0|0" \
   "$(printf '%s\n' "$FACTS" | grep -c '^session 104 ')|$(printf '%s\n' "$FACTS" | grep -c '^session 105 ')|$(printf '%s\n' "$FACTS" | grep -c '^session 301 ')"
+# Sessions started, and briefs written, before the change carry the former shape, « Orch : x »:
+# the orchestrator is read the current way, the title as the host shows it.
+printf 'The phase.\n\n- Your orchestrator is the session **`Orch : alpha [aaa111]`** — that exact name.\n' > "$CF/briefs/a1-former.md"
+cat > "$CF/ps-former" <<PS
+100 1 ttys100 /usr/bin/hostcli --model m Read and execute $CF/briefs/orch.md --name Orch : alpha --remote-control Orch : alpha
+101 1 ttys101 /usr/bin/hostcli --model m Read and execute $CF/briefs/a1-former.md --name Agent : a1
+102 1 ttys102 hostcli Read and execute $CF/briefs/gone.md. Your orchestrator is Orch : beta [bbb222]; handshake first. --name Agent : b1
+PS
+check "names in the former shape, « Orch : x », name the orchestrator the current way" \
+  "session 100 | ttys100 | Orch : alpha | Orch: alpha|session 101 | ttys101 | Agent : a1 | Orch: alpha [aaa111]|session 102 | ttys102 | Agent : b1 | Orch: beta [bbb222]" \
+  "$(COORDINATOR_PS_TABLE="$CF/ps-former" cfacts facts 2>/dev/null | grep '^session ' | cut -d'|' -f1-4 | sed 's/ $//' | tr '\n' '|' | sed 's/|$//')"
 check "the checkouts read are those of a repository a session works in" \
   "checkout $RA1 | forge.example/o/app | feat/x|checkout $RB1 | forge.example/o/app | feat/x|checkout $RC1 | forge.example/o/app | feat/y|checkout $RIDLE | forge.example/o/app | feat/w|checkout $RO1 | forge.example/o/other | feat/x|checkout $RO2 | forge.example/o/other | feat/o" \
   "$(printf '%s\n' "$FACTS" | grep '^checkout ' | tr '\n' '|' | sed 's/|$//')"
@@ -9125,12 +9142,12 @@ check "two checkouts on one branch of one repository are a collision" \
   "collision checkouts | forge.example/o/app | feat/x | $RA1, $RB1" \
   "$(printf '%s\n' "$FACTS" | grep '^collision checkouts ')"
 check "two sessions on one branch of one repository are a collision" \
-  "collision sessions | forge.example/o/app | feat/x | 101 Agent : a1, 102 Agent : b1" \
+  "collision sessions | forge.example/o/app | feat/x | 101 Agent: a1, 102 Agent: b1" \
   "$(printf '%s\n' "$FACTS" | grep '^collision sessions ')"
 check "two heavy runs at once are a collision" "collision heavy | 200, 300" \
   "$(printf '%s\n' "$FACTS" | grep '^collision heavy ')"
 check "a pull request whose branch two orchestrations are on is a collision" \
-  "collision pr | forge.example/o/app#7 | feat/x | Orch : alpha [aaa111], Orch : beta [bbb222]" \
+  "collision pr | forge.example/o/app#7 | feat/x | Orch: alpha [aaa111], Orch: beta [bbb222]" \
   "$(printf '%s\n' "$FACTS" | grep '^collision pr ')"
 check "the same branch in a repository nobody works in is no collision" "0" \
   "$(printf '%s\n' "$FACTS" | grep -c 'o/none')"
@@ -9142,7 +9159,7 @@ check "facts exits 1 on a collision" "exit 1" "$(cfacts_status facts)"
 # The defect: an orchestrator that asked the operator in its own tab looked stopped, and the
 # coordinator spent two turns asking it why. Its wait is in the module's row, and facts shows it.
 check "facts shows a live orchestrator waiting on the operator, and no dead one, cleared wait or broken file" \
-  "waiting Orch : alpha | operator since 2026-10-14T09:45:16.000Z | blocks: phase 3" \
+  "waiting Orch: alpha | operator since 2026-10-14T09:45:16.000Z | blocks: phase 3" \
   "$(printf '%s\n' "$FACTS" | grep '^waiting ')"
 # A wait write in flight is a temporary file beside the waits (the module's writeWait renames
 # it into place, and leaves it behind when its rename and its removal both fail): no second wait.
@@ -9151,13 +9168,13 @@ check "facts reads no temporary file beside the waits as a wait" "1" "$(cfacts f
 rm -f "$CSTORE/s-alpha.tmp-1-abcdef"
 
 check "owners traces each open pull request to the orchestrator named in its agent's brief" \
-  "pr forge.example/o/app#7 | feat/x | Orch : alpha [aaa111] | session 101 in $RA1|pr forge.example/o/app#7 | feat/x | Orch : beta [bbb222] | session 102 in $RB1|pr forge.example/o/app#8 | feat/y | unknown | session 103 in $RC1 names no orchestrator|pr forge.example/o/app#9 | feat/z | unknown | no checkout on feat/z|pr forge.example/o/app#10 | feat/w | unknown | no session in $RIDLE" \
+  "pr forge.example/o/app#7 | feat/x | Orch: alpha [aaa111] | session 101 in $RA1|pr forge.example/o/app#7 | feat/x | Orch: beta [bbb222] | session 102 in $RB1|pr forge.example/o/app#8 | feat/y | unknown | session 103 in $RC1 names no orchestrator|pr forge.example/o/app#9 | feat/z | unknown | no checkout on feat/z|pr forge.example/o/app#10 | feat/w | unknown | no session in $RIDLE" \
   "$(printf '%s\n' "$OWNERS" | tr '\n' '|' | sed 's/|$//')"
 check "owners exits 0 when every source was read" "exit 0" "$(cfacts_status owners)"
 
 # Nothing shared: one session in a repository of its own, one run.
 mkrepo "$CWS/lone/l1" feat/l git@forge.example:o/lone.git
-printf '101 1 ttys101 /usr/bin/hostcli --name Agent : l1\n200 1 ttys100 bash ./tests/run-tests.sh\n' > "$CF/ps-quiet"
+printf '101 1 ttys101 /usr/bin/hostcli --name Agent: l1\n200 1 ttys100 bash ./tests/run-tests.sh\n' > "$CF/ps-quiet"
 printf '101 %s\n200 %s\n' "$(real "$CWS/lone/l1")" "$RSRC" > "$CF/cwds-quiet"
 check "no collision, exit 0 and no collision line" "exit 0|0" \
   "$(COORDINATOR_PS_TABLE="$CF/ps-quiet" COORDINATOR_CWDS="$CF/cwds-quiet" cfacts_status facts)|$(COORDINATOR_PS_TABLE="$CF/ps-quiet" COORDINATOR_CWDS="$CF/cwds-quiet" cfacts facts 2>/dev/null | grep -c '^collision ')"
@@ -9207,32 +9224,32 @@ check "git failing on a session's directory and on a listed checkout is said" \
   "$(printf '%s\n' "$CGIT" | grep '^unread ' | sort | tr '\n' '|' | sed 's/|$//')"
 check "and facts exits 2" "exit 2" "$(PATH="$CF/bin-git:$PATH" cfacts_status facts)"
 mkdir -p "$CF/nogit"
-printf '120 1 ttys120 /usr/bin/hostcli --name Agent : n\n' > "$CF/ps-nogit"
+printf '120 1 ttys120 /usr/bin/hostcli --name Agent: n\n' > "$CF/ps-nogit"
 printf '120 %s\n' "$(real "$CF/nogit")" > "$CF/cwds-nogit"
 check "a session in no git tree says so on its line, and nothing is unread" \
-  "session 120 | ttys120 | Agent : n | unknown | not a git tree | - | $(real "$CF/nogit")|0" \
+  "session 120 | ttys120 | Agent: n | unknown | not a git tree | - | $(real "$CF/nogit")|0" \
   "$(COORDINATOR_PS_TABLE="$CF/ps-nogit" COORDINATOR_CWDS="$CF/cwds-nogit" cfacts facts 2>/dev/null | grep '^session ')|$(COORDINATOR_PS_TABLE="$CF/ps-nogit" COORDINATOR_CWDS="$CF/cwds-nogit" cfacts facts 2>/dev/null | grep -c '^unread ')"
 
 # A brief is read where its session reads it: a relative path from the session's directory,
 # not the coordinator's. A brief that exists and cannot be read is unread, never « names no
 # orchestrator », which stays for a brief read that gives no address.
 mkdir -p "$CWS/app/a1/notes"
-printf 'Your orchestrator is the session **`Orch : gamma [ccc333]`** here.\n' > "$CWS/app/a1/notes/rel.md"
-printf 'Your orchestrator is the session **`Orch : delta [ddd444]`** here.\n' > "$CF/briefs/locked.md"
+printf 'Your orchestrator is the session **`Orch: gamma [ccc333]`** here.\n' > "$CWS/app/a1/notes/rel.md"
+printf 'Your orchestrator is the session **`Orch: delta [ddd444]`** here.\n' > "$CF/briefs/locked.md"
 chmod 000 "$CF/briefs/locked.md"
 cat > "$CF/ps-brief" <<PS
-110 1 ttys110 /usr/bin/hostcli Read and execute $CF/briefs/locked.md --name Agent : k
-111 1 ttys111 /usr/bin/hostcli Read and execute notes/rel.md --name Agent : r
+110 1 ttys110 /usr/bin/hostcli Read and execute $CF/briefs/locked.md --name Agent: k
+111 1 ttys111 /usr/bin/hostcli Read and execute notes/rel.md --name Agent: r
 PS
 printf '110 %s\n111 %s\n' "$RC1" "$RA1" > "$CF/cwds-brief"
 cbrief() { COORDINATOR_PS_TABLE="$CF/ps-brief" COORDINATOR_CWDS="$CF/cwds-brief" cfacts "$@"; }
 CBRIEF=$(cbrief facts 2>/dev/null)
 check "a relative brief is read from its session's directory" \
-  "session 111 | ttys111 | Agent : r | Orch : gamma [ccc333] | forge.example/o/app | feat/x | $RA1" \
+  "session 111 | ttys111 | Agent: r | Orch: gamma [ccc333] | forge.example/o/app | feat/x | $RA1" \
   "$(printf '%s\n' "$CBRIEF" | grep '^session 111 ')"
 skip_as_root "a brief that cannot be read is said, its session unknown, and exit 2" ||
 check "a brief that cannot be read is said, its session unknown, and exit 2" \
-  "unread brief $CF/briefs/locked.md: cannot be read|session 110 | ttys110 | Agent : k | unknown | forge.example/o/app | feat/y | $RC1|exit 2" \
+  "unread brief $CF/briefs/locked.md: cannot be read|session 110 | ttys110 | Agent: k | unknown | forge.example/o/app | feat/y | $RC1|exit 2" \
   "$(printf '%s\n' "$CBRIEF" | grep '^unread brief ')|$(printf '%s\n' "$CBRIEF" | grep '^session 110 ')|$(cbrief facts >/dev/null 2>&1; echo "exit $?")"
 skip_as_root "and owners gives the unread brief as the reason, never « names no orchestrator »" ||
 check "and owners gives the unread brief as the reason, never « names no orchestrator »" \
@@ -9249,20 +9266,20 @@ mkrepo "$CWS/amb/d1" feat/d git@forge.example:o/amb.git
 mkrepo "$CWS/amb/f1" feat/f git@forge.example:o/amb.git
 RV1=$(real "$CWS/amb/v1"); RV2=$(real "$CWS/amb/v2"); RD1=$(real "$CWS/amb/d1"); RF1=$(real "$CWS/amb/f1")
 cat > "$CF/ps-amb" <<'PS'
-130 1 ttys130 /usr/bin/hostcli Your orchestrator is Orch : alpha [aaa111]. --name Agent : v1
-131 1 ttys131 /usr/bin/hostcli Your orchestrator is Orch : alpha [aaa111]. --name Agent : d1
-132 1 ttys132 /usr/bin/hostcli Your orchestrator is Orch : beta [bbb222]. --name Agent : d2
-133 1 ttys133 /usr/bin/hostcli Your orchestrator is Orch : alpha [aaa111]. --name Agent : f1
+130 1 ttys130 /usr/bin/hostcli Your orchestrator is Orch: alpha [aaa111]. --name Agent: v1
+131 1 ttys131 /usr/bin/hostcli Your orchestrator is Orch: alpha [aaa111]. --name Agent: d1
+132 1 ttys132 /usr/bin/hostcli Your orchestrator is Orch: beta [bbb222]. --name Agent: d2
+133 1 ttys133 /usr/bin/hostcli Your orchestrator is Orch: alpha [aaa111]. --name Agent: f1
 PS
 printf '130 %s\n131 %s\n132 %s\n133 %s\n' "$RV1" "$RD1" "$RD1" "$RF1" > "$CF/cwds-amb"
 printf '#!/bin/bash\nprintf "11 feat/v same\\n12 feat/d same\\n13 feat/f fork:someone\\n"\n' > "$CF/forge-amb"
 chmod +x "$CF/forge-amb"
 camb() { COORDINATOR_PS_TABLE="$CF/ps-amb" COORDINATOR_CWDS="$CF/cwds-amb" COORDINATOR_FORGE="$CF/forge-amb" cfacts "$@"; }
 check "owners says unknown for an idle checkout beside a busy one, two orchestrators in one checkout, and a fork" \
-  "pr forge.example/o/amb#11 | feat/v | unknown | no session in $RV2, beside a session in $RV1|pr forge.example/o/amb#12 | feat/d | unknown | sessions 131, 132 in $RD1 name different orchestrators: Orch : alpha [aaa111], Orch : beta [bbb222]|pr forge.example/o/amb#13 | feat/f | unknown | head branch in a fork, owned by someone" \
+  "pr forge.example/o/amb#11 | feat/v | unknown | no session in $RV2, beside a session in $RV1|pr forge.example/o/amb#12 | feat/d | unknown | sessions 131, 132 in $RD1 name different orchestrators: Orch: alpha [aaa111], Orch: beta [bbb222]|pr forge.example/o/amb#13 | feat/f | unknown | head branch in a fork, owned by someone" \
   "$(camb owners 2>/dev/null | tr '\n' '|' | sed 's/|$//')"
 check "two orchestrators in one checkout are still a pull request collision; a fork's is none" \
-  "collision pr | forge.example/o/amb#12 | feat/d | Orch : alpha [aaa111], Orch : beta [bbb222]" \
+  "collision pr | forge.example/o/amb#12 | feat/d | Orch: alpha [aaa111], Orch: beta [bbb222]" \
   "$(camb facts 2>/dev/null | grep '^collision pr ')"
 CT="$WORK/coord-tree/skills"
 mkdir -p "$CT/coordinator/scripts" "$CT/orchestrator/scripts" "$CT/iterm-agents/scripts"
@@ -9291,45 +9308,45 @@ echo brief > "$SLP/briefs/succession-brief.md"
 slc() { ORCHESTRATOR_STATE_DIR="$SLS" bash "$COORD" "$@"; }
 slc_status() { slc "$@" >/dev/null 2>&1; echo "exit $?"; }
 SLREC="$SLS/sleeping.json"
-check "sleep records a paused orchestrator and says so" "sleeping Orch : alpha" \
-  "$(slc sleep --name 'Orch : alpha' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model a-model --effort high --pr 'forge.example/o/app#9 feat/z' --checkout "$SLP" 2>&1)"
+check "sleep records a paused orchestrator and says so" "sleeping Orch: alpha" \
+  "$(slc sleep --name 'Orch: alpha' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model a-model --effort high --pr 'forge.example/o/app#9 feat/z' --checkout "$SLP" 2>&1)"
 check "the record holds every field a wake needs, the time stamped in UTC" \
-  "Orch : alpha|$SLP/briefs/succession-brief.md|$SLP|a-model|high|forge.example/o/app#9 feat/z|$SLP|1" \
+  "Orch: alpha|$SLP/briefs/succession-brief.md|$SLP|a-model|high|forge.example/o/app#9 feat/z|$SLP|1" \
   "$(jq -r '.[0] | [.name,.brief,.dir,.model,.effort,(.prs|join(",")),(.checkouts|join(",")),(.slept|test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")|if . then 1 else 0 end)] | map(tostring) | join("|")' "$SLREC" 2>/dev/null)"
 check "sleep leaves no lock behind" "0" "$([ -e "$SLS/coordinator.lock" ] && echo 1 || echo 0)"
-check "an orchestrator already sleeping is refused" "exit 1|coordinator: sleep: refused: Orch : alpha is already sleeping" \
-  "$(slc_status sleep --name 'Orch : alpha' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model m --effort high)|$(slc sleep --name 'Orch : alpha' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model m --effort high 2>&1)"
+check "an orchestrator already sleeping is refused" "exit 1|coordinator: sleep: refused: Orch: alpha is already sleeping" \
+  "$(slc_status sleep --name 'Orch: alpha' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model m --effort high)|$(slc sleep --name 'Orch: alpha' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model m --effort high 2>&1)"
 check "sleep refuses a name with its reference, an agent's name, a missing brief, a relative directory, no model, an unknown effort" \
   "exit 1|exit 1|exit 1|exit 1|exit 1|exit 1" \
-  "$(slc_status sleep --name 'Orch : b [abc123]' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model m)|$(slc_status sleep --name 'Agent : b' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model m)|$(slc_status sleep --name 'Orch : b' --brief "$SLP/briefs/gone.md" --dir "$SLP" --model m)|$(slc_status sleep --name 'Orch : b' --brief "$SLP/briefs/succession-brief.md" --dir sleep-proj --model m)|$(slc_status sleep --name 'Orch : b' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP")|$(slc_status sleep --name 'Orch : b' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model m --effort huge)"
+  "$(slc_status sleep --name 'Orch: b [abc123]' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model m)|$(slc_status sleep --name 'Agent: b' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model m)|$(slc_status sleep --name 'Orch: b' --brief "$SLP/briefs/gone.md" --dir "$SLP" --model m)|$(slc_status sleep --name 'Orch: b' --brief "$SLP/briefs/succession-brief.md" --dir sleep-proj --model m)|$(slc_status sleep --name 'Orch: b' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP")|$(slc_status sleep --name 'Orch: b' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model m --effort huge)"
 check "sleep refuses a pause without an effort, and says where the pair is read" "exit 1|1" \
-  "$(slc_status sleep --name 'Orch : b' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model m)|$(slc sleep --name 'Orch : b' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model m 2>&1 | grep -c 'no effort: a pause records the model with its effort, --effort <level> (the paused orchestrator reads both with iterm-agent.sh pair)')"
+  "$(slc_status sleep --name 'Orch: b' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model m)|$(slc sleep --name 'Orch: b' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model m 2>&1 | grep -c 'no effort: a pause records the model with its effort, --effort <level> (the paused orchestrator reads both with iterm-agent.sh pair)')"
 check "a refused sleep records nothing" "1" "$(jq length "$SLREC")"
-slc sleep --name 'Orch : beta' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model a-model --effort high >/dev/null 2>&1
+slc sleep --name 'Orch: beta' --brief "$SLP/briefs/succession-brief.md" --dir "$SLP" --model a-model --effort high >/dev/null 2>&1
 check "sleeping lists each one with its directory, pull requests, checkouts, brief, model and effort" \
-  "sleeping Orch : alpha | since * | $SLP | prs forge.example/o/app#9 feat/z | checkouts $SLP | brief $SLP/briefs/succession-brief.md | model a-model | effort high|sleeping Orch : beta | since * | $SLP | prs none | checkouts none | brief $SLP/briefs/succession-brief.md | model a-model | effort high" \
+  "sleeping Orch: alpha | since * | $SLP | prs forge.example/o/app#9 feat/z | checkouts $SLP | brief $SLP/briefs/succession-brief.md | model a-model | effort high|sleeping Orch: beta | since * | $SLP | prs none | checkouts none | brief $SLP/briefs/succession-brief.md | model a-model | effort high" \
   "$(slc sleeping | sed -E 's/since [^ ]+/since */' | tr '\n' '|' | sed 's/|$//')"
-check "wake-done removes the woken one's record alone" "woken Orch : beta|Orch : alpha" \
-  "$(slc wake-done --name 'Orch : beta' 2>&1)|$(jq -r 'map(.name)|join(",")' "$SLREC")"
-check "wake-done and drop refuse a name that does not sleep" "exit 1|exit 1|coordinator: drop: refused: Orch : beta is not sleeping (coordinator.sh sleeping lists who is)" \
-  "$(slc_status wake-done --name 'Orch : beta')|$(slc_status drop --name 'Orch : beta')|$(slc drop --name 'Orch : beta' 2>&1)"
+check "wake-done removes the woken one's record alone" "woken Orch: beta|Orch: alpha" \
+  "$(slc wake-done --name 'Orch: beta' 2>&1)|$(jq -r 'map(.name)|join(",")' "$SLREC")"
+check "wake-done and drop refuse a name that does not sleep" "exit 1|exit 1|coordinator: drop: refused: Orch: beta is not sleeping (coordinator.sh sleeping lists who is)" \
+  "$(slc_status wake-done --name 'Orch: beta')|$(slc_status drop --name 'Orch: beta')|$(slc drop --name 'Orch: beta' 2>&1)"
 mkdir "$SLS/coordinator.lock" && echo "$$ registration" > "$SLS/coordinator.lock/holder"
 check "a drop that cannot take the lock is refused and drops nothing" "exit 1|1|1" \
-  "$(slc_status drop --name 'Orch : alpha')|$(jq length "$SLREC")|$([ -f "$SLP/briefs/succession-brief.md" ] && echo 1 || echo 0)"
+  "$(slc_status drop --name 'Orch: alpha')|$(jq length "$SLREC")|$([ -f "$SLP/briefs/succession-brief.md" ] && echo 1 || echo 0)"
 rm -rf "$SLS/coordinator.lock"
-SLDROP=$(slc drop --name 'Orch : alpha' 2>&1)
+SLDROP=$(slc drop --name 'Orch: alpha' 2>&1)
 check "drop removes the record, moves the brief under abandoned/ beside it, and names what it left untouched" \
-  "dropped Orch : alpha|brief moved to $SLP/briefs/abandoned/*-succession-brief.md|left untouched: forge.example/o/app#9 feat/z, $SLP|0|0|1" \
+  "dropped Orch: alpha|brief moved to $SLP/briefs/abandoned/*-succession-brief.md|left untouched: forge.example/o/app#9 feat/z, $SLP|0|0|1" \
   "$(printf '%s' "$SLDROP" | sed -E 's#abandoned/[0-9TZ]+-#abandoned/*-#' | tr '\n' '|')|$(jq length "$SLREC")|$([ -f "$SLP/briefs/succession-brief.md" ] && echo 1 || echo 0)|$(ls "$SLP/briefs/abandoned" | grep -c 'succession-brief.md$')"
 check "sleeping prints nothing when none sleeps" "|exit 0" "$(slc sleeping)|$(slc_status sleeping)"
 echo 'not json' > "$SLREC"
-check "an unreadable sleeping record is said, never read as none" "exit 1|exit 1" "$(slc_status sleeping)|$(slc_status sleep --name 'Orch : c' --brief "$SLP/briefs/abandoned/$(ls "$SLP/briefs/abandoned" | head -1)" --dir "$SLP" --model m)"
+check "an unreadable sleeping record is said, never read as none" "exit 1|exit 1" "$(slc_status sleeping)|$(slc_status sleep --name 'Orch: c' --brief "$SLP/briefs/abandoned/$(ls "$SLP/briefs/abandoned" | head -1)" --dir "$SLP" --model m)"
 # owners: a pull request whose chain breaks on a sleeping orchestrator's absence is its own.
 echo x > "$SLP/briefs/b2.md"
-printf '[{"name":"Orch : gamma","brief":"%s","dir":"%s","model":"m","effort":"","slept":"2026-10-13T10:00:00Z","prs":["forge.example/o/app#9 feat/z","forge.example/o/app#7 feat/x"],"checkouts":[]}]\n' "$SLP/briefs/b2.md" "$SLP" > "$SLREC"
+printf '[{"name":"Orch: gamma","brief":"%s","dir":"%s","model":"m","effort":"","slept":"2026-10-13T10:00:00Z","prs":["forge.example/o/app#9 feat/z","forge.example/o/app#7 feat/x"],"checkouts":[]}]\n' "$SLP/briefs/b2.md" "$SLP" > "$SLREC"
 SLOWN=$(ORCHESTRATOR_STATE_DIR="$SLS" ORCHESTRATOR_WORKSPACES="$CWS" ORCHESTRATOR_HOST_CLI=hostcli COORDINATOR_PS_TABLE="$CF/ps" COORDINATOR_CWDS="$CF/cwds" COORDINATOR_FORGE="$CF/forge" bash "$COORD" owners 2>/dev/null)
 check "owners gives a sleeping orchestrator's unknown pull request to it, and leaves a live session's alone" \
-  "pr forge.example/o/app#9 | feat/z | Orch : gamma | sleeping since 2026-10-13T10:00:00Z|2|pr forge.example/o/app#10 | feat/w | unknown | no session in $RIDLE" \
+  "pr forge.example/o/app#9 | feat/z | Orch: gamma | sleeping since 2026-10-13T10:00:00Z|2|pr forge.example/o/app#10 | feat/w | unknown | no session in $RIDLE" \
   "$(printf '%s\n' "$SLOWN" | grep '#9 ')|$(printf '%s\n' "$SLOWN" | grep -c '#7 .*session 10[12] ')|$(printf '%s\n' "$SLOWN" | grep '#10 ')"
 # The pause's rules, in the prose that carries them: the operator's word only, the
 # coordinator closes, the orchestrator spawns no successor at a pause, a woken one skips the
@@ -9395,25 +9412,25 @@ CRCFG="$WORK/coord-remote-config"; RREM="$CRCFG/claude-orchestrator/store/remote
 mkdir -p "$RREM" "$CRCFG/claude-orchestrator/store/waits"
 RNOW=$(date -u +%Y-%m-%dT%H:%M:%S.000Z); ROLD=2020-01-01T00:00:00.000Z
 cat > "$RREM/Orch___far" <<EOF
-{"name":"Orch : far","role":"orchestrator","context_tokens":120000,"context_percent":12,"window":1000000,"waiting":"operator","blocks":"phase 3","waiting_since":"$RNOW","updated_at":"$RNOW","machine":"bench-mac","repo":"o/app","prs":["o/app#7","o/app#9","o/app#99"]}
+{"name":"Orch: far","role":"orchestrator","context_tokens":120000,"context_percent":12,"window":1000000,"waiting":"operator","blocks":"phase 3","waiting_since":"$RNOW","updated_at":"$RNOW","machine":"bench-mac","repo":"o/app","prs":["o/app#7","o/app#9","o/app#99"]}
 EOF
 cat > "$RREM/Orch___near" <<EOF
-{"name":"Orch : near","role":"orchestrator","context_tokens":300000,"context_percent":30,"window":1000000,"waiting":"done","blocks":null,"waiting_since":"$RNOW","updated_at":"$RNOW","machine":"lab-mini","repo":null,"prs":[]}
+{"name":"Orch: near","role":"orchestrator","context_tokens":300000,"context_percent":30,"window":1000000,"waiting":"done","blocks":null,"waiting_since":"$RNOW","updated_at":"$RNOW","machine":"lab-mini","repo":null,"prs":[]}
 EOF
 cat > "$RREM/Orch___quiet" <<EOF
-{"name":"Orch : quiet","role":"orchestrator","context_tokens":0,"context_percent":0,"window":1000000,"waiting":null,"blocks":null,"waiting_since":null,"updated_at":"$RNOW","machine":"lab-mini","repo":"o/app","prs":["o/app#10","o/gone#5"]}
+{"name":"Orch: quiet","role":"orchestrator","context_tokens":0,"context_percent":0,"window":1000000,"waiting":null,"blocks":null,"waiting_since":null,"updated_at":"$RNOW","machine":"lab-mini","repo":"o/app","prs":["o/app#10","o/gone#5"]}
 EOF
 cat > "$RREM/Orch___twin" <<EOF
-{"name":"Orch : twin","role":"orchestrator","context_tokens":0,"context_percent":0,"window":1000000,"waiting":null,"blocks":null,"waiting_since":null,"updated_at":"$RNOW","machine":"lab-mini","repo":null,"prs":["o/gone#5"]}
+{"name":"Orch: twin","role":"orchestrator","context_tokens":0,"context_percent":0,"window":1000000,"waiting":null,"blocks":null,"waiting_since":null,"updated_at":"$RNOW","machine":"lab-mini","repo":null,"prs":["o/gone#5"]}
 EOF
 cat > "$RREM/Orch___zeta" <<EOF
-{"name":"Orch : zeta","role":"orchestrator","context_tokens":0,"context_percent":0,"window":1000000,"waiting":null,"blocks":null,"waiting_since":null,"updated_at":"$RNOW","machine":"lab-mini","repo":"o/app","prs":["o/app#99"]}
+{"name":"Orch: zeta","role":"orchestrator","context_tokens":0,"context_percent":0,"window":1000000,"waiting":null,"blocks":null,"waiting_since":null,"updated_at":"$RNOW","machine":"lab-mini","repo":"o/app","prs":["o/app#99"]}
 EOF
 cat > "$RREM/Orch___old" <<EOF
-{"name":"Orch : old","role":"orchestrator","context_tokens":0,"context_percent":0,"window":1000000,"waiting":"operator","blocks":"x","waiting_since":"$ROLD","updated_at":"$ROLD","machine":"lab-mini","repo":"o/app","prs":["o/app#8"]}
+{"name":"Orch: old","role":"orchestrator","context_tokens":0,"context_percent":0,"window":1000000,"waiting":"operator","blocks":"x","waiting_since":"$ROLD","updated_at":"$ROLD","machine":"lab-mini","repo":"o/app","prs":["o/app#8"]}
 EOF
 cat > "$RREM/Orch___alpha" <<EOF
-{"name":"Orch : alpha","role":"orchestrator","context_tokens":0,"context_percent":0,"window":1000000,"waiting":null,"blocks":null,"waiting_since":null,"updated_at":"$RNOW","machine":"lab-mini","repo":"o/app","prs":["o/app#8"]}
+{"name":"Orch: alpha","role":"orchestrator","context_tokens":0,"context_percent":0,"window":1000000,"waiting":null,"blocks":null,"waiting_since":null,"updated_at":"$RNOW","machine":"lab-mini","repo":"o/app","prs":["o/app#8"]}
 EOF
 printf 'not json\n' > "$RREM/Orch___bad"
 printf 'half a row' > "$RREM/Orch___far.tmp-1"
@@ -9425,17 +9442,17 @@ crem_status() { crem "$@" >/dev/null 2>&1; echo "exit $?"; }
 RFACTS=$(crem facts 2>/dev/null)
 ROWNERS=$(crem owners 2>/dev/null)
 check "facts lists each fresh remote row in its wait form: operator, done, working" \
-  "remote Orch : far | on bench-mac | updated $RNOW | context 120000 (12%) | repository o/app | prs o/app#7, o/app#9, o/app#99 | operator since $RNOW | blocks: phase 3|remote Orch : near | on lab-mini | updated $RNOW | context 300000 (30%) | repository none | prs none | done since $RNOW|remote Orch : quiet | on lab-mini | updated $RNOW | context 0 (0%) | repository o/app | prs o/app#10, o/gone#5 | working|remote Orch : twin | on lab-mini | updated $RNOW | context 0 (0%) | repository none | prs o/gone#5 | working|remote Orch : zeta | on lab-mini | updated $RNOW | context 0 (0%) | repository o/app | prs o/app#99 | working" \
+  "remote Orch: far | on bench-mac | updated $RNOW | context 120000 (12%) | repository o/app | prs o/app#7, o/app#9, o/app#99 | operator since $RNOW | blocks: phase 3|remote Orch: near | on lab-mini | updated $RNOW | context 300000 (30%) | repository none | prs none | done since $RNOW|remote Orch: quiet | on lab-mini | updated $RNOW | context 0 (0%) | repository o/app | prs o/app#10, o/gone#5 | working|remote Orch: twin | on lab-mini | updated $RNOW | context 0 (0%) | repository none | prs o/gone#5 | working|remote Orch: zeta | on lab-mini | updated $RNOW | context 0 (0%) | repository o/app | prs o/app#99 | working" \
   "$(printf '%s\n' "$RFACTS" | grep '^remote ' | tr '\n' '|' | sed 's/|$//')"
 check "a stale remote row, a local session's name, and a temporary file are not listed" "0|0|1" \
-  "$(printf '%s\n' "$RFACTS" | grep -c '^remote Orch : old ')|$(printf '%s\n' "$RFACTS" | grep -c '^remote Orch : alpha ')|$(printf '%s\n' "$RFACTS" | grep -c '^remote Orch : far ')"
+  "$(printf '%s\n' "$RFACTS" | grep -c '^remote Orch: old ')|$(printf '%s\n' "$RFACTS" | grep -c '^remote Orch: alpha ')|$(printf '%s\n' "$RFACTS" | grep -c '^remote Orch: far ')"
 check "a malformed remote row is unread, and facts and owners exit 2" "unread remote $RREM/Orch___bad: not a JSON row|exit 2|exit 2" \
   "$(printf '%s\n' "$RFACTS" | grep '^unread ')|$(crem_status facts)|$(crem_status owners)"
 check "a remote row listing a pull request a local session is on is a collision, and so is two remote rows on one pull request of an unread repository" \
-  "collision pr | forge.example/o/app#7 | feat/x | Orch : alpha [aaa111], Orch : beta [bbb222], Orch : far|collision pr | o/gone#5 | - | Orch : quiet, Orch : twin" \
+  "collision pr | forge.example/o/app#7 | feat/x | Orch: alpha [aaa111], Orch: beta [bbb222], Orch: far|collision pr | o/gone#5 | - | Orch: quiet, Orch: twin" \
   "$(printf '%s\n' "$RFACTS" | grep '^collision pr ' | tr '\n' '|' | sed 's/|$//')"
 check "owners names the orchestrator of an unknown pull request a remote row lists, and says a pull request in an unread repository is not read" \
-  "pr forge.example/o/app#9 | feat/z | Orch : far | remote on bench-mac, updated $RNOW|pr forge.example/o/app#10 | feat/w | Orch : quiet | remote on lab-mini, updated $RNOW|pr o/gone#5 | - | Orch : quiet | remote on lab-mini, updated $RNOW, not read on the forge here|pr o/gone#5 | - | Orch : twin | remote on lab-mini, updated $RNOW, not read on the forge here" \
+  "pr forge.example/o/app#9 | feat/z | Orch: far | remote on bench-mac, updated $RNOW|pr forge.example/o/app#10 | feat/w | Orch: quiet | remote on lab-mini, updated $RNOW|pr o/gone#5 | - | Orch: quiet | remote on lab-mini, updated $RNOW, not read on the forge here|pr o/gone#5 | - | Orch: twin | remote on lab-mini, updated $RNOW, not read on the forge here" \
   "$(printf '%s\n' "$ROWNERS" | grep 'remote on' | tr '\n' '|' | sed 's/|$//')"
 check "a remote pull request absent from its repository's open list is not printed by owners, nor counted in a collision" "0|0" \
   "$(printf '%s\n' "$ROWNERS" | grep -c '#99')|$(printf '%s\n' "$RFACTS" | grep '^collision ' | grep -c '#99')"
@@ -9463,28 +9480,28 @@ round_entry() {  # <id> <from> <since> <status> <kind> <question>
       question:$q, choices:[], recommendation:null, status:$status, at:$since, answer:null}' > "$CROUND/$1.json"
   : > "$CLAUDE_CONFIG_DIR/claude-orchestrator/store/sessions/s-$1"
 }
-round_entry b-late "Orch : b" 2026-10-18T10:05:00.000Z open operator 'Merge #12 now?
+round_entry b-late "Orch: b" 2026-10-18T10:05:00.000Z open operator 'Merge #12 now?
 - **A** : merge it
 - **B** : wait'
-round_entry a-one "Orch : a" 2026-10-18T10:03:00.000Z open operator 'Rename the pane?'
-round_entry b-early "Orch : b" 2026-10-18T10:01:00.000Z open operator 'Ship it?'
-round_entry a-gone "Orch : a" 2026-10-18T09:00:00.000Z withdrawn operator 'Close the tab?'
-round_entry c-done "Orch : c" 2026-10-18T10:04:00.000Z open done 'Everything merged.'
-round_entry d-shut "Orch : d" 2026-10-18T08:00:00.000Z closed operator 'Old question?'
+round_entry a-one "Orch: a" 2026-10-18T10:03:00.000Z open operator 'Rename the pane?'
+round_entry b-early "Orch: b" 2026-10-18T10:01:00.000Z open operator 'Ship it?'
+round_entry a-gone "Orch: a" 2026-10-18T09:00:00.000Z withdrawn operator 'Close the tab?'
+round_entry c-done "Orch: c" 2026-10-18T10:04:00.000Z open done 'Everything merged.'
+round_entry d-shut "Orch: d" 2026-10-18T08:00:00.000Z closed operator 'Old question?'
 printf '{"id": "half' > "$CROUND/broken.json"
 cp "$CROUND/a-one.json" "$CROUND/a-one.json.tmp-123-abcdef"
 check "round prints the open entries grouped by sender, the groups by their first wait, then the withdrawn ones" \
-  "round b-early | operator | from Orch : b | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open
+  "round b-early | operator | from Orch: b | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open
     Ship it?
-round b-late | operator | from Orch : b | since 2026-10-18T10:05:00.000Z | blocks: phase 3 | open
+round b-late | operator | from Orch: b | since 2026-10-18T10:05:00.000Z | blocks: phase 3 | open
     Merge #12 now?
     - **A** : merge it
     - **B** : wait
-round a-one | operator | from Orch : a | since 2026-10-18T10:03:00.000Z | blocks: phase 3 | open
+round a-one | operator | from Orch: a | since 2026-10-18T10:03:00.000Z | blocks: phase 3 | open
     Rename the pane?
-round c-done | done | from Orch : c | since 2026-10-18T10:04:00.000Z | blocks: - | open
+round c-done | done | from Orch: c | since 2026-10-18T10:04:00.000Z | blocks: - | open
     Everything merged.
-round a-gone | operator | from Orch : a | since 2026-10-18T09:00:00.000Z | blocks: phase 3 | withdrawn
+round a-gone | operator | from Orch: a | since 2026-10-18T09:00:00.000Z | blocks: phase 3 | withdrawn
     Close the tab?" \
   "$(COORDINATOR_NOW=$ROUND_NOW coord round 2>&1)"
 check "round exits 0, and an empty or missing round directory prints nothing" "exit 0||" \
@@ -9492,7 +9509,7 @@ check "round exits 0, and an empty or missing round directory prints nothing" "e
 out=$(coord round-close b-early --answer 'A, ship it — on 2026-10-18' 2>&1); code=$?
 check "round-close says what it closed" "closed b-early|exit 0" "$out|exit $code"
 check "round-close writes the status and the operator's answer, by the coordinator, stamped in UTC" \
-  "closed|A, ship it — on 2026-10-18|coordinator|1|Ship it?|Orch : b" \
+  "closed|A, ship it — on 2026-10-18|coordinator|1|Ship it?|Orch: b" \
   "$(jq -r '[.status, .answer.text, .answer.by, (.answer.at | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$") | if . then 1 else 0 end), .question, .from] | join("|")' "$CROUND/b-early.json")"
 check "round-close leaves no temporary file, and round no longer lists the closed entry but still the others" "0|0|1" \
   "$(find "$CROUND" -name 'b-early.json.tmp-*' | wc -l | tr -d ' ')|$(COORDINATOR_NOW=$ROUND_NOW coord round | grep -c '^round b-early ')|$(COORDINATOR_NOW=$ROUND_NOW coord round | grep -c '^round b-late ')"
@@ -9510,13 +9527,13 @@ check "round-close leaves an open entry's delivery pending, stamped as its answe
 check "round-close leaves no delivery on an entry that was not open" "null" "$(jq -c .delivery "$CROUND/a-gone.json")"
 DROUND="$WORK/coord-done/round"
 mkdir -p "$DROUND"
-jq -n '{id:"d-open", from:"Orch : d", session:"s-d", kind:"done", since:"2026-10-18T10:02:00.000Z", blocks:null,
+jq -n '{id:"d-open", from:"Orch: d", session:"s-d", kind:"done", since:"2026-10-18T10:02:00.000Z", blocks:null,
   question:"Everything merged.", choices:[], recommendation:null, status:"open", at:"2026-10-18T10:02:00.000Z", answer:null}' > "$DROUND/d-open.json"
 check "round-close closes an open done entry but leaves it no delivery to send" "closed d-open|closed|null" \
   "$(ORCHESTRATOR_STATE_DIR="$WORK/coord-done" bash "$COORD" round-close d-open --answer ok 2>&1)|$(jq -r .status "$DROUND/d-open.json")|$(jq -c .delivery "$DROUND/d-open.json")"
 FROUND="$WORK/coord-far/round"
 mkdir -p "$FROUND"
-jq -n '{id:"r-far", from:"Orch : r", session:"s-r", kind:"operator", since:"2026-10-18T10:02:00.000Z", blocks:"phase 3",
+jq -n '{id:"r-far", from:"Orch: r", session:"s-r", kind:"operator", since:"2026-10-18T10:02:00.000Z", blocks:"phase 3",
   question:"Ship it far?", choices:[], recommendation:null, status:"open", at:"2026-10-18T10:02:00.000Z", answer:null,
   origin:{machine:"far", address:"uds:/tmp/cc-socks/far.sock"}}' > "$FROUND/r-far.json"
 check "round-close leaves an entry from another machine pending as the module's remote answers are, with no answer stamp" "closed r-far|pending|0|null" \
@@ -9529,7 +9546,7 @@ check "round-close leaves an entry from another machine pending as the module's 
 WROUND="$WORK/coord-withdraw/round"
 mkdir -p "$WROUND"
 for wid in w-open w-again w-both; do
-  jq -n --arg id "$wid" '{id:$id, from:"Orch : w", session:("s-" + $id), kind:"operator", since:"2026-10-18T10:02:00.000Z", blocks:"phase 3",
+  jq -n --arg id "$wid" '{id:$id, from:"Orch: w", session:("s-" + $id), kind:"operator", since:"2026-10-18T10:02:00.000Z", blocks:"phase 3",
     question:"Merge #12?", choices:[], recommendation:null, status:"open", at:"2026-10-18T10:02:00.000Z", answer:null}' > "$WROUND/$wid.json"
 done
 wcoord() { ORCHESTRATOR_STATE_DIR="$WORK/coord-withdraw" bash "$COORD" "$@"; }
@@ -9553,12 +9570,12 @@ CWAITS="$CLAUDE_CONFIG_DIR/claude-orchestrator/store/waits"
 mkdir -p "$CWAITS"
 fp_entry() {  # <id> <kind> <blocks or -> <urgent 0|1> <question>
   jq -n --arg id "$1" --arg kind "$2" --arg blocks "$3" --argjson urgent "$4" --arg q "$5" \
-    '{id:$id, from:"Orch : f", session:("s-" + $id), kind:$kind, since:"2026-10-18T10:00:00.000Z",
+    '{id:$id, from:"Orch: f", session:("s-" + $id), kind:$kind, since:"2026-10-18T10:00:00.000Z",
       blocks:(if $kind == "operator" then $blocks else null end), question:$q, choices:[], recommendation:null,
       status:"open", at:"2026-10-18T10:00:00.000Z", answer:null} + (if $urgent == 1 then {urgent:true} else {} end)' > "$CROUND/$1.json"
 }
 fp_wait() {  # <id> <relayed>
-  jq -n -c --arg r "$2" '{waiting:"operator", blocks:"phase 3", waiting_since:"2026-10-18T10:00:00.000Z", relayed:$r, name:"Orch : f", pid:"1", typed:{blocks:"phase 3", since:null}}' > "$CWAITS/s-$1"
+  jq -n -c --arg r "$2" '{waiting:"operator", blocks:"phase 3", waiting_since:"2026-10-18T10:00:00.000Z", relayed:$r, name:"Orch: f", pid:"1", typed:{blocks:"phase 3", since:null}}' > "$CWAITS/s-$1"
 }
 fp_entry fp-plain operator 'phase 3' 0 'Ship it?';        fp_wait fp-plain 17-fdd599a1
 fp_entry fp-text operator '' 0 'Ship it? 🚀 Café';          fp_wait fp-text 26-6c02a0af
@@ -9573,7 +9590,7 @@ for id in fp-text fp-urgent fp-done fp-other fp-nowait fp-broken; do coord round
 check "round-close nulls the relayed fingerprint it matches, a plain one, a non-ASCII one, an urgent one and a done one, and the turn's mark with it" \
   "null|null|null|null|false" \
   "$(jq -r '.relayed' "$CWAITS/s-fp-plain")|$(jq -r '.relayed' "$CWAITS/s-fp-text")|$(jq -r '.relayed' "$CWAITS/s-fp-urgent")|$(jq -r '.relayed' "$CWAITS/s-fp-done")|$(jq 'has("typed")' "$CWAITS/s-fp-plain")"
-check "round-close keeps the rest of the wait file, and leaves no temporary file" "operator|phase 3|Orch : f|0" \
+check "round-close keeps the rest of the wait file, and leaves no temporary file" "operator|phase 3|Orch: f|0" \
   "$(jq -r '[.waiting, .blocks, .name] | join("|")' "$CWAITS/s-fp-plain")|$(find "$CWAITS" -name '*.tmp-*' | wc -l | tr -d ' ')"
 check "round-close keeps a fingerprint that is not the closed entry's, a later wait's" "17-00000000|closed" \
   "$(jq -r .relayed "$CWAITS/s-fp-other")|$(jq -r .status "$CROUND/fp-other.json")"
@@ -9587,7 +9604,7 @@ AROUND="$WORK/coord-archive"
 mkdir -p "$AROUND/round"
 arch_entry() {  # <id> <status>
   jq -n --arg id "$1" --arg status "$2" \
-    '{id:$id, from:"Orch : z", session:("s-" + $id), kind:"operator", since:"2026-10-18T10:00:00.000Z", blocks:"x",
+    '{id:$id, from:"Orch: z", session:("s-" + $id), kind:"operator", since:"2026-10-18T10:00:00.000Z", blocks:"x",
       question:("Question " + $id), choices:[], recommendation:null, status:$status, at:"2026-10-18T10:00:00.000Z", answer:null}' > "$AROUND/round/$1.json"
 }
 arch_entry z-closed-1 closed; arch_entry z-closed-2 closed; arch_entry z-open open
@@ -9621,18 +9638,18 @@ GSTATE="$WORK/coord-gone"; GCFG="$WORK/coord-gone-config"
 mkdir -p "$GSTATE/round" "$GCFG/claude-orchestrator/store/sessions"
 for gone in "live:s-live" "ended:s-ended" "odd:s odd/1"; do
   jq -n --arg id "${gone%%:*}" --arg session "${gone#*:}" \
-    '{id:$id, from:("Orch : " + $id), session:$session, kind:"operator", since:"2026-10-18T10:0\(if $id == "live" then 1 elif $id == "ended" then 2 else 3 end):00.000Z",
+    '{id:$id, from:("Orch: " + $id), session:$session, kind:"operator", since:"2026-10-18T10:0\(if $id == "live" then 1 elif $id == "ended" then 2 else 3 end):00.000Z",
       blocks:"phase 3", question:"Ship it?", choices:[], recommendation:null, status:"open", at:"T", answer:null}' > "$GSTATE/round/${gone%%:*}.json"
 done
 : > "$GCFG/claude-orchestrator/store/sessions/s-live"
 cp "$CS/pane.json" "$GSTATE/pane.json"
 : > "$GCFG/claude-orchestrator/store/sessions/s_odd_1"
 check "round says the sender is gone on the header of an entry whose sessions file is absent, and still prints the entry" \
-  "round live | operator | from Orch : live | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open
+  "round live | operator | from Orch: live | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open
     Ship it?
-round ended | operator | from Orch : ended | since 2026-10-18T10:02:00.000Z | blocks: phase 3 | open | sender gone
+round ended | operator | from Orch: ended | since 2026-10-18T10:02:00.000Z | blocks: phase 3 | open | sender gone
     Ship it?
-round odd | operator | from Orch : odd | since 2026-10-18T10:03:00.000Z | blocks: phase 3 | open
+round odd | operator | from Orch: odd | since 2026-10-18T10:03:00.000Z | blocks: phase 3 | open
     Ship it?" \
   "$(ORCHESTRATOR_STATE_DIR="$GSTATE" CLAUDE_CONFIG_DIR="$GCFG" COORDINATOR_NOW=$ROUND_NOW bash "$COORD" round 2>&1)"
 # ORCHESTRATOR_MODULE_DIR moves the module's store, as the hooks module reads it: the same
@@ -9640,7 +9657,7 @@ round odd | operator | from Orch : odd | since 2026-10-18T10:03:00.000Z | blocks
 GMOD="$WORK/coord-gone-module"
 mkdir -p "$GMOD/store/sessions"
 : > "$GMOD/store/sessions/s-ended"
-check "with the module directory overridden, round reads the senders' sessions files there alone" "round live | operator | from Orch : live | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open | sender gone|round ended | operator | from Orch : ended | since 2026-10-18T10:02:00.000Z | blocks: phase 3 | open" \
+check "with the module directory overridden, round reads the senders' sessions files there alone" "round live | operator | from Orch: live | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open | sender gone|round ended | operator | from Orch: ended | since 2026-10-18T10:02:00.000Z | blocks: phase 3 | open" \
   "$(ORCHESTRATOR_STATE_DIR="$GSTATE" CLAUDE_CONFIG_DIR="$GCFG" ORCHESTRATOR_MODULE_DIR="$GMOD" COORDINATOR_NOW=$ROUND_NOW bash "$COORD" round 2>&1 | grep '^round \(live\|ended\) ' | paste -sd'|' -)"
 # A row write in flight is a temporary file beside the sessions files (the module's
 # writeAtomic, the launcher's row_write), never one: an entry whose session bears that very
@@ -9648,11 +9665,11 @@ check "with the module directory overridden, round reads the senders' sessions f
 TSTATE="$WORK/coord-tmp"; TCFG="$WORK/coord-tmp-config"
 mkdir -p "$TSTATE/round" "$TCFG/claude-orchestrator/store/sessions"
 cp "$CS/pane.json" "$TSTATE/pane.json"
-jq -n '{id:"tmp", from:"Orch : tmp", session:"s-tmp.tmp-1-abcdef", kind:"operator", since:"2026-10-18T10:01:00.000Z",
+jq -n '{id:"tmp", from:"Orch: tmp", session:"s-tmp.tmp-1-abcdef", kind:"operator", since:"2026-10-18T10:01:00.000Z",
   blocks:"phase 3", question:"Ship it?", choices:[], recommendation:null, status:"open", at:"T", answer:null}' > "$TSTATE/round/tmp.json"
 : > "$TCFG/claude-orchestrator/store/sessions/s-tmp.tmp-1-abcdef"
 check "round reads no temporary file beside the sessions files as a sender's" \
-  "round tmp | operator | from Orch : tmp | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open | sender gone" \
+  "round tmp | operator | from Orch: tmp | since 2026-10-18T10:01:00.000Z | blocks: phase 3 | open | sender gone" \
   "$(ORCHESTRATOR_STATE_DIR="$TSTATE" CLAUDE_CONFIG_DIR="$TCFG" COORDINATOR_NOW=$ROUND_NOW bash "$COORD" round 2>&1 | grep '^round tmp ')"
 # An entry the operator answered from the coordinator's pane is printed after the open ones and
 # before the withdrawn ones, each set in the round's order, with the answer the pane recorded.
@@ -9661,7 +9678,7 @@ mkdir -p "$ASTATE/round" "$ACFG/claude-orchestrator/store/sessions"
 for spec in "w1:withdrawn:1" "x1:answered:2" "o1:open:3" "x2:answered:4" "o2:open:5"; do
   IFS=: read -r aid astatus amin <<< "$spec"
   jq -n --arg id "$aid" --arg status "$astatus" --arg since "2026-10-20T10:0${amin}:00.000Z" \
-    '{id:$id, from:"Orch : a", session:"s-a", kind:"operator", since:$since, blocks:"phase 3", question:("Ask " + $id + "?"),
+    '{id:$id, from:"Orch: a", session:"s-a", kind:"operator", since:$since, blocks:"phase 3", question:("Ask " + $id + "?"),
       choices:[], recommendation:null, status:$status, at:$since,
       answer:(if $status == "answered" then {text:"A : ship it", by:"pane", at:"2026-10-20T10:09:00.000Z"}
               elif $status == "withdrawn" then {text:"", by:"sender", at:"2026-10-20T10:09:00.000Z"} else null end)}' > "$ASTATE/round/$aid.json"
@@ -9669,17 +9686,17 @@ done
 : > "$ACFG/claude-orchestrator/store/sessions/s-a"
 cp "$CS/pane.json" "$ASTATE/pane.json"
 check "round prints the open entries, then the answered ones with their answer, then the withdrawn ones, a sender's own withdrawal said" \
-  "round o1 | operator | from Orch : a | since 2026-10-20T10:03:00.000Z | blocks: phase 3 | open
+  "round o1 | operator | from Orch: a | since 2026-10-20T10:03:00.000Z | blocks: phase 3 | open
     Ask o1?
-round o2 | operator | from Orch : a | since 2026-10-20T10:05:00.000Z | blocks: phase 3 | open
+round o2 | operator | from Orch: a | since 2026-10-20T10:05:00.000Z | blocks: phase 3 | open
     Ask o2?
-round x1 | operator | from Orch : a | since 2026-10-20T10:02:00.000Z | blocks: phase 3 | answered
+round x1 | operator | from Orch: a | since 2026-10-20T10:02:00.000Z | blocks: phase 3 | answered
     Ask x1?
     answered from the pane at 2026-10-20T10:09:00.000Z: A : ship it
-round x2 | operator | from Orch : a | since 2026-10-20T10:04:00.000Z | blocks: phase 3 | answered
+round x2 | operator | from Orch: a | since 2026-10-20T10:04:00.000Z | blocks: phase 3 | answered
     Ask x2?
     answered from the pane at 2026-10-20T10:09:00.000Z: A : ship it
-round w1 | operator | from Orch : a | since 2026-10-20T10:01:00.000Z | blocks: phase 3 | withdrawn
+round w1 | operator | from Orch: a | since 2026-10-20T10:01:00.000Z | blocks: phase 3 | withdrawn
     Ask w1?
     withdrawn by the sender at 2026-10-20T10:09:00.000Z: a later turn the operator typed in waits on something else" \
   "$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>&1)"
@@ -9687,15 +9704,15 @@ round w1 | operator | from Orch : a | since 2026-10-20T10:01:00.000Z | blocks: p
 # that says nothing keeps the sentence above.
 for spec in "w2:superseded by s-a-o2" "w3:handed over to its successor"; do
   IFS=: read -r wid wwhy <<< "$spec"
-  jq -n --arg id "$wid" --arg why "$wwhy" '{id:$id, from:"Orch : a", session:"s-a", kind:"operator", since:"2026-10-20T10:00:00.000Z",
+  jq -n --arg id "$wid" --arg why "$wwhy" '{id:$id, from:"Orch: a", session:"s-a", kind:"operator", since:"2026-10-20T10:00:00.000Z",
     blocks:"phase 3", question:("Ask " + $id + "?"), choices:[], recommendation:null, status:"withdrawn", at:"2026-10-20T10:00:00.000Z",
     answer:{text:$why, by:"sender", at:"2026-10-20T10:09:00.000Z"}}' > "$ASTATE/round/$wid.json"
 done
 check "round says a sender's withdrawal with its reason, and shows no withdrawn entry as open" \
-  "round w2 | operator | from Orch : a | since 2026-10-20T10:00:00.000Z | blocks: phase 3 | withdrawn
+  "round w2 | operator | from Orch: a | since 2026-10-20T10:00:00.000Z | blocks: phase 3 | withdrawn
     Ask w2?
     withdrawn by the sender at 2026-10-20T10:09:00.000Z: superseded by s-a-o2
-round w3 | operator | from Orch : a | since 2026-10-20T10:00:00.000Z | blocks: phase 3 | withdrawn
+round w3 | operator | from Orch: a | since 2026-10-20T10:00:00.000Z | blocks: phase 3 | withdrawn
     Ask w3?
     withdrawn by the sender at 2026-10-20T10:09:00.000Z: handed over to its successor|0" \
   "$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>&1 | grep -A2 '^round w[23] ')|$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>&1 | grep -c '^round w[123] .*| open')"
@@ -9705,15 +9722,15 @@ rm -f "$ASTATE/round/w2.json" "$ASTATE/round/w3.json"
 # fixed text instead of its reason (the operator's report of 2026-10-25).
 for spec in "w4:tab:answered in the sender's own tab" "w5:pane:an older reason"; do
   IFS=: read -r wid wby wwhy <<< "$spec"
-  jq -n --arg id "$wid" --arg by "$wby" --arg why "$wwhy" '{id:$id, from:"Orch : a", session:"s-a", kind:"operator", since:"2026-10-20T10:00:00.000Z",
+  jq -n --arg id "$wid" --arg by "$wby" --arg why "$wwhy" '{id:$id, from:"Orch: a", session:"s-a", kind:"operator", since:"2026-10-20T10:00:00.000Z",
     blocks:"phase 3", question:("Ask " + $id + "?"), choices:[], recommendation:null, status:"withdrawn", at:"2026-10-20T10:00:00.000Z",
     answer:{text:$why, by:$by, at:"2026-10-20T10:09:00.000Z"}}' > "$ASTATE/round/$wid.json"
 done
 check "round prints every withdrawn entry's reason, whoever withdrew it" \
-  "round w4 | operator | from Orch : a | since 2026-10-20T10:00:00.000Z | blocks: phase 3 | withdrawn
+  "round w4 | operator | from Orch: a | since 2026-10-20T10:00:00.000Z | blocks: phase 3 | withdrawn
     Ask w4?
     withdrawn in the sender's tab at 2026-10-20T10:09:00.000Z: answered in the sender's own tab
-round w5 | operator | from Orch : a | since 2026-10-20T10:00:00.000Z | blocks: phase 3 | withdrawn
+round w5 | operator | from Orch: a | since 2026-10-20T10:00:00.000Z | blocks: phase 3 | withdrawn
     Ask w5?
     withdrawn by pane at 2026-10-20T10:09:00.000Z: an older reason" \
   "$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>&1 | grep -A2 '^round w[45] ')"
@@ -9736,7 +9753,7 @@ REAL_JQ=$(command -v jq)
 cat > "$LATE_BIN/jq" <<SHIM
 #!/bin/bash
 case "\$*" in
-  *'def ordered'*) [ -f "$ASTATE/round/late.json" ] || jq -n '{id:"late", from:"Orch : a", session:"s-a", kind:"operator", since:"2026-10-20T10:05:00.000Z",
+  *'def ordered'*) [ -f "$ASTATE/round/late.json" ] || jq -n '{id:"late", from:"Orch: a", session:"s-a", kind:"operator", since:"2026-10-20T10:05:00.000Z",
     blocks:"phase 9", question:"Late?", choices:[], recommendation:null, status:"open", at:"2026-10-20T10:05:00.000Z", answer:null}' > "$ASTATE/round/late.json" ;;
 esac
 exec "$REAL_JQ" "\$@"
@@ -9765,7 +9782,7 @@ for spec in "u1:open:2026-10-24T11:59:00.000Z:true" "p15:open:2026-10-24T11:45:0
     "zdone:open:2026-10-24T09:30:00.000Z:false"; do
   IFS=: read -r did dstatus dh dm drest durgent <<< "$spec"
   jq -n --arg id "$did" --arg status "$dstatus" --arg since "$dh:$dm:$drest" --argjson urgent "$durgent" \
-    '{id:$id, from:"Orch : d", session:"s-d", kind:(if $id == "zdone" then "done" else "operator" end), since:$since,
+    '{id:$id, from:"Orch: d", session:"s-d", kind:(if $id == "zdone" then "done" else "operator" end), since:$since,
       blocks:(if $id == "zdone" then null else "phase 3" end), question:("Ask " + $id + "?"),
       choices:[], recommendation:null, status:$status, at:$since,
       answer:(if $status == "answered" then {text:"A : ship it", by:"pane", at:"2026-10-24T11:59:00.000Z"}
@@ -9778,13 +9795,13 @@ printf '{"session":"s-coord","pid":"4242","at":"2026-10-24T09:00:00.000Z"}\n' > 
 dround() { ORCHESTRATOR_STATE_DIR="$DSTATE" CLAUDE_CONFIG_DIR="$DCFG" COORDINATOR_NOW=2026-10-24T12:00:00Z COORDINATOR_PS_TABLE="$WORK/coord-due-ps" bash "$COORD" round 2>&1; }
 # The urgent entry leads, the round's one order (6.2).
 check "with the pane open round marks due an urgent entry alone, however old the others" \
-  "round u1 | operator | from Orch : d | since 2026-10-24T11:59:00.000Z | blocks: phase 3 | open | due
-round pold | operator | from Orch : d | since 2026-10-24T09:00:00.000Z | blocks: phase 3 | open
-round zdone | done | from Orch : d | since 2026-10-24T09:30:00.000Z | blocks: - | open
-round p15 | operator | from Orch : d | since 2026-10-24T11:45:00.000Z | blocks: phase 3 | open
-round p14 | operator | from Orch : d | since 2026-10-24T11:45:01.000Z | blocks: phase 3 | open
-round xu | operator | from Orch : d | since 2026-10-24T11:58:00.000Z | blocks: phase 3 | answered
-round wold | operator | from Orch : d | since 2026-10-24T09:00:00.000Z | blocks: phase 3 | withdrawn" \
+  "round u1 | operator | from Orch: d | since 2026-10-24T11:59:00.000Z | blocks: phase 3 | open | due
+round pold | operator | from Orch: d | since 2026-10-24T09:00:00.000Z | blocks: phase 3 | open
+round zdone | done | from Orch: d | since 2026-10-24T09:30:00.000Z | blocks: - | open
+round p15 | operator | from Orch: d | since 2026-10-24T11:45:00.000Z | blocks: phase 3 | open
+round p14 | operator | from Orch: d | since 2026-10-24T11:45:01.000Z | blocks: phase 3 | open
+round xu | operator | from Orch: d | since 2026-10-24T11:58:00.000Z | blocks: phase 3 | answered
+round wold | operator | from Orch: d | since 2026-10-24T09:00:00.000Z | blocks: phase 3 | withdrawn" \
   "$(dround | grep '^round ')"
 check "with no pane open every open question is due, a closing proposal still not: no record, a dead pid, a record with no pid" \
   "4|0|4|4" \
@@ -9805,7 +9822,7 @@ for spec in "a0:a:open:10:00:false" "b1:b:open:10:01:true" "b2:b:open:10:02:fals
     "a4:a:answered:10:04:true" "b5:b:answered:10:05:false" "b6:b:open:10:06:false" "a7:a:open:10:06:false" \
     "a8:a:withdrawn:10:08:true"; do
   IFS=: read -r uid ufrom ustatus uh um uurgent <<< "$spec"
-  jq -n --arg id "$uid" --arg from "Orch : $ufrom" --arg status "$ustatus" --arg since "2026-10-24T$uh:$um:00.000Z" --argjson urgent "$uurgent" \
+  jq -n --arg id "$uid" --arg from "Orch: $ufrom" --arg status "$ustatus" --arg since "2026-10-24T$uh:$um:00.000Z" --argjson urgent "$uurgent" \
     '{id:$id, from:$from, session:("s-" + ($from | ascii_downcase | gsub("[^a-z]"; ""))), kind:"operator", since:$since,
       blocks:"phase 3", question:("Ask " + $id + "?"), choices:[], recommendation:null, status:$status, at:$since,
       answer:(if $status == "answered" then {text:"A : ship it", by:"pane", at:"2026-10-24T11:00:00.000Z"} else null end)}
@@ -9815,27 +9832,27 @@ done
 printf '{"session":"s-coord","pid":"4242","at":"2026-10-24T09:00:00.000Z"}\n' > "$USTATE/pane.json"
 uround() { ORCHESTRATOR_STATE_DIR="$USTATE" CLAUDE_CONFIG_DIR="$UCFG" COORDINATOR_PS_TABLE="$WORK/coord-due-ps" bash "$COORD" round "$@" 2>&1; }
 check "round --by-urgency orders each set urgent first, then grouped by orchestrator within each level, oldest first, due marked as without it" \
-  "round b1 | operator | from Orch : b | since 2026-10-24T10:01:00.000Z | blocks: phase 3 | open | due
-round a3 | operator | from Orch : a | since 2026-10-24T10:03:00.000Z | blocks: phase 3 | open | due
-round a0 | operator | from Orch : a | since 2026-10-24T10:00:00.000Z | blocks: phase 3 | open
-round a7 | operator | from Orch : a | since 2026-10-24T10:06:00.000Z | blocks: phase 3 | open
-round b2 | operator | from Orch : b | since 2026-10-24T10:02:00.000Z | blocks: phase 3 | open
-round b6 | operator | from Orch : b | since 2026-10-24T10:06:00.000Z | blocks: phase 3 | open
-round a4 | operator | from Orch : a | since 2026-10-24T10:04:00.000Z | blocks: phase 3 | answered
-round b5 | operator | from Orch : b | since 2026-10-24T10:05:00.000Z | blocks: phase 3 | answered
-round a8 | operator | from Orch : a | since 2026-10-24T10:08:00.000Z | blocks: phase 3 | withdrawn" \
+  "round b1 | operator | from Orch: b | since 2026-10-24T10:01:00.000Z | blocks: phase 3 | open | due
+round a3 | operator | from Orch: a | since 2026-10-24T10:03:00.000Z | blocks: phase 3 | open | due
+round a0 | operator | from Orch: a | since 2026-10-24T10:00:00.000Z | blocks: phase 3 | open
+round a7 | operator | from Orch: a | since 2026-10-24T10:06:00.000Z | blocks: phase 3 | open
+round b2 | operator | from Orch: b | since 2026-10-24T10:02:00.000Z | blocks: phase 3 | open
+round b6 | operator | from Orch: b | since 2026-10-24T10:06:00.000Z | blocks: phase 3 | open
+round a4 | operator | from Orch: a | since 2026-10-24T10:04:00.000Z | blocks: phase 3 | answered
+round b5 | operator | from Orch: b | since 2026-10-24T10:05:00.000Z | blocks: phase 3 | answered
+round a8 | operator | from Orch: a | since 2026-10-24T10:08:00.000Z | blocks: phase 3 | withdrawn" \
   "$(uround --by-urgency | grep '^round ')"
 # A withdrawn entry is listed last and never due.
 check "round --by-urgency with no pane open reads the same order, every open entry due" \
-  "round b1 | operator | from Orch : b | since 2026-10-24T10:01:00.000Z | blocks: phase 3 | open | due
-round a3 | operator | from Orch : a | since 2026-10-24T10:03:00.000Z | blocks: phase 3 | open | due
-round a0 | operator | from Orch : a | since 2026-10-24T10:00:00.000Z | blocks: phase 3 | open | due
-round a7 | operator | from Orch : a | since 2026-10-24T10:06:00.000Z | blocks: phase 3 | open | due
-round b2 | operator | from Orch : b | since 2026-10-24T10:02:00.000Z | blocks: phase 3 | open | due
-round b6 | operator | from Orch : b | since 2026-10-24T10:06:00.000Z | blocks: phase 3 | open | due
-round a4 | operator | from Orch : a | since 2026-10-24T10:04:00.000Z | blocks: phase 3 | answered
-round b5 | operator | from Orch : b | since 2026-10-24T10:05:00.000Z | blocks: phase 3 | answered
-round a8 | operator | from Orch : a | since 2026-10-24T10:08:00.000Z | blocks: phase 3 | withdrawn" \
+  "round b1 | operator | from Orch: b | since 2026-10-24T10:01:00.000Z | blocks: phase 3 | open | due
+round a3 | operator | from Orch: a | since 2026-10-24T10:03:00.000Z | blocks: phase 3 | open | due
+round a0 | operator | from Orch: a | since 2026-10-24T10:00:00.000Z | blocks: phase 3 | open | due
+round a7 | operator | from Orch: a | since 2026-10-24T10:06:00.000Z | blocks: phase 3 | open | due
+round b2 | operator | from Orch: b | since 2026-10-24T10:02:00.000Z | blocks: phase 3 | open | due
+round b6 | operator | from Orch: b | since 2026-10-24T10:06:00.000Z | blocks: phase 3 | open | due
+round a4 | operator | from Orch: a | since 2026-10-24T10:04:00.000Z | blocks: phase 3 | answered
+round b5 | operator | from Orch: b | since 2026-10-24T10:05:00.000Z | blocks: phase 3 | answered
+round a8 | operator | from Orch: a | since 2026-10-24T10:08:00.000Z | blocks: phase 3 | withdrawn" \
   "$(mv "$USTATE/pane.json" "$WORK/coord-urgency-pane"; uround --by-urgency | grep '^round '; mv "$WORK/coord-urgency-pane" "$USTATE/pane.json")"
 # One order everywhere, the ruling's (6.2): round without the flag prints what --by-urgency prints.
 check "round without the flag prints the round's one order, the very output of --by-urgency, and refuses another argument" \
@@ -11213,23 +11230,23 @@ leansettings() { sed -n "s/.* --settings '\([^']*\)'.*/\1/p"; }
 LEANBASE="Artifact SendFeedback Workflow ScheduleWakeup ReportFindings"
 LEANMOVE="mcp__orchestrator__move_send mcp__orchestrator__move_probe mcp__orchestrator__end_session"
 check "an agent loses the five unused tools and the three that move an orchestrator" "$LEANBASE $LEANMOVE" \
-  "$(leanl --title 'Agent : x' | leanset)"
+  "$(leanl --title 'Agent: x' | leanset)"
 check "an orchestrator loses the five and keeps the three" "$LEANBASE" \
-  "$(orchv leanl --title 'Orch : x' --successor --no-remote-control | leanset)"
+  "$(orchv leanl --title 'Orch: x' --successor --no-remote-control | leanset)"
 check "a title of no role is read as an agent's: it loses all eight" "$LEANBASE $LEANMOVE" \
   "$(leanl --title-free --title probe | leanset)"
 check "an auditor loses all eight" "$LEANBASE $LEANMOVE" \
-  "$(audl --auditor --title 'Audit : tm' | leanset)"
+  "$(audl --auditor --title 'Audit: tm' | leanset)"
 check "the coordinator's successor keeps the three" "$LEANBASE" \
-  "$(crdl --coordinator-successor --title 'Coord : ops' | leanset)"
+  "$(crdl --coordinator-successor --title 'Coord: ops' | leanset)"
 check "a successor keeps the three, as an orchestrator does" "$LEANBASE" \
   "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | leanset)"
 check "a woken orchestrator and an opened one keep the three" "$LEANBASE|$LEANBASE" \
-  "$(crdl --wake --title 'Orch : alpha' --model a-model --effort high | leanset)|$(opn 'Coord : ops' --open --title 'Orch : sync logs' | sed -n 's/^launch=//p' | leanset)"
+  "$(crdl --wake --title 'Orch: alpha' --model a-model --effort high | leanset)|$(opn 'Coord: ops' --open --title 'Orch: sync logs' | sed -n 's/^launch=//p' | leanset)"
 check "the removed set is the dry run's too, and Artifact is never switched off by the host's own setting" "1|0" \
-  "$(orchv lean --title 'Orch : x' --successor --no-remote-control | grep -c '^tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings$')|$(leanl --title 'Agent : x' | grep -c enableArtifact)"
+  "$(orchv lean --title 'Orch: x' --successor --no-remote-control | grep -c '^tools_removed=Artifact,SendFeedback,Workflow,ScheduleWakeup,ReportFindings$')|$(leanl --title 'Agent: x' | grep -c enableArtifact)"
 check "the removed set is followed by another option and comes before --permission-mode: never last, never next to the prompt" "1|1|0" \
-  "$(leanl --title 'Agent : x' | grep -c -- '--disallowedTools [^-].* --permission-mode ')|$(leanl --title 'Agent : x' | leanset | grep -c .)|$(leanl --title 'Agent : x' | grep -c -- '--disallowedTools [^-]* "\$(cat ')"
+  "$(leanl --title 'Agent: x' | grep -c -- '--disallowedTools [^-].* --permission-mode ')|$(leanl --title 'Agent: x' | leanset | grep -c .)|$(leanl --title 'Agent: x' | grep -c -- '--disallowedTools [^-]* "\$(cat ')"
 check "with a server file the removed set comes first and the pair is still closed by the mode" "1" \
   "$(mcpd | sed -n 's/^launch=//p' | grep -c -- '--disallowedTools Artifact .* --strict-mcp-config --mcp-config [^ ]* --permission-mode ')"
 check "with the account's connectors the removed set is followed by the mode" "1" \
@@ -11237,33 +11254,33 @@ check "with the account's connectors the removed set is followed by the mode" "1
 
 # The two options.
 check "--keep-tool Artifact takes it out of the removed set" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE" \
-  "$(leanl --title 'Agent : x' --keep-tool Artifact | leanset)"
+  "$(leanl --title 'Agent: x' --keep-tool Artifact | leanset)"
 check "--drop-tool adds any name, once, after the defaults" "$LEANBASE $LEANMOVE 'Bash(git push:*)'" \
-  "$(leanl --title 'Agent : x' --drop-tool 'Bash(git push:*)' --drop-tool Artifact | leanset)"
+  "$(leanl --title 'Agent: x' --drop-tool 'Bash(git push:*)' --drop-tool Artifact | leanset)"
 check "--drop-tool given the same name twice removes it once, on the launch line and in the dry run" "$LEANBASE $LEANMOVE WebSearch|1" \
-  "$(leanl --title 'Agent : x' --drop-tool WebSearch --drop-tool WebSearch | leanset)|$(lean --title 'Agent : x' --drop-tool WebSearch --drop-tool WebSearch | sed -n 's/^tools_removed=//p' | tr ',' '\n' | grep -c '^WebSearch$')"
+  "$(leanl --title 'Agent: x' --drop-tool WebSearch --drop-tool WebSearch | leanset)|$(lean --title 'Agent: x' --drop-tool WebSearch --drop-tool WebSearch | sed -n 's/^tools_removed=//p' | tr ',' '\n' | grep -c '^WebSearch$')"
 check "--keep-tool of a name the default keeps is harmless, and the options repeat" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE WebSearch" \
-  "$(leanl --title 'Agent : x' --keep-tool Artifact --keep-tool Bash --drop-tool WebSearch | leanset)"
+  "$(leanl --title 'Agent: x' --keep-tool Artifact --keep-tool Bash --drop-tool WebSearch | leanset)"
 check "--drop-tool on a name the role keeps removes it" "$LEANBASE mcp__orchestrator__end_session" \
-  "$(orchv leanl --title 'Orch : x' --successor --no-remote-control --drop-tool mcp__orchestrator__end_session | leanset)"
+  "$(orchv leanl --title 'Orch: x' --successor --no-remote-control --drop-tool mcp__orchestrator__end_session | leanset)"
 check "a spawn that keeps every default removes no tool, and the option is then left out" "0|none" \
-  "$(orchv leanl --title 'Orch : x' --successor --no-remote-control --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings | grep -c -- '--disallowedTools')|$(orchv lean --title 'Orch : x' --successor --no-remote-control --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings | sed -n 's/^tools_removed=//p')"
+  "$(orchv leanl --title 'Orch: x' --successor --no-remote-control --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings | grep -c -- '--disallowedTools')|$(orchv lean --title 'Orch: x' --successor --no-remote-control --keep-tool Artifact --keep-tool SendFeedback --keep-tool Workflow --keep-tool ScheduleWakeup --keep-tool ReportFindings | sed -n 's/^tools_removed=//p')"
 check "an empty name is refused for either option, before any tab exists" "1|1|1|1" \
-  "$(lean --title 'Agent : x' --keep-tool '' >/dev/null 2>&1; echo $?)|$(lean --title 'Agent : x' --drop-tool '  ' >/dev/null 2>&1; echo $?)|$(lean --title 'Agent : x' --keep-tool '' | grep -c -- '--keep-tool needs a tool name')|$(lean --title 'Agent : x' --drop-tool '' | grep -c -- '--drop-tool needs a tool name')"
+  "$(lean --title 'Agent: x' --keep-tool '' >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --drop-tool '  ' >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --keep-tool '' | grep -c -- '--keep-tool needs a tool name')|$(lean --title 'Agent: x' --drop-tool '' | grep -c -- '--drop-tool needs a tool name')"
 check "the same name on both options is refused, and the refusal names it" "1|1" \
-  "$(lean --title 'Agent : x' --keep-tool Artifact --drop-tool Artifact >/dev/null 2>&1; echo $?)|$(lean --title 'Agent : x' --keep-tool Artifact --drop-tool Artifact | grep -c "'Artifact' is given to both --keep-tool and --drop-tool")"
+  "$(lean --title 'Agent: x' --keep-tool Artifact --drop-tool Artifact >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --keep-tool Artifact --drop-tool Artifact | grep -c "'Artifact' is given to both --keep-tool and --drop-tool")"
 check "a name with surrounding whitespace is read without it, for either option, and a padded repeat is one name" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE|$LEANBASE $LEANMOVE WebSearch|$LEANBASE $LEANMOVE WebSearch" \
-  "$(leanl --title 'Agent : x' --keep-tool 'Artifact ' | leanset)|$(leanl --title 'Agent : x' --drop-tool $'\tWebSearch ' | leanset)|$(leanl --title 'Agent : x' --drop-tool 'WebSearch ' --drop-tool ' WebSearch' | leanset)"
+  "$(leanl --title 'Agent: x' --keep-tool 'Artifact ' | leanset)|$(leanl --title 'Agent: x' --drop-tool $'\tWebSearch ' | leanset)|$(leanl --title 'Agent: x' --drop-tool 'WebSearch ' --drop-tool ' WebSearch' | leanset)"
 check "the same name on both options is refused whatever its padding" "1|1" \
-  "$(lean --title 'Agent : x' --keep-tool 'Artifact ' --drop-tool Artifact >/dev/null 2>&1; echo $?)|$(lean --title 'Agent : x' --keep-tool Artifact --drop-tool ' Artifact' | grep -c "'Artifact' is given to both --keep-tool and --drop-tool")"
+  "$(lean --title 'Agent: x' --keep-tool 'Artifact ' --drop-tool Artifact >/dev/null 2>&1; echo $?)|$(lean --title 'Agent: x' --keep-tool Artifact --drop-tool ' Artifact' | grep -c "'Artifact' is given to both --keep-tool and --drop-tool")"
 check "every launch path honours them: successor, wake, open, auditor, coordinator-successor" "1|1|1|1|1" \
-  "$(succ "$PSTAB" --successor --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings$')|$(crdl --wake --title 'Orch : alpha' --model a-model --effort high --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(opn 'Coord : ops' --open --title 'Orch : sync logs' --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback ')|$(audl --auditor --title 'Audit : tm' --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(crdl --coordinator-successor --title 'Coord : ops' --keep-tool Artifact --drop-tool WebSearch | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings WebSearch$')"
+  "$(succ "$PSTAB" --successor --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings$')|$(crdl --wake --title 'Orch: alpha' --model a-model --effort high --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(opn 'Coord: ops' --open --title 'Orch: sync logs' --keep-tool Artifact | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback ')|$(audl --auditor --title 'Audit: tm' --keep-tool Artifact | leanset | grep -c '^SendFeedback ')|$(crdl --coordinator-successor --title 'Coord: ops' --keep-tool Artifact --drop-tool WebSearch | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings WebSearch$')"
 LEANPS="$WORK/ps-lean.txt"
-printf '/dev/ttys901 /opt/x/claude --name Agent : x\n' > "$LEANPS"
+printf '/dev/ttys901 /opt/x/claude --name Agent: x\n' > "$LEANPS"
 leanrot() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$LEANSTATE" ORCHESTRATOR_PS_TABLE="$LEANPS" \
-  bash "$AGENT" rotate --dir "$WORK" --title "Agent : rotated" --prompt p $(needs_tier "$@") "$@" 2>&1; }
+  bash "$AGENT" rotate --dir "$WORK" --title "Agent: rotated" --prompt p $(needs_tier "$@") "$@" 2>&1; }
 check "rotate passes both options to the replacement it launches" "1|1" \
-  "$(leanrot --old-tty /dev/ttys901 --keep-tool Artifact --drop-tool WebSearch | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings .* WebSearch$')|$(leanrot --old-tty /dev/ttys901 --keep-tool Artifact | sed -n 's/^launch=//p' | grep -c -- '--name .Agent : rotated.')"
+  "$(leanrot --old-tty /dev/ttys901 --keep-tool Artifact --drop-tool WebSearch | sed -n 's/^launch=//p' | leanset | grep -c '^SendFeedback Workflow ScheduleWakeup ReportFindings .* WebSearch$')|$(leanrot --old-tty /dev/ttys901 --keep-tool Artifact | sed -n 's/^launch=//p' | grep -c -- '--name .Agent: rotated.')"
 check "rotate refuses an empty name and the same name on both, before it spawns anything" "1|1" \
   "$(leanrot --old-tty /dev/ttys901 --keep-tool '' >/dev/null 2>&1; echo $?)|$(leanrot --old-tty /dev/ttys901 --keep-tool X --drop-tool X >/dev/null 2>&1; echo $?)"
 check "rotate reads a padded name without its padding" "SendFeedback Workflow ScheduleWakeup ReportFindings $LEANMOVE" \
@@ -11272,24 +11289,24 @@ check "rotate reads a padded name without its padding" "SendFeedback Workflow Sc
 # The host cuts, in the one --settings the launch carries. A cut a probe did not prove is not
 # listed here (§65).
 check "an agent's settings cut the synced skills, the recap, the countdown and the silent-turn reminder" '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' \
-  "$(leanl --title 'Agent : x' | leansettings)"
+  "$(leanl --title 'Agent: x' | leansettings)"
 check "an agent's settings carry no compaction window, and no switch for the 1M window" "0|0" \
-  "$(leanl --title 'Agent : x' | grep -c 'AUTO_COMPACT_WINDOW')|$(leanl --title 'Agent : x' | grep -c 'DISABLE_1M_CONTEXT')"
+  "$(leanl --title 'Agent: x' | grep -c 'AUTO_COMPACT_WINDOW')|$(leanl --title 'Agent: x' | grep -c 'DISABLE_1M_CONTEXT')"
 check "no role's settings carry a compaction window: the host's own setting applies" "0|0|0|0|0" \
-  "$(orchv leanl --title 'Orch : x' --successor --no-remote-control | grep -c 'AUTO_COMPACT_WINDOW')|$(succ "$PSTAB" --successor | grep -c 'AUTO_COMPACT_WINDOW')|$(audl --auditor --title 'Audit : tm' | grep -c 'AUTO_COMPACT_WINDOW')|$(crdl --coordinator-successor --title 'Coord : ops' | grep -c 'AUTO_COMPACT_WINDOW')|$(leanl --title 'Agent : x' | grep -c 'AUTO_COMPACT_WINDOW')"
+  "$(orchv leanl --title 'Orch: x' --successor --no-remote-control | grep -c 'AUTO_COMPACT_WINDOW')|$(succ "$PSTAB" --successor | grep -c 'AUTO_COMPACT_WINDOW')|$(audl --auditor --title 'Audit: tm' | grep -c 'AUTO_COMPACT_WINDOW')|$(crdl --coordinator-successor --title 'Coord: ops' | grep -c 'AUTO_COMPACT_WINDOW')|$(leanl --title 'Agent: x' | grep -c 'AUTO_COMPACT_WINDOW')"
 check "no role exports a percentage gate: the gate is a token count" "0|0|0|0|0" \
-  "$(orchv gspawn --title 'Orch : gate' --successor --no-remote-control --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')|$(gspawn --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')|$(gspawn --title 'Audit : gate' --auditor --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')|$(succ "$PSTAB" --successor | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')|$(crdl --coordinator-successor --title 'Coord : ops' | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')"
+  "$(orchv gspawn --title 'Orch: gate' --successor --no-remote-control --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')|$(gspawn --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')|$(gspawn --title 'Audit: gate' --auditor --prompt p | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')|$(succ "$PSTAB" --successor | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')|$(crdl --coordinator-successor --title 'Coord: ops' | grep -c 'ORCHESTRATOR_CONTEXT_GATE=')"
 check "an orchestrator's settings cut the synced skills and the countdown" '{"remoteControlAtStartup":false,"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' \
-  "$(orchv leanl --title 'Orch : x' --successor --no-remote-control | leansettings)"
+  "$(orchv leanl --title 'Orch: x' --successor --no-remote-control | leansettings)"
 check "a successor, an auditor and the coordinator's successor carry the cuts and no setting for remote control" '{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}|{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}|{"syncClaudeAiSkills":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}' \
-  "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | leansettings)|$(audl --auditor --title 'Audit : tm' | leansettings)|$(crdl --coordinator-successor --title 'Coord : ops' | leansettings)"
+  "$(succ "$PSTAB" --successor | sed -n 's/^launch=//p' | leansettings)|$(audl --auditor --title 'Audit: tm' | leansettings)|$(crdl --coordinator-successor --title 'Coord: ops' | leansettings)"
 check "the settings key for the host's own artifact switch is never passed, whatever the role" "0|0|0" \
-  "$(leanl --title 'Agent : x' --keep-tool Artifact | grep -c enableArtifact)|$(orchv leanl --title 'Orch : x' --successor --no-remote-control | grep -c enableArtifact)|$(audl --auditor --title 'Audit : tm' | grep -c enableArtifact)"
+  "$(leanl --title 'Agent: x' --keep-tool Artifact | grep -c enableArtifact)|$(orchv leanl --title 'Orch: x' --successor --no-remote-control | grep -c enableArtifact)|$(audl --auditor --title 'Audit: tm' | grep -c enableArtifact)"
 check "--account-connectors still merges into the same JSON, before the cuts" '{"remoteControlAtStartup":false,"enableAllProjectMcpServers":true,"syncClaudeAiSkills":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}' \
   "$(mcpd --account-connectors | sed -n 's/^launch=//p' | leansettings)"
 
 check "--keep-synced-skills leaves the synced skills in, for any role, and the dry run says which" '{"remoteControlAtStartup":false,"awaySummaryEnabled":false,"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off","CLAUDE_CODE_SILENT_TURN_REMINDER":"0"}}|{"env":{"CLAUDE_CODE_TOTAL_TOKENS_REMINDER":"off"}}|kept|removed' \
-  "$(leanl --title 'Agent : x' --keep-synced-skills | leansettings)|$(audl --auditor --title 'Audit : tm' --keep-synced-skills | leansettings)|$(lean --title 'Agent : x' --keep-synced-skills | sed -n 's/^synced_skills=//p')|$(lean --title 'Agent : x' | sed -n 's/^synced_skills=//p')"
+  "$(leanl --title 'Agent: x' --keep-synced-skills | leansettings)|$(audl --auditor --title 'Audit: tm' --keep-synced-skills | leansettings)|$(lean --title 'Agent: x' --keep-synced-skills | sed -n 's/^synced_skills=//p')|$(lean --title 'Agent: x' | sed -n 's/^synced_skills=//p')"
 # The launch line first: a rotation that refused the option prints none, and a count of
 # zero on an empty output would pass.
 check "rotate forwards --keep-synced-skills to the replacement" "1|0" \
@@ -11301,7 +11318,7 @@ check "rotate forwards --keep-synced-skills to the replacement" "1|0" \
 LEANCFG="$WORK/leancfg"; mkdir -p "$LEANCFG"
 printf '{"model":"a-model"}\n' > "$LEANCFG/settings.json"; printf '{"x":1}\n' > "$LEANCFG/settings.local.json"
 LEANSUM=$(cat "$LEANCFG"/settings*.json | cksum)
-LEANRUN=$(CLAUDE_CONFIG_DIR="$LEANCFG" HOME="$LEANCFG" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$LEANSTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title 'Agent : x' --prompt p 2>&1)
+LEANRUN=$(CLAUDE_CONFIG_DIR="$LEANCFG" HOME="$LEANCFG" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$LEANSTATE" bash "$AGENT" spawn --tier light --dir "$WORK" --title 'Agent: x' --prompt p 2>&1)
 check "the key appears once in a spawn's output, inside the --settings of the launch" "1|1" \
   "$(printf '%s\n' "$LEANRUN" | grep -c syncClaudeAiSkills)|$(printf '%s\n' "$LEANRUN" | sed -n 's/^launch=//p' | grep -c -- "--settings '[^']*syncClaudeAiSkills\":false")"
 check "and no settings file is written by it, the config directory and the state directory included" "$LEANSUM|0" \

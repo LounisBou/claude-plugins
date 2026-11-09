@@ -12,11 +12,11 @@ evaluation runs before 18:00 today, and nothing is pushed to main without asking
 Your session listing shows:
 
 ```
-Orch : api [k2m4p7]            idle
-Orch : search [q8r1s5]         busy
-Orch : billing [t3v6w9]        busy
-Agent : api phase 5 [z9y8x7]   busy
-Agent : billing p4 [h6j3k1]    busy
+Orch: api [k2m4p7]            idle
+Orch: search [q8r1s5]         busy
+Orch: billing [t3v6w9]        busy
+Agent: api phase 5 [z9y8x7]   busy
+Agent: billing p4 [h6j3k1]    busy
 ```
 
 Decide what happens now, then write your final message.

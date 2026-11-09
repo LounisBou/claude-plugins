@@ -260,7 +260,7 @@ Every module is at most 299 lines. Standard library only (the `ast` walk above).
    `people/`, `settings.json` and `state.json`, and no `.env`.
 2. A fake `.env` was written there: `TELEGRAM_BOT_TOKEN=123456:fake-token-for-rehearsal`.
 3. A throwaway git repository was created. The project was registered under a temporary
-   `BUGS_BOT_HOME` with `bin/bugs-bot init --project torrentmate --agent-title "Agent : TorrentMate
+   `BUGS_BOT_HOME` with `bin/bugs-bot init --project torrentmate --agent-title "Agent: TorrentMate
    Bugs" --chat-id <the legacy chat id> --title "TM Bugs" --gate-tokens 200000 --repo <tmp>/repo`.
    The gate value is the legacy `settings.json` `context_gate_tokens`.
 4. `docs/migration/tm_bugs_to_bugs_bot.py --copy --env-file <tmp>/fake.env` was run into that home.

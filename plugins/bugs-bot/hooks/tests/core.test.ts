@@ -5,8 +5,8 @@ import { isAgentRow, measuredGateArgs, peersOf, selfOf, sitsRightOfSelf, version
 import { ROOT_LISTING } from './fakes.ts'
 
 test('ListAgents: the caller from its first line, the peers from their rows', () => {
-  expect(selfOf(ROOT_LISTING)).toEqual({ name: 'Orch : demo', ref: 'a1b2c3', full: 'Orch : demo [a1b2c3]' })
-  expect(peersOf(ROOT_LISTING).map(p => p.full)).toEqual(['Agent : other work [d4e5f6]'])
+  expect(selfOf(ROOT_LISTING)).toEqual({ name: 'Orch: demo', ref: 'a1b2c3', full: 'Orch: demo [a1b2c3]' })
+  expect(peersOf(ROOT_LISTING).map(p => p.full)).toEqual(['Agent: other work [d4e5f6]'])
   expect(selfOf('Peer sessions (0):')).toBe(null)
 })
 
@@ -15,7 +15,9 @@ test('the agent\'s row: its title, case and spacing aside, or followed by more w
   expect(isAgentRow('bugs :  DEMO', 'Bugs : demo')).toBe(true)
   expect(isAgentRow('Bugs : demo 2', 'Bugs : demo')).toBe(true)
   expect(isAgentRow('Bugs : demonstration', 'Bugs : demo')).toBe(false)
-  expect(isAgentRow('Agent : other', 'Bugs : demo')).toBe(false)
+  expect(isAgentRow('Agent: other', 'Bugs : demo')).toBe(false)
+  expect(isAgentRow('Agent: Demo Bugs', 'Agent : Demo Bugs')).toBe(true)
+  expect(isAgentRow('Agent : Demo Bugs', 'Agent: Demo Bugs')).toBe(true)
 })
 
 test('a tagged orchestrator version is read by its release, never by the directory\'s sort', () => {

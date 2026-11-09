@@ -14,7 +14,7 @@ current value.
 2. Ask, in this order:
    - the project id (`[a-z0-9-]+`: it names the data directory under
      `~/.bugs-bot/`);
-   - the title of the agent session, for example `Agent : <Project> Bugs`;
+   - the title of the agent session, for example `Agent: <Project> Bugs`;
    - the deployment URL, if the project has one, then optionally a shell command
      that proves a commit is served (`--deploy-check`; none means the launcher
      checks);

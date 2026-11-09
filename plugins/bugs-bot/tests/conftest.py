@@ -62,7 +62,7 @@ def env(tmp_path: Path, bugs_home: Path) -> dict[str, str]:
 def register(bugs_home: Path, repo: Path, project: str, chat_id: int | str, title: str = "Bugs", channel: str = "telegram") -> Path:
     """Write ``repo``'s project file and register it, as ``init`` will; return ``repo``."""
     repo.mkdir(parents=True, exist_ok=True)
-    data = {"project": project, "group": {"chat_id": chat_id, "title": title}, "agent_title": f"Agent : {title}"}
+    data = {"project": project, "group": {"chat_id": chat_id, "title": title}, "agent_title": f"Agent: {title}"}
     if channel != "telegram":
         data["channel"] = channel
     (repo / PROJECT_FILE).write_text(json.dumps(data))

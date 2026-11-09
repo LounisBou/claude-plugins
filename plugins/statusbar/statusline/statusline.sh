@@ -261,12 +261,13 @@ fmt_tokens() {
 # ORCHESTRATOR_LARGE_WINDOW=1000000) so the bar and the
 # gate never disagree: a fixed token count on a large window, a percentage of
 # the window otherwise. Prints nothing when the window size is unknown.
-# The gate only applies to orchestration sessions: they are named "Orch : …",
-# "Agent : …", "Audit : …" or "Coord : …".
+# The gate only applies to orchestration sessions: they are named "Orch: …",
+# "Agent: …", "Audit: …" or "Coord: …", or "Orch : …" in the former shape that
+# sessions started before the change still carry.
 ctx_gate_tokens() {
   local name=${session_name#\"}
   case "$name" in
-    "Orch :"*|"Agent :"*|"Audit :"*|"Coord :"*) ;;
+    "Orch:"*|"Agent:"*|"Audit:"*|"Coord:"*|"Orch :"*|"Agent :"*|"Audit :"*|"Coord :"*) ;;
     *) return 0 ;;
   esac
   is_number "$ctx_size" || return 0

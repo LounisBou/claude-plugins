@@ -3,4 +3,4 @@
 type: regex
 ---
 
-Agent : shop p8 \[44ax55\]
+Agent: shop p8 \[44ax55\]

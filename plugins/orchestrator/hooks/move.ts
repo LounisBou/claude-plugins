@@ -40,7 +40,7 @@ export const MOVE_MISSING_ROUNDS = 3
 // What a move carries of the orchestrator: the sleeping record's fields, the remote of its
 // directory, and the operator's order. Paths are the origin machine's.
 export type MoveRecord = {
-  name: string                 // "Orch : <subject>", no [ref]
+  name: string                 // "Orch: <subject>", no [ref]
   brief: string                // absolute, origin machine
   dir: string                  // absolute, origin machine
   model: string
@@ -97,9 +97,10 @@ const MOVE_ID_HASH = /-[0-9a-f]{12}$/
 const SLUG_CAP = 40
 const SLUG_FALLBACK = 'move'
 
-// The name the launcher's opening takes and the sleeping record keeps: `Orch : `, a subject of
-// at most 25 characters with no space at either end, and no reference after it.
-const NAME_SHAPE = /^Orch : \S(?:.{0,23}\S)?$/
+// The name the launcher's opening takes and the sleeping record keeps: `Orch: `, a subject of
+// at most 25 characters with no space at either end, and no reference after it. core's shape,
+// mirrored: a machine still on the former `Orch : ` sends a name of that shape, read all the same.
+const NAME_SHAPE = /^Orch ?: \S(?:.{0,23}\S)?$/
 const REF_SUFFIX = / \[[0-9A-Za-z]+\]$/
 
 // What the opening command cannot carry between double quotes, nor any line: a quote, a

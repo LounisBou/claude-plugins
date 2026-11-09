@@ -3,4 +3,4 @@
 type: regex
 ---
 
-Agent : review 61 \[66by77\]
+Agent: review 61 \[66by77\]

@@ -25,7 +25,7 @@ const QUESTION = [
 const WAIT_LINE = `waiting: operator — blocks: ${BLOCKS}`
 
 const entry = (over: Partial<RoundEntry> = {}, question = QUESTION): RoundEntry => ({
-  ...roundEntry(SESSION, 'Orch : belt [1]', { kind: 'operator', blocks: BLOCKS, question }, SINCE, SINCE),
+  ...roundEntry(SESSION, 'Orch: belt [1]', { kind: 'operator', blocks: BLOCKS, question }, SINCE, SINCE),
   ...over,
 })
 const tabAnswer = { text: "answered in the sender's own tab", by: 'tab' as const, at: SINCE }

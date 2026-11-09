@@ -8,7 +8,7 @@ Run on the operator's word only: he types this command, in the session whose tab
 auditor should sit beside. Nothing of the audit stays with this session once it is launched.
 
 Usage: `/orchestrator-audit <subject> [--since <date>]`. The subject becomes the title
-`Audit : <subject>`.
+`Audit: <subject>`.
 
 1. **Fill the brief.** Copy `${CLAUDE_PLUGIN_ROOT}/templates/agent-audit-brief.md` into the
    project's briefs directory as `audit-<subject>-brief.md`, and fill every
@@ -32,7 +32,7 @@ Usage: `/orchestrator-audit <subject> [--since <date>]`. The subject becomes the
 3. **Spawn**, beside this tab:
 
    ```
-   ${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --dir <repository> --auditor --title "Audit : <subject>" --permission-mode auto --trust --prompt "Read and execute <brief path>"
+   ${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh spawn --dir <repository> --auditor --title "Audit: <subject>" --permission-mode auto --trust --prompt "Read and execute <brief path>"
    ```
 
    `--auditor` places the tab immediately left of this one. It takes no chain and joins none:
@@ -40,7 +40,7 @@ Usage: `/orchestrator-audit <subject> [--since <date>]`. The subject becomes the
    On a non-zero exit, run the `move` the line on stdout prints and never relaunch; when it
    says « unverified » or « API is not available », read `list` and move the tab by hand only
    if it is misplaced.
-4. **Verify** that `iterm-agent.sh list` shows the `Audit : <subject>` tab and
+4. **Verify** that `iterm-agent.sh list` shows the `Audit: <subject>` tab and
    `iterm-agent.sh verify --tty <its tty>` its process.
 5. **Tell the operator** in one line: the tab, and the report path. Then carry on with your
    own work: the auditor messages nobody, ends by itself, and the operator closes its tab. An auditor he

@@ -8,7 +8,7 @@ from pathlib import Path
 from conftest import REPO_ROOT, register
 from samples import BASE_DATE, OTHER_GROUP_ID
 
-LAUNCHER = "Orch : demo [9a3971]"
+LAUNCHER = "Orch: demo [9a3971]"
 AGENT_MD = REPO_ROOT / "agent" / "AGENT.md"
 
 
@@ -27,7 +27,7 @@ def test_the_prompt_names_every_project_fact(run, bound, capsys):
     repo = Path.cwd()
     configure(
         repo,
-        agent_title="Agent : Demo Bugs",
+        agent_title="Agent: Demo Bugs",
         deploy_url="https://demo.example.org",
         deploy_check="true",
         docs=["docs/reference/intent.md", "docs/production/"],
@@ -38,7 +38,7 @@ def test_the_prompt_names_every_project_fact(run, bound, capsys):
     prompt = prompt_of(run, capsys)
 
     for fact in (
-        '"Agent : Demo Bugs"',
+        '"Agent: Demo Bugs"',
         str(AGENT_MD),
         LAUNCHER,
         json.dumps(str(repo)),
@@ -98,7 +98,7 @@ def test_a_value_with_newlines_or_quotes_stays_on_its_line(run, bound, capsys):
 
 def test_a_line_separator_in_a_value_is_escaped_too(run, bound, capsys):
     plain = prompt_of(run, capsys)
-    configure(Path.cwd(), agent_title="Agent : Demo Bugs")
+    configure(Path.cwd(), agent_title="Agent: Demo Bugs")
 
     prompt = prompt_of(run, capsys)
 
@@ -118,10 +118,10 @@ def test_the_launcher_is_recorded_in_the_project_state(run, bound, home, capsys)
 
 
 def test_the_launcher_and_the_predecessor_reach_the_prompt_quoted_like_every_value(run, bound, capsys):
-    prompt = prompt_of(run, capsys, "--predecessor", "Agent : Demo Bugs [4f2a1c]", "--predecessor-tty", "/dev/ttys004")
+    prompt = prompt_of(run, capsys, "--predecessor", "Agent: Demo Bugs [4f2a1c]", "--predecessor-tty", "/dev/ttys004")
 
     assert f"Your launcher is {json.dumps(LAUNCHER)}:" in prompt
-    assert 'your predecessor is "Agent : Demo Bugs [4f2a1c]", on' in prompt
+    assert 'your predecessor is "Agent: Demo Bugs [4f2a1c]", on' in prompt
 
 
 def test_a_free_phrase_is_not_a_session_name(run, bound, home, capsys):
@@ -144,7 +144,7 @@ def test_the_prompt_names_the_platform_the_group_is_on(tmp_path):
     from bugs_bot.agent import project_facts
     from bugs_bot.project import Project
 
-    slack = Project(project="sla", chat_id="C0FAKE01", title="sla-bugs", agent_title="Agent : Sla", repo=tmp_path, channel="slack")
+    slack = Project(project="sla", chat_id="C0FAKE01", title="sla-bugs", agent_title="Agent: Sla", repo=tmp_path, channel="slack")
 
     assert '- Slack group: "sla-bugs"' in project_facts(slack)
     assert '- Telegram group: "sla-bugs"' in project_facts(Project(project="t", chat_id=-1, title="sla-bugs", agent_title="A", repo=tmp_path))

@@ -120,8 +120,8 @@ version, so releases bump the version as today.
 ## guards.ts
 
 - **Context gate** on `prompt.submit`. Scope and behavior identical to
-  `context-gate.sh`: only sessions whose name starts with `Orch :`, `Agent :`,
-  `Audit :` or `Coord :` are spoken to; the role line for each prefix is
+  `context-gate.sh`: only sessions whose name starts with `Orch:`, `Agent:`,
+  `Audit:` or `Coord:` are spoken to; the role line for each prefix is
   carried over verbatim; the gate trips on the double-gate rule above;
   injection rides the prompt's additional context. An unmeurable reading says
   so once per session, never blocks, and the first-prompt case (no measure

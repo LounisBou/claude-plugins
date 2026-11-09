@@ -85,9 +85,11 @@ test('the jq readings: text, order, groups, ids', () => {
 })
 
 test('session names: the house shape is core\'s', () => {
-  assert.equal(orchForm('  Orch: build [a1b2c3] '), 'Orch : build')
-  assert.equal(orchForm('Orch :build'), 'Orch : build')
-  assert.equal(orchForm('Agent : x'), 'Agent : x')
+  assert.equal(orchForm('  Orch: build [a1b2c3] '), 'Orch: build')
+  assert.equal(orchForm('Orch:build'), 'Orch: build')
+  // The former shape, an owner file written before the change: the same orchestration.
+  assert.equal(orchForm('Orch : build [a1b2c3]'), 'Orch: build')
+  assert.equal(orchForm('Agent: x'), 'Agent: x')
   assert.equal(orchForm('Orch: a subject far longer than twenty-five'), 'Orch: a subject far longer than twenty-five')
 })
 
@@ -95,18 +97,18 @@ test('the session\'s orchestration: the newest host record of this session', () 
   const sessions = join(dir, 'cfg', 'sessions')
   assert.equal(sessionOrchestration({ CLAUDE_CODE_SESSION_ID: 's1', CLAUDE_CONFIG_DIR: join(dir, 'cfg') }), '')
   mkdirSync(sessions, { recursive: true })
-  writeFileSync(join(sessions, '1.json'), '{"sessionId":"s1","name":"Orch : old","updatedAt":5}')
+  writeFileSync(join(sessions, '1.json'), '{"sessionId":"s1","name":"Orch: old","updatedAt":5}')
   writeFileSync(join(sessions, '2.json'), '{"sessionId":"s1","name":"Orch: new [r1]","updatedAt":9}')
-  writeFileSync(join(sessions, '3.json'), '{"sessionId":"s1","name":"Orch : older","updatedAt":7}')
+  writeFileSync(join(sessions, '3.json'), '{"sessionId":"s1","name":"Orch: older","updatedAt":7}')
   writeFileSync(join(sessions, '4.json'), 'not json')
-  writeFileSync(join(sessions, '5.json'), '{"sessionId":"s2","name":"Agent : a"}')
+  writeFileSync(join(sessions, '5.json'), '{"sessionId":"s2","name":"Agent: a"}')
   mkdirSync(join(sessions, '6.json'))
   const env = { CLAUDE_CONFIG_DIR: join(dir, 'cfg') }
-  assert.equal(sessionOrchestration({ ...env, CLAUDE_CODE_SESSION_ID: 's1' }), 'Orch : new')
+  assert.equal(sessionOrchestration({ ...env, CLAUDE_CODE_SESSION_ID: 's1' }), 'Orch: new')
   assert.equal(sessionOrchestration({ ...env, CLAUDE_CODE_SESSION_ID: 's2' }), '')
   assert.equal(sessionOrchestration(env), '')
-  writeFileSync(join(sessions, '7.json'), '{"sessionId":"s1","name":"Orch : float","updatedAt":1.5}')
-  assert.equal(sessionOrchestration({ ...env, CLAUDE_CODE_SESSION_ID: 's1' }), 'Orch : float')
+  writeFileSync(join(sessions, '7.json'), '{"sessionId":"s1","name":"Orch: float","updatedAt":1.5}')
+  assert.equal(sessionOrchestration({ ...env, CLAUDE_CODE_SESSION_ID: 's1' }), 'Orch: float')
 })
 
 test('Markdown code is no image', () => {
@@ -341,14 +343,14 @@ test('summary: the statistics and the open rows, or one reading of them', async 
 test('goals: handed to goals.py, the record registered from its first write', async () => {
   const sessions = join(dir, 'cfg', 'sessions')
   mkdirSync(sessions, { recursive: true })
-  writeFileSync(join(sessions, '1.json'), '{"sessionId":"s1","name":"Orch : build","updatedAt":1}')
+  writeFileSync(join(sessions, '1.json'), '{"sessionId":"s1","name":"Orch: build","updatedAt":1}')
   const r = rec()
   const d = deps({ CLAUDE_CODE_SESSION_ID: 's1' }, { goals: 0 })
   assert.match(await cli(['goals', r], d), /a subcommand is required/)
   assert.match(await cli(['goals', r, 'bogus'], d), /unknown subcommand: bogus/)
   assert.equal(await cli(['goals', r, 'init', '--spec', 'none'], d), '0||')
   assert.ok(d.calls.includes(`python3 /p/goals.py init ${join(dir, 'p')}/goals.md --spec none`))
-  assert.equal(readFileSync(`${r}.owner`, 'utf8'), 'Orch : build\n')
+  assert.equal(readFileSync(`${r}.owner`, 'utf8'), 'Orch: build\n')
   assert.equal(readFileSync(join(dir, 'state', 'records', 's1'), 'utf8'), `${join(dir, 'p', 'r.jsonl')}\n`)
   assert.equal(await cli(['goals', r, 'status'], deps({ CLAUDE_CODE_SESSION_ID: 's1' }, { goals: 3 })), '3||')
   assert.equal(readFileSync(join(dir, 'state', 'records', 's1'), 'utf8'), `${join(dir, 'p', 'r.jsonl')}\n`)
@@ -359,16 +361,16 @@ test('the owner: claimed by the first write, refused to another orchestration, g
   const sessions = join(dir, 'cfg', 'sessions')
   mkdirSync(sessions, { recursive: true })
   writeFileSync(join(sessions, '1.json'), '{"sessionId":"s1","name":"Orch: build [abc]","updatedAt":1}')
-  writeFileSync(join(sessions, '2.json'), '{"sessionId":"s2","name":"Orch : other","updatedAt":1}')
+  writeFileSync(join(sessions, '2.json'), '{"sessionId":"s2","name":"Orch: other","updatedAt":1}')
   const r = rec()
   const s1 = (): Deps & World => deps({ CLAUDE_CODE_SESSION_ID: 's1' })
   // A failed first write gives its claim back.
   assert.match(await cli(['open', r, '--class', 'c'], s1()), /--tier or --model is required/)
   assert.equal(existsSync(`${r}.owner`), false)
   assert.equal(await cli(['open', r, '--class', 'c', '--tier', 'deep'], s1()), '0|1\n|')
-  assert.equal(readFileSync(`${r}.owner`, 'utf8'), 'Orch : build\n')
+  assert.equal(readFileSync(`${r}.owner`, 'utf8'), 'Orch: build\n')
   assert.equal(await cli(['round', r, '1'], deps({ CLAUDE_CODE_SESSION_ID: 's2' })),
-    `1||ERROR: round: ${r} belongs to Orch : build, and this session is Orch : other: a record belongs to one orchestration, so open your own beside your briefs and hand Orch : build the work by message\n`)
+    `1||ERROR: round: ${r} belongs to Orch: build, and this session is Orch: other: a record belongs to one orchestration, so open your own beside your briefs and hand Orch: build the work by message\n`)
   assert.match(await cli(['round', r, '1'], deps({ CLAUDE_CODE_SESSION_ID: 's3' })), /this session is no orchestration it can tell/)
   // Outside any session, the operator's shell writes.
   assert.equal(await cli(['round', r, '1']), '0||')
@@ -382,7 +384,7 @@ test('the owner: claimed by the first write, refused to another orchestration, g
   // An empty owner file is claimed; the registry is never written twice for one record.
   writeFileSync(`${r}.owner`, '')
   assert.equal(await cli(['round', r, '1'], s1()), '0||')
-  assert.equal(readFileSync(`${r}.owner`, 'utf8'), 'Orch : build\n')
+  assert.equal(readFileSync(`${r}.owner`, 'utf8'), 'Orch: build\n')
   assert.equal(readFileSync(join(dir, 'state', 'records', 's1'), 'utf8'), `${r}\n`)
   // A record with no owner, written outside a session, is claimed by a session's next write.
   rmSync(`${r}.owner`)

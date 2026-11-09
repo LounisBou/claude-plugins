@@ -109,7 +109,7 @@ self=$(bash "$AGENT" list | head -1 | awk -F' \\| ' '{print $2}')
 WSDIR=$(bash "$WS" create "$SANDBOX/repo" e2e-probe --base main 2>/dev/null)
 check "a checkout was made for the probe" "$SANDBOX/ws/repo/e2e-probe" "$WSDIR"
 [ -n "$WSDIR" ] || exit 1
-spawn_out=$(bash "$AGENT" spawn --dir "$WSDIR" --tier "$tier" --title "Agent : e2e probe" --trust \
+spawn_out=$(bash "$AGENT" spawn --dir "$WSDIR" --tier "$tier" --title "Agent: e2e probe" --trust \
       --prompt "Read $SANDBOX/brief.md and wait. Do not write anything." --right-of "$self" 2>&1)
 TTY=$(printf '%s' "$spawn_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
 check "spawn returns a tty" "yes" \
@@ -141,7 +141,7 @@ check "the live process carries the tier's model" "${bound%%/*}" "$got"
 # Every launched session carries its effort as well (decision 3): the one the dry run of the
 # same spawn names is on the live process line, and the session's first main-thread request,
 # on its own transcript, runs at it — the host honoured the flag, not only received it.
-want_effort=$(ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" spawn --dir "$WSDIR" --tier "$tier" --title "Agent : e2e probe" \
+want_effort=$(ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" spawn --dir "$WSDIR" --tier "$tier" --title "Agent: e2e probe" \
       --prompt p 2>/dev/null | sed -n 's/^effort=//p')
 got_effort=$(ps -t "${TTY#/dev/}" -o command= 2>/dev/null | grep -oE -- '--effort [^ ]+' | awk '{print $2}')
 check "the live process carries the tier's effort" "$want_effort" "$got_effort"
@@ -180,17 +180,17 @@ check "the tab landed immediately right of its anchor" "$((pos_self + 1))" "$pos
 # having no tty of its own to resolve `self` against, leaves `me` empty — two different
 # causes the block below must tell apart instead of reporting one for the other.
 me_err=$(mktemp "$SANDBOX/self-probe.XXXXXX")
-me=$(ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title "Agent : e2e self" --trust \
+me=$(ORCHESTRATOR_DRY_RUN=1 bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title "Agent: e2e self" --trust \
       --prompt "Do nothing." --right-of self 2>"$me_err" | sed -n 's/^self=//p')
 if [ -n "$me" ]; then
   # The caller's own row, marked: the reading an orchestrator goes without when it takes the
   # last tab in the listing for its own, and moves a stranger's session (§38).
   check "the listing marks the caller's own row, and only it" "1|1" \
     "$(bash "$AGENT" list | grep "$me" | grep -c ' | self$')|$(bash "$AGENT" list | grep -c ' | self$')"
-  one_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title "Agent : e2e chain 1" --trust \
+  one_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title "Agent: e2e chain 1" --trust \
         --prompt "Do nothing." --right-of self 2>&1)
   ONE=$(printf '%s' "$one_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
-  two_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title "Agent : e2e chain 2" --trust \
+  two_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title "Agent: e2e chain 2" --trust \
         --prompt "Do nothing." --right-of self 2>&1)
   TWO=$(printf '%s' "$two_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
   pos_one=$(bash "$AGENT" list | grep -n "$ONE" | cut -d: -f1)
@@ -235,7 +235,7 @@ rm -f "$me_err"
 # and a shell that has none is refused by the launcher, which is a fact to state, not a
 # failure of the placement.
 if [ -n "$me" ]; then
-  aud_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --auditor --title "Audit : e2e probe" --trust \
+  aud_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --auditor --title "Audit: e2e probe" --trust \
         --prompt "Do nothing." 2>&1)
   AUD=$(printf '%s' "$aud_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
   if [ -z "$AUD" ] && printf '%s' "$aud_out" | grep -q 'they cannot be read'; then
@@ -276,7 +276,7 @@ echo "== an anchor that is not there =="
 # the orchestrator believes it. Before this check, an anchor in another window — or no
 # window at all — was silently replaced by « the end of whatever window is in front ».
 tabs_before=$(bash "$AGENT" list | wc -l | tr -d ' ')
-ghost_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title "Agent : e2e ghost" --trust \
+ghost_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title "Agent: e2e ghost" --trust \
       --prompt "Do nothing." --right-of /dev/ttys999 2>&1)
 ghost_code=$?
 check "an absent anchor is refused" "1" "$ghost_code"
@@ -320,7 +320,7 @@ check "the probe's checkout is deleted after its close" "0" \
   "$(bash "$WS" delete "$WSDIR" --discard >/dev/null 2>&1; [ -e "$WSDIR" ] && echo 1 || echo 0)"
 
 # The rest of the round rotates and stands down a live probe; the one above is gone.
-spawn_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title "Agent : e2e 2" --trust \
+spawn_out=$(bash "$AGENT" spawn --dir "$SANDBOX/repo" --tier "$tier" --title "Agent: e2e 2" --trust \
       --prompt "Read $SANDBOX/brief.md and wait. Do not write anything." --right-of "$self" 2>&1)
 TTY=$(printf '%s' "$spawn_out" | grep -oE '^/dev/ttys[0-9]+$' | tail -1)
 check "a fresh probe for the rest of the round" "yes" \
@@ -354,7 +354,7 @@ check "and its tab is still there" "1" "$(bash "$AGENT" list | grep -c "$old_tty
 # title to say what it is doing. The tty is the identity; what makes the close safe is the
 # stand-down that preceded it, not a string that was true a moment ago.
 out=$(bash "$AGENT" rotate --old-tty "$old_tty" \
-      --dir "$SANDBOX/repo" --tier "$tier" --title "Agent : e2e rotated" \
+      --dir "$SANDBOX/repo" --tier "$tier" --title "Agent: e2e rotated" \
       --prompt "Do nothing." 2>&1)
 TTY=$(printf '%s' "$out" | grep -oE '/dev/ttys[0-9]+' | head -1)
 check "the rotation returned a new tty" "yes" "$(printf '%s' "$TTY" | grep -qE '^/dev/tty' && echo yes || echo "$out")"

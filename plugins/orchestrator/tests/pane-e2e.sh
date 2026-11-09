@@ -152,7 +152,7 @@ start() {
   ORCHESTRATOR_COMMANDS_DIR="$COMMANDS" bash "$ROOT/short-commands.sh" install >/dev/null \
     || { echo "refused: the short names could not be written to $COMMANDS" >&2; exit 1; }
   jq -n '{ tui: "fullscreen" }' > "$SANDBOX/settings.json"
-  echo '{"name":"Coord : e2e"}' > "$SANDBOX/state/coordinator.json"
+  echo '{"name":"Coord: e2e"}' > "$SANDBOX/state/coordinator.json"
   [ -n "$ALIVE" ] && kill "$ALIVE" 2>/dev/null
   sleep 3600 &
   ALIVE=$!
@@ -160,7 +160,7 @@ start() {
   now=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
   local who
   for who in alpha beta $([ "$round" = report ] && echo gamma); do
-    jq -n --arg name "Orch : $who" --arg pid "$ALIVE" --arg now "$now" '{
+    jq -n --arg name "Orch: $who" --arg pid "$ALIVE" --arg now "$now" '{
       role: "orchestrator", name: $name, pid: $pid, tty: null, repo: "e2e", context_percent: 12,
       context_tokens: 24000, window: 200000, model: "a-model", busy: false, updated_at: $now
     }' > "$ROWS/s-$who"
@@ -176,8 +176,8 @@ start() {
     env -i HOME="$HOME" USER="$USER" PATH="$PATH" TERM=xterm-256color FORCE_HYPERLINK=1 \
     ORCHESTRATOR_STATE_DIR="$SANDBOX/state" ORCHESTRATOR_MODULE_DIR="$SANDBOX/module" ORCHESTRATOR_COMMANDS_DIR="$COMMANDS" \
     "$HOST" --setting-sources project --strict-mcp-config --settings "$SANDBOX/settings.json" \
-    --plugin-dir "$ROOT" --name "Coord : e2e"
-  wait_for 'Coord : e2e' 30
+    --plugin-dir "$ROOT" --name "Coord: e2e"
+  wait_for 'Coord: e2e' 30
   if screen | grep -qF 'trust this folder'; then
     record "the trust question"
     echo "refused: the host asks to trust $SANDBOX/work; set ORCHESTRATOR_E2E_DIR to a directory it trusts" >&2
@@ -193,7 +193,7 @@ start() {
 questions_round() {
   local now="$1"
   jq -n --arg now "$now" --arg long "$LONG" '{
-    id: "s-alpha-q1", from: "Orch : alpha", session: "s-alpha", kind: "operator", since: $now,
+    id: "s-alpha-q1", from: "Orch: alpha", session: "s-alpha", kind: "operator", since: $now,
     blocks: "phase 3",
     question: ("Recorded: the docs first.\n\n**Question 1 of 2**\n_Subject_ : the release\n_Question_ : merge the release branch now?\n- **A** : " + $long
       + "\n- **B** : wait for the next review — a day lost\n- **C** : close it — the work is dropped\n_Recommendation_ : B — one more pair of eyes\n\nYou decide: A, B or C?"),
@@ -201,7 +201,7 @@ questions_round() {
     recommendation: "B", status: "open", at: $now, answer: null
   }' > "$SANDBOX/state/round/s-alpha-q1.json"
   jq -n --arg now "$now" '{
-    id: "s-beta-q2", from: "Orch : beta", session: "s-beta", kind: "operator", since: $now,
+    id: "s-beta-q2", from: "Orch: beta", session: "s-beta", kind: "operator", since: $now,
     blocks: "the docs", question: "Which docs first?",
     choices: [{letter:"A",text:"the design"},{letter:"B",text:"the README"}],
     recommendation: null, status: "open", at: $now, answer: null
@@ -218,17 +218,17 @@ report_round() {
   jq --arg now "$now" --arg blocks "$REPORT_BLOCKS" '. + { waiting: "operator", waiting_since: $now, blocks: $blocks }' \
     "$ROWS/s-alpha" > "$SANDBOX/alpha.json" && mv "$SANDBOX/alpha.json" "$ROWS/s-alpha"
   jq -n --arg now "$now" --arg blocks "$REPORT_BLOCKS" '{
-    id: "s-alpha-r1", from: "Orch : alpha", session: "s-alpha", kind: "operator", since: $now, blocks: $blocks,
+    id: "s-alpha-r1", from: "Orch: alpha", session: "s-alpha", kind: "operator", since: $now, blocks: $blocks,
     question: "Takeover done.\n\n| PR | state |\n|---|---|\n| speculoos#53 | ready |\n| speculoos#54 | ready |",
     choices: [], recommendation: null, status: "open", at: $now, answer: null
   }' > "$SANDBOX/state/round/s-alpha-r1.json"
   jq -n --arg now "$now" '{
-    id: "s-gamma-q1", from: "Orch : gamma", session: "s-gamma", kind: "operator", since: $now, blocks: "the tag",
+    id: "s-gamma-q1", from: "Orch: gamma", session: "s-gamma", kind: "operator", since: $now, blocks: "the tag",
     question: "_Question_ : tag the release?\n- **A** : tag it\n- **B** : wait",
     choices: [{letter:"A",text:"tag it"},{letter:"B",text:"wait"}], recommendation: null, status: "open", at: $now, answer: null
   }' > "$SANDBOX/state/round/s-gamma-q1.json"
   jq -n --arg now "$now" '{
-    id: "s-beta-q3", from: "Orch : beta", session: "s-beta", kind: "operator", since: $now, blocks: "the docs",
+    id: "s-beta-q3", from: "Orch: beta", session: "s-beta", kind: "operator", since: $now, blocks: "the docs",
     question: "**Question 1 of 1**\n_Subject_ : the docs\n_Question_ : which page goes first, and why?",
     choices: [], recommendation: null, status: "open", at: $now, answer: null
   }' > "$SANDBOX/state/round/s-beta-q3.json"
@@ -243,7 +243,7 @@ pair_round() {
   jq --arg now "$now" --arg blocks "$PAIR_BLOCKS" '. + { repo: "acme/infra", waiting: "operator", waiting_since: $now, blocks: $blocks }' \
     "$ROWS/s-alpha" > "$SANDBOX/alpha.json" && mv "$SANDBOX/alpha.json" "$ROWS/s-alpha"
   jq -n --arg now "$now" --arg blocks "$PAIR_BLOCKS" '{
-    id: "s-alpha-p1", from: "Orch : alpha", session: "s-alpha", kind: "operator", since: $now, blocks: $blocks,
+    id: "s-alpha-p1", from: "Orch: alpha", session: "s-alpha", kind: "operator", since: $now, blocks: $blocks,
     question: ("**Question 1 of 2**\n_Subject_ : the version number\n_Context_ : the public API does not change, see `plan-v2.md`.\n_Question_ : which number does the release carry?\n_Choices_ :\n- **A** : 1.15.0 — no break for the applications\n- **B** : 2.0.0 — marks the rewrite\n_Recommendation_ : A — the number follows the API\n\n"
       + "**Question 2 of 2**\n_Subject_ : the release rhythm\n_Question_ : one release per module, or one at the end?\n_Choices_ :\n- **A** : one per module — each step proven in production\n- **B** : one at the end — one upgrade per application\n_Recommendation_ : A — a regression stays in its module"),
     choices: [{letter:"A",text:"1.15.0 — no break for the applications"},{letter:"B",text:"2.0.0 — marks the rewrite"}],
@@ -312,7 +312,7 @@ record "drawn"
 check "every choice's whole text is drawn above the picker" "1" "$(flat | grep -c 'sees the new pane at once')"
 check "each choice's text is drawn once, the picker's options their letter" "1|1" "$(pane | grep -c 'close it — the work is dropped')|$(pane | grep -c '^C$')"
 check "the questions are drawn above the orchestrators, counted once in their title" "1|1" "$([ "$(line_of 'Questions for you — 2 pending')" -lt "$(line_of 'Orchestrators')" ] && echo 1)|$(pane | grep -c 'pending')"
-check "the question in a rounded card, titled by its sender and its number" "1|Orch : alpha · Question 1 / 2" "$([ "$(screen | grep -c '╭─')" -ge 1 ] && echo 1)|$(pane | grep -m1 '^Orch : alpha')"
+check "the question in a rounded card, titled by its sender and its number" "1|Orch: alpha · Question 1 / 2" "$([ "$(screen | grep -c '╭─')" -ge 1 ] && echo 1)|$(pane | grep -m1 '^Orch: alpha')"
 check "one numbering, the sender's, and nothing of its turn outside its fields" "1|0|0" "$(pane | grep -cE '[0-9] / [0-9]')|$(pane | grep -c 'Recorded')|$(pane | grep -c 'You decide')"
 check "each label upper-case on its own line, its text under it, the recommendation starred" "the release|merge the release branch now?|1" "$(pane | grep -A1 '^SUBJECT$' | sed -n 2p)|$(pane | grep -A1 '^QUESTION$' | sed -n 2p)|$(pane | grep -c '^★ Recommendation : B — one more')"
 check "each choice behind its badge, the recommended one starred" "1|1" "$(pane | grep -c '^\[C\] *close it')|$(pane | grep -c '^\[B\] *wait for the next review — a day lost *★')"
@@ -395,7 +395,7 @@ wheel down 30
 check "and back down" "0" "$(pane | grep -c '^Questions for you')"
 check "the thumb moved down with the window, the key line still in view" "1|1" "$([ "${top%%,*}" -lt "$(thumb | cut -d, -f1)" ] && echo 1)|$(pane | head -2 | grep -c 'Enter: choose')"
 wheel down 4
-check "the window's end shows the last row, the thumb at the track's end: the content did not grow" "1|1" "$(pane | tail -1 | grep -c 'Orch : beta')|$([ "$(thumb | tr ',' '\n' | tail -1)" = "$(screen | grep -n '│$\|█$' | cut -d: -f1 | tail -1)" ] && echo 1)"
+check "the window's end shows the last row, the thumb at the track's end: the content did not grow" "1|1" "$(pane | tail -1 | grep -c 'Orch: beta')|$([ "$(thumb | tr ',' '\n' | tail -1)" = "$(screen | grep -n '│$\|█$' | cut -d: -f1 | tail -1)" ] && echo 1)"
 check "nothing was answered by the walk" "open,open" "$(statuses)"
 press Enter
 check "Enter answers the highlighted choice in the short pane" "A : $LONG" "$(jq -r .answer.text "$SANDBOX/state/round/s-alpha-q1.json")"
@@ -407,7 +407,7 @@ check "the report is counted, drawn after the questions" "1|0|0" "$(pane | grep 
 check "its sender's row still shows what it waits on and blocks, each label in its column" "1|1" "$(pane | grep -c '^Status: *waiting for the operator')|$(pane | grep -c '^Blocks: *line 239 (merge of speculoos#53)')"
 press Enter
 check "Enter answers the question with choices, its sender reached by no session" "answered" "$(jq -r .status "$SANDBOX/state/round/s-gamma-q1.json")"
-check "the labelled question without choices is drawn as a question, the report after it" "Orch : beta · Question 1 / 1|1|1|1|0" "$(pane | grep -m1 '^Orch : beta')|$(pane | grep -c '^Questions for you — 2 pending')|$(pane | grep -c '^which page goes first')|$(pane | grep -c '^Other answer')|$(pane | grep -c 'Takeover done')"
+check "the labelled question without choices is drawn as a question, the report after it" "Orch: beta · Question 1 / 1|1|1|1|0" "$(pane | grep -m1 '^Orch: beta')|$(pane | grep -c '^Questions for you — 2 pending')|$(pane | grep -c '^which page goes first')|$(pane | grep -c '^Other answer')|$(pane | grep -c 'Takeover done')"
 notice=$(line_of 'not delivered:')
 check "the notice is one line at the section's foot, below the question, above the orchestrators" "1|1|1" "$(pane | grep -c 'not delivered:')|$([ -n "$notice" ] && [ "$notice" -gt "$(line_of 'which page goes first')" ] && echo 1)|$([ -n "$notice" ] && [ "$notice" -lt "$(line_of 'Orchestrators')" ] && echo 1)"
 tm send-keys -t "$SESSION" -l 'the design first'
@@ -416,7 +416,7 @@ press Enter
 check "the labelled question answered from its field" "the design first" "$(jq -r .answer.text "$SANDBOX/state/round/s-beta-q3.json")"
 wait_for 'Takeover done' 5
 record "the report drawn"
-check "the report in its card, its text whole, the field drawn at once and no picker" "Orch : alpha|1|1|1|1|0" "$(pane | grep -m1 '^Orch : alpha')|$(pane | grep -c '^Questions for you — 1 pending')|$(pane | grep -c '| speculoos#54 | ready |')|$(pane | grep -c 'Takeover done')|$(pane | grep -c '^Other answer')|$(pane | grep -c '^Choose: ')"
+check "the report in its card, its text whole, the field drawn at once and no picker" "Orch: alpha|1|1|1|1|0" "$(pane | grep -m1 '^Orch: alpha')|$(pane | grep -c '^Questions for you — 1 pending')|$(pane | grep -c '| speculoos#54 | ready |')|$(pane | grep -c 'Takeover done')|$(pane | grep -c '^Other answer')|$(pane | grep -c '^Choose: ')"
 tm send-keys -t "$SESSION" -l 'merge speculoos#53'
 sleep 0.6
 press Enter
@@ -425,11 +425,11 @@ check "the typed text answers the report, and the section has no question left" 
 echo "== an entry that asks two questions (160x50)"
 start 50 pair
 record "drawn"
-check "the first question alone in the card, the second named under it" "Orch : alpha · Question 1 / 2|0|1" "$(pane | grep -m1 '^Orch : alpha')|$(pane | grep -c 'one release per module')|$(pane | grep -c '^next: Question 2 / 2 — the release rhythm')"
+check "the first question alone in the card, the second named under it" "Orch: alpha · Question 1 / 2|0|1" "$(pane | grep -m1 '^Orch: alpha')|$(pane | grep -c 'one release per module')|$(pane | grep -c '^next: Question 2 / 2 — the release rhythm')"
 check "the count is the questions left, inline code drawn without its backticks" "1|1|0" "$(pane | grep -c '^Questions for you — 2 pending')|$(flat | grep -c 'see plan-v2.md')|$(pane | grep -c '`')"
 check "the glued pull requests read as written, each a link of its own" "1|2" "$(pane | grep -c 'infra#195/infra#196')|$(tm capture-pane -e -p -t "$SESSION" | grep -o $'\x1b\\]8;[^\x1b]*pull/19[56]' | sort -u | wc -l | tr -d ' ')"
 press Enter
-check "the first answer moves to the second question and sends nothing" "Orch : alpha · Question 2 / 2|1|open|0" "$(pane | grep -m1 '^Orch : alpha')|$(pane | grep -c '^Questions for you — 1 pending')|$(jq -r .status "$SANDBOX/state/round/s-alpha-p1.json")|$(pane | grep -c '^next:')"
+check "the first answer moves to the second question and sends nothing" "Orch: alpha · Question 2 / 2|1|open|0" "$(pane | grep -m1 '^Orch: alpha')|$(pane | grep -c '^Questions for you — 1 pending')|$(jq -r .status "$SANDBOX/state/round/s-alpha-p1.json")|$(pane | grep -c '^next:')"
 press Down Enter
 check "the last answer sends both, each after its number" "Question 1 of 2: A : 1.15.0 — no break for the applications · Question 2 of 2: B : one at the end — one upgrade per application" "$(jq -r .answer.text "$SANDBOX/state/round/s-alpha-p1.json")"
 
@@ -472,7 +472,7 @@ record "the pane closed"
 check "pane closed: the coordinator is woken at once for every open question" "1|s-alpha-q1,s-beta-q2" "$([ "$(screen | grep -c 'now due in this tab')" -ge 1 ] && echo 1)|$(woken)"
 press Escape
 jq -n --arg now "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" '{
-  id: "s-alpha-q4", from: "Orch : alpha", session: "s-alpha", kind: "operator", since: $now, blocks: "the tag",
+  id: "s-alpha-q4", from: "Orch: alpha", session: "s-alpha", kind: "operator", since: $now, blocks: "the tag",
   question: "_Question_ : tag the release while the pane is closed?\n- **A** : tag it\n- **B** : wait",
   choices: [{letter:"A",text:"tag it"},{letter:"B",text:"wait"}], recommendation: null, status: "open", at: $now, answer: null
 }' > "$SANDBOX/state/round/s-alpha-q4.json"
@@ -604,19 +604,19 @@ coordround round >/dev/null
 check "round recorded the two entries it printed" "s-alpha-q1,s-beta-q2" "$(jq -r 'sort | join(",")' "$SANDBOX/state/round-listed.json")"
 tm send-keys -t "$SESSION" Enter
 stamp=$(ms)
-read -r gone told <<< "$(since_answer "$stamp" 10 'merge the release branch now?' 'Settled in the pane: Orch : alpha')"
+read -r gone told <<< "$(since_answer "$stamp" 10 'merge the release branch now?' 'Settled in the pane: Orch: alpha')"
 record "(a) after the answer"
 delay a "$gone" "$told"
 press Escape
 check "(a) answered once and closed by the module, gone from the pane, the coordinator told once with nothing to run, within seconds" "closed|answered from the pane: B : wait for the next review — a day lost|yes|1|0|yes" \
-  "$(jq -r .status "$SANDBOX/state/round/s-alpha-q1.json")|$(jq -r .answer.text "$SANDBOX/state/round/s-alpha-q1.json")|$(fluid "$gone")|$(tab_count 'Settled in the pane: Orch : alpha')|$(tab_count 'round-close')|$(fluid "$told")"
+  "$(jq -r .status "$SANDBOX/state/round/s-alpha-q1.json")|$(jq -r .answer.text "$SANDBOX/state/round/s-alpha-q1.json")|$(fluid "$gone")|$(tab_count 'Settled in the pane: Orch: alpha')|$(tab_count 'round-close')|$(fluid "$told")"
 stamp=$(ms)
 coordround round-close s-beta-q2 --answer 'A, the design (relayed in the tab)' >/dev/null
 read -r gone told <<< "$(since_answer "$stamp" 25 'Which docs first?' '')"
 record "(c) after the round-close"
 delay c "$gone" "$told"
 check "(c) closed in the tab: gone from the pane within seconds, no notice sent back" "closed|yes|0" \
-  "$(jq -r .status "$SANDBOX/state/round/s-beta-q2.json")|$(fluid "$gone")|$(tab_count 'Settled in the pane: Orch : beta')"
+  "$(jq -r .status "$SANDBOX/state/round/s-beta-q2.json")|$(fluid "$gone")|$(tab_count 'Settled in the pane: Orch: beta')"
 
 echo "== (e) a wait that asks nothing answered from its field (160x50)"
 start 50 report
@@ -632,12 +632,12 @@ tm send-keys -t "$SESSION" -l 'merge speculoos#53'
 sleep 0.6
 tm send-keys -t "$SESSION" Enter
 stamp=$(ms)
-read -r gone told <<< "$(since_answer "$stamp" 10 'Takeover done' 'Settled in the pane: Orch : alpha')"
+read -r gone told <<< "$(since_answer "$stamp" 10 'Takeover done' 'Settled in the pane: Orch: alpha')"
 record "(e) after the answer"
 delay e "$gone" "$told"
 press Escape
 check "(e) the typed text answers the report once, closed by the module, gone from the pane, the coordinator told once" "closed|answered from the pane: merge speculoos#53|yes|1|yes" \
-  "$(jq -r .status "$SANDBOX/state/round/s-alpha-r1.json")|$(jq -r .answer.text "$SANDBOX/state/round/s-alpha-r1.json")|$(fluid "$gone")|$(tab_count 'Settled in the pane: Orch : alpha')|$(fluid "$told")"
+  "$(jq -r .status "$SANDBOX/state/round/s-alpha-r1.json")|$(jq -r .answer.text "$SANDBOX/state/round/s-alpha-r1.json")|$(fluid "$gone")|$(tab_count 'Settled in the pane: Orch: alpha')|$(fluid "$told")"
 
 # A live orchestrator beside the coordinator, in a second window of the same server, its turns
 # its model's replies to the project commands below. Its banner is read before anything is typed.
@@ -651,16 +651,16 @@ start_orch() {
     env -i HOME="$HOME" USER="$USER" PATH="$PATH" TERM=xterm-256color FORCE_HYPERLINK=1 \
     ORCHESTRATOR_STATE_DIR="$SANDBOX/state" ORCHESTRATOR_MODULE_DIR="$SANDBOX/module" ORCHESTRATOR_COMMANDS_DIR="$COMMANDS" \
     "$HOST" --setting-sources project --strict-mcp-config --settings "$SANDBOX/settings.json" \
-    --plugin-dir "$ROOT" --name "Orch : flow"
+    --plugin-dir "$ROOT" --name "Orch: flow"
   local i
-  for ((i = 0; i < 120; i++)); do orch_screen | grep -qF 'Orch : flow' && break; sleep 0.25; done
+  for ((i = 0; i < 120; i++)); do orch_screen | grep -qF 'Orch: flow' && break; sleep 0.25; done
   [ "$i" -lt 120 ] || return 1
   subscription_or_exit "$(orch_screen)"
 }
 orch_type() { tm send-keys -t "$SESSION:$ORCH" -l "$1"; sleep 1; tm send-keys -t "$SESSION:$ORCH" Enter; }
-flow_entries() { jq -r --arg s "$1" 'select(.from == "Orch : flow" and .status == $s) | .id' "$SANDBOX/state/round/"*.json 2>/dev/null | sort | paste -sd, -; }
-flow_open_with() { [ -n "$(jq -r --arg b "$1" 'select(.from == "Orch : flow" and .status == "open" and .blocks == $b) | .id' "$SANDBOX/state/round/"*.json 2>/dev/null)" ]; }
-flow_id() { jq -r --arg b "$1" 'select(.from == "Orch : flow" and .blocks == $b) | .id' "$SANDBOX/state/round/"*.json 2>/dev/null | head -1; }
+flow_entries() { jq -r --arg s "$1" 'select(.from == "Orch: flow" and .status == $s) | .id' "$SANDBOX/state/round/"*.json 2>/dev/null | sort | paste -sd, -; }
+flow_open_with() { [ -n "$(jq -r --arg b "$1" 'select(.from == "Orch: flow" and .status == "open" and .blocks == $b) | .id' "$SANDBOX/state/round/"*.json 2>/dev/null)" ]; }
+flow_id() { jq -r --arg b "$1" 'select(.from == "Orch: flow" and .blocks == $b) | .id' "$SANDBOX/state/round/"*.json 2>/dev/null | head -1; }
 settled_is() { status_is "$1" withdrawn || status_is "$1" closed; }
 
 echo "== (d) a question with choices, then a turn that asks nothing, (b) answered in the sender's own tab (160x50)"
@@ -691,17 +691,17 @@ else
   keys_to_pane
   tm send-keys -t "$SESSION" Enter
   stamp=$(ms)
-  read -r gone told <<< "$(since_answer "$stamp" 10 'which page goes first?' 'Settled in the pane: Orch : flow')"
+  read -r gone told <<< "$(since_answer "$stamp" 10 'which page goes first?' 'Settled in the pane: Orch: flow')"
   record "(d) answered in the pane"
   delay d "$gone" "$told"
   tm send-keys -t "$SESSION" Escape
   check "(d) answered once from the pane and closed, the report drawn next, the coordinator told once" "closed|open|drawn|yes|1|yes" \
-    "$(jq -r .status "$SANDBOX/state/round/$first.json")|$(jq -r .status "$SANDBOX/state/round/$report.json")|$(wait_for 'The pages are drafted' 10 && echo drawn || echo missing)|$(fluid "$gone")|$(tab_count 'Settled in the pane: Orch : flow')|$(fluid "$told")"
+    "$(jq -r .status "$SANDBOX/state/round/$first.json")|$(jq -r .status "$SANDBOX/state/round/$report.json")|$(wait_for 'The pages are drafted' 10 && echo drawn || echo missing)|$(fluid "$gone")|$(tab_count 'Settled in the pane: Orch: flow')|$(fluid "$told")"
   # The orchestrator's next turn, started by the pane's answer, is let end before (b).
   sleep 20
   orch_type '/flow-tag'
   until_ms 120 flow_open_with 'the tag' >/dev/null
-  tag=$(jq -r 'select(.from == "Orch : flow" and .status == "open" and .blocks == "the tag") | .id' "$SANDBOX/state/round/"*.json | head -1)
+  tag=$(jq -r 'select(.from == "Orch: flow" and .status == "open" and .blocks == "the tag") | .id' "$SANDBOX/state/round/"*.json | head -1)
   check "(b) the question to answer in the tab is drawn" "drawn" "$(wait_for 'tag the release?' 25 && echo drawn || echo missing)"
   coordround round >/dev/null
   orch_type 'B, wait. Reply with exactly the two lines « Noted. » and « waiting: done », with no tool.'
@@ -709,14 +709,14 @@ else
   # The entry is settled only when the sender's turn ends, its model's reply included: what
   # follows that end is the module's and the pane's, and is what must be fluid.
   ended=$(until_ms 120 settled_is "$tag")
-  read -r gone told <<< "$(since_answer "$stamp" 25 'tag the release?' "Settled in Orch : flow's tab")"
+  read -r gone told <<< "$(since_answer "$stamp" 25 'tag the release?' "Settled in Orch: flow's tab")"
   record "(b) answered in the sender's tab"
   delay b "$gone" "$told"
   after() { [ "$1" = never ] || [ "$ended" = never ] && echo never || echo $(( $1 > ended ? $1 - ended : 0 )); }
   echo "  (b) the sender's turn ended $(shown "$ended") after the answer; then pane $(shown "$(after "$gone")"), tab $(shown "$(after "$told")"); the entry $(jq -r .status "$SANDBOX/state/round/$tag.json") by $(jq -r .answer.by "$SANDBOX/state/round/$tag.json")"
   tm send-keys -t "$SESSION" Escape
   check "(b) closed once by the module as answered in the tab, gone from the pane and the coordinator told once within seconds of the turn's end, with nothing to run" "closed|withdrawn: answered in the sender's own tab|yes|1|0|yes" \
-    "$(jq -r .status "$SANDBOX/state/round/$tag.json")|$(jq -r .answer.text "$SANDBOX/state/round/$tag.json")|$(fluid "$(after "$gone")")|$(tab_count "Settled in Orch : flow's tab")|$(tab_count 'round-close')|$(fluid "$(after "$told")")"
+    "$(jq -r .status "$SANDBOX/state/round/$tag.json")|$(jq -r .answer.text "$SANDBOX/state/round/$tag.json")|$(fluid "$(after "$gone")")|$(tab_count "Settled in Orch: flow's tab")|$(tab_count 'round-close')|$(fluid "$(after "$told")")"
 fi
 echo "delays (from the answer; a figure ≤ ~${FLOOR_MS} ms sits on the poll's floor): $DELAYS"
 

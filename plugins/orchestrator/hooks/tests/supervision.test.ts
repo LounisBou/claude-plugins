@@ -138,7 +138,7 @@ function fakeDollar(over: {
         if (argv[0] === 'sh') return { exitCode: 0, stdout: '123 ttys001\n', stderr: '' }
         if (argv[0] === 'ps' && argv[1] === '-t') {
           // The session's own process, as the listing prints it.
-          const name = over.launchName === null ? null : (over.launchName ?? 'Agent : belt-p3')
+          const name = over.launchName === null ? null : (over.launchName ?? 'Agent: belt-p3')
           return { exitCode: 0, stdout: name ? `  501 hostcli --name ${name}\n` : '  501 hostcli\n', stderr: '' }
         }
         if (argv[0] === 'git' && argv[1] === 'remote') {
@@ -176,13 +176,13 @@ test('a session end removes its row, the file with it', async () => {
 test('a patch merges into the row it finds, and the write stamps it', async () => {
   const { dollar } = fakeDollar()
   await writeSession(dollar, 's', {
-    role: 'agent', name: 'Agent : one', context_percent: 30,
+    role: 'agent', name: 'Agent: one', context_percent: 30,
     context_tokens: 30000, window: 100000, model: 'a-model', busy: false,
   })
   await writeSession(dollar, 's', { context_percent: 55 })
   const row = (await readSessions(dollar))['sessions/s']
   expect(row.context_percent).toBe(55)
-  expect(row.name).toBe('Agent : one')
+  expect(row.name).toBe('Agent: one')
   expect(Date.now() - Date.parse(row.updated_at)).toBeLessThan(60000)
 })
 
@@ -208,14 +208,14 @@ test('a row lives while its host pid does, however long since its last measure',
 async function liveStore(over: Parameters<typeof fakeDollar>[0]): Promise<Fx> {
   const fx = fakeDollar(over)
   for (const [id, pid] of [['orch-a', '501'], ['orch-b', '601'], ['orch-c', '701']]) {
-    await writeSession(fx.dollar, id, { role: 'orchestrator', name: `Orch : ${id}`, pid })
+    await writeSession(fx.dollar, id, { role: 'orchestrator', name: `Orch: ${id}`, pid })
   }
   return fx
 }
 
 test('one dead pid among live ones removes its own row alone, at every render', async () => {
   const { dollar, files } = await liveStore({ alive: ['501', '601', '701'] })
-  await writeSession(dollar, 'crashed', { role: 'orchestrator', name: 'Orch : crashed', pid: '99999' })
+  await writeSession(dollar, 'crashed', { role: 'orchestrator', name: 'Orch: crashed', pid: '99999' })
   // Two reads in a row: the pane's render, then its next one (a resize, a clock tick).
   for (const pass of [1, 2]) {
     const rows = await readSessions(dollar)
@@ -228,7 +228,7 @@ test('one dead pid among live ones removes its own row alone, at every render', 
 for (const psFails of ['reject', 'exit', 'empty'] as const) {
   test(`a liveness read that fails (${psFails}) removes nothing and keeps the rows drawn`, async () => {
     const { dollar, files, ran } = await liveStore({ alive: ['501', '601', '701'], psFails })
-    await writeSession(dollar, 'crashed', { role: 'orchestrator', name: 'Orch : crashed', pid: '99999' })
+    await writeSession(dollar, 'crashed', { role: 'orchestrator', name: 'Orch: crashed', pid: '99999' })
     const rows = await readSessions(dollar)
     expect(Object.keys(rows).sort()).toEqual(['sessions/crashed', 'sessions/orch-a', 'sessions/orch-b', 'sessions/orch-c'])
     for (const id of ['orch-a', 'orch-b', 'orch-c', 'crashed']) expect(files.has(`${SESSIONS}/${id}`)).toBe(true)
@@ -271,11 +271,11 @@ test('the store reads one listing with each process state and tty, and drops the
   expect(livePidsArgv(['501'])).toEqual(['ps', '-A', '-o', 'pid=,stat=,tty='])
   const { dollar, files } = fakeDollar({ table: GHOST_TABLE })
   const stale = new Date(Date.now() - 9 * 3600000).toISOString()
-  await writeSession(dollar, 'live', { role: 'orchestrator', name: 'Orch : live', pid: '501', tty: '/dev/ttys001' })
-  await writeSession(dollar, 'ghost', { role: 'orchestrator', name: 'Orch : ghost', pid: '56717', tty: '/dev/ttys014', updated_at: stale })
-  await writeSession(dollar, 'zombie', { role: 'agent', name: 'Agent : zombie', pid: '602', tty: '/dev/ttys002' })
-  await writeSession(dollar, 'tty-lost', { role: 'agent', name: 'Agent : lost', pid: '603', tty: '/dev/ttys003' })
-  await writeSession(dollar, 'tty-gone', { role: 'agent', name: 'Agent : gone', pid: '604', tty: '/dev/ttys014' })
+  await writeSession(dollar, 'live', { role: 'orchestrator', name: 'Orch: live', pid: '501', tty: '/dev/ttys001' })
+  await writeSession(dollar, 'ghost', { role: 'orchestrator', name: 'Orch: ghost', pid: '56717', tty: '/dev/ttys014', updated_at: stale })
+  await writeSession(dollar, 'zombie', { role: 'agent', name: 'Agent: zombie', pid: '602', tty: '/dev/ttys002' })
+  await writeSession(dollar, 'tty-lost', { role: 'agent', name: 'Agent: lost', pid: '603', tty: '/dev/ttys003' })
+  await writeSession(dollar, 'tty-gone', { role: 'agent', name: 'Agent: gone', pid: '604', tty: '/dev/ttys014' })
   const rows = await readSessions(dollar)
   expect(Object.keys(rows)).toEqual(['sessions/live'])
   for (const id of ['ghost', 'zombie', 'tty-lost', 'tty-gone']) expect([id, files.has(`${SESSIONS}/${id}`)]).toEqual([id, false])
@@ -309,23 +309,23 @@ test('an absent, empty or unparseable row file is no row', async () => {
 // file beside it, then one rename, so a reader never meets a row caught mid-write.
 test('the row is written to a temporary file beside it, then renamed into place', async () => {
   const { dollar, files, ran } = fakeDollar()
-  await writeSession(dollar, 's', { role: 'agent', name: 'Agent : one' })
+  await writeSession(dollar, 's', { role: 'agent', name: 'Agent: one' })
   const moves = ran.filter(line => line.startsWith('mv '))
   expect(moves.length).toBe(1)
   expect(new RegExp(`^mv -f ${SESSIONS}/s\\.tmp-\\d+-[0-9a-z]+ ${SESSIONS}/s$`).test(moves[0])).toBe(true)
-  expect(parseSessionRow(files.get(`${SESSIONS}/s`)!)?.name).toBe('Agent : one')
+  expect(parseSessionRow(files.get(`${SESSIONS}/s`)!)?.name).toBe('Agent: one')
   expect([...files.keys()].some(k => k.includes('.tmp-'))).toBe(false)
 })
 
 test('a rename that fails leaves the row as it was, and its temporary file removed', async () => {
   const fx = fakeDollar()
-  await writeSession(fx.dollar, 's', { role: 'agent', name: 'Agent : one' })
+  await writeSession(fx.dollar, 's', { role: 'agent', name: 'Agent: one' })
   const before = fx.files.get(`${SESSIONS}/s`)
   const real = fx.dollar.process.run
   fx.dollar.process.run = async (argv: readonly string[]) => argv[0] === 'mv' ? { exitCode: 1, stdout: '', stderr: 'refused' } : real(argv)
   let failed = false
   try {
-    await writeSession(fx.dollar, 's', { name: 'Agent : two' })
+    await writeSession(fx.dollar, 's', { name: 'Agent: two' })
   } catch {
     failed = true
   }
@@ -338,7 +338,7 @@ test('a rename that fails leaves the row as it was, and its temporary file remov
 // and never removed by a reader — removing a writer's temporary file fails its rename.
 test('a temporary file beside the rows is no row, and the read leaves a fresh one in place', async () => {
   const { dollar, files } = fakeDollar({ alive: ['501'] })
-  await writeSession(dollar, 'live', { role: 'agent', name: 'Agent : live', pid: '501' })
+  await writeSession(dollar, 'live', { role: 'agent', name: 'Agent: live', pid: '501' })
   files.set(`${SESSIONS}/live.tmp-1-abcdef`, files.get(`${SESSIONS}/live`)!)
   files.set(`${SESSIONS}/fresh.tmp-2-abcdef`, '')
   const rows = await readSessions(dollar)
@@ -351,7 +351,7 @@ test('a temporary file a killed writer left beside the rows is removed by the ne
   // A process killed between its write and its rename leaves its temporary file: one older than
   // any write takes is no write in flight, and the read removes it, even when the liveness read fails.
   const { dollar, files, mtimes } = fakeDollar({ psFails: 'exit' })
-  await writeSession(dollar, 'live', { role: 'agent', name: 'Agent : live', pid: '501' })
+  await writeSession(dollar, 'live', { role: 'agent', name: 'Agent: live', pid: '501' })
   files.set(`${SESSIONS}/live.tmp-1-dead`, '{}')
   mtimes.set(`${SESSIONS}/live.tmp-1-dead`, Date.now() - STALE_MS - 1000)
   await readSessions(dollar)
@@ -417,7 +417,7 @@ test('the composed register writes the row the gauge just measured', async () =>
   expect(row.model).toBe('a-model')
   expect(row.busy).toBe(false)
   expect(row.role).toBe('agent')
-  expect(row.name).toBe('Agent : belt-p3')
+  expect(row.name).toBe('Agent: belt-p3')
   expect(row.repo).toBe('me/belt')
   expect(row.pid).toBe('501')
 })
@@ -428,7 +428,7 @@ test('the composed register writes the row the gauge just measured', async () =>
 // ran one at every measure, eight processes in this case where seven run now).
 test('a steady measure reads the repository no more', async () => {
   const chains = mounted(register)
-  const fx = fakeDollar({ origin: 'git@github.com:me/belt.git', launchName: 'Orch : belt' })
+  const fx = fakeDollar({ origin: 'git@github.com:me/belt.git', launchName: 'Orch: belt' })
   await drive(chains, 'session.measure', fx.dollar, {})
   expect(fx.ran.filter(r => r.startsWith('git '))).toHaveLength(1)
   fx.ran.length = 0
@@ -454,20 +454,20 @@ test('a walk that does not finish keeps the name and role the row already had', 
   await drive(chains, 'session.measure', fx.dollar, {})
   const row = (await readSessions(fx.dollar))['sessions/s-one']
   expect(row.context_percent).toBe(61)
-  expect(row.name).toBe('Agent : belt-p3')
+  expect(row.name).toBe('Agent: belt-p3')
   expect(row.role).toBe('agent')
 })
 
 test('without a launch name the row is named by the transcript\'s last rename', async () => {
   const renamed = [
     '{"type":"assistant","message":{"role":"assistant","content":"an answer"}}',
-    '{"type":"custom-title","customTitle":"Agent : renamed"}',
+    '{"type":"custom-title","customTitle":"Agent: renamed"}',
   ].join('\n') + '\n'
   const chains = mounted(register)
   const fx = fakeDollar({ launchName: null, transcript: renamed })
   await drive(chains, 'session.measure', fx.dollar, {})
   const row = (await readSessions(fx.dollar))['sessions/s-one']
-  expect(row.name).toBe('Agent : renamed')
+  expect(row.name).toBe('Agent: renamed')
   expect(row.role).toBe('agent')
 })
 
@@ -501,7 +501,7 @@ const ROUND = `${STATE}/round`
 const SENT = '2026-11-03T10:00:00.000Z'
 
 function openEntry(files: Map<string, string>, session: string, kind: 'operator' | 'done', over: Record<string, unknown> = {}): string {
-  const entry = { ...roundEntry(session, `Orch : ${session}`, { kind, blocks: kind === 'operator' ? 'a phase' : null, question: 'which one?' } as any, SENT, SENT), ...over }
+  const entry = { ...roundEntry(session, `Orch: ${session}`, { kind, blocks: kind === 'operator' ? 'a phase' : null, question: 'which one?' } as any, SENT, SENT), ...over }
   files.set(`${ROUND}/${entry.id}.json`, JSON.stringify(entry) + '\n')
   return entry.id
 }
@@ -510,8 +510,8 @@ const statusOf = (files: Map<string, string>, id: string) => parseRoundEntry(fil
 
 test('a read of the store closes the open entries of a sender whose row it removes, and leaves the others open', async () => {
   const { dollar, files } = fakeDollar({ alive: ['501'] })
-  await writeSession(dollar, 'alive', { role: 'orchestrator', name: 'Orch : alive', pid: '501' })
-  await writeSession(dollar, 'killed', { role: 'orchestrator', name: 'Orch : killed', pid: '502' })
+  await writeSession(dollar, 'alive', { role: 'orchestrator', name: 'Orch: alive', pid: '501' })
+  await writeSession(dollar, 'killed', { role: 'orchestrator', name: 'Orch: killed', pid: '502' })
   files.set(`${SESSIONS}/emptied`, '')
   const live = openEntry(files, 'alive', 'operator')
   const killed = openEntry(files, 'killed', 'operator')
@@ -533,18 +533,18 @@ test('a read of the store closes the open entries of a sender whose row it remov
 // read that removes its row moves its open entries to the successor, as its end would have.
 test('a read of the store moves the open entries of a removed sender that learnt its successor, and withdraws none', async () => {
   const { dollar, files } = fakeDollar({ alive: ['501'] })
-  await writeSession(dollar, 'killed', { role: 'orchestrator', name: 'Orch : killed', pid: '502' })
-  files.set(`${STATE}/store/successors/killed`, JSON.stringify({ name: 'Orch : next', from: null, session: 'next', at: SENT }) + '\n')
+  await writeSession(dollar, 'killed', { role: 'orchestrator', name: 'Orch: killed', pid: '502' })
+  files.set(`${STATE}/store/successors/killed`, JSON.stringify({ name: 'Orch: next', from: null, session: 'next', at: SENT }) + '\n')
   const id = openEntry(files, 'killed', 'operator')
   await readSessions(dollar)
   const after = parseRoundEntry(files.get(`${ROUND}/${id}.json`)!)
-  expect([after?.status, after?.session, after?.from, after?.movedFrom]).toEqual(['open', 'next', 'Orch : next', 'killed'])
+  expect([after?.status, after?.session, after?.from, after?.movedFrom]).toEqual(['open', 'next', 'Orch: next', 'killed'])
   expect(files.has(`${STATE}/store/successors/killed`)).toBe(false)
 })
 
 test('a liveness read that fails does not close the entry of a row it keeps', async () => {
   const { dollar, files } = fakeDollar({ alive: ['501'], psFails: 'exit' })
-  await writeSession(dollar, 'kept', { role: 'orchestrator', name: 'Orch : kept', pid: '502' })
+  await writeSession(dollar, 'kept', { role: 'orchestrator', name: 'Orch: kept', pid: '502' })
   const id = openEntry(files, 'kept', 'operator')
   await readSessions(dollar)
   expect(statusOf(files, id)).toBe('open')
@@ -553,7 +553,7 @@ test('a liveness read that fails does not close the entry of a row it keeps', as
 test('a row idle past the stale bound with no pid is removed, and its sender keeps its open entries', async () => {
   const { dollar, files } = fakeDollar({ alive: ['501'] })
   const idle = new Date(Date.now() - 2 * 3600000).toISOString()
-  await writeSession(dollar, 'idle', { role: 'orchestrator', name: 'Orch : idle', updated_at: idle })
+  await writeSession(dollar, 'idle', { role: 'orchestrator', name: 'Orch: idle', updated_at: idle })
   const id = openEntry(files, 'idle', 'operator')
   await readSessions(dollar)
   expect(files.has(`${SESSIONS}/idle`)).toBe(false)
@@ -566,20 +566,20 @@ test('a row removed for idleness alone keeps its learnt successor, and its later
   const chains = mounted(register)
   const { dollar, files } = fakeDollar({ alive: ['501'] })
   const idle = new Date(Date.now() - 2 * 3600000).toISOString()
-  await writeSession(dollar, 'idle', { role: 'orchestrator', name: 'Orch : idle', updated_at: idle })
-  files.set(`${STATE}/store/successors/idle`, JSON.stringify({ name: 'Orch : next', from: null, session: 'next', at: SENT }) + '\n')
+  await writeSession(dollar, 'idle', { role: 'orchestrator', name: 'Orch: idle', updated_at: idle })
+  files.set(`${STATE}/store/successors/idle`, JSON.stringify({ name: 'Orch: next', from: null, session: 'next', at: SENT }) + '\n')
   const id = openEntry(files, 'idle', 'operator')
   await readSessions(dollar)
   expect(files.has(`${SESSIONS}/idle`)).toBe(false)
   expect(files.has(`${STATE}/store/successors/idle`)).toBe(true)
   await drive(chains, 'session.end', dollar, { sessionId: 'idle' })
   const after = parseRoundEntry(files.get(`${ROUND}/${id}.json`)!)
-  expect([after?.status, after?.session, after?.from, after?.movedFrom]).toEqual(['open', 'next', 'Orch : next', 'idle'])
+  expect([after?.status, after?.session, after?.from, after?.movedFrom]).toEqual(['open', 'next', 'Orch: next', 'idle'])
 })
 
 test('an entry moved to a successor between the read and the withdraw is not overwritten', async () => {
   const { dollar, files } = fakeDollar({ alive: ['501'] })
-  await writeSession(dollar, 'killed', { role: 'orchestrator', name: 'Orch : killed', pid: '502' })
+  await writeSession(dollar, 'killed', { role: 'orchestrator', name: 'Orch: killed', pid: '502' })
   const id = openEntry(files, 'killed', 'operator')
   const path = `${ROUND}/${id}.json`
   const read = dollar.fs.read
@@ -587,7 +587,7 @@ test('an entry moved to a successor between the read and the withdraw is not ove
   dollar.fs.read = async (p: string) => {
     const text = await read(p)
     // The sweep's two round reads see the entry under the dead sender; the move lands right after the second.
-    if (p === path && ++reads === 2) files.set(path, JSON.stringify({ ...JSON.parse(text), session: 'successor', from: 'Orch : next', movedFrom: 'killed' }) + '\n')
+    if (p === path && ++reads === 2) files.set(path, JSON.stringify({ ...JSON.parse(text), session: 'successor', from: 'Orch: next', movedFrom: 'killed' }) + '\n')
     return text
   }
   await readSessions(dollar)
@@ -619,7 +619,7 @@ test('an entry naming no session, or from another machine, stays open though a r
 // coordinator forgot the fingerprint put the fingerprint back, and the same question was never
 // relayed again; a field the relay leaves as it read it keeps what the file holds now.
 test('a wait written from an older read keeps what another process changed since', () => {
-  const seen = { waiting: 'operator' as const, blocks: 'b', waiting_since: 't0', relayed: 'K', name: 'Orch : a', pid: '1', typed: { blocks: 'b', since: 't0' } }
+  const seen = { waiting: 'operator' as const, blocks: 'b', waiting_since: 't0', relayed: 'K', name: 'Orch: a', pid: '1', typed: { blocks: 'b', since: 't0' } }
   const now = { ...seen, relayed: null }
   delete (now as { typed?: unknown }).typed
   const written = mergeWait(seen, now, { ...seen, waiting: 'done', waiting_since: 't1' })

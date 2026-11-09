@@ -977,8 +977,8 @@ amendment` on `main`.
 2. Each PR: review session + norms check, one correction round, rebased; then squash-merged by the
    orchestrator (auto-merge, operator 2026-10-02).
 3. Marketplace: a PR on `LounisBou/claude-statusbar` adding `bugs-bot` (source github
-   `LounisBou/claude-bugs-bot`); « Orch : optim plugin 5 » told.
+   `LounisBou/claude-bugs-bot`); « Orch: optim plugin 5 » told.
 4. Release 0.1.0: on the operator's word.
-5. Migration (spec § 6): proposed to « Orch : TM frontend », run at a quiet point with its agreement
+5. Migration (spec § 6): proposed to « Orch: TM frontend », run at a quiet point with its agreement
    — rehearsal first, then the RUNBOOK; the allow rule is the operator's `/permissions`; the
    PersonalScraper PR removing the two old allow rules from a worktree of mine.

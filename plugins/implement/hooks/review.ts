@@ -21,7 +21,7 @@ export function reviewerPrompt(branch: string): string {
   ].join(' ')
 }
 
-/** The reviewer's session name, `Agent : review <codename>`, its subject cut to the shape's limit. */
+/** The reviewer's session name, `Agent: review <codename>`, its subject cut to the shape's limit. */
 export function reviewerTitle(codename: string): string {
   const subject = `review ${codename}`.slice(0, SUBJECT_MAX).trim()
   return sessionName('Agent', subject)

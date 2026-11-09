@@ -25,7 +25,7 @@ function file(over: Partial<ManifestFile> = {}): ManifestFile {
 
 function record(over: Partial<MoveRecord> = {}): MoveRecord {
   return {
-    name: 'Orch : belt', brief: `${MAC.configDir}/orchestrator/briefs/app/belt.md`, dir: `${MAC.home}/dev/app`,
+    name: 'Orch: belt', brief: `${MAC.configDir}/orchestrator/briefs/app/belt.md`, dir: `${MAC.home}/dev/app`,
     model: 'a-model', effort: 'high', prs: ['acme/app#7 feat/belt'], checkouts: [`${MAC.home}/dev/app`],
     git: { url: 'git@example.com:acme/app.git', branch: 'feat/belt' },
     order: '2026-10-16T09:04Z: move belt to the other machine and wake it there', ...over,
@@ -138,6 +138,11 @@ for (const [label, text] of [
   })
 }
 
+test('a manifest from a machine on the former name shape, « Orch : belt », is read', () => {
+  const former = manifest({ record: record({ name: 'Orch : belt' }) })
+  expect(parseMoveMessage(moveText(former))).toEqual(former)
+})
+
 test('a marked text exactly at the cap is read, one character more is refused whole', () => {
   const head = moveText({ kind: 'probe', move: MOVE, size: MOVE_TEXT_CAP, data: '' }).length
   const full: MoveMessage = { kind: 'probe', move: MOVE, size: MOVE_TEXT_CAP, data: 'x'.repeat(MOVE_TEXT_CAP - head) }
@@ -158,15 +163,15 @@ const BAD: [string, unknown][] = [
   ['an origin home that is the root', manifest({ origin: { machine: 'bench-mac', home: '/', configDir: MAC.configDir } })],
   ['a relative origin home', manifest({ origin: { machine: 'bench-mac', home: 'Users/a', configDir: MAC.configDir } })],
   ['a relative origin config directory', manifest({ origin: { machine: 'bench-mac', home: MAC.home, configDir: '.host' } })],
-  ['a name of another role', manifest({ record: record({ name: 'Coord : belt' }) })],
+  ['a name of another role', manifest({ record: record({ name: 'Coord: belt' }) })],
   ['a name without its role', manifest({ record: record({ name: 'belt' }) })],
-  ['a name carrying its reference', manifest({ record: record({ name: 'Orch : belt [a1b2c3]' }) })],
-  ['a name past the launcher\'s shape', manifest({ record: record({ name: `Orch : ${'b'.repeat(26)}` }) })],
-  ['a name with a double quote', manifest({ record: record({ name: 'Orch : be"lt' }) })],
-  ['a name with a dollar', manifest({ record: record({ name: 'Orch : $(belt)' }) })],
-  ['a name with a backtick', manifest({ record: record({ name: 'Orch : `belt`' }) })],
-  ['a name with a backslash', manifest({ record: record({ name: 'Orch : be\\lt' }) })],
-  ['a name with a line break', manifest({ record: record({ name: 'Orch : be\nlt' }) })],
+  ['a name carrying its reference', manifest({ record: record({ name: 'Orch: belt [a1b2c3]' }) })],
+  ['a name past the launcher\'s shape', manifest({ record: record({ name: `Orch: ${'b'.repeat(26)}` }) })],
+  ['a name with a double quote', manifest({ record: record({ name: 'Orch: be"lt' }) })],
+  ['a name with a dollar', manifest({ record: record({ name: 'Orch: $(belt)' }) })],
+  ['a name with a backtick', manifest({ record: record({ name: 'Orch: `belt`' }) })],
+  ['a name with a backslash', manifest({ record: record({ name: 'Orch: be\\lt' }) })],
+  ['a name with a line break', manifest({ record: record({ name: 'Orch: be\nlt' }) })],
   ['a relative brief', manifest({ record: record({ brief: 'briefs/belt.md' }) })],
   ['a relative directory', manifest({ record: record({ dir: 'dev/app' }) })],
   ['a relative checkout', manifest({ record: record({ checkouts: ['dev/app'] }) })],
@@ -179,7 +184,7 @@ const BAD: [string, unknown][] = [
   ...['\u0080', '\u0085', '\u009f', '\u2028', '\u2029', '\u200b', '\u200f', '\u202a', '\u202e', '\u2060', '\u2069', '\ufeff'].flatMap(c => {
     const code = `U+${c.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}`
     return [
-      [`a name holding ${code}`, manifest({ record: record({ name: `Orch : be${c}lt` }) })],
+      [`a name holding ${code}`, manifest({ record: record({ name: `Orch: be${c}lt` }) })],
       [`a directory holding ${code}`, manifest({ record: record({ dir: `${MAC.home}/de${c}v` }) })],
     ] as [string, unknown][]
   }),
@@ -302,7 +307,7 @@ for (const size of [0, -1, Number.NaN, 1.5]) {
 const MOVE_ID = /^[a-z0-9-]{1,40}-[0-9a-f]{12}$/
 
 test('moveIdOf reads its subject as a slug, then twelve hex digits', () => {
-  const id = moveIdOf(record({ name: 'Orch : Belt wifi probe' }), [file()])
+  const id = moveIdOf(record({ name: 'Orch: Belt wifi probe' }), [file()])
   expect(MOVE_ID.test(id)).toBe(true)
   expect(id.startsWith('belt-wifi-probe-')).toBe(true)
 })
@@ -323,14 +328,14 @@ test('moveIdOf changes with one sha256, and with the order', () => {
 })
 
 test('moveIdOf folds accents, cuts a long subject to forty characters and never ends its slug on a dash', () => {
-  expect(moveIdOf(record({ name: 'Orch : Na\u00efve r\u00e9sum\u00e9' }), [file()]).startsWith('naive-resume-')).toBe(true)
-  const long = moveIdOf(record({ name: `Orch : ${'abcdefghi '.repeat(4)}xyz` }), [file()])
+  expect(moveIdOf(record({ name: 'Orch: Na\u00efve r\u00e9sum\u00e9' }), [file()]).startsWith('naive-resume-')).toBe(true)
+  const long = moveIdOf(record({ name: `Orch: ${'abcdefghi '.repeat(4)}xyz` }), [file()])
   expect(MOVE_ID.test(long)).toBe(true)
   expect(long.slice(0, -13)).toBe('abcdefghi-abcdefghi-abcdefghi-abcdefghi')
 })
 
 test('moveIdOf falls back to a slug of its own when the subject holds no letter or digit', () => {
-  const id = moveIdOf(record({ name: 'Orch : \u{1F600}\u{1F600}' }), [file()])
+  const id = moveIdOf(record({ name: 'Orch: \u{1F600}\u{1F600}' }), [file()])
   expect(MOVE_ID.test(id)).toBe(true)
 })
 
@@ -434,7 +439,7 @@ test('rewritePaths ignores a pair whose origin is the root or empty', () => {
   expect(rewritePaths(`${MAC.home}/x /y`, [['/', LINUX.home], ['', LINUX.home]])).toBe(`${MAC.home}/x /y`)
 })
 
-// Where a move about `Orch : belt` lands on the target, whatever the origin's paths.
+// Where a move about `Orch: belt` lands on the target, whatever the origin's paths.
 const LANDING = `${LINUX.configDir}/claude-orchestrator/briefs/belt`
 
 test('arrivalOf rewrites the record\'s paths into the target\'s', () => {
@@ -571,13 +576,13 @@ const LAUNCHER = at('opt', 'plugins', 'orchestrator', 'skills', 'iterm-agents', 
 test('the arrival notice gives every fact and ends on the opening command, exact', () => {
   const m = manifest({ record: record({ order: '2026-10-16T09:04Z: move belt\nand wake it there' }) })
   const arrival = arrivalOf(m, LINUX) as Arrival
-  const text = arrivedNotice(m, arrival, 'Coord : ops', LAUNCHER)
-  expect(text.startsWith('[module] Orch : belt ')).toBe(true)
+  const text = arrivedNotice(m, arrival, 'Coord: ops', LAUNCHER)
+  expect(text.startsWith('[module] Orch: belt ')).toBe(true)
   const lines = text.split('\n')
   expect(lines[lines.length - 1]).toBe(
-    `${LAUNCHER} spawn --open --title "Orch : belt" --dir ${LINUX.home}/dev/app --permission-mode auto --model a-model --effort high --prompt "Read and execute ${LANDING}/belt.md"`,
+    `${LAUNCHER} spawn --open --title "Orch: belt" --dir ${LINUX.home}/dev/app --permission-mode auto --model a-model --effort high --prompt "Read and execute ${LANDING}/belt.md"`,
   )
-  for (const fact of ['bench-mac', 'Coord : ops', arrival.brief, arrival.dir, 'git@example.com:acme/app.git', 'feat/belt', 'effort high', 'acme/app#7 feat/belt', JSON.stringify(m.record.order)]) {
+  for (const fact of ['bench-mac', 'Coord: ops', arrival.brief, arrival.dir, 'git@example.com:acme/app.git', 'feat/belt', 'effort high', 'acme/app#7 feat/belt', JSON.stringify(m.record.order)]) {
     expect(text).toContain(fact)
   }
   expect(text).not.toContain(MAC.home)
@@ -585,7 +590,7 @@ test('the arrival notice gives every fact and ends on the opening command, exact
 
 test('the arrival notice says when there is no git, no pull request, and the default effort', () => {
   const m = manifest({ record: record({ git: null, prs: [], effort: '' }) })
-  const text = arrivedNotice(m, arrivalOf(m, LINUX) as Arrival, 'Coord : ops', LAUNCHER)
+  const text = arrivedNotice(m, arrivalOf(m, LINUX) as Arrival, 'Coord: ops', LAUNCHER)
   expect(text).toContain('git: none')
   expect(text).toContain('pull requests: none')
   expect(text).toContain('effort default')
@@ -596,7 +601,7 @@ test('the arrival notice says when there is no git, no pull request, and the def
 test('the opening command gives the effort after the model, and neither for the default effort', () => {
   const opening = (effort: MoveRecord['effort']) => {
     const m = manifest({ record: record({ effort }) })
-    return arrivedNotice(m, arrivalOf(m, LINUX) as Arrival, 'Coord : ops', LAUNCHER).split('\n').pop()!
+    return arrivedNotice(m, arrivalOf(m, LINUX) as Arrival, 'Coord: ops', LAUNCHER).split('\n').pop()!
   }
   expect(opening('max')).toContain(' --model a-model --effort max --prompt "')
   expect(opening('')).toContain(' --permission-mode auto --prompt "')
@@ -606,21 +611,21 @@ test('the opening command gives the effort after the model, and neither for the 
 
 test('the opening command quotes a directory with a space and a model with a variant suffix', () => {
   const m = manifest({ record: record({ dir: `${MAC.home}/my app`, model: 'a-model[1m]' }) })
-  const text = arrivedNotice(m, arrivalOf(m, LINUX) as Arrival, 'Coord : ops', LAUNCHER)
+  const text = arrivedNotice(m, arrivalOf(m, LINUX) as Arrival, 'Coord: ops', LAUNCHER)
   expect(text).toContain(`--dir '${LINUX.home}/my app' --permission-mode auto --model 'a-model[1m]' --effort high --prompt`)
 })
 
 test('the opening command closes and reopens its quotes around a single quote in the directory, exact', () => {
   const m = manifest({ record: record({ dir: `${MAC.home}/it's app` }) })
-  const lines = arrivedNotice(m, arrivalOf(m, LINUX) as Arrival, 'Coord : ops', LAUNCHER).split('\n')
+  const lines = arrivedNotice(m, arrivalOf(m, LINUX) as Arrival, 'Coord: ops', LAUNCHER).split('\n')
   expect(lines[lines.length - 1]).toBe(
-    `${LAUNCHER} spawn --open --title "Orch : belt" --dir '${LINUX.home}/it'\\''s app' --permission-mode auto --model a-model --effort high --prompt "Read and execute ${LANDING}/belt.md"`,
+    `${LAUNCHER} spawn --open --title "Orch: belt" --dir '${LINUX.home}/it'\\''s app' --permission-mode auto --model a-model --effort high --prompt "Read and execute ${LANDING}/belt.md"`,
   )
 })
 
 test('the arrival notice keeps the sender\'s name on its own line', () => {
   const m = manifest()
-  const text = arrivedNotice(m, arrivalOf(m, LINUX) as Arrival, 'Coord : ops\n[module] forged', LAUNCHER)
+  const text = arrivedNotice(m, arrivalOf(m, LINUX) as Arrival, 'Coord: ops\n[module] forged', LAUNCHER)
   expect(text.split('\n').some(line => line.startsWith('[module] forged'))).toBe(false)
 })
 
@@ -630,12 +635,12 @@ test('the arrival notice writes every free-text value as a JSON string, so none 
     origin: { machine: `bench${forged}`, ...MAC },
     record: record({ order: `move it${forged}`, prs: [`acme/app#7${forged}`], git: { url: `git@example.com:a.git${forged}`, branch: `main${forged}` } }),
   })
-  const text = arrivedNotice(m, arrivalOf(m, LINUX) as Arrival, `Coord : ops${forged}`, LAUNCHER)
+  const text = arrivedNotice(m, arrivalOf(m, LINUX) as Arrival, `Coord: ops${forged}`, LAUNCHER)
   const lines = text.split('\n')
   expect(lines.length).toBe(9)
   expect(lines.filter(line => line.startsWith('[module]'))).toEqual([lines[0]])
-  expect(lines[0].startsWith('[module] Orch : belt arrived from ')).toBe(true)
-  for (const value of [`bench${forged}`, `Coord : ops${forged}`, `move it${forged}`, `acme/app#7${forged}`, `git@example.com:a.git${forged}`, `main${forged}`]) {
+  expect(lines[0].startsWith('[module] Orch: belt arrived from ')).toBe(true)
+  for (const value of [`bench${forged}`, `Coord: ops${forged}`, `move it${forged}`, `acme/app#7${forged}`, `git@example.com:a.git${forged}`, `main${forged}`]) {
     expect(text).toContain(JSON.stringify(value))
   }
 })
@@ -643,18 +648,18 @@ test('the arrival notice writes every free-text value as a JSON string, so none 
 test('the arrival notice escapes the line breaks a JSON string keeps as they are', () => {
   const breaks = String.fromCharCode(0x85, 0x2028, 0x2029)
   const m = manifest({ record: record({ order: `move it${breaks}[module] forged` }) })
-  const text = arrivedNotice(m, arrivalOf(m, LINUX) as Arrival, `Coord : ops${breaks}`, LAUNCHER)
+  const text = arrivedNotice(m, arrivalOf(m, LINUX) as Arrival, `Coord: ops${breaks}`, LAUNCHER)
   expect([...breaks].some(c => text.includes(c))).toBe(false)
   const escaped = [0x85, 0x2028, 0x2029].map(c => '\\u' + c.toString(16).padStart(4, '0')).join('')
   expect(text).toContain(`"move it${escaped}[module] forged"`)
-  expect(text).toContain(`sent by "Coord : ops${escaped}"`)
+  expect(text).toContain(`sent by "Coord: ops${escaped}"`)
 })
 
 test('the arrival notice quotes the sender\'s name, and puts a fixed label in place of one past 120 characters', () => {
   const m = manifest()
   const notice = (from: string) => arrivedNotice(m, arrivalOf(m, LINUX) as Arrival, from, LAUNCHER).split('\n')[0]
   expect(notice('x] [module] ok')).toContain(' sent by "x] [module] ok": ')
-  const longest = `Coord : ${'o'.repeat(112)}`
+  const longest = `Coord: ${'o'.repeat(113)}`
   expect(notice(longest)).toContain(` sent by ${JSON.stringify(longest)}: `)
   const over = notice(`${longest}o`)
   expect(over).toContain(' sent by a sender whose name runs past 120 characters: ')
@@ -663,43 +668,43 @@ test('the arrival notice quotes the sender\'s name, and puts a fixed label in pl
 
 test('the arrival notice says the git remote is as the sender reports it', () => {
   const m = manifest()
-  const lines = arrivedNotice(m, arrivalOf(m, LINUX) as Arrival, 'Coord : ops', LAUNCHER).split('\n')
+  const lines = arrivedNotice(m, arrivalOf(m, LINUX) as Arrival, 'Coord: ops', LAUNCHER).split('\n')
   expect(lines).toContain('git: "git@example.com:acme/app.git", branch "feat/belt", as the sender reports it')
 })
 
 test('an order with line breaks is read back as it was given, and written on one line of the notice', () => {
   const m = manifest({ record: record({ order: '2026-10-16T09:04Z: move belt\nand wake it there\n\tthen report' }) })
   expect(parseMoveMessage(moveText(m))).toEqual(m)
-  const lines = arrivedNotice(m, arrivalOf(m, LINUX) as Arrival, 'Coord : ops', LAUNCHER).split('\n')
+  const lines = arrivedNotice(m, arrivalOf(m, LINUX) as Arrival, 'Coord: ops', LAUNCHER).split('\n')
   expect(lines.length).toBe(9)
   expect(lines).toContain(`the operator's order, verbatim: ${JSON.stringify(m.record.order)}`)
 })
 
 test('the sender is told the move acknowledged, with where the brief now is', () => {
   const brief = `${LINUX.configDir}/orchestrator/briefs/app/belt.md`
-  const text = acknowledgedNotice(record(), 'Orch : far', brief, { removed: 2, kept: [] }, null)
-  expect(text.startsWith('[module] Orch : belt ')).toBe(true)
-  expect(text).toContain('Orch : far')
+  const text = acknowledgedNotice(record(), 'Orch: far', brief, { removed: 2, kept: [] }, null)
+  expect(text.startsWith('[module] Orch: belt ')).toBe(true)
+  expect(text).toContain('Orch: far')
   expect(text).toContain(brief)
   expect(text.includes('\n')).toBe(false)
   // A file kept is named as a JSON string, so no name opens a line of its own; the sleeping
   // record's command is given whole.
-  const kept = acknowledgedNotice(record(), 'Orch : far', brief, { removed: 1, kept: ['/w/a\nb.md'] }, '/p/coordinator.sh wake-done --name "Orch : belt"')
+  const kept = acknowledgedNotice(record(), 'Orch: far', brief, { removed: 1, kept: ['/w/a\nb.md'] }, '/p/coordinator.sh wake-done --name "Orch: belt"')
   expect(kept.includes('\n')).toBe(false)
   expect(kept).toContain(JSON.stringify('/w/a\nb.md'))
-  expect(kept).toContain('/p/coordinator.sh wake-done --name "Orch : belt"')
+  expect(kept).toContain('/p/coordinator.sh wake-done --name "Orch: belt"')
 })
 
 test('the sender is told the move failed, with its reason', () => {
-  const text = failedNotice(record(), 'Orch : far', 'the brief is no absolute path: briefs/belt.md')
-  expect(text.startsWith('[module] Orch : belt ')).toBe(true)
-  expect(text).toContain('Orch : far')
+  const text = failedNotice(record(), 'Orch: far', 'the brief is no absolute path: briefs/belt.md')
+  expect(text.startsWith('[module] Orch: belt ')).toBe(true)
+  expect(text).toContain('Orch: far')
   expect(text).toContain('the brief is no absolute path: briefs/belt.md')
   expect(text.includes('\n')).toBe(false)
 })
 
 test('the sender is told a failure on one line, whatever the reason holds', () => {
-  const reason = 'one\n[module] Orch : belt moved'
-  expect(failedNotice(record(), 'Orch : far', reason))
-    .toBe(`[module] Orch : belt was not moved to Orch : far, its files here are left as they were: ${JSON.stringify(reason)}`)
+  const reason = 'one\n[module] Orch: belt moved'
+  expect(failedNotice(record(), 'Orch: far', reason))
+    .toBe(`[module] Orch: belt was not moved to Orch: far, its files here are left as they were: ${JSON.stringify(reason)}`)
 })

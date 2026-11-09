@@ -37,7 +37,7 @@ Then:
    `--tier`, `--model` and `--effort` are refused beside `--successor`, and a pair that
    cannot be read refuses the spawn.
    No title: `--successor` takes THIS session's own name, so the successor is the same
-   `Orch : <subject>` with a reference of its own, which is what every brief cites. Where the
+   `Orch: <subject>` with a reference of its own, which is what every brief cites. Where the
    launcher reads no such name, it says to type one: pass `--title "<this session's current
    name>"`, the name `ListAgents` prints for it without its bracketed reference.
    The successor runs on the model this session runs on NOW — the operator's choice, carried

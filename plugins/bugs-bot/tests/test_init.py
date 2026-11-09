@@ -52,7 +52,7 @@ def channel_with(*updates: dict) -> tuple[TelegramChannel, FakeTelegram]:
 
 def args(**given) -> InitArgs:
     """The arguments of a first run, overridden by ``given``."""
-    base = {"project": "demo", "agent_title": "Agent : Demo Bugs", "chat_id": GROUP_ID, "title": "Demo Bugs"}
+    base = {"project": "demo", "agent_title": "Agent: Demo Bugs", "chat_id": GROUP_ID, "title": "Demo Bugs"}
     return InitArgs(**{**base, **given})
 
 
@@ -169,7 +169,7 @@ def test_init_with_one_discovered_group_writes_the_file_and_registers(repo, mach
     assert cmd_init(channel, machine, repo, given, pull_running=False) == 0
 
     project = load_project(repo / PROJECT_FILE)
-    assert (project.project, project.chat_id, project.title, project.agent_title) == ("demo", GROUP_ID, "TM Bugs", "Agent : Demo Bugs")
+    assert (project.project, project.chat_id, project.title, project.agent_title) == ("demo", GROUP_ID, "TM Bugs", "Agent: Demo Bugs")
     assert machine.registry.project_for("telegram", GROUP_ID).project == "demo"
     assert machine.load_offset() is None
     assert all("offset" not in p for p in tg.updates_calls())
@@ -360,7 +360,7 @@ def test_init_rerun_updates_the_file_keeps_unspecified_values_and_never_duplicat
 
     project = load_project(repo / PROJECT_FILE)
     assert project.language == "en"
-    assert (project.project, project.chat_id, project.agent_title) == ("demo", GROUP_ID, "Agent : Demo Bugs")
+    assert (project.project, project.chat_id, project.agent_title) == ("demo", GROUP_ID, "Agent: Demo Bugs")
     assert project.deploy_url == "https://x.example" and project.docs == ("docs/",)
     assert machine.registry.entries().keys() == {("telegram", GROUP_ID)}
     assert git_exclude_path(repo).read_text().splitlines().count(EXCLUDE_LINE) == 1
@@ -538,7 +538,7 @@ def no_pull(monkeypatch):
 def test_cli_init_end_to_end(run, repo, bugs_home, no_pull, monkeypatch):
     monkeypatch.chdir(repo)
 
-    code = run("init", "--project", "demo", "--agent-title", "Agent : Demo Bugs", "--chat-id", str(GROUP_ID), "--title", "Demo Bugs")
+    code = run("init", "--project", "demo", "--agent-title", "Agent: Demo Bugs", "--chat-id", str(GROUP_ID), "--title", "Demo Bugs")
 
     assert code == 0
     assert json.loads((repo / PROJECT_FILE).read_text())["group"] == {"chat_id": GROUP_ID, "title": "Demo Bugs"}

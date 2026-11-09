@@ -103,7 +103,7 @@ EFFORTS = ("low", "medium", "high", "xhigh", "max")
 # transcript. An effort the map binds wins over both.
 SHIPPED_TIER_EFFORTS = {"standard": "high", "light": "medium"}
 EFFORT_LIST = "low, medium, high, xhigh or max"
-# A title reads `Orch : <subject>` or `Agent : <subject>`: two roles, and a subject of at
+# A title reads `Orch: <subject>` or `Agent: <subject>`: two roles, and a subject of at
 # most twenty-five characters. It is the session's NAME (§24), so it is the operator's
 # format or it is nothing an orchestrator can recognise in a listing — a successor once
 # came up as `steward-successor` because the launcher took whatever was typed (§39). The
@@ -116,30 +116,40 @@ EFFORT_LIST = "low, medium, high, xhigh or max"
 # launch file and back out of the process table, where a second line is not part of a name.
 # The subject's first and last characters are not spaces either: a name that reads as
 # empty, or as its trimmed twin, never reaches a listing (§45).
-TITLE_SHAPE = re.compile(r"^(Orch|Agent) : \S(.{0,23}\S)?\Z")
+TITLE_SHAPE = re.compile(r"^(Orch|Agent): \S(.{0,23}\S)?\Z")
 # An auditor's title, and ONLY an auditor's (§52). An auditor reads an orchestrator's method
 # and results; it is neither that orchestrator's successor nor one of its agents, and the
-# operator tells the three apart in his window by the role word. So `Audit :` is accepted
-# under --auditor alone and refused everywhere else, the way `Orch :` is refused on a plain
+# operator tells the three apart in his window by the role word. So `Audit:` is accepted
+# under --auditor alone and refused everywhere else, the way `Orch:` is refused on a plain
 # anchor: a title is a claim about what a session is, and the launcher holds it to that.
-AUDIT_TITLE_SHAPE = re.compile(r"^Audit : \S(.{0,23}\S)?\Z")
-AUDIT_ROLE = "Audit :"
+AUDIT_TITLE_SHAPE = re.compile(r"^Audit: \S(.{0,23}\S)?\Z")
+AUDIT_ROLE = "Audit:"
 # An auditor's NAME, as a succession derives it from the caller: the strict title above, or
 # one whose role word carries a qualifier, « Audit neutre : <subject> », the name an auditor
 # the operator launches by hand may take. Accepted only where the name is read, never typed:
 # a typed audit title is still the strict one, under --auditor alone.
-AUDIT_NAME_SHAPE = re.compile(r"^Audit(?: [^\s:]+)* : \S(.{0,23}\S)?\Z")
+AUDIT_NAME_SHAPE = re.compile(r"^Audit(?: [^\s:]+)* ?: \S(.{0,23}\S)?\Z")
 # The coordinator's own successor's title, and ONLY that spawn's. The coordinator sits above
 # every orchestrator on the machine, so the operator tells its tab apart from an auditor's or
-# an agent's the same way: by the role word. `Coord :` is accepted under
-# --coordinator-successor alone and refused everywhere else, the way `Audit :` is refused
+# an agent's the same way: by the role word. `Coord:` is accepted under
+# --coordinator-successor alone and refused everywhere else, the way `Audit:` is refused
 # outside --auditor.
-COORD_TITLE_SHAPE = re.compile(r"^Coord : \S(.{0,23}\S)?\Z")
-COORD_ROLE = "Coord :"
+COORD_TITLE_SHAPE = re.compile(r"^Coord: \S(.{0,23}\S)?\Z")
+COORD_ROLE = "Coord:"
 # The four roles a title names, in the order a listing shows them. A title that reads none
 # of them (a probe's, a hand-named tab) has no role and gets the narrowest tool set.
 ROLE_WORDS = ("Orch", "Coord", "Audit", "Agent")
-ROLE_PREFIX = re.compile(r"^(%s) :" % "|".join(ROLE_WORDS))
+ROLE_PREFIX = re.compile(r"^(%s) ?:" % "|".join(ROLE_WORDS))
+# A name of the former shape, `Orch : x`, a blank before the colon: sessions started, and
+# briefs and records written, before the change carry it until they are replaced. Every name
+# that comes in, typed or read, is taken the current way, `Orch: x`, so a title is always
+# written the current way and two spellings of one name are one name.
+FORMER_ROLE = re.compile(r"^(%s) : " % "|".join(ROLE_WORDS))
+
+
+def current_name(name):
+    """`name` with a former-shape role written the current way; any other name as given."""
+    return FORMER_ROLE.sub(r"\1: ", name, count=1) if name else name
 # What a session is not given, whatever its role: tools no session has ever called, each
 # one a schema the host sends on EVERY call (§65). Artifact is removed by name and never
 # through the host's `enableArtifact` setting, which also drops the « Scratchpad
@@ -1630,7 +1640,7 @@ def session_name_on(tty):
     a name an orchestrator would then address."""
     registered = registry_name_on(tty)
     if registered:
-        return registered
+        return current_name(registered)
     for _, command in ps_rows(tty):
         words = command.split()
         if "--name" not in words:
@@ -1642,7 +1652,7 @@ def session_name_on(tty):
             name.append(word)
         if not name:
             continue
-        joined = " ".join(name)
+        joined = current_name(" ".join(name))
         return joined if len(joined) <= NAME_READABLE_MAX else UNREADABLE_NAME
     return None
 
@@ -3710,7 +3720,8 @@ def cmd_home(argv):
         die("home: unknown option %s" % unknown[0])
     if not args.session:
         die("home: --session is required")
-    if not args.name.startswith("Orch : ") or not TITLE_SHAPE.match(args.name):
+    args.name = current_name(args.name)
+    if not args.name.startswith("Orch: ") or not TITLE_SHAPE.match(args.name):
         print("stay: only an orchestrator moves into a home session, and this session is "
               "named '%s'" % args.name[:40])
         return
@@ -4395,6 +4406,7 @@ def cmd_spawn(argv, pair_from=""):
     args, unknown = p.parse_known_args(argv)
     if unknown:
         die("spawn: unknown option %s" % unknown[0])
+    args.title = current_name(args.title)
     # A name is read without its surrounding whitespace: padded, it would match no tool of the
     # host and be kept or dropped as another name, without a word.
     args.keep_tool = [name.strip() for name in args.keep_tool]
@@ -4422,7 +4434,7 @@ def cmd_spawn(argv, pair_from=""):
             "or a coordinator's successor is written into no chain as an agent")
     if args.coordinator_successor:
         # A coordinator's successor is placed, named, modelled and reached ONE way: at the
-        # first place of the caller's window, "Coord : <subject>", the caller's model, remote
+        # first place of the caller's window, "Coord: <subject>", the caller's model, remote
         # control on. Each of these would quietly replace one of those terms with the
         # launcher's default, so each is refused rather than obeyed; the placement is its own,
         # so it takes no anchor either. Checked BEFORE the auditor's own block, so a caller
@@ -4434,16 +4446,16 @@ def cmd_spawn(argv, pair_from=""):
                             ("--no-remote-control", not args.remote_control)):
             if given:
                 die("spawn: refused: %s is not a coordinator-successor's: it lands at the "
-                    "first place of your window, reads \"Coord : <subject>\", runs on your "
+                    "first place of your window, reads \"Coord: <subject>\", runs on your "
                     "model and effort and comes up under remote control" % flag)
         if not args.title:
-            die('spawn: refused: --coordinator-successor needs --title "Coord : <subject>"')
+            die('spawn: refused: --coordinator-successor needs --title "Coord: <subject>"')
         if not COORD_TITLE_SHAPE.match(args.title):
-            die("spawn: refused: the coordinator's title reads \"Coord : <subject>\", the "
+            die("spawn: refused: the coordinator's title reads \"Coord: <subject>\", the "
                 "subject at most 25 characters and neither starting nor ending with a space, "
                 "got '%s'" % args.title)
     elif args.title.startswith(COORD_ROLE):
-        die("spawn: refused: a \"Coord :\" title is the coordinator's; spawn it with "
+        die("spawn: refused: a \"Coord:\" title is the coordinator's; spawn it with "
             "--coordinator-successor, which places it at the first place of your window, "
             "keeps it out of every chain and brings it up under remote control on your model")
     if args.wake:
@@ -4461,9 +4473,9 @@ def cmd_spawn(argv, pair_from=""):
                 die("spawn: refused: %s is not a wake's: a woken orchestrator runs under its "
                     "recorded name, model and effort, lands immediately right of you, joins "
                     "no chain and comes up under remote control" % flag)
-        if (not args.title.startswith("Orch : ") or not TITLE_SHAPE.match(args.title)
+        if (not args.title.startswith("Orch: ") or not TITLE_SHAPE.match(args.title)
                 or re.search(r" \[[0-9A-Za-z]+\]\Z", args.title)):
-            die('spawn: refused: --wake needs the recorded name, --title "Orch : <subject>" '
+            die('spawn: refused: --wake needs the recorded name, --title "Orch: <subject>" '
                 "without its reference, got '%s'" % args.title)
         # A record is a model with its effort, or nothing: a model alone would start the
         # orchestrator at an effort nobody chose. With nothing, the resumed transcript's pair
@@ -4510,18 +4522,18 @@ def cmd_spawn(argv, pair_from=""):
             # default for the session applies: half a pair is a guess at the other half.
             die("spawn: refused: an opening types the model and the effort the order names, "
                 "--model <id> --effort <level>, or neither (the host's default applies)")
-        if (not args.title.startswith("Orch : ") or not TITLE_SHAPE.match(args.title)
+        if (not args.title.startswith("Orch: ") or not TITLE_SHAPE.match(args.title)
                 or re.search(r" \[[0-9A-Za-z]+\]\Z", args.title)):
             die('spawn: refused: --open needs the new orchestrator\'s name, --title '
-                '"Orch : <subject>" without a reference, got \'%s\'' % args.title)
+                '"Orch: <subject>" without a reference, got \'%s\'' % args.title)
         caller = opener_name()
-        if not (caller.startswith("Orch : ") or caller.startswith(COORD_ROLE)):
+        if not (caller.startswith("Orch: ") or caller.startswith(COORD_ROLE)):
             die("spawn: refused: --open is a coordinator's or an orchestrator's, and this "
                 "session reads '%s': an agent never opens an orchestrator"
                 % (caller[:40] or "no name"))
     if args.auditor:
         # An auditor is placed, named, modelled and reached ONE way (§52): immediately left
-        # of its caller, `Audit : <subject>`, the caller's model, remote control on. Each of
+        # of its caller, `Audit: <subject>`, the caller's model, remote control on. Each of
         # these would quietly replace one of those terms with the launcher's default, so
         # each is refused rather than obeyed.
         for flag, given in (("--successor", args.successor), ("--right-of", args.right_of),
@@ -4531,12 +4543,12 @@ def cmd_spawn(argv, pair_from=""):
                             ("--no-remote-control", not args.remote_control)):
             if given:
                 die("spawn: refused: %s is not an auditor's: an auditor lands immediately "
-                    "left of its caller, reads \"Audit : <subject>\", runs on the caller's "
+                    "left of its caller, reads \"Audit: <subject>\", runs on the caller's "
                     "model and effort and comes up under remote control" % flag)
         if not args.title:
-            die('spawn: refused: --auditor needs --title "Audit : <subject>"')
+            die('spawn: refused: --auditor needs --title "Audit: <subject>"')
         if not AUDIT_TITLE_SHAPE.match(args.title):
-            die("spawn: refused: an auditor's title reads \"Audit : <subject>\", the subject "
+            die("spawn: refused: an auditor's title reads \"Audit: <subject>\", the subject "
                 "at most 25 characters and neither starting nor ending with a space, got '%s'"
                 % args.title)
     elif args.title.startswith(AUDIT_ROLE) or AUDIT_NAME_SHAPE.match(args.title):
@@ -4549,26 +4561,26 @@ def cmd_spawn(argv, pair_from=""):
     if args.successor and args.title_free:
         die("spawn: refused: a successor is named after its caller, --title-free does not "
             "apply")
-    if args.title.startswith("Orch :") and (args.left_of or args.right_of):
+    if args.title.startswith("Orch:") and (args.left_of or args.right_of):
         # A plain anchor lands AFTER the chain (§21), so a successor spawned there is the
         # far-right tab the operator found, inheriting nothing. --successor places it and
         # hands the chain over; the title says which of the two this is.
         die("spawn: refused: an orchestrator's title is a successor's; spawn it with "
             "--successor, which places it and hands it the chain")
-    if args.title.startswith("Orch :") and not (args.successor or args.open_ or args.wake):
+    if args.title.startswith("Orch:") and not (args.successor or args.open_ or args.wake):
         # A plain spawn under an orchestrator's name landed at the window's end and was
         # written into its caller's chain as an agent: an auditor's relaunch of an
         # orchestrator became the auditor's agent. An orchestrator tab has three ways in.
         die("spawn: refused: an orchestrator's tab is opened only as a successor "
             "(--successor), an opened orchestrator (--open) or a woken one (--wake)")
-    if args.title.startswith("Orch :") and not args.open_:
+    if args.title.startswith("Orch:") and not args.open_:
         # --open already refuses every caller but a coordinator or an orchestrator. An
         # auditor's one successor is its own audit session, `--successor` without a title.
-        # Read on the session's role, not on the `Audit :` prefix: an auditor named
+        # Read on the session's role, not on the `Audit:` prefix: an auditor named
         # otherwise ("Audit neutre : ...") carries no such prefix and still is no orchestrator.
         # An orchestrator, the coordinator and a plain agent are not read as auditors here.
         caller = session_name_on(self_tty() or "")
-        if caller == UNREADABLE_NAME or (caller and (caller.startswith("Orch : ")
+        if caller == UNREADABLE_NAME or (caller and (caller.startswith("Orch: ")
                                                      or caller.startswith(COORD_ROLE)
                                                      or title_role(caller) == "Agent"
                                                      or registered_coord_on(self_tty() or ""))):
@@ -4583,7 +4595,7 @@ def cmd_spawn(argv, pair_from=""):
     if args.wake:
         # --open's caller rule, after the auditor's own refusal above has had its say.
         caller = opener_name()
-        if not (caller.startswith("Orch : ") or caller.startswith(COORD_ROLE)):
+        if not (caller.startswith("Orch: ") or caller.startswith(COORD_ROLE)):
             die("spawn: refused: --wake is a coordinator's or an orchestrator's, and this "
                 "session reads '%s': an agent never wakes an orchestrator"
                 % (caller[:40] or "no name"))
@@ -4677,15 +4689,15 @@ def cmd_spawn(argv, pair_from=""):
         if not title:
             die("spawn: refused: --successor without --title needs the caller's session "
                 "name, and this session was launched without one; pass "
-                '--title "Orch : <subject>"')
+                '--title "Orch: <subject>"')
         if title == UNREADABLE_NAME:
             die("spawn: refused: the caller's session name cannot be read from the process "
                 "table — a launch that places its prompt after --name loses the boundary "
-                'between the two; pass --title "Orch : <subject>"')
+                'between the two; pass --title "Orch: <subject>"')
         if AUDIT_NAME_SHAPE.match(title):
             # An auditor kept on past its report succeeds at its gate (§9.4): its successor
             # carries its name, as an orchestrator's does. Only a DERIVED audit title gets
-            # here; a typed one was refused above, so `Audit :` is still no one's to claim.
+            # here; a typed one was refused above, so `Audit:` is still no one's to claim.
             # The qualified form (« Audit neutre : <subject> ») is an auditor's name too.
             auditor_successor = True
         elif not TITLE_SHAPE.match(title):
@@ -4694,9 +4706,9 @@ def cmd_spawn(argv, pair_from=""):
             # is a whole launch line. Only the first forty characters are quoted back —
             # the rest of a launch line has no business filling a terminal.
             die("spawn: refused: the caller's session name '%s' does not read "
-                '"Orch : <subject>"; pass --title "Orch : <subject>"' % title[:40])
+                '"Orch: <subject>"; pass --title "Orch: <subject>"' % title[:40])
     elif not args.auditor and not args.coordinator_successor and not TITLE_SHAPE.match(title):
-        die("spawn: refused: a title reads \"Orch : <subject>\" or \"Agent : <subject>\", "
+        die("spawn: refused: a title reads \"Orch: <subject>\" or \"Agent: <subject>\", "
             "the subject at most 25 characters and neither starting nor ending with a "
             "space, got '%s' (pass --title-free for a tab named otherwise)" % title)
     if args.successor:
@@ -5030,7 +5042,7 @@ def stable_title(name):
     after it is guaranteed to differ: the guard meant to make a close unambiguous refused
     every rotation instead. Both sides are stripped, so a caller that captured the glyph
     still matches."""
-    return name.lstrip().lstrip("".join(c for c in name if not (c.isalnum() or c.isspace()))).strip()
+    return current_name(name.lstrip().lstrip("".join(c for c in name if not (c.isalnum() or c.isspace()))).strip())
 
 
 def close_made(made):

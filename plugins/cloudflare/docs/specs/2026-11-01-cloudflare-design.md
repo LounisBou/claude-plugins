@@ -1,6 +1,6 @@
 # Plugin `cloudflare` — Cloudflare et Caddy pour les agents Claude Code
 
-Conception, 2026-11-01. Auteur : `Orch : Cloudflare config`, à partir des réponses de l'opérateur.
+Conception, 2026-11-01. Auteur : `Orch: Cloudflare config`, à partir des réponses de l'opérateur.
 Ce qui est la décision de l'opérateur est marqué **(opérateur)** ; ce qui est un choix de l'auteur, **(choix)**.
 
 ## 1. Intention
@@ -86,7 +86,7 @@ possible** (opérateur), et la **connaissance de Caddy** pour bien configurer un
   lecture ; **toute commande absente de la liste est une écriture** ; une écriture passe par la
   vérification de permission de Claude Code (demande à l'utilisateur, règles `allow/ask/deny`
   respectées). La lecture passe sans demande.
-- **Jusqu'à nouvel ordre** (opérateur, réponse 2 « A pour aujourd'hui ») : seul `Orch : Cloudflare config`
+- **Jusqu'à nouvel ordre** (opérateur, réponse 2 « A pour aujourd'hui ») : seul `Orch: Cloudflare config`
   modifie la zone et le Caddyfile ; les autres sessions lisent et demandent. Le plugin ne code pas
   cette règle, il la rend possible plus tard.
 - **Sobriété en tokens** (opérateur) : sorties texte compactes par défaut (une ligne par enregistrement,

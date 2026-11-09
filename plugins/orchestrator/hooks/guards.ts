@@ -370,7 +370,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     if (to && typeof e.message === 'string' && asksTheOperator(e.message)) {
       try {
         const coordinator = await coordinatorAddress($)
-        // Compared without the ` [ref]` suffix on both sides: « Coord : ops » is « Coord : ops [abc] ».
+        // Compared without the ` [ref]` suffix on both sides: « Coord: ops » is « Coord: ops [abc] ».
         const bare = (name: string) => name.replace(REFERENCED, '').trim()
         const addressed = coordinator !== null
           && [coordinator.name, typeof coordinator.to === 'string' ? coordinator.to : coordinator.to.sessionId].some(a => bare(a) === bare(to))

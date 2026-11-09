@@ -64,7 +64,7 @@ export function machine(options: Options) {
   const env: Record<string, string | undefined> = {
     HOME: options.home, ORCHESTRATOR_HOST_CLI: 'hostcli', ORCHESTRATOR_SPAWNED: options.spawned ? '1' : undefined,
   }
-  let name = options.name === undefined ? 'Orch : belt' : options.name
+  let name = options.name === undefined ? 'Orch: belt' : options.name
   // Faults a test switches on in the middle of a move: writes whose path holds one of the strings
   // fail, a directory cannot be made, a send throws once that many have gone, an address stops answering.
   const faults: { writes: string[]; mkdir: boolean; sendThrowsAfter: number | null; unreachable: string[] } = { writes: [], mkdir: false, sendThrowsAfter: null, unreachable: [] }
@@ -234,7 +234,7 @@ export const NOTES_TEXT = 'notes: éé ok\n' + 'x'.repeat(4000) + '\n'
 // that must not travel, and two checkouts that are clean and pushed.
 export function sender(over: Partial<Options> = {}): Machine {
   const fx = machine({
-    home: HOME_A, address: ADDRESS_A, name: 'Orch : belt',
+    home: HOME_A, address: ADDRESS_A, name: 'Orch: belt',
     repos: {
       [`${HOME_A}/dev/app`]: { remote: 'git@example.com:acme/app.git', branch: 'feat/belt' },
       [`${HOME_A}/dev/lib`]: {},
@@ -251,12 +251,12 @@ export function sender(over: Partial<Options> = {}): Machine {
 }
 
 export function receiver(over: Partial<Options> = {}): Machine {
-  return machine({ home: HOME_B, address: ADDRESS_B, name: 'Orch : far', machine: 'mac-b', ...over })
+  return machine({ home: HOME_B, address: ADDRESS_B, name: 'Orch: far', machine: 'mac-b', ...over })
 }
 
 export function sendInput(fx: Machine, over: Record<string, unknown> = {}) {
   return {
-    to: ADDRESS_B, name: 'Orch : belt', brief: `${fx.briefs}/belt/${BRIEF_NAME}`, dir: `${HOME_A}/dev/app`, model: 'a-model',
+    to: ADDRESS_B, name: 'Orch: belt', brief: `${fx.briefs}/belt/${BRIEF_NAME}`, dir: `${HOME_A}/dev/app`, model: 'a-model',
     effort: 'high', prs: ['acme/app#7 feat/belt'], checkouts: [`${HOME_A}/dev/app`, `${HOME_A}/dev/lib`],
     order: '2026-10-17T10:00Z: move belt to the other machine', ...over,
   }

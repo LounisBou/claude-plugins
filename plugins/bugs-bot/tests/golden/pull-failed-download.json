@@ -46,9 +46,9 @@
     "bugs-bot/projects.json": "{\n  \"telegram:-1001234567890\": {\n    \"project\": \"demo\",\n    \"repo\": \"<tmp>/repo-demo\"\n  },\n  \"telegram:-1009999999999\": {\n    \"project\": \"other\",\n    \"repo\": \"<tmp>/repo-other\"\n  },\n  \"telegram:-1005555555555\": {\n    \"project\": \"mig\",\n    \"repo\": \"<tmp>/repo-mig\"\n  }\n}\n",
     "bugs-bot/projects.json.lock": "",
     "bugs-bot/unregistered.json": "{\n  \"-1007777777777\": {\n    \"title\": \"Famille\",\n    \"type\": \"supergroup\",\n    \"last_seen\": \"2026-10-02T09:30:00+00:00\"\n  },\n  \"-1004444444444\": {\n    \"title\": \"Nouveau\",\n    \"type\": \"supergroup\",\n    \"last_seen\": \"2026-10-02T09:30:00+00:00\"\n  }\n}\n",
-    "repo-demo/.bugs-bot.json": "{\"project\": \"demo\", \"group\": {\"chat_id\": -1001234567890, \"title\": \"Demo Bugs\"}, \"agent_title\": \"Agent : Demo Bugs\"}",
-    "repo-mig/.bugs-bot.json": "{\n  \"project\": \"mig\",\n  \"group\": {\n    \"chat_id\": -1005555555555,\n    \"title\": \"Mig Bugs\"\n  },\n  \"agent_title\": \"Agent : Mig Bugs\",\n  \"docs\": [],\n  \"language\": \"fr\",\n  \"gate_tokens\": 300000,\n  \"follow_up_hours\": 24\n}\n",
-    "repo-other/.bugs-bot.json": "{\"project\": \"other\", \"group\": {\"chat_id\": -1009999999999, \"title\": \"Other Bugs\"}, \"agent_title\": \"Agent : Other Bugs\"}"
+    "repo-demo/.bugs-bot.json": "{\"project\": \"demo\", \"group\": {\"chat_id\": -1001234567890, \"title\": \"Demo Bugs\"}, \"agent_title\": \"Agent: Demo Bugs\"}",
+    "repo-mig/.bugs-bot.json": "{\n  \"project\": \"mig\",\n  \"group\": {\n    \"chat_id\": -1005555555555,\n    \"title\": \"Mig Bugs\"\n  },\n  \"agent_title\": \"Agent: Mig Bugs\",\n  \"docs\": [],\n  \"language\": \"fr\",\n  \"gate_tokens\": 300000,\n  \"follow_up_hours\": 24\n}\n",
+    "repo-other/.bugs-bot.json": "{\"project\": \"other\", \"group\": {\"chat_id\": -1009999999999, \"title\": \"Other Bugs\"}, \"agent_title\": \"Agent: Other Bugs\"}"
   },
   "stderr": "bugs-bot: unregistered chat -1007777777777 'Famille' dropped\nbugs-bot: unregistered chat -1004444444444 'Nouveau' dropped\nbugs-bot: download of g1-l: HTTP 500\nbugs-bot: download of p1-l: HTTP 500\n",
   "stdout": "bugs-bot: group migrated, project mig rebound to chat -1005555555555\nnew 20261002-083030-100 (0 images) in demo\nnew 20261002-083000-201 (0 images) in other\nnew 20261002-083000-202 (0 images) in other\nnew 20261002-083000-401 (0 images) in mig\nnew 20261002-083100-2 (0 images) in mig\n",

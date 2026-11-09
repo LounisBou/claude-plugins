@@ -137,14 +137,14 @@ const ORCH: Prefix = (Object.keys(ROLES) as Prefix[]).find(prefix => ROLES[prefi
 
 /**
  * A session name in the house shape: blanks and the ` [reference]` the host appends left off, a
- * hand-typed « Orch: x » spelled « Orch : x ». The shape itself is core's (names.ts): a name it
+ * hand-typed « Orch:x » or a former « Orch : x » spelled « Orch: x ». The shape itself is core's (names.ts): a name it
  * does not read as an orchestrator's stays as it was given.
  */
 export function orchForm(raw: string): string {
   const name = raw.replace(/^\s+/, '').replace(/\s+$/, '').replace(/ \[[^\]\s]+\]$/, '').replace(/\s+$/, '')
   const typed = new RegExp(`^${ORCH} ?: *(\\S.*)$`, 's').exec(name)
   if (typed?.[1] !== undefined) {
-    const canonical = `${ORCH} : ${typed[1]}`
+    const canonical = `${ORCH}: ${typed[1]}`
     if (parseSessionName(canonical)?.role === 'orchestrator') return canonical
   }
   return name

@@ -265,20 +265,20 @@ echo "== the switch =="
 check "the session carries the mark" "1" "$(tm show -qv -t home @orchestrator-home)"
 
 echo "== spawn: two agents, each a window of the home session =="
-agent "Agent : e2e one" E2E-ONE-READY
+agent "Agent: e2e one" E2E-ONE-READY
 ONE_RC=$(rc); ONE=$(out | tail -1); ONE_ERR=$(cat "$STEP.err")
 check "the first spawn succeeds and prints the new tty" "0|1" "$ONE_RC|$(printf '%s' "$ONE" | grep -c '^/dev/ttys')"
 ONE_PANE=$(tm list-panes -s -t home -F '#{pane_tty} #{pane_id}' | awk -v t="$ONE" '$1 == t { print $2 }')
 [ -n "$ONE_PANE" ] && banner_or_exit "$ONE_PANE"
 check "it was verified on the process table and on its transcript's mode" "1|1" \
   "$(printf '%s' "$ONE_ERR" | grep -c "running on $ONE")|$(printf '%s' "$ONE_ERR" | grep -c 'mode acceptEdits read on the transcript')"
-agent "Agent : e2e two" E2E-TWO-READY
+agent "Agent: e2e two" E2E-TWO-READY
 TWO_RC=$(rc); TWO=$(out | tail -1)
 check "the second spawn succeeds on another tty" "0|1" "$TWO_RC|$([ -n "$TWO" ] && [ "$TWO" != "$ONE" ] && echo 1 || echo 0)"
 TWO_PANE=$(tm list-panes -s -t home -F '#{pane_tty} #{pane_id}' | awk -v t="$TWO" '$1 == t { print $2 }')
 [ -n "$TWO_PANE" ] && banner_or_exit "$TWO_PANE"
 check "the agents are windows 1 and 2, named, and window 0 kept the operator's view" \
-  "0 orch 1|1 Agent : e2e one 0|2 Agent : e2e two 0" \
+  "0 orch 1|1 Agent: e2e one 0|2 Agent: e2e two 0" \
   "$(windows | awk '{ $2 = ""; print }' | sed 's/  / /' | paste -sd'|' -)"
 check "each runs on the light tier's model" "1|1" \
   "$(ps -t "${ONE#/dev/}" -o command= | grep -c -- "--model $MODEL")|$(ps -t "${TWO#/dev/}" -o command= | grep -c -- "--model $MODEL")"
@@ -290,7 +290,7 @@ check "the chain names each window by the server's socket and its id, owned by w
 echo "== list and screen =="
 launcher 20 list
 check "list shows window 0 as self and both agents, in the rows the stop gate parses" "0|1|1|1" \
-  "$(rc)|$(out | grep -c "^w1/t0 | $OWN_TTY | .* | self\$")|$(out | grep -c "^w1/t1 | $ONE | .* | Agent : e2e one\$")|$(out | grep -c "^w1/t2 | $TWO | .* | Agent : e2e two\$")"
+  "$(rc)|$(out | grep -c "^w1/t0 | $OWN_TTY | .* | self\$")|$(out | grep -c "^w1/t1 | $ONE | .* | Agent: e2e one\$")|$(out | grep -c "^w1/t2 | $TWO | .* | Agent: e2e two\$")"
 if wait_reply "$ONE_PANE" E2E-ONE-READY 90; then ONE_REPLIED=1; else ONE_REPLIED=0; fi
 audit_rc
 check "the first agent replied within 90s" "1" "$ONE_REPLIED"
@@ -322,25 +322,25 @@ if state_is "$ONE_PANE" idle 30; then SECOND_IDLE=idle; else SECOND_IDLE=$(state
 check "the window reads idle after it" "idle" "$SECOND_IDLE"
 
 echo "== close =="
-launcher 20 close --tty "$ONE" --expect-title "Agent : e2e two"
+launcher 20 close --tty "$ONE" --expect-title "Agent: e2e two"
 check "a close whose expected words the window's name does not hold is refused, and the window stays" "1|1|1" \
-  "$(rc)|$(grep -c "close: refused: the window on $ONE is named 'Agent : e2e one'" "$STEP.err")|$(windows | grep -c ' Agent : e2e one ')"
-launcher 30 close --tty "$ONE" --expect-title "Agent : e2e one"
+  "$(rc)|$(grep -c "close: refused: the window on $ONE is named 'Agent: e2e one'" "$STEP.err")|$(windows | grep -c ' Agent: e2e one ')"
+launcher 30 close --tty "$ONE" --expect-title "Agent: e2e one"
 check "the first agent is closed, proved on the process table, its window and chain entry gone" "0|closed 1 session on $ONE|0|0|0" \
-  "$(rc)|$(out)|$(hosts_on "$ONE")|$(windows | grep -c ' Agent : e2e one ')|$(chain | grep -c "$W1")"
+  "$(rc)|$(out)|$(hosts_on "$ONE")|$(windows | grep -c ' Agent: e2e one ')|$(chain | grep -c "$W1")"
 
 echo "== rotate =="
 if wait_reply "$TWO_PANE" E2E-TWO-READY 90; then TWO_REPLIED=1; else TWO_REPLIED=0; fi
 check "the second agent replied within 90s" "1" "$TWO_REPLIED"
-launcher 120 rotate --old-tty "$TWO" --expect-title "Agent : e2e two" --dir "$WORKDIR" --tier light \
-  --permission-mode acceptEdits --title "Agent : e2e three" --prompt "$(prompt E2E-THREE-READY)" --right-of self
+launcher 120 rotate --old-tty "$TWO" --expect-title "Agent: e2e two" --dir "$WORKDIR" --tier light \
+  --permission-mode acceptEdits --title "Agent: e2e three" --prompt "$(prompt E2E-THREE-READY)" --right-of self
 THREE=$(out | head -1)
 check "the replacement runs before the old window is killed, and both are said" "0|1|closed 1 session on $TWO" \
   "$(rc)|$(printf '%s' "$THREE" | grep -c '^/dev/ttys')|$(out | tail -1)"
 THREE_PANE=$(tm list-panes -s -t home -F '#{pane_tty} #{pane_id}' | awk -v t="$THREE" '$1 == t { print $2 }')
 [ -n "$THREE_PANE" ] && banner_or_exit "$THREE_PANE"
 check "the old agent is gone from the process table and its window from the session; the new one runs" "0|0|1|1" \
-  "$(hosts_on "$TWO")|$(windows | grep -c ' Agent : e2e two ')|$(windows | grep -c ' Agent : e2e three 0$')|$(hosts_on "$THREE")"
+  "$(hosts_on "$TWO")|$(windows | grep -c ' Agent: e2e two ')|$(windows | grep -c ' Agent: e2e three 0$')|$(hosts_on "$THREE")"
 W3=$(tm list-panes -s -t home -F '#{pane_tty} #{window_id}' | awk -v t="$THREE" '$1 == t { print $2 }')
 check "the chain holds the replacement's window alone" "tmux:$SOCKET:$W3 $THREE" \
   "$(chain | jq -r '"\(.tab_id) \(.tty)"' | paste -sd'|' -)"
@@ -384,7 +384,7 @@ COORD_TTY=$(tm display -p -t plain:0 '#{pane_tty}')
 
 echo "== the move: a session moves into a home server of its own, the same conversation resumed in window 0 =="
 printf '#!/bin/sh\nexec %q --setting-sources project --settings %q --model %q --permission-mode acceptEdits --name %q %q\n' \
-  "$REAL_HOST" '{"remoteControlAtStartup":false}' "$MODEL" "Agent : e2e conv" "$(prompt E2E-CONV-READY)" > "$SANDBOX/run/conv.sh"
+  "$REAL_HOST" '{"remoteControlAtStartup":false}' "$MODEL" "Agent: e2e conv" "$(prompt E2E-CONV-READY)" > "$SANDBOX/run/conv.sh"
 tm new-window -d -t plain: -n conv -c "$WORKDIR" "/bin/sh $SANDBOX/run/conv.sh"
 CONV_TTY=$(tm display -p -t plain:conv '#{pane_tty}')
 banner_or_exit plain:conv
@@ -399,9 +399,9 @@ CONV_PAIR=$(jq -r 'select(.type == "api-request" and .querySource == "repl_main_
   "$TRANSCRIPTS/$CSID.jsonl" 2>/dev/null | tail -1)
 [ -n "$CONV_PAIR" ] || { echo "refused: the moved session's transcript holds no main-thread request" >&2; exit 1; }
 LT=plain:0; LENV=(ORCHESTRATOR_HOME_NO_TAB=1 ORCHESTRATOR_TEST_RUN=1 "ORCHESTRATOR_HOST_CLI=$REAL_HOST")
-launcher 30 home --session "$CSID" --name "Orch : e2e conv" --prompt "$(recall)"
+launcher 30 home --session "$CSID" --name "Orch: e2e conv" --prompt "$(recall)"
 check "the move starts the home server named after the session, window 0 named after the orchestrator, the mark set by the conf" \
-  "0|moved: $CHOME (no tab: attach with tmux -L $CHOME attach)|Orch : e2e conv|1" \
+  "0|moved: $CHOME (no tab: attach with tmux -L $CHOME attach)|Orch: e2e conv|1" \
   "$(rc)|$(out)|$(tmux -L "$CHOME" display -p -t home:0 '#{window_name}' 2>/dev/null)|$(tmux -L "$CHOME" show -qv -t home @orchestrator-home 2>/dev/null)"
 check "the session still runs in its old place until it ends there" "1" "$(hosts_on "$CONV_TTY")"
 # The module ends the session through its own exit; the host's own command is that exit here.
@@ -411,25 +411,25 @@ if wait_host "$CHOME_TTY" 150; then CUP=1; else CUP=0; fi
 check "the old process ended and window 0 resumed the session" "0|1" "$(hosts_on "$CONV_TTY")|$CUP"
 CLINE=$(ps -t "${CHOME_TTY#/dev/}" -o command= 2>/dev/null | grep -- '--setting-sources project' | head -1)
 check "window 0 replays the launch: its settings, model and mode, the session resumed under the orchestrator's name" "1|1|1|1|1" \
-  "$(printf '%s' "$CLINE" | grep -c -- '--setting-sources project')|$(printf '%s' "$CLINE" | grep -cF -- "--model ${CONV_PAIR% *} --effort ${CONV_PAIR#* }")|$(printf '%s' "$CLINE" | grep -c -- '--permission-mode acceptEdits')|$(printf '%s' "$CLINE" | grep -c -- "--resume $CSID")|$(printf '%s' "$CLINE" | grep -c -- '--name Orch : e2e conv$')"
+  "$(printf '%s' "$CLINE" | grep -c -- '--setting-sources project')|$(printf '%s' "$CLINE" | grep -cF -- "--model ${CONV_PAIR% *} --effort ${CONV_PAIR#* }")|$(printf '%s' "$CLINE" | grep -c -- '--permission-mode acceptEdits')|$(printf '%s' "$CLINE" | grep -c -- "--resume $CSID")|$(printf '%s' "$CLINE" | grep -c -- '--name Orch: e2e conv$')"
 resumed_or_exit "$CHOME::home:0"
 if wait_reply "$CHOME::home:0" ready-conv-e2e 120; then CRECALL=1; else CRECALL=0; fi
 audit_rc
 check "the resumed session answers from its earlier exchange" "1" "$CRECALL"
-check "one live session holds the id, under the orchestrator's name, and its transcript went on" "1 Orch : e2e conv|$CSID|1" \
+check "one live session holds the id, under the orchestrator's name, and its transcript went on" "1 Orch: e2e conv|$CSID|1" \
   "$(live_rows "$CSID")|$(sid_on "$CHOME_TTY")|$([ "$(lines_of "$CSID")" -gt "${CLINES:-0}" ] && echo 1 || echo 0)"
 
 echo "== open, pause and wake, from the coordinator's own place =="
-jq -n --arg tty "$COORD_TTY" '{tty: $tty, name: "Coord : e2e"}' > "$STATE/coordinator.json"
+jq -n --arg tty "$COORD_TTY" '{tty: $tty, name: "Coord: e2e"}' > "$STATE/coordinator.json"
 LENV=(ORCHESTRATOR_HOME_NO_TAB=1 ORCHESTRATOR_TEST_RUN=1)
-launcher 120 spawn --open --dir "$WORKDIR" --model "$MODEL" --effort low --permission-mode acceptEdits --title "Orch : e2e open" \
+launcher 120 spawn --open --dir "$WORKDIR" --model "$MODEL" --effort low --permission-mode acceptEdits --title "Orch: e2e open" \
   --prompt "$(prompt E2E-OPEN-READY)"
 OPEN_TTY=$(out | tail -1)
 OHOME=$(sed -n 's/^spawn: home server \([^ ,]*\),.*/\1/p' "$STEP.err" | head -1)
 [ -n "$OHOME" ] && HOMES+=("$OHOME")
 OSID=$(sid_on "$OPEN_TTY")
 check "an open starts the orchestrator in window 0 of a home server named after its session" \
-  "0|orch-$(printf '%s' "$OSID" | tr -cd '0-9A-Za-z' | cut -c1-8)|$OPEN_TTY|Orch : e2e open|1" \
+  "0|orch-$(printf '%s' "$OSID" | tr -cd '0-9A-Za-z' | cut -c1-8)|$OPEN_TTY|Orch: e2e open|1" \
   "$(rc)|$OHOME|$(home_tty "$OHOME")|$(tmux -L "$OHOME" display -p -t home:0 '#{window_name}' 2>/dev/null)|$(tmux -L "$OHOME" show -qv -t home @orchestrator-home 2>/dev/null)"
 banner_or_exit "$OHOME::home:0"
 if wait_reply "$OHOME::home:0" E2E-OPEN-READY 90; then OREPLIED=1; else OREPLIED=0; fi
@@ -445,11 +445,11 @@ print(sid, len(ttys))" "$ROOT/skills/iterm-agents/scripts" "$OHOME" 2>&1)
 check "the pause ends the server, names the session window 0 ran, and leaves no host and no server on ps" "$OSID 1|0|0|1" \
   "$PAUSED|$(hosts_on "$OPEN_TTY")|$(pgrep -f -- "-L $OHOME" | grep -c .)|$(tmux -L "$OHOME" has-session 2>/dev/null && echo 0 || echo 1)"
 printf 'b\n' > "$SANDBOX/run/brief.md"
-ORCHESTRATOR_STATE_DIR="$STATE" bash "$ROOT/skills/coordinator/scripts/coordinator.sh" sleep --name "Orch : e2e open" \
+ORCHESTRATOR_STATE_DIR="$STATE" bash "$ROOT/skills/coordinator/scripts/coordinator.sh" sleep --name "Orch: e2e open" \
   --brief "$SANDBOX/run/brief.md" --dir "$WORKDIR" --model "$MODEL" --effort low --session "$OSID" >/dev/null 2>&1
 check "the sleeping record keeps the session" "1" \
   "$(ORCHESTRATOR_STATE_DIR="$STATE" bash "$ROOT/skills/coordinator/scripts/coordinator.sh" sleeping 2>/dev/null | grep -c "session $OSID\$")"
-launcher 120 spawn --wake --dir "$WORKDIR" --title "Orch : e2e open" --model "$MODEL" --effort low --permission-mode acceptEdits \
+launcher 120 spawn --wake --dir "$WORKDIR" --title "Orch: e2e open" --model "$MODEL" --effort low --permission-mode acceptEdits \
   --resume "$OSID" --prompt "$(recall)"
 WAKE_TTY=$(out | tail -1)
 check "the wake resumes the recorded session in window 0 of a new home server" "0|$WAKE_TTY|1" \
@@ -458,12 +458,12 @@ resumed_or_exit "$OHOME::home:0"
 if wait_reply "$OHOME::home:0" ready-open-e2e 120; then ORECALL=1; else ORECALL=0; fi
 audit_rc
 check "the woken orchestrator answers from its earlier exchange, one live session under its name, its transcript gone on" \
-  "1|1 Orch : e2e open|1" \
+  "1|1 Orch: e2e open|1" \
   "$ORECALL|$(live_rows "$OSID")|$([ "$(lines_of "$OSID")" -gt "${OLINES:-0}" ] && echo 1 || echo 0)"
 LENV=()
 
 echo "== the successor: a window of the same session, then window 0 =="
-tm rename-window -t home:0 "Orch : e2e lead"
+tm rename-window -t home:0 "Orch: e2e lead"
 LT=home:0
 # A succession runs on its caller's live pair, read on the caller's transcript. Window 0 is
 # started under `env -i`, with no session id and no transcript: give it one, a fixture whose
@@ -474,14 +474,14 @@ mkdir -p "$TRANSCRIPTS"
 printf '{"type":"api-request","sessionId":"%s","querySource":"repl_main_thread","params":{"model":"%s","output_config":{"effort":"low"}}}\n' \
   "$LEAD_SID" "$MODEL" > "$TRANSCRIPTS/$LEAD_SID.jsonl"
 LENV=(CLAUDE_CODE_SESSION_ID="$LEAD_SID" ORCHESTRATOR_PROJECTS_DIR="$HOSTDIR/projects")
-launcher 120 spawn --successor --dir "$WORKDIR" --permission-mode acceptEdits --title "Orch : e2e lead" \
+launcher 120 spawn --successor --dir "$WORKDIR" --permission-mode acceptEdits --title "Orch: e2e lead" \
   --no-remote-control --prompt "$(prompt E2E-HEIR-READY)"
 LENV=()
 HEIR=$(out | tail -1)
 HEIR_PANE=$(tm list-panes -s -t home -F '#{pane_tty} #{pane_id}' | awk -v t="$HEIR" '$1 == t { print $2 }')
 HEIR_WIN=$(tm list-panes -s -t home -F '#{pane_tty} #{window_id}' | awk -v t="$HEIR" '$1 == t { print $2 }')
 check "the successor is a window of the same session, under the caller's name" "0|1|1" \
-  "$(rc)|$([ -n "$HEIR_PANE" ] && echo 1 || echo 0)|$(windows | grep -c " $HEIR_WIN Orch : e2e lead ")"
+  "$(rc)|$([ -n "$HEIR_PANE" ] && echo 1 || echo 0)|$(windows | grep -c " $HEIR_WIN Orch: e2e lead ")"
 [ -n "$HEIR_PANE" ] && banner_or_exit "$HEIR_PANE"
 check "the chain is handed over keyed on the successor's pane" "tmux:$SOCKET:$W3 $THREE tmux:$SOCKET:$HEIR_PANE|0" \
   "$(jq -r '"\(.tab_id) \(.tty) \(.owner)"' "$STATE/chains/${HEIR#/dev/}.jsonl" 2>/dev/null | paste -sd'|' -)|$(chain | grep -c .)"
@@ -489,9 +489,9 @@ W0=$(tm display -p -t home:0 '#{window_id}')
 # The takeover runs in the successor's own window: a shell beside it there stands in for it.
 SHELL_PANE=$(tm split-window -d -P -F '#{pane_id}' -t "$HEIR_WIN" -c "$WORKDIR" '/bin/bash --noprofile --norc')
 LT="$SHELL_PANE"
-launcher 30 takeover --tty "$OWN_TTY" --expect-title "Orch : e2e lead"
+launcher 30 takeover --tty "$OWN_TTY" --expect-title "Orch: e2e lead"
 check "the takeover kills window 0 and gives the successor index 0, the operator's view with it" \
-  "0|took window 0: the predecessor's window $W0 on $OWN_TTY was closed|0 $HEIR_WIN Orch : e2e lead 1|0" \
+  "0|took window 0: the predecessor's window $W0 on $OWN_TTY was closed|0 $HEIR_WIN Orch: e2e lead 1|0" \
   "$(rc)|$(out)|$(windows | awk '$1 == 0')|$(windows | grep -c " $W0 ")"
 if wait_reply "$HEIR_PANE" E2E-HEIR-READY 90; then HREPLIED=1; else HREPLIED=0; fi
 audit_rc

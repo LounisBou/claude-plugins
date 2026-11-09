@@ -425,7 +425,7 @@ git commit -m "feat(gauge): draw the context fill above the prompt"
 
 **Interfaces:**
 - Consumes: nothing.
-- Produces: `readName($: any, transcriptPath: string): Promise<{ tty: string | null; name: string | null }>` — launch name from the process table (via `$.process.run`), else the last `custom-title` entry of the transcript read from the end in 64 KiB blocks; `roleOf(name: string): 'orchestrator' | 'agent' | 'auditor' | 'coordinator' | null` mapping the `Orch :`, `Agent :`, `Audit :`, `Coord :` prefixes.
+- Produces: `readName($: any, transcriptPath: string): Promise<{ tty: string | null; name: string | null }>` — launch name from the process table (via `$.process.run`), else the last `custom-title` entry of the transcript read from the end in 64 KiB blocks; `roleOf(name: string): 'orchestrator' | 'agent' | 'auditor' | 'coordinator' | null` mapping the `Orch:`, `Agent:`, `Audit:`, `Coord:` prefixes.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -435,21 +435,21 @@ import { expect, test } from 'claude-code/testing'
 import { roleOf, lastCustomTitle } from '../session-name.ts'
 
 test('the role is the prefix of the name', () => {
-  expect(roleOf('Orch : payments')).toBe('orchestrator')
-  expect(roleOf('Agent : belt-p3')).toBe('agent')
-  expect(roleOf('Audit : 1712')).toBe('auditor')
-  expect(roleOf('Coord : main')).toBe('coordinator')
+  expect(roleOf('Orch: payments')).toBe('orchestrator')
+  expect(roleOf('Agent: belt-p3')).toBe('agent')
+  expect(roleOf('Audit: 1712')).toBe('auditor')
+  expect(roleOf('Coord: main')).toBe('coordinator')
   expect(roleOf('a plain session')).toBeNull()
   expect(roleOf('')).toBeNull()
 })
 
 test('the last custom-title entry wins, read from the end', async ($: any) => {
   const path = 'tests/fixtures/transcript-renamed.jsonl'
-  expect(await lastCustomTitle($, path)).toBe('Agent : renamed-later')
+  expect(await lastCustomTitle($, path)).toBe('Agent: renamed-later')
 })
 ```
 
-The fixture is three lines: two entries, the last a rename to `Agent : renamed-later`.
+The fixture is three lines: two entries, the last a rename to `Agent: renamed-later`.
 
 - [ ] **Step 2: Run to verify failure.**
 
@@ -463,10 +463,10 @@ const BLOCK = 65536
 
 export function roleOf(name: string | null): string | null {
   if (!name) return null
-  if (name.startsWith('Orch :')) return 'orchestrator'
-  if (name.startsWith('Agent :')) return 'agent'
-  if (name.startsWith('Audit :')) return 'auditor'
-  if (name.startsWith('Coord :')) return 'coordinator'
+  if (name.startsWith('Orch:')) return 'orchestrator'
+  if (name.startsWith('Agent:')) return 'agent'
+  if (name.startsWith('Audit:')) return 'auditor'
+  if (name.startsWith('Coord:')) return 'coordinator'
   return null
 }
 
@@ -532,7 +532,7 @@ git commit -m "feat(hooks): read a session's name in-process"
 **Interfaces:**
 - Consumes: `roleOf`, `readName` (Task 4), `tripGate`, `parseMeasure` (Task 2).
 - Produces: `roleLine(role: string): string` — the exact four lines from `context-gate.sh:57-63`; a `prompt.submit` handler.
-- Carries (Task 4 review minor, adjudicated to this task — it is the first consumer of the name): `titleOf` in hooks/session-name.ts ports `unquoted()`'s normalization — strip whitespace, then surrounding quotes, then whitespace again, an empty result reads as null (`session_name.py`'s own rule); a padded rename `  Agent : x  ` must read back trimmed, with a test line in hooks/tests/session-name.test.ts proving it.
+- Carries (Task 4 review minor, adjudicated to this task — it is the first consumer of the name): `titleOf` in hooks/session-name.ts ports `unquoted()`'s normalization — strip whitespace, then surrounding quotes, then whitespace again, an empty result reads as null (`session_name.py`'s own rule); a padded rename `  Agent: x  ` must read back trimmed, with a test line in hooks/tests/session-name.test.ts proving it.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -616,7 +616,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
 
 - [ ] **Step 4: Run tests** — PASS.
 
-- [ ] **Step 5: Live smoke** — rename the session `Orch : x`, fill past 80 % (or set `ORCHESTRATOR_CONTEXT_GATE=1`), send a prompt, see the line.
+- [ ] **Step 5: Live smoke** — rename the session `Orch: x`, fill past 80 % (or set `ORCHESTRATOR_CONTEXT_GATE=1`), send a prompt, see the line.
 
 - [ ] **Step 6: Commit**
 
@@ -874,7 +874,7 @@ test('a stop with nothing to wake it passes', () => {
 })
 
 test('a busy own agent holds the stop', () => {
-  expect(wakeDecision({ busyOwnAgents: ['Agent : belt-p3'], blockingQuestion: null, openRows: [] }).decision).toBe('block')
+  expect(wakeDecision({ busyOwnAgents: ['Agent: belt-p3'], blockingQuestion: null, openRows: [] }).decision).toBe('block')
 })
 
 test('a CI read that exceeds its time bound degrades to pass-and-log', async () => {
@@ -966,10 +966,10 @@ git commit -m "feat(supervision): share every session's state through the host s
 import { paneRows } from '../supervision.ts'
 test('rows sort by rotation urgency', () => {
   const rows = paneRows({
-    'sessions/a': { role: 'agent', name: 'Agent : low', context_percent: 30, context_tokens: 30000, window: 100000, model: 'a-model', busy: false, updated_at: 't', repo: 'r' },
-    'sessions/b': { role: 'agent', name: 'Agent : hot', context_percent: 85, context_tokens: 85000, window: 100000, model: 'a-model', busy: true, updated_at: 't', repo: 'r' },
+    'sessions/a': { role: 'agent', name: 'Agent: low', context_percent: 30, context_tokens: 30000, window: 100000, model: 'a-model', busy: false, updated_at: 't', repo: 'r' },
+    'sessions/b': { role: 'agent', name: 'Agent: hot', context_percent: 85, context_tokens: 85000, window: 100000, model: 'a-model', busy: true, updated_at: 't', repo: 'r' },
   })
-  expect(rows[0].label).toContain('Agent : hot')
+  expect(rows[0].label).toContain('Agent: hot')
   expect(rows[0].label).toContain('85%')
 })
 ```

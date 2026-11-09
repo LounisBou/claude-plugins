@@ -12,7 +12,7 @@ let dir = ''
 test.beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'succession-')) })
 test.afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
-const NAME = 'Orch : belt'
+const NAME = 'Orch: belt'
 const SESSION = 's-orch'
 
 /** A machine whose state holds open what an orchestration in flight holds. */
@@ -28,14 +28,14 @@ function world(over: { rows?: string; deck?: object; round?: object[] } = {}) {
   writeFileSync(join(state, 'deck.json'), JSON.stringify(over.deck ?? {
     version: 3,
     orchestrators: [
-      { name: NAME, machine: null, prs: ['acme/app#12', 'acme/app#14'], agents: [{ name: 'Agent : api' }] },
-      { name: 'Orch : other', machine: null, prs: ['acme/site#7'], agents: [{ name: 'Agent : site' }] },
+      { name: NAME, machine: null, prs: ['acme/app#12', 'acme/app#14'], agents: [{ name: 'Agent: api' }] },
+      { name: 'Orch: other', machine: null, prs: ['acme/site#7'], agents: [{ name: 'Agent: site' }] },
     ],
   }))
   for (const entry of over.round ?? [
     { id: 'q-2', session: SESSION, from: NAME, kind: 'operator', status: 'open', question: '**Question 1 of 1**\nWhich schema?' },
     { id: 'q-1', session: SESSION, from: NAME, kind: 'operator', status: 'answered', question: 'Done?' },
-    { id: 'q-3', session: 'other', from: 'Orch : other', kind: 'operator', status: 'open', question: 'Not ours' },
+    { id: 'q-3', session: 'other', from: 'Orch: other', kind: 'operator', status: 'open', question: 'Not ours' },
   ]) writeFileSync(join(state, 'round', `${(entry as { id: string }).id}.json`), JSON.stringify(entry))
   const brief = join(dir, 'brief.md')
   writeFileSync(brief, readFileSync(TEMPLATE, 'utf8').replaceAll('{{PROJECT}}', 'belt'))
@@ -53,9 +53,9 @@ test('live writes every open item of the state into the brief, and nothing of an
   const brief = w.read()
   assert.match(brief, /- Rows open \(id, label, what remains\): open=2 label=api; deferred=3 label=ui ruling=ruling 4\n/)
   assert.match(brief, /- Pull requests open \(number, head, where each stands\): acme\/app#12; acme\/app#14\n/)
-  assert.match(brief, /- Agents running \(name and reference, brief path\): Agent : api\n/)
+  assert.match(brief, /- Agents running \(name and reference, brief path\): Agent: api\n/)
   assert.ok(brief.includes('[q-2] **Question 1 of 1**\nWhich schema?'))
-  assert.ok(!brief.includes('q-1') && !brief.includes('q-3') && !brief.includes('acme/site#7') && !brief.includes('Agent : site'))
+  assert.ok(!brief.includes('q-1') && !brief.includes('q-3') && !brief.includes('acme/site#7') && !brief.includes('Agent: site'))
   assert.match(brief, /- The next step: review #12\n/)
   assert.match(brief, /<!-- generation: 1 -->/)
   assert.ok(!brief.includes('{{LIVE_'))
@@ -84,11 +84,11 @@ test('check refuses a brief that misses an open item, naming each one', () => {
 test('check refuses a hand-written Live state that drops a running agent or a row', () => {
   const w = world()
   assert.equal(w.run('live', '--next', 'x'), 0)
-  writeFileSync(w.brief, w.read().replace('Agent : api', 'none').replace('open=2 label=api; ', ''))
+  writeFileSync(w.brief, w.read().replace('Agent: api', 'none').replace('open=2 label=api; ', ''))
   assert.equal(w.run('check'), 1)
   assert.deepEqual(w.err, [
     'succession: the brief misses dispatch row 2: run succession.sh live\n',
-    'succession: the brief misses agent Agent : api: run succession.sh live\n',
+    'succession: the brief misses agent Agent: api: run succession.sh live\n',
   ])
 })
 

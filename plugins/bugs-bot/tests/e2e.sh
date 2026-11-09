@@ -111,10 +111,10 @@ OTHER=-1003
 
 # init: the group is found among the bot's pending updates, nothing consumed.
 enqueue $ALPHA "Alpha Bugs" 1 101 0 "alpha: the list is empty"
-bb init --project alpha --agent-title "Agent : Alpha" --repo "$WORK/repo-alpha" > "$WORK/init-alpha.out"
+bb init --project alpha --agent-title "Agent: Alpha" --repo "$WORK/repo-alpha" > "$WORK/init-alpha.out"
 grep -q "registered $ALPHA -> alpha" "$WORK/init-alpha.out" || fail "init alpha did not register its group"
 enqueue $BETA "Beta Bugs" 2 201 1 "beta: crash on start"
-bb init --project beta --agent-title "Agent : Beta" --repo "$WORK/repo-beta" > "$WORK/init-beta.out"
+bb init --project beta --agent-title "Agent: Beta" --repo "$WORK/repo-beta" > "$WORK/init-beta.out"
 grep -q "registered $BETA -> beta" "$WORK/init-beta.out" || fail "init beta did not register its group"
 [ ! -e "$BUGS_BOT_HOME/state.json" ] || fail "init consumed updates (an offset was written)"
 
@@ -201,7 +201,7 @@ mkdir "$WORK/repo-gamma"
 git -C "$WORK/repo-gamma" init -q
 GAMMA=C0GAMMA
 PARENT=$(slack_post $GAMMA 0 "gamma: export fails")
-bb init --channel slack --project gamma --agent-title "Agent : Gamma" --repo "$WORK/repo-gamma" > "$WORK/init-gamma.out"
+bb init --channel slack --project gamma --agent-title "Agent: Gamma" --repo "$WORK/repo-gamma" > "$WORK/init-gamma.out"
 grep -q "registered $GAMMA -> gamma" "$WORK/init-gamma.out" || fail "init gamma did not register its Slack channel"
 "$PY" - "$BUGS_BOT_HOME/projects.json" <<'PYEOF' || fail "the registry does not key each project by its channel"
 import json, sys

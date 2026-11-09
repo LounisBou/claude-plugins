@@ -81,7 +81,7 @@ test('the source is cleaned only after the acknowledgment, and keeps a file chan
   expect(a.files.has(notes)).toBe(true)
   // The notes change on the source; the « done » is answered again at the next « sent ».
   a.files.set(notes, 'written after the send\n')
-  await hb['session.receive'](b.dollar, { origin: { kind: 'peer', plugin: 'orchestrator' }, text: `<cross-session-message from="${a.address}" from-name="Orch : belt" from-mode="prompting">\n${moveText({ kind: 'sent', move: (parseMoveMessage(a.sent[0].text) as Extract<MoveMessage, { kind: 'manifest' }>).move })}\n</cross-session-message>` }, async (e: any) => e)
+  await hb['session.receive'](b.dollar, { origin: { kind: 'peer', plugin: 'orchestrator' }, text: `<cross-session-message from="${a.address}" from-name="Orch: belt" from-mode="prompting">\n${moveText({ kind: 'sent', move: (parseMoveMessage(a.sent[0].text) as Extract<MoveMessage, { kind: 'manifest' }>).move })}\n</cross-session-message>` }, async (e: any) => e)
   await settle(a, ha, b, hb)
   expect(a.files.has(`${a.briefs}/belt/${BRIEF_NAME}`)).toBe(false)
   expect(a.files.get(notes)).toBe('written after the send\n')
@@ -92,9 +92,9 @@ test('the source is cleaned only after the acknowledgment, and keeps a file chan
 
 test('a coordinator that moved an orchestrator it keeps asleep is given the command that removes its record', async () => {
   const { a, b, ha, hb } = await sent()
-  a.files.set(`${a.config}/claude-orchestrator/sleeping.json`, JSON.stringify([{ name: 'Orch : belt', brief: `${a.briefs}/belt/${BRIEF_NAME}` }]))
+  a.files.set(`${a.config}/claude-orchestrator/sleeping.json`, JSON.stringify([{ name: 'Orch: belt', brief: `${a.briefs}/belt/${BRIEF_NAME}` }]))
   await settle(a, ha, b, hb)
-  expect(a.submits[0].text).toContain('coordinator.sh wake-done --name "Orch : belt"')
+  expect(a.submits[0].text).toContain('coordinator.sh wake-done --name "Orch: belt"')
   const other = await sent()
   await settle(other.a, other.ha, other.b, other.hb)
   expect(other.a.submits[0].text).not.toContain('wake-done')
@@ -165,7 +165,7 @@ function recordKept(a: Machine, record: string): void {
   const brief = `${a.briefs}/belt/${BRIEF_NAME}`
   a.files.set(brief, `${a.files.get(brief)}- Dispatch record (this build's routing corrections): \`${record}\`, read before routing.\n`)
   a.files.set(record, `{"id":1,"record":"${record}"}\n`)
-  a.files.set(`${record}.owner`, 'Orch : belt\n')
+  a.files.set(`${record}.owner`, 'Orch: belt\n')
   a.files.set(`${record.slice(0, record.lastIndexOf('/'))}/goals.md`, '# goals\n- [ ] the move works\n')
 }
 
@@ -180,7 +180,7 @@ test('a dispatch record kept outside the briefs directory travels with it and la
   await settle(a, ha, b, hb)
   const there = `${HOME_B}/notes/app`
   expect(b.files.get(`${there}/record.jsonl`)).toBe(`{"id":1,"record":"${there}/record.jsonl"}\n`)
-  expect(b.files.get(`${there}/record.jsonl.owner`)).toBe('Orch : belt\n')
+  expect(b.files.get(`${there}/record.jsonl.owner`)).toBe('Orch: belt\n')
   expect(b.files.get(`${there}/goals.md`)).toBe('# goals\n- [ ] the move works\n')
   // The brief there names the record where it landed.
   expect(b.files.get(`${landed(b)}/${BRIEF_NAME}`)).toContain(`\`${there}/record.jsonl\``)
