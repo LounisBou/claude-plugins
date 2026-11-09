@@ -606,8 +606,8 @@ for (const phase of ['warn', 'enforce'] as const) {
       const seen = await world($, on)
       const merge: any = await $.tool.call(bash('gh pr merge 12 -R acme/thing --squash'))
       expect(merge.deny).toBe('github: gh pr merge refused on acme/thing: this repository is not in auto-merge, so a merge'
-        + ' or leaving draft needs the operator\'s explicit word. When he gave it, run mcp__github__gh pr-merge {"pr": 12}'
-        + ' on acme/thing: it checks that the pull request is ready, then asks him in the conversation.')
+        + ' or leaving draft needs the operator\'s explicit word. When they gave it, run mcp__github__gh pr-merge {"pr": 12}'
+        + ' on acme/thing: it checks that the pull request is ready, then asks them in the conversation.')
       const ready: any = await $.tool.call(bash('gh pr ready 12 -R acme/thing'))
       expect(ready.deny).toContain('github: gh pr ready refused on acme/thing: this repository is not in auto-merge')
       expect(ready.deny).toContain('mcp__github__gh pr-ready {"pr": 12}')
@@ -719,8 +719,8 @@ test('a Bash pull request opened out of draft is refused outside auto-merge in b
   const seen = await world($, on)
   const warned: any = await $.tool.call(bash('gh pr create -R acme/thing -t "fix: x" -b body'))
   expect(warned.deny).toBe('github: gh pr create refused on acme/thing: this repository is not in auto-merge, so opening'
-    + ' a pull request out of draft needs the operator\'s explicit word. Open it with --draft, or when he gave it, run'
-    + ' mcp__github__gh pr-create {"draft": false} on acme/thing: it asks him in the conversation.')
+    + ' a pull request out of draft needs the operator\'s explicit word. Open it with --draft, or when they gave it, run'
+    + ' mcp__github__gh pr-create {"draft": false} on acme/thing: it asks them in the conversation.')
   expect(seen.bash.length).toBe(0)
   await inPhase('enforce', async () => {
     const out: any = await $.tool.call(bash('gh pr create -R acme/thing -t "fix: x" -b body'))
@@ -767,8 +767,8 @@ test('a Bash merge through gh.py is refused outside auto-merge, as gh pr merge i
   const seen = await world($, on)
   const out: any = await $.tool.call(bash(ENGINE + ' pr-merge 12 --repo acme/thing --method squash'))
   expect(out.deny).toBe('github: gh.py pr-merge refused on acme/thing: this repository is not in auto-merge, so a merge or'
-    + ' leaving draft needs the operator\'s explicit word. When he gave it, run mcp__github__gh pr-merge {"pr": 12} on'
-    + ' acme/thing: it checks that the pull request is ready, then asks him in the conversation.')
+    + ' leaving draft needs the operator\'s explicit word. When they gave it, run mcp__github__gh pr-merge {"pr": 12} on'
+    + ' acme/thing: it checks that the pull request is ready, then asks them in the conversation.')
   expect(seen.bash.length).toBe(0)
 })
 
@@ -806,8 +806,8 @@ test('a Bash pr-create through gh.py without --draft is refused outside auto-mer
   const seen = await world($, on)
   const out: any = await $.tool.call(bash(ENGINE + ' pr-create --repo acme/thing --title "fix: x"'))
   expect(out.deny).toBe('github: gh.py pr-create refused on acme/thing: this repository is not in auto-merge, so opening'
-    + ' a pull request out of draft needs the operator\'s explicit word. Open it with --draft, or when he gave it, run'
-    + ' mcp__github__gh pr-create {"draft": false} on acme/thing: it asks him in the conversation.')
+    + ' a pull request out of draft needs the operator\'s explicit word. Open it with --draft, or when they gave it, run'
+    + ' mcp__github__gh pr-create {"draft": false} on acme/thing: it asks them in the conversation.')
   expect(seen.bash.length).toBe(0)
   const draft: any = await $.tool.call(bash(ENGINE + ' pr-create --repo acme/thing --title "fix: x" --draft'))
   expect(draft.deny).toBeUndefined()
@@ -1243,7 +1243,7 @@ test('words of a few characters never carry auto-merge, typed or not', async ($,
   expect(seen.files).toEqual({})
 })
 
-test('typed words that do not name auto-merge are refused even though he typed them', async ($, on) => {
+test('typed words that do not name auto-merge are refused even though they typed them', async ($, on) => {
   const seen = await world($, on)
   const words = 'ok, lance la suite maintenant'
   await typed($, 'thing : ' + words)
@@ -1262,7 +1262,7 @@ test('typed words naming auto-merge without the repository pass', async ($, on) 
 })
 
 for (const spelling of ['auto merge', 'automerge', 'AUTO-MERGE']) {
-  test('the word « ' + spelling + ' » names auto-merge in his words', async ($, on) => {
+  test('the word « ' + spelling + ' » names auto-merge in their words', async ($, on) => {
     const seen = await world($, on)
     const words = 'le projet est en ' + spelling
     await typed($, words)

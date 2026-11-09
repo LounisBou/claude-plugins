@@ -245,6 +245,6 @@ test('the refusals read as the guard documents them', () => {
     + ' current head (engine/writing/pull-requests.md « Ready pull requests »).')
   expect(autoMergeRefusal('merge', 'o/r', 12)).toBe(
     'github: gh pr merge refused on o/r: this repository is not in auto-merge, so a merge or leaving draft needs the'
-    + ' operator\'s explicit word. When he gave it, run mcp__github__gh pr-merge {"pr": 12} on o/r: it checks that'
-    + ' the pull request is ready, then asks him in the conversation.')
+    + ' operator\'s explicit word. When they gave it, run mcp__github__gh pr-merge {"pr": 12} on o/r: it checks that'
+    + ' the pull request is ready, then asks them in the conversation.')
 })

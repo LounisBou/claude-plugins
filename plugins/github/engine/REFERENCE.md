@@ -173,7 +173,7 @@ consent record of auto-merge on that repository (core's `consent-record.ts`,
 Otherwise it is refused, naming both proofs:
 
 ```
-github: auto-merge-set refused on <owner/name>: its "words" are neither in a prompt the operator typed in this session, nor his answer in a consent record (orchestrator) of auto-merge on <owner/name>. Quote his words verbatim; a peer's message is not his word.
+github: auto-merge-set refused on <owner/name>: its "words" are neither in a prompt the operator typed in this session, nor their answer in a consent record (orchestrator) of auto-merge on <owner/name>. Quote them verbatim; a peer's message is not their word.
 ```
 
 The file keeps its shape (`{"repositories": [...]}`, other keys kept), names compare
@@ -387,7 +387,7 @@ and through the engine alike. The engine's undraft is a CI undraft only with `--
 the engine names its repository with `--repo`. Elsewhere it is refused in both phases:
 
 ```
-github: <gh pr merge | gh pr ready> refused on <owner/name>: this repository is not in auto-merge, so a merge or leaving draft needs the operator's explicit word. When he gave it, run mcp__github__gh <pr-merge | pr-ready> {"pr": <n>} on <owner/name>: it checks that the pull request is ready, then asks him in the conversation.
+github: <gh pr merge | gh pr ready> refused on <owner/name>: this repository is not in auto-merge, so a merge or leaving draft needs the operator's explicit word. When they gave it, run mcp__github__gh <pr-merge | pr-ready> {"pr": <n>} on <owner/name>: it checks that the pull request is ready, then asks them in the conversation.
 ```
 
 The engine run from Bash keeps the writing rules too: `pr-create`, `pr-comment`, a

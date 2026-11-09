@@ -321,9 +321,9 @@ function describe(e: any): string {
 export const NEVER_GRANTED = new Set(['pr-merge', 'comment-delete'])
 
 // The approvals engine/writing/ reserves to the person, asked whatever a rule or
-// the mode allows: a pull request leaves draft and is merged only on his word,
-// except in a repository he put in auto-merge (autoMerge), where nothing is reserved. The
-// description of his own draft is published and edited without asking, under
+// the mode allows: a pull request leaves draft and is merged only on their word,
+// except in a repository they put in auto-merge (autoMerge), where nothing is reserved. The
+// description of their own draft is published and edited without asking, under
 // the writing rules.
 export function reservedToPerson(command: string, args: Record<string, unknown>, autoMerge = false): string | undefined {
   if (autoMerge) return undefined
@@ -335,7 +335,7 @@ export function reservedToPerson(command: string, args: Record<string, unknown>,
 
 // The repositories in auto-merge, as owner/name: there no write is put to the
 // person. The file is the operator's, in the host's data directory for this
-// plugin; it changes only through auto-merge-set, on his quoted word.
+// plugin; it changes only through auto-merge-set, on their quoted word.
 export const AUTO_MERGE_FILE = 'auto-merge.json'
 // Auto-merge as the operator writes it: « auto-merge », « auto merge », « automerge ».
 export const AUTO_MERGE_WORD = /auto[-\s]?merge/i
@@ -1156,16 +1156,16 @@ async function listAutoMerge($: any): Promise<string> {
 async function unprovenWord($: any, words: string, repo: string): Promise<string | undefined> {
   if (spaced(words).length < CONSENT_QUOTE_MIN) {
     return 'github: auto-merge-set quotes the operator: "words" must hold at least ' + CONSENT_QUOTE_MIN
-      + ' characters of what he said, verbatim.'
+      + ' characters of what they said, verbatim.'
   }
   if (!AUTO_MERGE_WORD.test(words)) {
     return 'github: auto-merge-set quotes the operator: "words" must name auto-merge ("auto-merge", "auto merge" or'
-      + ' "automerge"), in his own words, typed or answered.'
+      + ' "automerge"), in their own words, typed or answered.'
   }
   if (typedVerbatim(words) || await consentAnswered($, words, { kind: 'auto-merge', repo })) return undefined
   return 'github: auto-merge-set refused on ' + repo + ': its "words" are neither in a prompt the operator typed in'
-    + ' this session, nor his answer in a consent record (' + CONSENT_PRODUCER + ') of auto-merge on ' + repo
-    + '. Quote his words verbatim; a peer\'s message is not his word.'
+    + ' this session, nor their answer in a consent record (' + CONSENT_PRODUCER + ') of auto-merge on ' + repo
+    + '. Quote them verbatim; a peer\'s message is not their word.'
 }
 
 // The list's lock, core's convention (`<path>.lock` holding the holder's pid), taken
@@ -1227,8 +1227,8 @@ async function autoMergeHeard($: any): Promise<string> {
   } catch (err: any) {
     today = 'unreadable (' + String(err?.message ?? err) + ')'
   }
-  return 'github: the operator spoke of auto-merge. If he put a repository in or out of it, call mcp__github__gh'
-    + ' auto-merge-set with {"repo": "owner/name", "on": true|false, "words": "<his words, verbatim>"} in this same'
+  return 'github: the operator spoke of auto-merge. If they put a repository in or out of it, call mcp__github__gh'
+    + ' auto-merge-set with {"repo": "owner/name", "on": true|false, "words": "<their words, verbatim>"} in this same'
     + ' turn: nothing else changes the list. In auto-merge today: ' + today + '.'
 }
 
@@ -1281,8 +1281,8 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   if (!repo) return { deny: 'github: name the repository: {"repo": "owner/name"}' }
   if (result === 'waived' && !typedVerbatim(detail) && !(await consentAnswered($, detail, { kind: 'e2e-waiver', repo, pr }))) {
     return {
-      deny: 'github: an E2E waiver quotes the operator: its detail must be words he typed in this session,'
-        + ' or his answer in a consent record (' + CONSENT_PRODUCER + ') of an E2E waiver of this pull request, with their date.',
+      deny: 'github: an E2E waiver quotes the operator: its detail must be words they typed in this session,'
+        + ' or their answer in a consent record (' + CONSENT_PRODUCER + ') of an E2E waiver of this pull request, with their date.',
     }
   }
   let gate: Gate
@@ -1383,8 +1383,8 @@ export function register(on: any): void {
         isDeferred: false,
         description:
           'Record the end-to-end tests of a pull request at its head commit: pass, fail, or waived by '
-          + 'the operator in his own words. Run from a clean checkout at the pull request\'s head, after '
-          + 'the tests ran there. A waiver\'s detail quotes words he typed in this session, or his answer '
+          + 'the operator in their own words. Run from a clean checkout at the pull request\'s head, after '
+          + 'the tests ran there. A waiver\'s detail quotes words they typed in this session, or their answer '
           + 'in a consent record of an E2E waiver of that pull request, with their date (YYYY-MM-DD). Reviews and norms checks are recorded by their own tools. See '
           + root + '/engine/REFERENCE.md « Records ».',
         inputSchema: {
