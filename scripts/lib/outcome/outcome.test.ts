@@ -191,6 +191,15 @@ describe('outcome evals: an orchestration driven as a session', () => {
     assert.equal(totals(report, 'orchestration').suite, 0)
   })
 
+  it('counts a run it did not grade apart from the runs it graded', async () => {
+    const report = await evaluate(fixture(), { agent: driven({ agentsOpened: 0, decisions: [], askedOperator: null }) })
+    const sum = totals(report, 'orchestration')
+    assert.equal(sum.ran, 0)
+    assert.equal(sum.notGraded, 1)
+    assert.equal(totals(report, 'single').notGraded, 0)
+    assert.match(markdown(report), /\| Arm \| Ran \| Not graded \|[^\n]*\n[^\n]*\n\| single \| 1 \| 0 \|[^\n]*\n\| orchestration \| 0 \| 1 \|/)
+  })
+
   it('says why an orchestration stopped at its cap opened no agent', async () => {
     const agent: Agent = { run: async ({ budgetUsd }) => ({ costUsd: budgetUsd, error: null, orchestration: { agentsOpened: 0, decisions: [], askedOperator: null } }) }
     const result = (await evaluate(fixture(), { agent })).cases[0]?.arms[1]

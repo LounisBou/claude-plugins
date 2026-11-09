@@ -4,8 +4,10 @@ import { ARMS, type Arm } from './cases.ts'
 import type { ArmResult, Report } from './harness.ts'
 
 export interface Totals {
-  /** Arms that ran (any status but not-started). */
+  /** Arms that ran and were graded (any status but not-started and not-graded). */
   readonly ran: number
+  /** Arms that ran but were not graded. */
+  readonly notGraded: number
   readonly costUsd: number
   readonly durationSeconds: number
   readonly suite: number
@@ -15,12 +17,15 @@ export interface Totals {
 }
 
 export function totals(report: Report, arm: Arm): Totals {
-  const results = report.cases.flatMap(entry => entry.arms).filter(result => result.arm === arm && result.status !== 'not-started')
+  const started = report.cases.flatMap(entry => entry.arms).filter(result => result.arm === arm && result.status !== 'not-started')
+  const results = started.filter(result => result.status !== 'not-graded')
   const count = (test: (result: ArmResult) => boolean): number => results.filter(test).length
   return {
     ran: results.length,
-    costUsd: results.reduce((sum, result) => sum + result.costUsd, 0),
-    durationSeconds: results.reduce((sum, result) => sum + result.durationSeconds, 0),
+    notGraded: started.length - results.length,
+    // What an arm spent is spent, graded or not.
+    costUsd: started.reduce((sum, result) => sum + result.costUsd, 0),
+    durationSeconds: started.reduce((sum, result) => sum + result.durationSeconds, 0),
     suite: count(result => result.grades?.suite === true),
     referenceTests: count(result => result.grades?.referenceTests === true),
     intent: count(result => result.grades?.intent?.matches === true),
@@ -73,10 +78,10 @@ export function markdown(report: Report): string {
       if (result.grades && result.grades.outsidePlugin.length > 0) lines.push(`- ${result.arm}, outside its plugin: ${result.grades.outsidePlugin.join(', ')}`)
     }
   }
-  lines.push('', '## Totals', '', '| Arm | Ran | USD | Seconds | Suite | Reference tests | Intent | Blocking findings |', '|---|---:|---:|---:|---:|---:|---:|---:|')
+  lines.push('', '## Totals', '', '| Arm | Ran | Not graded | USD | Seconds | Suite | Reference tests | Intent | Blocking findings |', '|---|---:|---:|---:|---:|---:|---:|---:|---:|')
   for (const arm of ARMS) {
     const sum = totals(report, arm)
-    lines.push(`| ${arm} | ${sum.ran} | ${usd(sum.costUsd)} | ${sum.durationSeconds} | ${sum.suite} | ${sum.referenceTests} | ${sum.intent} | ${sum.blockingFindings} |`)
+    lines.push(`| ${arm} | ${sum.ran} | ${sum.notGraded} | ${usd(sum.costUsd)} | ${sum.durationSeconds} | ${sum.suite} | ${sum.referenceTests} | ${sum.intent} | ${sum.blockingFindings} |`)
   }
   return `${lines.join('\n')}\n`
 }
