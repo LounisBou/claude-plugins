@@ -23,6 +23,7 @@ import { WAIT_TOOL } from './transcript.ts'
 
 const TASK: Case = { id: 'a-case', pr: 1, base: 'a'.repeat(40), merge: 'b'.repeat(40), plugin: 'demo', task: 'Make the value 2.' }
 const HOME: BenchHome = { socket: 'orch-abc12345', tty: '/dev/ttys009', session: '11111111-2222-3333-4444-555555555555' }
+const BENCH = '/b'
 const GONE = 'closed 0 session(s): the home server orch-abc12345 is not running'
 
 type Line = Record<string, unknown>
@@ -52,10 +53,13 @@ function fakeLauncher(script: { panes?: (poll: number) => Pane[] | null; open?: 
       fake.opened.push(request)
       return script.open === undefined ? HOME : script.open()
     },
-    async panes() {
+    async panes(bench, socket) {
+      assert.equal(bench, BENCH, 'the panes are read in the arm’s bench')
+      assert.equal(socket, HOME.socket, 'the panes are read on the home’s server')
       return (script.panes ?? (() => [{ window: 0, id: '%0' }]))(fake.panesSeen++)
     },
-    async close(_bench, socket) {
+    async close(bench, socket) {
+      assert.equal(bench, BENCH, 'the home is closed in the arm’s bench')
       fake.closed.push(socket)
       const answer = script.close === undefined ? (fake.closed.length === 1 ? 'closed 1 session(s)' : GONE) : script.close(fake.closed.length)
       if (answer instanceof Error) throw answer
@@ -68,13 +72,16 @@ function fakeLauncher(script: { panes?: (poll: number) => Pane[] | null; open?: 
 function agent(launcher: Launcher, transcript: (poll: number) => string | null) {
   let poll = 0
   return orchestrationAgent({
-    bench: '/b',
+    bench: BENCH,
     model: 'm',
     orchestratorDir: '/o',
     dependencyDirs: ['/d'],
     settingsFile: '/s.json',
     launcher,
-    transcript: () => transcript(poll++),
+    transcript: session => {
+      assert.equal(session, HOME.session, 'the transcript read is the orchestrator session’s')
+      return transcript(poll++)
+    },
     pollMs: 5,
   })
 }
