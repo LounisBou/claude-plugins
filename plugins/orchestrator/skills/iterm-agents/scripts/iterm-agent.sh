@@ -56,7 +56,7 @@
 #   iterm-agent.sh home-release --tty /dev/ttysNNN --session-id <app session id> --pane-tty /dev/ttysNNN --resumed <session id>
 #     window 0's watcher closing the tab a moved orchestrator left, once the resumed host is
 #     proved running on window 0's tty, guarded by that tab's own id
-#   iterm-agent.sh bench-open --bench <dir> --dir <dir inside the bench> --title "Orch : <subject>"
+#   iterm-agent.sh bench-open --bench <dir> --dir <dir inside the bench> --title "Orch: <subject>"
 #                             --plugin-dir <abs dir> [--plugin-dir ...] [--settings <file>]
 #                             (--prompt <text> | --prompt-file <path>) [--model <id>] [--effort <level>]
 #                             [--permission-mode <mode>] [--mcp <names>] [--trust] [--no-verify]

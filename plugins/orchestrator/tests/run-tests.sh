@@ -8439,7 +8439,7 @@ benchrun() { # the launcher from a plain process: no tmux pane, no host session,
   env -u TMUX -u TMUX_PANE -u ORCHESTRATOR_SELF_TTY -u ORCHESTRATOR_PS_TABLE -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_TMUX="$HR/tmux" \
     ORCHESTRATOR_STATE_DIR="$WORK/benchstate" ORCHESTRATOR_LOGIN_SHELL=/bin/sh ORCHESTRATOR_HOST_CLI=/opt/x/host \
     ORCHESTRATOR_NEW_SESSION_ID="$BID" ORCHESTRATOR_SPAWN_TIMEOUT=1 ORCHESTRATOR_CLOSE_TIMEOUT=1 ORCHESTRATOR_MODE_TIMEOUT=1 "$@" 2>&1; }
-BENCH_OPEN=(bench-open --bench "$BENCH" --dir "$BENCH/clone" --title "Orch : eval x" --plugin-dir "$WORK/benchplug/a" --plugin-dir "$WORK/benchplug/b" --settings "$BENCH/settings.json" --prompt "go" --trust)
+BENCH_OPEN=(bench-open --bench "$BENCH" --dir "$BENCH/clone" --title "Orch: eval x" --plugin-dir "$WORK/benchplug/a" --plugin-dir "$WORK/benchplug/b" --settings "$BENCH/settings.json" --prompt "go" --trust)
 BENCH_REAL=$(cd "$BENCH" && pwd -P)
 
 reset_homerec
@@ -8461,7 +8461,7 @@ check "an opening starts the home server on window 0 and prints where it is" \
   "0|orch-0badc0de|/dev/ttys960|$BID" \
   "0|$(sfield "$out" socket)|$(sfield "$out" tty)|$(sfield "$out" session)"
 check "the server is started with the plugin's configuration, window 0 named by the title, in the clone" \
-  "[-u][-L][orch-0badc0de][-f][@ROOT@/skills/iterm-agents/tmux/home.conf][new-session][-d][-s][home][-n][Orch : eval x][-c][$BENCH_REAL/clone]" \
+  "[-u][-L][orch-0badc0de][-f][@ROOT@/skills/iterm-agents/tmux/home.conf][new-session][-d][-s][home][-n][Orch: eval x][-c][$BENCH_REAL/clone]" \
   "$(hcalls | head -1 | sed 's/\]\[\/bin\/sh -l .*$/]/')"
 check "and every call goes to the server under the bench, never another" "1|$BENCH_REAL/tmux" \
   "$(sort -u "$HR/tmpdir" | wc -l | tr -d ' ')|$(sort -u "$HR/tmpdir")"
@@ -8506,7 +8506,7 @@ refused() { # <name> <expected fragment> <bench-open arguments...>: refused befo
   check "$name" "1|1|0" \
     "$(sfield "$res" exit)|$(printf '%s' "$res" | grep -c -- "$fragment")|$(hcalls | wc -l | tr -d ' ')"
 }
-COMMON=(--plugin-dir "$WORK/benchplug/a" --settings "$BENCH/settings.json" --prompt go --title "Orch : eval x")
+COMMON=(--plugin-dir "$WORK/benchplug/a" --settings "$BENCH/settings.json" --prompt go --title "Orch: eval x")
 mkdir -p "$WORK/outside"; ln -sfn "$WORK/outside" "$BENCH/escape"
 refused "a directory outside the bench is refused" "must be inside the bench" --bench "$BENCH" --dir "$WORK/outside" "${COMMON[@]}"
 refused "so is the bench itself" "must be inside the bench" --bench "$BENCH" --dir "$BENCH" "${COMMON[@]}"
@@ -8518,15 +8518,15 @@ mkdir -p "$SHORTTMP/benchlink/clone"; ln -sfn "$WORK/outside" "$SHORTTMP/benchli
 refused "a tmux directory that is a link out of the bench" "leads out of the bench" --bench "$SHORTTMP/benchlink" --dir "$SHORTTMP/benchlink/clone" "${COMMON[@]}"
 DEEP="$SHORTTMP/bench-$(printf 'x%.0s' $(seq 1 80))"; mkdir -p "$DEEP/clone"
 refused "a socket path longer than a socket's address" "too long" --bench "$DEEP" --dir "$DEEP/clone" "${COMMON[@]}"
-refused "an agent's title" "needs the orchestrator's name" --bench "$BENCH" --dir "$BENCH/clone" --plugin-dir "$WORK/benchplug/a" --prompt go --title "Agent : eval x"
-refused "a title that names no subject" "needs the orchestrator's name" --bench "$BENCH" --dir "$BENCH/clone" --plugin-dir "$WORK/benchplug/a" --prompt go --title "Orch : "
-refused "no plugin directory" "needs a --plugin-dir" --bench "$BENCH" --dir "$BENCH/clone" --prompt go --title "Orch : eval x"
-refused "a plugin directory that holds no plugin" "is not a plugin" --bench "$BENCH" --dir "$BENCH/clone" --plugin-dir "$WORK/outside" --prompt go --title "Orch : eval x"
-refused "a plugin directory that is not absolute" "is not an absolute" --bench "$BENCH" --dir "$BENCH/clone" --plugin-dir "benchplug/a" --prompt go --title "Orch : eval x"
+refused "an agent's title" "needs the orchestrator's name" --bench "$BENCH" --dir "$BENCH/clone" --plugin-dir "$WORK/benchplug/a" --prompt go --title "Agent: eval x"
+refused "a title that names no subject" "needs the orchestrator's name" --bench "$BENCH" --dir "$BENCH/clone" --plugin-dir "$WORK/benchplug/a" --prompt go --title "Orch: "
+refused "no plugin directory" "needs a --plugin-dir" --bench "$BENCH" --dir "$BENCH/clone" --prompt go --title "Orch: eval x"
+refused "a plugin directory that holds no plugin" "is not a plugin" --bench "$BENCH" --dir "$BENCH/clone" --plugin-dir "$WORK/outside" --prompt go --title "Orch: eval x"
+refused "a plugin directory that is not absolute" "is not an absolute" --bench "$BENCH" --dir "$BENCH/clone" --plugin-dir "benchplug/a" --prompt go --title "Orch: eval x"
 printf '[1]\n' > "$WORK/benchplug/array.json"
-refused "a settings file that is not an object" "is not a JSON object" --bench "$BENCH" --dir "$BENCH/clone" --plugin-dir "$WORK/benchplug/a" --settings "$WORK/benchplug/array.json" --prompt go --title "Orch : eval x"
-refused "a settings file that cannot be read" "cannot be read" --bench "$BENCH" --dir "$BENCH/clone" --plugin-dir "$WORK/benchplug/a" --settings "$WORK/nowhere.json" --prompt go --title "Orch : eval x"
-refused "no startup prompt" "needs a startup prompt" --bench "$BENCH" --dir "$BENCH/clone" --plugin-dir "$WORK/benchplug/a" --title "Orch : eval x"
+refused "a settings file that is not an object" "is not a JSON object" --bench "$BENCH" --dir "$BENCH/clone" --plugin-dir "$WORK/benchplug/a" --settings "$WORK/benchplug/array.json" --prompt go --title "Orch: eval x"
+refused "a settings file that cannot be read" "cannot be read" --bench "$BENCH" --dir "$BENCH/clone" --plugin-dir "$WORK/benchplug/a" --settings "$WORK/nowhere.json" --prompt go --title "Orch: eval x"
+refused "no startup prompt" "needs a startup prompt" --bench "$BENCH" --dir "$BENCH/clone" --plugin-dir "$WORK/benchplug/a" --title "Orch: eval x"
 refused "an option it does not know, remote control among them" "unknown option --remote-control" --bench "$BENCH" --dir "$BENCH/clone" "${COMMON[@]}" --remote-control
 rm -rf "$DEEP" "$BENCH/escape" "$SHORTTMP/benchlink"
 
@@ -8604,7 +8604,7 @@ rm -f "$BTRUST.lock" "$BTRUST.orchestrator-bak"
 # The spawn calls the same writer: its record is kept the same way.
 printf '{"projects":{"/elsewhere":{"hasTrustDialogAccepted":true}}}' > "$BTRUST"; before=$(cat "$BTRUST")
 env ORCHESTRATOR_TRUST_FILE="$BTRUST" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" CLAUDE_CODE_SESSION_ID=s-suite \
-  bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent : trust" --tier deep --trust --prompt p >/dev/null 2>&1
+  bash "$AGENT" spawn --dir "$UNTRUSTED" --title "Agent: trust" --tier deep --trust --prompt p >/dev/null 2>&1
 check "and so is a spawn's, which records the directory the same way" "$before|1" \
   "$(cat "$BTRUST.orchestrator-bak" 2>/dev/null)|$("$py" -c "import json,sys,os; print(int(json.load(open(sys.argv[1]))['projects'][os.path.realpath(sys.argv[2])]['hasTrustDialogAccepted'] is True))" "$BTRUST" "$UNTRUSTED")"
 rm -f "$BTRUST" "$BTRUST.orchestrator-bak"
@@ -8622,7 +8622,7 @@ check "the dry run prints the launch the opening runs, the servers' file among i
   "$dry|$(printf '%s' "$dry" | grep -c -- '--mcp-config ')|$(sfield "$out" mcp)"
 
 # The opening of an orchestrator from a session stays what it was: the guards of --open hold.
-res=$(env -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_STATE_DIR="$WORK/benchstate" ORCHESTRATOR_LOGIN_SHELL=/bin/sh ORCHESTRATOR_HOST_CLI=/opt/x/host bash "$AGENT" spawn --open --title "Orch : eval x" --dir "$BENCH/clone" --prompt go --no-remote-control 2>&1; echo "exit=$?")
+res=$(env -u ORCHESTRATOR_DRY_RUN ORCHESTRATOR_STATE_DIR="$WORK/benchstate" ORCHESTRATOR_LOGIN_SHELL=/bin/sh ORCHESTRATOR_HOST_CLI=/opt/x/host bash "$AGENT" spawn --open --title "Orch: eval x" --dir "$BENCH/clone" --prompt go --no-remote-control 2>&1; echo "exit=$?")
 check "a plain spawn --open is still refused the remote-control switch it never had" "1|1" \
   "$(sfield "$res" exit)|$(printf '%s' "$res" | grep -c 'not an opening')"
 
