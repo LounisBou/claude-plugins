@@ -32,14 +32,19 @@ harness the way the operator opens one, on the same machine and plugin release:
    agents as it always does; they land in the same detached home.
 2. **No operator.** The brief tells the orchestrator that no operator answers in this run: each
    question it would ask is decided by its own recommendation, recorded in its state file, and
-   the run goes on; the report lists the decisions so taken. A turn that still ends on
-   `waiting: operator` ends the arm, reported `stopped: asked the operator` with the question,
-   and graded on what it left.
+   the run goes on; the report lists the decisions so taken. It spawns every agent with `--dir`
+   set to the graded checkout, never through `workspace.sh create`, one agent writing at a
+   time. A turn that still declares a wait on the operator ends the arm, reported `stopped:
+   asked the operator` with the question, and graded on what it left.
 3. **Done.** The harness polls the orchestrator session's transcript. The arm ends on the
    first turn whose declared wait is `done`, on a turn that waits on the operator, on its
-   share of the cap (the deck meter, as today), or at the arm's deadline.
+   share of the cap (the deck meter, counting only the sessions on its home's panes), or at
+   the arm's deadline. Only a declared wait decides, never a last line's wording. An
+   orchestrator that has neither declared a wait nor opened an agent after 10 minutes, or whose
+   meter still reads nothing 10 minutes after its first agent, ends the arm as not graded.
 4. **Close.** Every session the arm opened, the orchestrator first, is closed through the
-   launcher's own `close`, and the harness checks with the deck that none is left.
+   launcher's own `close`, and the harness proves none is left by reading the home's server
+   gone, closing it once more if not. A failed opening closes the home servers it left.
 5. **Graded the same.** The bench is graded as the single arm's is: suite, reference tests,
    intent, review, files, cost, duration. The report adds the number of agent sessions the
    orchestration opened; an orchestration that opened none is reported `not graded: no
