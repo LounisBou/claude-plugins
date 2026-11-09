@@ -2045,6 +2045,14 @@ test('an orchestration is its name without the reference, in the house shape', (
   expect(orchestrationOf(null)).toBeNull()
 })
 
+test('an orchestration reads the former « Orch : x » the current way, and only a name core reads as one', () => {
+  expect(orchestrationOf('Orch : belt [a1b2c3]')).toBe('Orch: belt')
+  expect(orchestrationOf('Orch:belt')).toBe('Orch: belt')
+  expect(orchestrationOf('Orch: ' + 'a'.repeat(25))).toBe('Orch: ' + 'a'.repeat(25))
+  expect(orchestrationOf('Orch: ' + 'a'.repeat(26))).toBeNull()
+  expect(ownerOf('Orch : other\n')).toBe('Orch: other')
+})
+
 test('an owner file names its owner on its first line, and a blank file names nobody', () => {
   expect(ownerOf('Orch: other\n')).toBe('Orch: other')
   expect(ownerOf('Orch: other [a1b2c3]\nignored\n')).toBe('Orch: other')

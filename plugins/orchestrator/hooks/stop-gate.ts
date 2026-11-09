@@ -14,6 +14,7 @@
 
 import { withDeadline as cancelAtDeadline, DeadlineExceeded } from '../core/deadline.ts'
 import type { ConsentSubject } from '../core/consent-record.ts'
+import { parseSessionName, sessionName } from '../core/names.ts'
 
 // --- the decision shapes -----------------------------------------------------------------
 
@@ -691,11 +692,13 @@ export function parseGoalsCheck(path: string, text: string): GoalsReading | null
 // `<record>.owner` at the first write, and a session answers for no other's rows or goals.
 // The orchestration is the session's name in the house shape, without its reference, which
 // is what a successor keeps; the file will hold the orchestration's id the day it has one.
+// The shape is core's: a hand-typed « Orch:x », or the former « Orch : x », is spelled the
+// current way first.
 const REFERENCE = / \[[^\]\s]+\]$/
 export function orchestrationOf(name: string | null | undefined): string | null {
-  const bare = (name ?? '').trim().replace(REFERENCE, '').trim()
-  const subject = /^Orch ?: *(\S.*)$/.exec(bare)?.[1]
-  return subject ? `Orch: ${subject}` : null
+  const bare = (name ?? '').trim().replace(REFERENCE, '').trim().replace(/^(\S+?) ?: */u, '$1: ')
+  const parsed = parseSessionName(bare)
+  return parsed?.role === 'orchestrator' ? sessionName('Orch', parsed.subject) : null
 }
 
 // The owner an owner file names: its first line, as the orchestration when it reads as one,
