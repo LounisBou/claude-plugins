@@ -235,6 +235,11 @@ host_cli() {
     basename "$name"
 }
 
+# current_orch <name>: the name with the former shape, `Orch : x`, written the current way,
+# `Orch: x`; any other name as given. Sessions started, and briefs written, before the change
+# carry the former shape.
+current_orch() { printf '%s' "$1" | sed 's/^Orch : /Orch: /'; }
+
 # brief_orchestrator <command line> <directory>: sets orch to the orchestrator the session's
 # brief names, else the one its startup prompt names, else « unknown » with the reason in
 # why. A relative brief is the session's own, read from its directory; a brief that exists
@@ -250,14 +255,13 @@ brief_orchestrator() {
     if [ -n "$brief" ] && [ -e "$brief" ]; then
         if [ -f "$brief" ] && [ -r "$brief" ]; then
             found=$(grep -o 'rchestrator is the session \*\*`[^`]*`' "$brief" | head -1 | sed 's/.*`\(.*\)`$/\1/')
-            [ -n "$found" ] && { orch=$(printf '%s' "$found" | sed 's/^Orch : /Orch: /'); return; }
+            [ -n "$found" ] && { orch=$(current_orch "$found"); return; }
         else
             unread "brief $brief: cannot be read"
             why="brief $brief cannot be read"
         fi
     fi
-    # A brief written before the change names it in the former shape, `Orch : x`: read the current way.
-    orch=$(printf '%s' "$1" | sed -n 's/.*[Yy]our orchestrator is \(Orch \{0,1\}: [^][]*\[[0-9A-Za-z]*\]\).*/\1/p' | sed 's/^Orch : /Orch: /')
+    orch=$(current_orch "$(printf '%s' "$1" | sed -n 's/.*[Yy]our orchestrator is \(Orch \{0,1\}: [^][]*\[[0-9A-Za-z]*\]\).*/\1/p')")
     [ -n "$orch" ] || orch=unknown
 }
 
@@ -341,8 +345,7 @@ read_facts() {
         fi
         title=$(printf '%s' "$cmd" | sed -n 's/.* --name \(.*\)$/\1/p' | sed 's/ --remote-control .*//')
         case "$title" in
-            "Orch: "*) orch="$title"; why=- ;;
-            "Orch : "*) orch="Orch: ${title#Orch : }"; why=- ;;
+            "Orch: "*|"Orch : "*) orch=$(current_orch "$title"); why=- ;;
             *) brief_orchestrator "$cmd" "$cwd" ;;
         esac
         printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$pid" "$tty" "${title:--}" "$orch" "$repo" "$branch" "$top" "$why" >> "$T/sessions"
