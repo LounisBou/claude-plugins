@@ -1,6 +1,6 @@
 // The consent record contract, owned by the orchestrator: the operator's answer to a round
-// question that asked his consent on a subject (an E2E waiver of one pull request, a repository in
-// or out of auto-merge), written by the orchestrator's hooks when he answers it, one file per
+// question that asked their consent on a subject (an E2E waiver of one pull request, a repository in
+// or out of auto-merge), written by the orchestrator's hooks when they answer it, one file per
 // question under <config>/consents/<owner>/<name>/<entry>.json, and read by github in place of
 // the orchestrator's private round. The subject is the one the asking session declared with its
 // question (`declare_wait`'s `consent`), never read from the question's words.
@@ -10,7 +10,7 @@ export const CONSENT_RECORD_CONTRACT = {
   kinds: ['e2e-waiver', 'auto-merge'],
   producer: 'orchestrator',
   // Who recorded the answer: the operator in the coordinator's pane, or the coordinator relaying
-  // what he told it (`round-close`).
+  // what they told it (`round-close`).
   answerers: ['pane', 'coordinator'],
   dir: 'consents',
   // A consent never rests on a few characters: the answer a quote holds is at least this long.

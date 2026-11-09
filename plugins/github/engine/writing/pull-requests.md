@@ -91,7 +91,7 @@ semicolon. No workflow vocabulary. Every PR is opened as a draft (`pr-create
 --draft`, the house default), and leaves draft only once it is ready (see « Ready
 pull requests »). Outside
 auto-merge, leaving draft (a CI undraft aside, see « Ready pull requests ») and merging
-also need the operator's explicit word, given through this tool, which asks him in the
+also need the operator's explicit word, given through this tool, which asks them in the
 conversation. In a
 repository in auto-merge, the merge, leaving draft and the deployment its method
 foresees need no approval of the operator once the pull request is ready. A repository
@@ -132,8 +132,8 @@ Every pull request has its end-to-end tests, and they are merged with the ready 
 
 A pull request is ready when four things hold at its current head commit: a review ran
 there and came out clean, the norms check ran there and every finding is fixed or
-passed, its end-to-end tests ran there and passed (or the operator waived them in his
-own words, dated), and every CI check is green there. Ready belongs to one head: a new
+passed, its end-to-end tests ran there and passed (or the operator waived them, in their
+words, dated), and every CI check is green there. Ready belongs to one head: a new
 commit makes the pull request not ready until the four hold again at the new head.
 
 The `Ready` and `Not Ready` labels carry that fact on GitHub. A draft opens with `Not

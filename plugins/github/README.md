@@ -220,7 +220,7 @@ Elsewhere it is refused in both phases, so the operator is asked in the
 conversation through the tool:
 
 ```
-github: <gh pr merge | gh pr ready> refused on <owner/name>: this repository is not in auto-merge, so a merge or leaving draft needs the operator's explicit word. When he gave it, run mcp__github__gh <pr-merge | pr-ready> {"pr": <n>} on <owner/name>: it checks that the pull request is ready, then asks him in the conversation.
+github: <gh pr merge | gh pr ready> refused on <owner/name>: this repository is not in auto-merge, so a merge or leaving draft needs the operator's explicit word. When they gave it, run mcp__github__gh <pr-merge | pr-ready> {"pr": <n>} on <owner/name>: it checks that the pull request is ready, then asks them in the conversation.
 ```
 
 A CI undraft, as above, is the exception, through the shell and the tool alike.
