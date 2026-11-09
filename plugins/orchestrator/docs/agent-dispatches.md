@@ -177,7 +177,7 @@ The class of each kind of work and its tier: `skills/model-routing/SKILL.md`, «
 
 - Since: routing phase 4 (#181, 2026-10-12), from the operator's study of the dispatch trials.
 - Rule: `skills/model-routing/SKILL.md`, « The correction round runs one notch above its
-  phase »; `routing.py pick` prints the pair as `nbis=<pair>`.
+  phase »; `routing.py pick` prints the pair as `corrective=<pair>`.
 - Choice: a phase starts at the cheap pair its table gives, and its correction round runs the
   same family one effort level up (the same pair at the top effort). The review and the
   correction round are the escalation; this is not a cascade, and a phase is never retried at

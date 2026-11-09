@@ -551,10 +551,10 @@ check_status "open wants a tier or a model" 1 crec open "$PR" --class x
 e1=$(crec open "$PR" --class conversion-phase --model a-model --effort low --explore)
 crec round "$PR" "$e1" >/dev/null; crec round "$PR" "$e1" >/dev/null; crec close "$PR" "$e1" --verdict approved >/dev/null
 check "an exploration that cost a corrective round freezes its class" "1" "$(crec summary "$PR" | grep -c '^frozen=conversion-phase$')"
-for i in 1 2 3; do e=$(crec open "$PR" --class n-bis --model a-model --effort low --explore); crec round "$PR" "$e" >/dev/null; crec close "$PR" "$e" --verdict approved >/dev/null; done
-check "three explorations closed in one round promote the pair" "1" "$(crec summary "$PR" | grep -c '^promote=n-bis a-model/low$')"
+for i in 1 2 3; do e=$(crec open "$PR" --class corrective --model a-model --effort low --explore); crec round "$PR" "$e" >/dev/null; crec close "$PR" "$e" --verdict approved >/dev/null; done
+check "three explorations closed in one round promote the pair" "1" "$(crec summary "$PR" | grep -c '^promote=corrective a-model/low$')"
 check "an escaped defect on an exploration freezes its class too" "1" \
-  "$(crec escaped "$PR" "$e" >/dev/null; crec summary "$PR" | grep -c '^frozen=n-bis$')"
+  "$(crec escaped "$PR" "$e" >/dev/null; crec summary "$PR" | grep -c '^frozen=corrective$')"
 ```
 
 The existing dispatch-record checks above them stay as they are: they pin that tier rows
@@ -773,7 +773,7 @@ effort below `low`; the next lighter family in the map is `b-model`, at the same
 CLASS_TIERS = {
     "orchestrator": "deep", "successor": "deep", "decision-round": "deep",
     "contract-phase": "deep", "final-verification": "deep",
-    "behaviour-phase": "standard", "conversion-phase": "standard", "n-bis": "standard",
+    "behaviour-phase": "standard", "conversion-phase": "standard", "corrective": "standard",
     "review-collector": "standard", "comments": "standard", "review-lens": "standard",
     "search": "light",
 }
@@ -1031,12 +1031,12 @@ check "the ladder is ordered by cost, cheapest first" "c-model/medium,b-model/me
 check "the entry keeps the identifiers it was measured on" "b-model-1" \
   "$(jq -r '.entries["behaviour-phase"].models|join(",")' "$CS/routing/tables/project-demo.json")"
 # Fewer than six trials: no eligible pair.
-: > "$TR"; for i in 1 2 3; do trial n-bis c-model/low pass 0.01; done
-check "fewer than six trials is never eligible" "class=n-bis no eligible pair" "$(rcal demo)"
+: > "$TR"; for i in 1 2 3; do trial corrective c-model/low pass 0.01; done
+check "fewer than six trials is never eligible" "class=corrective no eligible pair" "$(rcal demo)"
 # Record rows count as trials: closed in one round and not escaped is a pass.
 RR="$WORK/calrec.jsonl"; : > "$RR"
-for i in 1 2 3 4 5 6; do printf '{"id":%d,"class":"n-bis","model":"c-model","effort":"low","rounds":1,"state":"closed","cost_usd":0.02,"sessions":["s"],"cost_incomplete":false}\n' "$i" >> "$RR"; done
-check "record rows complete the measurement" "class=n-bis pair=c-model/low pass_rate=1.0 n=9 expected_usd=0.0167" \
+for i in 1 2 3 4 5 6; do printf '{"id":%d,"class":"corrective","model":"c-model","effort":"low","rounds":1,"state":"closed","cost_usd":0.02,"sessions":["s"],"cost_incomplete":false}\n' "$i" >> "$RR"; done
+check "record rows complete the measurement" "class=corrective pair=c-model/low pass_rate=1.0 n=9 expected_usd=0.0167" \
   "$(rcal demo --from-record "$RR")"
 ```
 
@@ -1044,7 +1044,7 @@ Expected values, by hand: behaviour-phase ladder by mean cost — `c-model/mediu
 (n 6, rate 0.667, ineligible), `b-model/medium` mean (6×0.30+0.05)/7 = 0.2643, n 6, rate
 1.0, `a-model/low` 0.50. Expected cost of `b-model/medium` = 0.2643 + (1−1.0)×0.50 = 0.2643
 (the mean includes the error trial's cost; the `n` excludes it). Contract: `b-model/high` rate
-0.833 < 1.0 floor → ineligible; `a-model/high` = 0.90. n-bis with the record: three trials
+0.833 < 1.0 floor → ineligible; `a-model/high` = 0.90. corrective with the record: three trials
 at 0.01 and six rows at 0.02 → mean 0.0167, n 9.
 
 - [ ] **Step 2: Run the suite to verify the new checks fail** — Expected `exit=1`.

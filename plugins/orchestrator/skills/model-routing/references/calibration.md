@@ -245,9 +245,9 @@ the map does not bind is skipped as ever and is never named. Without the options
 no size.
 
 The output, in order: `pair=<p> source=<s>[ stale][ size=<bucket>[ beyond=<scope>]]`;
-`explore=<pair>` when an exploration is offered; `nbis=<pair>` last, the picked pair one effort
-level up on the same family (the same pair at `max`), and no line for a pair with no effort.
-The skill runs a phase's correction round at that pair.
+`explore=<pair>` when an exploration is offered; `corrective=<pair>` last, the pair of the phase's
+correction round: one effort level up on the same family (the same pair at `max`), no line for a
+pair with no effort.
 
 `--from-record <record>`, repeatable, adds the dispatch record's closed pair rows as trials:
 one round and no escaped defect is a pass. A row whose cost is incomplete, or that names no
