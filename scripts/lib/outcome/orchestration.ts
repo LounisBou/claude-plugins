@@ -116,8 +116,6 @@ const lastLines = (exit: Exit): string => (exit.stderr.trim() || exit.stdout.tri
 export interface LauncherOptions {
   /** This checkout's `plugins/orchestrator`: the launcher run is the one the orchestrator ships. */
   readonly orchestratorDir: string
-  /** The trust record the launcher writes for the arm's directory, kept in the bench. */
-  readonly trustFile: string
   readonly tmux?: string
   readonly env: NodeJS.ProcessEnv
 }
@@ -135,7 +133,7 @@ export function benchLauncher(options: LauncherOptions): Launcher {
       args.push('--settings', request.settingsFile, '--prompt-file', promptFile)
       if (request.model !== '') args.push('--model', request.model)
       args.push('--trust')
-      const exit = await exec(script, args, { ...options.env, ORCHESTRATOR_TRUST_FILE: options.trustFile }, OPEN_MS)
+      const exit = await exec(script, args, options.env, OPEN_MS)
       if (exit.code !== 0) throw new Error(lastLines(exit) || `the launcher exited with ${exit.code}`)
       const field = (name: string): string => new RegExp(`^${name}=(\\S+)$`, 'mu').exec(exit.stdout)?.[1] ?? ''
       const home = { socket: field('socket'), tty: field('tty'), session: field('session') }

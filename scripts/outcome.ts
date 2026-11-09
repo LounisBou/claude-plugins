@@ -113,7 +113,7 @@ function hostPorts(root: string, options: Options, env: Io['env'], inject: Injec
     orchestratorDir,
     dependencyDirs,
     settingsFile,
-    launcher: inject.launcher ?? benchLauncher({ orchestratorDir, trustFile: join(options.out, 'trust.json'), env }),
+    launcher: inject.launcher ?? benchLauncher({ orchestratorDir, env }),
     transcript: session => {
       const path = findTranscript(projects, session)
       return path === null ? null : readFileSync(path, 'utf8')

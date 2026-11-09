@@ -238,7 +238,7 @@ describe('outcome evals: the launcher on the checkout', () => {
     mkdirSync(scripts, { recursive: true })
     run(join(scripts, 'iterm-agent.sh'), 'case "$1" in bench-open) printf "socket=orch-abc12345\\ntty=/dev/ttys009\\nsession=%s\\n" 11111111-2222-3333-4444-555555555555;; close) echo "closed 0 session(s): the home server orch-abc12345 is not running";; esac')
     run(join(dir, 'tmux'), 'printf "0 %%0\\n1 %%7\\nbad\\n"')
-    const launcher = benchLauncher({ orchestratorDir: join(dir, 'orchestrator'), trustFile: join(dir, 'trust.json'), tmux: join(dir, 'tmux'), env: { PATH: '/usr/bin:/bin' } })
+    const launcher = benchLauncher({ orchestratorDir: join(dir, 'orchestrator'), tmux: join(dir, 'tmux'), env: { PATH: '/usr/bin:/bin' } })
     return { dir, log, launcher }
   }
 
@@ -250,10 +250,17 @@ describe('outcome evals: the launcher on the checkout', () => {
     assert.deepEqual(await launcher.panes(bench, home.socket), [{ window: 0, id: '%0' }, { window: 1, id: '%7' }])
     assert.equal(await launcher.close(bench, home.socket), GONE)
     const [open, panes, close] = readFileSync(log, 'utf8').trim().split('\n')
-    assert.match(open ?? '', /^bench-open --bench .*bench --dir .*work --title Orch : eval x --plugin-dir \/o --plugin-dir \/d --settings \/s\.json --prompt-file \S+prompt\.txt --model m --trust\|TRUST=.*trust\.json\|/)
+    assert.match(open ?? '', /^bench-open --bench .*bench --dir .*work --title Orch : eval x --plugin-dir \/o --plugin-dir \/d --settings \/s\.json --prompt-file \S+prompt\.txt --model m --trust\|/)
     assert.match(panes ?? '', /^-L orch-abc12345 list-panes -a -F #\{window_index\} #\{pane_id\}\|.*\|TMUX=.*bench\/tmux$/)
     assert.match(close ?? '', /^close --bench .*bench --socket orch-abc12345\|/)
     assert.equal(readFileSync(/--prompt-file (\S+) /u.exec(open ?? '')?.[1] ?? '', 'utf8'), 'p')
+  })
+
+  it('leaves the trust record to the launcher’s own ladder, where the host reads it', async () => {
+    const { dir, log, launcher } = fakeBinaries()
+    const bench = join(dir, 'bench')
+    await launcher.open({ bench, dir: bench, title: 't', pluginDirs: ['/o'], settingsFile: '/s', prompt: 'p', model: 'm' })
+    assert.match(readFileSync(log, 'utf8'), /^bench-open .*--trust\|TRUST=\|/)
   })
 
   it('refuses a launcher answer that names no home, and a socket that is not one the launcher makes', async () => {
