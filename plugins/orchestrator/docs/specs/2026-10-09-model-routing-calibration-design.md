@@ -166,7 +166,7 @@ when all hold:
 One notch is the next cheaper pair on the class's **ladder**: the pairs of its table
 entry ordered by measured cost per closed dispatch; without measurements, effort down one
 level on the same family, then the next lighter family at its current effort. The
-dispatch is opened `--explore`. If it costs an N-bis round or later gets an `escaped`
+dispatch is opened `--explore`. If it costs a corrective round or later gets an `escaped`
 defect, the class reverts and `summary` prints `frozen=<class>`: no exploration on that
 class for the rest of the build. Three exploratory closes in one round promote the lower
 pair for the build, and `summary` prints `promote=<class> <pair>`; promoting it into the
@@ -194,7 +194,7 @@ the task to the manifest. The orchestrator reviews each brief before it enters a
 `bench` refuses a task whose brief is still marked `draft`.
 
 **Classes the bench covers** are those a merged pull request replays: contract-defining,
-behaviour and conversion phases, and N-bis correctives (fix pull requests). Review lenses,
+behaviour and conversion phases, and corrective phases (fix pull requests). Review lenses,
 collectors, comments agents and search subagents are calibrated online only.
 
 **A trial** is one task × one pair × one repetition:

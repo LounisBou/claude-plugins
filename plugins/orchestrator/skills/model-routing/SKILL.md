@@ -71,7 +71,7 @@ The floor `pick` lands on when nothing is measured: the class's tier, through th
 | The final verification phase (spec conformity, norms over the full diff, E2E) | `final-verification` | `deep` | nobody |
 | A behaviour phase with the contract already fixed | `behaviour-phase` | `standard` | the test suite, then the review round |
 | A conversion phase (move, rename, extract) | `conversion-phase` | `standard` | « nothing observable changed »: the suite judges |
-| An N-bis corrective on a findings list | `n-bis` | `standard` | you, on the artifact: the diff, the decisive tests |
+| A corrective phase on a findings list | `corrective` | `standard` | you, on the artifact: the diff, the decisive tests |
 | A review collector, a comments agent | `review-collector`, `comments` | `standard` | you verify every finding |
 | The review lenses, dispatched as the subagent type `orchestrator:lens` | `review-lens` | `standard` | the collector, then you |
 | The screenshot audit of a pull request, dispatched as the subagent type `orchestrator:screenshots` | `screenshot-audit` | `standard` | you, on a capture in doubt |
@@ -95,11 +95,11 @@ Two readings high or more raises the pair by **one** notch up the class's ladder
 
 ## The correction round runs one notch above its phase
 
-`pick` ends with `nbis=<pair>`: the phase's pair one effort level up on the same family, the same pair at `max`, and no line for a pair with no effort to raise. The phase's correction round runs at that pair, and the brief names it; the phase itself is never retried at its own pair. `--class n-bis` serves a correction round whose phase's pair is unknown: the round runs at that call's `pair=` line, and its `nbis=` line is not read.
+`pick` ends with `corrective=<pair>`: the phase's pair one effort level up on the same family, the same pair at `max`, no line for a pair with no effort to raise. The phase's correction round runs at that pair, and the brief names it; the phase itself is never retried at its own pair. `--class corrective` serves a correction round whose phase's pair is unknown: it runs at that call's `pair=` line; its `corrective=` line is not read.
 
 ## Explore one notch, never more
 
-`pick` prints `explore=<pair>` (`nbis=` stays last) when the record allows a try one notch below: take it only when the five readings show at most one high, and open the row `--explore`.
+`pick` prints `explore=<pair>` (`corrective=` stays last) when the record allows a try one notch below: take it only when the five readings show at most one high, and open the row `--explore`.
 
 `summary` prints `frozen=<class>` after a failed exploration (the class reverts and is not explored again this build) and `promote=<class> <pair>` after three that closed in one round (dispatch the class on that pair, and fold it into the project's table with `routing.py calibrate <slug> --from-record <record>`).
 
@@ -107,7 +107,7 @@ Two readings high or more raises the pair by **one** notch up the class's ladder
 
 Triggers, each a thing you have read:
 
-- the same class of finding survives one N-bis round;
+- the same class of finding survives one corrective round;
 - the agent STOPs twice on the same ambiguity;
 - the agent crosses the context gate without a single push.
 
@@ -147,5 +147,5 @@ The summary groups rows by class and pair, with `cost_avg=<usd>` over the closed
 **Read the summary before a wave, and revert what it names:**
 
 ```
-signal=n-bis at light averages 2 rounds: the drop did not pay, revert it for this class
+signal=corrective at light averages 2 rounds: the drop did not pay, revert it for this class
 ```
