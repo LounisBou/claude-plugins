@@ -1,6 +1,6 @@
 # The orchestration arm, run as an orchestration
 
-Status: proposal.
+Status: accepted.
 
 ## The defect
 
@@ -31,9 +31,10 @@ harness the way the operator opens one, on the same machine and plugin release:
    `/orchestrator:orchestrator build` followed by the brief. The orchestrator spawns its
    agents as it always does; they land in the same detached home.
 2. **No operator.** The brief tells the orchestrator that no operator answers in this run: each
-   question it would ask is decided by its own recommendation, recorded in its state file.
-   A turn that still ends on `waiting: operator` ends the arm, reported `stopped: asked the
-   operator` with the question, and graded on what it left.
+   question it would ask is decided by its own recommendation, recorded in its state file, and
+   the run goes on; the report lists the decisions so taken. A turn that still ends on
+   `waiting: operator` ends the arm, reported `stopped: asked the operator` with the question,
+   and graded on what it left.
 3. **Done.** The harness polls the orchestrator session's transcript. The arm ends on the
    first turn whose declared wait is `done`, on a turn that waits on the operator, on its
    share of the cap (the deck meter, as today), or at the arm's deadline.
@@ -52,7 +53,7 @@ harness the way the operator opens one, on the same machine and plugin release:
 - The dry run keeps its oracle; the new driver is tested against a fake host and a fake
   launcher, as the headless one is.
 
-## Open questions for the operator
+## Decided
 
-1. Questions the orchestrator would put to the operator are decided by its own
-   recommendation (recommended), or stop the arm on the first one.
+- Questions the orchestrator would put to the operator are decided by its own recommendation,
+  and the run goes on (the operator's choice, 2026-11-09).
