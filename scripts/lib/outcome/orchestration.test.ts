@@ -105,6 +105,12 @@ describe('outcome evals: opening the orchestration', () => {
     assert.equal(startupPrompt('B'), `/orchestrator:orchestrator build\n\nB\n\n${NO_OPERATOR}`)
   })
 
+  it('tells the orchestrator to keep its agents writing in the graded checkout, one at a time', () => {
+    assert.ok(NO_OPERATOR.includes('spawn every agent with `--dir` set to this checkout'))
+    assert.ok(NO_OPERATOR.includes('never through `workspace.sh create`'))
+    assert.ok(NO_OPERATOR.includes('one agent writing at a time'))
+  })
+
   it('names the session after the case, cut to what a session name holds', () => {
     assert.equal(benchTitle('a-case'), 'Orch : eval a-case')
     const long = benchTitle('github-auto-merge-list-under-a-lock')

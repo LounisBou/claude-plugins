@@ -26,7 +26,8 @@ const PANES_MS = 15_000
 export const NO_OPERATOR = [
   'No operator answers in this run, and none will. Every question you would put to the operator you decide yourself, by your own recommendation:',
   'record the decision in your state file, write it in your reply as one line `Decision: <question> → <choice>`, and go on.',
-  'Never end a turn waiting on the operator. Your agents work in this checkout and commit there: it is what is graded.',
+  'Never end a turn waiting on the operator.',
+  'This checkout is what is graded: spawn every agent with `--dir` set to this checkout, never through `workspace.sh create`, with one agent writing at a time, and have each commit here.',
 ].join(' ')
 
 /** What the orchestrator is typed at its start: its skill in `build` mode, then the brief. */

@@ -302,10 +302,14 @@ async function judged<T>(account: Account, notes: string[], what: string, ask: (
   return judgment.verdict
 }
 
-async function grade(task: Case, dir: string, calibration: Calibration, account: Account, input: RunInput): Promise<Grades> {
+/** What the grades say of an orchestration whose agents left the graded checkout as it was. */
+const NO_COMMIT = 'no commit in the graded checkout'
+
+async function grade(task: Case, dir: string, calibration: Calibration, account: Account, input: RunInput, orchestration: OrchestrationRun | null): Promise<Grades> {
   const { bench, judge } = input.ports
   const notes: string[] = []
   const diff = await bench.changes(dir, task.base)
+  if (diff.files.length === 0 && (orchestration?.agentsOpened ?? 0) > 0) notes.push(NO_COMMIT)
   const reference = await bench.reference(task.base, task.merge)
 
   let suite: boolean | null = null
@@ -383,7 +387,7 @@ export async function runEvals(input: RunInput): Promise<Report> {
       const worked = await work(task, arm, dir, account, input)
       const durationSeconds = Math.round((ports.now() - started) / 1000)
       if (worked.status === 'cancelled') stopped = 'the run was cancelled'
-      const grades = stopped === null && worked.status !== 'not-graded' ? await grade(task, dir, calibration, account, input) : null
+      const grades = stopped === null && worked.status !== 'not-graded' ? await grade(task, dir, calibration, account, input, worked.orchestration) : null
       ports.log(`${task.id}: ${arm} ${worked.status}, ${account.spent.toFixed(2)} USD`)
       const { orchestration } = worked
       arms.push({ arm, status: worked.status, reason: worked.reason, costUsd: account.spent, durationSeconds, agentsOpened: orchestration?.agentsOpened ?? null, decisions: orchestration?.decisions ?? [], grades })

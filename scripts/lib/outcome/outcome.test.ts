@@ -207,6 +207,16 @@ describe('outcome evals: an orchestration driven as a session', () => {
     assert.match(result?.reason ?? '', /^not graded: no agent opened \(the arm reached its 8 USD share\)$/)
   })
 
+  it('says an orchestration that opened agents left no commit in the graded checkout', async () => {
+    const idle: Agent = { run: async ({ arm }) => ({ costUsd: 1, error: null, ...(arm === 'orchestration' ? { orchestration: { agentsOpened: 2, decisions: [], askedOperator: null } } : {}) }) }
+    const report = await evaluate(fixture(), { agent: idle })
+    const [single, orchestration] = report.cases[0]?.arms ?? []
+    assert.equal(orchestration?.grades?.files, 0)
+    assert.ok(orchestration?.grades?.notes.includes('no commit in the graded checkout'))
+    assert.match(markdown(report), /- orchestration, no commit in the graded checkout/)
+    assert.equal(single?.grades?.notes.includes('no commit in the graded checkout'), false)
+  })
+
   it('ends on the question it put to the operator, and grades what it left', async () => {
     const asked = { agentsOpened: 1, decisions: [], askedOperator: 'merge or wait?' }
     const result = (await evaluate(fixture(), { agent: driven(asked) })).cases[0]?.arms[1]
