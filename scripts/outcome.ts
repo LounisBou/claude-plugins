@@ -13,7 +13,7 @@ import { isAbsolute, join, relative, resolve } from 'node:path'
 import { parseArgs } from 'node:util'
 import { gitBench } from './lib/outcome/bench.ts'
 import { CAPS_FILE, CASES_FILE, MODES, parseCapsFile, parseCases, selectCases, type Mode } from './lib/outcome/cases.ts'
-import { deckMeter, hostAgent, hostJudge, launcherClose, withoutOrchestrator } from './lib/outcome/host.ts'
+import { deckMeter, dependencyNames, hostAgent, hostJudge, launcherClose, withoutOrchestrator } from './lib/outcome/host.ts'
 import { configDir, setting } from '../packages/core/src/paths.ts'
 import { runEvals, type Ports, type Report } from './lib/outcome/harness.ts'
 import { markdown } from './lib/outcome/report.ts'
@@ -82,12 +82,17 @@ function hostPorts(root: string, options: Options, env: Io['env']): Pick<Ports, 
   const settingsFile = join(options.out, 'settings.json')
   writeFileSync(settingsFile, JSON.stringify(withoutOrchestrator(existsSync(operatorSettings) ? readJson(operatorSettings) : null)))
   const orchestratorDir = join(root, 'plugins', 'orchestrator')
+  const names = dependencyNames(readJson(join(orchestratorDir, '.claude-plugin', 'plugin.json')))
+  if (names instanceof Error) throw new Error(`the orchestrator's manifest: ${names.message}`)
+  const dependencyDirs = names.map(name => join(root, 'plugins', name))
+  const missing = dependencyDirs.find(dir => !existsSync(join(dir, '.claude-plugin', 'plugin.json')))
+  if (missing !== undefined) throw new Error(`the orchestrator depends on a plugin this checkout lacks: ${missing}`)
   const judgeDir = join(options.out, 'judge')
   mkdirSync(judgeDir)
   const { meter, close } = deckMeter(options.deck ?? deckPath(env), launcherClose(orchestratorDir))
   const host = options.host
   return {
-    agent: hostAgent({ host, model: options.model ?? '', orchestratorDir, settingsFile }, close),
+    agent: hostAgent({ host, model: options.model ?? '', orchestratorDir, dependencyDirs, settingsFile }, close),
     meter,
     judge: hostJudge({ host, model: options.judgeModel ?? '', settingsFile, dir: judgeDir }),
   }
