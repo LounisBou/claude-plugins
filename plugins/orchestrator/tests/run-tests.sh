@@ -17,6 +17,10 @@ export LC_COLLATE=C
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 ORCH_REFS="$ROOT/skills/orchestrator/references"
+# macOS sets TMPDIR with a trailing slash: every path built on it would carry a double slash
+# the scripts under test collapse, and no expected line would match what they print.
+TMPDIR="${TMPDIR:-/tmp}"
+export TMPDIR="${TMPDIR%/}"
 # Explicitly inside TMPDIR: the platform default lands in a directory a sandboxed
 # shell may not write to, and the suite then runs with an empty path where it thinks
 # it has a directory.
@@ -8883,6 +8887,9 @@ rmdir "$CREC" && cp "$WORK/coord-rec" "$CREC"
 # five seconds, then refuses, naming the lock, its holder and whether it still runs, and
 # never removes a lock it does not hold.
 CLOCK="$CS/coordinator.lock"
+# The script's own start, timed on a command that takes no lock, is taken off the wait: a slow
+# runner spends seconds there before the first try.
+b0=$(date +%s); coord sleeping >/dev/null 2>&1; b1=$(date +%s)
 mkdir "$CLOCK" && echo "$$ registration" > "$CLOCK/holder"
 t0=$(date +%s)
 out=$(coord register --name "Coord : three [ccc333]" --tty /dev/ttys103 2>&1 >/dev/null)
@@ -8890,7 +8897,7 @@ t1=$(date +%s)
 check "a register that cannot take the lock is refused, naming the lock and its holder" \
   "coordinator: refused: a registration holds the lock: $CLOCK held by pid $$ (running): remove $CLOCK" "$out"
 check "the refusal comes after five seconds, not one and not ten" "1" \
-  "$([ $((t1 - t0)) -ge 4 ] && [ $((t1 - t0)) -le 8 ] && echo 1 || echo 0)"
+  "$([ $((t1 - t0 - (b1 - b0))) -ge 4 ] && [ $((t1 - t0 - (b1 - b0))) -le 8 ] && echo 1 || echo 0)"
 check "the refused register leaves the other's lock in place" "1|$$ registration" \
   "$([ -d "$CLOCK" ] && echo 1 || echo 0)|$(cat "$CLOCK/holder")"
 sh -c 'exit 0' & deadpid=$!; wait "$deadpid"

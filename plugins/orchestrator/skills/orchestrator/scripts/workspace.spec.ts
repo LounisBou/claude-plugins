@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -169,7 +169,7 @@ test('copyList keeps each path at its place, a link as a link; an unreadable fil
   symlinkSync('b/f', join(from, 'a', 'l'))
   assert.ok(copyList(from, join(dir, 'to'), ['a/b/f', 'a/l']))
   assert.equal(readFileSync(join(dir, 'to', 'a', 'l'), 'utf8'), 'f')
-  assert.equal(execFileSync('stat', ['-c', '%a', join(dir, 'to', 'a', 'b', 'f')], { encoding: 'utf8' }).trim(), '750')
+  assert.equal(statSync(join(dir, 'to', 'a', 'b', 'f')).mode & 0o777, 0o750)
   assert.ok(!copyList(from, join(dir, 'to'), ['absent']))
 })
 

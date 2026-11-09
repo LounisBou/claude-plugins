@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
@@ -7,7 +7,8 @@ import { countShots, groupBy, keyOf, main, nextId, openLine, orchForm, order, pa
 import type { Ran } from './lib/process.ts'
 
 let dir = ''
-test.beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'dispatch-record-')) })
+// The real path: the script resolves its record's, and macOS's temporary directory is a link.
+test.beforeEach(() => { dir = realpathSync(mkdtempSync(join(tmpdir(), 'dispatch-record-'))) })
 test.afterEach(() => rmSync(dir, { recursive: true, force: true }))
 
 interface World {
