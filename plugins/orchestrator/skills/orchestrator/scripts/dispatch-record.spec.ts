@@ -143,6 +143,9 @@ test('open: validated, refused without goals, warned on unplanned goals', async 
     { id: 1, opened: '2026-11-08T10:11:12Z', class: 'c', tier: 'deep', label: 'one', rounds: 0, state: 'open', verdict: '', cascade: true },
     { id: 2, opened: '2026-11-08T10:11:12Z', class: 'c', tier: '', label: '', rounds: 0, state: 'open', verdict: '', cascade: false, model: 'm', effort: 'high', explore: true, cost_usd: 0, sessions: [], cost_incomplete: false },
   ])
+  // The corrective class's former name, given on the command line, is written as the class it stands for.
+  assert.equal(await cli(['open', r, '--class', 'n-bis', '--tier', 'light']), '0|3\n|')
+  assert.equal(rows()[2]?.['class'], 'corrective')
   writeFileSync(r, 'not json\n')
   assert.equal(await cli(['open', r, '--class', 'c', '--tier', 'deep']), `1||ERROR: could not update ${r}\n`)
   assert.equal(await cli(['round', r, '1']), `1||ERROR: could not read ${r}\n`)
