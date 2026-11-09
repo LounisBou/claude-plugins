@@ -525,7 +525,7 @@ describe('outcome evals: the command', () => {
         )
         return { socket: 'orch-abc12345', tty: '/dev/ttys009', session }
       },
-      panes: async () => [{ window: 0, id: '%0' }, { window: 1, id: '%1' }],
+      panes: async () => [{ window: 0, id: '%0', tty: '/dev/ttys100' }, { window: 1, id: '%1', tty: '/dev/ttys101' }],
       servers: async () => [],
       async close(_bench, socket) {
         closed.push(socket)

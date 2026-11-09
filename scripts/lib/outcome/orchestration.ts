@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, writeFil
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { sessionName } from '../../../packages/core/src/names.ts'
-import type { Agent, AgentRun, OrchestrationRun } from './harness.ts'
+import type { Agent, AgentRun, Meter, OrchestrationRun } from './harness.ts'
 import { readTranscript } from './transcript.ts'
 
 /** A unix socket's address holds this many bytes on macOS, the terminating one left out. */
@@ -23,6 +23,8 @@ const CLOSE_MS = 120_000
 const PANES_MS = 15_000
 /** An orchestrator that has neither declared a wait nor opened an agent by then has not started. */
 export const STARTUP_MS = 10 * 60_000
+/** A meter that still reads nothing this long after the first agent opened cannot see the bench. */
+export const METER_BLIND_MS = 10 * 60_000
 /** Failed reads of the home in a row that end the arm: one alone may be a slow or busy server. */
 const PANES_FAILURES_MAX = 3
 
@@ -89,6 +91,8 @@ export interface OpenRequest {
 export interface Pane {
   readonly window: number
   readonly id: string
+  /** The pane's terminal: the deck lists a session by it. */
+  readonly tty: string
 }
 
 /** The launcher's bench opening, as the driver needs it. */
@@ -151,12 +155,12 @@ export function benchLauncher(options: LauncherOptions): Launcher {
     },
     async panes(bench, socket) {
       if (!SOCKET_SHAPE.test(socket)) return null
-      const exit = await exec(tmux, ['-L', socket, 'list-panes', '-a', '-F', '#{window_index} #{pane_id}'], { ...options.env, TMUX_TMPDIR: join(bench, 'tmux') }, PANES_MS)
+      const exit = await exec(tmux, ['-L', socket, 'list-panes', '-a', '-F', '#{window_index} #{pane_id} #{pane_tty}'], { ...options.env, TMUX_TMPDIR: join(bench, 'tmux') }, PANES_MS)
       if (exit.code !== 0) return null
       const panes: Pane[] = []
       for (const line of exit.stdout.split('\n')) {
-        const match = /^(\d+) (%\d+)$/u.exec(line.trim())
-        if (match?.[1] !== undefined && match[2] !== undefined) panes.push({ window: Number(match[1]), id: match[2] })
+        const match = /^(\d+) (%\d+) (\/dev\/\S+)$/u.exec(line.trim())
+        if (match?.[1] !== undefined && match[2] !== undefined && match[3] !== undefined) panes.push({ window: Number(match[1]), id: match[2], tty: match[3] })
       }
       return panes
     },
@@ -199,6 +203,10 @@ export interface OrchestrationOptions {
   readonly pollMs: number
   /** The clock the arm's bounded waits are read on. */
   readonly now?: () => number
+  /** The arm's meter, read to tell one that cannot see the bench. */
+  readonly meter: Meter
+  /** Filled with the terminals of every pane the home held: the meter counts the sessions on them. */
+  readonly ttys: Set<string>
 }
 
 /** The launcher's answer to a close of a home that is not running. */
@@ -248,7 +256,12 @@ export function orchestrationAgent(options: OrchestrationOptions): Agent {
         return { costUsd: null, error: problems.join('; ') }
       }
 
+      options.ttys.clear()
+      options.ttys.add(home.tty)
+      const probe = await options.meter.start('orchestration').catch(() => null)
       const opened = now()
+      let firstAgent: number | null = null
+      let metered = false
       const agents = new Set<string>()
       let decisions: readonly string[] = []
       let askedOperator: string | null = null
@@ -258,7 +271,11 @@ export function orchestrationAgent(options: OrchestrationOptions): Agent {
       // A read of the home that fails is told from one that finds it gone, and neither ends the arm alone.
       const readPanes = (): Promise<Pane[] | null | Error> => launcher.panes(bench, home.socket).catch((error: unknown) => new Error(messageOf(error)))
       const seen = (panes: readonly Pane[] | null): void => {
-        for (const pane of panes ?? []) if (pane.window !== 0) agents.add(pane.id)
+        for (const pane of panes ?? []) {
+          options.ttys.add(pane.tty)
+          if (pane.window !== 0) agents.add(pane.id)
+        }
+        if (agents.size > 0) firstAgent ??= now()
       }
       try {
         // The end is concluded only on the same idle state read twice in a row: a turn that has
@@ -287,6 +304,15 @@ export function orchestrationAgent(options: OrchestrationOptions): Agent {
           if (!declared && agents.size === 0 && now() - opened >= STARTUP_MS) {
             notGraded = 'the orchestrator did not start'
             break
+          }
+          if (!metered && firstAgent !== null && now() - firstAgent >= METER_BLIND_MS) {
+            // An unreadable meter is not a blind one: the deadline and the host's own budget stand.
+            const spent = probe === null ? null : await probe.spent().catch(() => null)
+            if (spent !== null && spent > 0) metered = true
+            if (spent === 0) {
+              notGraded = 'the meter cannot see the bench'
+              break
+            }
           }
           if (failures >= PANES_FAILURES_MAX) {
             problem = panes instanceof Error ? `the orchestration could not be followed: ${panes.message}` : 'the orchestrator’s home ended before the orchestration was over'

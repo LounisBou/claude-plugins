@@ -138,16 +138,29 @@ describe('outcome evals: the deck meter', () => {
   })
 
   it('counts only the sessions opened since the start, each at its highest reading', () => {
-    const ledger = new DeckLedger(deckSessions(deck({ o1: 50 })))
+    const ledger = new DeckLedger(deckSessions(deck({ o1: 50 })), () => true)
     assert.equal(ledger.read(deckSessions(deck({ o1: 60, o2: 1, ao2x: 2 }))), 3)
     // the agent gone from the deck keeps what it spent; the week's start reads lower and is kept higher
     assert.equal(ledger.read(deckSessions(deck({ o1: 70, o2: 0.5 }))), 3)
     assert.equal(ledger.read(deckSessions(deck({ o2: 4, ao2y: null }))), 6)
   })
 
+  it('counts only the sessions on the terminals of the arm’s home, not another born meanwhile', async () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'outcome-deck-')), 'deck.json')
+    const home = new Set<string>()
+    const probe = await deckMeter(path, () => home).start('orchestration')
+    home.add('/dev/ttyo9')
+    home.add('/dev/ttyao9x')
+    writeFileSync(path, JSON.stringify(deck({ o9: 2.5, ao9x: 1, o8: 4, ao8y: 3 })))
+    assert.equal(await probe.spent(), 3.5)
+    writeFileSync(path, JSON.stringify(deck({ o9: 2.5, ao9x: 1, o8: 4 }, false)))
+    assert.equal(await probe.spent(), 3.5)
+    assert.deepEqual(deckSessions(deck({ o1: 1 })).map(session => session.tty), ['/dev/ttyo1', null])
+  })
+
   it('reads the deck file, a half-written one as empty', async () => {
     const path = join(mkdtempSync(join(tmpdir(), 'outcome-deck-')), 'deck.json')
-    const meter = deckMeter(path)
+    const meter = deckMeter(path, () => new Set(['/dev/ttyo9']))
     const probe = await meter.start('orchestration')
     assert.equal(await probe.spent(), 0)
     writeFileSync(path, JSON.stringify(deck({ o9: 2.5 })))

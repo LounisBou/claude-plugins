@@ -151,6 +151,8 @@ export function byArm(single: Agent, orchestration: Agent): Agent {
 
 export interface DeckSessionUsage {
   readonly key: string
+  /** The session's terminal; null for a remote one. */
+  readonly tty: string | null
   /** The session's spend this week, at API list prices; null when unpriced. */
   readonly weekUsd: number | null
 }
@@ -160,7 +162,7 @@ function sessionOf(raw: unknown): DeckSessionUsage | null {
   const usage = raw['usage']
   const week = isRecord(usage) ? usage['week'] : undefined
   const cost = isRecord(week) ? week['cost_usd'] : undefined
-  return { key: raw['key'], weekUsd: typeof cost === 'number' && Number.isFinite(cost) ? cost : null }
+  return { key: raw['key'], tty: typeof raw['tty'] === 'string' ? raw['tty'] : null, weekUsd: typeof cost === 'number' && Number.isFinite(cost) ? cost : null }
 }
 
 /** Every local session the deck lists: the coordinator, the orchestrators, their agents and the others. */
@@ -178,21 +180,24 @@ export function deckSessions(raw: unknown): DeckSessionUsage[] {
 }
 
 /**
- * What the sessions opened since `before` have spent: a session already listed at the start is
- * someone else's work. Each session counts at the highest week figure seen, so one that leaves
- * the deck or crosses the week's start keeps what it spent. An unpriced session counts nothing.
+ * What the arm's sessions opened since `before` have spent: a session already listed at the start,
+ * or one `ours` does not claim, is someone else's work. Each session counts at the highest week
+ * figure seen, so one that leaves the deck or crosses the week's start keeps what it spent. An
+ * unpriced session counts nothing.
  */
 export class DeckLedger {
   readonly #before: ReadonlySet<string>
+  readonly #ours: (session: DeckSessionUsage) => boolean
   readonly #seen = new Map<string, DeckSessionUsage>()
 
-  constructor(before: readonly DeckSessionUsage[]) {
+  constructor(before: readonly DeckSessionUsage[], ours: (session: DeckSessionUsage) => boolean) {
     this.#before = new Set(before.map(session => session.key))
+    this.#ours = ours
   }
 
   read(now: readonly DeckSessionUsage[]): number {
     for (const session of now) {
-      if (this.#before.has(session.key)) continue
+      if (this.#before.has(session.key) || !this.#ours(session)) continue
       const earlier = this.#seen.get(session.key)
       if (earlier === undefined || (session.weekUsd ?? 0) >= (earlier.weekUsd ?? 0)) this.#seen.set(session.key, session)
     }
@@ -209,11 +214,14 @@ function readDeck(path: string): DeckSessionUsage[] {
   }
 }
 
-/** The meter over the deck at `path`: what the sessions opened since the arm started have spent. */
-export function deckMeter(path: string): Meter {
+/**
+ * The meter over the deck at `path`: what the sessions opened since the arm started on the
+ * terminals `ttys` names have spent, the panes of the arm's home, and no other session of the machine.
+ */
+export function deckMeter(path: string, ttys: () => ReadonlySet<string>): Meter {
   return {
     async start() {
-      const ledger = new DeckLedger(readDeck(path))
+      const ledger = new DeckLedger(readDeck(path), session => session.tty !== null && ttys().has(session.tty))
       return { spent: async () => ledger.read(readDeck(path)) }
     },
   }

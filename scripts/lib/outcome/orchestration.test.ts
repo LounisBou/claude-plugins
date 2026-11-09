@@ -7,12 +7,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import type { Case } from './cases.ts'
+import type { Meter } from './harness.ts'
 import {
   benchLauncher,
   benchPathError,
   benchTitle,
   NO_OPERATOR,
   orchestrationAgent,
+  METER_BLIND_MS,
   STARTUP_MS,
   startupPrompt,
   type BenchHome,
@@ -57,7 +59,7 @@ function fakeLauncher(script: { panes?: (poll: number) => Pane[] | null; open?: 
     async panes(bench, socket) {
       assert.equal(bench, BENCH, 'the panes are read in the arm’s bench')
       assert.equal(socket, HOME.socket, 'the panes are read on the home’s server')
-      return (script.panes ?? (() => [{ window: 0, id: '%0' }]))(fake.panesSeen++)
+      return (script.panes ?? (() => [{ window: 0, id: '%0', tty: '/dev/ttys100' }]))(fake.panesSeen++)
     },
     async servers(bench) {
       assert.equal(bench, BENCH, 'the servers listed are the arm’s bench’s')
@@ -74,10 +76,23 @@ function fakeLauncher(script: { panes?: (poll: number) => Pane[] | null; open?: 
   return fake
 }
 
-function agent(launcher: Launcher, transcript: (poll: number) => string | null, now?: () => number) {
+/** A meter that reads what `reading` says on each read, counting the reads. */
+function meterReading(reading: (read: number) => number): Meter & { reads: number } {
+  const meter = {
+    reads: 0,
+    async start() {
+      return { spent: async () => reading(meter.reads++) }
+    },
+  }
+  return meter
+}
+
+function agent(launcher: Launcher, transcript: (poll: number) => string | null, now?: () => number, meter: Meter = meterReading(() => 1), ttys = new Set<string>()) {
   let poll = 0
   return orchestrationAgent({
     ...(now === undefined ? {} : { now }),
+    meter,
+    ttys,
     bench: BENCH,
     model: 'm',
     orchestratorDir: '/o',
@@ -187,10 +202,10 @@ describe('outcome evals: deciding the orchestration is over', () => {
 
   it('counts every agent window the home held, those closed since included, and the decisions', async () => {
     const panes: Record<number, Pane[]> = {
-      0: [{ window: 0, id: '%0' }],
-      1: [{ window: 0, id: '%0' }, { window: 1, id: '%1' }],
-      2: [{ window: 0, id: '%0' }, { window: 1, id: '%1' }, { window: 2, id: '%2' }],
-      3: [{ window: 0, id: '%0' }, { window: 1, id: '%5' }],
+      0: [{ window: 0, id: '%0', tty: '/dev/ttys100' }],
+      1: [{ window: 0, id: '%0', tty: '/dev/ttys100' }, { window: 1, id: '%1', tty: '/dev/ttys101' }],
+      2: [{ window: 0, id: '%0', tty: '/dev/ttys100' }, { window: 1, id: '%1', tty: '/dev/ttys101' }, { window: 2, id: '%2', tty: '/dev/ttys102' }],
+      3: [{ window: 0, id: '%0', tty: '/dev/ttys100' }, { window: 1, id: '%5', tty: '/dev/ttys105' }],
     }
     const launcher = fakeLauncher({ panes: poll => panes[Math.min(poll, 3)] ?? null })
     const text = jsonl([prompt(), said('Decision: model → sonnet'), declare('done'), result, said('Over.')])
@@ -201,7 +216,7 @@ describe('outcome evals: deciding the orchestration is over', () => {
   it('stops with the arm when it is aborted, and still reports what it counted', async () => {
     const controller = new AbortController()
     setTimeout(() => controller.abort(new Error('cap')), 40)
-    const launcher = fakeLauncher({ panes: () => [{ window: 0, id: '%0' }, { window: 1, id: '%1' }] })
+    const launcher = fakeLauncher({ panes: () => [{ window: 0, id: '%0', tty: '/dev/ttys100' }, { window: 1, id: '%1', tty: '/dev/ttys101' }] })
     const run = await agent(launcher, () => jsonl([prompt(), said('Working.')])).run(input(controller.signal))
     assert.equal(run.error, null)
     assert.equal(run.orchestration?.agentsOpened, 1)
@@ -209,7 +224,7 @@ describe('outcome evals: deciding the orchestration is over', () => {
   })
 
   it('reports an orchestrator whose home ended before it was over', async () => {
-    const launcher = fakeLauncher({ panes: poll => (poll < 2 ? [{ window: 0, id: '%0' }] : null) })
+    const launcher = fakeLauncher({ panes: poll => (poll < 2 ? [{ window: 0, id: '%0', tty: '/dev/ttys100' }] : null) })
     const run = await agent(launcher, () => jsonl([prompt(), said('Working.')])).run(input())
     assert.match(run.error ?? '', /home ended before the orchestration was over/)
     assert.equal(launcher.closed.length, 2)
@@ -219,7 +234,7 @@ describe('outcome evals: deciding the orchestration is over', () => {
     const home = (poll: number): Pane[] | null => {
       if (poll === 1) return null
       if (poll === 3) throw new Error('tmux timed out')
-      return [{ window: 0, id: '%0' }, { window: 1, id: '%1' }]
+      return [{ window: 0, id: '%0', tty: '/dev/ttys100' }, { window: 1, id: '%1', tty: '/dev/ttys101' }]
     }
     const launcher = fakeLauncher({ panes: home })
     const run = await agent(launcher, poll => (poll < 6 ? jsonl([prompt(), said('Working.')]) : ended('done'))).run(input())
@@ -229,7 +244,7 @@ describe('outcome evals: deciding the orchestration is over', () => {
 
   it('ends on three failed reads of the home in a row', async () => {
     const reads = [true, false, false, true, false, false, false]
-    const launcher = fakeLauncher({ panes: poll => (reads[poll] === true ? [{ window: 0, id: '%0' }] : null) })
+    const launcher = fakeLauncher({ panes: poll => (reads[poll] === true ? [{ window: 0, id: '%0', tty: '/dev/ttys100' }] : null) })
     let last = 0
     const run = await agent(launcher, poll => (last = poll, jsonl([prompt(), said('Working.')]))).run(input())
     assert.match(run.error ?? '', /home ended before the orchestration was over/)
@@ -254,9 +269,39 @@ describe('outcome evals: deciding the orchestration is over', () => {
     // one that declared a wait, or opened an agent, has started
     const waiting = await agent(fakeLauncher(), poll => (poll < 20 ? ended('tool', 'a monitor') : ended('done')), minutes()).run(input())
     assert.equal(waiting.orchestration?.notGraded, undefined)
-    const spawned = fakeLauncher({ panes: () => [{ window: 0, id: '%0' }, { window: 1, id: '%1' }] })
+    const spawned = fakeLauncher({ panes: () => [{ window: 0, id: '%0', tty: '/dev/ttys100' }, { window: 1, id: '%1', tty: '/dev/ttys101' }] })
     const working = await agent(spawned, poll => (poll < 20 ? jsonl([prompt(), said('Working.')]) : ended('done')), minutes()).run(input())
     assert.equal(working.orchestration?.notGraded, undefined)
+  })
+
+  it('gives the meter the terminals of every pane the home held', async () => {
+    const ttys = new Set<string>(['/dev/ttys999'])
+    const panes = [[{ window: 0, id: '%0', tty: '/dev/ttys100' }], [{ window: 0, id: '%0', tty: '/dev/ttys100' }, { window: 1, id: '%1', tty: '/dev/ttys101' }], [{ window: 0, id: '%0', tty: '/dev/ttys100' }]]
+    const launcher = fakeLauncher({ panes: poll => panes[Math.min(poll, 2)] ?? null })
+    await agent(launcher, poll => (poll < 3 ? jsonl([prompt(), said('Working.')]) : ended('done')), undefined, undefined, ttys).run(input())
+    assert.deepEqual([...ttys].sort(), ['/dev/ttys009', '/dev/ttys100', '/dev/ttys101'])
+  })
+
+  it('ends an arm whose meter still reads nothing once its agents have worked a while, as not graded', async () => {
+    const minutes = (): (() => number) => {
+      let calls = 0
+      return () => calls++ * 60_000
+    }
+    const spawned = (): Launcher => fakeLauncher({ panes: () => [{ window: 0, id: '%0', tty: '/dev/ttys100' }, { window: 1, id: '%1', tty: '/dev/ttys101' }] })
+    const blind = meterReading(() => 0)
+    const launcher = spawned()
+    let last = 0
+    const run = await agent(launcher, poll => (last = poll, jsonl([prompt(), said('Working.')])), minutes(), blind).run(input())
+    assert.equal(run.orchestration?.notGraded, 'the meter cannot see the bench')
+    assert.ok(blind.reads >= 1)
+    assert.ok(last <= METER_BLIND_MS / 60_000 + 1, `ended at poll ${last}`)
+    assert.ok((launcher as Fake).closed.length >= 1)
+    // a meter that reads a spend lets the arm go on, and is read once
+    const seeing = meterReading(() => 0.5)
+    const metered = await agent(spawned(), poll => (poll < 30 ? jsonl([prompt(), said('Working.')]) : ended('done')), minutes(), seeing).run(input())
+    assert.equal(metered.orchestration?.notGraded, undefined)
+    assert.equal(metered.error, null)
+    assert.equal(seeing.reads, 1)
   })
 
   it('closes the home even when reading the transcript fails', async () => {
@@ -302,7 +347,7 @@ describe('outcome evals: the launcher on the checkout', () => {
     }
     mkdirSync(scripts, { recursive: true })
     run(join(scripts, 'iterm-agent.sh'), 'case "$1" in bench-open) printf "socket=orch-abc12345\\ntty=/dev/ttys009\\nsession=%s\\n" 11111111-2222-3333-4444-555555555555;; close) echo "closed 0 session(s): the home server orch-abc12345 is not running";; esac')
-    run(join(dir, 'tmux'), 'printf "0 %%0\\n1 %%7\\nbad\\n"')
+    run(join(dir, 'tmux'), 'printf "0 %%0 /dev/ttys100\\n1 %%7 /dev/ttys107\\nbad\\n"')
     const launcher = benchLauncher({ orchestratorDir: join(dir, 'orchestrator'), tmux: join(dir, 'tmux'), env: { PATH: '/usr/bin:/bin' } })
     return { dir, log, launcher }
   }
@@ -312,11 +357,11 @@ describe('outcome evals: the launcher on the checkout', () => {
     const bench = join(dir, 'bench')
     const home = await launcher.open({ bench, dir: join(bench, 'work'), title: 'Orch : eval x', pluginDirs: ['/o', '/d'], settingsFile: '/s.json', prompt: 'p', model: 'm' })
     assert.deepEqual(home, HOME)
-    assert.deepEqual(await launcher.panes(bench, home.socket), [{ window: 0, id: '%0' }, { window: 1, id: '%7' }])
+    assert.deepEqual(await launcher.panes(bench, home.socket), [{ window: 0, id: '%0', tty: '/dev/ttys100' }, { window: 1, id: '%7', tty: '/dev/ttys107' }])
     assert.equal(await launcher.close(bench, home.socket), GONE)
     const [open, panes, close] = readFileSync(log, 'utf8').trim().split('\n')
     assert.match(open ?? '', /^bench-open --bench .*bench --dir .*work --title Orch : eval x --plugin-dir \/o --plugin-dir \/d --settings \/s\.json --prompt-file \S+prompt\.txt --model m --trust\|/)
-    assert.match(panes ?? '', /^-L orch-abc12345 list-panes -a -F #\{window_index\} #\{pane_id\}\|.*\|TMUX=.*bench\/tmux$/)
+    assert.match(panes ?? '', /^-L orch-abc12345 list-panes -a -F #\{window_index\} #\{pane_id\} #\{pane_tty\}\|.*\|TMUX=.*bench\/tmux$/)
     assert.match(close ?? '', /^close --bench .*bench --socket orch-abc12345\|/)
     assert.equal(readFileSync(/--prompt-file (\S+) /u.exec(open ?? '')?.[1] ?? '', 'utf8'), 'p')
   })

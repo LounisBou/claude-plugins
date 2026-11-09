@@ -107,6 +107,9 @@ function hostPorts(root: string, options: Options, env: Io['env'], inject: Injec
   const host = options.host
   const model = options.model ?? ''
   const projects = setting(env, 'ORCHESTRATOR_PROJECTS_DIR') ?? join(configDir(env), 'projects')
+  // The terminals of the orchestration's home: the meter counts the deck's sessions on them only.
+  const ttys = new Set<string>()
+  const meter = deckMeter(options.deck ?? deckPath(env), () => ttys)
   const orchestration = orchestrationAgent({
     bench,
     model,
@@ -119,10 +122,12 @@ function hostPorts(root: string, options: Options, env: Io['env'], inject: Injec
       return path === null ? null : readFileSync(path, 'utf8')
     },
     pollMs: inject.pollMs ?? ORCHESTRATION_POLL_MS,
+    meter,
+    ttys,
   })
   return {
     agent: byArm(hostAgent({ host, model, settingsFile }), orchestration),
-    meter: deckMeter(options.deck ?? deckPath(env)),
+    meter,
     judge: hostJudge({ host, model: options.judgeModel ?? '', settingsFile, dir: judgeDir }),
   }
 }
