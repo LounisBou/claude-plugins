@@ -5,7 +5,7 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, rmSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, it } from 'node:test'
+import { after, describe, it } from 'node:test'
 import { deckPath, run as outcome, parseOptions } from '../../outcome.ts'
 import type { Launcher, OpenRequest } from './orchestration.ts'
 import { WAIT_TOOL } from './transcript.ts'
@@ -463,7 +463,14 @@ describe('outcome evals: the command', () => {
   })
 
   /** A short bench: a socket's address holds 104 bytes, which a temporary directory's path can pass. */
-  const shortOut = (): string => join(mkdtempSync('/tmp/oc-'), 'run')
+  const shorts: string[] = []
+  const shortDir = (): string => {
+    const dir = mkdtempSync('/tmp/oc-')
+    shorts.push(dir)
+    return dir
+  }
+  after(() => shorts.forEach(dir => rmSync(dir, { recursive: true, force: true })))
+  const shortOut = (): string => join(shortDir(), 'run')
 
   /** A launcher whose orchestrator opens one agent, sets the value to 2 and declares itself done. */
   function benchOrchestrator(projects: string): Launcher & { readonly requests: OpenRequest[]; readonly closed: string[] } {
@@ -530,7 +537,7 @@ describe('outcome evals: the command', () => {
 
   it('refuses a paid run whose bench is too long for the orchestration arm\u2019s socket, before any arm', async () => {
     const root = repository()
-    const out = join(mkdtempSync('/tmp/oc-'), 'x'.repeat(80))
+    const out = join(shortDir(), 'x'.repeat(80))
     const args = ['pilot', '--out', out, '--host', HOST, '--model', 'm', '--judge-model', 'j']
     await assert.rejects(outcome(root, args, recorder(), new AbortController().signal), /too long for a socket's address/)
     assert.equal(existsSync(join(out, 'report.json')), false)
