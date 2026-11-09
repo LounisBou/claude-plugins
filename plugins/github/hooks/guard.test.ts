@@ -3,6 +3,7 @@
 // it: the tool's calls, Bash, Write, and the engine stubbed per scenario.
 import { expect, test } from 'claude-code/testing'
 import { ENFORCE_ENV, READY_PHASE } from './register.js'
+import { RECORDS_REFUSAL } from './ready.js'
 
 const ROOT = decodeURIComponent(new URL('..', import.meta.url).pathname).replace(/\/$/, '')
 const HEAD = '0123456789abcdef0123456789abcdef01234567'
@@ -980,8 +981,7 @@ test('a push of the current branch reads it in the session\'s checkout', async (
 
 test('the records are refused to Write, Edit and Bash, a Read of one passes', async ($, on) => {
   const seen = await world($, on)
-  const refusal = 'github: records are written by their producers (pr-review\'s auto-fix-loop, /norms:check,'
-    + ' mcp__github__record for E2E), never by hand.'
+  const refusal = RECORDS_REFUSAL
   for (const call of [
     { tool: 'Write', file_path: RECORDS + '/acme/thing/' + HEAD + '/e2e.x.json', content: '{}' },
     { tool: 'Edit', file_path: '/home/x/.claude/pr-records/o/r/x.json', old_string: 'a', new_string: 'b' },
@@ -1070,107 +1070,64 @@ test('an E2E waiver quotes words the operator typed in this session', async ($, 
   expect(recordRun(seen)).toContain('waived')
 })
 
-const ROUND = '/cfg/claude-orchestrator/round'
+const CONSENTS = '/cfg/consents/acme/thing'
 
-function roundWorld(entries: Record<string, unknown>): World {
-  const tree: NonNullable<World['tree']> = { [ROUND]: { kind: 'directory', mtimeMs: 1 } }
-  for (const [id, body] of Object.entries(entries)) tree[ROUND + '/' + id + '.json'] = { kind: 'file', mtimeMs: 2, text: JSON.stringify(body) }
+function consentWorld(records: Record<string, unknown>, dir = CONSENTS): World {
+  const tree: NonNullable<World['tree']> = { [dir]: { kind: 'directory', mtimeMs: 1 } }
+  for (const [id, body] of Object.entries(records)) tree[dir + '/' + id + '.json'] = { kind: 'file', mtimeMs: 2, text: JSON.stringify(body) }
   return { git: CLEAN, tree }
 }
 
-const answered = (over: Record<string, unknown> = {}, by = 'pane') => ({
-  question: 'E2E for thing#12: waive it?', blocks: null, status: 'answered',
-  answer: { text: 'waive it, no E2E for this docs change, 2026-11-03', by, at: '2026-11-03T10:00:00Z' }, ...over,
+const CONSENT_WORDS = 'waive it, no E2E for this docs change, 2026-11-03'
+const consent = (over: Record<string, unknown> = {}) => ({
+  v: 1, subject: { kind: 'e2e-waiver', repo: 'acme/thing', pr: 12 }, entry: 'a', question: 'E2E for thing#12: waive it?',
+  answer: CONSENT_WORDS, by: 'pane', at: '2026-11-03T10:00:00Z', ...over,
 })
-const ROUND_WORDS = 'waive it, no E2E for this docs change, 2026-11-03'
 const waiveCall = (detail: string) =>
   ({ tool: 'mcp__github__record', pr: 12, repo: 'acme/thing', result: 'waived', detail }) as any
 
-test('an E2E waiver may quote the operator\'s answer recorded in the round for that pull request', async ($, on) => {
-  const seen = await world($, on, roundWorld({ a: answered() }))
-  const out: any = await $.tool.call(waiveCall('operator ruled: ' + ROUND_WORDS))
+test('an E2E waiver may quote the operator\'s answer in a consent record of that pull request', async ($, on) => {
+  const seen = await world($, on, consentWorld({ a: consent() }))
+  const out: any = await $.tool.call(waiveCall('operator ruled: ' + CONSENT_WORDS))
   expect(out.deny).toBeUndefined()
   expect(recordRun(seen)).toContain('waived')
 })
 
-test('a round answer that names another pull request does not carry a waiver', async ($, on) => {
-  const seen = await world($, on, roundWorld({ a: answered({ question: 'E2E for thing#13: waive it?' }) }))
-  const out: any = await $.tool.call(waiveCall(ROUND_WORDS))
-  expect(out.deny).toContain('an E2E waiver quotes the operator')
-  expect(recordRun(seen)).toBeUndefined()
-})
-
-const CHOICE_A = 'waive the E2E, docs change only'
-const lettered = (text: string, over: Record<string, unknown> = {}) => answered({
-  choices: [{ letter: 'A', text: CHOICE_A }, { letter: 'B', text: 'run the E2E first' }],
-  answer: { text, by: 'pane', at: '2026-11-03T10:00:00Z' }, ...over,
-})
-
-test('a letter answer is resolved to its choice, quoted whole', async ($, on) => {
-  const seen = await world($, on, roundWorld({ a: lettered('A') }))
-  const out: any = await $.tool.call(waiveCall('operator chose: ' + CHOICE_A))
-  expect(out.deny).toBeUndefined()
-  expect(recordRun(seen)).toContain('waived')
-})
-
-test('a letter answer quoted as the letter alone does not carry a waiver', async ($, on) => {
-  const seen = await world($, on, roundWorld({ a: lettered('A : oui') }))
-  const out: any = await $.tool.call(waiveCall('operator answered A : oui, 2026-11-03'))
-  expect(out.deny).toContain('an E2E waiver quotes the operator')
-  expect(recordRun(seen)).toBeUndefined()
-})
-
-test('a question naming the pull request but not E2E does not carry a waiver', async ($, on) => {
-  const seen = await world($, on, roundWorld({ a: answered({ question: 'Merge thing#12 now?' }) }))
-  const out: any = await $.tool.call(waiveCall(ROUND_WORDS))
-  expect(out.deny).toContain('an E2E waiver quotes the operator')
-  expect(recordRun(seen)).toBeUndefined()
-})
-
-test('a letter that is not among the choices matches nothing', async ($, on) => {
-  const seen = await world($, on, roundWorld({ a: lettered('C: ' + CHOICE_A) }))
-  const out: any = await $.tool.call(waiveCall('operator chose: ' + CHOICE_A + ' C: ' + CHOICE_A))
-  expect(out.deny).toContain('an E2E waiver quotes the operator')
-  expect(recordRun(seen)).toBeUndefined()
-})
-
-test('a free-text answer of 8 characters or more, quoted, carries a waiver', async ($, on) => {
-  const seen = await world($, on, roundWorld({ a: answered({ answer: { text: 'no E2E ok', by: 'pane', at: 'x' } }) }))
-  const out: any = await $.tool.call(waiveCall('operator: no E2E ok'))
-  expect(out.deny).toBeUndefined()
-  expect(recordRun(seen)).toContain('waived')
-})
-
-test('a free-text answer of 3 characters does not carry a waiver', async ($, on) => {
-  const seen = await world($, on, roundWorld({ a: answered({ answer: { text: 'oui', by: 'pane', at: 'x' } }) }))
-  const out: any = await $.tool.call(waiveCall('operator said oui, 2026-11-03'))
-  expect(out.deny).toContain('an E2E waiver quotes the operator')
-  expect(recordRun(seen)).toBeUndefined()
-})
-
-for (const [label, entry] of [
-  ['no answer yet', answered({ answer: null })],
-  ['an answer given by the sender', answered({}, 'sender')],
+for (const [label, over] of [
+  ['another pull request', { subject: { kind: 'e2e-waiver', repo: 'acme/thing', pr: 13 } }],
+  ['auto-merge', { subject: { kind: 'auto-merge', repo: 'acme/thing' } }],
+  ['another repository', { subject: { kind: 'e2e-waiver', repo: 'acme/other', pr: 12 } }],
+  ['an answer of 3 characters', { answer: 'oui' }],
+  ['another contract version', { v: 2 }],
 ] as const) {
-  test('a round entry with ' + label + ' does not carry a waiver', async ($, on) => {
-    const seen = await world($, on, roundWorld({ a: entry }))
-    const out: any = await $.tool.call(waiveCall(ROUND_WORDS))
+  test('a consent record of ' + label + ' does not carry a waiver', async ($, on) => {
+    const seen = await world($, on, consentWorld({ a: consent(over) }))
+    const out: any = await $.tool.call(waiveCall(label === 'an answer of 3 characters' ? 'operator said oui, 2026-11-03' : CONSENT_WORDS))
     expect(out.deny).toContain('an E2E waiver quotes the operator')
     expect(recordRun(seen)).toBeUndefined()
   })
 }
 
-test('a waiver that quotes no round answer is refused, and says both ways to give one', async ($, on) => {
-  const seen = await world($, on, roundWorld({ a: answered() }))
-  const out: any = await $.tool.call(waiveCall('some words nobody said, 2026-11-03'))
-  expect(out.deny).toContain('typed in this session')
-  expect(out.deny).toContain('recorded in the round')
+test('an answer the orchestrator\'s round holds is no consent: github never reads round/', async ($, on) => {
+  const round = '/cfg/claude-orchestrator/round'
+  const entry = { question: 'E2E for thing#12: waive it?', blocks: null, status: 'answered', answer: { text: CONSENT_WORDS, by: 'pane', at: 'x' } }
+  const seen = await world($, on, { git: CLEAN, tree: { [round]: { kind: 'directory', mtimeMs: 1 }, [round + '/a.json']: { kind: 'file', mtimeMs: 2, text: JSON.stringify(entry) } } })
+  const out: any = await $.tool.call(waiveCall(CONSENT_WORDS))
+  expect(out.deny).toContain('an E2E waiver quotes the operator')
   expect(recordRun(seen)).toBeUndefined()
 })
 
-test('a missing round store carries no waiver and does not crash', async ($, on) => {
+test('a waiver that quotes no consent is refused, and says both ways to give one', async ($, on) => {
+  const seen = await world($, on, consentWorld({ a: consent(), b: 'not json' }))
+  const out: any = await $.tool.call(waiveCall('some words nobody said, 2026-11-03'))
+  expect(out.deny).toContain('typed in this session')
+  expect(out.deny).toContain('consent record (orchestrator)')
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('no consent records carry no waiver and do not crash', async ($, on) => {
   const seen = await world($, on, { git: CLEAN })
-  const out: any = await $.tool.call(waiveCall(ROUND_WORDS))
+  const out: any = await $.tool.call(waiveCall(CONSENT_WORDS))
   expect(out.deny).toContain('an E2E waiver quotes the operator')
   expect(recordRun(seen)).toBeUndefined()
 })
@@ -1265,7 +1222,7 @@ test('auto-merge-set with words the operator never typed is refused, naming both
   await typed($, 'something else entirely')
   const out: any = await $.tool.call(setAutoMerge(true, HIS_WORDS))
   expect(out.deny).toContain('typed in this session')
-  expect(out.deny).toContain('recorded in the round')
+  expect(out.deny).toContain('consent record')
   expect(seen.files).toEqual({})
   expect(seen.writes).toEqual([])
 })
@@ -1323,42 +1280,29 @@ test('the words match the typed prompt with its whitespace normalised', async ($
   expect(listed(seen)).toEqual(['acme/thing'])
 })
 
-const roundAutoMerge = (question: string, text = 'oui, thing passe en auto-merge') => ({
-  ...roundWorld({ a: { question, blocks: null, status: 'answered', answer: { text, by: 'coordinator', at: '2026-11-03T10:00:00Z' } } }),
-})
+const mergeConsent = (text = 'oui, thing passe en auto-merge', subject: unknown = { kind: 'auto-merge', repo: 'acme/thing' }) =>
+  consentWorld({ a: consent({ subject, question: 'Put thing in auto-merge?', answer: text, by: 'coordinator' }) })
 
-test('auto-merge-set may quote the operator\'s round answer about auto-merge of that repository', async ($, on) => {
-  const seen = await world($, on, roundAutoMerge('Put thing in auto-merge?'))
+test('auto-merge-set may quote the operator\'s answer in a consent record of auto-merge on that repository', async ($, on) => {
+  const seen = await world($, on, mergeConsent())
   const out: any = await $.tool.call(setAutoMerge(true, 'oui, thing passe en auto-merge'))
   expect(out.deny).toBeUndefined()
   expect(listed(seen)).toEqual(['acme/thing'])
 })
 
-test('a round answer without the auto-merge word is refused', async ($, on) => {
-  const seen = await world($, on, roundAutoMerge('Put thing in auto-merge?', 'oui, thing passe en automatique'))
+test('a consent answer without the auto-merge word is refused', async ($, on) => {
+  const seen = await world($, on, mergeConsent('oui, thing passe en automatique'))
   const out: any = await $.tool.call(setAutoMerge(true, 'oui, thing passe en automatique'))
   expect(out.deny).toContain('auto-merge')
   expect(seen.files).toEqual({})
 })
 
-test('a round answer naming auto-merge without the repository passes', async ($, on) => {
-  const seen = await world($, on, roundAutoMerge('Put thing in auto-merge?', 'le projet est en auto-merge'))
-  const out: any = await $.tool.call(setAutoMerge(true, 'le projet est en auto-merge'))
-  expect(out.deny).toBeUndefined()
-  expect(listed(seen)).toEqual(['acme/thing'])
+test('a consent record of an E2E waiver does not carry auto-merge', async ($, on) => {
+  const seen = await world($, on, mergeConsent(undefined, { kind: 'e2e-waiver', repo: 'acme/thing', pr: 12 }))
+  const out: any = await $.tool.call(setAutoMerge(true, 'oui, thing passe en auto-merge'))
+  expect(out.deny).toContain('consent record (orchestrator) of auto-merge on acme/thing')
+  expect(seen.files).toEqual({})
 })
-
-for (const [label, question] of [
-  ['another repository', 'Put other in auto-merge?'],
-  ['no auto-merge', 'Merge thing#12 now?'],
-] as const) {
-  test('a round answer to a question naming ' + label + ' does not carry auto-merge', async ($, on) => {
-    const seen = await world($, on, roundAutoMerge(question))
-    const out: any = await $.tool.call(setAutoMerge(true, 'oui, thing passe en auto-merge'))
-    expect(out.deny).toContain('recorded in the round')
-    expect(seen.files).toEqual({})
-  })
-}
 
 test('auto-merge-set off takes the repository out, whatever its case, and its pr-ready is asked again', async ($, on) => {
   const seen = await world($, on, { autoMerge: ['Acme/Thing', 'acme/other'] })

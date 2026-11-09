@@ -3,9 +3,10 @@
 import { expect, test } from 'claude-code/testing'
 import {
   bashActs, bashPushes, ciUndraft, createdPr, missingItems, parseGate, pushOf, toolAct, touchesRecords,
-  recordKindFor, producerSlug, autoMergeRefusal, notReadyRefusal,
+  recordKindFor, producerSlug, kindRefusal, RECORDS_REFUSAL, autoMergeRefusal, notReadyRefusal,
   type Gate, type RecordFile,
 } from './ready.ts'
+import { producerOf } from '../core/pr-record.ts'
 
 const HEAD = '0123456789abcdef0123456789abcdef01234567'
 const OTHER = 'fedcba9876543210fedcba9876543210fedcba98'
@@ -226,6 +227,15 @@ test('each producer plugin writes only its own kind, every other caller E2E', ()
   expect(recordKindFor('orchestrator')).toBe('e2e')
   expect(producerSlug('engine')).toBe('session-e2e')
   expect(producerSlug('pr-review')).toBe('pr-review')
+})
+
+test('the records refusals name only the producers the record contract declares', () => {
+  for (const kind of ['review', 'norms']) {
+    const producer = producerOf(kind)!
+    expect(RECORDS_REFUSAL).not.toContain(producer.plugin)
+    expect(kindRefusal(kind, 'engine', 'e2e')).toContain('(' + producer.plugin + ', ' + producer.tool + ')')
+  }
+  expect(kindRefusal('e2e', 'pr-review', 'review')).toBe('github: e2e records are written by their producer: pr-review writes review only.')
 })
 
 test('the refusals read as the guard documents them', () => {
