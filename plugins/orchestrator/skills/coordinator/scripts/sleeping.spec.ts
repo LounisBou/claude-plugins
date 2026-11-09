@@ -118,6 +118,27 @@ describe('sleeping, wake-done and drop', () => {
     assert.deepEqual(records(f), [])
   })
 
+  it('a record written in the former shape already sleeps under the current name', () => {
+    const f = fixture()
+    const { brief, dir } = project(f)
+    mkdirSync(f.state, { recursive: true })
+    writeFileSync(join(f.state, 'sleeping.json'), JSON.stringify([{ name: 'Orch : alpha', brief, dir }]))
+    assert.equal(main(f.ctx, ['sleep', '--name', 'Orch: alpha', '--brief', brief, '--dir', dir, '--model', 'm', '--effort', 'high']), 1)
+    assert.deepEqual(f.err, ['coordinator: sleep: refused: Orch: alpha is already sleeping'])
+    assert.equal((records(f) as unknown[]).length, 1)
+  })
+
+  it('drop takes a record written in the former shape, and moves its brief', () => {
+    const f = fixture()
+    const { brief, dir } = project(f)
+    mkdirSync(f.state, { recursive: true })
+    writeFileSync(join(f.state, 'sleeping.json'), JSON.stringify([{ name: 'Orch : alpha', brief, prs: [], checkouts: [] }]))
+    assert.equal(main(f.ctx, ['drop', '--name', 'Orch: alpha']), 0)
+    const moved = join(dir, 'briefs', 'abandoned', '20261018T100607Z-succession-brief.md')
+    assert.deepEqual(f.out, ['dropped Orch: alpha', `brief moved to ${moved}`, 'left untouched: none'])
+    assert.deepEqual(records(f), [])
+  })
+
   it('drop moves the brief under abandoned/ beside it, removes the record and names what it left', () => {
     const f = fixture()
     const { brief, dir } = project(f)

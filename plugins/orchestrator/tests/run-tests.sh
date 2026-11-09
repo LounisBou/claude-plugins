@@ -2815,6 +2815,8 @@ check "and so does an orchestrator's" "1" \
 check "and so does a probe's" "1" \
   "$(shaped --title 'Agent: anchor' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent: anchor'")"
 check "the dry run says which name it passes" "1" "$(shaped --title 'Agent: anchor' | grep -c '^name=Agent: anchor$')"
+check "a title typed in the former shape, « Agent : x », names the session the current way" "1|1" \
+  "$(shaped --title 'Agent : x' | sed -n 's/^launch=//p' | grep -c -- "--name 'Agent: x'")|$(shaped --title 'Agent : x' | grep -c '^name=Agent: x$')"
 check "a title without the shape is refused, and the reason names the shape and the cap" "1|1" \
   "$(shaped --title foo >/dev/null 2>&1; echo $?)|$(shaped --title foo | grep -c 'a title reads "Orch: <subject>" or "Agent: <subject>", the subject at most 25 characters and neither starting nor ending with a space, got .foo.')"
 # The older roles are the ones the operator could not read, so they are refused like any
@@ -3529,6 +3531,8 @@ check "an opening by the coordinator runs under its title, on the host's default
   "$(printf '%s' "$OPLAUNCH" | grep -c -- "--name 'Orch: sync logs'")|$(printf '%s' "$OPLAUNCH" | grep -c -- '--model deep-model')|$(printf '%s' "$OPLAUNCH" | grep -c -- "--remote-control 'Orch: sync logs'")|$(printf '%s' "$OPOUT" | grep -c '^open=yes$')"
 check "an opened orchestrator lands right of its caller and joins no chain" "1|1|1" \
   "$(printf '%s' "$OPOUT" | grep -c '^side=right$')|$(printf '%s' "$OPOUT" | grep -c '^anchor=self$')|$(printf '%s' "$OPOUT" | grep -c '^chain=none$')"
+check "an orchestrator launched under the former « Orch : gateway » opens one too" "1" \
+  "$(opn 'Orch : gateway' --open --title 'Orch: x' | grep -c '^open=yes$')"
 check "an orchestrator opens one too, and a model it names wins over the tier" "1|1" \
   "$(opn 'Orch: gateway' --open --title 'Orch: x' | grep -c '^open=yes$')|$(opn 'Orch: gateway' --open --title 'Orch: x' --model a-model --effort high | sed -n 's/^launch=//p' | grep -c -- '--model a-model')"
 check "an agent, an auditor or a session with no name never opens one" "1|1|1|1" \
@@ -4083,6 +4087,8 @@ print('yes' if m.stable_title(sys.argv[1]) in m.stable_title(sys.argv[2]) else '
 check "a title matches across an activity change" "yes" "$(title_in '◑ Lire et attendre' '✳ Lire et attendre')"
 check "a captured prefix still matches" "yes" "$(title_in '◑ Lire' '✳ Lire et attendre')"
 check "a plain title matches itself" "yes" "$(title_in 'Chat' 'Chat')"
+check "a title in the former shape, « Agent : x », matches the current one both ways" "yes|yes" \
+  "$(title_in 'Agent: x' '✳ Agent : x')|$(title_in '◑ Agent : x' 'Agent: x')"
 check "a different title still does not match" "no" "$(title_in 'autre' '✳ Lire et attendre')"
 
 # The shell of a fresh tab is read before anything is typed into it: a startup question
