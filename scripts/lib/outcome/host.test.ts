@@ -1,28 +1,26 @@
 // The real adapters, with a stand-in for the host's binary: the arguments each arm and judge
 // gets, the answers read back, the process group ended at a stop, the deck's sessions metered.
 import assert from 'node:assert/strict'
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import type { Case } from './cases.ts'
 import type { Diff } from './bench.ts'
+import type { Agent } from './harness.ts'
 import {
   agentArgs,
-  armPrompt,
+  byArm,
   deckMeter,
   deckSessions,
   DeckLedger,
   dependencyNames,
   hostAgent,
   hostJudge,
-  hostLogOf,
   intentPrompt,
   JUDGE_DIFF_CHARS,
   judgeArgs,
   judgmentOf,
-  launcherClose,
-  loadErrorOf,
   parseHostResult,
   parseIntent,
   parseReview,
@@ -33,7 +31,7 @@ import {
 
 const TASK: Case = { id: 'a-case', pr: 1, base: 'a'.repeat(40), merge: 'b'.repeat(40), plugin: 'demo', task: 'Make the value 2.' }
 const DIFF: Diff = { patch: '+2\n', files: ['plugins/demo/value'], lines: 1 }
-const OPTIONS = { host: 'h', model: 'm', orchestratorDir: '/o', dependencyDirs: ['/d'], settingsFile: '/s.json' }
+const OPTIONS = { host: 'h', model: 'm', settingsFile: '/s.json' }
 
 /** A stand-in for the host: prints `answer`, records its arguments, sleeps when asked to. */
 function fakeHost(answer: string, behaviour = ''): { binary: string; argsFile: string } {
@@ -67,17 +65,17 @@ describe('outcome evals: the host answer', () => {
 })
 
 describe('outcome evals: the arms on the host', () => {
-  it('gives each arm its budget and model, the orchestration its plugin and skill', () => {
-    const single = agentArgs(OPTIONS, 'single', 'Do it.', 8)
+  it('gives the single arm its budget and model, and no plugin of the orchestrator', () => {
+    const single = agentArgs(OPTIONS, 'Do it.', 8)
     assert.deepEqual(single.slice(0, 8), ['-p', 'Do it.', '--output-format', 'json', '--max-budget-usd', '8.00', '--model', 'm'])
     assert.equal(single.includes('--plugin-dir'), false)
-    const orchestration = agentArgs(OPTIONS, 'orchestration', 'Do it.', 8)
-    assert.equal(orchestration[orchestration.indexOf('--plugin-dir') + 1], '/o')
-    // The host disables an orchestrator whose dependencies it cannot find: they load beside it.
-    assert.equal(orchestration[orchestration.lastIndexOf('--plugin-dir') + 1], '/d')
-    assert.equal(orchestration[1], armPrompt('orchestration', 'Do it.'))
-    assert.notEqual(armPrompt('orchestration', 'Do it.'), 'Do it.')
-    assert.ok(armPrompt('orchestration', 'Do it.').endsWith('Do it.'))
+  })
+
+  it('sends each arm to its own driver', async () => {
+    const run = (name: string): Agent => ({ run: async () => ({ costUsd: null, error: name }) })
+    const agent = byArm(run('single'), run('orchestration'))
+    assert.equal((await agent.run({ case: TASK, arm: 'single', dir: '/d', prompt: 'p', budgetUsd: 1, signal: new AbortController().signal })).error, 'single')
+    assert.equal((await agent.run({ case: TASK, arm: 'orchestration', dir: '/d', prompt: 'p', budgetUsd: 1, signal: new AbortController().signal })).error, 'orchestration')
   })
 
   it('reads the plugins a manifest depends on, and refuses one it cannot read', () => {
@@ -88,14 +86,6 @@ describe('outcome evals: the arms on the host', () => {
     assert.ok(dependencyNames(null) instanceof Error)
   })
 
-  it('reads the host refusing to load a plugin as the orchestrator not loaded', () => {
-    const refused = '2026-11-09T12:59:00.934Z [DEBUG] Plugin loading errors: Dependency "method@m" is not installed'
-    assert.equal(loadErrorOf(`a\n${refused}\nb`), 'the orchestrator did not load: Plugin loading errors: Dependency "method@m" is not installed')
-    assert.match(loadErrorOf('x [DEBUG] Plugin not available for MCP: orchestrator@inline') ?? '', /did not load/)
-    assert.equal(loadErrorOf('2026-11-09T12:59:12.460Z [DEBUG] Loaded inline plugin from path: orchestrator'), null)
-    assert.equal(hostLogOf('/w/case/orchestration'), '/w/case/orchestration.host.log')
-  })
-
   it('turns off every installed orchestrator and nothing else', () => {
     assert.deepEqual(withoutOrchestrator({ enabledPlugins: { 'orchestrator@lounisbou': true, 'orchestrator@other': true, 'github@lounisbou': true } }), {
       enabledPlugins: { 'orchestrator@lounisbou': false, 'orchestrator@other': false },
@@ -103,34 +93,18 @@ describe('outcome evals: the arms on the host', () => {
     assert.deepEqual(withoutOrchestrator(null), { enabledPlugins: {} })
   })
 
-  it('runs the host in the bench and closes what the arm left', async () => {
+  it('runs the host in the bench', async () => {
     const fake = fakeHost(answer({}))
-    const closed: string[] = []
-    const agent = hostAgent({ ...OPTIONS, host: fake.binary }, async arm => void closed.push(arm))
+    const agent = hostAgent({ ...OPTIONS, host: fake.binary })
     const dir = mkdtempSync(join(tmpdir(), 'outcome-bench-'))
     const run = await agent.run({ case: TASK, arm: 'single', dir, prompt: 'Do it.', budgetUsd: 3, signal: new AbortController().signal })
     assert.deepEqual(run, { costUsd: 1.25, error: null })
     assert.equal(readFileSync(fake.argsFile, 'utf8').split('\n')[5], '3.00')
-    assert.deepEqual(closed, ['single'])
-  })
-
-  it('reports an orchestration whose orchestrator the host refused to load, its spend kept', async () => {
-    // The host's debug log is the last argument's value: a refusal there is the arm's error.
-    const log = (line: string): string => `for last; do :; done; printf '%s\\n' '${line}' > "$last"`
-    const dir = join(mkdtempSync(join(tmpdir(), 'outcome-bench-')), 'orchestration')
-    mkdirSync(dir)
-    const run = (behaviour: string) => hostAgent({ ...OPTIONS, host: fakeHost(answer({}), behaviour).binary }, async () => undefined)
-      .run({ case: TASK, arm: 'orchestration', dir, prompt: 'x', budgetUsd: 3, signal: new AbortController().signal })
-    assert.deepEqual(await run(log('t [DEBUG] Plugin loading errors: Dependency "method@m" is not installed')), {
-      costUsd: 1.25,
-      error: 'the orchestrator did not load: Plugin loading errors: Dependency "method@m" is not installed',
-    })
-    assert.deepEqual(await run(log('t [DEBUG] Loaded inline plugin from path: orchestrator')), { costUsd: 1.25, error: null })
   })
 
   it('ends the host when the arm is stopped', async () => {
     const fake = fakeHost(answer({}), 'sleep 30')
-    const agent = hostAgent({ ...OPTIONS, host: fake.binary }, async () => undefined)
+    const agent = hostAgent({ ...OPTIONS, host: fake.binary })
     const controller = new AbortController()
     setTimeout(() => controller.abort(), 100)
     const started = Date.now()
@@ -169,37 +143,17 @@ describe('outcome evals: the deck meter', () => {
     // the agent gone from the deck keeps what it spent; the week's start reads lower and is kept higher
     assert.equal(ledger.read(deckSessions(deck({ o1: 70, o2: 0.5 }))), 3)
     assert.equal(ledger.read(deckSessions(deck({ o2: 4, ao2y: null }))), 6)
-    assert.deepEqual(ledger.openSince(deckSessions(deck({ o1: 1, o2: 4, ao2y: 1 }))), ['/dev/ttyo2', '/dev/ttyao2y'])
   })
 
-  it('reads the deck file, and closes what an orchestration left open', async () => {
+  it('reads the deck file, a half-written one as empty', async () => {
     const path = join(mkdtempSync(join(tmpdir(), 'outcome-deck-')), 'deck.json')
-    const closed: string[] = []
-    const { meter, close } = deckMeter(path, async tty => void closed.push(tty))
-    await close('orchestration')
+    const meter = deckMeter(path)
     const probe = await meter.start('orchestration')
     assert.equal(await probe.spent(), 0)
     writeFileSync(path, JSON.stringify(deck({ o9: 2.5 })))
     assert.equal(await probe.spent(), 2.5)
     writeFileSync(path, '{"half')
     assert.equal(await probe.spent(), 2.5)
-    writeFileSync(path, JSON.stringify(deck({ o9: 2.5 })))
-    await close('single')
-    assert.deepEqual(closed, [])
-    await close('orchestration')
-    assert.deepEqual(closed, ['/dev/ttyo9'])
-  })
-
-  it("closes a tab through the launcher, and refuses what is not a terminal", async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'outcome-launcher-'))
-    const scripts = join(dir, 'skills', 'iterm-agents', 'scripts')
-    mkdirSync(scripts, { recursive: true })
-    const log = join(dir, 'log')
-    writeFileSync(join(scripts, 'iterm_agent.py'), `import sys\nopen(${JSON.stringify(log)}, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n`)
-    const closeTty = launcherClose(dir)
-    await closeTty('/dev/ttys004')
-    await closeTty('/dev/../etc; rm')
-    assert.equal(readFileSync(log, 'utf8'), 'close --tty /dev/ttys004\n')
   })
 })
 

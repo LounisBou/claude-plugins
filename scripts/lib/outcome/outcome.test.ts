@@ -7,6 +7,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 import { deckPath, run as outcome, parseOptions } from '../../outcome.ts'
+import type { Launcher, OpenRequest } from './orchestration.ts'
+import { WAIT_TOOL } from './transcript.ts'
 import type { Io } from '../io.ts'
 import { gitBench, isTestPath, printed, tail } from './bench.ts'
 import { parseCapsFile, parseCases, selectCases, type Case, type Caps } from './cases.ts'
@@ -54,7 +56,7 @@ function fixture(merged = '2'): Fixture {
 const quiet = (): void => undefined
 
 /** A stand-in for the host's binary: its test kit passes when the plugin's value is 2. */
-// Asked headless, it answers as the host does: an arm in a bench sets the value to 2, and every
+// Asked headless, it answers as the host does: the single arm in a bench sets the value to 2, and every
 // answer carries a verdict a judge would give.
 const HOST = join(mkdtempSync(join(tmpdir(), 'outcome-host-')), 'host')
 writeFileSync(
@@ -63,7 +65,6 @@ writeFileSync(
     '#!/bin/bash',
     'if [ "$1" = -p ]; then',
     '  [ -d plugins/demo ] && printf "2\\n" > plugins/demo/value',
-    '  for arg; do [ "$prev" = --debug-file ] && printf "t [DEBUG] Loaded inline plugin from path: orchestrator\\n" > "$arg"; prev=$arg; done',
     `  printf '%s' '${JSON.stringify({ subtype: 'success', is_error: false, total_cost_usd: 1.25, result: '{"matches": true, "reason": "r", "findings": [{"severity": "minor", "text": "t"}]}' })}'`,
     '  exit 0',
     'fi',
@@ -461,23 +462,78 @@ describe('outcome evals: the command', () => {
     assert.equal(typeof measure === 'string' ? measure : measure.judgeModel, 'j')
   })
 
-  it('runs a pilot through the host, under the pilot caps, with the arms and the judge it names', async () => {
+  /** A short bench: a socket's address holds 104 bytes, which a temporary directory's path can pass. */
+  const shortOut = (): string => join(mkdtempSync('/tmp/oc-'), 'run')
+
+  /** A launcher whose orchestrator opens one agent, sets the value to 2 and declares itself done. */
+  function benchOrchestrator(projects: string): Launcher & { readonly requests: OpenRequest[]; readonly closed: string[] } {
+    const requests: OpenRequest[] = []
+    const closed: string[] = []
+    const session = '11111111-2222-3333-4444-555555555555'
+    return {
+      requests,
+      closed,
+      async open(request) {
+        requests.push(request)
+        write(request.dir, 'plugins/demo/value', '2\n')
+        const turn = (message: unknown): string => JSON.stringify(message)
+        mkdirSync(join(projects, '-bench'), { recursive: true })
+        writeFileSync(
+          join(projects, '-bench', `${session}.jsonl`),
+          [
+            turn({ type: 'user', message: { role: 'user', content: 'go' } }),
+            turn({ type: 'assistant', message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'text', text: 'Decision: which model? → sonnet' }, { type: 'tool_use', id: 't', name: WAIT_TOOL, input: { kind: 'done' } }] } }),
+            turn({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: 'ok' }] } }),
+            turn({ type: 'assistant', message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'Done.' }] } }),
+          ].join('\n'),
+        )
+        return { socket: 'orch-abc12345', tty: '/dev/ttys009', session }
+      },
+      panes: async () => [{ window: 0, id: '%0' }, { window: 1, id: '%1' }],
+      async close(_bench, socket) {
+        closed.push(socket)
+        return closed.length === 1 ? 'closed 2 session(s)' : 'closed 0 session(s): the home server orch-abc12345 is not running'
+      },
+    }
+  }
+
+  it('runs a pilot through the host and an orchestrator session, under the pilot caps, with the judge it names', async () => {
     const root = repository()
-    const out = join(mkdtempSync(join(tmpdir(), 'outcome-out-')), 'run')
+    const out = shortOut()
     const deck = join(mkdtempSync(join(tmpdir(), 'outcome-deck-')), 'deck.json')
+    const projects = mkdtempSync(join(tmpdir(), 'outcome-projects-'))
+    const launcher = benchOrchestrator(projects)
     const args = ['pilot', '--out', out, '--host', HOST, '--model', 'm', '--judge-model', 'j', '--deck', deck]
-    assert.equal(await outcome(root, args, recorder(), new AbortController().signal), 0)
+    const io = { ...recorder(), env: { ORCHESTRATOR_PROJECTS_DIR: projects } }
+    assert.equal(await outcome(root, args, io, new AbortController().signal, Date.now, { launcher, pollMs: 5 }), 0)
     const report: Report = JSON.parse(readFileSync(join(out, 'report.json'), 'utf8'))
     assert.equal(report.mode, 'pilot')
-    for (const result of report.cases[0]?.arms ?? []) {
-      assert.equal(result.status, 'done')
-      assert.equal(result.grades?.referenceTests, true)
-      assert.equal(result.grades?.intent?.matches, true)
-      assert.deepEqual(result.grades?.review, { blocking: 0, minor: 1 })
-      assert.equal(result.costUsd, 3.75)
+    const [single, orchestration] = report.cases[0]?.arms ?? []
+    for (const result of [single, orchestration]) {
+      assert.equal(result?.status, 'done')
+      assert.equal(result?.grades?.referenceTests, true)
+      assert.equal(result?.grades?.intent?.matches, true)
+      assert.deepEqual(result?.grades?.review, { blocking: 0, minor: 1 })
     }
-    assert.equal(report.spentUsd, 7.5)
+    // the host's own figure and two judgments for the single arm, the two judgments alone for the orchestration (its deck is empty)
+    assert.equal(single?.costUsd, 3.75)
+    assert.equal(orchestration?.costUsd, 2.5)
+    assert.equal(orchestration?.agentsOpened, 1)
+    assert.deepEqual(orchestration?.decisions, ['which model? → sonnet'])
     assert.ok('enabledPlugins' in JSON.parse(readFileSync(join(out, 'settings.json'), 'utf8')))
+    const [request] = launcher.requests
+    assert.equal(request?.title, 'Orch : eval value-is-two')
+    assert.equal(request?.settingsFile, join(out, 'settings.json'))
+    assert.deepEqual(request?.pluginDirs, [join(root, 'plugins', 'orchestrator'), join(root, 'plugins', 'method')])
+    assert.equal(launcher.closed.length, 2)
+  })
+
+  it('refuses a paid run whose bench is too long for the orchestration arm\u2019s socket, before any arm', async () => {
+    const root = repository()
+    const out = join(mkdtempSync('/tmp/oc-'), 'x'.repeat(80))
+    const args = ['pilot', '--out', out, '--host', HOST, '--model', 'm', '--judge-model', 'j']
+    await assert.rejects(outcome(root, args, recorder(), new AbortController().signal), /too long for a socket's address/)
+    assert.equal(existsSync(join(out, 'report.json')), false)
   })
 
   it('refuses a paid run whose orchestrator depends on a plugin the checkout lacks, before any arm', async () => {
