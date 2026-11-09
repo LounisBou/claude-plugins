@@ -5019,14 +5019,16 @@ def cmd_spawn(argv, pair_from=""):
 # --- a bench opening ------------------------------------------------------------------
 #
 # A harness (the outcome evals') opens an orchestrator it drives with no operator, on a bench
-# of its own: a directory the caller names and everything the opening makes sits inside. The
-# home server's socket lives in the bench's own tmux directory, so no server of the machine
-# is touched and a tab is never asked for; the orchestrator runs in window 0 of a home session
-# marked like any other, so the agents it spawns are windows of that session. The caller gives
-# the plugin directories and the settings the orchestrator runs on, since it is no host session
-# whose launch they could be read from. No remote control. `close --bench --socket` ends the
-# home, every window of it. This is not an opening on the operator's order (`spawn --open`),
-# whose guards are untouched: it is the caller's own bench, and it refuses anything outside.
+# of its own: a directory the caller names. The home server and its socket, in the bench's own
+# tmux directory, and the orchestrator's working directory sit inside the bench, so no server
+# of the machine is touched and a tab is never asked for. The launch script, the prompt, the
+# servers' file and `close.log` go to the launcher's state directory, as for any launch. The
+# orchestrator runs in window 0 of a home session marked like any other, so the agents it
+# spawns are windows of that session. The caller gives the plugin directories and the settings
+# the orchestrator runs on, since it is no host session whose launch they could be read from.
+# No remote control. `close --bench --socket` ends the home, every window of it. This is not an
+# opening on the operator's order (`spawn --open`), whose guards are untouched: it is the
+# caller's own bench, and it refuses anything outside.
 
 # The bench's own tmux directory, where its home server's socket is made.
 BENCH_TMUX = "tmux"
