@@ -361,6 +361,33 @@ def refuse_made(made, msg):
     die("%s; %s" % (msg, closed_clause(closed, tty)))
 
 
+def await_host(tty, dir_, launch_epoch, made, what):
+    """Wait up to SPAWN_TIMEOUT seconds for the session just launched on `tty` to start, and
+    say how it was seen; the launch is refused, as `refuse_made` refuses one, when it never
+    started. `what` names the command in the lines it prints.
+
+    The process table is one reading of « it started », not the only one: a session that
+    wrote its transcript in the launch directory since the launch has started, whatever its
+    process line says. Declaring it dead there closed a working agent."""
+    waited = 0
+    pid = None
+    while waited < SPAWN_TIMEOUT:
+        pid = cli_pid_on_tty(tty)
+        if pid:
+            break
+        time.sleep(1)
+        waited += 1
+    if pid:
+        print("%s: %s running on %s (pid %s)" % (what, HOST_CLI, tty, pid), file=sys.stderr)
+        return
+    transcript = find_transcript(dir_, launch_epoch)
+    if not transcript:
+        refuse_made(made, "%s: %s never started on %s after %ss"
+                    % (what, HOST_CLI, tty, SPAWN_TIMEOUT))
+    print("%s: no process on %s matched %s, but the session wrote %s since the launch: it "
+          "started" % (what, tty, HOST_CLI, transcript), file=sys.stderr)
+
+
 def last_lines(lines, n):
     """The last `n` lines of a reading, its trailing blanks dropped.
 
@@ -4948,26 +4975,7 @@ def cmd_spawn(argv, pair_from=""):
             print(line)
 
     if args.verify:
-        waited = 0
-        pid = None
-        while waited < SPAWN_TIMEOUT:
-            pid = cli_pid_on_tty(new_tty)
-            if pid:
-                break
-            time.sleep(1)
-            waited += 1
-        if pid:
-            print("spawn: %s running on %s (pid %s)" % (HOST_CLI, new_tty, pid), file=sys.stderr)
-        else:
-            # The process table is one reading of « it started », not the only one: a session
-            # that wrote its transcript in the launch directory since the launch has started,
-            # whatever its process line says. Declaring it dead there closed a working agent.
-            transcript = find_transcript(args.dir, launch_epoch)
-            if not transcript:
-                refuse_made(made, "spawn: %s never started on %s after %ss"
-                            % (HOST_CLI, new_tty, SPAWN_TIMEOUT))
-            print("spawn: no process on %s matched %s, but the session wrote %s since the "
-                  "launch: it started" % (new_tty, HOST_CLI, transcript), file=sys.stderr)
+        await_host(new_tty, args.dir, launch_epoch, made, "spawn")
         # « The host CLI runs on the tty » is not « the session is launched »: a session
         # that runs and waits for a click is not. The mode asked for is carried on the
         # process line and honoured for some models and not others, so the mode the session
@@ -5152,13 +5160,7 @@ def cmd_bench_open(argv):
     pane_tty = make_home(socket, title, work, "%s -l %s" % (LOGIN_SHELL, script), "bench-open")
     made = {"terminal": NO_TAB, "home": socket, "tty": pane_tty}
     if args.verify:
-        waited = 0
-        while waited < SPAWN_TIMEOUT and not cli_pid_on_tty(pane_tty):
-            time.sleep(1)
-            waited += 1
-        if not cli_pid_on_tty(pane_tty):
-            refuse_made(made, "bench-open: %s never started on %s after %ss"
-                        % (HOST_CLI, pane_tty, SPAWN_TIMEOUT))
+        await_host(pane_tty, work, launch_epoch, made, "bench-open")
         print(verify_mode(work, launch_epoch, args.mode, args.model, made), file=sys.stderr)
     print("socket=%s" % socket)
     print("tty=%s" % pane_tty)
