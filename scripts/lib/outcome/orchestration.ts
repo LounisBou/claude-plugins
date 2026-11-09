@@ -21,6 +21,8 @@ const SUBJECT_MAX = 25
 const OPEN_MS = 240_000
 const CLOSE_MS = 120_000
 const PANES_MS = 15_000
+/** Failed reads of the home in a row that end the arm: one alone may be a slow or busy server. */
+const PANES_FAILURES_MAX = 3
 
 /** What the orchestrator is told, once, after the brief: nobody answers in this run. */
 export const NO_OPERATOR = [
@@ -224,6 +226,8 @@ export function orchestrationAgent(options: OrchestrationOptions): Agent {
       let decisions: readonly string[] = []
       let askedOperator: string | null = null
       let problem: string | null = null
+      // A read of the home that fails is told from one that finds it gone, and neither ends the arm alone.
+      const readPanes = (): Promise<Pane[] | null | Error> => launcher.panes(bench, home.socket).catch((error: unknown) => new Error(messageOf(error)))
       const seen = (panes: readonly Pane[] | null): void => {
         for (const pane of panes ?? []) if (pane.window !== 0) agents.add(pane.id)
       }
@@ -231,9 +235,12 @@ export function orchestrationAgent(options: OrchestrationOptions): Agent {
         // The end is concluded only on the same idle state read twice in a row: a turn that has
         // just ended may be woken by a notice or a refusal of the stop gate a moment later.
         let previous: string | null = null
+        let failures = 0
         while (!signal.aborted) {
-          const panes = await launcher.panes(bench, home.socket)
-          seen(panes)
+          const panes = await readPanes()
+          if (panes instanceof Error || panes === null) failures++
+          else failures = 0
+          seen(panes instanceof Error ? null : panes)
           const text = options.transcript(home.session)
           const reading = text === null ? null : readTranscript(text)
           if (reading !== null) decisions = reading.decisions
@@ -247,13 +254,14 @@ export function orchestrationAgent(options: OrchestrationOptions): Agent {
           } else {
             previous = null
           }
-          if (panes === null) {
-            problem = 'the orchestrator’s home ended before the orchestration was over'
+          if (failures >= PANES_FAILURES_MAX) {
+            problem = panes instanceof Error ? `the orchestration could not be followed: ${panes.message}` : 'the orchestrator’s home ended before the orchestration was over'
             break
           }
           await sleep(options.pollMs, signal)
         }
-        seen(await launcher.panes(bench, home.socket))
+        const last = await readPanes()
+        seen(last instanceof Error ? null : last)
       } catch (error: unknown) {
         problem = `the orchestration could not be followed: ${messageOf(error)}`
       } finally {

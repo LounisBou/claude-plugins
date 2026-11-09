@@ -200,6 +200,30 @@ describe('outcome evals: deciding the orchestration is over', () => {
     assert.equal(launcher.closed.length, 2)
   })
 
+  it('goes on through a failed read of the home, followed by good ones', async () => {
+    const home = (poll: number): Pane[] | null => {
+      if (poll === 1) return null
+      if (poll === 3) throw new Error('tmux timed out')
+      return [{ window: 0, id: '%0' }, { window: 1, id: '%1' }]
+    }
+    const launcher = fakeLauncher({ panes: home })
+    const run = await agent(launcher, poll => (poll < 6 ? jsonl([prompt(), said('Working.')]) : ended('done'))).run(input())
+    assert.equal(run.error, null)
+    assert.equal(run.orchestration?.agentsOpened, 1)
+  })
+
+  it('ends on three failed reads of the home in a row', async () => {
+    const reads = [true, false, false, true, false, false, false]
+    const launcher = fakeLauncher({ panes: poll => (reads[poll] === true ? [{ window: 0, id: '%0' }] : null) })
+    let last = 0
+    const run = await agent(launcher, poll => (last = poll, jsonl([prompt(), said('Working.')]))).run(input())
+    assert.match(run.error ?? '', /home ended before the orchestration was over/)
+    assert.equal(last, 6)
+    const throwing = fakeLauncher({ panes: () => { throw new Error('tmux timed out') } })
+    const failed = await agent(throwing, () => jsonl([prompt(), said('Working.')])).run(input())
+    assert.match(failed.error ?? '', /could not be followed: tmux timed out/)
+  })
+
   it('closes the home even when reading the transcript fails', async () => {
     const launcher = fakeLauncher()
     const run = await agent(launcher, () => { throw new Error('unreadable') }).run(input())
