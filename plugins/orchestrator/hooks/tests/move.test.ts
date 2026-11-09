@@ -6,7 +6,7 @@
 // stable over what it carries.
 import { expect, test } from 'claude-code/testing'
 import {
-  MOVE_MARKER, MOVE_TEXT_CAP, MOVE_FILE_CAP, MOVE_FILES_CAP, MOVE_TOTAL_CAP, MOVE_CHUNKS_CAP, moveText, isMoveMarked, parseMoveMessage,
+  MOVE_MARKER, MOVE_TEXT_CAP, MOVE_FILE_CAP, MOVE_FILES_CAP, MOVE_TOTAL_CAP, MOVE_CHUNKS_CAP, MOVE_PLACED_CAP, moveText, isMoveMarked, parseMoveMessage,
   chunkText, moveIdOf, checkManifestFiles, rewritePaths, arrivalOf, arrivalPairs, missingOf, arrivedNotice, acknowledgedNotice, failedNotice,
   type Arrival, type ManifestFile, type MoveMessage, type MoveRecord,
 } from '../move.ts'
@@ -443,7 +443,54 @@ test('arrivalOf rewrites the record\'s paths into the target\'s', () => {
     brief: `${LANDING}/belt.md`,
     dir: `${LINUX.home}/dev/app`,
     checkouts: [`${LINUX.home}/dev/app`],
+    places: [null, null],
   })
+})
+
+// The dispatch record the brief names, kept outside the brief's directory on the origin.
+const RECORD_AT = `${MAC.home}/notes/app/record.jsonl`
+const placed = (at: string, over: Partial<ManifestFile> = {}) => file({ name: at.slice(at.lastIndexOf('/') + 1), bytes: 40, chunks: 1, at, ...over })
+
+test('a file placed outside the briefs directory travels by its path, and lands there rewritten onto the target', () => {
+  const m = manifest({ files: [file(), placed(RECORD_AT), placed(`${RECORD_AT}.owner`), placed(`${MAC.home}/notes/app/goals.md`)] })
+  expect(parseMoveMessage(moveText(m))).toEqual(m)
+  const arrival = arrivalOf(m, LINUX) as Arrival
+  expect(arrival.places).toEqual([null, `${LINUX.home}/notes/app/record.jsonl`, `${LINUX.home}/notes/app/record.jsonl.owner`, `${LINUX.home}/notes/app/goals.md`])
+  // Under the target's own briefs, a hidden directory is no obstacle.
+  const inBriefs = manifest({ files: [file(), placed(`${MAC.configDir}/claude-orchestrator/briefs/other/record.jsonl`)] })
+  expect((arrivalOf(inBriefs, LINUX) as Arrival).places[1]).toBe(`${LINUX.configDir}/claude-orchestrator/briefs/other/record.jsonl`)
+})
+
+test('the id of a move with no placed file is the one an earlier version gives; a placed file changes it', () => {
+  const plain = [file()]
+  expect(moveIdOf(record(), plain)).toBe(manifest({ files: plain }).move)
+  expect(moveIdOf(record(), [file(), placed(RECORD_AT)])).not.toBe(moveIdOf(record(), [file(), placed(RECORD_AT, { at: `${MAC.home}/other/record.jsonl` })]))
+})
+
+test('a placed file whose path is not absolute or does not end in its name is no message', () => {
+  for (const f of [placed(RECORD_AT, { at: 'notes/record.jsonl' }), placed(RECORD_AT, { name: 'other.jsonl' })]) {
+    expect(parseMoveMessage(moveText(manifest({ files: [file(), f] })))).toBeNull()
+  }
+})
+
+test('a placed file is refused on arrival when it climbs, leaves the home, hides under it, or lies in a checkout', () => {
+  const refusal = (at: string) => {
+    const arrival = arrivalOf(manifest({ files: [file(), placed(at)] }), LINUX)
+    return 'refused' in arrival ? arrival.refused : null
+  }
+  expect(refusal(`${MAC.home}/notes/../../../etc/record.jsonl`)).toContain("'..'")
+  expect(refusal(at('etc', 'cron.d', 'record.jsonl'))).toContain('not strictly under')
+  expect(refusal(`${MAC.home}/.ssh/authorized_keys`)).toContain('hidden')
+  expect(refusal(`${MAC.home}/notes/.bashrc`)).toContain('hidden')
+  expect(refusal(`${MAC.home}/dev/app/record.jsonl`)).toContain('git rebuilds')
+})
+
+test('more placed files than a record carries, or two at one path, are refused', () => {
+  const four = [file(), ...['a', 'b', 'c', 'd'].map(n => placed(`${MAC.home}/notes/${n}`))]
+  expect(checkManifestFiles(four)).toContain(`more than ${MOVE_PLACED_CAP}`)
+  expect(checkManifestFiles([file(), placed(RECORD_AT), placed(RECORD_AT)])).toContain('duplicate')
+  // A placed file and a file of the brief's directory may share a name.
+  expect(checkManifestFiles([file({ name: 'record.jsonl' }), placed(RECORD_AT)])).toBeNull()
 })
 
 test('arrivalOf lands the files in the target\'s briefs directory named after the move, whatever path the origin gave', () => {

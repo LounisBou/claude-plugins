@@ -129,3 +129,48 @@ test('a forged manifest is refused on arrival: a move id its record does not giv
     expect(leftovers(b)).toEqual([])
   }
 })
+
+// The sender's brief names its dispatch record, kept at `record` with its owner and its goals.
+function recordKept(a: Machine, record: string): void {
+  const brief = `${a.briefs}/belt/${BRIEF_NAME}`
+  a.files.set(brief, `${a.files.get(brief)}- Dispatch record (this build's routing corrections): \`${record}\`, read before routing.\n`)
+  a.files.set(record, `{"id":1,"record":"${record}"}\n`)
+  a.files.set(`${record}.owner`, 'Orch : belt\n')
+  a.files.set(`${record.slice(0, record.lastIndexOf('/'))}/goals.md`, '# goals\n- [ ] the move works\n')
+}
+
+test('a dispatch record kept outside the briefs directory travels with it and lands at its path on the other home', async () => {
+  const a = sender()
+  const b = receiver()
+  const ha = mounted()
+  const hb = mounted()
+  const record = `${HOME_A}/notes/app/record.jsonl`
+  recordKept(a, record)
+  expect((await ha['tool.call:move_send'](a.dollar, sendInput(a))).isError).toBeUndefined()
+  await settle(a, ha, b, hb)
+  const there = `${HOME_B}/notes/app`
+  expect(b.files.get(`${there}/record.jsonl`)).toBe(`{"id":1,"record":"${there}/record.jsonl"}\n`)
+  expect(b.files.get(`${there}/record.jsonl.owner`)).toBe('Orch : belt\n')
+  expect(b.files.get(`${there}/goals.md`)).toBe('# goals\n- [ ] the move works\n')
+  // The brief there names the record where it landed.
+  expect(b.files.get(`${landed(b)}/${BRIEF_NAME}`)).toContain(`\`${there}/record.jsonl\``)
+  expect(b.submits.length).toBe(1)
+  expect(b.submits[0].text).toContain(`${there}/record.jsonl`)
+  expect(a.submits[0].text).toContain('acknowledged')
+  expect(leftovers(b)).toEqual([])
+})
+
+test('a dispatch record in a checkout travels by git when git tracks it, and refuses the move when it does not', async () => {
+  const tracked = sender({ repos: { [`${HOME_A}/dev/app`]: { remote: 'git@example.com:acme/app.git', branch: 'feat/belt', tracked: [`${HOME_A}/dev/app/ops/record.jsonl`, `${HOME_A}/dev/app/ops/record.jsonl.owner`, `${HOME_A}/dev/app/ops/goals.md`] }, [`${HOME_A}/dev/lib`]: {} } })
+  recordKept(tracked, `${HOME_A}/dev/app/ops/record.jsonl`)
+  const ha = mounted()
+  expect((await ha['tool.call:move_send'](tracked.dollar, sendInput(tracked))).isError).toBeUndefined()
+  const manifest = parseMoveMessage(tracked.sent[0].text) as Extract<MoveMessage, { kind: 'manifest' }>
+  expect(manifest.files.every(f => f.at === undefined)).toBe(true)
+  const untracked = sender()
+  recordKept(untracked, `${HOME_A}/dev/app/ops/record.jsonl`)
+  const refused = await ha['tool.call:move_send'](untracked.dollar, sendInput(untracked))
+  expect(refused.isError).toBe(true)
+  expect(refused.result).toContain('git does not track it')
+  expect(untracked.sent).toEqual([])
+})

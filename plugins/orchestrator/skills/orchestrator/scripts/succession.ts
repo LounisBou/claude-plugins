@@ -24,6 +24,7 @@ import { readText, writeAtomic } from '../../../core/store.ts'
 import type { Env } from '../../../core/paths.ts'
 import { openLine, parseRecord, stateRoot } from './dispatch-record.ts'
 import { isEntry, processIo, type Io } from './lib/process.ts'
+import { recordNamedIn } from './lib/record-paths.ts'
 
 export const USAGE =
   'usage: succession.sh live|check <brief> [--name "<Orch : x>"] [--record <dispatch record>] [--session <id>] [--next "<text>"] [--note "<text>"]... [--promote <n>=<path>]...'
@@ -233,7 +234,7 @@ function liveSection(brief: string): string {
 export function namedIn(brief: string): { name: string; record: string } {
   return {
     name: /SUCCESSOR ORCHESTRATOR of `([^`{}]+)`/.exec(brief)?.[1] ?? '',
-    record: /^- Dispatch record[^`\n]*`([^`{}]+)`/m.exec(brief)?.[1] ?? '',
+    record: recordNamedIn(brief),
   }
 }
 

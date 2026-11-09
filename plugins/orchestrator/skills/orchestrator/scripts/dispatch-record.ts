@@ -11,6 +11,7 @@ import { ROLES, parseSessionName, type Prefix } from '../../../core/names.ts'
 import { configDir, setting, stateDir, type Env } from '../../../core/paths.ts'
 import { readText, update, writeAtomic } from '../../../core/store.ts'
 import { isEntry, processIo, run, type Io, type Run } from './lib/process.ts'
+import { goalsFileOf, ownerFileOf } from './lib/record-paths.ts'
 
 export const USAGE =
   'usage: dispatch-record.sh {open|round|review|fixed|surface|audit|ready|exempt|close|defer|undefer|escaped|cost|summary|goals} <record> [...] (see header)'
@@ -933,8 +934,8 @@ export async function main(argv: readonly string[], deps: Deps): Promise<number>
   }
   const ctx: Context = {
     cmd, record, deps,
-    goalsFile: `${dirname(record)}/goals.md`,
-    ownerFile: `${record}.owner`,
+    goalsFile: goalsFileOf(record),
+    ownerFile: ownerFileOf(record),
     exemptFile: `${record}.e2e-exempt`,
     writing: false, claimed: false, registerAbsent: false,
   }

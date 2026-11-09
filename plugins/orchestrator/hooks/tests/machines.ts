@@ -29,7 +29,7 @@ export function sha256(text: string): string {
   return out.slice(0, 64)
 }
 
-export type Repo = { dirty?: boolean; ahead?: number; noUpstream?: boolean; remote?: string; branch?: string; detached?: boolean; branchFails?: boolean }
+export type Repo = { tracked?: string[]; dirty?: boolean; ahead?: number; noUpstream?: boolean; remote?: string; branch?: string; detached?: boolean; branchFails?: boolean }
 
 export type Options = {
   home: string
@@ -159,6 +159,7 @@ export function machine(options: Options) {
           const repo = options.repos?.[argv[2]]
           if (!repo) return fail(128)
           const verb = argv.slice(3).join(' ')
+          if (verb.startsWith('ls-files --error-unmatch -- ')) return repo.tracked?.includes(argv[argv.length - 1]) ? ok(`${argv[argv.length - 1]}\n`) : fail(1)
           if (verb === 'status --porcelain') return ok(repo.dirty ? ' M belt.md\n' : '')
           if (verb === 'rev-list @{u}..HEAD') return repo.noUpstream ? fail(128) : ok('abc1234\n'.repeat(repo.ahead ?? 0))
           if (verb === 'remote get-url origin') return repo.remote ? ok(`${repo.remote}\n`) : fail(2)
