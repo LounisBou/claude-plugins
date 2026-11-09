@@ -10,7 +10,7 @@ import { deckPath, run as outcome, parseOptions } from '../../outcome.ts'
 import type { Io } from '../io.ts'
 import { gitBench, isTestPath, printed, tail } from './bench.ts'
 import { parseCapsFile, parseCases, selectCases, type Case, type Caps } from './cases.ts'
-import { brief, overlap, runEvals, type Agent, type Judge, type Meter, type Ports, type Report } from './harness.ts'
+import { brief, overlap, runEvals, type Agent, type Judge, type Meter, type OrchestrationRun, type Ports, type Report } from './harness.ts'
 import { Ledger } from './ledger.ts'
 import { markdown, totals } from './report.ts'
 import { filesJudge, idleAgent, oracleAgent, silentMeter } from './stub.ts'
@@ -149,6 +149,67 @@ describe('outcome evals: a dry run', () => {
     assert.equal(result?.grades?.files, 3)
     assert.equal(result?.costUsd, 0.5)
     assert.equal(report.spentUsd, 1)
+  })
+})
+
+/** The oracle for both arms, the orchestration arm reporting `orchestration` as a driven session does. */
+function driven(orchestration: OrchestrationRun, over: Partial<{ costUsd: number | null; error: string | null }> = {}): Agent {
+  return {
+    async run(input) {
+      const left = await oracleAgent().run(input)
+      return input.arm === 'orchestration' ? { ...left, ...over, orchestration } : left
+    },
+  }
+}
+
+describe('outcome evals: an orchestration driven as a session', () => {
+  it('grades it as the single arm is, and reports the agents it opened and the decisions it took', async () => {
+    const decisions = ['which model? → sonnet']
+    const report = await evaluate(fixture(), { agent: driven({ agentsOpened: 2, decisions, askedOperator: null }) })
+    const [single, orchestration] = report.cases[0]?.arms ?? []
+    assert.equal(orchestration?.status, 'done')
+    assert.equal(orchestration?.agentsOpened, 2)
+    assert.deepEqual(orchestration?.decisions, decisions)
+    assert.equal(orchestration?.grades?.referenceTests, true)
+    assert.equal(single?.agentsOpened, null)
+    assert.deepEqual(single?.decisions, [])
+    const text = markdown(report)
+    assert.match(text, /orchestration, agents opened: 2/)
+    assert.match(text, /orchestration, decision: which model\? → sonnet/)
+    assert.doesNotMatch(text, /single, agents opened/)
+  })
+
+  it('does not grade an orchestration that opened no agent, as an orchestration', async () => {
+    const report = await evaluate(fixture(), { agent: driven({ agentsOpened: 0, decisions: [], askedOperator: null }) })
+    const result = report.cases[0]?.arms[1]
+    assert.equal(result?.status, 'not-graded')
+    assert.equal(result?.reason, 'not graded: no agent opened')
+    assert.equal(result?.grades, null)
+    assert.equal(result?.agentsOpened, 0)
+    assert.match(markdown(report), /orchestration: not graded: no agent opened/)
+    assert.equal(totals(report, 'orchestration').suite, 0)
+  })
+
+  it('says why an orchestration stopped at its cap opened no agent', async () => {
+    const agent: Agent = { run: async ({ budgetUsd }) => ({ costUsd: budgetUsd, error: null, orchestration: { agentsOpened: 0, decisions: [], askedOperator: null } }) }
+    const result = (await evaluate(fixture(), { agent })).cases[0]?.arms[1]
+    assert.equal(result?.status, 'not-graded')
+    assert.match(result?.reason ?? '', /^not graded: no agent opened \(the arm reached its 8 USD share\)$/)
+  })
+
+  it('ends on the question it put to the operator, and grades what it left', async () => {
+    const asked = { agentsOpened: 1, decisions: [], askedOperator: 'merge or wait?' }
+    const result = (await evaluate(fixture(), { agent: driven(asked) })).cases[0]?.arms[1]
+    assert.equal(result?.status, 'asked-operator')
+    assert.equal(result?.reason, 'stopped: asked the operator — merge or wait?')
+    assert.equal(result?.grades?.referenceTests, true)
+  })
+
+  it('keeps an error of the driver an error, whatever it opened', async () => {
+    const report = await evaluate(fixture(), { agent: driven({ agentsOpened: 0, decisions: [], askedOperator: null }, { error: 'the orchestrator never started' }) })
+    const result = report.cases[0]?.arms[1]
+    assert.equal(result?.status, 'error')
+    assert.equal(result?.reason, 'the orchestrator never started')
   })
 })
 

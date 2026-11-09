@@ -68,6 +68,8 @@ export function markdown(report: Report): string {
       if (result.reason !== null) lines.push('', `- ${result.arm}: ${result.reason}`)
       for (const note of result.grades?.notes ?? []) lines.push(`- ${result.arm}, ${note}`)
       if (result.grades?.intent) lines.push(`- ${result.arm}, intent: ${result.grades.intent.reason}`)
+      if (result.agentsOpened !== null) lines.push(`- ${result.arm}, agents opened: ${result.agentsOpened}`)
+      for (const decision of result.decisions) lines.push(`- ${result.arm}, decision: ${decision}`)
       if (result.grades && result.grades.outsidePlugin.length > 0) lines.push(`- ${result.arm}, outside its plugin: ${result.grades.outsidePlugin.join(', ')}`)
     }
   }
