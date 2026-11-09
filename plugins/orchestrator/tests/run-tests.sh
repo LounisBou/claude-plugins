@@ -7587,7 +7587,7 @@ rm -f "$TR/iterm-asked"
 reset_home
 out=$(home spawn --dir "$WORK" --title "Agent: three" --prompt p --right-of self --no-verify 2>"$WORK/tspawn.err")
 check "spawn: a window of the home session, detached, named, its ids and tty printed back, the launch file as its program" \
-  "/dev/ttys903|[-u][new-window][-d][-t][\$1:][-n][Agent: three][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Agent---three-@TIME@.sh]|none" \
+  "/dev/ttys903|[-u][new-window][-d][-t][\$1:][-n][Agent: three][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Agent--three-@TIME@.sh]|none" \
   "$out|$(calls | grep -F '[new-window]')|$(asked)"
 check "and the chain entry names the window by the server's socket and its id, owned by the caller's pane" \
   "{\"tab_id\": \"tmux:$TSOCK:@4\", \"tty\": \"/dev/ttys903\", \"owner\": \"tmux:$TSOCK:%0\"}" "$(chainf | tail -1)"
@@ -7760,7 +7760,7 @@ reset_home; rm -f "$TR/iterm-asked"
 ORCHESTRATOR_PROJECTS_DIR="$TR/projects" pair_transcript s-suite s-model high
 out=$(home spawn --dir "$WORK" --successor --prompt p 2>"$WORK/tsucc.err")
 check "a successor spawned from a home session is a window of that session under the caller's name, and iTerm2 is never asked" \
-  "/dev/ttys903|[-u][new-window][-d][-t][\$1:][-n][Orch: home][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Orch---home-@TIME@.sh]|none" \
+  "/dev/ttys903|[-u][new-window][-d][-t][\$1:][-n][Orch: home][-P][-F][#{window_id} #{pane_id} #{pane_tty}][/bin/sh -l @STATE@/prompts/launch-Orch--home-@TIME@.sh]|none" \
   "$out|$(calls | grep -F '[new-window]')|$(asked)"
 check "the chain is handed over keyed on the successor's pane: its tty's file, the successor's tmux owner, never an app id" \
   "{\"tab_id\": \"tmux:$TSOCK:@1\", \"tty\": \"/dev/ttys901\", \"owner\": \"tmux:$TSOCK:%4\"}|{\"tab_id\": \"tmux:$TSOCK:@2\", \"tty\": \"/dev/ttys902\", \"owner\": \"tmux:$TSOCK:%4\"}|0|1" \
@@ -8068,7 +8068,7 @@ PYEOF
 hprobe() { homecmd "$py" "$WORK/home_probe.py" "$ROOT/skills/iterm-agents/scripts" "$1" "$HR" "$HSID" "${2:-Orch : conv}" 2>&1; }
 reset_homerec; printf '/dev/ttys970\n' > "$HR/clients"
 res=$(hprobe ok)
-NEWS="[-u][-L][orch-abcdef12][-f][@ROOT@/skills/iterm-agents/tmux/home.conf][new-session][-d][-s][home][-n][Orch: conv][-c][@WORK@][/bin/sh -l @WORK@/homestate/prompts/home-Orch---conv-@TIME@.sh]"
+NEWS="[-u][-L][orch-abcdef12][-f][@ROOT@/skills/iterm-agents/tmux/home.conf][new-session][-d][-s][home][-n][Orch: conv][-c][@WORK@][/bin/sh -l @WORK@/homestate/prompts/home-Orch--conv-@TIME@.sh]"
 check "the move starts the home server with its conf, window 0 named after the orchestrator, then reads window 0's tty and the tab's client, then sets the server to exit with its tab" \
   "0|$NEWS|[-u][-L][orch-abcdef12][display-message][-p][-t][home:0][#{pane_tty}]|[-u][-L][orch-abcdef12][list-clients][-F][#{client_tty}]|[-u][-L][orch-abcdef12][set-option][-s][exit-unattached][on]" \
   "$(sfield "$res" exit)|$(hcalls | paste -sd'|' -)"
