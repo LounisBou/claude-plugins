@@ -4,7 +4,7 @@
 // is the operator's to wake or drop: nothing here acts on its own.
 import { accessSync, constants, mkdirSync, readFileSync, renameSync, statSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
-import { parseSessionName } from '../../../core/names.ts'
+import { currentSessionName, parseSessionName } from '../../../core/names.ts'
 import { die, stateOf, utc, type Context } from './context.ts'
 import { withCoordinatorLock } from './lock.ts'
 import { writeWhole } from './record.ts'
@@ -79,6 +79,12 @@ export function isSleeperName(name: string): boolean {
   return parseSessionName(name)?.role === 'orchestrator' && !/ \[[0-9A-Za-z]+\]$/.test(name)
 }
 
+/** Whether a record's name is `name`: a record written before the change carries the former `Orch : x`. */
+function named(record: unknown, name: string): boolean {
+  const recorded = fieldsOf(record)['name']
+  return typeof recorded === 'string' && currentSessionName(recorded) === currentSessionName(name)
+}
+
 function isFile(path: string): boolean {
   try {
     return statSync(path).isFile()
@@ -104,7 +110,7 @@ function isDirectory(path: string): boolean {
   }
 }
 
-const SLEEP_USAGE = 'sleep: usage: sleep --name "Orch : <subject>" --brief <path> --dir <path> --model <id> --effort <level> [--session <id>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...'
+const SLEEP_USAGE = 'sleep: usage: sleep --name "Orch: <subject>" --brief <path> --dir <path> --model <id> --effort <level> [--session <id>] [--pr "<repository>#<n> <branch>"]... [--checkout <path>]...'
 
 export function sleep(ctx: Context, args: readonly string[]): number {
   const single = new Map<string, string>()
@@ -131,7 +137,7 @@ export function sleep(ctx: Context, args: readonly string[]): number {
   const effort = get('--effort')
   const session = get('--session')
   if (name === '' || brief === '' || dir === '' || model === '') die(SLEEP_USAGE)
-  if (!isSleeperName(name)) die(`sleep: refused: the name reads "Orch : <subject>", without its reference, the subject at most 25 characters, got '${name}'`)
+  if (!isSleeperName(name)) die(`sleep: refused: the name reads "Orch: <subject>", without its reference, the subject at most 25 characters, got '${name}'`)
   if (!brief.startsWith('/')) die(`sleep: refused: the brief's path must be absolute, got ${brief}`)
   if (!isReadableFile(brief)) die(`sleep: refused: the brief ${brief} cannot be read: a wake starts on it`)
   if (!dir.startsWith('/')) die(`sleep: refused: the directory must be absolute, got ${dir}`)
@@ -144,7 +150,7 @@ export function sleep(ctx: Context, args: readonly string[]): number {
   const state = stateOf(ctx.env)
   withCoordinatorLock(ctx, 'sleep', () => {
     const all = readSleeping(state)
-    if (all.some(one => fieldsOf(one)['name'] === name)) die(`sleep: refused: ${name} is already sleeping`)
+    if (all.some(one => named(one, name))) die(`sleep: refused: ${name} is already sleeping`)
     const record = { name, brief, dir, model, effort, slept: utc(ctx.now()), prs, checkouts, ...(session === '' ? {} : { session }) }
     writeWhole(sleepingPath(state), JSON.stringify([...all, record]))
   })
@@ -167,14 +173,14 @@ function nameOption(sub: string, args: readonly string[]): string {
     if (value === undefined) die(`${sub}: --name needs a value`)
     name = value
   }
-  if (name === '') die(`${sub}: usage: ${sub} --name "Orch : <subject>"`)
+  if (name === '') die(`${sub}: usage: ${sub} --name "Orch: <subject>"`)
   return name
 }
 
 /** The records without `name`, refused when it does not sleep. */
 function without(all: readonly unknown[], name: string, sub: string): unknown[] {
-  if (!all.some(one => fieldsOf(one)['name'] === name)) die(`${sub}: refused: ${name} is not sleeping (coordinator.sh sleeping lists who is)`)
-  return all.filter(one => fieldsOf(one)['name'] !== name)
+  if (!all.some(one => named(one, name))) die(`${sub}: refused: ${name} is not sleeping (coordinator.sh sleeping lists who is)`)
+  return all.filter(one => !named(one, name))
 }
 
 export function wakeDone(ctx: Context, args: readonly string[]): number {
@@ -198,7 +204,7 @@ export function drop(ctx: Context, args: readonly string[]): number {
   const { one, moved } = withCoordinatorLock(ctx, 'drop', () => {
     const all = readSleeping(state)
     const rest = without(all, name, 'drop')
-    const one = fieldsOf(all.find(each => fieldsOf(each)['name'] === name))
+    const one = fieldsOf(all.find(each => named(each, name)))
     const brief = shown(one['brief'])
     // The brief is moved, never deleted: a drop typed by a slip loses nothing.
     let moved: string | undefined

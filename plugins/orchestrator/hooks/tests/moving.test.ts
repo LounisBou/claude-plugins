@@ -47,19 +47,19 @@ test('the tools are refused from a subagent, and to a session named neither Orch
     expect(refused.result).toContain('main thread')
   }
   expect(fx.sent).toEqual([])
-  for (const name of ['Agent : x', null, 'Audit : x']) {
+  for (const name of ['Agent: x', null, 'Audit: x']) {
     const other = sender({ name })
     for (const tool of ['move_send', 'move_probe']) {
       const input = tool === 'move_send' ? sendInput(other) : { to: ADDRESS_B, sizes: [2048] }
       const answer = await h[`tool.call:${tool}`](other.dollar, input)
       expect(answer.isError).toBe(true)
-      expect(answer.result).toContain('Orch :')
+      expect(answer.result).toContain('Orch:')
     }
     expect(other.sent).toEqual([])
   }
-  for (const name of ['Orch : x', 'Coord : x']) {
+  for (const name of ['Orch: x', 'Coord: x']) {
     const other = sender({ name })
-    const sentOk = await h['tool.call:move_send'](other.dollar, sendInput(other, { name: 'Orch : belt' }))
+    const sentOk = await h['tool.call:move_send'](other.dollar, sendInput(other, { name: 'Orch: belt' }))
     expect(sentOk.isError).toBeUndefined()
     const probed = await h['tool.call:move_probe'](other.dollar, { to: ADDRESS_B, sizes: [2048] })
     expect(probed.isError).toBeUndefined()
@@ -115,7 +115,7 @@ test('the messages go to the peer in order: the manifest, every chunk, then « s
     messages.filter((m): m is Extract<MoveMessage, { kind: 'chunk' }> => m.kind === 'chunk' && m.file === file).map(m => m.data).join(''))
   expect(joined).toEqual([BRIEF_TEXT, NOTES_TEXT])
   expect(manifest.record).toEqual({
-    name: 'Orch : belt', brief: `${fx.briefs}/belt/${BRIEF_NAME}`, dir: `${HOME_A}/dev/app`, model: 'a-model', effort: 'high',
+    name: 'Orch: belt', brief: `${fx.briefs}/belt/${BRIEF_NAME}`, dir: `${HOME_A}/dev/app`, model: 'a-model', effort: 'high',
     prs: ['acme/app#7 feat/belt'], checkouts: [`${HOME_A}/dev/app`, `${HOME_A}/dev/lib`],
     git: { url: 'git@example.com:acme/app.git', branch: 'feat/belt' }, order: '2026-10-17T10:00Z: move belt to the other machine',
   })
@@ -193,7 +193,7 @@ test('a brief that is not among the files, an empty directory and a bad field ar
   const fx = sender()
   const cases: Record<string, unknown>[] = [
     { brief: `${fx.briefs}/belt/missing.md` }, { brief: `${fx.briefs}/empty/x.md` }, { brief: 'belt.md' },
-    { name: 'Agent : belt' }, { model: '' }, { effort: 'fast' }, { order: '' }, { prs: 'acme/app#7' }, { checkouts: ['relative'] },
+    { name: 'Agent: belt' }, { model: '' }, { effort: 'fast' }, { order: '' }, { prs: 'acme/app#7' }, { checkouts: ['relative'] },
     { chunk: 0 }, { chunk: 1.5 }, { to: '' },
   ]
   for (const over of cases) {
@@ -390,7 +390,7 @@ test('all files acknowledged: done ok carries the brief, and the receiver\'s mod
   const arrival = arrivalOf(manifest, TARGET_B) as any
   const done = b.messages().filter(m => m?.kind === 'done') as any[]
   expect(done[0]).toEqual({ kind: 'done', move: manifest.move, ok: true, brief: arrival.brief, reason: null })
-  expect(b.submits).toEqual([{ text: arrivedNotice(manifest, arrival, 'Orch : belt', LAUNCHER) }])
+  expect(b.submits).toEqual([{ text: arrivedNotice(manifest, arrival, 'Orch: belt', LAUNCHER) }])
   // The arrival the notice reports is the one written.
   expect(b.submits[0].text).toContain(arrival.brief)
 })
@@ -423,7 +423,7 @@ test('a marked message that is not the module\'s to act on is consumed and does 
   const { a, messages, manifest } = await sentMessages()
   const hb = mounted()
   const b = receiver()
-  const stranger = { name: 'Orch : intruder', address: 'bridge:session_03Stranger' }
+  const stranger = { name: 'Orch: intruder', address: 'bridge:session_03Stranger' }
   const chunk = messages.find(m => m.kind === 'chunk')!
   await receive(hb, b, textOf(manifest), a)
   const before = { writes: [...b.writes], sent: b.sent.length, submits: b.submits.length }
@@ -451,7 +451,7 @@ test('a marked message that is not the module\'s to act on is consumed and does 
 test('a session named neither Orch nor Coord consumes a marked message and does nothing with it', async () => {
   const { a, messages } = await sentMessages()
   const hb = mounted()
-  const b = receiver({ name: 'Agent : x' })
+  const b = receiver({ name: 'Agent: x' })
   for (const m of messages) {
     const r = await receive(hb, b, textOf(m), a)
     expect(typeof r.consumed).toBe('string')
@@ -469,11 +469,11 @@ test('an unmarked delivery, a person\'s prompt and a subagent\'s receive pass th
   const hb = mounted()
   const b = receiver()
   const a = sender()
-  expect(await receive(hb, b, 'hello there', a)).toEqual({ passed: envelope('hello there', 'Orch : belt', ADDRESS_A) })
+  expect(await receive(hb, b, 'hello there', a)).toEqual({ passed: envelope('hello there', 'Orch: belt', ADDRESS_A) })
   const marked = textOf({ kind: 'sent', move: 'belt-0123456789ab' })
   const typed = await hb['session.receive'](b.dollar, { origin: { kind: 'user' }, text: marked }, passOn)
   expect(typed).toEqual({ passed: marked })
-  const sub = await hb['session.receive'](b.dollar, { agentId: 'a-1', origin: { kind: 'peer' }, text: envelope(marked, 'Orch : belt', ADDRESS_A) }, passOn)
+  const sub = await hb['session.receive'](b.dollar, { agentId: 'a-1', origin: { kind: 'peer' }, text: envelope(marked, 'Orch: belt', ADDRESS_A) }, passOn)
   expect(sub.passed).toBeDefined()
   expect(b.sent).toEqual([])
 })
@@ -507,7 +507,7 @@ test('« sent » with a chunk missing is answered missing, naming exactly it; th
 test('past MOVE_MISSING_ROUNDS answers the sender gives up and its model reads the failure', async () => {
   const { a, ha, manifest } = await sentMessages(500)
   const missing = textOf({ kind: 'missing', move: manifest.move, chunks: [[1, 2]] })
-  const peer = { name: 'Orch : far', address: ADDRESS_B }
+  const peer = { name: 'Orch: far', address: ADDRESS_B }
   const before = a.sent.length
   for (let round = 1; round <= MOVE_MISSING_ROUNDS; round++) {
     await receive(ha, a, missing, peer)
@@ -528,7 +528,7 @@ test('past MOVE_MISSING_ROUNDS answers the sender gives up and its model reads t
 
 test('done ok gives the sender\'s model the acknowledgment once; done not ok, the failure', async () => {
   const { a, ha, manifest } = await sentMessages()
-  const peer = { name: 'Orch : far', address: ADDRESS_B }
+  const peer = { name: 'Orch: far', address: ADDRESS_B }
   const brief = `${HOME_B}/.claude/claude-orchestrator/briefs/belt/${BRIEF_NAME}`
   const ok = textOf({ kind: 'done', move: manifest.move, ok: true, brief, reason: null })
   await receive(ha, a, textOf({ kind: 'ack', move: manifest.move, file: 0, ok: true, reason: null }), peer)
@@ -543,8 +543,8 @@ test('done ok gives the sender\'s model the acknowledgment once; done not ok, th
 
 test('an answer from a session that is not the move\'s peer, or for a move not sent, does nothing', async () => {
   const { a, ha, manifest } = await sentMessages()
-  const stranger = { name: 'Orch : intruder', address: 'bridge:session_03Stranger' }
-  const peer = { name: 'Orch : far', address: ADDRESS_B }
+  const stranger = { name: 'Orch: intruder', address: 'bridge:session_03Stranger' }
+  const peer = { name: 'Orch: far', address: ADDRESS_B }
   const before = a.sent.length
   const texts = [
     textOf({ kind: 'done', move: manifest.move, ok: true, brief: `${HOME_B}/b.md`, reason: null }),
@@ -577,7 +577,7 @@ test('each probe answer is appended as one JSON line to the probes file, and onl
   expect(lines.map(l => [l.size, l.received, l.move])).toEqual([[2048, 2048, probes[0].move], [8192, 8192, probes[0].move]])
   expect(lines.every(l => typeof l.at === 'string' && l.from === ADDRESS_B)).toBe(true)
   // An answer from another session, or for a probe never sent, adds no line.
-  await receive(ha, a, textOf({ kind: 'probe-ack', move: probes[0].move, size: 2048, received: 2048 }), { name: 'Orch : intruder', address: 'bridge:session_03Stranger' })
+  await receive(ha, a, textOf({ kind: 'probe-ack', move: probes[0].move, size: 2048, received: 2048 }), { name: 'Orch: intruder', address: 'bridge:session_03Stranger' })
   await receive(ha, a, textOf({ kind: 'probe-ack', move: 'probe-ffffffffffff', size: 2048, received: 2048 }), b)
   expect((a.files.get(`${a.store}/moves/probes.jsonl`) ?? '').split('\n').filter(Boolean).length).toBe(2)
 })
@@ -592,7 +592,7 @@ test('a whole move between two machines: the files land, each side\'s model read
   const manifest = a.messages()[0] as Extract<MoveMessage, { kind: 'manifest' }>
   const arrival = arrivalOf(manifest, TARGET_B) as any
   expect(b.files.get(arrival.brief)).toBe(BRIEF_ARRIVED)
-  expect(b.submits).toEqual([{ text: arrivedNotice(manifest, arrival, 'Orch : belt', LAUNCHER) }])
+  expect(b.submits).toEqual([{ text: arrivedNotice(manifest, arrival, 'Orch: belt', LAUNCHER) }])
   expect(a.submits).toEqual([{ text: acknowledgedNotice(manifest.record, ADDRESS_B, arrival.brief, { removed: 2, kept: [] }, null) }])
   expect(a.logged.length + b.logged.length).toBe(0)
 })
@@ -602,17 +602,17 @@ test('a whole move between two machines: the files land, each side\'s model read
 const REFUSED_TODAY = 'this session was opened by the launcher; its successor closes its tab'
 
 // A session the launcher opened, with the module and the naming mounted over one fake.
-function launcherOpened(name = 'Orch : belt') {
+function launcherOpened(name = 'Orch: belt') {
   return { moving: mounted(), naming: mounted(registerNaming), fx: sender({ spawned: true, name }) }
 }
 
 async function moveAcknowledged(s: ReturnType<typeof launcherOpened>, over: { sentAs?: string; ok?: boolean } = {}) {
-  await s.moving['tool.call:move_send'](s.fx.dollar, sendInput(s.fx, { name: over.sentAs ?? 'Orch : belt' }))
+  await s.moving['tool.call:move_send'](s.fx.dollar, sendInput(s.fx, { name: over.sentAs ?? 'Orch: belt' }))
   const manifest = s.fx.messages()[0] as Extract<MoveMessage, { kind: 'manifest' }>
   const done = over.ok === false
     ? { kind: 'done', move: manifest.move, ok: false, brief: null, reason: 'refused' } as const
     : { kind: 'done', move: manifest.move, ok: true, brief: `${HOME_B}/.claude/claude-orchestrator/briefs/belt/${BRIEF_NAME}`, reason: null } as const
-  await receive(s.moving, s.fx, textOf(done), { name: 'Orch : far', address: ADDRESS_B })
+  await receive(s.moving, s.fx, textOf(done), { name: 'Orch: far', address: ADDRESS_B })
 }
 
 test('a session the launcher opened is offered the end tool, not the rename tool', async () => {
@@ -637,15 +637,15 @@ test('it ends after the done ok of a move under its own name, and only then', as
   await ok.naming['turn.complete'](ok.fx.dollar, { isAborted: false }, (x: unknown) => x)
   expect(ok.fx.commands).toEqual([{ command: 'exit' }])
   // The move of another name does not count; nor does a done not ok.
-  const other = launcherOpened('Orch : other')
-  await moveAcknowledged(other, { sentAs: 'Orch : belt' })
+  const other = launcherOpened('Orch: other')
+  await moveAcknowledged(other, { sentAs: 'Orch: belt' })
   expect(await end(other)).toEqual({ result: REFUSED_TODAY, isError: true })
   const failed = launcherOpened()
   await moveAcknowledged(failed, { ok: false })
   expect(await end(failed)).toEqual({ result: REFUSED_TODAY, isError: true })
   // A subagent is still refused, and the rename stays refused to a launcher-opened session.
   expect((await ok.naming[`tool.call:${END_TOOL}`](ok.fx.dollar, { agentId: 'a-1' })).isError).toBe(true)
-  expect((await ok.naming['tool.call:rename_session'](ok.fx.dollar, { name: 'Orch : x' })).isError).toBe(true)
+  expect((await ok.naming['tool.call:rename_session'](ok.fx.dollar, { name: 'Orch: x' })).isError).toBe(true)
 })
 
 // --- the name of the session --------------------------------------------------------------
@@ -660,7 +660,7 @@ test('a name that could not be read is not remembered: the message is dropped un
   expect(b.writes).toEqual([])
   expect(b.logged.length).toBeGreaterThan(0)
   // The walk reads the name now: the same chain, within the memo's lifetime, judges it.
-  b.rename('Orch : far')
+  b.rename('Orch: far')
   await deliverAll(hb, b, a, messages)
   expect(b.messages().some(m => m?.kind === 'done' && m.ok)).toBe(true)
   expect(b.submits.length).toBe(1)
@@ -670,10 +670,10 @@ test('the end is allowed on the name read afresh when the done arrives, not on t
   const s = launcherOpened()
   await s.moving['tool.call:move_send'](s.fx.dollar, sendInput(s.fx))
   const manifest = s.fx.messages()[0] as Extract<MoveMessage, { kind: 'manifest' }>
-  const peer = { name: 'Orch : far', address: ADDRESS_B }
-  // An answer first: the name is read and remembered as « Orch : belt ».
+  const peer = { name: 'Orch: far', address: ADDRESS_B }
+  // An answer first: the name is read and remembered as « Orch: belt ».
   await receive(s.moving, s.fx, textOf({ kind: 'ack', move: manifest.move, file: 0, ok: true, reason: null }), peer)
-  s.fx.rename('Orch : other')
+  s.fx.rename('Orch: other')
   const done = { kind: 'done', move: manifest.move, ok: true, brief: `${HOME_B}/.claude/claude-orchestrator/briefs/belt/${BRIEF_NAME}`, reason: null } as const
   await receive(s.moving, s.fx, textOf(done), peer)
   expect(s.fx.submits.length).toBe(1)
@@ -687,7 +687,7 @@ const doneOf = (b: Machine) => b.messages().filter((m): m is Extract<MoveMessage
 test('a session named another role answers the manifest and the « sent » done not ok, and drops a chunk', async () => {
   const { a, messages, manifest } = await sentMessages()
   const hb = mounted()
-  const b = receiver({ name: 'Agent : x' })
+  const b = receiver({ name: 'Agent: x' })
   await deliverAll(hb, b, a, messages)
   const answers = doneOf(b)
   expect(answers.map(m => [m.ok, m.brief, m.move])).toEqual([[false, null, manifest.move], [false, null, manifest.move]])
@@ -702,7 +702,7 @@ test('the sender learns why a session named another role refused the move', asyn
   const a = sender()
   await ha['tool.call:move_send'](a.dollar, sendInput(a))
   const hb = mounted()
-  const b = receiver({ name: 'Agent : x' })
+  const b = receiver({ name: 'Agent: x' })
   await settle(a, ha, b, hb)
   expect(a.submits.length).toBe(1)
   expect(a.submits[0].text).toContain('neither an orchestrator nor a coordinator')
@@ -734,7 +734,7 @@ test('a manifest of a move held for another sender is answered done not ok, and 
   const hb = mounted()
   const b = receiver()
   await receive(hb, b, textOf(manifest), a)
-  const stranger = { name: 'Orch : intruder', address: 'bridge:session_03Stranger' }
+  const stranger = { name: 'Orch: intruder', address: 'bridge:session_03Stranger' }
   const writes = [...b.writes]
   await receive(hb, b, textOf(manifest), stranger)
   const answered = b.sent.filter(m => m.to === stranger.address).map(m => parseMoveMessage(m.text))
@@ -765,10 +765,10 @@ test('a « sent » for a move not held is answered done not ok; a chunk of one s
 test('a reply matched by name is accepted while the move holds no address; the first one pins its address', async () => {
   const ha = mounted()
   const a = sender()
-  await ha['tool.call:move_send'](a.dollar, sendInput(a, { to: 'Orch : far' }))
+  await ha['tool.call:move_send'](a.dollar, sendInput(a, { to: 'Orch: far' }))
   const manifest = a.messages()[0] as Extract<MoveMessage, { kind: 'manifest' }>
-  const real = { name: 'Orch : far', address: ADDRESS_B }
-  const twin = { name: 'Orch : far', address: 'bridge:session_04Twin' }
+  const real = { name: 'Orch: far', address: ADDRESS_B }
+  const twin = { name: 'Orch: far', address: 'bridge:session_04Twin' }
   const done = textOf({ kind: 'done', move: manifest.move, ok: true, brief: `${HOME_B}/b.md`, reason: null })
   await receive(ha, a, textOf({ kind: 'ack', move: manifest.move, file: 0, ok: true, reason: null }), real)
   expect(JSON.parse(a.files.get(`${a.store}/moves/${manifest.move}.json`)!).peer).toBe(ADDRESS_B)
@@ -786,12 +786,12 @@ test('a reply matched by name is accepted while the move holds no address; the f
 test('a missing answered from another address than the pinned one resends nothing', async () => {
   const ha = mounted()
   const a = sender()
-  await ha['tool.call:move_send'](a.dollar, sendInput(a, { to: 'Orch : far' }))
+  await ha['tool.call:move_send'](a.dollar, sendInput(a, { to: 'Orch: far' }))
   const manifest = a.messages()[0] as Extract<MoveMessage, { kind: 'manifest' }>
   const missing = textOf({ kind: 'missing', move: manifest.move, chunks: [[0, 0]] })
-  await receive(ha, a, missing, { name: 'Orch : far', address: ADDRESS_B })
+  await receive(ha, a, missing, { name: 'Orch: far', address: ADDRESS_B })
   const before = a.sent.length
-  await receive(ha, a, missing, { name: 'Orch : far', address: 'bridge:session_04Twin' })
+  await receive(ha, a, missing, { name: 'Orch: far', address: 'bridge:session_04Twin' })
   expect(a.sent.length).toBe(before)
   expect(JSON.parse(a.files.get(`${a.store}/moves/${manifest.move}.json`)!).rounds).toBe(1)
 })
@@ -799,14 +799,14 @@ test('a missing answered from another address than the pinned one resends nothin
 test('the answers of a probe are pinned to the address of the first, too', async () => {
   const ha = mounted()
   const a = sender()
-  await ha['tool.call:move_probe'](a.dollar, { to: 'Orch : far', sizes: [2048, 8192] })
+  await ha['tool.call:move_probe'](a.dollar, { to: 'Orch: far', sizes: [2048, 8192] })
   const move = (a.messages()[0] as Extract<MoveMessage, { kind: 'probe' }>).move
   const ack = (size: number) => textOf({ kind: 'probe-ack', move, size, received: size })
-  await receive(ha, a, ack(2048), { name: 'Orch : far', address: ADDRESS_B })
-  await receive(ha, a, ack(8192), { name: 'Orch : far', address: 'bridge:session_04Twin' })
+  await receive(ha, a, ack(2048), { name: 'Orch: far', address: ADDRESS_B })
+  await receive(ha, a, ack(8192), { name: 'Orch: far', address: 'bridge:session_04Twin' })
   const lines = () => (a.files.get(`${a.store}/moves/probes.jsonl`) ?? '').split('\n').filter(Boolean).map(l => JSON.parse(l))
   expect(lines().map(l => [l.size, l.from])).toEqual([[2048, ADDRESS_B]])
-  await receive(ha, a, ack(8192), { name: 'Orch : far', address: ADDRESS_B })
+  await receive(ha, a, ack(8192), { name: 'Orch: far', address: ADDRESS_B })
   expect(lines().map(l => l.size)).toEqual([2048, 8192])
 })
 
@@ -817,9 +817,9 @@ test('the receive fallback consumes a move-marked delivery only; anything else g
   const b = receiver()
   const fallback = hb['catch:session.receive']
   const failing = Object.assign(async (e: any) => ({ passed: e.text }), { error: { kind: 'failure', message: 'the hook did not finish' } })
-  const plain = envelope('a note from a peer', 'Orch : belt', ADDRESS_A)
+  const plain = envelope('a note from a peer', 'Orch: belt', ADDRESS_A)
   expect(await fallback(b.dollar, { origin: { kind: 'peer' }, text: plain }, failing)).toEqual({ passed: plain })
-  const marked = envelope(textOf({ kind: 'sent', move: 'belt-0123456789ab' }), 'Orch : belt', ADDRESS_A)
+  const marked = envelope(textOf({ kind: 'sent', move: 'belt-0123456789ab' }), 'Orch: belt', ADDRESS_A)
   const consumed = await fallback(b.dollar, { origin: { kind: 'peer' }, text: marked }, failing)
   expect(typeof consumed.consumed).toBe('string')
   expect(consumed.passed).toBeUndefined()
@@ -835,7 +835,7 @@ const RESUME = 'call move_send again with the same arguments to resume it'
 test('a resend after « missing » that stops ends the move: one notice with the cause and how to resume', async () => {
   for (const fault of ['throws', 'undelivered'] as const) {
     const { a, ha, manifest } = await sentMessages(500)
-    const peer = { name: 'Orch : far', address: ADDRESS_B }
+    const peer = { name: 'Orch: far', address: ADDRESS_B }
     const missing = textOf({ kind: 'missing', move: manifest.move, chunks: [[1, 2]] })
     if (fault === 'throws') a.faults.sendThrowsAfter = a.sent.length
     else a.faults.unreachable.push(ADDRESS_B)
@@ -868,7 +868,7 @@ test('a send that throws midway through move_send answers the same text as an un
 })
 
 test('a store write that fails when the move is answered is logged, and the notice is still submitted', async () => {
-  const peer = { name: 'Orch : far', address: ADDRESS_B }
+  const peer = { name: 'Orch: far', address: ADDRESS_B }
   const ok = launcherOpened()
   await ok.moving['tool.call:move_send'](ok.fx.dollar, sendInput(ok.fx))
   const manifest = ok.fx.messages()[0] as Extract<MoveMessage, { kind: 'manifest' }>
@@ -966,7 +966,7 @@ test('the module reloads in the middle of a move: the held move is read back, th
   const arrival = arrivalOf(manifest, TARGET_B) as any
   expect(b.files.get(arrival.brief)).toBe(BRIEF_ARRIVED)
   expect(b.files.get(`${arrival.briefDir}/notes.txt`)).toBe(NOTES_TEXT)
-  expect(b.submits).toEqual([{ text: arrivedNotice(manifest, arrival, 'Orch : belt', LAUNCHER) }])
+  expect(b.submits).toEqual([{ text: arrivedNotice(manifest, arrival, 'Orch: belt', LAUNCHER) }])
   expect(doneOf(b).length).toBeGreaterThan(0)
   expect(doneOf(b).every(m => m.ok)).toBe(true)
   expect(b.logged).toEqual([])

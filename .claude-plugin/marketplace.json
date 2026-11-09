@@ -13,7 +13,7 @@
       "name": "bugs-bot",
       "source": "./plugins/bugs-bot",
       "description": "A Telegram or Slack bug-report relay for Claude Code: one bot, one group or channel and one agent per project.",
-      "version": "0.4.4",
+      "version": "0.4.5",
       "author": {
         "name": "Lounis Bou"
       }
@@ -31,7 +31,7 @@
       "name": "github",
       "source": "./plugins/github",
       "description": "GitHub API from a native Claude Code tool: pull requests, review threads, comments, reviews, labels, issues, search and image attachments, facading a Python stdlib engine.",
-      "version": "0.18.2",
+      "version": "0.18.3",
       "author": {
         "name": "Lounis Bou"
       }
@@ -40,7 +40,7 @@
       "name": "implement",
       "source": "./plugins/implement",
       "description": "The feature lifecycle as five commands: brainstorm and plan a feature, run its phases, check a delivery, close the branch, prepare the next one.",
-      "version": "0.6.6",
+      "version": "0.6.7",
       "author": {
         "name": "Lounis Bou"
       }
@@ -58,7 +58,7 @@
       "name": "norms",
       "source": "./plugins/norms",
       "description": "Evidence-based code norms: eight review agents, a parallel conformity check, and a learner that turns resolved PR review threads into project rules.",
-      "version": "0.5.8",
+      "version": "0.5.9",
       "author": {
         "name": "Lounis Bou"
       }
@@ -67,7 +67,7 @@
       "name": "orchestrator",
       "source": "./plugins/orchestrator",
       "description": "Orchestrate implementer sessions from one supervising session: briefs, evidence-based reviews, agent rotation, succession, terminal tab tooling and a context gauge any session can read.",
-      "version": "0.99.10",
+      "version": "0.100.0",
       "author": {
         "name": "Lounis Bou"
       }
@@ -76,7 +76,7 @@
       "name": "pr-review",
       "source": "./plugins/pr-review",
       "description": "Interactive PR review workflow: a pending-review walkthrough item by item, GitHub comment processing, and an autonomous review-fix loop.",
-      "version": "0.9.7",
+      "version": "0.9.8",
       "author": {
         "name": "Lounis Bou"
       }
@@ -85,7 +85,7 @@
       "name": "statusbar",
       "source": "./plugins/statusbar",
       "description": "Two-line status bar: directory, git, PR, model, session, context and 5h/7d quotas. No network, no credentials.",
-      "version": "2.2.1",
+      "version": "2.2.2",
       "author": {
         "name": "Lounis Bou"
       }

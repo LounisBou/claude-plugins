@@ -304,7 +304,7 @@ def test_init_slack_takes_the_one_channel_the_bot_is_in_and_is_idempotent(bugs_h
     api = FakeSlack()
     api.answers["users.conversations"] = channels((CHANNEL, "demo-bugs"))
 
-    assert init(env, api, git_repo, "--channel", "slack", "--project", "demo", "--agent-title", "Agent : Demo") == 0
+    assert init(env, api, git_repo, "--channel", "slack", "--project", "demo", "--agent-title", "Agent: Demo") == 0
     first = (git_repo / ".bugs-bot.json").read_text()
     assert init(env, api, git_repo, "--language", "en") == 0  # a re-run keeps the channel and the group
 

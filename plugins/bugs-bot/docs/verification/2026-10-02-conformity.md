@@ -208,7 +208,7 @@ script against `sys.stdlib_module_names` finds no other import.
 
 A copy of the legacy home in a temporary tree (it holds no `.env`); a fake `.env` written there
 (`TELEGRAM_BOT_TOKEN=123456:fake-token-for-rehearsal`); a throwaway git repository; the project
-registered with `bin/bugs-bot init --project torrentmate --agent-title "Agent : TorrentMate Bugs"
+registered with `bin/bugs-bot init --project torrentmate --agent-title "Agent: TorrentMate Bugs"
 --chat-id <the legacy chat id> --title "TM Bugs" --gate-tokens 200000 --repo <tmp>/repo` under a
 temporary `BUGS_BOT_HOME`; then `docs/migration/tm_bugs_to_bugs_bot.py --copy` into that home.
 

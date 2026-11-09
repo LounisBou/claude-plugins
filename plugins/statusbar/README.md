@@ -82,7 +82,7 @@ never run: a line with an unknown key or another value is ignored and the key ke
 | `SHOW_MODEL` | 1 | model name |
 | `SHOW_SESSION_NAME` | 1 | session name set with `/rename` |
 | `SHOW_CONTEXT` | 1 | context consumed, turns red at ≥ 80% |
-| `SHOW_CONTEXT_TOKENS` | 1 | tokens next to the context percentage (`296k`, or `296k/300k` against the gate in an orchestration session: one named `Orch :`, `Agent :`, `Audit :` or `Coord :`) |
+| `SHOW_CONTEXT_TOKENS` | 1 | tokens next to the context percentage (`296k`, or `296k/300k` against the gate in an orchestration session: one named `Orch:`, `Agent:`, `Audit:` or `Coord:`) |
 | `SHOW_USAGE` | 1 | 5-hour quota |
 | `SHOW_SEVEN_DAY` | 1 | 7-day quota |
 | `SHOW_PROGRESS_BAR` | 1 | ten-block bar |

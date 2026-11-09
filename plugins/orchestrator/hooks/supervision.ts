@@ -174,7 +174,7 @@ export const SUPERVISION_COMMANDS = [
 // session's main thread; a subagent is refused it, as it is the rename.
 export const SUPERVISION_TOOL = 'supervision'
 export const PANE_MAIN_THREAD_ONLY = "only the session's main thread opens or closes the supervision pane"
-const PANE_ROLES_ONLY = 'The supervision pane opens in a coordinator session (« Coord : … ») or an orchestrator session (« Orch : … ») alone.'
+const PANE_ROLES_ONLY = 'The supervision pane opens in a coordinator session (« Coord: … ») or an orchestrator session (« Orch: … ») alone.'
 
 // The sort's one law: a row past the rotation gate outranks every row below
 // it, however full each side is; within a side, the fill descends. The floor
@@ -708,7 +708,7 @@ export function paneRows(rows: Record<string, SessionRow>): PaneRow[] {
 }
 
 // The round's first open question as a coordinator's pane draws it, above the orchestrator
-// rows: a header naming its sender and the sender's own numbering (« Orch : x — Question 5 of
+// rows: a header naming its sender and the sender's own numbering (« Orch: x — Question 5 of
 // 6 »; the name alone when the sender gave none: the pane adds no numbering of its own, the
 // section's title counts the questions), then one line per lettered choice, the recommended one
 // marked and drawn bold. A question without lettered choices is its header alone: the pane draws
@@ -1741,7 +1741,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
     const { tty, name, pid } = await walkWithinBound($, await $.session.id())
     const role = roleOf(name)
     if (role !== 'coordinator' && role !== 'orchestrator') {
-      return { text: 'The supervision pane opens in a coordinator session (« Coord : … »), listing the orchestrators, or in an orchestrator session (« Orch : … »), listing its agents; /orchestrator-status lists the sessions here.' }
+      return { text: 'The supervision pane opens in a coordinator session (« Coord: … »), listing the orchestrators, or in an orchestrator session (« Orch: … »), listing its agents; /orchestrator-status lists the sessions here.' }
     }
     // A toggle: the same command closes the pane it opened (Escape does not —
     // the pane holds no focus), beside the pane's own ✕. Either way the pane is his
@@ -3049,7 +3049,7 @@ export async function coordinatorAddress($: any): Promise<{ to: CoordinatorTo; n
   return learnt ? { to: learnt.from ?? learnt.name, name: learnt.name, local: false } : null
 }
 
-// A name that carries its session's reference, « Coord : ops [abc] »: no other session has it.
+// A name that carries its session's reference, « Coord: ops [abc] »: no other session has it.
 export const REFERENCED = / \[[^\]\s]+\]$/
 
 // The session id of the one session on this machine that the host's registry (its sessions

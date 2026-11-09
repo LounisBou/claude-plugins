@@ -18,7 +18,7 @@
 #     An agent given no placement flag is placed as --right-of self: after the caller's last
 #     agent while that tab is still contiguous with the caller's group, otherwise directly
 #     right of the caller, never at the window's end.
-#     A title "Orch : ..." is refused without --successor, --open or --wake, and from an
+#     A title "Orch: ..." is refused without --successor, --open or --wake, and from an
 #     auditor at all: its only successor is its own audit session.
 #     A successor, at its spawn and at `takeover`, takes the predecessor's whole chain and the
 #     predecessor's chain file is removed; a chain file whose every agent has ended is pruned
@@ -31,24 +31,24 @@
 #     --gate-tokens sets THIS session's context gate, in tokens: the launch exports
 #     ORCHESTRATOR_CONTEXT_GATE_TOKENS beside ORCHESTRATOR_SPAWNED. Absent, nothing is
 #     exported and the default holds. With --brief, the startup prompt also says the gate.
-#   iterm-agent.sh spawn --dir <path> --auditor --title "Audit : <subject>" (--prompt <text> | --prompt-file <path>)
+#   iterm-agent.sh spawn --dir <path> --auditor --title "Audit: <subject>" (--prompt <text> | --prompt-file <path>)
 #     the caller's auditor: left of the caller, its model and effort, remote control on, no chain
-#   iterm-agent.sh spawn --dir <path> --coordinator-successor --title "Coord : <subject>" (--prompt <text> | --prompt-file <path>)
+#   iterm-agent.sh spawn --dir <path> --coordinator-successor --title "Coord: <subject>" (--prompt <text> | --prompt-file <path>)
 #     the coordinator's own successor: first place of the caller's window, its model and effort,
 #     remote control on, no chain
-#   iterm-agent.sh spawn --dir <path> --wake --title "Orch : <subject>" [--model <id> --effort <level>] [--resume <session id>] (--prompt <text> | --prompt-file <path>)
+#   iterm-agent.sh spawn --dir <path> --wake --title "Orch: <subject>" [--model <id> --effort <level>] [--resume <session id>] (--prompt <text> | --prompt-file <path>)
 #     a paused orchestrator relaunched: its recorded name; the pair its resumed transcript
 #     holds, else its recorded model and effort, else the host's default; remote control on,
 #     no chain, in window 0 of a home session of its own shown by a tab immediately right of
 #     the caller; --resume brings back its recorded conversation
 #     (--open makes its home session the same way, the server named after the id it is given)
-#   iterm-agent.sh spawn --open --title "Orch : <subject>" --dir <path> [--model <id> --effort <level>] (--prompt <text> | --prompt-file <path>)
+#   iterm-agent.sh spawn --open --title "Orch: <subject>" --dir <path> [--model <id> --effort <level>] (--prompt <text> | --prompt-file <path>)
 #     a new orchestrator opened on the operator's order, by a coordinator or an orchestrator
 #     only: immediately right of the caller, the pair the order names or the host's default
 #     (a model alone, a tier and --inherit-model are refused), remote control on,
 #     no chain. `--open` comes right after `spawn`: that is the form the rule every
 #     `install.sh` run writes names
-#   iterm-agent.sh home --session <id> --name "Orch : <subject>" [--prompt <text>]
+#   iterm-agent.sh home --session <id> --name "Orch: <subject>" [--prompt <text>]
 #     run by the hooks module at the end of an orchestrator's naming turn: a home server of
 #     its own (-L orch-<id>, -f the plugin's tmux/home.conf) whose window 0 resumes the same
 #     session once it has ended in its tab, and a tab right of that one showing it. Prints
@@ -56,7 +56,7 @@
 #   iterm-agent.sh home-release --tty /dev/ttysNNN --session-id <app session id> --pane-tty /dev/ttysNNN --resumed <session id>
 #     window 0's watcher closing the tab a moved orchestrator left, once the resumed host is
 #     proved running on window 0's tty, guarded by that tab's own id
-#   iterm-agent.sh bench-open --bench <dir> --dir <dir inside the bench> --title "Orch : <subject>"
+#   iterm-agent.sh bench-open --bench <dir> --dir <dir inside the bench> --title "Orch: <subject>"
 #                             --plugin-dir <abs dir> [--plugin-dir ...] [--settings <file>]
 #                             (--prompt <text> | --prompt-file <path>) [--model <id>] [--effort <level>]
 #                             [--permission-mode <mode>] [--mcp <names>] [--trust] [--no-verify]

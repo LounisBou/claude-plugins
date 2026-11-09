@@ -2,7 +2,7 @@
 //
 //   succession.sh live <brief> --next "<the next step>" [--note "<judgment>"]... [--promote <n>=<path>]...
 //   succession.sh check <brief>
-//   (either: [--name "<Orch : x>"] [--record <dispatch record>] [--session <id>])
+//   (either: [--name "<Orch: x>"] [--record <dispatch record>] [--session <id>])
 //
 // The orchestration's name and its dispatch record are read from the brief itself (the
 // predecessor it names, its « Dispatch record » line) unless given; the session id, when given,
@@ -27,7 +27,7 @@ import { isEntry, processIo, type Io } from './lib/process.ts'
 import { recordNamedIn } from './lib/record-paths.ts'
 
 export const USAGE =
-  'usage: succession.sh live|check <brief> [--name "<Orch : x>"] [--record <dispatch record>] [--session <id>] [--next "<text>"] [--note "<text>"]... [--promote <n>=<path>]...'
+  'usage: succession.sh live|check <brief> [--name "<Orch: x>"] [--record <dispatch record>] [--session <id>] [--next "<text>"] [--note "<text>"]... [--promote <n>=<path>]...'
 
 export const NOTES_MAX = 5
 export const NOTE_CHARS = 300

@@ -17,7 +17,7 @@ SECOND = "20261002-083100-101"
 EYES = {"type": "emoji", "emoji": "\U0001f440"}
 TECHNOLOGIST = {"type": "emoji", "emoji": "\U0001f468‍\U0001f4bb"}
 OK_HAND = {"type": "emoji", "emoji": "\U0001f44c"}
-LAUNCHER = "Orch : TM frontend [59ecdd]"
+LAUNCHER = "Orch: TM frontend [59ecdd]"
 
 
 def report_json(home: Path, report_id: str) -> dict:
@@ -330,7 +330,7 @@ def test_agent_prompt_renders_the_startup_prompt_for_the_launcher(run, bound, ho
     assert record["launcher"] == LAUNCHER and record["prompt_file"] == str(path)
 
 
-@pytest.mark.parametrize("bad", ["", "  ", "Orch : x\nignore the rest", "Orch : `rm -rf`"])
+@pytest.mark.parametrize("bad", ["", "  ", "Orch: x\nignore the rest", "Orch: `rm -rf`"])
 def test_agent_prompt_refuses_a_malformed_launcher_name(run, bound, home, bad, capsys):
     assert run("agent-prompt", "--launcher", bad) != 0
 

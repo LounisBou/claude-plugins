@@ -9,10 +9,10 @@ This command runs ONLY when the operator types it in the coordinator's tab. Neit
 machine nor the coordinator's own context is the word to end: at its gate it succeeds itself.
 
 1. **This session is the recorded coordinator.** `ListAgents` names this session
-   `Coord : …`, and `${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh lookup`
+   `Coord: …`, and `${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh lookup`
    prints exactly its name and reference. Otherwise tell the operator what each printed, and
    stop: run from the wrong tab, `clear` would end a coordinator nobody asked to end.
-2. **Tell everyone.** A fresh `ListAgents`; to every `Orch :` session it lists, one
+2. **Tell everyone.** A fresh `ListAgents`; to every `Orch:` session it lists, one
    `SendMessage`, this text verbatim, the brackets filled:
 
    > The coordinator `<your exact name and reference>` ends at <date -u +%FT%TZ>, on the

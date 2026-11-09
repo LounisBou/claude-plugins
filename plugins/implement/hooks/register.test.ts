@@ -357,7 +357,7 @@ test('on macOS with the orchestrator, the reviewer opens in iTerm through its la
   const runs = machine(on, { system: 'Darwin', record: RECORD, launcher: true })
   const out: any = await review($)
   const spawn = runs.find(argv => argv[0] === LAUNCHER) ?? []
-  expect(spawn.slice(0, 6)).toEqual([LAUNCHER, 'spawn', '--dir', '/work', '--title', 'Agent : review demo'])
+  expect(spawn.slice(0, 6)).toEqual([LAUNCHER, 'spawn', '--dir', '/work', '--title', 'Agent: review demo'])
   expect(spawn[7]).toContain('"review_only": true')
   expect(String(out.text)).toContain('launched in iTerm on /dev/ttys004')
 })

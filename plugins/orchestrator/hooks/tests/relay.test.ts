@@ -72,17 +72,17 @@ test('the fingerprint is the wait and its line, never the progress written above
 
 test('the report: a header naming the session and its wait, then the question, cut past the cap and said', () => {
   const wait = parseWait(answerOf(QUESTION, 'waiting: operator — blocks: phase 3'))!
-  expect(relayText('Orch : belt', wait, '2026-10-14T10:00:00.000Z')).toBe(
-    `[module] Orch : belt waits for the operator since 2026-10-14T10:00:00.000Z — blocks: phase 3\nreply with SendMessage to: Orch : belt\n\n${QUESTION}`)
+  expect(relayText('Orch: belt', wait, '2026-10-14T10:00:00.000Z')).toBe(
+    `[module] Orch: belt waits for the operator since 2026-10-14T10:00:00.000Z — blocks: phase 3\nreply with SendMessage to: Orch: belt\n\n${QUESTION}`)
   const long = parseWait(answerOf('x'.repeat(RELAY_CAP + 10), 'waiting: operator — blocks: phase 3'))!
-  const text = relayText('Orch : belt', long, 'T')
+  const text = relayText('Orch: belt', long, 'T')
   expect(text).toContain(`[cut at ${RELAY_CAP} of ${RELAY_CAP + 10} characters]`)
   expect(text.length).toBeLessThan(RELAY_CAP + 200)
-  expect(relayText('Orch : belt', { kind: 'done', question: 'x' }, 'T')).toBe('[module] Orch : belt reports its work done and proposes to be closed\nreply with SendMessage to: Orch : belt')
+  expect(relayText('Orch: belt', { kind: 'done', question: 'x' }, 'T')).toBe('[module] Orch: belt reports its work done and proposes to be closed\nreply with SendMessage to: Orch: belt')
 })
 
 test('the coordinator is read from its record, and no record names nobody', () => {
-  expect(coordinatorOf('{"name":"Coord : ops [abc]","tty":"/dev/ttys1"}')).toBe('Coord : ops [abc]')
+  expect(coordinatorOf('{"name":"Coord: ops [abc]","tty":"/dev/ttys1"}')).toBe('Coord: ops [abc]')
   expect(coordinatorOf('')).toBeNull()
   expect(coordinatorOf('{"tty":"/dev/ttys1"}')).toBeNull()
 })
@@ -91,7 +91,7 @@ test('the pane and status label carry the wait', () => {
   const since = '2026-10-14T10:07:00.000Z'
   const at = new Date(since)
   const hhmm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
-  const row = { role: 'orchestrator', name: 'Orch : belt', repo: null, context_percent: 20, context_tokens: 1, window: 100, model: 'a-model',
+  const row = { role: 'orchestrator', name: 'Orch: belt', repo: null, context_percent: 20, context_tokens: 1, window: 100, model: 'a-model',
     busy: false, updated_at: new Date().toISOString(), waiting: 'operator', blocks: 'phase 3', waiting_since: since } as SessionRow
   expect(waitLabel(row)).toBe(`waiting for the operator since ${hhmm} — blocks: phase 3`)
   expect(paneRows({ a: row })[0].label).toContain(`waiting for the operator since ${hhmm} — blocks: phase 3`)
@@ -103,7 +103,7 @@ test('the wait is split at its source: the status words and what it blocks, join
   const since = '2026-10-14T10:07:00.000Z'
   const at = new Date(since)
   const hhmm = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
-  const row = { role: 'orchestrator', name: 'Orch : belt', repo: null, context_percent: 20, context_tokens: 1, window: 100, model: 'a-model',
+  const row = { role: 'orchestrator', name: 'Orch: belt', repo: null, context_percent: 20, context_tokens: 1, window: 100, model: 'a-model',
     busy: false, updated_at: new Date().toISOString(), waiting: 'operator', blocks: 'phase 3', waiting_since: since } as SessionRow
   expect(waitParts(row)).toEqual({ status: `waiting for the operator since ${hhmm}`, blocks: 'phase 3' })
   expect(waitParts({ ...row, blocks: null })).toEqual({ status: `waiting for the operator since ${hhmm}`, blocks: 'unsaid' })
@@ -126,9 +126,9 @@ test('a held question is the operator wait whose own fingerprint was relayed', (
 })
 
 test('the withdrawal names the sender, the question and where it was answered', () => {
-  expect(withdrawalText('Orch : belt', 'phase 3', '2026-10-14T10:00:00.000Z')).toBe(
-    "[module] Orch : belt withdraws its question for the operator since 2026-10-14T10:00:00.000Z — blocks: phase 3\nthe operator answered it in Orch : belt's own tab: nothing to send back")
-  expect(withdrawalText('Orch : belt', 'phase 3', null)).toContain('since ? — blocks: phase 3')
+  expect(withdrawalText('Orch: belt', 'phase 3', '2026-10-14T10:00:00.000Z')).toBe(
+    "[module] Orch: belt withdraws its question for the operator since 2026-10-14T10:00:00.000Z — blocks: phase 3\nthe operator answered it in Orch: belt's own tab: nothing to send back")
+  expect(withdrawalText('Orch: belt', 'phase 3', null)).toContain('since ? — blocks: phase 3')
 })
 
 // --- the wiring over a faked $ ------------------------------------------------------------
@@ -143,11 +143,11 @@ function fake(over: { name?: string; role?: SessionRow['role']; coordinator?: st
   const later: { ms: number; fn: () => unknown; cancelled: boolean }[] = []
   const invalidated: string[] = []
   files.set(ROW, JSON.stringify({
-    role: over.role === undefined ? 'orchestrator' : over.role, name: over.name ?? 'Orch : belt', pid: '501', repo: null,
+    role: over.role === undefined ? 'orchestrator' : over.role, name: over.name ?? 'Orch: belt', pid: '501', repo: null,
     context_percent: 20, context_tokens: 1, window: 100, model: 'a-model', busy: false, updated_at: '2026-10-14T09:00:00.000Z',
   }) + '\n')
-  if (over.coordinator !== null && over.remote) files.set(LEARNT, JSON.stringify({ name: over.coordinator ?? 'Coord : ops [abc]', from: null, at: 'T' }) + '\n')
-  else if (over.coordinator !== null) files.set(RECORD, JSON.stringify({ name: over.coordinator ?? 'Coord : ops [abc]', tty: '/dev/ttys9' }))
+  if (over.coordinator !== null && over.remote) files.set(LEARNT, JSON.stringify({ name: over.coordinator ?? 'Coord: ops [abc]', from: null, at: 'T' }) + '\n')
+  else if (over.coordinator !== null) files.set(RECORD, JSON.stringify({ name: over.coordinator ?? 'Coord: ops [abc]', tty: '/dev/ttys9' }))
   const dollar = {
     session: {
       id: async () => 's-one',
@@ -251,7 +251,7 @@ test('an operator wait lands in the row and is entered once in the round of the 
   const [entry] = entries(fx)
   expect(entries(fx).length).toBe(1)
   const wait = parseWait(answerOf(QUESTION, 'waiting: operator — blocks: phase 3'))!
-  expect(entry).toEqual(roundEntry('s-one', 'Orch : belt', wait, row.waiting_since!, entry.at))
+  expect(entry).toEqual(roundEntry('s-one', 'Orch: belt', wait, row.waiting_since!, entry.at))
   expect(fx.files.has(`${ROUND}/${entry.id}.json`)).toBe(true)
   expect(Number.isFinite(Date.parse(entry.at))).toBe(true)
   expect(row.relayed).toBe(fingerprint(wait))
@@ -318,7 +318,7 @@ test('done is one closing proposal', async () => {
   const fx = fake()
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Everything merged.', 'waiting: done')))
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('Everything merged.', 'waiting: done')))
-  expect(entries(fx).map(e => [e.kind, e.from, e.blocks, e.question, e.status])).toEqual([['done', 'Orch : belt', null, 'Everything merged.', 'open']])
+  expect(entries(fx).map(e => [e.kind, e.from, e.blocks, e.question, e.status])).toEqual([['done', 'Orch: belt', null, 'Everything merged.', 'open']])
   expect(fx.sent.length).toBe(0)
   expect(fx.row()!.waiting).toBe('done')
 })
@@ -345,7 +345,7 @@ test('no coordinator registered: the row is written, nothing is sent', async () 
   expect(fx.row()!.waiting).toBe('operator')
 })
 
-for (const [name, role] of [['Coord : ops', 'coordinator'], ['Agent : belt-p3', 'agent'], ['Audit : method', 'auditor']] as const) {
+for (const [name, role] of [['Coord: ops', 'coordinator'], ['Agent: belt-p3', 'agent'], ['Audit: method', 'auditor']] as const) {
   test(`a session that is no orchestrator (${role}) writes nothing and sends nothing`, async () => {
     const chains = mounted()
     const fx = fake({ name, role })
@@ -432,7 +432,7 @@ async function relayedQuestion(over: Parameters<typeof fake>[0] = {}) {
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
   // A coordinator on another machine acknowledges the entry it was sent: the question is then held.
   if (over.remote) await drive(chains, 'session.receive', fx.dollar, {
-    text: `<cross-session-message from="bridge:session_coord" from-name="Coord : ops [abc]">\n${ackLine(JSON.parse(fx.files.get(WAIT)!).pending, JSON.parse(fx.files.get(WAIT)!).waiting_since)}\n</cross-session-message>`,
+    text: `<cross-session-message from="bridge:session_coord" from-name="Coord: ops [abc]">\n${ackLine(JSON.parse(fx.files.get(WAIT)!).pending, JSON.parse(fx.files.get(WAIT)!).waiting_since)}\n</cross-session-message>`,
     origin: { kind: 'peer' },
   })
   fx.sent.length = 0
@@ -466,7 +466,7 @@ test('a withdrawal that finds no open entry says so in the log and still forgets
   expect(matched.fx.logged.filter(l => l.includes('round: no open entry matched')).length).toBe(0)
   for (const path of [...fx.files.keys()].filter(p => p.startsWith(`${ROUND}/`))) fx.files.delete(path)
   await typedTurn(chains, fx, 'Working.')
-  expect(fx.logged.filter(l => l.includes(`round: no open entry matched for Orch : belt since ${since}`)).length).toBe(1)
+  expect(fx.logged.filter(l => l.includes(`round: no open entry matched for Orch: belt since ${since}`)).length).toBe(1)
   expect(entries(fx)).toEqual([])
   expect(fx.row().relayed ?? null).toBeNull()
 })
@@ -480,7 +480,7 @@ test('the withdrawal holds when a turn start cleared the wait first', async () =
 
 for (const [label, setup, kind] of [
   ['another prompt kind', {}, 'peer'],
-  ['an agent session', { name: 'Agent : belt-p3', role: 'agent' as const }, 'composer'],
+  ['an agent session', { name: 'Agent: belt-p3', role: 'agent' as const }, 'composer'],
   ['no coordinator', { coordinator: null }, 'composer'],
 ] as const) {
   test(`nothing is withdrawn for ${label}`, async () => {
@@ -524,7 +524,7 @@ test('a refused withdrawal is one log line per attempt (two: prompt submit, then
   const key = fx.row().relayed
   const send = fx.dollar.session.send
   fx.dollar.session.send = async () => ({ isDelivered: false, reason: 'nobody by that name' })
-  const refused = () => fx.logged.filter(l => l.includes('withdraw: not delivered to Coord : ops [abc]: nobody by that name')).length
+  const refused = () => fx.logged.filter(l => l.includes('withdraw: not delivered to Coord: ops [abc]: nobody by that name')).length
   await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
   expect(refused()).toBe(1)
   await drive(chains, 'turn.start', fx.dollar, { text: 'yes' })
@@ -556,7 +556,7 @@ test('the write-back forgets the fingerprint and keeps every other field of the 
   const fields = ['blocks', 'waiting_since', 'name', 'pid']
   const kept = (wait: Record<string, unknown>) => Object.fromEntries(fields.map(f => [f, wait[f] ?? null]))
   expect(before.waiting).toBe('operator')
-  expect(kept(before).name).toBe('Orch : belt')
+  expect(kept(before).name).toBe('Orch: belt')
   await typedTurn(chains, fx, 'Working.')
   const after = JSON.parse(fx.files.get(WAIT)!)
   expect(after.relayed).toBeNull()
@@ -604,7 +604,7 @@ test('a turn that ends on the same wait re-opens it', async () => {
 test('a coordinator on another machine is sent the withdrawal at prompt submit, once', async () => {
   const { chains, fx } = await relayedQuestion({ remote: true })
   const since = fx.row().waiting_since
-  const withdrawal = [['Coord : ops [abc]', withdrawalText('Orch : belt', 'phase 3', since)]]
+  const withdrawal = [['Coord: ops [abc]', withdrawalText('Orch: belt', 'phase 3', since)]]
   const sentWithdrawals = () => fx.sent.filter(m => m.text.startsWith('[module]')).map(s => [s.to, s.text])
   await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
   expect(sentWithdrawals()).toEqual(withdrawal)
@@ -686,8 +686,8 @@ test('a wait file that vanished while the withdrawal of the prompt was sent is n
 })
 
 test('the reopened notice names the entry and says it is open again', () => {
-  const asked = roundEntry('s-one', 'Orch : belt', parseWait(answerOf(QUESTION, QUESTION_LINE))!, '2026-10-25T21:00:00.000Z', 'T')
-  expect(reopenedText(asked)).toBe(`[module] Reopened: Orch : belt's question since 2026-10-25T21:00:00.000Z (entry ${asked.id}) — its turn ended on the same wait. `
+  const asked = roundEntry('s-one', 'Orch: belt', parseWait(answerOf(QUESTION, QUESTION_LINE))!, '2026-10-25T21:00:00.000Z', 'T')
+  expect(reopenedText(asked)).toBe(`[module] Reopened: Orch: belt's question since 2026-10-25T21:00:00.000Z (entry ${asked.id}) — its turn ended on the same wait. `
     + 'Open again: the settled notice before it no longer holds, present it as any open question.')
 })
 
@@ -731,9 +731,9 @@ test('a coordinator on another machine is sent the wait as an entry of its round
   const row = fx.row()
   const report = fx.sent.filter(s => s.text.startsWith('[module]') || s.text.startsWith(ASK_MARKER))
   expect(report.length).toBe(1)
-  expect(report[0].to).toBe('Coord : ops [abc]')
+  expect(report[0].to).toBe('Coord: ops [abc]')
   const sent = JSON.parse(report[0].text.slice(ASK_MARKER.length))
-  const entry = roundEntry('s-one', 'Orch : belt', parseWait(answerOf(QUESTION, QUESTION_LINE))!, row.waiting_since!, sent.at)
+  const entry = roundEntry('s-one', 'Orch: belt', parseWait(answerOf(QUESTION, QUESTION_LINE))!, row.waiting_since!, sent.at)
   expect(report[0].text).toBe(askLine(entry, 'unknown'))
   expect(entries(fx)).toEqual([])
   expect([JSON.parse(fx.files.get(WAIT)!).pending, row.relayed ?? null]).toEqual([entry.id, null])
@@ -743,10 +743,10 @@ test('a coordinator on another machine is sent the withdrawal as a message at pr
   const { chains, fx } = await relayedQuestion({ remote: true })
   const since = fx.row().waiting_since
   await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
-  expect(fx.sent.filter(m => m.text.startsWith('[module]')).map(s => [s.to, s.text])).toEqual([['Coord : ops [abc]', withdrawalText('Orch : belt', 'phase 3', since)]])
+  expect(fx.sent.filter(m => m.text.startsWith('[module]')).map(s => [s.to, s.text])).toEqual([['Coord: ops [abc]', withdrawalText('Orch: belt', 'phase 3', since)]])
   await drive(chains, 'turn.start', fx.dollar, { text: 'yes' })
   await drive(chains, 'turn.complete', fx.dollar, turnEnd('Working.'))
-  expect(fx.sent.filter(m => m.text.startsWith('[module]')).map(s => [s.to, s.text])).toEqual([['Coord : ops [abc]', withdrawalText('Orch : belt', 'phase 3', since)]])
+  expect(fx.sent.filter(m => m.text.startsWith('[module]')).map(s => [s.to, s.text])).toEqual([['Coord: ops [abc]', withdrawalText('Orch: belt', 'phase 3', since)]])
   expect(fx.row().relayed ?? null).toBeNull()
   expect(entries(fx)).toEqual([])
 })
@@ -771,7 +771,7 @@ test('the withdrawal marks only the open question of that sender with the same s
   const { chains, fx } = await relayedQuestion()
   const [held] = entries(fx)
   const others: RoundEntry[] = [
-    { ...held, id: 'other-session', session: 's-two', from: 'Orch : other' },
+    { ...held, id: 'other-session', session: 's-two', from: 'Orch: other' },
     { ...held, id: 'other-since', since: '2026-10-14T07:00:00.000Z' },
     { ...held, id: 'other-blocks', blocks: 'phase 4' },
     { ...held, id: 'already-closed', status: 'closed' },
@@ -794,7 +794,7 @@ test('a typed turn on another wait withdraws the sender\'s own open entry; the s
   const first = turnEnd(answerOf(QUESTION, 'waiting: operator — blocks: phase 3'))
   await drive(chains, 'turn.complete', fx.dollar, first)
   const [asked] = entries(fx)
-  const other: RoundEntry = { ...asked, id: 'other-session', session: 's-two', from: 'Orch : other' }
+  const other: RoundEntry = { ...asked, id: 'other-session', session: 's-two', from: 'Orch: other' }
   const settled: RoundEntry = { ...asked, id: 'already-closed', status: 'closed' }
   for (const kept of [other, settled]) fx.files.set(`${ROUND}/${kept.id}.json`, JSON.stringify(kept) + '\n')
   // The same wait again, typed in or not: still what it waits on.
@@ -832,7 +832,7 @@ test('a new operator wait supersedes every older open entry of its session, one 
   const [asked] = entries(fx)
   const woken: RoundEntry = { ...asked, id: 'woken', blocks: 'phase 2', since: '2026-10-14T07:00:00.000Z' }
   const done: RoundEntry = { ...asked, id: 'done', kind: 'done', blocks: null, since: '2026-10-14T06:00:00.000Z' }
-  const other: RoundEntry = { ...asked, id: 'other-session', session: 's-two', from: 'Orch : other' }
+  const other: RoundEntry = { ...asked, id: 'other-session', session: 's-two', from: 'Orch: other' }
   for (const kept of [woken, done, other]) fx.files.set(`${ROUND}/${kept.id}.json`, JSON.stringify(kept) + '\n')
   fx.files.set(`${HOME}/.claude/claude-orchestrator/round-woken.json`, JSON.stringify(['woken']) + '\n')
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('A new question?', 'waiting: operator — blocks: phase 4')))
@@ -873,7 +873,7 @@ async function choicesThen(answer: string) {
 test('a choice-less turn end is entered as its own entry beside the open question with choices, which stays as asked, and the pane draws the question, the wait having a line', async () => {
   const { chains, fx, asked } = await choicesThen(answerOf(STAGING_REPORT, REPORT_LINE))
   const row = fx.row()!
-  const wait = roundEntry('s-one', 'Orch : belt', parseWait(answerOf(STAGING_REPORT, REPORT_LINE))!, row.waiting_since!, 'T')
+  const wait = roundEntry('s-one', 'Orch: belt', parseWait(answerOf(STAGING_REPORT, REPORT_LINE))!, row.waiting_since!, 'T')
   expect(entries(fx)).toEqual([asked, { ...wait, at: entries(fx)[1].at }])
   expect(fx.logged.some(l => l.includes('round: withdrawn by the sender'))).toBe(false)
   expect(row.relayed).toBe(fingerprint(parseWait(answerOf(STAGING_REPORT, REPORT_LINE))!))
@@ -960,7 +960,7 @@ test('an answer from the pane to the question with choices leaves the choice-les
 
 for (const [label, end, why] of [
   ['its session ending', async (chains: Record<string, Function[]>, fx: ReturnType<typeof fake>) => drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' }), "the sender's session ended"],
-  ['its hand-over', async (chains: Record<string, Function[]>, fx: ReturnType<typeof fake>) => drive(chains, 'session.send', fx.dollar, { to: 'Orch : belt-2', text: 'handed over', origin: { kind: 'model' } }), 'handed over to its successor'],
+  ['its hand-over', async (chains: Record<string, Function[]>, fx: ReturnType<typeof fake>) => drive(chains, 'session.send', fx.dollar, { to: 'Orch: belt-2', text: 'handed over', origin: { kind: 'model' } }), 'handed over to its successor'],
 ] as const) {
   test(`${label} withdraws both the question with choices and the choice-less wait`, async () => {
     const { chains, fx } = await choicesThen(answerOf(STAGING_REPORT, REPORT_LINE))
@@ -1009,7 +1009,7 @@ test('an entry withdrawn by a typed turn, its fingerprint forgotten: the same li
   // The later wait withdraws the first, and its own entry cannot be written: nothing else
   // replaces the first wait's fingerprint.
   const later = turnEnd(answerOf('A new question?', 'waiting: operator — blocks: phase 4'))
-  const laterId = roundEntry('s-one', 'Orch : belt', parseWait(later.answer)!, 'T', 'T').id
+  const laterId = roundEntry('s-one', 'Orch: belt', parseWait(later.answer)!, 'T', 'T').id
   const over = fake({ refuseInto: `${ROUND}/${laterId}.json` })
   over.files.clear()
   for (const [p, text] of fx.files) over.files.set(p, text)
@@ -1169,10 +1169,10 @@ test('a coordinator on another machine is sent the withdrawal at the prompt, not
   const shown = (m: { text: string }) => m.text.startsWith(ASK_MARKER) ? `ask: ${parseAsk(m.text)!.entry.blocks}`
     : m.text.startsWith(ROW_MARKER) ? `row: ${JSON.parse(m.text.slice(ROW_MARKER.length)).blocks}` : m.text
   expect(fx.sent.map(m => [m.to, shown(m)])).toEqual([
-    ['Coord : ops [abc]', withdrawalText('Orch : belt', 'phase 3', since)],
-    ['Coord : ops [abc]', 'ask: phase 3'],
-    ['Coord : ops [abc]', 'ask: phase 4'],
-    ['Coord : ops [abc]', 'row: phase 4'],
+    ['Coord: ops [abc]', withdrawalText('Orch: belt', 'phase 3', since)],
+    ['Coord: ops [abc]', 'ask: phase 3'],
+    ['Coord: ops [abc]', 'ask: phase 4'],
+    ['Coord: ops [abc]', 'row: phase 4'],
   ])
 })
 
@@ -1260,7 +1260,7 @@ async function senderWithEntries() {
   const fx = fake()
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
   const [asked] = entries(fx)
-  const other: RoundEntry = { ...asked, id: 'other-session', session: 's-two', from: 'Orch : other' }
+  const other: RoundEntry = { ...asked, id: 'other-session', session: 's-two', from: 'Orch: other' }
   const settled: RoundEntry = { ...asked, id: 'already-closed', status: 'closed', answer: { text: 'x', by: 'coordinator', at: 'T' } }
   for (const kept of [other, settled]) fx.files.set(`${ROUND}/${kept.id}.json`, JSON.stringify(kept) + '\n')
   return { chains, fx, asked, other, settled }
@@ -1303,7 +1303,7 @@ test('the sender\'s row is deleted before the withdrawal runs, and a withdrawal 
 for (const text of ['handed over', '**Handed over.**']) {
   test(`the sender's own message ${JSON.stringify(text)} to its successor withdraws its open entries, the message sent all the same`, async () => {
     const { chains, fx, asked, other, settled } = await senderWithEntries()
-    const send = { to: 'Orch : belt-2', text, origin: { kind: 'model' } }
+    const send = { to: 'Orch: belt-2', text, origin: { kind: 'model' } }
     expect(await drive(chains, 'session.send', fx.dollar, send)).toBe(send)
     expectWithdrawn(fx, asked, other, settled, 'handed over to its successor')
   })
@@ -1311,7 +1311,7 @@ for (const text of ['handed over', '**Handed over.**']) {
 
 test('a refused hand-over leaves the sender\'s open entries open', async () => {
   const { chains, fx, asked } = await senderWithEntries()
-  const send = { to: 'Orch : belt-2', text: 'handed over', origin: { kind: 'model' } }
+  const send = { to: 'Orch: belt-2', text: 'handed over', origin: { kind: 'model' } }
   const refused = { isDelivered: false, reason: 'nobody by that name' }
   expect(await chains['session.send'][0](fx.dollar, send, async () => refused)).toBe(refused)
   expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('open')
@@ -1324,7 +1324,7 @@ test('another session\'s end, and another session\'s hand-over, leave this sende
   expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('open')
   const id = fx.dollar.session.id
   fx.dollar.session.id = async () => 's-two'
-  await drive(chains, 'session.send', fx.dollar, { to: 'Orch : belt-2', text: 'handed over', origin: { kind: 'model' } })
+  await drive(chains, 'session.send', fx.dollar, { to: 'Orch: belt-2', text: 'handed over', origin: { kind: 'model' } })
   fx.dollar.session.id = id
   expect(entries(fx).find(e => e.id === asked.id)!.status).toBe('open')
 })
@@ -1340,7 +1340,7 @@ test('a non-orchestrator\'s turn ending on « handed over » withdraws nothing',
   const ask = fake()
   await drive(chains, 'turn.complete', ask.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
   const [asked] = entries(ask)
-  const agent = fake({ name: 'Agent : belt-p3', role: 'agent' })
+  const agent = fake({ name: 'Agent: belt-p3', role: 'agent' })
   agent.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
   await drive(chains, 'turn.complete', agent.dollar, turnEnd('Takeover confirmed by the successor.\n\nhanded over'))
   expect(entries(agent).find(e => e.id === asked.id)!.status).toBe('open')
@@ -1355,9 +1355,9 @@ test('a turn whose last line is a wait after « handed over » withdraws nothing
 })
 
 for (const [label, send] of [
-  ['another message of the model', { to: 'Orch : belt-2', text: 'not handed over yet', origin: { kind: 'model' } }],
-  ['a plugin\'s send', { to: 'Orch : belt-2', text: 'handed over', origin: { kind: 'plugin', name: 'other' } }],
-  ['a subagent\'s send', { to: 'Orch : belt-2', text: 'handed over', origin: { kind: 'model' }, agentId: 'a-1' }],
+  ['another message of the model', { to: 'Orch: belt-2', text: 'not handed over yet', origin: { kind: 'model' } }],
+  ['a plugin\'s send', { to: 'Orch: belt-2', text: 'handed over', origin: { kind: 'plugin', name: 'other' } }],
+  ['a subagent\'s send', { to: 'Orch: belt-2', text: 'handed over', origin: { kind: 'model' }, agentId: 'a-1' }],
 ] as const) {
   test(`${label} withdraws nothing`, async () => {
     const { chains, fx, asked } = await senderWithEntries()
@@ -1374,7 +1374,7 @@ test('the session end of a sender whose question a coordinator elsewhere holds s
   await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
   const lines = fx.sent.filter(m => m.text.startsWith('[module]'))
   expect(lines.length).toBe(1)
-  expect(lines[0].text).toContain('Orch : belt withdraws its question for the operator since')
+  expect(lines[0].text).toContain('Orch: belt withdraws its question for the operator since')
   expect(lines[0].text).toContain('blocks: phase 3')
 })
 
@@ -1391,7 +1391,7 @@ test('the session end of a sender whose question was sent and not yet acknowledg
 test('the session end of a sender with a successor, its question held by a coordinator elsewhere, sends no withdrawal', async () => {
   const { chains, fx } = await relayedQuestion({ remote: true })
   successorRunning(fx)
-  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch : belt-2'))
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-2'))
   fx.sent.length = 0
   await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
   expect(fx.sent.filter(m => m.text.startsWith('[module]')).length).toBe(0)
@@ -1417,7 +1417,7 @@ const confirmed = (name: string, body = 'takeover confirmed') => ({
 })
 
 // The successor runs on this machine: the host's registry names its session, and its row is live.
-function successorRunning(fx: ReturnType<typeof fake>, name = 'Orch : belt-2') {
+function successorRunning(fx: ReturnType<typeof fake>, name = 'Orch: belt-2') {
   fx.files.set(`${HOME}/.claude/sessions/9002.json`, JSON.stringify({ pid: 9002, sessionId: 's-two', name }))
   fx.files.set(`${HOME}/.claude/claude-orchestrator/store/sessions/s-two`, JSON.stringify({
     role: 'orchestrator', name, pid: '9002', repo: null, context_percent: 5, context_tokens: 1, window: 100,
@@ -1427,41 +1427,41 @@ function successorRunning(fx: ReturnType<typeof fake>, name = 'Orch : belt-2') {
 
 function expectMoved(fx: ReturnType<typeof fake>, asked: RoundEntry, other: RoundEntry, settled: RoundEntry) {
   const after = new Map(entries(fx).map(e => [e.id, e]))
-  expect(after.get(asked.id)).toEqual({ ...asked, session: 's-two', from: 'Orch : belt-2', movedFrom: 's-one' })
-  expect(fx.logged.filter(l => l.includes(`round: moved to the successor Orch : belt-2: ${asked.id}`)).length).toBe(1)
+  expect(after.get(asked.id)).toEqual({ ...asked, session: 's-two', from: 'Orch: belt-2', movedFrom: 's-one' })
+  expect(fx.logged.filter(l => l.includes(`round: moved to the successor Orch: belt-2: ${asked.id}`)).length).toBe(1)
   expect(fx.logged.some(l => l.includes('withdrawn by the sender'))).toBe(false)
   expect(after.get(other.id)).toEqual(other)
   expect(after.get(settled.id)).toEqual(settled)
 }
 
 for (const [label, end] of [
-  ['the hand-over', async (chains: Record<string, Function[]>, fx: ReturnType<typeof fake>) => drive(chains, 'session.send', fx.dollar, { to: 'Orch : belt-2', text: 'handed over', origin: { kind: 'model' } })],
+  ['the hand-over', async (chains: Record<string, Function[]>, fx: ReturnType<typeof fake>) => drive(chains, 'session.send', fx.dollar, { to: 'Orch: belt-2', text: 'handed over', origin: { kind: 'model' } })],
   ['the session end', async (chains: Record<string, Function[]>, fx: ReturnType<typeof fake>) => drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })],
 ] as const) {
   test(`« takeover confirmed » from an orchestrator, then ${label}, moves the open entries to it, still open`, async () => {
     const { chains, fx, asked, other, settled } = await senderWithEntries()
     successorRunning(fx)
-    await drive(chains, 'session.receive', fx.dollar, confirmed('Orch : belt-2'))
+    await drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-2'))
     await end(chains, fx)
     expectMoved(fx, asked, other, settled)
-    expect(waitsInTab(entries(fx)).find(e => e.id === asked.id)?.from).toBe('Orch : belt-2')
+    expect(waitsInTab(entries(fx)).find(e => e.id === asked.id)?.from).toBe('Orch: belt-2')
     expect(entries(fx).find(e => e.id === asked.id)?.session).toBe('s-two')
   })
 }
 
 test('a successor not found on this machine is recorded by its name: the entries move to that name', async () => {
   const { chains, fx, asked } = await senderWithEntries()
-  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch : belt-2', 'Takeover confirmed.\nAgents re-addressed.'))
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-2', 'Takeover confirmed.\nAgents re-addressed.'))
   await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
   const moved = entries(fx).find(e => e.id === asked.id)!
-  expect([moved.status, moved.session, moved.from]).toEqual(['open', '', 'Orch : belt-2'])
+  expect([moved.status, moved.session, moved.from]).toEqual(['open', '', 'Orch: belt-2'])
 })
 
 // A successor whose session the registry did not name yet when its « takeover confirmed » came:
 // the move resolves it again, or the moved entry names no session, never drawn nor due.
 test('a successor the registry names only after its « takeover confirmed » is resolved at the move', async () => {
   const { chains, fx, asked, other, settled } = await senderWithEntries()
-  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch : belt-2'))
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-2'))
   successorRunning(fx)
   await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
   expectMoved(fx, asked, other, settled)
@@ -1469,7 +1469,7 @@ test('a successor the registry names only after its « takeover confirmed » is 
 
 // The successor's real word of 2026-11-04T17:15:27Z: the phrase, then its report on the same
 // line. Read as no takeover, the hand-over withdrew the open questions instead of moving them.
-const TAKEOVER_REPORT = 'takeover confirmed — Orch : belt-2 [a1b2c3] holds the orchestration; the agents are re-addressed and the round is read.'
+const TAKEOVER_REPORT = 'takeover confirmed — Orch: belt-2 [a1b2c3] holds the orchestration; the agents are re-addressed and the round is read.'
 
 test('takeover confirmed followed by the successor\'s report confirms the takeover', async () => {
   expect(confirmsTakeover(TAKEOVER_REPORT)).toBe(true)
@@ -1478,8 +1478,8 @@ test('takeover confirmed followed by the successor\'s report confirms the takeov
   expect(confirmsTakeover('the takeover confirmed')).toBe(false)
   const { chains, fx, asked, other, settled } = await senderWithEntries()
   successorRunning(fx)
-  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch : belt-2', TAKEOVER_REPORT))
-  await drive(chains, 'session.send', fx.dollar, { to: 'Orch : belt-2', text: 'handed over', origin: { kind: 'model' } })
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-2', TAKEOVER_REPORT))
+  await drive(chains, 'session.send', fx.dollar, { to: 'Orch: belt-2', text: 'handed over', origin: { kind: 'model' } })
   expectMoved(fx, asked, other, settled)
 })
 
@@ -1487,24 +1487,24 @@ test('the successor\'s own wait file is left as it is by the move', async () => 
   const { chains, fx } = await senderWithEntries()
   successorRunning(fx)
   const theirs = `${HOME}/.claude/claude-orchestrator/store/waits/s-two`
-  const wait = JSON.stringify({ waiting: 'operator', blocks: 'phase 9', waiting_since: 'T', relayed: 'its-own', name: 'Orch : belt-2', pid: '9002' }) + '\n'
+  const wait = JSON.stringify({ waiting: 'operator', blocks: 'phase 9', waiting_since: 'T', relayed: 'its-own', name: 'Orch: belt-2', pid: '9002' }) + '\n'
   fx.files.set(theirs, wait)
-  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch : belt-2'))
-  await drive(chains, 'session.send', fx.dollar, { to: 'Orch : belt-2', text: 'handed over', origin: { kind: 'model' } })
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-2'))
+  await drive(chains, 'session.send', fx.dollar, { to: 'Orch: belt-2', text: 'handed over', origin: { kind: 'model' } })
   expect(fx.files.get(theirs)).toBe(wait)
 })
 
 for (const [label, delivery] of [
-  ['an agent', confirmed('Agent : belt-p3')],
-  ['a coordinator', confirmed('Coord : ops')],
-  ['an orchestrator saying something else', confirmed('Orch : belt-2', 'takeover not confirmed yet')],
+  ['an agent', confirmed('Agent: belt-p3')],
+  ['a coordinator', confirmed('Coord: ops')],
+  ['an orchestrator saying something else', confirmed('Orch: belt-2', 'takeover not confirmed yet')],
   ['the operator', { origin: { kind: 'user' }, text: 'takeover confirmed' }],
 ] as const) {
   test(`« takeover confirmed » from ${label} learns no successor: the hand-over withdraws as before`, async () => {
     const { chains, fx, asked, other, settled } = await senderWithEntries()
     successorRunning(fx)
     await drive(chains, 'session.receive', fx.dollar, delivery)
-    await drive(chains, 'session.send', fx.dollar, { to: 'Orch : belt-2', text: 'handed over', origin: { kind: 'model' } })
+    await drive(chains, 'session.send', fx.dollar, { to: 'Orch: belt-2', text: 'handed over', origin: { kind: 'model' } })
     expectWithdrawn(fx, asked, other, settled, 'handed over to its successor')
   })
 }
@@ -1512,25 +1512,25 @@ for (const [label, delivery] of [
 test('a later « takeover confirmed » replaces the successor learnt before it', async () => {
   const { chains, fx, asked } = await senderWithEntries()
   successorRunning(fx)
-  fx.files.set(`${HOME}/.claude/sessions/9003.json`, JSON.stringify({ pid: 9003, sessionId: 's-three', name: 'Orch : belt-3' }))
-  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch : belt-2'))
-  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch : belt-3'))
+  fx.files.set(`${HOME}/.claude/sessions/9003.json`, JSON.stringify({ pid: 9003, sessionId: 's-three', name: 'Orch: belt-3' }))
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-2'))
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-3'))
   await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
   const moved = entries(fx).find(e => e.id === asked.id)!
-  expect([moved.status, moved.session, moved.from]).toEqual(['open', 's-three', 'Orch : belt-3'])
+  expect([moved.status, moved.session, moved.from]).toEqual(['open', 's-three', 'Orch: belt-3'])
 })
 
 test('a session that is no orchestrator learns no successor', async () => {
   const chains = mounted()
-  const agent = fake({ name: 'Agent : belt-p3', role: 'agent' })
-  await drive(chains, 'session.receive', agent.dollar, confirmed('Orch : belt-2'))
+  const agent = fake({ name: 'Agent: belt-p3', role: 'agent' })
+  await drive(chains, 'session.receive', agent.dollar, confirmed('Orch: belt-2'))
   expect([...agent.files.keys()].some(p => p.includes('/store/successors/'))).toBe(false)
 })
 
 test('the pane\'s answer to a moved entry goes to the successor, never to the ended sender', async () => {
   const { chains, fx, asked } = await senderWithEntries()
   successorRunning(fx)
-  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch : belt-2'))
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-2'))
   await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
   const moved = entries(fx).find(e => e.id === asked.id)!
   const pane = { opened: null, ticker: null, other: new Set<string>(), writing: null, undelivered: new Map(), answering: new Set<string>() }
@@ -1542,7 +1542,7 @@ test('the pane\'s answer to a moved entry goes to the successor, never to the en
 test('a moved entry is not superseded by the successor\'s own question: it stays open', async () => {
   const { chains, fx, asked } = await senderWithEntries()
   successorRunning(fx)
-  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch : belt-2'))
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-2'))
   await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
   const successor = { ...fx.dollar, session: { ...fx.dollar.session, id: async () => 's-two' } }
   await drive(chains, 'turn.complete', successor, turnEnd(answerOf('Question 1 of 1 — start phase 9?', 'waiting: operator — blocks: phase 9')))
@@ -1556,27 +1556,27 @@ test('a moved entry is not superseded by the successor\'s own question: it stays
 
 test('two sessions share the successor\'s name, one of them the receiver\'s own: the other is the successor', async () => {
   const { chains, fx, asked } = await senderWithEntries()
-  fx.files.set(`${HOME}/.claude/sessions/501.json`, JSON.stringify({ pid: 501, sessionId: 's-one', name: 'Orch : belt-2' }))
+  fx.files.set(`${HOME}/.claude/sessions/501.json`, JSON.stringify({ pid: 501, sessionId: 's-one', name: 'Orch: belt-2' }))
   successorRunning(fx)
-  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch : belt-2'))
-  expect(fx.logged.filter(l => l.includes('round: successor learnt: Orch : belt-2 (session s-two)')).length).toBe(1)
+  await drive(chains, 'session.receive', fx.dollar, confirmed('Orch: belt-2'))
+  expect(fx.logged.filter(l => l.includes('round: successor learnt: Orch: belt-2 (session s-two)')).length).toBe(1)
   await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
   const moved = entries(fx).find(e => e.id === asked.id)!
-  expect([moved.status, moved.session, moved.from]).toEqual(['open', 's-two', 'Orch : belt-2'])
+  expect([moved.status, moved.session, moved.from]).toEqual(['open', 's-two', 'Orch: belt-2'])
 })
 
 test('several sessions share the successor\'s name besides the receiver: the reply address\'s process id chooses', async () => {
   const { chains, fx, asked } = await senderWithEntries()
-  fx.files.set(`${HOME}/.claude/sessions/501.json`, JSON.stringify({ pid: 501, sessionId: 's-one', name: 'Orch : belt-2' }))
+  fx.files.set(`${HOME}/.claude/sessions/501.json`, JSON.stringify({ pid: 501, sessionId: 's-one', name: 'Orch: belt-2' }))
   successorRunning(fx)
-  fx.files.set(`${HOME}/.claude/sessions/9003.json`, JSON.stringify({ pid: 9003, sessionId: 's-three', name: 'Orch : belt-2' }))
+  fx.files.set(`${HOME}/.claude/sessions/9003.json`, JSON.stringify({ pid: 9003, sessionId: 's-three', name: 'Orch: belt-2' }))
   await drive(chains, 'session.receive', fx.dollar, {
     origin: { kind: 'peer' },
-    text: '<cross-session-message from="uds:/tmp/claude-sockets/9003.sock" from-name="Orch : belt-2" from-mode="prompting">\ntakeover confirmed\n</cross-session-message>',
+    text: '<cross-session-message from="uds:/tmp/claude-sockets/9003.sock" from-name="Orch: belt-2" from-mode="prompting">\ntakeover confirmed\n</cross-session-message>',
   })
   await drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' })
   const moved = entries(fx).find(e => e.id === asked.id)!
-  expect([moved.status, moved.session, moved.from]).toEqual(['open', 's-three', 'Orch : belt-2'])
+  expect([moved.status, moved.session, moved.from]).toEqual(['open', 's-three', 'Orch: belt-2'])
 })
 
 // --- a settled question leaves the coordinator's tab -------------------------------------------
@@ -1591,13 +1591,13 @@ const WOKEN = `${HOME}/.claude/claude-orchestrator/round-woken.json`
 const DROP = 'Already closed: drop it, never ask or relay it again, present the next.'
 
 test('the settled notice is worded by the answer the entry was closed with, and carries no command', () => {
-  const asked = roundEntry('s-one', 'Orch : belt', parseWait(answerOf(QUESTION, QUESTION_LINE))!, '2026-10-25T21:00:00.000Z', 'T')
-  const head = `Orch : belt's question since 2026-10-25T21:00:00.000Z (entry ${asked.id})`
+  const asked = roundEntry('s-one', 'Orch: belt', parseWait(answerOf(QUESTION, QUESTION_LINE))!, '2026-10-25T21:00:00.000Z', 'T')
+  const head = `Orch: belt's question since 2026-10-25T21:00:00.000Z (entry ${asked.id})`
   const at = '2026-10-25T21:10:00.000Z'
   for (const [text, by, expected] of [
     ['answered from the pane: A : "ship" it', 'pane', `[module] Settled in the pane: ${head} — answered at ${at}. ${DROP}`],
-    ["withdrawn: answered in the sender's own tab", 'tab', `[module] Settled in Orch : belt's tab: ${head} — answered there. ${DROP}`],
-    ["withdrawn: answered in the sender's own tab", 'sender', `[module] Settled in Orch : belt's tab: ${head} — answered there. ${DROP}`],
+    ["withdrawn: answered in the sender's own tab", 'tab', `[module] Settled in Orch: belt's tab: ${head} — answered there. ${DROP}`],
+    ["withdrawn: answered in the sender's own tab", 'sender', `[module] Settled in Orch: belt's tab: ${head} — answered there. ${DROP}`],
     ['withdrawn: superseded by s-one-17-abc', 'sender', `[module] Settled superseded: ${head} — by s-one-17-abc, present that one. ${DROP}`],
     ["withdrawn: the sender's session ended", 'sender', `[module] Settled: ${head} — session ended. ${DROP}`],
     ['withdrawn: handed over to its successor', 'sender', `[module] Settled: ${head} — handed over to its successor. ${DROP}`],
@@ -1617,7 +1617,7 @@ for (const [label, file] of [['listed by its round', LISTED], ['woken for', WOKE
     await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf('A new question?', 'waiting: operator — blocks: phase 4')))
     const [closed, fresh] = entries(fx)
     expect([closed.status, closed.answer?.text, closed.answer?.by]).toEqual(['closed', `withdrawn: superseded by ${fresh.id}`, 'sender'])
-    expect(fx.sent).toEqual([{ to: 'Coord : ops [abc]', text: `[module] Settled superseded: Orch : belt's question since ${asked.since} (entry ${asked.id}) — by ${fresh.id}, present that one. ${DROP}` }])
+    expect(fx.sent).toEqual([{ to: 'Coord: ops [abc]', text: `[module] Settled superseded: Orch: belt's question since ${asked.since} (entry ${asked.id}) — by ${fresh.id}, present that one. ${DROP}` }])
   })
 }
 
@@ -1637,24 +1637,24 @@ test('an entry the operator answered in the sender\'s own tab is closed and tell
   fx.files.set(LISTED, JSON.stringify([asked.id]) + '\n')
   await typedTurn(chains, fx, 'Working on phase 3.')
   expect([entries(fx)[0].status, entries(fx)[0].answer?.text, entries(fx)[0].answer?.by]).toEqual(['closed', "withdrawn: answered in the sender's own tab", 'tab'])
-  expect(fx.sent).toEqual([{ to: 'Coord : ops [abc]', text: `[module] Settled in Orch : belt's tab: Orch : belt's question since ${asked.since} (entry ${asked.id}) — answered there. ${DROP}` }])
+  expect(fx.sent).toEqual([{ to: 'Coord: ops [abc]', text: `[module] Settled in Orch: belt's tab: Orch: belt's question since ${asked.since} (entry ${asked.id}) — answered there. ${DROP}` }])
 })
 
 // A coordinator recorded by its bare name shares it with another session the host lists (a
 // session of the same name kept by the host's remote control, say): the host refuses a send to
 // that name as ambiguous, and the settled notice would be lost. The registry's own record of the
 // session on this machine gives it unambiguously; without one, the refusal names it.
-const AMBIGUOUS = "2 agents are named 'Coord : e2e'. Re-send with the ref of the one you mean:\n"
-  + '  Coord : e2e [abc] — a session, on this machine, active 36s ago\n'
-  + '  Coord : e2e [xyz] — a session, on another machine (Remote Control), active 30m ago'
+const AMBIGUOUS = "2 agents are named 'Coord: e2e'. Re-send with the ref of the one you mean:\n"
+  + '  Coord: e2e [abc] — a session, on this machine, active 36s ago\n'
+  + '  Coord: e2e [xyz] — a session, on another machine (Remote Control), active 30m ago'
 async function ambiguousCoordinator(registry: Record<string, object>) {
   const { chains, fx } = await relayedQuestion()
-  fx.files.set(RECORD, JSON.stringify({ name: 'Coord : e2e' }))
+  fx.files.set(RECORD, JSON.stringify({ name: 'Coord: e2e' }))
   for (const [pid, record] of Object.entries(registry)) fx.files.set(`${HOME}/.claude/sessions/${pid}.json`, JSON.stringify(record))
   const tried: unknown[] = []
   fx.dollar.session.send = async (args: { to: unknown; text: string }) => {
     tried.push(args.to)
-    if (args.to === 'Coord : e2e') return { isDelivered: false, reason: AMBIGUOUS }
+    if (args.to === 'Coord: e2e') return { isDelivered: false, reason: AMBIGUOUS }
     fx.sent.push(args)
     return { isDelivered: true }
   }
@@ -1666,18 +1666,18 @@ async function ambiguousCoordinator(registry: Record<string, object>) {
 
 test('a coordinator recorded by a name another session shares is sent the settled notice by its session id', async () => {
   const { fx, asked, tried } = await ambiguousCoordinator({
-    4242: { pid: 4242, sessionId: 'coord-session', name: 'Coord : e2e', kind: 'interactive' },
-    4343: { pid: 4343, sessionId: 'other-session', name: 'Orch : belt', kind: 'interactive' },
+    4242: { pid: 4242, sessionId: 'coord-session', name: 'Coord: e2e', kind: 'interactive' },
+    4343: { pid: 4343, sessionId: 'other-session', name: 'Orch: belt', kind: 'interactive' },
   })
   expect(entries(fx)[0].status).toBe('closed')
   expect(tried).toEqual([{ sessionId: 'coord-session' }])
-  expect(fx.sent).toEqual([{ to: { sessionId: 'coord-session' }, text: `[module] Settled in Orch : belt's tab: Orch : belt's question since ${asked.since} (entry ${asked.id}) — answered there. ${DROP}` }])
+  expect(fx.sent).toEqual([{ to: { sessionId: 'coord-session' }, text: `[module] Settled in Orch: belt's tab: Orch: belt's question since ${asked.since} (entry ${asked.id}) — answered there. ${DROP}` }])
 })
 
 test('with no record of it in the registry, the refusal of an ambiguous name is sent again to the one on this machine', async () => {
   const { fx, tried } = await ambiguousCoordinator({})
-  expect(tried).toEqual(['Coord : e2e', 'Coord : e2e [abc]'])
-  expect(fx.sent.map(s => s.to)).toEqual(['Coord : e2e [abc]'])
+  expect(tried).toEqual(['Coord: e2e', 'Coord: e2e [abc]'])
+  expect(fx.sent.map(s => s.to)).toEqual(['Coord: e2e [abc]'])
   expect(fx.logged).toEqual([])
 })
 
@@ -1690,13 +1690,13 @@ test('an entry withdrawn by a typed turn ending on another wait is answered in t
   await typedTurn(chains, fx, answerOf('Something else.', 'waiting: operator — blocks: phase 4'))
   const closed = entries(fx).find(e => e.id === 'older')!
   expect([closed.status, closed.answer?.text, closed.answer?.by]).toEqual(['closed', "withdrawn: answered in the sender's own tab", 'sender'])
-  expect(fx.sent.map(s => s.text)).toEqual([`[module] Settled in Orch : belt's tab: Orch : belt's question since ${older.since} (entry older) — answered there. ${DROP}`])
+  expect(fx.sent.map(s => s.text)).toEqual([`[module] Settled in Orch: belt's tab: Orch: belt's question since ${older.since} (entry older) — answered there. ${DROP}`])
 })
 
 for (const [label, end, why] of [
   ['its session ending', async (chains: Record<string, Function[]>, fx: ReturnType<typeof fake>) => drive(chains, 'session.end', fx.dollar, { sessionId: 's-one', reason: 'exit' }), 'session ended'],
   ['its hand-over', async (chains: Record<string, Function[]>, fx: ReturnType<typeof fake>) => drive(chains, 'turn.complete', fx.dollar, turnEnd('Takeover confirmed.\n\nhanded over')), 'handed over to its successor'],
-  ['its hand-over message', async (chains: Record<string, Function[]>, fx: ReturnType<typeof fake>) => drive(chains, 'session.send', fx.dollar, { to: 'Orch : belt-2', text: 'handed over', origin: { kind: 'model' } }), 'handed over to its successor'],
+  ['its hand-over message', async (chains: Record<string, Function[]>, fx: ReturnType<typeof fake>) => drive(chains, 'session.send', fx.dollar, { to: 'Orch: belt-2', text: 'handed over', origin: { kind: 'model' } }), 'handed over to its successor'],
 ] as const) {
   test(`${label} closes every entry the coordinator was shown before it tells it of the first`, async () => {
     const { chains, fx, asked } = await senderWithEntries()
@@ -1712,7 +1712,7 @@ for (const [label, end, why] of [
     await end(chains, fx)
     expect(seen).toEqual([['closed', 'closed'], ['closed', 'closed']])
     expect(fx.sent.filter(s => s.text.startsWith('[module] Settled')).map(s => s.text)).toEqual([asked, second].map(e =>
-      `[module] Settled: Orch : belt's question since ${e.since} (entry ${e.id}) — ${why}. ${DROP}`))
+      `[module] Settled: Orch: belt's question since ${e.since} (entry ${e.id}) — ${why}. ${DROP}`))
   })
 }
 
@@ -1728,7 +1728,7 @@ test('a notice that does not fit in what the session end leaves is one log line,
     i >= chains['session.end'].length ? ev : chains['session.end'][i](fx.dollar, ev, Object.assign((x: any) => run(i + 1, x), { budget }))
   expect(await run(0, ended)).toBe(ended)
   expect([asked.id, 'second'].map(id => entries(fx).find(e => e.id === id)!.status)).toEqual(['closed', 'closed'])
-  for (const id of [asked.id, 'second']) expect(fx.logged.filter(l => l.endsWith(`| round: no time left to tell Coord : ops [abc] that ${id} is settled`)).length).toBe(1)
+  for (const id of [asked.id, 'second']) expect(fx.logged.filter(l => l.endsWith(`| round: no time left to tell Coord: ops [abc] that ${id} is settled`)).length).toBe(1)
 })
 
 test('a coordinator on another machine is told nothing of a withdrawal in this round, and the entry is only withdrawn', async () => {
@@ -1736,7 +1736,7 @@ test('a coordinator on another machine is told nothing of a withdrawal in this r
   const fx = fake({ remote: true })
   // The round on this machine holds the sender's entry, listed as if shown: only a coordinator on
   // this machine reads it, so it is neither closed nor told.
-  const asked = roundEntry('s-one', 'Orch : belt', parseWait(answerOf(QUESTION, QUESTION_LINE))!, '2026-10-25T21:00:00.000Z', 'T')
+  const asked = roundEntry('s-one', 'Orch: belt', parseWait(answerOf(QUESTION, QUESTION_LINE))!, '2026-10-25T21:00:00.000Z', 'T')
   fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
   fx.files.set(LISTED, JSON.stringify([asked.id]) + '\n')
   await drive(chains, 'turn.complete', fx.dollar, turnEnd('Takeover confirmed.\n\nhanded over'))
@@ -1836,7 +1836,7 @@ const COORD_AT = 'bridge:session_coord'
 const COORD_ROW = `${HOME}/.claude/claude-orchestrator/store/sessions/s-coord`
 
 function coordinatorMachine(over: Parameters<typeof fake>[0] = {}) {
-  const fx = fake({ name: 'Coord : ops [abc]', role: 'coordinator', ...over })
+  const fx = fake({ name: 'Coord: ops [abc]', role: 'coordinator', ...over })
   fx.files.set(COORD_ROW, fx.files.get(ROW)!)
   fx.files.delete(ROW)
   fx.dollar.session.id = async () => 's-coord'
@@ -1859,13 +1859,13 @@ test('a remote wait becomes an entry on the coordinator\'s machine, and is acked
   await drive(chains, 'turn.complete', sender.dollar, ask)
   const [line] = asks(sender)
   expect(asks(sender).length).toBe(1)
-  expect(line.to).toBe('Coord : ops [abc]')
+  expect(line.to).toBe('Coord: ops [abc]')
   expect(sender.sent.filter(s => s.text.startsWith('[module] '))).toEqual([])
   const since = sender.row().waiting_since!
-  const asked = roundEntry('s-one', 'Orch : belt', parseWait(ask.answer)!, since, 'T')
+  const asked = roundEntry('s-one', 'Orch: belt', parseWait(ask.answer)!, since, 'T')
   expect([waitOf(sender).pending, waitOf(sender).relayed ?? null]).toEqual([asked.id, null])
   expect(entries(sender)).toEqual([])
-  const consumed = await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', line.text))
+  const consumed = await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', line.text))
   expect(typeof consumed.consumed).toBe('string')
   const [entry] = entries(coordinator)
   expect(entries(coordinator).length).toBe(1)
@@ -1881,11 +1881,11 @@ test('the ack sets relayed and clears pending on the sender', async () => {
   await drive(chains, 'turn.complete', sender.dollar, ask)
   const id = waitOf(sender).pending
   // An acknowledgment of another entry keeps nothing.
-  const other = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', ackLine('s-one-9-abc', waitOf(sender).waiting_since)))
+  const other = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', ackLine('s-one-9-abc', waitOf(sender).waiting_since)))
   expect(typeof other.consumed).toBe('string')
   expect([waitOf(sender).pending, waitOf(sender).relayed ?? null]).toEqual([id, null])
   expect(sender.logged.filter(l => l.endsWith('| receive: an acknowledgment of s-one-9-abc matches no pending question')).length).toBe(1)
-  const consumed = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', ackLine(id, waitOf(sender).waiting_since)))
+  const consumed = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', ackLine(id, waitOf(sender).waiting_since)))
   expect(typeof consumed.consumed).toBe('string')
   expect([waitOf(sender).pending, waitOf(sender).relayed]).toEqual([null, fingerprint(parseWait(ask.answer)!)])
   expect([waitOf(sender).waiting, waitOf(sender).blocks]).toEqual(['operator', 'phase 3'])
@@ -1900,7 +1900,7 @@ test('no ack → resent at the next turn end, never twice entered', async () => 
   const coordinator = coordinatorMachine()
   const ask = turnEnd(answerOf(QUESTION, QUESTION_LINE))
   await drive(chains, 'turn.complete', sender.dollar, ask)
-  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', asks(sender)[0].text))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', asks(sender)[0].text))
   const [first] = entries(coordinator)
   const path = `${ROUND}/${first.id}.json`
   // A mark only the first writing carries: a second writing would erase it.
@@ -1912,20 +1912,20 @@ test('no ack → resent at the next turn end, never twice entered', async () => 
   expect(asks(sender).length).toBe(2)
   const read = (text: string) => JSON.parse(text.slice(ASK_MARKER.length))
   expect([read(again.text).id, read(again.text).since]).toEqual([read(once.text).id, read(once.text).since])
-  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', again.text))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', again.text))
   expect(entries(coordinator).length).toBe(1)
   expect((JSON.parse(coordinator.files.get(path)!) as { marked?: boolean }).marked).toBe(true)
   expect(acks(coordinator).map(a => [a.to, a.text])).toEqual([[SENDER_AT, ackLine(first.id, first.since)], [SENDER_AT, ackLine(first.id, first.since)]])
-  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', acks(coordinator)[1].text))
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', acks(coordinator)[1].text))
   expect(waitOf(sender).relayed).toBe(fingerprint(parseWait(ask.answer)!))
 })
 
 test('an ask reaching a session that is not the coordinator is consumed and entered nowhere', async () => {
   const chains = mounted()
   const sender = fake({ remote: true })
-  const elsewhere = fake({ name: 'Orch : other' })
+  const elsewhere = fake({ name: 'Orch: other' })
   await drive(chains, 'turn.complete', sender.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
-  const consumed = await drive(chains, 'session.receive', elsewhere.dollar, delivered(SENDER_AT, 'Orch : belt', asks(sender)[0].text))
+  const consumed = await drive(chains, 'session.receive', elsewhere.dollar, delivered(SENDER_AT, 'Orch: belt', asks(sender)[0].text))
   expect(typeof consumed.consumed).toBe('string')
   expect(consumed.text).toBeUndefined()
   expect(entries(elsewhere)).toEqual([])
@@ -1933,7 +1933,7 @@ test('an ask reaching a session that is not the coordinator is consumed and ente
   expect(elsewhere.logged.filter(l => l.includes('| receive: a remote question reached a session that is no coordinator')).length).toBe(1)
   // A line that fails the check is consumed the same, in the coordinator's own session too.
   const coordinator = coordinatorMachine()
-  const refused = await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', `${ASK_MARKER}{"id":1}`))
+  const refused = await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', `${ASK_MARKER}{"id":1}`))
   expect(typeof refused.consumed).toBe('string')
   expect([entries(coordinator), coordinator.sent]).toEqual([[], []])
 })
@@ -1950,7 +1950,7 @@ for (const [label, over, step] of [
     const coordinator = coordinatorMachine(over)
     await drive(chains, 'turn.complete', sender.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
     const id = waitOf(sender).pending
-    const result = await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', asks(sender)[0].text))
+    const result = await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', asks(sender)[0].text))
     expect(typeof result.consumed).toBe('string')
     expect(result.text).toBeUndefined()
     const failures = coordinator.logged.filter(l => l.includes(`| receive: a remote question failed at ${step} (${id}):`))
@@ -1966,7 +1966,7 @@ test('a remote ack whose handling throws is consumed, with one log line and noth
   const since = sender.row().waiting_since!
   const run = sender.dollar.process.run
   sender.dollar.process.run = async (argv: readonly string[]) => argv[0] === 'mv' && argv[3] === WAIT ? { exitCode: 1, stdout: '', stderr: 'refused' } : run(argv)
-  const result = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', ackLine(id, since)))
+  const result = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', ackLine(id, since)))
   expect(typeof result.consumed).toBe('string')
   expect(result.text).toBeUndefined()
   expect(sender.logged.filter(l => l.includes(`| receive: an acknowledgment failed at the wait write (${id}):`)).length).toBe(1)
@@ -1982,14 +1982,14 @@ test('a late ack of an older ask leaves a newer pending wait pending, resent at 
   // The same wait asked again later: the same id, a newer start, still pending.
   const newer = new Date(Date.parse(older) + 60_000).toISOString()
   sender.files.set(WAIT, JSON.stringify({ ...waitOf(sender), waiting_since: newer }) + '\n')
-  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', ackLine(id, older)))
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', ackLine(id, older)))
   expect([waitOf(sender).pending, waitOf(sender).relayed ?? null]).toEqual([id, null])
   expect(sender.logged.filter(l => l.includes(`| receive: an acknowledgment of ${id} matches no pending question`)).length).toBe(1)
   await drive(chains, 'turn.start', sender.dollar, { text: '' })
   await drive(chains, 'turn.complete', sender.dollar, ask)
   expect(asks(sender).length).toBe(2)
   expect(JSON.parse(asks(sender)[1].text.slice(ASK_MARKER.length)).since).toBe(newer)
-  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', ackLine(id, newer)))
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', ackLine(id, newer)))
   expect(waitOf(sender).relayed).toBe(fingerprint(parseWait(ask.answer)!))
 })
 
@@ -1999,8 +1999,8 @@ test('a question withdrawn at the prompt and asked again by the same wait is ope
   const coordinator = coordinatorMachine()
   const ask = turnEnd(answerOf(QUESTION, QUESTION_LINE))
   await drive(chains, 'turn.complete', sender.dollar, ask)
-  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', asks(sender)[0].text))
-  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', acks(coordinator)[0].text))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', asks(sender)[0].text))
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', acks(coordinator)[0].text))
   const [entered] = entries(coordinator)
   expect(waitOf(sender).relayed).toBe(fingerprint(parseWait(ask.answer)!))
   // The operator types in the tab: the coordinator's model reads the withdrawal and closes the entry.
@@ -2012,10 +2012,10 @@ test('a question withdrawn at the prompt and asked again by the same wait is ope
   await drive(chains, 'turn.start', sender.dollar, { text: 'yes' })
   await drive(chains, 'turn.complete', sender.dollar, ask)
   expect(asks(sender).length).toBe(2)
-  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', asks(sender)[1].text))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', asks(sender)[1].text))
   expect(entries(coordinator).map(e => [e.id, e.status, e.answer])).toEqual([[entered.id, 'open', null]])
   expect(acks(coordinator).length).toBe(2)
-  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', acks(coordinator)[1].text))
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', acks(coordinator)[1].text))
   expect([waitOf(sender).pending, waitOf(sender).relayed]).toEqual([null, fingerprint(parseWait(ask.answer)!)])
 })
 
@@ -2025,7 +2025,7 @@ test('a remote wait whose blocks carry a tab is entered on the coordinator\'s ma
   const coordinator = coordinatorMachine()
   await drive(chains, 'turn.complete', sender.dollar, turnEnd(answerOf(QUESTION, 'waiting: operator — blocks: phase\t3')))
   expect(asks(sender).length).toBe(1)
-  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', asks(sender)[0].text))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', asks(sender)[0].text))
   expect(entries(coordinator).map(e => e.blocks)).toEqual(['phase 3'])
   expect(acks(coordinator).length).toBe(1)
 })
@@ -2036,7 +2036,7 @@ test('the same remote wait asked again urgent, or plain again, takes the mark on
   const coordinator = coordinatorMachine()
   for (const line of [QUESTION_LINE, 'waiting: operator (urgent) — blocks: phase 3', QUESTION_LINE]) {
     await drive(chains, 'turn.complete', sender.dollar, turnEnd(answerOf(QUESTION, line)))
-    await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', asks(sender).at(-1)!.text))
+    await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', asks(sender).at(-1)!.text))
     if (entries(coordinator).length === 1 && line === QUESTION_LINE && asks(sender).length === 1) {
       // A mark only the first writing carries: the urgent mark is taken, the entry never written whole again.
       const [first] = entries(coordinator)
@@ -2049,7 +2049,7 @@ test('the same remote wait asked again urgent, or plain again, takes the mark on
   expect(entries(coordinator).length).toBe(1)
   expect([plain.urgent, (plain as { marked?: boolean }).marked]).toEqual([undefined, true])
   await drive(chains, 'turn.complete', sender.dollar, turnEnd(answerOf(QUESTION, 'waiting: operator (urgent) — blocks: phase 3')))
-  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', asks(sender).at(-1)!.text))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', asks(sender).at(-1)!.text))
   expect(entries(coordinator)[0].urgent).toBe(true)
   expect(entries(coordinator)[0].origin).toEqual({ machine: 'unknown', address: SENDER_AT })
 })
@@ -2060,10 +2060,10 @@ test('a remote note without choices, under the same wait, keeps the entry\'s que
   const coordinator = coordinatorMachine()
   const choices = 'Merge #12 now?\n- **A** : merge it\n- **B** : wait\n_Recommendation_ : A'
   await drive(chains, 'turn.complete', sender.dollar, turnEnd(answerOf(choices, QUESTION_LINE)))
-  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', asks(sender)[0].text))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', asks(sender)[0].text))
   const [asked] = entries(coordinator)
   await drive(chains, 'turn.complete', sender.dollar, turnEnd(answerOf('The review of #12 has started.', QUESTION_LINE)))
-  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', asks(sender)[1].text))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', asks(sender)[1].text))
   expect(entries(coordinator)).toEqual([asked])
   expect([asked.question, asked.choices.length, asked.recommendation]).toEqual([choices, 2, 'A'])
   expect(acks(coordinator).length).toBe(2)
@@ -2087,8 +2087,8 @@ async function enteredRemotely(over: Parameters<typeof fake>[0] = {}) {
   const coordinator = coordinatorMachine(over)
   const ask = turnEnd(answerOf(`${QUESTION}\n- **A** : merge it\n- **B** : wait`, QUESTION_LINE))
   await drive(chains, 'turn.complete', sender.dollar, ask)
-  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', asks(sender).at(-1)!.text))
-  if (acks(coordinator).length > 0) await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', acks(coordinator).at(-1)!.text))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', asks(sender).at(-1)!.text))
+  if (acks(coordinator).length > 0) await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', acks(coordinator).at(-1)!.text))
   const [entry] = entries(coordinator)
   const stored = () => JSON.parse(coordinator.files.get(`${ROUND}/${entry.id}.json`)!) as RoundEntry
   return { chains, sender, coordinator, ask, entry, stored }
@@ -2110,21 +2110,21 @@ test('a pane answer to a remote entry reaches the sender\'s module, forgets its 
   expect(parseAnswer(line.text)).toEqual({ id: entry.id, since: entry.since, text: 'A : merge it', at: answered.answer!.at, readable })
   expect(coordinator.files.has(`${HOME}/.claude/claude-orchestrator/store/waits/s-one`)).toBe(false)
   // The sender's module takes the marked line out and passes the readable answer alone.
-  const passed = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', line.text))
+  const passed = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', line.text))
   expect(passed.consumed).toBeUndefined()
-  expect(passed.text).toBe(delivered(COORD_AT, 'Coord : ops [abc]', readable).text)
+  expect(passed.text).toBe(delivered(COORD_AT, 'Coord: ops [abc]', readable).text)
   expect([waitOf(sender).relayed, waitOf(sender).relayed_id]).toEqual([null, null])
   expect(answerAcks(sender)).toEqual([{ to: COORD_AT, text: answerAckLine(entry.id, entry.since) }])
   // The coordinator's module takes the acknowledgment out and closes the entry.
   coordinator.invalidated.length = 0
-  const consumed = await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', answerAcks(sender)[0].text))
+  const consumed = await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', answerAcks(sender)[0].text))
   expect(typeof consumed.consumed).toBe('string')
   const closed = stored()
   expect([closed.status, closed.delivery!.state, closed.delivery!.attempts]).toEqual(['closed', 'acked', 1])
   expect(closed.answer).toEqual(answered.answer)
   expect(coordinator.invalidated).toContain('ui.render')
   // A second acknowledgment of the same answer settles nothing more: one log line.
-  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', answerAcks(sender)[0].text))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', answerAcks(sender)[0].text))
   expect(stored()).toEqual(closed)
   expect(coordinator.logged.filter(l => l.includes(`| receive: an answer's acknowledgment of ${entry.id} matches no answer sent`)).length).toBe(1)
 })
@@ -2134,11 +2134,11 @@ test('an answer whose since is not the acknowledged wait\'s is passed and acked,
   await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[1])
   const line = answers(coordinator)[0].text
   const older = line.replace(JSON.stringify(entry.since), JSON.stringify('2026-10-01T00:00:00.000Z'))
-  const passed = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', older))
+  const passed = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', older))
   expect(passed.text.includes(ANSWER_MARKER)).toBe(false)
   expect(waitOf(sender).relayed).toBe(fingerprint(parseWait(ask.answer)!))
   expect(answerAcks(sender)).toEqual([{ to: COORD_AT, text: answerAckLine(entry.id, '2026-10-01T00:00:00.000Z') }])
-  const refused = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', `${ANSWER_MARKER}{"id":1}\nreadable`))
+  const refused = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', `${ANSWER_MARKER}{"id":1}\nreadable`))
   expect(typeof refused.consumed).toBe('string')
   expect(refused.text).toBeUndefined()
   expect(answerAcks(sender).length).toBe(1)
@@ -2150,8 +2150,8 @@ test('an answer whose handling throws is consumed with one log line, its readabl
   await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[0])
   const run = sender.dollar.process.run
   sender.dollar.process.run = async (argv: readonly string[]) => argv[0] === 'mv' && argv[3] === WAIT ? { exitCode: 1, stdout: '', stderr: 'refused' } : run(argv)
-  const passed = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', answers(coordinator)[0].text))
-  expect(passed.text).toBe(delivered(COORD_AT, 'Coord : ops [abc]', parseAnswer(answers(coordinator)[0].text)!.readable).text)
+  const passed = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', answers(coordinator)[0].text))
+  expect(passed.text).toBe(delivered(COORD_AT, 'Coord: ops [abc]', parseAnswer(answers(coordinator)[0].text)!.readable).text)
   expect(sender.logged.filter(l => l.includes(`| receive: an answer failed at the wait write (${entry.id}):`)).length).toBe(1)
 })
 
@@ -2186,7 +2186,7 @@ test('no answer ack → resent on the tick, failed after 3', async () => {
   await tick()
   expect(answers(coordinator).length).toBe(3)
   // A late acknowledgment still settles a failed delivery.
-  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', answerAckLine(entry.id, entry.since)))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', answerAckLine(entry.id, entry.since)))
   expect([stored().status, stored().delivery!.state]).toEqual(['closed', 'acked'])
 })
 
@@ -2205,14 +2205,14 @@ test('an answer the host does not deliver is failed at once with its reason, and
 test('an answered remote entry, the same wait again at the next turn end, is entered again', async () => {
   const { chains, sender, coordinator, ask, entry, stored } = await enteredRemotely()
   await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[0])
-  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', answers(coordinator)[0].text))
-  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', answerAcks(sender)[0].text))
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', answers(coordinator)[0].text))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', answerAcks(sender)[0].text))
   expect(stored().status).toBe('closed')
   await clockMoves()
   await drive(chains, 'turn.start', sender.dollar, { text: '' })
   await drive(chains, 'turn.complete', sender.dollar, ask)
   expect(asks(sender).length).toBe(2)
-  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', asks(sender)[1].text))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', asks(sender)[1].text))
   const again = stored()
   expect([again.status, again.answer, again.delivery]).toEqual(['open', null, undefined])
   expect(again.origin).toEqual({ machine: 'unknown', address: SENDER_AT })
@@ -2223,7 +2223,7 @@ test('an answered remote entry whose answer is still travelling is not entered a
   const { chains, sender, coordinator, entry, stored } = await enteredRemotely()
   await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[0])
   const travelling = stored()
-  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', asks(sender)[0].text))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', asks(sender)[0].text))
   expect(stored()).toEqual(travelling)
   expect(acks(coordinator).length).toBe(2)
 })
@@ -2231,7 +2231,7 @@ test('an answered remote entry whose answer is still travelling is not entered a
 test('an ask sent again, of the same start, never reopens its entry settled meanwhile, and is acked again', async () => {
   const { chains, sender, coordinator, entry, stored } = await enteredRemotely()
   const path = `${ROUND}/${entry.id}.json`
-  const again = () => drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', asks(sender)[0].text))
+  const again = () => drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', asks(sender)[0].text))
   // Closed by a round-close while the ask's first acknowledgment was lost.
   const closed = { ...stored(), status: 'closed', answer: { text: 'A', by: 'coordinator', at: entry.at } }
   coordinator.files.set(path, JSON.stringify(closed) + '\n')
@@ -2248,7 +2248,7 @@ test('an ask sent again, of the same start, never reopens its entry settled mean
 test('an accepted answer forgets the wait\'s start: the same wait asked again is a new ask, of a new start', async () => {
   const { chains, sender, coordinator, ask, entry } = await enteredRemotely()
   await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[0])
-  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', answers(coordinator)[0].text))
+  await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', answers(coordinator)[0].text))
   expect([waitOf(sender).waiting_since ?? null, waitOf(sender).relayed, waitOf(sender).relayed_id]).toEqual([null, null, null])
   await clockMoves()
   await drive(chains, 'turn.start', sender.dollar, { text: '' })
@@ -2266,13 +2266,13 @@ test('an answer arriving before its ask\'s ack is taken: passed once, acked, and
   const ask = turnEnd(answerOf(`${QUESTION}\n- **A** : merge it\n- **B** : wait`, QUESTION_LINE))
   await drive(chains, 'turn.complete', sender.dollar, ask)
   // The ask is entered, its acknowledgment lost on the way back.
-  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', asks(sender)[0].text))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', asks(sender)[0].text))
   const [entry] = entries(coordinator)
   expect(waitOf(sender).pending).toBe(entry.id)
   await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[0])
   const readable = parseAnswer(answers(coordinator)[0].text)!.readable
-  const passed = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', answers(coordinator)[0].text))
-  expect(passed.text).toBe(delivered(COORD_AT, 'Coord : ops [abc]', readable).text)
+  const passed = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', answers(coordinator)[0].text))
+  expect(passed.text).toBe(delivered(COORD_AT, 'Coord: ops [abc]', readable).text)
   expect([waitOf(sender).pending, waitOf(sender).pending_key, waitOf(sender).waiting_since ?? null]).toEqual([null, null, null])
   expect(answerAcks(sender)).toEqual([{ to: COORD_AT, text: answerAckLine(entry.id, entry.since) }])
   await clockMoves()
@@ -2286,9 +2286,9 @@ test('an answer sent again, its ack lost, is acked again and reaches the model o
   const { chains, sender, coordinator, entry } = await enteredRemotely()
   await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[0])
   const line = answers(coordinator)[0].text
-  const first = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', line))
-  expect(first.text).toBe(delivered(COORD_AT, 'Coord : ops [abc]', parseAnswer(line)!.readable).text)
-  const second = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord : ops [abc]', line))
+  const first = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', line))
+  expect(first.text).toBe(delivered(COORD_AT, 'Coord: ops [abc]', parseAnswer(line)!.readable).text)
+  const second = await drive(chains, 'session.receive', sender.dollar, delivered(COORD_AT, 'Coord: ops [abc]', line))
   expect(typeof second.consumed).toBe('string')
   expect(second.text).toBeUndefined()
   expect(answerAcks(sender)).toEqual([0, 1].map(() => ({ to: COORD_AT, text: answerAckLine(entry.id, entry.since) })))
@@ -2306,7 +2306,7 @@ test('a delivery left pending is sent on the wake once aged, and an ack landing 
   await armed[armed.length - 1].fn()
   expect([answers(coordinator).length, stored().delivery!.state, stored().delivery!.attempts]).toEqual([2, 'sent', 1])
   pending(new Date().toISOString())
-  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', answerAckLine(entry.id, entry.since)))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', answerAckLine(entry.id, entry.since)))
   expect([stored().status, stored().delivery!.state]).toEqual(['closed', 'acked'])
 })
 
@@ -2314,7 +2314,7 @@ test('an answer ack of the right id and another start leaves the entry sent, wit
   const { chains, coordinator, entry, stored } = await enteredRemotely()
   await answerFromPane(coordinator.dollar, emptyPane(), entry, entry.choices[0])
   const sent = stored()
-  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch : belt', answerAckLine(entry.id, '2026-10-01T00:00:00.000Z')))
+  await drive(chains, 'session.receive', coordinator.dollar, delivered(SENDER_AT, 'Orch: belt', answerAckLine(entry.id, '2026-10-01T00:00:00.000Z')))
   expect(stored()).toEqual(sent)
   expect(stored().delivery!.state).toBe('sent')
   expect(coordinator.logged.filter(l => l.includes(`| receive: an answer's acknowledgment of ${entry.id} matches no answer sent`)).length).toBe(1)
@@ -2339,17 +2339,17 @@ test('the orchestrator withdraws its own open question when it acts on an answer
   const fx = fake()
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
   const [asked] = entries(fx)
-  const call = await toolHandler()(fx.dollar, { author: 'Coord : ops [abc]' })
+  const call = await toolHandler()(fx.dollar, { author: 'Coord: ops [abc]' })
   expect(call.isError).toBeUndefined()
   const [now] = entries(fx)
-  expect([now.id, now.status, now.answer?.by, now.answer?.author]).toEqual([asked.id, 'answered', 'message', 'Coord : ops [abc]'])
+  expect([now.id, now.status, now.answer?.by, now.answer?.author]).toEqual([asked.id, 'answered', 'message', 'Coord: ops [abc]'])
   expect((await toolHandler()(fx.dollar, { author: '' })).isError).toBe(true)
   expect((await toolHandler()(fx.dollar, { author: 'x', agentId: 'a' })).isError).toBe(true)
 })
 
 test('a tool call from a session that is no orchestrator withdraws nothing', async () => {
-  const fx = fake({ name: 'Coord : ops [abc]', role: 'coordinator' })
-  const asked = { ...roundEntry('s-one', 'Orch : belt', parseWait(answerOf(QUESTION, QUESTION_LINE))!, 'T', 'T') }
+  const fx = fake({ name: 'Coord: ops [abc]', role: 'coordinator' })
+  const asked = { ...roundEntry('s-one', 'Orch: belt', parseWait(answerOf(QUESTION, QUESTION_LINE))!, 'T', 'T') }
   fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
   expect((await toolHandler()(fx.dollar, { author: 'x' })).isError).toBe(true)
   expect(entries(fx).map(e => e.status)).toEqual(['open'])

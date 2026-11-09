@@ -25,10 +25,10 @@ const PROJECTS = `${HOME}/.claude/projects`
 
 test('rows sort by rotation urgency', () => {
   const rows = paneRows({
-    'sessions/a': { role: 'agent', name: 'Agent : low', context_percent: 30, context_tokens: 30000, window: 100000, model: 'a-model', busy: false, updated_at: 't', repo: 'r' },
-    'sessions/b': { role: 'agent', name: 'Agent : hot', context_percent: 85, context_tokens: 85000, window: 100000, model: 'a-model', busy: true, updated_at: 't', repo: 'r' },
+    'sessions/a': { role: 'agent', name: 'Agent: low', context_percent: 30, context_tokens: 30000, window: 100000, model: 'a-model', busy: false, updated_at: 't', repo: 'r' },
+    'sessions/b': { role: 'agent', name: 'Agent: hot', context_percent: 85, context_tokens: 85000, window: 100000, model: 'a-model', busy: true, updated_at: 't', repo: 'r' },
   })
-  expect(rows[0].label).toContain('Agent : hot')
+  expect(rows[0].label).toContain('Agent: hot')
   expect(rows[0].label).toContain('85%')
 })
 
@@ -85,15 +85,15 @@ test('on each side of the gate the fill descends', () => {
 
 test('the label carries the name, the role, the fill against the gate and the reading age', () => {
   const rows = paneRows({
-    'sessions/named': row({ name: 'Agent : one', context_percent: 30, updated_at: new Date(Date.now() - 65000).toISOString() }),
+    'sessions/named': row({ name: 'Agent: one', context_percent: 30, updated_at: new Date(Date.now() - 65000).toISOString() }),
     'sessions/quiet': row({ role: null, updated_at: 't' }),
   })
-  const named = rows.find(r => r.label.includes('Agent : one'))!
+  const named = rows.find(r => r.label.includes('Agent: one'))!
   expect(named.label).toContain('agent')
   expect(named.label).toContain('30%')
   expect(named.label).toContain('1m')
   expect(named.label).not.toContain('NaN')
-  const quiet = rows.find(r => !r.label.includes('Agent : one'))!
+  const quiet = rows.find(r => !r.label.includes('Agent: one'))!
   expect(quiet.label).toContain('unnamed')
   expect(quiet.label).toContain('no role')
   expect(quiet.label).not.toContain('NaN')
@@ -101,18 +101,18 @@ test('the label carries the name, the role, the fill against the gate and the re
 
 test('an orchestrator\'s agents sort like the store rows, an unmeasured one last', () => {
   const rows = agentPaneRows([
-    { name: 'Agent : fresh', status: 'busy', row: null },
-    { name: 'Agent : low', status: 'idle', row: row({ context_percent: 20 }) },
-    { name: 'Agent : full', status: 'busy', row: row({ context_percent: 35, context_tokens: 350000, window: 1000000 }) },
+    { name: 'Agent: fresh', status: 'busy', row: null },
+    { name: 'Agent: low', status: 'idle', row: row({ context_percent: 20 }) },
+    { name: 'Agent: full', status: 'busy', row: row({ context_percent: 35, context_tokens: 350000, window: 1000000 }) },
   ])
-  expect(rows.map(r => r.label.split(' · ')[0])).toEqual(['Agent : full', 'Agent : low', 'Agent : fresh'])
+  expect(rows.map(r => r.label.split(' · ')[0])).toEqual(['Agent: full', 'Agent: low', 'Agent: fresh'])
   expect(rows[0].label).toContain('busy · 35% past the gate')
-  expect(rows[2].label).toBe('Agent : fresh · busy · not measured yet')
+  expect(rows[2].label).toBe('Agent: fresh · busy · not measured yet')
 })
 
 test('the host record gives the id, the name without a quoted rename\'s quotes, the status', () => {
-  expect(hostRecordOf('{"sessionId":"s-1","name":"\\"Orch : PTI\\"","status":"busy"}'))
-    .toEqual({ sessionId: 's-1', name: 'Orch : PTI', status: 'busy' })
+  expect(hostRecordOf('{"sessionId":"s-1","name":"\\"Orch: PTI\\"","status":"busy"}'))
+    .toEqual({ sessionId: 's-1', name: 'Orch: PTI', status: 'busy' })
   expect(hostRecordOf('{"sessionId":"s-2","status":"waiting"}')).toEqual({ sessionId: 's-2', name: null, status: null })
   expect(hostRecordOf('not json')).toBeNull()
 })
@@ -248,7 +248,7 @@ function fakeDollar(over: {
           return { exitCode: 0, stdout: '  777 hostcli\n', stderr: '' }
         }
         if (argv[0] === 'ps' && argv[1] === '-t') {
-          const name = over.launchName === null ? null : (over.launchName ?? 'Agent : belt-p3')
+          const name = over.launchName === null ? null : (over.launchName ?? 'Agent: belt-p3')
           return { exitCode: 0, stdout: name ? `  501 hostcli --name ${name}\n` : '  501 hostcli\n', stderr: '' }
         }
         if (argv[0] === 'git' && argv[1] === 'remote') {
@@ -348,7 +348,7 @@ test('no start opens the pane, whatever the role', async () => {
   const { handlers } = mounted(registerSupervision)
   expect(handlers['session.start']).toBeUndefined()
   const chains = composedChains()
-  for (const launchName of ['Coord : main', 'Orch : phase-3', 'Agent : belt-p3']) {
+  for (const launchName of ['Coord: main', 'Orch: phase-3', 'Agent: belt-p3']) {
     const fx = fakeDollar({ launchName })
     await drive(chains, 'session.start', fx.dollar, startEvent)
     expect(fx.opened).toEqual([])
@@ -378,7 +378,7 @@ test('the supervision answers to every form of its one short name, one pane whic
   ])
   const [shortForm, pluginForm] = runs.map(run => run.handler)
   for (const [opener, closer] of [[shortForm, pluginForm], [pluginForm, shortForm]]) {
-    const coord = fakeDollar({ launchName: 'Coord : main' })
+    const coord = fakeDollar({ launchName: 'Coord: main' })
     expect((await opener(coord.dollar, { command: 'orchestrator:orchestrator-supervision', args: '' })).text).toContain('pane opened')
     expect(await closer(coord.dollar, { command: 'orchestrator:supervision', args: '' })).toEqual({ text: 'Supervision pane closed.' })
     expect(coord.opened.length).toBe(1)
@@ -393,20 +393,20 @@ test('a bare short name toggles the pane when its user command is the plugin\'s 
   for (const command of ['orchestrator-supervision']) {
     const hook = runs.find(run => (run.matcher as any).command === command)!.handler
     const e = { command, args: '' }
-    const marked = fakeDollar({ launchName: 'Coord : main' })
+    const marked = fakeDollar({ launchName: 'Coord: main' })
     marked.files.set(`${HOME}/.claude/commands/${command}.md`, '---\ninstalled-by: claude-orchestrator\ndescription: Open or close the supervision pane\n---\n')
     expect((await hook(marked.dollar, e, passed)).text).toContain('pane opened')
     expect(marked.opened.length).toBe(1)
-    const foreign = fakeDollar({ launchName: 'Coord : main' })
+    const foreign = fakeDollar({ launchName: 'Coord: main' })
     foreign.files.set(`${HOME}/.claude/commands/${command}.md`, '---\ndescription: mine\n---\n')
     expect(await hook(foreign.dollar, e, passed)).toEqual({ passed: e })
     expect(foreign.opened).toEqual([])
-    const none = fakeDollar({ launchName: 'Coord : main' })
+    const none = fakeDollar({ launchName: 'Coord: main' })
     expect(await hook(none.dollar, e, passed)).toEqual({ passed: e })
   }
   // The plugin's own file, `/orchestrator:supervision`, needs no copy.
   const plugin = runs.find(run => (run.matcher as any).command === 'orchestrator:supervision')!.handler
-  const orch = fakeDollar({ launchName: 'Orch : phase-3' })
+  const orch = fakeDollar({ launchName: 'Orch: phase-3' })
   expect((await plugin(orch.dollar, { command: 'orchestrator:supervision', args: '' }, passed)).text).toContain('pane opened')
 })
 
@@ -415,7 +415,7 @@ test('/orchestrator-supervision opens the pane in a coordinator or an orchestrat
   expect(matchers['ui.render']).toEqual({ component: 'Pane', requestId: 'supervision' })
   const run = { command: 'orchestrator:orchestrator-supervision', args: '' }
 
-  const coord = fakeDollar({ launchName: 'Coord : main' })
+  const coord = fakeDollar({ launchName: 'Coord: main' })
   // The one command of both roles, the operator's ruling 229 (« B »).
   expect(await handlers['command.run'](coord.dollar, run)).toEqual({ text: 'Supervision pane opened; type /orchestrator-supervision again, or click its ✕, to close it.' })
   expect(coord.opened).toEqual([{ id: 'supervision', title: 'Orchestrators', focus: true }])
@@ -424,14 +424,14 @@ test('/orchestrator-supervision opens the pane in a coordinator or an orchestrat
   expect(coord.closed).toEqual([{ id: 'supervision' }])
   expect(coord.opened.length).toBe(1)
 
-  const orch = fakeDollar({ launchName: 'Orch : phase-3' })
+  const orch = fakeDollar({ launchName: 'Orch: phase-3' })
   expect(await handlers['command.run'](orch.dollar, run)).toEqual({ text: 'Supervision pane opened; type /orchestrator-supervision again, or click its ✕, to close it.' })
   expect(orch.opened).toEqual([{ id: 'supervision', title: 'Agents', focus: true }])
 
-  for (const launchName of ['Agent : belt-p3', 'Audit : belt', null]) {
+  for (const launchName of ['Agent: belt-p3', 'Audit: belt', null]) {
     const fx = fakeDollar({ launchName })
     const answer = await handlers['command.run'](fx.dollar, run)
-    expect(answer.text).toContain('coordinator session (« Coord : … »), listing the orchestrators, or in an orchestrator session')
+    expect(answer.text).toContain('coordinator session (« Coord: … »), listing the orchestrators, or in an orchestrator session')
     expect(answer.text).toContain('/orchestrator-status lists the sessions here')
     expect(fx.opened).toEqual([])
   }
@@ -443,7 +443,7 @@ const toolCall = (action: string, over: object = {}) => ({ tool: `mcp__orchestra
 
 test('the supervision tool is registered at every start, loaded with its schema, and opens nothing', async () => {
   const { handlers } = mounted(registerPaneTool)
-  for (const launchName of ['Coord : main', 'Agent : belt-p3']) {
+  for (const launchName of ['Coord: main', 'Agent: belt-p3']) {
     const fx = fakeDollar({ launchName })
     await handlers['session.start'](fx.dollar, startEvent, (x: unknown) => x)
     expect(fx.tools.map(spec => [spec.name, spec.isDeferred])).toEqual([['supervision', false]])
@@ -456,7 +456,7 @@ test('the supervision tool is registered at every start, loaded with its schema,
 
 test('the supervision tool opens and closes the pane the commands toggle, by the word it is given', async () => {
   const { handlers } = mounted(registerSupervision)
-  for (const [launchName, title] of [['Coord : main', 'Orchestrators'], ['Orch : phase-3', 'Agents']]) {
+  for (const [launchName, title] of [['Coord: main', 'Orchestrators'], ['Orch: phase-3', 'Agents']]) {
     const fx = fakeDollar({ launchName })
     expect(await handlers['tool.call'](fx.dollar, toolCall('close'))).toEqual({ result: 'The supervision pane is not open.' })
     expect(await handlers['tool.call'](fx.dollar, toolCall('open'))).toEqual({ result: 'Supervision pane opened.' })
@@ -470,7 +470,7 @@ test('the supervision tool opens and closes the pane the commands toggle, by the
     expect(fx.state.get('orchestrator/paneOpened')).toBe(true)
   }
   // One pane: opened by the tool, the command closes it, and the reverse.
-  const fx = fakeDollar({ launchName: 'Coord : main' })
+  const fx = fakeDollar({ launchName: 'Coord: main' })
   await handlers['tool.call'](fx.dollar, toolCall('open'))
   expect(await handlers['command.run'](fx.dollar, supervisionRun)).toEqual({ text: 'Supervision pane closed.' })
   await handlers['command.run'](fx.dollar, supervisionRun)
@@ -481,15 +481,15 @@ test('the supervision tool opens and closes the pane the commands toggle, by the
 
 test('the supervision tool is refused to a subagent, outside the two roles, and on any other word', async () => {
   const { handlers } = mounted(registerSupervision)
-  const coord = fakeDollar({ launchName: 'Coord : main' })
+  const coord = fakeDollar({ launchName: 'Coord: main' })
   expect(await handlers['tool.call'](coord.dollar, toolCall('open', { agentId: 'a-1' }))).toEqual({ result: PANE_MAIN_THREAD_ONLY, isError: true })
   expect(await handlers['tool.call'](coord.dollar, toolCall('toggle'))).toEqual({ result: 'action is "open" or "close"', isError: true })
   expect(coord.opened).toEqual([])
-  for (const launchName of ['Agent : belt-p3', 'Audit : belt', null]) {
+  for (const launchName of ['Agent: belt-p3', 'Audit: belt', null]) {
     const fx = fakeDollar({ launchName })
     const answer = await handlers['tool.call'](fx.dollar, toolCall('open'))
     expect(answer.isError).toBe(true)
-    expect(answer.result).toContain('a coordinator session (« Coord : … ») or an orchestrator session (« Orch : … ») alone')
+    expect(answer.result).toContain('a coordinator session (« Coord: … ») or an orchestrator session (« Orch: … ») alone')
     expect(fx.opened).toEqual([])
     expect(fx.state.get('orchestrator/paneOpened')).toBeUndefined()
   }
@@ -497,7 +497,7 @@ test('the supervision tool is refused to a subagent, outside the two roles, and 
 
 test('the supervision tool says when the host holds the pane undrawn', async () => {
   const { handlers } = mounted(registerSupervision)
-  const fx = fakeDollar({ launchName: 'Orch : phase-3' })
+  const fx = fakeDollar({ launchName: 'Orch: phase-3' })
   fx.dollar.ui.open = async (pane: { id: string }) => {
     fx.opened.push(pane)
     return { isPlaced: false, reason: 'no-surface' }
@@ -510,27 +510,27 @@ const supervisionRun = { command: 'orchestrator:orchestrator-supervision', args:
 
 test('a coordinator\'s pane lists the live orchestrators alone, the urgent first and warned', async () => {
   const { handlers } = mounted(registerSupervision)
-  const fx = fakeDollar({ launchName: 'Coord : main' })
-  fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : low', context_percent: 30 })) + '\n')
-  fx.files.set(`${SESSIONS}/hot`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : hot', context_percent: 85 })) + '\n')
-  fx.files.set(`${SESSIONS}/agent`, JSON.stringify(row({ role: 'agent', name: 'Agent : belt', context_percent: 50 })) + '\n')
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: low', context_percent: 30 })) + '\n')
+  fx.files.set(`${SESSIONS}/hot`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: hot', context_percent: 85 })) + '\n')
+  fx.files.set(`${SESSIONS}/agent`, JSON.stringify(row({ role: 'agent', name: 'Agent: belt', context_percent: 50 })) + '\n')
   await handlers['command.run'](fx.dollar, supervisionRun)
   const text = JSON.stringify(await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))
-  expect(text.indexOf('Orch : hot')).toBeLessThan(text.indexOf('Orch : low'))
-  expect(text).not.toContain('Agent : belt')
+  expect(text.indexOf('Orch: hot')).toBeLessThan(text.indexOf('Orch: low'))
+  expect(text).not.toContain('Agent: belt')
   // Past the gate, the fill and its words are drawn in the error colour.
   expect(text.match(/"color":"error"/g)?.length).toBe(1)
-  expect(text.indexOf('"color":"error"')).toBeGreaterThan(text.indexOf('Orch : hot'))
+  expect(text.indexOf('"color":"error"')).toBeGreaterThan(text.indexOf('Orch: hot'))
 
   const { handlers: fresh } = mounted(registerSupervision)
-  const empty = fakeDollar({ launchName: 'Coord : main' })
+  const empty = fakeDollar({ launchName: 'Coord: main' })
   await fresh['command.run'](empty.dollar, supervisionRun)
   expect(JSON.stringify(await fresh['ui.render'](empty.dollar, renderEvent, (x: unknown) => ({ passed: x })))).toContain('no live orchestrator')
 })
 
 test('an orchestrator\'s pane lists the agents its own tab spawned, read from the host\'s records', async () => {
   const { handlers } = mounted(registerSupervision)
-  const fx = fakeDollar({ launchName: 'Orch : phase-3' })
+  const fx = fakeDollar({ launchName: 'Orch: phase-3' })
   fx.env.ITERM_SESSION_ID = 'w0t1p0:OWNER-1'
   // The walk's seed puts this session on ttys001; its chain holds one agent of
   // its own and one a recycled tty's previous owner wrote.
@@ -539,21 +539,21 @@ test('an orchestrator\'s pane lists the agents its own tab spawned, read from th
     JSON.stringify({ tab_id: 't-8', tty: '/dev/ttys008', owner: 'SOMEONE-ELSE' }),
   ].join('\n') + '\n')
   // The fake's ps answers pid 777 on an agent's tty: its host record and store row.
-  fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ sessionId: 's-agent', name: 'Agent : belt-p3', status: 'busy' }))
-  fx.files.set(`${SESSIONS}/s-agent`, JSON.stringify(row({ role: 'agent', name: 'Agent : belt-p3', context_percent: 40 })) + '\n')
+  fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ sessionId: 's-agent', name: 'Agent: belt-p3', status: 'busy' }))
+  fx.files.set(`${SESSIONS}/s-agent`, JSON.stringify(row({ role: 'agent', name: 'Agent: belt-p3', context_percent: 40 })) + '\n')
   await handlers['command.run'](fx.dollar, supervisionRun)
   // The row is the name (bold) and the rest in two pieces: read as the text they draw together.
   const tree = await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
   const text = tree.props.children.map((kid: any) => pieces(kid).map((p: any) => p.text).join('')).join('\n')
-  expect(text).toContain('Agent : belt-p3 · busy · 40%')
-  expect(text.match(/Agent : belt-p3/g)?.length).toBe(1)
+  expect(text).toContain('Agent: belt-p3 · busy · 40%')
+  expect(text.match(/Agent: belt-p3/g)?.length).toBe(1)
   expect(fx.ran).toContain('ps -t ttys009 -o pid=')
   expect(fx.ran).not.toContain('ps -t ttys008 -o pid=')
 
   // Without the terminal's session id no entry is counted: a recycled tty's
   // occupant would be.
   const { handlers: fresh } = mounted(registerSupervision)
-  const blind = fakeDollar({ launchName: 'Orch : phase-3' })
+  const blind = fakeDollar({ launchName: 'Orch: phase-3' })
   await fresh['command.run'](blind.dollar, supervisionRun)
   expect(JSON.stringify(await fresh['ui.render'](blind.dollar, renderEvent, (x: unknown) => ({ passed: x })))).toContain('no agent running')
 })
@@ -587,17 +587,17 @@ test('with the module directory overridden, the measure and the pane use it, and
   // A harness driving a host on the machine's own config dir sets ORCHESTRATOR_MODULE_DIR: its
   // rows and measures stay in its sandbox, and the operator's store never sees them.
   const SANDBOX = '/sandbox/module'
-  const fx = fakeDollar({ launchName: 'Coord : main' })
+  const fx = fakeDollar({ launchName: 'Coord: main' })
   fx.env.ORCHESTRATOR_MODULE_DIR = SANDBOX
   await drive(composedChains(), 'session.measure', fx.dollar, {})
   expect(fx.files.has(`${SANDBOX}/store/sessions/s-one`)).toBe(true)
   expect(fx.files.has(`${SANDBOX}/measure/s-one.json`)).toBe(true)
   expect([...fx.files.keys()].filter(p => p.startsWith(`${HOME}/.claude/claude-orchestrator/store`) || p.startsWith(`${HOME}/.claude/claude-orchestrator/measure`))).toEqual([])
-  fx.files.set(`${SANDBOX}/store/sessions/s-alpha`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : alpha', context_percent: 12 })) + '\n')
-  fx.files.set(`${SESSIONS}/s-real`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : real', context_percent: 40 })) + '\n')
+  fx.files.set(`${SANDBOX}/store/sessions/s-alpha`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: alpha', context_percent: 12 })) + '\n')
+  fx.files.set(`${SESSIONS}/s-real`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: real', context_percent: 40 })) + '\n')
   const drawn = JSON.stringify(await coordinatorRender(fx))
-  expect(drawn).toContain('Orch : alpha')
-  expect(drawn).not.toContain('Orch : real')
+  expect(drawn).toContain('Orch: alpha')
+  expect(drawn).not.toContain('Orch: real')
 })
 
 test('an open pane redraws on its own clock while its session waits, and the clock stops with any close', async () => {
@@ -606,7 +606,7 @@ test('an open pane redraws on its own clock while its session waits, and the clo
   // re-raises the render; the command's close and the pane's own close both stop it.
   const { handlers, matchers } = mounted(registerSupervision)
   expect(matchers['ui.close']).toEqual({ id: 'supervision' })
-  const fx = fakeDollar({ launchName: 'Coord : main' })
+  const fx = fakeDollar({ launchName: 'Coord: main' })
   await handlers['command.run'](fx.dollar, supervisionRun)
   expect(fx.timers.length).toBe(1)
   expect(fx.timers[0].ms).toBe(2000)
@@ -711,9 +711,9 @@ const CHOICES = [
 ]
 
 test('the round\'s first open question is drawn with its choices, the recommended one marked and bold', () => {
-  const asked = entry('Orch : a', '2026-10-18T10:03:00.000Z', { choices: CHOICES, recommendation: 'B' })
-  expect(roundLines([asked, entry('Orch : a', '2026-10-18T10:05:00.000Z')])).toEqual([
-    { letter: null, text: 'Orch : a', bold: false },
+  const asked = entry('Orch: a', '2026-10-18T10:03:00.000Z', { choices: CHOICES, recommendation: 'B' })
+  expect(roundLines([asked, entry('Orch: a', '2026-10-18T10:05:00.000Z')])).toEqual([
+    { letter: null, text: 'Orch: a', bold: false },
     { letter: 'A', text: 'merge it now — the release goes out today', bold: false },
     { letter: 'B', text: 'wait for the next review — a day lost  (recommended)', bold: true },
     { letter: 'C', text: 'close it — the work is dropped', bold: false },
@@ -722,14 +722,14 @@ test('the round\'s first open question is drawn with its choices, the recommende
 
 test('the first question is the round\'s order\'s, done proposals and closed entries left out of it and of the count', () => {
   const entries = [
-    entry('Orch : a', '2026-10-18T10:03:00.000Z', { choices: CHOICES, recommendation: 'B' }),
-    entry('Orch : b', '2026-10-18T10:01:00.000Z', { blocks: 'the merge' }),
-    entry('Orch : c', '2026-10-18T09:00:00.000Z', { kind: 'done', blocks: null }),
-    entry('Orch : d', '2026-10-18T08:00:00.000Z', { status: 'closed' }),
-    entry('Orch : e', '2026-10-18T08:30:00.000Z', { status: 'withdrawn' }),
+    entry('Orch: a', '2026-10-18T10:03:00.000Z', { choices: CHOICES, recommendation: 'B' }),
+    entry('Orch: b', '2026-10-18T10:01:00.000Z', { blocks: 'the merge' }),
+    entry('Orch: c', '2026-10-18T09:00:00.000Z', { kind: 'done', blocks: null }),
+    entry('Orch: d', '2026-10-18T08:00:00.000Z', { status: 'closed' }),
+    entry('Orch: e', '2026-10-18T08:30:00.000Z', { status: 'withdrawn' }),
   ]
   expect(roundLines(entries)).toEqual([
-    { letter: null, text: 'Orch : a', bold: false },
+    { letter: null, text: 'Orch: a', bold: false },
     { letter: 'A', text: 'merge it now — the release goes out today', bold: false },
     { letter: 'B', text: 'wait for the next review — a day lost  (recommended)', bold: true },
     { letter: 'C', text: 'close it — the work is dropped', bold: false },
@@ -744,12 +744,12 @@ async function coordinatorRender(fx: Fx, handlers = mounted(registerSupervision)
 }
 
 test('a coordinator\'s pane draws the round\'s first question under the orchestrator rows', async () => {
-  const fx = fakeDollar({ launchName: 'Coord : main' })
-  fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : low', context_percent: 30 })) + '\n')
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: low', context_percent: 30 })) + '\n')
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
   fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
   fx.files.set(`${ROUND}/broken.json`, '{"id": "broken", "status": "op')
-  fx.files.set(`${ROUND}/x.tmp-1.json`, JSON.stringify({ ...asked, from: 'Orch : half' }))
+  fx.files.set(`${ROUND}/x.tmp-1.json`, JSON.stringify({ ...asked, from: 'Orch: half' }))
   const { handlers } = mounted(registerSupervision)
   const first = await coordinatorRender(fx, handlers)
   // The field is drawn once « Other answer » is picked.
@@ -757,16 +757,16 @@ test('a coordinator\'s pane draws the round\'s first question under the orchestr
   await findAll(first, n => n.type === 'Select')[0].props.onSelect('other')
   const tree = await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
   const [round, , rows] = tree.props.children
-  expect(JSON.stringify(rows)).toContain('Orch : low')
+  expect(JSON.stringify(rows)).toContain('Orch: low')
   expect(round.type).toBe('Box')
   const card = round.props.children[1]
   expect(card).toBe(cardOf(tree))
   expect(card.props).toMatchObject({ borderStyle: 'round', borderColor: 'suggestion', flexDirection: 'column', gap: 1 })
-  expect(pieces(card.props.children[0])).toEqual([{ text: 'Orch : low', color: 'suggestion', bold: true }])
+  expect(pieces(card.props.children[0])).toEqual([{ text: 'Orch: low', color: 'suggestion', bold: true }])
   expect(drawScreen(card, 60)).toEqual([
     '╭──────────────────────────────────────────────────────────╮',
     '│                                                          │',
-    '│  Orch : low                                              │',
+    '│  Orch: low                                               │',
     '│                                                          │',
     '│  QUESTION                                                │',
     '│    Merge it?                                             │',
@@ -788,10 +788,10 @@ test('a coordinator\'s pane draws the round\'s first question under the orchestr
 })
 
 test('no open question: nothing is drawn below the rows, and an orchestrator\'s pane never draws the round', async () => {
-  const bare = fakeDollar({ launchName: 'Coord : main' })
-  const settled = fakeDollar({ launchName: 'Coord : main' })
-  for (const fx of [bare, settled]) fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : low', context_percent: 30, updated_at: '2026-10-18T10:00:00.000Z' })) + '\n')
-  for (const done of [entry('Orch : low', '2026-10-18T10:03:00.000Z', { status: 'closed' }), entry('Orch : low', '2026-10-18T10:04:00.000Z', { kind: 'done', blocks: null })]) {
+  const bare = fakeDollar({ launchName: 'Coord: main' })
+  const settled = fakeDollar({ launchName: 'Coord: main' })
+  for (const fx of [bare, settled]) fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: low', context_percent: 30, updated_at: '2026-10-18T10:00:00.000Z' })) + '\n')
+  for (const done of [entry('Orch: low', '2026-10-18T10:03:00.000Z', { status: 'closed' }), entry('Orch: low', '2026-10-18T10:04:00.000Z', { kind: 'done', blocks: null })]) {
     settled.files.set(`${ROUND}/${done.id}.json`, JSON.stringify(done) + '\n')
   }
   const settledTree = await coordinatorRender(settled)
@@ -800,37 +800,37 @@ test('no open question: nothing is drawn below the rows, and an orchestrator\'s 
   expect(settledTree.props.children.length).toBe(3)
   expect(JSON.stringify(settledTree)).not.toContain('Merge it?')
 
-  const orch = fakeDollar({ launchName: 'Orch : phase-3' })
-  const asked = entry('Orch : phase-3', '2026-10-18T10:03:00.000Z')
+  const orch = fakeDollar({ launchName: 'Orch: phase-3' })
+  const asked = entry('Orch: phase-3', '2026-10-18T10:03:00.000Z')
   orch.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
   expect(JSON.stringify(await coordinatorRender(orch))).not.toContain('pending')
 })
 
 test('the archive under the round is read by nothing: an open entry planted there is neither read nor drawn', async () => {
-  const fx = fakeDollar({ launchName: 'Coord : main' })
-  fx.files.set(`${SESSIONS}/live`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : live', context_percent: 30 })) + '\n')
-  const hidden = entry('Orch : live', '2026-10-18T10:03:00.000Z', { session: 'live' })
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  fx.files.set(`${SESSIONS}/live`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: live', context_percent: 30 })) + '\n')
+  const hidden = entry('Orch: live', '2026-10-18T10:03:00.000Z', { session: 'live' })
   fx.files.set(`${ROUND}/archive/${hidden.id}.json`, JSON.stringify(hidden) + '\n')
   expect(await readRound(fx.dollar)).toEqual([])
   expect(JSON.stringify(await coordinatorRender(fx))).not.toContain('pending')
   // The same entry directly under the round is drawn: only its place kept it out.
-  const control = fakeDollar({ launchName: 'Coord : main' })
-  control.files.set(`${SESSIONS}/live`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : live', context_percent: 30 })) + '\n')
+  const control = fakeDollar({ launchName: 'Coord: main' })
+  control.files.set(`${SESSIONS}/live`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: live', context_percent: 30 })) + '\n')
   control.files.set(`${ROUND}/${hidden.id}.json`, JSON.stringify(hidden) + '\n')
   expect((await readRound(control.dollar)).length).toBe(1)
   expect(JSON.stringify(await coordinatorRender(control))).toContain('Questions for you — 1 pending')
 })
 
 test('a question whose sender has ended is not drawn, nor counted: only the live sessions\' questions are', async () => {
-  const fx = fakeDollar({ launchName: 'Coord : main' })
-  fx.files.set(`${SESSIONS}/live`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : live', context_percent: 30 })) + '\n')
-  const gone = entry('Orch : gone', '2026-10-18T10:01:00.000Z', { session: 'ended', blocks: 'the old merge' })
-  const asked = entry('Orch : live', '2026-10-18T10:03:00.000Z', { session: 'live', choices: CHOICES, recommendation: 'B' })
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  fx.files.set(`${SESSIONS}/live`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: live', context_percent: 30 })) + '\n')
+  const gone = entry('Orch: gone', '2026-10-18T10:01:00.000Z', { session: 'ended', blocks: 'the old merge' })
+  const asked = entry('Orch: live', '2026-10-18T10:03:00.000Z', { session: 'live', choices: CHOICES, recommendation: 'B' })
   for (const e of [gone, asked]) fx.files.set(`${ROUND}/${e.id}.json`, JSON.stringify(e) + '\n')
   const [round] = (await coordinatorRender(fx)).props.children
   expect(texts(round)).toEqual([
     'Questions for you — 1 pending',
-    'Orch : live',
+    'Orch: live',
     'QUESTION',
     'Merge it?',
     'CHOICES',
@@ -843,7 +843,7 @@ test('a question whose sender has ended is not drawn, nor counted: only the live
     'close it — the work is dropped',
     '─'.repeat(40),
   ])
-  expect(JSON.stringify(round)).not.toContain('Orch : gone')
+  expect(JSON.stringify(round)).not.toContain('Orch: gone')
   // Every sender ended: nothing is drawn below the rows.
   fx.files.delete(`${SESSIONS}/live`)
   expect(JSON.stringify(await coordinatorRender(fx))).not.toContain('pending')
@@ -851,7 +851,7 @@ test('a question whose sender has ended is not drawn, nor counted: only the live
 })
 
 test('a round directory that cannot be listed is one log line and no entry; one never written is no failure', async () => {
-  const fx = fakeDollar({ launchName: 'Coord : main' })
+  const fx = fakeDollar({ launchName: 'Coord: main' })
   expect(await readRound(fx.dollar)).toEqual([])
   expect(fx.written).toEqual([])
   fx.files.set(ROUND, '')
@@ -865,9 +865,9 @@ test('a round directory that cannot be listed is one log line and no entry; one 
 const firstTurn = { answer: 'Registered.', reason: 'answer', isAborted: false, durationMs: 1, turnId: 't' }
 
 function coordinatorSession(over: { role?: SessionRow['role']; record?: boolean } = {}): Fx {
-  const fx = fakeDollar({ launchName: 'Coord : main' })
-  fx.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: 'role' in over ? over.role : 'coordinator', name: 'Coord : main' })) + '\n')
-  if (over.record !== false) fx.files.set(RECORD, JSON.stringify({ name: 'Coord : main [abc]', tty: '/dev/ttys001' }))
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  fx.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: 'role' in over ? over.role : 'coordinator', name: 'Coord: main' })) + '\n')
+  if (over.record !== false) fx.files.set(RECORD, JSON.stringify({ name: 'Coord: main [abc]', tty: '/dev/ttys001' }))
   return fx
 }
 
@@ -881,8 +881,8 @@ test('a coordinator\'s pane opens by itself at the end of its first turn, as the
   expect(fx.opened.length).toBe(1)
   expect(fx.timers.length).toBe(1)
   // Opened by the module, the pane lists what the command's pane lists.
-  fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : low', context_percent: 30 })) + '\n')
-  expect(JSON.stringify(await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))).toContain('Orch : low')
+  fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: low', context_percent: 30 })) + '\n')
+  expect(JSON.stringify(await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))).toContain('Orch: low')
 })
 
 test('a pane the operator closed with the command stays closed, the module reloaded or not', async () => {
@@ -950,7 +950,7 @@ test('a coordinator recorded after the first turn: the pane opens at the first t
   const fx = coordinatorSession({ record: false })
   await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
   expect(fx.opened).toEqual([])
-  fx.files.set(RECORD, JSON.stringify({ name: 'Coord : main [abc]', tty: '/dev/ttys001' }))
+  fx.files.set(RECORD, JSON.stringify({ name: 'Coord: main [abc]', tty: '/dev/ttys001' }))
   await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
   expect(fx.opened).toEqual([{ id: 'supervision', title: 'Orchestrators', focus: true }])
 })
@@ -970,7 +970,7 @@ function pieces(node: any): { text: string; color?: string; bold: boolean }[] {
 const AGO = () => new Date(Date.now() - 3 * 60000).toISOString()
 const SINCE = '2026-10-19T08:05:00.000Z'
 const paneTree = async (rows: Record<string, SessionRow>, round: RoundEntry[] = []) => {
-  const fx = fakeDollar({ launchName: 'Coord : main' })
+  const fx = fakeDollar({ launchName: 'Coord: main' })
   for (const [key, value] of Object.entries(rows)) fx.files.set(`${SESSIONS}/${key}`, JSON.stringify(value) + '\n')
   for (const e of round) fx.files.set(`${ROUND}/${e.id}.json`, JSON.stringify(e) + '\n')
   return coordinatorRender(fx)
@@ -978,7 +978,7 @@ const paneTree = async (rows: Record<string, SessionRow>, round: RoundEntry[] = 
 const orch = (name: string, over: Partial<SessionRow> = {}) => ({ ...row({ role: 'orchestrator', name, context_percent: 30, updated_at: AGO() }), ...over })
 
 test('the coordinator\'s pane opens with a bold title above the orchestrator blocks, and says when there is none', async () => {
-  const tree = await paneTree({ low: orch('Orch : low') })
+  const tree = await paneTree({ low: orch('Orch: low') })
   expect(pieces(tree.props.children[1])).toEqual([{ text: 'Orchestrators', bold: true }])
   const empty = await paneTree({})
   expect(pieces(empty.props.children[1])).toEqual([{ text: 'Orchestrators', bold: true }])
@@ -988,13 +988,13 @@ test('the coordinator\'s pane opens with a bold title above the orchestrator blo
 const text = (nodes: { text: string }[]) => nodes.map(p => p.text).join('')
 
 test('a plain orchestrator is one line: a dot, its bold name, then its figures in the normal colour', async () => {
-  const tree = await paneTree({ low: orch('Orch : low') })
+  const tree = await paneTree({ low: orch('Orch: low') })
   const block = tree.props.children[2]
   expect(block.props.children.length).toBe(1)
   expect(pieces(block.props.children[0])).toEqual([
     { text: '●', color: 'suggestion', bold: false },
     { text: ' ', bold: false },
-    { text: 'Orch : low', bold: true },
+    { text: 'Orch: low', bold: true },
     { text: ' · orchestrator · ', bold: false },
     { text: '30%', bold: false },
     { text: ' · 3m', bold: false },
@@ -1003,7 +1003,7 @@ test('a plain orchestrator is one line: a dot, its bold name, then its figures i
 })
 
 test('an orchestrator waiting for the operator draws a warning dot, a Status line and a Blocks line, both indented', async () => {
-  const tree = await paneTree({ w: orch('Orch : w', { waiting: 'operator', waiting_since: SINCE, blocks: 'the merge' }) })
+  const tree = await paneTree({ w: orch('Orch: w', { waiting: 'operator', waiting_since: SINCE, blocks: 'the merge' }) })
   const block = tree.props.children[2]
   expect(block.props.children.length).toBe(3)
   expect(pieces(block.props.children[0])[0]).toEqual({ text: '●', color: 'warning', bold: false })
@@ -1020,7 +1020,7 @@ test('an orchestrator waiting for the operator draws a warning dot, a Status lin
 
 test('a long blocks text stays in a column of its own, wrapping under its first character and not under the label', async () => {
   const long = 'release out of draft and squash merge of geonative-api#1749, geonative-api#1751 and front-office#1545 (G2/G5 with #1751, G6 with #1749 + #1545)'
-  const tree = await paneTree({ w: orch('Orch : w', { waiting: 'operator', waiting_since: SINCE, blocks: long }) })
+  const tree = await paneTree({ w: orch('Orch: w', { waiting: 'operator', waiting_since: SINCE, blocks: long }) })
   const line = tree.props.children[2].props.children[2]
   const [labelColumn, textColumn] = line.props.children
   expect(line.props.flexDirection).toBe('row')
@@ -1032,12 +1032,12 @@ test('a long blocks text stays in a column of its own, wrapping under its first 
 })
 
 test('an operator wait that carries no blocks text says unsaid', async () => {
-  const tree = await paneTree({ w: orch('Orch : w', { waiting: 'operator', waiting_since: SINCE }) })
+  const tree = await paneTree({ w: orch('Orch: w', { waiting: 'operator', waiting_since: SINCE }) })
   expect(pieces(tree.props.children[2].props.children[2])[1].text).toBe('unsaid')
 })
 
 test('a done orchestrator draws a success dot and one Status line in success, with no Blocks line', async () => {
-  const tree = await paneTree({ d: orch('Orch : d', { waiting: 'done', waiting_since: SINCE }) })
+  const tree = await paneTree({ d: orch('Orch: d', { waiting: 'done', waiting_since: SINCE }) })
   const block = tree.props.children[2]
   expect(block.props.children.length).toBe(2)
   expect(pieces(block.props.children[0])[0]).toEqual({ text: '●', color: 'success', bold: false })
@@ -1048,7 +1048,7 @@ test('a done orchestrator draws a success dot and one Status line in success, wi
 })
 
 test('a row past the gate draws its fill and gate words in the error colour, the rest in the normal colour', async () => {
-  const tree = await paneTree({ hot: orch('Orch : hot', { context_percent: 85, context_tokens: 85000 }) })
+  const tree = await paneTree({ hot: orch('Orch: hot', { context_percent: 85, context_tokens: 85000 }) })
   expect(pieces(tree.props.children[2].props.children[0]).slice(3)).toEqual([
     { text: ' · orchestrator · ', bold: false },
     { text: '85% past the gate', color: 'error', bold: false },
@@ -1057,38 +1057,38 @@ test('a row past the gate draws its fill and gate words in the error colour, the
 })
 
 test('a remote orchestrator keeps its machine in its line', async () => {
-  const tree = await paneTree({ r: orch('Orch : r', { machine: 'mini' }) })
-  expect(text(pieces(tree.props.children[2].props.children[0]))).toBe('● Orch : r · orchestrator · remote mini · 30% · 3m')
+  const tree = await paneTree({ r: orch('Orch: r', { machine: 'mini' }) })
+  expect(text(pieces(tree.props.children[2].props.children[0]))).toBe('● Orch: r · orchestrator · remote mini · 30% · 3m')
 })
 
 test('one blank line separates two blocks', async () => {
-  const tree = await paneTree({ a: orch('Orch : a', { context_percent: 40 }), b: orch('Orch : b') })
+  const tree = await paneTree({ a: orch('Orch: a', { context_percent: 40 }), b: orch('Orch: b') })
   const [, , first, second] = tree.props.children
   expect(first.props.marginTop).toBeUndefined()
   expect(second.props.marginTop).toBe(1)
-  expect(pieces(first.props.children[0])[2].text).toBe('Orch : a')
+  expect(pieces(first.props.children[0])[2].text).toBe('Orch: a')
 })
 
 test('the orchestrator that asked the open question stands out: its whole line bold in suggestion, the others plain', async () => {
-  const asked = entry('Orch : a', '2026-10-18T10:03:00.000Z', { session: 'a', choices: CHOICES, recommendation: 'B' })
-  const tree = await paneTree({ a: orch('Orch : a', { context_percent: 40 }), b: orch('Orch : b') }, [asked])
+  const asked = entry('Orch: a', '2026-10-18T10:03:00.000Z', { session: 'a', choices: CHOICES, recommendation: 'B' })
+  const tree = await paneTree({ a: orch('Orch: a', { context_percent: 40 }), b: orch('Orch: b') }, [asked])
   const [, , speaker, other] = tree.props.children
   expect(pieces(speaker.props.children[0])).toEqual([
     { text: '●', color: 'suggestion', bold: false },
     { text: ' ', bold: false },
-    { text: 'Orch : a', color: 'suggestion', bold: true },
+    { text: 'Orch: a', color: 'suggestion', bold: true },
     { text: ' · orchestrator · ', color: 'suggestion', bold: true },
     { text: '40%', color: 'suggestion', bold: true },
     { text: ' · 3m', color: 'suggestion', bold: true },
   ])
-  expect(pieces(other.props.children[0]).slice(2).every(p => p.color === undefined && p.bold === (p.text === 'Orch : b'))).toBe(true)
+  expect(pieces(other.props.children[0]).slice(2).every(p => p.color === undefined && p.bold === (p.text === 'Orch: b'))).toBe(true)
 })
 
 test('the speaker is matched by its session, not its name, and keeps the error colour past the gate', async () => {
-  const asked = entry('Orch : same', '2026-10-18T10:03:00.000Z', { session: 'hot', choices: CHOICES })
+  const asked = entry('Orch: same', '2026-10-18T10:03:00.000Z', { session: 'hot', choices: CHOICES })
   const tree = await paneTree({
-    hot: orch('Orch : hot', { context_percent: 85, context_tokens: 85000 }),
-    twin: orch('Orch : same', { context_percent: 20 }),
+    hot: orch('Orch: hot', { context_percent: 85, context_tokens: 85000 }),
+    twin: orch('Orch: same', { context_percent: 20 }),
   }, [asked])
   const [, , first, second] = tree.props.children
   expect(pieces(first.props.children[0]).slice(3)).toEqual([
@@ -1100,21 +1100,21 @@ test('the speaker is matched by its session, not its name, and keeps the error c
 })
 
 test('a done proposal is no question: no row stands out', async () => {
-  const done = entry('Orch : d', '2026-10-18T10:03:00.000Z', { session: 'd', kind: 'done', blocks: null })
-  const tree = await paneTree({ d: orch('Orch : d', { waiting: 'done', waiting_since: SINCE }) }, [done])
+  const done = entry('Orch: d', '2026-10-18T10:03:00.000Z', { session: 'd', kind: 'done', blocks: null })
+  const tree = await paneTree({ d: orch('Orch: d', { waiting: 'done', waiting_since: SINCE }) }, [done])
   const line = pieces(tree.props.children[2].props.children[0])
-  expect(line.map(p => p.text)).toEqual(['●', ' ', 'Orch : d', ' · orchestrator · ', '30%', ' · 3m'])
+  expect(line.map(p => p.text)).toEqual(['●', ' ', 'Orch: d', ' · orchestrator · ', '30%', ' · 3m'])
   expect(line.some(p => p.bold && p.color === 'suggestion')).toBe(false)
 })
 
 test('the questions section is titled in bold suggestion, with an open question styled', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
-  const tree = await paneTree({ low: orch('Orch : low') }, [asked])
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const tree = await paneTree({ low: orch('Orch: low') }, [asked])
   const section = tree.props.children[0]
   const [title, card] = section.props.children
   expect(pieces(title)).toEqual([{ text: 'Questions for you — 1 pending', color: 'suggestion', bold: true }])
   const [header, field, list] = card.props.children
-  expect(pieces(header)).toEqual([{ text: 'Orch : low', color: 'suggestion', bold: true }])
+  expect(pieces(header)).toEqual([{ text: 'Orch: low', color: 'suggestion', bold: true }])
   expect(pieces(field)).toEqual([{ text: 'QUESTION', color: 'suggestion', bold: true }, { text: 'Merge it?', bold: true }])
   const [a, b, c] = findAll(list, n => n.type === 'Box' && n.props.flexDirection === 'row')
   expect([a, b, c].map(choice => text(pieces(choice)))).toEqual([
@@ -1130,13 +1130,13 @@ test('the questions section is titled in bold suggestion, with an open question 
 })
 
 test('no question: the section says none, or counts the orchestrators waiting when the round holds none', async () => {
-  const none = await paneTree({ low: orch('Orch : low') })
+  const none = await paneTree({ low: orch('Orch: low') })
   expect(pieces(none.props.children[0])).toEqual([
     { text: 'Questions for you', color: 'suggestion', bold: true },
     { text: 'none', bold: false },
     { text: '─'.repeat(40), bold: false },
   ])
-  const waits = { w1: orch('Orch : w1', { waiting: 'operator', waiting_since: SINCE }), w2: orch('Orch : w2', { waiting: 'operator', waiting_since: SINCE }), d: orch('Orch : d', { waiting: 'done', waiting_since: SINCE }) }
+  const waits = { w1: orch('Orch: w1', { waiting: 'operator', waiting_since: SINCE }), w2: orch('Orch: w2', { waiting: 'operator', waiting_since: SINCE }), d: orch('Orch: d', { waiting: 'done', waiting_since: SINCE }) }
   const two = await paneTree(waits)
   expect(pieces(two.props.children[0])[1]).toEqual({ text: 'none in the pane — 2 orchestrators wait for you: ask the coordinator', bold: false })
   const one = await paneTree({ w1: waits.w1 })
@@ -1144,14 +1144,14 @@ test('no question: the section says none, or counts the orchestrators waiting wh
 })
 
 test('an orchestrator\'s own pane says no agent running in the default text colour, with no title', async () => {
-  const fx = fakeDollar({ launchName: 'Orch : phase-3' })
+  const fx = fakeDollar({ launchName: 'Orch: phase-3' })
   fx.env.ITERM_SESSION_ID = 'w0t1p0:OWNER-1'
   const tree = await coordinatorRender(fx)
   expect(tree.props.children.map((kid: any) => [kid.props.color, kid.props.children])).toEqual([[undefined, 'no agent running']])
 })
 
 test('an orchestrator\'s own pane draws an agent past the gate in warning and the other in the default text colour, each name bold, with no title', async () => {
-  const fx = fakeDollar({ launchName: 'Orch : phase-3' })
+  const fx = fakeDollar({ launchName: 'Orch: phase-3' })
   fx.env.ITERM_SESSION_ID = 'w0t1p0:OWNER-1'
   fx.files.set(`${HOME}/.claude/claude-orchestrator/chains/ttys001.jsonl`, [
     JSON.stringify({ tab_id: 't-9', tty: '/dev/ttys009', owner: 'OWNER-1' }),
@@ -1161,18 +1161,18 @@ test('an orchestrator\'s own pane draws an agent past the gate in warning and th
   const run = fx.dollar.process.run
   fx.dollar.process.run = async (argv: readonly string[]) =>
     argv[0] === 'ps' && argv[2] === 'ttys010' ? { exitCode: 0, stdout: '  778 hostcli\n', stderr: '' } : run(argv)
-  fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ sessionId: 's-past', name: 'Agent : past', status: 'busy' }))
-  fx.files.set(`${HOME}/.claude/sessions/778.json`, JSON.stringify({ sessionId: 's-under', name: 'Agent : under', status: 'busy' }))
-  fx.files.set(`${SESSIONS}/s-past`, JSON.stringify(row({ role: 'agent', name: 'Agent : past', context_percent: 35, context_tokens: 350000, window: 1000000 })) + '\n')
-  fx.files.set(`${SESSIONS}/s-under`, JSON.stringify(row({ role: 'agent', name: 'Agent : under', context_percent: 20 })) + '\n')
+  fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ sessionId: 's-past', name: 'Agent: past', status: 'busy' }))
+  fx.files.set(`${HOME}/.claude/sessions/778.json`, JSON.stringify({ sessionId: 's-under', name: 'Agent: under', status: 'busy' }))
+  fx.files.set(`${SESSIONS}/s-past`, JSON.stringify(row({ role: 'agent', name: 'Agent: past', context_percent: 35, context_tokens: 350000, window: 1000000 })) + '\n')
+  fx.files.set(`${SESSIONS}/s-under`, JSON.stringify(row({ role: 'agent', name: 'Agent: under', context_percent: 20 })) + '\n')
   const tree = await coordinatorRender(fx)
   const [past, under] = tree.props.children.map((kid: any) => pieces(kid))
-  expect(past.map((p: any) => p.text).join('')).toMatch(/^Agent : past · busy · 35% past the gate · /)
+  expect(past.map((p: any) => p.text).join('')).toMatch(/^Agent: past · busy · 35% past the gate · /)
   expect(past.every((p: any) => p.color === 'warning')).toBe(true)
-  expect(past.filter((p: any) => p.bold).map((p: any) => p.text)).toEqual(['Agent : past'])
-  expect(under.map((p: any) => p.text).join('')).toMatch(/^Agent : under · busy · 20% · /)
+  expect(past.filter((p: any) => p.bold).map((p: any) => p.text)).toEqual(['Agent: past'])
+  expect(under.map((p: any) => p.text).join('')).toMatch(/^Agent: under · busy · 20% · /)
   expect(under.some((p: any) => p.color !== undefined)).toBe(false)
-  expect(under.filter((p: any) => p.bold).map((p: any) => p.text)).toEqual(['Agent : under'])
+  expect(under.filter((p: any) => p.bold).map((p: any) => p.text)).toEqual(['Agent: under'])
 })
 
 // --- answering from the coordinator's pane ------------------------------------------------------
@@ -1195,8 +1195,8 @@ const shown = (tree: any, width = 200) => drawScreen(tree, width).map(line => li
 
 // A coordinator with one live orchestrator asking, its send recorded (or refused), its pane drawn.
 async function askingPane(asked: RoundEntry[], over: { refuse?: string; throws?: string; surface?: string } = {}) {
-  const fx = fakeDollar({ launchName: 'Coord : main' })
-  fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : low', context_percent: 30 })) + '\n')
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: low', context_percent: 30 })) + '\n')
   for (const e of asked) fx.files.set(`${ROUND}/${e.id}.json`, JSON.stringify(e) + '\n')
   const sent: { to: unknown; text: string }[] = []
   fx.dollar.session.send = async (args: { to: unknown; text: string }) => {
@@ -1219,17 +1219,17 @@ const LONG = `Question 1 of 1 — ${'every word of the context the operator need
 
 test('a 2,500-character question is drawn whole in the pane, above its choices', async () => {
   const question = `${LONG}\n- **A** : one\n- **B** : two\n_Recommendation_ : B`
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', question, choices: [{ letter: 'A', text: 'one' }, { letter: 'B', text: 'two' }], recommendation: 'B' })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', question, choices: [{ letter: 'A', text: 'one' }, { letter: 'B', text: 'two' }], recommendation: 'B' })
   const { render } = await askingPane([asked])
   const drawn = texts(await render())
   expect(drawn).toContain(LONG)
   expect(drawn.some(t => t.includes('[cut at'))).toBe(false)
-  expect(drawn.indexOf(LONG)).toBeGreaterThan(drawn.indexOf('Orch : low'))
-  expect(drawn.indexOf('Orch : low')).toBeGreaterThan(-1)
+  expect(drawn.indexOf(LONG)).toBeGreaterThan(drawn.indexOf('Orch: low'))
+  expect(drawn.indexOf('Orch: low')).toBeGreaterThan(-1)
 })
 
 test('a message without lettered choices shows its text and the Other answer field, no choice Button, never a bare blocks line', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', question: `_Question_ : ${LONG}` })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', question: `_Question_ : ${LONG}` })
   const { render } = await askingPane([asked])
   const tree = await render()
   expect(texts(tree)).toContain('QUESTION')
@@ -1240,8 +1240,8 @@ test('a message without lettered choices shows its text and the Other answer fie
 })
 
 test('a pick of a choice answers the entry from the pane, sends the asking orchestrator the choice once, and draws the next question', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
-  const next = entry('Orch : low', '2026-10-18T10:05:00.000Z', { session: 'low', blocks: 'phase 4', question: '_Question_ : Rename it?' })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const next = entry('Orch: low', '2026-10-18T10:05:00.000Z', { session: 'low', blocks: 'phase 4', question: '_Question_ : Rename it?' })
   const { fx, sent, render, stored } = await askingPane([asked, next])
   await pick(await render(), 'B')
   const answered = stored(asked.id)
@@ -1260,7 +1260,7 @@ test('a pick of a choice answers the entry from the pane, sends the asking orche
 })
 
 test('a pick on a drawing whose entry was settled meanwhile writes and sends nothing', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
   const { fx, sent, render, stored } = await askingPane([asked])
   const drawn = await render()
   fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify({ ...asked, status: 'closed' }) + '\n')
@@ -1270,24 +1270,24 @@ test('a pick on a drawing whose entry was settled meanwhile writes and sends not
 })
 
 test('an answer not delivered keeps the entry answered, is logged, and is said until a render finds the sender gone', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
   const { fx, sent, render, stored } = await askingPane([asked], { refuse: 'nobody by that name' })
   await pick(await render(), 'A')
   expect(stored(asked.id).status).toBe('answered')
   expect(sent.length).toBe(1)
-  expect(fx.written.filter(l => l.includes("round: the pane's answer was not delivered to Orch : low: nobody by that name")).length).toBe(1)
+  expect(fx.written.filter(l => l.includes("round: the pane's answer was not delivered to Orch: low: nobody by that name")).length).toBe(1)
   expect(texts(await render()).some(t => t.startsWith('not delivered: nobody by that name'))).toBe(true)
   expect(texts(await render()).some(t => t.startsWith('not delivered: nobody by that name'))).toBe(true)
   fx.files.delete(`${SESSIONS}/low`)
   expect(texts(await render()).some(t => t.startsWith('not delivered:'))).toBe(false)
-  fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : low', context_percent: 30 })) + '\n')
+  fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: low', context_percent: 30 })) + '\n')
   expect(texts(await render()).some(t => t.startsWith('not delivered:'))).toBe(false)
 })
 
 test('the answer to a question that asks consent is written as its subject\'s consent record, the choice as its text', async () => {
   const consent = { kind: 'e2e-waiver' as const, repo: 'Acme/Thing', pr: 12 }
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, consent })
-  const plain = entry('Orch : low', '2026-10-18T10:04:00.000Z', { session: 'low', choices: CHOICES })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, consent })
+  const plain = entry('Orch: low', '2026-10-18T10:04:00.000Z', { session: 'low', choices: CHOICES })
   const { fx } = await askingPane([asked, plain])
   const pane = { opened: null, ticker: null, other: new Set<string>(), writing: null, undelivered: new Map(), answering: new Set<string>() }
   await answerFromPane(fx.dollar, pane, asked, CHOICES[0])
@@ -1299,19 +1299,19 @@ test('the answer to a question that asks consent is written as its subject\'s co
 })
 
 test('two live sessions share the sender\'s name: the answer goes to the entry\'s own session', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low-2', choices: CHOICES })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low-2', choices: CHOICES })
   const { fx, sent, render } = await askingPane([asked])
-  fx.files.set(`${SESSIONS}/low-2`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : low', context_percent: 20 })) + '\n')
+  fx.files.set(`${SESSIONS}/low-2`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: low', context_percent: 20 })) + '\n')
   await pick(await render(), 'A')
   expect(sent.map(s => s.to)).toEqual([{ sessionId: 'low-2' }])
 })
 
 test('an entry whose session has no live row on this machine is answered by its sender\'s name', async () => {
-  const asked = entry('Orch : far', '2026-10-18T10:03:00.000Z', { session: 'session_far', choices: CHOICES })
+  const asked = entry('Orch: far', '2026-10-18T10:03:00.000Z', { session: 'session_far', choices: CHOICES })
   const { fx, sent } = await askingPane([asked])
   const pane = { opened: null, ticker: null, other: new Set<string>(), writing: null, undelivered: new Map(), answering: new Set<string>() }
   await answerFromPane(fx.dollar, pane, asked, CHOICES[0])
-  expect(sent.map(s => s.to)).toEqual(['Orch : far'])
+  expect(sent.map(s => s.to)).toEqual(['Orch: far'])
 })
 
 // The race the round's writers run on one entry (another process: the sender withdrawing it, the
@@ -1319,7 +1319,7 @@ test('an entry whose session has no live row on this machine is answered by its 
 // convention, writing under the entry's lock what it read open. Without the pane's lock it wrote
 // « withdrawn » between the pane's read and its write, and the pane's « answered » erased it.
 test('a withdrawal racing the pane\'s answer on one entry is never written over: one of them wins whole', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
   const { fx, sent } = await askingPane([asked])
   const path = `${ROUND}/${asked.id}.json`
   const lock = `${path}.lock`
@@ -1356,11 +1356,11 @@ test('a withdrawal racing the pane\'s answer on one entry is never written over:
 })
 
 test('an entry recorded before entries carried a session is answered by its sender\'s name', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: '', choices: CHOICES })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: '', choices: CHOICES })
   const { fx, sent } = await askingPane([asked])
   const pane = { opened: null, ticker: null, other: new Set<string>(), writing: null, undelivered: new Map(), answering: new Set<string>() }
   await answerFromPane(fx.dollar, pane, asked, CHOICES[0])
-  expect(sent.map(s => s.to)).toEqual(['Orch : low'])
+  expect(sent.map(s => s.to)).toEqual(['Orch: low'])
 })
 
 for (const [label, settled] of [
@@ -1369,8 +1369,8 @@ for (const [label, settled] of [
   ['answered again', { status: 'answered', answer: { text: 'B', by: 'pane', at: '2026-10-18T10:09:00.000Z' } }],
 ] as const) {
   test(`an answer not delivered is no longer said once its entry is ${label}`, async () => {
-    const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
-    const { fx, render, stored } = await askingPane([asked], { refuse: 'two agents are named Orch : low' })
+    const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+    const { fx, render, stored } = await askingPane([asked], { refuse: 'two agents are named Orch: low' })
     await pick(await render(), 'A')
     expect(texts(await render()).some(t => t.startsWith('not delivered:'))).toBe(true)
     fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify({ ...stored(asked.id), ...settled }) + '\n')
@@ -1379,8 +1379,8 @@ for (const [label, settled] of [
 }
 
 test('an answer not delivered is no longer said once its entry\'s file is gone', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
-  const { fx, render } = await askingPane([asked], { refuse: 'two agents are named Orch : low' })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const { fx, render } = await askingPane([asked], { refuse: 'two agents are named Orch: low' })
   await pick(await render(), 'A')
   expect(texts(await render()).some(t => t.startsWith('not delivered:'))).toBe(true)
   fx.files.delete(`${ROUND}/${asked.id}.json`)
@@ -1388,24 +1388,24 @@ test('an answer not delivered is no longer said once its entry\'s file is gone',
 })
 
 test('an entry its sender withdrew is out of the pane and of its count', async () => {
-  const stale = entry('Orch : low', '2026-10-18T10:01:00.000Z', { session: 'low', status: 'withdrawn', answer: { text: '', by: 'sender', at: '2026-10-18T10:02:00.000Z' } })
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', blocks: 'phase 4' })
+  const stale = entry('Orch: low', '2026-10-18T10:01:00.000Z', { session: 'low', status: 'withdrawn', answer: { text: '', by: 'sender', at: '2026-10-18T10:02:00.000Z' } })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', blocks: 'phase 4' })
   const { render } = await askingPane([stale, asked])
   expect(texts(await render())).toContain('Questions for you — 1 pending')
 })
 
 test('a send that throws is said in the pane as an answer not delivered, its reason the error\'s, and logged', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
   const { fx, render, stored } = await askingPane([asked], { throws: 'the bridge is down' })
   await pick(await render(), 'A')
   expect(stored(asked.id).status).toBe('answered')
-  expect(fx.written.filter(l => l.includes("round: the pane's answer was not delivered to Orch : low: the bridge is down")).length).toBe(1)
+  expect(fx.written.filter(l => l.includes("round: the pane's answer was not delivered to Orch: low: the bridge is down")).length).toBe(1)
   expect(texts(await render()).some(t => t.startsWith('not delivered: the bridge is down'))).toBe(true)
 })
 
 test('every letter picked answers with its own letter', async () => {
   const asked = ['phase 3', 'phase 4', 'phase 5'].map((blocks, i) =>
-    entry('Orch : low', `2026-10-18T10:0${i + 3}:00.000Z`, { session: 'low', blocks, choices: CHOICES }))
+    entry('Orch: low', `2026-10-18T10:0${i + 3}:00.000Z`, { session: 'low', blocks, choices: CHOICES }))
   const { sent, render, stored } = await askingPane(asked)
   for (const letter of ['A', 'B', 'C']) await pick(await render(), letter)
   expect(asked.map(e => stored(e.id).answer!.text)).toEqual(CHOICES.map(c => `${c.letter} : ${c.text}`))
@@ -1413,7 +1413,7 @@ test('every letter picked answers with its own letter', async () => {
 })
 
 test('a second pick while the answer is in flight, or after it, writes and sends nothing more', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
   const { fx, sent, render, stored } = await askingPane([asked])
   const drawn = await render()
   const writes = () => fx.ran.filter(r => r.startsWith('mv -f') && r.endsWith(`${ROUND}/${asked.id}.json`)).length
@@ -1426,7 +1426,7 @@ test('a second pick while the answer is in flight, or after it, writes and sends
 
 test('the question\'s body is drawn without its emphasis markers, its stored text verbatim', async () => {
   const question = '_Question_ : **merge** it?\n_Context_ : The __review__ is *green*, _really_, see `pr-219` and snake_case_name.\n* a list item'
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', question })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', question })
   const { render, stored } = await askingPane([asked])
   const tree = await render()
   const drawn = shown(tree)
@@ -1441,15 +1441,15 @@ test('the question\'s body is drawn without its emphasis markers, its stored tex
 
 test('a question without choices never hides one that has them, and the count is the total', () => {
   const entries = [
-    entry('Orch : a', '2026-10-18T10:01:00.000Z', { blocks: 'the note' }),
-    entry('Orch : b', '2026-10-18T10:02:00.000Z', { choices: CHOICES, recommendation: 'B', blocks: 'the merge' }),
-    entry('Orch : c', '2026-10-18T10:03:00.000Z', { blocks: 'the other note' }),
+    entry('Orch: a', '2026-10-18T10:01:00.000Z', { blocks: 'the note' }),
+    entry('Orch: b', '2026-10-18T10:02:00.000Z', { choices: CHOICES, recommendation: 'B', blocks: 'the merge' }),
+    entry('Orch: c', '2026-10-18T10:03:00.000Z', { blocks: 'the other note' }),
   ]
   const lines = roundLines(entries)
-  expect(lines[0]).toEqual({ letter: null, text: 'Orch : b', bold: false })
+  expect(lines[0]).toEqual({ letter: null, text: 'Orch: b', bold: false })
   expect(lines.map(l => l.letter)).toEqual([null, 'A', 'B', 'C'])
   // Without any choiced entry, the round's own order.
-  expect(roundLines(entries.filter(e => e.choices.length === 0))[0].text).toContain('Orch : a')
+  expect(roundLines(entries.filter(e => e.choices.length === 0))[0].text).toContain('Orch: a')
 })
 
 // A takeover report that asks nothing, ended on a wait for the operator: no labelled field, no choice.
@@ -1457,9 +1457,9 @@ const REPORT = 'Takeover done.\n\n| PR | state |\n|---|---|\n| speculoos#53 | re
 const BLOCKS = 'line 239 (merge of speculoos#53) and the next ready PRs'
 
 test('a wait that asks nothing is no card and no pending question: its row says it waits in its tab, with what it blocks', async () => {
-  const report = entry('Orch : w', '2026-10-18T10:03:00.000Z', { session: 'w', question: REPORT, blocks: BLOCKS })
+  const report = entry('Orch: w', '2026-10-18T10:03:00.000Z', { session: 'w', question: REPORT, blocks: BLOCKS })
   expect(roundLines([report])).toEqual([])
-  const tree = await paneTree({ w: orch('Orch : w', { waiting: 'operator', waiting_since: SINCE, blocks: BLOCKS }) }, [report])
+  const tree = await paneTree({ w: orch('Orch: w', { waiting: 'operator', waiting_since: SINCE, blocks: BLOCKS }) }, [report])
   const [section, , block] = tree.props.children
   expect(texts(section)).toEqual(['Questions for you', 'none', '─'.repeat(40)])
   expect(findAll(section, n => n.type === 'Input').length).toBe(0)
@@ -1472,67 +1472,67 @@ test('a wait that asks nothing is no card and no pending question: its row says 
 })
 
 test('a wait that asks nothing and blocks nothing shows the first line of its text on its row', async () => {
-  const report = entry('Orch : w', '2026-10-18T10:03:00.000Z', { session: 'w', question: REPORT, blocks: '' })
-  const tree = await paneTree({ w: orch('Orch : w') }, [report])
+  const report = entry('Orch: w', '2026-10-18T10:03:00.000Z', { session: 'w', question: REPORT, blocks: '' })
+  const tree = await paneTree({ w: orch('Orch: w') }, [report])
   const block = tree.props.children[2]
   expect(pieces(block.props.children.at(-1)).map(p => p.text).join('')).toBe('Waits in its tab: Takeover done.')
 })
 
 test('only the row of the session that waits carries the line, and a row with a card or a plain wait carries none', async () => {
-  const report = entry('Orch : w', '2026-10-18T10:03:00.000Z', { session: 'w', question: REPORT, blocks: BLOCKS })
-  const tree = await paneTree({ w: orch('Orch : w'), v: orch('Orch : v') }, [report])
+  const report = entry('Orch: w', '2026-10-18T10:03:00.000Z', { session: 'w', question: REPORT, blocks: BLOCKS })
+  const tree = await paneTree({ w: orch('Orch: w'), v: orch('Orch: v') }, [report])
   expect(JSON.stringify(tree).match(/Waits in its tab/g)?.length).toBe(1)
-  const asked = entry('Orch : v', '2026-10-18T10:04:00.000Z', { session: 'v', choices: CHOICES })
-  expect(JSON.stringify(await paneTree({ v: orch('Orch : v') }, [asked]))).not.toContain('Waits in its tab')
+  const asked = entry('Orch: v', '2026-10-18T10:04:00.000Z', { session: 'v', choices: CHOICES })
+  expect(JSON.stringify(await paneTree({ v: orch('Orch: v') }, [asked]))).not.toContain('Waits in its tab')
 })
 
 test('the none line counts only the waiting rows that have neither a card nor the line', async () => {
-  const report = entry('Orch : w', '2026-10-18T10:03:00.000Z', { session: 'w', question: REPORT, blocks: BLOCKS })
+  const report = entry('Orch: w', '2026-10-18T10:03:00.000Z', { session: 'w', question: REPORT, blocks: BLOCKS })
   const rows = {
-    w: orch('Orch : w', { waiting: 'operator', waiting_since: SINCE, blocks: BLOCKS }),
-    v: orch('Orch : v', { waiting: 'operator', waiting_since: SINCE, blocks: 'phase 4' }),
+    w: orch('Orch: w', { waiting: 'operator', waiting_since: SINCE, blocks: BLOCKS }),
+    v: orch('Orch: v', { waiting: 'operator', waiting_since: SINCE, blocks: 'phase 4' }),
   }
   expect(texts((await paneTree(rows, [report])).props.children[0])).toContain('none in the pane — 1 orchestrator waits for you: ask the coordinator')
   expect(JSON.stringify(await paneTree({ w: rows.w }, [report]))).not.toContain('none in the pane')
 })
 
 test('a question in the old shape with lettered choices is still drawn and counted', async () => {
-  const asked = entry('Orch : w', '2026-10-18T10:03:00.000Z', { session: 'w', question: 'Merge it?', choices: CHOICES, recommendation: 'B' })
-  const tree = await paneTree({ w: orch('Orch : w') }, [asked])
+  const asked = entry('Orch: w', '2026-10-18T10:03:00.000Z', { session: 'w', question: 'Merge it?', choices: CHOICES, recommendation: 'B' })
+  const tree = await paneTree({ w: orch('Orch: w') }, [asked])
   const drawn = texts(tree.props.children[0])
-  expect(drawn.slice(0, 3)).toEqual(['Questions for you — 1 pending', 'Orch : w', 'Merge it?'])
+  expect(drawn.slice(0, 3)).toEqual(['Questions for you — 1 pending', 'Orch: w', 'Merge it?'])
 })
 
 test('a labelled question without choices is still drawn and counted, beside a wait that asks nothing, which is neither', async () => {
-  const open = entry('Orch : w', '2026-10-18T10:03:00.000Z', { session: 'w', question: '_Question_ : Rename it?' })
-  const report = entry('Orch : w', '2026-10-18T10:05:00.000Z', { session: 'w', question: REPORT, blocks: BLOCKS })
-  expect(roundLines([report, open])).toEqual([{ letter: null, text: 'Orch : w', bold: false }])
-  const drawn = texts((await paneTree({ w: orch('Orch : w') }, [open, report])).props.children[0])
-  expect(drawn).toEqual(['Questions for you — 1 pending', 'Orch : w', 'QUESTION', 'Rename it?', '─'.repeat(40)])
+  const open = entry('Orch: w', '2026-10-18T10:03:00.000Z', { session: 'w', question: '_Question_ : Rename it?' })
+  const report = entry('Orch: w', '2026-10-18T10:05:00.000Z', { session: 'w', question: REPORT, blocks: BLOCKS })
+  expect(roundLines([report, open])).toEqual([{ letter: null, text: 'Orch: w', bold: false }])
+  const drawn = texts((await paneTree({ w: orch('Orch: w') }, [open, report])).props.children[0])
+  expect(drawn).toEqual(['Questions for you — 1 pending', 'Orch: w', 'QUESTION', 'Rename it?', '─'.repeat(40)])
   expect(drawn.join('\n')).not.toContain('Takeover done')
 })
 
 test('the waits that ask nothing are no pane question, the others in the order of choices first', () => {
-  const report = entry('Orch : a', '2026-10-18T10:01:00.000Z', { question: REPORT })
-  const labelled = entry('Orch : b', '2026-10-18T10:02:00.000Z', { question: '_Question_ : Rename it?' })
-  const asked = entry('Orch : c', '2026-10-18T10:03:00.000Z', { choices: CHOICES })
-  expect(paneQuestions([report, labelled, asked]).map(e => e.from)).toEqual(['Orch : c', 'Orch : b'])
-  expect(waitsInTab([report, labelled, asked]).map(e => e.from)).toEqual(['Orch : a'])
+  const report = entry('Orch: a', '2026-10-18T10:01:00.000Z', { question: REPORT })
+  const labelled = entry('Orch: b', '2026-10-18T10:02:00.000Z', { question: '_Question_ : Rename it?' })
+  const asked = entry('Orch: c', '2026-10-18T10:03:00.000Z', { choices: CHOICES })
+  expect(paneQuestions([report, labelled, asked]).map(e => e.from)).toEqual(['Orch: c', 'Orch: b'])
+  expect(waitsInTab([report, labelled, asked]).map(e => e.from)).toEqual(['Orch: a'])
 })
 
 test('a prose question ending with a question mark is drawn as a card and counted, a status text ending with a full stop stays a line', async () => {
-  const prose = entry('Orch : p', '2026-10-18T10:01:00.000Z', { session: 'p', question: 'The staging is ready.\n\nJe lance la campagne de test ?\n' })
-  const status = entry('Orch : s', '2026-10-18T10:02:00.000Z', { session: 's', question: 'Takeover done, nothing left to rule.' })
-  expect(paneQuestions([prose, status]).map(e => e.from)).toEqual(['Orch : p'])
-  expect(waitsInTab([prose, status]).map(e => e.from)).toEqual(['Orch : s'])
-  const drawn = texts((await paneTree({ p: orch('Orch : p'), s: orch('Orch : s') }, [prose, status])).props.children[0])
+  const prose = entry('Orch: p', '2026-10-18T10:01:00.000Z', { session: 'p', question: 'The staging is ready.\n\nJe lance la campagne de test ?\n' })
+  const status = entry('Orch: s', '2026-10-18T10:02:00.000Z', { session: 's', question: 'Takeover done, nothing left to rule.' })
+  expect(paneQuestions([prose, status]).map(e => e.from)).toEqual(['Orch: p'])
+  expect(waitsInTab([prose, status]).map(e => e.from)).toEqual(['Orch: s'])
+  const drawn = texts((await paneTree({ p: orch('Orch: p'), s: orch('Orch: s') }, [prose, status])).props.children[0])
   expect(drawn[0]).toBe('Questions for you — 1 pending')
   expect(drawn).toContain('The staging is ready.\n\nJe lance la campagne de test ?')
 })
 
 test('a wait that asks nothing beside a question with choices is not counted: the choice answers, then the pane is empty of questions', async () => {
-  const report = entry('Orch : low', '2026-10-18T10:01:00.000Z', { session: 'low', question: REPORT, blocks: BLOCKS })
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const report = entry('Orch: low', '2026-10-18T10:01:00.000Z', { session: 'low', question: REPORT, blocks: BLOCKS })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
   const { render, stored } = await askingPane([report, asked])
   const first = await render()
   expect(texts(first)[0]).toBe('Questions for you — 1 pending')
@@ -1552,7 +1552,7 @@ test('where the surface draws a picker the choices are one Select, its whole tex
   // A focused pane taller than its body scrolls on the arrows (the reference's Pane.isFocused:
   // « the arrows scroll »), so a ring of choice Buttons could not be walked there, and a click
   // on one answered. A Select holds the arrows while it has the ring; a click only gives it.
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
   const { render } = await askingPane([asked])
   const tree = await render()
   expect(findAll(tree, n => n.type === 'Button').length).toBe(0)
@@ -1582,7 +1582,7 @@ test('where the surface draws a picker the choices are one Select, its whole tex
 })
 
 test('where the pane has no picker (mobile) each choice is one Button carrying its full text, hotkey its lowercase letter', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
   const { sent, render, stored } = await askingPane([asked], { surface: 'mobile' })
   const tree = await render()
   expect(picker(tree)).toBeUndefined()
@@ -1602,7 +1602,7 @@ test('where the pane has no picker (mobile) each choice is one Button carrying i
 })
 
 test('picking Other answer moves the ring to the text field and answers nothing', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
   const { fx, sent, render, stored } = await askingPane([asked])
   const tree = await render()
   fx.focused.length = 0
@@ -1615,7 +1615,7 @@ test('picking Other answer moves the ring to the text field and answers nothing'
 test('where the surface draws a picker the text field is drawn only once Other answer is picked, so Tab reaches no field before', async () => {
   // The operator's order: text is typed only once the free-text row is selected. A field drawn
   // beside the picker is a stop of the pane's ring, which Tab reaches from a choice.
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
   const { fx, render } = await askingPane([asked])
   const tree = await render()
   expect(input(tree)).toBeUndefined()
@@ -1626,7 +1626,7 @@ test('where the surface draws a picker the text field is drawn only once Other a
 })
 
 test('the ring leaving the text field, back to the picker or off the pane, takes the field away until Other answer is picked again', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
   const { fx, render, ring } = await askingPane([asked])
   await pick(await render(), 'other')
   await ring(`answer:${asked.id}`)
@@ -1642,7 +1642,7 @@ test('the ring leaving the text field, back to the picker or off the pane, takes
 })
 
 test('the first draw of an entry requests the focus on its picker and brings it into view once drawn, a redraw nothing more', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
   const { fx, render } = await askingPane([asked])
   const tree = await render()
   expect(fx.focused).toEqual([{ requestId: 'supervision', key: `choices:${asked.id}` }])
@@ -1659,8 +1659,8 @@ test('the first draw of an entry requests the focus on its picker and brings it 
 })
 
 test('without a recommendation the picker starts on the first choice, and a new entry asks the focus again', async () => {
-  const first = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
-  const second = entry('Orch : low', '2026-10-18T10:05:00.000Z', { session: 'low', blocks: 'phase 4', choices: CHOICES, recommendation: 'C' })
+  const first = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const second = entry('Orch: low', '2026-10-18T10:05:00.000Z', { session: 'low', blocks: 'phase 4', choices: CHOICES, recommendation: 'C' })
   const { fx, render } = await askingPane([first, second])
   const tree = await render()
   expect(fx.focused).toEqual([{ requestId: 'supervision', key: `choices:${first.id}` }])
@@ -1672,7 +1672,7 @@ test('without a recommendation the picker starts on the first choice, and a new 
 })
 
 test('the window the module moves itself is drawn again, so the track and the key line follow it', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
   const { fx, render } = await askingPane([asked])
   await render({ scroll: { offset: 0, bodyRows: 8 }, bodyColumns: 50 })
   fx.invalidated.length = 0
@@ -1684,7 +1684,7 @@ test('the window the module moves itself is drawn again, so the track and the ke
 })
 
 test('a refused or failing focus or scroll request never blocks the draw', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
   const { fx, render } = await askingPane([asked])
   fx.dollar.ui.focus = async () => { throw new Error('refused') }
   fx.dollar.ui.scroll = () => { throw new Error('refused') }
@@ -1703,26 +1703,26 @@ async function countedRows(render: (props?: object) => Promise<any>): Promise<nu
 }
 
 test('the Other answer field is drawn four rows tall, beside a picker once it is picked and for a question without choices', async () => {
-  const withChoices = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const withChoices = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
   const beside = await askingPane([withChoices])
   await pick(await beside.render(), 'other')
   expect(input(await beside.render()).props.rows).toBe(4)
-  const alone = await askingPane([entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', question: '_Question_ : Rename it?' })])
+  const alone = await askingPane([entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', question: '_Question_ : Rename it?' })])
   expect(input(await alone.render()).props.rows).toBe(4)
 })
 
 test('the rows the pane counts include the Other answer field\'s four, beside a picker and for a question without choices', async () => {
-  const withChoices = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const withChoices = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
   const beside = await askingPane([withChoices])
   await pick(await beside.render(), 'other')
   // The screen helper draws the field on one row: the three rows it adds are the field's own.
   expect(await countedRows(beside.render)).toBe(drawScreen(await beside.render({ bodyColumns: 200 }), 198).length + 3)
-  const alone = await askingPane([entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', question: '_Question_ : Rename it?' })])
+  const alone = await askingPane([entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', question: '_Question_ : Rename it?' })])
   expect(await countedRows(alone.render)).toBe(drawScreen(await alone.render({ bodyColumns: 200 }), 198).length + 3)
 })
 
 test('the Other answer field comes last, labelled, and replaces the in-session Button', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
   const { render } = await askingPane([asked])
   await pick(await render(), 'other')
   const tree = await render()
@@ -1738,7 +1738,7 @@ test('the Other answer field comes last, labelled, and replaces the in-session B
 })
 
 test('the footer says how keys reach the selector, and names no letter where none answers', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
   const { render } = await askingPane([asked])
   const footer = texts(await render()).at(-1)!
   for (const part of ['ctrl+x tab', 'a click', 'arrows', 'Enter', 'Esc']) expect(footer).toContain(part)
@@ -1749,8 +1749,8 @@ test('the footer says how keys reach the selector, and names no letter where non
 })
 
 test('a submitted text answers the entry from the pane and is sent to its sender', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
-  const next = entry('Orch : low', '2026-10-18T10:05:00.000Z', { session: 'low', blocks: 'phase 4', question: '_Question_ : Rename it?' })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const next = entry('Orch: low', '2026-10-18T10:05:00.000Z', { session: 'low', blocks: 'phase 4', question: '_Question_ : Rename it?' })
   const { fx, sent, render, stored } = await askingPane([asked, next])
   await pick(await render(), 'other')
   await input(await render()).props.onSubmit('  some text  ')
@@ -1772,7 +1772,7 @@ const LISTED = `${HOME}/.claude/claude-orchestrator/round-listed.json`
 const WOKEN = `${HOME}/.claude/claude-orchestrator/round-woken.json`
 for (const [label, file] of [['listed by its round', LISTED], ['woken for', WOKEN]] as const) {
   test(`an answer from the pane to an entry the coordinator was ${label} is submitted to the coordinator once`, async () => {
-    const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+    const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
     const { fx, render, stored } = await askingPane([asked])
     fx.files.set(file, JSON.stringify([asked.id]) + '\n')
     const drawn = await render()
@@ -1781,7 +1781,7 @@ for (const [label, file] of [['listed by its round', LISTED], ['woken for', WOKE
     // Closed by the module in the same rename: the coordinator has no command to run.
     expect([stored(asked.id).status, stored(asked.id).answer]).toEqual(['closed', { text: `answered from the pane: A : ${CHOICES[0].text}`, by: 'pane', at }])
     expect(fx.submitted).toEqual([
-      `[module] Settled in the pane: Orch : low's question since 2026-10-18T10:03:00.000Z (entry ${asked.id}) — answered at ${at}. `
+      `[module] Settled in the pane: Orch: low's question since 2026-10-18T10:03:00.000Z (entry ${asked.id}) — answered at ${at}. `
       + 'Already closed: drop it, never ask or relay it again, present the next.',
     ])
     // A press landing late on the same picker settles nothing more.
@@ -1791,7 +1791,7 @@ for (const [label, file] of [['listed by its round', LISTED], ['woken for', WOKE
 }
 
 test('an answer from the pane to an entry the coordinator was never shown submits nothing', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
   const { fx, render, stored } = await askingPane([asked])
   fx.files.set(LISTED, JSON.stringify(['another-entry']) + '\n')
   await pick(await render(), 'A')
@@ -1800,7 +1800,7 @@ test('an answer from the pane to an entry the coordinator was never shown submit
 })
 
 test('an empty or blank submit writes and sends nothing', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
   const { fx, sent, render, stored } = await askingPane([asked])
   const before = fx.files.get(`${ROUND}/${asked.id}.json`)
   await pick(await render(), 'other')
@@ -1813,17 +1813,17 @@ test('an empty or blank submit writes and sends nothing', async () => {
 })
 
 test('a submitted text not delivered keeps the entry answered and leaves its notice', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
   const { fx, render, stored } = await askingPane([asked], { refuse: 'nobody by that name' })
   await pick(await render(), 'other')
   await input(await render()).props.onSubmit('some text')
   expect(stored(asked.id).status).toBe('answered')
-  expect(fx.written.filter(l => l.includes("round: the pane's answer was not delivered to Orch : low: nobody by that name")).length).toBe(1)
+  expect(fx.written.filter(l => l.includes("round: the pane's answer was not delivered to Orch: low: nobody by that name")).length).toBe(1)
   expect(texts(await render()).some(t => t.startsWith('not delivered: nobody by that name'))).toBe(true)
 })
 
 test('a text not delivered to an entry the coordinator was shown closes it and still leaves its notice', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
   const { fx, render, stored } = await askingPane([asked], { refuse: 'nobody by that name' })
   fx.files.set(LISTED, JSON.stringify([asked.id]) + '\n')
   await pick(await render(), 'other')
@@ -1833,7 +1833,7 @@ test('a text not delivered to an entry the coordinator was shown closes it and s
 })
 
 test('a submit on an entry settled meanwhile writes and sends nothing', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
   const { fx, sent, render, stored } = await askingPane([asked])
   await pick(await render(), 'other')
   const drawn = await render()
@@ -1844,7 +1844,7 @@ test('a submit on an entry settled meanwhile writes and sends nothing', async ()
 })
 
 test('where the pane has no field (mobile) the in-session Button and its line stay, and no Input is drawn', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })
   const { fx, sent, render } = await askingPane([asked], { surface: 'mobile' })
   const tree = await render()
   expect(input(tree)).toBeUndefined()
@@ -1854,7 +1854,7 @@ test('where the pane has no field (mobile) the in-session Button and its line st
   expect(fx.files.get(`${ROUND}/${asked.id}.json`)).toBe(before)
   expect(sent).toEqual([])
   expect(fx.invalidated).toContain('ui.render')
-  expect(texts(await render())).toContain("type your answer in this tab, or in Orch : low's tab")
+  expect(texts(await render())).toContain("type your answer in this tab, or in Orch: low's tab")
 })
 
 // --- the pane as the coordinator's round reads it, and the wake of a due question ------------
@@ -1889,7 +1889,7 @@ test('the pane opened by itself at the first turn is recorded too; an orchestrat
   fx.files.set(PANE_FILE, other)
   await handlers['session.end'](fx.dollar, endEvent, (x: unknown) => x)
   expect(fx.files.get(PANE_FILE)).toBe(other)
-  const orch = fakeDollar({ launchName: 'Orch : belt' })
+  const orch = fakeDollar({ launchName: 'Orch: belt' })
   await mounted(registerSupervision).handlers['command.run'](orch.dollar, supervisionRun)
   expect(orch.files.has(PANE_FILE)).toBe(false)
 })
@@ -1918,11 +1918,11 @@ async function wakingCoordinator(asked: RoundEntry[], over: { paneClosed?: boole
 }
 
 test('a due question wakes the coordinator once: with the pane open only an urgent one, however old the others, never one answered', async () => {
-  const urgent = entry('Orch : a', minutesAgo(1), { session: 'sa', urgent: true })
-  const old = entry('Orch : b', minutesAgo(90), { session: 'sb' })
-  const young = entry('Orch : c', minutesAgo(1), { session: 'sc' })
-  const answered = entry('Orch : d', minutesAgo(30), { session: 'sd', status: 'answered', urgent: true })
-  const done = entry('Orch : e', minutesAgo(30), { session: 'se', kind: 'done', blocks: null })
+  const urgent = entry('Orch: a', minutesAgo(1), { session: 'sa', urgent: true })
+  const old = entry('Orch: b', minutesAgo(90), { session: 'sb' })
+  const young = entry('Orch: c', minutesAgo(1), { session: 'sc' })
+  const answered = entry('Orch: d', minutesAgo(30), { session: 'sd', status: 'answered', urgent: true })
+  const done = entry('Orch: e', minutesAgo(30), { session: 'se', kind: 'done', blocks: null })
   const { fx, handlers, tick } = await wakingCoordinator([urgent, old, young, answered, done])
   expect(fx.opened.length).toBe(1)
   await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
@@ -1948,12 +1948,12 @@ test('a due question wakes the coordinator once: with the pane open only an urge
 })
 
 test('questions recorded while no pane is open, one already presented in the tab, are all drawn when the pane opens', async () => {
-  const presented = entry('Orch : a', minutesAgo(5), { session: 'sa', question: '_Question_ : Ship the first?', choices: CHOICES })
+  const presented = entry('Orch: a', minutesAgo(5), { session: 'sa', question: '_Question_ : Ship the first?', choices: CHOICES })
   const { fx, handlers, tick } = await wakingCoordinator([presented], { paneClosed: true })
   await tick()
   expect(fx.submitted.length).toBe(1)
   expect(fx.submitted[0]).toContain(presented.from)
-  const later = entry('Orch : b', minutesAgo(1), { session: 'sb', question: '_Question_ : Ship the second?' })
+  const later = entry('Orch: b', minutesAgo(1), { session: 'sb', question: '_Question_ : Ship the second?' })
   fx.files.set(`${ROUND}/${later.id}.json`, JSON.stringify(later) + '\n')
   fx.files.set(`${SESSIONS}/${later.session}`, JSON.stringify(row({ role: 'orchestrator', name: later.from })) + '\n')
   expect(fx.files.has(PANE_FILE)).toBe(false)
@@ -1971,14 +1971,14 @@ test('questions recorded while no pane is open, one already presented in the tab
 })
 
 test('with the pane closed every open question is due at once; one answered in the pane before it is due wakes nothing', async () => {
-  const fresh = entry('Orch : a', minutesAgo(1), { session: 'sa' })
+  const fresh = entry('Orch: a', minutesAgo(1), { session: 'sa' })
   const { fx, tick } = await wakingCoordinator([fresh], { paneClosed: true })
   expect(fx.files.has(PANE_FILE)).toBe(false)
   await tick()
   expect(fx.submitted.length).toBe(1)
   expect(fx.submitted[0]).toContain(fresh.from)
   // One fixed start: the entry's id carries its minute, and two readings of the clock may straddle one.
-  const asked = entry('Orch : b', '2026-10-24T11:59:00.000Z', { session: 'sb' })
+  const asked = entry('Orch: b', '2026-10-24T11:59:00.000Z', { session: 'sb' })
   const quiet = await wakingCoordinator([asked])
   const settled = asked
   quiet.fx.files.set(`${ROUND}/${settled.id}.json`, JSON.stringify({ ...settled, since: minutesAgo(20), status: 'answered' }) + '\n')
@@ -1988,14 +1988,14 @@ test('with the pane closed every open question is due at once; one answered in t
 
 test('a question whose sender has ended wakes nothing, and a session that is no coordinator arms no wake', async () => {
   const fx = coordinatorSession()
-  const gone = entry('Orch : gone', minutesAgo(30), { session: 'sg', urgent: true })
+  const gone = entry('Orch: gone', minutesAgo(30), { session: 'sg', urgent: true })
   fx.files.set(`${ROUND}/${gone.id}.json`, JSON.stringify(gone) + '\n')
   const { handlers } = mounted(registerSupervision)
   await handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
   await fx.later.filter(t => t.ms === 30000)[0].fn()
   expect(fx.submitted).toEqual([])
-  const orch = fakeDollar({ launchName: 'Orch : belt' })
-  orch.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : belt' })) + '\n')
+  const orch = fakeDollar({ launchName: 'Orch: belt' })
+  orch.files.set(`${SESSIONS}/s-one`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: belt' })) + '\n')
   await mounted(registerSupervision).handlers['turn.complete'](orch.dollar, firstTurn, (x: unknown) => x)
   expect(orch.later.filter(t => t.ms === 30000)).toEqual([])
 })
@@ -2008,7 +2008,7 @@ test('the pane opened at the first turn by a row that carries no pid records the
 })
 
 test('a wake the host refuses or that fails is not recorded, and the next reading wakes for it', async () => {
-  const urgent = entry('Orch : a', minutesAgo(1), { session: 'sa', urgent: true })
+  const urgent = entry('Orch: a', minutesAgo(1), { session: 'sa', urgent: true })
   const { fx, tick } = await wakingCoordinator([urgent])
   const submit = fx.dollar.prompt.submit
   fx.dollar.prompt.submit = async () => { throw new Error('the session is busy') }
@@ -2026,7 +2026,7 @@ test('a wake the host refuses or that fails is not recorded, and the next readin
 const WOKEN_FILE = `${HOME}/.claude/claude-orchestrator/round-woken.json`
 
 test('a successor over the same state directory, its host state its own, wakes for nothing its predecessor was woken for', async () => {
-  const urgent = entry('Orch : a', minutesAgo(1), { session: 'sa', urgent: true })
+  const urgent = entry('Orch: a', minutesAgo(1), { session: 'sa', urgent: true })
   const { fx, tick } = await wakingCoordinator([urgent])
   await tick()
   expect(fx.submitted.length).toBe(1)
@@ -2038,7 +2038,7 @@ test('a successor over the same state directory, its host state its own, wakes f
 })
 
 test('an entry another session was woken for between the reading and the wake is not woken for again', async () => {
-  const urgent = entry('Orch : a', minutesAgo(1), { session: 'sa', urgent: true })
+  const urgent = entry('Orch: a', minutesAgo(1), { session: 'sa', urgent: true })
   const { fx, tick } = await wakingCoordinator([urgent])
   const read = fx.dollar.fs.read
   let reads = 0
@@ -2056,7 +2056,7 @@ test('an entry another session was woken for between the reading and the wake is
 })
 
 test('a reload arms the wake with no turn after it; a second arm starts no second chain; the session\'s end stops it', async () => {
-  const urgent = entry('Orch : a', minutesAgo(1), { session: 'sa', urgent: true })
+  const urgent = entry('Orch: a', minutesAgo(1), { session: 'sa', urgent: true })
   const fx = coordinatorSession()
   fx.files.set(`${ROUND}/${urgent.id}.json`, JSON.stringify(urgent) + '\n')
   fx.files.set(`${SESSIONS}/sa`, JSON.stringify(row({ role: 'orchestrator', name: urgent.from })) + '\n')
@@ -2078,13 +2078,13 @@ test('a reload arms the wake with no turn after it; a second arm starts no secon
   await wakes()[1].fn()
   expect(wakes().length).toBe(2)
   // No coordinator, no wake at the start.
-  const orch = fakeDollar({ launchName: 'Orch : belt' })
+  const orch = fakeDollar({ launchName: 'Orch: belt' })
   await mounted(registerWake).handlers['session.start'](orch.dollar, startEvent, (x: unknown) => x)
   expect(orch.later.filter(t => t.ms === 30000)).toEqual([])
 })
 
 test('a pane record whose pid is not running, or that names none, is no pane; another session\'s live one is', async () => {
-  const young = entry('Orch : a', minutesAgo(1), { session: 'sa' })
+  const young = entry('Orch: a', minutesAgo(1), { session: 'sa' })
   for (const record of [{ session: 's-one', pid: '999' }, { session: 's-one' }, { session: 's-one', pid: null }]) {
     const { fx, tick } = await wakingCoordinator([young])
     fx.files.set(PANE_FILE, JSON.stringify({ ...record, at: '2026-10-24T10:00:00.000Z' }) + '\n')
@@ -2115,7 +2115,7 @@ const SHAPED = [
   '',
   'You decide: A or B?',
 ].join('\n')
-const shapedEntry = (over: Partial<RoundEntry> = {}) => entry('Orch : low', '2026-10-18T10:03:00.000Z', {
+const shapedEntry = (over: Partial<RoundEntry> = {}) => entry('Orch: low', '2026-10-18T10:03:00.000Z', {
   session: 'low', question: SHAPED, recommendation: 'A',
   choices: [{ letter: 'A', text: 'the orchestrator\'s — it follows its wave' }, { letter: 'B', text: 'the pane\'s — it counts the queue' }], ...over,
 })
@@ -2127,7 +2127,7 @@ test('a question in the decide shape is one block: the sender and its own number
   const drawn = shown(section)
   expect(drawn.slice(2, 21)).toEqual([
     '',
-    'Orch : low · Question 5 / 6',
+    'Orch: low · Question 5 / 6',
     '',
     'SUBJECT',
     'the numbering of the pane\'s questions',
@@ -2188,7 +2188,7 @@ test('each choice\'s text is drawn once: the picker\'s options carry their lette
 
 test('the questions are drawn first, above the orchestrators, the title counting them once', async () => {
   const asked = ['phase 3', 'phase 4', 'phase 5'].map((blocks, i) =>
-    entry('Orch : low', `2026-10-18T10:0${i + 3}:00.000Z`, { session: 'low', blocks, choices: CHOICES }))
+    entry('Orch: low', `2026-10-18T10:0${i + 3}:00.000Z`, { session: 'low', blocks, choices: CHOICES }))
   const { render } = await askingPane(asked)
   const tree = await render()
   const [section, title] = tree.props.children
@@ -2199,7 +2199,7 @@ test('the questions are drawn first, above the orchestrators, the title counting
 
 test('answers not delivered are one line at the section\'s foot, below the next question, never above it', async () => {
   const asked = ['phase 3', 'phase 4', 'phase 5'].map((blocks, i) =>
-    entry('Orch : low', `2026-10-18T10:0${i + 3}:00.000Z`, { session: 'low', blocks, choices: CHOICES }))
+    entry('Orch: low', `2026-10-18T10:0${i + 3}:00.000Z`, { session: 'low', blocks, choices: CHOICES }))
   const { render } = await askingPane(asked, { refuse: 'nobody by that name' })
   await pick(await render(), 'A')
   await pick(await render(), 'B')
@@ -2208,7 +2208,7 @@ test('answers not delivered are one line at the section\'s foot, below the next 
   expect(notices.length).toBe(1)
   expect(notices[0].props.children.split(' · ').length).toBe(2)
   expect(kids.at(-2)).toBe(notices[0])
-  expect(texts(kids[1])[0]).toBe('Orch : low')
+  expect(texts(kids[1])[0]).toBe('Orch: low')
 })
 
 test('once the pane holds the keys the key line no longer says how to give them, and it is dim', async () => {
@@ -2283,7 +2283,7 @@ test('over a tree taller than its window, the track and the key line are drawn a
 
 test('the pane opens asking the keys, so its picker answers at once over an empty prompt', async () => {
   const { handlers } = mounted(registerSupervision)
-  const fx = fakeDollar({ launchName: 'Coord : main' })
+  const fx = fakeDollar({ launchName: 'Coord: main' })
   await handlers['command.run'](fx.dollar, supervisionRun)
   expect((fx.opened[0] as { focus?: boolean }).focus).toBe(true)
 })
@@ -2304,14 +2304,14 @@ test('the rows the module counts are the rows the tree draws: a track exactly wh
 
 // --- one question at a time -----------------------------------------------------------------
 
-const twoQuestions = (over: Partial<RoundEntry> = {}) => entry('Orch : low', '2026-10-25T10:03:00.000Z', { session: 'low', question: TWO_QUESTIONS, blocks: 'questions 3 and 4', ...over })
+const twoQuestions = (over: Partial<RoundEntry> = {}) => entry('Orch: low', '2026-10-25T10:03:00.000Z', { session: 'low', question: TWO_QUESTIONS, blocks: 'questions 3 and 4', ...over })
 
 test('an entry that asks two questions is one card per question, its title the sender and its number, the next one named below it', async () => {
   const { render } = await askingPane([twoQuestions()])
   const tree = await render()
   const section = tree.props.children[0]
   expect(texts(section)[0]).toBe('Questions for you — 2 pending')
-  expect(texts(cardOf(tree))[0]).toBe('Orch : low · Question 3 / 4')
+  expect(texts(cardOf(tree))[0]).toBe('Orch: low · Question 3 / 4')
   expect(shown(cardOf(tree))).not.toContain('rythme de publication de la v2')
   expect(picker(tree).props.options.map((o: any) => o.label)).toEqual(['A (recommended)', 'B', 'Other answer: type it below'])
   const next = section.props.children[2]
@@ -2327,7 +2327,7 @@ test('answering the first question moves to the next, sends nothing, and the las
   expect(stored(twoQuestions().id).status).toBe('open')
   const second = await render()
   expect(texts(second)[0]).toBe('Questions for you — 1 pending')
-  expect(texts(cardOf(second))[0]).toBe('Orch : low · Question 4 / 4')
+  expect(texts(cardOf(second))[0]).toBe('Orch: low · Question 4 / 4')
   expect(picker(second).props.key).toBe(`choices:${twoQuestions().id}:2`)
   expect(texts(second).some(t => t.startsWith('next:'))).toBe(false)
   // A press landing late on the first question's picker answers nothing more.
@@ -2362,7 +2362,7 @@ test('an entry whose sender withdrew it between two answers forgets the first, a
   expect(texts(await render())[0]).toBe('Questions for you')
   // Asked again, it starts at its first question.
   fx.files.set(`${ROUND}/${twoQuestions().id}.json`, JSON.stringify(twoQuestions()) + '\n')
-  expect(texts(cardOf(await render()))[0]).toBe('Orch : low · Question 3 / 4')
+  expect(texts(cardOf(await render()))[0]).toBe('Orch: low · Question 3 / 4')
   expect(stored(twoQuestions().id).partial).toBeUndefined()
 })
 
@@ -2376,7 +2376,7 @@ test('without a picker (mobile) the same card draws one Button per choice, and a
   ])
   await button(tree, 'choice:A').props.onPress()
   const second = await render()
-  expect(texts(cardOf(second))[0]).toBe('Orch : low · Question 4 / 4')
+  expect(texts(cardOf(second))[0]).toBe('Orch: low · Question 4 / 4')
   await button(second, 'choice:B').props.onPress()
   expect(stored(twoQuestions().id).answer!.text).toBe(`Question 3 sur 4: A : ${FIRST_A} · Question 4 sur 4: B : ${SECOND_B}`)
   expect(sent.length).toBe(1)
@@ -2399,9 +2399,9 @@ const links = (tree: any) => findAll(tree, n => n.type === 'Link').map(n => [n.p
 
 test('each pull request a blocks text names is a link of its own, a glued pair two links', async () => {
   const tree = await paneTree({
-    w: orch('Orch : w', { waiting: 'operator', waiting_since: SINCE, blocks: GLUED_BLOCKS }),
-    i: orch('Orch : i', { repo: 'acme/infra' }),
-    g: orch('Orch : g', { repo: 'acme/geo-git-flow' }),
+    w: orch('Orch: w', { waiting: 'operator', waiting_since: SINCE, blocks: GLUED_BLOCKS }),
+    i: orch('Orch: i', { repo: 'acme/infra' }),
+    g: orch('Orch: g', { repo: 'acme/geo-git-flow' }),
   })
   expect(links(tree)).toEqual([
     ['infra#195', 'https://github.com/acme/infra/pull/195'],
@@ -2415,16 +2415,16 @@ test('each pull request a blocks text names is a link of its own, a glued pair t
 })
 
 test('a reference whose owner the module does not know stays plain text', async () => {
-  const tree = await paneTree({ w: orch('Orch : w', { waiting: 'operator', waiting_since: SINCE, blocks: GLUED_BLOCKS }), i: orch('Orch : i', { repo: 'acme/infra' }) })
+  const tree = await paneTree({ w: orch('Orch: w', { waiting: 'operator', waiting_since: SINCE, blocks: GLUED_BLOCKS }), i: orch('Orch: i', { repo: 'acme/infra' }) })
   expect(links(tree).map(([words]) => words)).toEqual(['infra#195', 'infra#196'])
   expect(texts(tree).some(t => t.includes('geo-git-flow#21/geo-git-flow#22'))).toBe(true)
-  expect(links(await paneTree({ w: orch('Orch : w', { waiting: 'operator', waiting_since: SINCE, blocks: GLUED_BLOCKS }) }))).toEqual([])
+  expect(links(await paneTree({ w: orch('Orch: w', { waiting: 'operator', waiting_since: SINCE, blocks: GLUED_BLOCKS }) }))).toEqual([])
 })
 
 test('a reference in a question\'s fields or choices is a link too, its owner this session\'s own repository', async () => {
-  const fx = fakeDollar({ launchName: 'Coord : main', origin: 'git@github.com:acme/speculoos.git' })
-  fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : low', context_percent: 30 })) + '\n')
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', {
+  const fx = fakeDollar({ launchName: 'Coord: main', origin: 'git@github.com:acme/speculoos.git' })
+  fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: low', context_percent: 30 })) + '\n')
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', {
     session: 'low', question: '_Question_ : merge speculoos#53?\n- **A** : yes, then speculoos#54\n- **B** : no',
     choices: [{ letter: 'A', text: 'yes, then speculoos#54' }, { letter: 'B', text: 'no' }],
   })
@@ -2447,9 +2447,9 @@ const withUrls = (node: any): any => {
 test('at 60 columns the rows counted for a text of links are the rows drawn where the URL is written after each', async () => {
   const { fx, render } = await askingPane([])
   for (const [key, value] of Object.entries({
-    w: orch('Orch : w', { waiting: 'operator', waiting_since: SINCE, blocks: GLUED_BLOCKS }),
-    i: orch('Orch : i', { repo: 'acme/infra' }),
-    g: orch('Orch : g', { repo: 'acme/geo-git-flow' }),
+    w: orch('Orch: w', { waiting: 'operator', waiting_since: SINCE, blocks: GLUED_BLOCKS }),
+    i: orch('Orch: i', { repo: 'acme/infra' }),
+    g: orch('Orch: g', { repo: 'acme/geo-git-flow' }),
   })) fx.files.set(`${SESSIONS}/${key}`, JSON.stringify(value) + '\n')
   const rows = drawScreen(withUrls(await render({ bodyColumns: 60 })), 58).length
   expect(rows).toBeGreaterThan(drawScreen(await render({ bodyColumns: 60 }), 58).length)
@@ -2463,13 +2463,13 @@ test('the choices have a label of their own unless the sender labelled them, nev
   const labelled = await (await askingPane([twoQuestions()])).render()
   expect(texts(cardOf(labelled))).toContain('CHOIX')
   expect(texts(cardOf(labelled))).not.toContain('CHOICES')
-  const bare = await (await askingPane([entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })])).render()
+  const bare = await (await askingPane([entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })])).render()
   expect(texts(cardOf(bare))).toContain('CHOICES')
 })
 
 test('a dim rule line, the pane\'s width wide, stands between the questions and the orchestrators', async () => {
   for (const [props, width] of [[{}, 40], [{ bodyColumns: 60 }, 58]] as const) {
-    const { render } = await askingPane([entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })])
+    const { render } = await askingPane([entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES, recommendation: 'B' })])
     const tree = await render(props)
     const [section, heading] = tree.props.children
     const rule = section.props.children.at(-1)
@@ -2484,7 +2484,7 @@ test('a dim rule line, the pane\'s width wide, stands between the questions and 
 
 const REMOTE_DIR = `${HOME}/.claude/claude-orchestrator/store/remote`
 const FAR = 'uds:/tmp/cc-socks/far.sock'
-const remoteEntry = (over: Partial<RoundEntry> = {}) => entry('Orch : belt', '2026-10-30T10:03:00.000Z', {
+const remoteEntry = (over: Partial<RoundEntry> = {}) => entry('Orch: belt', '2026-10-30T10:03:00.000Z', {
   session: 's-far', choices: CHOICES, recommendation: 'A', origin: { machine: 'far', address: FAR }, ...over,
 })
 // The remote row of `name` measured on `machine`, as the coordinator's module stores it.
@@ -2498,10 +2498,10 @@ function remoteRow(fx: Fx, name: string, machine: string, updatedAt = new Date()
 test('a remote entry is drawn with its machine and answered; an unacked answer is said on its card after a reload', async () => {
   const asked = remoteEntry()
   const { fx, sent, render, stored } = await askingPane([asked])
-  remoteRow(fx, 'Orch : belt', 'far')
+  remoteRow(fx, 'Orch: belt', 'far')
   const tree = await render()
   expect(texts(tree)[0]).toBe('Questions for you — 1 pending')
-  expect(texts(cardOf(tree))[0]).toBe('Orch : belt · remote far')
+  expect(texts(cardOf(tree))[0]).toBe('Orch: belt · remote far')
   await pick(tree, 'A')
   const answered = stored(asked.id)
   expect(answered.status).toBe('answered')
@@ -2516,11 +2516,11 @@ test('a remote entry is drawn with its machine and answered; an unacked answer i
   const drawn = () => reloaded['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
   const after = texts(await drawn())
   expect(after[0]).toBe('Questions for you')
-  expect(after).toContain('being delivered: the answer to Orch : belt on far (blocks: phase 3) — sent 1 of 3, not acknowledged yet')
+  expect(after).toContain('being delivered: the answer to Orch: belt on far (blocks: phase 3) — sent 1 of 3, not acknowledged yet')
   fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify({ ...answered, delivery: { state: 'pending', at: answered.delivery!.at, attempts: 0 } }) + '\n')
-  expect(texts(await drawn())).toContain('being delivered: the answer to Orch : belt on far (blocks: phase 3) — not sent yet')
+  expect(texts(await drawn())).toContain('being delivered: the answer to Orch: belt on far (blocks: phase 3) — not sent yet')
   fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify({ ...answered, delivery: { state: 'failed', at: answered.delivery!.at, attempts: 3, reason: 'no acknowledgment after 3 sends' } }) + '\n')
-  expect(texts(await drawn())).toContain('not delivered: no acknowledgment after 3 sends — the answer to Orch : belt on far (blocks: phase 3)')
+  expect(texts(await drawn())).toContain('not delivered: no acknowledgment after 3 sends — the answer to Orch: belt on far (blocks: phase 3)')
   fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify({ ...answered, status: 'closed', delivery: { state: 'acked', at: answered.delivery!.at, attempts: 1 } }) + '\n')
   expect(texts(await drawn()).some(t => t.startsWith('being delivered') || t.startsWith('not delivered'))).toBe(false)
 })
@@ -2535,12 +2535,12 @@ test('a remote entry whose sender\'s remote row is gone is not drawn', async () 
   }
   await none()
   // A row of that name measured on another machine, or past the stale bound, is not its sender's.
-  remoteRow(fx, 'Orch : belt', 'near')
+  remoteRow(fx, 'Orch: belt', 'near')
   await none()
-  remoteRow(fx, 'Orch : belt', 'far', new Date(Date.now() - 25 * 3600_000).toISOString())
+  remoteRow(fx, 'Orch: belt', 'far', new Date(Date.now() - 25 * 3600_000).toISOString())
   await none()
-  remoteRow(fx, 'Orch : belt', 'far')
-  expect(texts(cardOf(await render()))[0]).toBe('Orch : belt · remote far')
+  remoteRow(fx, 'Orch: belt', 'far')
+  expect(texts(cardOf(await render()))[0]).toBe('Orch: belt · remote far')
 })
 
 test('the answers given to a multi-question entry survive a reload', async () => {
@@ -2553,7 +2553,7 @@ test('the answers given to a multi-question entry survive a reload', async () =>
   await reloaded['command.run'](fx.dollar, supervisionRun)
   const tree = await reloaded['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
   expect(texts(tree)[0]).toBe('Questions for you — 1 pending')
-  expect(texts(cardOf(tree))[0]).toBe('Orch : low · Question 4 / 4')
+  expect(texts(cardOf(tree))[0]).toBe('Orch: low · Question 4 / 4')
   await pick(tree, 'B')
   expect(stored(twoQuestions().id).answer!.text).toBe(`Question 3 sur 4: A : ${FIRST_A} · Question 4 sur 4: B : ${SECOND_B}`)
 })
@@ -2590,7 +2590,7 @@ async function reloadedPane(fx: Fx) {
 }
 
 test('an answer round-close wrote reaches its sender once, at the round\'s reading, its delivery written delivered', async () => {
-  const asked = closedByCoordinator(entry('Orch : a', minutesAgo(1), { session: 'sa' }))
+  const asked = closedByCoordinator(entry('Orch: a', minutesAgo(1), { session: 'sa' }))
   const { fx, tick } = await wakingCoordinator([asked])
   const sent = sends(fx)
   await tick()
@@ -2615,7 +2615,7 @@ function withdrawnByCoordinator(asked: RoundEntry, evidence: string): RoundEntry
 }
 
 test('a question round-close --withdraw closed tells its sender it was withdrawn, with the evidence, never that it was answered', async () => {
-  const asked = withdrawnByCoordinator(entry('Orch : a', minutesAgo(1), { session: 'sa' }), '#12 merged at 10:04Z')
+  const asked = withdrawnByCoordinator(entry('Orch: a', minutesAgo(1), { session: 'sa' }), '#12 merged at 10:04Z')
   const { fx, tick } = await wakingCoordinator([asked])
   const sent = sends(fx)
   await tick()
@@ -2643,7 +2643,7 @@ const roundClose = (id: string) => ({ command: `bash "/plugins/orchestrator/skil
 const ranBash = async () => ({ result: 'closed' })
 
 test('an answer round-close wrote reaches its sender as soon as the command has run, before the round\'s next reading, and once', async () => {
-  const asked = closedByCoordinator(entry('Orch : a', minutesAgo(1), { session: 'sa' }))
+  const asked = closedByCoordinator(entry('Orch: a', minutesAgo(1), { session: 'sa' }))
   const { fx, tick } = await wakingCoordinator([asked])
   const sent = sends(fx)
   const call = mounted(registerCloseRelay).handlers['tool.call']
@@ -2655,13 +2655,13 @@ test('an answer round-close wrote reaches its sender as soon as the command has 
 })
 
 test('a Bash command that runs no round-close, one refused, or one in a session that is no coordinator, delivers nothing until the reading', async () => {
-  const asked = closedByCoordinator(entry('Orch : a', minutesAgo(1), { session: 'sa' }))
+  const asked = closedByCoordinator(entry('Orch: a', minutesAgo(1), { session: 'sa' }))
   const { fx, tick } = await wakingCoordinator([asked])
   const sent = sends(fx)
   const call = mounted(registerCloseRelay).handlers['tool.call']
   await call(fx.dollar, { command: 'bash coordinator.sh round' }, ranBash)
   await call(fx.dollar, roundClose(asked.id), async () => ({ deny: 'refused' }))
-  const orch = fakeDollar({ launchName: 'Orch : belt' })
+  const orch = fakeDollar({ launchName: 'Orch: belt' })
   orch.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
   const elsewhere: unknown[] = []
   orch.dollar.session.send = async (args: unknown) => { elsewhere.push(args); return { isDelivered: true } }
@@ -2672,7 +2672,7 @@ test('a Bash command that runs no round-close, one refused, or one in a session 
 })
 
 test('a round-close relayed while the round\'s reading runs sends its answer once', async () => {
-  const asked = closedByCoordinator(entry('Orch : a', minutesAgo(1), { session: 'sa' }))
+  const asked = closedByCoordinator(entry('Orch: a', minutesAgo(1), { session: 'sa' }))
   const { fx, tick } = await wakingCoordinator([asked])
   const sent = sends(fx)
   const call = mounted(registerCloseRelay).handlers['tool.call']
@@ -2693,16 +2693,16 @@ test('the relay watches Bash calls and reads a round-close however the script is
 })
 
 test('an answer round-close wrote that the host refuses is written failed on disk, sent once, and a fresh module\'s pane says it', async () => {
-  const asked = closedByCoordinator(entry('Orch : low', minutesAgo(1), { session: 'low' }))
+  const asked = closedByCoordinator(entry('Orch: low', minutesAgo(1), { session: 'low' }))
   const { fx, tick } = await wakingCoordinator([asked])
   const sent = sends(fx, 'nobody by that name')
   await tick()
   const stored = storedIn(fx, asked.id)
   expect(stored.delivery).toEqual({ state: 'failed', at: stored.delivery!.at, attempts: 1, answerAt: asked.answer!.at, reason: 'nobody by that name' })
-  expect(fx.written.filter(l => l.includes("round: the coordinator's answer was not delivered to Orch : low: nobody by that name")).length).toBe(1)
+  expect(fx.written.filter(l => l.includes("round: the coordinator's answer was not delivered to Orch: low: nobody by that name")).length).toBe(1)
   await tick()
   expect(sent.length).toBe(1)
-  expect(await reloadedPane(fx)).toContain('not delivered: nobody by that name — the answer to Orch : low (blocks: phase 3)')
+  expect(await reloadedPane(fx)).toContain('not delivered: nobody by that name — the answer to Orch: low (blocks: phase 3)')
 })
 
 test('an answer round-close wrote to an entry from another machine goes as a marked line at the round\'s reading', async () => {
@@ -2720,8 +2720,8 @@ test('an answer round-close wrote to an entry from another machine goes as a mar
 })
 
 test('an entry closed with no delivery pending — before round-close carried one, or from the pane — is sent nothing at the round\'s reading', async () => {
-  const old = entry('Orch : a', minutesAgo(5), { session: 'sa', status: 'closed', answer: { text: 'A', by: 'coordinator', at: minutesAgo(4) } })
-  const pane = entry('Orch : b', minutesAgo(5), { session: 'sb', status: 'closed', answer: { text: 'answered from the pane: A', by: 'pane', at: minutesAgo(4) } })
+  const old = entry('Orch: a', minutesAgo(5), { session: 'sa', status: 'closed', answer: { text: 'A', by: 'coordinator', at: minutesAgo(4) } })
+  const pane = entry('Orch: b', minutesAgo(5), { session: 'sb', status: 'closed', answer: { text: 'answered from the pane: A', by: 'pane', at: minutesAgo(4) } })
   const { fx, tick } = await wakingCoordinator([old, pane])
   const sent = sends(fx)
   await tick()
@@ -2730,7 +2730,7 @@ test('an entry closed with no delivery pending — before round-close carried on
 })
 
 test('an entry of kind done closed with a pending delivery is sent nothing at the round\'s reading', async () => {
-  const asked = closedByCoordinator(entry('Orch : a', minutesAgo(1), { session: 'sa', kind: 'done', blocks: null }))
+  const asked = closedByCoordinator(entry('Orch: a', minutesAgo(1), { session: 'sa', kind: 'done', blocks: null }))
   const { fx, tick } = await wakingCoordinator([asked])
   const sent = sends(fx)
   await tick()
@@ -2739,7 +2739,7 @@ test('an entry of kind done closed with a pending delivery is sent nothing at th
 })
 
 test('a pending delivery stamped for another answer than the entry holds is written failed, naming the mismatch, and sent nothing', async () => {
-  const closed = closedByCoordinator(entry('Orch : a', minutesAgo(1), { session: 'sa' }))
+  const closed = closedByCoordinator(entry('Orch: a', minutesAgo(1), { session: 'sa' }))
   const asked = { ...closed, delivery: { ...closed.delivery!, answerAt: minutesAgo(3) } } as RoundEntry
   const { fx, tick } = await wakingCoordinator([asked])
   const sent = sends(fx)
@@ -2753,27 +2753,27 @@ test('a pending delivery stamped for another answer than the entry holds is writ
 })
 
 test('a pane answer not delivered is written failed in its entry, and a fresh module\'s pane still says it', async () => {
-  const asked = entry('Orch : low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
+  const asked = entry('Orch: low', '2026-10-18T10:03:00.000Z', { session: 'low', choices: CHOICES })
   const { fx, render, stored } = await askingPane([asked], { refuse: 'nobody by that name' })
   await pick(await render(), 'A')
   const answered = stored(asked.id)
   expect(answered.delivery).toEqual({ state: 'failed', at: answered.delivery!.at, attempts: 1, answerAt: answered.answer!.at, reason: 'nobody by that name' })
-  expect(await reloadedPane(fx)).toContain('not delivered: nobody by that name — the answer to Orch : low (blocks: phase 3)')
+  expect(await reloadedPane(fx)).toContain('not delivered: nobody by that name — the answer to Orch: low (blocks: phase 3)')
 })
 
 test('an orchestrator\'s pane in tmux lists the agents its own pane spawned, not a sibling pane\'s sharing the server\'s ITERM_SESSION_ID', async () => {
   const owned = JSON.stringify({ tab_id: 'tmux:/private/tmp/tmux-501/orch:@1', tty: '/dev/ttys009', owner: 'tmux:/private/tmp/tmux-501/orch:%3' }) + '\n'
   const paneText = async (pane: string) => {
-    const fx = fakeDollar({ launchName: 'Orch : phase-3' })
+    const fx = fakeDollar({ launchName: 'Orch: phase-3' })
     Object.assign(fx.env, { ITERM_SESSION_ID: 'w0t1p0:OWNER-1', TMUX: '/private/tmp/tmux-501/orch,4242,0', TMUX_PANE: pane })
     fx.files.set(`${HOME}/.claude/claude-orchestrator/chains/ttys001.jsonl`, owned)
-    fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ sessionId: 's-agent', name: 'Agent : belt-p3', status: 'busy' }))
-    fx.files.set(`${SESSIONS}/s-agent`, JSON.stringify(row({ role: 'agent', name: 'Agent : belt-p3', context_percent: 40 })) + '\n')
+    fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ sessionId: 's-agent', name: 'Agent: belt-p3', status: 'busy' }))
+    fx.files.set(`${SESSIONS}/s-agent`, JSON.stringify(row({ role: 'agent', name: 'Agent: belt-p3', context_percent: 40 })) + '\n')
     const { handlers } = mounted(registerSupervision)
     await handlers['command.run'](fx.dollar, supervisionRun)
     return JSON.stringify(await handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x })))
   }
-  expect(await paneText('%3')).toContain('Agent : belt-p3')
+  expect(await paneText('%3')).toContain('Agent: belt-p3')
   expect(await paneText('%4')).toContain('no agent running')
 })
 
@@ -2782,20 +2782,20 @@ test('an orchestrator\'s pane in tmux lists the agents its own pane spawned, not
 // The operator's ruling of 2026-11-04 (« B »): one line per new question in the coordinator's
 // conversation, pane open or not, read from the round alone.
 test('with the pane open, a new question is told to the coordinator once, one line naming its sender and what it blocks, without its text; a second reading tells nothing', async () => {
-  const asked = entry('Orch : a', minutesAgo(1), { session: 'sa', question: '_Question_ : Ship the secret plan?', blocks: 'the release of phase 4' })
-  const urgent = entry('Orch : b', minutesAgo(2), { session: 'sb', urgent: true })
+  const asked = entry('Orch: a', minutesAgo(1), { session: 'sa', question: '_Question_ : Ship the secret plan?', blocks: 'the release of phase 4' })
+  const urgent = entry('Orch: b', minutesAgo(2), { session: 'sb', urgent: true })
   // From the round alone: a sender with no row is told too, and nothing waits on the pane's list.
-  const rowless = entry('Orch : c', minutesAgo(3), { session: 'sc' })
-  const answered = entry('Orch : d', minutesAgo(4), { session: 'sd', status: 'answered' })
-  const done = entry('Orch : e', minutesAgo(5), { session: 'se', kind: 'done', blocks: null })
+  const rowless = entry('Orch: c', minutesAgo(3), { session: 'sc' })
+  const answered = entry('Orch: d', minutesAgo(4), { session: 'sd', status: 'answered' })
+  const done = entry('Orch: e', minutesAgo(5), { session: 'se', kind: 'done', blocks: null })
   const { fx, tick } = await wakingCoordinator([asked, urgent, rowless, answered, done])
   fx.files.delete(`${SESSIONS}/sc`)
   expect(fx.files.has(PANE_FILE)).toBe(true)
   await tick()
   expect(fx.notices.sort()).toEqual([
-    'Question pending from Orch : a — blocks: the release of phase 4',
-    'Question pending from Orch : b — blocks: phase 3 (urgent)',
-    'Question pending from Orch : c — blocks: phase 3',
+    'Question pending from Orch: a — blocks: the release of phase 4',
+    'Question pending from Orch: b — blocks: phase 3 (urgent)',
+    'Question pending from Orch: c — blocks: phase 3',
   ])
   expect(fx.notices.some(line => line.includes('Ship the secret plan'))).toBe(false)
   // Only the urgent one wakes the model's turn, as before: the told lines start none.
@@ -2803,23 +2803,23 @@ test('with the pane open, a new question is told to the coordinator once, one li
   await tick()
   expect(fx.notices.length).toBe(3)
   // A reload, or a successor over the same state directory, tells none again; a new entry is told.
-  const later = entry('Orch : a', minutesAgo(0), { session: 'sa', blocks: 'phase 5' })
+  const later = entry('Orch: a', minutesAgo(0), { session: 'sa', blocks: 'phase 5' })
   fx.files.set(`${ROUND}/${later.id}.json`, JSON.stringify(later) + '\n')
   await mounted(registerSupervision).handlers['turn.complete'](fx.dollar, firstTurn, (x: unknown) => x)
   await tick()
-  expect(fx.notices.slice(3)).toEqual(['Question pending from Orch : a — blocks: phase 5'])
+  expect(fx.notices.slice(3)).toEqual(['Question pending from Orch: a — blocks: phase 5'])
 })
 
 test('with the pane closed each new question is told as well, beside its due wake', async () => {
-  const fresh = entry('Orch : a', minutesAgo(1), { session: 'sa' })
+  const fresh = entry('Orch: a', minutesAgo(1), { session: 'sa' })
   const { fx, tick } = await wakingCoordinator([fresh], { paneClosed: true })
   await tick()
-  expect(fx.notices).toEqual(['Question pending from Orch : a — blocks: phase 3'])
+  expect(fx.notices).toEqual(['Question pending from Orch: a — blocks: phase 3'])
   expect(fx.submitted.length).toBe(1)
 })
 
 test('a told line the host refuses is one log line, is told again at the next reading, and never holds the due wake', async () => {
-  const urgent = entry('Orch : a', minutesAgo(1), { session: 'sa', urgent: true })
+  const urgent = entry('Orch: a', minutesAgo(1), { session: 'sa', urgent: true })
   const { fx, tick } = await wakingCoordinator([urgent])
   const log = fx.dollar.ui.log
   fx.dollar.ui.log = () => { throw new Error('no transcript') }
@@ -2828,13 +2828,13 @@ test('a told line the host refuses is one log line, is told again at the next re
   expect(fx.written.filter(l => l.endsWith('| supervision | round told: no transcript')).length).toBe(1)
   fx.dollar.ui.log = log
   await tick()
-  expect(fx.notices).toEqual(['Question pending from Orch : a — blocks: phase 3 (urgent)'])
+  expect(fx.notices).toEqual(['Question pending from Orch: a — blocks: phase 3 (urgent)'])
 })
 
 // A host that refuses the second line of a reading: the first was drawn, and is never drawn again.
 test('a told line drawn before one the host refuses is recorded, and told once', async () => {
-  const first = entry('Orch : a', minutesAgo(2), { session: 'sa' })
-  const second = entry('Orch : b', minutesAgo(1), { session: 'sb' })
+  const first = entry('Orch: a', minutesAgo(2), { session: 'sa' })
+  const second = entry('Orch: b', minutesAgo(1), { session: 'sb' })
   const { fx, tick } = await wakingCoordinator([first, second])
   const log = fx.dollar.ui.log
   let calls = 0
@@ -2846,7 +2846,7 @@ test('a told line drawn before one the host refuses is recorded, and told once',
   expect(fx.notices.length).toBe(1)
   fx.dollar.ui.log = log
   await tick()
-  expect(fx.notices.sort()).toEqual(['Question pending from Orch : a — blocks: phase 3', 'Question pending from Orch : b — blocks: phase 3'])
+  expect(fx.notices.sort()).toEqual(['Question pending from Orch: a — blocks: phase 3', 'Question pending from Orch: b — blocks: phase 3'])
 })
 
 // --- what the pane leaves out, and what it shows, said in its log ---------------------------------
@@ -2859,18 +2859,18 @@ const loggedLines = (fx: Fx, line: string) => fx.written.filter(l => l.endsWith(
 const redraw = (fx: Fx, handlers: Record<string, Function>) => handlers['ui.render'](fx.dollar, renderEvent, (x: unknown) => ({ passed: x }))
 
 test('an open question whose sender has no row is logged once as not drawn, with its reason', async () => {
-  const fx = fakeDollar({ launchName: 'Coord : main' })
-  fx.files.set(`${SESSIONS}/live`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : live' })) + '\n')
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  fx.files.set(`${SESSIONS}/live`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: live' })) + '\n')
   // Idle for two hours with no pid: stale by the old rule, removed, and its sender not judged gone.
-  fx.files.set(`${SESSIONS}/idle`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : idle', updated_at: minutesAgo(120) })) + '\n')
+  fx.files.set(`${SESSIONS}/idle`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: idle', updated_at: minutesAgo(120) })) + '\n')
   fx.files.set(`${SESSIONS}/half`, '{"role": "orchestr')
-  const shown = entry('Orch : live', '2026-11-04T15:20:00.000Z', { session: 'live', choices: CHOICES })
-  const orphan = entry('Orch : orphan', '2026-11-04T15:21:00.000Z', { session: 'nobody' })
-  const idle = entry('Orch : idle', '2026-11-04T15:22:00.000Z', { session: 'idle' })
-  const half = entry('Orch : half', '2026-11-04T15:23:00.000Z', { session: 'half' })
-  const nameless = entry('Orch : old', '2026-11-04T15:24:00.000Z', { session: '' })
-  const answered = entry('Orch : gone', '2026-11-04T15:25:00.000Z', { session: 'gone', status: 'answered' })
-  const done = entry('Orch : done', '2026-11-04T15:26:00.000Z', { session: 'gone', kind: 'done', blocks: null })
+  const shown = entry('Orch: live', '2026-11-04T15:20:00.000Z', { session: 'live', choices: CHOICES })
+  const orphan = entry('Orch: orphan', '2026-11-04T15:21:00.000Z', { session: 'nobody' })
+  const idle = entry('Orch: idle', '2026-11-04T15:22:00.000Z', { session: 'idle' })
+  const half = entry('Orch: half', '2026-11-04T15:23:00.000Z', { session: 'half' })
+  const nameless = entry('Orch: old', '2026-11-04T15:24:00.000Z', { session: '' })
+  const answered = entry('Orch: gone', '2026-11-04T15:25:00.000Z', { session: 'gone', status: 'answered' })
+  const done = entry('Orch: done', '2026-11-04T15:26:00.000Z', { session: 'gone', kind: 'done', blocks: null })
   for (const e of [shown, orphan, idle, half, nameless, answered, done]) fx.files.set(`${ROUND}/${e.id}.json`, JSON.stringify(e) + '\n')
   const { handlers } = mounted(registerSupervision)
   await coordinatorRender(fx, handlers)
@@ -2886,13 +2886,13 @@ test('an open question whose sender has no row is logged once as not drawn, with
 })
 
 test('a stale row with a pid is named by its pid and tty when its question is left out', async () => {
-  const fx = fakeDollar({ launchName: 'Coord : main' })
-  fx.files.set(`${SESSIONS}/dead`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch : dead' }), pid: '4242', tty: '/dev/ttys004' }) + '\n')
-  const asked = entry('Orch : dead', '2026-11-04T15:20:00.000Z', { session: 'dead' })
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  fx.files.set(`${SESSIONS}/dead`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: dead' }), pid: '4242', tty: '/dev/ttys004' }) + '\n')
+  const asked = entry('Orch: dead', '2026-11-04T15:20:00.000Z', { session: 'dead' })
   fx.files.set(`${ROUND}/${asked.id}.json`, JSON.stringify(asked) + '\n')
   // The entry is withdrawn by the sweep of its dead sender: the pane leaves nothing open unsaid.
-  const fresh = fakeDollar({ launchName: 'Coord : main' })
-  fresh.files.set(`${SESSIONS}/half`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch : half' }), pid: '4242', tty: '/dev/ttys004' }) + '\n')
+  const fresh = fakeDollar({ launchName: 'Coord: main' })
+  fresh.files.set(`${SESSIONS}/half`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: half' }), pid: '4242', tty: '/dev/ttys004' }) + '\n')
   fresh.dollar.process.run = ((run: Function) => async (argv: readonly string[], init?: object) =>
     // A read that keeps the entry open: the sweep's round write fails, as an unwritable round does.
     argv[0] === 'mv' && String(argv[3]).startsWith(ROUND) ? { exitCode: 1, stdout: '', stderr: 'denied' } : run(argv, init))(fresh.dollar.process.run)
@@ -2904,15 +2904,15 @@ test('a stale row with a pid is named by its pid and tty when its question is le
 })
 
 test('a question drawn for the first time is logged once as shown, never at a redraw', async () => {
-  const first = entry('Orch : low', '2026-11-04T15:20:00.000Z', { session: 'low', choices: CHOICES })
-  const second = entry('Orch : low', '2026-11-04T15:21:00.000Z', { session: 'low' })
+  const first = entry('Orch: low', '2026-11-04T15:20:00.000Z', { session: 'low', choices: CHOICES })
+  const second = entry('Orch: low', '2026-11-04T15:21:00.000Z', { session: 'low' })
   const { fx, render, handlers } = await askingPane([first, second])
   await render()
   await render()
   expect(loggedLines(fx, `pane: shown ${first.id}`)).toBe(1)
   // The second is in the count the title draws, so it is shown too.
   expect(loggedLines(fx, `pane: shown ${second.id}`)).toBe(1)
-  const third = entry('Orch : low', '2026-11-04T15:22:00.000Z', { session: 'low' })
+  const third = entry('Orch: low', '2026-11-04T15:22:00.000Z', { session: 'low' })
   fx.files.set(`${ROUND}/${third.id}.json`, JSON.stringify(third) + '\n')
   await redraw(fx, handlers)
   await redraw(fx, handlers)
@@ -2921,8 +2921,8 @@ test('a question drawn for the first time is logged once as shown, never at a re
 })
 
 test('a question no render showed within 30 s is logged by the wake once, with the last render\'s time', async () => {
-  const unseen = entry('Orch : a', '2026-11-04T15:23:00.000Z', { session: 'sa', at: new Date(Date.now() - 31000).toISOString() })
-  const young = entry('Orch : b', '2026-11-04T15:24:00.000Z', { session: 'sb', at: new Date(Date.now() - 5000).toISOString() })
+  const unseen = entry('Orch: a', '2026-11-04T15:23:00.000Z', { session: 'sa', at: new Date(Date.now() - 31000).toISOString() })
+  const young = entry('Orch: b', '2026-11-04T15:24:00.000Z', { session: 'sb', at: new Date(Date.now() - 5000).toISOString() })
   const { fx, handlers, tick } = await wakingCoordinator([unseen, young])
   await tick()
   expect(fx.written.filter(l => l.includes(`round wake: ${unseen.id} open `)).length).toBe(1)
@@ -2931,12 +2931,12 @@ test('a question no render showed within 30 s is logged by the wake once, with t
   await tick()
   expect(fx.written.filter(l => l.includes(`round wake: ${unseen.id}`)).length).toBe(1)
   // A render that showed the question: the wake never names it.
-  const shownOne = entry('Orch : c', '2026-11-04T15:25:00.000Z', { session: 'sc', at: new Date(Date.now() - 40000).toISOString() })
+  const shownOne = entry('Orch: c', '2026-11-04T15:25:00.000Z', { session: 'sc', at: new Date(Date.now() - 40000).toISOString() })
   fx.files.set(`${ROUND}/${shownOne.id}.json`, JSON.stringify(shownOne) + '\n')
   fx.files.set(`${SESSIONS}/sc`, JSON.stringify(row({ role: 'orchestrator', name: shownOne.from })) + '\n')
   await redraw(fx, handlers)
   // A render that left one out: the wake gives that render's time.
-  const left = entry('Orch : d', '2026-11-04T15:26:00.000Z', { session: 'sd', at: new Date(Date.now() - 40000).toISOString() })
+  const left = entry('Orch: d', '2026-11-04T15:26:00.000Z', { session: 'sd', at: new Date(Date.now() - 40000).toISOString() })
   fx.files.set(`${ROUND}/${left.id}.json`, JSON.stringify(left) + '\n')
   await tick()
   expect(fx.written.some(l => l.includes(`round wake: ${shownOne.id}`))).toBe(false)
@@ -2952,24 +2952,24 @@ test('a question no render showed within 30 s is logged by the wake once, with t
 // (d2): a successor has no row until its first turn ends, minutes after the move; its session runs
 // all the same, and the host's own record of it says so.
 test('an entry moved to a successor not measured yet is drawn', async () => {
-  const moved = entry('Orch : belt-2', '2026-11-04T17:10:00.000Z', { session: 's-two', movedFrom: 's-old', choices: CHOICES })
+  const moved = entry('Orch: belt-2', '2026-11-04T17:10:00.000Z', { session: 's-two', movedFrom: 's-old', choices: CHOICES })
   const drawnWith = async (record: object | null) => {
-    const fx = fakeDollar({ launchName: 'Coord : main' })
+    const fx = fakeDollar({ launchName: 'Coord: main' })
     fx.files.set(`${ROUND}/${moved.id}.json`, JSON.stringify(moved) + '\n')
     if (record) fx.files.set(`${HOME}/.claude/sessions/${(record as { pid: number }).pid}.json`, JSON.stringify(record))
     return { fx, tree: JSON.stringify(await coordinatorRender(fx)) }
   }
-  const live = await drawnWith({ pid: 777, sessionId: 's-two', name: 'Orch : belt-2' })
+  const live = await drawnWith({ pid: 777, sessionId: 's-two', name: 'Orch: belt-2' })
   expect(live.tree).toContain('Questions for you — 1 pending')
   expect(loggedLines(live.fx, `pane: shown ${moved.id}`)).toBe(1)
   // The host's record of a process that no longer runs, or of another session, is no successor.
-  for (const record of [{ pid: 999, sessionId: 's-two', name: 'Orch : belt-2' }, { pid: 777, sessionId: 's-other', name: 'Orch : belt-2' }, null]) {
+  for (const record of [{ pid: 999, sessionId: 's-two', name: 'Orch: belt-2' }, { pid: 777, sessionId: 's-other', name: 'Orch: belt-2' }, null]) {
     const { fx, tree } = await drawnWith(record)
     expect(tree).not.toContain('pending')
     expect(loggedLines(fx, `pane: ${moved.id} not drawn: no row for its sender s-two`)).toBe(1)
   }
   // An entry no successor took, its session with no row, is not drawn on a live record alone.
-  const fx = fakeDollar({ launchName: 'Coord : main' })
+  const fx = fakeDollar({ launchName: 'Coord: main' })
   const plain = { ...moved }
   delete plain.movedFrom
   fx.files.set(`${ROUND}/${plain.id}.json`, JSON.stringify(plain) + '\n')
@@ -2980,17 +2980,17 @@ test('an entry moved to a successor not measured yet is drawn', async () => {
 // A move whose successor's session was not resolved names none: the host's record of a live
 // session of the successor's name draws it, the predecessor's own record never.
 test('an entry moved to a successor by its name alone is drawn while a live session of that name runs', async () => {
-  const moved = entry('Orch : belt-2', '2026-11-04T17:10:00.000Z', { session: '', movedFrom: 's-old', choices: CHOICES })
+  const moved = entry('Orch: belt-2', '2026-11-04T17:10:00.000Z', { session: '', movedFrom: 's-old', choices: CHOICES })
   const drawnWith = async (record: object | null) => {
-    const fx = fakeDollar({ launchName: 'Coord : main' })
+    const fx = fakeDollar({ launchName: 'Coord: main' })
     fx.files.set(`${ROUND}/${moved.id}.json`, JSON.stringify(moved) + '\n')
     if (record) fx.files.set(`${HOME}/.claude/sessions/${(record as { pid: number }).pid}.json`, JSON.stringify(record))
     return { fx, tree: JSON.stringify(await coordinatorRender(fx)) }
   }
-  const live = await drawnWith({ pid: 777, sessionId: 's-two', name: 'Orch : belt-2' })
+  const live = await drawnWith({ pid: 777, sessionId: 's-two', name: 'Orch: belt-2' })
   expect(live.tree).toContain('Questions for you — 1 pending')
   expect(loggedLines(live.fx, `pane: shown ${moved.id}`)).toBe(1)
-  for (const record of [{ pid: 999, sessionId: 's-two', name: 'Orch : belt-2' }, { pid: 777, sessionId: 's-old', name: 'Orch : belt-2' }, { pid: 777, sessionId: 's-two', name: 'Orch : other' }, null]) {
+  for (const record of [{ pid: 999, sessionId: 's-two', name: 'Orch: belt-2' }, { pid: 777, sessionId: 's-old', name: 'Orch: belt-2' }, { pid: 777, sessionId: 's-two', name: 'Orch: other' }, null]) {
     const { tree } = await drawnWith(record)
     expect(tree).not.toContain('pending')
   }
@@ -2999,12 +2999,12 @@ test('an entry moved to a successor by its name alone is drawn while a live sess
 // D2 of the round-2 verdict: no withdrawal nor move matches an entry naming no session, so the
 // read that judges it by its successor's name closes it once no session of that name runs.
 test('an entry moved to a successor by its name alone stays open while a session of that name runs, and is withdrawn once none does', async () => {
-  const moved = entry('Orch : belt-2', '2026-11-04T17:10:00.000Z', { session: '', movedFrom: 's-old', choices: CHOICES })
-  const nameless = entry('Orch : belt-2', '2026-11-04T17:11:00.000Z', { session: '' })
-  const fx = fakeDollar({ launchName: 'Coord : main' })
+  const moved = entry('Orch: belt-2', '2026-11-04T17:10:00.000Z', { session: '', movedFrom: 's-old', choices: CHOICES })
+  const nameless = entry('Orch: belt-2', '2026-11-04T17:11:00.000Z', { session: '' })
+  const fx = fakeDollar({ launchName: 'Coord: main' })
   for (const e of [moved, nameless]) fx.files.set(`${ROUND}/${e.id}.json`, JSON.stringify(e) + '\n')
   const record = `${HOME}/.claude/sessions/777.json`
-  fx.files.set(record, JSON.stringify({ pid: 777, sessionId: 's-two', name: 'Orch : belt-2' }))
+  fx.files.set(record, JSON.stringify({ pid: 777, sessionId: 's-two', name: 'Orch: belt-2' }))
   const statusOf = (e: RoundEntry) => JSON.parse(String(fx.files.get(`${ROUND}/${e.id}.json`)))
   const { handlers } = mounted(registerSupervision)
   expect(JSON.stringify(await coordinatorRender(fx, handlers))).toContain('Questions for you — 1 pending')
@@ -3012,7 +3012,7 @@ test('an entry moved to a successor by its name alone stays open while a session
   expect(statusOf(moved).status).toBe('open')
   // The successor's process ends, its record left behind: a process table that cannot be read
   // judges nothing, and the entry stays open and drawn.
-  fx.files.set(record, JSON.stringify({ pid: 999, sessionId: 's-two', name: 'Orch : belt-2' }))
+  fx.files.set(record, JSON.stringify({ pid: 999, sessionId: 's-two', name: 'Orch: belt-2' }))
   const run = fx.dollar.process.run
   fx.dollar.process.run = async (argv: readonly string[], init?: object) =>
     argv[0] === 'ps' && argv[1] === '-A' ? { exitCode: 1, stdout: '', stderr: 'denied' } : run(argv, init)
@@ -3037,30 +3037,30 @@ test('an entry moved to a successor by its name alone stays open while a session
 })
 
 test('an entry moved to a successor by its name alone is due in the tab with the pane closed', async () => {
-  const moved = entry('Orch : belt-2', minutesAgo(1), { session: '', movedFrom: 's-old' })
+  const moved = entry('Orch: belt-2', minutesAgo(1), { session: '', movedFrom: 's-old' })
   const { fx, tick } = await wakingCoordinator([moved], { paneClosed: true })
   fx.files.delete(`${SESSIONS}/`)
-  fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ pid: 777, sessionId: 's-two', name: 'Orch : belt-2' }))
+  fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ pid: 777, sessionId: 's-two', name: 'Orch: belt-2' }))
   await tick()
   expect(fx.submitted.length).toBe(1)
-  expect(fx.submitted[0]).toContain('Orch : belt-2')
+  expect(fx.submitted[0]).toContain('Orch: belt-2')
 })
 
 test('an entry moved to a successor not measured yet is due in the tab with the pane closed', async () => {
-  const moved = entry('Orch : belt-2', minutesAgo(1), { session: 's-two', movedFrom: 's-old' })
+  const moved = entry('Orch: belt-2', minutesAgo(1), { session: 's-two', movedFrom: 's-old' })
   const { fx, tick } = await wakingCoordinator([moved], { paneClosed: true })
   fx.files.delete(`${SESSIONS}/s-two`)
-  fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ pid: 777, sessionId: 's-two', name: 'Orch : belt-2' }))
+  fx.files.set(`${HOME}/.claude/sessions/777.json`, JSON.stringify({ pid: 777, sessionId: 's-two', name: 'Orch: belt-2' }))
   await tick()
   expect(fx.submitted.length).toBe(1)
-  expect(fx.submitted[0]).toContain('Orch : belt-2')
+  expect(fx.submitted[0]).toContain('Orch: belt-2')
 })
 
 // --- the render's own reads, bounded ---------------------------------------------------------
 
 test('a git that hangs holds no render: the origin read is bounded, and a render past its bound is logged with its duration', async () => {
-  const fx = fakeDollar({ launchName: 'Coord : main' })
-  fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : low' })) + '\n')
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: low' })) + '\n')
   const run = fx.dollar.process.run
   let skew = 0
   const asked: (object | undefined)[] = []
@@ -3078,11 +3078,11 @@ test('a git that hangs holds no render: the origin read is bounded, and a render
     const { handlers } = mounted(registerSupervision)
     const tree = await Promise.race([coordinatorRender(fx, handlers), hung])
     expect(tree).not.toBe('hung')
-    expect(JSON.stringify(tree)).toContain('Orch : low')
+    expect(JSON.stringify(tree)).toContain('Orch: low')
     expect((asked[0] as { timeoutMs: number }).timeoutMs).toBeLessThanOrEqual(2000)
     // A render whose reads took longer than its bound says so, once, with its duration: here the
     // process listing its live row's pid sends the store's read to.
-    fx.files.set(`${SESSIONS}/low`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch : low' }), pid: '501' }) + '\n')
+    fx.files.set(`${SESSIONS}/low`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: low' }), pid: '501' }) + '\n')
     fx.dollar.process.run = async (argv: readonly string[], init?: { timeoutMs?: number }) => {
       if (argv[0] === 'ps') skew += 6000
       return run(argv, init)
@@ -3096,8 +3096,8 @@ test('a git that hangs holds no render: the origin read is bounded, and a render
 // A pane redraws every few seconds: a render past its bound is said once per crossing of it, not
 // at every redraw while the reads stay slow.
 test('renders past their bound are logged once per crossing of it', async () => {
-  const fx = fakeDollar({ launchName: 'Coord : main' })
-  fx.files.set(`${SESSIONS}/low`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch : low' }), pid: '501' }) + '\n')
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  fx.files.set(`${SESSIONS}/low`, JSON.stringify({ ...row({ role: 'orchestrator', name: 'Orch: low' }), pid: '501' }) + '\n')
   const run = fx.dollar.process.run
   let skew = 0
   let slow = true
@@ -3123,8 +3123,8 @@ test('renders past their bound are logged once per crossing of it', async () => 
 // This session's repository is read once and kept: a read that timed out is no answer, and the
 // next render reads it again, while one that answered is never read twice.
 test('an origin read that timed out is read again at the next render, one that answered is kept', async () => {
-  const fx = fakeDollar({ launchName: 'Coord : main' })
-  fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : low' })) + '\n')
+  const fx = fakeDollar({ launchName: 'Coord: main' })
+  fx.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: low' })) + '\n')
   let gits = 0
   let answer: 'thrown' | 'ended' | 'none' | 'origin' = 'thrown'
   const gitAnswering = (run: Function) => async (argv: readonly string[], init?: { timeoutMs?: number }) => {
@@ -3149,8 +3149,8 @@ test('an origin read that timed out is read again at the next render, one that a
   await redraw(fx, handlers)
   expect(gits).toBe(3)
   // No origin is an answer too: kept, never read again.
-  const bare = fakeDollar({ launchName: 'Coord : main' })
-  bare.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch : low' })) + '\n')
+  const bare = fakeDollar({ launchName: 'Coord: main' })
+  bare.files.set(`${SESSIONS}/low`, JSON.stringify(row({ role: 'orchestrator', name: 'Orch: low' })) + '\n')
   bare.dollar.process.run = gitAnswering(bare.dollar.process.run)
   answer = 'none'
   const fresh = mounted(registerSupervision).handlers

@@ -19,7 +19,7 @@ function files(version = '0.49.1'): Record<string, string> {
 const ok = (stdout = ''): Reply => ({ exitCode: 0, stdout, stderr: '' })
 
 // The machine's children: the CLI and the launcher, by their second word.
-function machine(overrides: Record<string, Reply> = {}, list = ['w1/t1 | /dev/ttys001 | orch | Orch : demo | self', 'w1/t2 | /dev/ttys009 | Bugs : demo | Bugs : demo']) {
+function machine(overrides: Record<string, Reply> = {}, list = ['w1/t1 | /dev/ttys001 | orch | Orch: demo | self', 'w1/t2 | /dev/ttys009 | Bugs : demo | Bugs : demo']) {
   let lists = 0
   return (argv: string[]): Reply => {
     const verb = argv[0] === SCRIPT ? argv[1] : argv[2]
@@ -27,7 +27,7 @@ function machine(overrides: Record<string, Reply> = {}, list = ['w1/t1 | /dev/tt
     if (verb === 'plugin-path') return ok(`${ORCH}\n`)
     if (verb === 'agent-prompt') return ok('/home/op/.bugs-bot/demo/agent/startup-prompt.txt\n')
     if (verb === 'spawn') return ok('spawned\n/dev/ttys009\n')
-    if (verb === 'list') return ok((lists++ === 0 ? list : ['w1/t1 | /dev/ttys001 | orch | Orch : demo | self', 'w1/t2 | /dev/ttys009 | Bugs : demo | Bugs : demo']).join('\n'))
+    if (verb === 'list') return ok((lists++ === 0 ? list : ['w1/t1 | /dev/ttys001 | orch | Orch: demo | self', 'w1/t2 | /dev/ttys009 | Bugs : demo | Bugs : demo']).join('\n'))
     if (verb === 'verify') return ok('running: claude on /dev/ttys009\n')
     if (verb === 'move') return ok('')
     return { exitCode: 2, stdout: '', stderr: `unexpected ${argv.join(' ')}` }
@@ -45,11 +45,11 @@ test('it runs the seven steps and spawns the resident agent right of the launche
   await begin($)
   const out = await $.command.run({ command: 'bugs-bot:start', args: '' })
   expect(verbs(runs)).toEqual(['plugin-path', 'agent-prompt', 'spawn', 'list', 'verify'])
-  expect(runs[1].argv.slice(2)).toEqual(['agent-prompt', '--launcher', 'Orch : demo [a1b2c3]'])
+  expect(runs[1].argv.slice(2)).toEqual(['agent-prompt', '--launcher', 'Orch: demo [a1b2c3]'])
   expect(runs[2].argv).toEqual([SCRIPT, 'spawn', '--dir', '/repo', '--title', 'Bugs : demo', '--prompt-file',
     '/home/op/.bugs-bot/demo/agent/startup-prompt.txt', '--right-of', 'self', '--resident'])
   expect(runs[2].timeoutMs).toBeGreaterThanOrEqual(60_000)
-  expect(out.text).toContain('Spawned « Bugs : demo » on /dev/ttys009, launched by Orch : demo [a1b2c3].')
+  expect(out.text).toContain('Spawned « Bugs : demo » on /dev/ttys009, launched by Orch: demo [a1b2c3].')
   expect(out.text).toContain('It sits right of this session.')
   expect(out.text).toContain('Verified')
 })
@@ -74,7 +74,7 @@ test('without BUGS_BOT_PYTHON, the interpreter bin/setup remembered in the bugs 
 test('a tab spawned elsewhere is moved right of the launcher, and listed again', async ($, on) => {
   const { runs } = mount(on, {
     files: files(),
-    run: machine({}, ['w1/t1 | /dev/ttys001 | orch | Orch : demo | self', 'w1/t2 | /dev/ttys004 | Agent : x | Agent : x', 'w1/t3 | /dev/ttys009 | Bugs : demo | Bugs : demo']),
+    run: machine({}, ['w1/t1 | /dev/ttys001 | orch | Orch: demo | self', 'w1/t2 | /dev/ttys004 | Agent: x | Agent: x', 'w1/t3 | /dev/ttys009 | Bugs : demo | Bugs : demo']),
   })
   await begin($)
   const out = await $.command.run({ command: 'bugs-bot:start', args: '' })
@@ -117,7 +117,7 @@ test('an orchestrator older than 0.46.1 is refused, its tagged version read from
 
 test('a live agent of the project is refused: yours already, or another launcher\'s', async ($, on) => {
   const listing = ROOT_LISTING + '\n  Bugs : demo [778899]  ·  interactive  ·  idle  ·  started 2h ago'
-  const f = { ...files(), '/home/op/.bugs-bot/demo/state.json': JSON.stringify({ agent: { launcher: 'Orch : demo [a1b2c3]' } }) }
+  const f = { ...files(), '/home/op/.bugs-bot/demo/state.json': JSON.stringify({ agent: { launcher: 'Orch: demo [a1b2c3]' } }) }
   const { runs } = mount(on, { files: f, run: machine(), listing })
   await begin($)
   const out = await $.command.run({ command: 'bugs-bot:start', args: '' })
@@ -127,11 +127,11 @@ test('a live agent of the project is refused: yours already, or another launcher
 
 test('a live agent another launcher started names that launcher', async ($, on) => {
   const listing = ROOT_LISTING + '\n  Bugs : demo [778899]  ·  interactive  ·  idle  ·  started 2h ago'
-  const f = { ...files(), '/home/op/.bugs-bot/demo/state.json': JSON.stringify({ agent: { launcher: 'Orch : other [0f0f0f]' } }) }
+  const f = { ...files(), '/home/op/.bugs-bot/demo/state.json': JSON.stringify({ agent: { launcher: 'Orch: other [0f0f0f]' } }) }
   mount(on, { files: f, run: machine(), listing })
   await begin($)
   const out = await $.command.run({ command: 'bugs-bot:start', args: '' })
-  expect(out.text).toContain('it belongs to Orch : other [0f0f0f]')
+  expect(out.text).toContain('it belongs to Orch: other [0f0f0f]')
 })
 
 test('ListAgents unavailable: the markdown command runs instead, nothing spawned', async ($, on) => {

@@ -13,14 +13,14 @@ Read before typing any `iterm-agent.sh` command, and again when one fails, hangs
 SCRIPT=${CLAUDE_PLUGIN_ROOT}/skills/iterm-agents/scripts/iterm-agent.sh
 
 $SCRIPT list
-    # w1/t3 | /dev/ttys000 | ✳ chaining the PRs | Orch : plugin family | self
-    # w1/t4 | /dev/ttys004 | ◐ reading the brief | Agent : phase 2
+    # w1/t3 | /dev/ttys000 | ✳ chaining the PRs | Orch: plugin family | self
+    # w1/t4 | /dev/ttys004 | ◐ reading the brief | Agent: phase 2
     # w1/t5 | /dev/ttys007 | ◐ Chat | (host default) | hidden   ← behind a maximized sibling pane
     # tab title, then the session's NAME (the host registry's, else its --name; `(host
     # default)` when neither gives one), then `self` on YOUR OWN tab.
 
 $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --effort <low|medium|high|xhigh|max> | --inherit-model) [--permission-mode auto] \
-    --title "Agent : <subject>" --brief <brief-path> --orchestrator "<name [ref]>" [--right-of self | --successor] [--mcp <name>] [--gate-tokens <N>] \
+    --title "Agent: <subject>" --brief <brief-path> --orchestrator "<name [ref]>" [--right-of self | --successor] [--mcp <name>] [--gate-tokens <N>] \
     [--keep-tool <name>] [--drop-tool <name>] [--keep-synced-skills]
     # --brief lints the brief (skills/orchestrator/scripts/brief-lint.sh) before any tab
     # exists; a finding no longer refuses the spawn — it is printed on stderr as a warning
@@ -34,7 +34,7 @@ $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --eff
     # three is refused before any tab exists (the host writes no transcript before a first
     # prompt, so the session's mode could never be read, §29) — --no-verify does not lift
     # this, a promptless session stays refused whether or not the mode is checked.
-    # --title is `Orch : <subject>` for an orchestrator and its successor, `Agent : <subject>`
+    # --title is `Orch: <subject>` for an orchestrator and its successor, `Agent: <subject>`
     # for anything you spawn, the subject at most 25 characters; any other title, or none, is
     # refused unless `--title-free`, under which no title means `agent`.
     # The session's servers are CHOSEN. The launch is strict by default, and carries a file
@@ -65,7 +65,7 @@ $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --eff
     # --keep-tool <name> / --drop-tool <name>: the session's tools are CHOSEN too (§65). Every
     # launched session is started with `--disallowedTools` naming the tools no session has
     # called: Artifact, SendFeedback, Workflow, ScheduleWakeup and ReportFindings, and, for any
-    # title but `Orch :` and `Coord :`, the three that move an orchestrator between machines
+    # title but `Orch:` and `Coord:`, the three that move an orchestrator between machines
     # (mcp__orchestrator__move_send, move_probe, end_session). --keep-tool removes a name from
     # that set (a brief that asks for a page keeps Artifact); --drop-tool adds any tool name or
     # permission pattern to it. Both repeat, take one name each, and are honoured by every path
@@ -73,7 +73,7 @@ $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --eff
     # other special spawns, and `rotate`, which forwards them. Refused before a tab exists:
     # an empty name, and one name given to both options. A kept name the default never removed
     # is harmless. `tools` lists what exists. The dry run prints `tools_removed=` with the set.
-    # The same launch carries the host's cuts in its one --settings: an `Agent :` session
+    # The same launch carries the host's cuts in its one --settings: an `Agent:` session
     # loses the away recap and the silent-turn reminder. The host compacts where the operator's settings say; the plugin sets only the gates: agent 240,000, others 300,000.
     # Every launched session loses the
     # token countdown, and the account's synced skills (`anthropic-skills:*`) are hidden
@@ -129,19 +129,19 @@ $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --eff
     #   (--no-remote-control drops that). A session the older launcher named carries its
     #   prompt in its own process line, so the derivation refuses it and the title is typed
     #   by hand instead, and so is a name under an older convention, which no longer
-    #   derives. An `Orch :` title with --right-of/--left-of
+    #   derives. An `Orch:` title with --right-of/--left-of
     #   is refused: a plain anchor lands after your chain, which is not a successor's place.
     #   A successor runs on your live model and effort, read on your transcript:
     #   --tier, --model and --effort are refused beside --successor, and a pair that cannot
     #   be read refuses the launch, naming the file and what was missing.
-    #   From an `Audit : <subject>` session (an auditor kept on past its report, §9.4), or one
+    #   From an `Audit: <subject>` session (an auditor kept on past its report, §9.4), or one
     #   whose role word is qualified (`Audit neutre : <subject>`), it takes that name too, comes
     #   up under remote control, keeps your plugin set (the enabledPlugins of your --settings,
     #   with or without a plugin directory) and takes and hands NO chain (chain=none): an
     #   auditor has none, and written into one it would anchor the orchestrator's next agent.
     #   --no-remote-control is refused there too; a typed audit title still is, off --auditor.
     # --wake: a paused orchestrator relaunched on the operator's word, its predecessor already
-    #   gone. Needs --title "Orch : <subject>", the one recorded at its pause. Its pair: the one
+    #   gone. Needs --title "Orch: <subject>", the one recorded at its pause. Its pair: the one
     #   the transcript of --resume <session> holds, else the recorded --model <id> --effort
     #   <level>, else none (the host's default), never asked of the operator; a recorded model
     #   without its effort is refused. Lands immediately right of you, joins no chain (chain=none) and
@@ -149,7 +149,7 @@ $SCRIPT spawn --dir <workdir> (--tier deep|standard|light | --model <name> --eff
     #   anchor, --title-free, --tier, --inherit-model, --resident and --no-remote-control.
     # --open: a new orchestrator opened on the operator's order, by the session that carries
     #   it out, never by an agent. `--open` comes right after `spawn`. Needs
-    #   --title "Orch : <subject>" without a reference and a prompt (--prompt or --prompt-file).
+    #   --title "Orch: <subject>" without a reference and a prompt (--prompt or --prompt-file).
     #   Its pair is the one the order names, --model <id> --effort <level>, or neither: the
     #   host's default for the session applies. A model alone and an effort alone are refused,
     #   and so are --tier and --inherit-model: a tier or the caller's own live pair would be a
@@ -248,7 +248,7 @@ An orchestrator's tab holds a tmux session of its own, its **home session**, on 
 - **`list`** prints the home session's windows, one row each, the caller's own marked `self`, then the app's tabs it did not make as windows (an auditor's, for one). **`screen`** reads a window with `capture-pane`.
 - **`close`** kills the window, guarded by `--expect-title` against the window's name, proved gone on the process table (a host still there is sent SIGTERM, then SIGKILL, as for a tab), the checkout deleted as for a tab. A tty of another tmux session is refused. On a tab that shows a home session it ends the whole server first and prints a `home:` line. A home session's window 0 is closed only by `takeover`: `close` refuses it, before anything is killed.
 - **`move`** is `move-window`, with the operator's view kept; window 0 is refused as a subject, as an anchor to place something before, and as `--leftmost`. **`rotate`** spawns, verifies, then closes, as for tabs.
-- **`home --session <id> --name "Orch : <subject>"`** is run by the hooks module at the end of the turn that names an orchestrator, never by hand: it makes the server, resumes the same conversation in window 0 and opens a tab showing it, printing `moved: …` or `stay: <why>` (a session that is not an orchestrator, or already in a home session, stays). **`home-release`** is window 0's watcher, closing the tab the orchestrator left once the resumed host is proved running. **`takeover --tty <predecessor> --expect-title <words>`** is a successor's close of its predecessor: window 0 killed (the title being required) and its host proved gone, sent SIGTERM then SIGKILL when it stays, then the successor's window moved to index 0.
+- **`home --session <id> --name "Orch: <subject>"`** is run by the hooks module at the end of the turn that names an orchestrator, never by hand: it makes the server, resumes the same conversation in window 0 and opens a tab showing it, printing `moved: …` or `stay: <why>` (a session that is not an orchestrator, or already in a home session, stays). **`home-release`** is window 0's watcher, closing the tab the orchestrator left once the resumed host is proved running. **`takeover --tty <predecessor> --expect-title <words>`** is a successor's close of its predecessor: window 0 killed (the title being required) and its host proved gone, sent SIGTERM then SIGKILL when it stays, then the successor's window moved to index 0.
 - **The tab bar** shows one block per window — the name, then the state icon the module wrote on the window: busy ●, idle ○, asks ✋, done ✓, gate ⚠. A click on a block or `C-b n` / `C-b p` switches; the windows keep their numbers, so `C-b <digit>` still selects one, though the bar shows none. `C-b C-b` sends a Ctrl-B to the pane.
 - **`ORCHESTRATOR_TMUX`** names the tmux binary (the suite stands a recorder in for it); `ORCHESTRATOR_HOME_WAIT` is how long window 0 waits for the moved session to end in its old place.
 

@@ -1,6 +1,8 @@
 // Generated from packages/core/src by `npm run core`: edit the source, never this copy.
-// The shapes of the session names the plugins read: a role, then a subject of at most 25
-// characters that neither starts nor ends with a blank. Every plugin asks here, never its own regex.
+// The shapes of the session names the plugins read: a role and its colon, then a subject of at most
+// 25 characters that neither starts nor ends with a blank. Every plugin asks here, never its own regex.
+// A name is written `Orch: billing`; the former `Orch : billing`, a blank before the colon, still
+// reads as the same name: sessions started before the change carry it until they restart.
 
 export const ROLES = { Orch: 'orchestrator', Coord: 'coordinator', Agent: 'agent', Audit: 'auditor' } as const
 
@@ -12,7 +14,7 @@ export interface SessionName {
   readonly subject: string
 }
 
-const SHAPE = /^(Orch|Coord|Agent|Audit) : (\S(?:.{0,23}\S)?)$/u
+const SHAPE = /^(Orch|Coord|Agent|Audit) ?: (\S(?:.{0,23}\S)?)$/u
 
 function isPrefix(value: string): value is Prefix {
   return Object.hasOwn(ROLES, value)
@@ -29,7 +31,12 @@ export function parseSessionName(name: string): SessionName | null {
 
 /** The name of a session of `prefix`'s role about `subject`; throws when the subject does not fit. */
 export function sessionName(prefix: Prefix, subject: string): string {
-  const name = `${prefix} : ${subject}`
+  const name = `${prefix}: ${subject}`
   if (parseSessionName(name) === null) throw new Error(`not a session subject: ${JSON.stringify(subject)} (1 to 25 characters, no blank at either end)`)
   return name
+}
+
+/** A name of the former shape, `Orch : x`, written the current way, `Orch: x`; any other name as given. */
+export function currentSessionName(name: string): string {
+  return name.replace(/^(Orch|Coord|Agent|Audit) : /u, '$1: ')
 }

@@ -25,7 +25,7 @@ The orchestration arm becomes an interactive orchestrator session, opened and dr
 harness the way the operator opens one, on the same machine and plugin release:
 
 1. **Open.** The launcher of the checkout's `plugins/orchestrator` spawns
-   `Orch : eval <case id>` in the bench, detached from the operator's windows (the home
+   `Orch: eval <case id>` in the bench, detached from the operator's windows (the home
    session's tmux, its own socket), Remote Control off, with the checkout's orchestrator and
    its dependencies as `--plugin-dir`, the eval's settings file, and the startup prompt
    `/orchestrator:orchestrator build` followed by the brief. The orchestrator spawns its

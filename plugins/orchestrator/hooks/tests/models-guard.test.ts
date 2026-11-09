@@ -116,7 +116,7 @@ test('the guard mounts on the file tools and Bash', () => {
 
 test("an orchestrator's Write or Edit of the map is denied with the rule", async () => {
   const { guard } = mounted()
-  const { dollar } = fakeDollar('Orch : belt')
+  const { dollar } = fakeDollar('Orch: belt')
   for (const e of [write, edit]) {
     const out = await call(guard, dollar, e)
     expect((out.answer as any).deny).toBe(MODELS_DENY)
@@ -126,7 +126,7 @@ test("an orchestrator's Write or Edit of the map is denied with the rule", async
 
 test('a Bash write of the map is denied, a read of it passes', async () => {
   const { guard } = mounted()
-  const { dollar } = fakeDollar('Orch : belt')
+  const { dollar } = fakeDollar('Orch: belt')
   for (const command of [`jq . x > ${MAP}`, `echo x | tee ${MAP}`, `sed -i '' s/a/b/ ${MAP}`, `mv x ${MAP}`]) {
     expect(((await call(guard, dollar, bash(command))).answer as any).deny).toBe(MODELS_DENY)
   }
@@ -138,7 +138,7 @@ test('a Bash write of the map is denied, a read of it passes', async () => {
 
 test('the operator\'s typed word on the map lifts the guard; a peer\'s delivery does not', async () => {
   const { guard, prompt } = mounted()
-  const { dollar } = fakeDollar('Orch : belt')
+  const { dollar } = fakeDollar('Orch: belt')
   await prompt(dollar, typed('bind standard to a-model in models.json, please', 'peer'), (x: unknown) => x)
   expect(((await call(guard, dollar, write)).answer as any).deny).toBe(MODELS_DENY)
   await prompt(dollar, typed('bind standard to a-model'), (x: unknown) => x)

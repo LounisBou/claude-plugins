@@ -12,7 +12,7 @@ report (§ 3.2).
 ## 1. Purpose
 
 Testers of a project post bug reports and questions in a Telegram group. An agent session per
-project — « Agent : <Project> Bugs » — relays each new bug to the session that launched it (its
+project — « Agent: <Project> Bugs » — relays each new bug to the session that launched it (its
 **launcher**, usually the project's orchestrator), answers the group's questions from the project's
 own documentation, talks to testers warmly, and tags reports as the launcher handles them.
 
@@ -62,7 +62,7 @@ Telegram ──getUpdates──► [Pull]  (one per machine, PM2 `bugs-bot-pull`
               ~/.bugs-bot/<project>/inbox/<report-id>/
                             │
                             ▼
-                     [Agent : <Project> Bugs]  (one per project, iTerm2 tab)
+                     [Agent: <Project> Bugs]  (one per project, iTerm2 tab)
                             │  bugs-bot <command> --project <p>   (all I/O through the CLI)
                             ▼
                          [Channel]  (Telegram implementation: send, edit, react, get updates)
@@ -121,7 +121,7 @@ limitation of 0.1.0, documented, and its detection comes with the live Slack tes
   {
     "project": "torrentmate",
     "group": { "chat_id": -100123, "title": "TM Bugs" },
-    "agent_title": "Agent : TorrentMate Bugs",
+    "agent_title": "Agent: TorrentMate Bugs",
     "deploy_url": "https://tm-design.iznogoudatall.xyz",
     "deploy_check": "optional shell command proving a commit is served; absent = the launcher checks",
     "docs": ["docs/reference/product-intent.md", "docs/reference/", "docs/production/"],
@@ -335,7 +335,7 @@ After release 0.1.0, on the orchestrator's dispatch:
    `~/.bugs-bot/.env`.
 4. In ONE command: `pm2 delete tm-bugs-pull && pm2 start <plugin>/pm2.config.js && pm2 save` —
    never two pollers.
-5. At a quiet point, the live « Agent : TM Bugs » hands over to « Agent : TorrentMate Bugs »
+5. At a quiet point, the live « Agent: TM Bugs » hands over to « Agent: TorrentMate Bugs »
    through a normal handover (its note written), the launcher unchanged.
 6. Remove `~/.claude/skills/tm-bugs`, and the two old allow rules from
    `PersonalScraper/.claude/settings.json` (a PersonalScraper PR).
@@ -361,7 +361,7 @@ Rehearsed first on a copy of `~/.torrentmate/tm-bugs/` with a test registry.
 2. The repository `LounisBou/claude-bugs-bot` (public, like the other LounisBou plugins), built
    by implementer agents under the orchestrator, PRs reviewed on evidence.
 3. A PR adding the plugin to the LounisBou marketplace (`LounisBou/claude-statusbar`); the
-   session that maintains it (`Orch : optim plugin 5`) is told.
+   session that maintains it (`Orch: optim plugin 5`) is told.
 4. Release 0.1.0 on the operator's word.
 5. TorrentMate's migration (§ 6).
 

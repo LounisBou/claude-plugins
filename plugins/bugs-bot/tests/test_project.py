@@ -23,7 +23,7 @@ from bugs_bot.registry import Registry
 FULL = {
     "project": "demo",
     "group": {"chat_id": -100123, "title": "Demo Bugs"},
-    "agent_title": "Agent : Demo Bugs",
+    "agent_title": "Agent: Demo Bugs",
     "deploy_url": "https://demo.example.org",
     "deploy_check": "true",
     "docs": ["docs/a.md", "docs/"],
@@ -31,7 +31,7 @@ FULL = {
     "gate_tokens": 200000,
     "follow_up_hours": 12,
 }
-MINIMAL = {"project": "demo", "group": {"chat_id": -100123, "title": "Demo Bugs"}, "agent_title": "Agent : Demo Bugs"}
+MINIMAL = {"project": "demo", "group": {"chat_id": -100123, "title": "Demo Bugs"}, "agent_title": "Agent: Demo Bugs"}
 
 
 def write_project(directory: Path, data: dict) -> Path:
@@ -45,7 +45,7 @@ def write_project(directory: Path, data: dict) -> Path:
 def test_load_reads_every_field_and_sets_repo_to_the_file_directory(tmp_path):
     project = load_project(write_project(tmp_path / "repo", FULL))
     assert project == Project(
-        project="demo", chat_id=-100123, title="Demo Bugs", agent_title="Agent : Demo Bugs",
+        project="demo", chat_id=-100123, title="Demo Bugs", agent_title="Agent: Demo Bugs",
         repo=tmp_path / "repo", deploy_url="https://demo.example.org", deploy_check="true",
         docs=("docs/a.md", "docs/"), language="en", gate_tokens=200000, follow_up_hours=12,
     )

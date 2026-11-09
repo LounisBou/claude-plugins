@@ -56,7 +56,7 @@ def repo(tmp_path: Path) -> Path:
     path = tmp_path / "repo"
     path.mkdir()
     (path / ".bugs-bot.json").write_text(
-        json.dumps({"project": "demo", "group": {"chat_id": GROUP_ID, "title": "Demo Bugs"}, "agent_title": "Agent : Demo"})
+        json.dumps({"project": "demo", "group": {"chat_id": GROUP_ID, "title": "Demo Bugs"}, "agent_title": "Agent: Demo"})
     )
     return path
 
@@ -291,7 +291,7 @@ def test_the_script_accepts_the_project_file_that_init_writes(migrate, tmp_path)
     subprocess.run(["git", "-C", str(fresh), "init", "-q"], check=True)
     env = {"BUGS_BOT_HOME": str(tmp_path / "rehearsal-home")}
     assert cli.main(
-        ["init", "--project", "demo", "--agent-title", "Agent : Demo", "--chat-id", str(GROUP_ID), "--title", "Demo", "--repo", str(fresh)],
+        ["init", "--project", "demo", "--agent-title", "Agent: Demo", "--chat-id", str(GROUP_ID), "--title", "Demo", "--repo", str(fresh)],
         env=env,
     ) == 0
 

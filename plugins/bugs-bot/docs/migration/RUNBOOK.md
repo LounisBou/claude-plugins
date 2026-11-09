@@ -23,7 +23,7 @@ CHAT=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['chat_id'
 GATE=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('context_gate_tokens', 300000))" "$R/legacy/settings.json")
 
 # the test registry: the project registered in a scratch home, from a scratch repository
-BUGS_BOT_HOME="$R/home" "$CHECKOUT/bin/bugs-bot" init --project torrentmate --agent-title "Agent : TorrentMate Bugs" \
+BUGS_BOT_HOME="$R/home" "$CHECKOUT/bin/bugs-bot" init --project torrentmate --agent-title "Agent: TorrentMate Bugs" \
   --chat-id "$CHAT" --title "TM Bugs" --gate-tokens "$GATE" --repo "$R/repo"
 
 python3 "$CHECKOUT/docs/migration/tm_bugs_to_bugs_bot.py" --copy \
@@ -72,7 +72,7 @@ In the project's repository (PersonalScraper), with the chat id already bound by
 
 ```bash
 CHAT=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['chat_id'])" ~/.torrentmate/tm-bugs/state.json)
-bugs-bot init --project torrentmate --agent-title "Agent : TorrentMate Bugs" \
+bugs-bot init --project torrentmate --agent-title "Agent: TorrentMate Bugs" \
   --chat-id "$CHAT" --title "TM Bugs" [--deploy-url …] [--docs …] [--language fr]
 ```
 
@@ -146,9 +146,9 @@ step 6 removes the old skill and data.
 
 ## 5. Hand the agent over
 
-At a quiet point, the launcher tells the live « Agent : TM Bugs » to hand over. Its note is saved
+At a quiet point, the launcher tells the live « Agent: TM Bugs » to hand over. Its note is saved
 for its successor with `bugs-bot handover write "<the note>"`, then `/bugs-bot:start` launches
-« Agent : TorrentMate Bugs » through the normal handover, the launcher unchanged. The old agent's tab
+« Agent: TorrentMate Bugs » through the normal handover, the launcher unchanged. The old agent's tab
 is closed by its successor.
 
 ## 6. Clean up

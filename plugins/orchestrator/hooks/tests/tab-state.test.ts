@@ -69,7 +69,7 @@ function fake(over: Over) {
     env.TMUX_PANE = over.pane
   }
   files.set(`${STATE}/store/sessions/s-one`, JSON.stringify({
-    role: 'agent', name: 'Agent : belt-p3', pid: '501', tty: '/dev/ttys005', repo: null,
+    role: 'agent', name: 'Agent: belt-p3', pid: '501', tty: '/dev/ttys005', repo: null,
     context_percent: 12, context_tokens: 120000, window: 1000000, model: 'a-model', busy: false, updated_at: '2026-10-14T09:00:00.000Z',
   }) + '\n')
   const usage = { context: { tokens: over.tokens ?? 120000, window: 1000000, percent: 12 } }

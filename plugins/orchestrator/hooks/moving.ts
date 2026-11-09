@@ -27,7 +27,7 @@ export const PROBE_TOOL = 'move_probe'
 const MAIN_THREAD_ONLY = "only the session's main thread moves an orchestrator"
 
 // A move is an orchestrator's or a coordinator's to make.
-const ROLE_ONLY = 'a move is sent by a session named "Orch : <subject>" or "Coord : <subject>"'
+const ROLE_ONLY = 'a move is sent by a session named "Orch: <subject>" or "Coord: <subject>"'
 
 // The largest chunk a call may ask for, so a marked line stays far under the receiver's cap even
 // when every character of its data is escaped.
@@ -76,7 +76,7 @@ export function register(on: On<Dollar>): void {
           type: 'object',
           properties: {
             to: { type: 'string', description: "The receiving session's address or name" },
-            name: { type: 'string', description: 'The moved orchestrator\'s name, "Orch : <subject>", with no reference' },
+            name: { type: 'string', description: 'The moved orchestrator\'s name, "Orch: <subject>", with no reference' },
             brief: { type: 'string', description: 'Absolute path of its brief, on this machine; the files beside it travel' },
             dir: { type: 'string', description: 'Absolute path of its working directory, on this machine' },
             model: { type: 'string', description: 'The model it runs on, as `iterm-agent.sh pair` reads it' },
@@ -363,7 +363,7 @@ function recordRefusal(manifest: Manifest): string | null {
   if (manifest.record.git && parseMoveMessage(moveText({ ...manifest, record: { ...manifest.record, git: null } }))) {
     return `the remote ${manifest.record.git.url} (branch ${manifest.record.git.branch}) is not an address the protocol carries`
   }
-  return 'a field is out of shape: the name ("Orch : <subject>", no reference), the model, the effort, the pull requests, the paths or the order'
+  return 'a field is out of shape: the name ("Orch: <subject>", no reference), the model, the effort, the pull requests, the paths or the order'
 }
 
 async function sendMove($: Dollar, e: Events['tool.call']): Promise<{ result: string; isError?: true }> {

@@ -43,9 +43,11 @@ export function peersOf(listing: string): Session[] {
 }
 
 // A live row « named as agent_title (or a variant of it) »: the same words, case
-// and spacing aside, or the title followed by more words (a host suffix).
+// and spacing aside, or the title followed by more words (a host suffix). A blank
+// before a colon is spacing too: a title registered in the former « Agent : x »
+// names the session the launcher now titles « Agent: x ».
 export function isAgentRow(name: string, agentTitle: string): boolean {
-  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim()
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').replace(/ :/g, ':').trim()
   const n = norm(name)
   const t = norm(agentTitle)
   return t !== '' && (n === t || n.startsWith(t + ' '))

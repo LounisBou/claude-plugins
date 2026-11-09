@@ -7,7 +7,7 @@ import { fixture, type Fixture } from './fixture.ts'
 import { entryFingerprint, parseEntry, storeKey } from './round.ts'
 
 function entry(id: string, fields: Record<string, unknown> = {}): Record<string, unknown> {
-  return { id, from: 'Orch : b', session: `s-${id}`, kind: 'operator', since: '2026-10-18T10:01:00.000Z', blocks: 'phase 3',
+  return { id, from: 'Orch: b', session: `s-${id}`, kind: 'operator', since: '2026-10-18T10:01:00.000Z', blocks: 'phase 3',
     question: 'Ship it?', choices: [], recommendation: null, status: 'open', at: '2026-10-18T10:01:00.000Z', answer: null, ...fields }
 }
 
@@ -141,9 +141,9 @@ describe('the fingerprint a close forgets', () => {
     const ctx = { ...f.ctx, env: { ...f.ctx.env, ORCHESTRATOR_MODULE_DIR: join(f.root, 'module') } }
     const one = entry('fp', { session: 's/1' })
     put(f, 'fp', one)
-    const wait = waitFile(f, 's/1', { waiting: 'operator', blocks: 'phase 3', relayed: entryFingerprint(one), typed: true, name: 'Orch : f' })
+    const wait = waitFile(f, 's/1', { waiting: 'operator', blocks: 'phase 3', relayed: entryFingerprint(one), typed: true, name: 'Orch: f' })
     assert.equal(main(ctx, ['round-close', 'fp', '--answer', 'A']), 0)
-    assert.equal(readFileSync(wait, 'utf8'), '{"waiting":"operator","blocks":"phase 3","relayed":null,"name":"Orch : f"}\n')
+    assert.equal(readFileSync(wait, 'utf8'), '{"waiting":"operator","blocks":"phase 3","relayed":null,"name":"Orch: f"}\n')
     assert.deepEqual(readdirSync(join(wait, '..')), ['s_1'])
   })
 

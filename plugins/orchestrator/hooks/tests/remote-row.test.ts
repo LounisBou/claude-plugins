@@ -26,7 +26,7 @@ const COORD_FROM = 'bridge:session_01AbCdEf'
 
 function storeRow(over: Partial<SessionRow> = {}): string {
   return JSON.stringify({
-    role: 'orchestrator', name: 'Orch : belt', pid: '501', repo: 'acme/app', tty: '/dev/ttys3',
+    role: 'orchestrator', name: 'Orch: belt', pid: '501', repo: 'acme/app', tty: '/dev/ttys3',
     context_percent: 21, context_tokens: 210000, window: 1000000, model: 'a-model', busy: false,
     updated_at: new Date().toISOString(), ...over,
   }) + '\n'
@@ -38,8 +38,8 @@ function fake(over: { learnt?: boolean; local?: boolean; refuseAddress?: boolean
   const logged: string[] = []
   const mtimes = new Map<string, number>()
   files.set(ROW, storeRow())
-  if (over.learnt !== false) files.set(LEARNT, JSON.stringify({ name: 'Coord : ops', from: COORD_FROM, at: 'T' }) + '\n')
-  if (over.local) files.set(RECORD, JSON.stringify({ name: 'Coord : here', tty: '/dev/ttys9' }))
+  if (over.learnt !== false) files.set(LEARNT, JSON.stringify({ name: 'Coord: ops', from: COORD_FROM, at: 'T' }) + '\n')
+  if (over.local) files.set(RECORD, JSON.stringify({ name: 'Coord: here', tty: '/dev/ttys9' }))
   const dollar = {
     session: {
       id: async () => 's-one',
@@ -118,12 +118,12 @@ async function receive(chains: Record<string, Function[]>, dollar: any, text: st
   return { result, queued }
 }
 
-const envelope = (body: string, name = 'Orch : belt', from = 'bridge:session_02Xy') =>
+const envelope = (body: string, name = 'Orch: belt', from = 'bridge:session_02Xy') =>
   `<cross-session-message from="${from}" from-name="${name}" from-mode="prompting">\n${body}\n</cross-session-message>`
 
 function remote(over: Partial<RemoteRow> = {}): RemoteRow {
   return {
-    name: 'Orch : far', role: 'orchestrator', context_tokens: 120000, context_percent: 12, window: 1000000,
+    name: 'Orch: far', role: 'orchestrator', context_tokens: 120000, context_percent: 12, window: 1000000,
     waiting: null, blocks: null, waiting_since: null, updated_at: new Date().toISOString(), machine: 'bench-mac',
     repo: null, prs: [], ...over,
   }
@@ -145,7 +145,7 @@ test('the row goes to the learnt coordinator once, and a repeat sends nothing', 
   expect(fx.sent[0].to).toBe(COORD_FROM)
   expect(fx.sent[0].text.startsWith(ROW_MARKER)).toBe(true)
   const row = parseRemoteRow(fx.sent[0].text)!
-  expect(row.name).toBe('Orch : belt')
+  expect(row.name).toBe('Orch: belt')
   expect(row.machine).toBe('bench-mac')
   // Only the pane's fields, the repository and its pull requests travel: no path, no tty, no pid, no model.
   expect(row.repo).toBe('acme/app')
@@ -163,7 +163,7 @@ test('a wait change is sent, and so is a band crossing; a move inside the band i
   fx.files.set(ROW, storeRow({ context_percent: 27, context_tokens: 270000 }))
   await sendRow(fx.dollar, 's-one')
   expect(fx.sent.length).toBe(2)
-  fx.files.set(WAIT, JSON.stringify({ waiting: 'operator', blocks: 'phase 3', waiting_since: new Date().toISOString(), relayed: null, name: 'Orch : belt', pid: '501' }) + '\n')
+  fx.files.set(WAIT, JSON.stringify({ waiting: 'operator', blocks: 'phase 3', waiting_since: new Date().toISOString(), relayed: null, name: 'Orch: belt', pid: '501' }) + '\n')
   await sendRow(fx.dollar, 's-one')
   expect(fx.sent.length).toBe(3)
   expect(parseRemoteRow(fx.sent[2].text)!.waiting).toBe('operator')
@@ -196,7 +196,7 @@ test('no coordinator known: nothing is sent; an address that refuses falls back 
   expect(none.sent.length).toBe(0)
   const fx = fake({ refuseAddress: true })
   await sendRow(fx.dollar, 's-one')
-  expect(fx.sent.map(s => s.to)).toEqual(['Coord : ops'])
+  expect(fx.sent.map(s => s.to)).toEqual(['Coord: ops'])
 })
 
 test('the wait relay uses the learnt coordinator when none is registered here', async () => {
@@ -218,16 +218,16 @@ test('the wait relay uses the learnt coordinator when none is registered here', 
 test('a coordinator message teaches its address; a message from anyone else does not', async () => {
   const chains = mounted()
   const fx = fake({ learnt: false })
-  const other = await receive(chains, fx.dollar, envelope('hello', 'Orch : peer'))
+  const other = await receive(chains, fx.dollar, envelope('hello', 'Orch: peer'))
   expect(other.queued.length).toBe(1)
   expect(fx.files.has(LEARNT)).toBe(false)
-  const from = await receive(chains, fx.dollar, envelope('your next step', 'Coord : ops', COORD_FROM))
-  expect(from.queued).toEqual([envelope('your next step', 'Coord : ops', COORD_FROM)])
+  const from = await receive(chains, fx.dollar, envelope('your next step', 'Coord: ops', COORD_FROM))
+  expect(from.queued).toEqual([envelope('your next step', 'Coord: ops', COORD_FROM)])
   const learnt = JSON.parse(fx.files.get(LEARNT)!)
-  expect([learnt.name, learnt.from]).toEqual(['Coord : ops', COORD_FROM])
+  expect([learnt.name, learnt.from]).toEqual(['Coord: ops', COORD_FROM])
   // A person's own prompt, even shaped as one, teaches nothing.
   fx.files.delete(LEARNT)
-  await receive(chains, fx.dollar, envelope('x', 'Coord : evil', 'bridge:session_x'), 'bridge')
+  await receive(chains, fx.dollar, envelope('x', 'Coord: evil', 'bridge:session_x'), 'bridge')
   expect(fx.files.has(LEARNT)).toBe(false)
 })
 
@@ -237,10 +237,10 @@ test('a marked delivery is consumed and written as a remote row; an unmarked one
   const marked = await receive(chains, fx.dollar, envelope(rowText(remote())))
   expect(typeof marked.result.consumed).toBe('string')
   expect(marked.queued.length).toBe(0)
-  expect(JSON.parse(fx.files.get(`${STORE}/remote/Orch___far`)!).name).toBe('Orch : far')
-  const bare = await receive(chains, fx.dollar, rowText(remote({ name: 'Orch : bare' })))
+  expect(JSON.parse(fx.files.get(`${STORE}/remote/Orch__far`)!).name).toBe('Orch: far')
+  const bare = await receive(chains, fx.dollar, rowText(remote({ name: 'Orch: bare' })))
   expect(bare.queued.length).toBe(0)
-  expect(fx.files.has(`${STORE}/remote/Orch___bare`)).toBe(true)
+  expect(fx.files.has(`${STORE}/remote/Orch__bare`)).toBe(true)
   const plain = await receive(chains, fx.dollar, envelope('a [module-row] mention inside a sentence'))
   expect(plain.queued).toEqual([envelope('a [module-row] mention inside a sentence')])
 })
@@ -248,7 +248,7 @@ test('a marked delivery is consumed and written as a remote row; an unmarked one
 for (const [label, body] of [
   ['not JSON', `${ROW_MARKER}{oops`],
   ['an extra field', `${ROW_MARKER}${JSON.stringify({ ...remote(), path: '/srv/x' })}`],
-  ['no orchestrator prefix', rowText(remote({ name: 'Coord : ops' }))],
+  ['no orchestrator prefix', rowText(remote({ name: 'Coord: ops' }))],
   ['a machine with a slash', rowText(remote({ machine: 'a/b' }))],
   ['a percent past 100', rowText(remote({ context_percent: 101 }))],
   // Valid JSON, valid fields: only the size cap refuses it.
@@ -266,7 +266,7 @@ for (const [label, body] of [
 }
 
 test('the envelope is read for its sender, and a text without one is its own body', () => {
-  expect(deliveryOf(envelope('hi', 'Coord : ops', COORD_FROM))).toEqual({ from: COORD_FROM, fromName: 'Coord : ops', body: 'hi' })
+  expect(deliveryOf(envelope('hi', 'Coord: ops', COORD_FROM))).toEqual({ from: COORD_FROM, fromName: 'Coord: ops', body: 'hi' })
   expect(deliveryOf('hi')).toEqual({ from: null, fromName: null, body: 'hi' })
 })
 
@@ -274,14 +274,14 @@ test('the envelope is read for its sender, and a text without one is its own bod
 
 test('the pane shows a remote row with its machine and drops a stale one', () => {
   const now = Date.now()
-  const old = remote({ name: 'Orch : old', updated_at: new Date(now - REMOTE_STALE_AFTER_MS - 60000).toISOString() })
+  const old = remote({ name: 'Orch: old', updated_at: new Date(now - REMOTE_STALE_AFTER_MS - 60000).toISOString() })
   const rows = paneRows(withRemote({}, [remote(), old], now, REMOTE_STALE_AFTER_MS))
   expect(rows.length).toBe(1)
-  expect(rows[0].label).toContain('Orch : far · orchestrator · remote bench-mac · 12%')
+  expect(rows[0].label).toContain('Orch: far · orchestrator · remote bench-mac · 12%')
 })
 
 test('a live local row beats a remote one of the same name', () => {
-  const local = JSON.parse(storeRow({ name: 'Orch : far', context_percent: 40 })) as SessionRow
+  const local = JSON.parse(storeRow({ name: 'Orch: far', context_percent: 40 })) as SessionRow
   const rows = paneRows(withRemote({ 'sessions/x': local }, [remote()], Date.now(), REMOTE_STALE_AFTER_MS))
   expect(rows.length).toBe(1)
   expect(rows[0].label).toContain('40%')
@@ -293,14 +293,14 @@ test('a received row is read back from the store, and a stale one is swept as it
   const fx = fake()
   await receive(chains, fx.dollar, envelope(rowText(remote())))
   const read = await readRemoteRows(fx.dollar)
-  expect(read.map(r => r.name)).toEqual(['Orch : far'])
-  fx.files.set(`${STORE}/remote/Orch___old`, JSON.stringify(remote({ name: 'Orch : old', updated_at: '2020-01-01T00:00:00.000Z' })))
-  expect((await readRemoteRows(fx.dollar)).map(r => r.name)).toEqual(['Orch : far'])
-  expect(fx.files.has(`${STORE}/remote/Orch___old`)).toBe(false)
+  expect(read.map(r => r.name)).toEqual(['Orch: far'])
+  fx.files.set(`${STORE}/remote/Orch__old`, JSON.stringify(remote({ name: 'Orch: old', updated_at: '2020-01-01T00:00:00.000Z' })))
+  expect((await readRemoteRows(fx.dollar)).map(r => r.name)).toEqual(['Orch: far'])
+  expect(fx.files.has(`${STORE}/remote/Orch__old`)).toBe(false)
 })
 
 test('the row out of a store row: an orchestrator only, its waits only when shown', () => {
-  expect(remoteRowOf(JSON.parse(storeRow({ role: 'agent', name: 'Agent : x' })), 'm')).toBeNull()
+  expect(remoteRowOf(JSON.parse(storeRow({ role: 'agent', name: 'Agent: x' })), 'm')).toBeNull()
   const row = remoteRowOf({ ...JSON.parse(storeRow()), waiting: 'delivered', blocks: 'x' }, 'm.local')!
   expect(row.waiting).toBeNull()
   expect(row.blocks).toBeNull()
@@ -311,14 +311,14 @@ test('a remote orchestrator waiting on the operator stays drawn for hours; past 
   const hour = 60 * 60 * 1000
   const fx = fake()
   const waiting = { waiting: 'operator' as const, blocks: 'phase 3', waiting_since: new Date(Date.now() - 3 * hour).toISOString() }
-  fx.files.set(`${STORE}/remote/Orch___waits`, JSON.stringify(remote({ name: 'Orch : waits', ...waiting, updated_at: new Date(Date.now() - 3 * hour).toISOString() })))
-  fx.files.set(`${STORE}/remote/Orch___gone`, JSON.stringify(remote({ name: 'Orch : gone', ...waiting, updated_at: new Date(Date.now() - 25 * hour).toISOString() })))
+  fx.files.set(`${STORE}/remote/Orch__waits`, JSON.stringify(remote({ name: 'Orch: waits', ...waiting, updated_at: new Date(Date.now() - 3 * hour).toISOString() })))
+  fx.files.set(`${STORE}/remote/Orch__gone`, JSON.stringify(remote({ name: 'Orch: gone', ...waiting, updated_at: new Date(Date.now() - 25 * hour).toISOString() })))
   const read = await readRemoteRows(fx.dollar)
-  expect(read.map(r => r.name)).toEqual(['Orch : waits'])
-  expect(fx.files.has(`${STORE}/remote/Orch___gone`)).toBe(false)
+  expect(read.map(r => r.name)).toEqual(['Orch: waits'])
+  expect(fx.files.has(`${STORE}/remote/Orch__gone`)).toBe(false)
   const rows = paneRows(withRemote({}, read, Date.now(), REMOTE_STALE_AFTER_MS))
   expect(rows.length).toBe(1)
-  expect(rows[0].label).toContain('Orch : waits · orchestrator · remote bench-mac')
+  expect(rows[0].label).toContain('Orch: waits · orchestrator · remote bench-mac')
   expect(rows[0].label).toContain('3h')
   expect(rows[0].label).toContain('waiting for the operator')
 })
@@ -482,11 +482,11 @@ test('a store row whose repository is not the receiver\'s shape is sent with non
 test('a received row keeps its repository and pull requests, and an old row is stored with none', async () => {
   const chains = mounted()
   const fx = fake()
-  await receive(chains, fx.dollar, envelope(rowText(remote({ name: 'Orch : far', repo: 'acme/app', prs: ['acme/app#7'] }))))
-  await receive(chains, fx.dollar, envelope(oldRowText(remote({ name: 'Orch : old' }))))
-  const stored = JSON.parse(fx.files.get(`${STORE}/remote/Orch___far`)!)
+  await receive(chains, fx.dollar, envelope(rowText(remote({ name: 'Orch: far', repo: 'acme/app', prs: ['acme/app#7'] }))))
+  await receive(chains, fx.dollar, envelope(oldRowText(remote({ name: 'Orch: old' }))))
+  const stored = JSON.parse(fx.files.get(`${STORE}/remote/Orch__far`)!)
   expect([stored.repo, stored.prs]).toEqual(['acme/app', ['acme/app#7']])
-  const old = JSON.parse(fx.files.get(`${STORE}/remote/Orch___old`)!)
+  const old = JSON.parse(fx.files.get(`${STORE}/remote/Orch__old`)!)
   expect([old.repo, old.prs]).toEqual([null, []])
 })
 

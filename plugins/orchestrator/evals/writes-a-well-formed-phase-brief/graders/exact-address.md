@@ -4,4 +4,4 @@ type: regex
 target: {source: file, path: briefs/phase-5.md}
 ---
 
-Orch : inventory \[a3k9c2\]
+Orch: inventory \[a3k9c2\]

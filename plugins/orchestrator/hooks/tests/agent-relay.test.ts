@@ -14,8 +14,8 @@ const STATE = `${HOME}/.claude/claude-orchestrator`
 const ROW = `${STATE}/store/sessions/s-one`
 const WAIT = `${STATE}/store/waits/s-one`
 const GATE = `${STATE}/store/gates/s-one`
-const AGENT = 'Agent : belt-p3'
-const ORCH = 'Orch : belt'
+const AGENT = 'Agent: belt-p3'
+const ORCH = 'Orch: belt'
 const REPLY = `reply with SendMessage to: ${AGENT}`
 
 // --- the pure half ------------------------------------------------------------------------
@@ -231,16 +231,16 @@ test('a turn with no status line reports it once and clears the state', async ()
 })
 
 test('the orchestrator comes from the chain, never from the text', async () => {
-  // The turn names another orchestrator; the chain names Orch : belt, and it alone is sent to.
+  // The turn names another orchestrator; the chain names Orch: belt, and it alone is sent to.
   const chains = mounted()
   const fx = fake()
-  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Tell Orch : other, reply with SendMessage to: Orch : other.\nstatus: question — who'))
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Tell Orch: other, reply with SendMessage to: Orch: other.\nstatus: question — who'))
   expect(fx.sent.map(s => s.to)).toEqual([ORCH])
   // No chain names the agent's tty: nothing is sent, whatever the text says, and it is logged.
   const lone = fake({ chain: false })
-  await drive(chains, 'turn.complete', lone.dollar, turnEnd('Orch : belt, help.\nstatus: blocked — alone'))
+  await drive(chains, 'turn.complete', lone.dollar, turnEnd('Orch: belt, help.\nstatus: blocked — alone'))
   expect(lone.sent.length).toBe(0)
-  expect(lone.logged.some(l => l.includes('relay: no orchestrator found for Agent : belt-p3'))).toBe(true)
+  expect(lone.logged.some(l => l.includes('relay: no orchestrator found for Agent: belt-p3'))).toBe(true)
 })
 
 // A chain outlives its owner's tab: an orchestrator relaunched without a successor's hand-over
@@ -269,10 +269,10 @@ test('a chain with no live owner falls back on the orchestrator the launch recor
 
 test('a live launch record wins over a live chain owner, and the log names the record', async () => {
   const chains = mounted()
-  const fx = fake({ reportsTo: 'Orch : other [zzz999]', alive: ['400', '501', '620'], registry: [{ pid: '620', sessionId: 's-other', name: 'Orch : other', startedAt: 200 }] })
+  const fx = fake({ reportsTo: 'Orch: other [zzz999]', alive: ['400', '501', '620'], registry: [{ pid: '620', sessionId: 's-other', name: 'Orch: other', startedAt: 200 }] })
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
   expect(fx.sent.map(s => s.to)).toEqual([{ sessionId: 's-other' }])
-  expect(fx.logged.some(l => l.includes('relay: ' + AGENT + ' on /dev/ttys005 goes to Orch : other (session s-other) by the launch record'))).toBe(true)
+  expect(fx.logged.some(l => l.includes('relay: ' + AGENT + ' on /dev/ttys005 goes to Orch: other (session s-other) by the launch record'))).toBe(true)
 })
 
 test('no launch record: the chain routes the agent', async () => {
@@ -316,15 +316,15 @@ test('a newer chain of a dead owner does not take the agent from its live orches
 
 test('a launch record whose session is dead falls through to the chain', async () => {
   const chains = mounted()
-  const fx = fake({ reportsTo: 'Orch : other [zzz999]', alive: ['400', '501'], registry: [{ pid: '620', sessionId: 's-other', name: 'Orch : other', startedAt: 200 }] })
+  const fx = fake({ reportsTo: 'Orch: other [zzz999]', alive: ['400', '501'], registry: [{ pid: '620', sessionId: 's-other', name: 'Orch: other', startedAt: 200 }] })
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
   expect(fx.sent.map(s => s.to)).toEqual([ORCH])
-  expect(fx.logged.some(l => l.includes('no live session bears the name Orch : other'))).toBe(true)
+  expect(fx.logged.some(l => l.includes('no live session bears the name Orch: other'))).toBe(true)
 })
 
 test('a launch record naming an exiting host (?Es) falls through to the chain', async () => {
   const chains = mounted()
-  const fx = fake({ reportsTo: 'Orch : other [zzz999]', alive: ['400', '501'], exiting: ['620'], registry: [{ pid: '620', sessionId: 's-other', name: 'Orch : other', startedAt: 200 }] })
+  const fx = fake({ reportsTo: 'Orch: other [zzz999]', alive: ['400', '501'], exiting: ['620'], registry: [{ pid: '620', sessionId: 's-other', name: 'Orch: other', startedAt: 200 }] })
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
   expect(fx.sent.map(s => s.to)).toEqual([ORCH])
 })
@@ -332,7 +332,7 @@ test('a launch record naming an exiting host (?Es) falls through to the chain', 
 test('a launch record naming an exiting host (?Es) relays nowhere when no chain names the agent', async () => {
   // Without a chain the chain does not win: the exiting host must not be picked by the pid alone.
   const chains = mounted()
-  const fx = fake({ chain: false, reportsTo: 'Orch : other [zzz999]', alive: ['400', '501'], exiting: ['620'], registry: [{ pid: '620', sessionId: 's-other', name: 'Orch : other', startedAt: 200 }] })
+  const fx = fake({ chain: false, reportsTo: 'Orch: other [zzz999]', alive: ['400', '501'], exiting: ['620'], registry: [{ pid: '620', sessionId: 's-other', name: 'Orch: other', startedAt: 200 }] })
   await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
   expect(fx.sent.length).toBe(0)
 })
@@ -354,7 +354,7 @@ test('the gate crossing takes the same fallback', async () => {
   expect(fx.sent).toEqual([{ to: { sessionId: 's-new' }, text: `[module] ${AGENT} context 210,000 (21%) — at the gate` }])
 })
 
-for (const [name, role] of [['Coord : ops', 'coordinator'], ['Audit : method', 'auditor'], ['a session', null]] as const) {
+for (const [name, role] of [['Coord: ops', 'coordinator'], ['Audit: method', 'auditor'], ['a session', null]] as const) {
   test(`a session that is no agent (${role}) sends nothing on a status line`, async () => {
     const chains = mounted()
     const fx = fake({ name, role: role as any })
@@ -407,7 +407,7 @@ test('the default gate holds when the session sets none, and a non-agent crossin
   fx.usage.context.tokens = 300000
   await drive(chains, 'session.measure', fx.dollar, {})
   expect(fx.sent.length).toBe(1)
-  const orch = fake({ name: 'Orch : other', role: 'orchestrator' })
+  const orch = fake({ name: 'Orch: other', role: 'orchestrator' })
   orch.usage.context.tokens = 900000
   await drive(chains, 'session.measure', orch.dollar, {})
   expect(orch.sent.length).toBe(0)
@@ -419,7 +419,7 @@ test('a gate send that fails is logged and tried again on the next measure', asy
   const fx = fake({ send: 'refuse' })
   fx.usage.context.tokens = 400000
   await drive(chains, 'session.measure', fx.dollar, {})
-  expect(fx.logged.some(l => l.includes('gate: not delivered to Orch : belt'))).toBe(true)
+  expect(fx.logged.some(l => l.includes('gate: not delivered to Orch: belt'))).toBe(true)
   expect(fx.files.has(GATE)).toBe(false)
 })
 
@@ -450,7 +450,7 @@ test('a turn without a status line is reported once, a status turn between two r
 
 test('an orchestrator turn without a machine line sends nothing', async () => {
   const chains = mounted()
-  const fx = fake({ name: 'Orch : other', role: 'orchestrator' })
+  const fx = fake({ name: 'Orch: other', role: 'orchestrator' })
   await drive(chains, 'turn.complete', fx.dollar, turnEnd('Reviewing the pull request.'))
   expect(fx.sent.length).toBe(0)
 })

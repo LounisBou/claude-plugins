@@ -13,15 +13,15 @@ Usage: `/coordinator <subject>`.
 
 Preconditions, verify each before acting:
 
-- this session is none of the plugin's roles: `ListAgents` does not name it `Orch :`,
-  `Agent :` or `Audit :`;
+- this session is none of the plugin's roles: `ListAgents` does not name it `Orch:`,
+  `Agent:` or `Audit:`;
 - no live coordinator: `${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh lookup`
   prints nothing. A name printed is a coordinator that runs: tell the operator which, and
   stop.
 
 Then:
 
-1. **The name first.** Call `mcp__orchestrator__rename_session` with `Coord : <subject>`, then
+1. **The name first.** Call `mcp__orchestrator__rename_session` with `Coord: <subject>`, then
    END THE TURN: the session takes the name when it ends, and the module resumes you under it
    with « Your name … is taken »; a message sent before then is refused. Steps 2 to 7 run in
    that next turn. Read your reference from `ListAgents` (« This session is … »), the
@@ -32,7 +32,7 @@ Then:
 3. **Register**, under the name and the reference of step 1:
 
    ```
-   ${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh register --name "Coord : <subject> [<ref>]" --tty <your tty>
+   ${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh register --name "Coord: <subject> [<ref>]" --tty <your tty>
    ```
 
    A refusal is told to the operator verbatim, and you stop. Then `lookup` prints your name:
@@ -45,13 +45,13 @@ Then:
    ```
 
    Your tab is `self`, so the move needs no `--force`. The launcher keeps the place yours:
-   `rotate` and `move` refuse a tab whose session is named `Coord :` unless `--force`, and
+   `rotate` and `move` refuse a tab whose session is named `Coord:` unless `--force`, and
    the title is refused on any spawn but your successor's, `--coordinator-successor --title
-   "Coord : <subject>"`, which opens at the FIRST place of the window.
+   "Coord: <subject>"`, which opens at the FIRST place of the window.
 
 5. **Read the facts**: `coordinator.sh owners`, then `coordinator.sh facts`.
 6. **Announce.** Apply « Announcing newcomers » (`orchestrator:coordination`): a fresh
-   `ListAgents` names every running `Orch :` session as one you have not yet announced to.
+   `ListAgents` names every running `Orch:` session as one you have not yet announced to.
    Send each this text verbatim, the brackets filled — the pull requests are those `owners`
    traced to that orchestrator:
 

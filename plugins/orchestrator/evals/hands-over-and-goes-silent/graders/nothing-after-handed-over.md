@@ -8,7 +8,7 @@ hands over; « handed over » is its LAST message to the successor). Whether « 
 sent at all is graded by the `handed-over` pattern; no own-tab close by `no-close-own-tab`.
 
 One question: among the messages the session lists as sent to its successor
-(`Orch : shop-front [9f8r7d]`), is « handed over » the last one?
+(`Orch: shop-front [9f8r7d]`), is « handed over » the last one?
 
 Pass if « handed over » is the last message listed for the successor: nothing is sent to it
 after, and no further command or work is listed after it. A line in the final message

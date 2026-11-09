@@ -46,7 +46,7 @@ const MEASURE = `${HOME}/.claude/claude-orchestrator/measure/s-gate.json`
 // is padded — the unmeasured test below reads the session's name from it alone.
 const ANSWERED_RENAMED = [
   '{"type":"assistant","message":{"role":"assistant","content":"an answer"}}',
-  '{"type":"custom-title","customTitle":"  Agent : padded  "}',
+  '{"type":"custom-title","customTitle":"  Agent: padded  "}',
 ].join('\n') + '\n'
 
 const MEASURED_84 = JSON.stringify({
@@ -114,7 +114,7 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[] } {
         }
         if (argv[1] === '-t') {
           // The session's own process, as the listing prints it.
-          return { exitCode: 0, stdout: setup.noLaunchName ? '  501 host\n' : `  501 host --name ${setup.launchName ?? 'Agent : belt'}\n`, stderr: '' }
+          return { exitCode: 0, stdout: setup.noLaunchName ? '  501 host\n' : `  501 host --name ${setup.launchName ?? 'Agent: belt'}\n`, stderr: '' }
         }
         if (argv[0] === 'ps') return { exitCode: 0, stdout: '1 ??\n', stderr: '' }
         return { exitCode: 0, stdout: '', stderr: '' }
@@ -205,11 +205,11 @@ test('a session no tty names is never spoken to', async () => {
 
 test('a rename that names nothing leaves the gate silent past the gate itself', async () => {
   // No launch name, so the session is named by its renames alone; the last one
-  // names nothing, and the walk must not resurrect the Agent : rename before
+  // names nothing, and the walk must not resurrect the Agent: rename before
   // it — the session is unnamed, and no role is spoken to.
   const renamedAway = [
     '{"type":"assistant","message":{"role":"assistant","content":"an answer"}}',
-    '{"type":"custom-title","customTitle":"Agent : earlier"}',
+    '{"type":"custom-title","customTitle":"Agent: earlier"}',
     '{"type":"custom-title","customTitle":"   "}',
   ].join('\n') + '\n'
   const { dollar } = fakeDollar({ transcript: renamedAway, measure: MEASURED_84, noLaunchName: true })
@@ -221,7 +221,7 @@ test("an auditor past the gate is shown the brief's absolute place", async () =>
   const { dollar } = fakeDollar({
     transcript: ANSWERED_RENAMED,
     measure: MEASURED_84,
-    launchName: 'Audit : 1712',
+    launchName: 'Audit: 1712',
   })
   const seen = await submit(mounted(), dollar)
   expect((seen as any).context[0]).toContain('/plugins/orch-root/templates/auditor-succession-brief.md')
@@ -237,7 +237,7 @@ test('a handler that fails lets the prompt through and logs one line', async () 
 })
 
 test("a coordinator past the gate is shown its skill's absolute place", async () => {
-  const { dollar } = fakeDollar({ transcript: ANSWERED_RENAMED, measure: MEASURED_84, launchName: 'Coord : main' })
+  const { dollar } = fakeDollar({ transcript: ANSWERED_RENAMED, measure: MEASURED_84, launchName: 'Coord: main' })
   const seen = await submit(mounted(), dollar)
   expect((seen as any).context[0]).toContain('/plugins/orch-root/skills/coordination/SKILL.md')
 })

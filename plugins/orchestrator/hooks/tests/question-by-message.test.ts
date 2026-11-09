@@ -10,7 +10,7 @@ import { logLineOf } from './fakes.ts'
 
 const HOME = '/tmp/h'
 const STATE = `${HOME}/.claude/claude-orchestrator`
-const COORD = 'Coord : ops [abc]'
+const COORD = 'Coord: ops [abc]'
 const QUESTION = ['**Question 1 of 1**', '_Subject_ : the merge', '- **A** : yes', '- **B** : no'].join('\n')
 
 function mountedSend(): Function {
@@ -60,7 +60,7 @@ for (const [how, files] of [['registered on this machine', REGISTERED], ['learnt
     const handler = mountedSend()
     const fx = dollar(files)
     expect(await handler(fx.dollar, send(COORD, 'phase 2 merged.'), sent)).toEqual({ result: { ran: 'SendMessage' } })
-    expect(await handler(fx.dollar, send('Agent : belt', QUESTION), sent)).toEqual({ result: { ran: 'SendMessage' } })
+    expect(await handler(fx.dollar, send('Agent: belt', QUESTION), sent)).toEqual({ result: { ran: 'SendMessage' } })
   })
 }
 
@@ -73,9 +73,9 @@ test('a question quoted in a fence, or with no coordinator known, goes through',
 
 test('the address match ignores the reference suffix on either side', async () => {
   const handler = mountedSend()
-  const bareTo = await handler(dollar(REGISTERED).dollar, send('Coord : ops', QUESTION), sent)
+  const bareTo = await handler(dollar(REGISTERED).dollar, send('Coord: ops', QUESTION), sent)
   expect(bareTo).toEqual({ deny: QUESTION_BY_MESSAGE })
-  const bareRecord = { [`${STATE}/coordinator.json`]: JSON.stringify({ name: 'Coord : ops' }) }
+  const bareRecord = { [`${STATE}/coordinator.json`]: JSON.stringify({ name: 'Coord: ops' }) }
   const referencedTo = await handler(dollar(bareRecord).dollar, send(COORD, QUESTION), sent)
   expect(referencedTo).toEqual({ deny: QUESTION_BY_MESSAGE })
 })

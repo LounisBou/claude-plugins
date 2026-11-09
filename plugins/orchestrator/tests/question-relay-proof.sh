@@ -248,7 +248,7 @@ at() { jq -rn --argjson t $((T0 + $1)) '$t | todate'; }
 logl() { printf '%s.000Z | supervision | %s\n' "$(at "$1" | sed 's/Z$//')" "$2" >> "$MODULE/hooks-module.log"; }
 entry() {  # <id> <session> <status> [movedFrom] [answer]
   jq -n --arg id "$1" --arg s "$2" --arg st "$3" --arg mf "${4:-}" --arg ans "${5:-}" '{id: $id,
-    from: (if $mf == "" then "Orch : old" else "Orch : new" end), session: $s, kind: "operator",
+    from: (if $mf == "" then "Orch: old" else "Orch: new" end), session: $s, kind: "operator",
     since: "2026-10-26T10:00:00.000Z", blocks: "the release", question: "_Question_ : ship the release now?\n- **A** : ship\n- **B** : wait",
     choices: [], recommendation: null, status: $st, at: "2026-10-26T10:00:00.000Z",
     answer: (if $ans == "" then null else {text: $ans, by: "sender", at: "2026-10-26T10:01:00.000Z"} end)}
@@ -281,7 +281,7 @@ play() {  # <name> <steps> [noscreen]
 drawn() {
   case "$1" in
     0) entry q1 s-old open; row s-old; echo '["q1"]' > "$STATE/round-told.json"; logl 0 "pane: shown q1"; screen_shows 1 ;;
-    1) entry q1 s-new open s-old; logl 5 "round: moved to the successor Orch : new: q1" ;;
+    1) entry q1 s-new open s-old; logl 5 "round: moved to the successor Orch: new: q1" ;;
     3) row s-new ;;
   esac
 }
@@ -289,7 +289,7 @@ drawn() {
 left_out() {
   case "$1" in
     0) entry q2 s-old open; row s-old; echo '["q2"]' > "$STATE/round-told.json"; logl 0 "pane: shown q2"; screen_shows 1 ;;
-    1) entry q2 s-new open s-old; logl 5 "round: moved to the successor Orch : new: q2"; screen_shows 0 ;;
+    1) entry q2 s-new open s-old; logl 5 "round: moved to the successor Orch: new: q2"; screen_shows 0 ;;
     2) logl 10 "pane: q2 not drawn: no row for its sender s-new" ;;
     4) row s-new ;;
   esac
@@ -306,7 +306,7 @@ withdrawn_one() {
   case "$1" in
     0) entry q4 s-old open; entry q5 s-old open; row s-old; echo '["q4","q5"]' > "$STATE/round-told.json"
        logl 0 "pane: shown q4"; logl 0 "pane: shown q5"; screen_shows 1 ;;
-    1) entry q4 s-new open s-old; logl 5 "round: moved to the successor Orch : new: q4"
+    1) entry q4 s-new open s-old; logl 5 "round: moved to the successor Orch: new: q4"
        entry q5 s-old withdrawn "" "handed over to its successor"; logl 5 "round: withdrawn by the sender: q5" ;;
     3) row s-new ;;
   esac
@@ -316,7 +316,7 @@ write_fails() {
   case "$1" in
     0) entry q6 s-old open; entry q7 s-old open; row s-old; echo '["q6","q7"]' > "$STATE/round-told.json"
        logl 0 "pane: shown q6"; logl 0 "pane: shown q7"; screen_shows 1 ;;
-    1) entry q6 s-new open s-old; logl 5 "round: moved to the successor Orch : new: q6"
+    1) entry q6 s-new open s-old; logl 5 "round: moved to the successor Orch: new: q6"
        logl 5 "round: EIO: i/o error, rename '$STATE/round/q7.json.tmp-1' -> '$STATE/round/q7.json'" ;;
     3) row s-new ;;
   esac
@@ -325,7 +325,7 @@ write_fails() {
 unseen() {
   case "$1" in
     0) entry q8 s-old open; row s-old; echo '["q8"]' > "$STATE/round-told.json"; logl 0 "pane: shown q8" ;;
-    1) entry q8 s-new open s-old; logl 5 "round: moved to the successor Orch : new: q8" ;;
+    1) entry q8 s-new open s-old; logl 5 "round: moved to the successor Orch: new: q8" ;;
     3) row s-new ;;
   esac
 }

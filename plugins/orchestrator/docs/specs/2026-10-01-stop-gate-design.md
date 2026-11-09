@@ -45,7 +45,7 @@ It refuses a stop by printing `{"decision": "block", "reason": "<text>"}` and ex
 the model resumes with the reason. The host forces the stop after 8 consecutive refusals.
 
 **Scope.** The hook acts only in an orchestrator's session: one whose session name starts
-with `Orch :`. The name is read in two steps, the first that gives one wins: the name the
+with `Orch:`. The name is read in two steps, the first that gives one wins: the name the
 session was launched with (`--name`, read from the process table on the session's own tty by
 the launcher's code, `self_tty` and `session_name_on`), then, when the session was launched
 without one, the value of the LAST `custom-title` entry in the transcript at the payload's
@@ -54,7 +54,7 @@ session is renamed; the value may carry surrounding quotes, which are stripped).
 transcript is read from its end and only the matching line is parsed. Everywhere else —
 agents, auditors, the coordinator, sessions started by hand without a name — it exits 0 at
 once. The scope is decided before any call to the launcher's listing, which is read only for
-an `Orch :` session; when the session's own tty or its name cannot be read, one line is
+an `Orch:` session; when the session's own tty or its name cannot be read, one line is
 logged and the stop passes.
 
 **Loop guard.** When `stop_hook_active` is true the stop passes: at most one refusal per

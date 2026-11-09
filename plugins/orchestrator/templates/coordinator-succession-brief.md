@@ -26,10 +26,10 @@ word on a point outranks this brief and the rulebook both.
 4. **CLOSE ITS TAB, and prove it.** The operator's standing order: you ALWAYS close your
    predecessor, one the launcher did not open (the first coordinator, started by hand)
    included, and nothing is asked of him. The launcher's `list` must still show a session on
-   {{PREDECESSOR_TTY}} that is not `self`, named `Coord :`. Then:
+   {{PREDECESSOR_TTY}} that is not `self`, named `Coord:`. Then:
 
    ```
-   {{ITERM_AGENT_SH}} close --tty {{PREDECESSOR_TTY}} --expect-title "Coord :"
+   {{ITERM_AGENT_SH}} close --tty {{PREDECESSOR_TTY}} --expect-title "Coord:"
    ```
 
    A predecessor the launcher did not open: pass the title
@@ -47,7 +47,7 @@ word on a point outranks this brief and the rulebook both.
 
    The script says « replaced a stale record: {{PREDECESSOR}} »; `lookup` then prints your
    name. A refusal stops you here, reported to the operator verbatim.
-6. **Announce yourself** to every `Orch :` session a fresh `ListAgents` shows, one
+6. **Announce yourself** to every `Orch:` session a fresh `ListAgents` shows, one
    `SendMessage` each, this text verbatim, the brackets filled:
 
    > The coordinator of this machine is now `<your exact name and reference>`, since
@@ -61,7 +61,7 @@ word on a point outranks this brief and the rulebook both.
 
 ## Standing context — pointers, not status
 
-- Subject: `Coord : {{SUBJECT}}` — your own successor is spawned with
+- Subject: `Coord: {{SUBJECT}}` — your own successor is spawned with
   `--coordinator-successor`, in the rulebook's order.
 - State directory: `{{STATE_DIR}}` — the record and the notes.
 - Your context: the module measures it every turn — read the live state with

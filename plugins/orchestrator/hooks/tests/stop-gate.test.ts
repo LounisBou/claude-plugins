@@ -57,7 +57,7 @@ test('an orchestrator ending on an operator wait with no question block is refus
   const refused = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: report }))
   expect((refused.answer as any).block).toContain('**Question i of N**')
   expect(ran.filter(l => l.includes('iterm-agent.sh')).length).toBe(0)
-  const coord = fakeDollar({ launchName: 'Coord : machine' })
+  const coord = fakeDollar({ launchName: 'Coord: machine' })
   const passed = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: report }))
   expect(passed.answer).toBe(passed.passed)
 })
@@ -67,7 +67,7 @@ test('an orchestrator ending on an operator wait with no question block is refus
 // The orchestrator's question in the round, as the relay entered it at the end of the turn that asked it.
 const OPEN_QUESTION = ['**Question 1 of 1**', '_Subject_ : the deploy order', '_Question_ : which one ships first?', '_Choices_ :', '- **A** : the schema first', '- **B** : both at once', '_Recommendation_ : A — the reads need the column.'].join('\n')
 const OPEN_SINCE = '2026-11-03T10:00:00.000Z'
-const openEntry = (over: object = {}) => ({ ...roundEntry('a1b2c3', 'Orch : belt', { kind: 'operator', blocks: 'the deploy order', question: OPEN_QUESTION }, OPEN_SINCE, OPEN_SINCE), ...over })
+const openEntry = (over: object = {}) => ({ ...roundEntry('a1b2c3', 'Orch: belt', { kind: 'operator', blocks: 'the deploy order', question: OPEN_QUESTION }, OPEN_SINCE, OPEN_SINCE), ...over })
 const roundOf = (entry: { id: string }) => ({ [`${entry.id}.json`]: `${JSON.stringify(entry)}\n` })
 
 test('an orchestrator turn that ends without its unanswered question in full passes, the log naming it', async () => {
@@ -83,7 +83,7 @@ test('an orchestrator turn that ends without its unanswered question in full pas
 test('a question his prompt withdrew as answered in the tab is settled: the turn passes without it', async () => {
   const { handlers } = mounted()
   const withdrawn = openEntry({ status: 'withdrawn', answer: { text: "answered in the sender's own tab", by: 'tab', at: OPEN_SINCE } })
-  const wait = JSON.stringify({ waiting: null, last_waiting: 'operator', blocks: 'the deploy order', waiting_since: OPEN_SINCE, relayed: null, name: 'Orch : belt', pid: '123', typed: { blocks: 'the deploy order', since: OPEN_SINCE, withdrawn: true, told: [withdrawn.id] } })
+  const wait = JSON.stringify({ waiting: null, last_waiting: 'operator', blocks: 'the deploy order', waiting_since: OPEN_SINCE, relayed: null, name: 'Orch: belt', pid: '123', typed: { blocks: 'the deploy order', since: OPEN_SINCE, withdrawn: true, told: [withdrawn.id] } })
   const { dollar } = fakeDollar({ round: roundOf(withdrawn), wait })
   const passed = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: `Recorded: A, the schema first.\n\n${ASKED}\nwaiting: operator — blocks: the next one` }))
   expect(passed.answer).toBe(passed.passed)
@@ -98,7 +98,7 @@ test('a session that handed over leaves no unshown-question line for a question 
   const { dollar, written } = fakeDollar({ round: roundOf(openEntry()) })
   await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: UNSHOWN }))
   expect(written.filter(l => l.includes('warn question-unshown')).length).toBe(1)
-  const spawn = { tool: 'Bash', tool_use_id: 't9', command: 'bash /plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh spawn --successor --title "Orch : belt"' }
+  const spawn = { tool: 'Bash', tool_use_id: 't9', command: 'bash /plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh spawn --successor --title "Orch: belt"' }
   await handlers['tool.call'](dollar, spawn, async () => ({ result: { stdout: 'spawned' } }))
   const over = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: UNSHOWN }))
   expect(over.answer).toBe(over.passed)
@@ -157,7 +157,7 @@ test('a question the operator answered from the pane, or a coordinator\'s turn, 
   const report = `Recorded nothing.\n\n${ASKED}\nwaiting: operator — blocks: the next one`
   const passed = await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: report }))
   expect(passed.answer).toBe(passed.passed)
-  const coord = fakeDollar({ launchName: 'Coord : machine', round: roundOf(openEntry()) })
+  const coord = fakeDollar({ launchName: 'Coord: machine', round: roundOf(openEntry()) })
   const coordinator = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: 'the round is read.' }))
   expect(coordinator.answer).toBe(coordinator.passed)
 })
@@ -183,10 +183,10 @@ test('a coordinator whose last message asks two questions is refused, an agent i
   const { handlers } = mounted()
   const block = (head: string) => [head, '_Subject_ : a thing', '- **A** : yes', '- **B** : no'].join('\n')
   const two = [block('**Question 1 of 2**'), block('**Question 2 of 2**')].join('\n\n')
-  const coord = fakeDollar({ launchName: 'Coord : machine' })
+  const coord = fakeDollar({ launchName: 'Coord: machine' })
   const refused = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: two }))
   expect((refused.answer as any).block).toContain('One question per turn')
-  const agent = fakeDollar({ launchName: 'Agent : belt' })
+  const agent = fakeDollar({ launchName: 'Agent: belt' })
   const passed = await stop(handlers['classic.Stop'], agent.dollar, stopEvent({ last_assistant_message: two }))
   expect(passed.answer).toBe(passed.passed)
 })
@@ -197,7 +197,7 @@ test('a busy own agent releases the stop — its idle notice will wake the orche
   // the busy agent first among the things that release the hold, and the design doc lists
   // it among the wake conditions. Inverting it here would refuse every stop an agent
   // survives — the opposite of the ported gate.
-  expect(wakeDecision({ busyOwnAgents: ['Agent : belt-p3'], blockingQuestion: null, openRows: [] })).toEqual({ decision: 'pass' })
+  expect(wakeDecision({ busyOwnAgents: ['Agent: belt-p3'], blockingQuestion: null, openRows: [] })).toEqual({ decision: 'pass' })
 })
 
 test('a blocking question declared on the last line releases the stop', () => {
@@ -257,10 +257,10 @@ test('the machine line is read through whatever markup wraps it', () => {
 })
 
 test('the listing parses the launcher rows and drops the marks', () => {
-  const rows = listing('w1/t1 | /dev/ttys001 | a title | Orch : belt | self\nw1/t2 | /dev/ttys002 | ⠋ Agent : belt | Agent : belt-p3 | hidden\nnot a row\n')
+  const rows = listing('w1/t1 | /dev/ttys001 | a title | Orch: belt | self\nw1/t2 | /dev/ttys002 | ⠋ Agent: belt | Agent: belt-p3 | hidden\nnot a row\n')
   expect(rows).toEqual([
-    { tty: '/dev/ttys001', title: 'a title', name: 'Orch : belt' },
-    { tty: '/dev/ttys002', title: '⠋ Agent : belt', name: 'Agent : belt-p3' },
+    { tty: '/dev/ttys001', title: 'a title', name: 'Orch: belt' },
+    { tty: '/dev/ttys002', title: '⠋ Agent: belt', name: 'Agent: belt-p3' },
   ])
 })
 
@@ -274,7 +274,7 @@ test('a chain file with one corrupt line reads as empty', () => {
 })
 
 test('own agents are the owner entries that still run one, residents apart', () => {
-  const rows = listing('w1/t2 | /dev/ttys002 | ⠋ Agent : belt | Agent : belt-p3\nw1/t3 | /dev/ttys003 | ✳ Agent : idle | Agent : idle-p3\nw1/t4 | /dev/ttys004 | ✳ Agent : resident | Agent : resident-p3\nw1/t5 | /dev/ttys005 | a plain shell | (host default)\n')
+  const rows = listing('w1/t2 | /dev/ttys002 | ⠋ Agent: belt | Agent: belt-p3\nw1/t3 | /dev/ttys003 | ✳ Agent: idle | Agent: idle-p3\nw1/t4 | /dev/ttys004 | ✳ Agent: resident | Agent: resident-p3\nw1/t5 | /dev/ttys005 | a plain shell | (host default)\n')
   const entries = [
     { tab_id: 'T1', tty: '/dev/ttys002', owner: '17' },
     { tab_id: 'T2', tty: '/dev/ttys003', owner: '17' },
@@ -284,8 +284,8 @@ test('own agents are the owner entries that still run one, residents apart', () 
   ]
   const { agents, resident } = ownAgents(rows, entries, '17')
   expect(agents).toEqual([
-    { label: 'Agent : belt-p3', state: 'busy', tty: '/dev/ttys002' },
-    { label: 'Agent : idle-p3', state: 'idle', tty: '/dev/ttys003' },
+    { label: 'Agent: belt-p3', state: 'busy', tty: '/dev/ttys002' },
+    { label: 'Agent: idle-p3', state: 'idle', tty: '/dev/ttys003' },
   ])
   expect(resident).toBe(true)
   // With no owner known, no entry is counted: a recycled tty's occupant would be.
@@ -371,15 +371,15 @@ test('the heads path is per session and sanitised', () => {
 
 // --- check 1 -----------------------------------------------------------------------------
 
-const AGENT_BUSY = { label: 'Agent : belt-p3', state: 'busy' as const, tty: '/dev/ttys002' }
-const AGENT_IDLE = { label: 'Agent : idle-p3', state: 'idle' as const, tty: '/dev/ttys003' }
+const AGENT_BUSY = { label: 'Agent: belt-p3', state: 'busy' as const, tty: '/dev/ttys002' }
+const AGENT_IDLE = { label: 'Agent: idle-p3', state: 'idle' as const, tty: '/dev/ttys003' }
 
 test('an idle agent delivered of its pull request is flagged for the log before anything else, not refused', () => {
   const held = checkWake({
     agents: [AGENT_IDLE, AGENT_BUSY], resident: false,
-    delivered: ['Agent : idle-p3 (pull request #160, OPEN)'], message: 'anything',
+    delivered: ['Agent: idle-p3 (pull request #160, OPEN)'], message: 'anything',
   })
-  expect(held).toEqual({ warn: 'idle-delivered', detail: 'Agent : idle-p3 (pull request #160, OPEN)' })
+  expect(held).toEqual({ warn: 'idle-delivered', detail: 'Agent: idle-p3 (pull request #160, OPEN)' })
 })
 
 test('a busy agent passes, the blocks line passes, the done line asks for the facts', () => {
@@ -406,7 +406,7 @@ test('the done line holds the stop on its agents and on open rows, and no longer
     agents: [AGENT_IDLE], checkouts: ['/tmp/h/work/repo/belt'], deferred: ['r-12 (the report row)'],
   })).toEqual({
     case: 'not-done',
-    reason: 'Not done: Agent : idle-p3 is still there. Finish it, or say what blocks it. '
+    reason: 'Not done: Agent: idle-p3 is still there. Finish it, or say what blocks it. '
       + 'Not done: row r-12 (the report row) is open. Dispatch it, close it, or say what blocks it'
       + ' — or, if the operator deferred it, record his ruling with dispatch-record.sh defer <record> <id> --ruling "<his words, dated>" '
       + 'and end on waiting: deferred — <n> items.',
@@ -415,7 +415,7 @@ test('the done line holds the stop on its agents and on open rows, and no longer
 
 test('the remaining cases: idle agents and nothing to wake are flagged for the log, the others refuse with their own text', () => {
   expect(checkWake({ agents: [AGENT_IDLE], resident: false, delivered: [], message: 'I stopped.' })).toEqual({
-    warn: 'idle-agents', detail: 'Agent : idle-p3',
+    warn: 'idle-agents', detail: 'Agent: idle-p3',
   })
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: operater blocks x' })).toEqual({
     case: 'malformed-machine-line',
@@ -497,8 +497,8 @@ const GOALS_PY = '/plugins/orch-root/skills/orchestrator/scripts/goals.py'
 const GOALS_FILE = '/tmp/h/rec/goals.md'
 const WAIT_FILE = `${STATE}/store/waits/a1b2c3`
 
-const BUSY_ROW = 'w1/t2 | /dev/ttys002 | ⠋ Agent : belt | Agent : belt-p3'
-const IDLE_ROW = 'w1/t3 | /dev/ttys003 | ✳ Agent : idle | Agent : idle-p3'
+const BUSY_ROW = 'w1/t2 | /dev/ttys002 | ⠋ Agent: belt | Agent: belt-p3'
+const IDLE_ROW = 'w1/t3 | /dev/ttys003 | ✳ Agent: idle | Agent: idle-p3'
 const OWNED = '{"tab_id":"T1","tty":"/dev/ttys002","owner":"17"}\n'
 
 // The paths that hang off the state root: the shell gate kept them under one root and the
@@ -652,7 +652,7 @@ function fakeDollar(setup: Setup): { dollar: any; written: string[]; ran: string
         if (argv[0] === 'ps' && argv[1] === '-t' && argv[2] === 'ttys001') {
           // The session's own process, as the listing prints it.
           const bin = setup.selfBin ?? 'hostcli'
-          return { exitCode: 0, stdout: setup.noLaunchName ? `  501 ${bin}\n` : `  501 ${bin} --name ${setup.launchName ?? 'Orch : belt'}\n`, stderr: '' }
+          return { exitCode: 0, stdout: setup.noLaunchName ? `  501 ${bin}\n` : `  501 ${bin} --name ${setup.launchName ?? 'Orch: belt'}\n`, stderr: '' }
         }
         if (argv[0] === 'ps' && argv[1] === '-t' && argv[2] === 'ttys003') {
           // The idle agent's host process: its pid, then its working directory.
@@ -751,7 +751,7 @@ test('a stop already refused this turn is left alone, nothing read', async () =>
 
 test('a session that is no orchestrator stops untouched, the launcher never asked', async () => {
   const { handlers } = mounted()
-  const { dollar, ran } = fakeDollar({ launchName: 'Agent : belt' })
+  const { dollar, ran } = fakeDollar({ launchName: 'Agent: belt' })
   const e = stopEvent({})
   const { answer } = await stop(handlers['classic.Stop'], dollar, e)
   expect(answer).toBe(e)
@@ -794,13 +794,13 @@ test('an idle agent delivered of its open pull request is no longer refused: the
     chain: '{"tab_id":"T1","tty":"/dev/ttys003","owner":"17"}\n',
     agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: '{"number":160,"state":"OPEN"}',
   })
-  await warnsNotRefuses(handlers, fx, stopEvent({}), 'idle-delivered Agent : idle-p3 (pull request #160, OPEN)')
+  await warnsNotRefuses(handlers, fx, stopEvent({}), 'idle-delivered Agent: idle-p3 (pull request #160, OPEN)')
 })
 
 test('the transcript is read from the event, not by hunting the projects directory', async () => {
   // The rename lives outside the projects directory: only the event's transcript_path
   // reaches it, the fallback the prompt gate needs would not.
-  const renamed = ['{"type":"assistant","message":{"role":"assistant","content":"an answer"}}', '{"type":"custom-title","customTitle":"Orch : round 3"}'].join('\n') + '\n'
+  const renamed = ['{"type":"assistant","message":{"role":"assistant","content":"an answer"}}', '{"type":"custom-title","customTitle":"Orch: round 3"}'].join('\n') + '\n'
   const { handlers } = mounted()
   const named = fakeDollar({ transcript: renamed, noLaunchName: true })
   await warnsNotRefuses(handlers, named, stopEvent({}), 'nothing-will-wake')
@@ -1000,7 +1000,7 @@ test('a refused stop runs no sweep', async () => {
 
 test('a session outside the orchestration runs no sweep', async () => {
   const { handlers } = mounted()
-  const { dollar, ran, wrote } = fakeDollar({ stampMtimeMs: OLD_STAMP, launchName: 'Agent : belt' })
+  const { dollar, ran, wrote } = fakeDollar({ stampMtimeMs: OLD_STAMP, launchName: 'Agent: belt' })
   const e = stopEvent(PASSING)
   const { answer } = await stop(handlers['classic.Stop'], dollar, e)
   expect(answer).toBe(e)
@@ -1221,9 +1221,9 @@ test("an agent whose tab still reads idle but whose session the host records bus
   expect(released.answer).toBe(released.passed)
   // Recorded idle, or with no record at all, the glyph's idle stands and the log says so.
   const idle = fakeDollar({ listing: IDLE_ROW, chain, hostRecord: '{"pid":77,"status":"idle"}' })
-  await warnsNotRefuses(handlers, idle, stopEvent({}), 'idle-agents Agent : idle-p3')
+  await warnsNotRefuses(handlers, idle, stopEvent({}), 'idle-agents Agent: idle-p3')
   const none = fakeDollar({ listing: IDLE_ROW, chain })
-  await warnsNotRefuses(handlers, none, stopEvent({}), 'idle-agents Agent : idle-p3')
+  await warnsNotRefuses(handlers, none, stopEvent({}), 'idle-agents Agent: idle-p3')
 })
 
 // --- fix round 3: the gh read, the identity rule, the succession, the block, the watch ----
@@ -1251,9 +1251,9 @@ test('the agent on a tty is found by its host record, or by the basename of an a
   const { handlers } = mounted()
   const pr = { agentCwd: '/tmp/h/work/belt', agentBranch: 'feat/belt\n', prAnswer: '{"number":160,"state":"OPEN"}' }
   const bare = fakeDollar({ ...pr, listing: IDLE_ROW, chain: IDLE_OWNED, agentRow: '   77 hostcli --resume x\n', selfBin: '/opt/homebrew/bin/hostcli', env: { ORCHESTRATOR_HOST_CLI: '/opt/homebrew/bin/hostcli' } })
-  await warnsNotRefuses(handlers, bare, stopEvent({}), 'idle-delivered Agent : idle-p3 (pull request #160, OPEN)')
+  await warnsNotRefuses(handlers, bare, stopEvent({}), 'idle-delivered Agent: idle-p3 (pull request #160, OPEN)')
   const wrapped = fakeDollar({ ...pr, listing: IDLE_ROW, chain: IDLE_OWNED, agentRow: '   77 /usr/bin/node /x/cli.js\n', hostRecord: '{"pid":77,"sessionId":"s-a","status":"idle"}' })
-  await warnsNotRefuses(handlers, wrapped, stopEvent({}), 'idle-delivered Agent : idle-p3 (pull request #160, OPEN)')
+  await warnsNotRefuses(handlers, wrapped, stopEvent({}), 'idle-delivered Agent: idle-p3 (pull request #160, OPEN)')
 })
 
 test("a declared block is honoured before « stand it down »: the idle agent may wait on that answer", async () => {
@@ -1277,7 +1277,7 @@ test('the predecessor of a succession may stop: its last line « handed over »,
   const before = fakeDollar(open)
   expect(((await stop(handlers['classic.Stop'], before.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))).answer as any).block).toContain('row r-12')
   // The successor's spawn, run through Bash without error, is the hand-over.
-  const spawn = { tool: 'Bash', tool_use_id: 't9', command: 'bash /plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh spawn --successor --title "Orch : belt"' }
+  const spawn = { tool: 'Bash', tool_use_id: 't9', command: 'bash /plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh spawn --successor --title "Orch: belt"' }
   await handlers['tool.call'](before.dollar, spawn, async () => ({ result: { stdout: 'spawned' } }))
   const after = fakeDollar(open)
   const done = await stop(handlers['classic.Stop'], after.dollar, stopEvent({ last_assistant_message: 'waiting: done' }))
@@ -1300,13 +1300,13 @@ test('a successor spawn that failed hands nothing over', async () => {
 test('the predecessor that spawned its successor is never told nothing will wake it', async () => {
   const { handlers } = mounted()
   const fx = fakeDollar({})
-  const spawn = { tool: 'Bash', tool_use_id: 't9', command: 'bash /plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh spawn --successor --title "Orch : belt"' }
+  const spawn = { tool: 'Bash', tool_use_id: 't9', command: 'bash /plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh spawn --successor --title "Orch: belt"' }
   await handlers['tool.call'](fx.dollar, spawn, async () => ({ result: { stdout: 'spawned' } }))
   const waiting = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: 'Successor spawned; waiting for its « takeover confirmed ».' }))
   expect(waiting.answer).toBe(waiting.passed)
 })
 
-const SUBSCRIBE = { tool: 'SendMessage', tool_use_id: 't7', to: 'Orch : belt [b7f1]', message: 'takeover confirmed', notify_when_idle: true }
+const SUBSCRIBE = { tool: 'SendMessage', tool_use_id: 't7', to: 'Orch: belt [b7f1]', message: 'takeover confirmed', notify_when_idle: true }
 const SENT = async () => ({ result: { delivered: true } })
 const WAITING = { last_assistant_message: 'Takeover confirmed sent; waiting for « handed over ».' }
 
@@ -1325,7 +1325,7 @@ test("a peer's idle notice the session subscribed to will wake it, until the not
   const still = await stop(handlers['classic.Stop'], fx.dollar, stopEvent(WAITING))
   expect(still.answer).toBe(still.passed)
   // The peer's message arrives: the wait is over, and the gate reads the session again.
-  await handlers['prompt.submit'](fx.dollar, { text: 'Message from Orch : belt [b7f1]: handed over', origin: { kind: 'peer-send-message' }, wait: false }, (x: unknown) => x)
+  await handlers['prompt.submit'](fx.dollar, { text: 'Message from Orch: belt [b7f1]: handed over', origin: { kind: 'peer-send-message' }, wait: false }, (x: unknown) => x)
   await warnsNotRefuses(handlers, fx, stopEvent(WAITING), 'nothing-will-wake')
 })
 
@@ -1340,30 +1340,30 @@ test('a subscription a subagent made, or one whose send failed, wakes nothing', 
 })
 
 test('a subscription past its time-to-live wakes nothing: a notice that never comes holds no gate open', () => {
-  const peers = new Map([['Orch : belt', 1_000], ['Agent : x', 1_000 + NOTICE_TTL_MS]])
+  const peers = new Map([['Orch: belt', 1_000], ['Agent: x', 1_000 + NOTICE_TTL_MS]])
   expect(awaitingAny(peers, 1_000 + NOTICE_TTL_MS)).toBe(true)
   expect(awaitingAny(peers, 1_001 + NOTICE_TTL_MS)).toBe(true)
-  expect([...peers.keys()]).toEqual(['Agent : x'])
+  expect([...peers.keys()]).toEqual(['Agent: x'])
   expect(awaitingAny(peers, 2_001 + 2 * NOTICE_TTL_MS)).toBe(false)
   expect(NOTICE_TTL_MS).toBe(2 * 60 * 60 * 1000)
 })
 
 test("a notice is the awaited peer's when it names it, by name or by reference", () => {
-  expect(noticeFrom('Orch : belt [b7f1]', 'Orch : belt is idle', 'unclassified')).toBe(true)
-  expect(noticeFrom('Orch : belt [b7f1]', 'session b7f1 exited', 'unclassified')).toBe(true)
-  expect(noticeFrom('Orch : belt', 'handed over — Orch : belt', 'peer')).toBe(true)
-  expect(noticeFrom('Orch : belt', 'handed over — Orch : belt', 'peer-send-message')).toBe(true)
+  expect(noticeFrom('Orch: belt [b7f1]', 'Orch: belt is idle', 'unclassified')).toBe(true)
+  expect(noticeFrom('Orch: belt [b7f1]', 'session b7f1 exited', 'unclassified')).toBe(true)
+  expect(noticeFrom('Orch: belt', 'handed over — Orch: belt', 'peer')).toBe(true)
+  expect(noticeFrom('Orch: belt', 'handed over — Orch: belt', 'peer-send-message')).toBe(true)
   // The operator's own words, a stranger's message, a delivery receipt: not the notice.
-  expect(noticeFrom('Orch : belt', 'is Orch : belt idle?', 'composer')).toBe(false)
-  expect(noticeFrom('Orch : belt', 'Agent : x is idle', 'unclassified')).toBe(false)
-  expect(noticeFrom('Orch : belt', 'Message delivered to Orch : belt', 'unclassified')).toBe(false)
+  expect(noticeFrom('Orch: belt', 'is Orch: belt idle?', 'composer')).toBe(false)
+  expect(noticeFrom('Orch: belt', 'Agent: x is idle', 'unclassified')).toBe(false)
+  expect(noticeFrom('Orch: belt', 'Message delivered to Orch: belt', 'unclassified')).toBe(false)
 })
 
 test('the wake decision: an awaited notice wakes, and a handed-over session is never told nothing will', () => {
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting for it', awaiting: true })).toBeNull()
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting for it', handedOver: true })).toBeNull()
   // A delivered idle agent is still told: a subscription does not lift it.
-  expect((checkWake({ agents: [{ label: 'Agent : a', state: 'idle', tty: '/dev/ttys003' }], resident: false, delivered: ['Agent : a (pull request #1, OPEN)'], message: 'x', awaiting: true }) as any).warn).toBe('idle-delivered')
+  expect((checkWake({ agents: [{ label: 'Agent: a', state: 'idle', tty: '/dev/ttys003' }], resident: false, delivered: ['Agent: a (pull request #1, OPEN)'], message: 'x', awaiting: true }) as any).warn).toBe('idle-delivered')
 })
 
 test('a ci-watch this session started, still running, will wake it; a stranger\'s will not', async () => {
@@ -1392,9 +1392,9 @@ test('a failing set is told once per watch, whatever the log\'s mtime does while
 })
 
 test('the successor spawn is the launcher\'s spawn with --successor alone', () => {
-  expect(isSuccessorSpawn('bash /p/skills/iterm-agents/scripts/iterm-agent.sh spawn --successor --title "Orch : x"')).toBe(true)
+  expect(isSuccessorSpawn('bash /p/skills/iterm-agents/scripts/iterm-agent.sh spawn --successor --title "Orch: x"')).toBe(true)
   expect(isSuccessorSpawn('python3 -I /p/iterm_agent.py spawn --successor')).toBe(true)
-  expect(isSuccessorSpawn('bash /p/iterm-agent.sh spawn --title "Agent : x"')).toBe(false)
+  expect(isSuccessorSpawn('bash /p/iterm-agent.sh spawn --title "Agent: x"')).toBe(false)
   expect(isSuccessorSpawn('bash /p/iterm-agent.sh list # --successor')).toBe(false)
   expect(isSuccessorSpawn('grep -n successor notes.md')).toBe(false)
 })
@@ -1406,12 +1406,12 @@ test('own watches are the ci-watches whose parents reach the host process', () =
 })
 
 test('the wake decision: handed over, a block before a delivered agent, a watch as a waker', () => {
-  const idle = [{ label: 'Agent : a', state: 'idle' as const, tty: '/dev/ttys003' }]
+  const idle = [{ label: 'Agent: a', state: 'idle' as const, tty: '/dev/ttys003' }]
   expect(checkWake({ agents: [], resident: false, delivered: [], message: '`handed over`.' })).toBeNull()
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: done', handedOver: true })).toBeNull()
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: done' })).toBe('read-what-is-left')
-  expect(checkWake({ agents: idle, resident: false, delivered: ['Agent : a (pull request #1, OPEN)'], message: 'waiting: operator — blocks: x' })).toEqual({ blocks: 'x' })
-  expect((checkWake({ agents: idle, resident: false, delivered: ['Agent : a (pull request #1, OPEN)'], message: 'done', watching: true }) as any).warn).toBe('idle-delivered')
+  expect(checkWake({ agents: idle, resident: false, delivered: ['Agent: a (pull request #1, OPEN)'], message: 'waiting: operator — blocks: x' })).toEqual({ blocks: 'x' })
+  expect((checkWake({ agents: idle, resident: false, delivered: ['Agent: a (pull request #1, OPEN)'], message: 'done', watching: true }) as any).warn).toBe('idle-delivered')
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting on CI', watching: true })).toBeNull()
   // A bare question still blocks nothing declared.
   expect((checkWake({ agents: [], resident: false, delivered: [], message: 'You decide: A or B?' }) as any).case).toBe('question-without-blocks')
@@ -1442,8 +1442,8 @@ test('the done branch names open goals and faults in their own texts, after what
   const all = checkWakeDone({ agents: [AGENT_IDLE], checkouts: ['/tmp/c'], deferred: ['r-1 (x)'], goalsOpen: ['G3'], goalsFaults: ['G4 ruled out without the operator\'s words'] })!
   const at = (needle: string) => all.reason.indexOf(needle)
   expect(at('/tmp/c')).toBe(-1)
-  expect(at('Agent : idle-p3 is still there')).toBeGreaterThanOrEqual(0)
-  expect(at('row r-1 (x) is open')).toBeGreaterThan(at('Agent : idle-p3 is still there'))
+  expect(at('Agent: idle-p3 is still there')).toBeGreaterThanOrEqual(0)
+  expect(at('row r-1 (x) is open')).toBeGreaterThan(at('Agent: idle-p3 is still there'))
   expect(at('Not done against the spec: G3')).toBeGreaterThan(at('row r-1 (x) is open'))
   expect(at('goals.md is not a record')).toBeGreaterThan(at('Not done against the spec'))
   expect(checkWakeDone({ agents: [], checkouts: [], deferred: [], goalsOpen: [], goalsFaults: [] })).toBeNull()
@@ -1506,7 +1506,7 @@ test('a predecessor that handed over passes with goals open, the goals never rea
   expect(over.answer).toBe(over.passed)
   expect(last.ran.some(l => l.startsWith('python3'))).toBe(false)
   const spawned = fakeDollar({ ...NO_ROWS, goals: OPEN_GOALS })
-  const spawn = { tool: 'Bash', tool_use_id: 't9', command: 'bash /plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh spawn --successor --title "Orch : belt"' }
+  const spawn = { tool: 'Bash', tool_use_id: 't9', command: 'bash /plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh spawn --successor --title "Orch: belt"' }
   await handlers['tool.call'](spawned.dollar, spawn, async () => ({ result: { stdout: 'spawned' } }))
   const done = await stop(handlers['classic.Stop'], spawned.dollar, stopEvent(DONE))
   expect(done.answer).toBe(done.passed)
@@ -1515,7 +1515,7 @@ test('a predecessor that handed over passes with goals open, the goals never rea
 
 test('an agent session with open goals stops untouched, nothing read', async () => {
   const { handlers } = mounted()
-  const fx = fakeDollar({ ...NO_ROWS, goals: OPEN_GOALS, launchName: 'Agent : belt' })
+  const fx = fakeDollar({ ...NO_ROWS, goals: OPEN_GOALS, launchName: 'Agent: belt' })
   const out = await stop(handlers['classic.Stop'], fx.dollar, stopEvent(DONE))
   expect(out.answer).toBe(out.passed)
   expect(fx.ran.some(l => l.startsWith('python3'))).toBe(false)
@@ -1689,12 +1689,12 @@ test('the host task list leaves out a completed, failed, killed or stopped task'
 
 // A predecessor waiting on its successor's confirmation was told « tool-not-running » live: its
 // successor's « takeover confirmed » wakes it, as at its other endings.
-const SUCCESSOR_SPAWN = { tool: 'Bash', tool_use_id: 't9', command: 'bash /plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh spawn --successor --title "Orch : belt"' }
-const TAKEOVER_WAIT = { last_assistant_message: 'Successor spawned.\nwaiting: tool — takeover confirmation of « Orch : belt [b7f1] »' }
+const SUCCESSOR_SPAWN = { tool: 'Bash', tool_use_id: 't9', command: 'bash /plugins/orch-root/skills/iterm-agents/scripts/iterm-agent.sh spawn --successor --title "Orch: belt"' }
+const TAKEOVER_WAIT = { last_assistant_message: 'Successor spawned.\nwaiting: tool — takeover confirmation of « Orch: belt [b7f1] »' }
 
 test('a tool line of a session that handed over passes with nothing in flight', () => {
   const base = { agents: [], resident: false, delivered: [], message: TAKEOVER_WAIT.last_assistant_message, tasks: [] }
-  expect(checkWake({ ...base, handedOver: true })).toEqual({ tool: 'takeover confirmation of « Orch : belt [b7f1] »' })
+  expect(checkWake({ ...base, handedOver: true })).toEqual({ tool: 'takeover confirmation of « Orch: belt [b7f1] »' })
   expect((checkWake({ ...base, handedOver: false }) as any).case).toBe('tool-not-running')
 })
 
@@ -1704,7 +1704,7 @@ test('the predecessor that spawned its successor passes its tool line at the sto
   await handlers['tool.call'](fx.dollar, SUCCESSOR_SPAWN, async () => ({ result: { stdout: 'spawned' } }))
   const waiting = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ ...TAKEOVER_WAIT, background_tasks: [], session_crons: [] }))
   expect(waiting.answer).toBe(waiting.passed)
-  expect(fx.written.some(l => l.endsWith('| stop gate: check1 tool takeover confirmation of « Orch : belt [b7f1] »'))).toBe(true)
+  expect(fx.written.some(l => l.endsWith('| stop gate: check1 tool takeover confirmation of « Orch: belt [b7f1] »'))).toBe(true)
 })
 
 // The plain ending with nothing to wake it is refused on the same list; without one it is only logged.
@@ -1767,7 +1767,7 @@ test('the tool line, decided over the facts', () => {
   // A busy agent beside a tool line with nothing running: logged, not refused.
   expect(checkWake({ ...base, agents: [AGENT_BUSY], message: 'waiting: tool — the monitor' })).toEqual({ tool: 'the monitor', notRunning: true })
   // A delivered idle agent is told first, as for every line but a blocking question.
-  expect((checkWake({ ...base, agents: [AGENT_IDLE], delivered: ['Agent : idle-p3 (pull request #1, OPEN)'], message: 'waiting: tool — x', background: ['sleep 9'] }) as any).warn).toBe('idle-delivered')
+  expect((checkWake({ ...base, agents: [AGENT_IDLE], delivered: ['Agent: idle-p3 (pull request #1, OPEN)'], message: 'waiting: tool — x', background: ['sleep 9'] }) as any).warn).toBe('idle-delivered')
 })
 
 test('a wait on the operator that blocks nothing is refused, the right line named', () => {
@@ -2037,17 +2037,25 @@ test('an entry owned by a tmux pane is counted for that pane only, not for a sib
 // (`<record>.owner`, written by dispatch-record.sh) names the orchestration; the gate reads a
 // record that is its session's own, or has no owner yet, and no other.
 test('an orchestration is its name without the reference, in the house shape', () => {
-  expect(orchestrationOf('Orch : Shipping')).toBe('Orch : Shipping')
-  expect(orchestrationOf('Orch : Shipping [a1b2c3]')).toBe('Orch : Shipping')
-  expect(orchestrationOf('Orch: belt')).toBe('Orch : belt')
-  expect(orchestrationOf('  Orch :  belt  ')).toBe('Orch : belt')
-  expect(orchestrationOf('Agent : belt')).toBeNull()
+  expect(orchestrationOf('Orch: Shipping')).toBe('Orch: Shipping')
+  expect(orchestrationOf('Orch: Shipping [a1b2c3]')).toBe('Orch: Shipping')
+  expect(orchestrationOf('Orch: belt')).toBe('Orch: belt')
+  expect(orchestrationOf('  Orch:  belt  ')).toBe('Orch: belt')
+  expect(orchestrationOf('Agent: belt')).toBeNull()
   expect(orchestrationOf(null)).toBeNull()
 })
 
+test('an orchestration reads the former « Orch : x » the current way, and only a name core reads as one', () => {
+  expect(orchestrationOf('Orch : belt [a1b2c3]')).toBe('Orch: belt')
+  expect(orchestrationOf('Orch:belt')).toBe('Orch: belt')
+  expect(orchestrationOf('Orch: ' + 'a'.repeat(25))).toBe('Orch: ' + 'a'.repeat(25))
+  expect(orchestrationOf('Orch: ' + 'a'.repeat(26))).toBeNull()
+  expect(ownerOf('Orch : other\n')).toBe('Orch: other')
+})
+
 test('an owner file names its owner on its first line, and a blank file names nobody', () => {
-  expect(ownerOf('Orch : other\n')).toBe('Orch : other')
-  expect(ownerOf('Orch: other [a1b2c3]\nignored\n')).toBe('Orch : other')
+  expect(ownerOf('Orch: other\n')).toBe('Orch: other')
+  expect(ownerOf('Orch: other [a1b2c3]\nignored\n')).toBe('Orch: other')
   expect(ownerOf('\n  \n')).toBeNull()
   expect(ownerOf('')).toBeNull()
 })
@@ -2057,10 +2065,10 @@ test('an owner line that is no orchestration name is the owner as written', () =
 })
 
 test('a record is the session\'s own when it has no owner or the owner is the session\'s orchestration', () => {
-  expect(isOwnRecord(null, 'Orch : belt')).toBe(true)
-  expect(isOwnRecord('Orch : belt', 'Orch : belt')).toBe(true)
-  expect(isOwnRecord('Orch : other', 'Orch : belt')).toBe(false)
-  expect(isOwnRecord('Orch : belt', null)).toBe(false)
+  expect(isOwnRecord(null, 'Orch: belt')).toBe(true)
+  expect(isOwnRecord('Orch: belt', 'Orch: belt')).toBe(true)
+  expect(isOwnRecord('Orch: other', 'Orch: belt')).toBe(false)
+  expect(isOwnRecord('Orch: belt', null)).toBe(false)
   expect(isOwnRecord(null, null)).toBe(true)
 })
 
@@ -2082,24 +2090,24 @@ test('the refusals name the record or the goals file they read, when they are gi
 
 // The end-to-end path: a full stop event, two orchestrations sharing one record directory.
 const FOREIGN_RECORD = '/tmp/h/other/dispatch-record.jsonl'
-const FOREIGN_ROWS = '{"id":35,"label":"to implement by Orch : other","state":"open"}\n'
+const FOREIGN_ROWS = '{"id":35,"label":"to implement by Orch: other","state":"open"}\n'
 const FOREIGN_GOALS = { exitCode: 1, stdout: goalsAnswer({ open: ['G1', 'G2'] }) }
 
 test('a session is never made to answer for the rows and goals of a record another orchestration owns', async () => {
   const { handlers } = mounted()
-  // The session is « Orch : belt »; the record and the goals.md beside it belong to other.
-  const foreign = fakeDollar({ ...NO_ROWS, shared: [{ path: FOREIGN_RECORD, text: FOREIGN_ROWS, owner: 'Orch : other', goals: FOREIGN_GOALS }] })
+  // The session is « Orch: belt »; the record and the goals.md beside it belong to other.
+  const foreign = fakeDollar({ ...NO_ROWS, shared: [{ path: FOREIGN_RECORD, text: FOREIGN_ROWS, owner: 'Orch: other', goals: FOREIGN_GOALS }] })
   const passed = await stop(handlers['classic.Stop'], foreign.dollar, stopEvent(DONE))
   expect(passed.answer).toBe(passed.passed)
   expect(foreign.ran.filter(line => line.startsWith('python3'))).toEqual([])
-  expect(foreign.written.join('\n')).toContain(`stop gate: ${FOREIGN_RECORD} belongs to Orch : other: not read`)
+  expect(foreign.written.join('\n')).toContain(`stop gate: ${FOREIGN_RECORD} belongs to Orch: other: not read`)
 })
 
 test('the same record, owned by the session\'s own orchestration, is read and its refusals name its path', async () => {
   const { handlers } = mounted()
-  const own = fakeDollar({ ...NO_ROWS, shared: [{ path: FOREIGN_RECORD, text: FOREIGN_ROWS, owner: 'Orch : belt', goals: FOREIGN_GOALS }] })
+  const own = fakeDollar({ ...NO_ROWS, shared: [{ path: FOREIGN_RECORD, text: FOREIGN_ROWS, owner: 'Orch: belt', goals: FOREIGN_GOALS }] })
   const held = await stop(handlers['classic.Stop'], own.dollar, stopEvent(DONE))
-  expect((held.answer as any).block).toContain(`row 35 (to implement by Orch : other) is open in ${FOREIGN_RECORD}.`)
+  expect((held.answer as any).block).toContain(`row 35 (to implement by Orch: other) is open in ${FOREIGN_RECORD}.`)
   expect((held.answer as any).block).toContain('Not done against the spec: G1, G2 open in /tmp/h/other/goals.md.')
 })
 
@@ -2108,7 +2116,7 @@ test('a record with no owner yet is read as before, beside a foreign one that is
   const mixed = fakeDollar({
     ...NO_ROWS,
     shared: [
-      { path: FOREIGN_RECORD, text: FOREIGN_ROWS, owner: 'Orch : other', goals: FOREIGN_GOALS },
+      { path: FOREIGN_RECORD, text: FOREIGN_ROWS, owner: 'Orch: other', goals: FOREIGN_GOALS },
       { path: '/tmp/h/mine/dispatch-record.jsonl', text: '{"id":2,"label":"mine","state":"open"}\n' },
     ],
   })
@@ -2120,19 +2128,19 @@ test('a record with no owner yet is read as before, beside a foreign one that is
 
 test('an orchestrator whose name carries no subject owns no owned record, and answers for none of its rows', async () => {
   const { handlers } = mounted()
-  const owned = fakeDollar({ ...NO_ROWS, launchName: 'Orch :', shared: [{ path: FOREIGN_RECORD, text: FOREIGN_ROWS, owner: 'Orch : belt', goals: FOREIGN_GOALS }] })
+  const owned = fakeDollar({ ...NO_ROWS, launchName: 'Orch:', shared: [{ path: FOREIGN_RECORD, text: FOREIGN_ROWS, owner: 'Orch: belt', goals: FOREIGN_GOALS }] })
   const passed = await stop(handlers['classic.Stop'], owned.dollar, stopEvent(DONE))
   expect(passed.answer).toBe(passed.passed)
-  expect(owned.written.join('\n')).toContain(`stop gate: ${FOREIGN_RECORD} belongs to Orch : belt: not read`)
+  expect(owned.written.join('\n')).toContain(`stop gate: ${FOREIGN_RECORD} belongs to Orch: belt: not read`)
 })
 
 test('the register\'s own record is held to its owner file too', async () => {
   const { handlers } = mounted()
   const ROW = '{"id":"r-12","label":"the report row","state":"open"}\n'
-  const foreign = fakeDollar({ records: [ROW], recordOwner: 'Orch : other' })
+  const foreign = fakeDollar({ records: [ROW], recordOwner: 'Orch: other' })
   const passed = await stop(handlers['classic.Stop'], foreign.dollar, stopEvent(DONE))
   expect(passed.answer).toBe(passed.passed)
-  const own = fakeDollar({ records: [ROW], recordOwner: 'Orch : belt [a1b2c3]' })
+  const own = fakeDollar({ records: [ROW], recordOwner: 'Orch: belt [a1b2c3]' })
   expect(((await stop(handlers['classic.Stop'], own.dollar, stopEvent(DONE))).answer as any).block).toContain('row r-12 (the report row) is open')
 })
 

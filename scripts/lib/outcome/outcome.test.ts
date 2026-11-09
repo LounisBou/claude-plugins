@@ -559,7 +559,7 @@ describe('outcome evals: the command', () => {
     assert.deepEqual(orchestration?.decisions, ['which model? → sonnet'])
     assert.ok('enabledPlugins' in JSON.parse(readFileSync(join(out, 'settings.json'), 'utf8')))
     const [request] = launcher.requests
-    assert.equal(request?.title, 'Orch : eval value-is-two')
+    assert.equal(request?.title, 'Orch: eval value-is-two')
     assert.equal(request?.settingsFile, join(out, 'settings.json'))
     assert.deepEqual(request?.pluginDirs, [join(root, 'plugins', 'orchestrator'), join(root, 'plugins', 'method')])
     assert.equal(launcher.closed.length, 1)

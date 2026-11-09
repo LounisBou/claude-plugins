@@ -29,7 +29,7 @@ WAIT_TIMED_OUT = 3
 WAIT_INTERVAL = 5
 # The agent's own instructions, shipped in the repository's agent/ directory.
 AGENT_MD = Path(__file__).resolve().parent.parent / "agent" / "AGENT.md"
-# A ListAgents name and its reference, « Orch : demo [9a3971] »: not a free phrase.
+# A ListAgents name and its reference, « Orch: demo [9a3971] »: not a free phrase.
 _LAUNCHER_SHAPE = re.compile(r"[\w .:-]{1,100} \[[\w-]{1,20}\]")
 _TTY_SHAPE = re.compile(r"/dev/ttys\d{1,4}")
 # A commit as `deployed` takes it: an abbreviated or full hexadecimal hash, nothing a shell could read.

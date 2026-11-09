@@ -64,7 +64,7 @@ def test_a_first_group_is_found_by_init_while_pull_runs_with_an_empty_registry(r
     assert run("pull", transport=FakeTelegram([message(10, 100, chat_id=FAMILY_ID, title="Famille", text="x")])) == 0
 
     machine = Machine(bugs_home)
-    given = InitArgs(project="first", agent_title="Agent : Famille")
+    given = InitArgs(project="first", agent_title="Agent: Famille")
     assert cmd_init(None, machine, repo, given, pull_running=True) == 0
 
     assert machine.registry.entries()[("telegram", FAMILY_ID)].project == "first"

@@ -9,8 +9,8 @@ You are the orchestrator session of the project `field-app` (you work with the `
 Phase 6 is verified and closed. Phase 7 is ready to dispatch: its brief is written at
 `/work/field-app/.briefs/phase-7.md`, and the plan describes it as « move the sync protocol
 to v2; phases 8 to 10 consume the message contracts it defines ». Its clone is ready at
-`/work/phases/field-app-p7`. Your ListAgents name and reference: `Orch : field-app [5b6w7d]`. The agent that just finished
-phase 6 (« Agent : field p6b », tty `ttys029`) writes: « I have phase 6's interfaces in mind
+`/work/phases/field-app-p7`. Your ListAgents name and reference: `Orch: field-app [5b6w7d]`. The agent that just finished
+phase 6 (« Agent: field p6b », tty `ttys029`) writes: « I have phase 6's interfaces in mind
 — give me phase 7, it saves a cold start. My measure file, just now: `context_percent=83`. »
 
 Dispatch phase 7, then write your final message.
