@@ -71,6 +71,11 @@ changed by a pull request that edits this file and the code it governs together.
 - A fix lands with the test that fails when the fix is reverted.
 - Every suite runs on macOS and Linux, as a normal user and as root, under any locale.
 - One entry point per plugin: `tests/run-tests.sh`, selectable by case where the runner allows.
+- What differs between platforms is written for both: GNU `stat -f` reads the filesystem (try
+  `stat -c` first), GNU `tar` needs an external `gzip`, GNU `tr` is not multibyte, bash 5.2 reads
+  `&` in a pattern replacement as the match, bash 3.2 does not reseed `$RANDOM` in a subshell,
+  Ubuntu's `awk` is mawk. A plugin's CommonJS file needs its own `package.json`: the root one is
+  `"type": "module"`.
 
 ## Code decides, the model judges
 
@@ -113,6 +118,10 @@ changed by a pull request that edits this file and the code it governs together.
   consumer in the same one.
 - A shipped change raises the plugin's version (SemVer: a contract change that breaks a
   consumer is MAJOR).
+- A generated file in a merge conflict (`.claude-plugin/marketplace.json`, a plugin's `core/`,
+  `ci/prompts.json`) is taken from the base, then regenerated (`npm run marketplace`,
+  `npm run core`, `npm run prompts -- --lower`); a conflict of versions keeps the higher one, or
+  the next when the branch ships a change the base does not have.
 
 ## Ratchets
 
