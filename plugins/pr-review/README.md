@@ -1,4 +1,4 @@
-# claude-review
+# pr-review
 
 An interactive pull-request review workflow, packaged as a plugin: walk through
 review feedback one item at a time, process a PR's comments with a human deciding
@@ -21,16 +21,16 @@ dependency is missing or disabled, every skill stops before doing anything and p
 the command that fixes it.
 
 The GitHub plugin is accepted under either of the two keys it can be installed
-from — `github@lounisbou` from the aggregate marketplace, `github@claude-github`
-from its own. Either one satisfies the dependency; only neither is a failure.
+from — `github@lounisbou` from this repository's catalogue, or `github@claude-github`
+from its former one. Either one satisfies the dependency; only neither is a failure.
 
 ## Install
 
 Add the marketplace, install the plugin, then check it:
 
 ```
-/plugin marketplace add LounisBou/claude-review
-/plugin install pr-review@claude-review
+/plugin marketplace add LounisBou/claude-plugins
+/plugin install pr-review@lounisbou
 /pr-review:install
 ```
 
@@ -64,7 +64,9 @@ its own a reason to make it.
 
 **`/pr-review:auto-fix-loop`** — the autonomous counterpart: review, fix, re-review,
 until clean or until a pass limit. Use it when you want the cycle run for you rather
-than presented to you.
+than presented to you. Its reviewer mode (`review_only`), run by a session that did not
+write the code (implement's `/implement:review` launches one), makes one pass and fixes
+nothing: its findings are the verdict.
 
 ## The GitHub tool
 
@@ -87,7 +89,7 @@ path assembled into the plugin cache, whose directory names are sometimes git SH
 — and stops on an `error:`/`fix:` pair when the dependency is absent.
 
 Its documentation — the full subcommand and formatter surface, the exit codes —
-lives at [github.com/LounisBou/claude-github](https://github.com/LounisBou/claude-github).
+lives in the github plugin (`plugins/github/engine/REFERENCE.md`).
 
 ## The hooks module
 
@@ -111,7 +113,7 @@ and every skill keeps its own route.
   runs — answering the open items, the counts, the tier and the line to announce.
 - **`mcp__pr-review__loop` and a Stop gate.** auto-fix-loop's pass counter, seen
   findings and fix log, held outside the model's memory. While a loop runs and
-  neither exit condition (a clean review, pass 5) is met, a stop is refused once,
+  neither exit condition (a clean review, the pass limit) is met, a stop is refused once,
   naming the pass. Any prompt the user types, or an interrupted turn, ends that hold.
 - **The review record.** When the loop ends, it leaves a review record at the pull
   request's head, written through the github plugin's `mcp__github__record`, for that
@@ -121,7 +123,9 @@ and every skill keeps its own route.
   an agent without a readable block (or one that fails) leaves the severity unknown.
   A clean review writes `pass`. A loop stopped by the pass limit writes `pass` when
   the last review's agents reported nothing Critical or Important, and `fail`
-  otherwise, or when the severity is unknown. It leaves none when the loop was
+  otherwise, or when the severity is unknown. A reviewer's loop (`review_only`) ends
+  after its one pass and records its findings' verdict. github refuses a review record
+  written by the session that pushed the head. It leaves none when the loop was
   released by the user, when the branch has no pull request, when tracked files have
   uncommitted changes, or when the github plugin is absent or older than 0.12.0. The
   loop's answer then says `record: none — <why>`.
@@ -143,15 +147,16 @@ pins each of those cases.
 bash tests/run-tests.sh
 ```
 
-No network and no GitHub account. The tool's own behaviour is tested in the
-`claude-github` repository, where it lives; what runs here is the manifests, the
+No network and no GitHub account. The tool's own behaviour is tested by the github
+plugin's suite; what runs here is the manifests, the
 preflight, the resolver, the triage script, the skill documents, and a contract
 test that maps every request a skill makes through the real installed engine and
-fails if it names a subcommand, an argument or a formatter that does not exist. Point `CLAUDE_GITHUB_ROOT` at a `claude-github` checkout to run
-that contract test without the plugin installed:
+fails if it names a subcommand, an argument or a formatter that does not exist. Point
+`CLAUDE_GITHUB_ROOT` at the github plugin's directory to run that contract test without
+the plugin installed:
 
 ```
-CLAUDE_GITHUB_ROOT=~/dev/claude-github bash tests/run-tests.sh
+CLAUDE_GITHUB_ROOT=<this repository>/plugins/github bash tests/run-tests.sh
 ```
 
 The hooks module has its own tests, run by the host against its engine:

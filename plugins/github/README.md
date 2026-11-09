@@ -1,4 +1,4 @@
-# claude-github
+# github
 
 A Claude Code mod that talks to the GitHub API through one native tool and a PR
 pane, over a Python 3.9+ standard-library engine. No third-party packages and no
@@ -16,8 +16,8 @@ releases and runs `engine/gh.py` unchanged.
 Add the marketplace, then install the plugin:
 
 ```
-/plugin marketplace add LounisBou/claude-github
-/plugin install github@claude-github
+/plugin marketplace add LounisBou/claude-plugins
+/plugin install github@lounisbou
 ```
 
 Then run `/github:install`. When no GitHub token is found, it installs `gh` if it
@@ -105,7 +105,8 @@ points Claude at them.
 
 Images are attached by committing them to a dedicated `pr-assets` branch
 through the Contents API, named after the SHA-256 of their bytes so the same
-screenshot uploads once. GitHub's own web upload endpoint would need
+screenshot uploads once. Only an image (PNG, JPEG, GIF or WebP, by its first bytes) is
+uploaded. GitHub's own web upload endpoint would need
 whole-account browser cookies; that route is deliberately not used.
 
 ## Repositories in auto-merge
@@ -129,25 +130,28 @@ lists no repository; an unreadable or malformed one lists none either and
 says so in one transcript line.
 
 The list changes only through the tool, on the operator's word:
-`auto-merge-set {"repo": "owner/name", "on": true|false, "words": "<his words>"}`
-adds or removes a repository when `words` names auto-merge (« auto-merge », « auto
-merge » or « automerge ») and is found verbatim in a prompt he typed or in his answer
-in a consent record of auto-merge on that repository, and `auto-merge-list` prints it. A Write,
-an Edit or a shell command on the file is refused. A prompt he types that speaks
+`auto-merge-set {"repo": "owner/name", "on": true|false, "words": "<their words>"}`
+adds or removes a repository, under a lock on the file, when `words` names auto-merge (« auto-merge », « auto
+merge » or « automerge ») and is found verbatim in a prompt they typed or in their answer
+in a consent record of auto-merge on that repository (core's `consent-record.ts`; the
+orchestrator writes them under `<config dir>/consents/`), and `auto-merge-list` prints it. A Write,
+an Edit or a shell command on the file is refused. A prompt they type that speaks
 of auto-merge reminds the session to call `auto-merge-set`.
 
 ## Ready pull requests
 
 A pull request is ready when four things hold at its current head commit: a
 clean review, a passed norms check, passed end-to-end tests (or a waiver the
-operator dated in his own words) and green CI. The `Ready` label, leaving
+operator dated in their own words) and green CI. The `Ready` label, leaving
 draft and a merge need the four; a draft opens with `Not Ready`, and a push to
 the branch puts `Not Ready` back. CI is read from GitHub: no check at all is
 green, a check that failed, still runs, was skipped, or is neutral on a draft
 is not. The other three are records, one small JSON file per run under
-`~/.claude/pr-records/<owner>/<name>/<head>/`, written by their producers:
+`${CLAUDE_CONFIG_DIR:-~/.claude}/pr-records/<owner>/<name>/<head>/`, written by
+their producers, which the record contract (core's `pr-record.ts`) declares:
 pr-review's auto-fix-loop for the review, `/norms:check` for the norms, and
-`mcp__github__record` for the end-to-end run. A record counts only at the head it names, so a new commit voids them
+`mcp__github__record` for the end-to-end run. A review record written by the
+session that pushed the head is refused. A record counts only at the head it names, so a new commit voids them
 all without anything deleted. `engine/REFERENCE.md` « Records » holds the
 contract; `engine/writing/pull-requests.md` « Ready pull requests » the rule.
 
@@ -221,19 +225,20 @@ github: <gh pr merge | gh pr ready> refused on <owner/name>: this repository is 
 
 A CI undraft, as above, is the exception, through the shell and the tool alike.
 
-**Records.** The records are written by their producers alone. A Write, an Edit
-or a MultiEdit under the records root, and a shell command that names it,
+**Records.** The records are written by their producers alone. A Write, an Edit,
+a MultiEdit or a NotebookEdit under the records root, and a shell command that names it,
 a `pr-records/` path or `engine/record.py`, are refused with:
 
 ```
-github: records are written by their producers (pr-review's auto-fix-loop, /norms:check, mcp__github__record for E2E), never by hand.
+github: records are written by their producers' tools, and E2E by mcp__github__record, never by hand.
 ```
 
-The command is read as text, so a plain `ls` of the root is refused too; reading
+The command is read as text and word by word with the shell's quotes removed (so
+`rec""ord.py` is `record.py`), and a plain `ls` of the root is refused too; reading
 a record with the Read tool passes. `mcp__github__record` writes at the head the
 checkout and the pull request share, on a clean tree, one kind per caller: E2E
 for a session, each other kind for the plugin the record contract names its
-producer. A waiver quotes words the operator typed in the session, or his answer
+producer. A waiver quotes words the operator typed in the session, or their answer
 in a consent record of an E2E waiver of that pull request (core's
 `consent-record.ts`, at least 8 characters), with their date. Once a
 day at most, the start of a session prunes the head directories whose newest

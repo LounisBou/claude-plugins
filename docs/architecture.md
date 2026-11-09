@@ -8,12 +8,17 @@ decision that shaped this file, with its reason, is under `decisions/`.
 
 ```
 .claude-plugin/marketplace.json   the catalogue: authored header, generated plugin list
-packages/core/                    the shared library: paths, store, deadlines, names, plugin locator
+packages/core/                    the shared library: paths, store, deadlines, session names, the shell
+                                  reader, shared environment names, the plugin locator, and the typed
+                                  contracts (the method's formats, PR records, consent records)
 plugins/<name>/                   one installable plugin per directory, named as its manifest
 scripts/                          the repository's own tooling, strict TypeScript, tested
 evals/outcome/                    the outcome evals' cases and spend caps, read by scripts/outcome.ts
 ci/plugins.json                   where each plugin's suite blocks the build
-docs/                             architecture, conventions, contracts, decisions, specs
+ci/prompts.json                   the prompt budgets and the duplicate ceiling
+ci/scenarios.json                 what each kind of session loads, summed by `npm run context`
+.github/workflows/ci.yml          the one workflow: the repository rules, then the plugin suites
+docs/                             architecture, conventions, contracts, migration, decisions, specs
 ```
 
 A plugin is the unit of installation, versioning and release. The repository is the unit of
@@ -26,15 +31,18 @@ change: a change that crosses plugins is one pull request.
                               ▲
    packages/core   ◀──────────┤   knows no plugin
         ▲                     │
-        │      plugins/method ◀── every plugin that takes part in the lifecycle
-        │      plugins/github ◀── norms, pr-review, orchestrator, implement
-        │      plugins/orchestrator ◀── bugs-bot, statusbar (through a contract)
-        └───── every plugin    cloudflare stands alone
+        │      plugins/method ◀── implement, orchestrator
+        │      plugins/github ◀── norms, pr-review
+        │      plugins/orchestrator ◀── bugs-bot
+        └───── github, implement, norms, orchestrator, pr-review (a copy in core/)
 ```
 
 - `core` depends on the host's API and on nothing in `plugins/`.
 - A plugin depends on `core`, and on another plugin only through that plugin's published
   contract (`contracts.md`) and a dependency declared, with a version range, in its manifest.
+- The edges above are the dependencies the manifests declare. Two readings are not declared
+  yet and are listed in `contracts.md`: the orchestrator calls github's tool, and implement
+  and bugs-bot run the orchestrator's launcher. statusbar and cloudflare depend on no plugin.
 - The graph is acyclic. A plugin never imports another plugin's source and never reads another
   plugin's private state.
 
@@ -49,7 +57,8 @@ The lifecycle, the definition of done and the artifact formats belong to the `me
 (decision 0006). The others are roles in it and point at it: implement runs it alone, the
 orchestrator runs it with implementer sessions in its `build` mode and leaves it out in its
 `investigate` mode, norms and pr-review supply reviews to github's ready gate, bugs-bot turns
-reports into its inputs, statusbar shows its state. cloudflare stands outside it.
+reports into its inputs, statusbar shows a session's context against the orchestrator's gate.
+cloudflare stands outside it.
 
 ## Packaging
 
@@ -78,18 +87,25 @@ language; when another language needs it, it reads it as data, never as a re-imp
 
 A plugin's version lives in its `plugin.json` and nowhere else; the catalogue is generated
 from it. A pull request that changes what a plugin ships raises its version, or CI refuses it,
-because the host caches by version. A release is the merge; the tag `<name>--v<version>` marks it.
+because the host caches by version. A release is the merge: the
+host installs the version the catalogue names, and no tag is made.
 
 ## What CI holds
 
 | Check | Source of truth |
 |---|---|
 | strict types | `tsconfig.base.json`, coverage ratcheted in `tsconfig.json` |
-| tooling tests | `scripts/*.test.ts` |
-| dependencies declared, acyclic, no import across plugins | `npm run deps` |
-| every copy of core matches the source | `packages/core/src` |
-| catalogue matches the manifests | `plugins/*/.claude-plugin/plugin.json` |
-| shipped change raises the version | the same manifests, against the base branch |
-| the coverage floor | `npm test` thresholds |
-| prompt budgets and duplicates only fall | `ci/prompts.json` |
-| every plugin's suite, macOS and Linux | `plugins/<name>/tests/run-tests.sh`, blocking per `ci/plugins.json` |
+| tests of the tooling, of core and of the plugins' strict scripts, with the coverage floor | `npm test` (`scripts/**/*.test.ts`, `packages/*/src/**/*.test.ts`, `plugins/*/skills/*/scripts/**/*.spec.ts`) |
+| dependencies declared, acyclic, no import across plugins, shared variables named in core | `npm run deps` |
+| no committed permission grant, every installer rule listed | `npm run permissions`, `contracts.md` |
+| every copy of core matches the source | `npm run core -- --check`, `packages/core/src` |
+| catalogue matches the manifests | `npm run marketplace -- --check`, `plugins/*/.claude-plugin/plugin.json` |
+| shipped change raises the version (pull requests) | `npm run version-bump`, the same manifests against the base branch |
+| prompt budgets and duplicates only fall | `npm run prompts`, `ci/prompts.json` |
+| tokens by scenario, and the pull request's difference (a report in the run's summary) | `npm run context`, `ci/scenarios.json` |
+| rules a prompt states that nothing holds (a report in the run's summary) | `npm run rules` |
+| every plugin's suite | `plugins/<name>/tests/run-tests.sh`, blocking per `ci/plugins.json` (`npm run plugin-matrix`) |
+
+A pull request runs the Linux suites of the plugins it changes: a change outside `plugins/`
+runs every plugin, a change of documentation alone (`docs/`, a Markdown file at the root) none.
+A push to `main` runs every plugin on Linux and macOS.
