@@ -83,7 +83,7 @@ Read from the code at orchestrator 0.99.3. Pull requests are this repository's.
 | 4 | met in code | `hooks/move.ts`, `hooks/moving.ts` on core's store; the dispatch record kept outside the briefs directory travels; the source is cleaned once the target acknowledged it (#59, #76, #80, #81) | proved over a simulated pair of machines (`hooks/tests/move-e2e.test.ts`); no run between two real machines is recorded |
 | 5 | met | no push guard in `hooks/guards.ts`; force-push held by github's `/github:protect` (#72) | — |
 | 6 | met | `withDeadline` cancels through an `AbortSignal` (`stop-gate.ts`); temporary files older than `STALE_MS` swept (#55, #70) | — |
-| 7 | partly met | the suite blocks on Linux, as root and as a normal user (#65) | on macOS the suite stops at a bash 3.2 parse error (`tests/run-tests.sh:237`); macOS joins `ci/plugins.json` once it is green there |
+| 7 | met | the suite blocks on Linux, as root and as a normal user (#65), and on macOS's bash 3.2 (`ci/plugins.json`) | — |
 | 8 | partly met | ten principles, no dated quotation, on `method:lifecycle` (#67); `npm run context`: 1,960 tokens at a `build` start, 1,290 at an `investigate` start | no principle has been tested by ablation |
 | 9 | not met | the harness, cases and caps (`evals/outcome/`, `npm run outcome`; #42, #47, #49) | no pilot or measure has run; paid runs are the operator's, under `evals/outcome/caps.json` |
 | 10 | partly met | the calibration engine moved to `calibration.py` (#68); one price table, `routing/prices.json` in the state directory; the cost rule is data in `hooks/usage.ts`; `bench --max-usd` reserves the worst case before each run (#44, #62) | `routing.py` still holds `profile` and `pick` beside the cost rule |
