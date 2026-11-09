@@ -1,20 +1,25 @@
 # implement
 
 The feature lifecycle in a repository — brainstorm, branch, plan, phases, close —
-with nothing in it that belongs to one project.
+with nothing in it that belongs to one project. It runs the `method` plugin's lifecycle
+alone, in one session; the review of its pull request is made by another session
+(`/implement:review`).
 
-## Requires one plugin
+## Requires two plugins
 
-`superpowers@claude-plugins-official`. Installed is not the same as enabled: a
-plugin can sit on disk and be inert, so the preflight reads the `enabledPlugins`
-map rather than looking for files. If it is missing or disabled, every skill
-stops before doing anything and prints the command that fixes it.
+- `superpowers@claude-plugins-official`. Installed is not the same as enabled: a
+  plugin can sit on disk and be inert, so the preflight reads the `enabledPlugins`
+  map rather than looking for files. If it is missing or disabled, every skill
+  stops before doing anything and prints the command that fixes it.
+- `method@lounisbou`, the lifecycle, the definition of done and the formats this plugin's
+  skills follow. Until the session has loaded its kernel (`method:lifecycle`), the hooks
+  module leads each skill's text with a line asking to load it.
 
 ## Install
 
 ```
-/plugin marketplace add LounisBou/claude-implement
-/plugin install implement@claude-implement
+/plugin marketplace add LounisBou/claude-plugins
+/plugin install implement@lounisbou
 /implement:install
 ```
 
@@ -41,16 +46,27 @@ below.
 - **`/implement:prepare`** — plan a future feature onto `ROADMAP.md` without
   touching a branch, so it coexists with a feature in progress on another one.
 
+Two more commands, answered by the hooks module:
+
+- **`/implement:review`** — launch the review of the branch's pull request in another
+  session: on macOS with the orchestrator installed, an iTerm tab through its launcher;
+  anywhere else, a headless `claude -p` session whose report goes to
+  `.git/implement-review.log`. The reviewer runs `/pr-review:auto-fix-loop` in its review-only
+  mode and leaves the review record for github's ready gate, which refuses a record written by
+  the session that pushed the head.
+- **`/implement:release-guard`** — release the guards below until an implement skill starts
+  again.
+
 ## The hooks module
 
 `hooks/` holds a module the host loads beside the skills. Where it loads, it
-does five things; where it does not, every skill and command runs from its
+does what follows; where it does not, every skill and command runs from its
 markdown exactly as before, and each of its hooks falls back to that path when
 it fails.
 
 - **The commands answer at once.** `/implement:install` and `/implement:doctor`
   are answered by the module, without a model turn, from the merged settings of
-  every scope.
+  every scope; so are `/implement:review` and `/implement:release-guard`.
 - **The preflight runs before the skill.** The module checks the dependency and
   the repository as the skill's text is loaded: a failure replaces the text with
   the `error:`/`fix:` lines, a pass leads it with a `Preflight: passed` line and
@@ -139,10 +155,13 @@ commit — and nothing is deleted at close.
 skips this test altogether: whoever names a directory outside the repository's
 excludes has taken the responsibility for it.
 
-## CLAUDE.md
+## Tests
 
-This repository keeps a local `CLAUDE.md` with the conventions for working on
-the plugin itself. It is gitignored and will not be tracked.
+```
+bash tests/run-tests.sh
+```
+
+The suite runs the hooks module's tests in the host's kit (`claude plugin test`).
 
 ## Licence
 

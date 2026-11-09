@@ -16,12 +16,10 @@ ctx: 26% │ 5h: 47% ▓▓▓▓▓░░░░░ → 2h13 │ 7d: 50% ▓▓�
 ### From the plugin marketplace
 
 ```
-/plugin marketplace add LounisBou/claude-plugins-marketplace
+/plugin marketplace add LounisBou/claude-plugins
 /plugin install statusbar@lounisbou
 /statusbar:install
 ```
-
-The `lounisbou` marketplace also lists [claude-orchestrator](https://github.com/LounisBou/claude-orchestrator), installable the same way once the marketplace is added.
 
 That last step is required: `statusLine` is a key in `settings.json` and a
 plugin manifest cannot declare it. The command writes it for you.
@@ -29,11 +27,20 @@ plugin manifest cannot declare it. The command writes it for you.
 ### Without the plugin system
 
 ```bash
-git clone https://github.com/LounisBou/claude-statusbar.git
-cd claude-statusbar && ./install.sh
+git clone https://github.com/LounisBou/claude-plugins.git
+cd claude-plugins/plugins/statusbar && ./install.sh
 ```
 
 `./install.sh --dry-run` shows what would happen without changing anything.
+
+The installer copies two scripts into `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/statusbar/`:
+`statusline.sh`, the entry point `settings.json` names, and `statusline-core.sh`, a copy of the
+status line. The entry point runs the status line of the plugin install the host records as
+active, so a plugin update takes effect without re-running the installer; it falls back to the
+copy when no install is found. A `statusLine` another tool wrote is replaced, after a backup in
+`backups/statusbar-<timestamp>/settings.json.before`; a command that already carries this
+status bar's path (a wrapper) is left alone. `settings.json` is rewritten in one rename, through
+its symlink when it is one.
 
 Restart your session to see the bar.
 
@@ -63,7 +70,8 @@ Uninstall the old plugin with `/plugin uninstall` alone, never with its own
 ## Settings
 
 The status line is a shell command that reads `statusline-config.txt` in
-`${CLAUDE_CONFIG_DIR:-$HOME/.claude}`, one key per line, `1` or `0`:
+`${CLAUDE_CONFIG_DIR:-$HOME/.claude}`, one `KEY=1` or `KEY=0` per line. The file is read as data,
+never run: a line with an unknown key or another value is ignored and the key keeps its default.
 
 | Key | Default | Effect |
 |---|---|---|
@@ -74,7 +82,7 @@ The status line is a shell command that reads `statusline-config.txt` in
 | `SHOW_MODEL` | 1 | model name |
 | `SHOW_SESSION_NAME` | 1 | session name set with `/rename` |
 | `SHOW_CONTEXT` | 1 | context consumed, turns red at ≥ 80% |
-| `SHOW_CONTEXT_TOKENS` | 1 | tokens next to the context percentage (`296k`, or `296k/300k` against the gate in an orchestration session) |
+| `SHOW_CONTEXT_TOKENS` | 1 | tokens next to the context percentage (`296k`, or `296k/300k` against the gate in an orchestration session: one named `Orch :`, `Agent :`, `Audit :` or `Coord :`) |
 | `SHOW_USAGE` | 1 | 5-hour quota |
 | `SHOW_SEVEN_DAY` | 1 | 7-day quota |
 | `SHOW_PROGRESS_BAR` | 1 | ten-block bar |
@@ -139,7 +147,17 @@ revoke the cookie by signing out on the web if it matters to you.
 Every value comes from the JSON payload the host sends on stdin. The only
 external command is a single
 `git status --porcelain=v2 --branch --show-stash`, which yields branch,
-cleanliness, ahead/behind and stash count in one shot.
+cleanliness, ahead/behind and stash count in one shot. It runs with
+`GIT_OPTIONAL_LOCKS=0`, so the bar never takes the index lock an agent beside it may need.
+
+In an orchestration session, the context segment shows the tokens against the
+orchestrator's context gate, resolved from the same variables and defaults as the
+orchestrator's gate (`ORCHESTRATOR_CONTEXT_GATE`, `ORCHESTRATOR_CONTEXT_GATE_TOKENS`,
+`ORCHESTRATOR_LARGE_WINDOW`): a fixed count on a large window, a percentage of the window
+otherwise.
+
+Reset times are formatted with BSD `date -r`, else GNU `date -d @…`, so they show on macOS and
+Linux alike.
 
 Two implementation details are worth knowing before editing the script:
 
@@ -156,25 +174,27 @@ accounts.
 ## Tests
 
 ```bash
-./tests/run-tests.sh
+./tests/run-tests.sh      # the status line, install and uninstall
+claude plugin test .      # the hooks module (the /config rows and the commands), inside the host
 ```
 
-15 cases, no network: nominal render, missing or partial quotas, context
-warning threshold, the consecutive-empty-fields regression, disabled settings,
-clean/dirty/absent git repository, empty or invalid stdin, plus a check that no
+No network: nominal render, missing or partial quotas, the context and quota
+warning thresholds, the gate in each kind of orchestration session, the
+consecutive-empty-fields regression, disabled and malformed settings,
+clean/dirty/absent git repository, empty or invalid stdin, install and
+uninstall against a scratch configuration directory, plus a check that no
 session cookie and no network call survive anywhere — including under a
 pristine `HOME`.
-
-If another tool has wrapped `statusLine.command` around this status bar's
-script, install and uninstall leave that wrapper in place — install skips
-the write when the command already carries our path, and uninstall strips
-only our path, never the whole key.
 
 ## Uninstall
 
 ```bash
 ./uninstall.sh          # or /statusbar:uninstall
 ```
+
+It removes this status bar's `statusLine` (only its own path when another tool wrapped it, and
+nothing when the key is another tool's) and the installed scripts; the settings file and the
+backups stay.
 
 ## License
 

@@ -125,11 +125,11 @@ Oldest first; `--account` filters by account. Columns:
 Brings the names of the backup back to the records it holds, on the record
 types it holds (those of its records and those its write touched): records of
 those types added since are deleted, changed ones overwritten, deleted ones
-created again under a new id. Records of other types are kept. It takes its
-own backup first, so a restore can be restored. Lines: `deleted`, `restored`,
+created again under a new id. Records of other types are kept. It backs up
+first, so a restore can be restored. Lines: `deleted`, `restored`,
 `recreated`, `kept: <n> records of a type the backup does not hold` when some
-were kept, then `backup: <path>`; nothing differing, `nothing to restore: …`. The account is the backup's; another one named is
-refused. Asked every time.
+were kept, then `backup: <path>`; nothing differing, `nothing to restore: …`. It replays only where taken: the
+`<account>/<zone>/` it lies under. Asked every time.
 
 ## Zone settings and certificates
 

@@ -1,7 +1,7 @@
 {
   "name": "method",
   "description": "The development method every role follows: the lifecycle, the definition of done, the report, plan and question formats.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": {
     "name": "Lounis Bou",
     "email": "lounis.bou@gmail.com"
