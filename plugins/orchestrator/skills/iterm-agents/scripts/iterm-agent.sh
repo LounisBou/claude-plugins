@@ -56,6 +56,19 @@
 #   iterm-agent.sh home-release --tty /dev/ttysNNN --session-id <app session id> --pane-tty /dev/ttysNNN --resumed <session id>
 #     window 0's watcher closing the tab a moved orchestrator left, once the resumed host is
 #     proved running on window 0's tty, guarded by that tab's own id
+#   iterm-agent.sh bench-open --bench <dir> --dir <dir inside the bench> --title "Orch : <subject>"
+#                             --plugin-dir <abs dir> [--plugin-dir ...] [--settings <file>]
+#                             (--prompt <text> | --prompt-file <path>) [--model <id>] [--effort <level>]
+#                             [--permission-mode <mode>] [--mcp <names>] [--trust] [--no-verify]
+#     an orchestrator a harness opens and drives with no operator, from any process: a home
+#     server on a socket inside the bench's own tmux directory (<bench>/tmux), the
+#     orchestrator in window 0, so the agents it spawns are windows of that home; no tab, no
+#     remote control, the plugin directories and the settings file it is given. Refused unless
+#     --dir is a directory inside --bench, and the socket's file, a link followed, is too.
+#     Prints `socket=`, `tty=` (window 0's) and `session=` (the id naming its transcript).
+#   iterm-agent.sh close --bench <dir> --socket <orch-NNNNNNNN>
+#     ends that home server, every window of it, and proves no host is left on any of them;
+#     a home that is not running is closed already
 #   iterm-agent.sh takeover --tty /dev/ttysNNN --expect-title <substring>
 #     a successor's close of its predecessor in their home session: the predecessor's window
 #     0 killed and proved gone, then the successor's window moved to index 0

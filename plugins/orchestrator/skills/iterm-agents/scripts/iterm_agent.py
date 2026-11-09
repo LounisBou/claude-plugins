@@ -3536,13 +3536,14 @@ def home_panes(socket):
     return [l.split() for l in done.stdout.splitlines() if len(l.split()) == 2], ""
 
 
-def end_home(socket, what, listed=None, tab=""):
+def end_home(socket, what, listed=None, tab="", bench=False):
     """End a home server and prove it: no host left on any of its windows' ttys, and no tmux
     server left on its socket. `(session id of window 0, the ttys it held)`. A server whose
     window 0 session id cannot be read is NOT ended, and the death says why: a pause that
     recorded no session would wake a fresh conversation, the orchestrator's own lost. `listed`
     is `home_panes`' answer, when the caller has asked already. `tab` is the tab's tty, for the
-    line that says an end was not proved."""
+    line that says an end was not proved. A bench's home (`bench`) holds no conversation to
+    resume and has no watcher: window 0's session is not read, and the server is ended plainly."""
     panes, why = listed if listed is not None else home_panes(socket)
     session_id = ""
     if panes is not None:
@@ -3556,7 +3557,7 @@ def end_home(socket, what, listed=None, tab=""):
                     break
                 why = "window 0 on %s runs no host whose session can be read" % tty
     # A server answering with no pane at all holds no conversation to lose.
-    if not session_id and (panes is None or panes):
+    if not session_id and (panes is None or panes) and not bench:
         die("%s: refused: the session of the orchestrator in window 0 of the home server %s "
             "cannot be read: %s; the server was NOT ended and the orchestrator stays where it "
             "is: its conversation would be lost" % (what, socket, why))
@@ -3564,7 +3565,10 @@ def end_home(socket, what, listed=None, tab=""):
     # Read before the server is ended, as for a tab: a host the end of its pane does not end
     # is ended by its pid and start time.
     hosts = {tty: host_identity(tty) for tty in ttys}
-    kill_watched_home(socket)
+    if bench:
+        kill_home(socket)
+    else:
+        kill_watched_home(socket)
 
     def survives(tty):
         host = hosts.get(tty)
@@ -4087,7 +4091,7 @@ def host_cuts(role):
 def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_file="",
                   account_connectors=False, gate_tokens=0, effort="", keep_tools=(),
                   drop_tools=(), keep_synced_skills=False, session=(), plugin_dirs=(),
-                  caller_plugins=None, reports_to="", brief=""):
+                  caller_plugins=None, reports_to="", brief="", extra_settings=None):
     """The command iTerm2 runs in the new tab. It is HANDED to the app, never typed, so
     its length and its bytes stop being a hazard. No model argument at all when neither a
     tier nor an explicit identifier says which: the host's own default is the right
@@ -4166,7 +4170,9 @@ def build_command(dir_, title, model, mode, prompt_file, remote_control="", mcp_
     # everyone but a successor and an auditor, which the operator also drives from the
     # host's remote client (§52). The setting and the flag below are mutually exclusive —
     # only those two carry the flag, and they carry no such setting.
-    settings = {}
+    # A settings file the caller gives (a bench opening's) comes first: every key the launcher
+    # sets below replaces the file's.
+    settings = dict(extra_settings or {})
     if not remote_control:
         settings["remoteControlAtStartup"] = False
     # Dropping strict reopens the project's own "enable these MCP servers?" dialog that
@@ -4977,6 +4983,222 @@ def cmd_spawn(argv, pair_from=""):
         sys.exit(misplaced)
 
 
+# --- a bench opening ------------------------------------------------------------------
+#
+# A harness (the outcome evals') opens an orchestrator it drives with no operator, on a bench
+# of its own: a directory the caller names and everything the opening makes sits inside. The
+# home server's socket lives in the bench's own tmux directory, so no server of the machine
+# is touched and a tab is never asked for; the orchestrator runs in window 0 of a home session
+# marked like any other, so the agents it spawns are windows of that session. The caller gives
+# the plugin directories and the settings the orchestrator runs on, since it is no host session
+# whose launch they could be read from. No remote control. `close --bench --socket` ends the
+# home, every window of it. This is not an opening on the operator's order (`spawn --open`),
+# whose guards are untouched: it is the caller's own bench, and it refuses anything outside.
+
+# The bench's own tmux directory, where its home server's socket is made.
+BENCH_TMUX = "tmux"
+# A unix socket's address holds 104 bytes on macOS (108 on Linux), the terminating one included.
+SOCKET_PATH_MAX = 103
+BENCH_SOCKET_SHAPE = re.compile(r"^%s[0-9A-Za-z]{1,8}\Z" % re.escape(HOME_SOCKET_PREFIX))
+
+
+def under(parent, child):
+    """Whether the real path `child` is strictly inside the real path `parent`."""
+    return child != parent and os.path.commonpath([parent, child]) == parent
+
+
+def bench_root(path, what):
+    """The real path of the bench `path`: an absolute path to a directory that is neither the
+    root nor the operator's home."""
+    if not path:
+        die("%s: --bench is required" % what)
+    if not os.path.isabs(path):
+        die("%s: refused: --bench must be an absolute path, got '%s'" % (what, path))
+    real = os.path.realpath(path)
+    if not os.path.isdir(real):
+        die("%s: refused: --bench '%s' is not a directory" % (what, path))
+    if real == os.path.dirname(real) or real == os.path.realpath(os.path.expanduser("~")):
+        die("%s: refused: '%s' is not a bench: it holds more than a run's files" % (what, real))
+    return real
+
+
+def bench_server(bench, socket, what):
+    """Aim every tmux call of this process at the bench's own tmux directory, and prove the
+    socket of `socket` sits inside the bench and fits a socket's address: the real path of the
+    socket's file, a link of the bench's tmux directory followed. The path of the socket."""
+    os.environ["TMUX_TMPDIR"] = os.path.join(bench, BENCH_TMUX)
+    path = home_socket_path(socket)
+    if not under(bench, os.path.realpath(path)):
+        die("%s: refused: the socket %s leads out of the bench %s" % (what, path, bench))
+    if len(path) > SOCKET_PATH_MAX:
+        die("%s: refused: the socket path is too long for a socket's address (%d > %d): %s; "
+            "name a shorter bench" % (what, len(path), SOCKET_PATH_MAX, path))
+    return path
+
+
+def require_trust(path, grant, what):
+    """What the host's trust record says of `path`, for a launch that must not stop on the
+    workspace question: `already`, `recorded` (granted, for a directory the caller made),
+    `unread` (the record cannot be read, said on stderr), else a refusal."""
+    trusted = directory_is_trusted(path)
+    if trusted is True:
+        return "already"
+    if grant:
+        grant_directory_trust(path)
+        return "recorded"
+    if trusted is None:
+        print("%s: the trust record %s cannot be read, so whether the host trusts %s is "
+              "unknown; launching anyway" % (what, TRUST_FILE, path), file=sys.stderr)
+        return "unread"
+    die("%s: refused: the host has not been told to trust %s, so the session would stop on "
+        "its workspace question and never read its prompt. Pass --trust for a directory the "
+        "caller made" % (what, path))
+
+
+def cmd_bench_open(argv):
+    """Open an orchestrator on a bench: its home server on a socket inside the bench, the
+    orchestrator in window 0, no tab, no remote control, the plugin directories and the
+    settings it is given. Prints `socket=`, `tty=` (window 0's) and `session=` (its id, which
+    names its transcript); `close --bench <dir> --socket <socket>` ends it."""
+    p = argparse.ArgumentParser(prog="bench-open", add_help=False)
+    p.add_argument("--bench", default="")
+    p.add_argument("--dir", default="")
+    p.add_argument("--title", default="")
+    p.add_argument("--plugin-dir", dest="plugin_dir", action="append", default=[])
+    p.add_argument("--settings", default="")
+    p.add_argument("--prompt", default="")
+    p.add_argument("--prompt-file", dest="prompt_file", default="")
+    p.add_argument("--model", default="")
+    p.add_argument("--effort", default="")
+    p.add_argument("--permission-mode", dest="mode", default="auto")
+    p.add_argument("--mcp", action="append", default=[])
+    p.add_argument("--trust", action="store_true", default=False)
+    p.add_argument("--no-verify", dest="verify", action="store_false", default=True)
+    args, unknown = p.parse_known_args(argv)
+    if unknown:
+        die("bench-open: unknown option %s" % unknown[0])
+    bench = bench_root(args.bench, "bench-open")
+    if not args.dir:
+        die("bench-open: --dir is required")
+    work = os.path.realpath(args.dir)
+    if not under(bench, work) or not os.path.isdir(work):
+        die("bench-open: refused: --dir '%s' must be inside the bench %s, an existing "
+            "directory below it" % (args.dir, bench))
+    title = args.title
+    if (title_role(title) != "Orch" or not TITLE_SHAPE.match(title)
+            or re.search(r" \[[0-9A-Za-z]+\]\Z", title)):
+        die("bench-open: refused: --title needs the orchestrator's name, in the shape of an "
+            "orchestrator's title with a subject of at most 25 characters and no reference, "
+            "got '%s'" % title[:40])
+    if not args.plugin_dir:
+        die("bench-open: refused: the orchestrator runs on plugin directories, and it needs a "
+            "--plugin-dir")
+    for plugin_dir in args.plugin_dir:
+        if not os.path.isabs(plugin_dir):
+            die("bench-open: refused: --plugin-dir '%s' is not an absolute path" % plugin_dir)
+        if not os.path.isfile(os.path.join(plugin_dir, ".claude-plugin", "plugin.json")):
+            die("bench-open: refused: --plugin-dir '%s' is not a plugin: it has no "
+                ".claude-plugin/plugin.json" % plugin_dir)
+    extra = {}
+    if args.settings:
+        try:
+            with open(args.settings) as fh:
+                extra = json.load(fh)
+        except (OSError, ValueError) as exc:
+            die("bench-open: refused: --settings '%s' cannot be read as JSON (%s)"
+                % (args.settings, exc))
+        if not isinstance(extra, dict):
+            die("bench-open: refused: --settings '%s' is not a JSON object" % args.settings)
+    if bool(args.prompt) == bool(args.prompt_file):
+        die("bench-open: refused: an orchestrator needs a startup prompt, one of --prompt or "
+            "--prompt-file")
+    if args.prompt_file and not os.path.isfile(args.prompt_file):
+        die("bench-open: prompt file not found: %s" % args.prompt_file)
+    session = os.environ.get("ORCHESTRATOR_NEW_SESSION_ID") or str(uuid.uuid4())
+    socket = home_socket(session)
+    path = bench_server(bench, socket, "bench-open")
+    catalogue = read_catalogue()
+    servers = select_servers(args.mcp, catalogue)
+
+    if DRY_RUN:
+        launch = build_command(work, title, args.model, args.mode, args.prompt_file or
+                               state_file_path("prompt", title, "txt"), "", "", False, 0,
+                               args.effort, (), (), False, ("--session-id", session),
+                               args.plugin_dir, None, "", "", extra)
+        print("bench=%s" % bench)
+        print("launch=%s" % launch)
+        print("home_server=%s" % socket)
+        print("socket_path=%s" % path)
+        print("home_conf=%s" % plugin_path(HOME_CONF))
+        print("home_window0=%s" % title)
+        print("session=%s" % session)
+        print("mcp=%s" % (",".join(servers) or "none"))
+        print("tab=none")
+        print("remote_control=no")
+        return
+
+    trust_state = require_trust(work, args.trust, "bench-open")
+    mcp_file = write_mcp_file(servers, catalogue, title) if servers else ""
+    prompt_file = args.prompt_file or write_prompt_file(args.prompt, title)
+    launch = build_command(work, title, args.model, args.mode, prompt_file, "", mcp_file, False,
+                           0, args.effort, (), (), False, ("--session-id", session),
+                           args.plugin_dir, None, "", "", extra)
+    script = write_launch_script(launch, title)
+    os.makedirs(os.path.join(bench, BENCH_TMUX), mode=0o700, exist_ok=True)
+    print("bench-open: model %s, effort %s, trust %s"
+          % (args.model or "the host's default", args.effort or "the host's default",
+             trust_state), file=sys.stderr)
+    launch_epoch = time.time()
+    pane_tty = make_home(socket, title, work, "%s -l %s" % (LOGIN_SHELL, script), "bench-open")
+    made = {"terminal": NO_TAB, "home": socket, "tty": pane_tty}
+    if args.verify:
+        waited = 0
+        while waited < SPAWN_TIMEOUT and not cli_pid_on_tty(pane_tty):
+            time.sleep(1)
+            waited += 1
+        if not cli_pid_on_tty(pane_tty):
+            refuse_made(made, "bench-open: %s never started on %s after %ss"
+                        % (HOST_CLI, pane_tty, SPAWN_TIMEOUT))
+        print(verify_mode(work, launch_epoch, args.mode, args.model, made), file=sys.stderr)
+    print("socket=%s" % socket)
+    print("tty=%s" % pane_tty)
+    print("session=%s" % session)
+
+
+def close_bench(args):
+    """End a bench's home server and every window of it, proved: no host left on any of its
+    windows' ttys and no server left on its socket. A home that is not running is closed
+    already."""
+    for flag, given in (("--tty", args.tty), ("--expect-title", args.expect),
+                        ("--keep-checkout", args.keep_checkout)):
+        if given:
+            die("close: refused: a bench close takes no %s: it ends the home server named by "
+                "--socket, every window of it" % flag)
+    if not args.socket:
+        die("close: --bench needs --socket, the home server it opened")
+    if not args.bench:
+        die("close: --socket needs --bench, the bench it opened in")
+    if not BENCH_SOCKET_SHAPE.match(args.socket):
+        die("close: refused: '%s' is not the name of a home server the plugin makes" % args.socket)
+    bench = bench_root(args.bench, "close")
+    path = bench_server(bench, args.socket, "close")
+    if DRY_RUN:
+        print("close_bench=%s socket_path=%s" % (bench, path))
+        return
+    panes, why = home_panes(args.socket)
+    if panes is None:
+        if not home_answers(args.socket):
+            print("closed 0 session(s): the home server %s is not running" % args.socket)
+            return
+        die("close: the home server %s cannot be listed: %s; it was NOT ended"
+            % (args.socket, why))
+    _, ttys = end_home(args.socket, "close", (panes, why), bench=True)
+    trace_home(args.socket, "server", "close", "")
+    remove_exited_home_socket(args.socket)
+    print("closed %d session(s) of the home server %s" % (len(ttys), args.socket))
+    sys.stdout.flush()
+
+
 def cmd_screen(argv):
     """What a tab is showing, right now.
 
@@ -5161,7 +5383,12 @@ def cmd_close(argv):
     p.add_argument("--tty", dest="tty")
     p.add_argument("--expect-title", dest="expect", default="")
     p.add_argument("--keep-checkout", dest="keep_checkout", action="store_true", default=False)
+    p.add_argument("--bench", default="")
+    p.add_argument("--socket", default="")
     args, _ = p.parse_known_args(argv)
+    if args.bench or args.socket:
+        close_bench(args)
+        return
     if not args.tty:
         die("close: --tty is required")
     if DRY_RUN:
@@ -5560,13 +5787,13 @@ COMMANDS = {
     "move": cmd_move, "rotate": cmd_rotate, "resolve-tier": cmd_resolve_tier,
     "screen": cmd_screen, "trust": cmd_trust, "tools": cmd_tools,
     "home": cmd_home, "home-release": cmd_home_release, "takeover": cmd_takeover,
-    "home-watch": cmd_home_watch, "pair": cmd_pair,
+    "home-watch": cmd_home_watch, "pair": cmd_pair, "bench-open": cmd_bench_open,
 }
 
 
 def main():
     if len(sys.argv) < 2 or sys.argv[1] not in COMMANDS:
-        die("usage: iterm-agent.sh {list|spawn|verify|screen|resolve-tier|pair|close|move|rotate|trust|tools|home|home-release|takeover} [options] (see header)")
+        die("usage: iterm-agent.sh {list|spawn|verify|screen|resolve-tier|pair|close|move|rotate|trust|tools|home|home-release|takeover|bench-open} [options] (see header)")
     COMMANDS[sys.argv[1]](sys.argv[2:])
 
 
