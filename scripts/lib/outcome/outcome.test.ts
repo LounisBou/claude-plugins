@@ -5,12 +5,14 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, rmSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, it } from 'node:test'
+import { after, describe, it } from 'node:test'
 import { deckPath, run as outcome, parseOptions } from '../../outcome.ts'
+import type { Launcher, OpenRequest } from './orchestration.ts'
+import { WAIT_TOOL } from './transcript.ts'
 import type { Io } from '../io.ts'
 import { gitBench, isTestPath, printed, tail } from './bench.ts'
 import { parseCapsFile, parseCases, selectCases, type Case, type Caps } from './cases.ts'
-import { brief, overlap, runEvals, type Agent, type Judge, type Meter, type Ports, type Report } from './harness.ts'
+import { brief, overlap, runEvals, type Agent, type Judge, type Meter, type OrchestrationRun, type Ports, type Report } from './harness.ts'
 import { Ledger } from './ledger.ts'
 import { markdown, totals } from './report.ts'
 import { filesJudge, idleAgent, oracleAgent, silentMeter } from './stub.ts'
@@ -54,7 +56,7 @@ function fixture(merged = '2'): Fixture {
 const quiet = (): void => undefined
 
 /** A stand-in for the host's binary: its test kit passes when the plugin's value is 2. */
-// Asked headless, it answers as the host does: an arm in a bench sets the value to 2, and every
+// Asked headless, it answers as the host does: the single arm in a bench sets the value to 2, and every
 // answer carries a verdict a judge would give.
 const HOST = join(mkdtempSync(join(tmpdir(), 'outcome-host-')), 'host')
 writeFileSync(
@@ -63,7 +65,6 @@ writeFileSync(
     '#!/bin/bash',
     'if [ "$1" = -p ]; then',
     '  [ -d plugins/demo ] && printf "2\\n" > plugins/demo/value',
-    '  for arg; do [ "$prev" = --debug-file ] && printf "t [DEBUG] Loaded inline plugin from path: orchestrator\\n" > "$arg"; prev=$arg; done',
     `  printf '%s' '${JSON.stringify({ subtype: 'success', is_error: false, total_cost_usd: 1.25, result: '{"matches": true, "reason": "r", "findings": [{"severity": "minor", "text": "t"}]}' })}'`,
     '  exit 0',
     'fi',
@@ -149,6 +150,96 @@ describe('outcome evals: a dry run', () => {
     assert.equal(result?.grades?.files, 3)
     assert.equal(result?.costUsd, 0.5)
     assert.equal(report.spentUsd, 1)
+  })
+})
+
+/** The oracle for both arms, the orchestration arm reporting `orchestration` as a driven session does. */
+function driven(orchestration: OrchestrationRun, over: Partial<{ costUsd: number | null; error: string | null }> = {}): Agent {
+  return {
+    async run(input) {
+      const left = await oracleAgent().run(input)
+      return input.arm === 'orchestration' ? { ...left, ...over, orchestration } : left
+    },
+  }
+}
+
+describe('outcome evals: an orchestration driven as a session', () => {
+  it('grades it as the single arm is, and reports the agents it opened and the decisions it took', async () => {
+    const decisions = ['which model? → sonnet']
+    const report = await evaluate(fixture(), { agent: driven({ agentsOpened: 2, decisions, askedOperator: null }) })
+    const [single, orchestration] = report.cases[0]?.arms ?? []
+    assert.equal(orchestration?.status, 'done')
+    assert.equal(orchestration?.agentsOpened, 2)
+    assert.deepEqual(orchestration?.decisions, decisions)
+    assert.equal(orchestration?.grades?.referenceTests, true)
+    assert.equal(single?.agentsOpened, null)
+    assert.deepEqual(single?.decisions, [])
+    const text = markdown(report)
+    assert.match(text, /orchestration, agents opened: 2/)
+    assert.match(text, /orchestration, decision: which model\? → sonnet/)
+    assert.doesNotMatch(text, /single, agents opened/)
+  })
+
+  it('does not grade an orchestration that opened no agent, as an orchestration', async () => {
+    const report = await evaluate(fixture(), { agent: driven({ agentsOpened: 0, decisions: [], askedOperator: null }) })
+    const result = report.cases[0]?.arms[1]
+    assert.equal(result?.status, 'not-graded')
+    assert.equal(result?.reason, 'not graded: no agent opened')
+    assert.equal(result?.grades, null)
+    assert.equal(result?.agentsOpened, 0)
+    assert.match(markdown(report), /orchestration: not graded: no agent opened/)
+    assert.equal(totals(report, 'orchestration').suite, 0)
+  })
+
+  it('counts a run it did not grade apart from the runs it graded', async () => {
+    const report = await evaluate(fixture(), { agent: driven({ agentsOpened: 0, decisions: [], askedOperator: null }) })
+    const sum = totals(report, 'orchestration')
+    assert.equal(sum.ran, 0)
+    assert.equal(sum.notGraded, 1)
+    assert.equal(totals(report, 'single').notGraded, 0)
+    assert.match(markdown(report), /\| Arm \| Ran \| Not graded \|[^\n]*\n[^\n]*\n\| single \| 1 \| 0 \|[^\n]*\n\| orchestration \| 0 \| 1 \|/)
+  })
+
+  it('says why an orchestration stopped at its cap opened no agent', async () => {
+    const agent: Agent = { run: async ({ budgetUsd }) => ({ costUsd: budgetUsd, error: null, orchestration: { agentsOpened: 0, decisions: [], askedOperator: null } }) }
+    const result = (await evaluate(fixture(), { agent })).cases[0]?.arms[1]
+    assert.equal(result?.status, 'not-graded')
+    assert.match(result?.reason ?? '', /^not graded: no agent opened \(the arm reached its 8 USD share\)$/)
+  })
+
+  it('says an orchestration that opened agents left no commit in the graded checkout', async () => {
+    const idle: Agent = { run: async ({ arm }) => ({ costUsd: 1, error: null, ...(arm === 'orchestration' ? { orchestration: { agentsOpened: 2, decisions: [], askedOperator: null } } : {}) }) }
+    const report = await evaluate(fixture(), { agent: idle })
+    const [single, orchestration] = report.cases[0]?.arms ?? []
+    assert.equal(orchestration?.grades?.files, 0)
+    assert.ok(orchestration?.grades?.notes.includes('no commit in the graded checkout'))
+    assert.match(markdown(report), /- orchestration, no commit in the graded checkout/)
+    assert.equal(single?.grades?.notes.includes('no commit in the graded checkout'), false)
+  })
+
+  it('does not grade an orchestration its driver could not grade, and says why', async () => {
+    const report = await evaluate(fixture(), { agent: driven({ agentsOpened: 0, decisions: [], askedOperator: null, notGraded: 'the orchestrator did not start' }) })
+    const result = report.cases[0]?.arms[1]
+    assert.equal(result?.status, 'not-graded')
+    assert.equal(result?.reason, 'not graded: the orchestrator did not start')
+    assert.equal(result?.grades, null)
+    const failed = await evaluate(fixture(), { agent: driven({ agentsOpened: 2, decisions: [], askedOperator: null, notGraded: 'the meter cannot see the bench' }, { error: 'could not close the home: x' }) })
+    assert.equal(failed.cases[0]?.arms[1]?.reason, 'not graded: the meter cannot see the bench (could not close the home: x)')
+  })
+
+  it('ends on the question it put to the operator, and grades what it left', async () => {
+    const asked = { agentsOpened: 1, decisions: [], askedOperator: 'merge or wait?' }
+    const result = (await evaluate(fixture(), { agent: driven(asked) })).cases[0]?.arms[1]
+    assert.equal(result?.status, 'asked-operator')
+    assert.equal(result?.reason, 'stopped: asked the operator — merge or wait?')
+    assert.equal(result?.grades?.referenceTests, true)
+  })
+
+  it('keeps an error of the driver an error, whatever it opened', async () => {
+    const report = await evaluate(fixture(), { agent: driven({ agentsOpened: 0, decisions: [], askedOperator: null }, { error: 'the orchestrator never started' }) })
+    const result = report.cases[0]?.arms[1]
+    assert.equal(result?.status, 'error')
+    assert.equal(result?.reason, 'the orchestrator never started')
   })
 })
 
@@ -400,23 +491,86 @@ describe('outcome evals: the command', () => {
     assert.equal(typeof measure === 'string' ? measure : measure.judgeModel, 'j')
   })
 
-  it('runs a pilot through the host, under the pilot caps, with the arms and the judge it names', async () => {
+  /** A short bench: a socket's address holds 104 bytes, which a temporary directory's path can pass. */
+  const shorts: string[] = []
+  const shortDir = (): string => {
+    const dir = mkdtempSync('/tmp/oc-')
+    shorts.push(dir)
+    return dir
+  }
+  after(() => shorts.forEach(dir => rmSync(dir, { recursive: true, force: true })))
+  const shortOut = (): string => join(shortDir(), 'run')
+
+  /** A launcher whose orchestrator opens one agent, sets the value to 2 and declares itself done. */
+  function benchOrchestrator(projects: string): Launcher & { readonly requests: OpenRequest[]; readonly closed: string[] } {
+    const requests: OpenRequest[] = []
+    const closed: string[] = []
+    const session = '11111111-2222-3333-4444-555555555555'
+    return {
+      requests,
+      closed,
+      async open(request) {
+        requests.push(request)
+        write(request.dir, 'plugins/demo/value', '2\n')
+        const turn = (message: unknown): string => JSON.stringify(message)
+        mkdirSync(join(projects, '-bench'), { recursive: true })
+        writeFileSync(
+          join(projects, '-bench', `${session}.jsonl`),
+          [
+            turn({ type: 'user', message: { role: 'user', content: 'go' } }),
+            turn({ type: 'assistant', message: { role: 'assistant', stop_reason: 'tool_use', content: [{ type: 'text', text: 'Decision: which model? → sonnet' }, { type: 'tool_use', id: 't', name: WAIT_TOOL, input: { kind: 'done' } }] } }),
+            turn({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 't', content: 'ok' }] } }),
+            turn({ type: 'assistant', message: { role: 'assistant', stop_reason: 'end_turn', content: [{ type: 'text', text: 'Done.' }] } }),
+          ].join('\n'),
+        )
+        return { socket: 'orch-abc12345', tty: '/dev/ttys009', session }
+      },
+      panes: async () => (closed.length > 0 ? null : [{ window: 0, id: '%0', tty: '/dev/ttys100' }, { window: 1, id: '%1', tty: '/dev/ttys101' }]),
+      servers: async () => [],
+      async close(_bench, socket) {
+        closed.push(socket)
+        return 'closed 2 session(s)'
+      },
+    }
+  }
+
+  it('runs a pilot through the host and an orchestrator session, under the pilot caps, with the judge it names', async () => {
     const root = repository()
-    const out = join(mkdtempSync(join(tmpdir(), 'outcome-out-')), 'run')
+    const out = shortOut()
     const deck = join(mkdtempSync(join(tmpdir(), 'outcome-deck-')), 'deck.json')
+    const projects = mkdtempSync(join(tmpdir(), 'outcome-projects-'))
+    const launcher = benchOrchestrator(projects)
     const args = ['pilot', '--out', out, '--host', HOST, '--model', 'm', '--judge-model', 'j', '--deck', deck]
-    assert.equal(await outcome(root, args, recorder(), new AbortController().signal), 0)
+    const io = { ...recorder(), env: { ORCHESTRATOR_PROJECTS_DIR: projects } }
+    assert.equal(await outcome(root, args, io, new AbortController().signal, Date.now, { launcher, pollMs: 5 }), 0)
     const report: Report = JSON.parse(readFileSync(join(out, 'report.json'), 'utf8'))
     assert.equal(report.mode, 'pilot')
-    for (const result of report.cases[0]?.arms ?? []) {
-      assert.equal(result.status, 'done')
-      assert.equal(result.grades?.referenceTests, true)
-      assert.equal(result.grades?.intent?.matches, true)
-      assert.deepEqual(result.grades?.review, { blocking: 0, minor: 1 })
-      assert.equal(result.costUsd, 3.75)
+    const [single, orchestration] = report.cases[0]?.arms ?? []
+    for (const result of [single, orchestration]) {
+      assert.equal(result?.status, 'done')
+      assert.equal(result?.grades?.referenceTests, true)
+      assert.equal(result?.grades?.intent?.matches, true)
+      assert.deepEqual(result?.grades?.review, { blocking: 0, minor: 1 })
     }
-    assert.equal(report.spentUsd, 7.5)
+    // the host's own figure and two judgments for the single arm, the two judgments alone for the orchestration (its deck is empty)
+    assert.equal(single?.costUsd, 3.75)
+    assert.equal(orchestration?.costUsd, 2.5)
+    assert.equal(orchestration?.agentsOpened, 1)
+    assert.deepEqual(orchestration?.decisions, ['which model? → sonnet'])
     assert.ok('enabledPlugins' in JSON.parse(readFileSync(join(out, 'settings.json'), 'utf8')))
+    const [request] = launcher.requests
+    assert.equal(request?.title, 'Orch : eval value-is-two')
+    assert.equal(request?.settingsFile, join(out, 'settings.json'))
+    assert.deepEqual(request?.pluginDirs, [join(root, 'plugins', 'orchestrator'), join(root, 'plugins', 'method')])
+    assert.equal(launcher.closed.length, 1)
+  })
+
+  it('refuses a paid run whose bench is too long for the orchestration arm\u2019s socket, before any arm', async () => {
+    const root = repository()
+    const out = join(shortDir(), 'x'.repeat(80))
+    const args = ['pilot', '--out', out, '--host', HOST, '--model', 'm', '--judge-model', 'j']
+    await assert.rejects(outcome(root, args, recorder(), new AbortController().signal), /too long for a socket's address/)
+    assert.equal(existsSync(join(out, 'report.json')), false)
   })
 
   it('refuses a paid run whose orchestrator depends on a plugin the checkout lacks, before any arm', async () => {

@@ -10,10 +10,24 @@ import type { Bench, Diff } from './bench.ts'
 import { ARMS, type Arm, type Case, type Caps, type Mode } from './cases.ts'
 import { Ledger, type Account } from './ledger.ts'
 
+/** What an orchestration driven as a session reports of its run. */
+export interface OrchestrationRun {
+  /** The agent sessions it opened, besides its own. */
+  readonly agentsOpened: number
+  /** The decisions it took in place of the operator, `question → choice`. */
+  readonly decisions: readonly string[]
+  /** The question of the turn that ended waiting on the operator, or null. */
+  readonly askedOperator: string | null
+  /** Why the driver ended the arm with nothing to grade; absent when it has something. */
+  readonly notGraded?: string
+}
+
 export interface AgentRun {
   /** What the arm reports it spent, when it reports it. */
   readonly costUsd: number | null
   readonly error: string | null
+  /** Set by an arm that is an orchestrator session; the single arm and the dry run's oracle leave it out. */
+  readonly orchestration?: OrchestrationRun
 }
 
 export interface AgentInput {
@@ -85,7 +99,7 @@ export interface Ports {
   readonly armMs: number
 }
 
-export type Status = 'done' | 'stopped-at-cap' | 'deadline' | 'cancelled' | 'error' | 'not-started'
+export type Status = 'done' | 'stopped-at-cap' | 'deadline' | 'cancelled' | 'error' | 'not-started' | 'asked-operator' | 'not-graded'
 
 export interface Grades {
   /** The plugin's suite on the arm's result; null when it fails on the reference too. */
@@ -110,6 +124,10 @@ export interface ArmResult {
   readonly reason: string | null
   readonly costUsd: number
   readonly durationSeconds: number
+  /** The agent sessions an orchestration opened; null for an arm that is not one. */
+  readonly agentsOpened: number | null
+  /** The decisions an orchestration took in place of the operator. */
+  readonly decisions: readonly string[]
   readonly grades: Grades | null
 }
 
@@ -198,6 +216,31 @@ interface Worked {
   readonly status: Exclude<Status, 'not-started'>
   readonly reason: string | null
   readonly costUsd: number
+  readonly orchestration: OrchestrationRun | null
+}
+
+/**
+ * An orchestration its driver could not grade is not graded, an error of its close said beside.
+ * An orchestration that opened no agent measured a single session: it is not graded, whatever
+ * stopped it. One that ended on a question for the operator is stopped there, and graded on
+ * what it left. An error or a cancellation stays what it is.
+ */
+function asOrchestration(worked: Worked, orchestration: OrchestrationRun | undefined): Worked {
+  if (orchestration === undefined) return worked
+  const kept = { ...worked, orchestration }
+  if (worked.status === 'cancelled') return kept
+  if (orchestration.notGraded !== undefined) {
+    const error = worked.status === 'error' ? ` (${worked.reason ?? ''})` : ''
+    return { ...kept, status: 'not-graded', reason: `not graded: ${orchestration.notGraded}${error}` }
+  }
+  if (worked.status === 'error') return kept
+  if (orchestration.agentsOpened === 0) {
+    return { ...kept, status: 'not-graded', reason: `not graded: no agent opened${worked.reason === null ? '' : ` (${worked.reason})`}` }
+  }
+  if (worked.status === 'done' && orchestration.askedOperator !== null) {
+    return { ...kept, status: 'asked-operator', reason: `stopped: asked the operator — ${orchestration.askedOperator}` }
+  }
+  return kept
 }
 
 async function work(task: Case, arm: Arm, dir: string, account: Account, input: RunInput): Promise<Worked> {
@@ -234,15 +277,19 @@ async function work(task: Case, arm: Arm, dir: string, account: Account, input: 
   const final = await probe.spent().catch(() => 0)
   const costUsd = Math.max(reading, final, result.costUsd ?? 0)
   account.charge(costUsd)
-  if (controller.signal.aborted) {
-    const why = reasonOf(controller.signal)
-    if (why === 'cap') return { status: 'stopped-at-cap', reason: `the arm reached its ${account.armUsd} USD share`, costUsd }
-    if (why === 'deadline') return { status: 'deadline', reason: `the arm worked past ${Math.round(armMs / 60000)} minutes`, costUsd }
-    return { status: 'cancelled', reason: 'the run was cancelled', costUsd }
-  }
-  if (costUsd >= account.armUsd) return { status: 'stopped-at-cap', reason: `the arm reached its ${account.armUsd} USD share`, costUsd }
-  if (result.error !== null) return { status: 'error', reason: result.error, costUsd }
-  return { status: 'done', reason: null, costUsd }
+  const worked = ((): Worked => {
+    const base = { costUsd, orchestration: null }
+    if (controller.signal.aborted) {
+      const why = reasonOf(controller.signal)
+      if (why === 'cap') return { ...base, status: 'stopped-at-cap', reason: `the arm reached its ${account.armUsd} USD share` }
+      if (why === 'deadline') return { ...base, status: 'deadline', reason: `the arm worked past ${Math.round(armMs / 60000)} minutes` }
+      return { ...base, status: 'cancelled', reason: 'the run was cancelled' }
+    }
+    if (costUsd >= account.armUsd) return { ...base, status: 'stopped-at-cap', reason: `the arm reached its ${account.armUsd} USD share` }
+    if (result.error !== null) return { ...base, status: 'error', reason: result.error }
+    return { ...base, status: 'done', reason: null }
+  })()
+  return asOrchestration(worked, result.orchestration)
 }
 
 async function judged<T>(account: Account, notes: string[], what: string, ask: (budgetUsd: number) => Promise<Judgment<T>>): Promise<T | null> {
@@ -263,10 +310,14 @@ async function judged<T>(account: Account, notes: string[], what: string, ask: (
   return judgment.verdict
 }
 
-async function grade(task: Case, dir: string, calibration: Calibration, account: Account, input: RunInput): Promise<Grades> {
+/** What the grades say of an orchestration whose agents left the graded checkout as it was. */
+const NO_COMMIT = 'no commit in the graded checkout'
+
+async function grade(task: Case, dir: string, calibration: Calibration, account: Account, input: RunInput, orchestration: OrchestrationRun | null): Promise<Grades> {
   const { bench, judge } = input.ports
   const notes: string[] = []
   const diff = await bench.changes(dir, task.base)
+  if (diff.files.length === 0 && (orchestration?.agentsOpened ?? 0) > 0) notes.push(NO_COMMIT)
   const reference = await bench.reference(task.base, task.merge)
 
   let suite: boolean | null = null
@@ -310,7 +361,7 @@ async function grade(task: Case, dir: string, calibration: Calibration, account:
 }
 
 function notStarted(arm: Arm, reason: string): ArmResult {
-  return { arm, status: 'not-started', reason, costUsd: 0, durationSeconds: 0, grades: null }
+  return { arm, status: 'not-started', reason, costUsd: 0, durationSeconds: 0, agentsOpened: null, decisions: [], grades: null }
 }
 
 export async function runEvals(input: RunInput): Promise<Report> {
@@ -344,9 +395,10 @@ export async function runEvals(input: RunInput): Promise<Report> {
       const worked = await work(task, arm, dir, account, input)
       const durationSeconds = Math.round((ports.now() - started) / 1000)
       if (worked.status === 'cancelled') stopped = 'the run was cancelled'
-      const grades = stopped === null ? await grade(task, dir, calibration, account, input) : null
+      const grades = stopped === null && worked.status !== 'not-graded' ? await grade(task, dir, calibration, account, input, worked.orchestration) : null
       ports.log(`${task.id}: ${arm} ${worked.status}, ${account.spent.toFixed(2)} USD`)
-      arms.push({ arm, status: worked.status, reason: worked.reason, costUsd: account.spent, durationSeconds, grades })
+      const { orchestration } = worked
+      arms.push({ arm, status: worked.status, reason: worked.reason, costUsd: account.spent, durationSeconds, agentsOpened: orchestration?.agentsOpened ?? null, decisions: orchestration?.decisions ?? [], grades })
     }
     cases.push({ id: task.id, pr: task.pr, plugin: task.plugin, calibration, arms })
   }

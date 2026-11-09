@@ -1,10 +1,9 @@
-// The real arms, meter and judge: the host's command line run headless in the arm's bench,
+// The real single arm, meter and judge: the host's command line run headless in the arm's bench,
 // the orchestrator's deck read for what an orchestration's sessions spend, and the host asked
-// for the two judgments. What decides is pure and tested here; the processes are a thin layer.
+// for the two judgments. The orchestration arm is an interactive session (orchestration.ts).
+// What decides is pure and tested here; the processes are a thin layer.
 import { spawn } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import type { Arm } from './cases.ts'
 import type { Agent, AgentRun, Finding, IntentVerdict, Judge, JudgeInput, Judgment, Meter, ReviewVerdict } from './harness.ts'
 
 /** A diff longer than this is cut for a judge, and the cut said. */
@@ -52,11 +51,7 @@ export function parseHostResult(text: string): HostResult | Error {
 export interface HostOptions {
   readonly host: string
   readonly model: string
-  /** The orchestrator the orchestration arm loads: this checkout's, the release measured. */
-  readonly orchestratorDir: string
-  /** The plugins the orchestrator depends on, from the same checkout: without them the host disables it. */
-  readonly dependencyDirs: readonly string[]
-  /** A settings file that turns off every installed orchestrator, so only `orchestratorDir` loads. */
+  /** A settings file that turns off every installed orchestrator, so only the arm's own loads. */
   readonly settingsFile: string
 }
 
@@ -83,35 +78,12 @@ export function dependencyNames(manifest: unknown): string[] | Error {
   return names
 }
 
-/** Where the host writes the orchestration arm's debug log: beside its bench, out of its diff. */
-export function hostLogOf(dir: string): string {
-  return `${dir}.host.log`
-}
-
-/**
- * The host's own refusal to load a plugin, read from its debug log: an orchestration whose
- * orchestrator never loaded measured a single session, and is reported as an error, not graded.
- */
-export function loadErrorOf(log: string): string | null {
-  const line = log.split('\n').find(entry => entry.includes('Plugin loading errors') || entry.includes('Plugin not available'))
-  return line === undefined ? null : `the orchestrator did not load: ${line.replace(/^\S+ \[\w+\] /, '').slice(0, 300)}`
-}
-
-/** What the orchestration arm types: the orchestrator's skill, then the same brief. */
-export function armPrompt(arm: Arm, prompt: string): string {
-  return arm === 'orchestration' ? `/orchestrator:orchestrator ${prompt}` : prompt
-}
-
-/** The host's arguments for one arm: headless, its budget, its model, no question asked. */
-export function agentArgs(options: HostOptions, arm: Arm, prompt: string, budgetUsd: number): string[] {
-  const args = ['-p', armPrompt(arm, prompt), '--output-format', 'json', '--max-budget-usd', budgetUsd.toFixed(2), '--model', options.model, '--settings', options.settingsFile]
+/** The host's arguments for the single arm: headless, its budget, its model, no question asked. */
+export function agentArgs(options: HostOptions, prompt: string, budgetUsd: number): string[] {
+  const args = ['-p', prompt, '--output-format', 'json', '--max-budget-usd', budgetUsd.toFixed(2), '--model', options.model, '--settings', options.settingsFile]
   // The bench is a private clone with no remote: nothing an arm does reaches the forge, so its
-  // tools run unasked, as an orchestrator's agents do.
+  // tools run unasked.
   args.push('--dangerously-skip-permissions')
-  if (arm === 'orchestration') {
-    args.push('--plugin-dir', options.orchestratorDir)
-    for (const dir of options.dependencyDirs) args.push('--plugin-dir', dir)
-  }
   return args
 }
 
@@ -160,22 +132,18 @@ export function runOf(exit: Exit): AgentRun {
   return { costUsd: answer.costUsd, error: null }
 }
 
-/** The arms as the host runs them; `close` ends the sessions an orchestration left open. */
-export function hostAgent(options: HostOptions, close: (arm: Arm) => Promise<void>): Agent {
+/** The single arm as the host runs it. */
+export function hostAgent(options: HostOptions): Agent {
   return {
-    async run({ arm, dir, prompt, budgetUsd, signal }) {
-      try {
-        const args = agentArgs(options, arm, prompt, budgetUsd)
-        if (arm !== 'orchestration') return runOf(await host(options.host, args, dir, signal))
-        const log = hostLogOf(dir)
-        const run = runOf(await host(options.host, [...args, '--debug-file', log], dir, signal))
-        const refused = existsSync(log) ? loadErrorOf(readFileSync(log, 'utf8')) : 'the orchestrator did not load: the host wrote no debug log'
-        return refused === null ? run : { costUsd: run.costUsd, error: refused }
-      } finally {
-        await close(arm)
-      }
+    async run({ dir, prompt, budgetUsd, signal }) {
+      return runOf(await host(options.host, agentArgs(options, prompt, budgetUsd), dir, signal))
     },
   }
+}
+
+/** Each arm to its own driver. */
+export function byArm(single: Agent, orchestration: Agent): Agent {
+  return { run: input => (input.arm === 'orchestration' ? orchestration : single).run(input) }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -183,6 +151,7 @@ export function hostAgent(options: HostOptions, close: (arm: Arm) => Promise<voi
 
 export interface DeckSessionUsage {
   readonly key: string
+  /** The session's terminal; null for a remote one. */
   readonly tty: string | null
   /** The session's spend this week, at API list prices; null when unpriced. */
   readonly weekUsd: number | null
@@ -211,31 +180,28 @@ export function deckSessions(raw: unknown): DeckSessionUsage[] {
 }
 
 /**
- * What the sessions opened since `before` have spent: a session already listed at the start is
- * someone else's work. Each session counts at the highest week figure seen, so one that leaves
- * the deck or crosses the week's start keeps what it spent. An unpriced session counts nothing
- * here: the host's own figure for the lead still holds the arm.
+ * What the arm's sessions opened since `before` have spent: a session already listed at the start,
+ * or one `ours` does not claim, is someone else's work. Each session counts at the highest week
+ * figure seen, so one that leaves the deck or crosses the week's start keeps what it spent. An
+ * unpriced session counts nothing.
  */
 export class DeckLedger {
   readonly #before: ReadonlySet<string>
+  readonly #ours: (session: DeckSessionUsage) => boolean
   readonly #seen = new Map<string, DeckSessionUsage>()
 
-  constructor(before: readonly DeckSessionUsage[]) {
+  constructor(before: readonly DeckSessionUsage[], ours: (session: DeckSessionUsage) => boolean) {
     this.#before = new Set(before.map(session => session.key))
+    this.#ours = ours
   }
 
   read(now: readonly DeckSessionUsage[]): number {
     for (const session of now) {
-      if (this.#before.has(session.key)) continue
+      if (this.#before.has(session.key) || !this.#ours(session)) continue
       const earlier = this.#seen.get(session.key)
       if (earlier === undefined || (session.weekUsd ?? 0) >= (earlier.weekUsd ?? 0)) this.#seen.set(session.key, session)
     }
     return [...this.#seen.values()].reduce((sum, session) => sum + (session.weekUsd ?? 0), 0)
-  }
-
-  /** The terminals of the new sessions still listed in `now`. */
-  openSince(now: readonly DeckSessionUsage[]): string[] {
-    return now.filter(session => !this.#before.has(session.key) && session.tty !== null).map(session => session.tty ?? '')
   }
 }
 
@@ -249,32 +215,15 @@ function readDeck(path: string): DeckSessionUsage[] {
 }
 
 /**
- * The meter over the deck at `path`, and the closer that ends what an orchestration left open:
- * every session it opened that the deck still lists, closed by the launcher's own close.
+ * The meter over the deck at `path`: what the sessions opened since the arm started on the
+ * terminals `ttys` names have spent, the panes of the arm's home, and no other session of the machine.
  */
-export function deckMeter(path: string, closeTty: (tty: string) => Promise<void>): { meter: Meter; close: (arm: Arm) => Promise<void> } {
-  let current: DeckLedger | null = null
+export function deckMeter(path: string, ttys: () => ReadonlySet<string>): Meter {
   return {
-    meter: {
-      async start() {
-        const ledger = new DeckLedger(readDeck(path))
-        current = ledger
-        return { spent: async () => ledger.read(readDeck(path)) }
-      },
+    async start() {
+      const ledger = new DeckLedger(readDeck(path), session => session.tty !== null && ttys().has(session.tty))
+      return { spent: async () => ledger.read(readDeck(path)) }
     },
-    async close(arm) {
-      if (arm !== 'orchestration' || current === null) return
-      for (const tty of current.openSince(readDeck(path))) await closeTty(tty).catch(() => undefined)
-    },
-  }
-}
-
-/** The launcher's close of one tab, by its terminal. */
-export function launcherClose(orchestratorDir: string): (tty: string) => Promise<void> {
-  const script = join(orchestratorDir, 'skills', 'iterm-agents', 'scripts', 'iterm_agent.py')
-  return async tty => {
-    if (!/^\/dev\/[A-Za-z0-9]+$/.test(tty)) return
-    await host('python3', [script, 'close', '--tty', tty], orchestratorDir, AbortSignal.timeout(60_000))
   }
 }
 
