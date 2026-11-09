@@ -35,3 +35,8 @@ export function sessionName(prefix: Prefix, subject: string): string {
   if (parseSessionName(name) === null) throw new Error(`not a session subject: ${JSON.stringify(subject)} (1 to 25 characters, no blank at either end)`)
   return name
 }
+
+/** A name of the former shape, `Orch : x`, written the current way, `Orch: x`; any other name as given. */
+export function currentSessionName(name: string): string {
+  return name.replace(/^(Orch|Coord|Agent|Audit) : /u, '$1: ')
+}

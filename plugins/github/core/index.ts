@@ -2,7 +2,7 @@
 export { configDir, setting, stateDir, type Env } from './paths.ts'
 export { readText, update, withLock, writeAtomic, type LockOptions } from './store.ts'
 export { DeadlineExceeded, withDeadline } from './deadline.ts'
-export { parseSessionName, ROLES, sessionName, type Prefix, type Role, type SessionName } from './names.ts'
+export { currentSessionName, parseSessionName, ROLES, sessionName, type Prefix, type Role, type SessionName } from './names.ts'
 export { installRecordPath, locatePlugin, NotInstalled } from './locate.ts'
 export { recordedInstallPaths } from './install-record.ts'
 export { gitSubcommand, innerLine, readCommands, redirectsToFile, simpleCommands } from './shell.ts'

@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, it } from 'node:test'
 import { configDirOf, ENV, gateThresholds, isSpawned } from './env.ts'
-import { configDir, DeadlineExceeded, installRecordPath, locatePlugin, NotInstalled, parseSessionName, readText, recordedInstallPaths, sessionName, setting, stateDir, update, withDeadline, withLock, writeAtomic } from './index.ts'
+import { configDir, currentSessionName, DeadlineExceeded, installRecordPath, locatePlugin, NotInstalled, parseSessionName, readText, recordedInstallPaths, sessionName, setting, stateDir, update, withDeadline, withLock, writeAtomic } from './index.ts'
 
 const scratch = (): string => mkdtempSync(join(tmpdir(), 'core-'))
 
@@ -140,6 +140,13 @@ describe('names', () => {
   it('builds a name, or refuses a subject that does not fit', () => {
     assert.equal(sessionName('Orch', 'billing'), 'Orch: billing')
     assert.throws(() => sessionName('Agent', ' x'), /not a session subject/)
+  })
+
+  it('writes a name of the former shape the current way, its reference kept, any other name as given', () => {
+    assert.equal(currentSessionName('Orch : billing'), 'Orch: billing')
+    assert.equal(currentSessionName('Coord : ops [abc123]'), 'Coord: ops [abc123]')
+    assert.equal(currentSessionName('Agent: x'), 'Agent: x')
+    for (const name of ['billing', 'Orchestra : x', ' Orch : x', '']) assert.equal(currentSessionName(name), name, name)
   })
 })
 
