@@ -71,17 +71,30 @@ npm run outcome -- measure --out <dir> --model <agent model> --judge-model <judg
   replays one case under the run's caps, the way a reserve replaces a case.
 - The models are named on the command line, never in the repository. Two runs compare only
   on the same pair.
-- Each arm is the host's command line run headless in its bench, with its share of the cap
-  as the host's own budget. Its tools run unasked: the bench is a private clone without a
-  remote. The single arm runs with every installed orchestrator turned off; the
-  orchestration arm loads this checkout's `plugins/orchestrator`, the release measured, with
-  the plugins its manifest depends on, and is asked through the orchestrator's skill. An
-  orchestrator the host refuses to load makes the arm an error, read from the host's debug log
-  beside the bench, never a single session graded as an orchestration.
+- The single arm is the host's command line run headless in its bench, with its share of the
+  cap as the host's own budget. Its tools run unasked: the bench is a private clone without a
+  remote. It runs with every installed orchestrator turned off.
+- The orchestration arm is an orchestrator session driven the way the operator drives one. The
+  launcher of this checkout's `plugins/orchestrator` (the release measured, with the plugins its
+  manifest depends on) opens `Orch : eval <case id>` in a tmux home of its own under
+  `<dir>/tmux`, detached from the operator's windows, Remote Control off, on the run's settings
+  file, typed `/orchestrator:orchestrator build` and then the brief. The brief says no operator
+  answers: the orchestrator decides each question by its own recommendation and writes it as a
+  `Decision: <question> → <choice>` line, which the report lists. The agents it spawns are
+  windows of the same home. `--out` must be short and at least two levels below `/` (a socket's
+  address holds 103 bytes): `/tmp/oc/1`, not a temporary directory of macOS.
+- The harness reads the orchestrator's transcript (`<configDir>/projects/*/<session>.jsonl`, or
+  under `ORCHESTRATOR_PROJECTS_DIR`) and ends the arm on the first turn that declares `done`
+  or waits on the operator (reported `asked-operator`, with the question, and graded on what it
+  left), at the arm's share of the cap, or at its deadline. A turn is concluded only when two
+  polls in a row read the same idle state. An orchestration that opened no agent is reported
+  `not graded: no agent opened`; one that opened some reports their number.
+- Every session of the arm is closed through the launcher's `close --bench --socket`, which ends
+  the home with the orchestrator's window and its agents'; a second close proves none is left,
+  and a session left open makes the arm an error.
 - An orchestration's sessions are metered through the orchestrator's `deck.json` (`--deck`
   names another path): only the sessions opened after the arm started count, so the
-  operator's own sessions are never charged to it. When the arm ends or is stopped, the
-  sessions it opened that the deck still lists are closed by the launcher's close.
+  operator's own sessions are never charged to it.
 - `--host <binary>` names the host's command line when it is not `claude` on the path.
 
 A run stopped at a cap still writes its report, with what it measured and why it stopped.
