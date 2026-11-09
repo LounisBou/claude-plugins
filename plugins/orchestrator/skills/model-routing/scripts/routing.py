@@ -276,13 +276,33 @@ def size_bucket(files, lines):
 CLASS_TIERS = {
     "orchestrator": "deep", "successor": "deep", "decision-round": "deep",
     "contract-phase": "deep", "final-verification": "deep",
-    "behaviour-phase": "standard", "conversion-phase": "standard", "n-bis": "standard",
+    "behaviour-phase": "standard", "conversion-phase": "standard", "corrective": "standard",
     "review-collector": "standard", "comments": "standard", "review-lens": "standard",
     "search": "light",
 }
 # Work nothing downstream re-checks: never explored online, held offline to a pair that never failed.
 NEVER_EXPLORED = {"orchestrator", "successor", "decision-round", "contract-phase", "final-verification"}
 EXPLORE_AFTER = 3
+# A class's former name, still read wherever data written under it lives: the dispatch record's
+# rows, the trials, the tables (a table holding both keys reads the current one), the command line.
+FORMER_CLASSES = {"n-bis": "corrective"}
+
+
+def class_name(name):
+    """The class a name read in data or on the command line stands for; a value that is not a
+    string is no class name and is returned unchanged, for its row to be passed over.
+    """
+    return FORMER_CLASSES.get(name, name) if isinstance(name, str) else name
+
+
+def table_entries(table):
+    """A table's entries, each keyed by its current class name."""
+    entries = dict(table.get("entries", {}))
+    for former, current in FORMER_CLASSES.items():
+        if former in entries:
+            entries.setdefault(current, entries[former])
+            del entries[former]
+    return entries
 
 
 def git_top(repo):
@@ -417,7 +437,7 @@ def ladder_down(pair, entry=None):
     return notch
 
 
-def nbis_pair(pair):
+def corrective_pair(pair):
     """The pair a phase's corrective round runs at: the same family one effort level up, the
     same pair at the top. The round is the retry - cheap first, escalate on failure. None for a
     pair with no effort to raise: the host's default, a bare model, an effort the list lacks.
@@ -458,7 +478,7 @@ def lookup(repo, cls, size=None):
     beyond = None
     for scope, shipped in (("project:" + slug, False), ("profile:" + profile, False), ("global", False),
                            ("profile:" + profile, True), ("global", True)):
-        entry = read_json(table_path(scope, shipped), {}).get("entries", {}).get(cls)
+        entry = table_entries(read_json(table_path(scope, shipped), {})).get(cls)
         if not entry or not entry.get("pair"):
             continue
         source = "shipped:" + scope if shipped else scope
@@ -498,6 +518,8 @@ def read_rows(record):
             except ValueError:
                 row = None
             if isinstance(row, dict):
+                if "class" in row:
+                    row["class"] = class_name(row["class"])
                 rows.append(row)
             else:
                 warn("%s:%d does not read as a record row, skipped" % (record, n))
@@ -552,6 +574,7 @@ def cmd_pick(argv):
     p.add_argument("--files")
     p.add_argument("--lines")
     a = p.parse_args(argv)
+    a.cls = class_name(a.cls)
     if a.cls not in CLASS_TIERS:
         die("pick: unknown class: %s (expected one of %s)" % (a.cls, ", ".join(sorted(CLASS_TIERS))))
     size = phase_size(a.files, a.lines)
@@ -564,9 +587,9 @@ def cmd_pick(argv):
         below = ladder_down(pair, entry)
         if below:
             print("explore=%s" % below)
-    up = nbis_pair(pair)
+    up = corrective_pair(pair)
     if up:
-        print("nbis=%s" % up)
+        print("corrective=%s" % up)
 
 
 # The calibration engine's subcommands live in calibration.py, which reads this file's map,

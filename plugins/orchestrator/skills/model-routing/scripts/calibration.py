@@ -28,10 +28,10 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from routing import (  # noqa: E402
     CLASS_TIERS, DEFAULTS_DIR, EFFORTS, MIN_TRIALS,
-    ROUTING_DIR, carries_alias, cost_rule, count_at, die,
+    ROUTING_DIR, carries_alias, class_name, cost_rule, count_at, die,
     git_top, infer_profile, is_stale, manifest_path, note_alias, parse_pair,
     project_slug, read_json, read_map, read_rows, resolve_alias, size_bucket,
-    table_path, tier_order, warn, write_json,
+    table_entries, table_path, tier_order, warn, write_json,
 )
 
 
@@ -123,6 +123,7 @@ def read_trials(path):
             except (ValueError, TypeError, AttributeError):
                 ok = False
             if ok:
+                t["class"] = class_name(t["class"])
                 out.append(t)
             else:
                 warn("%s:%d does not read as a trial, skipped" % (path, n))
@@ -425,6 +426,9 @@ def load_manifest(slug):
     m = read_json(manifest_path(slug), None)
     if m is None:
         die("no manifest for project %s (harvest one first)" % slug)
+    for t in m.get("tasks") or []:
+        if isinstance(t, dict) and "class" in t:
+            t["class"] = class_name(t["class"])
     return m
 
 
@@ -444,6 +448,7 @@ def cmd_harvest(argv):
     p.add_argument("--test-glob", action="append", default=[])
     p.add_argument("--budget-usd", type=float)
     a = p.parse_args(argv)
+    a.cls = class_name(a.cls)
     if a.cls not in CLASS_TIERS:
         die("harvest: unknown class: %s" % a.cls)
     repo = git_top(a.repo)
@@ -991,6 +996,7 @@ def cmd_bench(argv):
     p.add_argument("--concurrency", type=int, default=2)
     p.add_argument("--class", dest="cls")
     a = p.parse_args(argv)
+    a.cls = class_name(a.cls)
     m = load_manifest(a.slug)
     need_tests(m)
     aliases = read_aliases()
@@ -1227,7 +1233,7 @@ def cmd_export(argv):
                        + glob.glob(os.path.join(ROUTING_DIR, "tables", "global.json"))):
         table = read_json(path, {})
         entries = {}
-        for cls, e in sorted(table.get("entries", {}).items()):
+        for cls, e in sorted(table_entries(table).items()):
             pair = tiered(e["pair"])
             if not pair:
                 warn("export: %s is bound to no tier, %s skipped" % (e["pair"].split("/")[0], cls))
@@ -1269,7 +1275,7 @@ def cmd_show(argv):
         die("show: no project under %s" % projects)
     for slug in slugs:
         m = load_manifest(slug)
-        tables = [read_json(table_path(s), {}).get("entries", {})
+        tables = [table_entries(read_json(table_path(s), {}))
                   for s in ("project:" + slug, "profile:" + (m.get("profile") or ""), "global")]
         print("project=%s profile=%s" % (slug, m.get("profile")))
         for cls in sorted(set().union(*tables)):

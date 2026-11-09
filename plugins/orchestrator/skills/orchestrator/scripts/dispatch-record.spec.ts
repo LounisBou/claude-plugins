@@ -141,6 +141,9 @@ test('open: validated, refused without goals, warned on unplanned goals', async 
     { id: 1, opened: '2026-11-08T10:11:12Z', class: 'c', tier: 'deep', label: 'one', rounds: 0, state: 'open', verdict: '', cascade: true },
     { id: 2, opened: '2026-11-08T10:11:12Z', class: 'c', tier: '', label: '', rounds: 0, state: 'open', verdict: '', cascade: false, model: 'm', effort: 'high', explore: true, cost_usd: 0, sessions: [], cost_incomplete: false },
   ])
+  // The corrective class's former name, given on the command line, is written as the class it stands for.
+  assert.equal(await cli(['open', r, '--class', 'n-bis', '--tier', 'light']), '0|3\n|')
+  assert.equal(rows()[2]?.['class'], 'corrective')
   writeFileSync(r, 'not json\n')
   assert.equal(await cli(['open', r, '--class', 'c', '--tier', 'deep']), `1||ERROR: could not update ${r}\n`)
   assert.equal(await cli(['round', r, '1']), `1||ERROR: could not read ${r}\n`)
@@ -333,6 +336,9 @@ test('summary: the statistics and the open rows, or one reading of them', async 
   assert.match(await cli(['summary', r, '--label', 'x']), /--label needs the row ids/)
   assert.match(await cli(['summary', r, '--bogus']), /unknown argument --bogus/)
   assert.deepEqual(summaryLines([]), [])
+  // A row written under the corrective class's former name reads as the class it stands for.
+  assert.deepEqual(summaryLines([{ id: 1, class: 'n-bis', tier: 'light', rounds: 1, state: 'closed' }, { id: 2, class: 'corrective', tier: 'light', rounds: 1, state: 'closed' }]),
+    ['class=corrective tier=light dispatches=2 closed=2 rounds_avg=1'])
 })
 
 test('goals: handed to goals.py, the record registered from its first write', async () => {
