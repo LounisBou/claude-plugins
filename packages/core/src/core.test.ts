@@ -113,23 +113,32 @@ describe('deadline', () => {
 
 describe('names', () => {
   it('reads the role and subject of each shape', () => {
+    assert.deepEqual(parseSessionName('Orch: billing'), { role: 'orchestrator', subject: 'billing' })
+    assert.deepEqual(parseSessionName('Agent: P3 cache'), { role: 'agent', subject: 'P3 cache' })
+    assert.equal(parseSessionName('Coord: x')?.role, 'coordinator')
+    assert.equal(parseSessionName('Audit: y')?.role, 'auditor')
+  })
+
+  it('still reads the former shape, a blank before the colon, as the same name', () => {
     assert.deepEqual(parseSessionName('Orch : billing'), { role: 'orchestrator', subject: 'billing' })
-    assert.deepEqual(parseSessionName('Agent : P3 cache'), { role: 'agent', subject: 'P3 cache' })
+    assert.deepEqual(parseSessionName('Agent : P3 cache'), parseSessionName('Agent: P3 cache'))
     assert.equal(parseSessionName('Coord : x')?.role, 'coordinator')
     assert.equal(parseSessionName('Audit : y')?.role, 'auditor')
   })
 
   it('gives no role to other names, an empty, padded or long subject', () => {
-    for (const name of ['billing', 'Orch: x', 'Orch : ', 'Orch :  x', 'Orch : x ', `Orch : ${'a'.repeat(26)}`]) assert.equal(parseSessionName(name), null, name)
+    for (const name of ['billing', 'Orch:x', 'Orch  : x', 'Orch: ', 'Orch:  x', 'Orch: x ', `Orch: ${'a'.repeat(26)}`,
+      'Orch : ', 'Orch :  x', 'Orch : x ', `Orch : ${'a'.repeat(26)}`]) assert.equal(parseSessionName(name), null, name)
+    assert.ok(parseSessionName(`Orch: ${'a'.repeat(25)}`))
     assert.ok(parseSessionName(`Orch : ${'a'.repeat(25)}`))
   })
 
   it('counts characters, not bytes', () => {
-    assert.ok(parseSessionName(`Orch : ${'é'.repeat(25)}`))
+    assert.ok(parseSessionName(`Orch: ${'é'.repeat(25)}`))
   })
 
   it('builds a name, or refuses a subject that does not fit', () => {
-    assert.equal(sessionName('Orch', 'billing'), 'Orch : billing')
+    assert.equal(sessionName('Orch', 'billing'), 'Orch: billing')
     assert.throws(() => sessionName('Agent', ' x'), /not a session subject/)
   })
 })
