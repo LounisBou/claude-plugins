@@ -289,8 +289,10 @@ FORMER_CLASSES = {"n-bis": "corrective"}
 
 
 def class_name(name):
-    """The class a name read in data or on the command line stands for."""
-    return FORMER_CLASSES.get(name, name)
+    """The class a name read in data or on the command line stands for; a value that is not a
+    string is no class name and is returned unchanged, for its row to be passed over.
+    """
+    return FORMER_CLASSES.get(name, name) if isinstance(name, str) else name
 
 
 def table_entries(table):

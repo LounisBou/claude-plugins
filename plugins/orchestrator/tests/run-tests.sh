@@ -9989,6 +9989,8 @@ check "a failed exploration freezes the class for the build" "2" \
   "$({ cat "$ER"; printf '{"id":5,"class":"behaviour-phase","model":"b-model","effort":"low","rounds":2,"state":"closed","explore":true}\n'; } > "$WORK/frozen.jsonl"; rpick --class behaviour-phase --record "$WORK/frozen.jsonl" | wc -l | tr -d ' ')"
 check "record rows naming the class n-bis, its former name, count for corrective" "explore=b-model/low" \
   "$(for i in 1 2 3; do printf '{"id":%d,"class":"n-bis","model":"b-model","effort":"medium","rounds":1,"state":"closed"}\n' "$i"; done > "$WORK/legacy-explore.jsonl"; rpick --class corrective --record "$WORK/legacy-explore.jsonl" | sed -n 2p)"
+check "a record row whose class is not a string is passed over, not fatal" "explore=b-model/low" \
+  "$({ cat "$ER"; printf '{"id":6,"class":[],"model":"a-model","effort":"low","rounds":1,"state":"closed"}\n'; } > "$WORK/list-class.jsonl"; rpick --class behaviour-phase --record "$WORK/list-class.jsonl" 2>&1 | sed -n 2p)"
 check "a notch the ladder measured below the floor is never offered" "2" \
   "$(for i in 1 2 3; do printf '{"id":%d,"class":"conversion-phase","model":"a-model","effort":"medium","rounds":1,"state":"closed"}\n' "$i"; done > "$WORK/conv.jsonl"; rpick --class conversion-phase --record "$WORK/conv.jsonl" | wc -l | tr -d ' ')"
 hi3() { for i in 1 2 3; do printf '{"id":%d,"class":"%s","model":"a-model","effort":"high","rounds":1,"state":"closed"}\n' "$i" "$1"; done; }
