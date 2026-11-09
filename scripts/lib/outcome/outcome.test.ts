@@ -63,6 +63,7 @@ writeFileSync(
     '#!/bin/bash',
     'if [ "$1" = -p ]; then',
     '  [ -d plugins/demo ] && printf "2\\n" > plugins/demo/value',
+    '  for arg; do [ "$prev" = --debug-file ] && printf "t [DEBUG] Loaded inline plugin from path: orchestrator\\n" > "$arg"; prev=$arg; done',
     `  printf '%s' '${JSON.stringify({ subtype: 'success', is_error: false, total_cost_usd: 1.25, result: '{"matches": true, "reason": "r", "findings": [{"severity": "minor", "text": "t"}]}' })}'`,
     '  exit 0',
     'fi',
@@ -361,6 +362,8 @@ describe('outcome evals: the command', () => {
     const fix = fixture()
     write(fix.root, 'evals/outcome/cases.json', JSON.stringify({ version: 1, repository: 'o/r', cases: [fix.task] }))
     write(fix.root, 'evals/outcome/caps.json', JSON.stringify({ version: 1, runs: { pilot: CAPS, measure: CAPS } }))
+    write(fix.root, 'plugins/orchestrator/.claude-plugin/plugin.json', JSON.stringify({ name: 'orchestrator', dependencies: [{ name: 'method' }] }))
+    write(fix.root, 'plugins/method/.claude-plugin/plugin.json', JSON.stringify({ name: 'method' }))
     return fix.root
   }
 
@@ -414,6 +417,15 @@ describe('outcome evals: the command', () => {
     }
     assert.equal(report.spentUsd, 7.5)
     assert.ok('enabledPlugins' in JSON.parse(readFileSync(join(out, 'settings.json'), 'utf8')))
+  })
+
+  it('refuses a paid run whose orchestrator depends on a plugin the checkout lacks, before any arm', async () => {
+    const root = repository()
+    rmSync(join(root, 'plugins', 'method'), { recursive: true })
+    const out = join(mkdtempSync(join(tmpdir(), 'outcome-out-')), 'run')
+    const args = ['pilot', '--out', out, '--host', HOST, '--model', 'm', '--judge-model', 'j']
+    await assert.rejects(outcome(root, args, recorder(), new AbortController().signal), /depends on a plugin this checkout lacks/)
+    assert.equal(existsSync(join(out, 'report.json')), false)
   })
 
   it("finds the deck under the orchestrator's state directory", () => {

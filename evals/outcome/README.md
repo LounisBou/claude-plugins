@@ -74,8 +74,10 @@ npm run outcome -- measure --out <dir> --model <agent model> --judge-model <judg
 - Each arm is the host's command line run headless in its bench, with its share of the cap
   as the host's own budget. Its tools run unasked: the bench is a private clone without a
   remote. The single arm runs with every installed orchestrator turned off; the
-  orchestration arm loads this checkout's `plugins/orchestrator`, the release measured, and
-  is asked through the orchestrator's skill.
+  orchestration arm loads this checkout's `plugins/orchestrator`, the release measured, with
+  the plugins its manifest depends on, and is asked through the orchestrator's skill. An
+  orchestrator the host refuses to load makes the arm an error, read from the host's debug log
+  beside the bench, never a single session graded as an orchestration.
 - An orchestration's sessions are metered through the orchestrator's `deck.json` (`--deck`
   names another path): only the sessions opened after the arm started count, so the
   operator's own sessions are never charged to it. When the arm ends or is stopped, the

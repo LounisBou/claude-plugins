@@ -13,13 +13,16 @@ import {
   deckMeter,
   deckSessions,
   DeckLedger,
+  dependencyNames,
   hostAgent,
   hostJudge,
+  hostLogOf,
   intentPrompt,
   JUDGE_DIFF_CHARS,
   judgeArgs,
   judgmentOf,
   launcherClose,
+  loadErrorOf,
   parseHostResult,
   parseIntent,
   parseReview,
@@ -30,7 +33,7 @@ import {
 
 const TASK: Case = { id: 'a-case', pr: 1, base: 'a'.repeat(40), merge: 'b'.repeat(40), plugin: 'demo', task: 'Make the value 2.' }
 const DIFF: Diff = { patch: '+2\n', files: ['plugins/demo/value'], lines: 1 }
-const OPTIONS = { host: 'h', model: 'm', orchestratorDir: '/o', settingsFile: '/s.json' }
+const OPTIONS = { host: 'h', model: 'm', orchestratorDir: '/o', dependencyDirs: ['/d'], settingsFile: '/s.json' }
 
 /** A stand-in for the host: prints `answer`, records its arguments, sleeps when asked to. */
 function fakeHost(answer: string, behaviour = ''): { binary: string; argsFile: string } {
@@ -70,9 +73,27 @@ describe('outcome evals: the arms on the host', () => {
     assert.equal(single.includes('--plugin-dir'), false)
     const orchestration = agentArgs(OPTIONS, 'orchestration', 'Do it.', 8)
     assert.equal(orchestration[orchestration.indexOf('--plugin-dir') + 1], '/o')
+    // The host disables an orchestrator whose dependencies it cannot find: they load beside it.
+    assert.equal(orchestration[orchestration.lastIndexOf('--plugin-dir') + 1], '/d')
     assert.equal(orchestration[1], armPrompt('orchestration', 'Do it.'))
     assert.notEqual(armPrompt('orchestration', 'Do it.'), 'Do it.')
     assert.ok(armPrompt('orchestration', 'Do it.').endsWith('Do it.'))
+  })
+
+  it('reads the plugins a manifest depends on, and refuses one it cannot read', () => {
+    assert.deepEqual(dependencyNames({ dependencies: [{ name: 'method', marketplace: 'm', version: '>=0.1.0' }, 'core-x'] }), ['method', 'core-x'])
+    assert.deepEqual(dependencyNames({ name: 'orchestrator' }), [])
+    assert.ok(dependencyNames({ dependencies: 'method' }) instanceof Error)
+    assert.ok(dependencyNames({ dependencies: [{ name: '../escape' }] }) instanceof Error)
+    assert.ok(dependencyNames(null) instanceof Error)
+  })
+
+  it('reads the host refusing to load a plugin as the orchestrator not loaded', () => {
+    const refused = '2026-11-09T12:59:00.934Z [DEBUG] Plugin loading errors: Dependency "method@m" is not installed'
+    assert.equal(loadErrorOf(`a\n${refused}\nb`), 'the orchestrator did not load: Plugin loading errors: Dependency "method@m" is not installed')
+    assert.match(loadErrorOf('x [DEBUG] Plugin not available for MCP: orchestrator@inline') ?? '', /did not load/)
+    assert.equal(loadErrorOf('2026-11-09T12:59:12.460Z [DEBUG] Loaded inline plugin from path: orchestrator'), null)
+    assert.equal(hostLogOf('/w/case/orchestration'), '/w/case/orchestration.host.log')
   })
 
   it('turns off every installed orchestrator and nothing else', () => {
@@ -91,6 +112,20 @@ describe('outcome evals: the arms on the host', () => {
     assert.deepEqual(run, { costUsd: 1.25, error: null })
     assert.equal(readFileSync(fake.argsFile, 'utf8').split('\n')[5], '3.00')
     assert.deepEqual(closed, ['single'])
+  })
+
+  it('reports an orchestration whose orchestrator the host refused to load, its spend kept', async () => {
+    // The host's debug log is the last argument's value: a refusal there is the arm's error.
+    const log = (line: string): string => `for last; do :; done; printf '%s\\n' '${line}' > "$last"`
+    const dir = join(mkdtempSync(join(tmpdir(), 'outcome-bench-')), 'orchestration')
+    mkdirSync(dir)
+    const run = (behaviour: string) => hostAgent({ ...OPTIONS, host: fakeHost(answer({}), behaviour).binary }, async () => undefined)
+      .run({ case: TASK, arm: 'orchestration', dir, prompt: 'x', budgetUsd: 3, signal: new AbortController().signal })
+    assert.deepEqual(await run(log('t [DEBUG] Plugin loading errors: Dependency "method@m" is not installed')), {
+      costUsd: 1.25,
+      error: 'the orchestrator did not load: Plugin loading errors: Dependency "method@m" is not installed',
+    })
+    assert.deepEqual(await run(log('t [DEBUG] Loaded inline plugin from path: orchestrator')), { costUsd: 1.25, error: null })
   })
 
   it('ends the host when the arm is stopped', async () => {

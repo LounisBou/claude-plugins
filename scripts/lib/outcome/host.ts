@@ -54,6 +54,8 @@ export interface HostOptions {
   readonly model: string
   /** The orchestrator the orchestration arm loads: this checkout's, the release measured. */
   readonly orchestratorDir: string
+  /** The plugins the orchestrator depends on, from the same checkout: without them the host disables it. */
+  readonly dependencyDirs: readonly string[]
   /** A settings file that turns off every installed orchestrator, so only `orchestratorDir` loads. */
   readonly settingsFile: string
 }
@@ -64,6 +66,35 @@ export function withoutOrchestrator(operatorSettings: unknown): { enabledPlugins
   const off: Record<string, false> = {}
   if (isRecord(enabled)) for (const key of Object.keys(enabled)) if (key.startsWith('orchestrator@')) off[key] = false
   return { enabledPlugins: off }
+}
+
+/** The names of the plugins a manifest (`.claude-plugin/plugin.json`) depends on, or what is wrong with it. */
+export function dependencyNames(manifest: unknown): string[] | Error {
+  if (!isRecord(manifest)) return new Error('the manifest is not an object')
+  const list = manifest['dependencies']
+  if (list === undefined) return []
+  if (!Array.isArray(list)) return new Error('its dependencies are not a list')
+  const names: string[] = []
+  for (const entry of list) {
+    const name = typeof entry === 'string' ? entry : isRecord(entry) ? entry['name'] : undefined
+    if (typeof name !== 'string' || !/^[a-z0-9][a-z0-9-]*$/.test(name)) return new Error(`a dependency names no plugin: ${JSON.stringify(entry)}`)
+    names.push(name)
+  }
+  return names
+}
+
+/** Where the host writes the orchestration arm's debug log: beside its bench, out of its diff. */
+export function hostLogOf(dir: string): string {
+  return `${dir}.host.log`
+}
+
+/**
+ * The host's own refusal to load a plugin, read from its debug log: an orchestration whose
+ * orchestrator never loaded measured a single session, and is reported as an error, not graded.
+ */
+export function loadErrorOf(log: string): string | null {
+  const line = log.split('\n').find(entry => entry.includes('Plugin loading errors') || entry.includes('Plugin not available'))
+  return line === undefined ? null : `the orchestrator did not load: ${line.replace(/^\S+ \[\w+\] /, '').slice(0, 300)}`
 }
 
 /** What the orchestration arm types: the orchestrator's skill, then the same brief. */
@@ -77,7 +108,10 @@ export function agentArgs(options: HostOptions, arm: Arm, prompt: string, budget
   // The bench is a private clone with no remote: nothing an arm does reaches the forge, so its
   // tools run unasked, as an orchestrator's agents do.
   args.push('--dangerously-skip-permissions')
-  if (arm === 'orchestration') args.push('--plugin-dir', options.orchestratorDir)
+  if (arm === 'orchestration') {
+    args.push('--plugin-dir', options.orchestratorDir)
+    for (const dir of options.dependencyDirs) args.push('--plugin-dir', dir)
+  }
   return args
 }
 
@@ -131,7 +165,12 @@ export function hostAgent(options: HostOptions, close: (arm: Arm) => Promise<voi
   return {
     async run({ arm, dir, prompt, budgetUsd, signal }) {
       try {
-        return runOf(await host(options.host, agentArgs(options, arm, prompt, budgetUsd), dir, signal))
+        const args = agentArgs(options, arm, prompt, budgetUsd)
+        if (arm !== 'orchestration') return runOf(await host(options.host, args, dir, signal))
+        const log = hostLogOf(dir)
+        const run = runOf(await host(options.host, [...args, '--debug-file', log], dir, signal))
+        const refused = existsSync(log) ? loadErrorOf(readFileSync(log, 'utf8')) : 'the orchestrator did not load: the host wrote no debug log'
+        return refused === null ? run : { costUsd: run.costUsd, error: refused }
       } finally {
         await close(arm)
       }
