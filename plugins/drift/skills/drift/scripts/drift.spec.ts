@@ -38,13 +38,13 @@ before(() => {
   })
   git('checkout', '-q', sha['base'] ?? '')
   commit('broken', () => writeFileSync(join(REPO, 'FAIL'), ''))
-  for (const [name, file, text] of [['link-a', 'LINK', 'old.txt'], ['link-b', 'LINK', 'index.html'], ['fifo', 'FIFO', '']] as const) {
+  for (const [name, file, text] of [['link-a', 'LINK', 'old.txt'], ['link-b', 'LINK', 'index.html'], ['fifo', 'FIFO', ''], ['no-install', 'FAIL_INSTALL', '']] as const) {
     git('checkout', '-q', sha['base'] ?? '')
     commit(name, () => writeFileSync(join(REPO, file), text))
   }
   git('checkout', '-q', 'main')
   git('remote', 'add', 'origin', 'git@github.com:acme/fixture.git')
-  writeFileSync(CONFIG, JSON.stringify({ install: ['node', '--version'], build: ['node', 'build.mjs'], outDir: 'dist' }))
+  writeFileSync(CONFIG, JSON.stringify({ install: ['node', 'install.mjs'], build: ['node', 'build.mjs'], outDir: 'dist' }))
 })
 
 after(() => rmSync(ROOT, { recursive: true, force: true }))
@@ -125,6 +125,20 @@ test('a symbolic link is compared by its target, and any other special file is a
   assert.equal(fifo.code, 2)
   assert.match(fifo.err.join('\n'), /pipe is neither a file, a directory nor a symbolic link/)
   assert.deepEqual(readdirSync(fifo.work), [])
+})
+
+test('the install runs before the build; its failure is a tool error, its log named', async () => {
+  const noInstall = join(ROOT, 'no-install.json')
+  writeFileSync(noInstall, JSON.stringify({ build: ['node', 'build.mjs'], outDir: 'dist' }))
+  const skipped = await drift(['--config', noInstall, '--base', sha['base'] ?? '', '--head', sha['base'] ?? ''])
+  assert.equal(skipped.code, 2)
+  assert.match(skipped.err.join('\n'), /base: build failed \(exit 1\)/)
+  assert.match(readFileSync(join(skipped.dir, 'base.log'), 'utf8'), /not installed/)
+  const { code, err, dir, work } = await drift(refs('base', 'no-install'))
+  assert.equal(code, 2)
+  assert.match(err.join('\n'), new RegExp(`head: install failed \\(exit 1\\); its log: ${join(dir, 'head.log').replace(/[.]/g, '\\.')}`))
+  assert.match(readFileSync(join(dir, 'head.log'), 'utf8'), /install failed on purpose/)
+  assert.deepEqual(readdirSync(work), [])
 })
 
 test('the default config is read from the home, named after the origin', async () => {

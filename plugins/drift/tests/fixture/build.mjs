@@ -1,4 +1,4 @@
-// The fixture project's build: every module of src/ on its own line of one hashed bundle, with a
+// The fixture project's build, run once install.mjs has: every module of src/ on its own line of one hashed bundle, with a
 // source map (one segment per line, column 0 of its module), an index.html naming the bundle, and
 // public/ copied as it is. The hash covers salt.txt too, so a commit changing only the salt renames
 // the bundle without changing a byte of it. A file named FAIL makes the build fail; a file named
@@ -9,6 +9,10 @@ import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symli
 
 if (existsSync('FAIL')) {
   console.error('build failed on purpose')
+  process.exit(1)
+}
+if (!existsSync('node_modules/.installed')) {
+  console.error('not installed')
   process.exit(1)
 }
 const VLQ = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
