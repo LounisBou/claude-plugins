@@ -62,3 +62,35 @@ harness the way the operator opens one, on the same machine and plugin release:
 
 - Questions the orchestrator would put to the operator are decided by its own recommendation,
   and the run goes on (the operator's choice, 2026-11-09).
+
+## Review notes (2026-11-11)
+
+The design above makes the arm measure an orchestration; these notes concern what its figures
+may then be read to say. They propose; the design stays accepted as it is.
+
+1. **One run per arm is one draw.** The orchestrator's behaviour baselines give different
+   results on the same version for about one case in five (8 of 36 at 0.34.0, 4 of 19 at
+   0.36.0; `learning-design.md`, review note 7). The measure runs each of six cases once per
+   arm, so a single-against-orchestration difference below a collapse is not measured: the
+   report gives each case's pair of results side by side and states that no difference of
+   that size is detectable, rather than a gap between the arms' totals.
+2. **Code-computed grades decide, the judge's report.** Suite and reference tests decide
+   which arm did better on a case; intent and review, judged by a model, are reported beside
+   them, as `learning-design.md` sets for every regression (its question 5).
+3. **Outcome and cost together.** An orchestration opens more sessions and spends more. A
+   better outcome at a higher cost is a trade-off, not a win: the report gives each arm's
+   result with its cost on the same line, and names an arm better only when it is no worse on
+   both.
+4. **« Not graded » is part of the result.** The orchestration arm has ways to end not graded
+   that the single arm lacks (no agent opened, the 10-minute bounds). Dropping those cases
+   compares the orchestrations that worked with every single session. The report counts not
+   graded per arm, and gives the comparison a second time with each not-graded arm counted
+   as failed.
+5. **What « no operator » measures.** The arm measures an orchestration that decides its own
+   questions, not one the operator steers. The count of questions it decided alone, already
+   in its report, says how far the figure is from the operator's use; a case where it decided
+   many is read with that count.
+6. **Cases newer than the model.** A case merged before the evaluated model's training
+   cutoff may have been seen. The nine current cases were all merged on 2026-11-08, the day after
+   this repository was created. Each case, and every one added later (`learning-design.md`,
+   review note 6), is checked against the training cutoff of the model the run names.

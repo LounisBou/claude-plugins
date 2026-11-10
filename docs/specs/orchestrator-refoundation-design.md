@@ -128,3 +128,59 @@ waits on the operator's paid runs.
 3. Changing `deck.json`'s format or the Stream Deck contract.
 4. Removing the machine-to-machine move, the cost accounting or the home session.
 5. New features outside the goals above.
+
+## Review notes (2026-11-11)
+
+Read against Jarmak 2026, « Engineering Reliable Coding Agents » (arXiv:2608.13867), chapters
+13 to 15, and the studies they cite. They propose; none changes a goal until the operator
+takes it.
+
+**Already where the evidence points; keep.**
+
+- **The succession is rebuilt from durable sources** (goal 12, decision 0007): its live state
+  is generated from the state by `succession.sh live`, every item re-verified on the artifact
+  by one named command (`templates/orchestrator-succession-brief.md`), and notes are promoted
+  or dropped, never carried. A memory a model rewrites summary after summary degrades
+  (Zhang 2026, arXiv:2605.12978); immutable sources with derived summaries is the remedy, and
+  this is it.
+- **A brief makes the agent verify the state, not believe it** (`references/briefs.md`, item
+  2), and the successor reads the artifact before the brief when they disagree.
+- **A light start** (goal 8, 1,960 tokens at a `build` start). Standing context files did not generally
+  improve task success (Gloaguen et al. 2026, arXiv:2602.11988), and across 288 runs their
+  effect on correctness was bounded to about 10 to 15 points at most (Khatri 2026,
+  arXiv:2607.27250).
+
+**Proposals.**
+
+1. **The rotation gate is a default, not a measure.** `tripGate` hands over at 80 % of the
+   window or 300,000 tokens (`hooks/gauge-core.ts`). The useful window is far smaller than the
+   advertised one: on repository tasks, Claude 3.5 Sonnet fell from 29 % at 32,000 tokens to
+   3 % at 256,000 (Rando et al. 2025, arXiv:2505.07897). That model is old and the figure does
+   not transfer; the method does. The dispatch record holds rounds and escapes per dispatch and
+   the measure file the context size: join them, and set each role's gate where rounds or
+   escapes start to rise on the operator's own work.
+2. **A restart on behaviour, not only on tokens.** Instructions given in pieces cost 39 % of
+   performance on average, models committing early to a guess and not recovering (Laban et al.
+   2025, arXiv:2505.06120, over 200,000 simulated conversations; not coding agents). Signs a
+   gauge cannot see call for the same fresh start from a consolidated brief: an agent
+   proposing again what a ruling in `rulings.md` rejected, re-reading a file it already read
+   in the same phase, a second correction round on the same finding. Each is countable by
+   code; each could trip the gate as tokens do.
+3. **Every brief names the head it was written against.** Stale context misleads: with
+   outdated code snippets, two models produced 15 and 13 outputs incompatible with the
+   current signature out of the same 17 examples (Weng et al. 2026, arXiv:2605.14478). A phase brief, a resume
+   brief and the succession brief carry the commit they were written at; `brief-lint` or the
+   launcher compares it with the checkout's head and lists the files the brief cites that
+   changed since. With several orchestrations on one base, the case is common.
+4. **A handover says what was kept and why.** For a resume brief and the succession, the
+   handover of file selection names the files kept with the evidence for each, the
+   candidates set aside, and the uncertainty left — not the exploration that found them. File
+   selection is where most of the gain lies: on 500 SWE-bench Verified tasks, better file
+   localization produced 15 to 17 times as much repair improvement as the later stages, successes
+   clustering around six to ten relevant files for one model family (Sepidband et al. 2026,
+   arXiv:2604.05481). A brief is judged first on the files it names.
+5. **Tune the succession by its failures.** When a successor misses, misreads or drowns an
+   item, classify it — omitted, distorted, buried — and change one rule of the generation at a
+   time, re-measured on the same handovers. Failure-driven compression cut peak tokens by 26 to
+   54 % while improving success on non-coding agent benchmarks (Kang et al. 2025, ACON,
+   arXiv:2510.00615); the transfer to coding agents is an inference to test, not a result.
