@@ -1025,6 +1025,11 @@ function typedWords(text: string): string {
 // Two questions are the same when their text is, whatever the spacing between the words.
 const sameQuestion = (a: string, b: string): boolean => a.replace(/\s+/g, ' ').trim() === b.replace(/\s+/g, ' ').trim()
 
+// Two entries of one session are twins when either was moved to it at a succession and they ask
+// the same question; a blank question is no question, so it never makes two entries twins.
+const areTwins = (a: RoundEntry, b: RoundEntry): boolean =>
+  (a.movedFrom !== undefined || b.movedFrom !== undefined) && a.question.trim() !== '' && sameQuestion(a.question, b.question)
+
 // An entry settled in the pane or at its sender's turn end, closed by the module itself when the
 // coordinator on this machine was shown it: the answer it was closed with.
 export type Settled = { entry: RoundEntry; answer: RoundAnswer }
@@ -2613,8 +2618,8 @@ async function handOver($: any, sessionId: string): Promise<void> {
 // The held question's entry in the round: that session's open operator question with the same
 // start and the same blocks, marked withdrawn, answered in its own tab, or closed so when the
 // coordinator was shown it (the entries to tell it of), with what the operator typed (`held.said`).
-// With it, every open entry of that session that a succession moved to it (`movedFrom`) and that
-// asks the same question (same text, spacing aside) is settled the same way: the successor
+// With it, every open entry of that session twin to one of those (areTwins: one of the two moved to
+// it at a succession, `movedFrom`, the same question, spacing aside) is settled the same way: the successor
 // asking again what its predecessor asked keeps the predecessor's wait start and its own wording
 // of the blocks, so only the question's text recognises the two as one (the operator's report of
 // 2026-11-10). A moved entry that asks another question stays open. None found, nothing is written and the
@@ -2624,8 +2629,7 @@ async function withdrawEntry($: any, sessionId: string, name: string, held: { bl
   const settled: Settled[] = []
   const open = (await readRound($)).filter(({ entry }) => entry.session === sessionId && entry.kind === 'operator' && entry.status === 'open')
   const direct = open.filter(({ entry }) => entry.since === held.since && entry.blocks === held.blocks)
-  const twins = open.filter(({ entry }) => entry.movedFrom !== undefined && !direct.some(found => found.entry.id === entry.id)
-    && direct.some(found => sameQuestion(found.entry.question, entry.question)))
+  const twins = open.filter(({ entry }) => !direct.some(found => found.entry.id === entry.id) && direct.some(found => areTwins(found.entry, entry)))
   for (const { path, entry } of [...direct, ...twins]) {
     const at = new Date().toISOString()
     const closed = await closesItself($, entry.id)
@@ -2785,7 +2789,7 @@ async function answerTwins($: any, entry: RoundEntry, text: string, at: string):
   try {
     for (const { path, entry: twin } of await readRound($)) {
       if (twin.id === entry.id || twin.session !== entry.session || twin.kind !== 'operator' || twin.status !== 'open' || twin.origin) continue
-      if ((entry.movedFrom === undefined && twin.movedFrom === undefined) || !sameQuestion(entry.question, twin.question)) continue
+      if (!areTwins(entry, twin)) continue
       const closed = await shownToCoordinator($, twin.id)
       const answer: RoundAnswer = { text: closed ? `${PANE_CLOSED}${text}` : text, by: 'pane', at }
       const written = await changeEntry($, path, current =>

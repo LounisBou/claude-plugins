@@ -2437,6 +2437,31 @@ test('an answer from the pane leaves a moved entry with another question open', 
   expect(new Map(entries(fx).map(e => [e.id, e.status]))).toEqual(new Map([[moved.id, 'open'], [again.id, 'answered']]))
 })
 
+// Two open entries of the successor's session, its wait file holding no question: the held
+// question the tab answer finds is the earliest open entry, the moved one unless `ownFirst`.
+function movedAndOwn(question: string, ownFirst = false) {
+  const fx = fake()
+  const old = roundEntry('s-pred', 'Orch: belt', parseWait(answerOf(QUESTION, PRED_LINE))!, ownFirst ? '2026-10-14T08:10:00.000Z' : '2026-10-14T08:00:00.000Z', '2026-10-14T08:00:00.100Z')
+  const moved: RoundEntry = { ...old, id: 's-pred-moved', session: 's-one', movedFrom: 's-pred', question }
+  const own: RoundEntry = { ...roundEntry('s-one', 'Orch: belt', parseWait(answerOf(QUESTION, QUESTION_LINE))!, ownFirst ? '2026-10-14T08:05:00.000Z' : '2026-10-14T08:10:00.000Z', 'T'), id: 's-one-own', question }
+  for (const e of [moved, own]) fx.files.set(`${ROUND}/${e.id}.json`, JSON.stringify(e) + '\n')
+  return { fx, moved, own }
+}
+
+test('a prompt typed when the held question is the moved entry withdraws the successor\'s own entry with the same question, with his words', async () => {
+  const { fx, moved, own } = movedAndOwn(QUESTION)
+  await drive(mounted(), 'prompt.submit', fx.dollar, typed('composer', 'B, but small'))
+  const after = new Map(entries(fx).map(e => [e.id, e]))
+  for (const id of [moved.id, own.id]) expect([after.get(id)!.status, after.get(id)!.answer?.by, after.get(id)!.answer?.typed]).toEqual(['withdrawn', 'tab', 'B, but small'])
+})
+
+test('two entries with an empty question are no twins: the tab answer settles only the direct one', async () => {
+  const { fx, moved, own } = movedAndOwn('', true)
+  await drive(mounted(), 'prompt.submit', fx.dollar, typed('composer', 'yes'))
+  const after = new Map(entries(fx).map(e => [e.id, e.status]))
+  expect(after).toEqual(new Map([[own.id, 'withdrawn'], [moved.id, 'open']]))
+})
+
 test('the notice of a question settled in the tab carries his words on one line, and the report to a remote coordinator too', () => {
   const asked = roundEntry('s-one', 'Orch: belt', parseWait(answerOf(QUESTION, QUESTION_LINE))!, '2026-10-14T08:00:00.000Z', 'T')
   const notice = settledText(asked, { text: "withdrawn: answered in the sender's own tab", by: 'tab', at: 'T', typed: 'B,\nkeep it small' })
