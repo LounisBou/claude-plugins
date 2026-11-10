@@ -118,16 +118,21 @@ function same(before: Buffer | Link, after: Buffer | Link): boolean {
   return !Buffer.isBuffer(before) && !Buffer.isBuffer(after) && before.link === after.link
 }
 
-/** The map of a generated file, by its `sourceMappingURL` (a data: URL, or a file of the output), else `<file>.map`. */
+/**
+ * The map of a generated file, by its `sourceMappingURL` (a data: URL, or a file of the output), else
+ * `<file>.map`. The URL is read in the normalised text, where a hashed name reads as its key; the
+ * text handed on is the raw one, whose columns the map indexes, each module's part normalised once cut.
+ */
 function mappedOf(read: Read, key: string): { readonly mapped: Mapped; readonly mapKey: string } | undefined {
   const bytesOf = (k: string): Buffer | undefined => {
     const path = read.keys.get(k)
     const bytes = path === undefined ? undefined : read.tree.get(path)
-    return Buffer.isBuffer(bytes) ? read.normalise(bytes) : undefined
+    return Buffer.isBuffer(bytes) ? bytes : undefined
   }
-  const text = bytesOf(key)?.toString('utf8')
-  if (text === undefined) return undefined
-  const url = mapUrlOf(text)
+  const raw = bytesOf(key)
+  if (raw === undefined) return undefined
+  const text = raw.toString('utf8')
+  const url = mapUrlOf(read.normalise(raw).toString('utf8'))
   let mapText: string | undefined
   let mapKey = `${key}.map`
   if (url?.startsWith('data:') === true) {
@@ -139,7 +144,8 @@ function mappedOf(read: Read, key: string): { readonly mapped: Mapped; readonly 
     mapText = bytesOf(mapKey)?.toString('utf8')
   }
   const map = mapText === undefined ? undefined : parseSourceMap(mapText)
-  return map === undefined ? undefined : { mapped: { text, map }, mapKey }
+  const normalise = (chunk: string): string => read.normalise(Buffer.from(chunk, 'utf8')).toString('utf8')
+  return map === undefined ? undefined : { mapped: { text, map, normalise }, mapKey }
 }
 
 /** The changed modules of a file both sides map, or undefined when either map is missing or unreadable. */

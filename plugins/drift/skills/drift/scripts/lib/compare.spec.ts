@@ -95,6 +95,15 @@ test('a changed file with a map on both sides names the modules whose output cha
   ])
 })
 
+test('a module is attributed by the raw text its map indexes, not the text with hashed names read without their hash', () => {
+  const side = (chunk: string, b: string): Tree => tree({
+    ...bundle('index-B1234567.js', [['a.js', `import"./${chunk}";`], ['b.js', b]]),
+    [`assets/${chunk}`]: 'c',
+  })
+  const { files } = compareTrees(side('c-B1234567.js', 'B();'), side('c-C7654321.js', 'B(1);'), HASH, 'dist')
+  assert.deepEqual(files.map(file => [file.path, file.sources]), [['assets/index.js', ['dist/src/b.js']]])
+})
+
 test('an inline data: map is read too, and an unreadable map names nothing', () => {
   const inline = (code: string): string => {
     const map = JSON.stringify({ version: 3, sources: ['m.js'], mappings: 'AAAA' })

@@ -112,14 +112,22 @@ export function textBySource(generated: string, map: SourceMap, mapDir: string):
 }
 
 export interface Mapped {
+  /** The generated text as the map indexes it: raw. */
   readonly text: string
   readonly map: SourceMap
+  /** How a module's text is read before the sides are compared (hashed names without their hash); none, as it is. */
+  readonly normalise?: (text: string) => string
 }
 
 /** The sources whose generated text differs between two sides, or that one side lacks, sorted. */
 export function changedSources(base: Mapped, head: Mapped, mapDir: string): string[] {
-  const before = textBySource(base.text, base.map, mapDir)
-  const after = textBySource(head.text, head.map, mapDir)
+  const read = (side: Mapped): Map<string, string> => {
+    const chunks = textBySource(side.text, side.map, mapDir)
+    const normalise = side.normalise
+    return normalise === undefined ? chunks : new Map([...chunks].map(([key, text]) => [key, normalise(text)]))
+  }
+  const before = read(base)
+  const after = read(head)
   const keys = new Set([...before.keys(), ...after.keys()])
   return [...keys].filter(key => before.get(key) !== after.get(key)).sort()
 }
