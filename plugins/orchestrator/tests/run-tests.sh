@@ -8502,8 +8502,11 @@ check "a tmux that times out dies naming the timeout, and no tab is made" "1|non
 # yet renamed. Any other caller keeps its tab.
 OUTSTATE="$WORK/outsidestate"
 outside() { # <ps line of the caller's tty> <spawn options>: a caller in a plain iTerm2 tab
+  outside_raw "$1" --tier light --dir "$WORK" --title "Agent: out" --prompt p --right-of self --no-verify "${@:2}"; }
+outside_raw() { # <ps line of the caller's tty> <every spawn option>
   local line="$1"; shift
   rm -rf "$OUTSTATE"; mkdir -p "$OUTSTATE/chains"; rm -f "$TR/iterm-asked"
+  [ -n "${OUT_COORD:-}" ] && printf '%s\n' "$OUT_COORD" > "$OUTSTATE/coordinator.json"
   if [ -n "$line" ]; then printf '%s\n' "$line" > "$WORK/ps-outside.txt"; else : > "$WORK/ps-outside.txt"; fi
   # The app stands in as a recorder: its first call writes that it was asked and ends the run.
   env -u TMUX -u TMUX_PANE ORCHESTRATOR_TMUX="$TR/tmux" ORCHESTRATOR_SELF_TTY=/dev/ttys800 \
@@ -8516,8 +8519,7 @@ def asked(*args, **kwargs):
     sys.exit(3)
 for method in ('chain_state', 'can_place', 'create', 'find', 'identity'):
     setattr(ia.ITERM, method, asked)
-ia.cmd_spawn(sys.argv[3:])" "$ROOT/skills/iterm-agents/scripts" "$TR/iterm-asked" \
-    --tier light --dir "$WORK" --title "Agent: out" --prompt p --right-of self --no-verify "$@" 2>&1; }
+ia.cmd_spawn(sys.argv[3:])" "$ROOT/skills/iterm-agents/scripts" "$TR/iterm-asked" "$@" 2>&1; }
 OUTREFUSED="spawn: refused: this session is an orchestrator ('Orch: rev') outside its home session"
 out=$(outside '/dev/ttys800 claude' --orchestrator "Orch: rev [52cb36]")
 check "an orchestrator not yet moved home (named by --orchestrator, its rename pending) is refused, and iTerm2 is never asked" "1|1|none" \
@@ -8545,6 +8547,27 @@ check "a session of another role, unnamed by --orchestrator, keeps its tab" "0|i
 out=$(outside '/dev/ttys800 claude' --orchestrator "Agent: x")
 check "a host session with no role name and no orchestrator named keeps its tab" "0|iterm" \
   "$(printf '%s' "$out" | grep -c 'outside its home session')|$(asked)"
+# A coordinator opened by hand, with no --name, is known by its own record.
+out=$(OUT_COORD='{"name":"Coord: machine","tty":"/dev/ttys800"}' outside '/dev/ttys800 claude' --orchestrator "Orch: rev [52cb36]")
+check "a coordinator opened by hand without a name, known by its record, keeps its tab" "0|iterm" \
+  "$(printf '%s' "$out" | grep -c 'outside its home session')|$(asked)"
+# What an orchestrator outside its home makes other than an agent stays as it was: its successor,
+# a woken or an opened orchestrator are tabs, and a dry run prints its launch.
+OUTORCH='/dev/ttys800 claude --name Orch: rev'
+ORCHESTRATOR_PROJECTS_DIR="$WORK/projects" pair_transcript s-outside s-model high
+out=$(CLAUDE_CODE_SESSION_ID=s-outside outside_raw "$OUTORCH" --dir "$WORK" --successor --prompt p --no-verify)
+check "an orchestrator outside its home still spawns its successor as a tab" "0|iterm" \
+  "$(printf '%s' "$out" | grep -c 'outside its home session')|$(asked)"
+# A wake and an opening read their caller from the real process table: their dry runs show
+# the home server and the tab that shows it.
+for how in wake open; do
+  out=$(ORCHESTRATOR_DRY_RUN=1 outside_raw "$OUTORCH" --dir "$WORK" --$how --title "Orch: woken" --model a-model --effort high --prompt p)
+  check "and a --$how still makes its orchestrator a home shown in a tab right of it" "0|1|1" \
+    "$(printf '%s' "$out" | grep -c 'outside its home session')|$(printf '%s' "$out" | grep -c '^home_server=orch-')|$(printf '%s' "$out" | grep -c '^home_tab=right of self$')"
+done
+out=$(ORCHESTRATOR_DRY_RUN=1 outside "$OUTORCH")
+check "and its dry run of an agent prints the launch, as before" "0|1|none" \
+  "$(printf '%s' "$out" | grep -c 'outside its home session')|$(printf '%s' "$out" | grep -c '^launch=')|$(asked)"
 rm -f "$TR/iterm-asked"
 reset_home
 out=$(home spawn --dir "$WORK" --title "Agent: three" --prompt p --right-of self --no-verify --orchestrator "Orch: home [52cb36]" 2>&1)
