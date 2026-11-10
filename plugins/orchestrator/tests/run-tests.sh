@@ -26,7 +26,10 @@ export TMPDIR="${TMPDIR%/}"
 # it has a directory.
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")
 [ -d "${WORK}" ] || { echo "cannot create a working directory under ${TMPDIR:-/tmp}" >&2; exit 1; }
-trap 'rm -rf "$WORK" ${SHORTTMP:+"$SHORTTMP"}' EXIT
+# The suite's own tmux servers are killed where they are used; their socket files are not,
+# and one pair a run piled up in the operator's tmux directory.
+SUITE_SOCKETS="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"
+trap 'rm -rf "$WORK" ${SHORTTMP:+"$SHORTTMP"}; rm -f "$SUITE_SOCKETS/suite-home-$$" "$SUITE_SOCKETS/suite-conf-$$"' EXIT
 
 pass=0
 fail=0
