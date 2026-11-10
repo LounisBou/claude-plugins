@@ -194,7 +194,7 @@ Invoke the review using the Skill tool or by launching review agents directly:
 - Launch code-reviewer and silent-failure-hunter in parallel (minimum)
 - Optionally add comment-analyzer, pr-test-analyzer, code-simplifier
 
-Wait for ALL agents to complete. Aggregate results.
+Wait for ALL agents to complete; the loop runs each in the foreground so its answer carries the findings block. Aggregate results.
 
 ### Step 4: Check for clean exit
 
