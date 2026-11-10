@@ -11046,6 +11046,16 @@ round w5 | operator | from Orch: a | since 2026-10-20T10:00:00.000Z | blocks: ph
     withdrawn by pane at 2026-10-20T10:09:00.000Z: an older reason" \
   "$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>&1 | grep -A2 '^round w[45] ')"
 rm -f "$ASTATE/round/w4.json" "$ASTATE/round/w5.json"
+# What the operator typed in the sender's tab is printed after the reason, on one line.
+jq -n '{id:"w6", from:"Orch: a", session:"s-a", kind:"operator", since:"2026-10-20T10:00:00.000Z",
+  blocks:"phase 3", question:"Ask w6?", choices:[], recommendation:null, status:"withdrawn", at:"2026-10-20T10:00:00.000Z",
+  answer:{text:"answered in the sender'"'"'s own tab", by:"tab", at:"2026-10-20T10:09:00.000Z", typed:"B,\nkeep it small"}}' > "$ASTATE/round/w6.json"
+check "round prints what the operator typed in the sender's tab after the reason" \
+  "round w6 | operator | from Orch: a | since 2026-10-20T10:00:00.000Z | blocks: phase 3 | withdrawn
+    Ask w6?
+    withdrawn in the sender's tab at 2026-10-20T10:09:00.000Z: answered in the sender's own tab — he typed: B, keep it small" \
+  "$(ORCHESTRATOR_STATE_DIR="$ASTATE" CLAUDE_CONFIG_DIR="$ACFG" COORDINATOR_NOW=2026-10-20T10:06:00Z bash "$COORD" round 2>&1 | grep -A2 '^round w6 ')"
+rm -f "$ASTATE/round/w6.json"
 # round records the open entries it printed, for the module to tell the coordinator at once when
 # one of them is settled in the pane or in the sender's tab: the coordinator once relayed a second
 # time an answer the pane had sent (the operator's report of 2026-10-25). The record keeps the

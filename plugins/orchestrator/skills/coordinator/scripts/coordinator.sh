@@ -74,6 +74,7 @@
 # line), « a later turn the operator typed in waits on something else »; one the operator's prompt
 # in the sender's own tab withdrew ends on
 #     withdrawn in the sender's tab at <UTC time>: <why>
+# followed by « — he typed: <his words> » when the prompt's words were kept (answer.typed)
 # and any other withdrawal on « withdrawn by <who> at <UTC time>: <why> »: every reason recorded
 # is printed, so the entry is closed with it.
 # round records the ids of the open entries it printed in <state>/round-listed.json (record_listed).
@@ -609,7 +610,7 @@ cmd_round() {
           (.question | select(. != "") | split("\n")[] | "    " + .),
           (select(.status == "answered") | "    answered from the pane at \(.answer.at // "?"): \(.answer.text // "")"),
           (select(.status == "withdrawn" and .answer.by? == "sender") | "    withdrawn by the sender at \(.answer.at // "?"): \(if (.answer.text | type) == "string" and .answer.text != "" then .answer.text else "a later turn the operator typed in waits on something else" end)"),
-          (select(.status == "withdrawn" and .answer.by? == "tab") | "    withdrawn in the sender\u0027s tab at \(.answer.at // "?"): \(.answer.text // "")"),
+          (select(.status == "withdrawn" and .answer.by? == "tab") | "    withdrawn in the sender\u0027s tab at \(.answer.at // "?"): \(.answer.text // "")\(if (.answer.typed | type) == "string" and .answer.typed != "" then " — he typed: \(.answer.typed | gsub("\\s*\n\\s*"; " "))" else "" end)"),
           (select(.status == "withdrawn" and (.answer | type) == "object" and .answer.by != "sender" and .answer.by != "tab") | "    withdrawn by \(.answer.by // "?") at \(.answer.at // "?"): \(.answer.text // "")")'
     record_listed "$entries"
 }

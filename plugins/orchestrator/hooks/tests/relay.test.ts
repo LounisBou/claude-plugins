@@ -7,7 +7,7 @@
 import { expect, test } from 'claude-code/testing'
 import { parseWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel, waitParts, heldQuestion, withdrawalText, confirmsTakeover, RELAY_CAP } from '../relay.ts'
 import { paneQuestions, waitsInTab, roundEntry, type RoundEntry } from '../round.ts'
-import { answerFromPane, paneAnswerText, settledText, reopenedText, withdrawOnTyped, parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
+import { answerFromPane, answerFromPaneText, paneAnswerText, settledText, reopenedText, withdrawOnTyped, parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
 import { DECLARATIONS } from '../wait.ts'
 import { logLineOf, lockRun } from './fakes.ts'
@@ -604,7 +604,7 @@ test('a turn that ends on the same wait re-opens it', async () => {
 test('a coordinator on another machine is sent the withdrawal at prompt submit, once', async () => {
   const { chains, fx } = await relayedQuestion({ remote: true })
   const since = fx.row().waiting_since
-  const withdrawal = [['Coord: ops [abc]', withdrawalText('Orch: belt', 'phase 3', since)]]
+  const withdrawal = [['Coord: ops [abc]', withdrawalText('Orch: belt', 'phase 3', since, 'yes')]]
   const sentWithdrawals = () => fx.sent.filter(m => m.text.startsWith('[module]')).map(s => [s.to, s.text])
   await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
   expect(sentWithdrawals()).toEqual(withdrawal)
@@ -743,10 +743,10 @@ test('a coordinator on another machine is sent the withdrawal as a message at pr
   const { chains, fx } = await relayedQuestion({ remote: true })
   const since = fx.row().waiting_since
   await drive(chains, 'prompt.submit', fx.dollar, typed('composer'))
-  expect(fx.sent.filter(m => m.text.startsWith('[module]')).map(s => [s.to, s.text])).toEqual([['Coord: ops [abc]', withdrawalText('Orch: belt', 'phase 3', since)]])
+  expect(fx.sent.filter(m => m.text.startsWith('[module]')).map(s => [s.to, s.text])).toEqual([['Coord: ops [abc]', withdrawalText('Orch: belt', 'phase 3', since, 'yes')]])
   await drive(chains, 'turn.start', fx.dollar, { text: 'yes' })
   await drive(chains, 'turn.complete', fx.dollar, turnEnd('Working.'))
-  expect(fx.sent.filter(m => m.text.startsWith('[module]')).map(s => [s.to, s.text])).toEqual([['Coord: ops [abc]', withdrawalText('Orch: belt', 'phase 3', since)]])
+  expect(fx.sent.filter(m => m.text.startsWith('[module]')).map(s => [s.to, s.text])).toEqual([['Coord: ops [abc]', withdrawalText('Orch: belt', 'phase 3', since, 'yes')]])
   expect(fx.row().relayed ?? null).toBeNull()
   expect(entries(fx)).toEqual([])
 })
@@ -1169,7 +1169,7 @@ test('a coordinator on another machine is sent the withdrawal at the prompt, not
   const shown = (m: { text: string }) => m.text.startsWith(ASK_MARKER) ? `ask: ${parseAsk(m.text)!.entry.blocks}`
     : m.text.startsWith(ROW_MARKER) ? `row: ${JSON.parse(m.text.slice(ROW_MARKER.length)).blocks}` : m.text
   expect(fx.sent.map(m => [m.to, shown(m)])).toEqual([
-    ['Coord: ops [abc]', withdrawalText('Orch: belt', 'phase 3', since)],
+    ['Coord: ops [abc]', withdrawalText('Orch: belt', 'phase 3', since, 'yes')],
     ['Coord: ops [abc]', 'ask: phase 3'],
     ['Coord: ops [abc]', 'ask: phase 4'],
     ['Coord: ops [abc]', 'row: phase 4'],
@@ -1637,7 +1637,7 @@ test('an entry the operator answered in the sender\'s own tab is closed and tell
   fx.files.set(LISTED, JSON.stringify([asked.id]) + '\n')
   await typedTurn(chains, fx, 'Working on phase 3.')
   expect([entries(fx)[0].status, entries(fx)[0].answer?.text, entries(fx)[0].answer?.by]).toEqual(['closed', "withdrawn: answered in the sender's own tab", 'tab'])
-  expect(fx.sent).toEqual([{ to: 'Coord: ops [abc]', text: `[module] Settled in Orch: belt's tab: Orch: belt's question since ${asked.since} (entry ${asked.id}) — answered there. ${DROP}` }])
+  expect(fx.sent).toEqual([{ to: 'Coord: ops [abc]', text: `[module] Settled in Orch: belt's tab: Orch: belt's question since ${asked.since} (entry ${asked.id}) — answered there: "yes". ${DROP}` }])
 })
 
 // A coordinator recorded by its bare name shares it with another session the host lists (a
@@ -1671,7 +1671,7 @@ test('a coordinator recorded by a name another session shares is sent the settle
   })
   expect(entries(fx)[0].status).toBe('closed')
   expect(tried).toEqual([{ sessionId: 'coord-session' }])
-  expect(fx.sent).toEqual([{ to: { sessionId: 'coord-session' }, text: `[module] Settled in Orch: belt's tab: Orch: belt's question since ${asked.since} (entry ${asked.id}) — answered there. ${DROP}` }])
+  expect(fx.sent).toEqual([{ to: { sessionId: 'coord-session' }, text: `[module] Settled in Orch: belt's tab: Orch: belt's question since ${asked.since} (entry ${asked.id}) — answered there: "yes". ${DROP}` }])
 })
 
 test('with no record of it in the registry, the refusal of an ambiguous name is sent again to the one on this machine', async () => {
@@ -2364,3 +2364,84 @@ function toolHandler(): (dollar: any, e: object) => Promise<any> {
   })
   return (dollar, e) => found!(dollar, e)
 }
+
+// --- a question moved to a successor settles with the successor's own answer ----------------
+// The operator's report of 2026-11-10 (Orch: stats): a question moved at a succession stayed open
+// in the coordinator's pane after he answered, in the successor's tab, the same question the
+// successor had asked again. The moved entry keeps the predecessor's wait start and its blocks
+// wording, so the held question (that wait's blocks and start) never matched it.
+const PRED_LINE = 'waiting: operator — blocks: phase 3, as the predecessor worded it'
+
+// The successor (s-one) holds the question the predecessor asked and the move left open, then
+// asks the same question again under its own words: two open entries, the moved one standing.
+async function movedThenAskedAgain(movedQuestion = QUESTION) {
+  const chains = mounted()
+  const fx = fake()
+  const old = roundEntry('s-pred', 'Orch: belt', parseWait(answerOf(movedQuestion, PRED_LINE))!, '2026-10-14T08:00:00.000Z', '2026-10-14T08:00:00.100Z')
+  const moved: RoundEntry = { ...old, session: 's-one', movedFrom: 's-pred' }
+  fx.files.set(`${ROUND}/${moved.id}.json`, JSON.stringify(moved) + '\n')
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+  fx.sent.length = 0
+  const again = entries(fx).find(e => e.id !== moved.id)!
+  expect(entries(fx).map(e => e.status)).toEqual(['open', 'open'])
+  return { chains, fx, moved, again }
+}
+
+test('a prompt typed in the successor\'s tab withdraws the question it holds and the moved one with the same question, by the tab, with his words', async () => {
+  const { chains, fx, moved, again } = await movedThenAskedAgain()
+  const words = 'B, but keep the hotfix small'
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer', words))
+  const after = new Map(entries(fx).map(e => [e.id, e]))
+  for (const id of [moved.id, again.id]) {
+    const entry = after.get(id)!
+    expect([entry.status, entry.answer?.by, entry.answer?.text, entry.answer?.typed]).toEqual(['withdrawn', 'tab', "answered in the sender's own tab", words])
+  }
+  expect(after.get(moved.id)!.movedFrom).toBe('s-pred')
+})
+
+test('a moved entry with another question stays open when the operator answers in the successor\'s tab', async () => {
+  const { chains, fx, moved, again } = await movedThenAskedAgain('Question 1 of 1 — drop the hotfix?\n_Context._ Unrelated.')
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer', 'yes'))
+  const after = new Map(entries(fx).map(e => [e.id, e]))
+  expect([after.get(again.id)!.status, after.get(moved.id)!.status, after.get(moved.id)!.answer]).toEqual(['withdrawn', 'open', null])
+})
+
+test('the same question differing only in its spacing is the same question', async () => {
+  const { chains, fx, moved } = await movedThenAskedAgain(QUESTION.replace('\n', '\n\n').replace(' now', '  now'))
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer', 'yes'))
+  expect(entries(fx).find(e => e.id === moved.id)!.status).toBe('withdrawn')
+})
+
+test('his words are cut at 500 characters and the cut is said', async () => {
+  const { chains, fx, moved } = await movedThenAskedAgain()
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer', 'x'.repeat(700)))
+  const said = entries(fx).find(e => e.id === moved.id)!.answer!.typed!
+  expect(said).toBe(`${'x'.repeat(500)}\n[cut at 500 of 700 characters]`)
+})
+
+for (const [label, pick] of [['the moved one', (m: RoundEntry, _a: RoundEntry) => m], ['the one the successor asked', (_m: RoundEntry, a: RoundEntry) => a]] as const) {
+  test(`an answer from the pane to ${label} settles both, and the sender is sent it once`, async () => {
+    const { fx, moved, again } = await movedThenAskedAgain()
+    const pane = { opened: null, ticker: null, other: new Set<string>(), writing: null, undelivered: new Map(), answering: new Set<string>() }
+    await answerFromPaneText({ ...fx.dollar, ui: { invalidate: () => undefined } }, pane, pick(moved, again), 'B, then')
+    const after = new Map(entries(fx).map(e => [e.id, e]))
+    for (const id of [moved.id, again.id]) expect([after.get(id)!.status, after.get(id)!.answer?.by, after.get(id)!.answer?.text]).toEqual(['answered', 'pane', 'B, then'])
+    expect(fx.sent.length).toBe(1)
+  })
+}
+
+test('an answer from the pane leaves a moved entry with another question open', async () => {
+  const { fx, moved, again } = await movedThenAskedAgain('Question 1 of 1 — drop the hotfix?')
+  const pane = { opened: null, ticker: null, other: new Set<string>(), writing: null, undelivered: new Map(), answering: new Set<string>() }
+  await answerFromPaneText({ ...fx.dollar, ui: { invalidate: () => undefined } }, pane, again, 'B, then')
+  expect(new Map(entries(fx).map(e => [e.id, e.status]))).toEqual(new Map([[moved.id, 'open'], [again.id, 'answered']]))
+})
+
+test('the notice of a question settled in the tab carries his words on one line, and the report to a remote coordinator too', () => {
+  const asked = roundEntry('s-one', 'Orch: belt', parseWait(answerOf(QUESTION, QUESTION_LINE))!, '2026-10-14T08:00:00.000Z', 'T')
+  const notice = settledText(asked, { text: "withdrawn: answered in the sender's own tab", by: 'tab', at: 'T', typed: 'B,\nkeep it small' })
+  expect(notice).toContain(`(entry ${asked.id}) — answered there: "B, keep it small". ${DROP}`)
+  expect(settledText(asked, { text: "withdrawn: answered in the sender's own tab", by: 'tab', at: 'T' })).toContain(`— answered there. ${DROP}`)
+  expect(withdrawalText('Orch: belt', 'phase 3', 'T', 'B,\nkeep it small')).toContain('(he typed: "B, keep it small")')
+  expect(withdrawalText('Orch: belt', 'phase 3', 'T')).not.toContain('typed')
+})

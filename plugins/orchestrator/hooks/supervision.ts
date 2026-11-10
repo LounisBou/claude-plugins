@@ -370,7 +370,7 @@ export function parseSessionRow(text: string): SessionRow | null {
 // yet, with the fingerprint its acknowledgment keeps (`pending_key`): an outbox, never drawn or
 // answered from here (remote-round.ts). `relayed_id` is the id of the entry that acknowledgment
 // kept, so the answer to it forgets `relayed` as forgetRelayed does on the coordinator's machine.
-export type WaitRecord = Pick<SessionRow, 'waiting' | 'blocks' | 'waiting_since' | 'relayed'> & { name: string | null; pid: string | null; last_waiting?: WaitKind | null; typed?: { blocks: string; since: string | null; withdrawn?: boolean; told?: string[] } | null; pending?: string | null; pending_key?: string | null; relayed_id?: string | null }
+export type WaitRecord = Pick<SessionRow, 'waiting' | 'blocks' | 'waiting_since' | 'relayed'> & { name: string | null; pid: string | null; last_waiting?: WaitKind | null; typed?: { blocks: string; since: string | null; said?: string; withdrawn?: boolean; told?: string[] } | null; pending?: string | null; pending_key?: string | null; relayed_id?: string | null }
 
 export function waitKey(id: string): string {
   return `waits/${id.replace(/[^A-Za-z0-9._-]/g, '_')}`
@@ -1013,6 +1013,18 @@ async function shownToCoordinator($: any, id: string): Promise<boolean> {
 // The reason an entry withdrawn by the operator's prompt in its sender's own tab records.
 const TAB_ANSWER = "answered in the sender's own tab"
 
+// What the operator typed in the tab, kept beside that reason (`answer.typed`): trimmed, and cut
+// past this many characters with the cut said, as cutQuestion says its own. Empty when he typed
+// nothing but blanks.
+const TYPED_CAP = 500
+function typedWords(text: string): string {
+  const said = text.trim()
+  return said.length > TYPED_CAP ? `${said.slice(0, TYPED_CAP)}\n[cut at ${TYPED_CAP} of ${said.length} characters]` : said
+}
+
+// Two questions are the same when their text is, whatever the spacing between the words.
+const sameQuestion = (a: string, b: string): boolean => a.replace(/\s+/g, ' ').trim() === b.replace(/\s+/g, ' ').trim()
+
 // An entry settled in the pane or at its sender's turn end, closed by the module itself when the
 // coordinator on this machine was shown it: the answer it was closed with.
 export type Settled = { entry: RoundEntry; answer: RoundAnswer }
@@ -1022,7 +1034,7 @@ export type Settled = { entry: RoundEntry; answer: RoundAnswer }
 export function settledText(entry: RoundEntry, answer: RoundAnswer): string {
   const reason = answer.text.replace(/^withdrawn: /, '')
   const [where, how] = answer.by === 'pane' ? ['in the pane', `answered at ${answer.at}`]
-    : answer.by === 'tab' || reason === TAB_ANSWER ? [`in ${entry.from}'s tab`, 'answered there']
+    : answer.by === 'tab' || reason === TAB_ANSWER ? [`in ${entry.from}'s tab`, answer.typed ? `answered there: "${answer.typed.replace(/\s*\n\s*/g, ' ')}"` : 'answered there']
     : reason.startsWith('superseded by ') ? ['superseded', `by ${reason.slice('superseded by '.length)}, present that one`]
     : reason === "the sender's session ended" ? ['', 'session ended']
     : ['', reason.replace(/\s*\n\s*/g, ' ').trim() || 'withdrawn by its sender']
@@ -2483,14 +2495,16 @@ export async function withdrawOnTyped($: any, kind: string, text: string): Promi
   const held = heldQuestion(prior) ?? (coordinator.local && !prior?.typed ? await openQuestion($, sessionId) : null)
   if (!held) return
   const heldKey = prior?.relayed ?? null
-  if (prior) await writeWait($, sessionId, { ...prior, typed: { ...held, withdrawn: false } })
-  const told = await withdrawHeld($, sessionId, name, held)
+  const said = typedWords(text)
+  const mark = { ...held, ...(said ? { said } : {}) }
+  if (prior) await writeWait($, sessionId, { ...prior, typed: { ...mark, withdrawn: false } })
+  const told = await withdrawHeld($, sessionId, name, mark)
   const now = await readWait($, sessionId)
   if (!now?.typed) return
   // The fingerprint is forgotten with the withdrawal, as the turn's end did: the same question
   // asked again is relayed again. A wait rewritten while the withdrawal was sent keeps its own.
   const relayed = told !== null && (now.relayed ?? null) === heldKey ? null : now.relayed ?? null
-  await writeWait($, sessionId, { ...now, relayed, typed: { ...held, withdrawn: told !== null, told: told ?? [] } })
+  await writeWait($, sessionId, { ...now, relayed, typed: { ...mark, withdrawn: told !== null, told: told ?? [] } })
 }
 
 // The session's open operator entry in the round, the earliest when several: the question a
@@ -2509,7 +2523,7 @@ async function openQuestion($: any, sessionId: string): Promise<{ blocks: string
 // when it is not done, a send refused being one log line and the fingerprint kept; else the ids
 // of the entries the coordinator on this machine was told closed, so the question asked again is
 // relayed again, and the coordinator told when it is open again (tellReopened).
-async function withdrawHeld($: any, sessionId: string, name: string, held: { blocks: string; since: string | null }): Promise<string[] | null> {
+async function withdrawHeld($: any, sessionId: string, name: string, held: { blocks: string; since: string | null; said?: string }): Promise<string[] | null> {
   const coordinator = await coordinatorAddress($)
   if (!coordinator) return null
   try {
@@ -2518,7 +2532,7 @@ async function withdrawHeld($: any, sessionId: string, name: string, held: { blo
       await tellSettled($, settled)
       return settled.map(({ entry }) => entry.id)
     }
-    const sent = await sendToCoordinator($, coordinator.to, withdrawalText(name, held.blocks, held.since))
+    const sent = await sendToCoordinator($, coordinator.to, withdrawalText(name, held.blocks, held.since, held.said))
     if (sent?.isDelivered) return []
     await logLine($, `withdraw: not delivered to ${addressLabel(coordinator.to)}: ${sent?.reason ?? 'no answer'}`)
     return null
@@ -2598,26 +2612,31 @@ async function handOver($: any, sessionId: string): Promise<void> {
 
 // The held question's entry in the round: that session's open operator question with the same
 // start and the same blocks, marked withdrawn, answered in its own tab, or closed so when the
-// coordinator was shown it (the entries to tell it of). None found, nothing is written and the
+// coordinator was shown it (the entries to tell it of), with what the operator typed (`held.said`).
+// With it, every open entry of that session that a succession moved to it (`movedFrom`) and that
+// asks the same question (same text, spacing aside) is settled the same way: the successor
+// asking again what its predecessor asked keeps the predecessor's wait start and its own wording
+// of the blocks, so only the question's text recognises the two as one (the operator's report of
+// 2026-11-10). A moved entry that asks another question stays open. None found, nothing is written and the
 // log says so; one that cannot be written throws, and the next typed prompt tries again, and so
 // does the turn's end.
-async function withdrawEntry($: any, sessionId: string, name: string, held: { blocks: string; since: string | null }): Promise<Settled[]> {
+async function withdrawEntry($: any, sessionId: string, name: string, held: { blocks: string; since: string | null; said?: string }): Promise<Settled[]> {
   const settled: Settled[] = []
-  let matched = 0
-  for (const { path, entry } of await readRound($)) {
-    if (entry.session !== sessionId || entry.kind !== 'operator' || entry.status !== 'open') continue
-    if (entry.since !== held.since || entry.blocks !== held.blocks) continue
-    matched++
+  const open = (await readRound($)).filter(({ entry }) => entry.session === sessionId && entry.kind === 'operator' && entry.status === 'open')
+  const direct = open.filter(({ entry }) => entry.since === held.since && entry.blocks === held.blocks)
+  const twins = open.filter(({ entry }) => entry.movedFrom !== undefined && !direct.some(found => found.entry.id === entry.id)
+    && direct.some(found => sameQuestion(found.entry.question, entry.question)))
+  for (const { path, entry } of [...direct, ...twins]) {
     const at = new Date().toISOString()
     const closed = await closesItself($, entry.id)
-    const answer: RoundAnswer = { text: closed ? `withdrawn: ${TAB_ANSWER}` : TAB_ANSWER, by: 'tab', at }
+    const answer: RoundAnswer = { text: closed ? `withdrawn: ${TAB_ANSWER}` : TAB_ANSWER, by: 'tab', at, ...(held.said ? { typed: held.said } : {}) }
     // Read again under the lock: an answer the pane wrote meanwhile stands.
     const written = await changeEntry($, path, current =>
       current && current.status === 'open' && current.session === sessionId ? { ...current, status: closed ? 'closed' : 'withdrawn', answer } : null)
     if (!written) await logLine($, `round: ${entry.id} was settled meanwhile, left as it is`)
     else if (closed) settled.push({ entry, answer })
   }
-  if (matched === 0) await logLine($, `round: no open entry matched for ${name} since ${held.since ?? '?'}`)
+  if (direct.length === 0) await logLine($, `round: no open entry matched for ${name} since ${held.since ?? '?'}`)
   return settled
 }
 
@@ -2735,6 +2754,7 @@ async function answerEntryFromPane($: any, pane: PaneMemory, asked: RoundEntry, 
     if (!answered || !entry) return
     await writeConsent($, entry, text, 'pane', at)
     forgetDraft(pane, entry.id)
+    await answerTwins($, entry, text, at)
     if (entry.origin) await sendAnswer($, path, answered, text)
     else {
       await forgetRelayed($, entry)
@@ -2754,6 +2774,30 @@ async function answerEntryFromPane($: any, pane: PaneMemory, asked: RoundEntry, 
 
 // The prefix of the answer an entry the coordinator was shown is closed with.
 const PANE_CLOSED = 'answered from the pane: '
+
+// The pane's answer to an entry, given to its twins: the open entries of the same session that ask
+// the same question when either of the two was moved to it at a succession. The sender asked once,
+// so it is sent the answer once (the entry's own send); the twins are settled in the round the same
+// way, answered or closed by the pane, so none stays in the pane or the coordinator's list. An entry
+// from another machine has no twin: a succession moves only the entries of this round.
+async function answerTwins($: any, entry: RoundEntry, text: string, at: string): Promise<void> {
+  if (entry.origin || entry.session === '') return
+  try {
+    for (const { path, entry: twin } of await readRound($)) {
+      if (twin.id === entry.id || twin.session !== entry.session || twin.kind !== 'operator' || twin.status !== 'open' || twin.origin) continue
+      if ((entry.movedFrom === undefined && twin.movedFrom === undefined) || !sameQuestion(entry.question, twin.question)) continue
+      const closed = await shownToCoordinator($, twin.id)
+      const answer: RoundAnswer = { text: closed ? `${PANE_CLOSED}${text}` : text, by: 'pane', at }
+      const written = await changeEntry($, path, current =>
+        current && current.status === 'open' && current.session === entry.session ? { ...current, status: closed ? 'closed' : 'answered', answer } : null)
+      if (!written) continue
+      await forgetRelayed($, twin)
+      if (closed) await $.prompt.submit({ text: settledText(twin, answer) })
+    }
+  } catch (err) {
+    await logLine($, `round: ${(err as Error).message}`)
+  }
+}
 
 // One send of an answer to a sender on this machine, `readable` the message it receives, to its
 // session (senderAddress); then the entry read again and, while it still holds that answer and its

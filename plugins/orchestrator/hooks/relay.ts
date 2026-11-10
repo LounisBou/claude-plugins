@@ -152,9 +152,10 @@ export function heldQuestion(prior: RelayedWait | null): { blocks: string; since
 
 // The report that the operator answered in the orchestrator's own tab: a report, never an
 // order, and nothing is to be sent back.
-export function withdrawalText(name: string, blocks: string, since: string | null): string {
+export function withdrawalText(name: string, blocks: string, since: string | null, said?: string): string {
+  const words = said ? ` (he typed: "${said.replace(/\s*\n\s*/g, ' ')}")` : ''
   return `[module] ${name} withdraws its question for the operator since ${since ?? '?'} — blocks: ${blocks}\n`
-    + `the operator answered it in ${name}'s own tab: nothing to send back`
+    + `the operator answered it in ${name}'s own tab${words}: nothing to send back`
 }
 
 // An agent's measure crossing the gate its session runs under, the one line sent to its
