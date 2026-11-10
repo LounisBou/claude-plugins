@@ -646,10 +646,7 @@ test('a review agent call the host refused did not run: only the reissued call i
 
 // What core answers a launch it runs in the background, whatever flag the call carried: the
 // launch's record, which names the agent, beside the text the model reads.
-const launched = (id: string) => ({
-  result: { isAsync: true, status: 'async_launched', agentId: id, description: 'review', prompt: 'review the diff', outputFile: `/tmp/tasks/${id}.output` },
-  text: 'Async agent launched successfully. (This tool result is internal metadata)\nagentId: ' + id + ' (internal ID - do not mention to user)',
-})
+const launched = (id: string) => coreLaunch(id)
 
 // The hand-back as the host delivers it: the report indented under a frame, the origin naming the agent.
 // `over` overrides the delivery: a forgery changes the origin or the event.
@@ -831,11 +828,11 @@ test('the hook rewrites a review call once: the reissued input comes back unchan
   expect(once.split(REPORT_REQUEST).length).toBe(2)
 })
 
-// ── the answers core gives, as a session's transcript recorded them on 2026-11-10 ──
+// ── the answers core gives to an Agent call ──
 
 // What `next(e)` of an Agent call resolves to from core: the tool's record in `result`, an object,
-// and the text the model reads in `text`. A background launch, as a session's transcript recorded it.
-const PASS2_AGENT = 'a1e5d2e302e28e5fc'
+// and the text the model reads in `text`. A background launch.
+const PASS2_AGENT = 'a0000000000000001'
 const coreLaunch = (id: string) => ({
   ref: 1,
   result: {
@@ -845,7 +842,7 @@ const coreLaunch = (id: string) => ({
     description: 'Review PR 42 whole range',
     resolvedModel: 'claude-opus-5-5',
     prompt: 'Read-only review of owner/web#42' + REPORT_REQUEST,
-    outputFile: `/private/tmp/claude-501/-work-web/b7e516ac-2336-47ec-bdf3-e67bb3706398/tasks/${id}.output`,
+    outputFile: `/tmp/session/tasks/${id}.output`,
     canReadOutputFile: true,
     canContinueAgent: true,
   },
@@ -995,6 +992,35 @@ test('a foreground agent that reported through its hand-back tool is read from t
   await review($)
   const out = await loopCall($, { action: 'findings', keys: [] })
   expect(String(out.result)).toContain('"exit": "clean"')
+})
+
+test('a flagged hand-back is read from its report like a sent one', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  stubs.agent = () => coreCompleted('This agent\'s report was delivered to you as a message.', { handback: 'flagged', handbackReport: { text: agentAnswer([{ severity: 'important' }]) } })
+  wireRecord(on, stubs)
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await review($)
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(out.result)).toContain('reported 1 finding(s)')
+})
+
+test('a sent hand-back with no report text falls to the content, and is silent when it has none', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  let calls = 0
+  stubs.agent = () => (++calls === 1
+    ? coreCompleted(agentAnswer([{ severity: 'critical' }]), { handback: 'send' })
+    : coreCompleted('No findings', { handback: 'send', content: undefined }))
+  wireRecord(on, stubs)
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await review($)
+  const found = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(found.result)).toContain('reported 1 finding(s)')
+  await loopCall($, { action: 'begin_pass' })
+  await review($)
+  const silent = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(silent.result)).toContain('1 of 1 review agents ended without their findings block')
 })
 
 test('a hand-back whose report was withheld is no report', async ($, on) => {
