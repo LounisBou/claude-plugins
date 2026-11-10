@@ -172,11 +172,10 @@ $SCRIPT close --tty /dev/ttysNNN --expect-title <substring> [--keep-checkout]
     # waits for the host CLI to leave the tty, and fails loudly naming what survived.
     # Once the close is proved, the checkout the session worked in is deleted when it is
     # a checkout or a pin under the workspaces root: `workspace.sh delete`, never
-    # --discard, its host temporary directory with it. The directory is read BEFORE the
-    # close. The outcome is on stderr (`close: deleted checkout <path>` or
-    # `close: kept checkout <path>: <reason>`); the stdout line `closed 1 session on <tty>`
-    # is unchanged and a refused delete never fails the close. --keep-checkout opts out
-    # (the checkout is then deleted by hand, or by the next sweep). `rotate` always keeps it.
+    # --discard, its host temporary directory with it, the directory read BEFORE the close.
+    # The outcome is on stderr (`close: deleted checkout <path>` or `close: kept checkout
+    # <path>: <reason>`); the stdout line `closed 1 session on <tty>` is unchanged and a
+    # refused delete never fails the close. --keep-checkout opts out. `rotate` always keeps it.
     # A host pid the hooks module's store records on the tty and the table still lists after
     # the close is named on stderr, `close: pid <n> lingers (<state>)`, the exit unchanged.
 
@@ -193,20 +192,23 @@ $SCRIPT rotate --dir <workdir> --old-tty <tty> [--trust] [--tier <tier> | --mode
     [--title <t>] [--prompt <text> | --prompt-file <path>] [--right-of self | --left-of <tty>] [--mcp <name>] [--gate-tokens <N>] \
     [--keep-tool <name>] [--drop-tool <name>] [--keep-synced-skills]
     # spawns the replacement FIRST and verifies it is running, then closes the old tab
-    # A rotation is a succession: given no pair, the replacement runs on the ROTATED agent's
-    # live model and effort, read on that agent's transcript (pair_source=transcript <path>);
-    # a tier, or --model with --effort, is the orchestrator naming the pair (an escalation),
-    # typed as given (pair_source=tier <t> or flag). An unreadable pair refuses the rotation
-    # before anything is spawned.
-    # every argument it does not consume reaches the spawn, `--trust` and `--mcp <name>`
+    # Before any spawn it refuses (`rotate: refused: …`, exit 1, nothing spawned) whatever
+    # `close` would refuse, the tab of the caller's own home server and a session no id nor
+    # title word tells from another.
+    # Once the spawn has returned the replacement is never closed: a later failure ends on one
+    # `rotate:` line naming the shell-quoted step that ends the old session.
+    # A rotation is a succession: with no pair given, the replacement runs on the ROTATED
+    # agent's live model and effort, read on its transcript (pair_source=transcript <path>); a
+    # tier, or --model with --effort, is the orchestrator naming the pair (an escalation),
+    # typed as given (pair_source=tier <t> or flag). An unreadable pair refuses the rotation.
+    # Every argument it does not consume reaches the spawn, `--trust` and `--mcp <name>`
     # included: an agent that needed a server is replaced by one that still has it.
-    # One of --prompt, --prompt-file or --brief is required here too — a promptless
-    # rotation is refused the same way a promptless spawn is, before the replacement's
-    # tab exists and with the old session untouched. --no-verify is refused: the old tab
-    # is closed only on a replacement verified running. --keep-tool, --drop-tool and
-    # --keep-synced-skills are forwarded like --mcp, and only those given to `rotate`: the
-    # replacement is opened with the default set, not the original's, so a rotation of an
-    # agent that was given Artifact or the synced skills gives them again.
+    # One of --prompt, --prompt-file or --brief is required, as for a spawn. A refusal comes
+    # before the replacement's tab exists, the old session untouched.
+    # --no-verify is refused: the old tab is closed only on a replacement verified running.
+    # --keep-tool, --drop-tool and --keep-synced-skills are forwarded like --mcp, and only
+    # those given to `rotate`: the replacement is opened with the default set, so a rotation
+    # of an agent that was given Artifact or the synced skills gives them again.
 
 $SCRIPT pair
     # read-only: the calling session's model and effort now, `model=<model> effort=<level>`,
@@ -242,19 +244,19 @@ $SCRIPT tools [--transcript <path>]
 
 ## Agents as windows of a home session
 
-An orchestrator's tab holds a tmux session of its own, its **home session**, on a server of its own (`-L orch-<id>`, started with the plugin's `skills/iterm-agents/tmux/home.conf` and nothing of the operator's tmux setup). The orchestrator is in window 0, and **the launcher puts an agent where its caller runs**: a caller inside a home session (`$TMUX` set and the session carrying the plugin's mark) gets a window, any other caller a tab. Windows are a placement, not a rung of « When iTerm2 does not answer »: a failed iTerm2 call never falls to tmux, and a tmux that cannot answer inside a pane is a refusal that names the cause. The auditor is made as a tab, and so is a woken or opened orchestrator (as a home session of its own, shown by a tab).
+An orchestrator's tab holds a tmux session of its own, its **home session**, on a server of its own (`-L orch-<id>`, started with the plugin's `skills/iterm-agents/tmux/home.conf` and nothing of the operator's tmux setup). The orchestrator is in window 0, and **the launcher puts an agent where its caller runs**: a caller inside a home session (`$TMUX` set and the session carrying the plugin's mark) gets a window, any other caller a tab. Windows are a placement, not a rung of « When iTerm2 does not answer »: a failed iTerm2 call never falls to tmux, and a tmux that cannot answer inside a pane is a refusal that names the cause. The auditor is made as a tab, and so is a woken or opened orchestrator.
 
-- **`spawn`** makes the window with `new-window -d` (the operator's view stays put), named by `-n` with the title, because a window not named takes its program's name. It takes the next free index; `--right-of self` is read as « after my last agent », and a first place or `--left-of` is said to be unsupported there. Its chain entry is `tmux:<socket>:@N`, owned by `tmux:<socket>:%N`.
+- **`spawn`** makes the window with `new-window -d` (the operator's view stays put), named by `-n` with the title, a window not named taking its program's name. It takes the next free index; `--right-of self` is read as « after my last agent », and a first place or `--left-of` is said to be unsupported there. Its chain entry is `tmux:<socket>:@N`, owned by `tmux:<socket>:%N`.
 - **`list`** prints the home session's windows, one row each, the caller's own marked `self`, then the app's tabs it did not make as windows (an auditor's, for one). **`screen`** reads a window with `capture-pane`.
-- **`close`** kills the window, guarded by `--expect-title` against the window's name, proved gone on the process table (a host still there is sent SIGTERM, then SIGKILL, as for a tab), the checkout deleted as for a tab. A tty of another tmux session is refused. On a tab that shows a home session it ends the whole server first and prints a `home:` line. A home session's window 0 is closed only by `takeover`: `close` refuses it, before anything is killed.
-- **`move`** is `move-window`, with the operator's view kept; window 0 is refused as a subject, as an anchor to place something before, and as `--leftmost`. **`rotate`** spawns, verifies, then closes, as for tabs.
+- **`close`** kills the window, guarded by `--expect-title` against the window's name, proved gone on the process table (a host still there is sent SIGTERM, then SIGKILL) and the checkout deleted, as for a tab. A tty of another tmux session is refused. On a tab that shows a home session it ends the whole server first and prints a `home:` line. A home session's window 0 is closed only by `takeover`: `close` refuses it, before anything is killed.
+- **`move`** is `move-window`, with the operator's view kept; window 0 is refused as a subject, as an anchor to place something before, and as `--leftmost`. **`rotate`** spawns, verifies, then closes, as for tabs, after refusing before any spawn what `close` would refuse (window 0 included).
 - **`home --session <id> --name "Orch: <subject>"`** is run by the hooks module at the end of the turn that names an orchestrator, never by hand: it makes the server, resumes the same conversation in window 0 and opens a tab showing it, printing `moved: …` or `stay: <why>` (a session that is not an orchestrator, or already in a home session, stays). **`home-release`** is window 0's watcher, closing the tab the orchestrator left once the resumed host is proved running. **`takeover --tty <predecessor> --expect-title <words>`** is a successor's close of its predecessor: window 0 killed (the title being required) and its host proved gone, sent SIGTERM then SIGKILL when it stays, then the successor's window moved to index 0.
 - **The tab bar** shows one block per window — the name, then the state icon the module wrote on the window: busy ●, idle ○, asks ✋, done ✓, gate ⚠. A click on a block or `C-b n` / `C-b p` switches; the windows keep their numbers, so `C-b <digit>` still selects one, though the bar shows none. `C-b C-b` sends a Ctrl-B to the pane.
 - **`ORCHESTRATOR_TMUX`** names the tmux binary (the suite stands a recorder in for it); `ORCHESTRATOR_HOME_WAIT` is how long window 0 waits for the moved session to end in its old place.
 
 ## How the launcher builds a tab
 
-- **A directory the host has never opened stops the session on a workspace question**, whose highlighted answer is « exit ». Nobody sits at that keyboard: the session waits for ever having never read its brief, or takes a stray keystroke and quits — and from outside both look like a launched agent, because the process genuinely runs. `spawn` refuses such a launch before making a tab, and `--trust` records the answer for ONE directory (the limit is in `SKILL.md`'s launch safety order). The record is the host's own, `~/.claude.json`, and writing to it is why the flag is explicit rather than automatic. It never rewrites an entry that already says yes, and a record it cannot read is said on stderr rather than launched past in silence; entries outlive their directories — `trust prune` lists them, `--apply` removes them.
+- **A directory the host has never opened stops the session on a workspace question**, whose highlighted answer is « exit ». The session waits for ever without reading its brief, or takes a stray keystroke and quits, and both look like a launched agent from outside, the process running. `spawn` refuses such a launch before making a tab, and `--trust` records the answer for ONE directory (the limit is in `SKILL.md`'s launch safety order). The record is the host's own, `~/.claude.json`, so the flag is explicit rather than automatic. It never rewrites an entry that already says yes, and says a record it cannot read on stderr; entries outlive their directories, `trust prune` lists them and `--apply` removes them.
 - **A spawn never takes the operator's focus.** The tab is created unselected: someone is working in another tab, and a launch that pulls the window across interrupts them every time an agent starts.
 - **The tab runs the launch through a login shell** (`ORCHESTRATOR_LOGIN_SHELL`, else `SHELL`, else `/bin/zsh`), so the agent inherits the operator's PATH, the package manager's binaries included. The launch names the CLI by ABSOLUTE path, resolved from the orchestrator's own environment, so a profile that breaks PATH cannot kill it.
 - **The app splits the command into words itself.** A compound command handed over raw is run by no shell at all. The launch goes to a FILE and the app is asked to run `/bin/sh <file>`: a path has no quoting, and quoting for someone else's tokenizer is the losing game the typed version already played.
@@ -263,15 +265,15 @@ An orchestrator's tab holds a tmux session of its own, its **home session**, on 
 - **The title is the session's name.** `--title` is passed to the host as the session's name (shown in its prompt, its resume picker, the terminal title, and applied with a variant when a live session already holds it), in the shape `spawn` gives above. `--title-free` is the escape and the dry run says when it is on.
 - **The tools a session is given are chosen, and the default is lean (§65).** The host sends every loaded tool's schema on every call; five tools no session has called and, for an agent or an auditor, the three that move an orchestrator weigh about 19,400 tokens per call. The launch names them in `--disallowedTools`, placed before the strict flag and the server file so the pair stays closed by `--permission-mode` (the option takes several values, like `--mcp-config`, and is never last). `--keep-tool` and `--drop-tool` change the set for one spawn; `tools` shows what exists and what each costs. The account's synced skills (`anthropic-skills:*`, never invoked) are hidden the same way, through the host's `syncClaudeAiSkills: false` in the launch's own `--settings`, which hides them for that session and moves nothing on disk (the same key in the operator's user settings would move the synced directory to the trash); `--keep-synced-skills` leaves them in. Artifact is removed by name, never by the host's `enableArtifact` setting, which also drops the « Scratchpad directory » line from the session's environment.
 - **The first character of a title is an activity glyph, and it flips on its own** — one shape while the session works, another once it idles. `--expect-title` compares titles with that glyph stripped from both sides.
-- **A pane behind a maximized sibling is still a session, and it is listed as `hidden`.** The host extension's « Chat / Diff / Code Review » bar opens each view as a sibling pane of the agent's tab and maximizes the one shown, so an agent with a review open is hidden and its tab shows the review. The tool reads hidden panes like visible ones; `close --tty` closes that SESSION alone and leaves the review pane and the tab.
+- **A pane behind a maximized sibling is still a session, and it is listed as `hidden`.** The host extension's « Chat / Diff / Code Review » bar opens each view as a sibling pane of the agent's tab and maximizes the one shown, so an agent with a review open is hidden. The tool reads hidden panes like visible ones; `close --tty` closes that SESSION alone and leaves the review pane and the tab.
 - **The app's API must be enabled** (Preferences > General > Magic > Enable Python API), and the first connection asks macOS for permission once. `move` needs no Accessibility grant any more, does not bring the app to the front, and flickers no focus: the menu-driven version did all three.
-- **The environment is the installer's, not yours.** `/orchestrator:install` builds it under the state directory; recent macOS refuses to install into a package-managed interpreter, and a plugin has no business writing into one it did not create. Without it the tooling refuses to run and says how to build it. `ORCHESTRATOR_PYTHON` overrides the choice.
+- **The environment is the installer's, not yours.** `/orchestrator:install` builds it under the state directory; recent macOS refuses to install into a package-managed interpreter. Without it the tooling refuses to run and says how to build it. `ORCHESTRATOR_PYTHON` overrides the choice.
 
 ## When iTerm2 does not answer
 
 The launcher drives iTerm2 for the tabs it makes, and iTerm2 can stop answering. When it does, the launcher **names the cause** — it never hangs, it never reports a thing it did not verify, and it never quietly hands you a terminal you did not ask for.
 
-**Why a menu stops an API.** A menu, a sheet or a modal dialog runs a NESTED event loop. While one runs, the app's main thread never returns to its default run loop mode and **AppleEvents are not dispatched** — they queue and expire on their own two-minute timeout, silently. The terminals keep scrolling the whole time, because a session's I/O runs on other threads, so nothing looks wrong from the outside. A sheet check does not find a context menu.
+**Why a menu stops an API.** A menu, a sheet or a modal dialog runs a NESTED event loop. While one runs, the app's main thread never returns to its default run loop mode and **AppleEvents are not dispatched** — they queue and expire on their own two-minute timeout, silently. The terminals keep scrolling, a session's I/O running on other threads, so nothing looks wrong from outside. A sheet check does not find a context menu.
 
 **Two rungs, and no third.** Every command tries them in order and says on stderr which one served it and why the one above did not:
 
