@@ -1093,6 +1093,13 @@ test('an E2E waiver may quote the operator\'s answer in a consent record of that
   expect(recordRun(seen)).toContain('waived')
 })
 
+test('an E2E waiver may quote the operator\'s answer typed in the asking session\'s own tab', async ($, on) => {
+  const seen = await world($, on, consentWorld({ a: consent({ by: 'tab' }) }))
+  const out: any = await $.tool.call(waiveCall('operator ruled: ' + CONSENT_WORDS))
+  expect(out.deny).toBeUndefined()
+  expect(recordRun(seen)).toContain('waived')
+})
+
 for (const [label, over] of [
   ['another pull request', { subject: { kind: 'e2e-waiver', repo: 'acme/thing', pr: 13 } }],
   ['auto-merge', { subject: { kind: 'auto-merge', repo: 'acme/thing' } }],
