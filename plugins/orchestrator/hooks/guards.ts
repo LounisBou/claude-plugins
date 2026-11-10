@@ -38,6 +38,7 @@ import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
 import { pendingQuestion, unansweredRefusal, type WaitRead } from './unanswered-question.ts'
 import { parseRoundEntry, parseWaitRecord, waitKey, coordinatorAddress, REFERENCED } from './supervision.ts'
 import type { RoundEntry } from './round.ts'
+import { MODE_DIALOG_DENY, asksTheMode } from './mode-dialog.ts'
 import { MODELS_DENY, namesTheMap, typedByOperator, mapPaths, editsTheMap, bashWritesTheMap } from './models-guard.ts'
 
 // The config dir, gauge.ts's own resolution: $ never crosses an import, so
@@ -419,6 +420,23 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   }).catch(async ($: any, e: any, next: any) => {
     // A guard that could not read lets the call through, and the log says why: the map is
     // the operator's file, and a session held on the guard's own failure helps nobody.
+    await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
+    return next(e)
+  })
+
+  // The mode question is never a dialog: an orchestrator's dialog that offers `build` and
+  // `investigate` is denied with the way to ask it. A dialog in the session's own tab reaches
+  // neither the coordinator's pane nor a `waiting:` line, so nothing tells the operator the
+  // session is blocked on him. The session's role is read only for a call that asks the mode.
+  on('tool.call', { tool: 'AskUserQuestion' }, async ($: any, e: any, next: (e: any) => any) => {
+    if (!asksTheMode(e)) return next(e)
+    const sessionId = await $.session.id()
+    const { name } = await readName($, await transcriptPathOf($, sessionId), sessionId)
+    if (roleOf(name) !== 'orchestrator') return next(e)
+    await logLine($, 'mode dialog denied: the mode is asked in the question format, never by dialog')
+    return { deny: MODE_DIALOG_DENY }
+  }).catch(async ($: any, e: any, next: any) => {
+    // A guard that could not read lets the dialog through, and the log says why.
     await logLine($, `unhandled (${next.error?.kind ?? 'failure'}): ${next.error?.message ?? 'the hook did not finish'}`)
     return next(e)
   })
