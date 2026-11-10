@@ -311,7 +311,7 @@ test('an interrupted turn releases the loop', async ($, on) => {
 
 const WRITTEN = '/data/records/o/n/' + 'a'.repeat(40) + '/review.json'
 
-type Stubs = { records: any[]; prCalls: number; dirty?: string; pr?: string; listed?: string[]; recordAnswer?: any; recordThrows?: boolean; prompts?: string[] }
+type Stubs = { records: any[]; prCalls: number; dirty?: string; pr?: string; listed?: string[]; recordAnswer?: any; recordThrows?: boolean; prompts?: string[]; launches?: unknown[]; agent?: (e: any) => any }
 
 // A review agent's answer: its findings block, or none when `findings` is undefined.
 const agentAnswer = (findings?: { severity: string }[]) =>
@@ -323,7 +323,7 @@ const review = ($: any, findings?: { severity: string }[]): Promise<any> =>
 function wireRecord(on: any, stubs: Stubs) {
   on('tool.call', { tool: 'Agent' }, (_$: any, e: any) => {
     stubs.prompts?.push(String(e.prompt))
-    return { result: e.answer }
+    return stubs.agent ? stubs.agent(e) : { result: e.answer }
   })
   on('tool.list', () => ({ value: (stubs.listed ?? ['mcp__github__gh', 'mcp__github__record']).map((name) => ({ name })) }))
   on('process.run', (_$: any, e: any) => {
@@ -576,4 +576,68 @@ test('a reviewer\'s loop whose agent gave no block records fail, severity unknow
   await review($)
   await loopCall($, { action: 'findings', keys: ['a::b'] })
   expect(stubs.records[0].detail).toBe('reviewed: 1 findings, severity unknown')
+})
+
+// ── review agents launched in the background ─────────────────────────────────
+
+// The host answers a background launch at once with « launched », without the agent's block;
+// the same agent run in the foreground answers its block.
+function wireBackground(on: any, stubs: Stubs, findings?: { severity: string }[]) {
+  stubs.agent = (e: any) => {
+    stubs.launches?.push(e.run_in_background)
+    return { result: e.run_in_background ? 'Async agent launched successfully.' : agentAnswer(findings) }
+  }
+  wireRecord(on, stubs)
+}
+
+const backgroundReview = ($: any): Promise<any> =>
+  $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: 'review the diff', run_in_background: true } as any)
+
+test('a review agent launched in the background still reports its block and the pass is clean', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, launches: [] }
+  wireBackground(on, stubs, [])
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await backgroundReview($)
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(out.result)).toContain('"exit": "clean"')
+  expect(stubs.launches).toEqual([false])
+  expect(stubs.records.map((r) => r.result)).toEqual(['pass'])
+})
+
+test('a background review agent that ends without its block still counts as silent', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireBackground(on, stubs, undefined)
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await backgroundReview($)
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(out.isError).toBe(true)
+  expect(String(out.result)).toContain('1 of 1 review agents ended without their findings block')
+  expect(stubs.records).toEqual([])
+})
+
+test('an agent launched outside a review pass keeps its background flag', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, launches: [] }
+  wireBackground(on, stubs, [])
+  await backgroundReview($)
+  expect(stubs.launches).toEqual([true])
+})
+
+test('a review agent call the host refused did not run: only the reissued call is counted', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  let calls = 0
+  stubs.agent = (e: any) => {
+    calls += 1
+    return calls === 1 ? { deny: "a hook changed this call's input" } : { result: e.answer }
+  }
+  wireRecord(on, stubs)
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  const refused = await review($, [])
+  expect(refused.deny).toBeDefined()
+  await review($, [])
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(out.result)).toContain('"exit": "clean"')
+  expect(stubs.records[0].detail).toBe('clean at pass 1, 1 review agents reporting no finding')
 })

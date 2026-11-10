@@ -208,19 +208,23 @@ async function recordReview($: any, exit: string): Promise<string | null> {
 
 export function register(on: any): void {
   // Each agent a review pass launches is asked for its findings block, and its answer is read.
-  // The agent runs once: a failure is its answer, and leaves the pass without a count.
+  // It runs in the foreground: an agent launched in the background answers « launched » at once,
+  // its conclusion reaching the session later as a message this loop never reads.
+  // The agent runs once: a failure is its answer, and leaves the pass without a count; a call
+  // that was refused never ran, and is no agent of the pass.
   on('tool.call', { tool: 'Agent' }, async ($: any, e: any, next: any) => {
     if (!loop.isActive || !loop.isReviewing) return next(e)
     let answer: any
     try {
-      answer = await next({ ...e, prompt: String(e.prompt ?? '') + REPORT_REQUEST })
+      answer = await next({ ...e, prompt: String(e.prompt ?? '') + REPORT_REQUEST, run_in_background: false })
     } catch (err: any) {
       loop.reports.push(null)
       return { result: String(err?.message ?? err), isError: true }
     }
+    if (answer?.deny) return answer
     let report: ReturnType<typeof reportOf> = null
     try {
-      report = answer?.isError || answer?.deny ? null : reportOf(answerText(answer))
+      report = answer?.isError ? null : reportOf(answerText(answer))
     } catch {
       // Unreadable: no count.
     }
