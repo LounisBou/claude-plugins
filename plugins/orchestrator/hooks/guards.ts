@@ -512,6 +512,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
         await logLine($, 'stop gate: an operator wait with no question')
         return refuse(unasked)
       }
+      // The question he is put follows the method's format: no more than five choices, a recommendation that argues.
       const malformed = questionDefectRefusal(String(e.last_assistant_message ?? ''))
       if (malformed !== null) {
         await logLine($, 'stop gate: a question breaks the format')

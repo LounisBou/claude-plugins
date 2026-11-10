@@ -1,11 +1,12 @@
 // hooks/one-question.ts
-// The stop gate's rules on the question a turn puts to the operator, both read off the final
+// The stop gate's rules on the question a turn puts to the operator, all read off the final
 // message alone. One question per turn: an orchestrator puts one to him, the next only after
-// his answer, so a message holding two numbered question blocks or more breaks it. And a turn
+// his answer, so a message holding two numbered question blocks or more breaks it. A turn
 // that ends on a wait for him puts one: an operator wait with no block asks him nothing he can
-// see. The blocks are the ones round.ts's questionParts splits an entry on (`**Question 3 of 4**`,
+// see. And a block follows the method's format: no more than five choices, a recommendation that
+// argues. The blocks are the ones round.ts's questionParts splits an entry on (`**Question 3 of 4**`,
 // in the sender's language): the numbering is read there, once. A heading inside a fenced code
-// block is a quoted example, never a block: both rules read the message without its fences, as
+// block is a quoted example, never a block: the rules read the message without its fences, as
 // unanswered-question.ts does.
 import { questionParts, entryQuestions, questionDefects } from './round.ts'
 import { MACHINE_LINE, blocksNothing, machineLine } from './stop-gate.ts'
@@ -17,11 +18,11 @@ export const ONE_QUESTION =
 
 export const NO_QUESTION =
   'This turn ends on a wait for the operator but holds no question block: he is shown a report, not a question, '
-  + 'and what waits on his answer stays blocked. Put the question to him as orchestrator:decide runs it, in the method\'s question format '
-  + '(method:lifecycle, references/questions.md): a block is the `**Question i of N**` line followed by its '
-  + 'labelled fields (`_Subject_ :`, `_Context_ :`, `_Question_ :`, `_Choices_ :`, `_Free answer_ :`, '
-  + '`_Recommendation_ :`, in the operator\'s language): a heading '
-  + 'alone is refused. If you ask him nothing, end on the line that fits: '
+  + 'and what waits on his answer stays blocked. Put the question to him as orchestrator:decide runs it, '
+  + 'in the method\'s question format (method:lifecycle, references/questions.md): a block is the '
+  + '`**Question i of N**` line followed by its labelled fields (`_Subject_ :`, `_Context_ :`, '
+  + '`_Question_ :`, `_Choices_ :`, `_Free answer_ :`, `_Recommendation_ :`, in the operator\'s language): '
+  + 'a heading alone is refused. If you ask him nothing, end on the line that fits: '
   + '`waiting: tool — <what is watched>`, `waiting: deferred — <n> items`, `waiting: done`, or no machine line.'
 
 // The message without its fenced code blocks (``` or ~~~, the closing fence of the opening one's
@@ -84,8 +85,10 @@ export function questionDefectRefusal(message: string): string | null {
     .flatMap(part => questionDefects(part.question)))
   if (defects.size === 0) return null
   const faults = [
-    ...(defects.has('choices') ? ['it holds more than five choices: keep two to five, lettered A to E, and put the rest in the free answer'] : []),
-    ...(defects.has('recommendation') ? ['its recommendation names a letter with no argument: argue it against the other choices'] : []),
+    ...(defects.has('choices')
+      ? ['it holds more than five choices: keep two to five, lettered A to E, and put the rest in the free answer'] : []),
+    ...(defects.has('recommendation')
+      ? ['its recommendation names a letter with no argument: argue it against the other choices'] : []),
   ]
   return `${FORMAT_DEFECT}${faults.join('; ')}. Put the question again, corrected.`
 }
