@@ -10,7 +10,7 @@
 // types, an interrupted turn or a /clear ends the loop's hold.
 import { loop, resetLoop, MAX_PASSES } from './state.ts'
 import { GH_TOOL } from './policy.ts'
-import { REPORT_REQUEST, answerText, isBlocking, isRefusedRewrite, launchedAgent, passFindings, reportOf } from './report.ts'
+import { REPORT_REQUEST, answerText, isBlocking, isRefusedRewrite, launchedAgent, MAX_WAITS, passFindings, reportOf } from './report.ts'
 
 export const LOOP_TOOL = 'loop'
 
@@ -61,7 +61,8 @@ export function act(e: any): Record<string, unknown> {
     loop.pass += 1
     loop.isReviewing = true
     loop.reports = []
-    loop.awaiting = {}
+    loop.awaiting = new Map()
+    loop.waits = 0
     loop.lastFindings = 0
     loop.lastBlocking = undefined
     return { pass: loop.pass, max_passes: MAX_PASSES, next: 'run the review, then report findings' }
@@ -72,8 +73,13 @@ export function act(e: any): Record<string, unknown> {
     const keys = strings(e.keys)
     const found = passFindings(loop.reports)
     if (keys.length === 0 && found === undefined) {
-      const running = Object.keys(loop.awaiting).length
-      if (running > 0) return { error: `${running} review agents are still running in the background: wait for their hand-back, then report` }
+      const running = loop.awaiting.size
+      if (running > 0) {
+        loop.waits += 1
+        if (loop.waits <= MAX_WAITS) return { error: `${running} review agents are still running in the background: wait for their hand-back, then report` }
+        loop.awaiting = new Map()
+        return { error: `${running} review agents never handed back after ${MAX_WAITS} waits: the pass cannot be found clean; call begin_pass and run the review again` }
+      }
       const silent = loop.reports.filter((r) => r === null).length
       return {
         error: loop.reports.length === 0
@@ -216,7 +222,8 @@ export function register(on: any): void {
   // The host may run the agent in the background all the same: the launch answer then names the
   // agent, and its hand-back, read below, fills its place in the pass.
   // The agent runs once: a failure is its answer, and leaves the pass without a count; a call
-  // that was refused never ran, and is no agent of the pass.
+  // that the host refused for the hook's rewrite never ran, and is no agent of the pass; any other
+  // refusal is the agent's answer.
   on('tool.call', { tool: 'Agent' }, async ($: any, e: any, next: any) => {
     if (!loop.isActive || !loop.isReviewing) return next(e)
     const prompt = String(e.prompt ?? '')
@@ -227,34 +234,36 @@ export function register(on: any): void {
       loop.reports.push(null)
       return { result: String(err?.message ?? err), isError: true }
     }
-    if (answer?.deny) return answer
     let report: ReturnType<typeof reportOf> = null
     let agent: string | undefined
     try {
-      const text = answerText(answer)
-      if (answer?.isError && isRefusedRewrite(text)) return answer
-      report = answer?.isError ? null : reportOf(text)
-      agent = report === null && !answer?.isError ? launchedAgent(text) : undefined
+      const text = answerText(answer) || String(answer?.deny ?? '')
+      if (isRefusedRewrite(text)) return answer
+      const failed = Boolean(answer?.isError || answer?.deny)
+      report = failed ? null : reportOf(text)
+      agent = report === null && !failed ? launchedAgent(text) : undefined
     } catch {
       // Unreadable: no count.
     }
     if (loop.isReviewing) {
-      if (agent !== undefined) loop.awaiting[agent] = loop.reports.length
+      if (agent !== undefined) loop.awaiting.set(agent, loop.reports.length)
       loop.reports.push(report)
     }
     return answer
   }).catch(async (_$: any, e: any, next: any) => next(e))
 
   // The hand-back of a review agent the host ran in the background: its report, read for the
-  // pass it belongs to. The message goes on to the model as it came.
+  // pass it belongs to. Only the host's own delivery counts: a peer origin flagged as a hand-back,
+  // from an agent launched in this pass, on the main session's event. The message goes on to the
+  // model as it came.
   on('session.receive', {}, async (_$: any, e: any, next: any) => {
     try {
-      const id = String(e?.origin?.from ?? '')
-      const at = loop.awaiting[id]
-      if (at !== undefined && loop.isActive && loop.isReviewing) {
-        delete loop.awaiting[id]
-        const body = e.origin?.handback === true && typeof e.origin?.handbackReportText === 'string' ? e.origin.handbackReportText : String(e.text ?? '')
-        loop.reports[at] = reportOf(body)
+      const o = e?.origin
+      const id = typeof o?.from === 'string' ? o.from : ''
+      if (!e?.agentId && o?.kind === 'peer' && o?.handback === true && typeof o?.handbackReportText === 'string'
+        && loop.isActive && loop.isReviewing && loop.awaiting.has(id)) {
+        loop.reports[loop.awaiting.get(id) as number] = reportOf(o.handbackReportText)
+        loop.awaiting.delete(id)
       }
     } catch {
       // Unreadable: no count.

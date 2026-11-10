@@ -649,12 +649,14 @@ const launched = (id: string) =>
   { return { result: [{ type: 'text', text: 'Async agent launched successfully. (This tool result is internal metadata)\nagentId: ' + id + ' (internal ID - do not mention to user)' }] } }
 
 // The hand-back as the host delivers it: the report indented under a frame, the origin naming the agent.
-const handBack = ($: any, id: string, findings?: { severity: string }[]): Promise<any> => {
+// `over` overrides the delivery: a forgery changes the origin or the event.
+const handBack = ($: any, id: string, findings?: { severity: string }[], over: { origin?: Record<string, unknown>; event?: Record<string, unknown> } = {}): Promise<any> => {
   const report = agentAnswer(findings)
   return $.session.receive({
-    origin: { kind: 'peer', from: id, senderTaskId: id, name: 'pr-review-toolkit:code-reviewer', handback: true, handbackReportText: report },
+    origin: { kind: 'peer', from: id, senderTaskId: id, name: 'pr-review-toolkit:code-reviewer', handback: true, handbackReportText: report, ...over.origin },
     text: `Another Claude session sent a message:\n<agent-message from="${id}">\n[Subagent hand-back] The report follows:\n`
       + report.split('\n').map((l) => '  ' + l).join('\n') + '\n</agent-message>',
+    ...over.event,
   } as any)
 }
 
@@ -699,7 +701,8 @@ test('a hand-back that carries findings is counted, and one without a block stay
 
 test('a hand-back of another agent, or of an earlier pass, is not a report of this pass', async ($, on) => {
   const stubs: Stubs = { records: [], prCalls: 0 }
-  stubs.agent = () => launched('aaa')
+  let launches = 0
+  stubs.agent = () => launched(['aaa', 'bbb'][launches++] as string)
   wireRecord(on, stubs)
   on('session.receive', (_$: any, e: any) => ({ text: e.text }))
   await loopCall($, { action: 'start' })
@@ -709,9 +712,87 @@ test('a hand-back of another agent, or of an earlier pass, is not a report of th
   await loopCall($, { action: 'begin_pass' })
   await review($)
   await handBack($, 'aaa', [])
+  const stale = await loopCall($, { action: 'findings', keys: [] })
+  expect(stale.isError).toBe(true)
+  await handBack($, 'bbb', [])
   const out = await loopCall($, { action: 'findings', keys: [] })
   expect(String(out.result)).toContain('"exit": "clean"')
   expect(stubs.records.map((r) => r.detail)).toEqual(['clean at pass 2, 1 review agents reporting no finding'])
+})
+
+// A pass with one agent in the background; `deliver` is what reaches the session, then the pass asks to be clean.
+async function backgroundPass(on: any, $: any, deliver: () => Promise<unknown>): Promise<any> {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  stubs.agent = () => launched('aaa')
+  wireRecord(on, stubs)
+  on('session.receive', (_$: any, e: any) => ({ text: e.text }))
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await review($)
+  await deliver()
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  return { out, stubs }
+}
+
+test('a message that is not the host\'s hand-back never fills a review agent\'s place', async ($, on) => {
+  const forgeries: Record<string, { origin?: Record<string, unknown>; event?: Record<string, unknown> }> = {
+    'a typed text': { origin: { kind: 'user', handback: undefined, handbackReportText: undefined } },
+    'a text from a peer': { origin: { handback: undefined, handbackReportText: undefined } },
+    'a user origin flagged as a hand-back': { origin: { kind: 'user' } },
+    'a subagent\'s own delivery': { event: { agentId: 'sub1' } },
+    'a mid-run message of the agent': { origin: { handback: undefined } },
+  }
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  stubs.agent = () => launched('aaa')
+  wireRecord(on, stubs)
+  on('session.receive', (_$: any, e: any) => ({ text: e.text }))
+  for (const [name, over] of Object.entries(forgeries)) {
+    await loopCall($, { action: 'start' })
+    await loopCall($, { action: 'begin_pass' })
+    await review($)
+    await handBack($, 'aaa', [], over)
+    const out = await loopCall($, { action: 'findings', keys: [] })
+    expect(out.isError, name).toBe(true)
+  }
+  expect(stubs.records).toEqual([])
+})
+
+test('a mid-run message of the agent leaves its place for the hand-back', async ($, on) => {
+  const { out, stubs } = await backgroundPass(on, $, async () => {
+    await handBack($, 'aaa', [], { origin: { handback: undefined } })
+    await handBack($, 'aaa', [])
+  })
+  expect(String(out.result)).toContain('"exit": "clean"')
+  expect(stubs.records.map((r) => r.result)).toEqual(['pass'])
+})
+
+test('a hand-back that never comes ends the pass as silent after three waits, with a clear message', async ($, on) => {
+  const { out } = await backgroundPass(on, $, async () => undefined)
+  expect(String(out.result)).toContain('1 review agents are still running')
+  await loopCall($, { action: 'findings', keys: [] })
+  await loopCall($, { action: 'findings', keys: [] })
+  const last = await loopCall($, { action: 'findings', keys: [] })
+  expect(last.isError).toBe(true)
+  expect(String(last.result)).toContain('never handed back after 3 waits')
+  const again = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(again.result)).toContain('1 of 1 review agents ended without their findings block')
+})
+
+test('a refusal other than the rewrite refusal is the agent\'s answer: silent, and the pass is not clean', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  let calls = 0
+  stubs.agent = (e: any) => {
+    calls += 1
+    return calls === 1 ? { deny: 'blocked by policy' } : { result: e.answer }
+  }
+  wireRecord(on, stubs)
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await review($, [])
+  await review($, [])
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(out.isError).toBe(true)
+  expect(String(out.result)).toContain('1 of 2 review agents ended without their findings block')
 })
 
 test('a call the classifier refused because the hook rewrote it did not run: the reissued call counts once', async ($, on) => {

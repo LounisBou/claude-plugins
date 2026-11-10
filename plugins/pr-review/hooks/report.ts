@@ -54,6 +54,9 @@ export function launchedAgent(text: string): string | undefined {
 
 // A refusal of the host's auto-mode classifier: the hook changed the call after it was reviewed,
 // so the call never ran and is issued again.
+// How many times a pass may ask for a hand-back that has not come before it ends as silent.
+export const MAX_WAITS = 3
+
 export const isRefusedRewrite = (text: string): boolean => text.includes("a hook changed this call's input")
 
 // The pass's findings once every agent reported, or undefined: none ran, or one did not report.
