@@ -158,19 +158,22 @@ function mappedOf(read: Read, key: string): { readonly mapped: Mapped; readonly 
 }
 
 /** The changed modules of a file both sides map, or undefined when either map is missing or unreadable. */
-function attribute(base: Read, head: Read, key: string, outDir: string): readonly string[] | undefined {
+function attribute(base: Read, head: Read, key: string, outDir: string, roots: readonly string[]): readonly string[] | undefined {
   const before = mappedOf(base, key)
   const after = mappedOf(head, key)
   if (before === undefined || after === undefined) return undefined
   try {
-    return changedSources(before.mapped, after.mapped, posix.join(outDir, posix.dirname(after.mapKey)))
+    return changedSources(before.mapped, after.mapped, posix.join(outDir, posix.dirname(after.mapKey)), roots)
   } catch {
     return undefined
   }
 }
 
-/** The differing files, sorted by stripped name, and how many pairs matched only once normalised. */
-export function compareTrees(baseTree: Tree, headTree: Tree, hash: RegExp, outDir: string): { files: FileDiff[]; normalised: number; ambiguous: string[] } {
+/**
+ * The differing files, sorted by stripped name, and how many pairs matched only once normalised.
+ * `roots`: the paths of the checkout the builds ran in, stripped from absolute source paths.
+ */
+export function compareTrees(baseTree: Tree, headTree: Tree, hash: RegExp, outDir: string, roots: readonly string[] = []): { files: FileDiff[]; normalised: number; ambiguous: string[] } {
   const ambiguous = new Set<string>()
   const read = (tree: Tree): Read => {
     const sided = keyed([...tree.keys()], hash)
@@ -195,7 +198,7 @@ export function compareTrees(baseTree: Tree, headTree: Tree, hash: RegExp, outDi
       }
       const b = sideOf(basePath, before)
       const h = sideOf(headPath, after)
-      const sources = key.endsWith('.map') ? undefined : attribute(base, head, key, outDir)
+      const sources = key.endsWith('.map') ? undefined : attribute(base, head, key, outDir, roots)
       files.push({ path: key, status: 'changed', base: b, head: h, raw: h.raw - b.raw, gzip: h.gzip - b.gzip, ...(sources === undefined ? {} : { sources }) })
     } else if (headPath !== undefined && after !== undefined) {
       const h = sideOf(headPath, after)

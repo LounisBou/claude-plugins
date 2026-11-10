@@ -9,7 +9,7 @@
 // next. A shared node_modules is not used: the lockfile may differ between the refs, and a cache
 // under node_modules would carry the base's build into the head's.
 import { spawn } from 'node:child_process'
-import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -179,7 +179,9 @@ async function build(argv: readonly string[], deps: Deps): Promise<number> {
   try {
     await buildSide(context, 'base', baseSha, tree, join(work, 'base'))
     await buildSide(context, 'head', headSha, tree, join(work, 'head'))
-    compared = compareTrees(readTree(join(work, 'base')), readTree(join(work, 'head')), new RegExp(config.hashPattern), config.outDir)
+    // The checkout's path as given and as resolved: a build reading its working directory gets the latter.
+    const roots = [tree, join(realpathSync(work), 'tree')]
+    compared = compareTrees(readTree(join(work, 'base')), readTree(join(work, 'head')), new RegExp(config.hashPattern), config.outDir, roots)
   } finally {
     await removeCheckout(top, tree)
     rmSync(work, { recursive: true, force: true })

@@ -67,9 +67,16 @@ export function parseSourceMap(text: string): SourceMap | undefined {
   return { sources: sources as string[], mappings, sourceRoot: typeof sourceRoot === 'string' ? sourceRoot : '' }
 }
 
-/** A source's path from the output root: resolved against the map's directory, unless it is a URL. */
-function sourcePath(source: string, sourceRoot: string, mapDir: string): string {
+/**
+ * A source's path from the output root: resolved against the map's directory, unless it is a URL
+ * or absolute. An absolute one (or its `file://` URL) under one of `roots`, the checkout the build
+ * ran in, is named from that root, so a path that changes with each run never reaches the report.
+ */
+function sourcePath(source: string, sourceRoot: string, mapDir: string, roots: readonly string[]): string {
   const joined = sourceRoot === '' ? source : `${sourceRoot.replace(/\/+$/, '')}/${source}`
+  const path = joined.startsWith('file://') ? joined.slice('file://'.length) : joined
+  const root = roots.find(dir => path.startsWith(`${dir}/`))
+  if (root !== undefined) return path.slice(root.length + 1)
   if (/^[a-z][a-z0-9+.-]*:/i.test(joined) || joined.startsWith('/')) return joined
   return posix.normalize(posix.join(mapDir, joined))
 }
@@ -79,8 +86,8 @@ function sourcePath(source: string, sourceRoot: string, mapDir: string): string 
  * column to the next segment's on the same line, text before a line's first segment is unmapped.
  * Columns count UTF-16 code units, as JavaScript strings do. Throws on a broken mapping.
  */
-export function textBySource(generated: string, map: SourceMap, mapDir: string): Map<string, string> {
-  const paths = map.sources.map(source => sourcePath(source, map.sourceRoot, mapDir))
+export function textBySource(generated: string, map: SourceMap, mapDir: string, roots: readonly string[] = []): Map<string, string> {
+  const paths = map.sources.map(source => sourcePath(source, map.sourceRoot, mapDir, roots))
   const chunks = new Map<string, string[]>()
   const add = (key: string, text: string): void => {
     if (text === '') return
@@ -120,9 +127,9 @@ export interface Mapped {
 }
 
 /** The sources whose generated text differs between two sides, or that one side lacks, sorted. */
-export function changedSources(base: Mapped, head: Mapped, mapDir: string): string[] {
+export function changedSources(base: Mapped, head: Mapped, mapDir: string, roots: readonly string[] = []): string[] {
   const read = (side: Mapped): Map<string, string> => {
-    const chunks = textBySource(side.text, side.map, mapDir)
+    const chunks = textBySource(side.text, side.map, mapDir, roots)
     const normalise = side.normalise
     return normalise === undefined ? chunks : new Map([...chunks].map(([key, text]) => [key, normalise(text)]))
   }

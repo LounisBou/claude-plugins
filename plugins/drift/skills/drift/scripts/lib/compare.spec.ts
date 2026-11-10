@@ -111,6 +111,15 @@ test('a module is attributed by the raw text its map indexes, not the text with 
   assert.deepEqual(files.map(file => [file.path, file.sources]), [['assets/index.js', ['dist/src/b.js']]])
 })
 
+test('an absolute source under the checkout is named from its root, so two runs name it alike', () => {
+  const side = (root: string, b: string): Tree => tree({
+    'x.js': `A();${b}`,
+    'x.js.map': JSON.stringify({ version: 3, sources: [`${root}/src/a.js`, `file://${root}/src/b.js`], mappings: `AAAA,${encodeVlq(4)}CAAA` }),
+  })
+  const { files } = compareTrees(side('/real/work/tree', 'B();'), side('/real/work/tree', 'B(1);'), HASH, 'dist', ['/work/tree', '/real/work/tree'])
+  assert.deepEqual(files[0]?.sources, ['src/b.js'])
+})
+
 test('an inline data: map is read too, and an unreadable map names nothing', () => {
   const inline = (code: string): string => {
     const map = JSON.stringify({ version: 3, sources: ['m.js'], mappings: 'AAAA' })
