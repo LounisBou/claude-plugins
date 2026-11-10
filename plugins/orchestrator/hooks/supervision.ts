@@ -34,7 +34,7 @@ import { declaredConsent } from './wait.ts'
 import { isTemporary, staleTemporaries, removeArgv, withLockOver, writeAtomicOver, type StoreIo } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
 import {
-  parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, NO_STATUS_KEY, coordinatorOf, chainOwnerTty, waitLabel, waitParts,
+  parseWait, parseStatus, handsOver, waitPatch, clearedWait, fingerprint, relayText, cutQuestion, heldQuestion, withdrawalText, gateText, noStatusText, noStatusKey, coordinatorOf, chainOwnerTty, waitLabel, waitParts,
   type WaitKind,
 } from './relay.ts'
 import { entryFingerprint, roundEntry, roundEntryId, roundPath, paneQuestions, waitsInTab, waitSummary, entryQuestions, plainText, textSpans, prPieces, repositoryOwners, numberLabel, questionBody, questionShape, isDue, dueText, toldText, asksNothing, carriesChoices, type RoundAnswer, type RoundChoice, type RoundEntry, type RoundDelivery } from './round.ts'
@@ -1598,7 +1598,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
   on('turn.complete', {}, async ($: any, e: any, next: (e: any) => any) => {
     try {
       if (!e.agentId && e.reason === 'answer') {
-        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? '')), RELAY_BOUND_MS)
+        const done = await withDeadline(relayTurnEnd($, String(e.answer ?? ''), e.turnId), RELAY_BOUND_MS)
         if (isDegradedPass(done)) await logLine($, `relay: did not finish within ${RELAY_BOUND_MS} ms`)
         // The wait just written is what the pane shows: the row follows it, when it is news.
         const sent = await withDeadline(sendRow($, await $.session.id()), RELAY_BOUND_MS)
@@ -2316,7 +2316,8 @@ async function dropMark($: any): Promise<void> {
 // else in the orchestrator its launch recorded (orchestratorOn), never in the turn's text; any
 // other role, nothing.
 // No line: a wait the session carried is cleared; an orchestrator sends nothing, an agent's
-// orchestrator is sent one report, unless it was already (key `no-status`). A line: written to the
+// orchestrator is sent one report for each such turn, with the turn's last text cut at the cap, unless
+// that very turn was already (key `no-status:<turn id>`). A line: written to the
 // session's wait file, then reported unless this very one was already — the fingerprint
 // is kept only once the entry is in place or the send is delivered. Nobody to send to: nothing
 // is sent. A write that fails or a send refused is one log line; the turn's end is never held
@@ -2329,7 +2330,7 @@ async function dropMark($: any): Promise<void> {
 // other open entries as answered there.
 // A turn that ends on an operator wait whose text asks nothing is entered as its own entry and
 // never withdraws its session's open question with choices.
-export async function relayTurnEnd($: any, answer: string): Promise<void> {
+export async function relayTurnEnd($: any, answer: string, turnId?: unknown): Promise<void> {
   const sessionId = await $.session.id()
   const row = parseSessionRow(String(await $.fs.read(`${await storeOf($)}/${sessionKey(sessionId)}`).catch(() => '')))
   let name = row?.name ?? null
@@ -2390,7 +2391,7 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
     ? waitPatch(reasked && before ? { ...before, waiting_since: null } : before, wait, new Date().toISOString())
     : before?.waiting ? clearedWait(before) : null
   if (patch) await writeWait($, sessionId, { ...patch, relayed, relayed_id: relayedId, name, pid })
-  const key = wait ? fingerprint(wait) : NO_STATUS_KEY
+  const key = wait ? fingerprint(wait) : noStatusKey(turnId, answer)
   let coordinator: Awaited<ReturnType<typeof coordinatorAddress>> = null
   if (relayed === key) {
     // The fingerprint of a question whose entry the coordinator closed (its answer comes by a
@@ -2443,7 +2444,7 @@ export async function relayTurnEnd($: any, answer: string): Promise<void> {
     return
   }
   const context = row && row.context_tokens > 0 ? `${row.context_tokens.toLocaleString('en-US')} (${row.context_percent}%)` : null
-  const text = wait ? relayText(name, wait, patch!.waiting_since!, context) : noStatusText(name, context)
+  const text = wait ? relayText(name, wait, patch!.waiting_since!, context) : noStatusText(name, context, answer)
   const sent = role === 'orchestrator' ? await sendToCoordinator($, to, text) : await $.session.send({ to, text })
   if (sent?.isDelivered) {
     await writeWait($, sessionId, { ...(patch ?? before ?? {}), relayed: key, name, pid })

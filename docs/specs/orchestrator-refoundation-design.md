@@ -56,8 +56,8 @@ reading, the coordinator's collision lines, the permission-mode allowlist, the l
 write. The operator keeps using the former repository's plugin meanwhile: each urgent fix
 merged there is imported here the same day (`git diff <last imported> <merged> --binary | git apply
 --index --directory=plugins/orchestrator`), and this build runs alongside, a conflict resolved at
-the import. The last import is the former repository's `4f59476`
-(claude-orchestrator#303).
+the import. The last import is the former repository's `d305921`
+(claude-orchestrator#304).
 
 Defects this build owns (line numbers at 0.98.0, relative to `plugins/orchestrator/`):
 

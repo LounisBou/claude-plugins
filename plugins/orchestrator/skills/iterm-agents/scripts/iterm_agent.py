@@ -3141,6 +3141,27 @@ def terminal_for(tty):
     return chosen
 
 
+def orchestrator_outside_home(own, named):
+    """The name of the orchestrator the caller is, when it runs outside a home session; ""
+    for any other caller. Read on the host session on the caller's own tty: an operator's
+    plain shell has none, and keeps its tabs. Its name reads « Orch: », or, before the rename
+    asked at its start is taken at the turn's end, the orchestrator `named` by --orchestrator
+    reads « Orch: » while the session carries no role name of its own. A coordinator, an
+    auditor or an agent is never one, whatever it names."""
+    if not own or host_cli_on(own) is None or os.environ.get("ORCHESTRATOR_AUDITOR") == "1":
+        return ""
+    caller = session_name_on(own) or ""
+    if caller == UNREADABLE_NAME:
+        caller = ""
+    role = title_role(caller)
+    if role == "Orch":
+        return caller
+    if role or registered_coord_on(own):
+        return ""
+    named = re.sub(r" \[[0-9A-Za-z]+\]\Z", "", current_name(named.strip()))
+    return named if title_role(named) == "Orch" else ""
+
+
 def refuse_window_zero(what, tty, name):
     """The refusal of a close or a rotation of window 0 of a home session, said before anything
     is killed or spawned: only a takeover puts a successor at index 0, and it is named."""
@@ -4921,6 +4942,19 @@ def cmd_spawn(argv, pair_from="", old_tty="", made=None):
     # agent joins its caller's chain and only a successor takes it, and only those two may be
     # windows of a home session.
     term = None if DRY_RUN else terminal(agent=effect in ("append", "transfer"))
+    if term is ITERM and effect == "append":
+        # An orchestrator's agents are windows of its home session. Spawned from its tab
+        # before the move into its home, at the end of the turn that named it, they stayed
+        # tabs the move left behind; refused here, before anything is read or made.
+        outside = orchestrator_outside_home(own, args.orchestrator)
+        if outside:
+            die("spawn: refused: this session is an orchestrator ('%s') outside its home "
+                "session, and its agents are windows there, never iTerm2 tabs: if "
+                "mcp__orchestrator__rename_session was not called in this turn, call it with "
+                "your name, then end the turn: its end moves you into your home session; "
+                "spawn from there; if you are still here after that turn, the move failed: "
+                "report this refusal to the operator and spawn nothing until he answers"
+                % outside[:40])
     if auditor_successor:
         for flag, given in (("--tier", args.tier), ("--model", args.model),
                             ("--effort", args.effort),

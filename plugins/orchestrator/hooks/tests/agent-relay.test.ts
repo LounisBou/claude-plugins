@@ -189,7 +189,7 @@ async function drive(chains: Record<string, Function[]>, event: string, dollar: 
   return run(0, e)
 }
 
-const turnEnd = (answer: string) => ({ answer, reason: 'answer', isAborted: false, durationMs: 1, turnId: 't' })
+const turnEnd = (answer: string, turnId = 't') => ({ answer, reason: 'answer', isAborted: false, durationMs: 1, turnId })
 const QUESTION = 'Merge the fixture change first, or rebase on it?\n\nstatus: question — merge order'
 
 test('each state is sent once to the orchestrator, a repeat sends nothing, a new question sends', async () => {
@@ -226,8 +226,8 @@ test('a turn with no status line reports it once and clears the state', async ()
   await drive(chains, 'turn.complete', fx.dollar, turnEnd('Back at it.'))
   expect(JSON.parse(fx.files.get(WAIT)!).waiting).toBeNull()
   expect(fx.sent.length).toBe(3)
-  expect(fx.sent[0].text).toBe(NO_STATUS)
-  expect(fx.sent[2].text).toBe(NO_STATUS)
+  expect(fx.sent[0].text).toBe(`${NO_STATUS}\n${REPLY}\n\nWorking on the second task.`)
+  expect(fx.sent[2].text).toBe(`${NO_STATUS}\n${REPLY}\n\nBack at it.`)
 })
 
 test('the orchestrator comes from the chain, never from the text', async () => {
@@ -433,19 +433,61 @@ test('the report of a turn without a status line: the name, the context when kno
   expect(noStatusText(AGENT, null)).toBe(`[module] ${AGENT} ended a turn without its status line`)
 })
 
-test('a turn without a status line is reported once, a status turn between two re-arms it', async () => {
+const silent = (text: string) => `${NO_STATUS}\n${REPLY}\n\n${text}`
+
+test('every turn without a status line is reported with its own text, a status turn between or not', async () => {
   const chains = mounted()
   const fx = fake()
-  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Working on the second task.'))
-  expect(fx.sent).toEqual([{ to: ORCH, text: NO_STATUS }])
-  expect(JSON.parse(fx.files.get(WAIT)!).relayed).toBe(NO_STATUS_KEY)
-  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Still working.'))
-  expect(fx.sent.length).toBe(1)
-  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION))
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Working on the second task.', 'turn-1'))
+  expect(fx.sent).toEqual([{ to: ORCH, text: silent('Working on the second task.') }])
+  expect(JSON.parse(fx.files.get(WAIT)!).relayed).toBe(`${NO_STATUS_KEY}:turn-1`)
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Still working.', 'turn-2'))
   expect(fx.sent.length).toBe(2)
-  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Back at it.'))
+  expect(fx.sent[1]).toEqual({ to: ORCH, text: silent('Still working.') })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(QUESTION, 'turn-3'))
   expect(fx.sent.length).toBe(3)
-  expect(fx.sent[2]).toEqual({ to: ORCH, text: NO_STATUS })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Back at it.', 'turn-4'))
+  expect(fx.sent.length).toBe(4)
+  expect(fx.sent[3]).toEqual({ to: ORCH, text: silent('Back at it.') })
+})
+
+test('the final report written without a status line still reaches the orchestrator after earlier silent turns', async () => {
+  const chains = mounted()
+  const fx = fake()
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Reading the diff.', 'turn-1'))
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Running the lenses.', 'turn-2'))
+  const report = 'Review of the pull request: two findings, none blocking.\n- a.ts:12 stale comment\n- b.ts:40 missing test'
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(report, 'turn-3'))
+  expect(fx.sent.length).toBe(3)
+  expect(fx.sent[2]).toEqual({ to: ORCH, text: silent(report) })
+})
+
+test('the text of a turn without a status line is cut past the cap, its head kept, the cut said', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const long = `${'a'.repeat(RELAY_CAP)}${'z'.repeat(50)}`
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(long, 'turn-1'))
+  expect(fx.sent).toEqual([{ to: ORCH, text: silent(`${'a'.repeat(RELAY_CAP)}\n[cut at ${RELAY_CAP} of ${RELAY_CAP + 50} characters]`) }])
+  expect(noStatusText(AGENT, null, 'x'.repeat(RELAY_CAP))).toBe(`[module] ${AGENT} ended a turn without its status line\n${REPLY}\n\n${'x'.repeat(RELAY_CAP)}`)
+})
+
+test('the same turn handled twice without a status line is sent once', async () => {
+  const chains = mounted()
+  const fx = fake()
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Working.', 'turn-1'))
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Working.', 'turn-1'))
+  expect(fx.sent.length).toBe(1)
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Working.', 'turn-2'))
+  expect(fx.sent.length).toBe(2)
+})
+
+test('a turn event that carries no turn id is still reported each time, never dropped', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const bare = (answer: string) => ({ answer, reason: 'answer', isAborted: false, durationMs: 1 })
+  await drive(chains, 'turn.complete', fx.dollar, bare('First.'))
+  await drive(chains, 'turn.complete', fx.dollar, bare('Second.'))
+  expect(fx.sent.map(s => s.text)).toEqual([silent('First.'), silent('Second.')])
 })
 
 test('an orchestrator turn without a machine line sends nothing', async () => {
@@ -463,6 +505,19 @@ test('a refused report of a turn without a status line writes no key', async () 
   expect(fx.files.has(WAIT) ? JSON.parse(fx.files.get(WAIT)!).relayed ?? null : null).toBeNull()
 })
 
+test('a refused report of a turn without a status line is sent again when the turn is handled again', async () => {
+  const chains = mounted()
+  let refuse = true
+  const fx = fake()
+  const send = fx.dollar.session.send
+  fx.dollar.session.send = async (args: { to: unknown; text: string }) => (refuse ? { isDelivered: false, reason: 'nobody by that name' } : send(args))
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Working.', 'turn-1'))
+  expect(fx.sent.length).toBe(0)
+  refuse = false
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd('Working.', 'turn-1'))
+  expect(fx.sent).toEqual([{ to: ORCH, text: silent('Working.') }])
+})
+
 // --- a run launched underneath the agent -------------------------------------------------
 
 test("a run launched from the agent's shell sends no notice in its name, the agent still does", async () => {
@@ -474,7 +529,7 @@ test("a run launched from the agent's shell sends no notice in its name, the age
   expect(run.files.has(WAIT)).toBe(false)
   const agent = fake({ walk: 'agent' })
   await drive(chains, 'turn.complete', agent.dollar, turnEnd('Working on the second task.'))
-  expect(agent.sent).toEqual([{ to: ORCH, text: `[module] ${AGENT} ended a turn without its status line` }])
+  expect(agent.sent).toEqual([{ to: ORCH, text: `[module] ${AGENT} ended a turn without its status line\n${REPLY}\n\nWorking on the second task.` }])
 })
 
 test("a run launched from the agent's shell writes no row and reports no gate in its name", async () => {
