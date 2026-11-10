@@ -164,13 +164,24 @@ export function gateText(name: string, tokens: number, percent: number): string 
 }
 
 // The deduplication key of an agent's turn that ended without its status line, kept in the
-// wait file's `relayed` like a status line's fingerprint.
+// wait file's `relayed` like a status line's fingerprint. It names the turn, never the kind:
+// one turn handled twice is one key, and the turn after it is another, so a report written
+// without its status line is never taken for the silent turn before it. The host's turn id
+// is the identity; an event that carries none gets a key of its own time and text length, so
+// it is sent rather than dropped.
 export const NO_STATUS_KEY = 'no-status'
 
+export function noStatusKey(turnId: unknown, text: string, now: number = Date.now()): string {
+  return typeof turnId === 'string' && turnId !== '' ? `${NO_STATUS_KEY}:${turnId}` : `${NO_STATUS_KEY}:${now}-${text.length}`
+}
+
 // The one line sent to the orchestrator when an agent ends a turn without its status line:
-// the figure when it is known, never an instruction.
-export function noStatusText(name: string, context: string | null): string {
-  return `[module] ${name} ended a turn without its status line${context ? ` — context ${context}` : ''}`
+// the figure when it is known, then the address the answer goes back to and the turn's last
+// text, cut past the cap and said like a question is. Never an instruction.
+export function noStatusText(name: string, context: string | null, text: string = ''): string {
+  const header = `[module] ${name} ended a turn without its status line${context ? ` — context ${context}` : ''}`
+  const said = text.trim()
+  return said === '' ? header : `${header}\nreply with SendMessage to: ${name}\n\n${cutQuestion(said)}`
 }
 
 // The orchestrator's tty an agent's tty belongs to: the launcher's chains, one file per
