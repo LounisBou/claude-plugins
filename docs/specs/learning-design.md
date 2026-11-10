@@ -4,6 +4,14 @@
 is decided or scheduled until the operator answers the « Open questions »; the current program
 does not build it.
 
+**Review notes (2026-11-11).** Six notes, each marked « Review note » at the section it
+concerns, check this design against published evidence on coding agents. They propose; they
+decide nothing, and none changes a goal until the operator takes it. Three choices already
+match that evidence and should stay: code first, and a prompt rule only by displacing one
+(context files added to repositories raised inference cost by over 20 % with no gain in task
+success, Gloaguen et al. 2026, arXiv:2602.11988); the session that learns is never the session
+that worked; only code-computed grades decide.
+
 For the version after `program-design.md`, whose priorities, conventions and constraints govern
 it; nothing here is built by the current program. Paths are relative to the repository root;
 line numbers are at `main` `5a78a08`.
@@ -123,6 +131,14 @@ Three choices, each against the starting outline:
   conventions, « Permissions and security »), no prompt text, no finding summary, no figure a
   model passes to a tool. The validator refuses any field outside the contract.
 
+> **Review note 1 — point at the step, not only at the record.** The retrospective must name a
+> cause (section 2), and a cause is a step: what it received, what it did, what consumed it.
+> `evidence` points at records, not at the step that produced the event. Proposal: `context`
+> gains a pointer to that step — the transcript's path and the turn's index or the tool call's
+> id — never its words. The host owns transcript retention, so the pointer may dangle; the
+> retrospective then treats the step as missing evidence (note 2) rather than reconstructing it
+> from a summary.
+
 **Writers**, one per plugin, each into its own state directory, `<config>/<plugin>/journal/`,
 one file per event through `writeAtomic` (or `writeAtomicOver` in a hooks module,
 `packages/core/src/store-io.ts`). One owner per file keeps the architecture's state rule
@@ -161,6 +177,20 @@ evidence pointers, under a fixed ceiling. It judges, per candidate, what the cod
 cluster one cause, which remedy, at which scope. It writes nothing but candidates' remedies,
 each through a pull request (section 5).
 
+> **Review note 2 — the cause is the least reliable judgment here.** Automated failure
+> attribution is weak: on logs of 127 annotated multi-agent systems, the best method named the
+> responsible agent in 53.5 % of cases and the decisive step in 14.2 % (Zhang et al., ICML
+> 2025, arXiv:2505.00212); the best long-context model localised the issue in 11 % of 148
+> annotated traces (Deshpande et al. 2025, TRAIL, arXiv:2505.08638). Proposal: the
+> retrospective writes each cause as a structured claim — the **first upstream failure** (the
+> earliest step that changed the path to success, not the last visible symptom); the
+> **counterfactual** (had that step been right, the earlier record unchanged, would the
+> failure still have occurred?); the evidence; the alternatives it considered; a confidence —
+> and may answer **« unresolved »**, naming the observation that would have decided. An
+> unresolved cause yields no remedy, only, at most, an instrumentation change (note 1). The
+> candidate's validator (goal 8) refuses a cause without these fields. Method: Jarmak 2026,
+> « Engineering Reliable Coding Agents », arXiv:2608.13867, ch. 11.
+
 **Candidates are state.** The learning plugin keeps one file per signature: proposed, its pull
 request, merged, ineffective, rejected with the operator's ruling. A rejected candidate is not
 proposed again unless its rate doubles.
@@ -192,6 +222,23 @@ the remedy needs judgment. The learning system adds two things the ladder lacks 
 - **A remedy is checked after it lands.** Over the next window, the candidate's signature must
   fall by half; otherwise the candidate reopens and the remedy becomes a removal candidate.
 
+> **Review note 3 — a precision measured on five calls.** « Nine in ten of at least five » is
+> met by five right out of five, whose 95 % lower bound (Wilson) is 0.57; nine of ten gives
+> 0.60. Proposal: enforce on the lower bound rather than the ratio, its threshold held in core
+> with the others: a bound of 0.8 needs 16 right out of 16, a bound of 0.9 needs 35. Also,
+> « merged with no correction » counts a would-be refusal as wrong even when the defect it named
+> escaped: a later escape on the same lines should turn it back into a right one.
+
+> **Review note 4 — a signature falls by itself.** A cluster becomes a candidate at its peak
+> (three events from two pull requests in one window), so the next window is likely lower with
+> or without a remedy: regression to the mean. Every remedy would pass « falls by half », and
+> goal 11 would hold for an inert one. Proposals: measure a **rate** (events per merged pull
+> request, or per session of the role) rather than a count, so a quiet window does not read as
+> a cure; compare it with the signature's rate over a longer baseline than the window that
+> selected it, or keep a few candidates without a remedy for one window as a control and
+> credit a remedy only with the fall beyond theirs; watch the same plugin's neighbouring codes,
+> since a guard can move a failure to another signature rather than remove it.
+
 ### 5. Proof, then promotion
 
 - **A code remedy** carries its test, as every fix does (conventions, « Tests and coverage »),
@@ -204,6 +251,24 @@ the remedy needs judgment. The learning system adds two things the ladder lacks 
 - **Release measure.** The outcome evals are re-measured as the operator decides (question 4);
   the grades code computes (suite, reference tests) decide a regression, the judge's grades are
   reported.
+
+> **Review note 5 — three runs decide on chance.** With a pass-or-fail grade, three runs per
+> variant cannot show a change: even three passes against three failures has a one-sided
+> Fisher p of 0.05, and every lesser split is weaker. « Enters only when the eval shows an
+> outcome change » would then admit rules on noise, or none. Proposal: L0 computes, from the
+> per-case variance of the orchestrator's baselines, the **minimum detectable effect** at the
+> per-rule budget; the ablation is paired by case and spreads its runs over several cases of
+> the incident's class rather than repeating one; a result under that effect is
+> reported « inconclusive », and an inconclusive rule does not enter. One run is one draw (Jarmak 2026,
+> ch. 1–2).
+
+> **Review note 6 — six cases cannot see a modest regression.** The outcome measure spends up
+> to 120 USD on six cases. Its power is bounded by the number of cases more than by the runs
+> per case, and a case transfers to the operator's work only as far as it resembles it.
+> Proposal: grow the case set from the operator's own merged pull requests (the dispatch
+> records name them), fewer runs each, rather than repeat six; each release measure states the
+> smallest regression it could have detected.
+
 - **Promotion is a pull request**, in the target repository, with its provenance: the
   candidate's signature, the count of its events and pull requests, the event ids. Under
   auto-merge in this repository, a remedy that is code and only tightens merges when proved; a
