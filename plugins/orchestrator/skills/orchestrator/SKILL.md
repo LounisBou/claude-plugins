@@ -14,9 +14,9 @@ once, then end the turn.
 
 ## Your mode
 
-Your mode is this skill's argument, `build` or `investigate`; with none or another, ask it
-once with `AskUserQuestion` (the two modes as options, `build` first). Never infer it from
-words. A successor or a session you open gets its mode as that argument.
+Your mode is this skill's argument, `build` or `investigate`; a successor's launch passes its
+brief's `Mode:` line. With none, ask as `orchestrator:decide` does. Never infer it from
+words.
 
 - **`build`**: a spec delivered as pull requests. Load `method:lifecycle` with the Skill tool
   before you plan: it owns the lifecycle, done and the formats. Done: every goal of

@@ -13,7 +13,7 @@ Preconditions, verify each before acting:
   item 0);
 - the orchestration's rulings file, `<briefs dir>/rulings.md`, exists and holds every ruling still
   standing, each dated and quoted, the brief's « Standing rulings » line naming it;
-- the standing succession brief exists; otherwise instantiate
+- the standing succession brief exists, a missing `Mode: ` line added with yours; otherwise instantiate
   `${CLAUDE_PLUGIN_ROOT}/templates/orchestrator-succession-brief.md` into the
   project's briefs directory, filling every `{{PLACEHOLDER}}`, never a brief written by hand;
 - its « Live state » is generated now, never written by hand:
@@ -27,7 +27,7 @@ Then:
 
 1. `iterm-agent.sh list` — your own row, `self`: its tty, your home server (the first
    comma-separated field of `printenv TMUX`, `none` on tabs), the launcher's path and the
-   scripts directory fill the brief's predecessor placeholders, and your own mode its `{{MODE}}`.
+   scripts directory fill the brief's predecessor placeholders, and the `Mode:` line with your own mode (`{{MODE}}`), without which the brief is refused.
 2. **Lint it.** `${CLAUDE_PLUGIN_ROOT}/skills/orchestrator/scripts/brief-lint.sh <brief path>`;
    any finding is repaired before the spawn, a known false positive is named.
 3. `iterm-agent.sh spawn --dir <worktree> --permission-mode auto

@@ -3122,12 +3122,37 @@ check "and a successor's, with the remote-control flag behind it" "Orch: f" \
 # and the same brief once `succession.sh live` wrote its Live state goes through.
 SUCCB="$WORK/succession-brief.md"; SUCCREC="$WORK/succession-record.jsonl"
 printf '{"id":4,"label":"api","state":"open"}\n' > "$SUCCREC"
-sed -e 's/{{PREDECESSOR_NAME_PATTERN}}/Orch: f/g' -e "s#{{DISPATCH_RECORD}}#$SUCCREC#g" "$ROOT/templates/orchestrator-succession-brief.md" > "$SUCCB"
+sed -e 's/{{PREDECESSOR_NAME_PATTERN}}/Orch: f/g' -e 's/{{MODE}}/build/g' -e "s#{{DISPATCH_RECORD}}#$SUCCREC#g" "$ROOT/templates/orchestrator-succession-brief.md" > "$SUCCB"
 mkdir -p "$ISTATE/round"
 printf '{"id":"succ-q1","from":"Orch: f","session":"s-old","kind":"operator","status":"open","question":"Which?"}\n' > "$ISTATE/round/succ-q1.json"
 check "a successor is refused on a brief that misses an open item of the state, and spawned once it is generated" "1|0" \
   "$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" 2>&1 | grep -c 'misses question succ-q1')|$(ORCHESTRATOR_STATE_DIR="$ISTATE" bash "$ROOT/skills/orchestrator/scripts/succession.sh" live "$SUCCB" --next 'answer succ-q1' >/dev/null 2>&1; succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" 2>&1 | grep -c 'refused')"
 rm -f "$ISTATE/round/succ-q1.json"
+# The mode travels by machine, not by prose (a successor once loaded the rulebook with no
+# argument and stopped on a dialog asking the mode its brief gave in a sentence). The brief
+# carries a `Mode: build|investigate` line; the spawn refuses a succession brief without one, and
+# the successor's startup prompt opens on the load of the rulebook with that mode as its argument.
+SUCCB_NOMODE="$WORK/succession-brief-nomode.md"; grep -v '^Mode: ' "$SUCCB" > "$SUCCB_NOMODE"
+SUCCB_PROSE="$WORK/succession-brief-prose.md"
+sed 's/^Mode: .*/Mode: `build` (load the rulebook with it)/' "$SUCCB" > "$SUCCB_PROSE"
+SUCCB_INV="$WORK/succession-brief-investigate.md"; sed 's/^Mode: .*/Mode: investigate/' "$SUCCB" > "$SUCCB_INV"
+printf 'Read and execute %s.\n' "$SUCCB_NOMODE" > "$WORK/p-nomode.txt"
+printf 'Read and execute %s.\n' "$SUCCB_INV" > "$WORK/p-inv.txt"
+check "a successor is refused on a succession brief with no Mode line, or a mode said in prose, before any tab" "1|1|1|1" \
+  "$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB_NOMODE" | grep -c 'spawn: refused: the succession brief .* carries no .Mode: build. or .Mode: investigate. line')|$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB_PROSE" | grep -c 'carries no .Mode: build. or .Mode: investigate. line')|$(succ "$PSTAB" --successor --prompt-file "$WORK/p-nomode.txt" | grep -c 'carries no .Mode: build. or .Mode: investigate. line')|$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB_NOMODE" >/dev/null 2>&1; echo $?)"
+check "a successor's startup prompt loads the rulebook with the brief's mode, first, then keeps the prompt" "1|1|1|1" \
+  "$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" | grep -c '^prompt=Load the skill orchestrator:orchestrator with the argument "build", then read and execute ')|$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB_INV" | grep -c '^prompt=Load the skill orchestrator:orchestrator with the argument "investigate", then read and execute ')|$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" | grep -c "^prompt=.*, then read and execute $SUCCB\$")|$(succ "$PSTAB" --successor --prompt-file "$WORK/p-inv.txt" | grep -c '^prompt=Load the skill orchestrator:orchestrator with the argument "investigate"')"
+check "a prompt that names no succession brief is left as it was" "0" \
+  "$(succ "$PSTAB" --successor --prompt "Read and execute $WORK/briefs/good.md" | grep -c 'with the argument')"
+# `--brief` builds the spawn's prompt from the brief and the successor's prompt, which carries the
+# mode, would be dropped: the combination is refused, before any tab opens, and says why.
+succ_brief() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
+  ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$PSTAB" bash "$AGENT" spawn --dir "$WORK" --successor \
+  --brief "$SUCCB" --orchestrator "Orch: f [abc123]" 2>&1; }
+check "a successor spawned with --brief is refused, before any tab, rather than losing its mode" "1|1|0" \
+  "$(succ_brief | grep -c 'spawn: refused: --successor takes its prompt, not --brief')|$(succ_brief | grep -c 'Mode:')|$(succ_brief | grep -c '^launch=')"
+check "the template carries the mode on a line of its own, and succeed fills it from the predecessor's own mode" "1|yes|yes" \
+  "$(grep -c '^Mode: {{MODE}}$' "$ROOT/templates/orchestrator-succession-brief.md")|$(spells "$ROOT/commands/succeed.md" 'the `Mode:` line with your own mode')|$(spells "$ROOT/commands/succeed.md" 'without which the brief is refused')"
 check "the launch puts the prompt before the name" "1" \
   "$(printf '%s' "$d1launch" | grep -cE '"\$\(cat [^"]+\)" --name ')"
 
@@ -5465,7 +5490,7 @@ printf '%s\n' '# Standing rulings' '' \
 # file replaced both — and what this fill proves is the size limit over a full brief. Each path
 # is one that exists, short and the same on every machine, so the count does not move with the
 # length of the temporary directory the suite runs in.
-sed -E -e 's#\{\{PROJECT\}\}#scratch#g' -e 's#\{\{PREDECESSOR_NAME_PATTERN\}\}#Orch: scratch#g' -e 's#\{\{SCRIPTS\}\}#/tmp#g' -e "s#\{\{RULINGS_FILE\}\}#$SUCCRULINGS#g" \
+sed -E -e 's#\{\{PROJECT\}\}#scratch#g' -e 's#\{\{PREDECESSOR_NAME_PATTERN\}\}#Orch: scratch#g' -e 's#\{\{MODE\}\}#build#g' -e 's#\{\{SCRIPTS\}\}#/tmp#g' -e "s#\{\{RULINGS_FILE\}\}#$SUCCRULINGS#g" \
   -e 's#\{\{LIVE_[A-Z_]+\}\}#none open#g' -e 's#\{\{[A-Z_]+\}\}#/tmp#g' "$SUCC" > "$SUCCFILL"
 # Measured as the lint measures: the open-questions field's value is left out, its label counted.
 check "a succession brief, every placeholder filled, lints clean and stays under 9,000 characters" "0|yes" \
@@ -5694,6 +5719,15 @@ check "a rulings entry dated without its time is refused" "1|1" \
   "$(bash "$LINT" "$R_SHORTDATE" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$R_SHORTDATE" 2>&1 | grep -c 'succ-r-shortdate-rulings.md:3: rulings entry without its date')"
 check "a rulings entry without its « » quote is refused, naming its line" "1|1" \
   "$(bash "$LINT" "$R_NOQUOTE" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$R_NOQUOTE" 2>&1 | grep -c 'succ-r-noquote-rulings.md:3: rulings entry without his words')"
+# Check 18: a succession brief carries its mode on one line, `Mode: build` or `Mode: investigate`,
+# the line the launcher reads to start the successor on it; prose alone, a missing line or another
+# word is refused.
+M_NONE="$WORK/succ-m-none.md"; grep -v '^Mode: ' "$SUCCFILL" > "$M_NONE"
+M_PROSE="$WORK/succ-m-prose.md"; sed 's/^Mode: .*/Mode: `build` (load the rulebook with it)/' "$SUCCFILL" > "$M_PROSE"
+M_OTHER="$WORK/succ-m-other.md"; sed 's/^Mode: .*/Mode: both/' "$SUCCFILL" > "$M_OTHER"
+M_INV="$WORK/succ-m-inv.md"; sed 's/^Mode: .*/Mode: investigate/' "$SUCCFILL" > "$M_INV"
+check "a succession brief with no Mode line, a prose mode or another word is refused; build and investigate pass" "1|1|1|1|0|0" \
+  "$(bash "$LINT" "$M_NONE" 2>&1 | grep -c 'succession brief carries no .Mode: build. or .Mode: investigate. line')|$(bash "$LINT" "$M_PROSE" 2>&1 | grep -c 'carries no .Mode: build. or .Mode: investigate. line')|$(bash "$LINT" "$M_OTHER" 2>&1 | grep -c 'carries no .Mode: build. or .Mode: investigate. line')|$(bash "$LINT" "$M_NONE" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$M_INV" >/dev/null 2>&1; echo $?)|$(bash "$LINT" "$SUCCFILL" >/dev/null 2>&1; echo $?)"
 check "the unnamed-file message spells the path it asks for, with no stray bracket" "1|0" \
   "$(bash "$LINT" "$R_UNNAMED" 2>&1 | grep -cF 'add "- Standing rulings: `<briefs dir>/rulings.md`", the operator')|$(bash "$LINT" "$R_UNNAMED" 2>&1 | grep -cF 'rulings.md>`')"
 # The successor reads the path from the project directory, not the brief's: a relative one is

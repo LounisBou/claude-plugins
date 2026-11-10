@@ -4107,16 +4107,29 @@ def read_text(path):
         return ""
 
 
+# The line a succession brief carries its mode on, the one brief-lint.sh requires (check 18).
+SUCCESSION_MODE = re.compile(r"^Mode: (build|investigate) *$", re.M)
+
+
 def succession_check(prompt):
     """A successor is refused on a succession brief that misses an open item of the state (an
     open dispatch row, pull request, running agent or pending question): the brief its prompt
     names, read as the file whose first line is a succession brief's, is checked by
-    `succession.sh check` (decision 0007). A prompt that names no such file is not checked.
-    Answers the brief's path, or "" when the prompt names none."""
+    `succession.sh check` (decision 0007), and on one that carries no `Mode:` line. A prompt that
+    names no such file is not checked. Answers the brief's path and its mode, or ("", "") when
+    the prompt names none."""
     for word in re.findall(r"[^\s'\"`]+", prompt or ""):
         path = os.path.expanduser(word.rstrip(".,;:"))
-        if not os.path.isfile(path) or not read_text(path).startswith("# Orchestrator succession brief"):
+        text = read_text(path) if os.path.isfile(path) else ""
+        if not text.startswith("# Orchestrator succession brief"):
             continue
+        # The mode is read from the one line the brief carries it on, never from prose: the
+        # successor's prompt loads the rulebook with it, so it asks nothing by dialog.
+        found = SUCCESSION_MODE.search(text)
+        if not found:
+            die("spawn: refused: the succession brief %s carries no `Mode: build` or `Mode: "
+                "investigate` line: add it on a line of its own, the mode of the orchestrator "
+                "that writes it" % path)
         script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "orchestrator",
                               "scripts", "succession.ts")
         argv = ["node", "--no-warnings", script, "check", path]
@@ -4129,8 +4142,8 @@ def succession_check(prompt):
         if ran.returncode != 0:
             die("spawn: refused: the succession brief %s is not the state's; regenerate its Live "
                 "state with succession.sh live:\n%s" % (path, ran.stdout.decode("utf-8", "replace").strip()))
-        return os.path.abspath(path)
-    return ""
+        return os.path.abspath(path), found.group(1)
+    return "", ""
 
 
 def write_prompt_file(prompt, title):
@@ -4805,6 +4818,11 @@ def cmd_spawn(argv, pair_from="", old_tty="", made=None):
         die("spawn: directory not found: %s" % args.dir)
     if args.prompt and args.prompt_file:
         die("spawn: --prompt and --prompt-file are exclusive")
+    if args.successor and args.brief:
+        # --brief builds the prompt from the brief and would drop the successor's own, the one
+        # that loads the rulebook with the `Mode:` its succession brief carries.
+        die("spawn: refused: --successor takes its prompt, not --brief: give the succession "
+            "brief with --prompt or --prompt-file, which carries its `Mode:` line to the session")
     if args.brief and (args.prompt or args.prompt_file):
         die("spawn: --brief and --prompt/--prompt-file are mutually exclusive")
     if args.brief and not args.orchestrator:
@@ -4850,8 +4868,14 @@ def cmd_spawn(argv, pair_from="", old_tty="", made=None):
             "first prompt, so the session's mode cannot be read; give the brief with "
             "--prompt or --prompt-file")
     start_brief = os.path.abspath(args.brief) if args.brief else ""
+    successor_prompt = ""
     if args.successor:
-        start_brief = succession_check(args.prompt or read_text(args.prompt_file)) or start_brief
+        asked = args.prompt or read_text(args.prompt_file)
+        brief_path, mode = succession_check(asked)
+        start_brief = brief_path or start_brief
+        if mode:
+            successor_prompt = ('Load the skill orchestrator:orchestrator with the argument "%s", '
+                                'then %s' % (mode, asked[:1].lower() + asked[1:]))
     if args.tier and args.model:
         die("spawn: --tier and --model are mutually exclusive")
     if args.inherit and (args.tier or args.model):
@@ -5029,7 +5053,7 @@ def cmd_spawn(argv, pair_from="", old_tty="", made=None):
     prompt_file = args.prompt_file
     if prompt_file and not os.path.isfile(prompt_file):
         die("spawn: prompt file not found: %s" % prompt_file)
-    prompt = brief_prompt or args.prompt
+    prompt = brief_prompt or successor_prompt or args.prompt
     if prompt:
         prompt_file = (state_file_path("prompt", title, "txt") if DRY_RUN
                        else write_prompt_file(prompt, title))
@@ -5063,8 +5087,8 @@ def cmd_spawn(argv, pair_from="", old_tty="", made=None):
         print("effort=%s" % (effort or "none"))
         print("pair_source=%s" % pair_source)
         print("prompt_file=%s" % prompt_file)
-        if args.brief:
-            print("prompt=%s" % brief_prompt)
+        if args.brief or successor_prompt:
+            print("prompt=%s" % (brief_prompt or successor_prompt))
             print("lint=%s" % lint_verdict)
         print("self=%s" % own)
         print("anchor=%s" % ("self" if anchor == own else anchor))

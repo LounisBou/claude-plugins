@@ -419,6 +419,19 @@ if head -n 1 "$brief" 2>/dev/null | grep -q '^# Orchestrator succession brief'; 
     fi
 fi
 
+# 18. A succession brief carries its mode on one line of its own, `Mode: build` or
+#     `Mode: investigate`, the line the launcher reads to start the successor on the rulebook with
+#     that mode as its argument. A mode said in a sentence is prose the successor may not act on:
+#     one loaded the rulebook with no argument and stopped on a dialog asking what its brief had
+#     said. A brief with no such line, or another word, is refused. A placeholder still there is
+#     check 1's.
+if head -n 1 "$brief" 2>/dev/null | grep -q '^# Orchestrator succession brief'; then
+    if ! grep -qE '^Mode: (build|investigate) *$' "$brief" 2>/dev/null \
+        && ! grep -qE '^Mode: \{\{[A-Za-z0-9_]+\}\} *$' "$brief" 2>/dev/null; then
+        say 1 "succession brief carries no \`Mode: build\` or \`Mode: investigate\` line: add it on a line of its own, the mode of the orchestrator that writes it"
+    fi
+fi
+
 # 12. A succession brief carries the close of the predecessor: the operator's standing order
 #     is that the successor ALWAYS closes it, on its « handed over » or, five minutes without
 #     it, on a reading of its screen. A brief written by hand instead of from the template
