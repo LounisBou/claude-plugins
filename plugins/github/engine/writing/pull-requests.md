@@ -79,11 +79,12 @@ GitHub's preview rendering every link as a pull request card. Never a heading, n
 link inline after the label: `none` is the one thing ever written beside a label, and
 never beside items. A label with nothing after it and no item below is an empty section
 left unsaid: write `none`. Staging and prod TODOs are always kept apart, even when
-they are the same items: then both sections list them. `**PRs Dependency:**` lists the
-PRs that must ship before this one, and the order is said there and nowhere else. No TODO item repeats PRs Dependency: no « Deploy/Merge <PR> before
-this PR » checkbox. A PR whose only prerequisite is another PR has its TODOs at `none`.
-`**Related PRs:**` lists the PRs truly linked to
-this work: part of the same batch, the origin of the bug, or a link of that strength,
+they are the same items: then both sections list them. `**PRs Dependency:**` lists the PRs
+that must ship before this one, and the order is said there and nowhere else. No TODO item
+repeats PRs Dependency: no « Deploy/Merge <PR> before this PR » checkbox. A PR whose only
+prerequisite is another PR has its TODOs at `none`. `**Related PRs:**` lists the PRs truly
+linked to this work: part of the same batch, the origin of the bug, or a link of that
+strength,
 never a distant link. A follow-up PR, one that must come after this one, is never listed
 in Related PRs. State what ships first. `PRs Dependency` lists PRs that ship before it,
 and two PRs never depend on each other. English always, with no
