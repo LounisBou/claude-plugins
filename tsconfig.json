@@ -4,6 +4,7 @@
   "include": [
     "scripts/**/*.ts",
     "packages/*/src/**/*.ts",
+    "plugins/drift/skills/*/scripts/**/*.ts",
     "plugins/orchestrator/skills/*/scripts/**/*.ts",
     "plugins/orchestrator/hooks/models-guard.ts",
     "plugins/orchestrator/hooks/module-log.ts",
