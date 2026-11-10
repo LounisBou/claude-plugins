@@ -63,6 +63,13 @@ test('a link is compared by its target, and a link never equals a file of the sa
   assert.deepEqual(files.map(file => [file.status, file.base?.link, file.head?.link]), [['changed', 'a.txt', undefined]])
 })
 
+test('two binary files beside a hashed name that differ read differ: normalising leaves every other byte as it was', () => {
+  const png = (last: number): Buffer => Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0xff, last])
+  const side = (last: number): Tree => new Map([['a-B1234567.js', Buffer.from('x')], ['logo.png', png(last)]])
+  const { files } = compareTrees(side(0xfe), side(0xfd), HASH, 'dist')
+  assert.deepEqual(files.map(file => [file.status, file.path]), [['changed', 'logo.png']])
+})
+
 test('changed, added and removed files carry their raw and gzip deltas, sorted by path', () => {
   const base = tree({ 'b.js': 'same', 'gone.css': 'abc', 'm.js': 'aaaa' })
   const head = tree({ 'b.js': 'same', 'm.js': 'aaaaaaaa', 'new-B1234567.js': 'hello' })
