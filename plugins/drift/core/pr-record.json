@@ -1,0 +1,33 @@
+{
+  "$comment": "Generated from packages/core/src by `npm run core`: edit the source, never this copy.",
+  "version": 1,
+  "kinds": [
+    "review",
+    "norms",
+    "e2e"
+  ],
+  "results": [
+    "pass",
+    "fail",
+    "waived"
+  ],
+  "waivable": "e2e",
+  "producers": {
+    "review": {
+      "plugin": "pr-review",
+      "tool": "its auto-fix-loop"
+    },
+    "norms": {
+      "plugin": "norms",
+      "tool": "/norms:check"
+    }
+  },
+  "open": "e2e",
+  "detail_max": 500,
+  "patterns": {
+    "head": "^[0-9a-fA-F]{40}$",
+    "repo_part": "^[A-Za-z0-9_.-]+$",
+    "producer": "^[a-z0-9-]+$",
+    "waiver_date": "\\b\\d{4}-\\d{2}-\\d{2}\\b"
+  }
+}

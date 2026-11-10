@@ -34,7 +34,7 @@ change: a change that crosses plugins is one pull request.
         │      plugins/method ◀── implement, orchestrator
         │      plugins/github ◀── norms, pr-review
         │      plugins/orchestrator ◀── bugs-bot
-        └───── github, implement, norms, orchestrator, pr-review (a copy in core/)
+        └───── drift, github, implement, norms, orchestrator, pr-review (a copy in core/)
 ```
 
 - `core` depends on the host's API and on nothing in `plugins/`.
