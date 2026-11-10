@@ -1475,3 +1475,62 @@ test('a typed prompt that does not speak of auto-merge adds no line', async ($, 
   await typed($, 'merge it when green')
   expect(seen.contexts.at(-1)).toEqual([])
 })
+
+// ---- the operator's words, quoted inside a record's wrapping, and sent mid-turn ----
+
+// The day a prompt is received, as the module dates it: the machine's own.
+const today = () => {
+  const now = new Date()
+  const two = (n: number) => String(n).padStart(2, '0')
+  return now.getFullYear() + '-' + two(now.getMonth() + 1) + '-' + two(now.getDate())
+}
+const SENTENCE = 'front-office#1660 est dispensé de tests de bout en bout sur la base de la relecture et des captures !'
+const waiverOf = (detail: string) => waiveCall(detail)
+
+test('a quote the operator typed counts inside the wrapping « … » — operator, date', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN })
+  await typed($, SENTENCE)
+  for (const detail of [
+    '« ' + SENTENCE + ' » — operator, ' + today(),
+    'Operator waived E2E on ' + today() + ': "' + SENTENCE + '"',
+  ]) {
+    const out: any = await $.tool.call(waiverOf(detail))
+    expect(out.deny).toBeUndefined()
+  }
+  expect(recordRun(seen)).toContain('waived')
+})
+
+test('a one-word answer counts in a quote only when it is the whole prompt', async ($, on) => {
+  await world($, on, { git: CLEAN })
+  const detail = 'Operator waived E2E on ' + today() + ' with « B », answering the E2E question'
+  await typed($, 'Bonjour, voyons la suite')
+  expect(((await $.tool.call(waiverOf(detail))) as any).deny).toContain('an E2E waiver quotes the operator')
+  await typed($, 'B')
+  expect(((await $.tool.call(waiverOf(detail))) as any).deny).toBeUndefined()
+})
+
+test('a quote the operator did not type, a wrong date or no date is refused', async ($, on) => {
+  const seen = await world($, on, { git: CLEAN })
+  await typed($, SENTENCE)
+  for (const detail of [
+    '« ' + SENTENCE.replace('dispensé', 'privé') + ' » — operator, ' + today(),
+    '« ' + SENTENCE + ' » — operator, 2001-01-01',
+    '« ' + SENTENCE + ' » — operator',
+    'B — ' + today(),
+    '« ' + SENTENCE + ' » and « no E2E at all, ever, anywhere » — operator, ' + today(),
+  ]) {
+    const out: any = await $.tool.call(waiverOf(detail))
+    expect(out.deny).toContain('an E2E waiver quotes the operator')
+  }
+  expect(recordRun(seen)).toBeUndefined()
+})
+
+test('auto-merge-set accepts a quote of the operator\'s typed words that names auto-merge, not one that does not', async ($, on) => {
+  const seen = await world($, on)
+  await typed($, 'thing : ' + HIS_WORDS)
+  const wrapped: any = await $.tool.call(setAutoMerge(true, '« ' + HIS_WORDS + ' » — operator'))
+  expect(wrapped.deny).toBeUndefined()
+  expect(listed(seen)).toEqual(['acme/thing'])
+  const naming: any = await $.tool.call(setAutoMerge(true, 'they said « pour cette orchestration infra compris », so auto-merge is on'))
+  expect(naming.deny).toContain('typed in this session')
+})
