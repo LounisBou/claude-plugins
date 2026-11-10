@@ -111,17 +111,24 @@ export function consentAnswer(answer: string, choices: readonly { letter: string
 }
 
 /**
- * Whether words the operator typed in the asking session's own tab answer one of the question's
- * choices: its letter alone or set apart (« A », « a) yes »), or words that hold a choice's text,
- * case and spacing aside. A prompt typed there can be any instruction, so words that name no
- * choice are no answer and no consent rests on them.
+ * The choice that words the operator typed in the asking session's own tab answer, case and
+ * spacing aside: that choice's letter alone (« A »); its letter, a separator (`:`, `—`, `)`, `-`,
+ * `.`) and nothing else or exactly that choice's text (« a) waive it, docs only »); or exactly one
+ * choice's text and nothing else. Anything else answers nothing (undefined): a prompt typed there
+ * can be any instruction, and a consent record lets an E2E waiver through, so only an unambiguous
+ * answer counts. The record's answer is then the chosen choice's text.
  */
-export function answersChoice(typed: string, choices: readonly { letter: string; text: string }[]): boolean {
-  const trimmed = typed.trim()
-  const named = /^([A-Za-z])\s*(?:[:—)\-.]|$)/.exec(trimmed)?.[1]?.toUpperCase()
-  if (named !== undefined) return choices.some(choice => choice.letter.toUpperCase() === named)
-  const said = spaced(trimmed).toLowerCase()
-  return choices.some(choice => { const text = spaced(choice.text).toLowerCase(); return text !== '' && said.includes(text) })
+export function answersChoice<C extends { letter: string; text: string }>(typed: string, choices: readonly C[]): C | undefined {
+  const said = spaced(typed).toLowerCase()
+  const textOf = (choice: C) => spaced(choice.text).toLowerCase()
+  const lettered = /^([a-z])\s*(?:[:—)\-.]\s*(.*))?$/.exec(said)
+  if (lettered) {
+    const chosen = choices.find(choice => choice.letter.toLowerCase() === lettered[1])
+    const rest = lettered[2] ?? ''
+    if (chosen && (rest === '' || rest === textOf(chosen))) return chosen
+  }
+  const exact = choices.filter(choice => textOf(choice) !== '' && textOf(choice) === said)
+  return exact.length === 1 ? exact[0] : undefined
 }
 
 /**

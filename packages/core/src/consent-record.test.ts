@@ -73,21 +73,34 @@ describe('a consent record of a round answer', () => {
 
 describe('words typed in the sender\'s own tab', () => {
   const choices = [{ letter: 'A', text: 'waive it, docs only' }, { letter: 'B', text: 'run the E2E' }]
+  const [waive, run] = choices
 
-  it('answers a choice by its letter, alone or set apart, or by words that hold its text', () => {
-    for (const typed of ['A', ' a ', 'B : go', 'a) yes', 'ok: waive it,  docs only', 'I say WAIVE IT, docs only, thanks']) assert.ok(answersChoice(typed, choices), typed)
+  it('answers a choice by its letter alone, its letter set apart from nothing or its exact text, or its exact text alone', () => {
+    for (const typed of ['A', ' a ', 'a)', 'A.', 'a) waive it, docs only', 'A — waive it,  docs only', 'A—waive it, docs only', 'a - WAIVE IT, docs only', 'waive it, docs only', '  WAIVE it,\n docs only ']) {
+      assert.deepEqual(answersChoice(typed, choices), waive, typed)
+    }
+    for (const typed of ['b', 'B : run the e2e', 'RUN THE E2E']) assert.deepEqual(answersChoice(typed, choices), run, typed)
   })
 
-  it('is no answer when it names no choice', () => {
-    for (const typed of ['', 'C', 'A, but check the diff first', 'go on with phase 2', 'yes']) assert.ok(!answersChoice(typed, choices), typed)
-    assert.ok(!answersChoice('anything', []))
+  it('is no answer when it is anything else', () => {
+    for (const typed of [
+      '', 'C', 'C)', 'yes', 'go on with phase 2',
+      'do not waive it, docs only', 'I say WAIVE IT, docs only, thanks', 'ok: waive it, docs only',
+      'B waive it, docs only', 'B : waive it, docs only', 'A run the E2E', 'A - but not yet', 'A, but check the diff first', 'A go', 'a) yes',
+    ]) assert.equal(answersChoice(typed, choices), undefined, typed)
+    assert.equal(answersChoice('anything', []), undefined)
   })
 
-  it('files a record by the tab, a letter resolved to its text and words kept whole', () => {
+  it('is no answer when a short choice text sits inside an unrelated prompt', () => {
+    const short = [{ letter: 'A', text: 'yes' }, { letter: 'B', text: 'no' }]
+    assert.deepEqual(answersChoice('Yes', short), short[0])
+    for (const typed of ['yes, and then rebase the branch on main', 'no idea, go on', 'B yes']) assert.equal(answersChoice(typed, short), undefined, typed)
+  })
+
+  it('files a record by the tab, a letter resolved to its text', () => {
     const fields = { subject: { kind: 'e2e-waiver', repo: 'o/n', pr: 3 }, entry: 's-1', question: 'Waive E2E?', choices, by: 'tab' as const, at: '2026-11-10T00:00:00Z' }
     assert.equal(consentRecordOf({ ...fields, answer: 'A' })?.by, 'tab')
     assert.equal(consentRecordOf({ ...fields, answer: 'A' })?.answer, 'waive it, docs only')
-    assert.equal(consentRecordOf({ ...fields, answer: 'yes: waive it, docs only' })?.answer, 'yes: waive it, docs only')
   })
 })
 
