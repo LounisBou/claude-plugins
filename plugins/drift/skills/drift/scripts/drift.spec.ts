@@ -195,6 +195,34 @@ test('an aborted run stops its command, removes its checkout and exits 2', async
   assert.equal(git('worktree', 'list', '--porcelain').split('\n').filter(line => line.startsWith('worktree ')).length, 1)
 })
 
+test('an aborted run stops the whole build, the processes it started included, before removing its checkout', async () => {
+  const pidFile = join(ROOT, 'grandchild.pid')
+  const script = `const c = require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => undefined, 60000)'], { stdio: 'ignore' }); require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(c.pid)); setTimeout(() => undefined, 60000)`
+  const slow = join(ROOT, 'slow-tree.json')
+  writeFileSync(slow, JSON.stringify({ build: ['node', '-e', script], outDir: 'dist' }))
+  const controller = new AbortController()
+  const started = setInterval(() => {
+    if (existsSync(pidFile)) controller.abort()
+  }, 50)
+  const { code, work } = await drift(['--config', slow, '--base', sha['base'] ?? '', '--head', sha['base'] ?? ''], { signal: controller.signal })
+  clearInterval(started)
+  assert.equal(code, 2)
+  assert.deepEqual(readdirSync(work), [])
+  const pid = Number(readFileSync(pidFile, 'utf8'))
+  const alive = (): boolean => {
+    try {
+      process.kill(pid, 0)
+      return true
+    } catch {
+      return false
+    }
+  }
+  for (let k = 0; k < 40 && alive(); k++) await new Promise(done => setTimeout(done, 50))
+  const survived = alive()
+  if (survived) process.kill(pid, 'SIGKILL')
+  assert.equal(survived, false)
+})
+
 test('without --out the run directory is made under the scratchpad, else the temp directory', async () => {
   const pad = join(ROOT, 'claude-root', 'proj', 'sess', 'scratchpad')
   mkdirSync(pad, { recursive: true })

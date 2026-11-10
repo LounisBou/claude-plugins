@@ -33,9 +33,13 @@ interface Ran {
   readonly stdout: string
 }
 
+/** How long an aborted command's process group has after SIGTERM before SIGKILL. */
+const KILL_GRACE_MS = 5000
+
 /**
  * Runs `argv` without a shell, `env` added to this process's environment; its streams go to `log`
- * (appended) or are collected. Never rejects.
+ * (appended) or are collected. Never rejects. The command leads its own process group: on abort the
+ * whole group is stopped, the processes it started included, and the promise settles once it closed.
  */
 function exec(argv: readonly string[], cwd: string, signal: AbortSignal | undefined, log?: string, env?: Readonly<Record<string, string>>): Promise<Ran> {
   return new Promise(done => {
@@ -43,21 +47,37 @@ function exec(argv: readonly string[], cwd: string, signal: AbortSignal | undefi
     const fd = log === undefined ? undefined : openSync(log, 'a')
     const child = spawn(command, args, {
       cwd,
+      detached: true,
       ...(env === undefined ? {} : { env: { ...process.env, ...env } }),
       stdio: fd === undefined ? ['ignore', 'pipe', 'pipe'] : ['ignore', fd, fd],
-      ...(signal === undefined ? {} : { signal }),
     })
     if (fd !== undefined) closeSync(fd)
     const out: Buffer[] = []
     child.stdout?.on('data', (chunk: Buffer) => out.push(chunk))
+    let killer: NodeJS.Timeout | undefined
+    const group = (name: NodeJS.Signals): void => {
+      try {
+        if (child.pid !== undefined) process.kill(-child.pid, name)
+      } catch {
+        // the group is gone already
+      }
+    }
+    const abort = (): void => {
+      group('SIGTERM')
+      killer = setTimeout(() => group('SIGKILL'), KILL_GRACE_MS)
+    }
     let settled = false
     const settle = (status: number | null): void => {
       if (settled) return
       settled = true
+      signal?.removeEventListener('abort', abort)
+      clearTimeout(killer)
       done({ status, stdout: Buffer.concat(out).toString('utf8').trim() })
     }
     child.on('error', () => settle(null))
     child.on('close', code => settle(code))
+    if (signal?.aborted === true) abort()
+    else signal?.addEventListener('abort', abort, { once: true })
   })
 }
 
