@@ -13,7 +13,7 @@ Preconditions, verify each before acting:
   item 0);
 - the orchestration's rulings file, `<briefs dir>/rulings.md`, exists and holds every ruling still
   standing, each dated and quoted, the brief's « Standing rulings » line naming it;
-- the standing succession brief exists; otherwise instantiate
+- the standing succession brief exists, a missing `Mode: ` line added with yours; otherwise instantiate
   `${CLAUDE_PLUGIN_ROOT}/templates/orchestrator-succession-brief.md` into the
   project's briefs directory, filling every `{{PLACEHOLDER}}`, never a brief written by hand;
 - its « Live state » is generated now, never written by hand:
