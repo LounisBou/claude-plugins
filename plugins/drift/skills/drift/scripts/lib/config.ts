@@ -1,6 +1,7 @@
 // What a run is asked: the command line, the project's config file, and where it is found.
 import { readdirSync, statSync } from 'node:fs'
 import { join, posix } from 'node:path'
+import { configDirOf, type Env } from '../../../../core/env.ts'
 import { DEFAULT_HASH_PATTERN, DriftError } from './compare.ts'
 
 export const USAGE = 'usage: drift build [--repo <path>] [--base <ref>] [--head <ref>] [--config <path>] [--out <dir>]'
@@ -75,7 +76,8 @@ export function slugOf(url: string): string | undefined {
   return match === null ? undefined : `${match[1]}-${match[2]}`
 }
 
-export const configPathOf = (home: string, slug: string): string => join(home, '.claude', 'drift', `${slug}.json`)
+/** The default config: `drift/<slug>.json` under the host's configuration directory. */
+export const configPathOf = (home: string, slug: string, env: Env = {}): string => join(configDirOf(env, home), 'drift', `${slug}.json`)
 
 /**
  * The calling session's scratchpad, when the host runs one: `<root>/<project>/<session>/scratchpad`

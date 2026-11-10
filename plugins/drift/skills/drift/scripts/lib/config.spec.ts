@@ -48,6 +48,11 @@ test('the default config lives under the home, by owner and repository', () => {
   assert.equal(configPathOf('/home/me', 'acme-web'), '/home/me/.claude/drift/acme-web.json')
 })
 
+test('the default config follows CLAUDE_CONFIG_DIR when it is set', () => {
+  assert.equal(configPathOf('/home/me', 'acme-web', { CLAUDE_CONFIG_DIR: '/etc/claude' }), '/etc/claude/drift/acme-web.json')
+  assert.equal(configPathOf('/home/me', 'acme-web', { CLAUDE_CONFIG_DIR: '' }), '/home/me/.claude/drift/acme-web.json')
+})
+
 test('the command line: defaults, every flag, and what is refused', () => {
   assert.deepEqual(parseArgs(['build']), { repo: '.', base: 'origin/main', head: 'HEAD', config: undefined, out: undefined })
   assert.deepEqual(parseArgs(['build', '--repo', 'r', '--base', 'b', '--head', 'h', '--config', 'c', '--out', 'o']), { repo: 'r', base: 'b', head: 'h', config: 'c', out: 'o' })

@@ -181,7 +181,7 @@ async function build(argv: readonly string[], deps: Deps): Promise<number> {
   if (configPath === undefined) {
     const slug = slugOf((await git(top, ['remote', 'get-url', 'origin'], signal)) ?? '')
     if (slug === undefined) throw new DriftError('no origin to name the config after: name it with --config')
-    configPath = configPathOf(deps.home, slug)
+    configPath = configPathOf(deps.home, slug, deps.env)
   }
   const config = readConfig(resolve(configPath))
   const resolveRef = async (side: string, ref: string): Promise<string> => {

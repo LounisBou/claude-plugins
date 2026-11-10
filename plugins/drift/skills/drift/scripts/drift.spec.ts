@@ -163,6 +163,13 @@ test('the default config is read from the home, named after the origin', async (
   assert.equal(found.code, 0)
 })
 
+test('the default config is read from CLAUDE_CONFIG_DIR when it is set', async () => {
+  const dir = join(ROOT, 'config-dir')
+  const { code, err } = await drift(['--base', sha['base'] ?? '', '--head', sha['base'] ?? ''], { env: { CLAUDE_CONFIG_DIR: dir } })
+  assert.equal(code, 2)
+  assert.match(err.join('\n'), new RegExp(`no config at ${join(dir, 'drift/acme-fixture.json')}`))
+})
+
 test('what cannot start is a tool error: a bad ref, no repository, a bad call, a broken config, a missing outDir', async () => {
   const badRef = await drift(['--config', CONFIG, '--base', 'no-such-ref'])
   assert.equal(badRef.code, 2)

@@ -4,7 +4,7 @@
 #   drift.sh build [--repo <path>] [--base <ref>] [--head <ref>] [--config <path>] [--out <dir>]
 #
 # Defaults: --repo ., --base origin/main, --head HEAD, --config ~/.claude/drift/<owner>-<repo>.json
-# (named after the repository's origin), --out a new directory under the calling session's
+# (named after the repository's origin, under $CLAUDE_CONFIG_DIR when it is set), --out a new directory under the calling session's
 # scratchpad when one is found, else under the system temp directory.
 #
 # The config, a JSON object kept outside the repository:
