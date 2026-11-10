@@ -4952,7 +4952,9 @@ def cmd_spawn(argv, pair_from="", old_tty="", made=None):
                 "session, and its agents are windows there, never iTerm2 tabs: if "
                 "mcp__orchestrator__rename_session was not called in this turn, call it with "
                 "your name, then end the turn: its end moves you into your home session; "
-                "spawn from there" % outside[:40])
+                "spawn from there; if you are still here after that turn, the move failed: "
+                "report this refusal to the operator and spawn nothing until he answers"
+                % outside[:40])
     if auditor_successor:
         for flag, given in (("--tier", args.tier), ("--model", args.model),
                             ("--effort", args.effort),
