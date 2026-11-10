@@ -51,10 +51,15 @@ export function isEnding(): boolean {
 // A call that hands an agent this session's address: the launcher's spawn or rotate
 // (its script or the python beneath it) — the brief it writes names the orchestrator —
 // and a SendMessage, which the peer reads its sender's name off. Made in the turn
-// that renamed, it carries the name the session is about to lose.
+// that renamed, it carries the name the session is about to lose. The launcher is
+// often named in a variable and called on another line or after a `;` or a `&&`:
+// a command that names it anywhere is held when spawn or rotate follows its path or
+// a variable, in any of its commands.
+const LAUNCHER = /\biterm[-_]agent\.(?:sh|py)\b/
+const LAUNCHER_CALL = /(?:\biterm[-_]agent\.(?:sh|py)["']?|\$\{?\w+\}?["']?)[ \t]+(?:spawn|rotate)(?=\s|$|[;&|)])/m
 export function addressesAnAgent(tool: string, command: string): boolean {
   if (tool === 'SendMessage') return true
-  return tool === 'Bash' && /\biterm[-_]agent\.(?:sh|py)\b[^\n]*?\s(?:spawn|rotate)(?:\s|$)/m.test(command)
+  return tool === 'Bash' && LAUNCHER.test(command) && LAUNCHER_CALL.test(command)
 }
 
 // The refusal while a rename waits for the turn's end: prose told the model to end the
