@@ -1082,9 +1082,9 @@ async function followPushes($: any, line: string): Promise<void> {
 
 // ---- the operator's word ----
 
-// The words the person sent in this session, each with the day it was received: a prompt typed at
-// the terminal or through the bridge, and a message sent while the session worked. An E2E waiver
-// and auto-merge-set quote them.
+// The prompts the person typed in this session, at the terminal or through the bridge, a prompt
+// typed while the session worked included, each with the day it was received: an E2E waiver and
+// auto-merge-set quote them.
 const typedPrompts: Array<{ text: string; day: string }> = []
 const TYPED_KEPT = 200
 
@@ -1093,57 +1093,58 @@ function spaced(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
 }
 
-// The machine's own day, YYYY-MM-DD: the date a record carries.
-function today(): string {
-  const now = new Date()
+// The machine's own day, YYYY-MM-DD, of a moment in milliseconds: the date a record carries.
+function dayOf(ms: number): string {
+  const at = new Date(ms)
   const two = (n: number) => String(n).padStart(2, '0')
-  return now.getFullYear() + '-' + two(now.getMonth() + 1) + '-' + two(now.getDate())
+  return at.getFullYear() + '-' + two(at.getMonth() + 1) + '-' + two(at.getDate())
 }
 
-function keepTyped(text: string): void {
-  typedPrompts.push({ text, day: today() })
+// A prompt received while the clock cannot be read is kept without a day: it proves a quote
+// undated, and no date.
+function keepTyped(text: string, now: number | undefined): void {
+  typedPrompts.push({ text, day: now === undefined ? '' : dayOf(now) })
   if (typedPrompts.length > TYPED_KEPT) typedPrompts.shift()
-}
-
-// What the host writes around a message the person sent while the session worked, the text between.
-const MID_TURN_WORDS = /^<system-reminder(?: id="[^"]*")?>\nThe user sent a new message while you were working:\n([\s\S]*)\n\nThis is how Claude Code surfaces messages the user sends mid-turn[^\n]*\n<\/system-reminder>$/
-
-// The words of a row the host appended for a message the person sent while the session worked, or
-// undefined. Only the host's own attachment of the main conversation counts: a peer's message has
-// its own frame, and a note, a delivery or a tool result has another door.
-function midTurnWords(e: any): string | undefined {
-  const message = e?.message
-  if (e?.door !== 'attachment' || e?.agentId !== undefined || e?.origin?.kind !== 'engine') return undefined
-  if (message?.type !== 'attachment' || message?.name !== 'queued_command') return undefined
-  const blocks = Array.isArray(message.content) ? message.content : []
-  if (blocks.length !== 1 || blocks[0]?.type !== 'text') return undefined
-  return MID_TURN_WORDS.exec(String(blocks[0].text ?? ''))?.[1]
 }
 
 const QUOTED_SPAN = /«([^»]*)»|"([^"]*)"|“([^”]*)”/g
 const ISO_DAY = /\b\d{4}-\d{2}-\d{2}\b/g
 
-// The words a text proves the person sent, or undefined. The text whole found in what they sent;
-// else, when it wraps its quotes (« … » — operator, date), the quoted spans, all in one message and,
-// when `dated`, the day that message was received the only date the text carries. A span shorter
-// than a consent quote proves nothing unless it is the whole message.
-function typedWords(text: string, dated: boolean): string | undefined {
-  const whole = spaced(text)
-  if (whole === '') return undefined
-  if (typedPrompts.some((p) => spaced(p.text).includes(whole))) return whole
-  const spans = [...text.matchAll(QUOTED_SPAN)].map((m) => spaced(m[1] ?? m[2] ?? m[3] ?? '')).filter((s) => s !== '')
-  if (spans.length === 0) return undefined
-  const days = text.match(ISO_DAY) ?? []
-  const found = typedPrompts.some((p) => {
-    const sent = spaced(p.text)
-    const quoted = spans.every((s) => s.length < CONSENT_QUOTE_MIN ? s === sent : sent.includes(s))
-    return quoted && (!dated || (days.length > 0 && days.every((d) => d === p.day)))
-  })
-  return found ? spans.join(' ') : undefined
+// What a quote must say to carry a record: its words name it.
+type Quoting = {
+  // The date the text carries is the day the message was received, and the only one.
+  dated: boolean
+  // Each quoted span names the subject, itself.
+  names: (span: string) => boolean
+  // A span that is the whole message needs not name it.
+  wholeBare: boolean
 }
 
-function typedVerbatim(text: string, dated = false): boolean {
-  return typedWords(text, dated) !== undefined
+// True when a text is the person's words: the text whole found in a prompt they typed; else, when
+// it wraps quotes (« … » — operator, date), every quoted span found in one prompt, each naming the
+// subject in itself, and the day that prompt was received the only date the text carries when it is
+// dated. A span shorter than a consent quote proves nothing unless it is the whole prompt.
+function typedWords(text: string, quoting: Quoting): boolean {
+  const whole = spaced(text)
+  if (whole === '') return false
+  if (typedPrompts.some((p) => spaced(p.text).includes(whole))) return true
+  const spans = [...text.matchAll(QUOTED_SPAN)].map((m) => spaced(m[1] ?? m[2] ?? m[3] ?? '')).filter((s) => s !== '')
+  if (spans.length === 0) return false
+  const days = text.match(ISO_DAY) ?? []
+  return typedPrompts.some((p) => {
+    const sent = spaced(p.text)
+    const quoted = spans.every((span) => {
+      if (span.length < CONSENT_QUOTE_MIN ? span !== sent : !sent.includes(span)) return false
+      return (quoting.wholeBare && span === sent) || quoting.names(span)
+    })
+    return quoted && (!quoting.dated || (days.length > 0 && days.every((d) => d === p.day)))
+  })
+}
+
+// An E2E waiver of a pull request: each quoted span names the waiver or the pull request.
+function waiverQuoting(pr: number): Quoting {
+  const names = new RegExp('E2E|end[-\\s]to[-\\s]end|bout[-\\s]en[-\\s]bout|tests?\\b|dispens|waiv|(?<![\\d])' + pr + '(?![\\d])', 'i')
+  return { dated: true, names: (span) => names.test(span), wholeBare: true }
 }
 
 // The consent records of a repository (core's consent-record.ts): read-only here, the newest files only.
@@ -1211,9 +1212,8 @@ async function unprovenWord($: any, words: string, repo: string): Promise<string
     return 'github: auto-merge-set quotes the operator: "words" must name auto-merge ("auto-merge", "auto merge" or'
       + ' "automerge"), in their own words, typed or answered.'
   }
-  const proven = typedWords(words, false)
-  if ((proven !== undefined && AUTO_MERGE_WORD.test(proven) && proven.length >= CONSENT_QUOTE_MIN)
-    || await consentAnswered($, words, { kind: 'auto-merge', repo })) return undefined
+  const quoting: Quoting = { dated: false, names: (span) => AUTO_MERGE_WORD.test(span), wholeBare: false }
+  if (typedWords(words, quoting) || await consentAnswered($, words, { kind: 'auto-merge', repo })) return undefined
   return 'github: auto-merge-set refused on ' + repo + ': its "words" are neither in a prompt the operator typed in'
     + ' this session, nor their answer in a consent record (' + CONSENT_PRODUCER + ') of auto-merge on ' + repo
     + '. Quote them verbatim; a peer\'s message is not their word.'
@@ -1330,7 +1330,7 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   if (!Number.isInteger(pr) || pr < 1) return { deny: 'github: name the pull request: {"pr": <n>}' }
   const repo = await targetRepo($, { repo: e.repo, args: {} })
   if (!repo) return { deny: 'github: name the repository: {"repo": "owner/name"}' }
-  if (result === 'waived' && !typedVerbatim(detail, true) && !(await consentAnswered($, detail, { kind: 'e2e-waiver', repo, pr }))) {
+  if (result === 'waived' && !typedWords(detail, waiverQuoting(pr)) && !(await consentAnswered($, detail, { kind: 'e2e-waiver', repo, pr }))) {
     return {
       deny: 'github: an E2E waiver quotes the operator: its detail must be words they typed in this session,'
         + ' or their answer in a consent record (' + CONSENT_PRODUCER + ') of an E2E waiver of this pull request, with their date.',
@@ -1479,15 +1479,15 @@ export function register(on: any): void {
     const kind = String(e.origin?.kind ?? '')
     if (kind !== 'composer' && kind !== 'bridge') return next(e)
     lastTyped = String(e.text ?? '')
-    keepTyped(lastTyped)
+    let now: number | undefined
+    try {
+      now = await $.clock.now()
+    } catch {
+      // Kept without its day.
+    }
+    keepTyped(lastTyped, now)
     if (!AUTO_MERGE_WORD.test(lastTyped)) return next(e)
     return next({ ...e, context: [...(e.context ?? []), await autoMergeHeard($)] })
-  }).catch(async (_$: any, e: any, next: any) => next(e))
-
-  on('session.append', { door: 'attachment' }, async (_$: any, e: any, next: any) => {
-    const words = midTurnWords(e)
-    if (words !== undefined) keepTyped(words)
-    return next(e)
   }).catch(async (_$: any, e: any, next: any) => next(e))
 
   on('tool.call', { tool: 'Bash' }, async ($: any, e: any, next: any) => {

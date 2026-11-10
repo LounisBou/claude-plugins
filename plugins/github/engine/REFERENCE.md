@@ -167,7 +167,7 @@ Answered by the mod, not by `gh.py`: the list is a file on this machine,
 
 `auto-merge-set` needs `words` of at least 8 characters, naming auto-merge (« auto-merge »,
 « auto merge » or « automerge »), found verbatim, whitespace
-normalised, in words the operator sent (or a quote), or quoting their answer in a
+normalised, in a prompt the operator typed (or a quote of it), or quoting their answer in a
 consent record of auto-merge on that repository (core's `consent-record.ts`,
 `<config dir>/consents/<owner>/<name>/`). A peer's message is not their word.
 Otherwise it is refused, naming both proofs:
@@ -423,9 +423,9 @@ github: records are written by their producers' tools, and E2E by mcp__github__r
 tracked files are clean. A session writes `e2e` only (producer `session-e2e`); each other
 kind is written by the plugin the record contract (core's `pr-record.ts`, `producers`) names
 its producer, any other kind refused with `github: <kind> records are written by their
-producer (<plugin>, <tool>)`. `waived` needs a detail found verbatim in words the operator
-sent, or wrapping a quote of them, dated that day, or quoting their answer in a consent record of an E2E waiver of that
-pull request (see `auto-merge-set`), carrying a date. The answer quoted is at least 8 characters.
+producer (<plugin>, <tool>)`. `waived` needs a detail found verbatim in a prompt the operator
+typed, or in dated quotes of it naming the waiver, or quoting their answer in a consent record of an E2E waiver of that
+pull request, carrying a date. The answer quoted is at least 8 characters.
 
 **Auto-merge list.** A Write, an Edit, a MultiEdit or a NotebookEdit of `auto-merge.json` in a plugin's
 data directory, and a shell command naming it there (the data directory, `plugins/data/`,
