@@ -758,6 +758,15 @@ test('a description ends with the four sections, each `none` when empty', () => 
   expect(lint('pr-update', { pr: 1, title: 'fix: x' })).toEqual([])
 })
 
+test('a dependency alone leaves the TODOs at `none`, and a TODO may state a sequencing constraint the list cannot express', () => {
+  const dependency = '**PRs Dependency:**\n- https://github.com/acme/api/pull/412\n\n**Related PRs:** none'
+  expect(lint('pr-create', { title: 't', body: 'Adds the export.\n\n**TODO Staging:** none\n**TODO Prod:** none\n' + dependency })).toEqual([])
+  const strictly = 'Adds the export.\n\n**TODO Staging:**\n- [ ] Ship https://github.com/acme/api/pull/412 strictly before this PR, not at the same time\n\n**TODO Prod:** none\n' + dependency
+  expect(lint('pr-create', { title: 't', body: strictly })).toEqual([])
+  const waiting = 'Adds the export.\n\n**TODO Staging:** none\n**TODO Prod:**\n- [ ] Set `EXPORT_ENABLED` to `true` in `/etc/app/app.env` on prod-01 once the existing records are updated by https://github.com/acme/api/pull/412\n\n' + dependency
+  expect(lint('pr-update', { pr: 1, body: waiting })).toEqual([])
+})
+
 test('a missing section, one out of order, an empty one, `none` beside items or text on a label\'s line is refused', () => {
   expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset.' })).toEqual([
     'body: a pull request description ends with the four sections, missing here: TODO Staging, TODO Prod, PRs Dependency, Related PRs',
