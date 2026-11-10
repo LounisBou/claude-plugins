@@ -28,18 +28,39 @@ async function run($: any, argv: string[]): Promise<string> {
 
 const lines = (s: string) => s.split('\n').map(l => l.trim()).filter(Boolean)
 
-// The base branch of the current branch's pull request, asked of the github plugin (its
-// mcp__github__gh contract), or undefined: no pull request, no plugin, an unreadable answer.
-export async function pullRequestBase($: any): Promise<string | undefined> {
+// The base branch of a pull request, asked of the github plugin (its mcp__github__gh contract), or
+// undefined: no pull request, no plugin, an unreadable answer. On a branch it is the current
+// branch's pull request. On a detached head, which has no branch to ask about, it is the open
+// pull request whose head is `detachedHead`.
+export async function pullRequestBase($: any, detachedHead?: string): Promise<string | undefined> {
   try {
-    const answer = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-get', args: {} })
+    const answer = await $.tool.call(
+      detachedHead
+        ? { tool: 'mcp__github__gh', command: 'pr-list', args: {} }
+        : { tool: 'mcp__github__gh', command: 'pr-get', args: {} },
+    )
     if (answer?.deny || answer?.isError) return undefined
     const pulls = JSON.parse(String(answer?.result ?? answer?.text ?? ''))
-    const ref = Array.isArray(pulls) ? pulls[0]?.base?.ref : undefined
+    if (!Array.isArray(pulls)) return undefined
+    const pull = detachedHead ? pulls.find(p => p?.head?.sha === detachedHead) : pulls[0]
+    const ref = pull?.base?.ref
     return typeof ref === 'string' && /^[\w./-]+$/.test(ref) ? ref : undefined
   } catch {
     return undefined
   }
+}
+
+// The base to resolve when the words name none. A checkout on a branch takes its pull request's;
+// a detached head takes the pull request at HEAD, or is refused: the default branch would hand
+// the agents every file the pull request does not change. resolve_base.sh refuses the same way
+// when the module could not run and the command does the work itself.
+async function defaultBase($: any): Promise<string | undefined> {
+  const branch = (await run($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD'])).trim()
+  if (branch !== 'HEAD') return pullRequestBase($)
+  const head = (await run($, ['git', 'rev-parse', 'HEAD'])).trim()
+  const base = await pullRequestBase($, head)
+  if (!base) throw new Error(`detached HEAD (${head.slice(0, 12)}) and no open pull request has it as its head: pass the base, /norms:check base=<branch>`)
+  return base
 }
 
 export async function computeScope($: any, baseArg?: string): Promise<Scope> {
@@ -92,8 +113,9 @@ export const SKILL_MATCHER = { tool: 'Skill', skill: /^\/?norms:check$/ }
 // the agents and marked for the record, and its block appended to the words.
 async function withScope($: any, words: string): Promise<string> {
   const args = parseCheckArgs(words)
-  // No base named: the pull request's, through the github plugin; the agents reuse it from the cache.
-  const scope = await computeScope($, args.base ?? (await pullRequestBase($)))
+  // No base named: the pull request's, through the github plugin (on a detached head, the one at
+  // HEAD, or a refusal); the agents reuse it from the cache.
+  const scope = await computeScope($, args.base ?? (await defaultBase($)))
   cached = { scope, at: Date.now() }
   const refs = await checkPaths($, args.paths)
   const spawned: unknown = await $.env.get('ORCHESTRATOR_SPAWNED').catch(() => undefined)

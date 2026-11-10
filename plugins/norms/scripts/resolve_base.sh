@@ -7,6 +7,9 @@
 #   2. the remote's default branch (refs/remotes/origin/HEAD)
 #   3. main
 #
+# A detached HEAD has no branch and no pull request of its own to ask about: without an
+# argument it is refused, since the default branch would stand in for the pull request's base.
+#
 # A name is resolved to origin/<name> when that remote ref exists, else to the local
 # branch. Exit 1 with a message on stderr when nothing resolves.
 set -u
@@ -27,6 +30,10 @@ if [ -n "${1:-}" ]; then
   base="$1"
   ref=$(resolve_ref "$base") || { echo "error: base '$base' does not resolve to a commit" >&2; exit 1; }
 else
+  git symbolic-ref --quiet HEAD >/dev/null || {
+    echo "error: detached HEAD and no base named: pass the pull request's base, /norms:check base=<branch>" >&2
+    exit 1
+  }
   base=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
   base=${base#origin/}
   [ -n "$base" ] || base=main

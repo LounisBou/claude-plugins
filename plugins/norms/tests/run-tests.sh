@@ -221,6 +221,17 @@ check "no remote falls back to main" "$want" "$(base_in "$WORK/lonely")"
 (cd "$WORK/lonely" && "$BASE_SH" nope >/dev/null 2>&1)
 check "unknown explicit base exits 1" "exit 1" "exit $?"
 
+# A detached head has no branch: with no base named, the resolver refuses rather than take the default branch.
+(cd "$WORK/stack" && $GIT checkout -q --detach child)
+want=$(cd "$WORK/stack" && git rev-parse parent)
+check "a detached head with no base named exits 1" "exit 1" \
+  "$(cd "$WORK/stack" && "$BASE_SH" >/dev/null 2>&1; echo "exit $?")"
+base_err=$(cd "$WORK/stack" && "$BASE_SH" 2>&1 >/dev/null)
+check "the detached refusal says how to pass the base" "1" \
+  "$(printf '%s\n' "$base_err" | grep -c -F 'base=<branch>')"
+check "a detached head resolves the base the module passes it" "$want" "$(base_in "$WORK/stack" parent)"
+(cd "$WORK/stack" && $GIT checkout -q child)
+
 check "check command calls the resolver, not a hard-coded main" "0" \
   "$(grep -c 'merge-base HEAD main' "$ROOT/commands/check.md" "$ROOT/agents/norms-diff-scope.md" | awk -F: '{s+=$2} END {print s+0}')"
 check "suggested commit messages carry a type" "0" \

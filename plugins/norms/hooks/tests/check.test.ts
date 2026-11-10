@@ -204,3 +204,70 @@ test('the pull request\'s base is read through the github tool, and anything unr
   expect(await ask({ result: JSON.stringify([{ base: { ref: 'x; rm -rf /' } }]) })).toBe(undefined)
   expect(await pullRequestBase({ tool: { call: async () => { throw new Error('absent') } } })).toBe(undefined)
 })
+
+// A detached checkout (a review session pinned at the head) has no branch for pr-get to ask about.
+const PR_HEAD = HEAD
+const pulls = (...rows: [string, string][]) => JSON.stringify(rows.map(([sha, ref]) => ({ head: { sha }, base: { ref } })))
+
+test('on a detached head the base comes from the open pull request whose head is HEAD', async () => {
+  const calls: any[] = []
+  const $ = { tool: { call: async (input: any) => { calls.push(input); return { result: pulls(['c'.repeat(40), 'main'], [PR_HEAD, 'home']) } } } }
+  expect(await pullRequestBase($, PR_HEAD)).toBe('home')
+  expect(calls).toEqual([{ tool: 'mcp__github__gh', command: 'pr-list', args: {} }])
+  expect(await pullRequestBase($, 'd'.repeat(40))).toBe(undefined)
+  expect(await pullRequestBase({ tool: { call: async () => ({ deny: 'no github' }) } }, PR_HEAD)).toBe(undefined)
+})
+
+async function detachedCheck(args: string, tool: (input: any) => any) {
+  resetCache()
+  const hooks = mount(register)
+  const { $, argvs, toolCalls } = fakeDollar({
+    runs: {
+      ...gitRuns(['src/auth.ts'], ['src/auth.ts'], {}, 'home'),
+      'git rev-parse --abbrev-ref HEAD': { stdout: 'HEAD\n' },
+    },
+    dirs: { '.': ['package.json'] },
+    tool,
+  })
+  const { next, seen } = nextOf()
+  const run = hook(hooks, 'command.run', { command: 'norms:check' }).handler($, { command: 'norms:check', args }, next)
+  return { run, seen, argvs, toolCalls }
+}
+
+test('/norms:check on a detached head resolves the base of the pull request at HEAD', async () => {
+  const { run, seen, argvs, toolCalls } = await detachedCheck('', () => ({ result: pulls([PR_HEAD, 'home']) }))
+  await run
+  expect(seen[0].args).toContain(`base: ${BASE} (from base=home)`)
+  expect(argvs).toContain('bash /plugin/scripts/resolve_base.sh home')
+  expect(toolCalls.map(c => c.command)).toEqual(['pr-list'])
+})
+
+test('/norms:check on a detached head with no pull request at HEAD refuses instead of taking the default branch', async () => {
+  const { run, seen, argvs } = await detachedCheck('', () => ({ result: pulls(['c'.repeat(40), 'main']) }))
+  const refusal = await run.then(() => '', (e: Error) => e.message)
+  expect(refusal).toContain('detached HEAD')
+  expect(refusal).toContain('base=<branch>')
+  expect(seen).toEqual([])
+  expect(argvs.filter(a => a.includes('resolve_base.sh'))).toEqual([])
+})
+
+test('/norms:check on a detached head with an explicit base asks the github tool nothing', async () => {
+  const { run, seen, toolCalls } = await detachedCheck('base=home', () => { throw new Error('asked') })
+  await run
+  expect(seen[0].args).toContain(`base: ${BASE} (from base=home)`)
+  expect(toolCalls).toEqual([])
+})
+
+test('/norms:check on a branch still asks the current branch\'s pull request, whatever the pull request list holds', async () => {
+  resetCache()
+  const hooks = mount(register)
+  const { $, toolCalls } = fakeDollar({
+    runs: gitRuns(['src/auth.ts'], ['src/auth.ts'], {}, 'develop'),
+    dirs: { '.': ['package.json'] },
+    tool: () => ({ result: JSON.stringify([{ base: { ref: 'develop' } }]) }),
+  })
+  const { next, seen } = nextOf()
+  await hook(hooks, 'command.run', { command: 'norms:check' }).handler($, { command: 'norms:check', args: '' }, next)
+  expect(seen[0].args).toContain('base: ' + BASE + ' (from base=develop)')
+  expect(toolCalls).toEqual([{ tool: 'mcp__github__gh', command: 'pr-get', args: {} }])
+})
