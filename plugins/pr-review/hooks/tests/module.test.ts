@@ -664,7 +664,7 @@ const CLASSIFIER_REFUSAL = "The server-side auto mode classifier gave no verdict
 
 test('a review agent the host runs in the background reports through its hand-back', async ($, on) => {
   const stubs: Stubs = { records: [], prCalls: 0 }
-  stubs.agent = () => launched('a98974439cdede26b')
+  stubs.agent = () => launched('a0000000000000002')
   wireRecord(on, stubs)
   on('session.receive', (_$: any, e: any) => ({ text: e.text }))
   await loopCall($, { action: 'start' })
@@ -673,7 +673,7 @@ test('a review agent the host runs in the background reports through its hand-ba
   const early = await loopCall($, { action: 'findings', keys: [] })
   expect(early.isError).toBe(true)
   expect(String(early.result)).toContain('still running')
-  await handBack($, 'a98974439cdede26b', [])
+  await handBack($, 'a0000000000000002', [])
   const out = await loopCall($, { action: 'findings', keys: [] })
   expect(String(out.result)).toContain('"exit": "clean"')
   expect(stubs.records.map((r) => r.result)).toEqual(['pass'])
@@ -870,7 +870,7 @@ const coreCompleted = (report: string, over: Record<string, unknown> = {}) => ({
 })
 
 // The end of the reviewer's report of pass 2, as its hand-back carried it.
-const PASS2_REPORT = 'I found no issue that needs fixing in owner/web#42 (`origin/main...03155743`, 18 commits, 12 files).\n\n'
+const PASS2_REPORT = 'I found no issue that needs fixing in owner/web#42 (`origin/main...0123abcd`, 18 commits, 12 files).\n\n'
   + '**Minor points below the reporting threshold (no action needed):**\n- `mt-[3px]` in `Position.vue` is a hard-coded pixel value.\n\n'
   + 'Findings:\nNo findings\nCritical and Important: 0\n\n```json\n{"findings": []}\n```'
 
