@@ -4,12 +4,12 @@
 is decided or scheduled until the operator answers the « Open questions »; the current program
 does not build it.
 
-**Review notes (2026-11-11).** Six notes, each marked « Review note » at the section it
+**Review notes (2026-11-11).** Seven notes, each marked « Review note » at the section it
 concerns, check this design against published evidence on coding agents. They propose; they
 decide nothing, and none changes a goal until the operator takes it. Three choices already
 match that evidence and should stay: code first, and a prompt rule only by displacing one
-(context files added to repositories raised inference cost by over 20 % with no gain in task
-success, Gloaguen et al. 2026, arXiv:2602.11988); the session that learns is never the session
+(context files added to repositories raised inference cost by over 20 % and did not generally
+improve task success, Gloaguen et al. 2026, arXiv:2602.11988); the session that learns is never the session
 that worked; only code-computed grades decide.
 
 For the version after `program-design.md`, whose priorities, conventions and constraints govern
@@ -263,11 +263,14 @@ the remedy needs judgment. The learning system adds two things the ladder lacks 
 > ch. 1–2).
 
 > **Review note 6 — six cases cannot see a modest regression.** The outcome measure spends up
-> to 120 USD on six cases. Its power is bounded by the number of cases more than by the runs
-> per case, and a case transfers to the operator's work only as far as it resembles it.
-> Proposal: grow the case set from the operator's own merged pull requests (the dispatch
-> records name them), fewer runs each, rather than repeat six; each release measure states the
-> smallest regression it could have detected.
+> to 120 USD on six cases, one run per arm (`evals/outcome/caps.json`). The cases are already
+> the right kind — this repository's merged pull requests, chosen by `evals/outcome/SELECTION.md`
+> — but there are six, and nine qualify in all. Six runs per arm show only a collapse of a
+> pass rate, about 73 points from 79 % (note 7). Its power is bounded by the number of cases more than by the
+> runs per case. Proposal: grow the case set under the same criteria from the other
+> repositories where the plugins run (the dispatch records name their pull requests), rather
+> than repeat six; each release measure states the smallest regression it could have detected,
+> and below that size reports per case, never a difference between versions.
 
 - **Promotion is a pull request**, in the target repository, with its provenance: the
   candidate's signature, the count of its events and pull requests, the event ids. Under
@@ -504,3 +507,35 @@ unless said.
 
 If refusals and findings are too few to reach three events from two pull requests within a
 window, the design keeps its contract and writers and defers L5 until they are.
+
+> **Review note 7 — L0's first reading of « Can evals decide? » (2026-11-11).** Read from the
+> orchestrator's two baselines, before any paid run:
+>
+> | Baseline | Cases × runs | Pass with the plugin | Cases whose runs disagree |
+> |---|---|---|---|
+> | `baseline-0.34.0.json` (with and without) | 36 × 3 per arm | 85 of 108 (79 %); without: 5 of 108 | 8 of 36 (22 %) |
+> | `baseline-0.36.0.json` (with only) | 19 × 3 or 6 | 57 of 63 (90 %) | 4 of 19 (21 %) |
+>
+> About one case in five gives different results on the same version: one run, or three, of
+> one case is one draw. Smallest change in a pass rate near 79 % that a comparison detects
+> (two proportions, 5 % two-sided, 80 % power, normal approximation, so indicative at small
+> sizes):
+>
+> | Runs per arm | Rise detectable | Fall detectable |
+> |---|---|---|
+> | 3 (one case, note 5's ablation) | none | none |
+> | 6 (the outcome measure, one run of six cases) | none | about 73 points (79 % to 6 %) |
+> | 18 | none | about 45 points |
+> | 36 | about 21 points (to 100 %) | about 32 points |
+> | 60 | about 17 points | about 24 points |
+> | 108 (the whole 0.34.0 suite) | about 14 points | about 18 points |
+>
+> What it shows: the with-and-without comparison of 0.34.0 (79 % against 5 %) is far above
+> any noise, so whole-suite ablations can decide; a single rule's ablation cannot, and the
+> six-case outcome measure sees only a collapse. What it does not show: these are behaviour evals, which grade a
+> rule's decisions; the outcome evals' own run-to-run variance is unknown until a case is run
+> twice per arm. L0's remaining steps: (1) run the pilot's case a second time per arm, within
+> the operator's cap, for the outcome evals' first disagreement rate; (2) from it, compute the
+> cases needed for the release measure to detect a 20-point fall, and set note 6's growth from
+> that number; (3) count refusals per guard prefix in the host transcripts, as the table
+> above says, before L2.
