@@ -28,6 +28,15 @@
       }
     },
     {
+      "name": "drift",
+      "source": "./plugins/drift",
+      "description": "Proves that a change meant to change nothing changed nothing: two refs built and their outputs compared byte by byte.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Lounis Bou"
+      }
+    },
+    {
       "name": "github",
       "source": "./plugins/github",
       "description": "GitHub API from a native Claude Code tool: pull requests, review threads, comments, reviews, labels, issues, search and image attachments, facading a Python stdlib engine.",

@@ -1,0 +1,180 @@
+// Two build outputs compared: file names read without their content hash, files paired by that
+// name, contents compared byte for byte once the hashed names they reference are read the same
+// way, and a changed file attributed to its source modules when both sides carry its map.
+import { posix } from 'node:path'
+import { gzipSync } from 'node:zlib'
+import { changedSources, mapUrlOf, parseSourceMap, type Mapped } from './sourcemap.ts'
+
+/**
+ * Vite's and Rollup's `name-[hash].ext`: eight base64url characters after the last dash of the
+ * file name, before its extension (and a `.map`). One digit or capital at least, so a word
+ * (`icon-settings.svg`, `use-dropdown.js`) is never read as a hash.
+ */
+export const DEFAULT_HASH_PATTERN = String.raw`-(?=[A-Za-z0-9_-]{0,7}[0-9A-Z])[A-Za-z0-9_-]{8}(?=\.[A-Za-z0-9]+(?:\.map)?$)`
+
+/** A failure of the tool itself, said on stderr with exit code 2. */
+export class DriftError extends Error {}
+
+/** A build output: each file's path under the output directory (`/`-separated) and its bytes. */
+export type Tree = ReadonlyMap<string, Buffer>
+
+export interface Side {
+  /** The file's name in that build, its hash kept. */
+  readonly name: string
+  readonly raw: number
+  readonly gzip: number
+}
+
+export interface FileDiff {
+  /** The file's name with its hash stripped: the name both sides are paired by. */
+  readonly path: string
+  readonly status: 'changed' | 'added' | 'removed'
+  readonly base?: Side
+  readonly head?: Side
+  /** Head's size minus base's, raw and gzipped. */
+  readonly raw: number
+  readonly gzip: number
+  /** The source modules whose generated output changed, when both sides carry a readable map. */
+  readonly sources?: readonly string[]
+}
+
+export interface Report {
+  readonly version: 1
+  readonly verdict: 'identical' | 'differ'
+  readonly differ: number
+  /** Pairs identical only once the hashed names they reference were read without the hash. */
+  readonly normalised: number
+  readonly hashPattern: string
+  readonly base: { readonly ref: string; readonly sha: string }
+  readonly head: { readonly ref: string; readonly sha: string }
+  readonly files: readonly FileDiff[]
+}
+
+/** A path with the hash stripped from its file name; directories are kept as they are. */
+export function stripName(path: string, hash: RegExp): string {
+  const dir = posix.dirname(path)
+  const name = posix.basename(path).replace(hash, '')
+  return dir === '.' ? name : `${dir}/${name}`
+}
+
+/** Stripped name → name, sorted; two names reading the same are a tool error. */
+export function keyed(paths: readonly string[], hash: RegExp, side: string): Map<string, string> {
+  const keys = new Map<string, string>()
+  for (const path of [...paths].sort()) {
+    const key = stripName(path, hash)
+    const other = keys.get(key)
+    if (other !== undefined) throw new DriftError(`${side}: ${other} and ${path} both read as ${key}; set "hashPattern" in the config`)
+    keys.set(key, path)
+  }
+  return new Map([...keys].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+}
+
+const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/** The side's contents with every hashed file name it outputs read as its stripped name. */
+function normaliser(keys: ReadonlyMap<string, string>): (bytes: Buffer) => Buffer {
+  const names = new Map<string, string>()
+  for (const [key, path] of keys) if (key !== path) names.set(posix.basename(path), posix.basename(key))
+  if (names.size === 0) return bytes => bytes
+  const pattern = new RegExp([...names.keys()].sort((a, b) => b.length - a.length).map(escape).join('|'), 'g')
+  // latin1 maps each byte to one code unit and back: the replacement leaves every other byte as it was.
+  return bytes => Buffer.from(bytes.toString('latin1').replace(pattern, name => names.get(name) ?? name), 'latin1')
+}
+
+interface Read {
+  readonly keys: ReadonlyMap<string, string>
+  readonly tree: Tree
+  readonly normalise: (bytes: Buffer) => Buffer
+}
+
+const sideOf = (name: string, bytes: Buffer): Side => ({ name, raw: bytes.length, gzip: gzipSync(bytes).length })
+
+/** The map of a generated file, by its `sourceMappingURL` (a data: URL, or a file of the output), else `<file>.map`. */
+function mappedOf(read: Read, key: string): { readonly mapped: Mapped; readonly mapKey: string } | undefined {
+  const bytesOf = (k: string): Buffer | undefined => {
+    const path = read.keys.get(k)
+    const bytes = path === undefined ? undefined : read.tree.get(path)
+    return bytes === undefined ? undefined : read.normalise(bytes)
+  }
+  const text = bytesOf(key)?.toString('utf8')
+  if (text === undefined) return undefined
+  const url = mapUrlOf(text)
+  let mapText: string | undefined
+  let mapKey = `${key}.map`
+  if (url?.startsWith('data:') === true) {
+    const comma = url.indexOf(',')
+    mapText = Buffer.from(url.slice(comma + 1), url.slice(0, comma).endsWith(';base64') ? 'base64' : 'utf8').toString('utf8')
+    mapKey = key
+  } else {
+    if (url !== undefined) mapKey = posix.normalize(posix.join(posix.dirname(key), url))
+    mapText = bytesOf(mapKey)?.toString('utf8')
+  }
+  const map = mapText === undefined ? undefined : parseSourceMap(mapText)
+  return map === undefined ? undefined : { mapped: { text, map }, mapKey }
+}
+
+/** The changed modules of a file both sides map, or undefined when either map is missing or unreadable. */
+function attribute(base: Read, head: Read, key: string, outDir: string): readonly string[] | undefined {
+  const before = mappedOf(base, key)
+  const after = mappedOf(head, key)
+  if (before === undefined || after === undefined) return undefined
+  try {
+    return changedSources(before.mapped, after.mapped, posix.join(outDir, posix.dirname(after.mapKey)))
+  } catch {
+    return undefined
+  }
+}
+
+/** The differing files, sorted by stripped name, and how many pairs matched only once normalised. */
+export function compareTrees(baseTree: Tree, headTree: Tree, hash: RegExp, outDir: string): { files: FileDiff[]; normalised: number } {
+  const read = (tree: Tree, side: string): Read => {
+    const keys = keyed([...tree.keys()], hash, side)
+    return { keys, tree, normalise: normaliser(keys) }
+  }
+  const base = read(baseTree, 'base')
+  const head = read(headTree, 'head')
+  const files: FileDiff[] = []
+  let normalised = 0
+  const all = [...new Set([...base.keys.keys(), ...head.keys.keys()])].sort()
+  for (const key of all) {
+    const basePath = base.keys.get(key)
+    const headPath = head.keys.get(key)
+    const before = basePath === undefined ? undefined : baseTree.get(basePath)
+    const after = headPath === undefined ? undefined : headTree.get(headPath)
+    if (basePath !== undefined && before !== undefined && headPath !== undefined && after !== undefined) {
+      if (before.equals(after)) continue
+      if (base.normalise(before).equals(head.normalise(after))) {
+        normalised++
+        continue
+      }
+      const b = sideOf(basePath, before)
+      const h = sideOf(headPath, after)
+      const sources = key.endsWith('.map') ? undefined : attribute(base, head, key, outDir)
+      files.push({ path: key, status: 'changed', base: b, head: h, raw: h.raw - b.raw, gzip: h.gzip - b.gzip, ...(sources === undefined ? {} : { sources }) })
+    } else if (headPath !== undefined && after !== undefined) {
+      const h = sideOf(headPath, after)
+      files.push({ path: key, status: 'added', head: h, raw: h.raw, gzip: h.gzip })
+    } else if (basePath !== undefined && before !== undefined) {
+      const b = sideOf(basePath, before)
+      files.push({ path: key, status: 'removed', base: b, raw: -b.raw, gzip: -b.gzip })
+    }
+  }
+  return { files, normalised }
+}
+
+export const signed = (n: number): string => (n > 0 ? `+${n}` : String(n))
+
+/** The report as text: the verdict first, one line per file and per changed module, the refs last. */
+export function render(report: Report): string[] {
+  const n = report.normalised
+  const verdict = report.verdict === 'identical'
+    ? `drift: identical${n > 0 ? ` (hash references normalised in ${n} file${n === 1 ? '' : 's'})` : ''}`
+    : `drift: ${report.differ} differ`
+  const lines = [verdict]
+  for (const file of report.files) {
+    lines.push(`${file.status} ${file.path} raw ${signed(file.raw)} gzip ${signed(file.gzip)}`)
+    for (const source of file.sources ?? []) lines.push(`  source ${source}`)
+  }
+  lines.push(`base ${report.base.sha.slice(0, 7)} (${report.base.ref}), head ${report.head.sha.slice(0, 7)} (${report.head.ref})`)
+  return lines
+}
