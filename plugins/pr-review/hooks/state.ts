@@ -51,11 +51,14 @@ export type Loop = {
   isReviewOnly: boolean
   // What each review agent of the pass returned, null for one without a readable block.
   reports: (Finding[] | null)[]
+  // The review agents the host runs in the background: their id, and the place in `reports`
+  // their hand-back fills.
+  awaiting: Record<string, number>
 }
 
 export const MAX_PASSES = 5
 
-export const loop: Loop = { isActive: false, pass: 0, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false, isReviewing: false, isReviewOnly: false, reports: [] }
+export const loop: Loop = { isActive: false, pass: 0, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false, isReviewing: false, isReviewOnly: false, reports: [], awaiting: {} }
 
 export function resetLoop(testCommand: string, isReviewOnly = false): void {
   loop.isActive = true
@@ -70,6 +73,7 @@ export function resetLoop(testCommand: string, isReviewOnly = false): void {
   loop.isReviewing = false
   loop.isReviewOnly = isReviewOnly
   loop.reports = []
+  loop.awaiting = {}
 }
 
 // The successful preflight, once per session: a skill started again skips it.

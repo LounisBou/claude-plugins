@@ -10,7 +10,7 @@
 // types, an interrupted turn or a /clear ends the loop's hold.
 import { loop, resetLoop, MAX_PASSES } from './state.ts'
 import { GH_TOOL } from './policy.ts'
-import { REPORT_REQUEST, answerText, isBlocking, passFindings, reportOf } from './report.ts'
+import { REPORT_REQUEST, answerText, isBlocking, isRefusedRewrite, launchedAgent, passFindings, reportOf } from './report.ts'
 
 export const LOOP_TOOL = 'loop'
 
@@ -61,6 +61,7 @@ export function act(e: any): Record<string, unknown> {
     loop.pass += 1
     loop.isReviewing = true
     loop.reports = []
+    loop.awaiting = {}
     loop.lastFindings = 0
     loop.lastBlocking = undefined
     return { pass: loop.pass, max_passes: MAX_PASSES, next: 'run the review, then report findings' }
@@ -71,6 +72,8 @@ export function act(e: any): Record<string, unknown> {
     const keys = strings(e.keys)
     const found = passFindings(loop.reports)
     if (keys.length === 0 && found === undefined) {
+      const running = Object.keys(loop.awaiting).length
+      if (running > 0) return { error: `${running} review agents are still running in the background: wait for their hand-back, then report` }
       const silent = loop.reports.filter((r) => r === null).length
       return {
         error: loop.reports.length === 0
@@ -208,28 +211,55 @@ async function recordReview($: any, exit: string): Promise<string | null> {
 
 export function register(on: any): void {
   // Each agent a review pass launches is asked for its findings block, and its answer is read.
-  // It runs in the foreground: an agent launched in the background answers « launched » at once,
-  // its conclusion reaching the session later as a message this loop never reads.
+  // The call asks for the foreground, once: a rewrite the call already carries is no rewrite, so
+  // the call the host sends back to be issued again with the hook's input goes through as it is.
+  // The host may run the agent in the background all the same: the launch answer then names the
+  // agent, and its hand-back, read below, fills its place in the pass.
   // The agent runs once: a failure is its answer, and leaves the pass without a count; a call
   // that was refused never ran, and is no agent of the pass.
   on('tool.call', { tool: 'Agent' }, async ($: any, e: any, next: any) => {
     if (!loop.isActive || !loop.isReviewing) return next(e)
+    const prompt = String(e.prompt ?? '')
     let answer: any
     try {
-      answer = await next({ ...e, prompt: String(e.prompt ?? '') + REPORT_REQUEST, run_in_background: false })
+      answer = await next({ ...e, prompt: prompt.includes(REPORT_REQUEST) ? prompt : prompt + REPORT_REQUEST, run_in_background: false })
     } catch (err: any) {
       loop.reports.push(null)
       return { result: String(err?.message ?? err), isError: true }
     }
     if (answer?.deny) return answer
     let report: ReturnType<typeof reportOf> = null
+    let agent: string | undefined
     try {
-      report = answer?.isError ? null : reportOf(answerText(answer))
+      const text = answerText(answer)
+      if (answer?.isError && isRefusedRewrite(text)) return answer
+      report = answer?.isError ? null : reportOf(text)
+      agent = report === null && !answer?.isError ? launchedAgent(text) : undefined
     } catch {
       // Unreadable: no count.
     }
-    if (loop.isReviewing) loop.reports.push(report)
+    if (loop.isReviewing) {
+      if (agent !== undefined) loop.awaiting[agent] = loop.reports.length
+      loop.reports.push(report)
+    }
     return answer
+  }).catch(async (_$: any, e: any, next: any) => next(e))
+
+  // The hand-back of a review agent the host ran in the background: its report, read for the
+  // pass it belongs to. The message goes on to the model as it came.
+  on('session.receive', {}, async (_$: any, e: any, next: any) => {
+    try {
+      const id = String(e?.origin?.from ?? '')
+      const at = loop.awaiting[id]
+      if (at !== undefined && loop.isActive && loop.isReviewing) {
+        delete loop.awaiting[id]
+        const body = e.origin?.handback === true && typeof e.origin?.handbackReportText === 'string' ? e.origin.handbackReportText : String(e.text ?? '')
+        loop.reports[at] = reportOf(body)
+      }
+    } catch {
+      // Unreadable: no count.
+    }
+    return next(e)
   }).catch(async (_$: any, e: any, next: any) => next(e))
 
   on('tool.call', { tool: 'mcp__pr-review__loop' }, async ($: any, e: any) => {

@@ -47,6 +47,15 @@ export function answerText(answer: any): string {
   return ''
 }
 
+// The id of an agent the host launched in the background, from the answer to its launch.
+export function launchedAgent(text: string): string | undefined {
+  return text.startsWith('Async agent launched') ? text.match(/agentId:\s*([A-Za-z0-9_-]+)/)?.[1] : undefined
+}
+
+// A refusal of the host's auto-mode classifier: the hook changed the call after it was reviewed,
+// so the call never ran and is issued again.
+export const isRefusedRewrite = (text: string): boolean => text.includes("a hook changed this call's input")
+
 // The pass's findings once every agent reported, or undefined: none ran, or one did not report.
 export function passFindings(reports: readonly (Finding[] | null)[]): Finding[] | undefined {
   if (reports.length === 0 || reports.some((r) => r === null)) return undefined
