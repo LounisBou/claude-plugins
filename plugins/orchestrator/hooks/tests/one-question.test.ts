@@ -133,3 +133,12 @@ test('a block quoted in a code fence, an older shape with no recommendation and 
   expect(questionDefectRefusal(FORMATTED('- **A** : one', '- **B** : two'))).toBeNull()
   expect(questionDefectRefusal('the report\n\nwaiting: tool — ci-watch 12')).toBeNull()
 })
+
+test('both defects are named in one refusal, and a block without a wait line is judged all the same', () => {
+  const reason = questionDefectRefusal(FORMATTED(...CHOICES('- **F** : six'), FREE, '_Recommendation_ : D'))
+  expect(reason).toContain('more than five choices')
+  expect(reason).toContain('no argument')
+  expect(reason?.split('. Put the question again').length).toBe(2)
+  expect(questionDefectRefusal(FORMATTED(...CHOICES(''), FREE, '_Recommendation_ : D\nthe cheapest of the five'))).toBeNull()
+  expect(questionDefectRefusal(`${FORMATTED(...CHOICES(''), FREE, '_Recommendation_ : D')}\nwaiting: operator — blocks: the answer`)).not.toBeNull()
+})

@@ -85,7 +85,9 @@ test('a recommendation naming an absent letter is none, and only the first recom
   expect(parseChoices('- **A** : one\n- **B** : two\n_Recommendation_ : a cheap one').recommendation).toBeNull()
 })
 
-// The method's format: two to five lettered choices, the free answer, the recommendation with its argument.
+// --- the method's question format -----------------------------------------------------------
+
+// Two to five lettered choices, the free answer, the recommendation with its argument.
 const FIVE = [
   '**Question 2 of 3**',
   '_Subject_ : the release',
@@ -131,6 +133,26 @@ test('a question with six choices or a bare recommendation letter has a defect, 
   }
   expect(questionDefects(sixth.replace(/_Recommendation_ :.*$/m, '_Recommendation_ : A'))).toEqual(['choices', 'recommendation'])
   expect(questionDefects('Merge it now?')).toEqual([])
+})
+
+test('only the recommendation is a bare letter to refuse: another field naming one, or an argument on the next line, is none', () => {
+  const subject = FIVE.replace('_Subject_ : the release', '_Subject_ : B')
+  expect(questionDefects(subject)).toEqual([])
+  const free = FIVE.replace('A different way is welcome, in your own words.', 'E')
+  expect(questionDefects(free)).toEqual([])
+  const next = FIVE.replace(/_Recommendation_ :.*$/m, '_Recommendation_ : E\na fresh reader finds what two reviews missed')
+  expect(questionDefects(next)).toEqual([])
+  const spaced = FIVE.replace(/_Recommendation_ :.*$/m, '_Recommendation_ : E\n\nYou decide: A, B or E?')
+  expect(questionDefects(spaced)).toEqual(['recommendation'])
+})
+
+test('a letter followed by a word, with no punctuation, names no recommendation', () => {
+  const choices = '- **A** : one\n- **B** : two\n'
+  expect(parseChoices(`${choices}_Recommendation_ : B the cheapest`).recommendation).toBeNull()
+  const text = FIVE.replace(/_Recommendation_ :.*$/m, '_Recommendation_ : D the cheapest')
+  expect(questionShape(text, parseChoices(text).choices)?.recommendation).toBeNull()
+  const free = FIVE.replace('A different way is welcome, in your own words.', 'B the cheapest, in your own words.')
+  expect(questionShape(free, parseChoices(free).choices)?.recommendation?.text).toMatch(/^E — /)
 })
 
 // --- the entry ------------------------------------------------------------------------------

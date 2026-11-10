@@ -83,15 +83,29 @@ function readChoices(question: string): { choices: RoundChoice[]; recommendation
 }
 
 // What the method's question format refuses in a block, read off its text alone: more than five
-// lettered choices, and a recommendation that names a letter and argues nothing. A block with no
-// lettered choice or no recommendation line is an older shape, no defect here.
-const BARE_RECOMMENDATION = /^\s*_[^_\n]*[^_\s]_\s*(?::\s*)?\**[A-E]\**\s*[.,;:—–-]?\s*$/
+// lettered choices, and a recommendation that names a letter and argues nothing. The recommendation
+// is the last labelled field after the last choice (its label is the operator's language, the free
+// answer comes before it); its argument may run on the lines below, up to the machine line. A block with no lettered choice
+// is an older shape, no defect here.
+const LONE_LETTER = /^\**[A-E]\**\s*[.,;:—–-]?$/
 export type QuestionDefect = 'choices' | 'recommendation'
 export function questionDefects(question: string): QuestionDefect[] {
   const lines = question.split('\n')
   const defects: QuestionDefect[] = []
-  if (lines.filter(line => CHOICE.test(line)).length > LETTERS.length) defects.push('choices')
-  if (lines.some(line => BARE_RECOMMENDATION.test(line))) defects.push('recommendation')
+  const choiceLines = lines.flatMap((line, i) => (CHOICE.test(line) ? [i] : []))
+  if (choiceLines.length > LETTERS.length) defects.push('choices')
+  let last: string | null = null
+  let open = false
+  for (const line of lines.slice((choiceLines[choiceLines.length - 1] ?? lines.length) + 1)) {
+    if (/^\s*waiting\s*:/.test(line)) break
+    const field = FIELD.exec(line)
+    if (field) {
+      last = (field[3] ?? '').trim()
+      open = true
+    } else if (line.trim() === '') open = false
+    else if (open && last !== null) last = `${last}\n${line.trim()}`.trim()
+  }
+  if (last !== null && LONE_LETTER.test(last)) defects.push('recommendation')
   return defects
 }
 
