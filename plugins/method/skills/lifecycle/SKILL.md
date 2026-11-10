@@ -51,9 +51,8 @@ A unit of work ends with a report in the shape of `references/report.md`. Its la
 
 ## Questions to the operator
 
-One question per message, in the shape of `references/questions.md`: the context, two to four
-choices each with its cost and gain, one recommendation. Never ask what the spec, the plan or
-the code already answers.
+One question per message, in the shape of `references/questions.md`. Never ask what the spec,
+the plan or the code already answers.
 
 ## The formats
 
