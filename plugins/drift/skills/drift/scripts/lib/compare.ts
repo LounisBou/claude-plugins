@@ -69,7 +69,8 @@ export function stripName(path: string, hash: RegExp): string {
 /**
  * Key → name, sorted by key. A file's key is its stripped name, unless another file of the same
  * side strips to the same one (Rollup names two chunks of same-named modules alike, the hash alone
- * tells them apart): those keep their full name as their key, and are listed as ambiguous.
+ * tells them apart): those keep their full name as their key, and are listed as ambiguous. A full
+ * name that is also another file's stripped name would hide one of the two: an error.
  */
 export function keyed(paths: readonly string[], hash: RegExp): { keys: Map<string, string>; ambiguous: string[] } {
   const byKey = new Map<string, string[]>()
@@ -79,10 +80,18 @@ export function keyed(paths: readonly string[], hash: RegExp): { keys: Map<strin
   }
   const keys = new Map<string, string>()
   const ambiguous: string[] = []
+  const set = (key: string, path: string): void => {
+    const other = keys.get(key)
+    if (other !== undefined) {
+      const [a, b] = [other, path].sort((x, y) => (x < y ? -1 : 1))
+      throw new DriftError(`${a} and ${b} both read as ${key}: name them apart with "hashPattern"`)
+    }
+    keys.set(key, path)
+  }
   for (const [key, group] of byKey) {
-    if (group.length === 1) keys.set(key, group[0] ?? key)
+    if (group.length === 1) set(key, group[0] ?? key)
     else for (const path of group) {
-      keys.set(path, path)
+      set(path, path)
       ambiguous.push(path)
     }
   }

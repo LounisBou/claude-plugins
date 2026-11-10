@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { compareTrees, DEFAULT_HASH_PATTERN, keyed, render, signed, stripName, type Report, type Tree } from './compare.ts'
+import { compareTrees, DEFAULT_HASH_PATTERN, DriftError, keyed, render, signed, stripName, type Report, type Tree } from './compare.ts'
 import { encodeVlq } from './sourcemap.ts'
 
 const HASH = new RegExp(DEFAULT_HASH_PATTERN)
@@ -22,6 +22,13 @@ test('files of one side that read as the same name keep their full name as their
   const { keys, ambiguous } = keyed(['a/x-B1234567.js', 'a/x-C7654321.js', 'b.js', 'a-B1234567.js'], HASH)
   assert.deepEqual([...keys], [['a.js', 'a-B1234567.js'], ['a/x-B1234567.js', 'a/x-B1234567.js'], ['a/x-C7654321.js', 'a/x-C7654321.js'], ['b.js', 'b.js']])
   assert.deepEqual(ambiguous, ['a/x-B1234567.js', 'a/x-C7654321.js'])
+})
+
+test('a file kept under its full name that another file strips to is refused, never left uncompared', () => {
+  const refused = (error: unknown): boolean => error instanceof DriftError && /x-B1234567-D7654321\.js and x-B1234567\.js both read as x-B1234567\.js/.test(error.message)
+  assert.throws(() => keyed(['x-B1234567.js', 'x-C7654321.js', 'x-B1234567-D7654321.js'], HASH), refused)
+  const files = tree({ 'x-B1234567.js': 'one', 'x-C7654321.js': 'two', 'x-B1234567-D7654321.js': 'three' })
+  assert.throws(() => compareTrees(files, files, HASH, 'dist'), refused)
 })
 
 test('two same-named chunks pair by their hashed name: the same build reads identical, and names them', () => {
