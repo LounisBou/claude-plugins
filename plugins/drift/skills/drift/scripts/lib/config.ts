@@ -20,6 +20,8 @@ export interface Config {
   /** The build's output directory, relative to the repository root. */
   readonly outDir: string
   readonly hashPattern: string
+  /** Added to the environment of the install and the build, on both sides. */
+  readonly env?: Readonly<Record<string, string>>
 }
 
 const FLAGS = { '--repo': 'repo', '--base': 'base', '--head': 'head', '--config': 'config', '--out': 'out' } as const
@@ -41,11 +43,15 @@ export function parseArgs(argv: readonly string[]): Options {
 const isArgv = (value: unknown): value is string[] =>
   Array.isArray(value) && value.length > 0 && value.every((item: unknown) => typeof item === 'string' && item !== '')
 
+const isEnv = (value: unknown): value is Record<string, string> =>
+  typeof value === 'object' && value !== null && !Array.isArray(value) &&
+  Object.entries(value).every(([name, text]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && typeof text === 'string')
+
 /** The config's fields, validated; keys this command does not read are left for others. */
 export function parseConfig(raw: unknown, origin: string): Config {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) throw new DriftError(`${origin}: expected an object`)
   const record = raw as Record<string, unknown>
-  const { install, build, outDir, hashPattern } = { install: record['install'], build: record['build'], outDir: record['outDir'], hashPattern: record['hashPattern'] }
+  const { install, build, outDir, hashPattern, env } = { install: record['install'], build: record['build'], outDir: record['outDir'], hashPattern: record['hashPattern'], env: record['env'] }
   if (!isArgv(build)) throw new DriftError(`${origin}: "build" must be a non-empty list of strings (the command and its arguments, run without a shell)`)
   if (install !== undefined && !isArgv(install)) throw new DriftError(`${origin}: "install" must be a non-empty list of strings`)
   const dir = typeof outDir === 'string' ? posix.normalize(outDir).replace(/\/+$/, '') : ''
@@ -59,7 +65,8 @@ export function parseConfig(raw: unknown, origin: string): Config {
   } catch {
     throw new DriftError(`${origin}: "hashPattern" is not a regular expression`)
   }
-  return { install, build, outDir: dir, hashPattern: pattern }
+  if (env !== undefined && !isEnv(env)) throw new DriftError(`${origin}: "env" must be an object of strings, by variable name`)
+  return { install, build, outDir: dir, hashPattern: pattern, ...(env === undefined ? {} : { env: { ...env } }) }
 }
 
 /** `<owner>-<repo>` from an origin URL (scp-like, URL or path), or undefined. */

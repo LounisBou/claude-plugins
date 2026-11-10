@@ -15,6 +15,14 @@ test('a config names its commands as argument lists, its output directory and an
     { install: undefined, build: ['make'], outDir: 'out/web', hashPattern: '\\.[0-9a-f]{20}' })
 })
 
+test('a config may set environment variables for its install and build', () => {
+  assert.deepEqual(parseConfig({ build: ['make'], outDir: 'out', env: { RELEASE: 'r1', EMPTY: '' } }, 'c.json').env, { RELEASE: 'r1', EMPTY: '' })
+  assert.throws(() => parseConfig({ build: ['x'], outDir: 'd', env: ['A=1'] }, 'c.json'), refused(/"env" must be an object of strings/))
+  assert.throws(() => parseConfig({ build: ['x'], outDir: 'd', env: { A: 1 } }, 'c.json'), refused(/"env"/))
+  assert.throws(() => parseConfig({ build: ['x'], outDir: 'd', env: { 'A=B': 'x' } }, 'c.json'), refused(/"env"/))
+  assert.throws(() => parseConfig({ build: ['x'], outDir: 'd', env: null }, 'c.json'), refused(/"env"/))
+})
+
 test('a config that cannot be run is refused with the file named', () => {
   assert.throws(() => parseConfig([], 'c.json'), refused(/^c\.json: expected an object/))
   assert.throws(() => parseConfig({ build: 'npm run build', outDir: 'dist' }, 'c.json'), refused(/"build" must be a non-empty list of strings/))

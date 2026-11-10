@@ -2,6 +2,7 @@
 // source map (one segment per line, column 0 of its module), an index.html naming the bundle, and
 // public/ copied as it is. The hash covers salt.txt too, so a commit changing only the salt renames
 // the bundle without changing a byte of it. A file named FAIL makes the build fail; a file named
+// STAMP writes the release, FIXTURE_RELEASE or else the commit, into dist/release.txt; a file named
 // LINK makes dist/latest a symbolic link to the path it holds; a file named FIFO adds a named pipe.
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -13,6 +14,11 @@ if (existsSync('FAIL')) {
 }
 if (!existsSync('node_modules/.installed')) {
   console.error('not installed')
+  process.exit(1)
+}
+const installed = readFileSync('node_modules/.installed', 'utf8')
+if (process.env.FIXTURE_RELEASE !== undefined && installed !== process.env.FIXTURE_RELEASE) {
+  console.error('the install saw another environment')
   process.exit(1)
 }
 const VLQ = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
@@ -28,5 +34,6 @@ writeFileSync(`dist/assets/${bundle}`, `${code}\n//# sourceMappingURL=${bundle}.
 writeFileSync(`dist/assets/${bundle}.map`, JSON.stringify({ version: 3, file: bundle, sources: modules.map(name => `../../src/${name}`), mappings }))
 writeFileSync('dist/index.html', `<script type="module" src="/assets/${bundle}"></script>\n`)
 cpSync('public', 'dist', { recursive: true })
+if (existsSync('STAMP')) writeFileSync('dist/release.txt', process.env.FIXTURE_RELEASE ?? execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }))
 if (existsSync('LINK')) symlinkSync(readFileSync('LINK', 'utf8').trim(), 'dist/latest')
 if (existsSync('FIFO')) execFileSync('mkfifo', ['dist/pipe'])

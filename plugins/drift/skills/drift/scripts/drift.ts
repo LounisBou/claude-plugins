@@ -33,13 +33,17 @@ interface Ran {
   readonly stdout: string
 }
 
-/** Runs `argv` without a shell; its streams go to `log` (appended) or are collected. Never rejects. */
-function exec(argv: readonly string[], cwd: string, signal: AbortSignal | undefined, log?: string): Promise<Ran> {
+/**
+ * Runs `argv` without a shell, `env` added to this process's environment; its streams go to `log`
+ * (appended) or are collected. Never rejects.
+ */
+function exec(argv: readonly string[], cwd: string, signal: AbortSignal | undefined, log?: string, env?: Readonly<Record<string, string>>): Promise<Ran> {
   return new Promise(done => {
     const [command = '', ...args] = argv
     const fd = log === undefined ? undefined : openSync(log, 'a')
     const child = spawn(command, args, {
       cwd,
+      ...(env === undefined ? {} : { env: { ...process.env, ...env } }),
       stdio: fd === undefined ? ['ignore', 'pipe', 'pipe'] : ['ignore', fd, fd],
       ...(signal === undefined ? {} : { signal }),
     })
@@ -90,15 +94,15 @@ async function buildSide(context: Context, side: 'base' | 'head', sha: string, t
   const { top, config, run, signal } = context
   const log = join(run, `${side}.log`)
   writeFileSync(log, '')
-  const step = async (what: string, argv: readonly string[], cwd: string): Promise<void> => {
+  const step = async (what: string, argv: readonly string[], cwd: string, env?: Readonly<Record<string, string>>): Promise<void> => {
     interrupted(signal)
-    const ran = await exec(argv, cwd, signal, log)
+    const ran = await exec(argv, cwd, signal, log, env)
     interrupted(signal)
     if (ran.status !== 0) throw new DriftError(`${side}: ${what} failed (exit ${ran.status ?? 'none'}); its log: ${log}`)
   }
   await step('checkout', ['git', '-C', top, 'worktree', 'add', '--detach', tree, sha], top)
-  if (config.install !== undefined) await step('install', config.install, tree)
-  await step('build', config.build, tree)
+  if (config.install !== undefined) await step('install', config.install, tree, config.env)
+  await step('build', config.build, tree, config.env)
   const output = join(tree, config.outDir)
   if (!existsSync(output) || !lstatSync(output).isDirectory()) throw new DriftError(`${side}: the build left no ${config.outDir}`)
   renameSync(output, into)

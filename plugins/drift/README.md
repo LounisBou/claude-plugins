@@ -40,7 +40,9 @@ One JSON file per project, outside its repository, at `~/.claude/drift/<owner>-<
 ```
 
 Commands are argument lists, run without a shell. `hashPattern`, a regular expression, replaces
-the default hash stripping.
+the default hash stripping. `env`, an object of strings, is added to the environment of the
+install and the build on both sides: a build that embeds a release name or a commit read from its
+environment reads the same on both once it is pinned there (`"env": { "RELEASE": "drift" }`).
 
 ## Skill
 

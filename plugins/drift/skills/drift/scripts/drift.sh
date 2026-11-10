@@ -13,6 +13,8 @@
 #   "outDir"       the build's output directory, relative to the repository root: "dist"
 #   "hashPattern"  optional, the regular expression removed from each output file name; the
 #                  default reads Vite's and Rollup's `name-[hash].ext`
+#   "env"          optional, variables added to the environment of install and build on both
+#                  sides, to pin what a build embeds from it: {"RELEASE": "drift"}
 #
 # stdout: the verdict first, then one line per differing file and per changed source module, then
 # the refs, then `out: <run directory>`, which holds report.txt, report.json, base.log and head.log.

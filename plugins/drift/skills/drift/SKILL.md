@@ -22,7 +22,8 @@ claim is worth checking.
 
 It needs the project's config, outside the repository, at `~/.claude/drift/<owner>-<repo>.json`
 (or `--config <path>`): `install` and `build` as argument lists, `outDir`, optionally
-`hashPattern`. The launcher's header documents every option and line.
+`hashPattern`, and `env` to pin what the build embeds from its environment (a release name, a
+commit) on both sides. The launcher's header documents every option and line.
 
 ## Read it
 

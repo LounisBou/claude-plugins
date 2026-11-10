@@ -38,10 +38,11 @@ before(() => {
   })
   git('checkout', '-q', sha['base'] ?? '')
   commit('broken', () => writeFileSync(join(REPO, 'FAIL'), ''))
-  for (const [name, file, text] of [['link-a', 'LINK', 'old.txt'], ['link-b', 'LINK', 'index.html'], ['fifo', 'FIFO', ''], ['no-install', 'FAIL_INSTALL', '']] as const) {
+  for (const [name, file, text] of [['link-a', 'LINK', 'old.txt'], ['link-b', 'LINK', 'index.html'], ['fifo', 'FIFO', ''], ['no-install', 'FAIL_INSTALL', ''], ['stamped', 'STAMP', '']] as const) {
     git('checkout', '-q', sha['base'] ?? '')
     commit(name, () => writeFileSync(join(REPO, file), text))
   }
+  commit('stamped-ci', () => writeFileSync(join(REPO, 'ci.yml'), 'on: push\n'))
   git('checkout', '-q', 'main')
   git('remote', 'add', 'origin', 'git@github.com:acme/fixture.git')
   writeFileSync(CONFIG, JSON.stringify({ install: ['node', 'install.mjs'], build: ['node', 'build.mjs'], outDir: 'dist' }))
@@ -139,6 +140,17 @@ test('the install runs before the build; its failure is a tool error, its log na
   assert.match(err.join('\n'), new RegExp(`head: install failed \\(exit 1\\); its log: ${join(dir, 'head.log').replace(/[.]/g, '\\.')}`))
   assert.match(readFileSync(join(dir, 'head.log'), 'utf8'), /install failed on purpose/)
   assert.deepEqual(readdirSync(work), [])
+})
+
+test('the config\'s env reaches the install and the build of both sides', async () => {
+  const stamped = await drift(refs('stamped', 'stamped-ci'))
+  assert.equal(stamped.code, 1)
+  assert.match(stamped.out[1] ?? '', /^changed release\.txt /)
+  const fixed = join(ROOT, 'env.json')
+  writeFileSync(fixed, JSON.stringify({ install: ['node', 'install.mjs'], build: ['node', 'build.mjs'], outDir: 'dist', env: { FIXTURE_RELEASE: 'r1' } }))
+  const { code, out } = await drift(['--config', fixed, '--base', sha['stamped'] ?? '', '--head', sha['stamped-ci'] ?? ''])
+  assert.equal(code, 0)
+  assert.equal(out[0], 'drift: identical')
 })
 
 test('the default config is read from the home, named after the origin', async () => {
