@@ -44,6 +44,8 @@ export interface Report {
   readonly differ: number
   /** Pairs identical only once the hashed names they reference were read without the hash. */
   readonly normalised: number
+  /** Files of either side paired by their full name, their stripped name being shared on their side. */
+  readonly ambiguous: readonly string[]
   readonly hashPattern: string
   readonly base: { readonly ref: string; readonly sha: string }
   readonly head: { readonly ref: string; readonly sha: string }
@@ -57,16 +59,27 @@ export function stripName(path: string, hash: RegExp): string {
   return dir === '.' ? name : `${dir}/${name}`
 }
 
-/** Stripped name → name, sorted; two names reading the same are a tool error. */
-export function keyed(paths: readonly string[], hash: RegExp, side: string): Map<string, string> {
-  const keys = new Map<string, string>()
-  for (const path of [...paths].sort()) {
+/**
+ * Key → name, sorted by key. A file's key is its stripped name, unless another file of the same
+ * side strips to the same one (Rollup names two chunks of same-named modules alike, the hash alone
+ * tells them apart): those keep their full name as their key, and are listed as ambiguous.
+ */
+export function keyed(paths: readonly string[], hash: RegExp): { keys: Map<string, string>; ambiguous: string[] } {
+  const byKey = new Map<string, string[]>()
+  for (const path of paths) {
     const key = stripName(path, hash)
-    const other = keys.get(key)
-    if (other !== undefined) throw new DriftError(`${side}: ${other} and ${path} both read as ${key}; set "hashPattern" in the config`)
-    keys.set(key, path)
+    byKey.set(key, [...(byKey.get(key) ?? []), path])
   }
-  return new Map([...keys].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+  const keys = new Map<string, string>()
+  const ambiguous: string[] = []
+  for (const [key, group] of byKey) {
+    if (group.length === 1) keys.set(key, group[0] ?? key)
+    else for (const path of group) {
+      keys.set(path, path)
+      ambiguous.push(path)
+    }
+  }
+  return { keys: new Map([...keys].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))), ambiguous: ambiguous.sort() }
 }
 
 const escape = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
@@ -126,13 +139,15 @@ function attribute(base: Read, head: Read, key: string, outDir: string): readonl
 }
 
 /** The differing files, sorted by stripped name, and how many pairs matched only once normalised. */
-export function compareTrees(baseTree: Tree, headTree: Tree, hash: RegExp, outDir: string): { files: FileDiff[]; normalised: number } {
-  const read = (tree: Tree, side: string): Read => {
-    const keys = keyed([...tree.keys()], hash, side)
-    return { keys, tree, normalise: normaliser(keys) }
+export function compareTrees(baseTree: Tree, headTree: Tree, hash: RegExp, outDir: string): { files: FileDiff[]; normalised: number; ambiguous: string[] } {
+  const ambiguous = new Set<string>()
+  const read = (tree: Tree): Read => {
+    const sided = keyed([...tree.keys()], hash)
+    for (const path of sided.ambiguous) ambiguous.add(path)
+    return { keys: sided.keys, tree, normalise: normaliser(sided.keys) }
   }
-  const base = read(baseTree, 'base')
-  const head = read(headTree, 'head')
+  const base = read(baseTree)
+  const head = read(headTree)
   const files: FileDiff[] = []
   let normalised = 0
   const all = [...new Set([...base.keys.keys(), ...head.keys.keys()])].sort()
@@ -159,7 +174,7 @@ export function compareTrees(baseTree: Tree, headTree: Tree, hash: RegExp, outDi
       files.push({ path: key, status: 'removed', base: b, raw: -b.raw, gzip: -b.gzip })
     }
   }
-  return { files, normalised }
+  return { files, normalised, ambiguous: [...ambiguous].sort() }
 }
 
 export const signed = (n: number): string => (n > 0 ? `+${n}` : String(n))
@@ -174,6 +189,10 @@ export function render(report: Report): string[] {
   for (const file of report.files) {
     lines.push(`${file.status} ${file.path} raw ${signed(file.raw)} gzip ${signed(file.gzip)}`)
     for (const source of file.sources ?? []) lines.push(`  source ${source}`)
+  }
+  if (report.ambiguous.length > 0) {
+    lines.push(`ambiguous: ${report.ambiguous.length} files paired by their hashed name`)
+    for (const path of report.ambiguous) lines.push(`  ${path}`)
   }
   lines.push(`base ${report.base.sha.slice(0, 7)} (${report.base.ref}), head ${report.head.sha.slice(0, 7)} (${report.head.ref})`)
   return lines

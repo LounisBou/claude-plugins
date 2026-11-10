@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { compareTrees, DEFAULT_HASH_PATTERN, DriftError, keyed, render, signed, stripName, type Report, type Tree } from './compare.ts'
+import { compareTrees, DEFAULT_HASH_PATTERN, keyed, render, signed, stripName, type Report, type Tree } from './compare.ts'
 import { encodeVlq } from './sourcemap.ts'
 
 const HASH = new RegExp(DEFAULT_HASH_PATTERN)
@@ -18,22 +18,35 @@ test('the default pattern strips a Vite or Rollup hash, never a word', () => {
   assert.equal(stripName('a-B1234567/x.js', HASH), 'a-B1234567/x.js')
 })
 
-test('two files of one side that read as the same name are a tool error', () => {
-  assert.throws(() => keyed(['a/x-B1234567.js', 'a/x-C7654321.js'], HASH, 'head'), (error: unknown) =>
-    error instanceof DriftError && /head: a\/x-B1234567\.js and a\/x-C7654321\.js both read as a\/x\.js/.test(error.message))
-  assert.deepEqual([...keyed(['b.js', 'a-B1234567.js'], HASH, 'base')], [['a.js', 'a-B1234567.js'], ['b.js', 'b.js']])
+test('files of one side that read as the same name keep their full name as their key', () => {
+  const { keys, ambiguous } = keyed(['a/x-B1234567.js', 'a/x-C7654321.js', 'b.js', 'a-B1234567.js'], HASH)
+  assert.deepEqual([...keys], [['a.js', 'a-B1234567.js'], ['a/x-B1234567.js', 'a/x-B1234567.js'], ['a/x-C7654321.js', 'a/x-C7654321.js'], ['b.js', 'b.js']])
+  assert.deepEqual(ambiguous, ['a/x-B1234567.js', 'a/x-C7654321.js'])
+})
+
+test('two same-named chunks pair by their hashed name: the same build reads identical, and names them', () => {
+  const files = { 'app/Alerts-B1234567.js': 'one', 'app/Alerts-C7654321.js': 'two', 'index.html': 'Alerts-B1234567.js Alerts-C7654321.js' }
+  assert.deepEqual(compareTrees(tree(files), tree(files), HASH, 'dist'), { files: [], normalised: 0, ambiguous: ['app/Alerts-B1234567.js', 'app/Alerts-C7654321.js'] })
+})
+
+test('one of two same-named chunks changed reads removed and added, never identical', () => {
+  const base = tree({ 'app/Alerts-B1234567.js': 'one', 'app/Alerts-C7654321.js': 'two' })
+  const head = tree({ 'app/Alerts-B1234567.js': 'one', 'app/Alerts-D9999999.js': 'TWO' })
+  const { files, ambiguous } = compareTrees(base, head, HASH, 'dist')
+  assert.deepEqual(files.map(file => [file.status, file.path]), [['removed', 'app/Alerts-C7654321.js'], ['added', 'app/Alerts-D9999999.js']])
+  assert.deepEqual(ambiguous, ['app/Alerts-B1234567.js', 'app/Alerts-C7654321.js', 'app/Alerts-D9999999.js'])
 })
 
 test('the same files read identical, with nothing normalised', () => {
   const files = { 'index.html': '<script src="a-B1234567.js">', 'a-B1234567.js': 'x' }
   const result = compareTrees(tree(files), tree(files), HASH, 'dist')
-  assert.deepEqual(result, { files: [], normalised: 0 })
+  assert.deepEqual(result, { files: [], normalised: 0, ambiguous: [] })
 })
 
 test('a hash-only rename reads identical, its references normalised and counted', () => {
   const base = tree({ 'index.html': '<script src="a-B1234567.js">', 'a-B1234567.js': 'x' })
   const head = tree({ 'index.html': '<script src="a-C7654321.js">', 'a-C7654321.js': 'x' })
-  assert.deepEqual(compareTrees(base, head, HASH, 'dist'), { files: [], normalised: 1 })
+  assert.deepEqual(compareTrees(base, head, HASH, 'dist'), { files: [], normalised: 1, ambiguous: [] })
 })
 
 test('changed, added and removed files carry their raw and gzip deltas, sorted by path', () => {
@@ -95,11 +108,12 @@ test('without a sourceMappingURL comment the map beside the file is read', () =>
   assert.deepEqual(files.map(file => [file.path, file.sources]), [['x.js', ['out/m.js']]])
 })
 
-const report = (files: Report['files'], normalised = 0): Report => ({
+const report = (files: Report['files'], normalised = 0, ambiguous: string[] = []): Report => ({
   version: 1,
   verdict: files.length === 0 ? 'identical' : 'differ',
   differ: files.length,
   normalised,
+  ambiguous,
   hashPattern: DEFAULT_HASH_PATTERN,
   base: { ref: 'origin/main', sha: 'a'.repeat(40) },
   head: { ref: 'HEAD', sha: 'b'.repeat(40) },
@@ -110,6 +124,13 @@ test('the text starts with the verdict and says when references were normalised'
   assert.deepEqual(render(report([])), ['drift: identical', 'base aaaaaaa (origin/main), head bbbbbbb (HEAD)'])
   assert.equal(render(report([], 3))[0], 'drift: identical (hash references normalised in 3 files)')
   assert.equal(render(report([], 1))[0], 'drift: identical (hash references normalised in 1 file)')
+  assert.deepEqual(render(report([], 0, ['app/A-B1234567.js', 'app/A-C7654321.js'])), [
+    'drift: identical',
+    'ambiguous: 2 files paired by their hashed name',
+    '  app/A-B1234567.js',
+    '  app/A-C7654321.js',
+    'base aaaaaaa (origin/main), head bbbbbbb (HEAD)',
+  ])
   const lines = render(report([
     { path: 'a.js', status: 'changed', raw: 3, gzip: -1, sources: ['src/b.js'], base: { name: 'a.js', raw: 1, gzip: 2 }, head: { name: 'a.js', raw: 4, gzip: 1 } },
     { path: 'n.js', status: 'added', raw: 5, gzip: 0, head: { name: 'n.js', raw: 5, gzip: 0 } },

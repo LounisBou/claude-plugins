@@ -178,6 +178,7 @@ async function build(argv: readonly string[], deps: Deps): Promise<number> {
     verdict: compared.files.length === 0 ? 'identical' : 'differ',
     differ: compared.files.length,
     normalised: compared.normalised,
+    ambiguous: compared.ambiguous,
     hashPattern: config.hashPattern,
     base: { ref: options.base, sha: baseSha },
     head: { ref: options.head, sha: headSha },

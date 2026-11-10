@@ -14,7 +14,8 @@ Builds the two refs (default `origin/main` and `HEAD`) with the project's own co
 temporary `git worktree` outside the target checkout, and compares the outputs:
 
 - content hashes stripped from file names (Vite's and Rollup's `name-[hash].ext` by default),
-  files paired by the stripped name; two files of one side reading as one name are an error;
+  files paired by the stripped name; files of one side sharing a stripped name (chunks of
+  same-named modules) are paired by their full name instead, and listed as ambiguous;
 - contents compared byte for byte, hashed names inside them read without their hash, and the
   verdict says how many files only matched that way;
 - for a changed file with a source map on both sides, the source modules whose generated code

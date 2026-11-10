@@ -23,8 +23,11 @@
 #   drift: <n> differ                                            1  followed by
 #     changed|added|removed <path> raw <±bytes> gzip <±bytes>
 #       source <module>   (a changed file both sides map: a module whose generated text changed)
+#   ambiguous: <n> files paired by their hashed name, then one indented line per file: files of
+#     one side whose names strip to the same one keep their full name, so a changed one reads
+#     removed and added
 # stderr: `drift: <reason>`, exit 2, when the tool cannot answer (a bad call, a missing config, a
-# ref that is no commit, a failed install or build, two outputs reading as one name).
+# ref that is no commit, a failed install or build).
 #
 # The command itself is drift.ts, beside this launcher.
 
