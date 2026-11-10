@@ -5,14 +5,8 @@ description: Use when a change must not change the built output (a refactor, a r
 
 # drift
 
-An optional proof, never a required gate: run it when a change claims to have no effect and the
-claim is worth checking.
-
-## When it fits
-
-- Fits: a refactor, a rename, a move, a dependency-free cleanup, anything whose built output
-  should not move.
-- Does not fit: a change meant to change behaviour or output; its `differ` says nothing new.
+An optional proof, never a required gate. It fits a change whose built output should not move
+(a refactor, a rename, a move), not one meant to change behaviour or output.
 
 ## Run it
 
@@ -22,8 +16,8 @@ claim is worth checking.
 
 It needs the project's config, outside the repository, at `~/.claude/drift/<owner>-<repo>.json`
 (or `--config <path>`): `install` and `build` as argument lists, `outDir`, optionally
-`hashPattern`, and `env` to pin what the build embeds from its environment (a release name, a
-commit) on both sides. The launcher's header documents every option and line.
+`hashPattern`, and `env`, variables pinning what the build embeds (a release name). The
+launcher's header documents every option and line.
 
 ## Read it
 
@@ -31,11 +25,10 @@ commit) on both sides. The launcher's header documents every option and line.
 - `drift: identical (hash references normalised in <n> files)`: the same once hashed file names
   inside the files are read without their hash. Equivalent output, but not byte for byte: say so.
 - `drift: <n> differ`: each changed, added or removed file with its size deltas; `source` lines
-  name the modules whose generated code changed. Read them before calling the change neutral.
+  name the modules whose generated code changed.
 - `ambiguous:` lists same-named chunks (two `Alerts.vue`), paired by their hashed name: such a
   file that changed reads removed and added.
-- A file renamed only in what the hash pattern strips (`data-20240101.json` to
-  `data-20240202.json`) is read as the same file, its contents compared.
+- A file renamed only in what the hash pattern strips (`data-20240101.json`) reads as the same file.
 - Exit 2: the tool could not answer (config, ref, install or build); no verdict.
 
 ## Quote it
