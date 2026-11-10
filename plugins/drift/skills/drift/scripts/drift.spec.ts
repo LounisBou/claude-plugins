@@ -43,6 +43,9 @@ before(() => {
     commit(name, () => writeFileSync(join(REPO, file), text))
   }
   commit('stamped-ci', () => writeFileSync(join(REPO, 'ci.yml'), 'on: push\n'))
+  git('checkout', '-q', sha['base'] ?? '')
+  commit('dotted', () => writeFileSync(join(REPO, 'DOTTED'), ''))
+  commit('dotted-salt', () => writeFileSync(join(REPO, 'salt.txt'), '1\n'))
   git('checkout', '-q', 'main')
   git('remote', 'add', 'origin', 'git@github.com:acme/fixture.git')
   writeFileSync(CONFIG, JSON.stringify({ install: ['node', 'install.mjs'], build: ['node', 'build.mjs'], outDir: 'dist' }))
@@ -97,6 +100,15 @@ test('two refs differing by one module name it, 1 differ, exit 1, and the same r
 
 test('a hash-only rename reads identical, its references normalised', async () => {
   const { code, out } = await drift(refs('base', 'salt'))
+  assert.equal(code, 0)
+  assert.equal(out[0], 'drift: identical (hash references normalised in 3 files)')
+})
+
+test('the config\'s hash pattern is the one names are stripped by', async () => {
+  assert.equal((await drift(refs('dotted', 'dotted-salt'))).code, 1)
+  const dotted = join(ROOT, 'dotted.json')
+  writeFileSync(dotted, JSON.stringify({ install: ['node', 'install.mjs'], build: ['node', 'build.mjs'], outDir: 'dist', hashPattern: String.raw`\.[0-9a-f]{8}(?=\.js(?:\.map)?$)` }))
+  const { code, out } = await drift(['--config', dotted, '--base', sha['dotted'] ?? '', '--head', sha['dotted-salt'] ?? ''])
   assert.equal(code, 0)
   assert.equal(out[0], 'drift: identical (hash references normalised in 3 files)')
 })

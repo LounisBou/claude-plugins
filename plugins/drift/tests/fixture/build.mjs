@@ -4,7 +4,8 @@
 // covers salt.txt too, so a commit changing only the salt renames the bundle without changing a
 // byte of it. A file named FAIL makes the build fail; a file named STAMP writes the release,
 // FIXTURE_RELEASE or else the commit, into dist/release.txt; a file named LINK makes dist/latest a
-// symbolic link to the path it holds; a file named FIFO adds a named pipe.
+// symbolic link to the path it holds; a file named FIFO adds a named pipe; a file named DOTTED names
+// the bundle `index.<hash>.js`, a shape the default hash pattern leaves.
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
@@ -27,8 +28,8 @@ const VLQ = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 const vlq = n => VLQ[n < 0 ? -n * 2 + 1 : n * 2]
 const modules = readdirSync('src').sort()
 const code = modules.map(name => readFileSync(`src/${name}`, 'utf8').trim()).join('\n')
-const hash = 'H' + createHash('sha256').update(code).update(readFileSync('salt.txt')).digest('hex').slice(0, 7)
-const bundle = `index-${hash}.js`
+const digest = createHash('sha256').update(code).update(readFileSync('salt.txt')).digest('hex')
+const bundle = existsSync('DOTTED') ? `index.${digest.slice(0, 8)}.js` : `index-H${digest.slice(0, 7)}.js`
 const mappings = modules.map((_, k) => [0, k === 0 ? 0 : 1, 0, 0].map(vlq).join('')).join(';')
 rmSync('dist', { recursive: true, force: true })
 mkdirSync('dist/assets', { recursive: true })
