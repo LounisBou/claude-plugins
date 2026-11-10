@@ -4,7 +4,7 @@
 // operator wait asks a question: a turn ending on one with no block is refused. The blocks are the
 // ones round.ts's questionParts recognises, in whatever language it accepts, outside code fences.
 import { expect, test } from 'claude-code/testing'
-import { oneQuestionRefusal, operatorWaitRefusal } from '../one-question.ts'
+import { oneQuestionRefusal, operatorWaitRefusal, questionDefectRefusal } from '../one-question.ts'
 import { TWO_QUESTIONS } from './fixtures.ts'
 
 const BLOCK = (head: string) => [head, '_Subject_ : a thing', '- **A** : yes', '- **B** : no', '_Recommendation_ : A. Safer.'].join('\n')
@@ -100,4 +100,45 @@ test('the refusal says what a block is: the numbering line followed by its label
   expect(reason).toContain('`**Question i of N**` line followed by its labelled fields')
   for (const field of ['_Subject_ :', '_Context_ :', '_Question_ :', '_Choices_ :', '_Recommendation_ :']) expect(reason).toContain(field)
   expect(reason).toContain('a heading alone is refused')
+})
+
+// --- the choices and the recommendation of a block ----------------------------------------------
+
+const CHOICES = (last: string) => ['- **A** : one', '- **B** : two', '- **C** : three', '- **D** : four', '- **E** : five', last].filter(line => line !== '')
+const FORMATTED = (...lines: string[]) => ['**Question 1 of 1**', '_Subject_ : a thing', '_Choices_ :', ...lines].join('\n')
+const FREE = '_Free answer_ : in your own words'
+
+test('a block of five choices, the free answer and an argued recommendation passes', () => {
+  expect(questionDefectRefusal(FORMATTED(...CHOICES(''), FREE, '_Recommendation_ : D — it costs the least of the five'))).toBeNull()
+  expect(questionDefectRefusal(FORMATTED('- **A** : one', '- **B** : two', FREE, '_Recommendation_ : B. Safer.'))).toBeNull()
+})
+
+test('a block of six choices is refused, the refusal naming the limit', () => {
+  const reason = questionDefectRefusal(FORMATTED(...CHOICES('- **F** : six'), FREE, '_Recommendation_ : D — the cheapest'))
+  expect(reason).not.toBeNull()
+  expect(reason).toContain('two to five')
+  expect(reason).toContain('A to E')
+})
+
+test('a recommendation naming a letter with no argument is refused, the refusal asking for the argument', () => {
+  const reason = questionDefectRefusal(FORMATTED(...CHOICES(''), FREE, '_Recommendation_ : D'))
+  expect(reason).not.toBeNull()
+  expect(reason).toContain('argu')
+  expect(questionDefectRefusal(FORMATTED(...CHOICES(''), FREE, '_Recommendation_ : **D**.'))).not.toBeNull()
+})
+
+test('a block quoted in a code fence, an older shape with no recommendation and a message with no block pass', () => {
+  const fenced = ['```', FORMATTED(...CHOICES('- **F** : six'), '_Recommendation_ : D'), '```'].join('\n')
+  expect(questionDefectRefusal(fenced)).toBeNull()
+  expect(questionDefectRefusal(FORMATTED('- **A** : one', '- **B** : two'))).toBeNull()
+  expect(questionDefectRefusal('the report\n\nwaiting: tool — ci-watch 12')).toBeNull()
+})
+
+test('both defects are named in one refusal, and a block without a wait line is judged all the same', () => {
+  const reason = questionDefectRefusal(FORMATTED(...CHOICES('- **F** : six'), FREE, '_Recommendation_ : D'))
+  expect(reason).toContain('more than five choices')
+  expect(reason).toContain('no argument')
+  expect(reason?.split('. Put the question again').length).toBe(2)
+  expect(questionDefectRefusal(FORMATTED(...CHOICES(''), FREE, '_Recommendation_ : D\nthe cheapest of the five'))).toBeNull()
+  expect(questionDefectRefusal(`${FORMATTED(...CHOICES(''), FREE, '_Recommendation_ : D')}\nwaiting: operator — blocks: the answer`)).not.toBeNull()
 })

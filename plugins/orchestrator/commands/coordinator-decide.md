@@ -8,11 +8,10 @@ open questions of every orchestrator in its round. Load that skill first. This r
 the coordinator's session: anywhere else, say so in one line and stop.
 
 The round's shape is `/orchestrator-decide`'s, read from `commands/decide.md` and followed as
-written: one question per message, in its step 2 shape, with its context, its choices and
-one recommendation; nothing on silence; a question re-presented in full after any
-interruption; a ruling never reopened. The coordination skill's rules for relayed questions
-hold too: the question, its context, its choices and its recommendation are the sender's,
-verbatim, and you add nothing of your own. Only what follows differs.
+written: one question per message, in the method's question format; nothing on silence; a
+question re-presented in full after any interruption; a ruling never reopened. The coordination
+skill's rules for relayed questions hold too: the question and every field of its block are
+the sender's, verbatim, and you add nothing of your own. Only what follows differs.
 
 1. **The source.** `${CLAUDE_PLUGIN_ROOT}/skills/coordinator/scripts/coordinator.sh round
    --by-urgency`: its open `operator` entries are the round, every one of them, due or not,

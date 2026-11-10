@@ -10,7 +10,7 @@
 // its name, never the measure.
 import { expect, test } from 'claude-code/testing'
 import { agentPaneRows, answerFromPane, paneRows, readRound, roundLines, scrollTrack, wrapWords, register as registerSupervision, registerWake, registerPaneTool, registerCloseRelay, runsRoundClose, SUPERVISION_TOOL, PANE_MAIN_THREAD_ONLY, type SessionRow } from '../supervision.ts'
-import { paneQuestions, waitsInTab, type RoundEntry } from '../round.ts'
+import { paneQuestions, waitsInTab, roundEntry, type RoundEntry } from '../round.ts'
 import { hostRecordOf } from '../session-name.ts'
 import { register as registerAll } from '../register.ts'
 import { logLineOf, blockOf, lockRun } from './fakes.ts'
@@ -2118,6 +2118,48 @@ const SHAPED = [
 const shapedEntry = (over: Partial<RoundEntry> = {}) => entry('Orch: low', '2026-10-18T10:03:00.000Z', {
   session: 'low', question: SHAPED, recommendation: 'A',
   choices: [{ letter: 'A', text: 'the orchestrator\'s — it follows its wave' }, { letter: 'B', text: 'the pane\'s — it counts the queue' }], ...over,
+})
+
+// The method's question: five choices, the free answer (its text opening on the article « A »), an argued recommendation.
+const FIVE = [
+  '**Question 2 of 3**',
+  '_Subject_ : the release',
+  '_Question_ : which way do we ship?',
+  '_Choices_ :',
+  '- **A** : merge now — cost: none — gain: today',
+  '- **B** : wait a day — cost: a day — gain: one more review',
+  '- **C** : split it — cost: two pull requests — gain: a smaller risk',
+  '- **D** : drop it — cost: the work — gain: no maintenance',
+  '- **E** : hand it over — cost: a briefing — gain: a fresh reader',
+  '_Free answer_ : A different way, in your own words.',
+  '_Recommendation_ : E — a fresh reader finds what merging now and waiting both miss',
+].join('\n')
+const fiveEntry = () => ({ ...roundEntry('low', 'Orch: low', { kind: 'operator', blocks: 'the release', question: FIVE }, '2026-10-18T10:03:00.000Z', '2026-10-18T10:03:00.000Z'), session: 'low' })
+
+test('a question of five choices and a free answer is drawn with its five letters, its own recommendation and the Other answer, the free-answer line left to it', async () => {
+  const { render } = await askingPane([fiveEntry()])
+  const tree = await render()
+  expect(picker(tree).props).toMatchObject({
+    value: 'E',
+    options: [
+      ...['A', 'B', 'C', 'D'].map(letter => ({ value: letter, label: letter })),
+      { value: 'E', label: 'E (recommended)' },
+      { value: 'other', label: 'Other answer: type it below' },
+    ],
+  })
+  const drawn = shown(tree.props.children[0])
+  expect(drawn.filter(t => /^\[[A-E]\]/.test(t)).map(t => t.slice(0, 3))).toEqual(['[A]', '[B]', '[C]', '[D]', '[E]'])
+  expect(drawn).toContain('★ Recommendation : E — a fresh reader finds what merging now and waiting both miss')
+  expect(drawn.some(t => t.includes('A different way'))).toBe(false)
+  expect(drawn.some(t => t.startsWith('★ Free answer'))).toBe(false)
+})
+
+test('where the pane has no picker the five choices are five Buttons, a to e, and the recommended one is E', async () => {
+  const { render } = await askingPane([fiveEntry()], { surface: 'mobile' })
+  const tree = await render()
+  const buttons = findAll(tree, n => n.type === 'Button' && String(n.props.key).startsWith('choice:'))
+  expect(buttons.map(n => [n.props.key, n.props.hotkey])).toEqual([['choice:A', 'a'], ['choice:B', 'b'], ['choice:C', 'c'], ['choice:D', 'd'], ['choice:E', 'e']])
+  expect(buttons[4].props.label).toContain('★')
 })
 
 test('a question in the decide shape is one block: the sender and its own numbering, its fields as labelled, nothing else of its turn', async () => {

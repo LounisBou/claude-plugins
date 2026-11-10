@@ -1,8 +1,8 @@
 {
   "name": "orchestrator",
   "description": "Orchestrate implementer sessions from one supervising session: briefs, evidence-based reviews, agent rotation, succession, terminal tab tooling and a context gauge any session can read.",
-  "version": "0.100.3",
-  "dependencies": [{"name": "method", "marketplace": "lounisbou", "version": ">=0.1.0"}],
+  "version": "0.101.0",
+  "dependencies": [{"name": "method", "marketplace": "lounisbou", "version": ">=0.2.0"}],
   "types": "./types/index.d.ts",
   "author": {
     "name": "Lounis Bou",

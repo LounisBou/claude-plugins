@@ -93,7 +93,7 @@ const questionField = (shape: QuestionShape) => shape.fields.find(field => /^que
 function refusal(named: string, blocks: string): string {
   return `Your question to the operator is still unanswered: « ${named} ». He must see it in your own chat as well as `
     + 'in the coordinator\'s round, at every turn\'s end until he answers it (his ruling of 2026-11-03). Present it again '
-    + 'IN FULL in this message, in the shape of orchestrator:decide step 2 — its `**Question i of N**` line and every '
+    + 'IN FULL in this message, in the method\'s question format — its `**Question i of N**` line and every '
     + 'labelled field, its choices and its recommendation, as you asked it — and end the turn on its wait line again, '
     + `\`waiting: operator — blocks: ${blocks}\`.`
 }
