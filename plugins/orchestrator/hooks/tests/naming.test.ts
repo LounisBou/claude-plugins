@@ -120,6 +120,41 @@ test('while a rename is pending, a spawn, a rotate and a SendMessage are refused
   expect(await handlers['tool.call:SendMessage'](fx.dollar, SEND, passOn)).toEqual({ result: { ran: 'SendMessage' } })
 })
 
+// The launcher named in a variable on one line and called on the next: the spawn the held
+// rename let through, its agents left as tabs the move into the home session did not take.
+test('while a rename is pending, a spawn or a rotate written over several commands is refused too', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar()
+  await handlers['tool.call'](fx.dollar, { name: 'Orch: belt' })
+  const path = '/p/skills/iterm-agents/scripts/iterm-agent.sh'
+  const held = [
+    `I=${path}; D=/tmp/briefs\n$I spawn --dir /w --title "Agent: belt" --brief $D/b.md 2>&1 | tail -5`,
+    `I=${path}\n"$I" spawn --dir /w --title "Agent: belt" --prompt p`,
+    `I=${path}; \${I} rotate --tty /dev/ttys003`,
+    `cd /w && bash ${path} spawn --dir /w --prompt p`,
+    `L=/p/skills/iterm-agents/scripts && $L/iterm-agent.sh spawn --dir /w --prompt p`,
+    `python3 /p/skills/iterm-agents/scripts/iterm_agent.py spawn --dir /w --prompt p`,
+    `bash "${path}" spawn --dir /w --prompt p`,
+    `I=${path}\n$I \\\n  spawn --dir /w --prompt p`,
+    `I=${path}\n$I "spawn" --dir /w --prompt p`,
+    `bash ${path} \\\n  spawn --dir /w --prompt p`,
+    `I=${path}; go() { "$I" "$@"; }; go spawn --dir /w --prompt p`,
+    `I=${path}\ngo() { "$I" "$@"; }\ngo spawn --dir /w --prompt p`,
+    `go() { bash ${path} "$@"; }\ngo rotate --tty /dev/ttys003`,
+  ]
+  for (const command of held) {
+    const answer = await handlers['tool.call:Bash'](fx.dollar, { tool: 'Bash', command }, passOn)
+    expect(answer.deny).toContain('end the turn now')
+  }
+  // The launcher's other subcommands, and a read of its file, still run.
+  // A note that names the launcher and, elsewhere, a variable before « spawn » calls nothing:
+  // only a variable given the launcher's path is the launcher.
+  const note = `cat > /w/notes.md <<'EOF'\nRun ${path} list first.\nThen $L spawn the agent.\nEOF`
+  for (const command of [`I=${path}\n$I list`, `grep -n "def cmd_spawn" /p/skills/iterm-agents/scripts/iterm_agent.py`, `I=${path}\n$I screen --tty /dev/ttys003 | grep spawn`, note]) {
+    expect(await handlers['tool.call:Bash'](fx.dollar, { tool: 'Bash', command }, passOn)).toEqual({ result: { ran: 'Bash' } })
+  }
+})
+
 test("a subagent's spawn or message is not the main thread's to hold", async () => {
   const { handlers } = mounted()
   const fx = fakeDollar()
