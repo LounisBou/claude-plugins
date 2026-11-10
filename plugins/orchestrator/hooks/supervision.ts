@@ -2538,7 +2538,12 @@ async function withdrawHeld($: any, sessionId: string, name: string, held: { blo
       return settled.map(({ entry }) => entry.id)
     }
     const sent = await sendToCoordinator($, coordinator.to, withdrawalText(name, held.blocks, held.since, held.said))
-    if (sent?.isDelivered) return []
+    if (sent?.isDelivered) {
+      // The round of a coordinator elsewhere is not this machine's: no consent record is written
+      // here for the words typed, and the log keeps a trace of it.
+      if (declaredConsent()) await logLine($, `round: the words typed for ${name} since ${held.since ?? '?'} went to a coordinator on another machine, no consent recorded`)
+      return []
+    }
     await logLine($, `withdraw: not delivered to ${addressLabel(coordinator.to)}: ${sent?.reason ?? 'no answer'}`)
     return null
   } catch (err) {
@@ -2671,17 +2676,17 @@ export async function writeConsent($: any, entry: RoundEntry, text: string, by: 
 }
 
 // The words the operator typed in the asking session's own tab, as the answer to an entry that
-// asks his consent: written as the pane's choice is (writeConsent, `by: 'tab'`), a choice letter
-// taken for that choice's text and any other words kept whole, when they answer one of the
-// question's choices (answersChoice). A prompt typed there can be any instruction: words that
-// answer none leave no record, and the log says so once.
+// asks his consent: written as the pane's choice is (writeConsent, `by: 'tab'`), as the choice
+// they answer unambiguously (answersChoice), its text the record's answer. A prompt typed there
+// can be any instruction: words that answer none leave no record, and the log says so once.
 async function writeTabConsent($: any, entry: RoundEntry, typed: string, at: string): Promise<void> {
   if (!entry.consent) return
-  if (!answersChoice(typed, entry.choices)) {
+  const chosen = answersChoice(typed, entry.choices)
+  if (!chosen) {
     await logLine($, `round: the words typed for ${entry.id} answer none of its choices, no consent recorded`)
     return
   }
-  await writeConsent($, entry, typed, 'tab', at)
+  await writeConsent($, entry, `${chosen.letter} : ${chosen.text}`, 'tab', at)
 }
 
 // A choice pressed in the coordinator's pane: the entry, read again so a question settled

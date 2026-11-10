@@ -2494,8 +2494,8 @@ async function askedConsent(declared: typeof CONSENT | null = CONSENT) {
 
 for (const [label, words, answer] of [
   ['a choice letter alone', 'A', 'waive it, docs only'],
-  ['a choice letter set apart from words', 'a : yes, go', 'waive it, docs only'],
-  ['the words of a choice', 'Yes, WAIVE it,  docs only, 2026-11-10', 'Yes, WAIVE it,  docs only, 2026-11-10'],
+  ['a choice letter set apart from its text', 'a : WAIVE it,  docs only', 'waive it, docs only'],
+  ['the text of a choice alone', 'Run the E2E first', 'run the E2E first'],
 ] as const) {
   test(`${label} typed in the tab to a question that asks consent is written as that subject's consent record, by the tab`, async () => {
     const { chains, fx, asked } = await askedConsent()
@@ -2512,7 +2512,7 @@ for (const [label, words, answer] of [
   })
 }
 
-for (const words of ['go on with the next phase', 'C', 'A, but check the diff first']) {
+for (const words of ['go on with the next phase', 'C', 'A, but check the diff first', 'do not waive it, docs only', 'B waive it, docs only', 'A - but not yet', 'yes: waive it, docs only']) {
   test(`« ${words} » typed in the tab answers no choice: no consent record, one line in the log`, async () => {
     const { chains, fx, asked } = await askedConsent()
     await drive(chains, 'prompt.submit', fx.dollar, typed('composer', words))
@@ -2550,3 +2550,38 @@ test('a moved entry that carries the consent, withdrawn with the question asked 
   expect(consentFiles(fx)).toEqual([`${HOME}/.claude/consents/acme/thing/${moved.id}.json`])
   expect(JSON.parse(fx.files.get(consentFiles(fx)[0])!)).toMatchObject({ entry: moved.id, answer: 'waive it, docs only', by: 'tab' })
 })
+
+test('a moved entry that carries the consent, withdrawn by a free prompt, leaves no record and one line in the log', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const old = roundEntry('s-pred', 'Orch: belt', parseWait(answerOf(CONSENT_QUESTION, PRED_LINE))!, '2026-10-14T08:00:00.000Z', '2026-10-14T08:00:00.100Z')
+  const moved: RoundEntry = { ...old, session: 's-one', movedFrom: 's-pred', consent: CONSENT }
+  fx.files.set(`${ROUND}/${moved.id}.json`, JSON.stringify(moved) + '\n')
+  DECLARATIONS.turnStarted()
+  DECLARATIONS.declare({ kind: 'operator', blocks: 'E2E of thing#12' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(CONSENT_QUESTION))
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer', 'do not waive it, docs only'))
+  expect(entries(fx).map(e => e.status)).toEqual(['withdrawn', 'withdrawn'])
+  expect(consentFiles(fx)).toEqual([])
+  expect(noAnswerLogs(fx)).toEqual([`round: the words typed for ${moved.id} answer none of its choices, no consent recorded`])
+})
+
+for (const declared of [CONSENT, null]) {
+  test(`a question ${declared ? 'that asks' : 'that asks no'} consent, answered in the tab with a coordinator on another machine: no record, ${declared ? 'one line' : 'no line'} in the log`, async () => {
+    const chains = mounted()
+    const fx = fake({ remote: true })
+    DECLARATIONS.turnStarted()
+    DECLARATIONS.declare({ kind: 'operator', blocks: 'phase 3', ...(declared ? { consent: declared } : {}) })
+    await drive(chains, 'turn.complete', fx.dollar, turnEnd(answerOf(QUESTION, QUESTION_LINE)))
+    const wait = JSON.parse(fx.files.get(WAIT)!)
+    await drive(chains, 'session.receive', fx.dollar, {
+      text: `<cross-session-message from="bridge:session_coord" from-name="Coord: ops [abc]">\n${ackLine(wait.pending, wait.waiting_since)}\n</cross-session-message>`,
+      origin: { kind: 'peer' },
+    })
+    await drive(chains, 'prompt.submit', fx.dollar, typed('composer', 'A'))
+    expect(fx.sent.some(m => m.text.startsWith('[module]'))).toBe(true)
+    expect(consentFiles(fx)).toEqual([])
+    const lines = fx.logged.filter(l => l.includes('went to a coordinator on another machine')).map(l => l.replace(/^.*\| supervision \| /, ''))
+    expect(lines).toEqual(declared ? [`round: the words typed for Orch: belt since ${wait.waiting_since} went to a coordinator on another machine, no consent recorded`] : [])
+  })
+}
