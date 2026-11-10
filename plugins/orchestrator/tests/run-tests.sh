@@ -7288,9 +7288,13 @@ print("ERR:" + " ".join(err.getvalue().split()))
 PYEOF
 PLACEPS="$WORK/ps-place.txt"
 printf '/dev/ttys801 claude --name Orch: own\n/dev/ttys802 claude --name Agent: a\n/dev/ttys803 claude --name Orch: other\n/dev/ttys804 claude --name Agent: b\n/dev/ttys902 claude --name Agent: x\n' > "$PLACEPS"
+# The placement is the caller's tab's, whoever the caller is: an orchestrator outside its home
+# session spawns no agent, so the caller on ttys801 is an operator's plain shell.
+PLACESHELLPS="$WORK/ps-place-shell.txt"
+sed 's#^/dev/ttys801 .*#/dev/ttys801 -zsh#' "$PLACEPS" > "$PLACESHELLPS"
 pprobe() { local layout="$1" state="$WORK/placestate"; shift
   ORCHESTRATOR_BACKEND=api ORCHESTRATOR_STATE_DIR="$state" ORCHESTRATOR_SELF_TTY=/dev/ttys801 \
-    ORCHESTRATOR_PS_TABLE="$PLACEPS" "$py" "$WORK/place_probe.py" "$ROOT/skills/iterm-agents/scripts" \
+    ORCHESTRATOR_PS_TABLE="$PLACESHELLPS" "$py" "$WORK/place_probe.py" "$ROOT/skills/iterm-agents/scripts" \
     "$layout" "$WORK" "$@" $(needs_tier "$@") 2>&1; }
 pchain() { rm -rf "$WORK/placestate"; mkdir -p "$WORK/placestate/chains"
   [ -n "$1" ] && printf '%s\n' "$1" > "$WORK/placestate/chains/ttys801.jsonl"; return 0; }
