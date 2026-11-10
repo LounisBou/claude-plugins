@@ -29,7 +29,8 @@ WORK=$(mktemp -d "${TMPDIR:-/tmp}/orchestrator-XXXXXX")
 # The suite's own tmux servers are killed where they are used; their socket files are not,
 # and one pair a run piled up in the operator's tmux directory.
 SUITE_SOCKETS="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)"
-trap 'rm -rf "$WORK" ${SHORTTMP:+"$SHORTTMP"}; rm -f "$SUITE_SOCKETS/suite-home-$$" "$SUITE_SOCKETS/suite-conf-$$"' EXIT
+suite_exit() { rm -rf "$WORK" ${SHORTTMP:+"$SHORTTMP"}; rm -f "$SUITE_SOCKETS/suite-home-$$" "$SUITE_SOCKETS/suite-conf-$$"; }
+trap suite_exit EXIT
 
 pass=0
 fail=0
@@ -160,7 +161,7 @@ check "no vendor or product name in prose" "" "$(policy_hits)"
 # The guard proves it can still SEE one: a file planted with a violation must show up in
 # the very same function, or "no hits" proves nothing.
 PROBE="$ROOT/.policy-probe-$$.md"
-trap 'rm -rf "$WORK" ${SHORTTMP:+"$SHORTTMP"}; rm -f "$PROBE"' EXIT
+trap 'suite_exit; rm -f "$PROBE"' EXIT
 printf 'PRODUCT NAME IN PROSE\n' | sed 's/PRODUCT NAME/Claude/' > "$PROBE"
 seen=$(policy_hits | grep -c 'policy-probe' || true)
 rm -f "$PROBE"
