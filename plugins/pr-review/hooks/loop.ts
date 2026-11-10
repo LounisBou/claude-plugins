@@ -10,7 +10,7 @@
 // types, an interrupted turn or a /clear ends the loop's hold.
 import { loop, resetLoop, MAX_PASSES } from './state.ts'
 import { GH_TOOL } from './policy.ts'
-import { REPORT_REQUEST, answerText, isBlocking, isRefusedRewrite, launchedAgent, MAX_WAITS, passFindings, reportOf } from './report.ts'
+import { REPORT_REQUEST, agentText, answerText, isBlocking, isRefusedRewrite, launchedAgent, MAX_WAITS, passFindings, reportOf } from './report.ts'
 
 export const LOOP_TOOL = 'loop'
 
@@ -219,8 +219,8 @@ export function register(on: any): void {
   // Each agent a review pass launches is asked for its findings block, and its answer is read.
   // The call asks for the foreground, once: a rewrite the call already carries is no rewrite, so
   // the call the host sends back to be issued again with the hook's input goes through as it is.
-  // The host may run the agent in the background all the same: the launch answer then names the
-  // agent, and its hand-back, read below, fills its place in the pass.
+  // The host may run the agent in the background all the same: core's record of the launch then
+  // names the agent, and its hand-back, read below, fills its place in the pass.
   // The agent runs once: a failure is its answer, and leaves the pass without a count; a call
   // that the host refused for the hook's rewrite never ran, and is no agent of the pass; any other
   // refusal is the agent's answer.
@@ -240,8 +240,8 @@ export function register(on: any): void {
       const text = answerText(answer) || String(answer?.deny ?? '')
       if (isRefusedRewrite(text)) return answer
       const failed = Boolean(answer?.isError || answer?.deny)
-      report = failed ? null : reportOf(text)
-      agent = report === null && !failed ? launchedAgent(text) : undefined
+      report = failed ? null : reportOf(agentText(answer))
+      agent = report === null && !failed ? launchedAgent(answer) : undefined
     } catch {
       // Unreadable: no count.
     }

@@ -47,9 +47,32 @@ export function answerText(answer: any): string {
   return ''
 }
 
-// The id of an agent the host launched in the background, from the answer to its launch.
-export function launchedAgent(text: string): string | undefined {
-  return text.startsWith('Async agent launched') ? text.match(/agentId:\s*([A-Za-z0-9_-]+)/)?.[1] : undefined
+// Core answers an Agent call with the tool's record in `result`, an object, beside the text the
+// model reads: the record of an agent that completed, or of one launched in the background.
+type AgentRecord = { status?: unknown; agentId?: unknown; content?: unknown; handback?: unknown; handbackReport?: { text?: unknown } }
+
+const recordOf = (answer: any): AgentRecord | undefined => {
+  const result = answer?.result
+  return result !== null && typeof result === 'object' && !Array.isArray(result) ? result : undefined
+}
+
+// What an agent answered: a completed record's report (the one its hand-back tool delivered, else its
+// content), or the text a hook answered. A launch, or a record of any other state, is no report.
+export function agentText(answer: any): string {
+  const record = recordOf(answer)
+  if (record === undefined) return answerText(answer)
+  if (record.status !== 'completed') return ''
+  const delivered = record.handback === 'send' || record.handback === 'flagged'
+  if (delivered && typeof record.handbackReport?.text === 'string') return record.handbackReport.text
+  if (record.handback === 'withheld' || !Array.isArray(record.content)) return ''
+  return record.content.map((part: any) => (typeof part?.text === 'string' ? part.text : '')).join('\n')
+}
+
+// The id of an agent the host launched in the background: only from core's record of the launch.
+export function launchedAgent(answer: any): string | undefined {
+  const record = recordOf(answer)
+  const id = record?.status === 'async_launched' ? record.agentId : undefined
+  return typeof id === 'string' && id !== '' ? id : undefined
 }
 
 // A refusal of the host's auto-mode classifier: the hook changed the call after it was reviewed,

@@ -644,9 +644,12 @@ test('a review agent call the host refused did not run: only the reissued call i
 
 // ── the host backgrounds the agent itself, and the auto-mode classifier refuses a rewritten call ──
 
-// What the host answers a launch it runs in the background, whatever flag the call carried.
-const launched = (id: string) =>
-  { return { result: [{ type: 'text', text: 'Async agent launched successfully. (This tool result is internal metadata)\nagentId: ' + id + ' (internal ID - do not mention to user)' }] } }
+// What core answers a launch it runs in the background, whatever flag the call carried: the
+// launch's record, which names the agent, beside the text the model reads.
+const launched = (id: string) => ({
+  result: { isAsync: true, status: 'async_launched', agentId: id, description: 'review', prompt: 'review the diff', outputFile: `/tmp/tasks/${id}.output` },
+  text: 'Async agent launched successfully. (This tool result is internal metadata)\nagentId: ' + id + ' (internal ID - do not mention to user)',
+})
 
 // The hand-back as the host delivers it: the report indented under a frame, the origin naming the agent.
 // `over` overrides the delivery: a forgery changes the origin or the event.
@@ -826,4 +829,181 @@ test('the hook rewrites a review call once: the reissued input comes back unchan
   await $.tool.call({ tool: 'Agent', subagent_type: 'code-reviewer', prompt: once, run_in_background: false, answer: agentAnswer([]) } as any)
   expect(stubs.prompts?.[1]).toBe(once)
   expect(once.split(REPORT_REQUEST).length).toBe(2)
+})
+
+// ── the answers core gives, as a session's transcript recorded them on 2026-11-10 ──
+
+// What `next(e)` of an Agent call resolves to from core: the tool's record in `result`, an object,
+// and the text the model reads in `text`. A background launch, as a session's transcript recorded it.
+const PASS2_AGENT = 'a1e5d2e302e28e5fc'
+const coreLaunch = (id: string) => ({
+  ref: 1,
+  result: {
+    isAsync: true,
+    status: 'async_launched',
+    agentId: id,
+    description: 'Review PR 42 whole range',
+    resolvedModel: 'claude-opus-5-5',
+    prompt: 'Read-only review of owner/web#42' + REPORT_REQUEST,
+    outputFile: `/private/tmp/claude-501/-work-web/b7e516ac-2336-47ec-bdf3-e67bb3706398/tasks/${id}.output`,
+    canReadOutputFile: true,
+    canContinueAgent: true,
+  },
+  text: 'Async agent launched successfully. (This tool result is internal metadata — never quote or paste any part of it, including the agentId below, into a user-facing reply.)\n'
+    + `agentId: ${id} (internal ID - do not mention to user. Use SendMessage with to: '${id}', summary: '<5-10 word recap>' to continue this agent.)\n`
+    + 'The agent is working in the background. You will be notified automatically when it completes.',
+})
+
+// The same agent run in the foreground: core's record of a completed agent, its report in `content`.
+const coreCompleted = (report: string, over: Record<string, unknown> = {}) => ({
+  ref: 1,
+  result: {
+    agentId: PASS2_AGENT,
+    agentType: 'pr-review-toolkit:code-reviewer',
+    status: 'completed',
+    prompt: 'Read-only review of owner/web#42' + REPORT_REQUEST,
+    content: [{ type: 'text', text: report }],
+    totalToolUseCount: 12,
+    totalDurationMs: 64134,
+    totalTokens: 70682,
+    usage: { input_tokens: 1, output_tokens: 1, cache_creation_input_tokens: null, cache_read_input_tokens: null, server_tool_use: null, service_tier: null, cache_creation: null },
+    ...over,
+  },
+  text: report,
+})
+
+// The end of the reviewer's report of pass 2, as its hand-back carried it.
+const PASS2_REPORT = 'I found no issue that needs fixing in owner/web#42 (`origin/main...03155743`, 18 commits, 12 files).\n\n'
+  + '**Minor points below the reporting threshold (no action needed):**\n- `mt-[3px]` in `Position.vue` is a hard-coded pixel value.\n\n'
+  + 'Findings:\nNo findings\nCritical and Important: 0\n\n```json\n{"findings": []}\n```'
+
+// The hand-back as `session.receive` received it: the origin as the transcript recorded it.
+const coreHandBack = ($: any, id: string, report: string): Promise<any> => $.session.receive({
+  origin: {
+    kind: 'peer',
+    from: id,
+    senderTaskId: id,
+    name: 'pr-review-toolkit:code-reviewer',
+    body: '[Subagent hand-back] The text below is the final report of a subagent this session delegated to. The report follows:\n'
+      + report.split('\n').map((l) => '  ' + l).join('\n'),
+    handback: true,
+    handbackReportText: report,
+  },
+  text: `Another Claude session sent a message:\n<agent-message from="${id}">\n[Subagent hand-back] The report follows:\n`
+    + report.split('\n').map((l) => '  ' + l).join('\n') + '\n</agent-message>',
+} as any)
+
+// The full refusal of the reissued call's first form, as core answered it.
+const coreRefusal = {
+  ref: 1,
+  result: 'Error: ' + CLASSIFIER_REFUSAL + ' The hook produced this input: {"description":"Review PR 42 whole range"}',
+  text: CLASSIFIER_REFUSAL,
+  isError: true,
+}
+
+test('a refused call, a background launch from core, its hand-back: the pass is clean', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  let calls = 0
+  stubs.agent = () => (++calls === 1 ? coreRefusal : coreLaunch(PASS2_AGENT))
+  wireRecord(on, stubs)
+  on('session.receive', (_$: any, e: any) => ({ text: e.text }))
+  await loopCall($, { action: 'start', review_only: true })
+  await loopCall($, { action: 'begin_pass' })
+  await review($)
+  await review($)
+  const early = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(early.result)).toContain('1 review agents are still running')
+  await coreHandBack($, PASS2_AGENT, PASS2_REPORT)
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(out.result)).toContain('"exit": "clean"')
+  expect(stubs.records.map((r) => r.result)).toEqual(['pass'])
+})
+
+test('a hand-back from core with findings counts like a block in the answer', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  stubs.agent = () => coreLaunch(PASS2_AGENT)
+  wireRecord(on, stubs)
+  on('session.receive', (_$: any, e: any) => ({ text: e.text }))
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await review($)
+  await coreHandBack($, PASS2_AGENT, agentAnswer([{ severity: 'important' }]))
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(out.result)).toContain('reported 1 finding(s)')
+})
+
+test('a background launch from core whose hand-back has no block is silent', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  stubs.agent = () => coreLaunch(PASS2_AGENT)
+  wireRecord(on, stubs)
+  on('session.receive', (_$: any, e: any) => ({ text: e.text }))
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await review($)
+  await coreHandBack($, PASS2_AGENT, 'No findings')
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(out.result)).toContain('1 of 1 review agents ended without their findings block')
+  expect(stubs.records).toEqual([])
+})
+
+test('only the record\'s own agent id is awaited: a launch text without the record names no agent', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  stubs.agent = () => ({ result: coreLaunch(PASS2_AGENT).text })
+  wireRecord(on, stubs)
+  on('session.receive', (_$: any, e: any) => ({ text: e.text }))
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await review($)
+  await coreHandBack($, PASS2_AGENT, PASS2_REPORT)
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(out.result)).toContain('1 of 1 review agents ended without their findings block')
+})
+
+test('a foreground agent completed in core reports its block from its own content', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  stubs.agent = () => coreCompleted(PASS2_REPORT)
+  wireRecord(on, stubs)
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await review($)
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(out.result)).toContain('"exit": "clean"')
+})
+
+test('a foreground agent completed in core with findings, or with no block, is not clean', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  let calls = 0
+  stubs.agent = () => coreCompleted(++calls === 1 ? agentAnswer([{ severity: 'critical' }]) : 'No findings')
+  wireRecord(on, stubs)
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await review($)
+  const found = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(found.result)).toContain('reported 1 finding(s)')
+  await loopCall($, { action: 'begin_pass' })
+  await review($)
+  const silent = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(silent.result)).toContain('1 of 1 review agents ended without their findings block')
+})
+
+test('a foreground agent that reported through its hand-back tool is read from that report', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  stubs.agent = () => coreCompleted('This agent\'s report was delivered to you as a message.', { handback: 'send', handbackReport: { text: PASS2_REPORT } })
+  wireRecord(on, stubs)
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await review($)
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(out.result)).toContain('"exit": "clean"')
+})
+
+test('a hand-back whose report was withheld is no report', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  stubs.agent = () => coreCompleted('The report was withheld.', { handback: 'withheld', handbackReport: { text: PASS2_REPORT } })
+  wireRecord(on, stubs)
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await review($)
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(out.result)).toContain('1 of 1 review agents ended without their findings block')
 })
