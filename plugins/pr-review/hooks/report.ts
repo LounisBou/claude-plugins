@@ -49,27 +49,45 @@ export function answerText(answer: any): string {
 
 // Core answers an Agent call with the tool's record in `result`, an object, beside the text the
 // model reads: the record of an agent that completed, or of one launched in the background.
-type AgentRecord = { status?: unknown; agentId?: unknown; content?: unknown; handback?: unknown; handbackReport?: { text?: unknown } }
+// `recordOf` is the one validator: it narrows what the host answered to the fields read below.
+type AgentRecord = {
+  status: unknown
+  agentId: unknown
+  handback: unknown
+  // The text of the report the agent's hand-back tool delivered, when it has one.
+  reportText: string | undefined
+  // The text of each part of the agent's content, when the content is a list.
+  content: string[] | undefined
+}
 
-const recordOf = (answer: any): AgentRecord | undefined => {
-  const result = answer?.result
-  return result !== null && typeof result === 'object' && !Array.isArray(result) ? result : undefined
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value)
+
+const recordOf = (answer: unknown): AgentRecord | undefined => {
+  const result = isObject(answer) ? answer.result : undefined
+  if (!isObject(result)) return undefined
+  const report = result.handbackReport
+  const reportText = isObject(report) && typeof report.text === 'string' ? report.text : undefined
+  const content = Array.isArray(result.content)
+    ? result.content.map((part: unknown) => (isObject(part) && typeof part.text === 'string' ? part.text : ''))
+    : undefined
+  return { status: result.status, agentId: result.agentId, handback: result.handback, reportText, content }
 }
 
 // What an agent answered: a completed record's report (the one its hand-back tool delivered, else its
 // content), or the text a hook answered. A launch, or a record of any other state, is no report.
-export function agentText(answer: any): string {
+export function agentText(answer: unknown): string {
   const record = recordOf(answer)
   if (record === undefined) return answerText(answer)
   if (record.status !== 'completed') return ''
   const delivered = record.handback === 'send' || record.handback === 'flagged'
-  if (delivered && typeof record.handbackReport?.text === 'string') return record.handbackReport.text
-  if (record.handback === 'withheld' || !Array.isArray(record.content)) return ''
-  return record.content.map((part: any) => (typeof part?.text === 'string' ? part.text : '')).join('\n')
+  if (delivered && record.reportText !== undefined) return record.reportText
+  if (record.handback === 'withheld' || record.content === undefined) return ''
+  return record.content.join('\n')
 }
 
 // The id of an agent the host launched in the background: only from core's record of the launch.
-export function launchedAgent(answer: any): string | undefined {
+export function launchedAgent(answer: unknown): string | undefined {
   const record = recordOf(answer)
   const id = record?.status === 'async_launched' ? record.agentId : undefined
   return typeof id === 'string' && id !== '' ? id : undefined
