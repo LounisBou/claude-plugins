@@ -135,13 +135,22 @@ test('while a rename is pending, a spawn or a rotate written over several comman
     `L=/p/skills/iterm-agents/scripts && $L/iterm-agent.sh spawn --dir /w --prompt p`,
     `python3 /p/skills/iterm-agents/scripts/iterm_agent.py spawn --dir /w --prompt p`,
     `bash "${path}" spawn --dir /w --prompt p`,
+    `I=${path}\n$I \\\n  spawn --dir /w --prompt p`,
+    `I=${path}\n$I "spawn" --dir /w --prompt p`,
+    `bash ${path} \\\n  spawn --dir /w --prompt p`,
+    `I=${path}; go() { "$I" "$@"; }; go spawn --dir /w --prompt p`,
+    `I=${path}\ngo() { "$I" "$@"; }\ngo spawn --dir /w --prompt p`,
+    `go() { bash ${path} "$@"; }\ngo rotate --tty /dev/ttys003`,
   ]
   for (const command of held) {
     const answer = await handlers['tool.call:Bash'](fx.dollar, { tool: 'Bash', command }, passOn)
     expect(answer.deny).toContain('end the turn now')
   }
   // The launcher's other subcommands, and a read of its file, still run.
-  for (const command of [`I=${path}\n$I list`, `grep -n "def cmd_spawn" /p/skills/iterm-agents/scripts/iterm_agent.py`, `I=${path}; $I screen --tty /dev/ttys003 | grep spawn`]) {
+  // A note that names the launcher and, elsewhere, a variable before « spawn » calls nothing:
+  // only a variable given the launcher's path is the launcher.
+  const note = `cat > /w/notes.md <<'EOF'\nRun ${path} list first.\nThen $L spawn the agent.\nEOF`
+  for (const command of [`I=${path}\n$I list`, `grep -n "def cmd_spawn" /p/skills/iterm-agents/scripts/iterm_agent.py`, `I=${path}\n$I screen --tty /dev/ttys003 | grep spawn`, note]) {
     expect(await handlers['tool.call:Bash'](fx.dollar, { tool: 'Bash', command }, passOn)).toEqual({ result: { ran: 'Bash' } })
   }
 })

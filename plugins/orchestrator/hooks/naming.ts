@@ -52,14 +52,31 @@ export function isEnding(): boolean {
 // (its script or the python beneath it) — the brief it writes names the orchestrator —
 // and a SendMessage, which the peer reads its sender's name off. Made in the turn
 // that renamed, it carries the name the session is about to lose. The launcher is
-// often named in a variable and called on another line or after a `;` or a `&&`:
-// a command that names it anywhere is held when spawn or rotate follows its path or
-// a variable, in any of its commands.
-const LAUNCHER = /\biterm[-_]agent\.(?:sh|py)\b/
-const LAUNCHER_CALL = /(?:\biterm[-_]agent\.(?:sh|py)["']?|\$\{?\w+\}?["']?)[ \t]+(?:spawn|rotate)(?=\s|$|[;&|)])/m
+// often named in a variable or wrapped in a function and called on another line,
+// after a `;` or a `&&`, or past a line continuation: a spawn or a rotate is held after
+// the launcher's path on its line, after a variable given that path, or after a function
+// that calls either, its subcommand quoted or not.
+const LAUNCHER_PATH = String.raw`iterm[-_]agent\.(?:sh|py)`
+const ON_ITS_LINE = new RegExp(String.raw`\b${LAUNCHER_PATH}\b[^\n]*?\s(?:spawn|rotate)(?:\s|$)`, 'm')
+const SEPARATOR = String.raw`(?:[ \t]|\\\n)+`
+const SUBCOMMAND = String.raw`["']?(?:spawn|rotate)["']?(?=\s|$|[;&|)])`
+const AFTER_PATH = new RegExp(String.raw`\b${LAUNCHER_PATH}["']?${SEPARATOR}${SUBCOMMAND}`)
+const ASSIGNED = new RegExp(String.raw`(?:^|[\s;&|(])(\w+)=["']?[^\s;&|]*${LAUNCHER_PATH}`, 'gm')
+const FUNCTION = /(\w+)\s*\(\)\s*\{([^}]*)\}/g
+
+function launcherCalled(command: string): boolean {
+  if (ON_ITS_LINE.test(command) || AFTER_PATH.test(command)) return true
+  const variables = [...command.matchAll(ASSIGNED)].map(m => m[1]!)
+  const names = (body: string) => new RegExp(LAUNCHER_PATH).test(body)
+    || variables.some(v => new RegExp(String.raw`\$\{?${v}\}?(?!\w)`).test(body))
+  const functions = [...command.matchAll(FUNCTION)].filter(m => names(m[2]!)).map(m => m[1]!)
+  return variables.some(v => new RegExp(String.raw`\$\{?${v}\}?["']?${SEPARATOR}${SUBCOMMAND}`).test(command))
+    || functions.some(f => new RegExp(String.raw`(?:^|[\s;&|(])${f}${SEPARATOR}${SUBCOMMAND}`, 'm').test(command))
+}
+
 export function addressesAnAgent(tool: string, command: string): boolean {
   if (tool === 'SendMessage') return true
-  return tool === 'Bash' && LAUNCHER.test(command) && LAUNCHER_CALL.test(command)
+  return tool === 'Bash' && launcherCalled(command)
 }
 
 // The refusal while a rename waits for the turn's end: prose told the model to end the
