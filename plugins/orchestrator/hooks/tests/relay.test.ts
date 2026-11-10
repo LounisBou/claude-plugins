@@ -9,6 +9,7 @@ import { parseWait, waitPatch, fingerprint, relayText, coordinatorOf, waitLabel,
 import { paneQuestions, waitsInTab, roundEntry, type RoundEntry } from '../round.ts'
 import { answerFromPane, answerFromPaneText, paneAnswerText, settledText, reopenedText, withdrawOnTyped, parseSessionRow, paneRows, withWait, writeSession, readSessions, type SessionRow } from '../supervision.ts'
 import { register } from '../register.ts'
+import { parseConsentRecord, quotesConsent } from '../../core/consent-record.ts'
 import { DECLARATIONS } from '../wait.ts'
 import { logLineOf, lockRun } from './fakes.ts'
 import { ROW_MARKER } from '../remote-row.ts'
@@ -184,6 +185,7 @@ function fake(over: { name?: string; role?: SessionRow['role']; coordinator?: st
           files.delete(argv[2])
           return { exitCode: 0, stdout: '', stderr: '' }
         }
+        if (argv[0] === 'mkdir') return { exitCode: 0, stdout: '', stderr: '' }
         if (argv[0] === 'rm') {
           for (const p of argv.slice(2)) files.delete(p)
           return { exitCode: 0, stdout: '', stderr: '' }
@@ -2469,4 +2471,82 @@ test('the notice of a question settled in the tab carries his words on one line,
   expect(settledText(asked, { text: "withdrawn: answered in the sender's own tab", by: 'tab', at: 'T' })).toContain(`— answered there. ${DROP}`)
   expect(withdrawalText('Orch: belt', 'phase 3', 'T', 'B,\nkeep it small')).toContain('(he typed: "B, keep it small")')
   expect(withdrawalText('Orch: belt', 'phase 3', 'T')).not.toContain('typed')
+})
+
+// --- the answer typed in the tab to a question that asks consent -------------------------------
+
+const CONSENT = { kind: 'e2e-waiver' as const, repo: 'Acme/Thing', pr: 12 }
+const CONSENT_QUESTION = 'Question 1 of 1 — waive the E2E on thing#12?\n- **A** : waive it, docs only\n- **B** : run the E2E first'
+const consentFiles = (fx: ReturnType<typeof fake>) => [...fx.files.keys()].filter(p => p.startsWith(`${HOME}/.claude/consents/`))
+const noAnswerLogs = (fx: ReturnType<typeof fake>) => fx.logged.filter(l => l.includes('answer none of its choices')).map(l => l.replace(/^.*\| supervision \| /, ''))
+
+// An orchestrator that declared the consent its question asks, the question relayed.
+async function askedConsent(declared: typeof CONSENT | null = CONSENT) {
+  const chains = mounted()
+  const fx = fake()
+  DECLARATIONS.turnStarted()
+  DECLARATIONS.declare({ kind: 'operator', blocks: 'E2E of thing#12', ...(declared ? { consent: declared } : {}) })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(CONSENT_QUESTION))
+  const [asked] = entries(fx)
+  expect(asked.consent).toEqual(declared ?? undefined)
+  return { chains, fx, asked }
+}
+
+for (const [label, words, answer] of [
+  ['a choice letter alone', 'A', 'waive it, docs only'],
+  ['a choice letter set apart from words', 'a : yes, go', 'waive it, docs only'],
+  ['the words of a choice', 'Yes, WAIVE it,  docs only, 2026-11-10', 'Yes, WAIVE it,  docs only, 2026-11-10'],
+] as const) {
+  test(`${label} typed in the tab to a question that asks consent is written as that subject's consent record, by the tab`, async () => {
+    const { chains, fx, asked } = await askedConsent()
+    await drive(chains, 'prompt.submit', fx.dollar, typed('composer', words))
+    expect(entries(fx)[0].status).toBe('withdrawn')
+    expect(consentFiles(fx)).toEqual([`${HOME}/.claude/consents/acme/thing/${asked.id}.json`])
+    const record = JSON.parse(fx.files.get(consentFiles(fx)[0])!)
+    expect({ ...record, at: 'x' }).toEqual({ v: 1, subject: CONSENT, entry: asked.id, question: asked.question, answer, by: 'tab', at: 'x' })
+    // What github reads: the record keeps the contract and carries a waiver that quotes it.
+    const read = parseConsentRecord(record)!
+    expect(read.by).toBe('tab')
+    expect(quotesConsent(read, CONSENT, `operator ruled: ${answer}, 2026-11-10`)).toBe(true)
+    expect(noAnswerLogs(fx)).toEqual([])
+  })
+}
+
+for (const words of ['go on with the next phase', 'C', 'A, but check the diff first']) {
+  test(`« ${words} » typed in the tab answers no choice: no consent record, one line in the log`, async () => {
+    const { chains, fx, asked } = await askedConsent()
+    await drive(chains, 'prompt.submit', fx.dollar, typed('composer', words))
+    expect(entries(fx)[0].status).toBe('withdrawn')
+    expect(consentFiles(fx)).toEqual([])
+    expect(noAnswerLogs(fx)).toEqual([`round: the words typed for ${asked.id} answer none of its choices, no consent recorded`])
+    // The turn's end does not say it again.
+    await drive(chains, 'turn.start', fx.dollar, { text: words })
+    await drive(chains, 'turn.complete', fx.dollar, turnEnd('Working.'))
+    expect(noAnswerLogs(fx).length).toBe(1)
+  })
+}
+
+test('a question that asks no consent leaves no consent record, whatever is typed', async () => {
+  const { chains, fx } = await askedConsent(null)
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer', 'A'))
+  expect(entries(fx)[0].status).toBe('withdrawn')
+  expect(consentFiles(fx)).toEqual([])
+  expect(noAnswerLogs(fx)).toEqual([])
+})
+
+test('a moved entry that carries the consent, withdrawn with the question asked again, is recorded too', async () => {
+  const chains = mounted()
+  const fx = fake()
+  const old = roundEntry('s-pred', 'Orch: belt', parseWait(answerOf(CONSENT_QUESTION, PRED_LINE))!, '2026-10-14T08:00:00.000Z', '2026-10-14T08:00:00.100Z')
+  const moved: RoundEntry = { ...old, session: 's-one', movedFrom: 's-pred', consent: CONSENT }
+  fx.files.set(`${ROUND}/${moved.id}.json`, JSON.stringify(moved) + '\n')
+  DECLARATIONS.turnStarted()
+  DECLARATIONS.declare({ kind: 'operator', blocks: 'E2E of thing#12' })
+  await drive(chains, 'turn.complete', fx.dollar, turnEnd(CONSENT_QUESTION))
+  const again = entries(fx).find(e => e.id !== moved.id)!
+  expect(again.consent).toBeUndefined()
+  await drive(chains, 'prompt.submit', fx.dollar, typed('composer', 'A'))
+  expect(entries(fx).map(e => e.status)).toEqual(['withdrawn', 'withdrawn'])
+  expect(consentFiles(fx)).toEqual([`${HOME}/.claude/consents/acme/thing/${moved.id}.json`])
+  expect(JSON.parse(fx.files.get(consentFiles(fx)[0])!)).toMatchObject({ entry: moved.id, answer: 'waive it, docs only', by: 'tab' })
 })

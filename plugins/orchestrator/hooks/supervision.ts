@@ -29,7 +29,7 @@ import { withDeadline, isDegradedPass, chainEntries, chainOwner, watchNumberOf, 
 import { typedByOperator } from './models-guard.ts'
 import { logArgv, moduleDirOf, LOG_TIMEOUT_MS } from './module-log.ts'
 import { configDirOf, gateThresholds } from '../core/env.ts'
-import { consentPath, consentRecordOf, parseConsentSubject, type Answerer } from '../core/consent-record.ts'
+import { answersChoice, consentPath, consentRecordOf, parseConsentSubject, type Answerer } from '../core/consent-record.ts'
 import { declaredConsent } from './wait.ts'
 import { isTemporary, staleTemporaries, removeArgv, withLockOver, writeAtomicOver, type StoreIo } from '../core/store-io.ts'
 import { commandsDirOf, isBare, isOwnCopy } from './short-names.ts'
@@ -2638,7 +2638,10 @@ async function withdrawEntry($: any, sessionId: string, name: string, held: { bl
     const written = await changeEntry($, path, current =>
       current && current.status === 'open' && current.session === sessionId ? { ...current, status: closed ? 'closed' : 'withdrawn', answer } : null)
     if (!written) await logLine($, `round: ${entry.id} was settled meanwhile, left as it is`)
-    else if (closed) settled.push({ entry, answer })
+    else {
+      if (closed) settled.push({ entry, answer })
+      await writeTabConsent($, entry, held.said ?? '', at)
+    }
   }
   if (direct.length === 0) await logLine($, `round: no open entry matched for ${name} since ${held.since ?? '?'}`)
   return settled
@@ -2665,6 +2668,20 @@ export async function writeConsent($: any, entry: RoundEntry, text: string, by: 
   } catch (err) {
     await logLine($, `round: the consent of ${entry.id} was not recorded: ${(err as Error).message}`)
   }
+}
+
+// The words the operator typed in the asking session's own tab, as the answer to an entry that
+// asks his consent: written as the pane's choice is (writeConsent, `by: 'tab'`), a choice letter
+// taken for that choice's text and any other words kept whole, when they answer one of the
+// question's choices (answersChoice). A prompt typed there can be any instruction: words that
+// answer none leave no record, and the log says so once.
+async function writeTabConsent($: any, entry: RoundEntry, typed: string, at: string): Promise<void> {
+  if (!entry.consent) return
+  if (!answersChoice(typed, entry.choices)) {
+    await logLine($, `round: the words typed for ${entry.id} answer none of its choices, no consent recorded`)
+    return
+  }
+  await writeConsent($, entry, typed, 'tab', at)
 }
 
 // A choice pressed in the coordinator's pane: the entry, read again so a question settled
