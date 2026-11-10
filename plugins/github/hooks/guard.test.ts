@@ -1106,6 +1106,7 @@ for (const [label, over] of [
   ['another repository', { subject: { kind: 'e2e-waiver', repo: 'acme/other', pr: 12 } }],
   ['an answer of 3 characters', { answer: 'oui' }],
   ['another contract version', { v: 2 }],
+  ['an unknown answerer', { by: 'someone' }],
 ] as const) {
   test('a consent record of ' + label + ' does not carry a waiver', async ($, on) => {
     const seen = await world($, on, consentWorld({ a: consent(over) }))
