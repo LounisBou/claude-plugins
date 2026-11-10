@@ -19,11 +19,15 @@ A spawn is not done until the host CLI is seen in `ps`.
 import argparse
 import asyncio
 import collections
+import contextlib
 import glob
+import io
 import json
 import logging
 import os
 import re
+import shlex
+import signal
 import subprocess
 import sys
 import uuid
@@ -362,12 +366,27 @@ def refuse_made(made, msg):
     A refusal used to say « the tab was closed » whatever the close did, and the « never
     started » refusal closed nothing at all and kept the tty to its stderr line: the
     operator was told of a failure over a tab still open, possibly holding a running agent
-    nobody would now stop."""
+    nobody would now stop.
+
+    The refusal is recorded in `made` before the close: an interrupt during that close then
+    finds what it interrupted, and a rotation does not take the session being closed for a
+    replacement it keeps.
+
+    The tty's write is guarded as `settle_stdout` guards it: a reader gone from stdout must not
+    lose the refusal to a traceback. Inside a rotation (`made["creating"]`) the refusal is the
+    rotation's to say, on its one line: it is raised, not printed."""
+    made["refusing"] = msg
     closed = close_made(made)
+    made["refused_closed"] = closed
     tty = made.get("tty") or ""
     if tty:
-        print(tty)
-        sys.stdout.flush()
+        try:
+            print(tty)
+            sys.stdout.flush()
+        except (OSError, ValueError, AttributeError):
+            mute_stdout()
+    if made.get("creating"):
+        raise SpawnFailed(msg)
     die("%s; %s" % (msg, closed_clause(closed, tty)))
 
 
@@ -388,6 +407,7 @@ def await_host(tty, dir_, launch_epoch, made, what):
         time.sleep(1)
         waited += 1
     if pid:
+        made["pid"] = pid
         print("%s: %s running on %s (pid %s)" % (what, HOST_CLI, tty, pid), file=sys.stderr)
         return
     transcript = find_transcript(dir_, launch_epoch)
@@ -593,6 +613,14 @@ class Unreachable(Exception):
         self.advice = advice
 
 
+# True while a rotation's replacement is being made: the terminal's own children (the tmux
+# client, the AppleScript runner) are then started in a session of their own, out of the
+# launcher's process group, so that an interrupt sent to that group (a Ctrl-C at the terminal)
+# reaches the launcher alone, which holds it until the creation returns. A client killed with
+# the group after the server made the window would leave a replacement nothing names.
+CHILDREN_APART = False
+
+
 def osascript_run(script, timeout=None):
     """One AppleScript under a deadline THIS process holds.
 
@@ -605,7 +633,8 @@ def osascript_run(script, timeout=None):
     timeout = PROBE_TIMEOUT if timeout is None else timeout
     try:
         proc = subprocess.Popen([OSASCRIPT, "-"], stdin=subprocess.PIPE,
-                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                start_new_session=CHILDREN_APART)
     except OSError as exc:
         return "error", str(exc)
     try:
@@ -711,8 +740,9 @@ def backend_chain():
     return (asked,)
 
 
-def ps_rows(tty):
+def ps_rows(tty, strict=False):
     """`(pid, command)` for every process on a tty, from `ps` or from the suite's stand-in.
+    A table that cannot be read reads as no process, or with `strict` raises.
 
     ORCHESTRATOR_PS_TABLE names a file that replaces `ps`, one `<tty> [<pid>] <command>`
     line per process; a table written to check a name carries no pid, so the pid is empty
@@ -738,6 +768,8 @@ def ps_rows(tty):
         out = subprocess.run(["ps", "-t", short, "-o", "pid=,command="],
                              capture_output=True, text=True, timeout=10).stdout
     except Exception:
+        if strict:
+            raise
         return []
     rows = []
     for line in out.splitlines():
@@ -799,11 +831,13 @@ def is_host_process(pid, command, names=None):
     return os.path.basename(words[0]) in (names if names is not None else host_cli_names())
 
 
-def host_clis_on(tty):
+def host_clis_on(tty, strict=False):
     """Every host CLI on a tty, in table order: each one's pid, or its command line where the
-    suite's table carries no pid. A session that runs a nested host CLI shows two."""
+    suite's table carries no pid. A session that runs a nested host CLI shows two. With
+    `strict`, a process table that cannot be read raises rather than reading as none."""
     names = host_cli_names()
-    return [pid or command for pid, command in ps_rows(tty) if is_host_process(pid, command, names)]
+    return [pid or command for pid, command in ps_rows(tty, strict)
+            if is_host_process(pid, command, names)]
 
 
 def host_cli_on(tty):
@@ -879,12 +913,17 @@ def host_identity(tty):
     return str(pid), state[0]
 
 
-def process_gone(pid, start):
+_READ = object()
+
+
+def process_gone(pid, start, state=_READ):
     """Whether the process `pid` started at `start` is gone: no longer in the table, its pid
     held by a process started at another time, or exited and only waiting for its parent to
     reap it (a zombie, or the « exiting » state the terminal's daemon leaves unreaped). A
-    table that could not be read does not say it is gone."""
-    state = process_state(pid)
+    table that could not be read does not say it is gone. `state` is a reading of
+    `process_state` already taken, so one reading answers both questions."""
+    if state is _READ:
+        state = process_state(pid)
     if state == UNREADABLE:
         return False
     if state is None or state[0] != start:
@@ -1150,7 +1189,6 @@ def end_host(pid, start, tty, what):
     for, then SIGTERM, then SIGKILL. True once the process table shows it gone. A process
     whose identity no longer matches is not signalled: it is gone, and its pid another's.
     When it returns False, `end_failure` says why."""
-    import signal
     _END_FAILURES.pop(str(pid), None)
     if wait_process_gone(pid, start, CLOSE_TIMEOUT):
         return True
@@ -1418,9 +1456,8 @@ def as_close(tty, expect):
         name = as_run(as_close_script(tty, False), "a title read")
         if not name:
             die("close: no session found on %s" % tty)
-        if stable_title(expect) not in stable_title(name):
-            die("close: refused: session on %s is titled '%s', which does not contain '%s'"
-                % (tty, name, expect))
+        refuse_title("close", tty, name, expect)
+    KILL_SENT.add(tty)
     name = as_run(as_close_script(tty, True), "a close")
     if not name:
         die("close: no session found on %s" % tty)
@@ -2538,6 +2575,7 @@ class ItermTerminal(Terminal):
                 # at its very first place, whatever tab happens to sit there today.
                 win, _, _ = await find_tab(app, place.anchor)
                 if win is None:
+                    made["unmade"] = True
                     die("spawn: no session found on %s" % place.anchor)
                 index = 0
             elif place.at == "beside":
@@ -2545,10 +2583,12 @@ class ItermTerminal(Terminal):
                 # and a window object is a cached copy (§14).
                 win, index = await anchor_position(app, place.anchor, place.side)
                 if win is None:
+                    made["unmade"] = True
                     die("spawn: no session found on %s" % place.anchor)
             else:
                 win = app.current_window
                 if win is None:
+                    made["unmade"] = True
                     die("spawn: iTerm2 has no current window")
             # select=False: the operator is working in another tab, and a spawn that pulls the
             # window to the new one interrupts them every time an agent is launched.
@@ -2757,7 +2797,7 @@ def tmux_call(args, env=None):
     runnable. `env` replaces the caller's environment, for a call that starts a server."""
     try:
         return subprocess.run([TMUX_BIN, "-u"] + list(args), capture_output=True, text=True,
-                              timeout=PROBE_TIMEOUT, env=env)
+                              timeout=PROBE_TIMEOUT, env=env, start_new_session=CHILDREN_APART)
     except subprocess.TimeoutExpired:
         raise TmuxError("timed out after %ds" % PROBE_TIMEOUT)
     except OSError as exc:
@@ -2778,9 +2818,22 @@ def tmux_out(args, what):
         done = tmux_call(args)
     except TmuxError as exc:
         die("%s: tmux %s: %s" % (what, args[0], exc))
+    if done.returncode < 0:
+        # Killed by a signal, the client says nothing of what the server did with the call.
+        die("%s: the tmux client of %s was killed by %s, so whether tmux carried it out is not "
+            "known: a window it was making may exist, and list shows it"
+            % (what, args[0], signal_name(-done.returncode)))
     if done.returncode != 0:
         die("%s: tmux refused %s: %s" % (what, args[0], tmux_refusal(done)))
     return done.stdout
+
+
+def signal_name(number):
+    """A signal's name, or its number when it has none."""
+    try:
+        return signal.Signals(number).name
+    except ValueError:
+        return "signal %d" % number
 
 
 def in_home_session():
@@ -2939,6 +2992,8 @@ class TmuxTerminal(Terminal):
                     killed = done.returncode == 0
                 except TmuxError:
                     killed = False
+                # Kept for a rotation's line, which the death below leaves to name it.
+                made.update(window=fields[0], window_killed=killed)
                 print("spawn: the window %s %s" % (fields[0], "was killed" if killed else
                                                    "could not be killed"), file=sys.stderr)
             die("spawn: tmux made a window and answered '%s', not its ids and tty"
@@ -2960,16 +3015,25 @@ class TmuxTerminal(Terminal):
                        "screen")
         return last_lines([l.rstrip() for l in out.split("\n")], lines)
 
-    def close(self, tty, expect):
-        """Guarded on the window's name, fixed at its making, rather than on a title the
-        host rewrites as it works. Window 0 is the orchestrator's place: only a takeover puts
-        a successor there, so a close of it is refused before anything is killed."""
-        pane = self.window_of(tty, "close")
+    def close_refusals(self, what, tty, expect):
+        """What a close of the window on `tty` refuses, read before anything is killed or
+        spawned, and the window when nothing is refused. `what` names the command that
+        speaks: a rotation reads it before its spawn, so a refusal leaves no replacement.
+
+        Guarded on the window's name, fixed at its making, rather than on a title the host
+        rewrites as it works. Window 0 is the orchestrator's place: only a takeover puts a
+        successor there, so a close of it is refused."""
+        pane = self.window_of(tty, what)
         if pane.index == "0":
-            refuse_window_zero("close", tty, pane.name)
+            refuse_window_zero(what, tty, pane.name)
         if expect and stable_title(expect) not in stable_title(pane.name):
-            die("close: refused: the window on %s is named '%s', which does not contain '%s'"
-                % (tty, pane.name, expect))
+            die("%s: refused: the window on %s is named '%s', which does not contain '%s'"
+                % (what, tty, pane.name, expect))
+        return pane
+
+    def close(self, tty, expect):
+        pane = self.close_refusals("close", tty, expect)
+        KILL_SENT.add(tty)
         self.kill(pane.window, "close")
         return self.stable_id(pane.window)
 
@@ -3102,8 +3166,8 @@ def refuse_window_zero(what, tty, name):
     """The refusal of a close or a rotation of window 0 of a home session, said before anything
     is killed or spawned: only a takeover puts a successor at index 0, and it is named."""
     die("%s: refused: the window on %s is window 0, the orchestrator's place in this home "
-        "session: a successor takes it with takeover --tty %s --expect-title \"%s\", which also "
-        "puts its own window at index 0" % (what, tty, tty, name))
+        "session: a successor takes it with takeover --tty %s --expect-title %s, which also "
+        "puts its own window at index 0" % (what, tty, shlex.quote(tty), shlex.quote(name)))
 
 
 # --- the orchestrator's home session ------------------------------------------------
@@ -3568,10 +3632,11 @@ def cmd_home_watch(argv):
                "ended it)", args.tty)
 
 
-def home_of_tab(tty):
+def home_of_tab(tty, strict=False):
     """The home server whose client runs on the tab `tty`, or "": read from the client's own
-    command line, which names its server with -L."""
-    for _, command in ps_rows(tty):
+    command line, which names its server with -L. With `strict`, a process table that cannot be
+    read raises rather than reading as no server."""
+    for _, command in ps_rows(tty, strict):
         words = command.split()
         if not words or os.path.basename(words[0]) != os.path.basename(TMUX_BIN):
             continue
@@ -3594,14 +3659,13 @@ def home_panes(socket):
     return [l.split() for l in done.stdout.splitlines() if len(l.split()) == 2], ""
 
 
-def end_home(socket, what, listed=None, tab="", bench=False):
-    """End a home server and prove it: no host left on any of its windows' ttys, and no tmux
-    server left on its socket. `(session id of window 0, the ttys it held)`. A server whose
-    window 0 session id cannot be read is NOT ended, and the death says why: a pause that
-    recorded no session would wake a fresh conversation, the orchestrator's own lost. `listed`
-    is `home_panes`' answer, when the caller has asked already. `tab` is the tab's tty, for the
-    line that says an end was not proved. A bench's home (`bench`) holds no conversation to
-    resume and has no watcher: window 0's session is not read, and the server is ended plainly."""
+def window0_session(what, socket, listed=None, bench=False):
+    """`(panes, session id of window 0)` of the home server `socket`, read and never changed:
+    a server whose window 0 session cannot be read dies, saying it was NOT ended, because a
+    pause that recorded no session would wake a fresh conversation, the orchestrator's own
+    lost. `listed` is `home_panes`' answer, when the caller has asked already. A rotation
+    reads it before its spawn, as the close it ends with reads it before the server is. A
+    bench's home (`bench`) holds no conversation to resume: window 0's session is not read."""
     panes, why = listed if listed is not None else home_panes(socket)
     session_id = ""
     if panes is not None:
@@ -3619,6 +3683,19 @@ def end_home(socket, what, listed=None, tab="", bench=False):
         die("%s: refused: the session of the orchestrator in window 0 of the home server %s "
             "cannot be read: %s; the server was NOT ended and the orchestrator stays where it "
             "is: its conversation would be lost" % (what, socket, why))
+    return panes, session_id
+
+
+def end_home(socket, what, listed=None, tab="", bench=False):
+    """End a home server and prove it: no host left on any of its windows' ttys, and no tmux
+    server left on its socket. `(session id of window 0, the ttys it held)`. A server whose
+    window 0 session id cannot be read is NOT ended, and the death says why: a pause that
+    recorded no session would wake a fresh conversation, the orchestrator's own lost. `listed`
+    is `home_panes`' answer, when the caller has asked already. `tab` is the tab's tty, for the
+    line that says an end was not proved, and marked in KILL_SENT before the server is ended.
+    A bench's home (`bench`) holds no conversation to resume and has no watcher: window 0's
+    session is not read, and the server is ended plainly."""
+    panes, session_id = window0_session(what, socket, listed, bench)
     ttys = [tty for _, tty in panes or []]
     # Read before the server is ended, as for a tab: a host the end of its pane does not end
     # is ended by its pid and start time.
@@ -3626,6 +3703,8 @@ def end_home(socket, what, listed=None, tab="", bench=False):
     if bench:
         kill_home(socket)
     else:
+        if tab:
+            KILL_SENT.add(tab)
         kill_watched_home(socket)
 
     def survives(tty):
@@ -3654,6 +3733,15 @@ def end_home(socket, what, listed=None, tab="", bench=False):
     return session_id, ttys
 
 
+def session_title(tty, what):
+    """The title of the iTerm2 session on `tty`, or None when there is none: a read, served
+    by the rung the close would be, and nothing closed. `what` names the command that reads
+    it, and speaks for it when a rung falls."""
+    return served_by(what, {
+        "api": lambda: iterm_title(tty),
+        "applescript": lambda: as_run(as_close_script(tty, False), "a title read") or None})
+
+
 def iterm_title(tty):
     """The name iTerm2 shows for the session on `tty`, or None when it has none there."""
     async def go(iterm2, connection):
@@ -3663,18 +3751,25 @@ def iterm_title(tty):
     return run(go)
 
 
+def refuse_home_title(what, tty, expect):
+    """The title check of a close of a tab that shows a home session, read-only: with no
+    `expect` there is nothing to compare, and the server is what the close is about. The title
+    read, or None when none was."""
+    if not expect:
+        return None
+    name = session_title(tty, what)
+    if name is None:
+        die("%s: no session found on %s" % (what, tty))
+    refuse_title(what, tty, name, expect)
+    return name
+
+
 def close_home_tab(tty, socket, expect, listed=None):
     """Close a tab that shows a home session: its title checked first, then the server
     ended, every window of it proved gone, then the tab if it outlived its client. Prints
     the close's contract line, then the server and the session window 0 ran, which a pause
     records for the wake."""
-    if expect:
-        name = iterm_title(tty)
-        if name is None:
-            die("close: no session found on %s" % tty)
-        if stable_title(expect) not in stable_title(name):
-            die("close: refused: session on %s is titled '%s', which does not contain '%s'"
-                % (tty, name, expect))
+    refuse_home_title("close", tty, expect)
     session_id, ttys = end_home(socket, "close", listed, tty)
     trace_home(socket, "server", "close", tty)
     deadline = time.time() + CLOSE_TIMEOUT
@@ -3683,6 +3778,7 @@ def close_home_tab(tty, socket, expect, listed=None):
             ITERM.close(tty, "")
             break
         time.sleep(0.3)
+    CLOSE_DONE.add(tty)
     print("closed 1 session on %s" % tty)
     print("home: ended the server %s and its %d window(s)%s"
           % (socket, len(ttys), ", session %s" % session_id if session_id else ""))
@@ -4463,9 +4559,8 @@ def pair_of_launch(args, auditor_successor, pair_from=""):
         "and effort are its orchestrator's to name")
 
 
-def cmd_spawn(argv, pair_from=""):
-    """`pair_from` is a rotation's: the source of the model and effort it passes on as flags,
-    read on the rotated agent's transcript, so the launch says where they came from."""
+def spawn_parser():
+    """The parser of `spawn`'s options, which `rotate` reads its refusals with too."""
     p = argparse.ArgumentParser(prog="spawn", add_help=False)
     p.add_argument("--dir")
     p.add_argument("--model", default="")
@@ -4500,7 +4595,17 @@ def cmd_spawn(argv, pair_from=""):
     p.add_argument("--drop-tool", dest="drop_tool", action="append", default=[])
     p.add_argument("--keep-synced-skills", dest="keep_synced_skills", action="store_true",
                    default=False)
-    args, unknown = p.parse_known_args(argv)
+    return p
+
+
+def cmd_spawn(argv, pair_from="", old_tty="", made=None):
+    """`pair_from` is a rotation's: the source of the model and effort it passes on as flags,
+    read on the rotated agent's transcript, so the launch says where they came from. `old_tty`
+    is a rotation's too: the session it replaces, named when what follows the verification
+    fails. So is `made`, filled as the terminal makes the new session, so that an interrupt
+    once it exists still knows what to name. Returns `made`, what the terminal recorded of the
+    new session, for `rotate` to name."""
+    args, unknown = spawn_parser().parse_known_args(argv)
     if unknown:
         die("spawn: unknown option %s" % unknown[0])
     args.title = current_name(args.title)
@@ -4997,7 +5102,8 @@ def cmd_spawn(argv, pair_from=""):
                                                     effort or "the host's default", pair_source),
           file=sys.stderr)
 
-    made = {"terminal": term}
+    made = {} if made is None else made
+    made["terminal"] = term
     if anchor == "leftmost":
         place = Place("first", own, side, args.auditor)
     elif anchor:
@@ -5008,32 +5114,50 @@ def cmd_spawn(argv, pair_from=""):
     # Before the tab exists, so no transcript older than this launch can be taken for its.
     launch_epoch = time.time()
     _, resumed_from = transcript_of(args.resume) if args.resume else ("", 0)
-    if home:
-        # The host runs in window 0 and the tab shows the server: what is verified is window
-        # 0's tty, and a refusal ends the server with the tab.
-        pane_tty = make_home(socket, title, args.dir, command, "spawn")
-        if home_no_tab():
-            made = {"terminal": NO_TAB, "home": socket, "tty": pane_tty}
-            print("spawn: home server %s, window 0 on %s, no tab: attach with %s -L %s attach"
-                  % (socket, pane_tty, TMUX_BIN, socket), file=sys.stderr)
+    # A rotation's interrupts wait for the creation to end: one in its middle would leave a
+    # tab or window made whose tty nothing names.
+    with interrupts_deferred(bool(old_tty)):
+        if old_tty:
+            # From here a replacement may exist: whatever ends the spawn is the rotation's to say,
+            # on its one line, the replacement named by its tty or, before one is known, by the
+            # name it was given.
+            made["creating"] = title
+        if home:
+            # The host runs in window 0 and the tab shows the server: what is verified is window
+            # 0's tty, and a refusal ends the server with the tab.
+            pane_tty = make_home(socket, title, args.dir, command, "spawn")
+            if home_no_tab():
+                made = {"terminal": NO_TAB, "home": socket, "tty": pane_tty}
+                print("spawn: home server %s, window 0 on %s, no tab: attach with %s -L %s attach"
+                      % (socket, pane_tty, TMUX_BIN, socket), file=sys.stderr)
+            else:
+                tab_tty, made = open_home_tab(socket, title, place.anchor, "spawn")
+                made.update(home=socket, tty=pane_tty)
+                print("spawn: home server %s, window 0 on %s, shown in the tab on %s"
+                      % (socket, pane_tty, tab_tty), file=sys.stderr)
+            new_tty, tab_id = pane_tty, ""
         else:
-            tab_tty, made = open_home_tab(socket, title, place.anchor, "spawn")
-            made.update(home=socket, tty=pane_tty)
-            print("spawn: home server %s, window 0 on %s, shown in the tab on %s"
-                  % (socket, pane_tty, tab_tty), file=sys.stderr)
-        new_tty, tab_id = pane_tty, ""
-    else:
-        # The stable id is written into the chain only once the session is verified running:
-        # a spawn that dies unverified must leave the chain as it found it, and a successor
-        # that never started must not take the predecessor's agents.
-        new_tty, tab_id = term.create(command, title, place,
-                                      effect if own and effect != "none" else "", made)
-    if made.get("error"):
-        refuse_made(made, "spawn: the tab was made, then the terminal failed: %s"
-                    % made["error"])
-    if not new_tty:
-        refuse_made(made, "spawn: the terminal returned no tty for the new tab")
-    made.setdefault("tty", new_tty)
+            # The stable id is written into the chain only once the session is verified running:
+            # a spawn that dies unverified must leave the chain as it found it, and a successor
+            # that never started must not take the predecessor's agents.
+            def create():
+                return term.create(command, title, place,
+                                   effect if own and effect != "none" else "", made)
+            if old_tty:
+                # The creation's own death (a timeout, a client killed, an error of the app's
+                # connection) is held back and raised with its words, for the rotation's line.
+                try:
+                    new_tty, tab_id = quietly(create)
+                except Unread as exc:
+                    raise SpawnFailed(str(exc))
+            else:
+                new_tty, tab_id = create()
+        if made.get("error"):
+            refuse_made(made, "spawn: the tab was made, then the terminal failed: %s"
+                        % made["error"])
+        if not new_tty:
+            refuse_made(made, "spawn: the terminal returned no tty for the new tab")
+        made.setdefault("tty", new_tty)
 
     # Before the verification below, which may wait or die: an auditor's place is settled as
     # soon as its tab exists, and said on stdout, where the orchestrator reads the launch.
@@ -5054,10 +5178,28 @@ def cmd_spawn(argv, pair_from=""):
                   file=sys.stderr)
         else:
             print(verify_mode(args.dir, launch_epoch, args.mode, model, made), file=sys.stderr)
-    apply_chain_plan(term, own, new_tty, tab_id, effect, args.resident)
-    print(new_tty)
+        made["verified"] = True
+    # From here the session runs: whatever fails names it, never on a traceback, and a rotation
+    # (`old_tty`, the session it replaces) leaves that old session as it is.
+    try:
+        apply_chain_plan(term, own, new_tty, tab_id, effect, args.resident)
+        print(new_tty)
+    except (Exception, SystemExit) as exc:
+        if isinstance(exc, SystemExit) and not exc.code:
+            raise
+        why = ("the error above" if isinstance(exc, SystemExit)
+               else str(exc) or type(exc).__name__)
+        runs = "runs on %s%s" % (new_tty, ", verified," if args.verify else "")
+        if old_tty:
+            # The rotation writes the line: what is left of the old session is read by the
+            # identity it had before the spawn, and no close is named of a tty the replacement
+            # may have been given.
+            raise AfterSpawn(new_tty, runs, why)
+        die("spawn: the session %s but what followed its spawn failed (%s); it is kept, its "
+            "chain entry may be missing" % (runs, why))
     if misplaced:
         sys.exit(misplaced)
+    return made
 
 
 # --- a bench opening ------------------------------------------------------------------
@@ -5321,6 +5463,14 @@ def stable_title(name):
     return current_name(name.lstrip().lstrip("".join(c for c in name if not (c.isalnum() or c.isspace()))).strip())
 
 
+def refuse_title(what, tty, name, expect):
+    """The refusal of a close whose expected words are not in the session's title. With no
+    `expect` there is nothing to compare."""
+    if expect and stable_title(expect) not in stable_title(name):
+        die("%s: refused: session on %s is titled '%s', which does not contain '%s'"
+            % (what, tty, name, expect))
+
+
 def close_made(made):
     """Close the session a spawn just made, by its own id; True only when it was closed.
 
@@ -5391,9 +5541,8 @@ async def close_session(app, tty, expect):
     if tab is None:
         die("close: no session found on %s" % tty)
     name = await sess.async_get_variable("autoName") or ""
-    if expect and stable_title(expect) not in stable_title(name):
-        die("close: refused: session on %s is titled '%s', which does not contain '%s'"
-            % (tty, name, expect))
+    refuse_title("close", tty, name, expect)
+    KILL_SENT.add(tty)
     await sess.async_close(force=True)
     return name
 
@@ -5412,6 +5561,16 @@ def close_note(tty, was_running):
     return ""
 
 
+# The ttys whose close went past its own checks: each close path, home tab, tab and window
+# alike, marks its tty here before its first signal or close. A close that fails after the mark
+# may have ended the session, its window or its host; one that fails before it refused with the
+# session as it was. The line of a rotation whose close failed says which.
+KILL_SENT = set()
+# The ttys whose close went through, marked before the « closed » line is printed: what fails
+# after, that line's own write included, fails after the session was closed.
+CLOSE_DONE = set()
+
+
 def close_tab(tty, expect):
     """The ordinary close of a tab or a window, proved on the process table and, where the
     terminal can name what it closed, on the terminal; prints the contract line."""
@@ -5419,6 +5578,7 @@ def close_tab(tty, expect):
     # Read before the close: once it is accepted, nothing else names the process to end.
     host = host_identity(tty)
     closed_id = term.close(tty, expect)
+    KILL_SENT.add(tty)
     # The close is not what was asked for, it is what the process table shows. The line
     # below used to print the moment the request was acknowledged, over a session that
     # kept running for minutes and had to be ended by hand (§46).
@@ -5444,6 +5604,79 @@ def close_tab(tty, expect):
         chain_drop_tab(closed_id)
 
 
+def close_host_tty(tty, strict=False):
+    """`(home server, its panes, host tty)` of a close of `tty`. A tab that shows a home
+    session runs no host of its own: the orchestrator runs in window 0 of the server behind
+    it, and that pane is what a close's proof is about. With `strict`, a process table that
+    cannot be read raises rather than reading as no home server."""
+    socket = home_of_tab(tty, strict)
+    listed = home_panes(socket) if socket else None
+    host_tty = tty
+    if listed and listed[0]:
+        host_tty = next((t for index, t in listed[0] if index == "0"), tty)
+    return socket, listed, host_tty
+
+
+def host_fate(host):
+    """What became of a host read before a rotation's spawn, by its pid and its start time:
+    "runs" while that same process runs, "ended" once it is gone (its pid free, or held by a
+    process started at another time), "unknown" when the process table could not be read."""
+    try:
+        state = process_state(host[0])
+    except Exception:
+        return "unknown"
+    if state == UNREADABLE:
+        return "unknown"
+    return "ended" if process_gone(host[0], host[1], state) else "runs"
+
+
+def host_unknown(host):
+    """The words for a host whose fate the process table could not tell: its kill is named
+    only for the process started when it was read, which the reader checks first."""
+    return ("whether its host (pid %s, started %s) still runs is not known (the process table "
+            "could not be read): if pid %s still shows that start time, end it with kill %s"
+            % (host[0], host[1], host[0], host[0]))
+
+
+def host_reading(host_tty, host):
+    """What became of the host a rotation's old session ran, `(gone, words, note)`: gone True,
+    False, or None when it cannot be told, the words of the rotation's line, and a note on
+    another host found on its tty, or "". A pid is named for a kill only when it is `host`,
+    the old host read before the spawn by its pid and start time, and still that process: what
+    else runs on its tty (a stranger given the tty, the replacement itself) is described and
+    never named for a kill, and with no host read before the spawn none is named at all."""
+    if not host:
+        try:
+            listed = host_clis_on(host_tty, strict=True)
+        except Exception:
+            return None, ("whether a host runs on %s is not known (the process table could not "
+                          "be read)" % host_tty), ""
+        if not listed:
+            return True, "no host is listed on %s" % host_tty, ""
+        return None, ("a host runs on %s, but the old one's pid was not read before the spawn, "
+                      "so it cannot be told from another session's: no kill is named"
+                      % host_tty), ""
+    fate = host_fate(host)
+    if fate == "unknown":
+        return None, host_unknown(host), ""
+    if fate == "runs":
+        return False, ("its host (pid %s) still runs on %s, and no command of this tool ends it: "
+                       "end it with kill %s" % (host[0], host_tty, host[0])), ""
+    try:
+        others = others_on(host_tty, host[0])
+    except Exception:
+        others = []
+    note = ("another host runs on %s now, not the one read before the spawn, and no step here "
+            "ends it" % host_tty if others else "")
+    return True, "its host ended", note
+
+
+def host_words(reading):
+    """A `host_reading`'s words with its note, as the rotation's line carries them."""
+    _, words, note = reading
+    return "%s; %s" % (words, note) if note else words
+
+
 def cmd_close(argv):
     p = argparse.ArgumentParser(prog="close", add_help=False)
     p.add_argument("--tty", dest="tty")
@@ -5461,13 +5694,7 @@ def cmd_close(argv):
         print("close=%s expect_title=%s" % (args.tty, args.expect))
         return
 
-    # A tab that shows a home session runs no host of its own: the orchestrator runs in window
-    # 0 of the server behind it, and that pane is what the proof below is about.
-    socket = home_of_tab(args.tty)
-    listed = home_panes(socket) if socket else None
-    host_tty = args.tty
-    if listed and listed[0]:
-        host_tty = next((tty for index, tty in listed[0] if index == "0"), args.tty)
+    socket, listed, host_tty = close_host_tty(args.tty)
     # Read BEFORE the close: what the proof below is a proof ABOUT.
     was_running = host_cli_on(host_tty)
     # And the same for the checkout the session works in: once it is gone nothing says where.
@@ -5490,6 +5717,7 @@ def cmd_close(argv):
             print(note, file=sys.stderr)
     else:
         close_tab(args.tty, args.expect)
+        CLOSE_DONE.add(args.tty)
         if note:
             print(note, file=sys.stderr)
         # The first line is the contract every skill, command and brief parses; the reading
@@ -5599,6 +5827,46 @@ def cmd_pair(argv):
     print("model=%s effort=%s" % (model, effort))
 
 
+def close_refusals(what, tty, expect):
+    """Everything a close of the session on `tty` refuses before it kills, read and never
+    changed, dying with the refusal in `what`'s name. A rotation spawns its replacement
+    first and closes the old session after: asked here before the spawn, a refusal leaves no
+    replacement running beside the session it was meant to replace. What only the close can
+    learn (a host that outlives its window) cannot be asked here. A dry run has no app and
+    no home server to ask: only a window of a home session, which tmux answers, is read.
+    Returns `(terminal, title, window)`: the terminal the session was found on, None for a home
+    tab; the title read (a window's name), or None when none was; a window's tmux id, or "".
+    A process table that cannot be read says nothing of whether the tab shows a home server:
+    the refusals of a home tab would then be skipped, so it refuses."""
+    try:
+        socket = home_of_tab(tty, strict=True)
+    except Exception as exc:
+        die("%s: refused: whether %s shows a home server cannot be read (%s): nothing was "
+            "spawned" % (what, tty, str(exc) or type(exc).__name__))
+    if socket:
+        name = None
+        if not DRY_RUN:
+            name = refuse_home_title(what, tty, expect)
+            # Read with no expected words too: a rotation guards the steps it prints on it.
+            if name is None:
+                name = session_title(tty, what)
+                if name is None:
+                    die("%s: no session found on %s" % (what, tty))
+            window0_session(what, socket)
+        return None, name, ""
+    term = terminal_for(tty)
+    if isinstance(term, TmuxTerminal):
+        pane = term.close_refusals(what, tty, expect)
+        return term, pane.name, pane.window
+    if DRY_RUN:
+        return term, None, ""
+    name = session_title(tty, what)
+    if name is None:
+        die("%s: no session found on %s" % (what, tty))
+    refuse_title(what, tty, name, expect)
+    return term, name, ""
+
+
 def cmd_rotate(argv):
     p = argparse.ArgumentParser(prog="rotate", add_help=False)
     p.add_argument("--old-tty", dest="old_tty")
@@ -5609,15 +5877,26 @@ def cmd_rotate(argv):
         die("rotate: --old-tty is required")
     # A rotation replaces an agent with a titled agent; none of these are that. A successor
     # is spawned with `spawn --successor`, not smuggled through the replacement a rotation
-    # makes, and neither is an auditor or the coordinator's own successor.
-    for flag in ("--successor", "--auditor", "--coordinator-successor", "--wake", "--open",
-                 "--title-free", "--no-remote-control"):
-        if flag in rest:
+    # makes, and neither is an auditor or the coordinator's own successor. Each is read as the
+    # spawn reads it, by what it sets and not by its spelling: the spawn takes a flag's prefix
+    # for the flag, and a refusal by exact words let --no-ver through as --no-verify.
+    try:
+        asked, _ = quietly(lambda: spawn_parser().parse_known_args(rest))
+    except Unread as exc:
+        why = str(exc)
+        why = why[len("spawn: error: "):] if why.startswith("spawn: error: ") else why
+        die("rotate: refused: the spawn's options cannot be read (%s): nothing was spawned" % why)
+    for flag, taken in (("--successor", asked.successor), ("--auditor", asked.auditor),
+                        ("--coordinator-successor", asked.coordinator_successor),
+                        ("--wake", asked.wake), ("--open", asked.open_),
+                        ("--title-free", asked.title_free),
+                        ("--no-remote-control", not asked.remote_control)):
+        if taken:
             die("rotate: refused: %s is not a rotation's (a rotation replaces an agent with "
                 "a titled agent; a successor is spawned with spawn --successor)" % flag)
     # The verification is the rotation's whole guarantee: without it the old agent is closed
     # on a replacement nobody saw start, and a replacement that never started leaves none.
-    if "--no-verify" in rest:
+    if not asked.verify:
         die("rotate: refused: --no-verify is not a rotation's (the old agent is closed only "
             "once its replacement is verified running)")
     # Nor is the tab it closes the coordinator's or an auditor's: neither is an agent of the
@@ -5639,14 +5918,17 @@ def cmd_rotate(argv):
                 "and is not rotated (pass --force to rotate it anyway)" % (args.old_tty, audit))
         print("rotate: forced: %s is an auditor's tab ('%s')" % (args.old_tty, audit),
               file=sys.stderr)
-    # Window 0 of a home session is the orchestrator's place. The close below refuses it, but
-    # only after the replacement has spawned, which would leave that replacement running with
-    # nothing to close the old window: the refusal is read here, before the spawn.
-    chosen = terminal()
-    if isinstance(chosen, TmuxTerminal):
-        pane = chosen.lookup(args.old_tty)
-        if pane is not None and pane.index == "0":
-            refuse_window_zero("rotate", args.old_tty, pane.name)
+    # The tab that shows the caller's own home server: the replacement is made as a window of
+    # that server, and the close of the tab ends the server, the replacement and the caller with
+    # it. Read before the spawn, so nothing is made.
+    refuse_own_home("rotate", args.old_tty)
+    # The close below refuses window 0 of a home session, a window of another session, a title
+    # that does not match, a session that does not exist, but only after the replacement has
+    # spawned, which would leave that replacement running with nothing to close the old
+    # session: every refusal the close can give is read here, before the spawn.
+    found_on, title, window = close_refusals("rotate", args.old_tty, args.expect)
+    # And who the old session is, read before the spawn too: after it, the tty may hold another.
+    old = old_session(args.old_tty, found_on, title, window, args.expect)
     # A rotation is a succession: given no pair, the replacement runs on the ROTATED agent's
     # live model and effort, read on that agent's transcript — not on its tier's, which its
     # orchestrator may have escalated since. A tier, or a model with its effort, is the
@@ -5665,12 +5947,662 @@ def cmd_rotate(argv):
     # The spawn verifies the replacement is RUNNING before anything is closed: a rotation
     # that killed the old agent on a spawn that never started would leave zero agents,
     # which is the one outcome this order exists to prevent.
-    cmd_spawn(rest, pair_from)
-    # The replacement works in the same checkout: a rotation deletes nothing.
-    close_args = ["--tty", args.old_tty, "--keep-checkout"]
-    if args.expect:
-        close_args += ["--expect-title", args.expect]
-    cmd_close(close_args)
+    # The interrupts are raised from before the replacement is made, and the spawn fills
+    # `spawned` as the terminal makes it: from its creation on, the replacement is closed only by
+    # the spawn's own refusal, never once the spawn has returned, and whatever fails, an error,
+    # a death of the spawn or an interrupt, ends on one line that names it.
+    # Whatever ends the span, stdout is settled last: the spawn printed its tty on it, and a
+    # reader gone would make the interpreter's own flush at exit fail and change the exit code.
+    made, after, spawned = None, None, {}
+    with interrupts_raised():
+        try:
+            try:
+                try:
+                    made = cmd_spawn(rest, pair_from, args.old_tty, made=spawned)
+                except AfterSpawn as exc:
+                    made, after = {"tty": exc.tty}, exc
+                except (Exception, SystemExit) as exc:
+                    # Before the creation began nothing was made: the spawn's refusal stands.
+                    if not spawned.get("creating") or (isinstance(exc, SystemExit)
+                                                       and not exc.code):
+                        raise
+                    spawn_failed(spawned, old, exc)
+                finish_rotation(made, old, after)
+            except (KeyboardInterrupt, Interrupted) as exc:
+                hold_signals()
+                name = "SIGINT" if isinstance(exc, KeyboardInterrupt) else str(exc)
+                if made is None:
+                    spawn_interrupted(spawned, old, name)
+                refuse_recycled(made, old, after)
+                late_refusal(made, old, False, "interrupted by %s" % name, interrupted=True)
+        finally:
+            settle_stdout()
+
+
+class SpawnFailed(Exception):
+    """A rotation's spawn that failed once its replacement may exist, with the reason in the
+    spawn's words: the line is the rotation's to write, naming both sessions."""
+
+    def __init__(self, why):
+        super().__init__(why)
+        self.why = why
+
+
+class AfterSpawn(Exception):
+    """A rotation's spawn that failed once its replacement was verified running: the line is the
+    rotation's to write, with what is left of the old session."""
+
+    def __init__(self, tty, runs, why):
+        super().__init__(why)
+        self.tty, self.runs, self.why = tty, runs, why
+
+
+class Interrupted(BaseException):
+    """SIGTERM or SIGHUP, raised where it lands once a rotation's replacement runs, so that the
+    rotation still writes its line. A BaseException, as KeyboardInterrupt is: no `except
+    Exception` of a close takes it for a failure of its own."""
+
+
+@contextlib.contextmanager
+def interrupts_raised():
+    """SIGTERM and SIGHUP raised as `Interrupted` for the span of a rotation's spawn and close,
+    SIGINT left to raise its KeyboardInterrupt; the handlers found are put back after, whatever
+    ends the span. A signal the caller ignores (a hangup under nohup) stays ignored. Only the
+    main thread can set them: elsewhere nothing is changed."""
+    saved = {}
+    def raise_it(signum, frame):
+        raise Interrupted(signal.Signals(signum).name)
+    try:
+        for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            saved[sig] = signal.getsignal(sig)
+        for sig in (signal.SIGTERM, signal.SIGHUP):
+            if saved[sig] != signal.SIG_IGN:
+                signal.signal(sig, raise_it)
+    except ValueError:
+        pass
+    try:
+        yield
+    finally:
+        put_back(saved)
+
+
+@contextlib.contextmanager
+def interrupts_deferred(active):
+    """SIGINT, SIGTERM and SIGHUP held back while a rotation's replacement is being made, then
+    raised through the handlers found once it is made and its tty known. A span that ends on a
+    death drops what it held, the death being what is said. Nothing is held when not `active`,
+    nor outside the main thread. The terminal's children run apart from the launcher's process
+    group for the span (CHILDREN_APART), so that a signal sent to that group is held here and
+    does not kill them halfway."""
+    global CHILDREN_APART
+    saved, pending = {}, []
+    if active:
+        try:
+            for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+                saved[sig] = signal.getsignal(sig)
+                signal.signal(sig, lambda signum, frame: pending.append(signum))
+        except ValueError:
+            pass
+    apart = CHILDREN_APART
+    CHILDREN_APART = apart or bool(active)
+    try:
+        yield
+    finally:
+        CHILDREN_APART = apart
+        put_back(saved)
+    if pending:
+        signal.raise_signal(pending[0])
+
+
+def put_back(saved):
+    """The signal handlers in `saved`, put back; one that cannot be set is left."""
+    for sig, handler in saved.items():
+        try:
+            signal.signal(sig, handler)
+        except (ValueError, TypeError):
+            pass
+
+
+def hold_signals():
+    """Ignore the interrupts while a rotation's line is read and written: an interrupt then
+    would leave it half-written. `interrupts_raised` puts the handlers back."""
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        try:
+            signal.signal(sig, signal.SIG_IGN)
+        except ValueError:
+            pass
+
+
+def mute_stdout():
+    """Point stdout at the null device once a write to it failed on a reader gone: the
+    interpreter flushes stdout again at exit, and that flush would fail too, print its own
+    complaint and change the exit status."""
+    try:
+        null = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(null, sys.stdout.fileno())
+        os.close(null)
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
+def settle_stdout():
+    """Flush stdout, and mute it when its reader is gone (`mute_stdout`): what it holds then
+    goes to the null device at exit instead of failing a second time."""
+    try:
+        sys.stdout.flush()
+    except (OSError, ValueError, AttributeError):
+        mute_stdout()
+
+
+def refuse_own_home(what, tty):
+    """Refuse the rotation of the tab that shows the caller's own home server: the replacement
+    is made as a window of that server, and a close of the tab ends the server, every window
+    of it with the replacement, and the caller in window 0. A caller in no tmux pane has no
+    server of its own; for one that has, a tab whose processes cannot be read is refused too,
+    for it may be that server's."""
+    own = os.path.basename(os.environ.get("TMUX", "").split(",")[0]) if tmux_owner() else ""
+    if not own:
+        return
+    try:
+        socket = home_of_tab(tty, strict=True)
+    except Exception as exc:
+        die("%s: refused: whether %s shows this session's own home server %s cannot be read "
+            "(%s): nothing was spawned" % (what, tty, own, str(exc) or type(exc).__name__))
+    if socket == own:
+        die("%s: refused: %s is the tab that shows this session's own home server %s, where the "
+            "replacement would be made as a window: the close of that tab ends the server, the "
+            "replacement and this session with it" % (what, tty, socket))
+
+
+class Unread(Exception):
+    """A reading of a rotation's old session that could not be made, with the reason."""
+
+
+def quietly(read):
+    """`read()`, its stderr kept back while it runs: a death of its own becomes `Unread` with
+    its words, for the rotation's one line to carry; what a read that succeeded said is passed
+    on. Interrupts go through."""
+    held = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(held):
+            value = read()
+    except (Exception, SystemExit) as exc:
+        said = [l for l in held.getvalue().splitlines() if l.strip()]
+        why = said[-1] if isinstance(exc, SystemExit) and said else (str(exc) or
+                                                                   type(exc).__name__)
+        for prefix in ("ERROR: ", "rotate: "):
+            if why.startswith(prefix):
+                why = why[len(prefix):]
+        raise Unread(why.rstrip(". "))
+    sys.stderr.write(held.getvalue())
+    return value
+
+
+def session_id_on(tty, what):
+    """The app's id of the session on `tty`, "" when it has none there, None when no rung
+    gave one. Read by the API rung alone: the AppleScript rung names no session."""
+    return served_by(what, {"api": lambda: ITERM.identity(tty)[0]})
+
+
+def old_session(tty, found_on, title, window, expect):
+    """Who a rotation's old session is, read before the spawn: after it, its tty may have been
+    handed to another session, and a reading of « what is on the tty » then would take that one
+    for it. A window of a home session by its tmux id; a tab, a home tab included, by the app's
+    id of its session or, when the app gives none, by its title, on which its close is then
+    guarded. Its host's tty and its host by pid and start time, for the same reason. A reading
+    that fails refuses the rotation, nothing spawned, and so does a tab with neither an id nor a
+    title that holds a word character: no close of it could be guarded once the replacement
+    runs."""
+    old = {"tty": tty, "host_tty": tty, "host": None, "closing": False, "term": found_on,
+           "window": window, "session": "", "why": "", "expect": expect,
+           "title": stable_title(expect or title or "")}
+    if DRY_RUN:
+        return old
+    try:
+        _, _, old["host_tty"] = close_host_tty(tty, strict=True)
+        old["host"] = host_identity(old["host_tty"])
+    except Exception as exc:
+        die("rotate: refused: the old session on %s cannot be read before the spawn (%s): "
+            "nothing was spawned" % (tty, str(exc) or type(exc).__name__))
+    if window:
+        return old
+    try:
+        sid = quietly(lambda: session_id_on(tty, "rotate"))
+    except Unread as exc:
+        sid, old["why"] = None, str(exc)
+    if sid == "":
+        die("rotate: no session found on %s" % tty)
+    if sid:
+        old["session"] = sid
+        return old
+    old["why"] = old["why"] or "the app gave no id for it"
+    if not re.search(r"\w", old["title"]):
+        try:
+            name = quietly(lambda: session_title(tty, "rotate"))
+        except Unread as exc:
+            die("rotate: refused: the session on %s can be told from another neither by its id "
+                "(%s) nor by its title (%s): nothing was spawned" % (tty, old["why"], exc))
+        if name is None:
+            die("rotate: no session found on %s" % tty)
+        old["title"] = stable_title(name)
+        if not re.search(r"\w", old["title"]):
+            die("rotate: refused: the session on %s can be told from another neither by its id "
+                "(%s) nor by its title ('%s'), which holds no word a close could be guarded on: "
+                "nothing was spawned" % (tty, old["why"], name))
+    return old
+
+
+def presence(old):
+    """What is on the old session's tty now: `(state, words)`. « same », the window or session
+    read before the spawn, named in the words; « gone », nothing there; « other », another
+    session, named; « untold », a session whose identity was never read (the words are its
+    title); « unread », with the reason."""
+    tty = old["tty"]
+
+    def read():
+        if old["window"]:
+            term = old["term"]
+            pane = next((p for p in term.panes(every=True) if p.tty == tty), None)
+            if pane is None:
+                return "gone", ""
+            if pane.window == old["window"]:
+                old["named"] = stable_title(pane.name)
+                return "same", "window %s" % pane.window
+            return "other", "window %s, named '%s'" % (pane.window, pane.name)
+        if old["session"]:
+            sid = session_id_on(tty, "rotate")
+            if sid is None:
+                return "unread", "the app gave no id for the session on it"
+            if not sid:
+                return "gone", ""
+            if sid == old["session"]:
+                return "same", "session %s" % sid
+            return "other", "session %s" % sid
+        name = session_title(tty, "rotate")
+        return ("gone", "") if name is None else ("untold", name)
+    try:
+        return quietly(read)
+    except Unread as exc:
+        return "unread", str(exc)
+
+
+def old_identity(old):
+    """The old session's identity as it was read before the spawn, in the line's words."""
+    return "window %s" % old["window"] if old["window"] else "session %s" % old["session"]
+
+
+def spawn_interrupted(spawned, old, name):
+    """A rotation interrupted by `name` inside its spawn. Before the replacement was made,
+    nothing was. Once it was, it is kept, verified or not, and the line names both."""
+    tty = spawned.get("tty")
+    if not tty:
+        hold_signals()
+        die("rotate: the rotation was interrupted by %s before its replacement was made: nothing "
+            "was spawned, and the old session on %s was left as it was" % (name, old["tty"]))
+    if spawned.get("refusing"):
+        refused_interrupted(spawned, old, name)
+    refuse_recycled(spawned, old, None)
+    late_refusal(spawned, old, False, "", lead=(
+        "the rotation was interrupted by %s during the spawn, once its replacement was made on "
+        "%s, so the old session on %s was not closed" % (name, tty, old["tty"])), kept=(
+        "the replacement runs on %s, verified, and is kept, its chain entry may be missing"
+        if spawned.get("verified") else "the replacement made on %s is kept, though whether it "
+        "started was not verified, and its chain entry may be missing") % tty,
+        unverified=not spawned.get("verified"))
+
+
+def spawn_failed(spawned, old, exc):
+    """A rotation whose spawn failed by `exc` once its replacement may exist: an error or a death
+    inside the creation (a timeout, a client killed, the app's connection lost), the spawn's own
+    refusal of what it made, or anything after. A replacement the spawn refused and closed leaves
+    the old session the one agent, untouched, and so does a creation that made nothing or whose
+    window was killed. Otherwise the replacement is kept, named by its tty or, before one was
+    known, by the id or the name it was made with. The old session's step is given only with
+    the replacement's tty, to take once the replacement is seen running: that start was never
+    verified."""
+    hold_signals()
+    if isinstance(exc, BrokenPipeError):
+        mute_stdout()
+    tty = spawned.get("tty") or ""
+    why = (exc.why if isinstance(exc, SpawnFailed) else "the spawn's error above"
+           if isinstance(exc, SystemExit) else str(exc) or type(exc).__name__)
+    for prefix in ("spawn: ", "refused: "):
+        if why.startswith(prefix):
+            why = why[len(prefix):]
+    refused = bool(spawned.get("refusing"))
+    if refused and spawned.get("refused_closed"):
+        die("rotate: the spawn refused the replacement it made%s (%s) and closed it; the old "
+            "session on %s was not touched, and nothing is left to close"
+            % (" on %s" % tty if tty else "", why, old["tty"]))
+    if tty:
+        refuse_recycled(spawned, old, None)
+        lead = ("the spawn refused the replacement it made on %s (%s) and could not close it"
+                % (tty, why) if refused else
+                "the spawn failed once its replacement was made on %s (%s)" % (tty, why))
+        kept = ("the replacement made on %s is kept, though %s, and its chain entry may be "
+                "missing" % (tty, "it was refused" if refused else
+                             "whether it started was not verified"))
+        late_refusal(spawned, old, False, "", lead="%s, so the old session on %s was not closed"
+                     % (lead, old["tty"]), kept=kept, unverified=True)
+    # No tty: the replacement, if any, carries the old session's title, and a step taken on what
+    # list shows under it could end the only agent. Nothing that ends the old session is given.
+    if spawned.get("unmade"):
+        die("rotate: the spawn failed before its replacement was made (%s): nothing was made, and "
+            "the old session on %s was left as it was" % (why, old["tty"]))
+    window, tab = spawned.get("window") or "", spawned.get("tab_id") or ""
+    if window and spawned.get("window_killed"):
+        die("rotate: the spawn failed once tmux made the window %s for its replacement (%s), and "
+            "that window was killed: nothing of the replacement is left, and the old session on "
+            "%s was left as it was" % (window, why, old["tty"]))
+    name = shlex.quote(spawned.get("creating") or "")
+    made_one = "the window %s" % window if window else "the tab %s" % tab if tab else ""
+    kept = ("%s it made, named %s, may still run, which list shows" % (made_one, name) if made_one
+            else "a window may exist, named %s, which list shows" % name)
+    die("rotate: the spawn failed while its replacement was being made (%s), so the old session "
+        "on %s was not closed; %s; the old session is left as it was, and no step here ends it "
+        "while no replacement's tty is known" % (why, old["tty"], kept))
+
+
+def refused_interrupted(made, old, name):
+    """A rotation interrupted by `name` while its spawn closed the session it had just made and
+    refused (it never started, or came up in another mode): that session is no replacement, the
+    close of it was under way, and the old session was never touched. An interrupt that lands
+    once that close returned says what it did. The close step printed is guarded on the title
+    the session was made with: the tty may be given to another session once the close went
+    through."""
+    hold_signals()
+    if "refused_closed" in made:
+        spawn_failed(made, old, SpawnFailed(made["refusing"]))
+    tty = made["tty"]
+    why = made["refusing"]
+    for prefix in ("spawn: ", "refused: "):
+        if why.startswith(prefix):
+            why = why[len(prefix):]
+    title = stable_title(made.get("creating") or "")
+    step = ("close it with close --tty %s --expect-title %s --keep-checkout"
+            % (shlex.quote(tty), shlex.quote(title)) if re.search(r"\w", title) else
+            "no close of it is named, for its title holds no word a close could be guarded on")
+    die("rotate: the rotation was interrupted by %s while the spawn closed the replacement it "
+        "made on %s, which it refused (%s): whether that close went through is not known: if "
+        "list still shows a session on %s, %s; the old session on %s was not touched"
+        % (name, tty, why, tty, step, old["tty"]))
+
+
+def refuse_recycled(made, old, after):
+    """A tty is handed to another session once its own has let it go: a replacement given the
+    old session's tty means that session is no longer on it, and a close of that tty would end
+    the replacement. So with the tty its host ran on, window 0's behind a home tab: that host is
+    gone, and what runs there now is the replacement's. Nothing is closed then, no kill is
+    named, and the line says why."""
+    tty, host_tty = old["tty"], old["host_tty"]
+    new_tty = (made or {}).get("tty") or ""
+    failed = ("; what followed its spawn failed too (%s): its own chain entry may be missing"
+              % after.why if after else "")
+    if new_tty and new_tty == host_tty and host_tty != tty:
+        hold_signals()
+        die("rotate: the replacement was given %s, the tty the host of the old session on %s ran "
+            "on: that host is no longer on it, so nothing was closed, for a kill of what runs on "
+            "%s would end the replacement; the replacement runs on %s and is kept, and the tab "
+            "on %s and the chain entry of the old session are left%s"
+            % (new_tty, tty, new_tty, new_tty, tty, failed))
+    if new_tty and new_tty == tty:
+        hold_signals()
+        die("rotate: the replacement was given %s, the tty of the old session on %s: that "
+            "session is no longer on it, so nothing was closed, for a close --tty %s would end "
+            "the replacement; the replacement runs on %s and is kept, and the chain entry of "
+            "the old session is left%s" % ((tty,) * 4 + (failed,)))
+
+
+def finish_rotation(made, old, after):
+    """The close of a rotation's old session, once its replacement runs. Once the spawn has
+    returned, the replacement is never closed: a recycled tty, a spawn that failed after its
+    verification, an old session no longer on its tty, a close that refuses, fails or raises,
+    each ends on one `rotate:` line."""
+    tty = old["tty"]
+    refuse_recycled(made, old, after)
+    if after:
+        late_refusal(made, old, False, "", lead=(
+            "the replacement %s but what followed its spawn failed (%s), so the old session on "
+            "%s was not closed" % (after.runs, after.why, tty)),
+            kept="the replacement is kept, its chain entry may be missing")
+    # The old session is closed only while the session read before the spawn is still on its
+    # tty: one that left it, and a stranger given it since, are not.
+    if (old["window"] or old["session"]) and not DRY_RUN:
+        reading = presence(old)
+        state, words = reading
+        if state == "gone":
+            late_refusal(made, old, False, "", reading=reading, lead=(
+                "the old session on %s was not closed: its window or tab is gone since the "
+                "spawn" % tty))
+        if state == "other":
+            late_refusal(made, old, False, "", reading=reading, lead=(
+                "the old session on %s was not closed: %s now holds another session (%s), not "
+                "the %s read before the spawn" % (tty, tty, words, old_identity(old))))
+        if state == "unread":
+            late_refusal(made, old, False, "", reading=reading, lead=(
+                "the old session on %s could not be read after the spawn (%s), so it was not "
+                "closed" % (tty, words)))
+    # A tab with no id is known by its title alone, which a stranger given its tty may carry too:
+    # once the old host read before the spawn has ended, nothing tells the session on it from
+    # another's, and nothing is closed.
+    if not (old["window"] or old["session"]) and not DRY_RUN and untold_left(old):
+        late_refusal(made, old, False, "", lead=(
+            "the old session on %s was not closed: its tab is known by its title alone, and its "
+            "host read before the spawn has ended" % tty))
+    # The replacement works in the same checkout: a rotation deletes nothing. A session whose
+    # identity was never read is closed only while its title holds the one it had.
+    close_args = ["--tty", tty, "--keep-checkout"]
+    if old["expect"]:
+        close_args += ["--expect-title", old["expect"]]
+    elif old["title"] and not (old["window"] or old["session"]) and not DRY_RUN:
+        close_args += ["--expect-title", old["title"]]
+    old["closing"] = True
+    try:
+        cmd_close(close_args)
+    except SystemExit as exc:
+        if not exc.code:
+            raise
+        late_refusal(made, old, True, "")
+    except Exception as exc:
+        if isinstance(exc, BrokenPipeError):
+            mute_stdout()
+        late_refusal(made, old, False, str(exc) or type(exc).__name__)
+
+
+def late_refusal(made, old, refused, error, interrupted=False, lead="", reading=None,
+                 kept="", unverified=False):
+    """A rotation whose old session was not closed after its replacement was spawned, by a
+    refusal its close printed itself (`refused`), by `error`, by an interrupt, or for `lead`.
+    A replacement whose start was not verified (`unverified`) is to be checked before the old
+    session's step is taken: with none running, that step would leave no agent.
+    Once the spawn has returned, the replacement is never closed, whatever the close did: two
+    agents can be recovered by hand, none cannot. The rotation dies with one line on stderr that names both
+    sessions, what the close of the old one did, and the step the tool accepts to finish by
+    hand. Nothing raised here escapes: each reading of the old session says what it could not
+    read, and the interrupts are held until the line is written."""
+    hold_signals()
+    tty = (made or {}).get("tty") or "the tty the spawn printed"
+    old_tty = old["tty"]
+    cause = " (%s)" % error if error else ""
+    kept = kept or "the replacement runs on %s and is kept" % tty
+    if lead:
+        pass
+    elif not old["closing"]:
+        lead = ("the rotation was %s after the spawn, before the close of the old session on %s, "
+                "so it was not closed" % (error, old_tty) if interrupted else
+                "the old session on %s could not be read after the spawn%s, so it was not closed"
+                % (old_tty, cause))
+    elif old_tty in CLOSE_DONE:
+        die("rotate: the old session on %s was closed, but what followed failed%s; %s; nothing "
+            "left to close" % (old_tty, cause, kept))
+    elif (refused or interrupted) and old_tty not in KILL_SENT:
+        lead = ("the old session on %s was not closed: its close %s before it ended anything%s"
+                % (old_tty, "was %s" % error if interrupted else "refused",
+                   "" if interrupted else cause))
+    else:
+        lead = "the close of the old session on %s failed%s" % (old_tty, cause)
+    steps = old_steps(old, reading)
+    if unverified:
+        steps = "%s before ending the old session: %s" % (replacement_check(made or {}), steps)
+    die("rotate: %s; %s; %s" % (lead, kept, steps))
+
+
+def replacement_check(made):
+    """How to check that a replacement whose start was not verified runs, in the rotation's words:
+    by its host's pid, the spawn's or the one on its tty as the line is written, for a verify of
+    the tty alone passes any host on it, a stranger given that tty included."""
+    tty = made.get("tty") or ""
+    pid = made.get("pid")
+    if not pid:
+        try:
+            pid = next(iter(host_clis_on(tty)), None)
+        except Exception:
+            pid = None
+    if pid:
+        return "check that it runs with verify --tty %s --pid %s" % (shlex.quote(tty), pid)
+    return ("no host was seen on %s as this line was written: check that the replacement runs "
+            "there, which list shows," % tty)
+
+
+def old_steps(old, reading=None):
+    """What is left of a rotation's old session after a close that did not go through, in the
+    words of the rotation's line, with the step that ends each part and nothing else: a close
+    of its tty while the window or session read before the spawn is still on it, guarded on its
+    name or title, and for a tab the kill of its host should that title have been rewritten; a
+    kill of its host's pid when no window is left and a host lingers; nothing when both are
+    gone. A tty that now holds another session gets no step, and only the old host is named
+    then, by the pid read before the spawn; nor does a tty another host was just seen on, a tab
+    known by its title alone whose old host has ended, or an unread one whose host was never
+    read while one may run there. A host the close of the window does not end is read too: the
+    window or tab gone or unread, or a home tab, whose host runs in window 0. Every close named
+    keeps the checkout, which the replacement works in, and every value a step carries is quoted
+    for the shell, so the step is safe to paste. `reading` is `presence`'s, when it was just
+    taken."""
+    tty = old["tty"]
+    q = shlex.quote
+    state, words = reading or presence(old)
+    guard = " --expect-title %s" % q(old["title"]) if old["title"] else ""
+    if state == "other":
+        return ("%s; its window or tab is gone, and its chain entry is left; no close of %s is "
+                "to be made: it would end the session now on it" % (old_host(old), tty))
+    if state == "same":
+        # A window keeps the name its spawn gave it, read again with its id just now; a tab's
+        # title is the one read before the spawn. The step is guarded on it, so the tty taken
+        # later by another session is refused. A name or title of glyphs alone guards nothing:
+        # the host read before the spawn is then the one thing named.
+        named = (old.get("named") or old["title"]) if old["window"] else old["title"]
+        if not named:
+            return untitled_steps(old)
+        step = ("its window or tab is still there, the same %s as before the spawn: close it with "
+                "close --tty %s --expect-title %s --keep-checkout (its chain entry is left for "
+                "that close)" % (words, q(tty), q(named)))
+    elif state == "untold":
+        left = untold_left(old)
+        if left:
+            return ("%s; a session titled '%s' is on %s, and the old one's id could not be read "
+                    "before the spawn (%s): nothing tells it from another session's, so no close "
+                    "of %s is named; its chain entry is left" % (left, words, tty, old["why"], tty))
+        step = ("a session titled '%s' is on %s, and the old one's id could not be read before "
+                "the spawn (%s): close it with close --tty %s%s --keep-checkout, which closes it "
+                "only while its title holds the old one's (its chain entry is left for that close)"
+                % (words, tty, old["why"], q(tty), guard))
+    if state in ("same", "untold"):
+        # A home tab's close ends its server and window 0's host with it: the close is its step,
+        # alone, unless that close began and left the host running. A tab's title is its host's
+        # to rewrite, which makes the guarded close refuse: the kill of that host follows.
+        if old["host_tty"] == tty or tty not in KILL_SENT:
+            return step + (retitled_step(old) if not old["window"] else "")
+        return "%s; %s" % (host_words(host_reading(old["host_tty"], old["host"])), step)
+    reading = host_reading(old["host_tty"], old["host"])
+    gone, host = reading[0], host_words(reading)
+    if state == "gone":
+        if gone is True:
+            return ("its window or tab and its host are gone: nothing left to close (its chain "
+                    "entry is left)%s" % ("; %s" % reading[2] if reading[2] else ""))
+        return "%s; its window or tab is gone, and its chain entry is left" % host
+    if reading[2]:
+        # Another host was just seen on the tty: a title guard is a substring match, and a
+        # rotation's titles are alike, so no close of that tty is named at all.
+        return ("%s; whether its window or tab is still there could not be read (%s), and "
+                "another host runs on %s: no close of %s is named; its chain entry is left"
+                % (host, words, old["host_tty"], tty))
+    if not old["host"] and gone is None:
+        # No host was read before the spawn, and one may run on the tty now: it cannot be told
+        # from another session's, so no close is named either.
+        return ("%s; whether its window or tab is still there could not be read (%s), and nothing "
+                "tells the session on %s from another's: no close of %s is named; its chain entry "
+                "is left" % (host, words, tty, tty))
+    if not guard:
+        return ("%s; whether its window or tab is still there could not be read (%s), and its title "
+                "holds no word a close could be guarded on: no close of %s is named; its chain "
+                "entry is left" % (host, words, tty))
+    return ("%s; whether its window or tab is still there could not be read (%s): if it is, close "
+            "it with close --tty %s%s --keep-checkout; its chain entry is left"
+            % (host, words, q(tty), guard))
+
+
+def untold_left(old):
+    """For an old session known by its title alone: the words of its host's fate when the host
+    read before the spawn has ended, a stranger seen on its tty described and never named for a
+    kill; "" while it runs, or when none was read."""
+    if not old["host"]:
+        return ""
+    reading = host_reading(old["host_tty"], old["host"])
+    return host_words(reading) if reading[0] is True else ""
+
+
+def untitled_steps(old):
+    """What is left of an old session with no identity a close could be guarded on, a window
+    named with glyphs alone or a tab titled so, in the rotation's line: no close of its tty,
+    which nothing tells from another session's; its host alone, by the pid and start time read
+    before the spawn."""
+    left = "its %s and its chain entry are left" % ("window" if old["window"] else "tab")
+    host = old["host"]
+    if not host:
+        return "no host of it was read before the spawn, so no kill is named; %s" % left
+    fate = host_fate(host)
+    if fate == "unknown":
+        return "%s; %s" % (host_unknown(host), left)
+    if fate == "ended":
+        return "its host (pid %s) read before the spawn has ended; %s" % (host[0], left)
+    return ("end the old session alone with kill %s, its host (pid %s) read before the spawn, "
+            "which still runs; %s" % (host[0], host[0], left))
+
+
+def retitled_step(old):
+    """The step that ends a rotation's old session alone whatever its title reads now, after a
+    close guarded on its title: a host that rewrote that title during the spawn makes the close
+    refuse. A kill of the host by the pid read before the spawn, while the process started then
+    still runs; "" when no pid was read or that process has ended."""
+    host = old["host"]
+    if not host:
+        return ""
+    fate = host_fate(host)
+    if fate == "unknown":
+        return "; should that close refuse on a title rewritten since, %s" % host_unknown(host)
+    if fate == "ended":
+        return ""
+    return ("; should that close refuse on a title rewritten since, end the old session alone "
+            "with kill %s, its host (pid %s) read before the spawn, which still runs"
+            % (host[0], host[0]))
+
+
+def old_host(old):
+    """The old host, when another session holds the old tty: by the pid and start time read
+    before the spawn, and never by what runs on that tty, which is the other session's."""
+    if old["host_tty"] != old["tty"]:
+        return host_words(host_reading(old["host_tty"], old["host"]))
+    host = old["host"]
+    if not host:
+        return ("its host's pid was not read before the spawn, and what runs on %s now is the "
+                "other session's: no host is named" % old["tty"])
+    fate = host_fate(host)
+    if fate == "unknown":
+        return host_unknown(host)
+    if fate == "ended":
+        return "its host ended"
+    return ("its host (pid %s) still runs on %s, and no command of this tool ends it: end it "
+            "with kill %s" % (host[0], old["tty"], host[0]))
 
 
 def cmd_resolve_tier(argv):
