@@ -18,7 +18,9 @@ export type RoundChoice = { letter: string; text: string }   // letter: one of '
 // (`withdrawn`). An answer relayed by another session's message is `by: 'message'` (`answered`),
 // with that session's name in `author`. A question the coordinator withdrew as settled meanwhile
 // (`round-close --withdraw`) is closed by it, with the evidence it read on the artifact in `evidence`.
-export type RoundAnswer = { text: string; by: 'pane' | 'coordinator' | 'tab' | 'sender' | 'message'; at: string; author?: string; evidence?: string }
+// What the operator typed in the sender's tab (`by: 'tab'`) is kept in `typed`, cut at 500 characters
+// with the cut said (typedWords in supervision.ts); `text` keeps the reason.
+export type RoundAnswer = { text: string; by: 'pane' | 'coordinator' | 'tab' | 'sender' | 'message'; at: string; author?: string; evidence?: string; typed?: string }
 export type RoundEntry = {
   id: string                    // `${sanitised session id}-${fingerprint(wait)}`, its wait unmarked, sanitised as supervision.ts sanitises store ids
   from: string                  // the sender's name (what relayText puts after « reply with SendMessage to: »), the answer's address when `session` is not live here
