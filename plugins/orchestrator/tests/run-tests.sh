@@ -7696,6 +7696,63 @@ out=$(ORCHESTRATOR_PROBE_TIMEOUT=1 REC_TMUX="$TR/tmux-slow" home spawn --dir "$W
 check "a tmux that times out dies naming the timeout, and no tab is made" "1|none" \
   "$(printf '%s' "$out" | grep -c '(timed out after 1s)')|$(asked)"
 
+# An orchestrator's agents go into its home session, never into an iTerm2 tab. A caller that
+# is an orchestrator outside its home (its rename asked and the move not yet made at the
+# turn's end, or a move that never happened) is refused before the app is asked, and the
+# refusal says how to get home. Whether the caller is one is read on the host session on its
+# own tty: its name, else the orchestrator name --orchestrator gives while the session is not
+# yet renamed. Any other caller keeps its tab.
+OUTSTATE="$WORK/outsidestate"
+outside() { # <ps line of the caller's tty> <spawn options>: a caller in a plain iTerm2 tab
+  local line="$1"; shift
+  rm -rf "$OUTSTATE"; mkdir -p "$OUTSTATE/chains"; rm -f "$TR/iterm-asked"
+  if [ -n "$line" ]; then printf '%s\n' "$line" > "$WORK/ps-outside.txt"; else : > "$WORK/ps-outside.txt"; fi
+  # The app stands in as a recorder: its first call writes that it was asked and ends the run.
+  env -u TMUX -u TMUX_PANE ORCHESTRATOR_TMUX="$TR/tmux" ORCHESTRATOR_SELF_TTY=/dev/ttys800 \
+    ORCHESTRATOR_STATE_DIR="$OUTSTATE" ORCHESTRATOR_LOGIN_SHELL=/bin/sh ORCHESTRATOR_PS_TABLE="$WORK/ps-outside.txt" \
+    "$py" -c "
+import sys; sys.path.insert(0, sys.argv[1])
+import iterm_agent as ia
+def asked(*args, **kwargs):
+    open(sys.argv[2], 'a').write('asked\n')
+    sys.exit(3)
+for method in ('chain_state', 'can_place', 'create', 'find', 'identity'):
+    setattr(ia.ITERM, method, asked)
+ia.cmd_spawn(sys.argv[3:])" "$ROOT/skills/iterm-agents/scripts" "$TR/iterm-asked" \
+    --tier light --dir "$WORK" --title "Agent: out" --prompt p --right-of self --no-verify "$@" 2>&1; }
+OUTREFUSED="spawn: refused: this session is an orchestrator ('Orch: rev') outside its home session"
+out=$(outside '/dev/ttys800 claude' --orchestrator "Orch: rev [52cb36]")
+check "an orchestrator not yet moved home (named by --orchestrator, its rename pending) is refused, and iTerm2 is never asked" "1|1|none" \
+  "$(printf '%s' "$out" | grep -c "$OUTREFUSED")|$(printf '%s' "$out" | grep -c 'end the turn: its end moves you into your home session')|$(asked)"
+check "and nothing is left behind: no prompt file, no launch file, no chain" "0|0" \
+  "$(ls "$OUTSTATE/prompts" 2>/dev/null | wc -l | tr -d ' ')|$(ls "$OUTSTATE/chains" | wc -l | tr -d ' ')"
+out=$(outside '/dev/ttys800 claude --name Orch: rev')
+check "an orchestrator named and still outside its home is refused, iTerm2 never asked" "1|none" \
+  "$(printf '%s' "$out" | grep -c "$OUTREFUSED")|$(asked)"
+out=$(outside '/dev/ttys800 claude --name Orch : rev')
+check "a name in the former shape is an orchestrator's too" "1|none" \
+  "$(printf '%s' "$out" | grep -c "$OUTREFUSED")|$(asked)"
+out=$(outside '' --orchestrator "Orch: rev [52cb36]")
+check "an operator's plain shell (no host session on its tty) keeps its tab" "0|iterm" \
+  "$(printf '%s' "$out" | grep -c 'outside its home session')|$(asked)"
+out=$(outside '/dev/ttys800 claude --name Coord: machine' --orchestrator "Orch: rev [52cb36]")
+check "the coordinator keeps its tab" "0|iterm" "$(printf '%s' "$out" | grep -c 'outside its home session')|$(asked)"
+out=$(outside '/dev/ttys800 claude --name Audit: rev' --orchestrator "Orch: rev [52cb36]")
+check "an auditor keeps its tab" "0|iterm" "$(printf '%s' "$out" | grep -c 'outside its home session')|$(asked)"
+out=$(ORCHESTRATOR_AUDITOR=1 outside '/dev/ttys800 claude' --orchestrator "Orch: rev [52cb36]")
+check "an unnamed auditor session keeps its tab" "0|iterm" "$(printf '%s' "$out" | grep -c 'outside its home session')|$(asked)"
+out=$(outside '/dev/ttys800 claude --name Agent: bench')
+check "a session of another role, unnamed by --orchestrator, keeps its tab" "0|iterm" \
+  "$(printf '%s' "$out" | grep -c 'outside its home session')|$(asked)"
+out=$(outside '/dev/ttys800 claude' --orchestrator "Agent: x")
+check "a host session with no role name and no orchestrator named keeps its tab" "0|iterm" \
+  "$(printf '%s' "$out" | grep -c 'outside its home session')|$(asked)"
+rm -f "$TR/iterm-asked"
+reset_home
+out=$(home spawn --dir "$WORK" --title "Agent: three" --prompt p --right-of self --no-verify --orchestrator "Orch: home [52cb36]" 2>&1)
+check "an orchestrator in its home still gets a window, iTerm2 never asked" "/dev/ttys903|none" \
+  "$(printf '%s' "$out" | tail -1)|$(asked)"
+
 # The chain anchor reads; the launcher writes. Only the caller's entry whose window is gone is
 # dropped: an iTerm2 tab's entry and another occupant's stay, and a listing with nothing in
 # it proves nothing.
