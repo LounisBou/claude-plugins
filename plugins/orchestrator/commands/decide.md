@@ -52,7 +52,7 @@ presenting it: the collection may be an hour old. Found settled, it is written b
 « already done: <evidence> », dropped from the count (N in the header drops with it),
 reported in one line, and the next question is presented instead: a settled item is never asked.
 
-The shape is the method's question (`method:lifecycle`, `references/questions.md`), in the user's
+The shape is the method's question (`method:lifecycle`, « Questions to the operator »), in the user's
 language, one field per line: the operator's pane draws these fields alone. The context names
 the goal of `goals.md` the question serves. Close with « You decide: » and the letters offered,
 then « or your own words ». Then call
