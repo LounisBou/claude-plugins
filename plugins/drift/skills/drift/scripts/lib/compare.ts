@@ -213,6 +213,9 @@ export function compareTrees(baseTree: Tree, headTree: Tree, hash: RegExp, outDi
 
 export const signed = (n: number): string => (n > 0 ? `+${n}` : String(n))
 
+/** How many ambiguous names the text lists; report.json lists them all. */
+const AMBIGUOUS_SHOWN = 20
+
 /** The report as text: the verdict first, one line per file and per changed module, the refs last. */
 export function render(report: Report): string[] {
   const n = report.normalised
@@ -226,7 +229,9 @@ export function render(report: Report): string[] {
   }
   if (report.ambiguous.length > 0) {
     lines.push(`ambiguous: ${report.ambiguous.length} files paired by their hashed name`)
-    for (const path of report.ambiguous) lines.push(`  ${path}`)
+    for (const path of report.ambiguous.slice(0, AMBIGUOUS_SHOWN)) lines.push(`  ${path}`)
+    const more = report.ambiguous.length - AMBIGUOUS_SHOWN
+    if (more > 0) lines.push(`  … ${more} more in report.json`)
   }
   lines.push(`base ${report.base.sha.slice(0, 7)} (${report.base.ref}), head ${report.head.sha.slice(0, 7)} (${report.head.ref})`)
   return lines

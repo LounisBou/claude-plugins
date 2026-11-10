@@ -177,6 +177,16 @@ test('the text starts with the verdict and says when references were normalised'
   assert.deepEqual(lines, ['drift: 2 differ', 'changed a.js raw +3 gzip -1', '  source src/b.js', 'added n.js raw +5 gzip 0', 'base aaaaaaa (origin/main), head bbbbbbb (HEAD)'])
 })
 
+test('the ambiguous list shows its count and 20 names at most, the rest left to report.json', () => {
+  const names = Array.from({ length: 23 }, (_, k) => `app/A-B${String(k).padStart(6, '0')}.js`)
+  const lines = render(report([], 0, names))
+  assert.equal(lines[1], 'ambiguous: 23 files paired by their hashed name')
+  assert.deepEqual(lines.slice(2, 22), names.slice(0, 20).map(name => `  ${name}`))
+  assert.equal(lines[22], '  … 3 more in report.json')
+  assert.equal(lines.length, 24)
+  assert.equal(render(report([], 0, names.slice(0, 20))).length, 23)
+})
+
 test('a delta is signed, zero bare', () => {
   assert.deepEqual([signed(4), signed(-4), signed(0)], ['+4', '-4', '0'])
 })
