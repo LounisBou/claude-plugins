@@ -35,7 +35,7 @@ Follow this exact template:
 - [ ] <next step>
 
 **PRs Dependency:**
-- <url of a PR that must ship before this one>
+- <url of a PR that must ship with or before this one>
 - <url of the next one>
 
 **Related PRs:**
@@ -68,8 +68,9 @@ other than the `---` between two screenshots, and no bold label line (`**Label:*
 other than the four sections, anywhere in the description.
 The four sections come after the summary text, in that order, each in that exact shape
 whatever the number of items: the bold label alone on its line, then one item per line,
-nothing else on the line, or the label and `none` on one line when the section is
-empty. A TODO Staging or TODO Prod item is a task-list checkbox, `- [ ] <step>`, never a bare `- ` bullet: the operator ticks it as the step is done. A TODO item stands alone:
+nothing else on the line. A TODO Staging or TODO Prod item is a task-list checkbox,
+`- [ ] <step>`, never a bare `- ` bullet: the operator ticks it as the step is done. A TODO
+item stands alone:
 it never points to another item ("do the same edit", "same as above", "likewise") and writes
 the action in full, the file, the value before and after, and the host or environment. One
 checkbox, one action: an edit and the restart, reload, deploy or migration that applies it are
@@ -80,18 +81,19 @@ link inline after the label: `none` is the one thing ever written beside a label
 never beside items. A label with nothing after it and no item below is an empty section
 left unsaid: write `none`. Staging and prod TODOs are always kept apart, even when
 they are the same items: then both sections list them. `**PRs Dependency:**` lists the PRs
-that must ship before this one, and the order is said there and nowhere else. No TODO item
-repeats PRs Dependency: no « Deploy/Merge <PR> before this PR » checkbox. A PR whose only
-prerequisite is another PR has its TODOs at `none`. `**Related PRs:**` lists the PRs truly
-linked to this work: part of the same batch, the origin of the bug, or a link of that
-strength,
-never a distant link. A follow-up PR, one that must come after this one, is never listed
-in Related PRs. State what ships first. `PRs Dependency` lists PRs that ship before it,
-and two PRs never depend on each other. English always, with no
+that ship before this one or at the same time: that is the delivery prerequisite, their
+deploy steps included. No TODO repeats it (« Deploy/Merge <PR> before this PR », their
+migrations, restarts or config): with no deploy action of its own, a PR has both TODOs at
+`none`, even with dependencies. A TODO states only a constraint the list cannot express: the
+dependency ships strictly before, or a step waits for an asynchronous operation of the
+dependency. `**Related PRs:**` lists the PRs truly linked to this work: part of the same
+batch, the origin of the bug, or a link of that strength. A follow-up PR, one that must come
+after this one, is never listed
+in Related PRs. Two PRs never depend on each other. English always, with no
 semicolon. No workflow vocabulary. Every PR is opened as a draft (`pr-create
 --draft`, the house default), and leaves draft only once it is ready (see « Ready
 pull requests »). Outside
-auto-merge, leaving draft (a CI undraft aside, see « Ready pull requests ») and merging
+auto-merge, leaving draft (a CI undraft aside) and merging
 also need the operator's explicit word, given through this tool, which asks them in the
 conversation. In a
 repository in auto-merge, the merge, leaving draft and the deployment its method
@@ -104,7 +106,7 @@ A colleague's PR and any review comment are proposed first.
 
 A paragraph stating the ship order is always added to a description, without asking:
 add, re-read, report in one line. It names no pull request, it points to the sections
-(« Ships after the PRs in PRs Dependency », « Ships in any order with the Related
+(« Ships with or after the PRs in PRs Dependency », « Ships in any order with the Related
 PRs »), and every pull request goes in `PRs Dependency` or `Related PRs` as its full
 URL. Every URL written in those sections comes from that pull request's own files and
 body, never by eye. A TODO goes only on the PR that enables its
@@ -138,9 +140,8 @@ words, dated), and every CI check is green there. Ready belongs to one head: a n
 commit makes the pull request not ready until the four hold again at the new head.
 
 The `Ready` and `Not Ready` labels carry that fact on GitHub. A draft opens with `Not
-Ready`. `Ready` is put only when the four hold, and leaving draft or merging needs the
-same four. When the CI does not run on a draft, the pull request leaves draft for it,
-still `Not Ready`, and goes back to draft once the CI is green, then takes `Ready`.
+Ready`. `Ready` is put only when the four hold. When the CI does not run on a draft, the pull
+request leaves draft for it, still `Not Ready`, and goes back to draft once the CI is green, then takes `Ready`.
 A push to the pull request's branch puts `Not Ready` back. The plugin refuses `Ready`,
 leaving draft and a merge whose four conditions do not hold, through its tool and
 through the shell alike. The review, the norms check and the end-to-end run each leave
