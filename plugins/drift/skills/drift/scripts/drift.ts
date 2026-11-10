@@ -235,7 +235,7 @@ export async function main(argv: readonly string[], deps: Deps): Promise<number>
   }
 }
 
-/* node:coverage ignore next 14 */
+/* node:coverage ignore next 13 */
 if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const controller = new AbortController()
   for (const name of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(name, () => controller.abort())
