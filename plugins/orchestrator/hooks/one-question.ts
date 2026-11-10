@@ -7,19 +7,20 @@
 // in the sender's language): the numbering is read there, once. A heading inside a fenced code
 // block is a quoted example, never a block: both rules read the message without its fences, as
 // unanswered-question.ts does.
-import { questionParts, entryQuestions } from './round.ts'
+import { questionParts, entryQuestions, questionDefects } from './round.ts'
 import { MACHINE_LINE, blocksNothing, machineLine } from './stop-gate.ts'
 
 export const ONE_QUESTION =
   'One question per turn: this message holds several numbered question blocks. Put the first to the operator '
-  + 'alone, in the shape of orchestrator:decide, and let the others wait for his answer: ask the next in the '
+  + 'alone, in the method\'s question format, and let the others wait for his answer: ask the next in the '
   + 'turn that follows it. The numbering « i of N » still says how many questions there are.'
 
 export const NO_QUESTION =
   'This turn ends on a wait for the operator but holds no question block: he is shown a report, not a question, '
-  + 'and what waits on his answer stays blocked. Put the question to him in the shape of orchestrator:decide '
-  + 'step 2: a block is the `**Question i of N**` line followed by its labelled fields (`_Subject_ :`, '
-  + '`_Context_ :`, `_Question_ :`, `_Choices_ :`, `_Recommendation_ :`, in the operator\'s language): a heading '
+  + 'and what waits on his answer stays blocked. Put the question to him as orchestrator:decide runs it, in the method\'s question format '
+  + '(method:lifecycle, references/questions.md): a block is the `**Question i of N**` line followed by its '
+  + 'labelled fields (`_Subject_ :`, `_Context_ :`, `_Question_ :`, `_Choices_ :`, `_Free answer_ :`, '
+  + '`_Recommendation_ :`, in the operator\'s language): a heading '
   + 'alone is refused. If you ask him nothing, end on the line that fits: '
   + '`waiting: tool — <what is watched>`, `waiting: deferred — <n> items`, `waiting: done`, or no machine line.'
 
@@ -69,4 +70,22 @@ export function asksTheOperator(message: string): boolean {
   // A wait that blocks nothing asks him nothing: the stop gate reads it as no question.
   if (MACHINE_LINE.exec(line)?.[1] && !blocksNothing(line)) return true
   return entryQuestions({ question: outsideFences(message), choices: [], recommendation: null }).some(part => part.number !== null)
+}
+
+export const FORMAT_DEFECT =
+  'The question breaks the method\'s question format (method:lifecycle, references/questions.md): '
+
+// The refusal for a numbered block outside the fences that holds more than five lettered choices (two
+// to five, A to E) or a recommendation naming a letter with no argument; null otherwise. Asked of an
+// orchestrator's own question: the coordinator relays the sender's block as it was ruled on.
+export function questionDefectRefusal(message: string): string | null {
+  const defects = new Set(entryQuestions({ question: outsideFences(message), choices: [], recommendation: null })
+    .filter(part => part.number !== null)
+    .flatMap(part => questionDefects(part.question)))
+  if (defects.size === 0) return null
+  const faults = [
+    ...(defects.has('choices') ? ['it holds more than five choices: keep two to five, lettered A to E, and put the rest in the free answer'] : []),
+    ...(defects.has('recommendation') ? ['its recommendation names a letter with no argument: argue it against the other choices'] : []),
+  ]
+  return `${FORMAT_DEFECT}${faults.join('; ')}. Put the question again, corrected.`
 }

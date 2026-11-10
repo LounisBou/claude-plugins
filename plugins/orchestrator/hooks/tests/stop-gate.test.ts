@@ -62,6 +62,20 @@ test('an orchestrator ending on an operator wait with no question block is refus
   expect(passed.answer).toBe(passed.passed)
 })
 
+test('an orchestrator whose question holds six choices or a bare recommendation is refused, the coordinator relaying it is not', async () => {
+  const { handlers } = mounted()
+  const { dollar, ran } = fakeDollar({})
+  const block = (...lines: string[]) => ['**Question 1 of 1**', '_Subject_ : a thing', '_Choices_ :', '- **A** : a', '- **B** : b', ...lines, 'waiting: operator — blocks: the answer'].join('\n')
+  const six = block('- **C** : c', '- **D** : d', '- **E** : e', '- **F** : f', '_Recommendation_ : A — the cheapest')
+  const bare = block('_Recommendation_ : A')
+  expect(((await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: six }))).answer as any).block).toContain('two to five')
+  expect(((await stop(handlers['classic.Stop'], dollar, stopEvent({ last_assistant_message: bare }))).answer as any).block).toContain('argu')
+  expect(ran.filter(l => l.includes('iterm-agent.sh')).length).toBe(0)
+  const coord = fakeDollar({ launchName: 'Coord: machine' })
+  const relayed = await stop(handlers['classic.Stop'], coord.dollar, stopEvent({ last_assistant_message: bare }))
+  expect(relayed.answer).toBe(relayed.passed)
+})
+
 // --- a question still on the operator, shown in the orchestrator's own chat ----------------------
 
 // The orchestrator's question in the round, as the relay entered it at the end of the turn that asked it.

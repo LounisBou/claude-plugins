@@ -24,7 +24,7 @@ import {
 import { tripGate, parseMeasure, measureFilePath } from './gauge-core.ts'
 import { takeDrift } from './gauge.ts'
 import { isEnding } from './naming.ts'
-import { oneQuestionRefusal, operatorWaitRefusal, asksTheOperator, QUESTION_BY_MESSAGE } from './one-question.ts'
+import { oneQuestionRefusal, operatorWaitRefusal, questionDefectRefusal, asksTheOperator, QUESTION_BY_MESSAGE } from './one-question.ts'
 import { detectPatternKills } from './pattern-kills.ts'
 import {
   refuse, withDeadline, isDegradedPass, type DegradedPass,
@@ -511,6 +511,11 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       if (unasked !== null) {
         await logLine($, 'stop gate: an operator wait with no question')
         return refuse(unasked)
+      }
+      const malformed = questionDefectRefusal(String(e.last_assistant_message ?? ''))
+      if (malformed !== null) {
+        await logLine($, 'stop gate: a question breaks the format')
+        return refuse(malformed)
       }
       const state = await stateDir($)
       // A question still on the operator is shown again in the orchestrator's own chat at every

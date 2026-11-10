@@ -3,7 +3,7 @@
 // recommendation read out of a question in the decide shape, near misses read as none, the
 // entry built from an orchestrator's wait, and the order the round takes its open entries in.
 import { expect, test } from 'claude-code/testing'
-import { parseChoices, questionBody, questionShape, questionParts, entryQuestions, textSpans, plainText, prReferences, prPieces, repositoryOwners, numberLabel, roundEntry, roundEntryId, roundPath, openEntries, isDue, asksNothing, type RoundEntry } from '../round.ts'
+import { parseChoices, questionDefects, questionBody, questionShape, questionParts, entryQuestions, textSpans, plainText, prReferences, prPieces, repositoryOwners, numberLabel, roundEntry, roundEntryId, roundPath, openEntries, isDue, asksNothing, type RoundEntry } from '../round.ts'
 import { TWO_QUESTIONS, GLUED_BLOCKS, SHAPED, SHAPED_SUBJECT, SHAPED_CONTEXT, SHAPED_RECOMMENDATION, FIRST_B, SECOND_RECOMMENDATION_START } from './fixtures.ts'
 import { fingerprint, parseWait, relayText, RELAY_CAP, type Wait } from '../relay.ts'
 
@@ -83,6 +83,54 @@ test('a recommendation naming an absent letter is none, and only the first recom
   expect(parseChoices('- **A** : one\n- **B** : two').recommendation).toBeNull()
   // A lowercase word after the label is no choice letter.
   expect(parseChoices('- **A** : one\n- **B** : two\n_Recommendation_ : a cheap one').recommendation).toBeNull()
+})
+
+// The method's format: two to five lettered choices, the free answer, the recommendation with its argument.
+const FIVE = [
+  '**Question 2 of 3**',
+  '_Subject_ : the release',
+  '_Context_ : The release is green.',
+  '_Question_ : which way do we ship?',
+  '_Choices_ :',
+  '- **A** : merge now — cost: none — gain: today',
+  '- **B** : wait a day — cost: a day — gain: one more review',
+  '- **C** : split it — cost: two pull requests — gain: a smaller risk',
+  '- **D** : drop it — cost: the work — gain: no maintenance',
+  '- **E** : hand it over — cost: a briefing — gain: a fresh reader',
+  '_Free answer_ : A different way is welcome, in your own words.',
+  '_Recommendation_ : E — a fresh reader finds what two reviews missed, which merging now and waiting a day both forgo',
+].join('\n')
+
+test('five choices, the free answer and an argued recommendation are read whole, the free answer taking no letter', () => {
+  const read = parseChoices(FIVE)
+  expect(read.choices.map(choice => choice.letter)).toEqual(['A', 'B', 'C', 'D', 'E'])
+  expect(read.recommendation).toBe('E')
+  const shape = questionShape(FIVE, read.choices)
+  expect(shape?.fields.map(field => field.label)).toEqual(['Subject', 'Context', 'Question', 'Choices'])
+  expect(shape?.recommendation?.text).toMatch(/^E — a fresh reader/)
+  expect(questionDefects(FIVE)).toEqual([])
+})
+
+test('a free answer opening on the article A is no recommendation, whatever the pane draws', () => {
+  const text = FIVE.replace('_Recommendation_ : E', '_Recommendation_ : B')
+  const free = text.replace('A different way is welcome, in your own words.', 'A different answer, in your own words.')
+  expect(questionShape(free, parseChoices(free).choices)?.recommendation?.text).toMatch(/^B — /)
+  const withoutRecommendation = free.split('\n').slice(0, -1).join('\n')
+  expect(questionShape(withoutRecommendation, parseChoices(withoutRecommendation).choices)?.recommendation).toBeNull()
+})
+
+test('a question with six choices or a bare recommendation letter has a defect, five choices and an argument none', () => {
+  const six = FIVE.replace('- **E**', '- **F** : one more — cost: x — gain: y\n- **E**')
+  expect(questionDefects(six)).toEqual(['choices'])
+  const sixth = FIVE.replace('_Free answer_', '- **F** : the sixth — cost: x — gain: y\n_Free answer_')
+  expect(questionDefects(sixth)).toEqual(['choices'])
+  expect(parseChoices(sixth).choices).toEqual([])
+  for (const bare of ['E', '**E**', 'E.', 'E —']) {
+    const text = FIVE.replace(/_Recommendation_ :.*$/m, `_Recommendation_ : ${bare}`)
+    expect(questionDefects(text)).toEqual(['recommendation'])
+  }
+  expect(questionDefects(sixth.replace(/_Recommendation_ :.*$/m, '_Recommendation_ : A'))).toEqual(['choices', 'recommendation'])
+  expect(questionDefects('Merge it now?')).toEqual([])
 })
 
 // --- the entry ------------------------------------------------------------------------------

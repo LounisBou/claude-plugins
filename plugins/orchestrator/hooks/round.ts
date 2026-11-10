@@ -82,6 +82,19 @@ function readChoices(question: string): { choices: RoundChoice[]; recommendation
   return { choices, recommendation: named !== null && choices.some(choice => choice.letter === named) ? named : null }
 }
 
+// What the method's question format refuses in a block, read off its text alone: more than five
+// lettered choices, and a recommendation that names a letter and argues nothing. A block with no
+// lettered choice or no recommendation line is an older shape, no defect here.
+const BARE_RECOMMENDATION = /^\s*_[^_\n]*[^_\s]_\s*(?::\s*)?\**[A-E]\**\s*[.,;:—–-]?\s*$/
+export type QuestionDefect = 'choices' | 'recommendation'
+export function questionDefects(question: string): QuestionDefect[] {
+  const lines = question.split('\n')
+  const defects: QuestionDefect[] = []
+  if (lines.filter(line => CHOICE.test(line)).length > LETTERS.length) defects.push('choices')
+  if (lines.some(line => BARE_RECOMMENDATION.test(line))) defects.push('recommendation')
+  return defects
+}
+
 // The question as the pane shows it above its choices: the whole text, less the choice lines
 // and the recommendation's line when the choices were read, since the pane draws them below.
 export function questionBody(entry: Pick<RoundEntry, 'question' | 'choices'>): string {
@@ -97,7 +110,7 @@ const FIELD = /^\s*_([^_\n]*[^_\s])_(\s*:\s*)(.*?)\s*$/
 // a word or a slash between them, `**Question 5 of 6**`; `**Version 1.2**` is no numbering.
 const NUMBER = /^\s*\*\*([^*\n\d]*\p{L}[^*\n\d]*\d+[^*\n\d]*[\p{L}/][^*\n\d]*\d+[^*\n]*)\*\*\s*$/u
 // A field after the choices whose text starts with a lone choice letter: the recommendation.
-const NAMES_LETTER = /^\**([A-E])\**(?:$|[\s.,;:—–-])/
+const NAMES_LETTER = /^\**([A-E])\**\s*(?:$|[.,;:—–-](?:\s|$))/
 
 // The questions of an entry, one text each: a turn may ask several in the decide shape, each
 // under its own numbering line (`**Question 3 of 4**`, in the sender's language). Two such lines
