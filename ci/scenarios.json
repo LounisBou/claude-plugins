@@ -13,6 +13,7 @@
     "github: write a pull request": ["github/engine/writing/pull-requests.md", "github/engine/writing/references.md"],
     "github: write a commit": ["github/engine/writing/commits.md", "github/engine/writing/references.md"],
     "github: write a comment": ["github/engine/writing/comments.md", "github/engine/writing/references.md"],
+    "drift: prove a change neutral": ["drift/skills/drift/SKILL.md"],
     "bugs-bot: resident agent": ["bugs-bot/agent/AGENT.md", "bugs-bot/skills/bugs-bot/SKILL.md"],
     "orchestrator: start (build)": ["orchestrator/skills/orchestrator/SKILL.md", "method/skills/lifecycle/SKILL.md"],
     "orchestrator: start (investigate)": ["orchestrator/skills/orchestrator/SKILL.md"],

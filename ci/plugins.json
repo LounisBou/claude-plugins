@@ -9,6 +9,9 @@
       "ubuntu-latest",
       "macos-latest"
     ],
+    "drift": [
+      "ubuntu-latest"
+    ],
     "github": [
       "ubuntu-latest",
       "macos-latest"

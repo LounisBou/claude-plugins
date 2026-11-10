@@ -3,6 +3,7 @@
   "budgets": {
     "bugs-bot": 16058,
     "cloudflare": 8282,
+    "drift": 429,
     "github": 11402,
     "implement": 12825,
     "method": 1498,
