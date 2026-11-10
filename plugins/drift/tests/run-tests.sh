@@ -15,5 +15,16 @@ case "$code:$out" in
   "2:drift: usage: drift build"*) ;;
   *) echo "FAIL drift.sh without a command: exit $code, $out"; fail=1 ;;
 esac
+# A node too old to run drift.ts is a tool error, exit 2, never the 1 of « differ ».
+fake=$(mktemp -d)
+printf '#!/bin/sh\n[ "$1" = -p ] && echo 22.6.0 && exit 0\nexit 1\n' > "$fake/node"
+chmod +x "$fake/node"
+out=$(PATH="$fake:$PATH" "$SCRIPTS/drift.sh" build 2>&1)
+code=$?
+case "$code:$out" in
+  "2:drift: node 22.6.0 is too old"*) ;;
+  *) echo "FAIL drift.sh under an old node: exit $code, $out"; fail=1 ;;
+esac
+rm -rf "$fake"
 [ "$fail" -eq 0 ] && echo "drift: all checks passed"
 exit "$fail"
