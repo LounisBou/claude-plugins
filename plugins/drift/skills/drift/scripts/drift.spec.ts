@@ -38,6 +38,10 @@ before(() => {
   })
   git('checkout', '-q', sha['base'] ?? '')
   commit('broken', () => writeFileSync(join(REPO, 'FAIL'), ''))
+  for (const [name, file, text] of [['link-a', 'LINK', 'old.txt'], ['link-b', 'LINK', 'index.html'], ['fifo', 'FIFO', '']] as const) {
+    git('checkout', '-q', sha['base'] ?? '')
+    commit(name, () => writeFileSync(join(REPO, file), text))
+  }
   git('checkout', '-q', 'main')
   git('remote', 'add', 'origin', 'git@github.com:acme/fixture.git')
   writeFileSync(CONFIG, JSON.stringify({ install: ['node', '--version'], build: ['node', 'build.mjs'], outDir: 'dist' }))
@@ -110,6 +114,17 @@ test('a failing build is a tool error, exit 2, its log named, and no checkout le
   assert.deepEqual(readdirSync(work), [])
   assert.equal(git('worktree', 'list', '--porcelain').split('\n').filter(line => line.startsWith('worktree ')).length, 1)
   assert.equal(git('status', '--porcelain'), '')
+})
+
+test('a symbolic link is compared by its target, and any other special file is a tool error', async () => {
+  const changed = await drift(refs('link-a', 'link-b'))
+  assert.equal(changed.code, 1)
+  assert.deepEqual(changed.out.slice(0, 2), ['drift: 1 differ', 'changed latest raw +3 gzip +3'])
+  assert.equal((await drift(refs('link-a', 'link-a'))).code, 0)
+  const fifo = await drift(refs('base', 'fifo'))
+  assert.equal(fifo.code, 2)
+  assert.match(fifo.err.join('\n'), /pipe is neither a file, a directory nor a symbolic link/)
+  assert.deepEqual(readdirSync(fifo.work), [])
 })
 
 test('the default config is read from the home, named after the origin', async () => {

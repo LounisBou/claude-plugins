@@ -15,12 +15,19 @@ export const DEFAULT_HASH_PATTERN = String.raw`-(?=[A-Za-z0-9_-]{0,7}[0-9A-Z])[A
 /** A failure of the tool itself, said on stderr with exit code 2. */
 export class DriftError extends Error {}
 
-/** A build output: each file's path under the output directory (`/`-separated) and its bytes. */
-export type Tree = ReadonlyMap<string, Buffer>
+/** A symbolic link of a build output, compared by its target. */
+export interface Link {
+  readonly link: string
+}
+
+/** A build output: each entry's path under the output directory (`/`-separated), with its bytes or its link. */
+export type Tree = ReadonlyMap<string, Buffer | Link>
 
 export interface Side {
   /** The file's name in that build, its hash kept. */
   readonly name: string
+  /** The target, when the file is a symbolic link; its sizes are the target's. */
+  readonly link?: string
   readonly raw: number
   readonly gzip: number
 }
@@ -100,14 +107,23 @@ interface Read {
   readonly normalise: (bytes: Buffer) => Buffer
 }
 
-const sideOf = (name: string, bytes: Buffer): Side => ({ name, raw: bytes.length, gzip: gzipSync(bytes).length })
+function sideOf(name: string, entry: Buffer | Link): Side {
+  const bytes = Buffer.isBuffer(entry) ? entry : Buffer.from(entry.link)
+  return { name, ...(Buffer.isBuffer(entry) ? {} : { link: entry.link }), raw: bytes.length, gzip: gzipSync(bytes).length }
+}
+
+/** Whether two entries are the same: a file's bytes, a link's target, never a file and a link. */
+function same(before: Buffer | Link, after: Buffer | Link): boolean {
+  if (Buffer.isBuffer(before) && Buffer.isBuffer(after)) return before.equals(after)
+  return !Buffer.isBuffer(before) && !Buffer.isBuffer(after) && before.link === after.link
+}
 
 /** The map of a generated file, by its `sourceMappingURL` (a data: URL, or a file of the output), else `<file>.map`. */
 function mappedOf(read: Read, key: string): { readonly mapped: Mapped; readonly mapKey: string } | undefined {
   const bytesOf = (k: string): Buffer | undefined => {
     const path = read.keys.get(k)
     const bytes = path === undefined ? undefined : read.tree.get(path)
-    return bytes === undefined ? undefined : read.normalise(bytes)
+    return Buffer.isBuffer(bytes) ? read.normalise(bytes) : undefined
   }
   const text = bytesOf(key)?.toString('utf8')
   if (text === undefined) return undefined
@@ -157,8 +173,8 @@ export function compareTrees(baseTree: Tree, headTree: Tree, hash: RegExp, outDi
     const before = basePath === undefined ? undefined : baseTree.get(basePath)
     const after = headPath === undefined ? undefined : headTree.get(headPath)
     if (basePath !== undefined && before !== undefined && headPath !== undefined && after !== undefined) {
-      if (before.equals(after)) continue
-      if (base.normalise(before).equals(head.normalise(after))) {
+      if (same(before, after)) continue
+      if (Buffer.isBuffer(before) && Buffer.isBuffer(after) && base.normalise(before).equals(head.normalise(after))) {
         normalised++
         continue
       }

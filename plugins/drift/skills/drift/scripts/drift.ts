@@ -9,11 +9,11 @@
 // next. A shared node_modules is not used: the lockfile may differ between the refs, and a cache
 // under node_modules would carry the base's build into the head's.
 import { spawn } from 'node:child_process'
-import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, readlinkSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { compareTrees, DriftError, render, type Report, type Tree } from './lib/compare.ts'
+import { compareTrees, DriftError, render, type Link, type Report, type Tree } from './lib/compare.ts'
 import { configPathOf, parseArgs, parseConfig, scratchpadOf, slugOf, type Config } from './lib/config.ts'
 
 export interface Deps {
@@ -57,12 +57,19 @@ function exec(argv: readonly string[], cwd: string, signal: AbortSignal | undefi
   })
 }
 
-/** Every regular file under `dir`, by its `/`-separated path, with its bytes. */
+/**
+ * Every file under `dir`, by its `/`-separated path: a regular file with its bytes, a symbolic link
+ * with its target. Any other kind of entry (a pipe, a socket, a device) cannot be compared: an error.
+ */
 function readTree(dir: string): Tree {
-  const tree = new Map<string, Buffer>()
+  const tree = new Map<string, Buffer | Link>()
   for (const entry of readdirSync(dir, { recursive: true, withFileTypes: true })) {
     const path = join(entry.parentPath, entry.name)
-    if (entry.isFile()) tree.set(relative(dir, path).split(sep).join('/'), readFileSync(path))
+    const name = relative(dir, path).split(sep).join('/')
+    if (entry.isDirectory()) continue
+    if (entry.isFile()) tree.set(name, readFileSync(path))
+    else if (entry.isSymbolicLink()) tree.set(name, { link: readlinkSync(path) })
+    else throw new DriftError(`${name} is neither a file, a directory nor a symbolic link`)
   }
   return tree
 }

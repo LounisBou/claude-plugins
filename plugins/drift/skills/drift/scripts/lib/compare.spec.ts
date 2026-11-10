@@ -49,6 +49,13 @@ test('a hash-only rename reads identical, its references normalised and counted'
   assert.deepEqual(compareTrees(base, head, HASH, 'dist'), { files: [], normalised: 1, ambiguous: [] })
 })
 
+test('a link is compared by its target, and a link never equals a file of the same bytes', () => {
+  const link = (target: string): Tree => new Map([['latest', { link: target }]])
+  assert.deepEqual(compareTrees(link('a.txt'), link('a.txt'), HASH, 'dist').files, [])
+  const { files } = compareTrees(link('a.txt'), new Map([['latest', Buffer.from('a.txt')]]), HASH, 'dist')
+  assert.deepEqual(files.map(file => [file.status, file.base?.link, file.head?.link]), [['changed', 'a.txt', undefined]])
+})
+
 test('changed, added and removed files carry their raw and gzip deltas, sorted by path', () => {
   const base = tree({ 'b.js': 'same', 'gone.css': 'abc', 'm.js': 'aaaa' })
   const head = tree({ 'b.js': 'same', 'm.js': 'aaaaaaaa', 'new-B1234567.js': 'hello' })

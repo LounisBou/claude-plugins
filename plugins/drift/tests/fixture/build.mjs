@@ -1,9 +1,11 @@
 // The fixture project's build: every module of src/ on its own line of one hashed bundle, with a
 // source map (one segment per line, column 0 of its module), an index.html naming the bundle, and
 // public/ copied as it is. The hash covers salt.txt too, so a commit changing only the salt renames
-// the bundle without changing a byte of it. A file named FAIL makes the build fail.
+// the bundle without changing a byte of it. A file named FAIL makes the build fail; a file named
+// LINK makes dist/latest a symbolic link to the path it holds; a file named FIFO adds a named pipe.
+import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 
 if (existsSync('FAIL')) {
   console.error('build failed on purpose')
@@ -22,3 +24,5 @@ writeFileSync(`dist/assets/${bundle}`, `${code}\n//# sourceMappingURL=${bundle}.
 writeFileSync(`dist/assets/${bundle}.map`, JSON.stringify({ version: 3, file: bundle, sources: modules.map(name => `../../src/${name}`), mappings }))
 writeFileSync('dist/index.html', `<script type="module" src="/assets/${bundle}"></script>\n`)
 cpSync('public', 'dist', { recursive: true })
+if (existsSync('LINK')) symlinkSync(readFileSync('LINK', 'utf8').trim(), 'dist/latest')
+if (existsSync('FIFO')) execFileSync('mkfifo', ['dist/pipe'])
