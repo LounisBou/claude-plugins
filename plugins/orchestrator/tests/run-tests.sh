@@ -3144,6 +3144,13 @@ check "a successor's startup prompt loads the rulebook with the brief's mode, fi
   "$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" | grep -c '^prompt=Load the skill orchestrator:orchestrator with the argument "build", then read and execute ')|$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB_INV" | grep -c '^prompt=Load the skill orchestrator:orchestrator with the argument "investigate", then read and execute ')|$(succ "$PSTAB" --successor --prompt "Read and execute $SUCCB" | grep -c "^prompt=.*, then read and execute $SUCCB\$")|$(succ "$PSTAB" --successor --prompt-file "$WORK/p-inv.txt" | grep -c '^prompt=Load the skill orchestrator:orchestrator with the argument "investigate"')"
 check "a prompt that names no succession brief is left as it was" "0" \
   "$(succ "$PSTAB" --successor --prompt "Read and execute $WORK/briefs/good.md" | grep -c 'with the argument')"
+# `--brief` builds the spawn's prompt from the brief and the successor's prompt, which carries the
+# mode, would be dropped: the combination is refused, before any tab opens, and says why.
+succ_brief() { CLAUDE_CODE_SESSION_ID="${CLAUDE_CODE_SESSION_ID-s-suite}" ORCHESTRATOR_DRY_RUN=1 ORCHESTRATOR_STATE_DIR="$ISTATE" \
+  ORCHESTRATOR_SELF_TTY=/dev/ttys900 ORCHESTRATOR_PS_TABLE="$PSTAB" bash "$AGENT" spawn --dir "$WORK" --successor \
+  --brief "$SUCCB" --orchestrator "Orch: f [abc123]" 2>&1; }
+check "a successor spawned with --brief is refused, before any tab, rather than losing its mode" "1|1|0" \
+  "$(succ_brief | grep -c 'spawn: refused: --successor takes its prompt, not --brief')|$(succ_brief | grep -c 'Mode:')|$(succ_brief | grep -c '^launch=')"
 check "the template carries the mode on a line of its own, and succeed fills it from the predecessor's own mode" "1|yes|yes" \
   "$(grep -c '^Mode: {{MODE}}$' "$ROOT/templates/orchestrator-succession-brief.md")|$(spells "$ROOT/commands/succeed.md" 'the `Mode:` line with your own mode')|$(spells "$ROOT/commands/succeed.md" 'without which the brief is refused')"
 check "the launch puts the prompt before the name" "1" \
