@@ -32,8 +32,10 @@ commit) on both sides. The launcher's header documents every option and line.
   inside the files are read without their hash. Equivalent output, but not byte for byte: say so.
 - `drift: <n> differ`: each changed, added or removed file with its size deltas; `source` lines
   name the modules whose generated code changed. Read them before calling the change neutral.
-- `ambiguous:` lists same-named chunks (two `Alerts.vue`), paired by their hash: such a file
-  that changed reads removed and added.
+- `ambiguous:` lists same-named chunks (two `Alerts.vue`), paired by their hashed name: such a
+  file that changed reads removed and added.
+- A file renamed only in what the hash pattern strips (`data-20240101.json` to
+  `data-20240202.json`) is read as the same file, its contents compared.
 - Exit 2: the tool could not answer (config, ref, install or build); no verdict.
 
 ## Quote it
