@@ -1105,6 +1105,21 @@ function keepTyped(text: string): void {
   if (typedPrompts.length > TYPED_KEPT) typedPrompts.shift()
 }
 
+// What the host writes around a message the person sent while the session worked, the text between.
+const MID_TURN_WORDS = /^<system-reminder(?: id="[^"]*")?>\nThe user sent a new message while you were working:\n([\s\S]*)\n\nThis is how Claude Code surfaces messages the user sends mid-turn[^\n]*\n<\/system-reminder>$/
+
+// The words of a row the host appended for a message the person sent while the session worked, or
+// undefined. Only the host's own attachment of the main conversation counts: a peer's message has
+// its own frame, and a note, a delivery or a tool result has another door.
+function midTurnWords(e: any): string | undefined {
+  const message = e?.message
+  if (e?.door !== 'attachment' || e?.agentId !== undefined || e?.origin?.kind !== 'engine') return undefined
+  if (message?.type !== 'attachment' || message?.name !== 'queued_command') return undefined
+  const blocks = Array.isArray(message.content) ? message.content : []
+  if (blocks.length !== 1 || blocks[0]?.type !== 'text') return undefined
+  return MID_TURN_WORDS.exec(String(blocks[0].text ?? ''))?.[1]
+}
+
 const QUOTED_SPAN = /«([^»]*)»|"([^"]*)"|“([^”]*)”/g
 const ISO_DAY = /\b\d{4}-\d{2}-\d{2}\b/g
 
@@ -1467,6 +1482,12 @@ export function register(on: any): void {
     keepTyped(lastTyped)
     if (!AUTO_MERGE_WORD.test(lastTyped)) return next(e)
     return next({ ...e, context: [...(e.context ?? []), await autoMergeHeard($)] })
+  }).catch(async (_$: any, e: any, next: any) => next(e))
+
+  on('session.append', { door: 'attachment' }, async (_$: any, e: any, next: any) => {
+    const words = midTurnWords(e)
+    if (words !== undefined) keepTyped(words)
+    return next(e)
   }).catch(async (_$: any, e: any, next: any) => next(e))
 
   on('tool.call', { tool: 'Bash' }, async ($: any, e: any, next: any) => {
