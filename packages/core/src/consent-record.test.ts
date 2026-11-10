@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { consentAnswer, consentDir, consentRecordOf, consentPath, parseConsentRecord, parseConsentSubject, quotesConsent } from './consent-record.ts'
+import { answersChoice, consentAnswer, consentDir, consentRecordOf, consentPath, parseConsentRecord, parseConsentSubject, quotesConsent } from './consent-record.ts'
 import { kindFor, producerOf } from './pr-record.ts'
 
 const RECORD = {
@@ -11,6 +11,7 @@ const RECORD = {
 describe('consent records', () => {
   it('reads a record that keeps the contract', () => {
     assert.deepEqual(parseConsentRecord(RECORD), RECORD)
+    for (const by of ['pane', 'coordinator', 'tab']) assert.equal(parseConsentRecord({ ...RECORD, by })?.by, by)
     assert.deepEqual(parseConsentSubject({ kind: 'auto-merge', repo: 'o/n' }), { kind: 'auto-merge', repo: 'o/n' })
   })
 
@@ -18,7 +19,7 @@ describe('consent records', () => {
     const broken: Record<string, unknown>[] = [
       { v: 2 }, { subject: null }, { subject: { kind: 'e2e-waiver', repo: 'o/n' } }, { subject: { kind: 'e2e-waiver', repo: 'o/n', pr: 0 } },
       { subject: { kind: 'auto-merge', repo: 'o/n', pr: 3 } }, { subject: { kind: 'merge', repo: 'o/n' } }, { subject: { kind: 'auto-merge', repo: 'o/..' } },
-      { entry: '../x' }, { entry: 3 }, { question: 3 }, { answer: 'x'.repeat(20_001) }, { by: 'tab' }, { at: 0 },
+      { entry: '../x' }, { entry: 3 }, { question: 3 }, { answer: 'x'.repeat(20_001) }, { by: 'elsewhere' }, { at: 0 },
     ]
     for (const change of broken) assert.equal(parseConsentRecord({ ...RECORD, ...change }), undefined, JSON.stringify(change))
     for (const raw of [null, [], 'record']) assert.equal(parseConsentRecord(raw), undefined)
@@ -67,6 +68,26 @@ describe('a consent record of a round answer', () => {
     assert.equal(consentRecordOf({ ...fields, answer: 'B' }), undefined)
     assert.equal(consentRecordOf({ ...fields, subject: { kind: 'e2e-waiver', repo: 'o/n' } }), undefined)
     assert.equal(consentRecordOf({ ...fields, entry: '../x' }), undefined)
+  })
+})
+
+describe('words typed in the sender\'s own tab', () => {
+  const choices = [{ letter: 'A', text: 'waive it, docs only' }, { letter: 'B', text: 'run the E2E' }]
+
+  it('answers a choice by its letter, alone or set apart, or by words that hold its text', () => {
+    for (const typed of ['A', ' a ', 'B : go', 'a) yes', 'ok: waive it,  docs only', 'I say WAIVE IT, docs only, thanks']) assert.ok(answersChoice(typed, choices), typed)
+  })
+
+  it('is no answer when it names no choice', () => {
+    for (const typed of ['', 'C', 'A, but check the diff first', 'go on with phase 2', 'yes']) assert.ok(!answersChoice(typed, choices), typed)
+    assert.ok(!answersChoice('anything', []))
+  })
+
+  it('files a record by the tab, a letter resolved to its text and words kept whole', () => {
+    const fields = { subject: { kind: 'e2e-waiver', repo: 'o/n', pr: 3 }, entry: 's-1', question: 'Waive E2E?', choices, by: 'tab' as const, at: '2026-11-10T00:00:00Z' }
+    assert.equal(consentRecordOf({ ...fields, answer: 'A' })?.by, 'tab')
+    assert.equal(consentRecordOf({ ...fields, answer: 'A' })?.answer, 'waive it, docs only')
+    assert.equal(consentRecordOf({ ...fields, answer: 'yes: waive it, docs only' })?.answer, 'yes: waive it, docs only')
   })
 })
 

@@ -9,9 +9,9 @@ export const CONSENT_RECORD_CONTRACT = {
   version: 1,
   kinds: ['e2e-waiver', 'auto-merge'],
   producer: 'orchestrator',
-  // Who recorded the answer: the operator in the coordinator's pane, or the coordinator relaying
-  // what they told it (`round-close`).
-  answerers: ['pane', 'coordinator'],
+  // Who recorded the answer: the operator in the coordinator's pane, or in the asking session's
+  // own tab (`tab`), or the coordinator relaying what they told it (`round-close`).
+  answerers: ['pane', 'coordinator', 'tab'],
   dir: 'consents',
   // A consent never rests on a few characters: the answer a quote holds is at least this long.
   quote_min: 8,
@@ -25,7 +25,7 @@ export const CONSENT_RECORD_CONTRACT = {
 const contract = CONSENT_RECORD_CONTRACT
 
 export type ConsentKind = 'e2e-waiver' | 'auto-merge'
-export type Answerer = 'pane' | 'coordinator'
+export type Answerer = 'pane' | 'coordinator' | 'tab'
 
 /** What the operator is asked to consent to: a waiver names its pull request, auto-merge none. */
 export type ConsentSubject =
@@ -76,7 +76,7 @@ export function parseConsentRecord(raw: unknown): ConsentRecord | undefined {
   const { v, subject: rawSubject, entry, question, answer, by, at } = raw as Record<string, unknown>
   const subject = parseConsentSubject(rawSubject)
   if (v !== CONSENT_VERSION || subject === undefined || typeof entry !== 'string' || !ENTRY.test(entry)) return undefined
-  if (!isText(question) || !isText(answer) || (by !== 'pane' && by !== 'coordinator') || typeof at !== 'string') return undefined
+  if (!isText(question) || !isText(answer) || (by !== 'pane' && by !== 'coordinator' && by !== 'tab') || typeof at !== 'string') return undefined
   return { v, subject, entry, question, answer, by, at }
 }
 
@@ -108,6 +108,20 @@ export function consentAnswer(answer: string, choices: readonly { letter: string
   if (named === undefined) return trimmed
   const chosen = choices.find(choice => choice.letter.toUpperCase() === named)
   return chosen ? chosen.text.trim() : ''
+}
+
+/**
+ * Whether words the operator typed in the asking session's own tab answer one of the question's
+ * choices: its letter alone or set apart (« A », « a) yes »), or words that hold a choice's text,
+ * case and spacing aside. A prompt typed there can be any instruction, so words that name no
+ * choice are no answer and no consent rests on them.
+ */
+export function answersChoice(typed: string, choices: readonly { letter: string; text: string }[]): boolean {
+  const trimmed = typed.trim()
+  const named = /^([A-Za-z])\s*(?:[:—)\-.]|$)/.exec(trimmed)?.[1]?.toUpperCase()
+  if (named !== undefined) return choices.some(choice => choice.letter.toUpperCase() === named)
+  const said = spaced(trimmed).toLowerCase()
+  return choices.some(choice => { const text = spaced(choice.text).toLowerCase(); return text !== '' && said.includes(text) })
 }
 
 /**
