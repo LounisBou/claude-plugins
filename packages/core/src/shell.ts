@@ -3,8 +3,10 @@
 // commit message, a body) are data and never read as a command. The command line a shell runs
 // with -c, or eval runs, is read again by simpleCommands, one level deep; readCommands hands the
 // structure to a reader that needs more than the words (what each substitution held, what fed
-// the pipe) and innerLine the line a command runs from a string. Pure functions only. Every plugin that reads a
-// command line reads it here (docs/conventions.md, « One rule, one place »).
+// the pipe) and innerLine the line a command runs from a string; the text a line writes to a
+// command's standard input (a heredoc, a here-string, what echo or printf print into a pipe) is
+// kept on the command, and stdinLines gives what a shell reads from it. Pure functions only.
+// Every plugin that reads a command line reads it here (docs/conventions.md, « One rule, one place »).
 
 // Words that end a simple command or open a group: skipped in command position
 // the way an assignment is.
@@ -38,6 +40,13 @@ export interface ShellCommand {
   readonly substitutions: readonly (readonly ShellCommand[])[]
   /** The programs, directory dropped, of the commands before it in its pipeline; empty after `;`, `&&`, `||`, `&` or a newline. */
   readonly piped: readonly string[]
+  /**
+   * The text the line itself writes to its standard input: its here-strings and heredoc bodies,
+   * and, in a pipeline, the same from the commands before it with what an `echo` or `printf`
+   * among them prints. A body or a word is one entry; text a command reads from a file or
+   * another program's output is not there.
+   */
+  readonly stdin: readonly string[]
 }
 
 // Where a git command's subcommand sits in its argv, past git's global options,
@@ -93,8 +102,52 @@ export function innerLine(argv: readonly string[]): string | undefined {
   return undefined
 }
 
+/**
+ * The command lines a shell reads from its standard input, when the line writes them: the
+ * command's `stdin` for a shell run with no `-c` and no script file (`sh`, `bash -s`, `bash -`,
+ * `bash -o pipefail`), none for any other command, for a shell given a command string or a
+ * script, which read no commands from it.
+ */
+export function stdinLines(command: ShellCommand): readonly string[] {
+  const { argv } = command
+  if (!SHELL.test(argv[0] ?? '')) return []
+  for (let k = 1; k < argv.length; k++) {
+    const word = argv[k] ?? ''
+    if (word === '-') break
+    if (/^[-+][A-Za-z]+$/.test(word)) {
+      if (word.includes('c')) return []
+      if (word.includes('s')) break
+      k += word.replace(/[^oO]/g, '').length
+      continue
+    }
+    if (word.startsWith('-')) continue
+    return []
+  }
+  return command.stdin
+}
+
 function baseName(word: string): string {
   return word.replace(/^.*\//, '')
+}
+
+// What an `echo` or a `printf` writes into a pipe, as the text a shell at its other end would
+// read: echo's words joined by a space, each of printf's words on its own (its format may
+// shape them, a word it prints is still a line a shell would read).
+function printed(argv: readonly string[]): string[] {
+  const program = baseName(argv[0] ?? '')
+  const args = argv.slice(1)
+  if (program === 'echo') {
+    const text = args.filter((word, k) => !(/^-[neE]+$/.test(word) && args.slice(0, k).every(w => /^-[neE]+$/.test(w)))).join(' ')
+    return text === '' ? [] : [text]
+  }
+  return program === 'printf' ? args.filter(word => word !== '' && word !== '--') : []
+}
+
+// What the commands of a pipeline so far write to a standard input: texts, and the heredocs whose
+// bodies, not read yet, are to be added.
+interface Feed {
+  readonly texts: readonly string[]
+  readonly hds: readonly number[]
 }
 
 function tokenize(command: string): ShellCommand[] {
@@ -121,7 +174,15 @@ function tokenize(command: string): ShellCommand[] {
   const words: string[][] = [[]]
   const pd = [0]
   const dq = [0]
+  // 1 drops the next word (a redirection's target), 2 keeps it as a here-string's text.
   const sk = [0]
+  // The here-string words and the heredocs (by number) the command being read opened; what the
+  // earlier commands of the pipeline write to a standard input, as texts and heredocs; and,
+  // by heredoc number, every stdin list its body goes to once the body is read.
+  const hereWords: string[][] = [[]]
+  const hdOwn: number[][] = [[]]
+  const feeds: Feed[] = [{ texts: [], hds: [] }]
+  const sinks: string[][][] = []
   // The substitutions closed among the words of the command being read, each as the
   // commands it held; the commands read so far at each depth below the top (what pop()
   // hands to the depth above); the programs of the pipeline so far, and whether the last
@@ -141,6 +202,7 @@ function tokenize(command: string): ShellCommand[] {
   function push(cl: string): void {
     flushWord(); d++; closer[d] = cl; words[d] = []; pd[d] = 0; dq[d] = 0; sk[d] = 0
     substs[d] = []; held[d] = []; chain[d] = []; piping[d] = false
+    hereWords[d] = []; hdOwn[d] = []; feeds[d] = { texts: [], hds: [] }
   }
   function pop(): void {
     flushWord(); flushCmd()
@@ -152,7 +214,8 @@ function tokenize(command: string): ShellCommand[] {
   }
   function flushWord(): void {
     if (started) {
-      if (sk[d]) sk[d] = 0
+      if (sk[d] === 2) { hereWords[d]?.push(cur); sk[d] = 0 }
+      else if (sk[d]) sk[d] = 0
       else words[d]?.push(cur)
     }
     cur = ''
@@ -161,17 +224,25 @@ function tokenize(command: string): ShellCommand[] {
   function flushCmd(): void {
     if ((words[d] ?? []).length > 0) {
       const piped = piping[d] ? chain[d] ?? [] : []
-      const command = analyze(d, piped)
+      const before = piping[d] ? feeds[d] ?? { texts: [], hds: [] } : { texts: [], hds: [] }
+      const here = hereWords[d] ?? []
+      const opened = hdOwn[d] ?? []
+      const stdin = [...before.texts, ...here]
+      for (const k of [...before.hds, ...opened]) (sinks[k] ??= []).push(stdin)
+      const command = analyze(d, piped, stdin)
       if (command !== undefined) {
         found.push(command)
         if (d > 0) held[d]?.push(command)
       }
       chain[d] = [...piped, command === undefined ? '' : baseName(command.argv[0] ?? '')]
+      feeds[d] = { texts: [...stdin, ...(command === undefined ? [] : printed(command.argv))], hds: [...before.hds, ...opened] }
       piping[d] = false
     }
     words[d] = []
     sk[d] = 0
     substs[d] = []
+    hereWords[d] = []
+    hdOwn[d] = []
   }
   // `$((...))` is arithmetic, not a command: skipped whole, so a `<<` inside it is no heredoc.
   function arith(j: number): number {
@@ -203,10 +274,12 @@ function tokenize(command: string): ShellCommand[] {
       dl += ch
     }
     hn++; HD[hn] = dl; HS[hn] = strip
+    hdOwn[d]?.push(hn)
     return j
   }
   function bodies(j: number): number {
     for (let k = hdone + 1; k <= hn; k++) {
+      const body: string[] = []
       while (j <= L) {
         const e = find('\n', j)
         let line: string
@@ -214,14 +287,16 @@ function tokenize(command: string): ShellCommand[] {
         else { line = s.slice(j - 1, e - 1); j = e + 1 }
         if (HS[k]) line = line.replace(/^\t+/, '')
         if (line === HD[k]) break
+        body.push(line)
       }
+      for (const sink of sinks[k] ?? []) sink.push(body.join('\n'))
     }
     hdone = hn
     return j
   }
   // A finished simple command, from its real command on; undefined when nothing is left
   // once the assignments, reserved words and wrappers are skipped.
-  function analyze(depth: number, piped: readonly string[]): ShellCommand | undefined {
+  function analyze(depth: number, piped: readonly string[], stdin: readonly string[]): ShellCommand | undefined {
     const w = words[depth] ?? []
     const n = w.length
     const wrappers: string[] = []
@@ -244,7 +319,7 @@ function tokenize(command: string): ShellCommand[] {
       break
     }
     if (k > n) return undefined
-    return { argv: w.slice(k - 1), wrappers, lookup, substitutions: substs[depth] ?? [], piped }
+    return { argv: w.slice(k - 1), wrappers, lookup, substitutions: substs[depth] ?? [], piped, stdin }
   }
 
   // One pass over s, c the character, n1 the one after it.
@@ -300,7 +375,7 @@ function tokenize(command: string): ShellCommand[] {
     else if (c === '&') { flushWord(); if (n1 !== '>') flushCmd(); i++ }
     else if (c === '<' && n1 === '<') {
       flushWord()
-      if (at(i + 2) === '<') { sk[d] = 1; i += 3 }
+      if (at(i + 2) === '<') { sk[d] = 2; i += 3 }
       else i = heredoc(i + 2)
     }
     else if (c === '<' || c === '>') {

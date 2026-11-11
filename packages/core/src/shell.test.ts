@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { gitSubcommand, innerLine, readCommands, redirectsToFile, simpleCommands } from './shell.ts'
+import { gitSubcommand, innerLine, readCommands, redirectsToFile, simpleCommands, stdinLines } from './shell.ts'
 
 const commands = (line: string): string[][] => simpleCommands(line)
 
@@ -62,6 +62,52 @@ describe('readCommands', () => {
     assert.deepEqual([sudo?.argv, sudo?.wrappers, sudo?.lookup], [['kill'], ['sudo', 'xargs'], false])
     assert.deepEqual([lookup?.argv, lookup?.lookup], [['pkill'], true])
     assert.deepEqual([run?.argv, run?.lookup], [['pkill'], false])
+  })
+})
+
+describe('stdin', () => {
+  const stdins = (line: string): (readonly string[])[] => readCommands(line).map(c => c.stdin)
+
+  it('keeps a here-string and a heredoc body as the text of the command that reads them', () => {
+    assert.deepEqual(stdins(`bash <<< 'pkill x'`), [['pkill x']])
+    assert.deepEqual(stdins('sh <<EOF\npkill x\nEOF'), [['pkill x']])
+    assert.deepEqual(stdins('sh <<EOF\na\nb\nEOF\nls'), [['a\nb'], []])
+    assert.deepEqual(stdins('sh <<-EOF\n\ta\n\tEOF'), [['a']])
+  })
+
+  it('carries what the earlier commands of a pipeline write, echo and printf by their words', () => {
+    assert.deepEqual(stdins(`echo 'pkill x' | sh`), [[], ['pkill x']])
+    assert.deepEqual(stdins(`echo -n a b | tr a b | sh`), [[], ['a b'], ['a b']])
+    assert.deepEqual(stdins(`printf '%s\\n' 'pkill x' | sh`), [[], ['%s\\n', 'pkill x']])
+    assert.deepEqual(stdins('cat <<EOF | sh\nbody\nEOF'), [['body'], ['body']])
+    assert.deepEqual(stdins(`cat <<< x |& sh`), [['x'], ['x']])
+    assert.deepEqual(stdins('ls a | sh'), [[], []])
+  })
+
+  it('carries nothing past a list separator or into a substitution', () => {
+    assert.deepEqual(stdins(`echo 'pkill x'; sh`), [[], []])
+    assert.deepEqual(stdins(`echo 'pkill x' && sh`), [[], []])
+    assert.deepEqual(stdins(`echo 'pkill x' | cat; sh`), [[], ['pkill x'], []])
+    assert.deepEqual(stdins(`echo "$(echo a | sh)"`), [[], ['a'], []])
+  })
+})
+
+describe('stdinLines', () => {
+  const lines = (line: string): (readonly string[])[] => readCommands(line).map(stdinLines)
+
+  it('gives what a shell with no command string and no script file reads from its standard input', () => {
+    assert.deepEqual(lines(`echo 'pkill x' | sh`), [[], ['pkill x']])
+    assert.deepEqual(lines(`echo 'pkill x' | bash -s`), [[], ['pkill x']])
+    assert.deepEqual(lines(`echo 'pkill x' | bash -`), [[], ['pkill x']])
+    assert.deepEqual(lines(`echo 'pkill x' | bash -o pipefail`), [[], ['pkill x']])
+    assert.deepEqual(lines(`echo 'pkill x' | bash --norc`), [[], ['pkill x']])
+    assert.deepEqual(lines(`bash -s -- a <<< 'ls'`), [['ls']])
+  })
+
+  it('gives nothing for a shell given a command string or a script, or for another program', () => {
+    assert.deepEqual(lines(`echo 'pkill x' | sh -c ls`), [[], []])
+    assert.deepEqual(lines(`echo 'pkill x' | sh script.sh`), [[], []])
+    assert.deepEqual(lines(`echo 'pkill x' | cat`), [[], []])
   })
 })
 
