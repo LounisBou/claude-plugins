@@ -149,8 +149,9 @@ def pr_create(args):
     if args.draft:
         payload["draft"] = True
     created = http.rest("POST", "/repos/%s/%s/pulls" % (owner, name), payload)
+    # A new pull request has no record at its head, so it is never ready: Not Ready, draft or not.
     if isinstance(created, dict) and created.get("number"):
-        meta.follow_readiness(owner, name, created["number"], "not-ready" if args.draft else "ready")
+        meta.follow_readiness(owner, name, created["number"], "not-ready")
     return created
 
 

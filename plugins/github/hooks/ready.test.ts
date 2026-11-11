@@ -105,13 +105,17 @@ test('pr-gate\'s answer is read, a malformed one throws', () => {
   expect(() => parseGate('{"head": "abc"}')).toThrow()
 })
 
-test('a CI undraft is a Not Ready pull request whose CI is not green', () => {
-  expect(ciUndraft(gate({}, { result: 'PENDING' }))).toBe(true)
-  expect(ciUndraft(gate({}, { result: 'FAILURE' }))).toBe(true)
-  expect(ciUndraft(gate({ labels: ['not ready'] }, { result: 'PENDING' }))).toBe(true)
+test('a CI undraft is a Not Ready pull request none of whose checks has passed yet', () => {
+  expect(ciUndraft(gate({}, { result: 'PENDING', running: 1 }))).toBe(true)
+  expect(ciUndraft(gate({}, { result: 'PENDING', skipped: ['test'] }))).toBe(true)
+  expect(ciUndraft(gate({}, { result: 'FAILURE', failed: ['guard'] }))).toBe(true)
+  expect(ciUndraft(gate({ labels: ['not ready'] }, { result: 'PENDING', running: 1 }))).toBe(true)
   expect(ciUndraft(gate())).toBe(false)
-  expect(ciUndraft(gate({ labels: [] }, { result: 'PENDING' }))).toBe(false)
-  expect(ciUndraft(gate({ labels: ['Ready'] }, { result: 'PENDING' }))).toBe(false)
+  expect(ciUndraft(gate({ labels: [] }, { result: 'PENDING', running: 1 }))).toBe(false)
+  expect(ciUndraft(gate({ labels: ['Ready'] }, { result: 'PENDING', running: 1 }))).toBe(false)
+  // A check of the head already passed: its CI ran, and a red one is no reason to leave draft.
+  expect(ciUndraft(gate({}, { result: 'FAILURE', failed: ['test'], total: 2 }))).toBe(false)
+  expect(ciUndraft(gate({}, { result: 'PENDING', running: 1, total: 2 }))).toBe(false)
 })
 
 test('the Bash merges, undrafts and Ready labels are recognised with their repository and pull request', () => {
@@ -135,6 +139,56 @@ test('the Bash merges, undrafts and Ready labels are recognised with their repos
   expect(bashActs('gh pr create -d -t t -R o/r')).toEqual([{ kind: 'create-draft', name: 'gh pr create', repo: 'o/r' }])
   expect(bashActs('gh pr create --draft --label Ready')[0].kind).toBe('create')
   expect(bashActs('gh pr ready 3 -R o/r --undo')).toEqual([{ kind: 'redraft', name: 'gh pr ready', repo: 'o/r', pr: 3 }])
+})
+
+test('gh pr ready --undo is read as gh reads a boolean flag: =false leaves draft', () => {
+  expect(bashActs('gh pr ready 3 -R o/r --undo')[0].kind).toBe('redraft')
+  expect(bashActs('gh pr ready 3 -R o/r --undo=true')[0].kind).toBe('redraft')
+  expect(bashActs('gh pr ready 3 -R o/r --undo=false')).toEqual([{ kind: 'undraft', name: 'gh pr ready', repo: 'o/r', pr: 3 }])
+  expect(bashActs('gh pr ready 3 -R o/r --undo --undo=0')[0].kind).toBe('undraft')
+})
+
+test('a GraphQL query the line does not show is an unread act, on every spelling of the endpoint', () => {
+  const opaque = [{ kind: 'undraft', name: 'gh api graphql', unnamed: true, opaque: true }]
+  for (const line of [
+    'gh api graphql -F query=@mutation.graphql',
+    'gh api /graphql --input body.json',
+    'gh api https://api.github.com/graphql -f query="$Q"',
+    'gh api graphql -f query="mutation { ${OP} }"',
+    'gh api graphql -f query="$(cat q.graphql)"',
+    'gh api graphql -F owner=o',
+  ]) {
+    expect(bashActs(line), line).toEqual(opaque)
+  }
+  for (const endpoint of ['graphql', '/graphql', 'https://api.github.com/graphql']) {
+    expect(bashActs('gh api ' + endpoint + ' -f query=\'mutation{markPullRequestReadyForReview(input:{}){clientMutationId}}\''), endpoint)
+      .toEqual([{ kind: 'undraft', name: 'gh api graphql', unnamed: true }])
+  }
+  // A variable the query declares is GraphQL's, not the shell's: the query is read.
+  expect(bashActs('gh api graphql -F id=x -f query=\'query($id: ID!){node(id: $id){id}}\'')).toEqual([])
+})
+
+test('a Ready label put through REST is read on the labels, the issue and the pull request, by any spelling', () => {
+  const act = [{ kind: 'ready-label', name: 'gh api', repo: 'o/r', pr: 12 }]
+  for (const line of [
+    'gh api -X PATCH repos/o/r/issues/12 -f \'labels[]=Ready\'',
+    'gh api --method PATCH repos/o/r/pulls/12 -f labels=\'["Ready"]\'',
+    'gh api -X PATCH https://api.github.com/repos/o/r/issues/12 -f \'labels[]=Ready\'',
+    'gh api -X PATCH repos/o/r/issues/12 --input body.json',
+    'gh api https://api.github.com/repos/o/r/issues/12/labels -f labels=\'["bug","Ready"]\'',
+    'gh api repos/o/r/issues/12/labels --input labels.json',
+  ]) {
+    expect(bashActs(line), line).toEqual(act)
+  }
+  expect(bashActs('gh api -X PATCH repos/o/r/issues/12 -f \'labels[]=Not Ready\'')).toEqual([])
+  expect(bashActs('gh api -X PATCH repos/o/r/issues/12 -f title=Ready')).toEqual([])
+  expect(bashActs('gh api -X PATCH repos/o/r/issues/12 -f labels=\'["Not Ready"]\'')).toEqual([])
+})
+
+test('the engine fed on stdin from Bash is an act of its own, its request unread', () => {
+  expect(bashActs('printf %s "$REQ" | python3 /p/engine/gh.py --stdin-json'))
+    .toEqual([{ kind: 'merge', name: 'gh.py --stdin-json', stdin: true }])
+  expect(bashActs('python3 /p/engine/gh.py --repo o/r label-add 12 Ready -- --stdin-json')[0].kind).toBe('ready-label')
 })
 
 test('gh pr create --draft=false and --draft=0 open a pull request out of draft, --draft=true and a bare --draft a draft', () => {

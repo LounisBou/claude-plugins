@@ -1215,6 +1215,8 @@ test('a description replaced and a pull request opened out of draft on a reposit
   await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-create', args: { title: 'fix: x', draft: false }, repo: 'acme/thing' })
   expect(asked.length).toBe(0)
   expect(runs.length).toBe(2)
+  expect(runs[1].command).toBe('pr-create')
+  expect(runs[1].args.draft).toBe(false)
 })
 
 test('a pull request opened or taken out of draft on a repository not in auto-merge is refused, a description replaced is not asked', async ($, on) => {
