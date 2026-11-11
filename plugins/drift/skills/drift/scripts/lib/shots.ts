@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import { locatePlaywright, NotInstalled, type Playwright } from '../../../../core/index.ts'
 import { DriftError } from './compare.ts'
 import { parseShots, parseShotsArgs, type ShotsConfig } from './config.ts'
-import { decodePng, diffOf, encodePng, exactDiff, sizeOfPng, type Box } from './png.ts'
+import { comparePair, diffOf, sizeOfPng, type Box, type Compared, type Sizes } from './png.ts'
 import { checkout, exec, interrupted, readJson, removeCheckout, runDirectory, stepper, targetOf, type Deps } from './run.ts'
 import { startServer } from './server.ts'
 
@@ -28,7 +28,7 @@ export interface Pair {
   readonly pixels?: number
   readonly box?: Box
   /** Both captures' sizes, when they differ. */
-  readonly size?: { readonly base: readonly [number, number]; readonly head: readonly [number, number] }
+  readonly size?: Sizes
   /** The diff image, relative to the run directory. */
   readonly diff?: string
 }
@@ -152,12 +152,23 @@ async function shootSide(context: Shooting, side: 'base' | 'head', sha: string):
   await removeCheckout(top, tree)
 }
 
+/** A pair's verdict, with the diff image to write when it is ours. */
+export type Judged = Compared | { readonly verdict: 'differ'; readonly pixels: number; readonly box?: Box; readonly image?: undefined }
+
 /**
- * Compares every pair with Playwright's comparator, then reads each diff image it left. At
- * threshold 0, and for a pair whose sizes differ, the pair is compared byte for byte instead: the
- * comparator forgives pixels it takes for anti-aliasing, and paints no pixel of a size change.
- * Identical then means the same size and RGBA bytes, and the diff image is ours.
+ * One pair's verdict. At threshold 0, and for a pair whose sizes differ, the pair is compared byte
+ * for byte (comparePair): the comparator forgives pixels it takes for anti-aliasing, and paints no
+ * pixel of a size change. Identical then means the same size and RGBA bytes, and the diff image is
+ * ours. Otherwise the comparator's diff image, when it left one, is read.
  */
+export function judgePair(baseFile: Buffer, headFile: Buffer, threshold: number, comparatorDiff: Buffer | undefined): Judged {
+  const base = sizeOfPng(baseFile)
+  const head = sizeOfPng(headFile)
+  if (threshold === 0 || base.width !== head.width || base.height !== head.height) return comparePair(baseFile, headFile)
+  return comparatorDiff === undefined ? { verdict: 'identical' } : { verdict: 'differ', ...diffOf(comparatorDiff) }
+}
+
+/** Compares every pair with Playwright's comparator, then judges each from the diff image it left. */
 async function compareSides(context: Shooting, threshold: number): Promise<Pair[]> {
   const { config, run, spec, playwright, pairs, signal } = context
   const log = join(run, 'compare.log')
@@ -183,28 +194,14 @@ async function compareSides(context: Shooting, threshold: number): Promise<Pair[
       const error = firstLine(join(diff, `${pair}.error.txt`))
       if (error !== undefined) throw new DriftError(`${pair} could not be compared: ${error}; its log: ${log}`)
       const image = join(diff, `${pair}.png`)
-      const baseFile = readFileSync(join(run, 'base', `${pair}.png`))
-      const headFile = readFileSync(join(run, 'head', `${pair}.png`))
-      const base = sizeOfPng(baseFile)
-      const head = sizeOfPng(headFile)
-      const resized = base.width !== head.width || base.height !== head.height
-      if (threshold === 0 || resized) {
-        const exact = exactDiff(decodePng(baseFile), decodePng(headFile))
-        if (exact.pixels === 0) {
-          result.push({ route: route.path, width: viewport.width, verdict: 'identical' })
-          continue
-        }
-        writeFileSync(image, encodePng(exact.image))
-      } else if (!existsSync(image)) {
+      const judged = judgePair(readFileSync(join(run, 'base', `${pair}.png`)), readFileSync(join(run, 'head', `${pair}.png`)), threshold, existsSync(image) ? readFileSync(image) : undefined)
+      if (judged.verdict === 'identical') {
         result.push({ route: route.path, width: viewport.width, verdict: 'identical' })
         continue
       }
-      const { pixels, box } = diffOf(readFileSync(image))
-      result.push({
-        route: route.path, width: viewport.width, verdict: 'differ', pixels, ...(box === undefined ? {} : { box }),
-        ...(resized ? { size: { base: [base.width, base.height] as const, head: [head.width, head.height] as const } } : {}),
-        diff: `diff/${pair}.png`,
-      })
+      const { image: written, ...found } = judged
+      if (written !== undefined) writeFileSync(image, written)
+      result.push({ route: route.path, width: viewport.width, ...found, diff: `diff/${pair}.png` })
     }
   }
   return result

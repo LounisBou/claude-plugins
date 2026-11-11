@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path'
 import { DriftError } from './compare.ts'
 import { flagsOf, routeName, USAGE, type Options } from './config.ts'
-import { decodePng, encodePng, exactDiff, sizeOfPng, type Box } from './png.ts'
+import { comparePair, type Box, type Sizes } from './png.ts'
 import { exec, git, interrupted, refsOf, runDirectory, type Deps } from './run.ts'
 import { generate, playwrightConfig, playwrightOf, requestsFileOf } from './shots.ts'
 
@@ -97,12 +97,6 @@ export function externalRefs(text: string): string[] {
   return [...found].sort()
 }
 
-/** Both renderings' sizes, when they differ. */
-export interface Sizes {
-  readonly base: readonly [number, number]
-  readonly head: readonly [number, number]
-}
-
 export interface SvgPair {
   readonly scale: number
   readonly background: Background
@@ -164,25 +158,6 @@ export function renderSvg(report: SvgReport): string[] {
   for (const url of report.blocked) lines.push(`blocked: ${url}`)
   lines.push(`base ${report.base.sha.slice(0, 7)} (${report.base.ref}), head ${report.head.sha.slice(0, 7)} (${report.head.ref})`)
   return lines
-}
-
-export type Compared =
-  | { readonly verdict: 'identical' }
-  | { readonly verdict: 'differ'; readonly pixels: number; readonly box?: Box; readonly size?: Sizes; readonly image: Buffer }
-
-/** Two renderings compared byte for byte: identical when of one size and the same bytes, else the differing pixels, their box, any change of size, and a diff image. */
-export function comparePair(baseFile: Buffer, headFile: Buffer): Compared {
-  const exact = exactDiff(decodePng(baseFile), decodePng(headFile))
-  const base = sizeOfPng(baseFile)
-  const head = sizeOfPng(headFile)
-  // Past a smaller image's edge exactDiff reads transparent: a size change differs even when no pixel does.
-  const resized = base.width !== head.width || base.height !== head.height
-  if (exact.pixels === 0 && !resized) return { verdict: 'identical' }
-  return {
-    verdict: 'differ', pixels: exact.pixels, ...(exact.box === undefined ? {} : { box: exact.box }),
-    ...(resized ? { size: { base: [base.width, base.height] as const, head: [head.width, head.height] as const } } : {}),
-    image: encodePng(exact.image),
-  }
 }
 
 /** A blob's bytes, read from the object store. */

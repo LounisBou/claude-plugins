@@ -142,6 +142,34 @@ export function exactDiff(base: Image, head: Image): { pixels: number; box?: Box
   return { ...boxOf(width, height, differs), image: { width, height, data } }
 }
 
+/** Both renderings' sizes, when they differ. */
+export interface Sizes {
+  readonly base: readonly [number, number]
+  readonly head: readonly [number, number]
+}
+
+export type Compared =
+  | { readonly verdict: 'identical' }
+  | { readonly verdict: 'differ'; readonly pixels: number; readonly box?: Box; readonly size?: Sizes; readonly image: Buffer }
+
+/**
+ * Two PNG files compared byte for byte (exactDiff): identical when of one size and the same RGBA
+ * bytes, else the differing pixels, their box, any change of size, and a diff image. Past the
+ * smaller image's edge exactDiff reads transparent: a change of size differs even when no pixel does.
+ */
+export function comparePair(baseFile: Buffer, headFile: Buffer): Compared {
+  const exact = exactDiff(decodePng(baseFile), decodePng(headFile))
+  const base = sizeOfPng(baseFile)
+  const head = sizeOfPng(headFile)
+  const resized = base.width !== head.width || base.height !== head.height
+  if (exact.pixels === 0 && !resized) return { verdict: 'identical' }
+  return {
+    verdict: 'differ', pixels: exact.pixels, ...(exact.box === undefined ? {} : { box: exact.box }),
+    ...(resized ? { size: { base: [base.width, base.height] as const, head: [head.width, head.height] as const } } : {}),
+    image: encodePng(exact.image),
+  }
+}
+
 function chunk(type: string, body: Buffer): Buffer {
   const head = Buffer.alloc(8)
   head.writeUInt32BE(body.length, 0)

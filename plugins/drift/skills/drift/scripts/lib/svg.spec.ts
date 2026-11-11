@@ -1,8 +1,7 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import { DriftError } from './compare.ts'
-import { encodePng, type Image } from './png.ts'
-import { changesOf, comparePair, externalRefs, parseSvgArgs, renderSvg, type SvgReport } from './svg.ts'
+import { changesOf, externalRefs, parseSvgArgs, renderSvg, type SvgReport } from './svg.ts'
 
 const refused = (pattern: RegExp) => (error: unknown): boolean => error instanceof DriftError && pattern.test(error.message)
 
@@ -56,27 +55,6 @@ test('the external references of an SVG text: href, xlink:href, src, url() and @
   ].join('')
   assert.deepEqual(externalRefs(text), ['//evil.example.com/s.js', 'b.css', 'https://cdn.example.com/bg.png', 'https://fonts.example.com/a.css', 'https://img.example.com/p.png', 'sprite.svg#x'])
   assert.deepEqual(externalRefs('<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0"/></svg>'), [])
-})
-
-const image = (width: number, height: number, paint: (x: number, y: number) => number): Image => {
-  const data = Buffer.alloc(width * height * 4)
-  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) data.writeUInt32BE(paint(x, y) >>> 0, (y * width + x) * 4)
-  return { width, height, data }
-}
-
-test('a pair of renderings: identical when every byte matches, else the differing pixels, their box and a diff image; a size change differs even when no pixel does', () => {
-  const blank = encodePng(image(4, 3, () => 0))
-  assert.deepEqual(comparePair(blank, blank), { verdict: 'identical' })
-  const dot = encodePng(image(4, 3, (x, y) => (x === 2 && y === 1 ? 0x000000ff : 0)))
-  const found = comparePair(blank, dot)
-  assert.ok(found.verdict === 'differ')
-  assert.equal(found.pixels, 1)
-  assert.deepEqual(found.box, { x: 2, y: 1, width: 1, height: 1 })
-  assert.equal(found.size, undefined)
-  assert.ok(found.image.length > 0)
-  const wider = comparePair(blank, encodePng(image(5, 3, () => 0)))
-  assert.ok(wider.verdict === 'differ')
-  assert.deepEqual(wider.size, { base: [4, 3], head: [5, 3] })
 })
 
 const REPORT: SvgReport = {

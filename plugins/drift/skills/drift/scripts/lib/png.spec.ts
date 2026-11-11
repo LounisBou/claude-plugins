@@ -2,7 +2,7 @@ import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import { crc32, deflateSync } from 'node:zlib'
 import { DriftError } from './compare.ts'
-import { decodePng, diffOf, encodePng, exactDiff, sizeOfPng, type Image } from './png.ts'
+import { comparePair, decodePng, diffOf, encodePng, exactDiff, sizeOfPng, type Image } from './png.ts'
 
 /** An 8-bit PNG of `image` (RGBA, or RGB when `rgb`), every row written with `filter`. */
 function encode(image: Image, filter: number, rgb = false): Buffer {
@@ -105,4 +105,25 @@ test('two captures compared byte for byte: a one-pixel-wide grey column a shade 
 test('an image written as a PNG reads back the same', () => {
   const source = image(9, 4, [[8, 3, 1, 2, 3]])
   assert.deepEqual(decodePng(encodePng(source)), source)
+})
+
+const painted = (width: number, height: number, paint: (x: number, y: number) => number): Image => {
+  const data = Buffer.alloc(width * height * 4)
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) data.writeUInt32BE(paint(x, y) >>> 0, (y * width + x) * 4)
+  return { width, height, data }
+}
+
+test('a pair of renderings: identical when every byte matches, else the differing pixels, their box and a diff image; a size change differs even when no pixel does', () => {
+  const blank = encodePng(painted(4, 3, () => 0))
+  assert.deepEqual(comparePair(blank, blank), { verdict: 'identical' })
+  const dot = encodePng(painted(4, 3, (x, y) => (x === 2 && y === 1 ? 0x000000ff : 0)))
+  const found = comparePair(blank, dot)
+  assert.ok(found.verdict === 'differ')
+  assert.equal(found.pixels, 1)
+  assert.deepEqual(found.box, { x: 2, y: 1, width: 1, height: 1 })
+  assert.equal(found.size, undefined)
+  assert.ok(found.image.length > 0)
+  const wider = comparePair(blank, encodePng(painted(5, 3, () => 0)))
+  assert.ok(wider.verdict === 'differ')
+  assert.deepEqual(wider.size, { base: [4, 3], head: [5, 3] })
 })
