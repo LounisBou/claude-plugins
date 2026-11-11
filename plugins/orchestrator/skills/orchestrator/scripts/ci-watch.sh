@@ -68,10 +68,10 @@
 # followed workflow is misnamed, and the operator is told.
 #
 # What the caller does, per line:
-#   green: run the call the line ends with, the github tool's read of the gate, which puts `Ready`
-#     when the four hold. Then, with auto-merge, nothing: the merge is coming, and a watch that sees
-#     auto-merge enabled on green waits, bounded, for it and follows the base branch, so a green
-#     line there means no merge came within the bound; otherwise report « ready » once `Ready` is on.
+#   green: with auto-merge, nothing: the merge is coming, and a watch that sees auto-merge enabled
+#     on green waits, bounded, for it and follows the base branch, so a green line there means no
+#     merge came within the bound; otherwise run the call the line ends with, the github tool's
+#     read of the gate, which puts `Ready` when the four hold, and report « ready » once it is on.
 #   red: read the failing job first; when its failure is outside what the pull request touches
 #     (an unrelated flake, infrastructure), re-run the failed jobs once with
 #     `gh run rerun <run-id> --failed`, after naming the failing job's cause in one line, read in
