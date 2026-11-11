@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Fixture</title>
+<style>
+  body { margin: 0; font: 16px sans-serif; background: #ffffff; color: #222222; }
+  main { padding: 40px; }
+  .card { width: 200px; height: 80px; background: #e0e8f0; transition: background 2s; }
+  .card:hover { background: #ff0000; }
+  #dot { position: absolute; left: 10px; top: 20px; width: 1px; height: 1px; background: #336699; }
+  .spin { width: 20px; height: 20px; background: #888888; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div id="dot"></div>
+<main>
+  <h1>Fixture</h1>
+  <p id="who">loading</p>
+  <p id="when"></p>
+  <div class="card"></div>
+  <div class="spin"></div>
+  <img src="https://tiles.blocked.test/tile.png" width="16" height="16" alt="">
+  <input autofocus value="caret">
+</main>
+<script>
+  document.getElementById('when').textContent = new Date().toISOString()
+  fetch('https://api.fixture.test/v1/me').then(r => r.json()).then(me => { document.getElementById('who').textContent = me.name })
+</script>
+</body>
+</html>

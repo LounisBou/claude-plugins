@@ -9,8 +9,9 @@ decision that shaped this file, with its reason, is under `decisions/`.
 ```
 .claude-plugin/marketplace.json   the catalogue: authored header, generated plugin list
 packages/core/                    the shared library: paths, store, deadlines, session names, the shell
-                                  reader, shared environment names, the plugin locator, and the typed
-                                  contracts (the method's formats, PR records, consent records)
+                                  reader, shared environment names, the plugin locator, the pinned
+                                  Playwright's install, and the typed contracts (the method's
+                                  formats, PR records, consent records)
 plugins/<name>/                   one installable plugin per directory, named as its manifest
 scripts/                          the repository's own tooling, strict TypeScript, tested
 evals/outcome/                    the outcome evals' cases and spend caps, read by scripts/outcome.ts
@@ -73,6 +74,27 @@ Each plugin owns one state directory under the host's configuration directory an
 only through `core`'s store, which locks and writes atomically. A file another plugin or an
 outside program reads (`deck.json`, the measure file) is a contract: typed in `core`,
 versioned, written in one rename by its owner alone.
+
+## Tools installed once per machine
+
+A heavy tool several plugins may drive (a browser and its test runner) is never a dependency of
+the repository's `package.json` nor of a plugin: the host copies a plugin into its cache, where
+an install would be repeated per plugin and per version, and lost on each update. `core` pins its
+version in one constant and installs it once per machine under the host's configuration
+directory, in a directory named by the pin, outside every plugin's cache; a plugin locates it
+through `core` and names its own install command when it is missing.
+
+- Playwright: `packages/core/src/playwright.ts`, `PLAYWRIGHT_VERSION`; `@playwright/test` and its
+  Chromium headless shell in `<config dir>/playwright/<version>/` (the browser under `browsers/`,
+  through `PLAYWRIGHT_BROWSERS_PATH`); a marker written last tells a complete install from a
+  half-done one, which is removed and redone. Installed by `/drift:install`.
+
+The pin is raised in that constant, with the integrity the registry publishes for each package it
+installs (`PLAYWRIGHT_PACKAGES`, read with `npm view <name>@<version> dist.integrity`): the install
+writes them into a lockfile and runs `npm ci`, which refuses a tarball of another hash. Then
+`npm run core`: every plugin carrying core ships the change and raises its version, the next
+install lands beside the old one, and the CI cache keyed on the module installs the new one. An
+old version's directory is removed by hand.
 
 ## Languages
 

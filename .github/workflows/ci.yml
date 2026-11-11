@@ -84,6 +84,27 @@ jobs:
         run: |
           git clone --quiet --depth 1 --branch v7.0.2 https://github.com/obra/superpowers "$RUNNER_TEMP/superpowers"
           echo "SUPERPOWERS_ROOT=$RUNNER_TEMP/superpowers" >> "$GITHUB_ENV"
+      - name: the runner's image, which the expressions below cannot read from its environment
+        if: matrix.plugin == 'drift'
+        run: echo "RUNNER_IMAGE_OS=$ImageOS" >> "$GITHUB_ENV"
+      - name: the pinned Playwright drift drives, cached by the core module that pins it
+        if: matrix.plugin == 'drift'
+        uses: actions/cache@v4
+        with:
+          path: ~/.claude/playwright
+          # A browser downloaded on one image or architecture never runs on another.
+          key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ env.RUNNER_IMAGE_OS }}-${{ hashFiles('packages/core/src/playwright.ts') }}
+      - name: install it through core, then the system libraries its Chromium needs on Linux
+        if: matrix.plugin == 'drift'
+        # The libraries come from a fresh download of the pinned version, never from the restored
+        # cache: nothing the cache holds runs as root.
+        run: |
+          plugins/drift/install.sh
+          if [ "$RUNNER_OS" = Linux ]; then
+            pin=$(sed -n "s/^export const PLAYWRIGHT_VERSION = '\([0-9.]*\)'$/\1/p" packages/core/src/playwright.ts)
+            [ -n "$pin" ] || { echo "no PLAYWRIGHT_VERSION in packages/core/src/playwright.ts"; exit 1; }
+            sudo env "PATH=$PATH" npx --yes "playwright@$pin" install-deps chromium
+          fi
       - name: suite
         env:
           CLAUDE_GITHUB_ROOT: ${{ github.workspace }}/plugins/github

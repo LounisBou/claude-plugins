@@ -1,14 +1,22 @@
 #!/bin/bash
 # drift's suite: the plugin validates, the command's tests pass (a fixture project built at
-# several refs in a temporary repository), and the launcher reaches the command.
+# several refs in a temporary repository), the browser tests pass (a fixture app captured at
+# several refs), and the launcher reaches the command.
 #
-# Requires bash, git, node and the claude CLI.
+# Requires bash, git, node, npm and the claude CLI. The browser tests drive the shared Playwright
+# install, which install.sh puts in place first: once per machine, a no-op once it is there.
 set -u
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 SCRIPTS="$HERE/skills/drift/scripts"
 fail=0
 claude plugin validate "$HERE" >/dev/null || { echo "FAIL claude plugin validate"; fail=1; }
 node --no-warnings --test "$SCRIPTS"/lib/*.spec.ts "$SCRIPTS"/*.spec.ts || { echo "FAIL the command's tests"; fail=1; }
+if "$HERE/install.sh"; then
+  node --no-warnings --test "$SCRIPTS"/*.e2e.ts || { echo "FAIL the browser tests"; fail=1; }
+else
+  echo "FAIL install.sh: the browser tests need the shared Playwright install"
+  fail=1
+fi
 out=$("$SCRIPTS/drift.sh" 2>&1)
 code=$?
 case "$code:$out" in

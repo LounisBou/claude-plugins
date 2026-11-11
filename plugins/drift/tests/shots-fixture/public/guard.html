@@ -1,0 +1,23 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>Guard</title></head>
+<body style="margin: 0; font: 16px sans-serif">
+<img src="/hop" width="8" height="8" alt="">
+<img src="/relay" width="8" height="8" alt="">
+<img src="/loop" width="8" height="8" alt="">
+<img id="side" width="8" height="8" alt="">
+<p id="socket">open</p>
+<p id="malformed">pending</p>
+<script>
+  // Every way out of the page drift shots must route: redirects of the server's own (/hop,
+  // /relay in two hops, /loop never ending), a host on another port (an image and a window), a
+  // WebSocket, an API path with a malformed escape.
+  const side = `http://127.0.0.1:${new URLSearchParams(location.search).get('port')}`
+  document.getElementById('side').src = `${side}/pixel.png`
+  // A window's navigation is the one way out the browser's own local network checks leave open.
+  window.open(`${side}/popup.html`)
+  new WebSocket('wss://socket.blocked.test/live').onclose = () => { document.getElementById('socket').textContent = 'closed' }
+  fetch('https://api.fixture.test/v1/%E0%A4%A').then(r => { document.getElementById('malformed').textContent = `status ${r.status}` }, () => { document.getElementById('malformed').textContent = 'failed' })
+</script>
+</body>
+</html>

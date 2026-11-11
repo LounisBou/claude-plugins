@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { PLAYWRIGHT_VERSION } from '../../../core/index.ts'
 import { main, type Deps } from './drift.ts'
 
 const FIXTURE = fileURLToPath(new URL('../../../tests/fixture', import.meta.url))
@@ -253,4 +254,100 @@ test('without --out the run directory is made under the scratchpad, else the tem
   out.length = 0
   assert.equal(await main(['build', '--repo', REPO, ...refs('base', 'base')], { ...deps, env: {} }), 0)
   assert.match(out.at(-1) ?? '', new RegExp(`^out: ${ROOT}/drift-`))
+})
+
+test('drift shots without the shared Playwright install exits 2, naming the command that installs it', async () => {
+  const configDir = join(ROOT, 'no-playwright')
+  const err: string[] = []
+  const code = await main(['shots', '--repo', REPO, '--config', CONFIG], { tmp: ROOT, home: HOME, env: { CLAUDE_CONFIG_DIR: configDir }, out: () => undefined, err: line => err.push(line) })
+  assert.equal(code, 2)
+  assert.equal(err.join('\n'), `drift: Playwright ${PLAYWRIGHT_VERSION} is not installed in ${join(configDir, 'playwright', PLAYWRIGHT_VERSION)}: run /drift:install`)
+})
+
+test('drift install puts the pinned Playwright in the shared directory once, and says where and how big', async () => {
+  const configDir = join(ROOT, 'playwright-home')
+  const calls: string[][] = []
+  const installRun = async (argv: readonly string[], cwd: string, env: Readonly<Record<string, string>>): Promise<number> => {
+    calls.push([...argv])
+    if (argv[0] === 'npm') {
+      mkdirSync(join(cwd, 'node_modules', '@playwright', 'test'), { recursive: true })
+      writeFileSync(join(cwd, 'node_modules', '@playwright', 'test', 'package.json'), JSON.stringify({ version: PLAYWRIGHT_VERSION }))
+    } else {
+      mkdirSync(join(env['PLAYWRIGHT_BROWSERS_PATH'] ?? '', 'chromium_headless_shell-1'), { recursive: true })
+      writeFileSync(join(env['PLAYWRIGHT_BROWSERS_PATH'] ?? '', 'chromium_headless_shell-1', 'chrome'), Buffer.alloc(3_000_000))
+      writeFileSync(join(env['PLAYWRIGHT_BROWSERS_PATH'] ?? '', 'chromium_headless_shell-1', 'INSTALLATION_COMPLETE'), '')
+    }
+    return 0
+  }
+  const out: string[] = []
+  const deps = { tmp: ROOT, home: HOME, env: { CLAUDE_CONFIG_DIR: configDir }, out: (line: string) => out.push(line), err: () => undefined, installRun }
+  const dir = join(configDir, 'playwright', PLAYWRIGHT_VERSION)
+  assert.equal(await main(['install'], deps), 0)
+  assert.equal(await main(['install'], deps), 0)
+  assert.deepEqual(out, [`drift: Playwright ${PLAYWRIGHT_VERSION} installed in ${dir} (3 MB)`, `drift: Playwright ${PLAYWRIGHT_VERSION} already installed in ${dir} (3 MB)`])
+  assert.equal(calls.length, 2)
+  const err: string[] = []
+  assert.equal(await main(['install', '--now'], { ...deps, err: line => err.push(line) }), 2)
+  assert.match(err.join('\n'), /^drift: usage: drift build/)
+})
+
+test('a failed install is a tool error, exit 2, saying which step failed', async () => {
+  const err: string[] = []
+  const code = await main(['install'], {
+    tmp: ROOT, home: HOME, env: { CLAUDE_CONFIG_DIR: join(ROOT, 'failed-install') }, out: () => undefined, err: line => err.push(line), installRun: async () => 1,
+  })
+  assert.equal(code, 2)
+  assert.match(err.join('\n'), /^drift: npm install failed \(exit 1\) in /)
+})
+
+test('an interrupted install stops its command and exits 2', async () => {
+  const controller = new AbortController()
+  const err: string[] = []
+  const pending = main(['install'], {
+    tmp: ROOT, home: HOME, env: { CLAUDE_CONFIG_DIR: join(ROOT, 'stopped-install') }, signal: controller.signal, out: () => undefined, err: line => err.push(line),
+    installRun: (_argv, _cwd, _env, signal) => new Promise(done => signal.addEventListener('abort', () => done(null), { once: true })),
+  })
+  controller.abort()
+  assert.equal(await pending, 2)
+  assert.match(err.join('\n'), /install was interrupted/)
+})
+
+/** A config directory holding what the shared install's locator checks, no real Playwright in it. */
+function fakePlaywright(name: string): string {
+  const configDir = join(ROOT, name)
+  const dir = join(configDir, 'playwright', PLAYWRIGHT_VERSION)
+  mkdirSync(join(dir, 'node_modules', '@playwright', 'test'), { recursive: true })
+  writeFileSync(join(dir, 'node_modules', '@playwright', 'test', 'package.json'), JSON.stringify({ version: PLAYWRIGHT_VERSION }))
+  mkdirSync(join(dir, 'browsers', 'chromium_headless_shell-1'), { recursive: true })
+  writeFileSync(join(dir, 'browsers', 'chromium_headless_shell-1', 'INSTALLATION_COMPLETE'), '')
+  writeFileSync(join(dir, '.complete'), `${PLAYWRIGHT_VERSION}\n`)
+  return configDir
+}
+
+test('drift shots refuses fixtures that name no directory, exit 2, before anything runs', async () => {
+  const shotsConfig = join(ROOT, 'shots-file-fixtures.json')
+  writeFileSync(shotsConfig, JSON.stringify({ shots: { server: ['node', 'x'], port: 4999, routes: ['/'], fixtures: CONFIG } }))
+  const err: string[] = []
+  const work = join(ROOT, 'shots-work')
+  mkdirSync(work)
+  const code = await main(['shots', '--repo', REPO, '--config', shotsConfig, '--base', sha['base'] ?? '', '--head', sha['base'] ?? ''], {
+    tmp: work, home: HOME, env: { CLAUDE_CONFIG_DIR: fakePlaywright('fake-playwright') }, out: () => undefined, err: line => err.push(line),
+  })
+  assert.equal(code, 2)
+  assert.equal(err.join('\n'), `drift: ${shotsConfig}: "shots.fixtures" names no directory: ${CONFIG}`)
+  assert.deepEqual(readdirSync(work), [])
+})
+
+test('--out is refused when it holds anything but a previous run, its content kept; a previous run\'s is reused', async () => {
+  const taken = join(ROOT, 'taken-out')
+  mkdirSync(taken)
+  writeFileSync(join(taken, 'notes.txt'), 'mine\n')
+  const err: string[] = []
+  const code = await main(['build', '--repo', REPO, '--out', taken, ...refs('base', 'base')], { tmp: ROOT, home: HOME, env: {}, out: () => undefined, err: line => err.push(line) })
+  assert.equal(code, 2)
+  assert.match(err.join('\n'), /neither empty nor a previous run's/)
+  assert.deepEqual(readdirSync(taken), ['notes.txt'])
+  const first = await drift(refs('base', 'base'))
+  assert.equal(first.code, 0)
+  assert.equal(await main(['build', '--repo', REPO, '--out', first.dir, ...refs('base', 'base')], { tmp: first.work, home: HOME, env: {}, out: () => undefined, err: () => undefined }), 0)
 })
