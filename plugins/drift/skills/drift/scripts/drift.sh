@@ -3,12 +3,15 @@
 #
 #   drift.sh build [--repo <path>] [--base <ref>] [--head <ref>] [--config <path>] [--out <dir>]
 #   drift.sh shots [--repo <path>] [--base <ref>] [--head <ref>] [--config <path>] [--out <dir>] [--threshold <0..1>]
+#   drift.sh svg [--repo <path>] [--base <ref>] [--head <ref>] [--out <dir>] [--scales <s,…>]
 #   drift.sh install
 #
 # Defaults: --repo ., --base origin/main, --head HEAD, --config ~/.claude/drift/<owner>-<repo>.json
 # (named after the repository's origin, under $CLAUDE_CONFIG_DIR when it is set), --out a new directory under the calling session's
-# scratchpad when one is found, else under the system temp directory; --threshold 0. A given --out
-# must be new, empty or a previous run's (it holds a report.json): anything else is refused.
+# scratchpad when one is found, else under the system temp directory; --threshold 0; --scales 1,4
+# (each above 0, at most 16). svg reads no config. A given --out
+# must be new, empty or a previous run's (it holds a report.json): anything else is refused; svg
+# also refuses another command's run, and removes an earlier report before writing anything.
 #
 # The config, a JSON object kept outside the repository:
 #   "install"      optional, the command run in each checkout first, as a list: ["npm", "ci"]
@@ -65,17 +68,49 @@
 #   <route> @<width>: identical
 #   <route> @<width>: <n> px differ in <x,y,w,h>[ (size <w>x<h> → <w>x<h>)], diff diff/<name>.png
 #                               at --threshold 0, a pair differs as soon as one byte of one pixel
-#                               does; above 0, Playwright's comparator decides, and the line
+#                               does, and at any threshold a change of size differs, even when
+#                               the area gained is transparent; above 0, Playwright's comparator
+#                               decides, and the line
 #   threshold <t>: colour differences within it and pixels taken for anti-aliasing are not counted
 #                               says what it may forgive
 #   blocked: <url>              a request to a host neither the server's, nor in "api" or "allow"
 #   unmocked: <METHOD> <url>    a request to an "api" host with no fixture
 #
+# stdout of svg: the verdict, one line per changed SVG file (and per differing rendering), what
+# was left out, the refs, then `out: <run directory>`, which holds each side's files (svg/), their
+# renderings (base/, head/), the diff images (diff/), the generated spec (spec/), render.log,
+# report.txt and report.json. Every standalone .svg file (any case) changed between the refs,
+# renames detected, read from git without a checkout, is rendered as an image (no script, no
+# request) at each scale of its own size (its viewBox, else the size the browser gives it) and at
+# its intrinsic size, on a transparent then a white background, light then dark when it names
+# prefers-color-scheme, and each pair compared byte for byte. `identical` is never said of a file
+# whose rendering could differ unseen: it is unproved, and the run gives no verdict.
+#   drift: identical                                             0  no SVG added or removed, every
+#                                                                  changed one renders the same
+#   drift: <n> differ                                            1  <n> files added, removed or
+#                                                                  rendering differently
+#   drift: no verdict, <n> unproved                              2  <n> files could not be compared
+#   no SVG file changed
+#   added|removed <path>        listed, not rendered
+#   <path>: identical (text differs[, renamed from <old>])   the bytes changed, not the pixels;
+#                               `identical` alone for a change of mode, `identical (renamed from
+#                               <old>)` for a rename that kept the bytes
+#   <path> @<s>x|@intrinsic transparent|white[ light|dark]: <n> px differ in <x,y,w,h>[ (size <w>x<h> → <w>x<h>)], diff diff/<name>.png
+#                               a change of size differs even when no pixel does
+#   <path>: differ, external reference changed   what the file names outside itself changed
+#   unproved: <path> — symlink|submodule|animated   a side that is no regular file, or a file
+#                               animated by SMIL or CSS: not compared
+#   fallback: <path> 300x150 (width <w>, height <h>)   a root size the browser could not use
+#   external: <path> <url>      a resource the file names outside itself (href, src, url(),
+#                               @import), on either side: never fetched, rendered without it
+#   blocked: <url>              a request a rendering made, aborted
+#
 # install: `drift: Playwright <version> installed in <dir> (<n> MB)`, or `already installed`.
 #
 # stderr: `drift: <reason>`, exit 2, when the tool cannot answer (a bad call, a missing config, a
 # ref that is no commit, a failed install, build, server or capture, a route answering an error
-# status, Playwright not installed, no node able to run the command).
+# status, a changed SVG that does not parse or render, Playwright not installed, no node able to
+# run the command).
 #
 # The command itself is drift.ts, beside this launcher: TypeScript, which node runs without a flag
 # from 22.18 and 23.6 on.

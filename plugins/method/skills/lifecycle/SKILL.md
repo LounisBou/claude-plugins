@@ -5,8 +5,8 @@ description: The development method every role follows - the lifecycle, the defi
 
 # The method
 
-One lifecycle, run by roles. implement runs it alone in one session; the orchestrator runs it
-with implementer sessions. Whoever runs it, the review is made by another session.
+One lifecycle, run by roles: implement in one session, the orchestrator with implementer
+sessions.
 
 ## The lifecycle
 
@@ -17,7 +17,8 @@ with implementer sessions. Whoever runs it, the review is made by another sessio
 3. **Implementation.** Per step: a failing test first, the code, the project's gate run and
    its exit code read, one commit.
 4. **Review on evidence.** By a session that did not write the code. A result without the
-   command output that shows it is a claim, not a result.
+   command output that shows it is a claim, not a result. A change meant to change nothing
+   may quote a `drift` verdict as proof, never a required gate.
 5. **Ready.** The definition of done below, at the current head.
 6. **Merge.** The operator's, unless the repository is in auto-merge.
 
@@ -60,4 +61,4 @@ the plan or the code already answers.
 - `references/report.md`: the report.
 - `references/questions.md`: the question.
 
-Read one when you write that artifact, not before.
+Read each only when writing it.

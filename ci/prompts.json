@@ -3,12 +3,12 @@
   "budgets": {
     "bugs-bot": 16058,
     "cloudflare": 8282,
-    "drift": 408,
+    "drift": 406,
     "github": 11393,
     "implement": 12825,
     "method": 1498,
     "norms": 23605,
-    "orchestrator": 67244,
+    "orchestrator": 67243,
     "pr-review": 24192,
     "statusbar": 775
   },

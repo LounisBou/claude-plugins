@@ -1,6 +1,7 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { generate, renderShots, requestsFileOf, type ShotsReport } from './shots.ts'
+import { encodePng, type Image } from './png.ts'
+import { generate, judgePair, playwrightConfig, renderShots, requestsFileOf, type ShotsReport } from './shots.ts'
 
 const REPORT: ShotsReport = {
   version: 1,
@@ -48,4 +49,31 @@ test('a requests file is read as lists of strings, anything else dropped', () =>
   assert.deepEqual(requestsFileOf({ blocked: ['a', 3], unmocked: ['GET b'] }), { blocked: ['a'], unmocked: ['GET b'] })
   assert.deepEqual(requestsFileOf(['x']), { blocked: [], unmocked: [] })
   assert.deepEqual(requestsFileOf(null), { blocked: [], unmocked: [] })
+})
+
+test('every capture launches Chromium with grayscale text anti-aliasing only, so a page renders the same on each run', () => {
+  const config = JSON.parse(playwrightConfig('/spec', 'capture.spec.cjs', '/results', 1000).replace(/^module\.exports = /, ''))
+  assert.deepEqual(config.use.launchOptions.args, ['--disable-lcd-text'])
+})
+
+const blank = (width: number, height: number): Image => ({ width, height, data: Buffer.alloc(width * height * 4) })
+
+test('a capture whose size changed differs, even when the area it gained is transparent, at any threshold', () => {
+  const small = encodePng(blank(4, 3))
+  const large = encodePng(blank(4, 5))
+  for (const threshold of [0, 0.1]) {
+    const judged = judgePair(small, large, threshold, undefined)
+    assert.ok(judged.verdict === 'differ' && judged.image !== undefined)
+    assert.equal(judged.pixels, 0)
+    assert.deepEqual(judged.size, { base: [4, 3], head: [4, 5] })
+  }
+  assert.deepEqual(judgePair(small, small, 0, undefined), { verdict: 'identical' })
+})
+
+test('above threshold 0, a pair of one size is judged by the diff image the comparator left, or identical without one', () => {
+  const dot = blank(4, 3)
+  dot.data.set([255, 0, 0, 255], (1 * 4 + 2) * 4)
+  const small = encodePng(blank(4, 3))
+  assert.deepEqual(judgePair(small, small, 0.1, encodePng(dot)), { verdict: 'differ', pixels: 1, box: { x: 2, y: 1, width: 1, height: 1 } })
+  assert.deepEqual(judgePair(small, small, 0.1, undefined), { verdict: 'identical' })
 })

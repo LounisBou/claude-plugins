@@ -1,7 +1,7 @@
 #!/bin/bash
 # drift's suite: the plugin validates, the command's tests pass (a fixture project built at
 # several refs in a temporary repository), the browser tests pass (a fixture app captured at
-# several refs), and the launcher reaches the command.
+# several refs, changed SVG files rendered), and the launcher reaches the command.
 #
 # Requires bash, git, node, npm and the claude CLI. The browser tests drive the shared Playwright
 # install, which install.sh puts in place first: once per machine, a no-op once it is there.

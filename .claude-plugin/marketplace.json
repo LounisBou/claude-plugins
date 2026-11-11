@@ -30,8 +30,8 @@
     {
       "name": "drift",
       "source": "./plugins/drift",
-      "description": "Proves that a change meant to change nothing changed nothing: two refs built and their outputs compared byte by byte, their pages captured and compared pixel by pixel.",
-      "version": "0.2.0",
+      "description": "Proves that a change meant to change nothing changed nothing: two refs built and their outputs compared byte by byte, their pages captured and compared pixel by pixel, their changed SVG files rendered and compared alike.",
+      "version": "0.3.0",
       "author": {
         "name": "Lounis Bou"
       }
@@ -58,7 +58,7 @@
       "name": "method",
       "source": "./plugins/method",
       "description": "The development method every role follows: the lifecycle, the definition of done, the report, plan and question formats.",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "author": {
         "name": "Lounis Bou"
       }
@@ -76,7 +76,7 @@
       "name": "orchestrator",
       "source": "./plugins/orchestrator",
       "description": "Orchestrate implementer sessions from one supervising session: briefs, evidence-based reviews, agent rotation, succession, terminal tab tooling and a context gauge any session can read.",
-      "version": "0.102.1",
+      "version": "0.102.2",
       "author": {
         "name": "Lounis Bou"
       }

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test } from 'node:test'
 import { DEFAULT_HASH_PATTERN, DriftError } from './compare.ts'
-import { configPathOf, parseArgs, parseConfig, parseShots, parseShotsArgs, scratchpadOf, slugOf } from './config.ts'
+import { configPathOf, parseArgs, parseConfig, parseShots, parseShotsArgs, parseSvgArgs, scratchpadOf, slugOf } from './config.ts'
 
 const refused = (pattern: RegExp) => (error: unknown): boolean => error instanceof DriftError && pattern.test(error.message)
 
@@ -153,4 +153,14 @@ test('a shots config that cannot be run is refused with the field named', () => 
   bad({ ...SHOTS, fullPage: 'yes' }, /"shots\.fullPage" must be true or false/)
   assert.throws(() => parseShots({ install: 'npm ci', shots: SHOTS }, 'c.json'), refused(/"install"/))
   assert.throws(() => parseShots({ env: [], shots: SHOTS }, 'c.json'), refused(/"env"/))
+})
+
+test('the svg command line: the refs and --out as the other commands, scales 1 and 4 by default, no config', () => {
+  assert.deepEqual(parseSvgArgs(['svg']), { repo: '.', base: 'origin/main', head: 'HEAD', config: undefined, out: undefined, scales: [1, 4] })
+  assert.deepEqual(parseSvgArgs(['svg', '--repo', 'r', '--base', 'b', '--head', 'h', '--out', 'o', '--scales', '2,0.5,2']),
+    { repo: 'r', base: 'b', head: 'h', config: undefined, out: 'o', scales: [0.5, 2] })
+  for (const bad of ['0', '-1', 'x', '1,,2', '17', '']) assert.throws(() => parseSvgArgs(['svg', '--scales', bad]), refused(/--scales (needs a value|must be)/))
+  assert.throws(() => parseSvgArgs(['svg', '--config', 'c.json']), refused(/drift svg reads no config/))
+  assert.throws(() => parseSvgArgs(['svg', '--threshold', '0.1']), refused(/unknown option --threshold/))
+  assert.throws(() => parseSvgArgs(['build']), refused(/^usage/))
 })
