@@ -84,6 +84,21 @@ jobs:
         run: |
           git clone --quiet --depth 1 --branch v7.0.2 https://github.com/obra/superpowers "$RUNNER_TEMP/superpowers"
           echo "SUPERPOWERS_ROOT=$RUNNER_TEMP/superpowers" >> "$GITHUB_ENV"
+      - name: the pinned Playwright drift drives, cached by the core module that pins it
+        if: matrix.plugin == 'drift'
+        uses: actions/cache@v4
+        with:
+          path: ~/.claude/playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('packages/core/src/playwright.ts') }}
+      - name: install it through core, then the system libraries its Chromium needs on Linux
+        if: matrix.plugin == 'drift'
+        run: |
+          plugins/drift/install.sh
+          if [ "$RUNNER_OS" = Linux ]; then
+            for cli in "$HOME"/.claude/playwright/*/node_modules/@playwright/test/cli.js; do
+              sudo "$(command -v node)" "$cli" install-deps chromium
+            done
+          fi
       - name: suite
         env:
           CLAUDE_GITHUB_ROOT: ${{ github.workspace }}/plugins/github
