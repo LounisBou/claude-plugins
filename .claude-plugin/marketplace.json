@@ -40,7 +40,7 @@
       "name": "github",
       "source": "./plugins/github",
       "description": "GitHub API from a native Claude Code tool: pull requests, review threads, comments, reviews, labels, issues, search and image attachments, facading a Python stdlib engine.",
-      "version": "0.18.8",
+      "version": "0.19.1",
       "author": {
         "name": "Lounis Bou"
       }
@@ -58,7 +58,7 @@
       "name": "method",
       "source": "./plugins/method",
       "description": "The development method every role follows: the lifecycle, the definition of done, the report, plan and question formats.",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "author": {
         "name": "Lounis Bou"
       }
@@ -76,7 +76,7 @@
       "name": "orchestrator",
       "source": "./plugins/orchestrator",
       "description": "Orchestrate implementer sessions from one supervising session: briefs, evidence-based reviews, agent rotation, succession, terminal tab tooling and a context gauge any session can read.",
-      "version": "0.101.4",
+      "version": "0.102.1",
       "author": {
         "name": "Lounis Bou"
       }

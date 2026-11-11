@@ -58,8 +58,10 @@ def _node_id(owner, name, pr):
 def pr_ready(args):
     owner, name = repo.owner_repo()
     result = http.graphql(_READY, {"id": _node_id(owner, name, args.pr)})
-    # Out of draft only for its CI to run: the pull request stays Not Ready.
-    follow_readiness(owner, name, args.pr, "not-ready" if args.for_ci else "ready")
+    # Out of draft only for its CI to run: the pull request stays Not Ready. Otherwise the
+    # labels stay as they are: Ready is the ready gate's to put, once the four conditions hold.
+    if args.for_ci:
+        follow_readiness(owner, name, args.pr, "not-ready")
     return result
 
 

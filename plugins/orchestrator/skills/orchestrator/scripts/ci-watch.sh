@@ -44,7 +44,8 @@
 # reported with its own sha. A cancelled run with no newer one is a red.
 #
 # stdout, one line, and the exit code the caller reads without opening the log:
-#   ci-watch: green <pr> <head>                                 0  every workflow run of the head completed and
+#   ci-watch: green <pr> <head> next: mcp__github__gh pr-gate {"pr": <pr>} [on <owner/repo>]
+#                                                               0  every workflow run of the head completed and
 #                                                                  every check passed, one at least; with
 #                                                                  auto-merge: no merge within the bound
 #   ci-watch: red <pr> <head> <failing check names>             1
@@ -69,7 +70,8 @@
 # What the caller does, per line:
 #   green: with auto-merge, nothing: the merge is coming, and a watch that sees auto-merge enabled
 #     on green waits, bounded, for it and follows the base branch, so a green line there means no
-#     merge came within the bound; otherwise report « ready ».
+#     merge came within the bound; otherwise report « ready » once the call the line ends with, the
+#     github tool's read of the gate, has put `Ready` (it does when the four hold).
 #   red: read the failing job first; when its failure is outside what the pull request touches
 #     (an unrelated flake, infrastructure), re-run the failed jobs once with
 #     `gh run rerun <run-id> --failed`, after naming the failing job's cause in one line, read in

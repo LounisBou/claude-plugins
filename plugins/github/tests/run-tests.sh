@@ -1865,8 +1865,8 @@ POST /repos/acme/thing/issues/12/labels {"labels": ["Not Ready"]}' "$(sent7)"
 new7 create-ready
 printf '%s' '{"number":12,"html_url":"https://github.com/acme/thing/pull/12"}' > "$F7/POST_repos_acme_thing_pulls.json"
 gh7 pr-create --title T --head feature-x >/dev/null
-check "pr-create without --draft puts Ready on the pull request" \
-  'POST /repos/acme/thing/issues/12/labels {"labels": ["Ready"]}' "$(sent7 | grep '/issues/')"
+check "pr-create without --draft puts Not Ready on the pull request, never Ready" \
+  'POST /repos/acme/thing/issues/12/labels {"labels": ["Not Ready"]}' "$(sent7 | grep '/issues/')"
 
 new7 create-label-fails
 printf '%s' '{"number":12,"html_url":"https://github.com/acme/thing/pull/12"}' > "$F7/POST_repos_acme_thing_pulls.json"
@@ -1885,15 +1885,14 @@ check "a network failure while labelling prints no traceback" "0" "$(grep -c 'Tr
 new7 ready-label-fails
 printf '%s' '{"number":7,"node_id":"PR_x"}' > "$F7/GET_repos_acme_thing_pulls_7.json"
 printf '%s' '{"__status":500,"message":"boom"}' > "$F7/POST_repos_acme_thing_issues_7_labels.json"
-gh7 pr-ready 7 >/dev/null 2>"$WORK/err7"
+gh7 pr-ready 7 --for-ci >/dev/null 2>"$WORK/err7"
 check "a label failure leaves pr-ready succeeding" "0" "$?"
 check "a label failure on pr-ready is printed on its own line" "1" "$(grep -c '^error: label' "$WORK/err7")"
 
 new7 ready-out-of-draft
 printf '%s' '{"number":7,"node_id":"PR_x"}' > "$F7/GET_repos_acme_thing_pulls_7.json"
 gh7 pr-ready 7 >/dev/null
-check "pr-ready puts Ready on the pull request" \
-  'POST /repos/acme/thing/issues/7/labels {"labels": ["Ready"]}' "$(sent7 | grep '/issues/')"
+check "pr-ready leaves the labels to the gate, never Ready" "" "$(sent7 | grep '/issues/')"
 
 check "stdin json maps pr-readiness positionals by name" \
   "pr-readiness -- 12 not-ready" \

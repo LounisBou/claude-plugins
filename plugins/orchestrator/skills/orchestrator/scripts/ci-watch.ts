@@ -385,13 +385,21 @@ export async function watch(options: Options, deps: Deps): Promise<Said> {
         }
       }
       if (passed <= 0) return new Said(`no-checks ${pr} ${current.head} skipped=${skipped}`, 2)
-      return new Said(`green ${pr} ${current.head}`, 0)
+      return new Said(`green ${pr} ${current.head} ${gateCall(pr, options.repo)}`, 0)
     }
   } else {
     names = joinNames(current.draft ? await draftGuard() : await failingNames())
     if (names === '') throw unread(pr, `gh pr checks --watch exited ${code} with no failing check named (log: ${log})`)
   }
   return new Said(`red ${pr} ${current.head} ${names}`, 1)
+}
+
+/**
+ * The one call a green line carries: the github tool's read of the gate, which puts `Ready` once
+ * the four conditions hold at the head (github's contract, docs/contracts.md).
+ */
+export function gateCall(pr: string, repo: string | undefined): string {
+  return `next: mcp__github__gh pr-gate {"pr": ${pr}}${repo === undefined ? '' : ` on ${repo}`}`
 }
 
 /** `-R <repo>` placed where the shell script put it: after the subcommand's first operand, if any. */
