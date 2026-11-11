@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, test } from 'node:test'
 import { DriftError } from './compare.ts'
-import { portTaken, startServer } from './server.ts'
+import { portTaken, serverEnv, startServer } from './server.ts'
 
 const ROOT = mkdtempSync(join(tmpdir(), 'drift-server-'))
 after(() => rmSync(ROOT, { recursive: true, force: true }))
@@ -75,4 +75,37 @@ test('a server that exits before answering, or never answers in time, is a tool 
   const controller = new AbortController()
   controller.abort()
   await assert.rejects(startServer(spec(serverScript(port, join(ROOT, 'aborted.pid'), 60_000), port), controller.signal), /interrupted/)
+})
+
+test('the server inherits PATH, HOME and NODE_ENV alone, then the config\'s variables', async () => {
+  const port = await freePort()
+  const envFile = join(ROOT, 'env.json')
+  process.env['DRIFT_SECRET_TOKEN'] = 'never-passed'
+  try {
+    const argv = ['node', '-e', `require('node:fs').writeFileSync(${JSON.stringify(envFile)}, JSON.stringify(process.env)); require('node:http').createServer((q, s) => s.end('ok')).listen(${port}, '127.0.0.1')`]
+    const server = await startServer(spec(argv, port), undefined)
+    await server.stop()
+  } finally {
+    delete process.env['DRIFT_SECRET_TOKEN']
+  }
+  const seen = JSON.parse(readFileSync(envFile, 'utf8')) as Record<string, string>
+  assert.equal(seen['DRIFT_SECRET_TOKEN'], undefined)
+  assert.equal(seen['DRIFT_X'], '1')
+  assert.equal(seen['PATH'], process.env['PATH'])
+  assert.deepEqual(serverEnv({ PATH: '/bin', HOME: '/h', NODE_ENV: 'test', TOKEN: 's' }, { A: 'b', PATH: '/x' }), { PATH: '/x', HOME: '/h', NODE_ENV: 'test', A: 'b' })
+})
+
+test('a server URL on [::1] probes its port over IPv6', async t => {
+  const port = await freePort()
+  const busy = createServer()
+  const listening = await new Promise<boolean>(done => {
+    busy.once('error', () => done(false))
+    busy.listen(port, '::1', () => done(true))
+  })
+  if (!listening) return t.skip('no IPv6 loopback on this machine')
+  try {
+    await assert.rejects(startServer({ ...spec(['node', '-e', ''], port), url: `http://[::1]:${port}` }, undefined), new RegExp(`port ${port} is in use`))
+  } finally {
+    busy.close()
+  }
 })

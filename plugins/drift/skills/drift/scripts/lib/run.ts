@@ -1,9 +1,9 @@
 // What both commands share: running a command in its own process group, the target repository
 // and its two refs, the temporary checkout of a ref, and the run directory.
 import { spawn } from 'node:child_process'
-import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import type { Run } from '../../../../core/index.ts'
+import { KILL_GRACE_MS, signalGroup, type Run } from '../../../../core/index.ts'
 import { DriftError } from './compare.ts'
 import { configPathOf, scratchpadOf, slugOf, type Options } from './config.ts'
 
@@ -26,9 +26,6 @@ export interface Ran {
   readonly stdout: string
 }
 
-/** How long an aborted command's process group has after SIGTERM before SIGKILL. */
-const KILL_GRACE_MS = 5000
-
 /**
  * Runs `argv` without a shell, `env` added to this process's environment; its streams go to `log`
  * (appended) or are collected. Never rejects. The command leads its own process group: on abort the
@@ -48,16 +45,9 @@ export function exec(argv: readonly string[], cwd: string, signal: AbortSignal |
     const out: Buffer[] = []
     child.stdout?.on('data', (chunk: Buffer) => out.push(chunk))
     let killer: NodeJS.Timeout | undefined
-    const group = (name: NodeJS.Signals): void => {
-      try {
-        if (child.pid !== undefined) process.kill(-child.pid, name)
-      } catch {
-        // the group is gone already
-      }
-    }
     const abort = (): void => {
-      group('SIGTERM')
-      killer = setTimeout(() => group('SIGKILL'), KILL_GRACE_MS)
+      signalGroup(child.pid, 'SIGTERM')
+      killer = setTimeout(() => signalGroup(child.pid, 'SIGKILL'), KILL_GRACE_MS)
     }
     let settled = false
     const settle = (status: number | null): void => {
@@ -110,10 +100,17 @@ export function readJson(path: string): unknown {
   }
 }
 
+/**
+ * The run directory: `out` when given, else a new one under the calling session's scratchpad, else
+ * under `deps.tmp`. A given directory must be new, empty, or a previous run's (it holds a
+ * report.json): anything else is refused, never emptied.
+ */
 export function runDirectory(out: string | undefined, deps: Deps): string {
   if (out !== undefined) {
     const dir = resolve(out)
     mkdirSync(dir, { recursive: true })
+    const entries = readdirSync(dir)
+    if (entries.length > 0 && !entries.includes('report.json')) throw new DriftError(`--out ${dir} is neither empty nor a previous run's (no report.json): name a new directory`)
     return dir
   }
   const uid = process.getuid?.() ?? 0
@@ -130,6 +127,7 @@ export interface Target {
   readonly headSha: string
 }
 
+/** Resolves the repository, the config file (named after the origin unless given) and both refs; a tool error when one is missing. */
 export async function targetOf(options: Options, deps: Deps): Promise<Target> {
   const { signal } = deps
   const repo = resolve(options.repo)
@@ -154,6 +152,7 @@ export async function targetOf(options: Options, deps: Deps): Promise<Target> {
 /** Runs one step of a side, its output appended to the side's log; a failure is a tool error naming it. */
 export type Step = (what: string, argv: readonly string[], cwd: string, env?: Readonly<Record<string, string>>) => Promise<void>
 
+/** A Step for one side, its log emptied first; it stops at the signal before and after each command. */
 export function stepper(side: string, log: string, signal: AbortSignal | undefined): Step {
   writeFileSync(log, '')
   return async (what, argv, cwd, env) => {

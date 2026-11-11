@@ -10,7 +10,7 @@
 // under node_modules would carry the base's build into the head's.
 import { existsSync, lstatSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, relative, resolve, sep } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { compareTrees, DriftError, render, type Link, type Report, type Tree } from './lib/compare.ts'
 import { installPlaywright, PLAYWRIGHT_VERSION } from '../../../core/index.ts'
@@ -98,7 +98,12 @@ async function build(argv: readonly string[], deps: Deps): Promise<number> {
 /** `drift install`: the pinned Playwright and its browser, once per machine, where every plugin finds them. */
 async function install(argv: readonly string[], deps: Deps): Promise<number> {
   if (argv.length !== 1) throw new DriftError(USAGE)
-  const { playwright, installed, bytes } = await installPlaywright({ env: deps.env, home: deps.home, ...(deps.installRun === undefined ? {} : { run: deps.installRun }) })
+  const { playwright, installed, bytes } = await installPlaywright({
+    env: deps.env,
+    home: deps.home,
+    ...(deps.installRun === undefined ? {} : { run: deps.installRun }),
+    ...(deps.signal === undefined ? {} : { signal: deps.signal }),
+  })
   deps.out(`drift: Playwright ${PLAYWRIGHT_VERSION} ${installed ? 'installed' : 'already installed'} in ${playwright.dir} (${Math.round(bytes / 1e6)} MB)`)
   return 0
 }
