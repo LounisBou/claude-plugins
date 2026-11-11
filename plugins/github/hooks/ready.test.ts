@@ -3,7 +3,7 @@
 import { expect, test } from 'claude-code/testing'
 import {
   bashActs, bashPushes, ciUndraft, createdPr, missingItems, parseGate, pushOf, toolAct, touchesRecords,
-  recordKindFor, producerSlug, kindRefusal, RECORDS_REFUSAL, autoMergeRefusal, notReadyRefusal,
+  recordKindFor, producerSlug, kindRefusal, RECORDS_REFUSAL, autoMergeRefusal, notReadyRefusal, labelMove, leaveDraftRefusal,
   type Gate, type RecordFile,
 } from './ready.ts'
 import { producerOf } from '../core/pr-record.ts'
@@ -244,7 +244,28 @@ test('the refusals read as the guard documents them', () => {
     + ' A pull request is ready when a clean review, a passed norms check, passed E2E and green CI are all at its'
     + ' current head (engine/writing/pull-requests.md « Ready pull requests »).')
   expect(autoMergeRefusal('merge', 'o/r', 12)).toBe(
-    'github: gh pr merge refused on o/r: this repository is not in auto-merge, so a merge or leaving draft needs the'
+    'github: gh pr merge refused on o/r: this repository is not in auto-merge, so a merge needs the'
     + ' operator\'s explicit word. When they gave it, run mcp__github__gh pr-merge {"pr": 12} on o/r: it checks that'
     + ' the pull request is ready, then asks them in the conversation.')
+})
+
+test('leaving draft outside auto-merge is refused with one line, the same for each route', () => {
+  expect(leaveDraftRefusal('pr-ready', 'o/r', 12)).toBe(
+    'github: pr-ready refused on o/r: outside auto-merge, leaving draft is the operator\'s, on GitHub after their review,'
+    + ' and Ready is put by the gate once the four conditions hold (pr-readiness {"pr": 12, "state": "ready"} reads them now).')
+  expect(autoMergeRefusal('undraft', 'o/r', 12)).toBe(leaveDraftRefusal('gh pr ready', 'o/r', 12))
+  expect(autoMergeRefusal('create', 'o/r')).toBe(leaveDraftRefusal('gh pr create', 'o/r'))
+  expect(autoMergeRefusal('undraft', 'o/r', 12, 'gh.py pr-ready')).toBe(leaveDraftRefusal('gh.py pr-ready', 'o/r', 12))
+})
+
+test('the gate moves the label: Ready when the four hold, Not Ready back when Ready no longer holds', () => {
+  expect(labelMove(gate(), [])).toBe('ready')
+  expect(labelMove(gate({ labels: ['Ready'] }), [])).toBeUndefined()
+  expect(labelMove(gate({ labels: ['Ready', 'Not Ready'] }), [])).toBe('ready')
+  expect(labelMove(gate({ labels: [] }), [])).toBe('ready')
+  expect(labelMove(gate({ labels: ['ready'] }), ['CI still running'])).toBe('not-ready')
+  expect(labelMove(gate(), ['CI still running'])).toBeUndefined()
+  // A closed or merged pull request keeps its labels.
+  expect(labelMove(gate({ state: 'merged' }), [])).toBeUndefined()
+  expect(labelMove(gate({ state: 'closed', labels: ['Ready'] }), ['the pull request is closed'])).toBeUndefined()
 })

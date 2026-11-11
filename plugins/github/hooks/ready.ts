@@ -405,6 +405,16 @@ export function carriesReady(gate: Gate): boolean {
   return gate.labels.some((label) => label.toLowerCase() === READY)
 }
 
+// The label the gate puts on an open pull request, or undefined to leave it: Ready when the four
+// hold and it does not carry Ready alone, Not Ready when it carries Ready and they no longer hold.
+// A closed or merged one keeps its labels.
+export function labelMove(gate: Gate, missing: string[]): 'ready' | 'not-ready' | undefined {
+  if (gate.state !== 'open') return undefined
+  const notReady = gate.labels.some((label) => label.toLowerCase() === NOT_READY)
+  if (missing.length === 0) return carriesReady(gate) && !notReady ? undefined : 'ready'
+  return carriesReady(gate) ? 'not-ready' : undefined
+}
+
 // ---- the texts ----
 
 export function notReadyRefusal(act: string, repo: string, pr: number, head: string, missing: string[]): string {
@@ -435,28 +445,50 @@ export function unnamedRepoRefusal(act: string): string {
 
 // A GraphQL mutation names a node, not a repository and a number.
 export function graphqlRefusal(kind: ActKind): string {
-  const tool = kind === 'merge' ? 'pr-merge' : 'pr-ready'
-  return 'github: gh api graphql refused: the pull request it acts on cannot be read from the command. Run'
-    + ' mcp__github__gh ' + tool + ' {"pr": <n>} on <owner/name>: it checks that the pull request is ready.'
+  const named = 'github: gh api graphql refused: the pull request it acts on cannot be read from the command.'
+  if (kind !== 'merge') {
+    return named + ' In a repository in auto-merge, run mcp__github__gh pr-ready {"pr": <n>} on <owner/name>; ' + LEAVE_DRAFT + '.'
+  }
+  return named + ' Run mcp__github__gh pr-merge {"pr": <n>} on <owner/name>: it checks that the pull request is ready.'
+}
+
+// Why leaving draft is refused outside auto-merge, whatever the route.
+const LEAVE_DRAFT = 'outside auto-merge, leaving draft is the operator\'s, on GitHub after their review, and Ready is put'
+  + ' by the gate once the four conditions hold'
+
+// Leaving draft, or opening out of draft, in a repository not in auto-merge: never asked, refused.
+export function leaveDraftRefusal(act: string, repo: string, pr?: number): string {
+  return 'github: ' + act + ' refused on ' + repo + ': ' + LEAVE_DRAFT + ' (pr-readiness {"pr": ' + (pr ?? '<n>')
+    + ', "state": "ready"} reads them now).'
 }
 
 // name: the command as the refusal names it, by default the gh command of that kind.
 export function autoMergeRefusal(kind: ActKind, repo: string, pr?: number, name?: string): string {
-  if (kind === 'create') {
-    return 'github: ' + (name ?? 'gh pr create') + ' refused on ' + repo + ': this repository is not in auto-merge,'
-      + ' so opening a pull request out of draft needs the operator\'s explicit word. Open it with --draft, or when'
-      + ' they gave it, run mcp__github__gh pr-create {"draft": false} on ' + repo + ': it asks them in the conversation.'
-  }
-  const command = name ?? (kind === 'merge' ? 'gh pr merge' : 'gh pr ready')
-  const tool = kind === 'merge' ? 'pr-merge' : 'pr-ready'
-  return 'github: ' + command + ' refused on ' + repo + ': this repository is not in auto-merge, so a merge or'
-    + ' leaving draft needs the operator\'s explicit word. When they gave it, run mcp__github__gh ' + tool
-    + ' {"pr": ' + (pr ?? '<n>') + '} on ' + repo + ': it checks that the pull request is ready, then asks them'
-    + ' in the conversation.'
+  if (kind === 'create') return leaveDraftRefusal(name ?? 'gh pr create', repo)
+  if (kind !== 'merge') return leaveDraftRefusal(name ?? 'gh pr ready', repo, pr)
+  return 'github: ' + (name ?? 'gh pr merge') + ' refused on ' + repo + ': this repository is not in auto-merge, so a merge'
+    + ' needs the operator\'s explicit word. When they gave it, run mcp__github__gh pr-merge {"pr": ' + (pr ?? '<n>') + '} on '
+    + repo + ': it checks that the pull request is ready, then asks them in the conversation.'
 }
 
 export function ciUndraftLine(repo: string, pr: number): string {
   return 'github: ' + repo + '#' + pr + ' out of draft to run CI, still Not Ready'
+}
+
+const tail = (missing: string[]) => 'Missing: ' + missing.join(', ')
+
+// The lines the gate says when it reads a pull request: the label it put, or what is still missing.
+export function gateReadyLine(repo: string, pr: number, head: string): string {
+  return 'github: ' + repo + '#' + pr + ' Ready at ' + head7(head) + ': a clean review, a passed norms check, passed E2E'
+    + ' and green CI hold at its head.'
+}
+
+export function gateNotReadyLine(repo: string, pr: number, head: string, missing: string[]): string {
+  return 'github: ' + repo + '#' + pr + ' back to Not Ready at ' + head7(head) + '. ' + tail(missing)
+}
+
+export function gateMissingLine(repo: string, pr: number, head: string, missing: string[]): string {
+  return 'github: ' + repo + '#' + pr + ' not Ready yet at ' + head7(head) + '. ' + tail(missing)
 }
 
 export function warnLine(act: string, repo: string, pr: number | string, missing: string[]): string {

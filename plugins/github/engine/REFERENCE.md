@@ -123,9 +123,9 @@ to `RIGHT`). `commit_id` is the PR head, read by the tool. The request carries n
 | Subcommand | Arguments | Description |
 |---|---|---|
 | `pr-update` | `<pr> [--title T] [--body-file P] [--base B] [--state open\|closed]` | Change a PR's fields |
-| `pr-ready` | `<pr> [--for-ci]` | Mark a draft ready for review, and put the `Ready` label on it. `--for-ci` takes it out of draft only for its CI to run, and puts `Not Ready` on it |
+| `pr-ready` | `<pr> [--for-ci]` | Mark a draft ready for review, and put the `Ready` label on it; refused outside auto-merge (« Guards »). `--for-ci` takes it out of draft only for its CI to run, and puts `Not Ready` on it |
 | `pr-draft` | `<pr>` | Convert a pull request back to a draft, and put the `Not Ready` label on it |
-| `pr-readiness` | `<pr> <ready\|not-ready>` | Put `Ready` or `Not Ready` on a PR and take the other off, creating the labels when missing. Prints the state now carried, `(unchanged)` after it when nothing changed |
+| `pr-readiness` | `<pr> <ready\|not-ready>` | Put `Ready` or `Not Ready` on a PR and take the other off, creating the labels when missing. Prints the state now carried, `(unchanged)` after it when nothing changed. `ready` only when the four hold (« Guards ») |
 | `labels-ensure` | | Create `Ready` (`27e760`) and `Not Ready` (`8c1455`) when missing, no description. A label already there under that name, in any case, is left as it is. One line per label: `created <name>` or `present <name>`, with ` #<colour>` when it differs from the house colour |
 | `label-add` | `<pr> <label>...` | Add labels |
 | `label-remove` | `<pr> <label>` | Remove one label — GitHub deletes one per call |
@@ -350,26 +350,28 @@ github: read <root>/engine/writing/<file> and <root>/engine/writing/references.m
 by a shell variable followed by its subcommand), need the pull request ready at its head: a clean review, a
 passed norms check and passed or waived E2E recorded at the head `pr-gate` reads (« Records »
 above), and green CI. A `--match-head-commit` or a `pr-merge --sha` other than that head
-is not ready either. Under the enforce phase the act is refused before any question, and a
-pull request still carrying `Ready` goes back to `Not Ready`:
-
-```
-github: <act> refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>, <item>. A pull request is ready when a clean review, a passed norms check, passed E2E and green CI are all at its current head (engine/writing/pull-requests.md « Ready pull requests »).
-```
+is not ready either. The `Ready` label is refused so in both phases; under the enforce phase
+every other act is too, before any question, with `github: <act> refused on
+<owner/name>#<n> at <head7>: not ready. Missing: <item>, …`, and a pull request still carrying
+`Ready` goes back to `Not Ready`.
 
 Under the warn phase, the one this release ships (`CLAUDE_GITHUB_READY_ENFORCE=1` brings
-enforce forward), it goes ahead with one transcript line, `github: <act> on
+enforce forward), the other acts go ahead with one transcript line, `github: <act> on
 <owner/name>#<n> is not ready, let through while the guard only warns. Missing: <item>`,
 and one JSON line `{at, session, repo, pr, head, act, route, missing}` in `guard-warn.log`,
-in the plugin's data directory. In the shell, a pull request opened out of draft outside a
-repository in auto-merge is refused in both phases, naming the tool call that asks the
-operator (« Auto-merge split » below). Under enforce, a pull request opened out of draft is
+in the plugin's data directory. Under enforce, a pull request opened out of draft is
 refused with `github: <act> refused: open it as a draft, then leave draft once ready.`,
 and a readiness `pr-gate` could not read with `github: readiness of <owner/name>#<n>
-unverified: <error>`. A shell merge or undraft that names no repository (`-R`, `--repo`
-or a URL) is refused in both phases, a `Ready` label without one under enforce, with
-`github: <command> refused: name the repository with -R owner/name.`; a GraphQL merge or
+unverified: <error>`, a `Ready` label in both phases. A shell merge, undraft or `Ready`
+label that names no repository (`-R`, `--repo` or a URL) is refused in both phases,
+with `github: <command> refused: name the repository with -R owner/name.`; a GraphQL merge or
 undraft names no pull request and is always refused, with the tool call to run.
+
+**The gate puts `Ready`.** After a record is written (any producer) and a `pr-gate` or
+`pr-checks` read through the tool, the module reads the four at the open pull request's head
+and puts `Ready` when they hold, or `Not Ready` back on one carrying `Ready`, with one line after
+the output; after a record it also names what is missing. CI turning green is followed by the
+next such read.
 
 A pull request that carries `Not Ready` and whose CI is not green may leave draft for its
 CI to run, in every repository and with no question: the tool runs `pr-ready --for-ci`,
@@ -381,14 +383,12 @@ create --draft`. After a `git push`, a pull request of the pushed branch that ca
 the push to <branch>`; a branch or a repository the push does not name with certainty is
 left as it is, with one line.
 
-**Auto-merge split.** In the shell, a merge or leaving draft (CI undraft aside) runs only
-in a repository listed in `auto-merge.json`, the ready guard applying on top, through `gh`
-and through the engine alike. The engine's undraft is a CI undraft only with `--for-ci`, and
-the engine names its repository with `--repo`. Elsewhere it is refused in both phases:
-
-```
-github: <gh pr merge | gh pr ready> refused on <owner/name>: this repository is not in auto-merge, so a merge or leaving draft needs the operator's explicit word. When they gave it, run mcp__github__gh <pr-merge | pr-ready> {"pr": <n>} on <owner/name>: it checks that the pull request is ready, then asks them in the conversation.
-```
+**Auto-merge split.** A merge or leaving draft (CI undraft aside) runs only in a repository
+listed in `auto-merge.json`, the ready guard on top. Elsewhere leaving draft or opening out of
+draft is refused on every route, never asked (`github: <act> refused on <owner/name>: outside
+auto-merge, leaving draft is the operator's, …`); a merge is asked through the tool and refused
+in the shell. The engine's undraft is a CI undraft only with `--for-ci`; it names its
+repository with `--repo`.
 
 The engine run from Bash keeps the writing rules too: `pr-create`, `pr-comment`, a
 `pr-update` with a title or a body, and `review-submit`, `thread-reply`, `comment-edit`,
