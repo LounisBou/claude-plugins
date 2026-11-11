@@ -231,6 +231,16 @@ test('a shell string nested four deep is still read', () => {
   expect(detectPatternKills(four)).toEqual(['pkill'])
 })
 
+// The text a line writes to a shell's standard input is read the same four strings deep, and no
+// deeper: each layer is an `echo "<the layer inside>" | sh`.
+test('a kill line nested four deep in text given to a shell is read, one deeper is not', () => {
+  const layer = (inner: string) => `echo "${inner.replace(/(["\\$`])/g, '\\$1')}" | sh`
+  let line = 'pkill x'
+  for (let depth = 1; depth <= 4; depth++) line = layer(line)
+  expect(detectPatternKills(line)).toEqual(['pkill'])
+  expect(detectPatternKills(layer(line))).toEqual([])
+})
+
 test('a lookup with command -v or -V runs nothing, a command that runs still reads', () => {
   expect(detectPatternKills('command -v pkill')).toEqual([])
   expect(detectPatternKills('command -V killall')).toEqual([])
@@ -394,6 +404,13 @@ test('a loop over a recorded pid, typed words or a variable no lister filled pas
   for (const c of unlooped) expect(detectPatternKills(c), c).toEqual([])
 })
 
+test('a probe of a pid a lister filled kills nothing, a kill after the options does', () => {
+  expect(detectPatternKills('pgrep x | while read p; do kill -0 $p; done')).toEqual([])
+  expect(detectPatternKills('for p in $(pgrep x); do kill -0 $p; done')).toEqual([])
+  expect(detectPatternKills('pgrep x | while read p; do kill -- $p; done')).toEqual(['kill fed through a loop by pgrep'])
+  expect(detectPatternKills('pgrep x | while read p; do kill -9 -- $p; done')).toEqual(['kill fed through a loop by pgrep'])
+})
+
 test('a for loop over a substitution that is no lister is a kill fed by a substitution', () => {
   expect(detectPatternKills('for p in $(some-tool); do kill $p; done')).toEqual(['kill fed through a loop by a command substitution'])
 })
@@ -448,7 +465,26 @@ test('kill-port, run directly or through a package runner, kills what listens on
     'echo kill-port',
     'grep kill-port package.json',
     'ls kill-port/',
+    'pnpm run kill-port',
+    'yarn run kill-port',
+    'pnpm install',
   ]) expect(detectPatternKills(c), c).toEqual([])
+})
+
+test('kill-port behind a package manager that runs a binary by its name, with no dlx or exec', () => {
+  for (const c of [
+    'pnpm kill-port 3000',
+    'yarn kill-port 3000',
+    'bun kill-port 3000',
+    'pnpm kill-port@latest 3000',
+    'pnpx kill-port 3000',
+    'pnpx -y kill-port 3000',
+    'bun x kill-port 3000',
+    'bunx --bun kill-port 3000',
+    'sudo yarn kill-port 80',
+    'echo x; pnpm kill-port 3000',
+    `bash -c 'bun kill-port 3000'`,
+  ]) expect(detectPatternKills(c), c).toEqual(['kill-port'])
 })
 
 // A kill line the line itself writes to a shell's standard input: through echo or printf and a
@@ -516,6 +552,42 @@ test('a shell that only parses (-n) or has no command string runs nothing', () =
     `echo 'pkill x' | bash -n`,
     `bash -xn <<< 'pkill x'`,
     `bash -c <<< 'pkill x'`,
+  ]) expect(detectPatternKills(c), c).toEqual([])
+})
+
+// A wrapper is skipped by its base name, written with its directory or not.
+test('a wrapper written with its directory is skipped as the bare one is', () => {
+  for (const c of [
+    `/usr/bin/env bash <<< 'pkill x'`,
+    `echo 'pkill x' | /usr/bin/env bash`,
+    `env bash -c 'pkill x'`,
+    `/usr/bin/env bash -c 'pkill x'`,
+    `/usr/bin/env pkill x`,
+    `/usr/bin/env FOO=1 bash <<< 'pkill x'`,
+    `/usr/bin/env -u X bash <<< 'killall x'`,
+    `/usr/bin/sudo /usr/bin/env bash <<< 'pkill x'`,
+    `/usr/bin/sudo pkill x`,
+    `/usr/bin/nohup bash -c 'pkill x'`,
+    `/usr/bin/env sh <<EOF\npkill x\nEOF`,
+    'pgrep x | /usr/bin/xargs kill',
+    '/usr/bin/env kill -9 -1',
+    `/usr/bin/timeout 5 bash <<< 'pkill x'`,
+  ]) expect(detectPatternKills(c), c).not.toEqual([])
+  expect(detectPatternKills(`/usr/bin/env bash <<< 'pkill x'`)).toEqual(['pkill'])
+  expect(detectPatternKills('pgrep x | /usr/bin/xargs kill')).toEqual(['kill fed through xargs by pgrep'])
+})
+
+test('a wrapper written with its directory around no kill, or a lookup, passes', () => {
+  for (const c of [
+    `/usr/bin/env bash <<< 'echo hi'`,
+    `echo 'kill 1234' | /usr/bin/env bash`,
+    `/usr/bin/env bash -n <<< 'pkill x'`,
+    `/usr/bin/env bash script.sh <<< 'pkill x'`,
+    '/usr/bin/env kill 1234',
+    '/usr/bin/command -v pkill',
+    '/usr/bin/env FOO=1',
+    '/usr/bin/env',
+    `/usr/bin/env echo 'pkill x'`,
   ]) expect(detectPatternKills(c), c).toEqual([])
 })
 

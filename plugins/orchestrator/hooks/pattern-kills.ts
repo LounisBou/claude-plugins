@@ -2,7 +2,7 @@
 // The kill guard's reading of a command line, pure: which kills reach processes by name or
 // pattern. The line is read by core's shell reader (core/shell.ts), the one every plugin reads
 // a command line with; what is a kill by pattern is decided here.
-import { innerLine, readCommands, stdinLines, type ShellCommand } from '../core/shell.ts'
+import { innerLine, readCommands, stdinLines, unwrapPath, type ShellCommand } from '../core/shell.ts'
 
 // Programs that list processes: what `xargs kill` kills by pattern when one feeds it.
 const LISTERS = new Set(['pgrep', 'pidof', 'lsof', 'ps'])
@@ -11,6 +11,8 @@ const LISTERS = new Set(['pgrep', 'pidof', 'lsof', 'ps'])
 const RUNNERS = new Set(['npx', 'bunx', 'pnpx'])
 const MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun'])
 const RUN_SUBCOMMANDS = new Set(['dlx', 'exec', 'x'])
+// The managers that run a binary named right after them, with no subcommand: `pnpm kill-port 3000`.
+const BINARY_RUNNERS = new Set(['pnpm', 'yarn', 'bun'])
 // How many strings may sit inside one another and still be read as command lines.
 const STRING_DEPTH = 4
 
@@ -48,6 +50,11 @@ function killsIn(line: string, depth: number, seen: (reason: string) => void): v
 }
 
 function killOf(command: ShellCommand, depth: number, seen: (reason: string) => void, filled: Filled): void {
+  const bare = unwrapPath(command.argv)
+  if (bare.wrappers.length > 0) {
+    const wrappers = [...command.wrappers, ...bare.wrappers]
+    return killOf({ ...command, argv: bare.argv, wrappers, lookup: command.lookup || bare.lookup }, depth, seen, filled)
+  }
   const { argv, wrappers, lookup, substitutions, piped } = command
   if (lookup) return
   const program = baseName(argv[0] ?? '')
@@ -107,7 +114,7 @@ function isFuserKill(word: string): boolean {
 }
 
 // Whether the words run the kill-port program: bare, or behind a package runner (`npx -y
-// kill-port 3000`, `pnpm dlx kill-port 3000`). Installing it (`npm install kill-port`) runs
+// kill-port 3000`, `pnpm dlx kill-port 3000`, `pnpm kill-port 3000`). Installing it (`npm install kill-port`) runs
 // nothing of it.
 function runsKillPort(argv: readonly string[]): boolean {
   const isIt = (word: string): boolean => /^kill-port(@.*)?$/.test(baseName(word))
@@ -115,6 +122,7 @@ function runsKillPort(argv: readonly string[]): boolean {
   if (isIt(program)) return true
   if (RUNNERS.has(program)) return argv.slice(1).some(isIt)
   if (!MANAGERS.has(program)) return false
+  if (BINARY_RUNNERS.has(program) && isIt(argv.slice(1).find(word => !word.startsWith('-')) ?? '')) return true
   const at = argv.findIndex((word, k) => k > 0 && RUN_SUBCOMMANDS.has(word))
   return at > 0 && argv.slice(at + 1).some(isIt)
 }
