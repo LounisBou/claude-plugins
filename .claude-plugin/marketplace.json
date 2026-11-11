@@ -58,7 +58,7 @@
       "name": "method",
       "source": "./plugins/method",
       "description": "The development method every role follows: the lifecycle, the definition of done, the report, plan and question formats.",
-      "version": "0.2.1",
+      "version": "0.2.2",
       "author": {
         "name": "Lounis Bou"
       }
