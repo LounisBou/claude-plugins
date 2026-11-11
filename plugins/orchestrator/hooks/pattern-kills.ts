@@ -1,7 +1,10 @@
 // hooks/pattern-kills.ts
 // The kill guard's reading of a command line, pure: which kills reach processes by name or
 // pattern. The line is read by core's shell reader (core/shell.ts), the one every plugin reads
-// a command line with; what is a kill by pattern is decided here.
+// a command line with; what is a kill by pattern is decided here. Known limits, which pass: a
+// variable an assignment filled (`p=$(pgrep x); kill $p`, then `for p in $p`) or a process
+// substitution fed (`done < <(pgrep x)`, `mapfile a < <(pgrep x)`): the reader drops an assignment
+// and ties no variable, nor a loop, to the substitution that fed it.
 import { innerLine, readCommands, stdinLines, unwrapPath, type ShellCommand } from '../core/shell.ts'
 
 // Programs that list processes: what `xargs kill` kills by pattern when one feeds it.
@@ -44,16 +47,22 @@ export function detectPatternKills(command: string): string[] {
 // The variables of one command line that a lister filled, each with what filled it.
 type Filled = Map<string, string>
 
-function killsIn(line: string, depth: number, seen: (reason: string) => void): void {
-  const filled: Filled = new Map()
-  for (const command of readCommands(line)) killOf(command, depth, seen, filled)
+// A line is read with the variables a lister filled in the one that holds it (`inherited`): a
+// shell string or text given to a shell in the middle of a loop expands them as the loop does.
+function killsIn(line: string, depth: number, seen: (reason: string) => void, inherited: Filled = new Map()): void {
+  const filled: Filled = new Map(inherited)
+  const commands = readCommands(line)
+  // What a loop reads through a here-string, `done <<< "$(pgrep x)"`, is in the `done` that
+  // closes it, after the commands of its body.
+  const loop = commands.map(c => (c.argv[0] === 'done' ? listerIn(c.substitutions) : undefined)).find(l => l !== undefined)
+  for (const command of commands) killOf(command, depth, seen, filled, loop)
 }
 
-function killOf(command: ShellCommand, depth: number, seen: (reason: string) => void, filled: Filled): void {
+function killOf(command: ShellCommand, depth: number, seen: (reason: string) => void, filled: Filled, loop?: string): void {
   const bare = unwrapPath(command.argv)
   if (bare.wrappers.length > 0) {
     const wrappers = [...command.wrappers, ...bare.wrappers]
-    return killOf({ ...command, argv: bare.argv, wrappers, lookup: command.lookup || bare.lookup }, depth, seen, filled)
+    return killOf({ ...command, argv: bare.argv, wrappers, lookup: command.lookup || bare.lookup }, depth, seen, filled, loop)
   }
   const { argv, wrappers, lookup, substitutions, piped } = command
   if (lookup) return
@@ -62,10 +71,10 @@ function killOf(command: ShellCommand, depth: number, seen: (reason: string) => 
   if (program === 'fuser' && argv.some(isFuserKill)) { seen('fuser -k'); return }
   if (runsKillPort(argv)) { seen('kill-port'); return }
   const text = depth < STRING_DEPTH ? innerLine(argv) : undefined
-  if (text !== undefined) { killsIn(text, depth + 1, seen); return }
+  if (text !== undefined) { killsIn(text, depth + 1, seen, filled); return }
   const fed = depth < STRING_DEPTH ? stdinLines(command) : []
   if (fed.length > 0) { for (const line of fed) killsIn(line, depth + 1, seen); return }
-  fill(command, filled)
+  fill(command, filled, loop)
   if (program !== 'kill' || argv[1] === '-0') return
   if (substitutions.some(held => !isRecordedPid(held))) seen('kill of a command substitution')
   else if (wrappers.includes('xargs')) {
@@ -77,21 +86,26 @@ function killOf(command: ShellCommand, depth: number, seen: (reason: string) => 
   if (reachesMany(argv.slice(1))) seen('kill of all processes or a process group')
 }
 
-// What a loop gives a variable: `read` at the end of a pipe a lister feeds names the variables
-// it reads (REPLY when it names none), and `for name in …` with a substitution among its words,
-// other than a recorded pid, names the one it sets.
-function fill({ argv, substitutions, piped }: ShellCommand, filled: Filled): void {
+// What a loop gives a variable: `read` at the end of a pipe a lister feeds, or fed it through a
+// here-string (its own, or the `done` that closes its loop: `loop`), names the variables it reads
+// (REPLY when it names none), and `for name in …` with a substitution among its words, other than
+// a recorded pid, names the one it sets.
+function fill({ argv, substitutions, piped }: ShellCommand, filled: Filled, loop: string | undefined): void {
   if (argv[0] === 'read') {
-    const lister = piped.find(p => LISTERS.has(p))
+    const lister = piped.find(p => LISTERS.has(p)) ?? listerIn(substitutions) ?? loop
     if (lister === undefined) return
     const names = argv.slice(1).filter(word => /^[A-Za-z_][A-Za-z0-9_]*$/.test(word))
     for (const name of names.length > 0 ? names : ['REPLY']) filled.set(name, lister)
   } else if (argv[0] === 'for' && argv[2] === 'in' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(argv[1] ?? '')) {
     const lookups = substitutions.filter(held => !isRecordedPid(held))
     if (lookups.length === 0) return
-    const lister = lookups.flat().map(c => baseName(c.argv[0] ?? '')).find(p => LISTERS.has(p))
-    filled.set(argv[1] ?? '', lister ?? 'a command substitution')
+    filled.set(argv[1] ?? '', listerIn(lookups) ?? 'a command substitution')
   }
+}
+
+// The first lister among the commands the substitutions held, undefined when none is.
+function listerIn(substitutions: readonly (readonly ShellCommand[])[]): string | undefined {
+  return substitutions.flat().map(c => baseName(c.argv[0] ?? '')).find(p => LISTERS.has(p))
 }
 
 // What filled the first variable among kill's words that a lister filled, or undefined when

@@ -404,6 +404,56 @@ test('a loop over a recorded pid, typed words or a variable no lister filled pas
   for (const c of unlooped) expect(detectPatternKills(c), c).toEqual([])
 })
 
+// A lister that feeds a loop through a here-string, or whose variable a string a shell runs
+// kills with: read the same as a pipe into `read`.
+const hereFed = [
+  'read p <<< "$(pgrep x)"; kill $p',
+  'read -r p <<< "$(pgrep x)"; kill -9 "$p"',
+  'while read p; do kill $p; done <<< "$(pgrep x)"',
+  'while read -r pid; do kill -9 $pid; done <<< "$(lsof -ti :3000)"',
+  'while read p\ndo\n  kill $p\ndone <<< "$(pgrep x)"',
+  'pgrep x | while read p; do bash -c "kill $p"; done',
+  'pgrep x | while read p; do sh -c "echo; kill -9 $p"; done',
+  'for p in $(pgrep x); do bash -c "kill $p"; done',
+  'for p in $(pgrep x); do sh <<< "kill $p"; done',
+  'pgrep x | while read p; do eval "kill $p"; done',
+]
+
+test('a kill of a variable a lister filled through a here-string, or inside a shell string, is a kill by pattern', () => {
+  for (const c of hereFed) expect(detectPatternKills(c), c).not.toEqual([])
+  expect(detectPatternKills('read p <<< "$(pgrep x)"; kill $p')).toEqual(['kill fed through a loop by pgrep'])
+  expect(detectPatternKills('while read p; do kill $p; done <<< "$(lsof -ti :3000)"')).toEqual(['kill fed through a loop by lsof'])
+  expect(detectPatternKills('pgrep x | while read p; do bash -c "kill $p"; done')).toEqual(['kill fed through a loop by pgrep'])
+})
+
+test('a here-string no lister wrote, and a shell string where no lister filled the variable, fill nothing', () => {
+  for (const c of [
+    'read p <<< "$(cat f.pid)"; kill $p',
+    'read p <<< "$(date)"; kill $p',
+    'read p <<< "1234"; kill $p',
+    'while read p; do kill $p; done <<< "$(cat f.pids)"',
+    'while read p; do echo $p; done <<< "$(pgrep x)"',
+    'while read p; do kill $q; done <<< "$(pgrep x)"',
+    'bash -c "pgrep x | while read p; do echo $p; done"; kill $p',
+    'for p in 1 2; do bash -c "kill $p"; done',
+  ]) expect(detectPatternKills(c), c).toEqual([])
+})
+
+// What the reader cannot link, stays a pass: it drops an assignment and keeps no tie between a
+// variable and the command that filled it, and a process substitution is a command of its own
+// with nothing to say it feeds the loop before it. Each is named in pattern-kills.ts' header.
+test('known limits: a variable filled by an assignment or a process substitution is not followed', () => {
+  for (const c of [
+    'pids=$(pgrep x); kill $pids',
+    'p=$(pgrep x); kill $p',
+    'p=`pgrep x`; kill $p',
+    'pids=$(pgrep x); for p in $pids; do kill $p; done',
+    'while read p; do kill $p; done < <(pgrep x)',
+    'read p < <(pgrep x); kill $p',
+    'mapfile -t a < <(pgrep x); kill "${a[@]}"',
+  ]) expect(detectPatternKills(c), c).toEqual([])
+})
+
 test('a probe of a pid a lister filled kills nothing, a kill after the options does', () => {
   expect(detectPatternKills('pgrep x | while read p; do kill -0 $p; done')).toEqual([])
   expect(detectPatternKills('for p in $(pgrep x); do kill -0 $p; done')).toEqual([])
