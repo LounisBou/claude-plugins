@@ -52,6 +52,19 @@ export ORCHESTRATOR_HOST_CLI=claude
 # may a run from inside tmux change the chain owner the launcher reads (TMUX, TMUX_PANE).
 unset CLAUDE_CODE_SESSION_ID TMUX TMUX_PANE
 
+# The role a launched session carries is read by the hooks and the launcher from its
+# environment: the launcher exports it in every launch, and a session started from one inherits
+# it. A suite run from inside an auditor, an agent or a spawned orchestrator must read none of
+# it; a case that needs a role sets it on its own command. `--role-probe` prints the names of
+# the role variables the suite still sees at its start, none when it cleared them all.
+ROLE_VARS='ORCHESTRATOR_SPAWNED ORCHESTRATOR_AUDITOR ORCHESTRATOR_REPORTS_TO ORCHESTRATOR_BRIEF ORCHESTRATOR_CONTEXT_GATE ORCHESTRATOR_CONTEXT_GATE_TOKENS ORCHESTRATOR_SELF_ID ORCHESTRATOR_NEW_SESSION_ID'
+# shellcheck disable=SC2086
+unset $ROLE_VARS
+if [ "${1:-}" = --role-probe ]; then
+  for v in $ROLE_VARS; do [ -z "${!v+x}" ] || echo "$v"; done
+  exit 0
+fi
+
 # A launch reads a session's model and effort on its transcript. Every transcript the suite
 # reads is its own: the host's projects directory is never read. `pair_transcript <session>
 # <model> <effort>` writes one whose main thread ran on that pair (no effort field when the
@@ -134,6 +147,18 @@ check_status() {
 # and a guard that pins the number breaks on a sentence that was merely rewritten.
 spells() { grep -qF -- "$2" "$1" && echo yes || echo no; }
 carries() { grep -qiF "$2" "$1" && echo yes || echo no; }
+
+echo "== suite environment =="
+
+# The suite started from inside a role reads the same as one started outside it: every role
+# variable exported, none is still set when the suite begins.
+# shellcheck disable=SC2086
+check "a suite started with every role variable exported sees none of them" "" \
+  "$(env $(for v in $ROLE_VARS; do printf '%s=1 ' "$v"; done) bash "$ROOT/tests/run-tests.sh" --role-probe)"
+# The list is the launcher's: each variable it exports in a launch is one the suite clears.
+launcher_exports=$(grep -oE 'export ORCHESTRATOR_[A-Z_]+=' "$ROOT/skills/iterm-agents/scripts/iterm_agent.py" | sed -E 's/^export //; s/=$//' | sort -u)
+check "every role variable the launcher exports in a launch is cleared by the suite" "" \
+  "$(for v in $launcher_exports; do case " $ROLE_VARS " in *" $v "*) ;; *) echo "$v" ;; esac; done)"
 
 echo "== repository policy =="
 
