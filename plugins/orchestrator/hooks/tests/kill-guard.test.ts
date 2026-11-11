@@ -499,6 +499,26 @@ test('a kill line given to a shell in a heredoc is read', () => {
   expect(detectPatternKills('sh <<EOF\npkill x\nEOF')).toEqual(['pkill'])
 })
 
+// The shell's own options: --rcfile and --init-file take a value that is no script, -n parses
+// and runs nothing, and `--` after -c leaves the string to run.
+test('a shell given an rc file, or a string after `--`, still reads what it is given', () => {
+  for (const c of [
+    `bash --rcfile f <<< 'pkill x'`,
+    `bash --init-file f <<< 'pkill x'`,
+    `echo 'pkill x' | bash --rcfile f`,
+    `sh -c -- 'pkill x'`,
+  ]) expect(detectPatternKills(c), c).toEqual(['pkill'])
+})
+
+test('a shell that only parses (-n) or has no command string runs nothing', () => {
+  for (const c of [
+    `bash -n <<< 'pkill x'`,
+    `echo 'pkill x' | bash -n`,
+    `bash -xn <<< 'pkill x'`,
+    `bash -c <<< 'pkill x'`,
+  ]) expect(detectPatternKills(c), c).toEqual([])
+})
+
 test('text a shell is not given on its standard input is data', () => {
   for (const c of [
     `echo 'echo hi' | sh`,

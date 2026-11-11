@@ -104,6 +104,27 @@ describe('stdinLines', () => {
     assert.deepEqual(lines(`bash -s -- a <<< 'ls'`), [['ls']])
   })
 
+  it('skips the value of --rcfile and --init-file, which is no script', () => {
+    assert.deepEqual(lines(`bash --rcfile f <<< 'pkill x'`), [['pkill x']])
+    assert.deepEqual(lines(`bash --init-file f <<< 'pkill x'`), [['pkill x']])
+    assert.deepEqual(lines(`bash --rcfile f -s <<< 'pkill x'`), [['pkill x']])
+    assert.deepEqual(lines(`bash --rcfile=f <<< 'pkill x'`), [['pkill x']])
+    assert.deepEqual(lines(`bash --rcfile f script.sh <<< 'pkill x'`), [[]])
+  })
+
+  it('gives nothing for a shell that only parses (-n), alone or in a cluster', () => {
+    assert.deepEqual(lines(`bash -n <<< 'pkill x'`), [[]])
+    assert.deepEqual(lines(`bash -xn <<< 'pkill x'`), [[]])
+    assert.deepEqual(lines(`echo 'pkill x' | sh -n`), [[], []])
+    assert.deepEqual(lines(`bash +n <<< 'pkill x'`), [['pkill x']])
+  })
+
+  it('gives nothing for a shell whose -c has no command string to take', () => {
+    assert.deepEqual(lines(`bash -c <<< 'pkill x'`), [[]])
+    assert.deepEqual(lines(`echo 'pkill x' | sh -c`), [[], []])
+    assert.deepEqual(lines(`bash -c -- <<< 'pkill x'`), [[]])
+  })
+
   it('gives nothing for a shell given a command string or a script, or for another program', () => {
     assert.deepEqual(lines(`echo 'pkill x' | sh -c ls`), [[], []])
     assert.deepEqual(lines(`echo 'pkill x' | sh script.sh`), [[], []])
@@ -113,6 +134,7 @@ describe('stdinLines', () => {
 
 describe('innerLine', () => {
   it('gives the line a shell runs with -c, or eval runs', () => {
+    assert.equal(innerLine(['sh', '-c', '--', 'ls']), 'ls')
     assert.equal(innerLine(['bash', '-o', 'pipefail', '-c', 'ls']), 'ls')
     assert.equal(innerLine(['/bin/dash', '-lc', 'ls']), 'ls')
     assert.equal(innerLine(['ksh', '+o', 'x', '-c', 'ls']), 'ls')

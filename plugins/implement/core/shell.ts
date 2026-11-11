@@ -25,6 +25,8 @@ const VALUED = new Set([
 const GITVALUED = new Set(['-C', '-c', '--git-dir', '--work-tree', '--namespace', '--super-prefix', '--config-env'])
 // The shells whose -c argument is a command line of its own.
 const SHELL = /^(.*\/)?(bash|sh|zsh|dash|ksh)$/
+// The shells' long options that take a value as the next word: it is no script file.
+const VALUED_LONG = new Set(['--rcfile', '--init-file'])
 // `command`'s lookup options: -v and -V (alone or clustered with -p) print where a program is
 // and run nothing.
 const LOOKUP = /^-[pvV]*[vV][pvV]*$/
@@ -106,8 +108,8 @@ export function innerLine(argv: readonly string[]): string | undefined {
 /**
  * The command lines a shell reads from its standard input, when the line writes them: the
  * command's `stdin` for a shell run with no `-c` and no script file (`sh`, `bash -s`, `bash -`,
- * `bash -o pipefail`), none for any other command, for a shell given a command string or a
- * script, which read no commands from it.
+ * `bash -o pipefail`, `bash --rcfile f`), none for any other command, for a shell given a command
+ * string or a script, which read no commands from it, nor for one that only parses (`-n`).
  */
 export function stdinLines(command: ShellCommand): readonly string[] {
   const { argv } = command
@@ -116,11 +118,12 @@ export function stdinLines(command: ShellCommand): readonly string[] {
     const word = argv[k] ?? ''
     if (word === '-') break
     if (/^[-+][A-Za-z]+$/.test(word)) {
-      if (word.includes('c')) return []
+      if (word.includes('c') || (word.startsWith('-') && word.includes('n'))) return []
       if (word.includes('s')) break
       k += word.replace(/[^oO]/g, '').length
       continue
     }
+    if (VALUED_LONG.has(word)) { k++; continue }
     if (word.startsWith('-')) continue
     return []
   }
