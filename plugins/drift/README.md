@@ -51,12 +51,15 @@ compares each pair of captures with Playwright's own comparator:
   first request and its target listed; an API request with no fixture answered 404 and listed
   (`unmocked:`), never waited on; the clock frozen (`now`), animations and transitions stopped,
   the caret hidden, fonts loaded, the config's ignore regions masked; one locale, time zone and
-  pixel ratio. A host listed without a port means its scheme's default port alone;
+  pixel ratio; text drawn with grayscale anti-aliasing only, which Chromium on Linux otherwise
+  picks per paint. A host listed without a port means its scheme's default port alone;
 - a route answering an error status (outside 2xx and 3xx) on either side is a tool error, never
   a capture;
 - `drift: identical` (exit 0), or `drift: <n> differ` (exit 1) with one line per pair,
   `<n> px differ in <x,y,w,h>` and a diff image; exit 2 when the tool cannot answer. At
   `--threshold 0`, the default, identical means the same size and the same bytes for every pixel.
+  At any threshold, a capture whose size changed differs, even when the area it gained is
+  transparent; its line reads both sizes.
   Above 0, `--threshold` is the comparator's per-pixel colour tolerance, and the comparator also
   ignores pixels it takes for anti-aliasing: the report says so.
 
@@ -88,29 +91,42 @@ Compares the standalone `.svg` files changed between the two refs as rendered im
 its own rather than an option of `shots`: it needs no config, no checkout, no install and no
 server, so it runs on any repository as it is.
 
-- the files: `git diff --raw --no-renames` between the two commits, every path ending in `.svg`
-  (any case); each side's bytes read from the object store, never checked out, written under the
-  run directory. Added and removed files are listed, not rendered; a side that is a symbolic link
-  or a submodule is listed as skipped;
+`identical` is quoted as proof, so it is never said of a file whose rendering could differ unseen:
+such a file is listed as `unproved: <path> — <why>`, and the run gives no verdict.
+
+- the files: `git diff --raw -M` between the two commits, every path ending in `.svg` (any case);
+  each side's bytes read from the object store, never checked out, written under the run
+  directory. Added and removed files are listed, not rendered. A renamed file is compared under
+  its new name; renamed with its bytes unchanged, it reads `identical (renamed from <old>)`. A
+  file renamed from or to another type is added or removed;
+- unproved: a side that is a symbolic link (`symlink`) or a submodule; a file animated by SMIL
+  (`<animate>`, `<animateTransform>`, `<animateMotion>`, `<set>`) or by CSS (`@keyframes`,
+  `animation`), whose still rendering proves nothing about its other frames (`animated`);
 - the rendering: each changed file of each side shown in the shared Chromium as an image from a
-  `data:` URL, where an SVG runs no script and loads nothing; every request a page makes is
-  aborted and listed (`blocked:`). The size is the file's viewBox (else its `width` and `height`
-  in px, else 300×150, a browser's default) times each of `--scales` (default `1,4`), on a
-  transparent then a white background;
+  `data:` URL, where an SVG runs no script and loads nothing; any request a page makes is aborted
+  and listed (`blocked:`). Its own size is its viewBox, else the size the browser gives it (its
+  `width` and `height`, `em` and `pt` included, else 300×150, a browser's default). It is
+  rendered at that size times each of `--scales` (default `1,4`), and at its intrinsic size, no
+  size forced on the image, so a change of its root `width`, `height` or `preserveAspectRatio`
+  shows. Each rendering is made on a transparent then a white background, and, when the file
+  names `prefers-color-scheme` on either side, in the light then the dark scheme. A root sized in
+  `%` falls back to 300×150, named on a `fallback:` line;
 - the comparison: each pair byte for byte, as `shots` at `--threshold 0`; a change of size differs
   even when no pixel does. A file whose bytes changed but whose renderings all match reads
   `identical (text differs)`;
 - the resources a file names outside itself (`href`, `src`, `url()`, `@import`), on either side,
-  are listed (`external:`) and never fetched: the file is rendered without them;
+  are listed (`external:`) and never fetched: the file is rendered without them. When they differ
+  between the sides, the file differs: `<path>: differ, external reference changed`;
 - a changed file that does not parse as XML, whose root is not `<svg>` in the SVG namespace, or
-  that the browser does not render is a tool error naming the file and its side (exit 2), never
+  that the browser does not decode is a tool error naming the file and its side (exit 2), never
   a verdict;
 - `drift: identical` (exit 0), or `drift: <n> differ` (exit 1), `<n>` counting the files added,
-  removed or rendering differently, with one line per differing rendering and its diff image.
+  removed or rendering differently, with one line per differing rendering and its diff image; or
+  `drift: no verdict, <n> unproved` (exit 2) when a file is unproved;
+- `--out` as `shots`, and more: an earlier `svg` run's report is removed before anything is
+  written, and a directory holding another command's run is refused, never emptied.
 
-SVGs inlined in components or style sheets are not read: `shots` sees them on its pages. An
-animated SVG (SMIL or CSS) is captured at whatever frame the image shows, and may read as a
-difference.
+SVGs inlined in components or style sheets are not read: `shots` sees them on its pages.
 
 ## The config
 
@@ -188,5 +204,12 @@ gets ready end in a tool error with the server stopped.
 The SVG tests (`skills/drift/scripts/svg.e2e.ts`) commit a few icons at several refs: a path moved
 by one unit is found with its box at each scale and on each background; a file only reformatted,
 its attributes reordered, reads `identical (text differs)`; an added and a removed file are
-listed; a reference to a local server is listed and the server never reached; a malformed file
-ends in a tool error; the same refs give the same report.
+listed; a reference to a local server is listed and the server never reached, nor any of the
+other kinds of reference an SVG image can name; a malformed file, a root outside the SVG
+namespace and a file the browser cannot decode end in a tool error; a white background added
+differs on the transparent renderings only; a change to a dark style differs in the dark scheme
+only; a change of the root size or of its aspect handling differs at the intrinsic size; an
+animated file and a symbolic link are unproved; a changed external reference differs; a pure
+rename reads identical and an edited one is compared under its new name; a change of mode alone
+reads identical; a root sized in `%` is named at 300×150; `--out` replaces an earlier `svg` run
+and refuses another command's; the same refs give the same report.

@@ -11,17 +11,17 @@ An optional proof, never a required gate, for a change whose output should not m
 <this skill's directory>/scripts/drift.sh build|shots|svg --base <ref> --head <ref> --out <scratchpad>/drift
 ```
 
-Needs the project's config at `~/.claude/drift/<owner>-<repo>.json` (or `--config <path>`);
-`shots` also takes `--threshold <0..1>`. Config: see the README.
-`svg` renders the changed `.svg` files, no config; it and `shots` need `/drift:install`.
+`build`, `shots` read `~/.claude/drift/<owner>-<repo>.json` (or `--config`; see the README);
+`shots` takes `--threshold <0..1>`. `svg` renders each changed `.svg` at its scales and own size,
+light and dark if it reads the scheme. `shots`, `svg` need `/drift:install`.
 
 ## Read it
 
-- `drift: identical`: same output (`shots`: same pixels).
+- `drift: identical`: same output, pixels and size, renames included.
 - `drift: identical (hash references normalised in <n> files)`: equivalent, not byte for byte: say so.
 - `drift: <n> differ`: one line per difference, with its diff.
-- `blocked:` requests aborted, `unmocked:` requests with no fixture (answered 404): listed, not hidden.
-- Exit 2: the tool could not answer; no verdict.
+- `blocked:`, `unmocked:` (answered 404): listed.
+- Exit 2, `unproved: <path> — <why>` or an error: no verdict.
 
 ## Quote it
 
