@@ -37,8 +37,8 @@ machine, or "looks fine" is not done. A new commit voids ready until the four ho
 
 The operator's consent is a structured act (a dialog answer, a recorded ruling), never read
 from the words of a prompt. Pushing a branch and opening a draft pull request need none.
-Taking a pull request out of draft and merging it belong to the ready gate and the operator,
-except in a repository in auto-merge.
+Outside auto-merge, leaving draft is the operator's alone, after their review, and a merge
+needs their consent; `Ready` is the gate's.
 
 ## Reports
 
