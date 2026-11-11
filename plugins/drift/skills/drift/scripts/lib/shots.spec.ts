@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { renderShots, type ShotsReport } from './shots.ts'
+import { generate, renderShots, requestsFileOf, type ShotsReport } from './shots.ts'
 
 const REPORT: ShotsReport = {
   version: 1,
@@ -31,4 +31,21 @@ test('the text report: the verdict, one line per pair with its box and any chang
   assert.deepEqual(renderShots({ ...REPORT, verdict: 'identical', differ: 0, pairs: [REPORT.pairs[0]!], blocked: [], unmocked: [] }), [
     'drift: identical', '/ @1440: identical', 'base 1111111 (origin/main), head 2222222 (HEAD)',
   ])
+})
+
+test('a report at a threshold above 0 says what it may not count', () => {
+  assert.equal(renderShots({ ...REPORT, threshold: 0.1 })[4], 'threshold 0.1: colour differences within it and pixels taken for anti-aliasing are not counted')
+  assert.equal(renderShots(REPORT).some(line => line.startsWith('threshold')), false)
+})
+
+test('a generated spec carries the module path as it is, $& and $1 included', () => {
+  const text = generate('capture.pw.cjs', { module: '/opt/$&/$1/x' })
+  assert.ok(text.includes('require("/opt/$&/$1/x")'))
+  assert.equal(text.includes('__PLAYWRIGHT_MODULE__'), false)
+})
+
+test('a requests file is read as lists of strings, anything else dropped', () => {
+  assert.deepEqual(requestsFileOf({ blocked: ['a', 3], unmocked: ['GET b'] }), { blocked: ['a'], unmocked: ['GET b'] })
+  assert.deepEqual(requestsFileOf(['x']), { blocked: [], unmocked: [] })
+  assert.deepEqual(requestsFileOf(null), { blocked: [], unmocked: [] })
 })

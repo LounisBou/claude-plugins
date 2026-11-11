@@ -2,7 +2,7 @@ import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import { crc32, deflateSync } from 'node:zlib'
 import { DriftError } from './compare.ts'
-import { decodePng, diffOf, sizeOfPng, type Image } from './png.ts'
+import { decodePng, diffOf, encodePng, exactDiff, sizeOfPng, type Image } from './png.ts'
 
 /** An 8-bit PNG of `image` (RGBA, or RGB when `rgb`), every row written with `filter`. */
 function encode(image: Image, filter: number, rgb = false): Buffer {
@@ -88,4 +88,21 @@ test('what is not an 8-bit, non-interlaced RGB or RGBA PNG is refused', () => {
   const idat = bad.indexOf('IDAT')
   bad[idat + 7] = 9
   assert.throws(() => decodePng(bad), DriftError)
+})
+
+test('two captures compared byte for byte: a one-pixel-wide grey column a shade darker is every pixel of it', () => {
+  const column = (grey: number): Image => image(6, 5, [0, 1, 2, 3, 4].map(y => [2, y, grey, grey, grey] as const))
+  const { pixels, box, image: diff } = exactDiff(column(128), column(100))
+  assert.equal(pixels, 5)
+  assert.deepEqual(box, { x: 2, y: 0, width: 1, height: 5 })
+  assert.deepEqual(diffOf(encodePng(diff)), { pixels: 5, box: { x: 2, y: 0, width: 1, height: 5 } })
+  assert.deepEqual(exactDiff(column(128), column(128)).pixels, 0)
+  assert.deepEqual(exactDiff(column(128), column(128)).box, undefined)
+  const taller = exactDiff(image(2, 2), image(2, 3))
+  assert.deepEqual([taller.pixels, taller.box, taller.image.width, taller.image.height], [2, { x: 0, y: 2, width: 2, height: 1 }, 2, 3])
+})
+
+test('an image written as a PNG reads back the same', () => {
+  const source = image(9, 4, [[8, 3, 1, 2, 3]])
+  assert.deepEqual(decodePng(encodePng(source)), source)
 })
