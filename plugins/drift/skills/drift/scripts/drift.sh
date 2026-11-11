@@ -7,7 +7,8 @@
 #
 # Defaults: --repo ., --base origin/main, --head HEAD, --config ~/.claude/drift/<owner>-<repo>.json
 # (named after the repository's origin, under $CLAUDE_CONFIG_DIR when it is set), --out a new directory under the calling session's
-# scratchpad when one is found, else under the system temp directory; --threshold 0.
+# scratchpad when one is found, else under the system temp directory; --threshold 0. A given --out
+# must be new, empty or a previous run's (it holds a report.json): anything else is refused.
 #
 # The config, a JSON object kept outside the repository:
 #   "install"      optional, the command run in each checkout first, as a list: ["npm", "ci"]
@@ -16,11 +17,13 @@
 #   "hashPattern"  optional, the regular expression removed from each output file name; the
 #                  default reads Vite's and Rollup's `name-[hash].ext`
 #   "env"          optional, variables added to the environment of install, build and server on
-#                  both sides, to pin what a build embeds from it: {"RELEASE": "drift"}
+#                  both sides, to pin what a build embeds from it: {"RELEASE": "drift"}; the
+#                  server inherits PATH, HOME and NODE_ENV alone besides them
 #   "shots"        what `shots` reads, an object:
 #     "server"       the server command, as a list, run in each checkout once installed
 #     "port"         the port it listens on; refused when something already listens there
-#     "url"          optional, the server's root: http://localhost:<port>
+#     "url"          optional, the server's root: http://localhost:<port>; its host is localhost,
+#                    127.0.0.1 or [::1], its port "port"
 #     "routes"       paths to capture, from that root: ["/", "/login"], or {"path", "waitFor"}
 #                    where waitFor is a selector the page shows once ready
 #     "viewports"    optional, widths, or {"width", "height"}: [1440, 390]; a width alone is 900 high
@@ -30,7 +33,9 @@
 #     "api"          optional, hosts answered from the fixtures alone: a request with no fixture
 #                    gets a 404 and is listed as unmocked
 #     "allow"        optional, hosts let through to the network; a request to any other host but
-#                    the server's is aborted and listed as blocked
+#                    the server's is aborted and listed as blocked, a WebSocket closed and listed,
+#                    and a redirect leaving them blocks the request that led to it. A host in
+#                    "api" or "allow" without a port means its scheme's default port alone
 #     "ignore"       optional, regions masked on both sides: {"selector"} or {"box": [x, y, w, h]},
 #                    each with an optional "route"
 #     "now"          optional, the time the pages read, frozen: 2026-01-01T09:00:00Z
@@ -59,14 +64,18 @@
 #   drift: <n> differ                                            1  <n> pairs differ
 #   <route> @<width>: identical
 #   <route> @<width>: <n> px differ in <x,y,w,h>[ (size <w>x<h> → <w>x<h>)], diff diff/<name>.png
+#                               at --threshold 0, a pair differs as soon as one byte of one pixel
+#                               does; above 0, Playwright's comparator decides, and the line
+#   threshold <t>: colour differences within it and pixels taken for anti-aliasing are not counted
+#                               says what it may forgive
 #   blocked: <url>              a request to a host neither the server's, nor in "api" or "allow"
 #   unmocked: <METHOD> <url>    a request to an "api" host with no fixture
 #
 # install: `drift: Playwright <version> installed in <dir> (<n> MB)`, or `already installed`.
 #
 # stderr: `drift: <reason>`, exit 2, when the tool cannot answer (a bad call, a missing config, a
-# ref that is no commit, a failed install, build, server or capture, Playwright not installed, no
-# node able to run the command).
+# ref that is no commit, a failed install, build, server or capture, a route answering an error
+# status, Playwright not installed, no node able to run the command).
 #
 # The command itself is drift.ts, beside this launcher: TypeScript, which node runs without a flag
 # from 22.18 and 23.6 on.
