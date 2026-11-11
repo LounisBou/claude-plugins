@@ -1,7 +1,8 @@
 # drift
 
 Proves that a change meant to change nothing changed nothing: the same build output byte for byte
-(`drift build`), the same pages pixel for pixel (`drift shots`). An agent or a reviewer runs it on
+(`drift build`), the same pages pixel for pixel (`drift shots`), the same rendering of every
+changed SVG file (`drift svg`). An agent or a reviewer runs it on
 a refactor, a rename or a move, and quotes its verdict as evidence; it is an optional proof, never a
 required gate.
 
@@ -74,8 +75,42 @@ configuration directory), outside the plugin's cache so an update of the plugin 
 call finds it and does nothing. The packages are installed by `npm ci` from a lockfile core writes
 with the integrity the registry published for each, their install scripts not run; the install
 runs in its own process group, stopped on an interruption and past core's `INSTALL_TIMEOUT_MS`. The install and its pin belong to the repository's shared core,
-so another plugin driving a browser uses the same one. `drift shots` without it exits 2 and names
-the command.
+so another plugin driving a browser uses the same one. `drift shots` and `drift svg` without it
+exit 2 and name the command.
+
+## drift svg
+
+```
+skills/drift/scripts/drift.sh svg [--repo <path>] [--base <ref>] [--head <ref>] [--out <dir>] [--scales <s,…>]
+```
+
+Compares the standalone `.svg` files changed between the two refs as rendered images. A command of
+its own rather than an option of `shots`: it needs no config, no checkout, no install and no
+server, so it runs on any repository as it is.
+
+- the files: `git diff --raw --no-renames` between the two commits, every path ending in `.svg`
+  (any case); each side's bytes read from the object store, never checked out, written under the
+  run directory. Added and removed files are listed, not rendered; a side that is a symbolic link
+  or a submodule is listed as skipped;
+- the rendering: each changed file of each side shown in the shared Chromium as an image from a
+  `data:` URL, where an SVG runs no script and loads nothing; every request a page makes is
+  aborted and listed (`blocked:`). The size is the file's viewBox (else its `width` and `height`
+  in px, else 300×150, a browser's default) times each of `--scales` (default `1,4`), on a
+  transparent then a white background;
+- the comparison: each pair byte for byte, as `shots` at `--threshold 0`; a change of size differs
+  even when no pixel does. A file whose bytes changed but whose renderings all match reads
+  `identical (text differs)`;
+- the resources a file names outside itself (`href`, `src`, `url()`, `@import`), on either side,
+  are listed (`external:`) and never fetched: the file is rendered without them;
+- a changed file that does not parse as XML, whose root is not `<svg>` in the SVG namespace, or
+  that the browser does not render is a tool error naming the file and its side (exit 2), never
+  a verdict;
+- `drift: identical` (exit 0), or `drift: <n> differ` (exit 1), `<n>` counting the files added,
+  removed or rendering differently, with one line per differing rendering and its diff image.
+
+SVGs inlined in components or style sheets are not read: `shots` sees them on its pages. An
+animated SVG (SMIL or CSS) is captured at whatever frame the image shows, and may read as a
+difference.
 
 ## The config
 
@@ -149,3 +184,9 @@ its box, and so is a grey column the comparator would take for anti-aliasing; a 
 a threshold, a masked box are read; a blocked host, a missing fixture, a WebSocket, redirects and
 another port of an allowed host are listed and never reached; an error page and a page that never
 gets ready end in a tool error with the server stopped.
+
+The SVG tests (`skills/drift/scripts/svg.e2e.ts`) commit a few icons at several refs: a path moved
+by one unit is found with its box at each scale and on each background; a file only reformatted,
+its attributes reordered, reads `identical (text differs)`; an added and a removed file are
+listed; a reference to a local server is listed and the server never reached; a malformed file
+ends in a tool error; the same refs give the same report.

@@ -127,12 +127,34 @@ export interface Target {
   readonly headSha: string
 }
 
+/** The top of the repository at `repo`; a tool error when it is none. */
+async function topOf(repo: string, signal: AbortSignal | undefined): Promise<string> {
+  const path = resolve(repo)
+  const top = existsSync(path) ? await git(path, ['rev-parse', '--show-toplevel'], signal) : undefined
+  if (top === undefined) throw new DriftError(`${path} is not a git repository`)
+  return top
+}
+
+/** Both refs as commits; a tool error naming the side whose ref is none. */
+async function commitsOf(top: string, options: Pick<Options, 'base' | 'head'>, signal: AbortSignal | undefined): Promise<{ baseSha: string; headSha: string }> {
+  const commitOf = async (side: string, ref: string): Promise<string> => {
+    const found = await git(top, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], signal)
+    if (found === undefined) throw new DriftError(`${side}: ${ref} is not a commit`)
+    return found
+  }
+  return { baseSha: await commitOf('base', options.base), headSha: await commitOf('head', options.head) }
+}
+
+/** Resolves the repository and both refs, for a command that reads no config. */
+export async function refsOf(options: Pick<Options, 'repo' | 'base' | 'head'>, deps: Deps): Promise<Omit<Target, 'configPath'>> {
+  const top = await topOf(options.repo, deps.signal)
+  return { top, ...(await commitsOf(top, options, deps.signal)) }
+}
+
 /** Resolves the repository, the config file (named after the origin unless given) and both refs; a tool error when one is missing. */
 export async function targetOf(options: Options, deps: Deps): Promise<Target> {
   const { signal } = deps
-  const repo = resolve(options.repo)
-  const top = existsSync(repo) ? await git(repo, ['rev-parse', '--show-toplevel'], signal) : undefined
-  if (top === undefined) throw new DriftError(`${repo} is not a git repository`)
+  const top = await topOf(options.repo, signal)
   let configPath = options.config
   if (configPath === undefined) {
     const slug = slugOf((await git(top, ['remote', 'get-url', 'origin'], signal)) ?? '')
@@ -141,12 +163,7 @@ export async function targetOf(options: Options, deps: Deps): Promise<Target> {
   }
   configPath = resolve(configPath)
   readJson(configPath)
-  const resolveRef = async (side: string, ref: string): Promise<string> => {
-    const found = await git(top, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], signal)
-    if (found === undefined) throw new DriftError(`${side}: ${ref} is not a commit`)
-    return found
-  }
-  return { top, configPath, baseSha: await resolveRef('base', options.base), headSha: await resolveRef('head', options.head) }
+  return { top, configPath, ...(await commitsOf(top, options, signal)) }
 }
 
 /** Runs one step of a side, its output appended to the side's log; a failure is a tool error naming it. */

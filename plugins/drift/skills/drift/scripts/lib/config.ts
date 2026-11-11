@@ -7,6 +7,7 @@ import { DEFAULT_HASH_PATTERN, DriftError } from './compare.ts'
 export const USAGE = [
   'usage: drift build [--repo <path>] [--base <ref>] [--head <ref>] [--config <path>] [--out <dir>]',
   '       drift shots [--repo <path>] [--base <ref>] [--head <ref>] [--config <path>] [--out <dir>] [--threshold <0..1>]',
+  '       drift svg [--repo <path>] [--base <ref>] [--head <ref>] [--out <dir>] [--scales <s,…>]',
   '       drift install',
 ].join('\n')
 
@@ -37,7 +38,7 @@ export interface ShotsOptions extends Options {
 const FLAGS = { '--repo': 'repo', '--base': 'base', '--head': 'head', '--config': 'config', '--out': 'out' } as const
 
 /** The flags after the command word, each with its value; `extra` names the command's own flags. */
-function flagsOf(rest: readonly string[], extra: readonly string[] = []): { options: { -readonly [K in keyof Options]: Options[K] }; values: Map<string, string> } {
+export function flagsOf(rest: readonly string[], extra: readonly string[] = []): { options: { -readonly [K in keyof Options]: Options[K] }; values: Map<string, string> } {
   const options: { -readonly [K in keyof Options]: Options[K] } = { repo: '.', base: 'origin/main', head: 'HEAD', config: undefined, out: undefined }
   const values = new Map<string, string>()
   for (let k = 0; k < rest.length; k += 2) {

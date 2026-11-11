@@ -16,6 +16,7 @@ import { compareTrees, DriftError, render, type Link, type Report, type Tree } f
 import { installPlaywright, PLAYWRIGHT_VERSION } from '../../../core/index.ts'
 import { parseArgs, parseConfig, USAGE, type Config } from './lib/config.ts'
 import { shots } from './lib/shots.ts'
+import { svg } from './lib/svg.ts'
 import { checkout, removeCheckout, readJson, runDirectory, stepper, targetOf, type Deps } from './lib/run.ts'
 
 export type { Deps } from './lib/run.ts'
@@ -112,6 +113,7 @@ async function install(argv: readonly string[], deps: Deps): Promise<number> {
 export async function main(argv: readonly string[], deps: Deps): Promise<number> {
   try {
     if (argv[0] === 'shots') return await shots(argv, deps)
+    if (argv[0] === 'svg') return await svg(argv, deps)
     if (argv[0] === 'install') return await install(argv, deps)
     return await build(argv, deps)
   } catch (error) {
