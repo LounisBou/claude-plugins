@@ -92,7 +92,9 @@ export function deckPath(env: Io['env']): string {
 function hostPorts(root: string, options: Options, env: Io['env'], inject: Inject): Pick<Ports, 'agent' | 'meter' | 'judge'> {
   const operatorSettings = join(configDir(env), 'settings.json')
   const settingsFile = join(options.out, 'settings.json')
-  writeFileSync(settingsFile, JSON.stringify(withoutOrchestrator(existsSync(operatorSettings) ? readJson(operatorSettings) : null)))
+  // The arms and the judge are sessions the evals start themselves: none comes up in Remote Control.
+  const settings = { ...withoutOrchestrator(existsSync(operatorSettings) ? readJson(operatorSettings) : null), remoteControlAtStartup: false }
+  writeFileSync(settingsFile, JSON.stringify(settings))
   const orchestratorDir = join(root, 'plugins', 'orchestrator')
   const names = dependencyNames(readJson(join(orchestratorDir, '.claude-plugin', 'plugin.json')))
   if (names instanceof Error) throw new Error(`the orchestrator's manifest: ${names.message}`)

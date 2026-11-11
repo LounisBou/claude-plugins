@@ -558,6 +558,8 @@ describe('outcome evals: the command', () => {
     assert.equal(orchestration?.agentsOpened, 1)
     assert.deepEqual(orchestration?.decisions, ['which model? → sonnet'])
     assert.ok('enabledPlugins' in JSON.parse(readFileSync(join(out, 'settings.json'), 'utf8')))
+    // the arms and the judge are sessions the evals start themselves: none comes up in Remote Control
+    assert.equal(JSON.parse(readFileSync(join(out, 'settings.json'), 'utf8')).remoteControlAtStartup, false)
     const [request] = launcher.requests
     assert.equal(request?.title, 'Orch: eval value-is-two')
     assert.equal(request?.settingsFile, join(out, 'settings.json'))

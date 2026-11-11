@@ -11393,6 +11393,11 @@ rcall() { # a python expression over routing.py and calibration.py as `m`, print
 check "a phase of 3 files and 50 lines is small; one more file or one more line is large" "small|small|large|large" \
   "$(rcall 'm.size_bucket(3, 50)')|$(rcall 'm.size_bucket(0, 0)')|$(rcall 'm.size_bucket(4, 0)')|$(rcall 'm.size_bucket(0, 51)')"
 
+# A trial is a session the calibration starts itself: it comes up with Remote Control off, so none
+# shows up among the operator's sessions.
+check "a calibration trial starts the host with Remote Control off, once" "1|1" \
+  "$(rcall 'm.host_command("a-model", "low", "auto", 1.5)' | grep -Fc "'--settings', '{\"remoteControlAtStartup\":false}'")|$(rcall 'm.host_command("a-model", "low", "auto", 1.5)' | grep -o -- "'--settings'" | wc -l | tr -d ' ')"
+
 # The corrective pair: the corrective round runs one effort notch above its phase (the round is the
 # retry: cheap first, escalate on failure). The top effort has no notch above, so it stays.
 check "the notch up is the next effort of the same family, and the top stays" "a-model/medium|a-model/high|a-model/xhigh|a-model/max|a-model/max" \
