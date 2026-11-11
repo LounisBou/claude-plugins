@@ -38,7 +38,7 @@ export interface ShotsOptions extends Options {
 const FLAGS = { '--repo': 'repo', '--base': 'base', '--head': 'head', '--config': 'config', '--out': 'out' } as const
 
 /** The flags after the command word, each with its value; `extra` names the command's own flags. */
-export function flagsOf(rest: readonly string[], extra: readonly string[] = []): { options: { -readonly [K in keyof Options]: Options[K] }; values: Map<string, string> } {
+function flagsOf(rest: readonly string[], extra: readonly string[] = []): { options: { -readonly [K in keyof Options]: Options[K] }; values: Map<string, string> } {
   const options: { -readonly [K in keyof Options]: Options[K] } = { repo: '.', base: 'origin/main', head: 'HEAD', config: undefined, out: undefined }
   const values = new Map<string, string>()
   for (let k = 0; k < rest.length; k += 2) {
@@ -68,6 +68,28 @@ export function parseShotsArgs(argv: readonly string[]): ShotsOptions {
   const threshold = raw === undefined ? 0 : Number(raw)
   if (!Number.isFinite(threshold) || threshold < 0 || threshold > 1) throw new DriftError('--threshold must be a number between 0 and 1')
   return { ...options, threshold }
+}
+
+export interface SvgOptions extends Options {
+  /** The sizes rendered, as multiples of each file's own size, ascending. */
+  readonly scales: readonly number[]
+}
+
+const DEFAULT_SCALES = [1, 4]
+const MAX_SCALE = 16
+
+export function parseSvgArgs(argv: readonly string[]): SvgOptions {
+  const [command, ...rest] = argv
+  if (command !== 'svg') throw new DriftError(USAGE)
+  const { options, values } = flagsOf(rest, ['--scales'])
+  if (options.config !== undefined) throw new DriftError('drift svg reads no config: its sizes come from --scales')
+  const raw = values.get('--scales')
+  if (raw === undefined) return { ...options, scales: DEFAULT_SCALES }
+  const scales = raw.split(',').map(item => (item.trim() === '' ? Number.NaN : Number(item)))
+  if (scales.some(scale => !Number.isFinite(scale) || scale <= 0 || scale > MAX_SCALE)) {
+    throw new DriftError(`--scales must be numbers above 0 and at most ${MAX_SCALE}, separated by commas: 1,4`)
+  }
+  return { ...options, scales: [...new Set(scales)].sort((a, b) => a - b) }
 }
 
 const isArgv = (value: unknown): value is string[] =>
