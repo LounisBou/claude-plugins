@@ -187,7 +187,18 @@ describe('playwright', () => {
     const lockPath = (config: string): string => join(config, 'playwright', `${PLAYWRIGHT_VERSION}.lock`)
     const hanging = (signals: AbortSignal[]): Run => (_argv, _cwd, _env, signal) => {
       signals.push(signal)
-      return new Promise(done => signal.addEventListener('abort', () => done(null), { once: true }))
+      return new Promise(done => {
+        /*
+         * A running command keeps the event loop alive, as the child process of the real run does.
+         * Without it the only timer left is the timeout's, which Node does not keep the loop for:
+         * the loop empties before it fires and the runner cancels the test.
+         */
+        const running = setInterval(() => undefined, 1000)
+        signal.addEventListener('abort', () => {
+          clearInterval(running)
+          done(null)
+        }, { once: true })
+      })
     }
     const timed = machine()
     const seen: AbortSignal[] = []
