@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
-import { generate, renderShots, requestsFileOf, type ShotsReport } from './shots.ts'
+import { generate, playwrightConfig, renderShots, requestsFileOf, type ShotsReport } from './shots.ts'
 
 const REPORT: ShotsReport = {
   version: 1,
@@ -48,4 +48,9 @@ test('a requests file is read as lists of strings, anything else dropped', () =>
   assert.deepEqual(requestsFileOf({ blocked: ['a', 3], unmocked: ['GET b'] }), { blocked: ['a'], unmocked: ['GET b'] })
   assert.deepEqual(requestsFileOf(['x']), { blocked: [], unmocked: [] })
   assert.deepEqual(requestsFileOf(null), { blocked: [], unmocked: [] })
+})
+
+test('every capture launches Chromium with grayscale text anti-aliasing only, so a page renders the same on each run', () => {
+  const config = JSON.parse(playwrightConfig('/spec', 'capture.spec.cjs', '/results', 1000).replace(/^module\.exports = /, ''))
+  assert.deepEqual(config.use.launchOptions.args, ['--disable-lcd-text'])
 })
