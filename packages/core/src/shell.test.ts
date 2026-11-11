@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { gitSubcommand, innerLine, readCommands, redirectsToFile, simpleCommands, stdinLines } from './shell.ts'
+import { gitSubcommand, innerLine, readCommands, redirectsToFile, simpleCommands, stdinLines, unwrapPath } from './shell.ts'
 
 const commands = (line: string): string[][] => simpleCommands(line)
 
@@ -166,5 +166,26 @@ describe('redirectsToFile', () => {
   it('sees a write into a file, and not a stream, /dev/null or a quoted >', () => {
     for (const line of ['git diff > out.txt', 'echo a >> notes.md', 'cmd >| f', 'x 2> err.log', 'a && b>f']) assert.equal(redirectsToFile(line), true, line)
     for (const line of ['git diff 2>&1', 'cmd > /dev/null 2>&1', 'cmd 2>/dev/null', 'echo "a > b"', "grep '>' f", 'echo a\\>b', 'cmd >&2']) assert.equal(redirectsToFile(line), false, line)
+  })
+})
+
+describe('unwrapPath', () => {
+  it('skips a wrapper written with its directory, with its options and assignments', () => {
+    assert.deepEqual(unwrapPath(['/usr/bin/env', 'bash', '-c', 'ls']), { argv: ['bash', '-c', 'ls'], wrappers: ['env'], lookup: false })
+    assert.deepEqual(unwrapPath(['/usr/bin/env', '-u', 'X', 'FOO=1', 'bash']), { argv: ['bash'], wrappers: ['env'], lookup: false })
+    assert.deepEqual(unwrapPath(['/usr/bin/sudo', '-u', 'root', '/usr/bin/xargs', 'kill']), { argv: ['kill'], wrappers: ['sudo', 'xargs'], lookup: false })
+    assert.deepEqual(unwrapPath(['/usr/bin/timeout', '5', 'sh']), { argv: ['sh'], wrappers: ['timeout'], lookup: false })
+    assert.deepEqual(unwrapPath(['/usr/bin/command', '-v', 'pkill']).lookup, true)
+  })
+
+  it('leaves a command that is no wrapper written with a directory as it is', () => {
+    assert.deepEqual(unwrapPath(['bash', '-c', 'ls']), { argv: ['bash', '-c', 'ls'], wrappers: [], lookup: false })
+    assert.deepEqual(unwrapPath(['/bin/bash', '-c', 'ls']), { argv: ['/bin/bash', '-c', 'ls'], wrappers: [], lookup: false })
+    assert.deepEqual(unwrapPath(['env', 'bash']), { argv: ['env', 'bash'], wrappers: [], lookup: false })
+    assert.deepEqual(unwrapPath([]), { argv: [], wrappers: [], lookup: false })
+  })
+
+  it('does not change what readCommands returns for a wrapper written with its directory', () => {
+    assert.deepEqual(readCommands('/usr/bin/env bash').map(c => [...c.argv]), [['/usr/bin/env', 'bash']])
   })
 })

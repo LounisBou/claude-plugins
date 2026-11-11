@@ -129,6 +129,45 @@ export function stdinLines(command: ShellCommand): readonly string[] {
   return command.stdin
 }
 
+// Where a wrapper's own words end: `next` is the index of the first word after its options (and
+// the duration of `timeout`), `from` the index of the first word after its name; `lookup` is
+// whether a `command -v` among them looks the program up rather than run it.
+function pastOptions(wrap: string, w: readonly string[], from: number): { next: number; lookup: boolean } {
+  let next = from
+  let lookup = false
+  while (next < w.length && (w[next] ?? '').startsWith('-')) {
+    if (wrap === 'command' && LOOKUP.test(w[next] ?? '')) lookup = true
+    next += VALUED.has(`${wrap} ${w[next]}`) ? 2 : 1
+  }
+  if (wrap === 'timeout' || wrap === 'gtimeout') next++
+  return { next, lookup }
+}
+
+/**
+ * The command a wrapper written with its directory runs (`/usr/bin/env bash -c …`, which
+ * readCommands keeps as the program `/usr/bin/env`, leaving every reader it serves as it is): the
+ * words from the real command on, the wrappers skipped by their base name, and whether a lookup
+ * is among them. A command that does not start with such a wrapper comes back as it is.
+ */
+export function unwrapPath(argv: readonly string[]): { argv: readonly string[]; wrappers: readonly string[]; lookup: boolean } {
+  const wrappers: string[] = []
+  let lookup = false
+  let i = 0
+  if ((argv[0] ?? '').includes('/') && WRAPPER.has(baseName(argv[0] ?? ''))) {
+    while (i < argv.length) {
+      const word = argv[i] ?? ''
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word)) { i++; continue }
+      const wrap = baseName(word)
+      if (!WRAPPER.has(wrap)) break
+      wrappers.push(wrap)
+      const past = pastOptions(wrap, argv, i + 1)
+      i = past.next
+      lookup ||= past.lookup
+    }
+  }
+  return { argv: argv.slice(i), wrappers, lookup }
+}
+
 function baseName(word: string): string {
   return word.replace(/^.*\//, '')
 }
@@ -309,14 +348,10 @@ function tokenize(command: string): ShellCommand[] {
       const word = w[k - 1] ?? ''
       if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word) || RESERVED.has(word)) { k++; continue }
       if (WRAPPER.has(word)) {
-        const wrap = word
-        wrappers.push(wrap)
-        k++
-        while (k <= n && (w[k - 1] ?? '').startsWith('-')) {
-          if (wrap === 'command' && LOOKUP.test(w[k - 1] ?? '')) lookup = true
-          k += VALUED.has(`${wrap} ${w[k - 1]}`) ? 2 : 1
-        }
-        if (wrap === 'timeout' || wrap === 'gtimeout') k++
+        wrappers.push(word)
+        const past = pastOptions(word, w, k)
+        k = past.next + 1
+        lookup ||= past.lookup
         continue
       }
       break
