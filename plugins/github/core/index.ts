@@ -12,3 +12,4 @@ export { CONSENT_KINDS, CONSENT_PRODUCER, CONSENT_QUOTE_MIN, CONSENT_VERSION, co
 export { configDirOf, ENV, gateThresholds, isSpawned } from './env.ts'
 export { markRow, nextRow, parseState, REPORT_STATUSES, reportStatus, ROW_STATUSES, twoDigits, type ReportStatus, type Row, type RowStatus, type State } from './method.ts'
 export { isTemporary, lockOf, removeArgv, renameArgv, staleTemporaries, STALE_MS, STORE_CONTRACT, takeLockArgv, temporaryOf, updateOver, withLockOver, writeAtomicOver, type AsyncLockOptions, type RunResult, type StoreIo } from './store-io.ts'
+export { installPlaywright, locatePlaywright, PLAYWRIGHT_BROWSER, PLAYWRIGHT_VERSION, playwrightDir, sizeOf, type InstallDeps, type Playwright, type Run } from './playwright.ts'
