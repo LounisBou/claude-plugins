@@ -1,7 +1,7 @@
 {
   "name": "drift",
-  "description": "Proves that a change meant to change nothing changed nothing: two refs built and their outputs compared byte by byte.",
-  "version": "0.1.1",
+  "description": "Proves that a change meant to change nothing changed nothing: two refs built and their outputs compared byte by byte, their pages captured and compared pixel by pixel.",
+  "version": "0.2.0",
   "author": {
     "name": "Lounis Bou",
     "email": "lounis.bou@gmail.com"
@@ -9,5 +9,5 @@
   "homepage": "https://github.com/LounisBou/claude-plugins",
   "repository": "https://github.com/LounisBou/claude-plugins",
   "license": "MIT",
-  "keywords": ["refactor", "build", "diff", "review"]
+  "keywords": ["refactor", "build", "diff", "screenshot", "review"]
 }
