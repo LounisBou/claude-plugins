@@ -139,12 +139,13 @@ words, dated), and every CI check is green there. Ready belongs to one head: a n
 commit makes the pull request not ready until the four hold again at the new head.
 
 The `Ready` and `Not Ready` labels carry that fact on GitHub. A draft opens with `Not
-Ready`. The plugin puts `Ready` itself once the four hold. When the CI does not run on a draft, the pull
-request leaves draft for it, still `Not Ready`, and goes back to draft once the CI is green, then takes `Ready`.
-A push to the pull request's branch puts `Not Ready` back. The plugin refuses `Ready`,
-leaving draft and a merge whose four conditions do not hold, through its tool and
-through the shell alike. The review, the norms check and the end-to-end run each leave
-a record at the head they read (see REFERENCE.md « Records »). CI is read from GitHub.
+Ready`. The plugin puts `Ready` itself once the four hold. When the CI does not run on a
+draft, the pull request leaves draft for it, still `Not Ready`, and goes back to draft
+once the CI is green, then takes `Ready`. A push to the pull request's branch puts `Not
+Ready` back. The plugin refuses `Ready`, leaving draft and a merge whose four conditions
+do not hold, through its tool and through the shell alike. The review, the norms check
+and the end-to-end run each leave a record at the head they read (see REFERENCE.md
+« Records »). CI is read from GitHub.
 
 ## Security update pull requests
 

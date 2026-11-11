@@ -46,7 +46,7 @@ Before writing a text, read its rules in `writing/` beside this file.
 | `pr-files` | `<pr>` | Changed paths with their patches, paginated |
 | `pr-commits` | `<pr>` | Commits on the PR, paginated |
 | `file-at-ref` | `<path> <ref>` | A file's contents at a ref |
-| `pr-create` | `--title T [--body-file P] [--base B] [--head H] [--draft]` | Open a PR from the current branch, `--draft` for a draft (the house default). A draft gets the `Not Ready` label, any other PR the `Ready` one. A label failure is printed as an `error:` line on stderr and does not fail the command |
+| `pr-create` | `--title T [--body-file P] [--base B] [--head H] [--draft]` | Open a PR from the current branch, `--draft` for a draft (the house default). It gets the `Not Ready` label, draft or not: `Ready` is the gate's (« Ready »). A label failure is printed as an `error:` line on stderr and does not fail the command |
 | `pr-merge` | `<pr> [--method merge\|squash\|rebase] [--sha SHA]` | Merge a PR, optionally pinned to the head that was verified |
 
 `pr-gate` makes three REST reads: the pull request, the combined status and the check
@@ -123,7 +123,7 @@ to `RIGHT`). `commit_id` is the PR head, read by the tool. The request carries n
 | Subcommand | Arguments | Description |
 |---|---|---|
 | `pr-update` | `<pr> [--title T] [--body-file P] [--base B] [--state open\|closed]` | Change a PR's fields |
-| `pr-ready` | `<pr> [--for-ci]` | Mark a draft ready for review, and put the `Ready` label on it; refused outside auto-merge (« Guards »). `--for-ci` takes it out of draft only for its CI to run, and puts `Not Ready` on it |
+| `pr-ready` | `<pr> [--for-ci]` | Mark a draft ready for review, its labels left as they are; refused outside auto-merge (« Guards »). `--for-ci` takes it out of draft only for its CI to run, and puts `Not Ready` on it |
 | `pr-draft` | `<pr>` | Convert a pull request back to a draft, and put the `Not Ready` label on it |
 | `pr-readiness` | `<pr> <ready\|not-ready>` | Put `Ready` or `Not Ready` on a PR and take the other off, creating the labels when missing. Prints the state now carried, `(unchanged)` after it when nothing changed. `ready` only when the four hold (« Guards ») |
 | `labels-ensure` | | Create `Ready` (`27e760`) and `Not Ready` (`8c1455`) when missing, no description. A label already there under that name, in any case, is left as it is. One line per label: `created <name>` or `present <name>`, with ` #<colour>` when it differs from the house colour |
@@ -340,48 +340,49 @@ github: read <root>/engine/writing/<file> and <root>/engine/writing/references.m
 ```
 
 **Ready.** `pr-ready`, `pr-merge`, `pr-readiness ready`, `label-add` with `Ready` and
-`pr-create` out of draft, and in the shell `gh pr ready` (not `--undo`), `gh pr merge`
-(not `--disable-auto`, `--auto` included), `gh pr edit` and `gh issue edit` with
-`--add-label Ready`, `gh pr create` without `--draft`, `gh api` with `PUT` or `POST` on
-`repos/<o>/<r>/pulls/<n>/merge` or on `repos/<o>/<r>/issues/<n>/labels` with `Ready`, and
-`gh api graphql` naming `mergePullRequest`, `markPullRequestReadyForReview` or
-`enablePullRequestAutoMerge`, and the same subcommands of the engine run from Bash
-(`python3 <root>/engine/gh.py pr-merge 12 --repo owner/name`, its script given by its path or
-by a shell variable followed by its subcommand), need the pull request ready at its head: a clean review, a
-passed norms check and passed or waived E2E recorded at the head `pr-gate` reads (« Records »
-above), and green CI. A `--match-head-commit` or a `pr-merge --sha` other than that head
-is not ready either. The `Ready` label is refused so in both phases; under the enforce phase
-every other act is too, before any question, with `github: <act> refused on
-<owner/name>#<n> at <head7>: not ready. Missing: <item>, …`, and a pull request still carrying
-`Ready` goes back to `Not Ready`.
+`pr-create` out of draft, and in the shell `gh pr ready` (not `--undo`; `--undo=false` is
+none), `gh pr merge` (not `--disable-auto`), `gh pr edit` and `gh issue edit` with `--add-label
+Ready`, `gh pr create` without `--draft`, `gh api` (a path or a full URL) with `PUT` or `POST`
+on `repos/<o>/<r>/pulls/<n>/merge` or `…/issues/<n>/labels`, or `PATCH` on `…/issues/<n>` or
+`…/pulls/<n>`, naming `Ready` (`labels[]=Ready`, `labels='["Ready"]'`) or with a body it cannot
+read (`--input`), `gh api graphql` naming `mergePullRequest`, `markPullRequestReadyForReview`
+or `enablePullRequestAutoMerge`, and the same subcommands of the engine run from Bash (its
+script by its path, or a shell variable followed by its subcommand), need the pull request
+ready at its head: a clean review, a passed norms check and passed or waived E2E recorded at
+the head `pr-gate` reads (« Records » above), and green CI. A `--match-head-commit` or a
+`pr-merge --sha` other than that head is not ready either. The `Ready` label is refused so in
+both phases; under enforce every other act is too, before any question, with `github: <act>
+refused on <owner/name>#<n> at <head7>: not ready. Missing: <item>, …`, and a pull request
+still carrying `Ready` goes back to `Not Ready`.
 
-Under the warn phase, the one this release ships (`CLAUDE_GITHUB_READY_ENFORCE=1` brings
-enforce forward), the other acts go ahead with one transcript line, `github: <act> on
-<owner/name>#<n> is not ready, let through while the guard only warns. Missing: <item>`,
-and one JSON line `{at, session, repo, pr, head, act, route, missing}` in `guard-warn.log`,
-in the plugin's data directory. Under enforce, a pull request opened out of draft is
-refused with `github: <act> refused: open it as a draft, then leave draft once ready.`,
-and a readiness `pr-gate` could not read with `github: readiness of <owner/name>#<n>
-unverified: <error>`, a `Ready` label in both phases. A shell merge, undraft or `Ready`
-label that names no repository (`-R`, `--repo` or a URL) is refused in both phases,
-with `github: <command> refused: name the repository with -R owner/name.`; a GraphQL merge or
-undraft names no pull request and is always refused, with the tool call to run.
+Under warn, the phase this release ships (`CLAUDE_GITHUB_READY_ENFORCE=1` brings enforce
+forward), the other acts go ahead with `github: <act> on <owner/name>#<n> is not ready, let
+through while the guard only warns. Missing: <item>`, and one JSON line `{at, session, repo,
+pr, head, act, route, missing}` in `guard-warn.log`, in the plugin's data directory. Under
+enforce, opening out of draft is refused, and a readiness `pr-gate` could not read with
+`github: readiness of <owner/name>#<n> unverified: <error>`, a `Ready` label in both phases. A
+shell merge, undraft or `Ready` label naming no repository (`-R`, `--repo` or a URL) is refused
+in both phases; a GraphQL merge or undraft names no pull request and is always refused, with
+the tool call to run. A GraphQL query the command does not show (`-F query=@file`, `--input`, a
+shell variable or substitution) is refused outside auto-merge, an unverified readiness inside
+it. `gh.py --stdin-json` run from Bash is refused: its request cannot be read.
 
 **The gate puts `Ready`.** After a record is written (any producer) and a `pr-gate` or
 `pr-checks` read through the tool, the module reads the four at the open pull request's head
-and puts `Ready` when they hold, or `Not Ready` back on one carrying `Ready`, with one line after
-the output; after a record it also names what is missing. CI turning green is followed by the
-next such read.
+and puts `Ready` when they hold, or `Not Ready` back on one carrying `Ready`: the gate's own
+act. It reads the head again just before writing, and writes nothing on a moved head or on
+records it cannot list. Outside auto-merge `Ready` lands on a draft: one out of draft for
+its CI goes back first. Its line follows a record's output; after a read it is a line of
+its own, and `pr-gate` stays JSON, with the labels and draft the gate left.
 
-A pull request that carries `Not Ready` and whose CI is not green may leave draft for its
-CI to run, in every repository and with no question: the tool runs `pr-ready --for-ci`,
+A pull request that carries `Not Ready` and no passed check at its head may leave draft for
+its CI to run, in every repository and with no question: the tool runs `pr-ready --for-ci`,
 which keeps `Not Ready`, the shell's `gh pr ready` passes, and both print `github:
 <owner/name>#<n> out of draft to run CI, still Not Ready`. Going back to draft
 (`pr-draft`, `gh pr ready --undo`) always passes and puts `Not Ready`, and so does `gh pr
 create --draft`. After a `git push`, a pull request of the pushed branch that carries
-`Ready` goes back to `Not Ready`, with `github: <owner/name>#<n> back to Not Ready after
-the push to <branch>`; a branch or a repository the push does not name with certainty is
-left as it is, with one line.
+`Ready` goes back to `Not Ready`, with one line; a branch or a repository the push does not
+name with certainty is left as it is.
 
 **Auto-merge split.** A merge or leaving draft (CI undraft aside) runs only in a repository
 listed in `auto-merge.json`, the ready guard on top. Elsewhere leaving draft or opening out of
@@ -390,21 +391,18 @@ auto-merge, leaving draft is the operator's, …`); a merge is asked through the
 in the shell. The engine's undraft is a CI undraft only with `--for-ci`; it names its
 repository with `--repo`.
 
-The engine run from Bash keeps the writing rules too: `pr-create`, `pr-comment`, a
-`pr-update` with a title or a body, and `review-submit`, `thread-reply`, `comment-edit`,
-`review-pending-create` and `review-pending-add` with a body file or a comments file wait for
-the writing rules to be read, as `gh pr create`, `gh pr comment` and `gh pr edit` do, and the `--title` of `pr-create` and `pr-update`, and the
-file a `--body-file` names, are linted as the tool's call would be. An engine act whose
-pull request number cannot be read from the command (`pr-merge {}` fed by an `xargs`,
-`pr-merge "$PR"`) is refused in both phases, never read against the current branch's pull
-request: write the number, or call the tool.
+The engine's texts run from Bash (`pr-create`, `pr-comment`, `pr-update`, `review-submit`,
+`thread-reply`, `comment-edit`, `review-pending-*`) wait for the writing rules to be read
+and are linted, `--title` and the `--body-file` file, as the tool's call would be. An engine
+act whose pull request number cannot be read (`pr-merge {}` from an `xargs`, `pr-merge "$PR"`)
+is refused in both phases, never read against the current branch's: write the number.
 
 What the guards do not read on that route:
 
-- A request the engine reads from stdin (`gh.py --stdin-json`) is not on the command line:
-  the guards do not see it. Nor do they see an engine script given by a shell variable that is
-  not followed by one of its subcommands, `$PY engine/gh.py …`, `eval`, `uv run`, or an
-  unquoted `${CLAUDE_PLUGIN_ROOT}/engine/gh.py`: run it as `python3 "<root>/engine/gh.py" …`.
+- An engine script given by a shell variable not followed by one of its subcommands, `$PY
+  engine/gh.py …`, `eval`, `uv run`, or an unquoted `${CLAUDE_PLUGIN_ROOT}/engine/gh.py`:
+  run it as `python3 "<root>/engine/gh.py" …`. Nor a `gh alias`, a script or a subprocess
+  that runs `gh` or the engine, or `curl` on the API: documented, not guarded.
 - A `--comments-file` is not read, so its inline comments are not linted.
 - A body file written by the same command line (`printf … > body.md && python3 gh.py
   pr-create --body-file body.md`) is read before it exists, so it is not linted.

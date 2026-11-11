@@ -60,8 +60,8 @@ it. `/github:doctor` then confirms everything is ready.
   from a fixed list. The same rules hold for `gh pr create`, `gh pr edit`,
   `gh pr comment` and `gh pr review` run through Bash, their `--body-file` read,
   and for the engine's own subcommands run there (`python3 engine/gh.py
-  pr-update 12 --body-file body.md`). A request the engine reads from stdin
-  (`--stdin-json`) is left unchecked.
+  pr-update 12 --body-file body.md`). A request the engine would read from
+  stdin (`--stdin-json`) is refused from Bash, as nothing on the line shows it.
   A `--body` read from stdin or made by a command substitution other than a
   `$(cat <<'EOF' … EOF)` heredoc is left unchecked, as the hook cannot see it.
   A text that breaks one is refused with the rule, so it can be rewritten. A
@@ -162,13 +162,19 @@ contract; `engine/writing/pull-requests.md` « Ready pull requests » the rule.
 The module puts `Ready` itself: after a record is written, and after a
 `pr-gate` or `pr-checks` read through the tool, it reads the four at the head
 and puts `Ready` when they hold, or `Not Ready` back on a pull request that
-carries `Ready` and no longer holds them, with one line after the call's output.
-A CI that turns green after the last record is followed by the next read of the
-gate; the orchestrator makes one when its CI watch says green.
+carries `Ready` and no longer holds them, with one line of its own. That label
+is the gate's act, not the session's, though a read brought it about. The head
+is read again just before the label is written: a head that moved gets none.
+`pr-gate`'s answer stays JSON, with the labels the gate left. A CI that turns
+green after the last record is followed by the next read of the gate; the
+orchestrator makes one when its CI watch says green, the call printed on its
+green line.
 
 When the CI does not run on a draft, the pull request leaves draft for it,
-still `Not Ready`, goes back to draft once the CI is green, then takes
-`Ready`. That undraft runs in every repository, with one transcript line:
+still `Not Ready`, as long as no check of its head has passed. Outside
+auto-merge, once the four hold the gate puts it back to draft, then puts
+`Ready`: `Ready` there always lands on a draft. That undraft runs in every
+repository, with one transcript line:
 
 ```
 github: <owner/name>#<n> out of draft to run CI, still Not Ready
