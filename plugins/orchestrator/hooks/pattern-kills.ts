@@ -2,10 +2,15 @@
 // The kill guard's reading of a command line, pure: which kills reach processes by name or
 // pattern. The line is read by core's shell reader (core/shell.ts), the one every plugin reads
 // a command line with; what is a kill by pattern is decided here.
-import { innerLine, readCommands, type ShellCommand } from '../core/shell.ts'
+import { innerLine, readCommands, stdinLines, type ShellCommand } from '../core/shell.ts'
 
 // Programs that list processes: what `xargs kill` kills by pattern when one feeds it.
 const LISTERS = new Set(['pgrep', 'pidof', 'lsof', 'ps'])
+// Package runners that fetch a program and run it: `npx kill-port 3000` runs kill-port. The
+// managers among them (`pnpm dlx x`, `npm exec x`) run what follows their subcommand.
+const RUNNERS = new Set(['npx', 'bunx', 'pnpx'])
+const MANAGERS = new Set(['npm', 'pnpm', 'yarn', 'bun'])
+const RUN_SUBCOMMANDS = new Set(['dlx', 'exec', 'x'])
 // How many strings may sit inside one another and still be read as command lines.
 const STRING_DEPTH = 4
 
@@ -18,11 +23,15 @@ function baseName(word: string): string {
 // there is none. A kill is pkill or killall whatever their options, or a kill whose pids
 // come from a command substitution or, through xargs, from a lister, or one that reaches
 // more than one process: every process (`-1`), the caller's group (`0`) or a group
-// (`-<pgid>`). `kill 1234`, `kill $pid`, `kill %1`, `kill $(cat file)` (the pid kept in a
+// (`-<pgid>`), or one that takes a variable a lister filled, through a loop (`pgrep x | while
+// read p; do kill $p; done`, `for p in $(pgrep x); do kill $p; done`). `fuser -k` and
+// `kill-port`, bare or behind a package runner, kill by port or file. `kill 1234`, `kill $pid`, `kill %1`, `kill $(cat file)` (the pid kept in a
 // file) and `kill -0 …` (a probe, it kills nothing) are not kills by pattern, and neither
 // is a `command -v` lookup, which runs nothing. Words in quotes, heredocs and arguments of
 // other programs are data, but for the string a shell runs after `-c` and the words eval
-// runs: those are command lines themselves and read as such, STRING_DEPTH nested at most.
+// runs, and the text the line writes to the standard input of a shell (`echo 'pkill x' | sh`,
+// `sh <<< 'pkill x'`, a heredoc): those are command lines themselves and read as such,
+// STRING_DEPTH nested at most.
 export function detectPatternKills(command: string): string[] {
   const found: string[] = []
   const seen = (reason: string): void => { if (!found.includes(reason)) found.push(reason) }
@@ -30,23 +39,84 @@ export function detectPatternKills(command: string): string[] {
   return found
 }
 
+// The variables of one command line that a lister filled, each with what filled it.
+type Filled = Map<string, string>
+
 function killsIn(line: string, depth: number, seen: (reason: string) => void): void {
-  for (const command of readCommands(line)) killOf(command, depth, seen)
+  const filled: Filled = new Map()
+  for (const command of readCommands(line)) killOf(command, depth, seen, filled)
 }
 
-function killOf({ argv, wrappers, lookup, substitutions, piped }: ShellCommand, depth: number, seen: (reason: string) => void): void {
+function killOf(command: ShellCommand, depth: number, seen: (reason: string) => void, filled: Filled): void {
+  const { argv, wrappers, lookup, substitutions, piped } = command
   if (lookup) return
   const program = baseName(argv[0] ?? '')
   if (program === 'pkill' || program === 'killall') { seen(program); return }
+  if (program === 'fuser' && argv.some(isFuserKill)) { seen('fuser -k'); return }
+  if (runsKillPort(argv)) { seen('kill-port'); return }
   const text = depth < STRING_DEPTH ? innerLine(argv) : undefined
   if (text !== undefined) { killsIn(text, depth + 1, seen); return }
+  const fed = depth < STRING_DEPTH ? stdinLines(command) : []
+  if (fed.length > 0) { for (const line of fed) killsIn(line, depth + 1, seen); return }
+  fill(command, filled)
   if (program !== 'kill' || argv[1] === '-0') return
   if (substitutions.some(held => !isRecordedPid(held))) seen('kill of a command substitution')
   else if (wrappers.includes('xargs')) {
     const lister = piped.find(p => LISTERS.has(p))
     if (lister) seen(`kill fed through xargs by ${lister}`)
   }
+  const source = filledTarget(argv.slice(1), filled)
+  if (source !== undefined) seen(`kill fed through a loop by ${source}`)
   if (reachesMany(argv.slice(1))) seen('kill of all processes or a process group')
+}
+
+// What a loop gives a variable: `read` at the end of a pipe a lister feeds names the variables
+// it reads (REPLY when it names none), and `for name in …` with a substitution among its words,
+// other than a recorded pid, names the one it sets.
+function fill({ argv, substitutions, piped }: ShellCommand, filled: Filled): void {
+  if (argv[0] === 'read') {
+    const lister = piped.find(p => LISTERS.has(p))
+    if (lister === undefined) return
+    const names = argv.slice(1).filter(word => /^[A-Za-z_][A-Za-z0-9_]*$/.test(word))
+    for (const name of names.length > 0 ? names : ['REPLY']) filled.set(name, lister)
+  } else if (argv[0] === 'for' && argv[2] === 'in' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(argv[1] ?? '')) {
+    const lookups = substitutions.filter(held => !isRecordedPid(held))
+    if (lookups.length === 0) return
+    const lister = lookups.flat().map(c => baseName(c.argv[0] ?? '')).find(p => LISTERS.has(p))
+    filled.set(argv[1] ?? '', lister ?? 'a command substitution')
+  }
+}
+
+// What filled the first variable among kill's words that a lister filled, or undefined when
+// none is. A variable is written `$name`, `"$name"`, or `${name}`, which the reader splits into
+// `$` and the name when it is not in quotes.
+function filledTarget(args: readonly string[], filled: Filled): string | undefined {
+  if (filled.size === 0) return undefined
+  for (const [k, word] of args.entries()) {
+    for (const [name, source] of filled) {
+      if (new RegExp(`\\$\\{?${name}(?![A-Za-z0-9_])`).test(word) || (word === '$' && args[k + 1] === name)) return source
+    }
+  }
+  return undefined
+}
+
+// `fuser`'s kill option: `-k`, alone or in a cluster (`-km`), or `--kill`. A signal name
+// (`-TERM`, `-KILL`) is no option of its own, and kills nothing without it.
+function isFuserKill(word: string): boolean {
+  return word === '--kill' || /^-[A-Za-z0-9]*k[A-Za-z0-9]*$/.test(word)
+}
+
+// Whether the words run the kill-port program: bare, or behind a package runner (`npx -y
+// kill-port 3000`, `pnpm dlx kill-port 3000`). Installing it (`npm install kill-port`) runs
+// nothing of it.
+function runsKillPort(argv: readonly string[]): boolean {
+  const isIt = (word: string): boolean => /^kill-port(@.*)?$/.test(baseName(word))
+  const program = baseName(argv[0] ?? '')
+  if (isIt(program)) return true
+  if (RUNNERS.has(program)) return argv.slice(1).some(isIt)
+  if (!MANAGERS.has(program)) return false
+  const at = argv.findIndex((word, k) => k > 0 && RUN_SUBCOMMANDS.has(word))
+  return at > 0 && argv.slice(at + 1).some(isIt)
 }
 
 // What a command substitution held, when it is a pid read back from the file that
