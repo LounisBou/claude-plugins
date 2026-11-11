@@ -149,17 +149,17 @@ async function sideServer(): Promise<{ port: number; hits: () => number; close: 
   return { port: sidePort, hits: () => hits, close: () => new Promise(done => server.close(() => done())) }
 }
 
-test('nothing leaves the page unrouted: a redirect, another port of an allowed host, a WebSocket are blocked and listed; a malformed path answers 400', async () => {
+test('nothing leaves the page unrouted: a redirect, a chain without end, another port of an allowed host, a WebSocket are blocked and listed; a malformed path answers 400', async () => {
   const side = await sideServer()
   try {
     const route = `/guard.html?port=${side.port}`
     const blocking = await shots(config('guard', { routes: [route], viewports: [390], allow: ['127.0.0.1'] }), 'base', 'base')
     assert.equal(blocking.code, 0, [...blocking.out, ...blocking.err].join('\n'))
-    assert.deepEqual(blocking.report?.blocked, [`http://127.0.0.1:${side.port}/pixel.png`, `http://127.0.0.1:${side.port}/popup.html`, 'https://hop.blocked.test/landing.png', 'https://relay.blocked.test/end.png', 'wss://socket.blocked.test/live'])
+    assert.deepEqual(blocking.report?.blocked, [`http://127.0.0.1:${port}/loop`, `http://127.0.0.1:${side.port}/pixel.png`, `http://127.0.0.1:${side.port}/popup.html`, 'https://hop.blocked.test/landing.png', 'https://relay.blocked.test/end.png', 'wss://socket.blocked.test/live'])
     assert.equal(side.hits(), 0)
     const allowing = await shots(config('guard-allowed', { routes: [route], viewports: [390], allow: [`127.0.0.1:${side.port}`] }), 'base', 'base')
     assert.equal(allowing.code, 0, [...allowing.out, ...allowing.err].join('\n'))
-    assert.deepEqual(allowing.report?.blocked, ['https://hop.blocked.test/landing.png', 'https://relay.blocked.test/end.png', 'wss://socket.blocked.test/live'])
+    assert.deepEqual(allowing.report?.blocked, [`http://127.0.0.1:${port}/loop`, 'https://hop.blocked.test/landing.png', 'https://relay.blocked.test/end.png', 'wss://socket.blocked.test/live'])
     assert.equal(side.hits(), 4)
   } finally {
     await side.close()

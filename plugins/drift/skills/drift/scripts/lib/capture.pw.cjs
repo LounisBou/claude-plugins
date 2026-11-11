@@ -36,7 +36,8 @@ const KEEPS_METHOD = [307, 308]
 
 /**
  * The first target of `response`'s redirect chain the browser may not reach, or undefined when
- * every hop stays: each hop fetched without following it, with the context's cookies.
+ * every hop stays: each hop fetched without following it, with the context's cookies. A chain
+ * still redirecting past the last hop walked is read as leaving, at its last hop.
  */
 async function leaves(context, request, response) {
   let current = response
@@ -49,7 +50,7 @@ async function leaves(context, request, response) {
     if (!KEEPS_METHOD.includes(current.status())) method = 'GET'
     current = await context.request.fetch(target.href, { method, maxRedirects: 0, ...(method === request.method() && request.postDataBuffer() !== null ? { data: request.postDataBuffer() } : {}) })
   }
-  return undefined
+  return current.status() >= 300 && current.status() < 400 ? new URL(current.url()) : undefined
 }
 
 /** A path's decoding, or undefined when it holds a malformed escape. */

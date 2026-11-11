@@ -4,12 +4,14 @@
 <body style="margin: 0; font: 16px sans-serif">
 <img src="/hop" width="8" height="8" alt="">
 <img src="/relay" width="8" height="8" alt="">
+<img src="/loop" width="8" height="8" alt="">
 <img id="side" width="8" height="8" alt="">
 <p id="socket">open</p>
 <p id="malformed">pending</p>
 <script>
-  // Every way out of the page drift shots must route: redirects of the server's own (/hop, and
-  // /relay in two hops), a host on another port (an image and a window), a WebSocket, an API path with a malformed escape.
+  // Every way out of the page drift shots must route: redirects of the server's own (/hop,
+  // /relay in two hops, /loop never ending), a host on another port (an image and a window), a
+  // WebSocket, an API path with a malformed escape.
   const side = `http://127.0.0.1:${new URLSearchParams(location.search).get('port')}`
   document.getElementById('side').src = `${side}/pixel.png`
   // A window's navigation is the one way out the browser's own local network checks leave open.
