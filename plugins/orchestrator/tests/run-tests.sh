@@ -158,7 +158,7 @@ check "a suite started with every role variable exported sees none of them" "" \
 # The list is the launcher's: each variable it exports in a launch is one the suite clears.
 launcher_exports=$(grep -oE 'export ORCHESTRATOR_[A-Z_]+=' "$ROOT/skills/iterm-agents/scripts/iterm_agent.py" | sed -E 's/^export //; s/=$//' | sort -u)
 check "every role variable the launcher exports in a launch is cleared by the suite" "" \
-  "$(for v in $launcher_exports; do case " $ROLE_VARS " in *" $v "*) ;; *) echo "$v" ;; esac; done)"
+  "$(for v in $launcher_exports; do printf '%s\n' $ROLE_VARS | grep -qx "$v" || echo "$v"; done)"
 
 echo "== repository policy =="
 
