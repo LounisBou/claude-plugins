@@ -1,5 +1,6 @@
 // The shots fixture's server: serves public/ on the port given as its argument, and writes its
-// process id to FIXTURE_PID_FILE when set, so a test can tell it was stopped.
+// process id to FIXTURE_PID_FILE when set, so a test can tell it was stopped. Its redirects: /hop
+// to another host, /relay to /far, which redirects to another host.
 import { readFile, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { extname, join, normalize } from 'node:path'
@@ -7,7 +8,13 @@ import { extname, join, normalize } from 'node:path'
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript' }
 const port = Number(process.argv[2])
 if (process.env.FIXTURE_PID_FILE) await writeFile(process.env.FIXTURE_PID_FILE, String(process.pid))
+const REDIRECTS = { '/hop': 'https://hop.blocked.test/landing.png', '/relay': '/far', '/far': 'https://relay.blocked.test/end.png' }
 createServer(async (request, response) => {
+  if (Object.hasOwn(REDIRECTS, request.url)) {
+    response.writeHead(302, { location: REDIRECTS[request.url] })
+    response.end()
+    return
+  }
   const path = normalize(new URL(request.url, 'http://x').pathname).replace(/^\/$/, '/index.html')
   try {
     const body = await readFile(join('public', path))

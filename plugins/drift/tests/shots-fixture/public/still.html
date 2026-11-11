@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Still</title>
+<style>
+  body { margin: 0; }
+  .spin { width: 20px; height: 20px; background: #888888; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  #motion { position: absolute; left: 30px; top: 20px; width: 4px; height: 4px; background: #ff0000; }
+</style>
+</head>
+<body>
+<div class="spin"></div>
+<div id="motion"></div>
+<script>
+  // Green once the page's animation is stopped by a style of the capture's, red while it runs.
+  const spin = document.querySelector('.spin')
+  const paint = () => {
+    document.getElementById('motion').style.background = getComputedStyle(spin).animationName === 'none' ? '#00ff00' : '#ff0000'
+    requestAnimationFrame(paint)
+  }
+  paint()
+</script>
+</body>
+</html>

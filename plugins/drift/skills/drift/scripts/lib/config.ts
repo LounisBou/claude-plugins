@@ -194,6 +194,10 @@ const DEFAULT_HEIGHT = 900
 const DEFAULT_NOW = '2026-01-01T09:00:00Z'
 const DEFAULT_START_TIMEOUT_S = 120
 const DEFAULT_TIMEOUT_S = 30
+/** The host names the server's URL may have: it runs on this machine. */
+const LOOPBACK = ['localhost', '127.0.0.1', '[::1]']
+/** The port a URL of each scheme means when it names none. */
+const DEFAULT_PORTS: Readonly<Record<string, number>> = { 'http:': 80, 'https:': 443 }
 
 const isPositive = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value > 0
 const isHosts = (value: unknown): value is string[] =>
@@ -272,6 +276,9 @@ export function parseShots(raw: unknown, origin: string): ShotsConfig {
       parsed = undefined
     }
     if (parsed === undefined || !/^https?:$/.test(parsed.protocol)) return fail('url', 'an http(s) URL')
+    if (!LOOPBACK.includes(parsed.hostname)) return fail('url', `a URL of this machine (${LOOPBACK.join(', ')}): the server runs here`)
+    const urlPort = parsed.port === '' ? DEFAULT_PORTS[parsed.protocol] : Number(parsed.port)
+    if (urlPort !== port) return fail('url', `a URL on "shots.port" (${port}), not ${urlPort ?? 'none'}`)
     url = `${parsed.origin}${parsed.pathname}`.replace(/\/+$/, '')
   }
   const fixtures = s['fixtures']
