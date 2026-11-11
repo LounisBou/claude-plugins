@@ -532,10 +532,11 @@ window, the design keeps its contract and writers and defers L5 until they are.
 >
 > What it shows: the with-and-without comparison of 0.34.0 (79 % against 5 %) is far above
 > any noise, so whole-suite ablations can decide; a single rule's ablation cannot, and the
-> six-case outcome measure sees only a collapse. What it does not show: these are behaviour evals, which grade a
-> rule's decisions; the outcome evals' own run-to-run variance is unknown until a case is run
-> twice per arm. L0's remaining steps: (1) run the pilot's case a second time per arm, within
-> the operator's cap, for the outcome evals' first disagreement rate; (2) from it, compute the
-> cases needed for the release measure to detect a 20-point fall, and set note 6's growth from
-> that number; (3) count refusals per guard prefix in the host transcripts, as the table
-> above says, before L2.
+> six-case outcome measure sees only a collapse. What it does not show: these are behaviour
+> evals, which grade a rule's decisions; the outcome evals' own run-to-run variance is unknown
+> until cases are run twice per arm. L0's remaining steps: (1) run the pilot twice, same case,
+> same model pair, within the operator's cap (`orchestrator-refoundation-design.md`, review
+> note 6) — a first signal, stable or not on one case, not yet a rate; (2) for a rate, run
+> several cases twice, and from it compute the cases needed for the release measure to detect
+> a 20-point fall, setting note 6's growth from that number; (3) count refusals per guard
+> prefix in the host transcripts, as the table above says, before L2.
