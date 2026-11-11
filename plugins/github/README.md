@@ -60,22 +60,25 @@ it. `/github:doctor` then confirms everything is ready.
   from a fixed list. The same rules hold for `gh pr create`, `gh pr edit`,
   `gh pr comment` and `gh pr review` run through Bash, their `--body-file` read,
   and for the engine's own subcommands run there (`python3 engine/gh.py
-  pr-update 12 --body-file body.md`). A request the engine reads from stdin
-  (`--stdin-json`) is left unchecked.
+  pr-update 12 --body-file body.md`). A request the engine would read from
+  stdin (`--stdin-json`) is refused from Bash, as nothing on the line shows it.
   A `--body` read from stdin or made by a command substitution other than a
   `$(cat <<'EOF' … EOF)` heredoc is left unchecked, as the hook cannot see it.
   A text that breaks one is refused with the rule, so it can be rewritten. A
   text the user typed in the prompt passes, and the same text sent again is
-  put to the user. `pr-create` opens a draft unless the call says otherwise,
-  and leaving draft (`draft: false`, `pr-ready`) and a merge (`pr-merge`) are
-  always asked, whatever the rules allow, except in a repository in auto-merge
-  (below) and for a CI undraft (« Ready pull requests »). An existing
+  put to the user. `pr-create` opens a draft unless the call says otherwise.
+  Outside a repository in auto-merge (below), leaving draft (`draft: false`,
+  `pr-ready`) is refused, never asked: it is the operator's, on GitHub after
+  their review, a CI undraft aside (« Ready pull requests »); a merge
+  (`pr-merge`) is always asked, whatever the rules allow. An existing
   description is replaced without asking, under the writing rules.
 - **Ready and Not Ready labels** — `pr-readiness <pr> ready|not-ready` puts
   the `Ready` (`27e760`) or `Not Ready` (`8c1455`) label on a pull request and
   takes the other off, and `labels-ensure` creates both on a repository that
   lacks them. `pr-create` labels the new pull request (`Not Ready` for a draft,
   `Ready` otherwise) and `pr-ready` puts `Ready` on it. A label failure never fails the command it follows.
+  `Ready` is the gate's: put by the module once the four hold (« Ready pull
+  requests »), and refused by hand on a pull request that is not ready.
 - **Auto-merge list** — `auto-merge-set` puts a repository in auto-merge or
   takes it out, on the operator's words quoted verbatim, and `auto-merge-list`
   prints the list (below).
@@ -125,7 +128,8 @@ follows. There, opening a pull request out of draft, `pr-ready`, a merge
 and every other write run without a question, which ends agents held on a
 dialog nobody answers in a repository that merges on its own. A deny rule
 still refuses, an ask from an explicit rule still asks, and the writing
-rules still apply. Elsewhere every write is asked as before. An absent file
+rules still apply. Elsewhere leaving draft is refused and every other write
+is asked as before. An absent file
 lists no repository; an unreadable or malformed one lists none either and
 says so in one transcript line.
 
@@ -155,16 +159,29 @@ session that pushed the head is refused. A record counts only at the head it nam
 all without anything deleted. `engine/REFERENCE.md` « Records » holds the
 contract; `engine/writing/pull-requests.md` « Ready pull requests » the rule.
 
+The module puts `Ready` itself: after a record is written, and after a
+`pr-gate` or `pr-checks` read through the tool, it reads the four at the head
+and puts `Ready` when they hold, or `Not Ready` back on a pull request that
+carries `Ready` and no longer holds them, with one line of its own. That label
+is the gate's act, not the session's, though a read brought it about. The head
+is read again just before the label is written: a head that moved gets none.
+`pr-gate`'s answer stays JSON, with the labels the gate left. A CI that turns
+green after the last record is followed by the next read of the gate; the
+orchestrator makes one when its CI watch says green, the call printed on its
+green line.
+
 When the CI does not run on a draft, the pull request leaves draft for it,
-still `Not Ready`, goes back to draft once the CI is green, then takes
-`Ready`. That undraft runs in every repository, with one transcript line:
+still `Not Ready`, as long as no check of its head has passed. Outside
+auto-merge, once the four hold the gate puts it back to draft, then puts
+`Ready`: `Ready` there always lands on a draft. That undraft runs in every
+repository, with one transcript line:
 
 ```
 github: <owner/name>#<n> out of draft to run CI, still Not Ready
 ```
 
-This release ships the ready guard in its warn phase: an act that is not ready
-goes ahead with one transcript line and one JSON line in `guard-warn.log`, in
+This release ships the ready guard in its warn phase: an act that is not ready,
+the `Ready` label aside, goes ahead with one transcript line and one JSON line in `guard-warn.log`, in
 the plugin's data directory. `CLAUDE_GITHUB_READY_ENFORCE=1` in the
 environment brings the enforce phase forward, where it is refused.
 

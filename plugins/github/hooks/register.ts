@@ -13,8 +13,10 @@ import {
   unreadRefusal,
 } from './guards.ts'
 import {
-  PRUNE_DAYS, PRUNE_EVERY_MS, RECORDS_REFUSAL, autoMergeRefusal, bashActs, bashPushes, carriesReady, ciUndraft,
-  ciUndraftLine, createdPr, draftRefusal, graphqlRefusal, missingItems, notReadyRefusal, parseGate, producerSlug,
+  NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashPushes,
+  carriesReady, ciUndraft, ciUndraftLine, createdPr, draftRefusal, gateLeftLine, gateMissingLine, gateMovedLine,
+  gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, leaveDraftRefusal, missingItems,
+  notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug,
   kindRefusal, recordKindFor, toolAct, touchesRecords, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, warnLine,
   type Act, type Gate, type Phase, type RecordFile,
 } from './ready.ts'
@@ -42,8 +44,9 @@ export const COMMANDS = [
 // repositories in auto-merge is a file on this machine, not GitHub's.
 export const MOD_COMMANDS = new Set(['auto-merge-set', 'auto-merge-list'])
 
-// The subcommands that only read. Every other one writes to GitHub, and a
-// command missing here is treated as a write, so the safe side is the default.
+// The subcommands the session calls to read. Every other one writes to GitHub, and a
+// command missing here is treated as a write, so the safe side is the default. After
+// pr-gate and pr-checks the gate may write the Ready label itself: its act, not the session's.
 export const READS = new Set([
   'pr-get', 'pr-list', 'pr-status', 'pr-checks', 'pr-gate', 'pr-diff', 'pr-files', 'pr-commits',
   'file-at-ref', 'pr-threads', 'pr-comments', 'pr-issue-comments', 'pr-reviews',
@@ -84,6 +87,9 @@ async function runGh(
  * approvals the file reserves to the person (a pull request out of draft, a
  * merge) are asked whatever the settings allow.
  *
+ * Outside auto-merge, leaving draft (a CI undraft aside) is refused, never
+ * asked: it is the person's act on GitHub, after their review.
+ *
  * In a repository in auto-merge no write is put to the person: the reserved
  * approvals lift and an ask with no rule behind it runs. A deny and an ask
  * from an explicit rule stand, and so do the mechanical writing rules.
@@ -112,6 +118,16 @@ async function permit(
     return ask($, describe(e) + '?', ['Allow', 'Deny'], e.command)
   }
 
+  // Read once per call, for a write only.
+  const autoMerge = !READS.has(e.command) && await inAutoMerge($, e)
+  // Outside auto-merge, leaving draft is the operator's on GitHub: refused, never asked, and
+  // before the writing rules, whose « Send as it is? » would otherwise open it.
+  if (!autoMerge && leavesDraft(e.command, args)) {
+    const repo = await targetRepo($, e).catch(() => undefined)
+    const pr = Number(String(args.pr ?? '').replace('#', ''))
+    return leaveDraftRefusal(e.command, repo ?? 'the origin repository', Number.isInteger(pr) && pr > 0 ? pr : undefined)
+  }
+
   const found = lint(e.command, args, lastTyped)
   if (found.length > 0) {
     const print = fingerprint(e)
@@ -125,9 +141,7 @@ async function permit(
       ['Send as it is', 'Deny'], e.command)
   }
 
-  // Read once per call, for a write only.
-  const autoMerge = !READS.has(e.command) && await inAutoMerge($, e)
-  const reserved = reservedToPerson(e.command, args, autoMerge)
+  const reserved = reservedToPerson(e.command, autoMerge)
   if (reserved) return ask($, reserved + ' ' + describe(e) + '?', ['Allow', 'Deny'], e.command)
 
   if (verdict.decision === 'allow') return undefined
@@ -320,17 +334,20 @@ function describe(e: any): string {
 // time, as neither can be taken back.
 export const NEVER_GRANTED = new Set(['pr-merge', 'comment-delete'])
 
-// The approvals engine/writing/ reserves to the person, asked whatever a rule or
-// the mode allows: a pull request leaves draft and is merged only on their word,
-// except in a repository they put in auto-merge (autoMerge), where nothing is reserved. The
+// The approval engine/writing/ reserves to the person, asked whatever a rule or
+// the mode allows: a pull request is merged only on their word, except in a
+// repository they put in auto-merge (autoMerge), where nothing is reserved. The
 // description of their own draft is published and edited without asking, under
 // the writing rules.
-export function reservedToPerson(command: string, args: Record<string, unknown>, autoMerge = false): string | undefined {
+export function reservedToPerson(command: string, autoMerge = false): string | undefined {
   if (autoMerge) return undefined
-  if (command === 'pr-ready') return 'Take a pull request out of draft:'
   if (command === 'pr-merge') return 'Merge a pull request:'
-  if (command === 'pr-create' && args.draft === false) return 'Open a pull request ready for review, not as a draft:'
   return undefined
+}
+
+// A call that takes a pull request out of draft, or opens one out of draft.
+export function leavesDraft(command: string, args: Record<string, unknown>): boolean {
+  return command === 'pr-ready' || (command === 'pr-create' && args.draft === false)
 }
 
 // The repositories in auto-merge, as owner/name: there no write is put to the
@@ -677,10 +694,11 @@ export async function diagnose($: any, check = false): Promise<string> {
  * pull requests »). Marking it Ready, taking it out of draft and merging it
  * need the four, through the tool and through Bash alike. Under the warn
  * phase an act that is not ready goes ahead with one warn line, under the
- * enforce phase it is refused. Through Bash a merge or leaving draft in a
- * repository not in auto-merge is refused in both: the tool asks the person.
- * A pull request that carries Not Ready and whose CI is not green may leave
- * draft for its CI to run, still Not Ready, in every repository.
+ * enforce phase it is refused. In a repository not in auto-merge, leaving
+ * draft is refused on every route, and a merge is refused through Bash: the
+ * tool asks the person for it. A pull request that carries Not Ready and none
+ * of whose checks has passed yet may leave draft for its CI to run, still Not
+ * Ready, in every repository.
  */
 
 // The phase this release ships with.
@@ -728,8 +746,12 @@ async function recordsRoot($: any): Promise<string | undefined> {
   }
 }
 
-// The records of a pull request's head, as files. A directory that cannot be
-// listed holds none, a file that cannot be read is one that does not parse.
+// A head's records directory that is there but cannot be listed.
+class RecordsUnread extends Error {}
+
+// The records of a pull request's head, as files. A directory that is not there
+// holds none; one that cannot be listed throws RecordsUnread, never read as none.
+// A file that cannot be read is one that does not parse.
 async function headRecords($: any, gate: Gate): Promise<RecordFile[]> {
   const root = await recordsRoot($)
   if (!root) return []
@@ -737,8 +759,15 @@ async function headRecords($: any, gate: Gate): Promise<RecordFile[]> {
   let entries: any[]
   try {
     entries = await $.fs.list(dir)
-  } catch {
-    return []
+  } catch (err: any) {
+    let absent = false
+    try {
+      absent = !(await $.fs.exists(dir))
+    } catch {
+      // Unknown: not read as absent.
+    }
+    if (absent) return []
+    throw new RecordsUnread('the records of ' + gate.head.slice(0, 7) + ' cannot be listed: ' + String(err?.message ?? err).trim())
   }
   const files: RecordFile[] = []
   for (const entry of entries) {
@@ -765,7 +794,84 @@ async function readiness($: any, repo: string, pr: number, sha?: string): Promis
   } catch (err: any) {
     return { missing: [], error: String(err?.message ?? err).trim() }
   }
-  return { gate, missing: missingItems(gate, await headRecords($, gate), sha) }
+  let files: RecordFile[]
+  try {
+    files = await headRecords($, gate)
+  } catch (err: any) {
+    if (err instanceof RecordsUnread) return { gate, missing: [], error: err.message }
+    throw err
+  }
+  return { gate, missing: missingItems(gate, files, sha) }
+}
+
+/*
+ * The Ready label follows the gate: whenever the module learns something that can complete or
+ * break readiness (a record written, the gate or the checks read through the tool), it reads the
+ * four at the head and puts Ready, or Not Ready back on a pull request carrying Ready. The head is
+ * read again just before the write, and a head that moved meanwhile gets no label. Outside
+ * auto-merge Ready lands on a draft: a pull request out of draft for its CI goes back first. The
+ * labels the gate leaves (labels, draft) when it wrote, and the line it says, or none: always
+ * names what is missing too. It never fails the call it follows.
+ */
+type Followed = { line?: string; labels?: string[]; draft?: boolean }
+
+async function followGate($: any, repo: string, pr: number, known?: Gate, always = false): Promise<Followed> {
+  let gate: Gate
+  let missing: string[]
+  try {
+    gate = known ?? parseGate(await runGh($, 'pr-gate', { pr }, repo))
+    missing = missingItems(gate, await headRecords($, gate))
+  } catch (err: any) {
+    return { line: gateLeftLine(repo, pr, String(err?.message ?? err).trim()) }
+  }
+  const move = labelMove(gate, missing)
+  if (!move) {
+    if (always && gate.state === 'open' && missing.length > 0) return { line: gateMissingLine(repo, pr, gate.head, missing) }
+    return {}
+  }
+  let now: Gate
+  try {
+    now = parseGate(await runGh($, 'pr-gate', { pr }, repo))
+  } catch (err: any) {
+    return { line: gateLeftLine(repo, pr, String(err?.message ?? err).trim()) }
+  }
+  if (now.head !== gate.head) return { line: gateMovedLine(repo, pr, gate.head, now.head) }
+  const redraft = move === 'ready' && !now.draft && !(await autoMergeRepos($)).has(repo.toLowerCase())
+  try {
+    if (redraft) await runGh($, 'pr-draft', { pr }, repo)
+    await runGh($, 'pr-readiness', { pr, state: move }, repo)
+  } catch (err: any) {
+    return { line: gateUnwrittenLine(repo, pr, String(err?.message ?? err).trim()) }
+  }
+  const labels = [...now.labels.filter((label) => ![READY, NOT_READY].includes(label.toLowerCase())), move === 'ready' ? 'Ready' : 'Not Ready']
+  const draft = redraft || now.draft
+  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, redraft), labels, draft }
+  return { line: gateNotReadyLine(repo, pr, gate.head, missing), labels, draft }
+}
+
+// The reads after which the gate puts the label.
+const GATE_READS = new Set(['pr-gate', 'pr-checks'])
+
+// A read's output once the gate followed it. Its line is the module's own, never in the output;
+// pr-gate's JSON says the labels and the draft the gate left.
+async function afterRead($: any, e: any, output: string): Promise<string> {
+  if (!GATE_READS.has(e.command)) return output
+  const pr = Number(String(e.args?.pr ?? '').replace('#', ''))
+  if (!Number.isInteger(pr) || pr < 1) return output
+  const repo = await targetRepo($, e).catch(() => undefined)
+  if (!repo) return output
+  let known: Gate | undefined
+  if (e.command === 'pr-gate') {
+    try {
+      known = parseGate(output)
+    } catch {
+      return output
+    }
+  }
+  const followed = await followGate($, repo, pr, known)
+  if (followed.line) note($, followed.line)
+  if (!known || !followed.labels) return output
+  return JSON.stringify({ ...known, labels: followed.labels, draft: followed.draft }, null, 2)
 }
 
 // A line added at the end of a file, the file created when absent. $.fs only
@@ -836,14 +942,16 @@ async function refuseNotReady($: any, act: Act, repo: string, pr: number, r: Rea
 
 // The Bash ready guard failed on its own: under warn the command goes on with
 // a warn line, under enforce it is refused as a readiness that could not be read.
+// A Ready label is refused so in both phases: it is the gate's.
 // An undraft outside auto-merge is refused on the list first, in both phases: only a CI
 // undraft passes there, and the failed read cannot tell whether this is one.
 async function guardThrew($: any, act: Act | undefined, err: any): Promise<string | undefined> {
   const error = String(err?.message ?? err).trim()
+  if (act?.opaque) return opaqueGraphqlRefusal()
   if (act?.kind === 'undraft' && act.repo && !(await autoMergeRepos($)).has(act.repo.toLowerCase())) {
     return autoMergeRefusal('undraft', act.repo, act.pr, engineName(act))
   }
-  if (await phaseOf($) === 'enforce') return unverifiedRefusal(act?.repo, act?.pr, error)
+  if (act?.kind === 'ready-label' || await phaseOf($) === 'enforce') return unverifiedRefusal(act?.repo, act?.pr, error)
   const named: Act = act ?? { kind: 'merge', name: 'the command' }
   await warnAct($, named, 'bash', act?.repo ?? '?', act?.pr ?? '?', '', ['readiness unverified: ' + error])
   return undefined
@@ -886,9 +994,10 @@ function toolReady($: any, e: any, act: Act) {
   const gated = act.kind === 'merge' || act.kind === 'undraft' || act.kind === 'ready-label'
   return {
     async beforeAsk(): Promise<string | undefined> {
-      if (await phaseOf($) !== 'enforce') return undefined
-      if (act.kind === 'create') return draftRefusal(act.name)
-      if (!gated) return undefined
+      // A Ready label is the gate's in both phases; the other acts only under enforce.
+      const enforce = await phaseOf($) === 'enforce'
+      if (act.kind === 'create') return enforce ? draftRefusal(act.name) : undefined
+      if (!gated || (!enforce && act.kind !== 'ready-label')) return undefined
       const found = await evaluate()
       if (!found) return undefined
       if (found.r.error) return unverifiedRefusal(found.repo, found.pr, found.r.error)
@@ -933,11 +1042,13 @@ function engineName(act: Act): string | undefined {
 
 // The Bash act's refusal, or undefined; what must follow its success goes in after.
 async function bashReady($: any, act: Act, after: Array<(result: any) => Promise<void>>): Promise<string | undefined> {
-  const readyPhase = await phaseOf($)
+  // A Ready label is the gate's: refused in both phases when the four do not hold.
+  const readyPhase: Phase = act.kind === 'ready-label' ? 'enforce' : await phaseOf($)
+  if (act.stdin) return STDIN_REFUSAL
   if (act.kind === 'create') {
     if (readyPhase === 'enforce') return draftRefusal(act.name)
-    // Opening out of draft is leaving draft: outside auto-merge it needs the
-    // operator's word, which the tool asks for, as gh pr ready does.
+    // Opening out of draft is leaving draft: outside auto-merge it is refused, as
+    // gh pr ready is, on every route.
     if (!act.repo) return unnamedRepoRefusal(act.name)
     if (!(await autoMergeRepos($)).has(act.repo.toLowerCase())) return autoMergeRefusal('create', act.repo, undefined, engineName(act))
     await warnAct($, act, 'bash', act.repo, '?', '', ['opened out of draft'])
@@ -959,14 +1070,22 @@ async function bashReady($: any, act: Act, after: Array<(result: any) => Promise
     })
     return undefined
   }
+  if (act.opaque) {
+    // An unread query may leave draft or merge: refused outside auto-merge, read as an
+    // unverified readiness inside it. gh api names the origin's repository, or GH_REPO's.
+    const origin = await targetRepo($, { repo: undefined, args: {} })
+    if (!origin || !(await autoMergeRepos($)).has(origin.toLowerCase())) return opaqueGraphqlRefusal()
+    const why = 'the GraphQL query cannot be read from the command'
+    if (readyPhase === 'enforce') return unverifiedRefusal(origin, undefined, why)
+    await warnAct($, act, 'bash', origin, '?', '', ['readiness unverified: ' + why])
+    return undefined
+  }
   if (act.unnamed) return graphqlRefusal(act.kind)
   if (act.unreadable) return unreadablePrRefusal(act.name)
   if (!act.repo) {
-    // A merge or leaving draft is refused in both phases, as the auto-merge
-    // split needs the repository. The Ready label is the ready guard's alone.
-    if (act.kind !== 'ready-label' || readyPhase === 'enforce') return unnamedRepoRefusal(act.name)
-    await warnAct($, act, 'bash', '?', act.pr ?? '?', '', ['readiness unverified: the command names no repository'])
-    return undefined
+    // A merge, leaving draft and the Ready label are refused in both phases:
+    // the auto-merge split and the gate need the repository.
+    return unnamedRepoRefusal(act.name)
   }
   const repo = act.repo
   const listed = act.kind === 'ready-label' ? false : (await autoMergeRepos($)).has(repo.toLowerCase())
@@ -1365,7 +1484,9 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
   ]
   const run = await $.process.run(argv, { timeoutMs: 30_000 })
   if (run.exitCode !== 0) return { result: String(run.stderr || 'record.py exited ' + run.exitCode).trim(), isError: true }
-  return { result: String(run.stdout).trim() }
+  // The record may complete the four: the gate reads them at the head it just checked.
+  const { line } = await followGate($, repo, pr, gate, true)
+  return { result: String(run.stdout).trim() + (line ? '\n' + line : '') }
 }
 
 // At most once a day, the head directories whose newest record is older than
@@ -1623,8 +1744,9 @@ export function register(on: any): void {
     if (refused) return { deny: refused }
     if (ready) await ready.goingAhead()
     try {
-      const result = await runGh($, e.command, e.args, e.repo, true) || '(no output)'
+      let result = await runGh($, e.command, e.args, e.repo, !READS.has(e.command)) || '(no output)'
       if (ready) await ready.ran()
+      result = await afterRead($, e, result)
       // A write changes what the open pane shows: read it again, unawaited.
       if (watch && !READS.has(e.command)) void refresh($)
       return { result }

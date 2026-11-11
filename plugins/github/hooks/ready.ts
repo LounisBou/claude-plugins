@@ -6,7 +6,7 @@
 
 import { accepts, KINDS, kindFor, parsePrRecord, producerOf, type Kind, type PrRecord } from '../core/pr-record.ts'
 import { gitSubcommand, simpleCommands } from '../core/shell.ts'
-import { type EngineCall, engineCall, engineFlag, engineOption } from './shell.ts'
+import { type EngineCall, engineCall, engineFlag, engineOption, engineStart } from './shell.ts'
 
 // warn: an act that is not ready goes ahead with one warn line. enforce: it is
 // refused with what it misses.
@@ -36,6 +36,10 @@ export type Act = {
   // An undraft through the engine: whether it asks for CI only (`--for-ci`),
   // which keeps Not Ready. A gh pr ready leaves it unset.
   forCi?: boolean
+  // A GraphQL call whose query the command line does not show (a file, stdin, a variable).
+  opaque?: boolean
+  // The engine fed its request on stdin (`gh.py --stdin-json`): the line shows no act.
+  stdin?: boolean
 }
 
 // What pr-gate answers.
@@ -173,7 +177,7 @@ function prAct(argv: string[]): Act | undefined {
     return target({ ...base, kind: 'merge', ...(sha ? { sha } : {}) }, parsed.positionals[0])
   }
   if (verb === 'ready') {
-    return target({ ...base, kind: has(parsed, '--undo') ? 'redraft' : 'undraft' }, parsed.positionals[0])
+    return target({ ...base, kind: flagSet(parsed, '--undo') ? 'redraft' : 'undraft' }, parsed.positionals[0])
   }
   if (verb === 'edit' && namesReady(values(parsed, '--add-label'))) {
     return target({ ...base, kind: 'ready-label' }, parsed.positionals[0])
@@ -192,6 +196,55 @@ const API_VALUED = [
 ]
 const MERGE_PATH = /^\/?repos\/([^/]+)\/([^/]+)\/pulls\/(\d+)\/merge\/?$/
 const LABELS_PATH = /^\/?repos\/([^/]+)\/([^/]+)\/issues\/(\d+)\/labels\/?$/
+// An issue or a pull request itself, whose PATCH may set its labels.
+const ISSUE_PATH = /^\/?repos\/([^/]+)\/([^/]+)\/(?:issues|pulls)\/(\d+)\/?$/
+// The API's own host before a REST path: api.github.com, or a server's /api/v3.
+const API_HOST = /^https?:\/\/[^/]+(?:\/api\/v3)?\//
+const GRAPHQL = /^(?:https?:\/\/[^/]+(?:\/api)?\/|\/)?graphql\/?$/
+
+// The fields of a gh api command, as [name, value] pairs: -f sends the text as it is, -F reads
+// `@file` and types the rest.
+function apiFields(parsed: Parsed): Array<{ name: string; value: string; typed: boolean }> {
+  return parsed.opts
+    .filter(([flag, value]) => ['-f', '--raw-field', '-F', '--field'].includes(flag) && value !== undefined)
+    .map(([flag, value]) => {
+      const text = value as string
+      const at = text.indexOf('=')
+      return { name: at === -1 ? text : text.slice(0, at), value: at === -1 ? '' : text.slice(at + 1), typed: flag === '-F' || flag === '--field' }
+    })
+}
+
+// The labels one field's value names: a JSON list (`["Ready"]`), or names split on commas.
+function labelsIn(value: string): string[] {
+  try {
+    const parsed = JSON.parse(value)
+    if (Array.isArray(parsed)) return parsed.map((item) => (typeof item === 'string' ? item : String(item?.name ?? '')))
+    if (typeof parsed === 'string') return [parsed]
+  } catch {
+    // Not JSON: names split on commas.
+  }
+  return value.split(',').map((name) => name.trim().replace(/^["'[]+|["'\]]+$/g, ''))
+}
+
+function fieldsNameReady(fields: Array<{ value: string }>): boolean {
+  return fields.some((field) => labelsIn(field.value).some((name) => name.trim().toLowerCase() === READY))
+}
+
+// The GraphQL query the command line shows, or undefined when it does not: read from a file or
+// stdin (`-F query=@…`, `--input`), absent or empty (a command substitution reads as nothing), or
+// holding a shell expansion the hook cannot see. A `$name` the query declares (`$name:`) is a
+// GraphQL variable, not the shell's.
+function inlineQuery(parsed: Parsed, fields: Array<{ name: string; value: string; typed: boolean }>): string | undefined {
+  if (has(parsed, '--input')) return undefined
+  const query = fields.filter((field) => field.name === 'query')
+  if (query.length === 0 || query.some((field) => field.value.trim() === '' || (field.typed && field.value.startsWith('@')))) {
+    return undefined
+  }
+  const text = query.map((field) => field.value).join('\n')
+  const declared = new Set([...text.matchAll(/\$(\w+)\s*:/g)].map((m) => m[1]))
+  if (/`|\$[({]/.test(text) || [...text.matchAll(/\$(\w+)/g)].some((m) => !declared.has(m[1]))) return undefined
+  return text
+}
 
 // The act of one gh api command: a merge or a label put through the REST API,
 // or a GraphQL mutation that merges, leaves draft, arms auto-merge or puts back to draft.
@@ -199,24 +252,33 @@ function apiAct(argv: string[]): Act | undefined {
   const parsed = parseWords(argv.slice(2), API_VALUED)
   const endpoint = parsed.positionals[0]
   if (endpoint === undefined) return undefined
-  const fields = values(parsed, '-f', '--raw-field', '-F', '--field')
+  const fields = apiFields(parsed)
+  const input = has(parsed, '--input')
   const explicit = values(parsed, '-X', '--method')[0]
     ?? parsed.opts.filter(([flag]) => /^-X./.test(flag)).map(([flag]) => flag.slice(2))[0]
-  const method = (explicit ?? (fields.length > 0 ? 'POST' : 'GET')).toUpperCase()
-  if (endpoint === 'graphql') {
-    const query = fields.filter((f) => /^query=/.test(f)).map((f) => f.slice(6)).join('\n')
+  const method = (explicit ?? (fields.length > 0 || input ? 'POST' : 'GET')).toUpperCase()
+  if (GRAPHQL.test(endpoint)) {
     const base = { name: 'gh api graphql', unnamed: true }
+    const query = inlineQuery(parsed, fields)
+    // A query the hook cannot read may do any of the acts below.
+    if (query === undefined) return { ...base, kind: 'undraft', opaque: true }
     if (/\b(mergePullRequest|enablePullRequestAutoMerge)\b/.test(query)) return { ...base, kind: 'merge' }
     if (/\bmarkPullRequestReadyForReview\b/.test(query)) return { ...base, kind: 'undraft' }
     return undefined
   }
-  if (method !== 'PUT' && method !== 'POST') return undefined
-  const merge = MERGE_PATH.exec(endpoint)
-  if (merge) return { kind: 'merge', name: 'gh api', repo: merge[1] + '/' + merge[2], pr: Number(merge[3]) }
-  const labels = LABELS_PATH.exec(endpoint)
-  if (labels && fields.some((f) => f.includes('=') && f.slice(f.indexOf('=') + 1).trim().toLowerCase() === READY)) {
-    return { kind: 'ready-label', name: 'gh api', repo: labels[1] + '/' + labels[2], pr: Number(labels[3]) }
+  const path = endpoint.replace(API_HOST, '')
+  const at = (match: RegExpExecArray, kind: ActKind): Act => ({ kind, name: 'gh api', repo: match[1] + '/' + match[2], pr: Number(match[3]) })
+  if (method === 'PATCH') {
+    // A body the hook cannot read may set the labels.
+    const issue = ISSUE_PATH.exec(path)
+    if (issue && (input || fieldsNameReady(fields.filter((field) => field.name.startsWith('labels'))))) return at(issue, 'ready-label')
+    return undefined
   }
+  if (method !== 'PUT' && method !== 'POST') return undefined
+  const merge = MERGE_PATH.exec(path)
+  if (merge) return at(merge, 'merge')
+  const labels = LABELS_PATH.exec(path)
+  if (labels && (input || fieldsNameReady(fields))) return at(labels, 'ready-label')
   return undefined
 }
 
@@ -240,10 +302,15 @@ function engineAct(call: EngineCall): Act | undefined {
 
 // Every act of a Bash command line, read word by word: a message or a body
 // that only mentions one is an argument, not a command. A request the engine
-// reads from stdin (`gh.py --stdin-json`) is no act the line shows.
+// reads from stdin (`gh.py --stdin-json`) shows no act: it is one of its own, refused.
 export function bashActs(line: string): Act[] {
   const found: Act[] = []
   for (const argv of simpleCommands(line)) {
+    const start = engineStart(argv)
+    if (start !== undefined && argv.length === start + 1 && argv[start] === '--stdin-json') {
+      found.push({ kind: 'merge', name: 'gh.py --stdin-json', stdin: true })
+      continue
+    }
     const engine = engineCall(argv)
     const act = engine ? engineAct(engine) : !GH.test(argv[0] ?? '') ? undefined : argv[1] === 'api' ? apiAct(argv) : prAct(argv)
     if (act) found.push(act)
@@ -395,21 +462,39 @@ export function missingItems(gate: Gate, files: RecordFile[], sha?: string): str
   return missing
 }
 
-// An undraft only for the CI to run: the pull request carries Not Ready and
-// its CI is not green, so it leaves draft still Not Ready.
+// An undraft only for the CI to run: the pull request carries Not Ready and no
+// check of its head has passed yet, so it leaves draft still Not Ready.
 export function ciUndraft(gate: Gate): boolean {
-  return gate.labels.some((label) => label.toLowerCase() === NOT_READY) && gate.ci.result !== 'SUCCESS'
+  const ci = gate.ci
+  const passed = (ci.total ?? 0) - (ci.failed ?? []).length - (ci.running ?? 0) - (ci.skipped ?? []).length
+  return gate.labels.some((label) => label.toLowerCase() === NOT_READY) && ci.result !== 'SUCCESS' && passed <= 0
 }
 
 export function carriesReady(gate: Gate): boolean {
   return gate.labels.some((label) => label.toLowerCase() === READY)
 }
 
+// The label the gate puts on an open pull request, or undefined to leave it: Ready when the four
+// hold and it does not carry Ready alone, Not Ready when it carries Ready and they no longer hold.
+// A closed or merged one keeps its labels.
+export function labelMove(gate: Gate, missing: string[]): 'ready' | 'not-ready' | undefined {
+  if (gate.state !== 'open') return undefined
+  const notReady = gate.labels.some((label) => label.toLowerCase() === NOT_READY)
+  if (missing.length === 0) return carriesReady(gate) && !notReady ? undefined : 'ready'
+  return carriesReady(gate) ? 'not-ready' : undefined
+}
+
 // ---- the texts ----
 
+const tail = (missing: string[]) => 'Missing: ' + missing.join(', ')
+
+// Why leaving draft is refused outside auto-merge, whatever the route.
+const LEAVE_DRAFT = 'outside auto-merge, leaving draft is the operator\'s, on GitHub after their review, and Ready is put'
+  + ' by the gate once the four conditions hold'
+
 export function notReadyRefusal(act: string, repo: string, pr: number, head: string, missing: string[]): string {
-  return 'github: ' + act + ' refused on ' + repo + '#' + pr + ' at ' + head7(head) + ': not ready. Missing: '
-    + missing.join(', ') + '. A pull request is ready when a clean review, a passed norms check, passed E2E and'
+  return 'github: ' + act + ' refused on ' + repo + '#' + pr + ' at ' + head7(head) + ': not ready. ' + tail(missing)
+    + '. A pull request is ready when a clean review, a passed norms check, passed E2E and'
     + ' green CI are all at its current head (engine/writing/pull-requests.md « Ready pull requests »).'
 }
 
@@ -435,33 +520,72 @@ export function unnamedRepoRefusal(act: string): string {
 
 // A GraphQL mutation names a node, not a repository and a number.
 export function graphqlRefusal(kind: ActKind): string {
-  const tool = kind === 'merge' ? 'pr-merge' : 'pr-ready'
-  return 'github: gh api graphql refused: the pull request it acts on cannot be read from the command. Run'
-    + ' mcp__github__gh ' + tool + ' {"pr": <n>} on <owner/name>: it checks that the pull request is ready.'
+  const named = 'github: gh api graphql refused: the pull request it acts on cannot be read from the command.'
+  if (kind !== 'merge') {
+    return named + ' In a repository in auto-merge, run mcp__github__gh pr-ready {"pr": <n>} on <owner/name>; ' + LEAVE_DRAFT + '.'
+  }
+  return named + ' Run mcp__github__gh pr-merge {"pr": <n>} on <owner/name>: it checks that the pull request is ready.'
+}
+
+// A GraphQL query the command line does not show may leave draft or merge.
+export function opaqueGraphqlRefusal(): string {
+  return 'github: gh api graphql refused: its query cannot be read from the command (a file, stdin or a shell'
+    + ' expansion), and ' + LEAVE_DRAFT + '. Write the query inline, or run the mcp__github__gh call it stands for.'
+}
+
+export const STDIN_REFUSAL = 'github: gh.py --stdin-json refused from Bash: its request cannot be read from the command.'
+  + ' Run the mcp__github__gh call, or gh.py with its subcommand and arguments.'
+
+// Leaving draft, or opening out of draft, in a repository not in auto-merge: never asked, refused.
+export function leaveDraftRefusal(act: string, repo: string, pr?: number): string {
+  return 'github: ' + act + ' refused on ' + repo + ': ' + LEAVE_DRAFT + ' (pr-readiness {"pr": ' + (pr ?? '<n>')
+    + ', "state": "ready"} reads them now).'
 }
 
 // name: the command as the refusal names it, by default the gh command of that kind.
 export function autoMergeRefusal(kind: ActKind, repo: string, pr?: number, name?: string): string {
-  if (kind === 'create') {
-    return 'github: ' + (name ?? 'gh pr create') + ' refused on ' + repo + ': this repository is not in auto-merge,'
-      + ' so opening a pull request out of draft needs the operator\'s explicit word. Open it with --draft, or when'
-      + ' they gave it, run mcp__github__gh pr-create {"draft": false} on ' + repo + ': it asks them in the conversation.'
-  }
-  const command = name ?? (kind === 'merge' ? 'gh pr merge' : 'gh pr ready')
-  const tool = kind === 'merge' ? 'pr-merge' : 'pr-ready'
-  return 'github: ' + command + ' refused on ' + repo + ': this repository is not in auto-merge, so a merge or'
-    + ' leaving draft needs the operator\'s explicit word. When they gave it, run mcp__github__gh ' + tool
-    + ' {"pr": ' + (pr ?? '<n>') + '} on ' + repo + ': it checks that the pull request is ready, then asks them'
-    + ' in the conversation.'
+  if (kind === 'create') return leaveDraftRefusal(name ?? 'gh pr create', repo)
+  if (kind !== 'merge') return leaveDraftRefusal(name ?? 'gh pr ready', repo, pr)
+  return 'github: ' + (name ?? 'gh pr merge') + ' refused on ' + repo + ': this repository is not in auto-merge, so a merge'
+    + ' needs the operator\'s explicit word. When they gave it, run mcp__github__gh pr-merge {"pr": ' + (pr ?? '<n>') + '} on '
+    + repo + ': it checks that the pull request is ready, then asks them in the conversation.'
 }
 
 export function ciUndraftLine(repo: string, pr: number): string {
   return 'github: ' + repo + '#' + pr + ' out of draft to run CI, still Not Ready'
 }
 
+// The lines the gate says when it reads a pull request: the label it put, or what is still missing.
+// redrafted: outside auto-merge it put the pull request back to draft first, out of draft for its CI.
+export function gateReadyLine(repo: string, pr: number, head: string, redrafted = false): string {
+  return 'github: ' + repo + '#' + pr + (redrafted ? ' back to draft, then' : '') + ' Ready at ' + head7(head)
+    + ': a clean review, a passed norms check, passed E2E and green CI hold at its head.'
+}
+
+export function gateNotReadyLine(repo: string, pr: number, head: string, missing: string[]): string {
+  return 'github: ' + repo + '#' + pr + ' back to Not Ready at ' + head7(head) + '. ' + tail(missing)
+}
+
+export function gateMissingLine(repo: string, pr: number, head: string, missing: string[]): string {
+  return 'github: ' + repo + '#' + pr + ' not Ready yet at ' + head7(head) + '. ' + tail(missing)
+}
+
+// The gate read nothing it can trust (the pull request, its records): the label stays.
+export function gateLeftLine(repo: string, pr: number, error: string): string {
+  return 'github: the Ready label of ' + repo + '#' + pr + ' is left as it is: ' + error
+}
+
+export function gateMovedLine(repo: string, pr: number, read: string, now: string): string {
+  return 'github: the Ready label of ' + repo + '#' + pr + ' is left as it is: the head moved from ' + head7(read)
+    + ' to ' + head7(now) + ' while the gate read it, no label written.'
+}
+
+export function gateUnwrittenLine(repo: string, pr: number, error: string): string {
+  return 'github: the Ready label of ' + repo + '#' + pr + ': label not written: ' + error
+}
+
 export function warnLine(act: string, repo: string, pr: number | string, missing: string[]): string {
-  return 'github: ' + act + ' on ' + repo + '#' + pr + ' is not ready, let through while the guard only warns.'
-    + ' Missing: ' + missing.join(', ')
+  return 'github: ' + act + ' on ' + repo + '#' + pr + ' is not ready, let through while the guard only warns. ' + tail(missing)
 }
 
 export const RECORDS_REFUSAL = 'github: records are written by their producers\' tools, and E2E by mcp__github__record,'

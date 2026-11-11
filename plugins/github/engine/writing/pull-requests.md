@@ -93,9 +93,8 @@ in Related PRs. Two PRs never depend on each other. English always, with no
 semicolon. No workflow vocabulary. Every PR is opened as a draft (`pr-create
 --draft`, the house default), and leaves draft only once it is ready (see « Ready
 pull requests »). Outside
-auto-merge, leaving draft (a CI undraft aside) and merging
-also need the operator's explicit word, given through this tool, which asks them in the
-conversation. In a
+auto-merge, leaving draft (a CI undraft aside) is the operator's, on GitHub after their
+review, and a merge needs their explicit word, given through this tool. In a
 repository in auto-merge, the merge, leaving draft and the deployment its method
 foresees need no approval of the operator once the pull request is ready. A repository
 enters or leaves auto-merge only through `auto-merge-set`, on the operator's words quoted
@@ -140,12 +139,13 @@ words, dated), and every CI check is green there. Ready belongs to one head: a n
 commit makes the pull request not ready until the four hold again at the new head.
 
 The `Ready` and `Not Ready` labels carry that fact on GitHub. A draft opens with `Not
-Ready`. `Ready` is put only when the four hold. When the CI does not run on a draft, the pull
-request leaves draft for it, still `Not Ready`, and goes back to draft once the CI is green, then takes `Ready`.
-A push to the pull request's branch puts `Not Ready` back. The plugin refuses `Ready`,
-leaving draft and a merge whose four conditions do not hold, through its tool and
-through the shell alike. The review, the norms check and the end-to-end run each leave
-a record at the head they read (see REFERENCE.md « Records »). CI is read from GitHub.
+Ready`. The plugin puts `Ready` itself once the four hold. When the CI does not run on a
+draft, the pull request leaves draft for it, still `Not Ready`, and goes back to draft
+once the CI is green, then takes `Ready`. A push to the pull request's branch puts `Not
+Ready` back. The plugin refuses `Ready`, leaving draft and a merge whose four conditions
+do not hold, through its tool and through the shell alike. The review, the norms check
+and the end-to-end run each leave a record at the head they read (see REFERENCE.md
+« Records »). CI is read from GitHub.
 
 ## Security update pull requests
 

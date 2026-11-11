@@ -1049,20 +1049,19 @@ test('pr-create is sent as a draft when the call does not say', async ($, on) =>
   expect(runs[0].args.draft).toBe(true)
 })
 
-test('a pr-create out of draft and a pr-ready are asked even when a rule allows', async ($, on) => {
+test('a pr-create out of draft and a pr-ready outside auto-merge are refused even when a rule allows, never asked', async ($, on) => {
   const runs: any[] = []
   const asked: string[] = []
   await stubMod(on, runs, [], undefined, { decision: 'allow' })
   stubAsk(on, asked, 'Allow')
   await startReading($)
 
-  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-create', args: { title: 'fix: x', draft: false } })
-  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 } })
-  expect(asked.length).toBe(2)
-  expect(asked[0]).toContain('not as a draft')
-  expect(asked[1]).toContain('out of draft')
-  expect(runs.length).toBe(2)
-  expect(runs[0].args.draft).toBe(false)
+  const create: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-create', args: { title: 'fix: x', draft: false } })
+  const ready: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 } })
+  expect(create.deny).toContain('leaving draft is the operator\'s')
+  expect(ready.deny).toContain('leaving draft is the operator\'s')
+  expect(asked.length).toBe(0)
+  expect(acts(runs).filter((r) => r.command).length).toBe(0)
 })
 
 test('a pr-merge is asked even when a rule allows, and Deny runs nothing', async ($, on) => {
@@ -1111,8 +1110,8 @@ test('a reserved approval refused by the person runs nothing', async ($, on) => 
   stubAsk(on, [], 'Deny')
   await startReading($)
 
-  const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 } })
-  expect(JSON.stringify(out)).toContain('refused gh pr-ready')
+  const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-merge', args: { pr: 1 } })
+  expect(JSON.stringify(out)).toContain('refused gh pr-merge')
   expect(runs.length).toBe(0)
 })
 
@@ -1155,7 +1154,7 @@ test('a pr-ready on a repository in auto-merge is not asked', async ($, on) => {
   expect(runs.filter((r) => r.command === 'pr-gate').length).toBe(1)
 })
 
-test('a pr-ready on a repository not in auto-merge is asked', async ($, on) => {
+test('a pr-ready on a repository not in auto-merge is refused, never asked', async ($, on) => {
   const runs: any[] = []
   const asked: string[] = []
   await stubMod(on, runs, [], undefined, { decision: 'allow' })
@@ -1164,13 +1163,12 @@ test('a pr-ready on a repository not in auto-merge is asked', async ($, on) => {
   await startReading($)
 
   const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 }, repo: 'acme/other' })
-  expect(asked.length).toBe(1)
-  expect(asked[0]).toContain('out of draft')
-  expect(JSON.stringify(out)).toContain('refused gh pr-ready')
+  expect(asked.length).toBe(0)
+  expect(out.deny).toContain('github: pr-ready refused on acme/other: outside auto-merge, leaving draft is the operator\'s')
   expect(acts(runs).length).toBe(0)
 })
 
-test('with no auto-merge file a pr-ready is asked, and nothing is logged', async ($, on) => {
+test('with no auto-merge file a pr-ready is refused, and nothing is logged', async ($, on) => {
   const runs: any[] = []
   const asked: string[] = []
   const logs: string[] = []
@@ -1179,14 +1177,15 @@ test('with no auto-merge file a pr-ready is asked, and nothing is logged', async
   stubAutoMerge(on, DATA, {}, logs)
   await startReading($)
 
-  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 }, repo: 'acme/thing' })
-  expect(asked.length).toBe(1)
+  const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 }, repo: 'acme/thing' })
+  expect(out.deny).toContain('leaving draft is the operator\'s')
+  expect(asked.length).toBe(0)
   expect(acts(runs).length).toBe(0)
   expect(logs).toEqual([])
 })
 
 for (const [what, text] of [['unreadable', null], ['without a list', '{"repositories": "acme/thing"}'], ['not JSON', 'not json']] as const) {
-  test('an auto-merge file ' + what + ' asks, with one log line naming it', async ($, on) => {
+  test('an auto-merge file ' + what + ' refuses leaving draft, with one log line naming it', async ($, on) => {
     const runs: any[] = []
     const asked: string[] = []
     const logs: string[] = []
@@ -1195,8 +1194,9 @@ for (const [what, text] of [['unreadable', null], ['without a list', '{"reposito
     stubAutoMerge(on, DATA, { '/data/github/auto-merge.json': text }, logs)
     await startReading($)
 
-    await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 }, repo: 'acme/thing' })
-    expect(asked.length).toBe(1)
+    const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 }, repo: 'acme/thing' })
+    expect(out.deny).toContain('leaving draft is the operator\'s')
+    expect(asked.length).toBe(0)
     expect(acts(runs).length).toBe(0)
     expect(logs.length).toBe(1)
     expect(logs[0]).toContain('/data/github/auto-merge.json')
@@ -1215,9 +1215,11 @@ test('a description replaced and a pull request opened out of draft on a reposit
   await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-create', args: { title: 'fix: x', draft: false }, repo: 'acme/thing' })
   expect(asked.length).toBe(0)
   expect(runs.length).toBe(2)
+  expect(runs[1].command).toBe('pr-create')
+  expect(runs[1].args.draft).toBe(false)
 })
 
-test('a pull request opened out of draft on a repository not in auto-merge is still asked, a description replaced is not', async ($, on) => {
+test('a pull request opened or taken out of draft on a repository not in auto-merge is refused, a description replaced is not asked', async ($, on) => {
   const runs: any[] = []
   const asked: string[] = []
   await stubMod(on, runs, [], undefined, { decision: 'allow' })
@@ -1228,11 +1230,11 @@ test('a pull request opened out of draft on a repository not in auto-merge is st
   await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-update', args: { pr: 1, body: 'New text\n\n' + NONE }, repo: 'acme/other' })
   expect(asked.length).toBe(0)
   expect(runs.length).toBe(1)
-  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-create', args: { title: 'fix: x', draft: false }, repo: 'acme/other' })
-  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 }, repo: 'acme/other' })
-  expect(asked.length).toBe(2)
-  expect(asked[0]).toContain('not as a draft')
-  expect(asked[1]).toContain('out of draft')
+  const create: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-create', args: { title: 'fix: x', draft: false }, repo: 'acme/other' })
+  const ready: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 }, repo: 'acme/other' })
+  expect(create.deny).toContain('github: pr-create refused on acme/other')
+  expect(ready.deny).toContain('github: pr-ready refused on acme/other')
+  expect(asked.length).toBe(0)
   expect(acts(runs).length).toBe(1)
 })
 
@@ -1430,8 +1432,8 @@ test('GH_REPO names the repository before the origin, as it does for the engine'
   stubAutoMerge(on, { ...DATA, GH_REPO: 'acme/other' }, LISTED)
   await startReading($)
 
-  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 } })
-  expect(asked.length).toBe(1)
+  const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 } })
+  expect(out.deny).toContain('refused on acme/other')
   expect(acts(runs).length).toBe(0)
 })
 
@@ -1443,11 +1445,11 @@ test('a repo in the call names the repository before one in its args', async ($,
   stubAutoMerge(on, DATA, LISTED)
   await startReading($)
 
-  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1, repo: 'acme/thing' }, repo: 'acme/other' })
-  expect(asked.length).toBe(1)
+  const other: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1, repo: 'acme/thing' }, repo: 'acme/other' })
+  expect(other.deny).toContain('refused on acme/other')
   const out = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1, repo: 'acme/thing' } })
   expect(out).toEqual({ result: 'ok' })
-  expect(asked.length).toBe(1)
+  expect(asked.length).toBe(0)
 })
 
 test('an empty repo in the call hides the one in its args, as the engine\'s last --repo= does', async ($, on) => {
@@ -1461,8 +1463,9 @@ test('an empty repo in the call hides the one in its args, as the engine\'s last
   stubAutoMerge(on, DATA, LISTED)
   await startReading($)
 
-  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1, repo: 'acme/thing' }, repo: '' })
-  expect(asked.length).toBe(1)
+  const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1, repo: 'acme/thing' }, repo: '' })
+  expect(out.deny).toContain('refused on acme/other')
+  expect(asked.length).toBe(0)
   expect(acts(runs).map((r) => r.argv[0])).toEqual(['git'])
 })
 
@@ -1496,7 +1499,7 @@ test('an https origin of a listed repository, in another case, is not asked', as
   expect(asked.length).toBe(0)
 })
 
-test('an origin git cannot give is asked', async ($, on) => {
+test('an origin git cannot give is no repository in auto-merge', async ($, on) => {
   const runs: any[] = []
   const asked: string[] = []
   const reply = (e: any) => e.argv[0] === 'git'
@@ -1507,12 +1510,13 @@ test('an origin git cannot give is asked', async ($, on) => {
   stubAutoMerge(on, DATA, LISTED)
   await startReading($)
 
-  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 } })
-  expect(asked.length).toBe(1)
+  const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 } })
+  expect(out.deny).toContain('refused on the origin repository')
+  expect(asked.length).toBe(0)
   expect(runs.map((r) => r.argv[0])).toEqual(['git'])
 })
 
-test('a git run that throws is asked', async ($, on) => {
+test('a git run that throws is no repository in auto-merge', async ($, on) => {
   const runs: any[] = []
   const asked: string[] = []
   const reply = (e: any) => {
@@ -1524,12 +1528,13 @@ test('a git run that throws is asked', async ($, on) => {
   stubAutoMerge(on, DATA, LISTED)
   await startReading($)
 
-  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 } })
-  expect(asked.length).toBe(1)
+  const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 } })
+  expect(out.deny).toContain('refused on the origin repository')
+  expect(asked.length).toBe(0)
   expect(runs.map((r) => r.argv[0])).toEqual(['git'])
 })
 
-test('an auto-merge list that is not made of strings asks, with one log line', async ($, on) => {
+test('an auto-merge list that is not made of strings refuses leaving draft, with one log line', async ($, on) => {
   const runs: any[] = []
   const asked: string[] = []
   const logs: string[] = []
@@ -1538,8 +1543,9 @@ test('an auto-merge list that is not made of strings asks, with one log line', a
   stubAutoMerge(on, DATA, { '/data/github/auto-merge.json': '{"repositories": [1]}' }, logs)
   await startReading($)
 
-  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 }, repo: 'acme/thing' })
-  expect(asked.length).toBe(1)
+  const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-ready', args: { pr: 1 }, repo: 'acme/thing' })
+  expect(out.deny).toContain('leaving draft is the operator\'s')
+  expect(asked.length).toBe(0)
   expect(acts(runs).length).toBe(0)
   expect(logs.length).toBe(1)
   expect(logs[0]).toContain('/data/github/auto-merge.json')
@@ -2106,11 +2112,11 @@ test('gh pr edit that only adds a label passes unread, one that sets the body is
   const bash: string[] = []
   await stubGuard($, on, [], bash)
 
-  const label: any = await $.tool.call({ tool: 'Bash', command: 'gh pr edit 3 --add-label Ready' })
+  const label: any = await $.tool.call({ tool: 'Bash', command: 'gh pr edit 3 --add-label bug' })
   expect(label.deny).toBeUndefined()
   const body: any = await $.tool.call({ tool: 'Bash', command: 'gh pr edit 3 --body-file /x' })
   expect(JSON.stringify(body)).toContain('before gh pr edit:')
-  expect(bash).toEqual(['gh pr edit 3 --add-label Ready'])
+  expect(bash).toEqual(['gh pr edit 3 --add-label bug'])
 })
 
 test('the tool\'s pr-update without text passes unread, with a body it is refused before the writing rules', async ($, on) => {
@@ -2432,7 +2438,7 @@ test('a Bash title and body that keep the rules run with no question', async ($,
     'gh pr edit 3 --title=\'fix: keep the reset\'',
     'gh pr edit 3 --body "Adds the reset.\n\n' + NONE + '"',
     'gh pr comment 3 -b "Thanks, fixed."',
-    'gh pr edit 3 --add-label Ready',
+    'gh pr edit 3 --add-label bug',
   ]
   for (const command of lines) {
     const out: any = await $.tool.call({ tool: 'Bash', command })
