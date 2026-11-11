@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { PLAYWRIGHT_VERSION } from '../../../core/index.ts'
 import { main, type Deps } from './drift.ts'
 
 const FIXTURE = fileURLToPath(new URL('../../../tests/fixture', import.meta.url))
@@ -253,4 +254,38 @@ test('without --out the run directory is made under the scratchpad, else the tem
   out.length = 0
   assert.equal(await main(['build', '--repo', REPO, ...refs('base', 'base')], { ...deps, env: {} }), 0)
   assert.match(out.at(-1) ?? '', new RegExp(`^out: ${ROOT}/drift-`))
+})
+
+test('drift shots without the shared Playwright install exits 2, naming the command that installs it', async () => {
+  const configDir = join(ROOT, 'no-playwright')
+  const err: string[] = []
+  const code = await main(['shots', '--repo', REPO, '--config', CONFIG], { tmp: ROOT, home: HOME, env: { CLAUDE_CONFIG_DIR: configDir }, out: () => undefined, err: line => err.push(line) })
+  assert.equal(code, 2)
+  assert.equal(err.join('\n'), `drift: Playwright ${PLAYWRIGHT_VERSION} is not installed in ${join(configDir, 'playwright', PLAYWRIGHT_VERSION)}: run /drift:install`)
+})
+
+test('drift install puts the pinned Playwright in the shared directory once, and says where and how big', async () => {
+  const configDir = join(ROOT, 'playwright-home')
+  const calls: string[][] = []
+  const installRun = async (argv: readonly string[], cwd: string, env: Readonly<Record<string, string>>): Promise<number> => {
+    calls.push([...argv])
+    if (argv[0] === 'npm') {
+      mkdirSync(join(cwd, 'node_modules', '@playwright', 'test'), { recursive: true })
+      writeFileSync(join(cwd, 'node_modules', '@playwright', 'test', 'package.json'), JSON.stringify({ version: PLAYWRIGHT_VERSION }))
+    } else {
+      mkdirSync(join(env['PLAYWRIGHT_BROWSERS_PATH'] ?? '', 'chromium_headless_shell-1'), { recursive: true })
+      writeFileSync(join(env['PLAYWRIGHT_BROWSERS_PATH'] ?? '', 'chromium_headless_shell-1', 'chrome'), Buffer.alloc(3_000_000))
+    }
+    return 0
+  }
+  const out: string[] = []
+  const deps = { tmp: ROOT, home: HOME, env: { CLAUDE_CONFIG_DIR: configDir }, out: (line: string) => out.push(line), err: () => undefined, installRun }
+  const dir = join(configDir, 'playwright', PLAYWRIGHT_VERSION)
+  assert.equal(await main(['install'], deps), 0)
+  assert.equal(await main(['install'], deps), 0)
+  assert.deepEqual(out, [`drift: Playwright ${PLAYWRIGHT_VERSION} installed in ${dir} (3 MB)`, `drift: Playwright ${PLAYWRIGHT_VERSION} already installed in ${dir} (3 MB)`])
+  assert.equal(calls.length, 2)
+  const err: string[] = []
+  assert.equal(await main(['install', '--now'], { ...deps, err: line => err.push(line) }), 2)
+  assert.match(err.join('\n'), /^drift: usage: drift build/)
 })
