@@ -184,3 +184,19 @@ takes it.
    time, re-measured on the same handovers. Failure-driven compression cut peak tokens by 26 to
    54 % while improving success on non-coding agent benchmarks (Kang et al. 2025, ACON,
    arXiv:2510.00615); the transfer to coding agents is an inference to test, not a result.
+6. **Goal 9's first step: the pilot, run twice.** No pilot has yet measured an orchestration:
+   the two before `outcome-orchestration-arm.md` measured the single arm twice. The next one
+   runs the rebuilt arm, and runs twice on the same case with the same model pair:
+
+   ```bash
+   npm run outcome -- pilot --out <dir-1> --model <agent model> --judge-model <judge model>
+   npm run outcome -- pilot --out <dir-2> --model <agent model> --judge-model <judge model>
+   ```
+
+   The two runs compare per arm: the same grades twice, or not. On the same version, the
+   behaviour baselines disagree with themselves on about one case in five
+   (`learning-design.md`, review note 7); if the outcome arms do too, the six-case measure,
+   one run per arm, cannot rank the arms, and the cases must grow first. Two runs of one case
+   give a signal, not a rate: a rate needs several cases run twice. The runs are the
+   operator's — on his machine, since the arm opens its agents through the launcher, and paid,
+   up to 20 USD each under `evals/outcome/caps.json`, 40 for the pair.
