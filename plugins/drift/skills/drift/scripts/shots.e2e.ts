@@ -136,35 +136,42 @@ test('a page that never gets ready is a tool error, its server stopped, its port
   assert.equal(git('worktree', 'list', '--porcelain').split('\n').filter(line => line.startsWith('worktree ')).length, 1)
 })
 
-/** A server of the test's own on another port, counting the requests it gets. */
-async function sideServer(): Promise<{ port: number; hits: () => number; close: () => Promise<void> }> {
+/**
+ * A server of the test's own on another port, counting the requests it gets. Its port is drawn
+ * until it sorts, as text, before or after the fixture server's: the report lists URLs as text.
+ */
+async function sideServer(order: 'before' | 'after'): Promise<{ port: number; hits: () => number; close: () => Promise<void> }> {
   let hits = 0
   const server = createHttpServer((_request, response) => {
     hits++
     response.writeHead(404)
     response.end()
   })
-  const sidePort = await freePort()
+  let sidePort = await freePort()
+  while ((String(sidePort) < String(port)) !== (order === 'before')) sidePort = await freePort()
   await new Promise<void>(done => server.listen(sidePort, '127.0.0.1', done))
   return { port: sidePort, hits: () => hits, close: () => new Promise(done => server.close(() => done())) }
 }
 
-test('nothing leaves the page unrouted: a redirect, a chain without end, another port of an allowed host, a WebSocket are blocked and listed; a malformed path answers 400', async () => {
-  const side = await sideServer()
+for (const order of ['before', 'after'] as const) {
+test(`nothing leaves the page unrouted, the other port sorting ${order} the server's: a redirect, a chain without end, another port of an allowed host, a WebSocket are blocked and listed; a malformed path answers 400`, async () => {
+  const side = await sideServer(order)
   try {
     const route = `/guard.html?port=${side.port}`
     const blocking = await shots(config('guard', { routes: [route], viewports: [390], allow: ['127.0.0.1'] }), 'base', 'base')
     assert.equal(blocking.code, 0, [...blocking.out, ...blocking.err].join('\n'))
-    assert.deepEqual(blocking.report?.blocked, [`http://127.0.0.1:${port}/loop`, `http://127.0.0.1:${side.port}/pixel.png`, `http://127.0.0.1:${side.port}/popup.html`, 'https://hop.blocked.test/landing.png', 'https://relay.blocked.test/end.png', 'wss://socket.blocked.test/live'])
+    const blocked = [`http://127.0.0.1:${port}/loop`, `http://127.0.0.1:${side.port}/pixel.png`, `http://127.0.0.1:${side.port}/popup.html`, 'https://hop.blocked.test/landing.png', 'https://relay.blocked.test/end.png', 'wss://socket.blocked.test/live']
+    assert.deepEqual(blocking.report?.blocked, blocked.sort())
     assert.equal(side.hits(), 0)
     const allowing = await shots(config('guard-allowed', { routes: [route], viewports: [390], allow: [`127.0.0.1:${side.port}`] }), 'base', 'base')
     assert.equal(allowing.code, 0, [...allowing.out, ...allowing.err].join('\n'))
-    assert.deepEqual(allowing.report?.blocked, [`http://127.0.0.1:${port}/loop`, 'https://hop.blocked.test/landing.png', 'https://relay.blocked.test/end.png', 'wss://socket.blocked.test/live'])
+    assert.deepEqual(allowing.report?.blocked, [`http://127.0.0.1:${port}/loop`, 'https://hop.blocked.test/landing.png', 'https://relay.blocked.test/end.png', 'wss://socket.blocked.test/live'].sort())
     assert.equal(side.hits(), 4)
   } finally {
     await side.close()
   }
 })
+}
 
 test('a route answering an error status is a tool error on its side, never identical', async () => {
   const { code, err, report } = await shots(config('absent', { routes: ['/absent.html'], viewports: [390] }), 'base', 'base')
