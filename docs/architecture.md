@@ -89,9 +89,12 @@ through `core` and names its own install command when it is missing.
   through `PLAYWRIGHT_BROWSERS_PATH`); a marker written last tells a complete install from a
   half-done one, which is removed and redone. Installed by `/drift:install`.
 
-The pin is raised in that constant alone, then `npm run core`: every plugin carrying core ships
-the change and raises its version, the next install lands beside the old one, and the CI cache
-keyed on the module installs the new one. An old version's directory is removed by hand.
+The pin is raised in that constant, with the integrity the registry publishes for each package it
+installs (`PLAYWRIGHT_PACKAGES`, read with `npm view <name>@<version> dist.integrity`): the install
+writes them into a lockfile and runs `npm ci`, which refuses a tarball of another hash. Then
+`npm run core`: every plugin carrying core ships the change and raises its version, the next
+install lands beside the old one, and the CI cache keyed on the module installs the new one. An
+old version's directory is removed by hand.
 
 ## Languages
 
