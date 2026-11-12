@@ -151,7 +151,7 @@ start() {
   # commands, never in the host's user commands: `/orchestrator-supervision` below is the copy.
   ORCHESTRATOR_COMMANDS_DIR="$COMMANDS" bash "$ROOT/short-commands.sh" install >/dev/null \
     || { echo "refused: the short names could not be written to $COMMANDS" >&2; exit 1; }
-  jq -n '{ tui: "fullscreen" }' > "$SANDBOX/settings.json"
+  jq -n '{ tui: "fullscreen", remoteControlAtStartup: false }' > "$SANDBOX/settings.json"
   echo '{"name":"Coord: e2e"}' > "$SANDBOX/state/coordinator.json"
   [ -n "$ALIVE" ] && kill "$ALIVE" 2>/dev/null
   sleep 3600 &
