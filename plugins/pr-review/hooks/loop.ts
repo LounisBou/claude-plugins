@@ -63,6 +63,7 @@ export function act(e: any): Record<string, unknown> {
     loop.reports = []
     loop.awaiting = new Map()
     loop.waits = 0
+    loop.waitedAt = -1
     loop.lastFindings = 0
     loop.lastBlocking = undefined
     return { pass: loop.pass, max_passes: MAX_PASSES, next: 'run the review, then report findings' }
@@ -72,15 +73,20 @@ export function act(e: any): Record<string, unknown> {
     if (loop.pass === 0) return { error: 'no review pass has begun: call begin_pass, run the review, then report its findings' }
     const keys = strings(e.keys)
     // The pass's verdict waits for every agent the host runs in the background, whatever the keys.
+    // One wait per hand-back event: calls with none between them are one wait, not several.
     const running = loop.awaiting.size
     if (running > 0) {
-      loop.waits += 1
+      if (loop.waitedAt !== loop.handbacks) {
+        loop.waits += 1
+        loop.waitedAt = loop.handbacks
+      }
       if (loop.waits <= MAX_WAITS) return { error: `${running} review agents are still running in the background: wait for their hand-back, then report` }
       loop.awaiting = new Map()
       return { error: `${running} review agents never handed back after ${MAX_WAITS} waits: the pass cannot be found clean; call begin_pass and run the review again` }
     }
-    // A clean exit, and a reviewer's verdict, are computed from the agents' blocks: none without an agent.
-    if (loop.reports.length === 0 && (keys.length === 0 || loop.isReviewOnly)) {
+    // A verdict, whether a clean exit, a reviewer's or the fix loop's last pass, is computed from
+    // the agents' blocks: none without an agent.
+    if (loop.reports.length === 0) {
       return { error: 'no review agent ran in this pass: the verdict is computed from the agents\' findings; launch the review agents (a call refused for the hook\'s rewrite did not run: issue it again), then report' }
     }
     const found = passFindings(loop.reports)
@@ -146,6 +152,11 @@ export function releaseLoop(): void {
 // The tool a subagent calls, in its own loop, to hand its final report back to the session.
 const HANDBACK_TOOL = 'SubagentHandback'
 
+// A hand-back event, of an agent of the pass or not: the waits of `findings` are counted between them.
+function handedBack(): void {
+  loop.handbacks += 1
+}
+
 // A background agent of the pass has answered: its report, or null, fills its place once.
 function settle(id: string, report: Finding[] | null): void {
   const place = loop.awaiting.get(id)
@@ -156,6 +167,7 @@ function settle(id: string, report: Finding[] | null): void {
 
 // A background agent of the pass that ended its turn without a hand-back: its last answer is its report.
 export function agentEnded(id: string, reason: string, answer: string): void {
+  handedBack()
   if (loop.awaiting.has(id)) settle(id, reason === 'answer' ? reportOf(answer) : null)
 }
 
@@ -246,6 +258,8 @@ async function pullOf($: any, repo: string): Promise<number | string> {
 async function recordReview($: any, exit: string): Promise<string | null> {
   const outcome = verdict(exit)
   if (!outcome) return null
+  // A pass whose findings were never accepted read nothing: its count is no verdict.
+  if (loop.isReviewing) return 'record: none — the last pass has no findings its review agents reported'
   try {
     if (!(await $.tool.list()).some((t: any) => t.name === RECORD_TOOL)) return `record: none — ${NO_GITHUB}`
     const status = await git($, ['status', '--porcelain', '-uno'])
@@ -311,8 +325,9 @@ export function register(on: any): void {
       const o = e?.origin
       const id = typeof o?.from === 'string' ? o.from : ''
       if (!e?.agentId && o?.kind === 'peer' && o?.handback === true && typeof o?.handbackReportText === 'string'
-        && loop.isActive && loop.isReviewing && loop.awaiting.has(id)) {
-        settle(id, reportOf(o.handbackReportText))
+        && loop.isActive && loop.isReviewing) {
+        handedBack()
+        if (loop.awaiting.has(id)) settle(id, reportOf(o.handbackReportText))
       }
     } catch {
       // Unreadable: no count.
@@ -327,6 +342,7 @@ export function register(on: any): void {
     const answer = await next(e)
     try {
       const id = typeof e?.agentId === 'string' ? e.agentId : ''
+      handedBack()
       if (answer?.result?.success === true && typeof e?.message === 'string') settle(id, reportOf(e.message))
     } catch {
       // Unreadable: no count.

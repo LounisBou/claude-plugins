@@ -205,9 +205,11 @@ test("open_comments reports the github tool's refusal as an error", async ($, on
 test('the loop counts passes, sorts findings into new and seen, and ends clean', () => {
   act({ action: 'start', test_command: 'npm test' })
   expect(act({ action: 'begin_pass' }).pass).toBe(1)
+  loop.reports.push(null)
   expect(act({ action: 'findings', keys: ['a.ts::x', 'b.ts::y'] }).new).toEqual(['a.ts::x', 'b.ts::y'])
   act({ action: 'fixed', key: 'a.ts::x', sha: 'abc', description: 'fix x' })
   expect(act({ action: 'begin_pass' }).pass).toBe(2)
+  loop.reports.push([])
   const second = act({ action: 'findings', keys: ['b.ts::y', 'c.ts::z'] })
   expect(second.seen).toEqual(['b.ts::y'])
   expect(second.new).toEqual(['c.ts::z'])
@@ -253,6 +255,7 @@ test('the loop ends after pass 5', () => {
   act({ action: 'start' })
   for (let i = 1; i <= 5; i++) {
     expect(act({ action: 'begin_pass' }).pass).toBe(i)
+    loop.reports.push(null)
     act({ action: 'findings', keys: ['k' + i] })
   }
   const sixth: any = act({ action: 'begin_pass' })
@@ -268,6 +271,7 @@ test('the Stop gate refuses a stop mid-loop once, naming the pass', async ($, on
   await $.skill.prompt({ skill: 'pr-review:auto-fix-loop', text: '' })
   await $.tool.call({ tool: 'mcp__pr-review__loop', action: 'start' } as any)
   await $.tool.call({ tool: 'mcp__pr-review__loop', action: 'begin_pass' } as any)
+  await $.tool.call({ tool: 'Agent', prompt: 'review' } as any)
   await $.tool.call({ tool: 'mcp__pr-review__loop', action: 'findings', keys: ['a::b', 'c::d'] } as any)
   const held: any = await $.classic.Stop({ stop_hook_active: false } as any)
   expect(held.block).toContain('pass 1/5')
@@ -775,8 +779,12 @@ test('a mid-run message of the agent leaves its place for the hand-back', async 
 test('a hand-back that never comes ends the pass as silent after three waits, with a clear message', async ($, on) => {
   const { out } = await backgroundPass(on, $, async () => undefined)
   expect(String(out.result)).toContain('1 review agents are still running')
+  // Each wait is a hand-back event that is not the agent's: another agent's.
+  await handBack($, 'zzz', [])
   await loopCall($, { action: 'findings', keys: [] })
+  await handBack($, 'zzz', [])
   await loopCall($, { action: 'findings', keys: [] })
+  await handBack($, 'zzz', [])
   const last = await loopCall($, { action: 'findings', keys: [] })
   expect(last.isError).toBe(true)
   expect(String(last.result)).toContain('never handed back after 3 waits')
@@ -1194,4 +1202,52 @@ test('a branch with no pull request does not take the one at its head: that look
   const out = await cleanLoop($)
   expect(String(out.result)).toContain('record: none — the branch has no pull request')
   expect(stubs.ghCalls?.map((c) => c.command)).toEqual(['pr-get'])
+})
+
+// ── a pass's verdict needs its readers ──
+
+test('a fix loop\'s findings with no reader in the pass ask for the readers, and its exit records nothing', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireRecord(on, stubs)
+  await loopCall($, { action: 'start' })
+  for (let i = 1; i <= 5; i++) {
+    await loopCall($, { action: 'begin_pass' })
+    const out = await loopCall($, { action: 'findings', keys: ['k' + i] })
+    expect(out.isError).toBe(true)
+    expect(String(out.result)).toContain('no review agent ran in this pass')
+  }
+  const status = await loopCall($, { action: 'status' })
+  expect(String(status.result)).toContain('"seen": []')
+  const last = await loopCall($, { action: 'begin_pass' })
+  expect(String(last.result)).toContain('"exit": "max_passes"')
+  expect(String(last.result)).toContain('record: none — the last pass has no findings its review agents reported')
+  expect(stubs.records).toEqual([])
+})
+
+test('quick findings calls with no hand-back between them are one wait: the reader\'s report still counts', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireHandBack(on)
+  await backgroundReviewerPass(on, $, stubs)
+  for (let i = 0; i < 5; i++) {
+    const early = await loopCall($, { action: 'findings', keys: ['f0::s'] })
+    expect(String(early.result)).toContain('1 review agents are still running')
+  }
+  await readerHandBack($, READER, agentAnswer([{ severity: 'suggestion' }]))
+  const out = await loopCall($, { action: 'findings', keys: ['f0::s'] })
+  expect(String(out.result)).toContain('"exit": "reviewed"')
+  expect(stubs.records.map((r) => r.detail)).toEqual(['reviewed: 1 findings, none Critical or Important'])
+})
+
+test('findings with keys give up on a reader after three waits between other hand-backs', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireHandBack(on)
+  await backgroundReviewerPass(on, $, stubs)
+  let out: any
+  for (let i = 0; i <= 3; i++) {
+    out = await loopCall($, { action: 'findings', keys: ['f0::s'] })
+    await readerHandBack($, 'a0000000000000099', agentAnswer([]))
+  }
+  expect(out.isError).toBe(true)
+  expect(String(out.result)).toContain('never handed back after 3 waits')
+  expect(stubs.records).toEqual([])
 })
