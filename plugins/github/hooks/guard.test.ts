@@ -2206,6 +2206,27 @@ test('a review that failed last at the earlier head is not carried, nor is a kin
     + ' e2e: fail at 0123456 by p-e2e; norms carried from abcdef0'])
 })
 
+test('a review failed at a later head of the same diff is not carried from an earlier head where it passed', async ($, on) => {
+  const LATER = '1111111111111111111111111111111111111111'
+  const tree = {
+    ...earlier(CLEAN_OLD),
+    ...earlier([at('review', 'fail', { head: LATER }, '2026-11-01T11:00:00Z')], RECORDS + '/acme/thing/' + LATER),
+  }
+  await world($, on, { records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME, [LATER]: SAME } })
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.deny).toContain('Missing: review: no record at 0123456; norms carried from abcdef0, e2e carried from abcdef0.')
+})
+
+test('a second gate read with the records unchanged still reads Ready with the same carried kinds', async ($, on) => {
+  const seen = await world($, on, { records: {}, tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  const out: any = await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(JSON.parse(out.result).labels).toEqual(['Ready'])
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+  expect(seen.logs).toEqual([READY_LINE.slice(0, -1)
+    + ' (review carried from abcdef0, norms carried from abcdef0, e2e carried from abcdef0).'])
+})
+
 test('a head whose commits cannot be fingerprinted (a merge in the pull request) carries nothing, and says so in one line', async ($, on) => {
   const seen = await world($, on, { records: {}, labels: ['Ready'], tree: earlier(CLEAN_OLD), fingerprints: { [OLD]: SAME } })
   await $.tool.call(gh('pr-gate', { pr: 12 }))

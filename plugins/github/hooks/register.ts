@@ -7,7 +7,7 @@ import { atom, read, update } from 'claude-code'
 import type { GithubPane, GithubPaneRow } from '../types'
 import { lint, refusal, textFields } from './writing.ts'
 import { CONSENT_PRODUCER, CONSENT_QUOTE_MIN, consentDir, parseConsentRecord, quotesConsent, type ConsentSubject } from '../core/consent-record.ts'
-import { KINDS } from '../core/pr-record.ts'
+import { KINDS, type PrRecord } from '../core/pr-record.ts'
 import {
   type WritingFile, bashAuthoring, bashTexts, lineCount, normalise, printsWhole, readerKey, readsWhole, toolAuthoring, writingFileAt, writingFilesFor,
   unreadRefusal,
@@ -16,7 +16,7 @@ import {
   NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashPushes,
   carriesReady, ciUndraft, ciUndraftLine, createdPr, draftRefusal, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, leaveDraftRefusal, missingItems,
-  notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug, carriable, recordPrs, uncarriedLine, unrecorded,
+  notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug, carries, headLatest, recordPrs, uncarriedLine, unrecorded,
   kindRefusal, recordKindFor, toolAct, touchesRecords, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, warnLine,
   type Act, type Carried, type Gate, type Phase, type RecordFile,
 } from './ready.ts'
@@ -871,17 +871,22 @@ async function earlierRecords($: any, gate: Gate, root: string): Promise<Map<str
   return found
 }
 
-// The records an earlier head of the same commits carries to the gate's head, for the kinds it has none of.
+/*
+ * The records the earlier heads of the same commits carry to the gate's head, for the kinds it has
+ * none of: per kind, the latest record by its time across every earlier head of the same fingerprint,
+ * so a newer failure at one of them is never hidden by an older pass at another.
+ */
 async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<Carried[]> {
   const wanted = gate.state === 'open' ? unrecorded(gate, files) : []
   const root = wanted.length > 0 ? await recordsRoot($) : undefined
   if (!root) return []
-  const candidates: Array<{ head: string; kinds: Carried['kind'][] }> = []
+  const candidates: Array<{ head: string; latest: PrRecord[] }> = []
   for (const [head, records] of await earlierRecords($, gate, root)) {
-    const kinds = carriable(gate, head, records).filter((kind) => wanted.includes(kind))
-    if (kinds.length > 0) candidates.push({ head, kinds })
+    const found = headLatest(gate, head, records)
+    const latest = wanted.flatMap((kind) => found.get(kind) ?? [])
+    if (latest.length > 0) candidates.push({ head, latest })
   }
-  if (candidates.length === 0) return []
+  if (!candidates.some((c) => c.latest.some(carries))) return []
   let current: Fingerprint
   try {
     current = await headFingerprint($, gate.repo, gate.pr, gate.head)
@@ -889,10 +894,8 @@ async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<
     note($, uncarriedLine(gate.repo, gate.pr, gate.head, String(err?.message ?? err).trim()))
     return []
   }
-  const carried: Carried[] = []
-  for (const { head, kinds } of candidates) {
-    const fresh = kinds.filter((kind) => !carried.some((c) => c.kind === kind))
-    if (fresh.length === 0) continue
+  const newest = new Map<PrRecord['kind'], { record: PrRecord; from: string }>()
+  for (const { head, latest } of candidates) {
     let earlier: Fingerprint
     try {
       earlier = await headFingerprint($, gate.repo, gate.pr, head, current.commits)
@@ -900,9 +903,17 @@ async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<
       note($, uncarriedLine(gate.repo, gate.pr, gate.head, String(err?.message ?? err).trim(), head))
       continue
     }
-    if (earlier.fingerprint === current.fingerprint) for (const kind of fresh) carried.push({ kind, from: head })
+    if (earlier.fingerprint !== current.fingerprint) continue
+    for (const record of latest) {
+      const before = newest.get(record.kind)?.record
+      // At the same time, the record that carries nothing wins.
+      if (!before || record.at > before.at || (record.at === before.at && !carries(record))) newest.set(record.kind, { record, from: head })
+    }
   }
-  return wanted.flatMap((kind) => carried.filter((c) => c.kind === kind))
+  return wanted.flatMap((kind) => {
+    const kept = newest.get(kind)
+    return kept && carries(kept.record) ? [{ kind, from: kept.from }] : []
+  })
 }
 
 /*

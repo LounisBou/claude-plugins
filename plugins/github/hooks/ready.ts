@@ -460,14 +460,16 @@ export function unrecorded(gate: Gate, files: RecordFile[]): Kind[] {
   return KINDS.filter((kind) => !latest.has(kind))
 }
 
-// The kinds an earlier head's records carry to a head of the same diff: a clean review, a passed
-// norms check, an E2E waiver, each the latest of its kind there. An E2E pass is run again at the new head.
-export function carriable(gate: Gate, head: string, files: RecordFile[]): Kind[] {
-  const { latest } = latestRecords(gate, head.toLowerCase(), files)
-  return KINDS.filter((kind) => {
-    const record = latest.get(kind)
-    return !!record && accepts(record) && !(kind === 'e2e' && record.result === 'pass')
-  })
+// The latest record of each kind of the pull request at an earlier head, whatever its result.
+export function headLatest(gate: Gate, head: string, files: RecordFile[]): Map<Kind, PrRecord> {
+  return latestRecords(gate, head.toLowerCase(), files).latest
+}
+
+// A record an earlier head carries to a head of the same diff, when it is the latest of its kind
+// across the earlier heads of that diff: a clean review, a passed norms check, an E2E waiver.
+// An E2E pass is run again at the new head.
+export function carries(record: PrRecord): boolean {
+  return accepts(record) && !(record.kind === 'e2e' && record.result === 'pass')
 }
 
 // What a pull request misses to be ready at its head: the four conditions,
