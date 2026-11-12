@@ -2396,6 +2396,25 @@ test('a different question block in the message does not hide the declared one: 
   expect(spaced.split('**Question 1 of 1**').length).toBe(2)
 })
 
+test('a near copy of the declared block in the message is the declared one: not appended, one question, the stop passes', async () => {
+  const declared = ['**Question 1 of 1**', '_Subject_ : the report', '_Context_ : the report is ready for review.', '- **A** : yes', '- **B** : no'].join('\n')
+  const wait = waitMounted()
+  const fx = fakeDollar({})
+  await declare(wait, fx.dollar, { kind: 'operator', blocks: 'the mode', question: declared })
+  // One word, then one mark of the context changed: the same numbering and subject line, the declared block.
+  for (const copy of [declared.replace('ready', 'done'), declared.replace('review.', 'review !')]) {
+    const handed = withDeclaredWait(copy, { kind: 'operator', blocks: 'the mode', question: declared })
+    expect(handed.split('**Question 1 of 1**').length).toBe(2)
+    const passed = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: copy, ...NOTHING_RUNS }))
+    expect(passed.answer).toBe(passed.passed)
+  }
+  // Another subject under the same number is another question: appended, and refused as several.
+  const other = declared.replace('_Subject_ : the report', '_Subject_ : the deploy')
+  expect(withDeclaredWait(other, { kind: 'operator', blocks: 'the mode', question: declared }).split('**Question 1 of 1**').length).toBe(3)
+  const held = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: other, ...NOTHING_RUNS }))
+  expect(String((held.answer as any).block)).toContain('One question per turn')
+})
+
 // The coordinator of the machine, as its record names it, and the messages the module sent it.
 function withCoordinator(fx: ReturnType<typeof fakeDollar>): string[] {
   const sent: string[] = []
@@ -2453,6 +2472,16 @@ test('a notice to the coordinator that never resolves does not hold the stop pas
   expect(last.answer).toBe(last.passed)
   expect(Date.now() - started).toBeLessThan(3000)
   expect(fx.written.some(l => l.includes('the notice to the coordinator did not finish within the deadline'))).toBe(true)
+})
+
+test('a notice to the coordinator whose send throws is logged as that failure, never as a missed deadline', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({})
+  withCoordinator(fx)
+  fx.dollar.session.send = async () => { throw new Error('peer socket closed') }
+  for (let i = 0; i <= REFIRED_REFUSALS; i++) await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED, stop_hook_active: true }))
+  expect(fx.written.some(l => l.includes('the notice to the coordinator failed: peer socket closed'))).toBe(true)
+  expect(fx.written.some(l => l.includes('did not finish within the deadline'))).toBe(false)
 })
 
 test('a re-fired stop the gate used to step aside from still does when nothing asks the operator, or the session is no orchestrator', async () => {

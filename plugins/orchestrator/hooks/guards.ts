@@ -768,13 +768,15 @@ async function refiredWithoutQuestion($: any, paidBySession: Map<string, number>
   paidBySession.delete(sessionId)
   await logLine($, `stop gate: an operator wait with no question let through after ${REFIRED_REFUSALS} more refusals (${name})`)
   try {
-    const told = await inTime($, async () => {
+    // Not inTime: it turns a throw into null, and a send that fails must be logged as the failure it is.
+    const left = until - Date.now()
+    const told = left <= 0 ? null : await withDeadline((async () => {
       const coordinator = await coordinatorAddress($)
       if (!coordinator) return 'no coordinator to tell that an orchestrator waits on the operator with no question'
       const sent = await sendToCoordinator($, coordinator.to, `[module] ${name} ended its turn waiting on the operator with no question block, after ${REFIRED_REFUSALS + 1} refusals: he was not asked anything. Ask it of ${name}, or ask him for it.`)
       return sent?.isDelivered ? '' : `the notice to the coordinator was not delivered: ${sent?.reason ?? 'no answer'}`
-    }, until)
-    if (told === null) await logLine($, 'stop gate: the notice to the coordinator did not finish within the deadline')
+    })(), left)
+    if (told === null || isDegradedPass(told)) await logLine($, 'stop gate: the notice to the coordinator did not finish within the deadline')
     else if (told !== '') await logLine($, `stop gate: ${told}`)
   } catch (err) {
     await logLine($, `stop gate: the notice to the coordinator failed: ${(err as Error).message}`)

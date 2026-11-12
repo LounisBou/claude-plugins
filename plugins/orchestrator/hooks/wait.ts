@@ -13,7 +13,7 @@ import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
 import { CONSENT_KINDS, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
 import { messageOf, type Host, type On } from './host.ts'
 import { openFence, outsideFences, oneQuestionRefusal, questionDefectRefusal } from './one-question.ts'
-import { entryQuestions } from './round.ts'
+import { entryQuestions, questionShape } from './round.ts'
 
 // The nouns the declaration holds.
 type Held = Host<'plugin' | 'env' | 'process' | 'tool'>
@@ -47,12 +47,25 @@ function checkQuestion(question: unknown): { question: string } | { error: strin
 
 const flat = (text: string): string => text.replace(/\s+/g, ' ').trim()
 
-// The question block an operator wait holds that the message does not show as it is: appended above the
-// line. The call's question is authoritative: a different numbered block in the message does not hide it,
-// the two then make several questions in one turn, which the stop gate refuses.
+// Each question block a text shows outside its fences, by its numbering and its subject line (its first field).
+function blockKeys(text: string): string[] {
+  return entryQuestions({ question: outsideFences(text), choices: [], recommendation: null }).flatMap(part => {
+    const shape = questionShape(part.question, part.choices)
+    const subject = shape?.fields[0]
+    return shape?.number && subject ? [`${flat(shape.number)}\n${flat(subject.label)}: ${flat(subject.text)}`] : []
+  })
+}
+
+// The question block an operator wait holds that the message does not show: appended above the line. A
+// block of the same numbering and subject line is the declared one, its other words copied or not. The
+// call's question is authoritative: a block of another number or subject does not hide it, the two then
+// make several questions in one turn, which the stop gate refuses.
 function questionMissingFrom(message: string, wait: DeclaredWait): string | null {
   if (wait.kind !== 'operator' || !wait.question) return null
-  return flat(outsideFences(message)).includes(flat(wait.question)) ? null : wait.question
+  if (flat(outsideFences(message)).includes(flat(wait.question))) return null
+  const shown = blockKeys(message)
+  const declared = blockKeys(wait.question)
+  return declared.length > 0 && declared.every(key => shown.includes(key)) ? null : wait.question
 }
 
 // The tool's input, validated: the declaration, or why it is none.
@@ -110,7 +123,7 @@ export function declaredConsent(declarations: Declarations = DECLARATIONS): Cons
   return wait?.kind === 'operator' ? wait.consent ?? null : null
 }
 
-// The message with the declared question in it when it holds none: the pane, the round entry
+// The message with the declared question in it unless it shows a block of the same numbering and subject: the pane, the round entry
 // and the gate read the question from the call, whatever the prose around it says.
 export function withDeclaredQuestion(message: string, wait: DeclaredWait | null): string {
   const missing = wait === null ? null : questionMissingFrom(message, wait)
