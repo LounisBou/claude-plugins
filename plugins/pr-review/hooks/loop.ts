@@ -84,10 +84,12 @@ export function act(e: any): Record<string, unknown> {
       return { error: ids.map(reaskLine).join('\n') }
     }
     // The pass's verdict waits for every agent the host runs in the background, whatever the keys.
-    // One wait per hand-back event: calls with none between them are one wait, not several.
+    // One wait per hand-back event: calls with none between them are one wait, not several. Once
+    // every awaited agent was asked again, each call is one wait: no other hand-back may come.
     const running = loop.awaiting.size
     if (running > 0) {
-      if (loop.waitedAt !== loop.handbacks) {
+      const isAllReasked = [...loop.awaiting.keys()].every((id) => loop.reasked.has(id))
+      if (isAllReasked || loop.waitedAt !== loop.handbacks) {
         loop.waits += 1
         loop.waitedAt = loop.handbacks
       }
@@ -212,15 +214,16 @@ function settle(id: string, report: Finding[] | null, isFinal = false): void {
 }
 
 // A background agent of the pass that ended its turn without a hand-back: its last answer is its report;
-// a turn that ended in error or aborted, none. The first run's end that comes after the agent was
-// asked again, without a block, is no answer to the request: the place waits for the second run.
+// a turn that ended in error or aborted, none, and the agent is silent at once. The first run's
+// answer that comes after the agent was asked again, without a block, is no answer to the request:
+// the place waits for the second run.
 export function agentEnded(id: string, reason: string, answer: string): void {
   handedBack()
   if (!loop.awaiting.has(id)) return
   const isFirstEnd = !loop.ended.has(id)
   loop.ended.add(id)
   const report = reason === 'answer' ? reportOf(answer) : null
-  if (report === null && isFirstEnd && loop.reasked.has(id)) return
+  if (reason === 'answer' && report === null && isFirstEnd && loop.reasked.has(id)) return
   settle(id, report, reason !== 'answer')
 }
 

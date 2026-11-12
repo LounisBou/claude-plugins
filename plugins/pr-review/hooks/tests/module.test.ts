@@ -1496,6 +1496,41 @@ test('a reader asked again that never answers is silent after three waits: the r
   expect(stubs.records.map((r) => [r.result, r.detail])).toEqual([['fail', `reviewed: 3 findings, severity unknown: no findings block from ${HUNTER}`]])
 })
 
+test('a reader asked again that never answers, with no other event at all, is silent after three waits', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  await transcriptPass(on, $, stubs, PASS_4CB(PROSE_NONE), KEYS_4CB)
+  const answers: string[] = []
+  for (let i = 0; i <= 3; i++) answers.push(String((await loopCall($, { action: 'findings', keys: KEYS_4CB })).result))
+  expect(answers.slice(0, 3).every((a) => a.includes('1 review agents are still running'))).toBe(true)
+  expect(answers[3]).toContain('"exit": "reviewed"')
+  expect(stubs.records.map((r) => [r.result, r.detail])).toEqual([['fail', `reviewed: 3 findings, severity unknown: no findings block from ${HUNTER}`]])
+})
+
+for (const reason of ['error', 'aborted']) {
+  test(`a reader asked again whose turn ends in ${reason}, its first end never seen, is silent at once`, async ($, on) => {
+    const stubs: Stubs = { records: [], prCalls: 0 }
+    on('turn.complete', (_$: any, e: any) => ({ text: e.answer }))
+    await transcriptPass(on, $, stubs, PASS_4CB(PROSE_NONE), KEYS_4CB)
+    await $.turn.complete({ agentId: 'a0000000000000012', reason, answer: '', turnId: 't', durationMs: 1 } as any)
+    const out = await loopCall($, { action: 'findings', keys: KEYS_4CB })
+    expect(String(out.result)).toContain('"exit": "reviewed"')
+    expect(stubs.records.map((r) => [r.result, r.detail])).toEqual([['fail', `reviewed: 3 findings, severity unknown: no findings block from ${HUNTER}`]])
+  })
+}
+
+test('a reader whose first end had no block, asked again, whose second run ends without one is silent at once', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  on('turn.complete', (_$: any, e: any) => ({ text: e.answer }))
+  await backgroundReviewerPass(on, $, stubs)
+  await $.turn.complete({ agentId: READER, reason: 'answer', answer: PROSE_NONE, turnId: 't1', durationMs: 1 } as any)
+  const asked = await loopCall($, { action: 'findings', keys: ['f0::s'] })
+  expect(String(asked.result)).toContain(`SendMessage to '${READER}'`)
+  await $.turn.complete({ agentId: READER, reason: 'answer', answer: 'No findings', turnId: 't2', durationMs: 1 } as any)
+  const out = await loopCall($, { action: 'findings', keys: ['f0::s'] })
+  expect(String(out.result)).toContain('"exit": "reviewed"')
+  expect(stubs.records.map((r) => [r.result, r.detail])).toEqual([['fail', 'reviewed: 1 findings, severity unknown: no findings block from code-reviewer']])
+})
+
 test('the first run\'s end that comes after the request neither silences the reader nor drops its answer', async ($, on) => {
   const stubs: Stubs = { records: [], prCalls: 0 }
   on('turn.complete', (_$: any, e: any) => ({ text: e.answer }))
