@@ -44,13 +44,29 @@ def _pr_merge_status(obj):
     return "open" if item.get("state") == "open" else "closed"
 
 
+def _latest_runs(runs):
+    """The latest run of each check. A check is its name and its app (app.id, or
+    app.slug when that is all the payload carries; no app, the name alone). The
+    latest is the greatest id, which grows with creation: started_at is kept by a
+    re-run, so a re-run of an old run would pass for the newest."""
+    latest = {}
+    for run in runs:
+        app = run.get("app") or {}
+        key = (run.get("name"), app.get("id", app.get("slug")))
+        if key not in latest or (run.get("id") or 0) > (latest[key].get("id") or 0):
+            latest[key] = run
+    return list(latest.values())
+
+
 def gate_ci(statuses, runs, draft):
-    """CI at one head, as the ready guard reads it. A completed check passes
+    """CI at one head, as the ready guard reads it. Only the latest run of each
+    check counts. A completed check passes
     on success, and on neutral out of draft. A skipped one, and on a draft a
     neutral one, did not prove anything: not green. Any other conclusion is a
     failure, named by its check. A check still running is not green. No check
     at all is green."""
     commit_statuses = (statuses or {}).get("statuses") or []
+    runs = _latest_runs(runs)
     passing = ("success",) if draft else ("success", "neutral")
     unproven = ("skipped", "neutral") if draft else ("skipped",)
     completed = [run for run in runs if run.get("status") == "completed"]

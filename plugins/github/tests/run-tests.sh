@@ -299,6 +299,24 @@ check "checks-status names a check that failed to start" "FAILURE build" \
 check "checks-status reads a neutral check outside draft as green" "SUCCESS" \
   "$(render checks-status '{"check_runs":[{"name":"scan","status":"completed","conclusion":"neutral"}],"statuses":{"statuses":[]}}' \
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
+# Only the latest run of a check counts, the greatest id: older runs are neither
+# failed, nor running, nor in the total.
+ci_field() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["result"], ",".join(d["failed_checks"]))'; }
+check "checks-status reads a newer success over older failures of one check" "SUCCESS " \
+  "$(render checks-status '{"check_runs":[{"id":1,"name":"wip-check","status":"completed","conclusion":"failure"},{"id":2,"name":"wip-check","status":"completed","conclusion":"failure"},{"id":9,"name":"wip-check","status":"completed","conclusion":"success"},{"id":8,"name":"wip-check","status":"completed","conclusion":"success"}],"statuses":{"statuses":[]}}' | ci_field)"
+check "checks-status reads a newer failure over an older success" "FAILURE wip-check" \
+  "$(render checks-status '{"check_runs":[{"id":9,"name":"wip-check","status":"completed","conclusion":"failure"},{"id":2,"name":"wip-check","status":"completed","conclusion":"success"}],"statuses":{"statuses":[]}}' | ci_field)"
+check "checks-status keeps a check of the same name from two apps" "FAILURE wip-check" \
+  "$(render checks-status '{"check_runs":[{"id":9,"name":"wip-check","app":{"id":1},"status":"completed","conclusion":"success"},{"id":2,"name":"wip-check","app":{"id":2},"status":"completed","conclusion":"failure"}],"statuses":{"statuses":[]}}' | ci_field)"
+check "gate_ci counts a check once and a newer running run over a failure as running" "PENDING 0 2 1" \
+  "$(python3 -c '
+import json, sys
+sys.path.insert(0, sys.argv[1])
+from ghlib import fmt
+runs = json.loads(sys.argv[2])
+ci = fmt.gate_ci({"statuses": []}, runs, False)
+print(ci["result"], len(ci["failed"]), ci["total"], ci["running"])
+' "$GHDIR" '[{"id":1,"name":"a","status":"completed","conclusion":"failure"},{"id":2,"name":"a","status":"in_progress"},{"id":3,"name":"b","app":{"slug":"s"},"status":"completed","conclusion":"success"}]')"
 check "open-threads keeps only unresolved" "1" \
   "$(render open-threads '[{"id":"a","isResolved":false},{"id":"b","isResolved":true}]' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
 check "resolve-status" "resolved" "$(render resolve-status '{"resolveReviewThread":{"thread":{"isResolved":true}}}')"
