@@ -437,6 +437,20 @@ function latestRecords(gate: Gate, head: string, files: RecordFile[]): { latest:
   return { latest, skipped }
 }
 
+// The pull requests a head's records name, whatever their head.
+export function recordPrs(files: RecordFile[]): number[] {
+  const prs = new Set<number>()
+  for (const file of files) {
+    try {
+      const record = parsePrRecord(JSON.parse(file.text))
+      if (record) prs.add(record.pr)
+    } catch {
+      // Names none.
+    }
+  }
+  return [...prs]
+}
+
 // A record of an earlier head of the pull request, counted at its head as their diffs are the same.
 export type Carried = { kind: Kind; from: string }
 
@@ -605,9 +619,10 @@ export function gateMissingLine(repo: string, pr: number, head: string, missing:
 }
 
 // The gate read nothing it can trust (the pull request, its records): the label stays.
-// The records of earlier heads are not counted: the head's diff could not be fingerprinted.
-export function uncarriedLine(repo: string, pr: number, head: string, error: string): string {
-  return 'github: ' + repo + '#' + pr + ': no record of an earlier head carried to ' + head7(head) + ', its diff cannot be fingerprinted: ' + error
+// The records of an earlier head are not counted: its commits, or the head's (from omitted), could not be fingerprinted.
+export function uncarriedLine(repo: string, pr: number, head: string, error: string, from?: string): string {
+  return 'github: ' + repo + '#' + pr + ': no record of ' + (from ? head7(from) : 'an earlier head') + ' carried to ' + head7(head)
+    + ', its commits cannot be fingerprinted: ' + error
 }
 
 export function gateLeftLine(repo: string, pr: number, error: string): string {

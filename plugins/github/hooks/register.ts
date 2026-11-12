@@ -16,7 +16,7 @@ import {
   NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashPushes,
   carriesReady, ciUndraft, ciUndraftLine, createdPr, draftRefusal, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, leaveDraftRefusal, missingItems,
-  notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug, carriable, uncarriedLine, unrecorded,
+  notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug, carriable, recordPrs, uncarriedLine, unrecorded,
   kindRefusal, recordKindFor, toolAct, touchesRecords, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, warnLine,
   type Act, type Carried, type Gate, type Phase, type RecordFile,
 } from './ready.ts'
@@ -785,60 +785,94 @@ async function headRecords($: any, gate: Gate, head = gate.head): Promise<Record
 }
 
 /*
- * A rebase that leaves a pull request's own diff unchanged keeps its review, its norms check and its
- * E2E waiver: a kind with no record at the head counts as present when an earlier head of the same
- * pull request holds one, clean, passed or waived, and that head's diff has the same fingerprint
- * (the engine's pr-fingerprint, from GitHub's compare). An E2E pass is run again at the new head, and
- * CI is always read at it. A fingerprint is computed once per head and kept in the data directory.
+ * A rebase that leaves a pull request's own commits unchanged keeps its review, its norms check and
+ * its E2E waiver: a kind with no record at the head counts as present when an earlier head of the
+ * same pull request holds one, clean, passed or waived, and that head's fingerprint is the head's
+ * (the engine's pr-fingerprint: the diffs of the pull request's k commits along first parents, so a
+ * parent branch rewritten below them changes nothing). An E2E pass is run again at the new head, and
+ * CI is always read at it. A fingerprint is computed once per head and kept in the data directory,
+ * with the commit count it was taken over (version 2: the compare-based version 1 is never read).
  */
 const SHA = /^[0-9a-f]{40}$/
 const FINGERPRINT = /^[0-9a-f]{64}$/
+const FINGERPRINT_VERSION = 2
+export const FINGERPRINT_PREFIX = 'fingerprint.'
+
+type Fingerprint = { fingerprint: string; commits: number }
 
 async function fingerprintPath($: any, repo: string, pr: number, head: string): Promise<string | undefined> {
   const dir = await dataDir($)
-  return dir ? dir + '/fingerprint.' + encodeURIComponent(repo.toLowerCase()) + '.' + pr + '.' + head + '.json' : undefined
+  return dir ? dir + '/' + FINGERPRINT_PREFIX + encodeURIComponent(repo.toLowerCase()) + '.' + pr + '.' + head + '.json' : undefined
 }
 
-// The fingerprint of the pull request's own diff at a head, or a throw naming why there is none.
-async function headFingerprint($: any, repo: string, pr: number, head: string): Promise<string> {
+// The fingerprint of the pull request's own commits at a head, over `count` commits (by default the
+// pull request's), or a throw naming why there is none.
+async function headFingerprint($: any, repo: string, pr: number, head: string, count?: number): Promise<Fingerprint> {
   const path = await fingerprintPath($, repo, pr, head)
+  const valid = (kept: any): kept is Fingerprint => kept?.v === FINGERPRINT_VERSION && typeof kept.fingerprint === 'string'
+    && FINGERPRINT.test(kept.fingerprint) && Number.isInteger(kept.commits) && (count === undefined || kept.commits === count)
   try {
     if (path && await $.fs.exists(path)) {
-      const kept = JSON.parse(String(await $.fs.read(path)))?.fingerprint
-      if (typeof kept === 'string' && FINGERPRINT.test(kept)) return kept
+      const kept = JSON.parse(String(await $.fs.read(path)))
+      if (valid(kept)) return { fingerprint: kept.fingerprint, commits: kept.commits }
     }
   } catch {
     // Computed again.
   }
-  const computed = JSON.parse(await runGh($, 'pr-fingerprint', { pr, head }, repo))?.fingerprint
-  if (typeof computed !== 'string' || !FINGERPRINT.test(computed)) throw new Error('pr-fingerprint answered no fingerprint')
+  const computed = JSON.parse(await runGh($, 'pr-fingerprint', { pr, head, ...(count === undefined ? {} : { count }) }, repo))
+  if (!valid({ v: FINGERPRINT_VERSION, ...computed })) throw new Error('pr-fingerprint answered no fingerprint')
   if (path) {
-    await $.fs.write(path, JSON.stringify({ v: 1, repo: repo.toLowerCase(), pr, head, fingerprint: computed }) + '\n')
-      .catch(() => undefined)
+    await $.fs.write(path, JSON.stringify({ v: FINGERPRINT_VERSION, repo: repo.toLowerCase(), pr, head,
+      commits: computed.commits, fingerprint: computed.fingerprint }) + '\n').catch(() => undefined)
   }
-  return computed
+  return { fingerprint: computed.fingerprint, commits: computed.commits }
 }
 
-// The records an earlier head of the same diff carries to the gate's head, for the kinds it has none of.
+// The pull requests each head directory's records name, by path, as of the directory's mtime: a
+// directory whose records name other pull requests only is not read again until a record lands in it.
+const headPrs = new Map<string, { mtimeMs: number; prs: number[] }>()
+
+// The records of the gate's pull request at its earlier heads, read once each, by head.
+async function earlierRecords($: any, gate: Gate, root: string): Promise<Map<string, RecordFile[]>> {
+  const dir = root + '/' + gate.repo.toLowerCase()
+  const found = new Map<string, RecordFile[]>()
+  let heads: string[]
+  try {
+    heads = (await $.fs.list(dir))
+      .filter((x: any) => x?.kind === 'directory' && SHA.test(String(x.name)) && x.name !== gate.head)
+      .map((x: any) => String(x.name))
+  } catch {
+    return found
+  }
+  for (const head of heads) {
+    const path = dir + '/' + head
+    let mtimeMs = NaN
+    try {
+      mtimeMs = Number((await $.fs.stat(path)).mtimeMs)
+    } catch {
+      // Read as changed.
+    }
+    const known = headPrs.get(path)
+    if (known && known.mtimeMs === mtimeMs && !known.prs.includes(Number(gate.pr))) continue
+    const files = await headRecords($, gate, head).catch(() => [])
+    if (Number.isFinite(mtimeMs)) headPrs.set(path, { mtimeMs, prs: recordPrs(files) })
+    found.set(head, files)
+  }
+  return found
+}
+
+// The records an earlier head of the same commits carries to the gate's head, for the kinds it has none of.
 async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<Carried[]> {
   const wanted = gate.state === 'open' ? unrecorded(gate, files) : []
   const root = wanted.length > 0 ? await recordsRoot($) : undefined
   if (!root) return []
-  let heads: string[]
-  try {
-    heads = (await $.fs.list(root + '/' + gate.repo.toLowerCase()))
-      .filter((x: any) => x?.kind === 'directory' && SHA.test(String(x.name)) && x.name !== gate.head)
-      .map((x: any) => String(x.name))
-  } catch {
-    return []
-  }
   const candidates: Array<{ head: string; kinds: Carried['kind'][] }> = []
-  for (const head of heads) {
-    const kinds = carriable(gate, head, await headRecords($, gate, head).catch(() => [])).filter((kind) => wanted.includes(kind))
+  for (const [head, records] of await earlierRecords($, gate, root)) {
+    const kinds = carriable(gate, head, records).filter((kind) => wanted.includes(kind))
     if (kinds.length > 0) candidates.push({ head, kinds })
   }
   if (candidates.length === 0) return []
-  let current: string
+  let current: Fingerprint
   try {
     current = await headFingerprint($, gate.repo, gate.pr, gate.head)
   } catch (err: any) {
@@ -849,8 +883,14 @@ async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<
   for (const { head, kinds } of candidates) {
     const fresh = kinds.filter((kind) => !carried.some((c) => c.kind === kind))
     if (fresh.length === 0) continue
-    const earlier = await headFingerprint($, gate.repo, gate.pr, head).catch(() => undefined)
-    if (earlier === current) for (const kind of fresh) carried.push({ kind, from: head })
+    let earlier: Fingerprint
+    try {
+      earlier = await headFingerprint($, gate.repo, gate.pr, head, current.commits)
+    } catch (err: any) {
+      note($, uncarriedLine(gate.repo, gate.pr, gate.head, String(err?.message ?? err).trim(), head))
+      continue
+    }
+    if (earlier.fingerprint === current.fingerprint) for (const kind of fresh) carried.push({ kind, from: head })
   }
   return wanted.flatMap((kind) => carried.filter((c) => c.kind === kind))
 }
@@ -1628,7 +1668,7 @@ async function writeRecord($: any, e: any, origin: string): Promise<{ result?: s
 }
 
 // At most once a day, the head directories whose newest record is older than
-// PRUNE_DAYS go: their pull request merged or moved on long ago.
+// PRUNE_DAYS go, their pull request merged or moved on long ago, and the fingerprints kept as long.
 async function pruneRecords($: any): Promise<void> {
   const root = await recordsRoot($)
   if (!root || !(await $.fs.exists(root))) return
@@ -1652,6 +1692,15 @@ async function pruneRecords($: any): Promise<void> {
         }
         if (newest < cut) stale.push(head)
       }
+    }
+  }
+  // The fingerprints kept for the heads, by the same cut-off.
+  const data = await dataDir($)
+  if (data) {
+    for (const file of await $.fs.list(data).catch(() => [])) {
+      const name = String(file?.name ?? '')
+      if (!name.startsWith(FINGERPRINT_PREFIX) || !name.endsWith('.json')) continue
+      if (Number((await $.fs.stat(data + '/' + name)).mtimeMs) < cut) stale.push(data + '/' + name)
     }
   }
   if (stale.length > 0) await $.process.run(['rm', '-rf', '--', ...stale], { timeoutMs: 60_000 })

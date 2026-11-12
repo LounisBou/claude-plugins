@@ -42,7 +42,7 @@ Before writing a text, read its rules in `writing/` beside this file.
 | `pr-status` | `<pr>` | State, draft flag, head and base |
 | `pr-checks` | `<pr>` | Combined commit status and check runs |
 | `pr-gate` | `<pr>` | `{"repo", "pr", "state", "draft", "head", "labels", "ci": {"result", "failed", "running", "skipped", "total"}}`, the reads the ready guard decides on (below) |
-| `pr-fingerprint` | `<pr> <head>` | `{"head", "base", "fingerprint"}` of the PR's own diff at that head, line offsets apart |
+| `pr-fingerprint` | `<pr> <head> [--count K]` | `{"head", "commits", "fingerprint"}` of the PR's K (default: all) commits ending at that head, by first parents, no merge |
 | `pr-diff` | `<pr>` | Unified diff as plain text |
 | `pr-files` | `<pr>` | Changed paths with their patches, paginated |
 | `pr-commits` | `<pr>` | Commits on the PR, paginated |
@@ -288,12 +288,12 @@ Requires push access to the repository.
 
 ### How the guard reads it, and how a head voids it
 
-- The guard reads the PR's head from GitHub (`pr-gate`) and lists `<root>/<owner>/<name>/<head>/`. Only that directory counts. A record written at any other sha, older or not yet pushed, is not read.
+- The guard reads the PR's head from GitHub (`pr-gate`) and lists `<root>/<owner>/<name>/<head>/`.
 - Per kind, the record with the latest `at` decides, so a later `fail` overrides an earlier `pass`. A file that does not parse, or whose `repo`, `head` or `pr` disagree with its path or with the PR, is skipped, and the refusal names it when a kind is missing or not accepted.
 - Accepted: `review` `pass`, `norms` `pass`, `e2e` `pass` or `waived`. Anything else, or no record, is missing.
 - A kind missing at the head takes an accepted record of an earlier head of the PR with the same `pr-fingerprint`, an E2E pass apart (`<kind> carried from <head7>`).
 - Otherwise a moved head voids every record by construction, with nothing deleted. A record written before a push matches once that same sha is pushed: a review of an unpushed commit counts once it is on the PR.
-- Pruning: at most daily, the module removes the `<head>` directories whose newest file is older than 90 days.
+- Pruning: at most daily, the module removes the `<head>` directories and fingerprints untouched for 90 days.
 
 ### The producers
 

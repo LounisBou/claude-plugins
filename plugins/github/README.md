@@ -149,7 +149,7 @@ clean review, a passed norms check, passed end-to-end tests (or a waiver the
 operator dated in their own words) and green CI. The `Ready` label, leaving
 draft and a merge need the four; a draft opens with `Not Ready`, and a push to
 the branch puts `Not Ready` back. A rebase that leaves the pull request's own
-diff unchanged carries its review, norms check and E2E waiver to the new head. CI is read from GitHub: no check at all is
+commits unchanged carries its review, norms check and E2E waiver to the new head. CI is read from GitHub: no check at all is
 green, a check that failed, still runs, was skipped, or is neutral on a draft
 is not. The other three are records, one small JSON file per run under
 `${CLAUDE_CONFIG_DIR:-~/.claude}/pr-records/<owner>/<name>/<head>/`, written by

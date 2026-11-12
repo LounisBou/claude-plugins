@@ -56,8 +56,9 @@ type World = {
   branch?: string
   // Every git run fails in the host itself, with this error.
   gitThrows?: string
-  // What pr-fingerprint answers, by head; a head absent fails as a diff that cannot be fingerprinted.
+  // What pr-fingerprint answers, by head, over two commits; a head absent fails with this error, or a merge's.
   fingerprints?: Record<string, string>
+  fingerprintFails?: string
 }
 
 type Seen = {
@@ -69,6 +70,8 @@ type Seen = {
   files: Record<string, string>
   // The context each prompt entered with.
   contexts: string[][]
+  // The paths $.fs read, in order.
+  reads: string[]
 }
 
 function record(kind: string, result: string, at = '2026-11-01T10:00:00Z', over: Record<string, unknown> = {}): [string, string] {
@@ -92,7 +95,7 @@ function gateOf(w: World, pull?: Pull) {
 }
 
 async function world($: any, on: any, w: World = {}): Promise<Seen> {
-  const seen: Seen = { runs: [], asked: [], logs: [], writes: [], bash: [], warnLog: w.warnLog, files: {}, contexts: [] }
+  const seen: Seen = { runs: [], asked: [], logs: [], writes: [], bash: [], warnLog: w.warnLog, files: {}, contexts: [], reads: [] }
   if (w.autoMerge !== undefined) seen.files[AUTO_MERGE] = JSON.stringify({ repositories: w.autoMerge })
   for (const m of w.ciUndrafts ?? []) seen.files[ciUndraftFile(m.repo, m.pr)] = JSON.stringify({ v: 1, ...m })
   const session = 'guard-session-' + ++sessions
@@ -142,6 +145,7 @@ async function world($: any, on: any, w: World = {}): Promise<Seen> {
     return { deny: 'ENOENT ' + e.path }
   })
   on('fs.read', (_$: any, e: any) => {
+    seen.reads.push(e.path)
     if (e.path in seen.files) return { value: seen.files[e.path] }
     if (tree[e.path]?.text !== undefined) return { value: tree[e.path].text }
     if (e.path.startsWith(HEAD_DIR + '/')) {
@@ -210,8 +214,8 @@ async function world($: any, on: any, w: World = {}): Promise<Seen> {
     }
     if (stdin.command === 'pr-fingerprint') {
       const fingerprint = w.fingerprints?.[stdin.args.head]
-      if (!fingerprint) return { value: { exitCode: 1, stdout: '', stderr: 'error: the comparison reaches 300 files' } }
-      return { value: { exitCode: 0, stdout: JSON.stringify({ head: stdin.args.head, base: 'b'.repeat(40), fingerprint }), stderr: '' } }
+      if (!fingerprint) return { value: { exitCode: 1, stdout: '', stderr: w.fingerprintFails ?? 'error: commit 1234567 is a merge' } }
+      return { value: { exitCode: 0, stdout: JSON.stringify({ head: stdin.args.head, commits: stdin.args.count ?? 2, fingerprint }), stderr: '' } }
     }
     if (stdin.command === 'pr-readiness' && w.readinessFails) return { value: { exitCode: 3, stdout: '', stderr: w.readinessFails } }
     if (stdin.command === 'pr-readiness') pull.labels = [stdin.args.state === 'ready' ? 'Ready' : 'Not Ready']
@@ -2119,13 +2123,16 @@ const OLD = 'abcdef0123456789abcdef0123456789abcdef01'
 const OLD_DIR = RECORDS + '/acme/thing/' + OLD
 const SAME = 'a'.repeat(64)
 const OTHER = 'b'.repeat(64)
-const fingerprintRuns = (seen: Seen) => seen.runs.filter((r) => r.command === 'pr-fingerprint').map((r) => r.args.head)
+const fingerprintRuns = (seen: Seen) => seen.runs.filter((r) => r.command === 'pr-fingerprint')
+  .map((r) => r.args.head + (r.args.count === undefined ? '' : ' x' + r.args.count))
+// Each world's earlier head directory has a new mtime, as a directory a record lands in does.
+let earlierMtime = 0
 
 // The earlier head's records as the store holds them, beside the current head's directory.
 function earlier(records: Array<[string, string]>, dir = OLD_DIR): World['tree'] {
   const tree: NonNullable<World['tree']> = {
     [RECORDS + '/acme/thing']: { kind: 'directory', mtimeMs: 0 },
-    [dir]: { kind: 'directory', mtimeMs: 0 },
+    [dir]: { kind: 'directory', mtimeMs: ++earlierMtime },
   }
   for (const [name, text] of records) tree[dir + '/' + name] = { kind: 'file', mtimeMs: 0, text }
   return tree
@@ -2140,9 +2147,9 @@ test('a rebase that leaves the diff unchanged carries the review, the norms chec
   expect(JSON.parse(out.result).labels).toEqual(['Ready'])
   expect(seen.logs).toEqual([READY_LINE.slice(0, -1)
     + ' (review carried from abcdef0, norms carried from abcdef0, e2e carried from abcdef0).'])
-  // Each head is fingerprinted once: the second read takes both from the data directory.
+  // Each head is fingerprinted once, the earlier one over the head's commit count: the second read takes both from the data directory.
   await $.tool.call(gh('pr-gate', { pr: 12 }))
-  expect(fingerprintRuns(seen)).toEqual([HEAD, OLD])
+  expect(fingerprintRuns(seen)).toEqual([HEAD, OLD + ' x2'])
 })
 
 test('a rebase that changed the diff carries nothing', async ($, on) => {
@@ -2170,11 +2177,11 @@ test('a review that failed last at the earlier head is not carried, nor is a kin
     + ' e2e: fail at 0123456 by p-e2e; norms carried from abcdef0'])
 })
 
-test('a head whose diff cannot be fingerprinted carries nothing, and says so in one line', async ($, on) => {
+test('a head whose commits cannot be fingerprinted (a merge in the pull request) carries nothing, and says so in one line', async ($, on) => {
   const seen = await world($, on, { records: {}, labels: ['Ready'], tree: earlier(CLEAN_OLD), fingerprints: { [OLD]: SAME } })
   await $.tool.call(gh('pr-gate', { pr: 12 }))
   expect(seen.logs).toEqual([
-    'github: acme/thing#12: no record of an earlier head carried to 0123456, its diff cannot be fingerprinted: error: the comparison reaches 300 files',
+    'github: acme/thing#12: no record of an earlier head carried to 0123456, its commits cannot be fingerprinted: error: commit 1234567 is a merge',
     'github: acme/thing#12 back to Not Ready at 0123456. Missing: review: no record at 0123456,'
       + ' norms: no record at 0123456, e2e: no record at 0123456',
   ])
@@ -2193,4 +2200,57 @@ test('a refused Ready label names the records carried beside what is missing', a
   await world($, on, { records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
   const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
   expect(out.deny).toContain('Missing: e2e: no record at 0123456; review carried from abcdef0, norms carried from abcdef0.')
+})
+
+test('an earlier head whose commits cannot be fingerprinted carries nothing, and says so in one line', async ($, on) => {
+  const seen = await world($, on, {
+    records: {}, labels: ['Ready'], tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME },
+    fingerprintFails: 'error: abcdef0 has fewer than 2 commits along its first parents',
+  })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs[0]).toBe('github: acme/thing#12: no record of abcdef0 carried to 0123456, its commits cannot be fingerprinted:'
+    + ' error: abcdef0 has fewer than 2 commits along its first parents')
+  expect(seen.logs[1]).toContain('Missing: review: no record at 0123456')
+})
+
+const fingerprintFile = (head: string) => '/data/fingerprint.acme%2Fthing.12.' + head + '.json'
+
+test('a kept fingerprint of another version or commit count is computed again', async ($, on) => {
+  const seen = await world($, on, { records: {}, tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  seen.files[fingerprintFile(HEAD)] = JSON.stringify({ v: 1, fingerprint: OTHER, commits: 2 })
+  seen.files[fingerprintFile(OLD)] = JSON.stringify({ v: 2, fingerprint: SAME, commits: 3 })
+  const out: any = await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(JSON.parse(out.result).labels).toEqual(['Ready'])
+  expect(fingerprintRuns(seen)).toEqual([HEAD, OLD + ' x2'])
+  expect(JSON.parse(seen.files[fingerprintFile(OLD)])).toEqual({ v: 2, repo: 'acme/thing', pr: 12, head: OLD, commits: 2, fingerprint: SAME })
+})
+
+test('an earlier head whose records name only other pull requests is read once, until a record lands in it', async ($, on) => {
+  const tree = earlier([at('review', 'pass', { pr: 13 })])
+  const seen = await world($, on, { records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  const oldReads = () => seen.reads.filter((path) => path.startsWith(OLD_DIR + '/')).length
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(oldReads()).toBe(1)
+  expect(fingerprintRuns(seen)).toEqual([])
+  const [name, text] = at('norms', 'pass')
+  tree![OLD_DIR + '/' + name] = { kind: 'file', mtimeMs: 0, text }
+  tree![OLD_DIR] = { kind: 'directory', mtimeMs: ++earlierMtime }
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  // Read again once it changed: the new record names the pull request, so it is fingerprinted.
+  expect(oldReads()).toBe(3)
+  expect(fingerprintRuns(seen)).toEqual([HEAD, OLD + ' x2'])
+})
+
+test('the daily pruning removes the fingerprints kept past 90 days with the old records', async ($, on) => {
+  const now = Date.now()
+  const tree: World['tree'] = {
+    [RECORDS]: { kind: 'directory', mtimeMs: now },
+    '/data': { kind: 'directory', mtimeMs: now },
+    [fingerprintFile(OLD)]: { kind: 'file', mtimeMs: now - 100 * DAY },
+    [fingerprintFile(HEAD)]: { kind: 'file', mtimeMs: now - 10 * DAY },
+    '/data/auto-merge.json': { kind: 'file', mtimeMs: now - 100 * DAY },
+  }
+  const seen = await world($, on, { tree })
+  expect(seen.runs.map((r) => r.argv)).toEqual([['rm', '-rf', '--', fingerprintFile(OLD)]])
 })
