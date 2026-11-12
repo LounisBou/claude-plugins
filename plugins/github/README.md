@@ -172,9 +172,10 @@ green line.
 
 When the CI does not run on a draft, the pull request leaves draft for it,
 still `Not Ready`, as long as no check of its head has passed. Outside
-auto-merge, once the four hold the gate puts it back to draft, then puts
-`Ready`: `Ready` there always lands on a draft. That undraft runs in every
-repository, with one transcript line:
+auto-merge, once the four hold the gate puts back to draft only a pull request
+the plugin itself took out of draft for its CI (a mark kept in the data directory),
+then puts `Ready`; one the operator took out of draft keeps its place. That undraft
+runs in every repository, with one transcript line:
 
 ```
 github: <owner/name>#<n> out of draft to run CI, still Not Ready
