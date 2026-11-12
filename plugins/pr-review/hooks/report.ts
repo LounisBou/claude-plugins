@@ -12,7 +12,8 @@ const SEVERITIES: readonly string[] = ['critical', 'important', 'suggestion']
 
 export const REPORT_REQUEST = '\n\nEnd your answer with one fenced ```json block holding '
   + '{"findings": [{"severity": "critical" | "important" | "suggestion", "file": "<path>", "summary": "<one line>"}]}: '
-  + 'every finding you report, and an empty list when you found none. The review\'s verdict is computed from this block alone.'
+  + 'every finding you report, and an empty list when you found none. The block is due even then, in place of any '
+  + 'prose such as "no findings" an earlier line allows. The review\'s verdict is computed from this block alone.'
 
 const FENCE = /```json\s*\n([\s\S]*?)\n\s*```/g
 
