@@ -118,6 +118,19 @@ export async function repositoryDir($: any): Promise<string | undefined> {
   }
 }
 
+// The open pull request whose head is `head`, asked of the github plugin, or undefined: none, no
+// plugin, an unreadable answer. A detached head names no branch to ask about; its commit does.
+export async function openPullAt($: any, head: string): Promise<{ number?: unknown; base?: { ref?: unknown } } | undefined> {
+  try {
+    const answer = await $.tool.call({ tool: GH_TOOL, command: 'pr-list', args: {} })
+    if (answer?.deny || answer?.isError) return undefined
+    const pulls = JSON.parse(String(answer?.result ?? answer?.text ?? ''))
+    return Array.isArray(pulls) ? pulls.find(p => p?.head?.sha === head) : undefined
+  } catch {
+    return undefined
+  }
+}
+
 async function git($: any, argv: string[], dir?: string): Promise<string> {
   const r = await $.process.run(argv, { timeoutMs: GIT_TIMEOUT_MS, ...(dir ? { cwd: dir } : {}) })
   if (r.exitCode !== 0) throw new Error(`${argv.join(' ')}: ${String(r.stderr).trim() || 'exit ' + r.exitCode}`)
@@ -178,7 +191,9 @@ export async function checkDone($: any, input: any): Promise<{ result: string; i
     } catch {
       return { result: none('the github plugin is absent or older than 0.12.0') }
     }
-    const pr = Number(numberText)
+    let pr = Number(numberText)
+    // No pull request for the branch: a detached head (a review checkout) names none, its commit may.
+    if (!Number.isInteger(pr) || pr < 1) pr = Number((await openPullAt($, head))?.number)
     if (!Number.isInteger(pr) || pr < 1) return { result: none('the branch has no pull request') }
     let recorded: { text: string } | { why: string }
     try {

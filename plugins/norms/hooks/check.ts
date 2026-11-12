@@ -14,7 +14,7 @@ import {
   DIFF_INLINE_MAX, type Scope, type ReferencePaths,
 } from './scope.ts'
 import { isSpawned } from '../core/env.ts'
-import { markScope, repositoryDir } from './record.ts'
+import { markScope, openPullAt, repositoryDir } from './record.ts'
 
 const GIT_TIMEOUT_MS = 30_000
 // Agents spawned in one message reuse the scope the command computed.
@@ -37,15 +37,16 @@ const at = (dir: string | undefined, name: string) => (dir ? `${dir}/${name}` : 
 // pull request whose head is `detachedHead`.
 export async function pullRequestBase($: any, detachedHead?: string): Promise<string | undefined> {
   try {
-    const answer = await $.tool.call(
-      detachedHead
-        ? { tool: 'mcp__github__gh', command: 'pr-list', args: {} }
-        : { tool: 'mcp__github__gh', command: 'pr-get', args: {} },
-    )
-    if (answer?.deny || answer?.isError) return undefined
-    const pulls = JSON.parse(String(answer?.result ?? answer?.text ?? ''))
-    if (!Array.isArray(pulls)) return undefined
-    const pull = detachedHead ? pulls.find(p => p?.head?.sha === detachedHead) : pulls[0]
+    let pull: { base?: { ref?: unknown } } | undefined
+    if (detachedHead) {
+      pull = await openPullAt($, detachedHead)
+    } else {
+      const answer = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-get', args: {} })
+      if (answer?.deny || answer?.isError) return undefined
+      const pulls = JSON.parse(String(answer?.result ?? answer?.text ?? ''))
+      if (!Array.isArray(pulls)) return undefined
+      pull = pulls[0]
+    }
     const ref = pull?.base?.ref
     return typeof ref === 'string' && /^[\w./-]+$/.test(ref) ? ref : undefined
   } catch {

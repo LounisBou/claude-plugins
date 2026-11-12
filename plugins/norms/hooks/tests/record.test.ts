@@ -453,7 +453,7 @@ test('a ui.log that returns a rejected promise has its rejection caught, and the
   }
 })
 
-// ── a review checkout the session's directory moved out of ──
+// ── a review checkout: the session's directory moved out of it, or a detached head ──
 
 // The git answers of setup(), as runs in `dir` rather than in the session's directory.
 const runsIn = (dir: string, runs: FakeSetup['runs'] = {}): FakeSetup['runs'] => Object.fromEntries(Object.entries({
@@ -484,4 +484,55 @@ test('a check run after a shell cd out of the repository reads the project root\
   const out = await m.done($, { open: 0, fixed: 0, passed: 1 })
   expect(out.result).toBe('record: ' + WRITTEN)
   expect(recordCalls(calls).map(c => c.pr)).toEqual([12])
+})
+
+test('a review checkout on a detached head records at the open pull request whose head it is', async () => {
+  resetCache()
+  const calls: any[] = []
+  const pulls = JSON.stringify([
+    { number: 7, head: { sha: NEW_HEAD }, base: { ref: 'main' } },
+    { number: 12, head: { sha: HEAD }, base: { ref: 'main' } },
+  ])
+  const { $ } = fakeDollar({
+    runs: {
+      ...gitRuns(['src/a.ts'], ['src/a.ts'], {}, 'main'),
+      'git rev-parse --abbrev-ref HEAD': { stdout: 'HEAD\n' },
+      'git status --porcelain -uno': { stdout: '' },
+      'git remote get-url origin': { stdout: 'git@github.com:Owner/Repo.git\n' },
+    },
+    tool: (input: any) => {
+      calls.push(input)
+      if (input.tool === 'mcp__github__record') return { result: WRITTEN + '\n' }
+      // The github plugin asks the branch `HEAD` for its pull request: there is none.
+      return { result: input.command === 'pr-list' ? pulls : '' }
+    },
+  })
+  const m = mounted()
+  await m.scope($)
+  const out = await m.done($, { open: 0, fixed: 0, passed: 1 })
+  expect(out.result).toBe('record: ' + WRITTEN)
+  expect(recordCalls(calls).map(c => c.pr)).toEqual([12])
+})
+
+test('a detached head that no open pull request has as its head leaves no record', async () => {
+  resetCache()
+  const calls: any[] = []
+  const { $ } = fakeDollar({
+    runs: {
+      ...gitRuns(['src/a.ts'], ['src/a.ts'], {}, 'main'),
+      'git rev-parse --abbrev-ref HEAD': { stdout: 'HEAD\n' },
+      'git status --porcelain -uno': { stdout: '' },
+      'git remote get-url origin': { stdout: 'git@github.com:Owner/Repo.git\n' },
+    },
+    tool: (input: any) => {
+      calls.push(input)
+      return { result: input.command === 'pr-list' ? JSON.stringify([{ number: 7, head: { sha: NEW_HEAD }, base: { ref: 'main' } }]) : '' }
+    },
+  })
+  const m = mounted()
+  const { next } = nextOf()
+  await m.hooks.find(h => h.event === 'command.run')!.handler($, { args: 'base=main' }, next)
+  const out = await m.done($, { open: 0, fixed: 0, passed: 1 })
+  expect(out.result).toBe('record: none — the branch has no pull request')
+  expect(recordCalls(calls)).toEqual([])
 })
