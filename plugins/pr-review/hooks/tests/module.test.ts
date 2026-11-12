@@ -410,7 +410,7 @@ test('the model\'s own count is not read: an agent without its block leaves the 
   for (let i = 1; i <= 5; i++) {
     await loopCall($, { action: 'begin_pass' })
     await review($)
-    await loopCall($, { action: 'findings', keys: ['k' + i], blocking: 0 })
+    await loopCall($, { action: 'findings', keys: ['k' + i] })
   }
   await loopCall($, { action: 'begin_pass' })
   expect(stubs.records[0].result).toBe('fail')
@@ -1250,4 +1250,24 @@ test('findings with keys give up on a reader after three waits between other han
   expect(out.isError).toBe(true)
   expect(String(out.result)).toContain('never handed back after 3 waits')
   expect(stubs.records).toEqual([])
+})
+
+test('a delivered hand-back of a foreign reader, or of none, fills no reader\'s place', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireHandBack(on)
+  await backgroundReviewerPass(on, $, stubs)
+  await readerHandBack($, 'a0000000000000099', agentAnswer([]))
+  await $.tool.call({ tool: 'SubagentHandback', message: agentAnswer([]) } as any)
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(String(out.result)).toContain('1 review agents are still running')
+  expect(stubs.records).toEqual([])
+})
+
+test('a background reader whose turn ends otherwise than with an answer is silent: the severity is unknown', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  on('turn.complete', (_$: any, e: any) => ({ text: e.answer }))
+  await backgroundReviewerPass(on, $, stubs)
+  await $.turn.complete({ agentId: READER, reason: 'error', answer: agentAnswer([]), turnId: 't', durationMs: 1 } as any)
+  await loopCall($, { action: 'findings', keys: ['f0::s'] })
+  expect(stubs.records.map((r) => [r.result, r.detail])).toEqual([['fail', 'reviewed: 1 findings, severity unknown']])
 })
