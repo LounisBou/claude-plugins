@@ -437,7 +437,7 @@ test('the remaining cases: idle agents and nothing to wake are flagged for the l
     reason: 'Your last line is not the machine line: end the message with the line waiting: operator — blocks: <what it blocks>, or with waiting: done, '
       + 'or, if the operator deferred it, his ruling recorded: waiting: deferred — <n> items, as the message\'s last line, no markup. '
       + 'waiting: tool — <what is watched> fits only while a command or monitor you started runs in the background. '
-      + 'Or declare it with declare_wait({kind: "operator" | "tool" | "done" | "deferred", blocks}), which the gate reads in place of the line.',
+      + 'Or declare it: declare_wait({kind: "operator", blocks, question}) or declare_wait({kind: "tool" | "done" | "deferred", blocks}); the gate reads it in place of the line.',
   })
   expect(checkWake({ agents: [], resident: false, delivered: [], message: 'waiting: your call?' })).toEqual({
     case: 'question-without-blocks',
@@ -2369,6 +2369,33 @@ test('a turn that declared its question passes the stop whatever its prose, firs
   expect(fx.written.some(l => l.includes('an operator wait with no question'))).toBe(false)
 })
 
+test('a message ending in an open code fence still carries the declared question, the fence closed first', async () => {
+  const wait = waitMounted()
+  const fx = fakeDollar({})
+  await declare(wait, fx.dollar, { kind: 'operator', blocks: 'the mode', question: ASKED })
+  const open = 'Voici la commande :\n```bash\nnpm test'
+  const handed = withDeclaredWait(open, { kind: 'operator', blocks: 'the mode', question: ASKED })
+  expect(handed).toContain('npm test\n```\n\n**Question 1 of 1**')
+  const passed = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: open, ...NOTHING_RUNS }))
+  expect(passed.answer).toBe(passed.passed)
+  expect(fx.written.some(l => l.includes('an operator wait with no question'))).toBe(false)
+})
+
+test('a different question block in the message does not hide the declared one: the two are several questions, refused', async () => {
+  const wait = waitMounted()
+  const fx = fakeDollar({})
+  await declare(wait, fx.dollar, { kind: 'operator', blocks: 'the mode', question: ASKED })
+  const other = ASKED.replace('the report', 'another subject')
+  const handed = withDeclaredWait(other, { kind: 'operator', blocks: 'the mode', question: ASKED })
+  expect(handed).toContain('another subject')
+  expect(handed).toContain('_Subject_ : the report')
+  const held = await chainedStop(wait, fx.dollar, stopEvent({ last_assistant_message: other, ...NOTHING_RUNS }))
+  expect(String((held.answer as any).block)).toContain('One question per turn')
+  // The same block, differently spaced, is the declared one: not given a second copy.
+  const spaced = withDeclaredWait(ASKED.replace('_Subject_ : the', '_Subject_  :  the'), { kind: 'operator', blocks: 'the mode', question: ASKED })
+  expect(spaced.split('**Question 1 of 1**').length).toBe(2)
+})
+
 // The coordinator of the machine, as its record names it, and the messages the module sent it.
 function withCoordinator(fx: ReturnType<typeof fakeDollar>): string[] {
   const sent: string[] = []
@@ -2398,6 +2425,34 @@ test('a re-fired stop whose operator wait still holds no question is refused twi
   // A later turn starts over: its first stop is refused, and so is its re-fired one.
   await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED }))
   expect(((await refired()).answer as any).block).toContain('**Question i of N**')
+})
+
+test('a fresh stop starts the refusal count over: the next re-fired stops are refused the whole bound again', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({})
+  const sent = withCoordinator(fx)
+  const refired = () => stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED, stop_hook_active: true }))
+  await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED }))
+  expect(((await refired()).answer as any).block).toContain('**Question i of N**')
+  // Without the reset the count stands at one, and only one more refusal would come.
+  await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED }))
+  for (let i = 0; i < REFIRED_REFUSALS; i++) expect(((await refired()).answer as any).block).toContain('**Question i of N**')
+  expect(sent).toEqual([])
+  const last = await refired()
+  expect(last.answer).toBe(last.passed)
+})
+
+test('a notice to the coordinator that never resolves does not hold the stop past its deadline', async () => {
+  const { handlers } = mounted()
+  const fx = fakeDollar({ env: { ORCHESTRATOR_STOP_GATE_DEADLINE: '0.3' } })
+  withCoordinator(fx)
+  fx.dollar.session.send = () => new Promise(() => {})
+  for (let i = 0; i < REFIRED_REFUSALS; i++) await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED, stop_hook_active: true }))
+  const started = Date.now()
+  const last = await stop(handlers['classic.Stop'], fx.dollar, stopEvent({ last_assistant_message: UNASKED, stop_hook_active: true }))
+  expect(last.answer).toBe(last.passed)
+  expect(Date.now() - started).toBeLessThan(3000)
+  expect(fx.written.some(l => l.includes('the notice to the coordinator did not finish within the deadline'))).toBe(true)
 })
 
 test('a re-fired stop the gate used to step aside from still does when nothing asks the operator, or the session is no orchestrator', async () => {

@@ -12,7 +12,7 @@ import { waitLine, WAIT_KINDS, type DeclaredWait, type WaitKind } from './stop-g
 import { logArgv, LOG_TIMEOUT_MS } from './module-log.ts'
 import { CONSENT_KINDS, parseConsentSubject, type ConsentSubject } from '../core/consent-record.ts'
 import { messageOf, type Host, type On } from './host.ts'
-import { outsideFences, oneQuestionRefusal, questionDefectRefusal } from './one-question.ts'
+import { openFence, outsideFences, oneQuestionRefusal, questionDefectRefusal } from './one-question.ts'
 import { entryQuestions } from './round.ts'
 
 // The nouns the declaration holds.
@@ -45,11 +45,14 @@ function checkQuestion(question: unknown): { question: string } | { error: strin
   return defect === null ? { question: question.trim() } : { error: defect }
 }
 
-// The question block an operator wait holds that the message does not: appended above the line.
+const flat = (text: string): string => text.replace(/\s+/g, ' ').trim()
+
+// The question block an operator wait holds that the message does not show as it is: appended above the
+// line. The call's question is authoritative: a different numbered block in the message does not hide it,
+// the two then make several questions in one turn, which the stop gate refuses.
 function questionMissingFrom(message: string, wait: DeclaredWait): string | null {
   if (wait.kind !== 'operator' || !wait.question) return null
-  const shown = entryQuestions({ question: outsideFences(message), choices: [], recommendation: null }).some(part => part.number !== null)
-  return shown ? null : wait.question
+  return flat(outsideFences(message)).includes(flat(wait.question)) ? null : wait.question
 }
 
 // The tool's input, validated: the declaration, or why it is none.
@@ -111,7 +114,10 @@ export function declaredConsent(declarations: Declarations = DECLARATIONS): Cons
 // and the gate read the question from the call, whatever the prose around it says.
 export function withDeclaredQuestion(message: string, wait: DeclaredWait | null): string {
   const missing = wait === null ? null : questionMissingFrom(message, wait)
-  return missing === null ? message : `${message.replace(/\s+$/, '')}\n\n${missing}`
+  if (missing === null) return message
+  // A message that ends inside a code fence has it closed first: the block would else be quoted text.
+  const fence = openFence(message)
+  return `${message.replace(/\s+$/, '')}${fence === null ? '' : `\n${fence}`}\n\n${missing}`
 }
 
 // The message as the gate and the turn's end read it: the declaration's question, then its line written last.

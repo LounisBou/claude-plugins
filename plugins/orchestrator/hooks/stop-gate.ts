@@ -93,7 +93,7 @@ export function waitLine(wait: DeclaredWait): string {
 }
 
 // The sentence every refusal about the ending carries: the call that declares the wait.
-const DECLARE = 'Or declare it with declare_wait({kind: "operator" | "tool" | "done" | "deferred", blocks}), which the gate reads in place of the line.'
+const DECLARE = 'Or declare it: declare_wait({kind: "operator", blocks, question}) or declare_wait({kind: "tool" | "done" | "deferred", blocks}); the gate reads it in place of the line.'
 
 // --- the refusal texts (stop_gate.py:126-146, verbatim but where the tool line changed them) -----------------------------------
 

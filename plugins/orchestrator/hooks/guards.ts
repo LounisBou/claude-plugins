@@ -506,7 +506,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       // with the marker set, and the gate steps aside before it reads anything — but for an
       // operator wait that still holds no question block, read off the message alone: that one
       // is refused again, within REFIRED_REFUSALS (below).
-      const refired = e.stop_hook_active === true
+      const refired = Boolean(e.stop_hook_active)
       if (refired && operatorWaitRefusal(String(e.last_assistant_message ?? '')) === null) return next(e)
       const sessionId = String(e.session_id ?? '')
       if (!refired) unaskedRefusals.delete(sessionId)
@@ -528,7 +528,7 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
       if (role !== 'orchestrator' && role !== 'coordinator') return next(e)
       if (refired) {
         if (role !== 'orchestrator') return next(e)
-        return await refiredWithoutQuestion($, unaskedRefusals, sessionId, name, String(e.last_assistant_message ?? '')) ?? next(e)
+        return await refiredWithoutQuestion($, unaskedRefusals, sessionId, name, String(e.last_assistant_message ?? ''), until) ?? next(e)
       }
       // One question per turn, for the orchestrator and the coordinator alike: read off the
       // message alone, before any read the checks pay.
@@ -757,7 +757,8 @@ export function register(on: (...args: [event: string, handler: Function] | [eve
 // A re-fired stop (the host sets stop_hook_active after a refusal) of an orchestrator whose message still
 // ends on an operator wait with no question block: refused again, REFIRED_REFUSALS times, then let through
 // (null) with one log line and a notice to its coordinator that it waits on the operator without asking him.
-async function refiredWithoutQuestion($: any, paidBySession: Map<string, number>, sessionId: string, name: string, message: string): Promise<{ block: string } | null> {
+// The notice runs under the gate's deadline: a coordinator that never answers never holds the stop.
+async function refiredWithoutQuestion($: any, paidBySession: Map<string, number>, sessionId: string, name: string, message: string, until: number): Promise<{ block: string } | null> {
   const paid = paidBySession.get(sessionId) ?? 0
   if (paid < REFIRED_REFUSALS) {
     paidBySession.set(sessionId, paid + 1)
@@ -767,13 +768,14 @@ async function refiredWithoutQuestion($: any, paidBySession: Map<string, number>
   paidBySession.delete(sessionId)
   await logLine($, `stop gate: an operator wait with no question let through after ${REFIRED_REFUSALS} more refusals (${name})`)
   try {
-    const coordinator = await coordinatorAddress($)
-    if (coordinator) {
+    const told = await inTime($, async () => {
+      const coordinator = await coordinatorAddress($)
+      if (!coordinator) return 'no coordinator to tell that an orchestrator waits on the operator with no question'
       const sent = await sendToCoordinator($, coordinator.to, `[module] ${name} ended its turn waiting on the operator with no question block, after ${REFIRED_REFUSALS + 1} refusals: he was not asked anything. Ask it of ${name}, or ask him for it.`)
-      if (!sent?.isDelivered) await logLine($, `stop gate: the notice to the coordinator was not delivered: ${sent?.reason ?? 'no answer'}`)
-    } else {
-      await logLine($, 'stop gate: no coordinator to tell that an orchestrator waits on the operator with no question')
-    }
+      return sent?.isDelivered ? '' : `the notice to the coordinator was not delivered: ${sent?.reason ?? 'no answer'}`
+    }, until)
+    if (told === null) await logLine($, 'stop gate: the notice to the coordinator did not finish within the deadline')
+    else if (told !== '') await logLine($, `stop gate: ${told}`)
   } catch (err) {
     await logLine($, `stop gate: the notice to the coordinator failed: ${(err as Error).message}`)
   }
