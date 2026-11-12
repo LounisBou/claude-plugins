@@ -20,6 +20,8 @@ type World = {
   // pr-gate's answer: an object, raw text, or a failing exit with this stderr.
   gate?: any
   gateFails?: string
+  // The line pr-gate and pr-checks print on stderr while they succeed (the Actions runs unread).
+  readStderr?: string
   labels?: string[]
   ci?: Record<string, unknown>
   // The records at the head, by file name; omitted: the four pass.
@@ -210,13 +212,14 @@ async function world($: any, on: any, w: World = {}): Promise<Seen> {
     if (stdin.command === 'pr-gate') {
       if (w.gateFails) return { value: { exitCode: 3, stdout: '', stderr: w.gateFails } }
       const gate = gateOf(w, pull)
-      return { value: { exitCode: 0, stdout: typeof gate === 'string' ? gate : JSON.stringify(gate), stderr: '' } }
+      return { value: { exitCode: 0, stdout: typeof gate === 'string' ? gate : JSON.stringify(gate), stderr: w.readStderr ?? '' } }
     }
     if (stdin.command === 'pr-fingerprint') {
       const fingerprint = w.fingerprints?.[stdin.args.head]
       if (!fingerprint) return { value: { exitCode: 1, stdout: '', stderr: w.fingerprintFails ?? 'error: commit 1234567 is a merge' } }
       return { value: { exitCode: 0, stdout: JSON.stringify({ head: stdin.args.head, commits: stdin.args.count ?? 2, fingerprint }), stderr: '' } }
     }
+    if (stdin.command === 'pr-checks' && w.readStderr) return { value: { exitCode: 0, stdout: 'ok', stderr: w.readStderr } }
     if (stdin.command === 'pr-readiness' && w.readinessFails) return { value: { exitCode: 3, stdout: '', stderr: w.readinessFails } }
     if (stdin.command === 'pr-readiness') pull.labels = [stdin.args.state === 'ready' ? 'Ready' : 'Not Ready']
     if (stdin.command === 'pr-draft') pull.draft = true
@@ -1765,6 +1768,32 @@ test('a read of the checks through the tool puts Ready when the four hold, its o
   expect(seen.logs).toEqual([READY_LINE])
   expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
   expect(gates(seen)).toBe(2)
+})
+
+const ACTIONS_LINE = 'error: cannot read the Actions runs of ' + HEAD + ': boom (HTTP 500)'
+
+test('a read of the gate through the tool shows the line of its Actions call, after a JSON the module still read', async ($, on) => {
+  const seen = await world($, on, { readStderr: ACTIONS_LINE + '\n' })
+  const out: any = await $.tool.call(gh('pr-gate', { pr: 12 }))
+  const cut = out.result.lastIndexOf('\n')
+  expect(out.result.slice(cut + 1)).toBe(ACTIONS_LINE)
+  // The module parsed the output as the gate wrote it: it put Ready and rewrote the labels.
+  expect(JSON.parse(out.result.slice(0, cut)).labels).toEqual(['Ready'])
+  expect(readinessRuns(seen)).toEqual([['acme/thing', { pr: 12, state: 'ready' }]])
+})
+
+test('a read of the checks through the tool shows the line of its Actions call', async ($, on) => {
+  await world($, on, { readStderr: ACTIONS_LINE + '\n' })
+  const out: any = await $.tool.call(gh('pr-checks', { pr: 12 }))
+  expect(out.result).toBe('ok\n' + ACTIONS_LINE)
+})
+
+test('the guard reads the gate with that line on stderr, shows it nowhere, and still parses', async ($, on) => {
+  const seen = await world($, on, { readStderr: ACTIONS_LINE + '\n', autoMerge: ['acme/thing'] })
+  const out: any = await $.tool.call(gh('pr-ready', { pr: 12 }))
+  expect(out).toEqual({ result: 'ok' })
+  expect(commands(seen)).toEqual(['pr-gate', 'pr-ready'])
+  expect(seen.logs).toEqual([])
 })
 
 test('a read that finds the four short of a pull request not Ready says nothing', async ($, on) => {
