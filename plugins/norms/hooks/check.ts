@@ -14,7 +14,7 @@ import {
   DIFF_INLINE_MAX, type Scope, type ReferencePaths,
 } from './scope.ts'
 import { isSpawned } from '../core/env.ts'
-import { branchPull, markScope, openPullAt, repositoryDir, repositoryOf, type Lookup } from './record.ts'
+import { branchPull, markScope, markedDir, openPullAt, repositoryDir, repositoryOf, type Lookup } from './record.ts'
 
 const GIT_TIMEOUT_MS = 30_000
 // Agents spawned in one message reuse the scope the command computed.
@@ -86,12 +86,13 @@ export async function computeScope($: any, baseArg?: string, dir?: string): Prom
   return { base, baseArg, head, branch, files, types: projectTypes(root), hasContributing, hasTestInfra }
 }
 
-async function checkPaths($: any, paths: string[]): Promise<ReferencePaths> {
+// The reference paths the words name, a relative one read from the repository the check reads.
+async function checkPaths($: any, paths: string[], dir?: string): Promise<ReferencePaths> {
   const home = (await $.env.get('HOME').catch(() => undefined)) ?? ''
   const found: string[] = []
   const missing: string[] = []
   for (const p of paths) {
-    const expanded = p.startsWith('~/') && home ? home + p.slice(1) : p
+    const expanded = p.startsWith('~/') && home ? home + p.slice(1) : p.startsWith('/') || p.startsWith('~') ? p : at(dir, p)
     const stat = await $.fs.stat(expanded).catch(() => null)
     if (stat && (stat.kind === 'dir' || stat.kind === 'file')) found.push(p)
     else missing.push(p)
@@ -101,11 +102,13 @@ async function checkPaths($: any, paths: string[]): Promise<ReferencePaths> {
 
 // The last scope /norms:check computed, for the agents it then spawns. A
 // module variable: a reload loses it, and the spawn hook computes afresh.
-// `dir` is the repository it was computed in, when not the session's own directory.
+// `dir` is the repository it was computed in: a scope is reused there only.
 let cached: { scope: Scope; at: number; dir?: string } | undefined
 
+// The repository is the one the check marked, so a shell `cd` into another repository between the
+// check and its agents is not taken for the reviewed one.
 async function scopeForSpawn($: any): Promise<{ scope: Scope; dir?: string }> {
-  const dir = await repositoryDir($)
+  const dir = (await markedDir($)) ?? await repositoryDir($)
   const head = (await run($, ['git', 'rev-parse', 'HEAD'], dir)).trim()
   if (cached && cached.dir === dir && cached.scope.head === head && Date.now() - cached.at < SCOPE_TTL_MS) return cached
   const scope = await computeScope($, cached?.scope.baseArg, dir)
@@ -141,11 +144,11 @@ async function withScope($: any, words: string): Promise<string> {
   }
   const scope = await computeScope($, base, dir)
   cached = { scope, at: Date.now(), dir }
-  const refs = await checkPaths($, args.paths)
+  const refs = await checkPaths($, args.paths, dir)
   const spawned: unknown = await $.env.get('ORCHESTRATOR_SPAWNED').catch(() => undefined)
   const block = scopeBlock(scope, args, refs, args.auto === true || isSpawned(typeof spawned === 'string' ? spawned : undefined))
   // Last, so the mark means the block is delivered.
-  await markScope($, scope.head, Object.values(scope.files).flat())
+  await markScope($, scope.head, Object.values(scope.files).flat(), dir)
   return (typed ? typed + '\n\n' : '') + block
 }
 
@@ -181,7 +184,7 @@ export function register(on: any): void {
         diff = undefined
       }
     }
-    const block = contextBlock({ agent, base: scope.base, head: scope.head, files, diff, diffPath, diffStat, contributing })
+    const block = contextBlock({ agent, dir, base: scope.base, head: scope.head, files, diff, diffPath, diffStat, contributing })
     return next({ ...e, prompt: `${e.prompt}\n\n${block}` })
   }).catch(($: any, e: any, next: any) => next(e))
 }

@@ -48,7 +48,8 @@ export function asMark(value: unknown): Mark | undefined {
   const v = value as Record<string, unknown>
   if (typeof v.head !== 'string' || !/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(v.head)) return undefined
   if (typeof v.at !== 'number' || !Array.isArray(v.files) || !v.files.every(f => typeof f === 'string')) return undefined
-  return { head: v.head, at: v.at, files: v.files as string[] }
+  if (v.dir !== undefined && (typeof v.dir !== 'string' || !v.dir.startsWith('/'))) return undefined
+  return { head: v.head, at: v.at, files: v.files as string[], ...(typeof v.dir === 'string' ? { dir: v.dir } : {}) }
 }
 
 // One line in the session's log. A log that throws or rejects draws nothing: what the line
@@ -62,8 +63,10 @@ function warn($: any, line: string): void {
   }
 }
 
-export async function markScope($: any, head: string, files: readonly string[] = []): Promise<void> {
-  const mark: Mark = { head, at: Date.now(), files: [...files] }
+// `dir`: the repository the check read, so that a later shell `cd` into another repository is not
+// taken for the reviewed one.
+export async function markScope($: any, head: string, files: readonly string[] = [], dir?: string): Promise<void> {
+  const mark: Mark = { head, at: Date.now(), files: [...files], ...(dir ? { dir } : {}) }
   try {
     await $.state.set({ plugin: 'norms', key: 'scopeMark' }, mark)
     fallback = undefined
@@ -93,6 +96,11 @@ async function readMark($: any): Promise<Mark | undefined> {
     // Unreadable: the memory copy, if any, is the mark.
   }
   return fallback
+}
+
+// The repository the last /norms:check of this session read, or undefined when no mark names one.
+export async function markedDir($: any): Promise<string | undefined> {
+  return (await readMark($))?.dir
 }
 
 // owner/name from a remote url: scp-like, https or ssh://. Undefined for a
@@ -202,7 +210,8 @@ export async function checkDone($: any, input: any): Promise<{ result: string; i
     return { result: 'norms: open, fixed and passed are whole numbers, 0 or more', isError: true }
   }
   try {
-    const dir = await repositoryDir($)
+    // The repository the check read, not the one a later shell `cd` landed in.
+    const dir = checked.dir ?? await repositoryDir($)
     // First, so the reason is clear: a record is written on a clean checkout.
     if ((await git($, ['git', 'status', '--porcelain', '-uno'], dir)).trim() !== '') {
       return { result: none('the tracked files have changes') }

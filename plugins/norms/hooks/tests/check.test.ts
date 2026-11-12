@@ -308,3 +308,71 @@ test('/norms:check on a branch with no pull request takes the default branch the
   expect(args).toContain(`base: ${BASE}\n`)
   expect(argvs).toContain('bash /plugin/scripts/resolve_base.sh')
 })
+
+// ── the repository the check read, remembered for its agents ──
+
+// The answers of gitRuns, as runs in `dir` rather than in the session's directory.
+const runsIn = (dir: string, diffs: Record<string, string> = {}) => Object.fromEntries(Object.entries({
+  ...gitRuns(['src/a.ts'], ['src/a.ts'], diffs, 'develop'),
+  'git rev-parse --show-toplevel': { stdout: dir + '\n' },
+}).map(([argv, answer]) => [`(${dir}) ${argv}`, answer]))
+
+test('a reference path is read from the repository the check reads, not from where a shell cd left the session', async () => {
+  resetCache()
+  const hooks = mount(register)
+  const { $ } = fakeDollar({
+    cwd: '/tmp/scratch',
+    root: '/work/repo',
+    runs: runsIn('/work/repo'),
+    dirs: { '/work/repo': ['package.json'], '/work/lib': [] },
+  })
+  const { next, seen } = nextOf()
+  await hook(hooks, 'command.run', { command: 'norms:check' }).handler($, { command: 'norms:check', args: 'base=develop use ../lib as pattern reference' }, next)
+  expect(seen[0].args).toContain('external references (validated): ../lib')
+})
+
+test('agents spawned after a shell cd into another repository get the diff of the repository the check read', async () => {
+  resetCache()
+  const hooks = mount(register)
+  const { $, argvs } = fakeDollar({
+    cwd: '/other',
+    state: { 'norms/scopeMark': { head: HEAD, at: 1, files: ['src/a.ts'], dir: '/repo' } },
+    runs: {
+      // The session's directory is now another repository.
+      'git rev-parse --show-toplevel': { stdout: '/other\n' },
+      ...runsIn('/repo', { 'src/a.ts': '+const a = 1\n' }),
+      [`(/repo) bash /plugin/scripts/resolve_base.sh`]: { stdout: BASE + '\n' },
+    },
+    dirs: { '/repo': [] },
+  })
+  const { next, seen } = nextOf()
+  await hook(hooks, 'agent.spawn').handler($, { subagentType: 'norms:norms-magic-values', prompt: 'p', fork: false }, next)
+  expect(seen[0].prompt).toContain('+const a = 1')
+  expect(seen[0].prompt).toContain(`diff (git -C /repo diff ${BASE}...HEAD -- <files above>):`)
+  expect(argvs.filter(a => !a.startsWith('(/repo) '))).toEqual([])
+})
+
+test('the scope cached for the agents is reused in its own repository only', async () => {
+  resetCache()
+  const hooks = mount(register)
+  const marked = (dir: string) => ({ head: HEAD, at: 1, files: ['src/a.ts'], dir })
+  const { $, argvs, state } = fakeDollar({
+    cwd: '/tmp',
+    root: '/a',
+    runs: { ...runsIn('/a', { 'src/a.ts': '+a\n' }), ...runsIn('/b', { 'src/a.ts': '+b\n' }) },
+    dirs: { '/a': [], '/b': [] },
+  })
+  await hook(hooks, 'command.run', { command: 'norms:check' }).handler($, { command: 'norms:check', args: 'base=develop' }, nextOf().next)
+  const spawn = async () => {
+    const { next, seen } = nextOf()
+    await hook(hooks, 'agent.spawn').handler($, { subagentType: 'norms:norms-magic-values', prompt: 'p', fork: false }, next)
+    return String(seen[0].prompt)
+  }
+  expect((state.get('norms/scopeMark') as any).dir).toBe('/a')
+  expect(await spawn()).toContain('+a')
+  expect(argvs.filter(a => a.includes('resolve_base.sh'))).toEqual(['(/a) bash /plugin/scripts/resolve_base.sh develop'])
+  // A mark for another repository: the cache of /a is not its scope.
+  state.set('norms/scopeMark', marked('/b'))
+  expect(await spawn()).toContain('+b')
+  expect(argvs.filter(a => a.includes('resolve_base.sh'))).toEqual(['(/a) bash /plugin/scripts/resolve_base.sh develop', '(/b) bash /plugin/scripts/resolve_base.sh develop'])
+})

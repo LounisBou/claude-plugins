@@ -539,6 +539,33 @@ test('a detached head that no open pull request has as its head leaves no record
   expect(recordCalls(calls)).toEqual([])
 })
 
+test('a check_done after a shell cd into another repository records the repository the check read', async () => {
+  resetCache()
+  const checked = setup()
+  const m = mounted()
+  await m.scope(checked.$)
+  const mark = checked.state.get('norms/scopeMark') as any
+  expect(mark.dir).toBe('/repo')
+  const calls: any[] = []
+  const { $, argvs } = fakeDollar({
+    cwd: '/other',
+    state: { 'norms/scopeMark': mark },
+    runs: {
+      ...runsIn('/repo'),
+      // The session's directory is now another repository, with its own pull request.
+      'git rev-parse --show-toplevel': { stdout: '/other\n' },
+      'git status --porcelain -uno': { stdout: '' },
+      'git remote get-url origin': { stdout: 'git@github.com:Owner/Other.git\n' },
+    },
+    tool: recordTool(calls),
+  })
+  const out = await m.done($, { open: 0, fixed: 0, passed: 1 })
+  expect(out.result).toBe('record: ' + WRITTEN)
+  expect(recordCalls(calls).map(c => [c.repo, c.pr])).toEqual([['Owner/Repo', 12]])
+  expect(calls[0]).toEqual({ tool: 'mcp__github__gh', command: 'pr-get', args: { branch: 'feature' }, repo: 'Owner/Repo' })
+  expect(argvs.filter(a => !a.startsWith('(/repo) '))).toEqual([])
+})
+
 test('a branch with no pull request does not take the open pull request at its head: that lookup is a detached head\'s', async () => {
   resetCache()
   const calls: any[] = []
