@@ -310,8 +310,9 @@ test('an interrupted turn releases the loop', async ($, on) => {
 // ── the review record at the loop's exit ─────────────────────────────────────
 
 const WRITTEN = '/data/records/o/n/' + 'a'.repeat(40) + '/review.json'
+const REVIEWED_HEAD = 'a'.repeat(40)
 
-type Stubs = { records: any[]; prCalls: number; dirty?: string; pr?: string; listed?: string[]; recordAnswer?: any; recordThrows?: boolean; prompts?: string[]; launches?: unknown[]; agent?: (e: any) => any }
+type Stubs = { records: any[]; prCalls: number; dirty?: string; pr?: string; branch?: string; pulls?: unknown; ghCalls?: any[]; listed?: string[]; recordAnswer?: any; recordThrows?: boolean; prompts?: string[]; launches?: unknown[]; agent?: (e: any) => any }
 
 // A review agent's answer: its findings block, or none when `findings` is undefined.
 const agentAnswer = (findings?: { severity: string }[]) =>
@@ -329,10 +330,15 @@ function wireRecord(on: any, stubs: Stubs) {
   on('process.run', (_$: any, e: any) => {
     if (e.argv[1] === 'status') return { value: { ...ok, stdout: stubs.dirty ?? '' } }
     if (e.argv[1] === 'remote') return { value: { ...ok, stdout: 'git@github.com:LounisBou/claude-review.git\n' } }
+    if (e.argv.join(' ') === 'git rev-parse --abbrev-ref HEAD') return { value: { ...ok, stdout: (stubs.branch ?? 'feature') + '\n' } }
+    if (e.argv.join(' ') === 'git rev-parse HEAD') return { value: { ...ok, stdout: REVIEWED_HEAD + '\n' } }
     return { value: ok }
   })
-  on('tool.call', { tool: 'mcp__github__gh' }, () => {
+  // pr-get answers the branch's pull request number; pr-list, the open pull requests as JSON.
+  on('tool.call', { tool: 'mcp__github__gh' }, (_$: any, e: any) => {
     stubs.prCalls += 1
+    stubs.ghCalls?.push({ command: e.command, args: e.args, repo: e.repo })
+    if (e.command === 'pr-list') return typeof stubs.pulls === 'string' || stubs.pulls === undefined ? { result: stubs.pulls ?? '[]' } : stubs.pulls
     return { result: stubs.pr ?? '12\n' }
   })
   on('tool.call', { tool: 'mcp__github__record' }, (_$: any, e: any) => {
@@ -1135,4 +1141,57 @@ test('the Stop gate lets the turn end while the pass\'s readers run in the backg
 
 test('the findings action takes no severity count from the model', () => {
   expect(Object.keys(LOOP_SCHEMA.properties)).not.toContain('blocking')
+})
+
+// ── the pull request of the record, in the repository named ──
+
+const REPO = 'LounisBou/claude-review'
+const openPull = (number: number, sha = REVIEWED_HEAD) => ({ number, head: { sha }, base: { ref: 'main' } })
+
+test('the record reads the branch\'s pull request in the repository named, not the session\'s directory\'s', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, ghCalls: [] }
+  wireRecord(on, stubs)
+  await cleanLoop($)
+  expect(stubs.ghCalls).toEqual([{ command: 'pr-get', args: { branch: 'feature', format: 'pr-number' }, repo: REPO }])
+  expect(stubs.records.map((r) => [r.repo, r.pr])).toEqual([[REPO, 12]])
+})
+
+test('a detached review checkout records at the open pull request whose head it is', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, ghCalls: [], branch: 'HEAD', pulls: JSON.stringify([openPull(7, 'c'.repeat(40)), openPull(34)]) }
+  wireRecord(on, stubs)
+  await cleanLoop($)
+  expect(stubs.ghCalls).toEqual([{ command: 'pr-list', args: {}, repo: REPO }])
+  expect(stubs.records.map((r) => r.pr)).toEqual([34])
+})
+
+test('a detached head that several open pull requests have leaves no record, naming them', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, branch: 'HEAD', pulls: JSON.stringify([openPull(34), openPull(35)]) }
+  wireRecord(on, stubs)
+  const out = await cleanLoop($)
+  expect(String(out.result)).toContain(`record: none — 2 open pull requests have the head ${REVIEWED_HEAD.slice(0, 12)}: ${REPO}#34, ${REPO}#35`)
+  expect(stubs.records).toEqual([])
+})
+
+test('a detached head that no open pull request has leaves no record and says so', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, branch: 'HEAD', pulls: JSON.stringify([openPull(7, 'c'.repeat(40))]) }
+  wireRecord(on, stubs)
+  const out = await cleanLoop($)
+  expect(String(out.result)).toContain(`record: none — no open pull request has the head ${REVIEWED_HEAD.slice(0, 12)}`)
+  expect(stubs.records).toEqual([])
+})
+
+test('a pull request list the github tool refuses leaves no record, with its refusal', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, branch: 'HEAD', pulls: { deny: 'github: gh is not signed in' } }
+  wireRecord(on, stubs)
+  const out = await cleanLoop($)
+  expect(String(out.result)).toContain('record: none — github: gh is not signed in')
+  expect(stubs.records).toEqual([])
+})
+
+test('a branch with no pull request does not take the one at its head: that lookup is a detached head\'s', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, ghCalls: [], pr: '\n', pulls: JSON.stringify([openPull(34)]) }
+  wireRecord(on, stubs)
+  const out = await cleanLoop($)
+  expect(String(out.result)).toContain('record: none — the branch has no pull request')
+  expect(stubs.ghCalls?.map((c) => c.command)).toEqual(['pr-get'])
 })

@@ -208,6 +208,39 @@ export function verdict(exit: string): { result: 'pass' | 'fail'; detail: string
 
 const textOf = (answer: any): string => String(answer?.result ?? answer?.text ?? answer?.deny ?? '').trim()
 
+const git = ($: any, argv: string[]) => $.process.run(['git', ...argv], { timeoutMs: 10_000 })
+
+// The pull request of the checkout, in its repository, named: a branch asks for its own; a detached
+// head (a review checkout) names no branch, and the open pull request whose head is its commit is
+// the one, never one of several. The number, or the line that says why there is none.
+async function pullOf($: any, repo: string): Promise<number | string> {
+  const branchRun = await git($, ['rev-parse', '--abbrev-ref', 'HEAD'])
+  const branch = String(branchRun.stdout ?? '').trim()
+  if (branchRun.exitCode !== 0 || branch === '') return 'record: none — git rev-parse failed: ' + String(branchRun.stderr ?? '').trim()
+  if (branch !== 'HEAD') {
+    const found = await $.tool.call({ tool: GH_TOOL, command: 'pr-get', args: { branch, format: 'pr-number' }, repo })
+    if (found?.deny || found?.isError) return 'record: none — ' + (textOf(found) || 'the pull request could not be read')
+    const pr = Number(textOf(found))
+    return Number.isInteger(pr) && pr >= 1 ? pr : 'record: none — the branch has no pull request'
+  }
+  const headRun = await git($, ['rev-parse', 'HEAD'])
+  const head = String(headRun.stdout ?? '').trim()
+  if (headRun.exitCode !== 0 || head === '') return 'record: none — git rev-parse failed: ' + String(headRun.stderr ?? '').trim()
+  const listed = await $.tool.call({ tool: GH_TOOL, command: 'pr-list', args: {}, repo })
+  if (listed?.deny || listed?.isError) return 'record: none — ' + (textOf(listed) || 'the pull requests could not be read')
+  let pulls: unknown
+  try {
+    pulls = JSON.parse(textOf(listed))
+  } catch {
+    pulls = undefined
+  }
+  if (!Array.isArray(pulls)) return 'record: none — the github plugin\'s pr-list answer is not a list of pull requests'
+  const at = pulls.filter((p: any) => p?.head?.sha === head)
+  if (at.length > 1) return `record: none — ${at.length} open pull requests have the head ${head.slice(0, 12)}: ${at.map((p: any) => `${repo}#${String(p?.number)}`).join(', ')}`
+  const pr = Number(at[0]?.number)
+  return Number.isInteger(pr) && pr >= 1 ? pr : `record: none — no open pull request has the head ${head.slice(0, 12)}`
+}
+
 // Writes the review record through the github tool, once the loop has ended.
 // Always answers the line the loop's answer carries; never throws.
 async function recordReview($: any, exit: string): Promise<string | null> {
@@ -215,16 +248,14 @@ async function recordReview($: any, exit: string): Promise<string | null> {
   if (!outcome) return null
   try {
     if (!(await $.tool.list()).some((t: any) => t.name === RECORD_TOOL)) return `record: none — ${NO_GITHUB}`
-    const status = await $.process.run(['git', 'status', '--porcelain', '-uno'], { timeoutMs: 10_000 })
+    const status = await git($, ['status', '--porcelain', '-uno'])
     if (status.exitCode !== 0) return 'record: none — git status failed: ' + String(status.stderr ?? '').trim()
     if (String(status.stdout).trim() !== '') return 'record: none — the tracked files have changes: a record is written on a clean checkout of the head'
-    const remote = await $.process.run(['git', 'remote', 'get-url', 'origin'], { timeoutMs: 10_000 })
+    const remote = await git($, ['remote', 'get-url', 'origin'])
     const repo = remote.exitCode === 0 ? repoOf(String(remote.stdout)) : undefined
     if (!repo) return 'record: none — the origin remote is not a GitHub repository'
-    const found = await $.tool.call({ tool: GH_TOOL, command: 'pr-get', args: { format: 'pr-number' } })
-    if (found?.deny || found?.isError) return 'record: none — ' + (textOf(found) || 'the pull request could not be read')
-    const pr = Number(textOf(found))
-    if (!Number.isInteger(pr) || pr < 1) return 'record: none — the branch has no pull request'
+    const pr = await pullOf($, repo)
+    if (typeof pr === 'string') return pr
     const written = await $.tool.call({ tool: RECORD_TOOL, pr, repo, kind: 'review', result: outcome.result, detail: outcome.detail })
     if (written?.deny || written?.isError) return 'record: none — ' + (textOf(written) || 'refused')
     return 'record: ' + textOf(written)
