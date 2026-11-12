@@ -303,18 +303,18 @@ check "checks-status reads a neutral check outside draft as green" "SUCCESS" \
 # failed, nor running, nor in the total.
 ci_field() { python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["result"], ",".join(d["failed_checks"]))'; }
 check "checks-status reads a newer success over older failures of one check" "SUCCESS " \
-  "$(render checks-status '{"check_runs":[{"id":1,"name":"wip-check","status":"completed","conclusion":"failure"},{"id":2,"name":"wip-check","status":"completed","conclusion":"failure"},{"id":9,"name":"wip-check","status":"completed","conclusion":"success"},{"id":8,"name":"wip-check","status":"completed","conclusion":"success"}],"statuses":{"statuses":[]}}' | ci_field)"
+  "$(render checks-status '{"check_runs":[{"id":1,"name":"wip-check","status":"completed","conclusion":"failure"},{"id":2,"name":"wip-check","status":"completed","conclusion":"failure"},{"id":9,"name":"wip-check","status":"completed","conclusion":"success"},{"id":8,"name":"wip-check","status":"completed","conclusion":"success"}],"statuses":{"statuses":[]},"workflows":{}}' | ci_field)"
 check "checks-status reads a newer failure over an older success" "FAILURE wip-check" \
-  "$(render checks-status '{"check_runs":[{"id":9,"name":"wip-check","status":"completed","conclusion":"failure"},{"id":2,"name":"wip-check","status":"completed","conclusion":"success"}],"statuses":{"statuses":[]}}' | ci_field)"
+  "$(render checks-status '{"check_runs":[{"id":9,"name":"wip-check","status":"completed","conclusion":"failure"},{"id":2,"name":"wip-check","status":"completed","conclusion":"success"}],"statuses":{"statuses":[]},"workflows":{}}' | ci_field)"
 check "checks-status keeps a check of the same name from two apps" "FAILURE wip-check" \
-  "$(render checks-status '{"check_runs":[{"id":9,"name":"wip-check","app":{"id":1},"status":"completed","conclusion":"success"},{"id":2,"name":"wip-check","app":{"id":2},"status":"completed","conclusion":"failure"}],"statuses":{"statuses":[]}}' | ci_field)"
+  "$(render checks-status '{"check_runs":[{"id":9,"name":"wip-check","app":{"id":1},"status":"completed","conclusion":"success"},{"id":2,"name":"wip-check","app":{"id":2},"status":"completed","conclusion":"failure"}],"statuses":{"statuses":[]},"workflows":{}}' | ci_field)"
 check "gate_ci counts a check once and a newer running run over a failure as running" "PENDING 0 2 1" \
   "$(python3 -c '
 import json, sys
 sys.path.insert(0, sys.argv[1])
 from ghlib import fmt
 runs = json.loads(sys.argv[2])
-ci = fmt.gate_ci({"statuses": []}, runs, False)
+ci = fmt.gate_ci({"statuses": []}, runs, False, {})
 print(ci["result"], len(ci["failed"]), ci["total"], ci["running"])
 ' "$GHDIR" '[{"id":1,"name":"a","status":"completed","conclusion":"failure"},{"id":2,"name":"a","status":"in_progress"},{"id":3,"name":"b","app":{"slug":"s"},"status":"completed","conclusion":"success"}]')"
 # A run without an integer id, or tied on the greatest id, is never dropped.
@@ -323,7 +323,7 @@ check "gate_ci keeps a success and a running run without an id" "PENDING 2" \
 import json, sys
 sys.path.insert(0, sys.argv[1])
 from ghlib import fmt
-ci = fmt.gate_ci({"statuses": []}, json.loads(sys.argv[2]), False)
+ci = fmt.gate_ci({"statuses": []}, json.loads(sys.argv[2]), False, {})
 print(ci["result"], ci["total"])
 ' "$GHDIR" '[{"name":"a","status":"completed","conclusion":"success"},{"name":"a","status":"in_progress"}]')"
 check "gate_ci keeps two runs of one check with the same id" "FAILURE a 2" \
@@ -331,7 +331,7 @@ check "gate_ci keeps two runs of one check with the same id" "FAILURE a 2" \
 import json, sys
 sys.path.insert(0, sys.argv[1])
 from ghlib import fmt
-ci = fmt.gate_ci({"statuses": []}, json.loads(sys.argv[2]), False)
+ci = fmt.gate_ci({"statuses": []}, json.loads(sys.argv[2]), False, {})
 print(ci["result"], ",".join(ci["failed"]), ci["total"])
 ' "$GHDIR" '[{"id":5,"name":"a","status":"completed","conclusion":"success"},{"id":5,"name":"a","status":"completed","conclusion":"failure"}]')"
 check "open-threads keeps only unresolved" "1" \
@@ -2011,9 +2011,27 @@ check "pr-checks keeps a failure of one workflow under a newer success of anothe
 gate8 wf-same "$PULL8" '{"statuses":[]}' "$RUNS2" '{"workflow_runs":[{"check_suite_id":100,"workflow_id":1},{"check_suite_id":200,"workflow_id":1}]}'
 check "pr-gate reads a newer success of the same workflow from another event over a failure" "SUCCESS   1" "$(ci8)"
 gate8 wf-down "$PULL8" '{"statuses":[]}' "$RUNS2" '{"__status":500,"message":"boom"}'
-check "pr-gate counts every run when the Actions runs call fails" "FAILURE test  2" "$(ci8)"
+check "pr-gate counts every run when the Actions runs call fails" "FAILURE test  2" "$(ci8 2>/dev/null)"
+check "pr-gate prints one error line naming the Actions runs call failure" \
+  "error: cannot read the Actions runs of $GATEHEAD: boom (HTTP 500)" "$(gh8 pr-gate 12 2>&1 >/dev/null)"
+# A re-run of one suite (the same suite id) is the only run deduplicated away on a
+# failing call: older failure and newer success of one suite, every run counted.
+RUNS1='{"check_runs":[{"id":1,"name":"test","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"failure"},{"id":2,"name":"test","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"success"}]}'
+gate8 wf-down-checks "$PULL8" '{"statuses":[]}' "$RUNS1" '{"__status":500,"message":"boom"}'
+check "pr-checks counts every run when the Actions runs call fails" "FAILURE" \
+  "$(gh8 pr-checks 12 --format checks-status 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
+# Without a mapping (None, or no key at all) no run is placed: nothing is deduplicated.
+check "gate_ci and the checks-status format count every run with no mapping" "FAILURE FAILURE" \
+  "$(python3 -c "
+import json, sys; sys.path.insert(0, '$GHDIR')
+from ghlib import fmt
+runs = json.loads(sys.argv[1])['check_runs']
+print(fmt.gate_ci(None, runs, False)['result'], json.loads(fmt._checks_status({'check_runs': runs}))['result'])
+" "$RUNS1")"
 gate8 wf-none "$PULL8" '{"statuses":[]}' "$RUNS2"
-check "pr-gate keys on name and app a run whose suite no Actions run places" "SUCCESS   1" "$(ci8)"
+check "pr-gate never merges the runs of two suites no Actions run places" "FAILURE test  2" "$(ci8)"
+gate8 wf-nosuite "$PULL8" '{"statuses":[]}' '{"check_runs":[{"id":1,"name":"test","app":{"id":1},"status":"completed","conclusion":"failure"},{"id":2,"name":"test","app":{"id":1},"status":"completed","conclusion":"success"}]}'
+check "pr-gate keys on name and app a run with no check suite" "SUCCESS   1" "$(ci8)"
 gate8 unknown '{"__status":404,"message":"Not Found"}' '{}' '{}'
 check_status "pr-gate of an unknown pull request exits 4" 4 gh8 pr-gate 12
 gate8 nohead '{"number":12,"state":"open","head":{}}' '{}' '{}'

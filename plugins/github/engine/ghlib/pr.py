@@ -5,6 +5,7 @@ import binascii
 import os
 import re
 import subprocess
+import sys
 import time
 from urllib.parse import quote
 
@@ -56,7 +57,8 @@ def _suite_workflows(owner, name, sha):
     every run rather than guess which belong together."""
     try:
         data = http.rest("GET", "/repos/%s/%s/actions/runs?head_sha=%s&per_page=100" % (owner, name, sha))
-    except errors.GhError:
+    except errors.GhError as exc:
+        print("error: cannot read the Actions runs of %s: %s" % (sha, exc.message), file=sys.stderr)
         return None
     return {
         str(run["check_suite_id"]): run["workflow_id"]
