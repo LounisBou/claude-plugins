@@ -1988,6 +1988,38 @@ check_status "pr-gate of a pull request with no head sha exits 3" 3 gh8 pr-gate 
 gate8 sha-newline '{"number":12,"state":"open","head":{"sha":"'$GATEHEAD'\n"}}' '{"state":"success","statuses":[]}' '{"total_count":0,"check_runs":[]}'
 check_status "pr-gate of a head sha with a trailing newline exits 3" 3 gh8 pr-gate 12
 
+echo "== diff fingerprints =="
+
+BASE9=1111111111111111111111111111111111111111
+# fp9 <scenario> <compare files json>: the pull request and its comparison at GATEHEAD.
+fp9() {
+  F9="$WORK/fix9-$1"; rm -rf "$F9"; mkdir -p "$F9"
+  printf '{"number":12,"base":{"sha":"%s","ref":"main"}}' "$BASE9" > "$F9/GET_repos_acme_thing_pulls_12.json"
+  printf '{"files":%s}' "$2" > "$F9/GET_repos_acme_thing_compare_${BASE9}...${GATEHEAD}__per_page=1.json"
+}
+gh9() { env GH_FIXTURES="$F9" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" pr-fingerprint 12 "$GATEHEAD" 2>&1; }
+fpof() { gh9 | python3 -c 'import json,sys; print(json.load(sys.stdin)["fingerprint"])'; }
+A9='{"filename":"a.ts","status":"modified","sha":"s1","patch":"@@ -1,2 +1,3 @@ fn\n a\n+b"}'
+B9='{"filename":"b.ts","status":"added","sha":"s2","patch":"@@ -0,0 +1 @@\n+c"}'
+
+fp9 one "[$A9,$B9]"; first=$(fpof)
+check "pr-fingerprint compares the base sha to the head" \
+  "GET /repos/acme/thing/pulls/12|GET /repos/acme/thing/compare/$BASE9...$GATEHEAD?per_page=1" \
+  "$(python3 -c 'import json,sys; print("|".join(json.loads(l)["method"] + " " + json.loads(l)["path"] for l in open(sys.argv[1])))' "$F9/sent.jsonl")"
+fp9 moved "[$B9,$(printf '%s' "$A9" | sed 's/-1,2 +1,3 @@ fn/-40,2 +41,3 @@ other/; s/"s1"/"s9"/')]"
+check "pr-fingerprint is the same for the same diff at other lines, in another order" "$first" "$(fpof)"
+fp9 changed "[$(printf '%s' "$A9" | sed 's/+b/+B/'),$B9]"
+check "pr-fingerprint differs when a changed line differs" "yes" "$([ "$(fpof)" != "$first" ] && echo yes || echo no)"
+fp9 spaced "[$(printf '%s' "$A9" | sed 's/+b/+ b/'),$B9]"
+check "pr-fingerprint counts whitespace" "yes" "$([ "$(fpof)" != "$first" ] && echo yes || echo no)"
+fp9 bin1 '[{"filename":"i.png","status":"modified","sha":"blob1"}]'; bin1=$(fpof)
+fp9 bin2 '[{"filename":"i.png","status":"modified","sha":"blob2"}]'
+check "pr-fingerprint counts a file with no patch by its blob" "yes" "$([ "$(fpof)" != "$bin1" ] && echo yes || echo no)"
+fp9 many "$(python3 -c 'import json; print(json.dumps([{"filename": "f%d" % i, "status": "added", "sha": "x", "patch": "+x"} for i in range(300)]))')"
+check "pr-fingerprint refuses a comparison of 300 files" "error: the comparison of 89abcde reaches 300 files, more may be left out" "$(gh9)"
+fp9 empty '[]'
+check "pr-fingerprint refuses a head that changes no file" "error: 89abcde changes no file" "$(gh9)"
+
 echo "== draft and back =="
 
 new7 to-draft

@@ -16,9 +16,9 @@ import {
   NOT_READY, PRUNE_DAYS, PRUNE_EVERY_MS, READY, RECORDS_REFUSAL, STDIN_REFUSAL, autoMergeRefusal, bashActs, bashPushes,
   carriesReady, ciUndraft, ciUndraftLine, createdPr, draftRefusal, gateLeftLine, gateMissingLine, gateMovedLine,
   gateNotReadyLine, gateReadyLine, gateUnwrittenLine, graphqlRefusal, labelMove, leaveDraftRefusal, missingItems,
-  notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug,
+  notReadyRefusal, opaqueGraphqlRefusal, parseGate, producerSlug, carriable, uncarriedLine, unrecorded,
   kindRefusal, recordKindFor, toolAct, touchesRecords, unnamedRepoRefusal, unreadablePrRefusal, unverifiedRefusal, warnLine,
-  type Act, type Gate, type Phase, type RecordFile,
+  type Act, type Carried, type Gate, type Phase, type RecordFile,
 } from './ready.ts'
 
 export const PANE_ID = 'github-prs'
@@ -27,7 +27,7 @@ export const PANE_ID = 'github-prs'
 // (--stdin-json), and the mod's own (MOD_COMMANDS), answered here.
 // tests/run-tests.sh fails when this list and the two sources disagree.
 export const COMMANDS = [
-  'pr-get', 'pr-list', 'pr-status', 'pr-checks', 'pr-gate', 'pr-diff', 'pr-files',
+  'pr-get', 'pr-list', 'pr-status', 'pr-checks', 'pr-gate', 'pr-fingerprint', 'pr-diff', 'pr-files',
   'pr-commits', 'file-at-ref', 'pr-create', 'pr-merge', 'pr-threads',
   'pr-comments', 'pr-issue-comments', 'pr-reviews', 'thread-reply',
   'pr-comment', 'comment-edit', 'comment-delete', 'thread-resolve',
@@ -48,7 +48,7 @@ export const MOD_COMMANDS = new Set(['auto-merge-set', 'auto-merge-list'])
 // command missing here is treated as a write, so the safe side is the default. After
 // pr-gate and pr-checks the gate may write the Ready label itself: its act, not the session's.
 export const READS = new Set([
-  'pr-get', 'pr-list', 'pr-status', 'pr-checks', 'pr-gate', 'pr-diff', 'pr-files', 'pr-commits',
+  'pr-get', 'pr-list', 'pr-status', 'pr-checks', 'pr-gate', 'pr-fingerprint', 'pr-diff', 'pr-files', 'pr-commits',
   'file-at-ref', 'pr-threads', 'pr-comments', 'pr-issue-comments', 'pr-reviews',
   'comment-resolved', 'comments-resolved-batch', 'review-pending', 'repo-review-comments',
   'issue-view', 'issue-list', 'issue-search', 'pr-linked-issues', 'auth-check', 'auto-merge-list',
@@ -752,10 +752,10 @@ class RecordsUnread extends Error {}
 // The records of a pull request's head, as files. A directory that is not there
 // holds none; one that cannot be listed throws RecordsUnread, never read as none.
 // A file that cannot be read is one that does not parse.
-async function headRecords($: any, gate: Gate): Promise<RecordFile[]> {
+async function headRecords($: any, gate: Gate, head = gate.head): Promise<RecordFile[]> {
   const root = await recordsRoot($)
   if (!root) return []
-  const dir = root + '/' + gate.repo.toLowerCase() + '/' + gate.head
+  const dir = root + '/' + gate.repo.toLowerCase() + '/' + head
   let entries: any[]
   try {
     entries = await $.fs.list(dir)
@@ -767,7 +767,7 @@ async function headRecords($: any, gate: Gate): Promise<RecordFile[]> {
       // Unknown: not read as absent.
     }
     if (absent) return []
-    throw new RecordsUnread('the records of ' + gate.head.slice(0, 7) + ' cannot be listed: ' + String(err?.message ?? err).trim())
+    throw new RecordsUnread('the records of ' + head.slice(0, 7) + ' cannot be listed: ' + String(err?.message ?? err).trim())
   }
   const files: RecordFile[] = []
   for (const entry of entries) {
@@ -782,6 +782,77 @@ async function headRecords($: any, gate: Gate): Promise<RecordFile[]> {
     files.push({ name, text })
   }
   return files
+}
+
+/*
+ * A rebase that leaves a pull request's own diff unchanged keeps its review, its norms check and its
+ * E2E waiver: a kind with no record at the head counts as present when an earlier head of the same
+ * pull request holds one, clean, passed or waived, and that head's diff has the same fingerprint
+ * (the engine's pr-fingerprint, from GitHub's compare). An E2E pass is run again at the new head, and
+ * CI is always read at it. A fingerprint is computed once per head and kept in the data directory.
+ */
+const SHA = /^[0-9a-f]{40}$/
+const FINGERPRINT = /^[0-9a-f]{64}$/
+
+async function fingerprintPath($: any, repo: string, pr: number, head: string): Promise<string | undefined> {
+  const dir = await dataDir($)
+  return dir ? dir + '/fingerprint.' + encodeURIComponent(repo.toLowerCase()) + '.' + pr + '.' + head + '.json' : undefined
+}
+
+// The fingerprint of the pull request's own diff at a head, or a throw naming why there is none.
+async function headFingerprint($: any, repo: string, pr: number, head: string): Promise<string> {
+  const path = await fingerprintPath($, repo, pr, head)
+  try {
+    if (path && await $.fs.exists(path)) {
+      const kept = JSON.parse(String(await $.fs.read(path)))?.fingerprint
+      if (typeof kept === 'string' && FINGERPRINT.test(kept)) return kept
+    }
+  } catch {
+    // Computed again.
+  }
+  const computed = JSON.parse(await runGh($, 'pr-fingerprint', { pr, head }, repo))?.fingerprint
+  if (typeof computed !== 'string' || !FINGERPRINT.test(computed)) throw new Error('pr-fingerprint answered no fingerprint')
+  if (path) {
+    await $.fs.write(path, JSON.stringify({ v: 1, repo: repo.toLowerCase(), pr, head, fingerprint: computed }) + '\n')
+      .catch(() => undefined)
+  }
+  return computed
+}
+
+// The records an earlier head of the same diff carries to the gate's head, for the kinds it has none of.
+async function carriedRecords($: any, gate: Gate, files: RecordFile[]): Promise<Carried[]> {
+  const wanted = gate.state === 'open' ? unrecorded(gate, files) : []
+  const root = wanted.length > 0 ? await recordsRoot($) : undefined
+  if (!root) return []
+  let heads: string[]
+  try {
+    heads = (await $.fs.list(root + '/' + gate.repo.toLowerCase()))
+      .filter((x: any) => x?.kind === 'directory' && SHA.test(String(x.name)) && x.name !== gate.head)
+      .map((x: any) => String(x.name))
+  } catch {
+    return []
+  }
+  const candidates: Array<{ head: string; kinds: Carried['kind'][] }> = []
+  for (const head of heads) {
+    const kinds = carriable(gate, head, await headRecords($, gate, head).catch(() => [])).filter((kind) => wanted.includes(kind))
+    if (kinds.length > 0) candidates.push({ head, kinds })
+  }
+  if (candidates.length === 0) return []
+  let current: string
+  try {
+    current = await headFingerprint($, gate.repo, gate.pr, gate.head)
+  } catch (err: any) {
+    note($, uncarriedLine(gate.repo, gate.pr, gate.head, String(err?.message ?? err).trim()))
+    return []
+  }
+  const carried: Carried[] = []
+  for (const { head, kinds } of candidates) {
+    const fresh = kinds.filter((kind) => !carried.some((c) => c.kind === kind))
+    if (fresh.length === 0) continue
+    const earlier = await headFingerprint($, gate.repo, gate.pr, head).catch(() => undefined)
+    if (earlier === current) for (const kind of fresh) carried.push({ kind, from: head })
+  }
+  return wanted.flatMap((kind) => carried.filter((c) => c.kind === kind))
 }
 
 /*
@@ -839,7 +910,7 @@ async function noteCiUndraft($: any, repo: string, pr: number, head: string | un
   }
 }
 
-type Readiness = { gate?: Gate; missing: string[]; error?: string }
+type Readiness = { gate?: Gate; missing: string[]; carried?: Carried[]; error?: string }
 
 // What a pull request misses at its head, read from GitHub and the records.
 async function readiness($: any, repo: string, pr: number, sha?: string): Promise<Readiness> {
@@ -856,7 +927,8 @@ async function readiness($: any, repo: string, pr: number, sha?: string): Promis
     if (err instanceof RecordsUnread) return { gate, missing: [], error: err.message }
     throw err
   }
-  return { gate, missing: missingItems(gate, files, sha) }
+  const carried = await carriedRecords($, gate, files)
+  return { gate, missing: missingItems(gate, files, sha, carried), carried }
 }
 
 /*
@@ -873,9 +945,12 @@ type Followed = { line?: string; labels?: string[]; draft?: boolean }
 async function followGate($: any, repo: string, pr: number, known?: Gate, always = false): Promise<Followed> {
   let gate: Gate
   let missing: string[]
+  let carried: Carried[]
   try {
     gate = known ?? parseGate(await runGh($, 'pr-gate', { pr }, repo))
-    missing = missingItems(gate, await headRecords($, gate))
+    const files = await headRecords($, gate)
+    carried = await carriedRecords($, gate, files)
+    missing = missingItems(gate, files, undefined, carried)
   } catch (err: any) {
     return { line: gateLeftLine(repo, pr, String(err?.message ?? err).trim()) }
   }
@@ -883,7 +958,7 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
   if (gate.draft || gate.state !== 'open') await dropCiUndraft($, repo, pr).catch(() => undefined)
   const move = labelMove(gate, missing)
   if (!move) {
-    if (always && gate.state === 'open' && missing.length > 0) return { line: gateMissingLine(repo, pr, gate.head, missing) }
+    if (always && gate.state === 'open' && missing.length > 0) return { line: gateMissingLine(repo, pr, gate.head, missing, carried) }
     return {}
   }
   let now: Gate
@@ -906,8 +981,8 @@ async function followGate($: any, repo: string, pr: number, known?: Gate, always
   }
   const labels = [...now.labels.filter((label) => ![READY, NOT_READY].includes(label.toLowerCase())), move === 'ready' ? 'Ready' : 'Not Ready']
   const draft = redraft || now.draft
-  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, redraft), labels, draft }
-  return { line: gateNotReadyLine(repo, pr, gate.head, missing), labels, draft }
+  if (move === 'ready') return { line: gateReadyLine(repo, pr, gate.head, redraft, carried), labels, draft }
+  return { line: gateNotReadyLine(repo, pr, gate.head, missing, carried), labels, draft }
 }
 
 // The reads after which the gate puts the label.
@@ -998,7 +1073,7 @@ async function refuseNotReady($: any, act: Act, repo: string, pr: number, r: Rea
       note($, 'github: ' + repo + '#' + pr + ' keeps Ready, the label could not be changed: ' + String(err?.message ?? err))
     }
   }
-  return notReadyRefusal(act.name, repo, pr, gate.head, r.missing)
+  return notReadyRefusal(act.name, repo, pr, gate.head, r.missing, r.carried)
 }
 
 // The Bash ready guard failed on its own: under warn the command goes on with

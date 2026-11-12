@@ -42,6 +42,7 @@ Before writing a text, read its rules in `writing/` beside this file.
 | `pr-status` | `<pr>` | State, draft flag, head and base |
 | `pr-checks` | `<pr>` | Combined commit status and check runs |
 | `pr-gate` | `<pr>` | `{"repo", "pr", "state", "draft", "head", "labels", "ci": {"result", "failed", "running", "skipped", "total"}}`, the reads the ready guard decides on (below) |
+| `pr-fingerprint` | `<pr> <head>` | `{"head", "base", "fingerprint"}` of the PR's own diff at that head, line offsets apart |
 | `pr-diff` | `<pr>` | Unified diff as plain text |
 | `pr-files` | `<pr>` | Changed paths with their patches, paginated |
 | `pr-commits` | `<pr>` | Commits on the PR, paginated |
@@ -266,7 +267,7 @@ Requires push access to the repository.
 
 - `<owner>/<name>` lowercased. `<head>` is the full 40-hex sha, refused shorter, so the guard only lists one directory.
 - `<at>` is UTC `YYYYMMDDTHHMMSSZ`, and `<producer>` is the producer's slug (`[a-z0-9-]`).
-- Neutral root, not the github plugin's data directory: the producers are other plugins and a shell script, and none of them can read the github plugin's `CLAUDE_PLUGIN_DATA`. `~/.claude/.gitignore` ignores everything (`*`, line 3), so the root needs no git change.
+- A neutral root, not the plugin's data directory, which other producers cannot read.
 
 ### The one writer: `engine/record.py`
 
@@ -274,8 +275,8 @@ Requires push access to the repository.
 
 - The contract is core's `pr-record.ts`, loaded here as the generated `core/pr-record.json`.
 - It validates: the sha shape, the kind, `waived` for `e2e` only and only with a `--detail` that carries a date `YYYY-MM-DD`, a detail of at most 500 characters.
-- It writes the file under a temporary name in the same directory, then renames it. It prints the path, and exits 2 on a usage error. Standard library only, like the engine.
-- The producers find `<github root>` the way pr-review's `scripts/resolve_github.py` already does: the `installPath` of `github@lounisbou` (or `github@claude-github`) in `~/.claude/plugins/installed_plugins.json`, never a hand-built cache path.
+- It writes the file under a temporary name in the same directory, then renames it. It prints the path, and exits 2 on a usage error.
+- The producers find `<github root>` as the `installPath` in `~/.claude/plugins/installed_plugins.json`, never a hand-built cache path.
 
 ### Fields (one JSON object per file)
 
@@ -290,8 +291,9 @@ Requires push access to the repository.
 - The guard reads the PR's head from GitHub (`pr-gate`) and lists `<root>/<owner>/<name>/<head>/`. Only that directory counts. A record written at any other sha, older or not yet pushed, is not read.
 - Per kind, the record with the latest `at` decides, so a later `fail` overrides an earlier `pass`. A file that does not parse, or whose `repo`, `head` or `pr` disagree with its path or with the PR, is skipped, and the refusal names it when a kind is missing or not accepted.
 - Accepted: `review` `pass`, `norms` `pass`, `e2e` `pass` or `waived`. Anything else, or no record, is missing.
-- A moved head voids every record by construction, with nothing deleted. A record written before a push matches once that same sha is pushed: a review of an unpushed commit counts once it is on the PR.
-- Pruning: at `session.start`, at most once a day (a stamp file in the root), the github module removes the `<head>` directories whose newest file is older than 90 days.
+- A kind missing at the head takes an accepted record of an earlier head of the PR with the same `pr-fingerprint`, an E2E pass apart (`<kind> carried from <head7>`).
+- Otherwise a moved head voids every record by construction, with nothing deleted. A record written before a push matches once that same sha is pushed: a review of an unpushed commit counts once it is on the PR.
+- Pruning: at most daily, the module removes the `<head>` directories whose newest file is older than 90 days.
 
 ### The producers
 

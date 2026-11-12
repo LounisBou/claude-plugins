@@ -56,6 +56,8 @@ type World = {
   branch?: string
   // Every git run fails in the host itself, with this error.
   gitThrows?: string
+  // What pr-fingerprint answers, by head; a head absent fails as a diff that cannot be fingerprinted.
+  fingerprints?: Record<string, string>
 }
 
 type Seen = {
@@ -205,6 +207,11 @@ async function world($: any, on: any, w: World = {}): Promise<Seen> {
       if (w.gateFails) return { value: { exitCode: 3, stdout: '', stderr: w.gateFails } }
       const gate = gateOf(w, pull)
       return { value: { exitCode: 0, stdout: typeof gate === 'string' ? gate : JSON.stringify(gate), stderr: '' } }
+    }
+    if (stdin.command === 'pr-fingerprint') {
+      const fingerprint = w.fingerprints?.[stdin.args.head]
+      if (!fingerprint) return { value: { exitCode: 1, stdout: '', stderr: 'error: the comparison reaches 300 files' } }
+      return { value: { exitCode: 0, stdout: JSON.stringify({ head: stdin.args.head, base: 'b'.repeat(40), fingerprint }), stderr: '' } }
     }
     if (stdin.command === 'pr-readiness' && w.readinessFails) return { value: { exitCode: 3, stdout: '', stderr: w.readinessFails } }
     if (stdin.command === 'pr-readiness') pull.labels = [stdin.args.state === 'ready' ? 'Ready' : 'Not Ready']
@@ -2104,4 +2111,86 @@ test('a pr-gate answer that does not parse is given back as it is, with no secon
   expect(await $.tool.call(gh('pr-gate', { pr: 12 }))).toEqual({ result: 'not json' })
   expect(gates(seen)).toBe(1)
   expect(readinessRuns(seen)).toEqual([])
+})
+
+// ---- records carried across a rebase that leaves the diff unchanged ----
+
+const OLD = 'abcdef0123456789abcdef0123456789abcdef01'
+const OLD_DIR = RECORDS + '/acme/thing/' + OLD
+const SAME = 'a'.repeat(64)
+const OTHER = 'b'.repeat(64)
+const fingerprintRuns = (seen: Seen) => seen.runs.filter((r) => r.command === 'pr-fingerprint').map((r) => r.args.head)
+
+// The earlier head's records as the store holds them, beside the current head's directory.
+function earlier(records: Array<[string, string]>, dir = OLD_DIR): World['tree'] {
+  const tree: NonNullable<World['tree']> = {
+    [RECORDS + '/acme/thing']: { kind: 'directory', mtimeMs: 0 },
+    [dir]: { kind: 'directory', mtimeMs: 0 },
+  }
+  for (const [name, text] of records) tree[dir + '/' + name] = { kind: 'file', mtimeMs: 0, text }
+  return tree
+}
+const at = (kind: string, result: string, over: Record<string, unknown> = {}, when = '2026-11-01T10:00:00Z') =>
+  record(kind, result, when, { head: OLD, ...over })
+const CLEAN_OLD = [at('review', 'pass'), at('norms', 'pass'), at('e2e', 'waived', { detail: 'no E2E, 2026-11-01' })]
+
+test('a rebase that leaves the diff unchanged carries the review, the norms check and the E2E waiver: Ready on green CI', async ($, on) => {
+  const seen = await world($, on, { records: {}, tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  const out: any = await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(JSON.parse(out.result).labels).toEqual(['Ready'])
+  expect(seen.logs).toEqual([READY_LINE.slice(0, -1)
+    + ' (review carried from abcdef0, norms carried from abcdef0, e2e carried from abcdef0).'])
+  // Each head is fingerprinted once: the second read takes both from the data directory.
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(fingerprintRuns(seen)).toEqual([HEAD, OLD])
+})
+
+test('a rebase that changed the diff carries nothing', async ($, on) => {
+  const seen = await world($, on, { records: {}, labels: ['Ready'], tree: earlier(CLEAN_OLD), fingerprints: { [HEAD]: SAME, [OLD]: OTHER } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs).toEqual(['github: acme/thing#12 back to Not Ready at 0123456. Missing: review: no record at 0123456,'
+    + ' norms: no record at 0123456, e2e: no record at 0123456'])
+})
+
+test('an E2E pass at the earlier head is not carried: E2E runs again, the review and norms are carried', async ($, on) => {
+  const tree = earlier([at('review', 'pass'), at('norms', 'pass'), at('e2e', 'pass')])
+  const seen = await world($, on, { records: {}, labels: ['Ready'], tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs).toEqual(['github: acme/thing#12 back to Not Ready at 0123456. Missing: e2e: no record at 0123456;'
+    + ' review carried from abcdef0, norms carried from abcdef0'])
+})
+
+test('a review that failed last at the earlier head is not carried, nor is a kind already recorded at the head', async ($, on) => {
+  const tree = earlier([at('review', 'pass'), at('review', 'fail', {}, '2026-11-01T11:00:00Z'), at('norms', 'pass'), at('e2e', 'waived', { detail: 'no E2E, 2026-11-01' })])
+  const seen = await world($, on, {
+    records: Object.fromEntries([record('e2e', 'fail')]), labels: ['Ready'], tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME },
+  })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs).toEqual(['github: acme/thing#12 back to Not Ready at 0123456. Missing: review: no record at 0123456,'
+    + ' e2e: fail at 0123456 by p-e2e; norms carried from abcdef0'])
+})
+
+test('a head whose diff cannot be fingerprinted carries nothing, and says so in one line', async ($, on) => {
+  const seen = await world($, on, { records: {}, labels: ['Ready'], tree: earlier(CLEAN_OLD), fingerprints: { [OLD]: SAME } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs).toEqual([
+    'github: acme/thing#12: no record of an earlier head carried to 0123456, its diff cannot be fingerprinted: error: the comparison reaches 300 files',
+    'github: acme/thing#12 back to Not Ready at 0123456. Missing: review: no record at 0123456,'
+      + ' norms: no record at 0123456, e2e: no record at 0123456',
+  ])
+})
+
+test('the records of another pull request with the same diff are never carried, nothing is fingerprinted', async ($, on) => {
+  const tree = earlier(CLEAN_OLD.map(([name]) => at(name.split('.')[0], name.startsWith('e2e') ? 'waived' : 'pass', { pr: 13, detail: 'no E2E, 2026-11-01' })))
+  const seen = await world($, on, { records: {}, labels: ['Ready'], tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  await $.tool.call(gh('pr-gate', { pr: 12 }))
+  expect(seen.logs[0]).toContain('Missing: review: no record at 0123456, norms: no record at 0123456, e2e: no record at 0123456')
+  expect(fingerprintRuns(seen)).toEqual([])
+})
+
+test('a refused Ready label names the records carried beside what is missing', async ($, on) => {
+  const tree = earlier([at('review', 'pass'), at('norms', 'pass')])
+  await world($, on, { records: {}, tree, fingerprints: { [HEAD]: SAME, [OLD]: SAME } })
+  const out: any = await $.tool.call(gh('pr-readiness', { pr: 12, state: 'ready' }))
+  expect(out.deny).toContain('Missing: e2e: no record at 0123456; review carried from abcdef0, norms carried from abcdef0.')
 })

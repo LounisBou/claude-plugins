@@ -136,7 +136,8 @@ A pull request is ready when four things hold at its current head commit: a revi
 there and came out clean, the norms check ran there and every finding is fixed or
 passed, its end-to-end tests ran there and passed (or the operator waived them, in their
 words, dated), and every CI check is green there. Ready belongs to one head: a new
-commit makes the pull request not ready until the four hold again at the new head.
+commit makes the pull request not ready until the four hold again at the new head. A rebase
+that keeps its diff keeps its records, a passed E2E apart.
 
 The `Ready` and `Not Ready` labels carry that fact on GitHub. A draft opens with `Not
 Ready`. The plugin puts `Ready` itself once the four hold. When the CI does not run on a

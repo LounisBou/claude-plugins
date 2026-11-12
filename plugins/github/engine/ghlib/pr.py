@@ -2,6 +2,7 @@
 
 import base64
 import binascii
+import hashlib
 import os
 import re
 import subprocess
@@ -80,6 +81,49 @@ def pr_gate(args):
         "labels": [label.get("name", "") for label in pull.get("labels") or []],
         "ci": fmt.gate_ci(statuses, (runs or {}).get("check_runs") or [], bool(pull.get("draft"))),
     }
+
+
+# The most files GitHub's compare lists: a comparison that reaches it may hold more, never fingerprinted.
+_COMPARE_FILES_MAX = 300
+_HUNK_HEADER = re.compile(r"^@@ [^@]* @@.*$", re.M)
+
+
+def diff_fingerprint(files):
+    """The fingerprint of a pull request's own diff, as compare's files list it: the same diff
+    gives the same value wherever its hunks stand and in whatever order its files come, as
+    `git patch-id --stable` does, but whitespace counts. A file whose patch GitHub leaves out
+    (a binary, a diff too large) counts by its blob. None when there is nothing to fingerprint."""
+    parts = []
+    for entry in files:
+        patch = entry.get("patch")
+        body = _HUNK_HEADER.sub("@@", patch) if isinstance(patch, str) else "blob " + str(entry.get("sha") or "")
+        head = "%s %s %s" % (entry.get("status") or "", entry.get("previous_filename") or "", entry.get("filename") or "")
+        parts.append(hashlib.sha256((head + "\n" + body).encode("utf-8")).hexdigest())
+    if not parts:
+        return None
+    return hashlib.sha256("\n".join(sorted(parts)).encode("utf-8")).hexdigest()
+
+
+def pr_fingerprint(args):
+    """The fingerprint of the pull request's own diff at a head: from the merge-base of its base
+    and that head, to that head."""
+    if not _FULL_SHA.fullmatch(args.head):
+        raise errors.UsageError("the head must be the full 40-character sha, got: %s" % args.head)
+    owner, name = repo.owner_repo()
+    pull = http.rest("GET", "/repos/%s/%s/pulls/%s" % (owner, name, args.pr))
+    base = (pull.get("base") or {}).get("sha") or ""
+    if not _FULL_SHA.fullmatch(base):
+        raise errors.ApiError("pull request %s has no base sha" % args.pr)
+    compared = http.rest("GET", "/repos/%s/%s/compare/%s...%s?per_page=1" % (owner, name, base, args.head))
+    files = compared.get("files") if isinstance(compared, dict) else None
+    if not isinstance(files, list):
+        raise errors.ApiError("the comparison of %s lists no files" % args.head[:7])
+    if len(files) >= _COMPARE_FILES_MAX:
+        raise errors.ApiError("the comparison of %s reaches %d files, more may be left out" % (args.head[:7], len(files)))
+    fingerprint = diff_fingerprint(files)
+    if fingerprint is None:
+        raise errors.ApiError("%s changes no file" % args.head[:7])
+    return {"head": args.head.lower(), "base": base.lower(), "fingerprint": fingerprint}
 
 
 def pr_diff(args):
@@ -259,6 +303,11 @@ def register(subparsers):
     parser = subparsers.add_parser("pr-gate", help="state, head, labels and CI, as the ready guard reads them")
     parser.add_argument("pr", type=int)
     parser.set_defaults(handler=pr_gate)
+
+    parser = subparsers.add_parser("pr-fingerprint", help="the fingerprint of the pull request's own diff at a head")
+    parser.add_argument("pr", type=int)
+    parser.add_argument("head")
+    parser.set_defaults(handler=pr_fingerprint)
 
     parser = subparsers.add_parser("pr-checks", help="combined status and check runs")
     parser.add_argument("pr", type=int)
