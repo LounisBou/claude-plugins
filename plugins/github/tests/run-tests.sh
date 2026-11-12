@@ -317,6 +317,23 @@ runs = json.loads(sys.argv[2])
 ci = fmt.gate_ci({"statuses": []}, runs, False)
 print(ci["result"], len(ci["failed"]), ci["total"], ci["running"])
 ' "$GHDIR" '[{"id":1,"name":"a","status":"completed","conclusion":"failure"},{"id":2,"name":"a","status":"in_progress"},{"id":3,"name":"b","app":{"slug":"s"},"status":"completed","conclusion":"success"}]')"
+# A run without an integer id, or tied on the greatest id, is never dropped.
+check "gate_ci keeps a success and a running run without an id" "PENDING 2" \
+  "$(python3 -c '
+import json, sys
+sys.path.insert(0, sys.argv[1])
+from ghlib import fmt
+ci = fmt.gate_ci({"statuses": []}, json.loads(sys.argv[2]), False)
+print(ci["result"], ci["total"])
+' "$GHDIR" '[{"name":"a","status":"completed","conclusion":"success"},{"name":"a","status":"in_progress"}]')"
+check "gate_ci keeps two runs of one check with the same id" "FAILURE a 2" \
+  "$(python3 -c '
+import json, sys
+sys.path.insert(0, sys.argv[1])
+from ghlib import fmt
+ci = fmt.gate_ci({"statuses": []}, json.loads(sys.argv[2]), False)
+print(ci["result"], ",".join(ci["failed"]), ci["total"])
+' "$GHDIR" '[{"id":5,"name":"a","status":"completed","conclusion":"success"},{"id":5,"name":"a","status":"completed","conclusion":"failure"}]')"
 check "open-threads keeps only unresolved" "1" \
   "$(render open-threads '[{"id":"a","isResolved":false},{"id":"b","isResolved":true}]' | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')"
 check "resolve-status" "resolved" "$(render resolve-status '{"resolveReviewThread":{"thread":{"isResolved":true}}}')"
@@ -1922,12 +1939,14 @@ echo "== readiness reads =="
 
 GATEHEAD=89abcdef0123456789abcdef0123456789abcdef
 # gate8 <scenario> <pull json> <combined status json> <check runs json>: one
-# fixture directory with the three reads pr-gate makes.
+# fixture directory with the reads pr-gate makes, and <workflow runs json> (the
+# Actions runs of the head, optional) as its fourth.
 gate8() {
   F8="$WORK/fix8-$1"; rm -rf "$F8"; mkdir -p "$F8"
   printf '%s' "$2" > "$F8/GET_repos_acme_thing_pulls_12.json"
   printf '%s' "$3" > "$F8/GET_repos_acme_thing_commits_${GATEHEAD}_status.json"
   printf '%s' "$4" > "$F8/GET_repos_acme_thing_commits_${GATEHEAD}_check-runs__per_page=100.json"
+  if [ -n "${5:-}" ]; then printf '%s' "$5" > "$F8/GET_repos_acme_thing_actions_runs__head_sha=${GATEHEAD}&per_page=100.json"; fi
 }
 gh8() { env GH_FIXTURES="$F8" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" "$@"; }
 ci8() { gh8 pr-gate 12 | python3 -c 'import json,sys; c=json.load(sys.stdin)["ci"]; print(c["result"], ",".join(c["failed"]), ",".join(c["skipped"]), c["total"])'; }
@@ -1937,8 +1956,8 @@ gate8 shape "$PULL8" '{"state":"success","statuses":[{"context":"ci/legacy","sta
 check "pr-gate answers repo, pr, state, draft, head, labels and ci" \
   "acme/thing 12 open False $GATEHEAD Not Ready|bug SUCCESS 2" \
   "$(gh8 pr-gate 12 | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["repo"], d["pr"], d["state"], d["draft"], d["head"], "|".join(d["labels"]), d["ci"]["result"], d["ci"]["total"])')"
-check "pr-gate makes three reads, the check runs a full page" \
-  "GET /repos/acme/thing/pulls/12|GET /repos/acme/thing/commits/$GATEHEAD/status|GET /repos/acme/thing/commits/$GATEHEAD/check-runs?per_page=100" \
+check "pr-gate makes four reads, the check runs and the Actions runs a full page" \
+  "GET /repos/acme/thing/pulls/12|GET /repos/acme/thing/commits/$GATEHEAD/status|GET /repos/acme/thing/commits/$GATEHEAD/check-runs?per_page=100|GET /repos/acme/thing/actions/runs?head_sha=$GATEHEAD&per_page=100" \
   "$(python3 -c 'import json,sys; print("|".join(json.loads(l)["method"] + " " + json.loads(l)["path"] for l in open(sys.argv[1])))' "$F8/sent.jsonl")"
 
 gate8 none "$PULL8" '{"state":"pending","statuses":[]}' '{"total_count":0,"check_runs":[]}'
@@ -1970,8 +1989,8 @@ check "pr-checks reads a neutral check on a draft as pr-gate does" "PENDING" \
 
 gate8 checks-page "$PULL8" '{"statuses":[]}' '{"check_runs":[{"name":"test","status":"completed","conclusion":"success"}]}'
 gh8 pr-checks 12 >/dev/null
-check "pr-checks reads the check runs a full page, as pr-gate does" \
-  "GET /repos/acme/thing/pulls/12|GET /repos/acme/thing/commits/$GATEHEAD/status|GET /repos/acme/thing/commits/$GATEHEAD/check-runs?per_page=100" \
+check "pr-checks reads the check runs and the Actions runs a full page, as pr-gate does" \
+  "GET /repos/acme/thing/pulls/12|GET /repos/acme/thing/commits/$GATEHEAD/status|GET /repos/acme/thing/commits/$GATEHEAD/check-runs?per_page=100|GET /repos/acme/thing/actions/runs?head_sha=$GATEHEAD&per_page=100" \
   "$(python3 -c 'import json,sys; print("|".join(json.loads(l)["method"] + " " + json.loads(l)["path"] for l in open(sys.argv[1])))' "$F8/sent.jsonl")"
 
 gate8 checks-neutral "$PULL8" '{"statuses":[]}' '{"check_runs":[{"name":"scan","status":"completed","conclusion":"neutral"}]}'
@@ -1981,6 +2000,20 @@ check "pr-checks reads a neutral check out of draft as pr-gate does" "SUCCESS" \
 gate8 merged "$(printf '%s' "$PULL8" | sed 's/"state":"open"/"state":"closed","merged_at":"2026-11-01T00:00:00Z"/')" '{"statuses":[]}' '{"check_runs":[]}'
 check "pr-gate says merged for a merged pull request" "merged" \
   "$(gh8 pr-gate 12 | python3 -c 'import json,sys; print(json.load(sys.stdin)["state"])')"
+# A check is its workflow's too: every Actions run shares one app, so two workflows
+# each with a job "test" are two checks, and a success of one never hides the
+# failure of the other. The workflow of a run is read from its check suite.
+RUNS2='{"check_runs":[{"id":1,"name":"test","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"failure"},{"id":2,"name":"test","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"success"}]}'
+gate8 wf-two "$PULL8" '{"statuses":[]}' "$RUNS2" '{"workflow_runs":[{"check_suite_id":100,"workflow_id":1},{"check_suite_id":200,"workflow_id":2}]}'
+check "pr-gate keeps a failure of one workflow under a newer success of another" "FAILURE test  2" "$(ci8)"
+check "pr-checks keeps a failure of one workflow under a newer success of another" "FAILURE" \
+  "$(gh8 pr-checks 12 --format checks-status | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
+gate8 wf-same "$PULL8" '{"statuses":[]}' "$RUNS2" '{"workflow_runs":[{"check_suite_id":100,"workflow_id":1},{"check_suite_id":200,"workflow_id":1}]}'
+check "pr-gate reads a newer success of the same workflow from another event over a failure" "SUCCESS   1" "$(ci8)"
+gate8 wf-down "$PULL8" '{"statuses":[]}' "$RUNS2" '{"__status":500,"message":"boom"}'
+check "pr-gate counts every run when the Actions runs call fails" "FAILURE test  2" "$(ci8)"
+gate8 wf-none "$PULL8" '{"statuses":[]}' "$RUNS2"
+check "pr-gate keys on name and app a run whose suite no Actions run places" "SUCCESS   1" "$(ci8)"
 gate8 unknown '{"__status":404,"message":"Not Found"}' '{}' '{}'
 check_status "pr-gate of an unknown pull request exits 4" 4 gh8 pr-gate 12
 gate8 nohead '{"number":12,"state":"open","head":{}}' '{}' '{}'
