@@ -2373,7 +2373,7 @@ test('a turn that declared its question passes the stop whatever its prose, firs
 function withCoordinator(fx: ReturnType<typeof fakeDollar>): string[] {
   const sent: string[] = []
   const read = fx.dollar.fs.read
-  fx.dollar.fs.read = async (p: string) => (p === `${STATE}/coordinator.json` ? '{"name":"Coord: ops [c0ffee]"}' : read(p))
+  fx.dollar.fs.read = async (p: string) => (p === `${STATE}/coordinator.json` ? '{"name":"Coord: ops [a1b2c3]"}' : read(p))
   fx.dollar.session.send = async ({ text }: { to: unknown; text: string }) => { sent.push(text); return { isDelivered: true } }
   return sent
 }
