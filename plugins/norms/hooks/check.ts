@@ -14,7 +14,7 @@ import {
   DIFF_INLINE_MAX, type Scope, type ReferencePaths,
 } from './scope.ts'
 import { isSpawned } from '../core/env.ts'
-import { markScope, openPullAt, repositoryDir } from './record.ts'
+import { branchPull, markScope, openPullAt, repositoryDir, repositoryOf, type Lookup } from './record.ts'
 
 const GIT_TIMEOUT_MS = 30_000
 // Agents spawned in one message reuse the scope the command computed.
@@ -31,40 +31,46 @@ const lines = (s: string) => s.split('\n').map(l => l.trim()).filter(Boolean)
 // A file of the repository the check reads: relative to the session's directory, or under `dir`.
 const at = (dir: string | undefined, name: string) => (dir ? `${dir}/${name}` : name)
 
-// The base branch of a pull request, asked of the github plugin (its mcp__github__gh contract), or
-// undefined: no pull request, no plugin, an unreadable answer. On a branch it is the current
-// branch's pull request. On a detached head, which has no branch to ask about, it is the open
-// pull request whose head is `detachedHead`.
-export async function pullRequestBase($: any, detachedHead?: string): Promise<string | undefined> {
-  try {
-    let pull: { base?: { ref?: unknown } } | undefined
-    if (detachedHead) {
-      pull = await openPullAt($, detachedHead)
-    } else {
-      const answer = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-get', args: {} })
-      if (answer?.deny || answer?.isError) return undefined
-      const pulls = JSON.parse(String(answer?.result ?? answer?.text ?? ''))
-      if (!Array.isArray(pulls)) return undefined
-      pull = pulls[0]
-    }
-    const ref = pull?.base?.ref
-    return typeof ref === 'string' && /^[\w./-]+$/.test(ref) ? ref : undefined
-  } catch {
-    return undefined
-  }
+// A refusal of the check, said to the person in one line: the scope is not computed, and the
+// markdown must not compute one either (it would take the default branch).
+export class ScopeRefusal extends Error {}
+
+// The block that carries a refusal in place of the scope.
+export function refusalBlock(line: string): string {
+  return ['<norms-scope>', `refused: ${line}`, 'Run no step of the check: print the refused line to the user as it is, and stop.', '</norms-scope>'].join('\n')
 }
 
-// The base to resolve when the words name none. A checkout on a branch takes its pull request's;
-// a detached head takes the pull request at HEAD, or is refused: the default branch would hand
-// the agents every file the pull request does not change. resolve_base.sh refuses the same way
-// when the module could not run and the command does the work itself.
+// The base branch of a pull request, read from a lookup of the github plugin (its mcp__github__gh
+// contract): the base, none for no pull request, or why the pull request could not be read.
+export function baseOf(found: Lookup): { base?: string } | { why: string } {
+  if ('why' in found) return found
+  if (found.pull === undefined) return {}
+  const ref = found.pull.base?.ref
+  return typeof ref === 'string' && /^[\w./-]+$/.test(ref) ? { base: ref } : { why: 'the pull request\'s base is not a branch name' }
+}
+
+const PASS_BASE = 'pass the base, /norms:check base=<branch>'
+
+// The base to resolve when the words name none, in the repository `dir`. A checkout on a branch
+// takes its pull request's, or the default branch when it has none (resolve_base.sh, given no
+// base); a detached head takes the pull request at HEAD. Anything else is refused, never replaced
+// by the default branch, which would hand the agents files the pull request does not change: a
+// pull request that cannot be read, several at a detached head, none there. A checkout whose origin
+// is no GitHub repository has no pull request to read: the default branch.
 async function defaultBase($: any, dir?: string): Promise<string | undefined> {
+  const repo = await repositoryOf($, dir).catch(() => undefined)
   const branch = (await run($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD'], dir)).trim()
-  if (branch !== 'HEAD') return pullRequestBase($)
+  if (branch !== 'HEAD') {
+    if (!repo) return undefined
+    const found = baseOf(await branchPull($, repo, branch))
+    if ('why' in found) throw new ScopeRefusal(`the base of ${branch}'s pull request could not be read (${found.why}): ${PASS_BASE}`)
+    return found.base
+  }
   const head = (await run($, ['git', 'rev-parse', 'HEAD'], dir)).trim()
-  const base = await pullRequestBase($, head)
-  if (!base) throw new Error(`detached HEAD (${head.slice(0, 12)}) and no open pull request has it as its head: pass the base, /norms:check base=<branch>`)
-  return base
+  const found = repo ? baseOf(await openPullAt($, repo, head)) : { why: 'the origin remote names no GitHub repository' }
+  if ('why' in found) throw new ScopeRefusal(`detached HEAD (${head.slice(0, 12)}) and its pull request could not be read (${found.why}): ${PASS_BASE}`)
+  if (!found.base) throw new ScopeRefusal(`detached HEAD (${head.slice(0, 12)}) and no open pull request has it as its head: ${PASS_BASE}`)
+  return found.base
 }
 
 export async function computeScope($: any, baseArg?: string, dir?: string): Promise<Scope> {
@@ -119,18 +125,27 @@ export const SKILL_MATCHER = { tool: 'Skill', skill: /^\/?norms:check$/ }
 // the agents and marked for the record, and its block appended to the words.
 async function withScope($: any, words: string): Promise<string> {
   const args = parseCheckArgs(words)
+  const typed = words.trim()
   // The session's directory, or its project root's repository when a shell cd left the checkout.
   const dir = await repositoryDir($)
   // No base named: the pull request's, through the github plugin (on a detached head, the one at
-  // HEAD, or a refusal); the agents reuse it from the cache.
-  const scope = await computeScope($, args.base ?? (await defaultBase($, dir)), dir)
+  // HEAD), or a refusal; the agents reuse it from the cache.
+  let base = args.base
+  if (base === undefined) {
+    try {
+      base = await defaultBase($, dir)
+    } catch (err) {
+      if (err instanceof ScopeRefusal) return (typed ? typed + '\n\n' : '') + refusalBlock(err.message)
+      throw err
+    }
+  }
+  const scope = await computeScope($, base, dir)
   cached = { scope, at: Date.now(), dir }
   const refs = await checkPaths($, args.paths)
   const spawned: unknown = await $.env.get('ORCHESTRATOR_SPAWNED').catch(() => undefined)
   const block = scopeBlock(scope, args, refs, args.auto === true || isSpawned(typeof spawned === 'string' ? spawned : undefined))
   // Last, so the mark means the block is delivered.
   await markScope($, scope.head, Object.values(scope.files).flat())
-  const typed = words.trim()
   return (typed ? typed + '\n\n' : '') + block
 }
 

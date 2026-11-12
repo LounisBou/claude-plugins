@@ -3,26 +3,30 @@
 // github plugin's record tool, once /norms:check computed its scope.
 import { expect, test } from 'claude-code/testing'
 import { register as registerCheck, resetCache, SKILL_MATCHER } from '../check.ts'
-import { register as registerRecord, repoOf, asMark } from '../record.ts'
+import { register as registerRecord, repoOf, asMark, repositoryDir } from '../record.ts'
 import { register as registerGuards } from '../guards.ts'
 import { mount, hook, nextOf, fakeDollar, gitRuns, HEAD, type FakeSetup } from './fakes.ts'
 
 const NEW_HEAD = 'c'.repeat(40)
 const WRITTEN = '/home/u/.claude/pr-records/o/r/' + HEAD + '/norms.20261102T100000Z.norms.json'
 
-type Github = { pr?: string; record?: any }
+// The open pull requests the github tool answers: by default 12, of the branch, at HEAD, onto main.
+type Github = { pulls?: unknown[]; record?: any }
+const PR_12 = { number: 12, head: { sha: HEAD }, base: { ref: 'main' } }
+
+// The resolver's answers with the pull request's base passed, and without (a branch with none).
+const resolverRuns = (): FakeSetup['runs'] => ({ ...gitRuns(['src/a.ts'], ['src/a.ts']), ...gitRuns(['src/a.ts'], ['src/a.ts'], {}, 'main') })
 
 function setup(github: Github = {}, runs: FakeSetup['runs'] = {}, calls: any[] = []) {
   return fakeDollar({
     runs: {
-      ...gitRuns(['src/a.ts'], ['src/a.ts']),
+      ...resolverRuns(),
       'git status --porcelain -uno': { stdout: '' },
-      'git remote get-url origin': { stdout: 'git@github.com:Owner/Repo.git\n' },
       ...runs,
     },
     tool: (input: any) => {
       calls.push(input)
-      if (input.tool === 'mcp__github__gh') return { result: github.pr ?? '12\n' }
+      if (input.tool === 'mcp__github__gh') return { result: JSON.stringify(github.pulls ?? [PR_12]) }
       if (input.tool === 'mcp__github__record') return github.record ?? { result: WRITTEN + '\n' }
       throw new Error('unexpected tool ' + input.tool)
     },
@@ -97,16 +101,18 @@ test('the pull request is read through the github tool', async () => {
   const { $ } = setup({}, {}, calls)
   const m = mounted()
   await m.scope($)
-  // The scope's own call, at the command's start, reads the pull request's base.
-  expect(calls).toEqual([{ tool: 'mcp__github__gh', command: 'pr-get', args: {} }])
+  // The scope's own call, at the command's start, reads the pull request's base: of the branch,
+  // in the repository named, never the session's directory's.
+  const ofBranch = { tool: 'mcp__github__gh', command: 'pr-get', args: { branch: 'feature' }, repo: 'Owner/Repo' }
+  expect(calls).toEqual([ofBranch])
   await m.done($, { open: 0, fixed: 0, passed: 0 })
-  expect(calls[1]).toEqual({ tool: 'mcp__github__gh', command: 'pr-get', args: { format: 'pr-number' } })
+  expect(calls[1]).toEqual(ofBranch)
 })
 
 test('a branch with no pull request leaves no record', async () => {
   resetCache()
   const calls: any[] = []
-  const { $ } = setup({ pr: '\n' }, {}, calls)
+  const { $ } = setup({ pulls: [] }, {}, calls)
   const m = mounted()
   await m.scope($)
   const out = await m.done($, { open: 0, fixed: 0, passed: 0 })
@@ -148,12 +154,12 @@ test('a github plugin that is absent or older than 0.12.0 leaves no record and t
   resetCache()
   const { $ } = fakeDollar({
     runs: {
-      ...gitRuns(['src/a.ts'], ['src/a.ts']),
+      ...resolverRuns(),
       'git status --porcelain -uno': { stdout: '' },
       'git remote get-url origin': { stdout: 'https://github.com/o/r.git\n' },
     },
     tool: (input: any) => {
-      if (input.tool === 'mcp__github__gh') return { result: '12' }
+      if (input.tool === 'mcp__github__gh') return { result: JSON.stringify([PR_12]) }
       throw new Error('unknown tool ' + input.tool)
     },
   })
@@ -188,6 +194,7 @@ test('the head is read at the call: a commit made after the scope does not refus
     if (key === 'git rev-parse HEAD') return { exitCode: 0, stdout: NEW_HEAD + '\n', stderr: '' }
     if (key === 'git status --porcelain -uno') return { exitCode: 0, stdout: '', stderr: '' }
     if (key === 'git remote get-url origin') return { exitCode: 0, stdout: 'https://github.com/o/r.git\n', stderr: '' }
+    if (key === 'git rev-parse --abbrev-ref HEAD') return { exitCode: 0, stdout: 'feature\n', stderr: '' }
     if (key === `git diff --name-only ${HEAD} ${NEW_HEAD}`) return { exitCode: 0, stdout: 'src/a.ts\n', stderr: '' }
     return { exitCode: 1, stdout: '', stderr: 'unexpected run: ' + key }
   }
@@ -343,13 +350,12 @@ const REFUSED = 'norms: run /norms:check first: the record follows its own scope
 
 // The git and github answers of a clean checkout at HEAD whose pull request is 12.
 const recordRuns = () => ({
-  ...gitRuns(['src/a.ts'], ['src/a.ts']),
+  ...resolverRuns(),
   'git status --porcelain -uno': { stdout: '' },
-  'git remote get-url origin': { stdout: 'git@github.com:Owner/Repo.git\n' },
 })
 const recordTool = (calls: any[] = []) => (input: any) => {
   calls.push(input)
-  return input.tool === 'mcp__github__gh' ? { result: '12\n' } : { result: WRITTEN + '\n' }
+  return input.tool === 'mcp__github__gh' ? { result: JSON.stringify([PR_12]) } : { result: WRITTEN + '\n' }
 }
 
 test('the scope mark lives in $.state, so a module that restarted still records', async () => {
@@ -457,9 +463,8 @@ test('a ui.log that returns a rejected promise has its rejection caught, and the
 
 // The git answers of setup(), as runs in `dir` rather than in the session's directory.
 const runsIn = (dir: string, runs: FakeSetup['runs'] = {}): FakeSetup['runs'] => Object.fromEntries(Object.entries({
-  ...gitRuns(['src/a.ts'], ['src/a.ts']),
+  ...resolverRuns(),
   'git status --porcelain -uno': { stdout: '' },
-  'git remote get-url origin': { stdout: 'git@github.com:Owner/Repo.git\n' },
   'git rev-parse --show-toplevel': { stdout: dir + '\n' },
   ...runs,
 }).map(([argv, answer]) => [`(${dir}) ${argv}`, answer]))
@@ -471,10 +476,7 @@ test('a check run after a shell cd out of the repository reads the project root\
   const { $ } = fakeDollar({
     runs: runsIn(root),
     root,
-    tool: (input: any) => {
-      calls.push(input)
-      return input.tool === 'mcp__github__gh' ? { result: '12\n' } : { result: WRITTEN + '\n' }
-    },
+    tool: recordTool(calls),
   })
   const m = mounted()
   const { next, seen } = nextOf()
@@ -535,4 +537,61 @@ test('a detached head that no open pull request has as its head leaves no record
   const out = await m.done($, { open: 0, fixed: 0, passed: 1 })
   expect(out.result).toBe('record: none — the branch has no pull request')
   expect(recordCalls(calls)).toEqual([])
+})
+
+test('a branch with no pull request does not take the open pull request at its head: that lookup is a detached head\'s', async () => {
+  resetCache()
+  const calls: any[] = []
+  const { $ } = fakeDollar({
+    runs: { ...resolverRuns(), 'git status --porcelain -uno': { stdout: '' } },
+    tool: (input: any) => {
+      calls.push(input)
+      if (input.tool === 'mcp__github__record') return { result: WRITTEN + '\n' }
+      return { result: input.command === 'pr-list' ? JSON.stringify([PR_12]) : '[]' }
+    },
+  })
+  const m = mounted()
+  await m.scope($)
+  const out = await m.done($, { open: 0, fixed: 0, passed: 1 })
+  expect(out.result).toBe('record: none — the branch has no pull request')
+  expect(calls.map(c => c.command ?? c.tool)).toEqual(['pr-get', 'pr-get'])
+})
+
+// A detached review checkout at HEAD, whose pull request list the github tool answers with `pulls`.
+function detached(pulls: (input: any) => any, calls: any[] = []) {
+  return fakeDollar({
+    state: { 'norms/scopeMark': { head: HEAD, at: 1, files: ['src/a.ts'], dir: '/repo' } },
+    runs: {
+      ...gitRuns(['src/a.ts'], ['src/a.ts']),
+      'git rev-parse --abbrev-ref HEAD': { stdout: 'HEAD\n' },
+      'git status --porcelain -uno': { stdout: '' },
+    },
+    tool: (input: any) => {
+      calls.push(input)
+      return input.tool === 'mcp__github__record' ? { result: WRITTEN + '\n' } : pulls(input)
+    },
+  })
+}
+
+test('a detached head that several open pull requests have leaves no record, naming them', async () => {
+  const calls: any[] = []
+  const both = [PR_12, { number: 13, head: { sha: HEAD }, base: { ref: 'home' } }]
+  const { $ } = detached(() => ({ result: JSON.stringify(both) }), calls)
+  const out = await mounted().done($, { open: 0, fixed: 0, passed: 1 })
+  expect(out.result).toBe(`record: none — 2 open pull requests have the head ${HEAD.slice(0, 12)}: Owner/Repo#12, Owner/Repo#13`)
+  expect(recordCalls(calls)).toEqual([])
+})
+
+test('a detached head whose pull request list the github tool refuses leaves no record, with the refusal', async () => {
+  const calls: any[] = []
+  const { $ } = detached(() => ({ deny: 'github: gh is not signed in' }), calls)
+  const out = await mounted().done($, { open: 0, fixed: 0, passed: 1 })
+  expect(out.result).toBe('record: none — github: gh is not signed in')
+  expect(calls).toEqual([{ tool: 'mcp__github__gh', command: 'pr-list', args: {}, repo: 'Owner/Repo' }])
+})
+
+test('a host that cannot say where the repository is leaves the session\'s directory to git', async () => {
+  expect(await repositoryDir({ process: { run: async () => { throw new Error('no process') } } })).toBeUndefined()
+  const outside = { exitCode: 128, stdout: '', stderr: 'fatal: not a git repository' }
+  expect(await repositoryDir({ process: { run: async () => outside }, session: { root: async () => { throw new Error('no root') } } })).toBeUndefined()
 })

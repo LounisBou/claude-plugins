@@ -45,6 +45,20 @@ export type FakeSetup = {
   stateFails?: string
   // The session's project root, as $.session.root() answers it.
   root?: string
+  // The session's directory: a run there is keyed by its argv alone, and a relative path is read
+  // from it. Default /repo, the top directory gitRuns answers.
+  cwd?: string
+}
+
+// An absolute path without `.` and `..` steps.
+export function normalize(path: string): string {
+  const parts: string[] = []
+  for (const step of path.split('/')) {
+    if (step === '' || step === '.') continue
+    if (step === '..') parts.pop()
+    else parts.push(step)
+  }
+  return '/' + parts.join('/')
 }
 
 export function fakeDollar(setup: FakeSetup): {
@@ -53,7 +67,11 @@ export function fakeDollar(setup: FakeSetup): {
   const argvs: string[] = []
   const written: Record<string, string> = {}
   const toolCalls: any[] = []
-  const files = { ...(setup.files ?? {}) }
+  const cwd = setup.cwd ?? '/repo'
+  const abs = (p: string) => normalize(p.startsWith('/') ? p : `${cwd}/${p}`)
+  const keyed = <T>(table: Record<string, T> = {}) => Object.fromEntries(Object.entries(table).map(([p, v]) => [abs(p), v]))
+  const files: Record<string, string> = keyed(setup.files)
+  const dirs: Record<string, string[]> = keyed(setup.dirs)
   const state = new Map<string, unknown>(Object.entries(setup.state ?? {}))
   const logs: string[] = []
   const $ = {
@@ -62,7 +80,7 @@ export function fakeDollar(setup: FakeSetup): {
     process: {
       // A run in another directory than the session's is keyed `(<dir>) <argv>`.
       run: async (argv: readonly string[], init?: { cwd?: string }) => {
-        const key = (init?.cwd ? `(${init.cwd}) ` : '') + argv.join(' ')
+        const key = (init?.cwd && init.cwd !== cwd ? `(${init.cwd}) ` : '') + argv.join(' ')
         argvs.push(key)
         const r = setup.runs?.[key]
         if (!r) return { exitCode: 1, stdout: '', stderr: `unexpected run: ${key}` }
@@ -70,19 +88,19 @@ export function fakeDollar(setup: FakeSetup): {
       },
     },
     fs: {
-      exists: async (p: string) => p in files || p in (setup.dirs ?? {}),
+      exists: async (p: string) => abs(p) in files || abs(p) in dirs,
       read: async (p: string) => {
-        if (!(p in files)) throw new Error(`missing ${p}`)
-        return files[p]
+        if (!(abs(p) in files)) throw new Error(`missing ${p}`)
+        return files[abs(p)]
       },
       write: async (p: string, text: string) => {
         written[p] = text
-        files[p] = text
+        files[abs(p)] = text
       },
-      list: async (p: string) => (setup.dirs?.[p] ?? []).map(name => ({ name, kind: 'file' })),
+      list: async (p: string) => (dirs[abs(p)] ?? []).map(name => ({ name, kind: 'file' })),
       stat: async (p: string) => {
-        if (p in (setup.dirs ?? {})) return { kind: 'dir', size: 0, mtimeMs: 0, isLink: false }
-        if (p in files) return { kind: 'file', size: files[p].length, mtimeMs: 0, isLink: false }
+        if (abs(p) in dirs) return { kind: 'dir', size: 0, mtimeMs: 0, isLink: false }
+        if (abs(p) in files) return { kind: 'file', size: files[abs(p)].length, mtimeMs: 0, isLink: false }
         throw new Error(`missing ${p}`)
       },
     },
@@ -120,6 +138,7 @@ export function gitRuns(changed: string[], tracked: string[], diffs: Record<stri
     'git ls-files': { stdout: tracked.join('\n') + '\n' },
     'git rev-parse --absolute-git-dir': { stdout: '/repo/.git\n' },
     'git rev-parse --show-toplevel': { stdout: '/repo\n' },
+    'git remote get-url origin': { stdout: 'git@github.com:Owner/Repo.git\n' },
   }
   for (const [files, diff] of Object.entries(diffs)) {
     runs[`git diff ${BASE}...HEAD -- ${files}`] = { stdout: diff }
