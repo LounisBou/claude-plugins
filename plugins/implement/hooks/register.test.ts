@@ -379,6 +379,13 @@ test('elsewhere, or without the launcher, the reviewer runs headless with its re
   expect(String(out.text)).toContain('launched headless')
 })
 
+test('the headless reviewer starts with Remote Control off', async ($, on) => {
+  const runs = machine(on, { system: 'Linux', record: RECORD, launcher: true })
+  await review($)
+  const headless = runs.find(argv => argv[0] === 'sh') ?? []
+  expect(headless[2]).toContain(`--settings '{"remoteControlAtStartup":false}'`)
+})
+
 test('a macOS without the orchestrator installed runs the reviewer headless too', async ($, on) => {
   const runs = machine(on, { system: 'Darwin' })
   await review($)

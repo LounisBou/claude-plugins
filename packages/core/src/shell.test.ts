@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
-import { gitSubcommand, innerLine, readCommands, redirectsToFile, simpleCommands } from './shell.ts'
+import { gitSubcommand, innerLine, readCommands, redirectsToFile, simpleCommands, stdinLines, unwrapPath } from './shell.ts'
 
 const commands = (line: string): string[][] => simpleCommands(line)
 
@@ -65,8 +65,76 @@ describe('readCommands', () => {
   })
 })
 
+describe('stdin', () => {
+  const stdins = (line: string): (readonly string[])[] => readCommands(line).map(c => c.stdin)
+
+  it('keeps a here-string and a heredoc body as the text of the command that reads them', () => {
+    assert.deepEqual(stdins(`bash <<< 'pkill x'`), [['pkill x']])
+    assert.deepEqual(stdins('sh <<EOF\npkill x\nEOF'), [['pkill x']])
+    assert.deepEqual(stdins('sh <<EOF\na\nb\nEOF\nls'), [['a\nb'], []])
+    assert.deepEqual(stdins('sh <<-EOF\n\ta\n\tEOF'), [['a']])
+  })
+
+  it('carries what the earlier commands of a pipeline write, echo and printf by their words', () => {
+    assert.deepEqual(stdins(`echo 'pkill x' | sh`), [[], ['pkill x']])
+    assert.deepEqual(stdins(`echo -n a b | tr a b | sh`), [[], ['a b'], ['a b']])
+    assert.deepEqual(stdins(`printf '%s\\n' 'pkill x' | sh`), [[], ['%s\\n', 'pkill x']])
+    assert.deepEqual(stdins('cat <<EOF | sh\nbody\nEOF'), [['body'], ['body']])
+    assert.deepEqual(stdins(`cat <<< x |& sh`), [['x'], ['x']])
+    assert.deepEqual(stdins('ls a | sh'), [[], []])
+  })
+
+  it('carries nothing past a list separator or into a substitution', () => {
+    assert.deepEqual(stdins(`echo 'pkill x'; sh`), [[], []])
+    assert.deepEqual(stdins(`echo 'pkill x' && sh`), [[], []])
+    assert.deepEqual(stdins(`echo 'pkill x' | cat; sh`), [[], ['pkill x'], []])
+    assert.deepEqual(stdins(`echo "$(echo a | sh)"`), [[], ['a'], []])
+  })
+})
+
+describe('stdinLines', () => {
+  const lines = (line: string): (readonly string[])[] => readCommands(line).map(stdinLines)
+
+  it('gives what a shell with no command string and no script file reads from its standard input', () => {
+    assert.deepEqual(lines(`echo 'pkill x' | sh`), [[], ['pkill x']])
+    assert.deepEqual(lines(`echo 'pkill x' | bash -s`), [[], ['pkill x']])
+    assert.deepEqual(lines(`echo 'pkill x' | bash -`), [[], ['pkill x']])
+    assert.deepEqual(lines(`echo 'pkill x' | bash -o pipefail`), [[], ['pkill x']])
+    assert.deepEqual(lines(`echo 'pkill x' | bash --norc`), [[], ['pkill x']])
+    assert.deepEqual(lines(`bash -s -- a <<< 'ls'`), [['ls']])
+  })
+
+  it('skips the value of --rcfile and --init-file, which is no script', () => {
+    assert.deepEqual(lines(`bash --rcfile f <<< 'pkill x'`), [['pkill x']])
+    assert.deepEqual(lines(`bash --init-file f <<< 'pkill x'`), [['pkill x']])
+    assert.deepEqual(lines(`bash --rcfile f -s <<< 'pkill x'`), [['pkill x']])
+    assert.deepEqual(lines(`bash --rcfile=f <<< 'pkill x'`), [['pkill x']])
+    assert.deepEqual(lines(`bash --rcfile f script.sh <<< 'pkill x'`), [[]])
+  })
+
+  it('gives nothing for a shell that only parses (-n), alone or in a cluster', () => {
+    assert.deepEqual(lines(`bash -n <<< 'pkill x'`), [[]])
+    assert.deepEqual(lines(`bash -xn <<< 'pkill x'`), [[]])
+    assert.deepEqual(lines(`echo 'pkill x' | sh -n`), [[], []])
+    assert.deepEqual(lines(`bash +n <<< 'pkill x'`), [['pkill x']])
+  })
+
+  it('gives nothing for a shell whose -c has no command string to take', () => {
+    assert.deepEqual(lines(`bash -c <<< 'pkill x'`), [[]])
+    assert.deepEqual(lines(`echo 'pkill x' | sh -c`), [[], []])
+    assert.deepEqual(lines(`bash -c -- <<< 'pkill x'`), [[]])
+  })
+
+  it('gives nothing for a shell given a command string or a script, or for another program', () => {
+    assert.deepEqual(lines(`echo 'pkill x' | sh -c ls`), [[], []])
+    assert.deepEqual(lines(`echo 'pkill x' | sh script.sh`), [[], []])
+    assert.deepEqual(lines(`echo 'pkill x' | cat`), [[], []])
+  })
+})
+
 describe('innerLine', () => {
   it('gives the line a shell runs with -c, or eval runs', () => {
+    assert.equal(innerLine(['sh', '-c', '--', 'ls']), 'ls')
     assert.equal(innerLine(['bash', '-o', 'pipefail', '-c', 'ls']), 'ls')
     assert.equal(innerLine(['/bin/dash', '-lc', 'ls']), 'ls')
     assert.equal(innerLine(['ksh', '+o', 'x', '-c', 'ls']), 'ls')
@@ -98,5 +166,26 @@ describe('redirectsToFile', () => {
   it('sees a write into a file, and not a stream, /dev/null or a quoted >', () => {
     for (const line of ['git diff > out.txt', 'echo a >> notes.md', 'cmd >| f', 'x 2> err.log', 'a && b>f']) assert.equal(redirectsToFile(line), true, line)
     for (const line of ['git diff 2>&1', 'cmd > /dev/null 2>&1', 'cmd 2>/dev/null', 'echo "a > b"', "grep '>' f", 'echo a\\>b', 'cmd >&2']) assert.equal(redirectsToFile(line), false, line)
+  })
+})
+
+describe('unwrapPath', () => {
+  it('skips a wrapper written with its directory, with its options and assignments', () => {
+    assert.deepEqual(unwrapPath(['/usr/bin/env', 'bash', '-c', 'ls']), { argv: ['bash', '-c', 'ls'], wrappers: ['env'], lookup: false })
+    assert.deepEqual(unwrapPath(['/usr/bin/env', '-u', 'X', 'FOO=1', 'bash']), { argv: ['bash'], wrappers: ['env'], lookup: false })
+    assert.deepEqual(unwrapPath(['/usr/bin/sudo', '-u', 'root', '/usr/bin/xargs', 'kill']), { argv: ['kill'], wrappers: ['sudo', 'xargs'], lookup: false })
+    assert.deepEqual(unwrapPath(['/usr/bin/timeout', '5', 'sh']), { argv: ['sh'], wrappers: ['timeout'], lookup: false })
+    assert.deepEqual(unwrapPath(['/usr/bin/command', '-v', 'pkill']).lookup, true)
+  })
+
+  it('leaves a command that is no wrapper written with a directory as it is', () => {
+    assert.deepEqual(unwrapPath(['bash', '-c', 'ls']), { argv: ['bash', '-c', 'ls'], wrappers: [], lookup: false })
+    assert.deepEqual(unwrapPath(['/bin/bash', '-c', 'ls']), { argv: ['/bin/bash', '-c', 'ls'], wrappers: [], lookup: false })
+    assert.deepEqual(unwrapPath(['env', 'bash']), { argv: ['env', 'bash'], wrappers: [], lookup: false })
+    assert.deepEqual(unwrapPath([]), { argv: [], wrappers: [], lookup: false })
+  })
+
+  it('does not change what readCommands returns for a wrapper written with its directory', () => {
+    assert.deepEqual(readCommands('/usr/bin/env bash').map(c => [...c.argv]), [['/usr/bin/env', 'bash']])
   })
 })

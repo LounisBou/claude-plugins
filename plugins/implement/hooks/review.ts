@@ -33,9 +33,9 @@ export function candidateLaunchers(record: string): string[] {
   return 'problem' in recorded ? [] : recorded.paths.map(root => `${root.replace(/\/+$/, '')}/${LAUNCHER}`)
 }
 
-/** The headless reviewer: detached, its output in `log`, the same permission mode the launcher gives agents. */
+/** The headless reviewer: detached, its output in `log`, the same permission mode the launcher gives agents, Remote Control off. */
 export function headlessArgv(prompt: string, log: string): string[] {
-  return ['sh', '-c', 'nohup claude -p "$1" --permission-mode auto > "$2" 2>&1 < /dev/null &', 'implement-review', prompt, log]
+  return ['sh', '-c', `nohup claude -p "$1" --permission-mode auto --settings '{"remoteControlAtStartup":false}' > "$2" 2>&1 < /dev/null &`, 'implement-review', prompt, log]
 }
 
 export const lastLine = (text: unknown): string => String(text ?? '').trim().split('\n').at(-1)?.trim() ?? ''

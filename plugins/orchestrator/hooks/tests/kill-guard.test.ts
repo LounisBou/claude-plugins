@@ -231,6 +231,16 @@ test('a shell string nested four deep is still read', () => {
   expect(detectPatternKills(four)).toEqual(['pkill'])
 })
 
+// The text a line writes to a shell's standard input is read the same four strings deep, and no
+// deeper: each layer is an `echo "<the layer inside>" | sh`.
+test('a kill line nested four deep in text given to a shell is read, one deeper is not', () => {
+  const layer = (inner: string) => `echo "${inner.replace(/(["\\$`])/g, '\\$1')}" | sh`
+  let line = 'pkill x'
+  for (let depth = 1; depth <= 4; depth++) line = layer(line)
+  expect(detectPatternKills(line)).toEqual(['pkill'])
+  expect(detectPatternKills(layer(line))).toEqual([])
+})
+
 test('a lookup with command -v or -V runs nothing, a command that runs still reads', () => {
   expect(detectPatternKills('command -v pkill')).toEqual([])
   expect(detectPatternKills('command -V killall')).toEqual([])
@@ -345,6 +355,315 @@ test('a wide kill and a kill by lookup name themselves each', () => {
   expect(detectPatternKills('kill -9 -1 $(pgrep x)')).toEqual(['kill of a command substitution', 'kill of all processes or a process group'])
   expect(detectPatternKills('kill -9 -1; kill 0')).toEqual(['kill of all processes or a process group'])
   expect(detectPatternKills('pgrep x | xargs kill -9 -1')).toEqual(['kill fed through xargs by pgrep', 'kill of all processes or a process group'])
+})
+
+// A loop that kills what a lister printed: the pids come from `pgrep` through a pipe into
+// `read`, or from a substitution in the `for` words, and `kill` takes the variable that holds
+// them. A pid read from a file, or a loop over words typed in the line, is a recorded pid.
+const looped = [
+  'pgrep -f x | while read p; do kill $p; done',
+  'pgrep -f x | while read -r p; do kill -9 "$p"; done',
+  'pgrep x | while read p; do kill ${p}; done',
+  'lsof -ti :3000 | while read pid; do kill $pid; done',
+  'pgrep x | while read; do kill $REPLY; done',
+  'pgrep x | grep -v y | while read p; do kill $p; done',
+  'pgrep x |\n  while read p\n  do\n    kill $p\n  done',
+  'pidof node | while read a b; do kill $b; done',
+  'for p in $(pgrep -f x); do kill $p; done',
+  'for p in `pgrep x`; do kill -9 $p; done',
+  'for p in $(lsof -ti :3000); do kill "$p"; done',
+  "for p in $(ps aux | grep x | awk '{print $2}'); do kill $p; done",
+  'for p in $(pgrep x) $(pgrep y); do kill $p; done',
+  'for p in $(pgrep x); do echo $p; done; kill $p',
+  `bash -c 'pgrep x | while read p; do kill $p; done'`,
+]
+
+const unlooped = [
+  'cat pids | while read p; do kill $p; done',
+  'while read p; do kill $p; done < server.pids',
+  'pgrep x | while read p; do echo $p; done',
+  'pgrep x | while read p; do kill $q; done',
+  'pgrep x | while read p; do kill $pp; done',
+  'pgrep x | wc -l; read p; kill $p',
+  'pgrep x | while read p; do echo $p; done; kill 1234',
+  'for p in $(cat server.pids); do kill $p; done',
+  'for p in 1 2 3; do kill $p; done',
+  'for f in $(pgrep x); do echo $f; done',
+  'for f in $(pgrep x); do kill $pid; done',
+  'for p in a b; do echo $(pgrep x); kill $p; done',
+]
+
+test('a kill of a variable a lister filled through a loop is a kill by pattern', () => {
+  for (const c of looped) expect(detectPatternKills(c), c).not.toEqual([])
+  expect(detectPatternKills('pgrep x | while read p; do kill $p; done')).toEqual(['kill fed through a loop by pgrep'])
+  expect(detectPatternKills('for p in $(lsof -ti :3000); do kill $p; done')).toEqual(['kill fed through a loop by lsof'])
+  expect(detectPatternKills('for p in $(pgrep x); do kill $p; done')).toEqual(['kill fed through a loop by pgrep'])
+})
+
+test('a loop over a recorded pid, typed words or a variable no lister filled passes', () => {
+  for (const c of unlooped) expect(detectPatternKills(c), c).toEqual([])
+})
+
+// A lister that feeds a loop through a here-string, or whose variable a string a shell runs
+// kills with: read the same as a pipe into `read`.
+const hereFed = [
+  'read p <<< "$(pgrep x)"; kill $p',
+  'read -r p <<< "$(pgrep x)"; kill -9 "$p"',
+  'while read p; do kill $p; done <<< "$(pgrep x)"',
+  'while read -r pid; do kill -9 $pid; done <<< "$(lsof -ti :3000)"',
+  'while read p\ndo\n  kill $p\ndone <<< "$(pgrep x)"',
+  'pgrep x | while read p; do bash -c "kill $p"; done',
+  'pgrep x | while read p; do sh -c "echo; kill -9 $p"; done',
+  'for p in $(pgrep x); do bash -c "kill $p"; done',
+  'for p in $(pgrep x); do sh <<< "kill $p"; done',
+  'pgrep x | while read p; do eval "kill $p"; done',
+]
+
+test('a kill of a variable a lister filled through a here-string, or inside a shell string, is a kill by pattern', () => {
+  for (const c of hereFed) expect(detectPatternKills(c), c).not.toEqual([])
+  expect(detectPatternKills('read p <<< "$(pgrep x)"; kill $p')).toEqual(['kill fed through a loop by pgrep'])
+  expect(detectPatternKills('while read p; do kill $p; done <<< "$(lsof -ti :3000)"')).toEqual(['kill fed through a loop by lsof'])
+  expect(detectPatternKills('pgrep x | while read p; do bash -c "kill $p"; done')).toEqual(['kill fed through a loop by pgrep'])
+})
+
+test('a here-string no lister wrote, and a shell string where no lister filled the variable, fill nothing', () => {
+  for (const c of [
+    'read p <<< "$(cat f.pid)"; kill $p',
+    'read p <<< "$(date)"; kill $p',
+    'read p <<< "1234"; kill $p',
+    'while read p; do kill $p; done <<< "$(cat f.pids)"',
+    'while read p; do echo $p; done <<< "$(pgrep x)"',
+    'while read p; do kill $q; done <<< "$(pgrep x)"',
+    'bash -c "pgrep x | while read p; do echo $p; done"; kill $p',
+    'for p in 1 2; do bash -c "kill $p"; done',
+  ]) expect(detectPatternKills(c), c).toEqual([])
+})
+
+// What the reader cannot link, stays a pass: it drops an assignment and keeps no tie between a
+// variable and the command that filled it, and a process substitution is a command of its own
+// with nothing to say it feeds the loop before it. Each is named in pattern-kills.ts' header.
+test('known limits: a variable filled by an assignment or a process substitution is not followed', () => {
+  for (const c of [
+    'pids=$(pgrep x); kill $pids',
+    'p=$(pgrep x); kill $p',
+    'p=`pgrep x`; kill $p',
+    'pids=$(pgrep x); for p in $pids; do kill $p; done',
+    'while read p; do kill $p; done < <(pgrep x)',
+    'read p < <(pgrep x); kill $p',
+    'mapfile -t a < <(pgrep x); kill "${a[@]}"',
+  ]) expect(detectPatternKills(c), c).toEqual([])
+})
+
+test('a probe of a pid a lister filled kills nothing, a kill after the options does', () => {
+  expect(detectPatternKills('pgrep x | while read p; do kill -0 $p; done')).toEqual([])
+  expect(detectPatternKills('for p in $(pgrep x); do kill -0 $p; done')).toEqual([])
+  expect(detectPatternKills('pgrep x | while read p; do kill -- $p; done')).toEqual(['kill fed through a loop by pgrep'])
+  expect(detectPatternKills('pgrep x | while read p; do kill -9 -- $p; done')).toEqual(['kill fed through a loop by pgrep'])
+})
+
+test('a for loop over a substitution that is no lister is a kill fed by a substitution', () => {
+  expect(detectPatternKills('for p in $(some-tool); do kill $p; done')).toEqual(['kill fed through a loop by a command substitution'])
+})
+
+test('fuser -k kills whatever holds a file or a port', () => {
+  for (const c of [
+    'fuser -k 3000/tcp',
+    'fuser -k -n tcp 3000',
+    'fuser -km /mnt',
+    'fuser -9 -k 80/tcp',
+    'fuser -TERM -k 80/tcp',
+    'fuser --kill 80/tcp',
+    'sudo fuser -k 80/tcp',
+    '/usr/bin/fuser -k 8080/tcp',
+    'echo x && fuser -k 3000/tcp',
+    `bash -c 'fuser -k 3000/tcp'`,
+  ]) expect(detectPatternKills(c), c).toEqual(['fuser -k'])
+  for (const c of [
+    'fuser 3000/tcp',
+    'fuser -v /dev/null',
+    'fuser -n tcp 3000',
+    'fuser -TERM 3000/tcp',
+    'echo fuser -k 80',
+    'man fuser',
+    'grep fuser file',
+    'command -v fuser',
+  ]) expect(detectPatternKills(c), c).toEqual([])
+})
+
+test('kill-port, run directly or through a package runner, kills what listens on a port', () => {
+  for (const c of [
+    'kill-port 3000',
+    'npx kill-port 3000',
+    'npx -y kill-port 3000 8080',
+    'npx --yes kill-port 3000',
+    'npx kill-port@latest 3000',
+    'bunx kill-port 3000',
+    'pnpm dlx kill-port 3000',
+    'yarn dlx kill-port 3000',
+    'npm exec kill-port 3000',
+    'sudo npx kill-port 80',
+    'node_modules/.bin/kill-port 3000',
+    'echo x; npx kill-port 3000',
+    `bash -c 'npx kill-port 3000'`,
+  ]) expect(detectPatternKills(c), c).toEqual(['kill-port'])
+  for (const c of [
+    'npm install kill-port',
+    'pnpm add kill-port',
+    'yarn add kill-port',
+    'npm run dev',
+    'npx vite',
+    'echo kill-port',
+    'grep kill-port package.json',
+    'ls kill-port/',
+    'pnpm run kill-port',
+    'yarn run kill-port',
+    'pnpm install',
+  ]) expect(detectPatternKills(c), c).toEqual([])
+})
+
+test('kill-port behind a package manager that runs a binary by its name, with no dlx or exec', () => {
+  for (const c of [
+    'pnpm kill-port 3000',
+    'yarn kill-port 3000',
+    'bun kill-port 3000',
+    'pnpm kill-port@latest 3000',
+    'pnpx kill-port 3000',
+    'pnpx -y kill-port 3000',
+    'bun x kill-port 3000',
+    'bunx --bun kill-port 3000',
+    'sudo yarn kill-port 80',
+    'echo x; pnpm kill-port 3000',
+    `bash -c 'bun kill-port 3000'`,
+  ]) expect(detectPatternKills(c), c).toEqual(['kill-port'])
+})
+
+// A kill line the line itself writes to a shell's standard input: through echo or printf and a
+// pipe, a here-string or a heredoc. The shell reads it as any command line.
+test('a kill line given to a shell through a pipe is read', () => {
+  for (const c of [
+    `echo 'pkill x' | sh`,
+    `echo "killall node" | bash`,
+    `echo 'pkill -f vite' | sudo bash`,
+    `echo 'echo hi; pkill x' | bash`,
+    `printf 'pkill x\\n' | sh`,
+    `printf '%s\\n' 'pkill x' | sh`,
+    `echo pkill | sh`,
+    `echo 'pkill x' | bash -s`,
+    `echo 'pkill x' | bash -`,
+    `echo 'pkill x' | /bin/sh`,
+    `echo "echo 'pkill x' | sh" | sh`,
+  ]) expect(detectPatternKills(c), c).not.toEqual([])
+  expect(detectPatternKills(`echo 'pkill x' | sh`)).toEqual(['pkill'])
+  expect(detectPatternKills(`echo 'pgrep x | xargs kill' | sh`)).toEqual(['kill fed through xargs by pgrep'])
+  expect(detectPatternKills(`echo 'kill $(pgrep x)' | sh`)).toEqual(['kill of a command substitution'])
+})
+
+test('a kill line given to a shell as a here-string is read', () => {
+  for (const c of [
+    `bash <<< 'pkill x'`,
+    `sh <<< "killall node"`,
+    `bash -s <<< 'pkill x'`,
+    `bash - <<< 'pkill x'`,
+    `zsh <<< 'pkill x'`,
+    `sudo bash <<< 'pkill x'`,
+    `cat <<< 'pkill x' | sh`,
+  ]) expect(detectPatternKills(c), c).not.toEqual([])
+  expect(detectPatternKills(`bash <<< 'pkill x'`)).toEqual(['pkill'])
+})
+
+test('a kill line given to a shell in a heredoc is read', () => {
+  for (const c of [
+    'sh <<EOF\npkill x\nEOF',
+    `bash <<'EOF'\necho hi\npkill -f vite\nEOF`,
+    'bash <<-EOF\n\tpkill x\n\tEOF',
+    'cat <<EOF | sh\npkill x\nEOF',
+    `cat <<'EOF' | bash\necho hi\nkillall node\nEOF`,
+    'sh <<EOF\npgrep x | xargs kill\nEOF',
+    'sh <<EOF\nfor p in $(pgrep x); do kill $p; done\nEOF',
+    'echo before\nsh <<EOF\npkill x\nEOF\necho after',
+  ]) expect(detectPatternKills(c), c).not.toEqual([])
+  expect(detectPatternKills('sh <<EOF\npkill x\nEOF')).toEqual(['pkill'])
+})
+
+// The shell's own options: --rcfile and --init-file take a value that is no script, -n parses
+// and runs nothing, and `--` after -c leaves the string to run.
+test('a shell given an rc file, or a string after `--`, still reads what it is given', () => {
+  for (const c of [
+    `bash --rcfile f <<< 'pkill x'`,
+    `bash --init-file f <<< 'pkill x'`,
+    `echo 'pkill x' | bash --rcfile f`,
+    `sh -c -- 'pkill x'`,
+  ]) expect(detectPatternKills(c), c).toEqual(['pkill'])
+})
+
+test('a shell that only parses (-n) or has no command string runs nothing', () => {
+  for (const c of [
+    `bash -n <<< 'pkill x'`,
+    `echo 'pkill x' | bash -n`,
+    `bash -xn <<< 'pkill x'`,
+    `bash -c <<< 'pkill x'`,
+  ]) expect(detectPatternKills(c), c).toEqual([])
+})
+
+// A wrapper is skipped by its base name, written with its directory or not.
+test('a wrapper written with its directory is skipped as the bare one is', () => {
+  for (const c of [
+    `/usr/bin/env bash <<< 'pkill x'`,
+    `echo 'pkill x' | /usr/bin/env bash`,
+    `env bash -c 'pkill x'`,
+    `/usr/bin/env bash -c 'pkill x'`,
+    `/usr/bin/env pkill x`,
+    `/usr/bin/env FOO=1 bash <<< 'pkill x'`,
+    `/usr/bin/env -u X bash <<< 'killall x'`,
+    `/usr/bin/sudo /usr/bin/env bash <<< 'pkill x'`,
+    `/usr/bin/sudo pkill x`,
+    `/usr/bin/nohup bash -c 'pkill x'`,
+    `/usr/bin/env sh <<EOF\npkill x\nEOF`,
+    'pgrep x | /usr/bin/xargs kill',
+    '/usr/bin/env kill -9 -1',
+    `/usr/bin/timeout 5 bash <<< 'pkill x'`,
+  ]) expect(detectPatternKills(c), c).not.toEqual([])
+  expect(detectPatternKills(`/usr/bin/env bash <<< 'pkill x'`)).toEqual(['pkill'])
+  expect(detectPatternKills('pgrep x | /usr/bin/xargs kill')).toEqual(['kill fed through xargs by pgrep'])
+})
+
+test('a wrapper written with its directory around no kill, or a lookup, passes', () => {
+  for (const c of [
+    `/usr/bin/env bash <<< 'echo hi'`,
+    `echo 'kill 1234' | /usr/bin/env bash`,
+    `/usr/bin/env bash -n <<< 'pkill x'`,
+    `/usr/bin/env bash script.sh <<< 'pkill x'`,
+    '/usr/bin/env kill 1234',
+    '/usr/bin/command -v pkill',
+    '/usr/bin/env FOO=1',
+    '/usr/bin/env',
+    `/usr/bin/env echo 'pkill x'`,
+  ]) expect(detectPatternKills(c), c).toEqual([])
+})
+
+test('text a shell is not given on its standard input is data', () => {
+  for (const c of [
+    `echo 'echo hi' | sh`,
+    `echo 'kill 1234' | sh`,
+    `bash <<< 'echo hello'`,
+    'sh <<EOF\necho hi\nEOF',
+    'sh <<EOF\nkill 1234\nEOF',
+    `bash script.sh <<< 'pkill x'`,
+    `bash -c 'echo ok' <<< 'pkill x'`,
+    `echo 'pkill x' | sh script.sh`,
+    `echo 'pkill x' | sh -c 'cat'`,
+    `echo 'pkill x' | cat`,
+    `echo 'pkill x' | grep p`,
+    `echo 'pkill x' > f.sh`,
+    `echo 'pkill x'; sh script.sh`,
+    `echo 'pkill x'\nsh`,
+    `printf 'pkill x\\n' | wc -l`,
+    'cat <<EOF | grep pkill\npkill x\nEOF',
+    'cat <<EOF > f.sh\npkill x\nEOF',
+    'cat <<EOF\npkill x\nEOF\nsh script.sh',
+    'cat <<EOF; sh\npkill x\nEOF',
+    'pgrep x | sh script.sh',
+  ]) expect(detectPatternKills(c), c).toEqual([])
 })
 
 // The decision: nothing in a session the launcher did not mark, a refusal in a

@@ -639,6 +639,15 @@ def number(v):
     return isinstance(v, (int, float)) and not isinstance(v, bool)
 
 
+def host_command(model, effort, mode, budget):
+    """The host's command line for one trial. The session is the calibration's own: it
+    starts with Remote Control off, so no trial shows up as a session of the operator's."""
+    return [HOST_CLI, "-p", "--model", model, "--effort", effort, "--permission-mode", mode,
+            "--output-format", "json", "--no-session-persistence", "--setting-sources", "project",
+            "--settings", '{"remoteControlAtStartup":false}',
+            "--max-budget-usd", "%.2f" % budget]
+
+
 def host(pair, prompt, cwd, budget, mode):
     """One headless run. A timeout, a host that cannot start or an answer that does not
     read is not ok; the cost is the host's own per-model figure. A cost that cannot be read
@@ -646,9 +655,7 @@ def host(pair, prompt, cwd, budget, mode):
     `incomplete`, or the cap would undercount what was spent.
     """
     model, effort = parse_pair(pair)
-    cmd = [HOST_CLI, "-p", "--model", model, "--effort", effort, "--permission-mode", mode,
-           "--output-format", "json", "--no-session-persistence", "--setting-sources", "project",
-           "--max-budget-usd", "%.2f" % budget]
+    cmd = host_command(model, effort, mode, budget)
     started = time.time()
     failed = {"ok": False, "models": {}, "cost": budget, "incomplete": True, "text": "", "tokens": None}
     try:
