@@ -51,8 +51,8 @@ Before writing a text, read its rules in `writing/` beside this file.
 
 `pr-gate` makes three REST reads: the pull request, the combined status and the check
 runs at its head (`per_page=100`). `state` is `open`, `closed` or `merged`, `head` the
-full sha, `labels` the names it carries. `ci.total` counts the latest run of each check plus the
-commit statuses at that head. `ci.result` is `FAILURE` when one failed (`ci.failed`
+full sha, `labels` the names it carries. `ci.total` counts each check's latest run plus the
+commit statuses. `ci.result` is `FAILURE` when one failed (`ci.failed`
 names them), `PENDING` when one still runs (`ci.running` counts them) or when one
 proved nothing: `skipped`, or `neutral` on a draft (`ci.skipped` names them), and
 `SUCCESS` otherwise, no check at all included. A check that was skipped never turns green
