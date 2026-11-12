@@ -54,13 +54,16 @@ export type Loop = {
   // The review agents the host runs in the background: their id, and the place in `reports`
   // their hand-back fills.
   awaiting: Map<string, number>
-  // How many times `findings` was answered « still running » in this pass.
+  // How many waits `findings` answered « still running » in this pass: one per hand-back event.
   waits: number
+  // The hand-back events of the session so far, and their count at the last wait counted.
+  handbacks: number
+  waitedAt: number
 }
 
 export const MAX_PASSES = 5
 
-export const loop: Loop = { isActive: false, pass: 0, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false, isReviewing: false, isReviewOnly: false, reports: [], awaiting: new Map(), waits: 0 }
+export const loop: Loop = { isActive: false, pass: 0, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false, isReviewing: false, isReviewOnly: false, reports: [], awaiting: new Map(), waits: 0, handbacks: 0, waitedAt: -1 }
 
 export function resetLoop(testCommand: string, isReviewOnly = false): void {
   loop.isActive = true
@@ -77,6 +80,7 @@ export function resetLoop(testCommand: string, isReviewOnly = false): void {
   loop.reports = []
   loop.awaiting = new Map()
   loop.waits = 0
+  loop.waitedAt = -1
 }
 
 // The successful preflight, once per session: a skill started again skips it.

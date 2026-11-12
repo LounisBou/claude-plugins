@@ -48,7 +48,8 @@ export function asMark(value: unknown): Mark | undefined {
   const v = value as Record<string, unknown>
   if (typeof v.head !== 'string' || !/^[0-9a-f]{40}([0-9a-f]{24})?$/.test(v.head)) return undefined
   if (typeof v.at !== 'number' || !Array.isArray(v.files) || !v.files.every(f => typeof f === 'string')) return undefined
-  return { head: v.head, at: v.at, files: v.files as string[] }
+  if (v.dir !== undefined && (typeof v.dir !== 'string' || !v.dir.startsWith('/'))) return undefined
+  return { head: v.head, at: v.at, files: v.files as string[], ...(typeof v.dir === 'string' ? { dir: v.dir } : {}) }
 }
 
 // One line in the session's log. A log that throws or rejects draws nothing: what the line
@@ -62,8 +63,10 @@ function warn($: any, line: string): void {
   }
 }
 
-export async function markScope($: any, head: string, files: readonly string[] = []): Promise<void> {
-  const mark: Mark = { head, at: Date.now(), files: [...files] }
+// `dir`: the repository the check read, so that a later shell `cd` into another repository is not
+// taken for the reviewed one.
+export async function markScope($: any, head: string, files: readonly string[] = [], dir?: string): Promise<void> {
+  const mark: Mark = { head, at: Date.now(), files: [...files], ...(dir ? { dir } : {}) }
   try {
     await $.state.set({ plugin: 'norms', key: 'scopeMark' }, mark)
     fallback = undefined
@@ -95,6 +98,11 @@ async function readMark($: any): Promise<Mark | undefined> {
   return fallback
 }
 
+// The repository the last /norms:check of this session read, or undefined when no mark names one.
+export async function markedDir($: any): Promise<string | undefined> {
+  return (await readMark($))?.dir
+}
+
 // owner/name from a remote url: scp-like, https or ssh://. Undefined for a
 // path or a url that names no owner and repository.
 export function repoOf(url: string): string | undefined {
@@ -102,8 +110,75 @@ export function repoOf(url: string): string | undefined {
   return m ? `${m[1]}/${m[2]}` : undefined
 }
 
-async function git($: any, argv: string[]): Promise<string> {
-  const r = await $.process.run(argv, { timeoutMs: GIT_TIMEOUT_MS })
+// The repository the check reads, as its top directory: the session's directory's when it is in one,
+// else the repository of the session's project root (a shell `cd` into a scratchpad or /tmp moves
+// the session's directory out of the checkout, never its project root). Undefined when neither is a
+// repository, or when the host cannot answer: git then runs in the session's directory and says why.
+export async function repositoryDir($: any): Promise<string | undefined> {
+  try {
+    const here = await $.process.run(['git', 'rev-parse', '--show-toplevel'], { timeoutMs: GIT_TIMEOUT_MS })
+    const top = String(here.stdout).trim()
+    if (here.exitCode === 0 && top !== '') return top
+    const root = String(await $.session.root())
+    const there = await $.process.run(['git', 'rev-parse', '--show-toplevel'], { cwd: root, timeoutMs: GIT_TIMEOUT_MS })
+    const rootTop = String(there.stdout).trim()
+    return there.exitCode === 0 && rootTop !== '' ? rootTop : undefined
+  } catch {
+    return undefined
+  }
+}
+
+export type Pull = { number?: unknown; head?: { sha?: unknown }; base?: { ref?: unknown } }
+
+// A pull request asked of the github plugin, in the repository named: the pull request, none
+// (`pull` undefined), or why it could not be read. Never against the session's own directory.
+export type Lookup = { pull?: Pull } | { why: string }
+
+const NO_GITHUB = 'the github plugin is absent or older than 0.12.0'
+
+async function pullList($: any, repo: string, command: string, args: Record<string, unknown>): Promise<Pull[] | { why: string }> {
+  let answer: any
+  try {
+    answer = await $.tool.call({ tool: GH_TOOL, command, args, repo })
+  } catch {
+    return { why: NO_GITHUB }
+  }
+  const read = textOf(answer)
+  if ('why' in read) return read
+  try {
+    const pulls = JSON.parse(read.text)
+    if (Array.isArray(pulls)) return pulls
+  } catch {
+    // Not JSON: said below.
+  }
+  return { why: `the github plugin's ${command} answer is not a list of pull requests` }
+}
+
+// The open pull request of `branch` in `repo`.
+export async function branchPull($: any, repo: string, branch: string): Promise<Lookup> {
+  const pulls = await pullList($, repo, 'pr-get', { branch })
+  return Array.isArray(pulls) ? { pull: pulls[0] } : pulls
+}
+
+// The open pull request of `repo` whose head is `head`: a detached head names no branch to ask
+// about, its commit does. Several such pull requests are refused, naming them: none is the one.
+export async function openPullAt($: any, repo: string, head: string): Promise<Lookup> {
+  const pulls = await pullList($, repo, 'pr-list', {})
+  if (!Array.isArray(pulls)) return pulls
+  const found = pulls.filter(p => p?.head?.sha === head)
+  if (found.length > 1) {
+    return { why: `${found.length} open pull requests have the head ${head.slice(0, 12)}: ${found.map(p => `${repo}#${String(p?.number)}`).join(', ')}` }
+  }
+  return { pull: found[0] }
+}
+
+// The repository of the checkout in `dir`, owner/name, or undefined for an origin that names none.
+export async function repositoryOf($: any, dir?: string): Promise<string | undefined> {
+  return repoOf(await git($, ['git', 'remote', 'get-url', 'origin'], dir))
+}
+
+async function git($: any, argv: string[], dir?: string): Promise<string> {
+  const r = await $.process.run(argv, { timeoutMs: GIT_TIMEOUT_MS, ...(dir ? { cwd: dir } : {}) })
   if (r.exitCode !== 0) throw new Error(`${argv.join(' ')}: ${String(r.stderr).trim() || 'exit ' + r.exitCode}`)
   return String(r.stdout)
 }
@@ -135,15 +210,17 @@ export async function checkDone($: any, input: any): Promise<{ result: string; i
     return { result: 'norms: open, fixed and passed are whole numbers, 0 or more', isError: true }
   }
   try {
+    // The repository the check read, not the one a later shell `cd` landed in.
+    const dir = checked.dir ?? await repositoryDir($)
     // First, so the reason is clear: a record is written on a clean checkout.
-    if ((await git($, ['git', 'status', '--porcelain', '-uno'])).trim() !== '') {
+    if ((await git($, ['git', 'status', '--porcelain', '-uno'], dir)).trim() !== '') {
       return { result: none('the tracked files have changes') }
     }
     // At the call, not at the scope: the fix commits of check.md 7.4 are in it.
-    const head = (await git($, ['git', 'rev-parse', 'HEAD'])).trim()
+    const head = (await git($, ['git', 'rev-parse', 'HEAD'], dir)).trim()
     if (!head) return { result: none('the checkout has no commit') }
     if (head !== checked.head) {
-      const changed = (await git($, ['git', 'diff', '--name-only', checked.head, head])).split('\n').map(f => f.trim()).filter(Boolean)
+      const changed = (await git($, ['git', 'diff', '--name-only', checked.head, head], dir)).split('\n').map(f => f.trim()).filter(Boolean)
       const read = new Set(checked.files)
       const unread = changed.filter(f => !read.has(f))
       if (unread.length > 0) {
@@ -151,17 +228,14 @@ export async function checkDone($: any, input: any): Promise<{ result: string; i
         return { result: none(`commits since the check touch files it did not read (${named}): run /norms:check again`) }
       }
     }
-    const repo = repoOf(await git($, ['git', 'remote', 'get-url', 'origin']))
+    const repo = await repositoryOf($, dir)
     if (!repo) return { result: none('the origin remote names no GitHub repository') }
-    let numberText: string
-    try {
-      const found = textOf(await $.tool.call({ tool: GH_TOOL, command: 'pr-get', args: { format: 'pr-number' } }))
-      if ('why' in found) return { result: none(found.why) }
-      numberText = found.text
-    } catch {
-      return { result: none('the github plugin is absent or older than 0.12.0') }
-    }
-    const pr = Number(numberText)
+    // A branch asks for its own pull request; a detached head (a review checkout) names none, its
+    // commit may.
+    const branch = (await git($, ['git', 'rev-parse', '--abbrev-ref', 'HEAD'], dir)).trim()
+    const found = branch === 'HEAD' ? await openPullAt($, repo, head) : await branchPull($, repo, branch)
+    if ('why' in found) return { result: none(found.why) }
+    const pr = Number(found.pull?.number)
     if (!Number.isInteger(pr) || pr < 1) return { result: none('the branch has no pull request') }
     let recorded: { text: string } | { why: string }
     try {
@@ -171,7 +245,7 @@ export async function checkDone($: any, input: any): Promise<{ result: string; i
         detail: `${fixed} fixed, ${passed} passed${input?.auto === true ? ' (non-blocking, automatic)' : ''}, ${open} open`,
       }))
     } catch {
-      return { result: none('the github plugin is absent or older than 0.12.0') }
+      return { result: none(NO_GITHUB) }
     }
     if ('why' in recorded) return { result: none(recorded.why) }
     return { result: `record: ${recorded.text}` }

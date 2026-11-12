@@ -1015,6 +1015,17 @@ printf '{"version":2,"plugins":{"github@claude-github":[{"scope":"user","install
 check "the aggregate key resolves too" "$WORK/installed-agg" \
   "$(resolve_state "$WORK/agg.json" 2>&1)"
 
+echo "== the host loads the module =="
+
+# The host refuses a whole hooks module for one defect and then registers none of its tools,
+# and the module's own tests run only in the host's kit. Without `claude` the check fails: it
+# does not skip.
+if command -v claude >/dev/null 2>&1; then
+  check_status "the host validates the plugin" 0 claude plugin validate "$ROOT"
+  check_status "the module's tests pass in the host's kit" 0 claude plugin test "$ROOT"
+else
+  check "claude is on PATH, to validate the module" "found" "absent"
+fi
 
 echo
 echo "$pass passed, $fail failed"

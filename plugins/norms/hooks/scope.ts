@@ -272,6 +272,8 @@ export const DIFF_INLINE_MAX = 40_000
 
 export type AgentContext = {
   agent: string
+  // The repository the check read, named in the git command the block gives the agent.
+  dir?: string
   base: string
   head: string
   files: string[]
@@ -302,7 +304,7 @@ export function contextBlock(c: AgentContext): string {
     }
   }
   if (c.files.length) {
-    const range = `git diff ${c.base}...HEAD -- <files above>`
+    const range = `git ${c.dir ? `-C ${c.dir} ` : ''}diff ${c.base}...HEAD -- <files above>`
     if (c.diffPath) {
       lines.push(`diff: too large to inline; read it from ${c.diffPath} (${range})`)
       if (c.diffStat) lines.push(c.diffStat.trimEnd())
