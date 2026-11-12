@@ -76,11 +76,14 @@ export function act(e: any): Record<string, unknown> {
     // A clean exit records a pass: it must follow a review the loop counted, never the start.
     if (loop.pass === 0) return { error: 'no review pass has begun: call begin_pass, run the review, then report its findings' }
     const keys = strings(e.keys)
-    // A background agent whose hand-back carried no block is asked for it once, its place kept.
+    // A background agent whose hand-back carried no block is asked for it once, its place kept;
+    // its waits start over, the ones counted before it was asked are not its own.
     if (loop.blockless.size > 0) {
       const ids = [...loop.blockless]
       ids.forEach((id) => loop.reasked.add(id))
       loop.blockless.clear()
+      loop.waits = 0
+      loop.waitedAt = -1
       return { error: ids.map(reaskLine).join('\n') }
     }
     // The pass's verdict waits for every agent the host runs in the background, whatever the keys.

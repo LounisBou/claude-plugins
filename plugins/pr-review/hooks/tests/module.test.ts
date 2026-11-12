@@ -1301,8 +1301,8 @@ const PROSE_LINES = '[important] engine/fmt.py:54 — key (name, app.id) merges 
   + '[suggestion] engine/fmt.py:54 — a string id compared to an int raises TypeError — coerce via int().'
 
 // One reviewer's pass up to its first `findings`: each reader refused once, then launched with its
-// id, then its hand-back, delivered the first time only.
-async function transcriptPass(on: any, $: any, stubs: Stubs, readers: [string, string, string][], keys: string[]): Promise<any> {
+// id, then its hand-back, delivered the first time only; the held readers' hand-backs never come.
+async function transcriptPass(on: any, $: any, stubs: Stubs, readers: [string, string, string][], keys: string[], held: string[] = []): Promise<any> {
   const refused = new Set<string>()
   stubs.agent = (e: any) => {
     const id = readers.find(([type]) => type === e.subagent_type)?.[1] ?? ''
@@ -1323,7 +1323,7 @@ async function transcriptPass(on: any, $: any, stubs: Stubs, readers: [string, s
   await loopCall($, { action: 'begin_pass' })
   for (const [type] of readers) await $.tool.call({ tool: 'Agent', subagent_type: type, description: 'Review', prompt: 'review the diff' } as any)
   for (const [type] of readers) await $.tool.call({ tool: 'Agent', subagent_type: type, description: 'Review', prompt: 'review the diff' + REPORT_REQUEST } as any)
-  for (const [, id, report] of readers) await readerHandBack($, id, report)
+  for (const [, id, report] of readers) if (!held.includes(id)) await readerHandBack($, id, report)
   return loopCall($, { action: 'findings', keys })
 }
 
@@ -1503,6 +1503,25 @@ test('a reader asked again that never answers, with no other event at all, is si
   for (let i = 0; i <= 3; i++) answers.push(String((await loopCall($, { action: 'findings', keys: KEYS_4CB })).result))
   expect(answers.slice(0, 3).every((a) => a.includes('1 review agents are still running'))).toBe(true)
   expect(answers[3]).toContain('"exit": "reviewed"')
+  expect(stubs.records.map((r) => [r.result, r.detail])).toEqual([['fail', `reviewed: 3 findings, severity unknown: no findings block from ${HUNTER}`]])
+})
+
+test('a reader asked again after the waits were counted while another ran waits three of its own before it is silent', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  const [reviewer, hunter] = ['a0000000000000011', 'a0000000000000012']
+  const answers = [String((await transcriptPass(on, $, stubs, PASS_4CB(PROSE_NONE), KEYS_4CB, [reviewer, hunter])).result)]
+  for (let i = 0; i < 2; i++) {
+    await readerHandBack($, 'a0000000000000099', agentAnswer([]))
+    answers.push(String((await loopCall($, { action: 'findings', keys: KEYS_4CB })).result))
+  }
+  expect(answers.every((a) => a.includes('2 review agents are still running'))).toBe(true)
+  await readerHandBack($, hunter, PROSE_NONE)
+  expect(String((await loopCall($, { action: 'findings', keys: KEYS_4CB })).result)).toContain(`SendMessage to '${hunter}'`)
+  await readerHandBack($, reviewer, agentAnswer([]))
+  const after: string[] = []
+  for (let i = 0; i <= 3; i++) after.push(String((await loopCall($, { action: 'findings', keys: KEYS_4CB })).result))
+  expect(after.slice(0, 3).every((a) => a.includes('1 review agents are still running'))).toBe(true)
+  expect(after[3]).toContain('"exit": "reviewed"')
   expect(stubs.records.map((r) => [r.result, r.detail])).toEqual([['fail', `reviewed: 3 findings, severity unknown: no findings block from ${HUNTER}`]])
 })
 
