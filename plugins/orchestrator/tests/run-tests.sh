@@ -1188,7 +1188,7 @@ cat "$f"
 GH
 chmod +x "$SB/gh"
 export SURFACE_BODIES="$WORK/surface-bodies"; mkdir -p "$SURFACE_BODIES"
-printf 'Adds the alert pop-up avatar.\n\n**Related PRs:** none\n' > "$SURFACE_BODIES/11"
+printf 'Adds the alert pop-up avatar.\n' > "$SURFACE_BODIES/11"
 printf 'Adds the avatar.\n\n![pop-up](https://github.com/user-attachments/assets/abc)\n' > "$SURFACE_BODIES/12"
 printf 'Adds the avatar.\n\n<img width="600" alt="pop-up" src="https://github.com/user-attachments/assets/def" />\n' > "$SURFACE_BODIES/13"
 srec() { env PATH="$SB:$PATH" bash "$REC" "$@"; }

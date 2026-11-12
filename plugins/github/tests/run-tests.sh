@@ -757,10 +757,10 @@ PY
     "$(BLOCKS="$blocks" ROOT="$ROOT" bun -e '
 const { lint } = await import(process.env.ROOT + "/hooks/writing.ts")
 const blocks = JSON.parse(await Bun.file(process.env.BLOCKS).text())
-const none = "**TODO Staging:** none\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:** none"
+const sections = "**TODO Prod:**\n- [ ] Run the seeder on prod-01\n\n**Related PRs:**\n- https://github.com/o/r/pull/2"
 let refused = 0
 for (const block of blocks) {
-  if (lint("pr-create", { title: "fix: x", body: "Adds the screenshots.\n\n" + block + "\n\n" + none }).length > 0) refused++
+  if (lint("pr-create", { title: "fix: x", body: "Adds the screenshots.\n\n" + block + "\n\n" + sections }).length > 0) refused++
 }
 console.log(blocks.length + " blocks, " + refused + " refused")
 ')"

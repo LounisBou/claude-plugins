@@ -52,9 +52,9 @@ it. `/github:doctor` then confirms everything is ready.
   `Signed-off-by`, `Claude-Session`, any `<word>-by`, `Change-Id`), a
   title on one line and within 72 characters, no heading in a PR description,
   every CVE id in a PR description a link to its advisory, and a security
-  update's tables, one per advisory. A PR description ends with the four
+  update's tables, one per advisory. A PR description may end with the
   sections `TODO Staging`, `TODO Prod`, `PRs Dependency` and `Related PRs`, in
-  that order, `none` where empty, with nothing after them, and carries no horizontal rule but the `---`
+  that order, each one only when it has content (an empty section, `none`, `N/A` or `-` is refused), with nothing after them, and carries no horizontal rule but the `---`
   between two screenshots, no other bold label (a screenshot's bold title, with
   no colon at its end, is none), and in its summary no pull request reference and no negative phrasing
   from a fixed list. The same rules hold for `gh pr create`, `gh pr edit`,

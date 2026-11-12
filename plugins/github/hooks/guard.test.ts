@@ -763,7 +763,7 @@ test('a Bash pull request opened out of draft is refused outside auto-merge in b
 
 test('a Bash gh pr create --draft=false is refused outside auto-merge, like one with no --draft', async ($, on) => {
   const seen = await world($, on)
-  const body = '"Adds the reset.\n\n**TODO Staging:** none\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:** none"'
+  const body = '"Adds the reset."'
   for (const flag of ['--draft=false', '--draft=0']) {
     const out: any = await $.tool.call(bash('gh pr create -R acme/thing ' + flag + ' -t "fix: x" -b ' + body))
     expect(out.deny, flag).toContain('github: gh pr create refused on acme/thing: outside auto-merge, leaving draft is the operator\'s')
@@ -777,7 +777,7 @@ test('a Bash gh pr create --draft=false is refused outside auto-merge, like one 
 
 test('a Bash pull request opened out of draft in auto-merge warns, then is refused under enforce', async ($, on) => {
   const seen = await world($, on, { autoMerge: ['acme/thing'] })
-  await $.tool.call(bash('gh pr create -R acme/thing -t "fix: x" -b "Adds the reset.\n\n**TODO Staging:** none\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:** none"'))
+  await $.tool.call(bash('gh pr create -R acme/thing -t "fix: x" -b "Adds the reset."'))
   expect(seen.bash.length).toBe(1)
   expect(seen.logs[0]).toContain('opened out of draft')
   await inPhase('enforce', async () => {
@@ -949,7 +949,7 @@ test('a --stdin-json word among other engine words does not hide the Ready label
 
 test('a Bash draft opened gets Not Ready from the URL gh printed', async ($, on) => {
   const seen = await world($, on, { bashResult: { result: { stdout: 'https://github.com/acme/thing/pull/31\n', stderr: '', interrupted: false } } })
-  await $.tool.call(bash('gh pr create --draft -t "fix: x" -b "Adds the reset.\n\n**TODO Staging:** none\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:** none"'))
+  await $.tool.call(bash('gh pr create --draft -t "fix: x" -b "Adds the reset."'))
   expect(seen.runs.map((r) => [r.command, r.repo, r.args])).toEqual([['pr-readiness', 'acme/thing', { pr: 31, state: 'not-ready' }]])
 })
 

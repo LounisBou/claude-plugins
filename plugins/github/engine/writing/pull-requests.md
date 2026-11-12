@@ -43,17 +43,9 @@ Follow this exact template:
 - <url of the next one>
 ```
 
-The four sections are mandatory in every description, so an empty one reads as checked,
-never as forgotten. A section with nothing in it is written `none`, lowercase
-in one word, on its label's line.
-With nothing to do at deployment and no linked PR, a description ends with:
-
-```
-**TODO Staging:** none
-**TODO Prod:** none
-**PRs Dependency:** none
-**Related PRs:** none
-```
+Each of the four sections is optional: one with nothing to say is omitted, never written
+empty, `none`, `N/A` or `-`. A description with nothing to do at deployment and no linked PR
+ends after its summary.
 
 No heading of any kind: the description starts directly with the summary text, never
 with `## Summary` or any other title. State what the PR does, never what it does not
@@ -77,14 +69,13 @@ checkbox, one action: an edit and the restart, reload, deploy or migration that 
 two checkboxes, never joined by "then" or "and run". A PRs Dependency or Related PRs
 item is a `- ` bullet — the line break and the dash are what keep
 GitHub's preview rendering every link as a pull request card. Never a heading, never a
-link inline after the label: `none` is the one thing ever written beside a label, and
-never beside items. A label with nothing after it and no item below is an empty section
-left unsaid: write `none`. Staging and prod TODOs are always kept apart, even when
+link or any text inline after the label. A label with no item below is an empty section:
+omit it. Staging and prod TODOs are always kept apart, even when
 they are the same items: then both sections list them. `**PRs Dependency:**` lists the PRs
 that ship before this one or at the same time: that is the delivery prerequisite, their
 deploy steps included. No TODO repeats it (« Deploy/Merge <PR> before this PR », their
-migrations, restarts or config): with no deploy action of its own, a PR has both TODOs at
-`none`, even with dependencies. A TODO states only a constraint the list cannot express: the
+migrations, restarts or config): with no deploy action of its own, a PR has neither TODO, even with
+dependencies. A TODO states only a constraint the list cannot express: the
 dependency ships strictly before, or a step waits for an asynchronous operation of the
 dependency. `**Related PRs:**` lists the PRs truly linked to this work: part of the same
 batch, the origin of the bug, or a link of that strength. A follow-up PR, one that must come

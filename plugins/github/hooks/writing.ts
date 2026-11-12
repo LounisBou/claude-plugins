@@ -191,7 +191,8 @@ function missingCveTables(lines: string[]): boolean {
   return ids.some((id) => !named.has(id))
 }
 
-// The four sections every pull request description ends with, in this order.
+// The four sections a pull request description may end with, in this order; each one is
+// optional and a section with nothing to say is omitted.
 export const SECTIONS = ['TODO Staging', 'TODO Prod', 'PRs Dependency', 'Related PRs']
 
 // The phrasings that state what a pull request does not do, read in its
@@ -202,16 +203,14 @@ export const NEGATIVE_PHRASES = [
 ]
 
 const DESCRIPTIONS = ' (writing/pull-requests.md, « Pull request descriptions »)'
-const MISSING_RULE = 'a pull request description ends with the four sections, missing here: '
-const ORDER_RULE = 'the four sections come in this order: ' + SECTIONS.join(', ') + ', each once' + DESCRIPTIONS
-const EMPTY_RULE = 'an empty section is written `**<Label>:** none` on the label\'s line, never a label with nothing after it' + DESCRIPTIONS
-const NONE_ITEMS_RULE = 'a section is either `none` on its label\'s line or its items below the label, never both' + DESCRIPTIONS
-const LABEL_TEXT_RULE = 'a section\'s label line holds the label alone, or the label and `none`, nothing else' + DESCRIPTIONS
+const ORDER_RULE = 'the sections come in this order: ' + SECTIONS.join(', ') + ', each once' + DESCRIPTIONS
+const EMPTY_RULE = 'a section with nothing to say is omitted, never written empty, `none`, `N/A` or `-`' + DESCRIPTIONS
+const LABEL_TEXT_RULE = 'a section\'s label line holds the label alone, its items go on the lines below' + DESCRIPTIONS
 const OTHER_LABEL_RULE = 'no bold label line other than the four sections, '
   + SECTIONS.map((s) => '`**' + s + ':**`').join(', ') + DESCRIPTIONS
 const REF_RULE = 'no pull request reference in the summary above the sections, `#N`, `repo#N`, `owner/repo#N` or a pull request URL:'
   + ' it goes in PRs Dependency or Related PRs' + DESCRIPTIONS
-const AFTER_RULE = 'nothing after the four sections, a description ends with Related PRs' + DESCRIPTIONS
+const AFTER_RULE = 'nothing after the last section, a description ends with its sections' + DESCRIPTIONS
 const RULE_LINE_RULE = 'no horizontal rule, `---`, `***` or `___`, in a pull request description' + DESCRIPTIONS
   + ': a `---` is kept only between two screenshots, a blank line before it'
 const NEGATIVE_RULE = 'state what the PR does, never what it does not do' + DESCRIPTIONS
@@ -271,8 +270,17 @@ function sectionLabel(line: string): { at: number; rest: string } | undefined {
   return m ? { at: SECTIONS.indexOf(m[1].trim()), rest: m[2].trim() } : undefined
 }
 
-// What the four sections break: each present once, in order, each holding
-// `none` on its label's line or its items on the lines below, never both.
+// What stands for « nothing » in a section: `none`, `N/A` or `-`, in any case.
+const NOTHING = /^(none|n\/a|-)$/i
+
+// An item line that says nothing: no text after its bullet and checkbox, or a « nothing » word.
+function emptyItem(line: string): boolean {
+  const text = line.trim().replace(/^[-*+]\s*(\[[ xX]\]\s*)?/, '').trim()
+  return text === '' || NOTHING.test(text)
+}
+
+// What the sections break: each present once, in order, each holding its items on the
+// lines below its label, never empty, `none`, `N/A` or `-`.
 function sectionFaults(lines: string[]): string[] {
   const faults = new Set<string>()
   const seen: number[] = []
@@ -284,15 +292,11 @@ function sectionFaults(lines: string[]): string[] {
       return
     }
     seen.push(label.at)
-    let items = 0
-    for (let j = i + 1; j < lines.length && lines[j].trim() !== '' && !sectionLabel(lines[j]); j++) items++
-    const none = label.rest === 'none'
-    if (label.rest !== '' && !none) faults.add(LABEL_TEXT_RULE)
-    else if (none && items > 0) faults.add(NONE_ITEMS_RULE)
-    else if (!none && items === 0) faults.add(EMPTY_RULE)
+    const items: string[] = []
+    for (let j = i + 1; j < lines.length && lines[j].trim() !== '' && !sectionLabel(lines[j]); j++) items.push(lines[j])
+    if (NOTHING.test(label.rest) || (label.rest === '' && items.every(emptyItem))) faults.add(EMPTY_RULE)
+    else if (label.rest !== '') faults.add(LABEL_TEXT_RULE)
   })
-  const missing = SECTIONS.filter((_, k) => !seen.includes(k))
-  if (missing.length > 0) faults.add(MISSING_RULE + missing.join(', ') + DESCRIPTIONS)
   if (seen.some((k, n) => n > 0 && k <= seen[n - 1])) faults.add(ORDER_RULE)
   return [...faults]
 }

@@ -560,8 +560,8 @@ test('a truncated engine output says so', async ($, on) => {
 
 // ---- the writing rules' mechanical checks (writing.ts) ----
 
-// The four sections every pull request description ends with, each empty.
-const NONE = '**TODO Staging:** none\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:** none'
+// The sections a pull request description may end with, here two of the four, each with an item.
+const ENDING = '**TODO Prod:**\n- [ ] Run the seeder on prod-01\n\n**Related PRs:**\n- https://github.com/o/r/pull/2'
 
 const rulesOf = (command: string, args: any, typed = '') => lint(command, args, typed).map((v) => v.field + ': ' + v.rule.split(' (')[0])
 
@@ -592,36 +592,36 @@ test('a semicolon in code, a URL or a character reference passes', () => {
 })
 
 test('a heading in a pull request description is refused, a hash in a comment or in code is not', () => {
-  expect(rulesOf('pr-create', { title: 't', body: '## Summary\nText\n\n' + NONE })).toEqual(['body: no heading of any kind in a pull request description, it starts with the summary text'])
-  expect(rulesOf('pr-update', { pr: 1, body: 'Text\n\n# Notes\nmore\n\n' + NONE }).length).toBe(1)
+  expect(rulesOf('pr-create', { title: 't', body: '## Summary\nText\n\n' + ENDING })).toEqual(['body: no heading of any kind in a pull request description, it starts with the summary text'])
+  expect(rulesOf('pr-update', { pr: 1, body: 'Text\n\n# Notes\nmore\n\n' + ENDING }).length).toBe(1)
   expect(lint('pr-comment', { pr: 1, body: '## Not a description' })).toEqual([])
   // TODO items are checkboxes the operator ticks; dependency and related links stay bullets.
-  const todoBare = 'Adds the reset.\n\n**TODO Staging:** none\n**TODO Prod:**\n- Deploy the API first\n\n**PRs Dependency:** none\n**Related PRs:**\n- https://github.com/o/r/pull/1'
+  const todoBare = 'Adds the reset.\n\n**TODO Prod:**\n- Deploy the API first\n\n**Related PRs:**\n- https://github.com/o/r/pull/1'
   expect(rulesOf('pr-create', { title: 't', body: todoBare })).toEqual(['body: a TODO Staging or TODO Prod item is a task-list checkbox, `- [ ] <step>`, never a bare `- ` bullet'])
   expect(rulesOf('pr-update', { pr: 1, body: todoBare })).toEqual(['body: a TODO Staging or TODO Prod item is a task-list checkbox, `- [ ] <step>`, never a bare `- ` bullet'])
-  const todoBoxes = 'Adds the reset.\n\n**TODO Staging:**\n- [ ] Run the migration\n\n**TODO Prod:**\n- [x] Deploy the API first\n- [ ] Run the migration\n\n**PRs Dependency:**\n- https://github.com/o/r/pull/1\n\n**Related PRs:** none'
+  const todoBoxes = 'Adds the reset.\n\n**TODO Staging:**\n- [ ] Run the migration\n\n**TODO Prod:**\n- [x] Deploy the API first\n- [ ] Run the migration\n\n**PRs Dependency:**\n- https://github.com/o/r/pull/1'
   expect(lint('pr-create', { title: 't', body: todoBoxes })).toEqual([])
-  expect(lint('pr-create', { title: 't', body: 'A list of changes:\n- one\n- two\n\n' + NONE })).toEqual([])
-  expect(lint('pr-create', { title: 't', body: 'Fixes #12\n#hashtag\n```sh\n# a shell comment\n```\n\n' + NONE })).toEqual([])
+  expect(lint('pr-create', { title: 't', body: 'A list of changes:\n- one\n- two\n\n' + ENDING })).toEqual([])
+  expect(lint('pr-create', { title: 't', body: 'Fixes #12\n#hashtag\n```sh\n# a shell comment\n```\n\n' + ENDING })).toEqual([])
 })
 
 test('a TODO item that points to another or joins two actions is refused, two full items are not', () => {
   const alone = 'a TODO item stands alone, it never points to another item'
   const one = 'one checkbox, one action: an edit and the restart, reload or deploy that applies it are two checkboxes, never joined by « then » or « and run »'
-  const before = 'Lowers the pool.\n\n**TODO Staging:** none\n**TODO Prod:**\n- [ ] Set `size=1000` instead of `size=30000` in `FREDDIE_TRANSPORT_DSN` of the staging `/etc/caddy/caddy.env`, then run `sudo systemctl reload caddy`\n- [ ] Do the same edit on prod-01 to prod-05 and run `sudo systemctl reload caddy` on each\n\n**PRs Dependency:** none\n**Related PRs:** none'
+  const before = 'Lowers the pool.\n\n**TODO Prod:**\n- [ ] Set `size=1000` instead of `size=30000` in `FREDDIE_TRANSPORT_DSN` of the staging `/etc/caddy/caddy.env`, then run `sudo systemctl reload caddy`\n- [ ] Do the same edit on prod-01 to prod-05 and run `sudo systemctl reload caddy` on each'
   expect(rulesOf('pr-create', { title: 't', body: before })).toEqual(['body: ' + alone, 'body: ' + one])
-  expect(rulesOf('pr-update', { pr: 1, body: '**TODO Staging:**\n- [ ] Same as above on staging\n\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:** none' })).toEqual(['body: ' + alone])
-  expect(rulesOf('pr-update', { pr: 1, body: '**TODO Staging:**\n- [ ] Run the migration and run the seeder\n\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:** none' })).toEqual(['body: ' + one])
-  const after = 'Lowers the pool.\n\n**TODO Staging:** none\n**TODO Prod:**\n- [ ] Set `size=1000` instead of `size=30000` in `FREDDIE_TRANSPORT_DSN` of `/etc/caddy/caddy.env` on prod-01 to prod-05\n- [ ] Run `sudo systemctl reload caddy` on prod-01 to prod-05 to restart the Freddie workers\n\n**PRs Dependency:** none\n**Related PRs:** none'
+  expect(rulesOf('pr-update', { pr: 1, body: '**TODO Staging:**\n- [ ] Same as above on staging' })).toEqual(['body: ' + alone])
+  expect(rulesOf('pr-update', { pr: 1, body: '**TODO Staging:**\n- [ ] Run the migration and run the seeder' })).toEqual(['body: ' + one])
+  const after = 'Lowers the pool.\n\n**TODO Prod:**\n- [ ] Set `size=1000` instead of `size=30000` in `FREDDIE_TRANSPORT_DSN` of `/etc/caddy/caddy.env` on prod-01 to prod-05\n- [ ] Run `sudo systemctl reload caddy` on prod-01 to prod-05 to restart the Freddie workers'
   expect(lint('pr-create', { title: 't', body: after })).toEqual([])
   // Outside a TODO section, and inside code spans, the same words are prose like any other.
-  expect(lint('pr-create', { title: 't', body: 'Reads the file, then caches it, the same as before.\n\n**TODO Staging:** none\n**TODO Prod:**\n- [ ] Set `mode=then` in `app.env` on prod-01\n\n**PRs Dependency:** none\n**Related PRs:** none' })).toEqual([])
+  expect(lint('pr-create', { title: 't', body: 'Reads the file, then caches it, the same as before.\n\n**TODO Prod:**\n- [ ] Set `mode=then` in `app.env` on prod-01' })).toEqual([])
 })
 
 test('every trailer is refused, Signed-off-by included', () => {
   expect(rulesOf('pr-create', { title: 't', body: 'Text\n\nCo-Authored-By: someone <a@b.c>' })[0]).toContain('no trailer')
   expect(rulesOf('thread-reply', { thread_id: 'x', body: 'ok\nclaude-session: 123' })[0]).toContain('no trailer')
-  expect(rulesOf('pr-create', { title: 't', body: 'Text\n\n' + NONE + '\n\nSigned-off-by: Dev <d@e.f>' })).toContain('body: no trailer of any kind, such as Co-Authored-By, Signed-off-by or Claude-Session')
+  expect(rulesOf('pr-create', { title: 't', body: 'Text\n\n' + ENDING + '\n\nSigned-off-by: Dev <d@e.f>' })).toContain('body: no trailer of any kind, such as Co-Authored-By, Signed-off-by or Claude-Session')
   for (const trailer of ['Reviewed-by: Dev <d@e.f>', 'Acked-by: Dev <d@e.f>', 'Change-Id: I0123456789abcdef']) {
     expect(rulesOf('pr-comment', { pr: 1, body: 'Looks right.\n\n' + trailer }), trailer).toEqual(['body: no trailer of any kind, such as Co-Authored-By, Signed-off-by or Claude-Session'])
   }
@@ -638,21 +638,21 @@ test('a trailer is a line opening with a <word>-by label, so Stand-by: is one, a
 })
 
 test('a loose list under Related PRs, its items split by a blank line, is text after the sections', () => {
-  const rule = 'body: nothing after the four sections, a description ends with Related PRs'
-  const head = 'Adds the reset.\n\n**TODO Staging:** none\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:**\n'
+  const rule = 'body: nothing after the last section, a description ends with its sections'
+  const head = 'Adds the reset.\n\n**Related PRs:**\n'
   const tight = head + '- https://github.com/acme/front/pull/1620\n- https://github.com/acme/front/pull/1621'
   const loose = head + '- https://github.com/acme/front/pull/1620\n\n- https://github.com/acme/front/pull/1621'
   expect(lint('pr-create', { title: 't', body: tight })).toEqual([])
   expect(rulesOf('pr-create', { title: 't', body: loose })).toEqual([rule])
 })
 
-test('a description ends with the four sections, any text after them is refused', () => {
-  const rule = 'body: nothing after the four sections, a description ends with Related PRs'
-  expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset.\n\n' + NONE + '\n\nThanks for the review.' })).toEqual([rule])
-  const listed = 'Adds the reset.\n\n**TODO Staging:** none\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:**\n- https://github.com/acme/front/pull/1620\n\nThanks.'
+test('a description ends with its sections, any text after them is refused', () => {
+  const rule = 'body: nothing after the last section, a description ends with its sections'
+  expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset.\n\n' + ENDING + '\n\nThanks for the review.' })).toEqual([rule])
+  const listed = 'Adds the reset.\n\n**Related PRs:**\n- https://github.com/acme/front/pull/1620\n\nThanks.'
   expect(rulesOf('pr-create', { title: 't', body: listed })).toEqual([rule])
   expect(lint('pr-create', { title: 't', body: listed.replace('\n\nThanks.', '\n\n') })).toEqual([])
-  expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset.\n\n' + NONE + '\n\n```\nnpm test\n```' })).toEqual([rule])
+  expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset.\n\n' + ENDING + '\n\n```\nnpm test\n```' })).toEqual([rule])
 })
 
 test('a title past the margin or on two lines is refused, one of about sixty passes', () => {
@@ -703,7 +703,7 @@ const cve1743 = [
   '| Affected | `>=2.0.0,<5.4.54`, `>=6.0.0,<6.4.45`, `>=7.0.0,<7.4.18` and `>=8.0.0,<8.1.6` |',
   '| Reference | https://symfony.com/cve-2026-109413 |',
   '',
-  NONE,
+  ENDING,
 ].join('\n')
 const cve1557 = [
   'squizlabs/php_codesniffer to 4.0.4 (CVE-2026-67434)',
@@ -715,7 +715,7 @@ const cve1557 = [
   '| Affected | `<3.13.6` and `>=4.0.0,<4.0.2` |',
   '| Reference | https://github.com/PHPCSStandards/PHP_CodeSniffer/security/advisories/GHSA-hmqg-cxww-wqhq |',
   '',
-  NONE,
+  ENDING,
 ].join('\n')
 
 test('a security update in the house form passes, a bare CVE id is refused', () => {
@@ -723,9 +723,9 @@ test('a security update in the house form passes, a bare CVE id is refused', () 
   expect(lint('pr-create', { title: 'chore: update Symfony packages for security', body: cve1743 })).toEqual([])
   expect(lint('pr-update', { pr: 1, body: cve1743 })).toEqual([])
   expect(rulesOf('pr-create', { title: 't', body: cve1557 })).toEqual([link])
-  expect(rulesOf('pr-update', { pr: 1, body: 'Bumps the parser.\n\nThe advisory is `CVE-2026-11111`.\n\n' + NONE })).toEqual([link])
+  expect(rulesOf('pr-update', { pr: 1, body: 'Bumps the parser.\n\nThe advisory is `CVE-2026-11111`.\n\n' + ENDING })).toEqual([link])
   // In a URL, in a fenced block, in a title and in a comment, a CVE id is not held.
-  expect(lint('pr-create', { title: 'fix: patch CVE-2026-11111', body: 'See https://example.com/cve-2026-11111 and <https://example.com/CVE-2026-11111>.\n```\nCVE-2026-11111\n```\n\n' + NONE })).toEqual([])
+  expect(lint('pr-create', { title: 'fix: patch CVE-2026-11111', body: 'See https://example.com/cve-2026-11111 and <https://example.com/CVE-2026-11111>.\n```\nCVE-2026-11111\n```\n\n' + ENDING })).toEqual([])
   expect(lint('pr-comment', { pr: 1, body: 'Fixes CVE-2026-11111.' })).toEqual([])
 })
 
@@ -734,66 +734,72 @@ test('a security update whose first line names a CVE id without its table is ref
   const first = 'symfony/yaml and symfony/process to 8.1.9 ([CVE-2026-11111](https://example.com/a), [CVE-2026-22222](https://example.com/b))'
   const table = (id: string, rows = ['Package', 'Advisory', 'Affected', 'Reference']) => ['| | |', '|---|---|', ...rows.map((row) =>
     '| ' + row + ' | ' + (row === 'Advisory' ? 'PKSA-aaaa / [' + id + '](https://example.com/a) — A title' : '`x`') + ' |')].join('\n')
-  expect(lint('pr-create', { title: 't', body: [first, table('CVE-2026-11111'), table('CVE-2026-22222'), NONE].join('\n\n') })).toEqual([])
-  expect(rulesOf('pr-create', { title: 't', body: [first, table('CVE-2026-11111'), NONE].join('\n\n') })).toEqual([tables])
-  expect(rulesOf('pr-create', { title: 't', body: [first, NONE].join('\n\n') })).toEqual([tables])
-  expect(rulesOf('pr-update', { pr: 1, body: [first, table('CVE-2026-11111'), table('CVE-2026-22222', ['Package', 'Advisory', 'Affected']), NONE].join('\n\n') })).toEqual([tables])
+  expect(lint('pr-create', { title: 't', body: [first, table('CVE-2026-11111'), table('CVE-2026-22222'), ENDING].join('\n\n') })).toEqual([])
+  expect(rulesOf('pr-create', { title: 't', body: [first, table('CVE-2026-11111'), ENDING].join('\n\n') })).toEqual([tables])
+  expect(rulesOf('pr-create', { title: 't', body: [first, ENDING].join('\n\n') })).toEqual([tables])
+  expect(rulesOf('pr-update', { pr: 1, body: [first, table('CVE-2026-11111'), table('CVE-2026-22222', ['Package', 'Advisory', 'Affected']), ENDING].join('\n\n') })).toEqual([tables])
   // A link with a title after its URL, or a reference link, is a link.
-  expect(lint('pr-create', { title: 't', body: 'Reads the header once.\n\nSee [CVE-2026-11111](https://example.com/a "advisory") and [CVE-2026-22222][1].\n\n[1]: https://example.com/b\n\n' + NONE })).toEqual([])
+  expect(lint('pr-create', { title: 't', body: 'Reads the header once.\n\nSee [CVE-2026-11111](https://example.com/a "advisory") and [CVE-2026-22222][1].\n\n[1]: https://example.com/b\n\n' + ENDING })).toEqual([])
   // An Advisory row whose only mention of an id is inside a URL does not name it.
-  expect(rulesOf('pr-create', { title: 't', body: [first, table('CVE-2026-11111'), table('CVE-2026-33333').replace('](https://example.com/a)', '](https://example.com/CVE-2026-22222)'), NONE].join('\n\n') })).toEqual([tables])
+  expect(rulesOf('pr-create', { title: 't', body: [first, table('CVE-2026-11111'), table('CVE-2026-33333').replace('](https://example.com/a)', '](https://example.com/CVE-2026-22222)'), ENDING].join('\n\n') })).toEqual([tables])
   // A CVE id linked further down, in a description that is no security update, asks for no table.
-  expect(lint('pr-create', { title: 't', body: 'Reads the header once.\n\nThe check came with [CVE-2026-11111](https://example.com/a).\n\n' + NONE })).toEqual([])
+  expect(lint('pr-create', { title: 't', body: 'Reads the header once.\n\nThe check came with [CVE-2026-11111](https://example.com/a).\n\n' + ENDING })).toEqual([])
 })
 
-test('a description ends with the four sections, each `none` when empty', () => {
-  expect(lint('pr-create', { title: 't', body: 'Adds the reset.\n\n' + NONE })).toEqual([])
-  expect(lint('pr-update', { pr: 1, body: 'Adds the reset.\n\n' + NONE })).toEqual([])
+test('a description carries only the sections it has something to say in', () => {
+  expect(lint('pr-create', { title: 't', body: 'Adds the reset.' })).toEqual([])
+  expect(lint('pr-update', { pr: 1, body: 'Adds the reset.\n\n' + ENDING })).toEqual([])
   const items = 'Adds the reset.\n\n**TODO Staging:**\n- [ ] Run `bin/console app:reset` on staging\n\n**TODO Prod:**\n- [ ] Run `bin/console app:reset` on prod-01\n\n'
     + '**PRs Dependency:**\n- https://github.com/o/r/pull/1\n\n**Related PRs:**\n- https://github.com/o/r/pull/2\n- https://github.com/o/r/pull/3'
   expect(lint('pr-create', { title: 't', body: items })).toEqual([])
-  expect(lint('pr-create', { title: 't', body: 'Adds the reset.\n\n**TODO Staging:** none\n**TODO Prod:**\n- [ ] Run the seeder on prod-01\n\n**PRs Dependency:** none\n**Related PRs:** none' })).toEqual([])
+  expect(lint('pr-create', { title: 't', body: 'Adds the reset.\n\n**TODO Prod:**\n- [ ] Run the seeder on prod-01' })).toEqual([])
   // A comment and a title carry no section.
   expect(lint('pr-comment', { pr: 1, body: 'Thanks.' })).toEqual([])
   expect(lint('pr-update', { pr: 1, title: 'fix: x' })).toEqual([])
 })
 
-test('a dependency alone leaves the TODOs at `none`, and a TODO may state a sequencing constraint the list cannot express', () => {
-  const dependency = '**PRs Dependency:**\n- https://github.com/acme/api/pull/412\n\n**Related PRs:** none'
-  expect(lint('pr-create', { title: 't', body: 'Adds the export.\n\n**TODO Staging:** none\n**TODO Prod:** none\n' + dependency })).toEqual([])
-  const strictly = 'Adds the export.\n\n**TODO Staging:**\n- [ ] Ship https://github.com/acme/api/pull/412 strictly before this PR, not at the same time\n\n**TODO Prod:** none\n' + dependency
+test('a dependency alone needs no TODO, and a TODO may state a sequencing constraint the list cannot express', () => {
+  const dependency = '**PRs Dependency:**\n- https://github.com/acme/api/pull/412'
+  expect(lint('pr-create', { title: 't', body: 'Adds the export.\n\n' + dependency })).toEqual([])
+  const strictly = 'Adds the export.\n\n**TODO Staging:**\n- [ ] Ship https://github.com/acme/api/pull/412 strictly before this PR, not at the same time\n\n' + dependency
   expect(lint('pr-create', { title: 't', body: strictly })).toEqual([])
-  const waiting = 'Adds the export.\n\n**TODO Staging:** none\n**TODO Prod:**\n- [ ] Set `EXPORT_ENABLED` to `true` in `/etc/app/app.env` on prod-01 once the existing records are updated by https://github.com/acme/api/pull/412\n\n' + dependency
+  const waiting = 'Adds the export.\n\n**TODO Prod:**\n- [ ] Set `EXPORT_ENABLED` to `true` in `/etc/app/app.env` on prod-01 once the existing records are updated by https://github.com/acme/api/pull/412\n\n' + dependency
   expect(lint('pr-update', { pr: 1, body: waiting })).toEqual([])
 })
 
-test('a missing section, one out of order, an empty one, `none` beside items or text on a label\'s line is refused', () => {
-  expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset.' })).toEqual([
-    'body: a pull request description ends with the four sections, missing here: TODO Staging, TODO Prod, PRs Dependency, Related PRs',
-  ])
-  expect(rulesOf('pr-update', { pr: 1, body: 'Adds the reset.\n\n' + NONE.replace('**PRs Dependency:** none\n', '') })).toEqual([
-    'body: a pull request description ends with the four sections, missing here: PRs Dependency',
-  ])
-  const swapped = '**TODO Prod:** none\n**TODO Staging:** none\n**PRs Dependency:** none\n**Related PRs:** none'
+test('a section out of order or with text on its label\'s line is refused', () => {
+  const swapped = '**TODO Prod:**\n- [ ] Run the seeder on prod-01\n\n**TODO Staging:**\n- [ ] Run the seeder on staging-01'
   expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset.\n\n' + swapped })).toEqual([
-    'body: the four sections come in this order: TODO Staging, TODO Prod, PRs Dependency, Related PRs, each once',
+    'body: the sections come in this order: TODO Staging, TODO Prod, PRs Dependency, Related PRs, each once',
   ])
-  expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset.\n\n' + NONE.replace('**TODO Prod:** none', '**TODO Prod:**') })).toEqual([
-    'body: an empty section is written `**<Label>:** none` on the label\'s line, never a label with nothing after it',
-  ])
-  expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset.\n\n' + NONE.replace('**TODO Prod:** none', '**TODO Prod:** none\n- [ ] Run the seeder on prod-01') })).toEqual([
-    'body: a section is either `none` on its label\'s line or its items below the label, never both',
-  ])
-  expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset.\n\n' + NONE.replace('**Related PRs:** none', '**Related PRs:** https://github.com/o/r/pull/2') })).toEqual([
-    'body: a section\'s label line holds the label alone, or the label and `none`, nothing else',
+  expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset.\n\n**Related PRs:** https://github.com/o/r/pull/2' })).toEqual([
+    'body: a section\'s label line holds the label alone, its items go on the lines below',
   ])
 })
 
-test('an empty section is `none` in lowercase, `None` or `NONE` is refused', () => {
-  const rule = 'body: a section\'s label line holds the label alone, or the label and `none`, nothing else'
-  for (const none of ['None', 'NONE']) {
-    expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset.\n\n' + NONE.replace('**Related PRs:** none', '**Related PRs:** ' + none) }), none).toEqual([rule])
+test('a section left empty, `none`, `N/A` or `-` is refused, in any case, with or without items below', () => {
+  const rule = 'body: a section with nothing to say is omitted, never written empty, `none`, `N/A` or `-`'
+  const bodies = [
+    '**TODO Prod:**',
+    '**TODO Prod:** none',
+    '**TODO Prod:** None',
+    '**TODO Prod:** NONE',
+    '**TODO Prod:** N/A',
+    '**TODO Prod:** n/a',
+    '**TODO Prod:** -',
+    '**TODO Prod:** none\n- [ ] Run the seeder on prod-01',
+    '**PRs Dependency:**\n- none',
+    '**TODO Prod:**\n- [ ] N/A',
+    '**Related PRs:**\n-',
+  ]
+  for (const section of bodies) {
+    const body = 'Adds the reset.\n\n' + section
+    expect(rulesOf('pr-create', { title: 't', body }), section).toEqual([rule])
+    expect(rulesOf('pr-update', { pr: 1, body }), section).toEqual([rule])
   }
+  // One empty section among real ones is the only fault.
+  expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset.\n\n' + ENDING.replace('**Related PRs:**\n- https://github.com/o/r/pull/2', '**Related PRs:** none') })).toEqual([rule])
+  expect(lint('pr-create', { title: 't', body: 'Adds the reset. There is none left.\n\n' + ENDING })).toEqual([])
 })
 
 test('a bare pull request reference in the summary is refused, the same in a section or a closing keyword is not', () => {
@@ -804,11 +810,11 @@ test('a bare pull request reference in the summary is refused, the same in a sec
     'Ships after front#1620.',
     'Ships after https://github.com/acme/front/pull/1620.',
   ]) {
-    expect(rulesOf('pr-create', { title: 't', body: summary + '\n\n' + NONE }), summary).toEqual([rule])
+    expect(rulesOf('pr-create', { title: 't', body: summary + '\n\n' + ENDING }), summary).toEqual([rule])
   }
-  const sectioned = 'Adds the reset.\n\n**TODO Staging:** none\n**TODO Prod:** none\n**PRs Dependency:**\n- https://github.com/acme/front/pull/1620\n- acme/front#1626\n\n**Related PRs:** none'
+  const sectioned = 'Adds the reset.\n\n**PRs Dependency:**\n- https://github.com/acme/front/pull/1620\n- acme/front#1626'
   expect(lint('pr-create', { title: 't', body: sectioned })).toEqual([])
-  expect(lint('pr-create', { title: 't', body: 'Fixes #12, closes front#13 and resolves acme/front#14.\n\nUses `#15` and `front#16` and &#59;.\n\n' + NONE })).toEqual([])
+  expect(lint('pr-create', { title: 't', body: 'Fixes #12, closes front#13 and resolves acme/front#14.\n\nUses `#15` and `front#16` and &#59;.\n\n' + ENDING })).toEqual([])
 })
 
 test('a colour, a link to an anchor and a version before a #N are no pull request reference', () => {
@@ -819,7 +825,7 @@ test('a colour, a link to an anchor and a version before a #N are no pull reques
     'Bumps the parser past v1.2#3.',
     'Reads the 2.0#1 marker.',
   ]) {
-    expect(lint('pr-create', { title: 't', body: summary + '\n\n' + NONE }), summary).toEqual([])
+    expect(lint('pr-create', { title: 't', body: summary + '\n\n' + ENDING }), summary).toEqual([])
   }
   for (const summary of [
     'Ships after #12.',
@@ -828,43 +834,43 @@ test('a colour, a link to an anchor and a version before a #N are no pull reques
     'Ships after claude.github#21.',
     'Ships after LounisBou/claude-code#15.',
   ]) {
-    expect(rulesOf('pr-create', { title: 't', body: summary + '\n\n' + NONE }), summary).toEqual([rule])
+    expect(rulesOf('pr-create', { title: 't', body: summary + '\n\n' + ENDING }), summary).toEqual([rule])
   }
 })
 
 test('a horizontal rule is refused, a table and a rule in code are not', () => {
   const rule = 'body: no horizontal rule, `---`, `***` or `___`, in a pull request description'
   for (const line of ['---', '***', '___', ' - - -']) {
-    expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset.\n\n' + line + '\n\n' + NONE }), line).toEqual([rule])
+    expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset.\n\n' + line + '\n\n' + ENDING }), line).toEqual([rule])
   }
-  expect(lint('pr-create', { title: 't', body: 'Adds the reset.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```\n---\n```\n\n' + NONE })).toEqual([])
+  expect(lint('pr-create', { title: 't', body: 'Adds the reset.\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```\n---\n```\n\n' + ENDING })).toEqual([])
 })
 
 test('a bold label other than the four sections is refused, bold text is not', () => {
   const rule = 'body: no bold label line other than the four sections, `**TODO Staging:**`, `**TODO Prod:**`, `**PRs Dependency:**`, `**Related PRs:**`'
-  expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset.\n\n**Desktop:**\n![d](https://example.com/d.png)\n\n' + NONE })).toEqual([rule])
-  expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset.\n\n**Note:** the cache is cold.\n\n' + NONE })).toEqual([rule])
-  expect(lint('pr-create', { title: 't', body: 'Adds the **reset** button.\n\n- **Desktop:** in a list\n\n' + NONE })).toEqual([])
+  expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset.\n\n**Desktop:**\n![d](https://example.com/d.png)\n\n' + ENDING })).toEqual([rule])
+  expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset.\n\n**Note:** the cache is cold.\n\n' + ENDING })).toEqual([rule])
+  expect(lint('pr-create', { title: 't', body: 'Adds the **reset** button.\n\n- **Desktop:** in a list\n\n' + ENDING })).toEqual([])
 })
 
 test('negative phrasing in the summary is refused, the same words in a section or typed by the user are not', () => {
   const rule = 'body: state what the PR does, never what it does not do'
   for (const phrase of NEGATIVE_PHRASES) {
     const summary = 'Adds the reset. The rest ' + phrase.toUpperCase() + ' move.'
-    expect(rulesOf('pr-create', { title: 't', body: summary + '\n\n' + NONE }), phrase).toEqual([rule])
+    expect(rulesOf('pr-create', { title: 't', body: summary + '\n\n' + ENDING }), phrase).toEqual([rule])
   }
-  expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset. The topic doesn’t move.\n\n' + NONE })).toEqual([rule])
-  const inSection = 'Adds the reset.\n\n**TODO Staging:**\n- [ ] Check the stored data is unchanged on staging\n\n**TODO Prod:** none\n**PRs Dependency:** none\n**Related PRs:** none'
+  expect(rulesOf('pr-create', { title: 't', body: 'Adds the reset. The topic doesn’t move.\n\n' + ENDING })).toEqual([rule])
+  const inSection = 'Adds the reset.\n\n**TODO Staging:**\n- [ ] Check the stored data is unchanged on staging'
   expect(lint('pr-create', { title: 't', body: inSection })).toEqual([])
-  expect(lint('pr-create', { title: 't', body: 'Adds the reset, `unchanged` is a flag.\n\n' + NONE })).toEqual([])
-  expect(lint('pr-create', { title: 't', body: 'Adds the unchanged-file check and the pre-unchanged hook.\n\n' + NONE })).toEqual([])
-  const typed = 'The data is unchanged.\n\n' + NONE
+  expect(lint('pr-create', { title: 't', body: 'Adds the reset, `unchanged` is a flag.\n\n' + ENDING })).toEqual([])
+  expect(lint('pr-create', { title: 't', body: 'Adds the unchanged-file check and the pre-unchanged hook.\n\n' + ENDING })).toEqual([])
+  const typed = 'The data is unchanged.\n\n' + ENDING
   expect(lint('pr-create', { title: 't', body: typed }, 'open it with this body: ' + typed)).toEqual([])
 })
 
 test('screenshots with a plain caption are part of a description', () => {
   const body = 'Adds the reset button.\n\n![desktop](https://github.com/user-attachments/assets/1.png)\nDesktop\n\n'
-    + '<img src="https://github.com/user-attachments/assets/2.png#1" width="320">\nMobile, the page unchanged at 320 px\n\n' + NONE
+    + '<img src="https://github.com/user-attachments/assets/2.png#1" width="320">\nMobile, the page unchanged at 320 px\n\n' + ENDING
   expect(rulesOf('pr-create', { title: 't', body })).toEqual(['body: state what the PR does, never what it does not do'])
   expect(lint('pr-create', { title: 't', body: body.replace(', the page unchanged at 320 px', '') })).toEqual([])
 })
@@ -876,43 +882,43 @@ const MOBILE_SHOT = '**Devices list, mobile 390 px, after**\n![Devices list, mob
 const RULE_LINE = 'body: no horizontal rule, `---`, `***` or `___`, in a pull request description'
 
 test('a `---` between two titled screenshots, a blank line before it, is part of a description', () => {
-  const body = 'Adds the last alert column.\n\n' + DESKTOP_SHOT + '\n\n---\n\n' + MOBILE_SHOT + '\n\n---\n\n' + DESKTOP_SHOT + '\n\n' + NONE
+  const body = 'Adds the last alert column.\n\n' + DESKTOP_SHOT + '\n\n---\n\n' + MOBILE_SHOT + '\n\n---\n\n' + DESKTOP_SHOT + '\n\n' + ENDING
   expect(lint('pr-create', { title: 't', body })).toEqual([])
 })
 
 test('a `---` between two titled screenshots drawn with <img> tags is part of a description', () => {
   const body = 'Adds the last alert column.\n\n**Devices list, desktop 1440 px, after**\n<img src="https://github.com/user-attachments/assets/1.png" width="720">\n\n---\n\n'
-    + '**Devices list, mobile 390 px, after**\n<img src="https://github.com/user-attachments/assets/2.png" width="320">\n\n' + NONE
+    + '**Devices list, mobile 390 px, after**\n<img src="https://github.com/user-attachments/assets/2.png" width="320">\n\n' + ENDING
   expect(lint('pr-create', { title: 't', body })).toEqual([])
 })
 
 test('the block image-upload writes for two titled files is part of a description', () => {
   const block = '**First**\n![First](https://github.com/acme/thing/blob/pr-assets/a.png?raw=true)\n\n---\n\n'
     + '**Second**\n![Second](https://github.com/acme/thing/blob/pr-assets/b.png?raw=true)'
-  expect(lint('pr-create', { title: 't', body: 'Adds the reset button.\n\n' + block + '\n\n' + NONE })).toEqual([])
+  expect(lint('pr-create', { title: 't', body: 'Adds the reset button.\n\n' + block + '\n\n' + ENDING })).toEqual([])
 })
 
 test('the block image-upload writes for a title that carried asterisks and brackets is part of a description', () => {
   const block = '**Login screen [v2**\n![Login screen [v2](https://github.com/acme/thing/blob/pr-assets/a.png?raw=true)\n\n---\n\n'
     + '**Second**\n![Second](https://github.com/acme/thing/blob/pr-assets/b.png?raw=true)'
-  expect(lint('pr-create', { title: 't', body: 'Adds the reset button.\n\n' + block + '\n\n' + NONE })).toEqual([])
+  expect(lint('pr-create', { title: 't', body: 'Adds the reset button.\n\n' + block + '\n\n' + ENDING })).toEqual([])
 })
 
 test('a rule anywhere but between two titled screenshots is refused, and the refusal names the exception', () => {
   const summary = 'Adds the last alert column.\n\n'
   for (const [name, body] of [
-    ['under the summary, above the first screenshot', summary + '---\n\n' + DESKTOP_SHOT + '\n\n---\n\n' + MOBILE_SHOT + '\n\n' + NONE],
-    ['after the last screenshot, above the sections', summary + DESKTOP_SHOT + '\n\n---\n\n' + MOBILE_SHOT + '\n\n---\n\n' + NONE],
-    ['right under an image, which makes it a heading', summary + DESKTOP_SHOT + '\n---\n\n' + MOBILE_SHOT + '\n\n' + NONE],
-    ['between two images with no title', summary + '![d](https://example.com/d.png)\n\n---\n\n![m](https://example.com/m.png)\n\n' + NONE],
-    ['between a titled image and prose', summary + DESKTOP_SHOT + '\n\n---\n\nThe column sorts by date.\n\n' + NONE],
-    ['`***` between two screenshots', summary + DESKTOP_SHOT + '\n\n***\n\n' + MOBILE_SHOT + '\n\n' + NONE],
-    ['`___` between two screenshots', summary + DESKTOP_SHOT + '\n\n___\n\n' + MOBILE_SHOT + '\n\n' + NONE],
-    ['between two screenshots in a section', summary + NONE.replace('**Related PRs:** none', '**Related PRs:**\n- https://github.com/acme/front/pull/1620') + '\n\n' + DESKTOP_SHOT + '\n\n---\n\n' + MOBILE_SHOT],
+    ['under the summary, above the first screenshot', summary + '---\n\n' + DESKTOP_SHOT + '\n\n---\n\n' + MOBILE_SHOT + '\n\n' + ENDING],
+    ['after the last screenshot, above the sections', summary + DESKTOP_SHOT + '\n\n---\n\n' + MOBILE_SHOT + '\n\n---\n\n' + ENDING],
+    ['right under an image, which makes it a heading', summary + DESKTOP_SHOT + '\n---\n\n' + MOBILE_SHOT + '\n\n' + ENDING],
+    ['between two images with no title', summary + '![d](https://example.com/d.png)\n\n---\n\n![m](https://example.com/m.png)\n\n' + ENDING],
+    ['between a titled image and prose', summary + DESKTOP_SHOT + '\n\n---\n\nThe column sorts by date.\n\n' + ENDING],
+    ['`***` between two screenshots', summary + DESKTOP_SHOT + '\n\n***\n\n' + MOBILE_SHOT + '\n\n' + ENDING],
+    ['`___` between two screenshots', summary + DESKTOP_SHOT + '\n\n___\n\n' + MOBILE_SHOT + '\n\n' + ENDING],
+    ['between two screenshots in a section', summary + ENDING.replace('', '**Related PRs:**\n- https://github.com/acme/front/pull/1620') + '\n\n' + DESKTOP_SHOT + '\n\n---\n\n' + MOBILE_SHOT],
   ]) {
     expect(rulesOf('pr-create', { title: 't', body }), name).toContain(RULE_LINE)
   }
-  const refused = lint('pr-create', { title: 't', body: summary + '---\n\n' + NONE })
+  const refused = lint('pr-create', { title: 't', body: summary + '---\n\n' + ENDING })
   expect(refused.map((v) => v.rule).join('\n')).toContain('a `---` is kept only between two screenshots, a blank line before it')
 })
 
@@ -920,20 +926,20 @@ test('a `---` is refused when a screenshot beside it has a title ending with a c
   const summary = 'Adds the last alert column.\n\n'
   const url = 'https://github.com/user-attachments/assets/1.png'
   for (const [name, body] of [
-    ['title ending with a colon above the rule', summary + '**Devices list, desktop:**\n![Devices list](' + url + ')\n\n---\n\n' + MOBILE_SHOT + '\n\n' + NONE],
-    ['title ending with a space and a colon above the rule', summary + '**Devices list, desktop :**\n![Devices list](' + url + ')\n\n---\n\n' + MOBILE_SHOT + '\n\n' + NONE],
-    ['title ending with a colon below the rule', summary + DESKTOP_SHOT + '\n\n---\n\n**Devices list, mobile:**\n![Devices list](' + url + ')\n\n' + NONE],
-    ['title not adjacent to its image above the rule', summary + '**Devices list, desktop**\n\n![Devices list](' + url + ')\n\n---\n\n' + MOBILE_SHOT + '\n\n' + NONE],
-    ['title not adjacent to its image below the rule', summary + DESKTOP_SHOT + '\n\n---\n\n**Devices list, mobile**\n\n![Devices list](' + url + ')\n\n' + NONE],
-    ['title with no image above the rule', summary + '**Devices list, desktop**\n\n---\n\n' + MOBILE_SHOT + '\n\n' + NONE],
-    ['title with no image below the rule', summary + DESKTOP_SHOT + '\n\n---\n\n**Devices list, mobile**\n\n' + NONE],
+    ['title ending with a colon above the rule', summary + '**Devices list, desktop:**\n![Devices list](' + url + ')\n\n---\n\n' + MOBILE_SHOT + '\n\n' + ENDING],
+    ['title ending with a space and a colon above the rule', summary + '**Devices list, desktop :**\n![Devices list](' + url + ')\n\n---\n\n' + MOBILE_SHOT + '\n\n' + ENDING],
+    ['title ending with a colon below the rule', summary + DESKTOP_SHOT + '\n\n---\n\n**Devices list, mobile:**\n![Devices list](' + url + ')\n\n' + ENDING],
+    ['title not adjacent to its image above the rule', summary + '**Devices list, desktop**\n\n![Devices list](' + url + ')\n\n---\n\n' + MOBILE_SHOT + '\n\n' + ENDING],
+    ['title not adjacent to its image below the rule', summary + DESKTOP_SHOT + '\n\n---\n\n**Devices list, mobile**\n\n![Devices list](' + url + ')\n\n' + ENDING],
+    ['title with no image above the rule', summary + '**Devices list, desktop**\n\n---\n\n' + MOBILE_SHOT + '\n\n' + ENDING],
+    ['title with no image below the rule', summary + DESKTOP_SHOT + '\n\n---\n\n**Devices list, mobile**\n\n' + ENDING],
   ]) {
     expect(rulesOf('pr-create', { title: 't', body }), name).toContain(RULE_LINE)
   }
 })
 
 test('a screenshot\'s bold title is read as the summary', () => {
-  const body = 'Adds the last alert column.\n\n**Settings page unchanged, after**\n![settings](https://github.com/user-attachments/assets/1.png)\n\n' + NONE
+  const body = 'Adds the last alert column.\n\n**Settings page unchanged, after**\n![settings](https://github.com/user-attachments/assets/1.png)\n\n' + ENDING
   expect(rulesOf('pr-create', { title: 't', body })).toEqual(['body: state what the PR does, never what it does not do'])
 })
 
@@ -946,7 +952,7 @@ test('an image\'s alt text, URL and HTML attributes are never read as the summar
     '![mobile](assets/page#12.png)',
     '<img alt="the page unchanged at 320 px" src="https://github.com/user-attachments/assets/2.png" width="320">',
   ]) {
-    expect(lint('pr-create', { title: 't', body: 'Adds the reset button.\n\n' + image + '\n\n' + NONE }), image).toEqual([])
+    expect(lint('pr-create', { title: 't', body: 'Adds the reset button.\n\n' + image + '\n\n' + ENDING }), image).toEqual([])
   }
 })
 
@@ -1045,7 +1051,7 @@ test('pr-create is sent as a draft when the call does not say', async ($, on) =>
   await stubMod(on, runs, [])
   await startReading($)
 
-  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-create', args: { title: 'fix: x', body: 'Text\n\n' + NONE } })
+  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-create', args: { title: 'fix: x', body: 'Text\n\n' + ENDING } })
   expect(runs[0].args.draft).toBe(true)
 })
 
@@ -1211,7 +1217,7 @@ test('a description replaced and a pull request opened out of draft on a reposit
   stubAutoMerge(on, DATA, LISTED)
   await startReading($)
 
-  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-update', args: { pr: 1, body: 'New text\n\n' + NONE }, repo: 'acme/thing' })
+  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-update', args: { pr: 1, body: 'New text\n\n' + ENDING }, repo: 'acme/thing' })
   await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-create', args: { title: 'fix: x', draft: false }, repo: 'acme/thing' })
   expect(asked.length).toBe(0)
   expect(runs.length).toBe(2)
@@ -1227,7 +1233,7 @@ test('a pull request opened or taken out of draft on a repository not in auto-me
   stubAutoMerge(on, DATA, LISTED)
   await startReading($)
 
-  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-update', args: { pr: 1, body: 'New text\n\n' + NONE }, repo: 'acme/other' })
+  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-update', args: { pr: 1, body: 'New text\n\n' + ENDING }, repo: 'acme/other' })
   expect(asked.length).toBe(0)
   expect(runs.length).toBe(1)
   const create: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-create', args: { title: 'fix: x', draft: false }, repo: 'acme/other' })
@@ -1246,7 +1252,7 @@ test('a description replaced is refused under a deny rule', async ($, on) => {
   stubAutoMerge(on, DATA, LISTED)
   await startReading($)
 
-  const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-update', args: { pr: 1, body: 'New text\n\n' + NONE }, repo: 'acme/other' })
+  const out: any = await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-update', args: { pr: 1, body: 'New text\n\n' + ENDING }, repo: 'acme/other' })
   expect(JSON.stringify(out)).toContain('denied by rule')
   expect(asked.length).toBe(0)
   expect(runs.length).toBe(0)
@@ -1260,7 +1266,7 @@ test('a description replaced under an ask from a rule is still asked', async ($,
   stubAutoMerge(on, DATA, LISTED)
   await startReading($)
 
-  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-update', args: { pr: 1, body: 'New text\n\n' + NONE }, repo: 'acme/other' })
+  await $.tool.call({ tool: 'mcp__github__gh', command: 'pr-update', args: { pr: 1, body: 'New text\n\n' + ENDING }, repo: 'acme/other' })
   expect(asked.length).toBe(1)
   expect(runs.length).toBe(0)
 })
@@ -2364,7 +2370,7 @@ async function stubBashLint($: any, on: any, bash: string[], asked: string[], an
 test('a gh pr create whose body file breaks a rule is refused once, then sendable as it is', async ($, on) => {
   const bash: string[] = []
   const asked: string[] = []
-  await stubBashLint($, on, bash, asked, 'Send as it is', { '/work/body.md': 'Adds the reset; at last.\n\n' + NONE })
+  await stubBashLint($, on, bash, asked, 'Send as it is', { '/work/body.md': 'Adds the reset; at last.\n\n' + ENDING })
 
   const command = 'gh pr create --draft --title "feat: add the reset" --body-file body.md'
   const out: any = await $.tool.call({ tool: 'Bash', command })
@@ -2382,7 +2388,7 @@ test('a gh pr create whose body file breaks a rule is refused once, then sendabl
 test('a gh.py text run through Bash keeps the writing rules, its --body-file read', async ($, on) => {
   const bash: string[] = []
   const asked: string[] = []
-  await stubBashLint($, on, bash, asked, 'Deny', { '/work/body.md': 'Adds the reset; at last.\n\n' + NONE, '/work/ok.md': 'Adds the reset.\n\n' + NONE })
+  await stubBashLint($, on, bash, asked, 'Deny', { '/work/body.md': 'Adds the reset; at last.\n\n' + ENDING, '/work/ok.md': 'Adds the reset.\n\n' + ENDING })
 
   const create: any = await $.tool.call({ tool: 'Bash', command: 'python3 engine/gh.py pr-create --title "feat: add the reset" --body-file body.md --draft' })
   expect(create.deny).toContain('gh pr-create refused, its text breaks the writing rules:\n- body: no semicolon in prose')
@@ -2399,15 +2405,15 @@ test('a gh.py text run through Bash keeps the writing rules, its --body-file rea
   expect(asked).toEqual([])
 })
 
-test('a gh pr edit whose -b body lacks the sections is refused once, then sendable as it is', async ($, on) => {
+test('a gh pr edit whose -b body has a `none` section is refused once, then sendable as it is', async ($, on) => {
   const bash: string[] = []
   const asked: string[] = []
   await stubBashLint($, on, bash, asked, 'Send as it is')
 
-  const command = 'gh pr edit 3 -R acme/front -b \'Adds the reset.\''
+  const command = 'gh pr edit 3 -R acme/front -b \'Adds the reset.\n\n**TODO Prod:** none\''
   const out: any = await $.tool.call({ tool: 'Bash', command })
   expect(out.deny).toContain('gh pr edit refused')
-  expect(out.deny).toContain('- body: a pull request description ends with the four sections, missing here: TODO Staging')
+  expect(out.deny).toContain('- body: a section with nothing to say is omitted')
   expect(bash).toEqual([])
   const again: any = await $.tool.call({ tool: 'Bash', command })
   expect(again.deny).toBeUndefined()
@@ -2431,12 +2437,12 @@ test('a refused Bash text the person denies runs nothing', async ($, on) => {
 test('a Bash title and body that keep the rules run with no question', async ($, on) => {
   const bash: string[] = []
   const asked: string[] = []
-  await stubBashLint($, on, bash, asked, 'Deny', { '/tmp/b.md': 'Adds the reset.\n\n' + NONE })
+  await stubBashLint($, on, bash, asked, 'Deny', { '/tmp/b.md': 'Adds the reset.\n\n' + ENDING })
 
   const lines = [
     'gh pr create -t "feat: add the reset" -F /tmp/b.md --draft',
     'gh pr edit 3 --title=\'fix: keep the reset\'',
-    'gh pr edit 3 --body "Adds the reset.\n\n' + NONE + '"',
+    'gh pr edit 3 --body "Adds the reset.\n\n' + ENDING + '"',
     'gh pr comment 3 -b "Thanks, fixed."',
     'gh pr edit 3 --add-label bug',
   ]
@@ -2500,7 +2506,7 @@ test('a title or body a shell variable or substitution gives is left to the pers
 
 test('a body file under ~ is read from HOME, a relative one after a cd is left to the person', async ($, on) => {
   const bash: string[] = []
-  const bad = 'Adds the reset; at last.\n\n' + NONE
+  const bad = 'Adds the reset; at last.\n\n' + ENDING
   on('env.get', (_$: any, e: any) => ({ value: e.name === 'HOME' ? '/home/me' : undefined }))
   await stubBashLint($, on, bash, [], 'Deny', { '/home/me/b.md': bad, '/work/b.md': bad, '/tmp/b.md': bad })
 
@@ -2516,7 +2522,7 @@ test('a body file under ~ is read from HOME, a relative one after a cd is left t
 
 test('the engine route leaves a body from stdin, an expanded variable and a relative file after a cd to the person', async ($, on) => {
   const bash: string[] = []
-  const bad = 'Adds the reset; at last.\n\n' + NONE
+  const bad = 'Adds the reset; at last.\n\n' + ENDING
   on('env.get', (_$: any, e: any) => ({ value: e.name === 'HOME' ? '/home/me' : undefined }))
   await stubBashLint($, on, bash, [], 'Deny', { '/home/me/b.md': bad, '/work/b.md': bad, '/tmp/b.md': bad })
 
@@ -2563,7 +2569,7 @@ test('a body in a heredoc substitution is read and linted', async ($, on) => {
   const bash: string[] = []
   await stubBashLint($, on, bash, [], 'Deny')
 
-  const bad = 'gh pr create --draft --title "feat: x" --body "$(cat <<\'EOF\'\nAdds the reset; at last.\n\n' + NONE + '\nEOF\n)"'
+  const bad = 'gh pr create --draft --title "feat: x" --body "$(cat <<\'EOF\'\nAdds the reset; at last.\n\n' + ENDING + '\nEOF\n)"'
   const out: any = await $.tool.call({ tool: 'Bash', command: bad })
   expect(out.deny).toContain('- body: no semicolon in prose')
   const good = bad.replace('; at last', '')
