@@ -61,6 +61,7 @@ export function act(e: any): Record<string, unknown> {
     loop.pass += 1
     loop.isReviewing = true
     loop.reports = []
+    loop.readers = []
     loop.awaiting = new Map()
     loop.waits = 0
     loop.waitedAt = -1
@@ -91,8 +92,8 @@ export function act(e: any): Record<string, unknown> {
     }
     const found = passFindings(loop.reports)
     if (keys.length === 0 && found === undefined) {
-      const silent = loop.reports.filter((r) => r === null).length
-      return { error: `${silent} of ${loop.reports.length} review agents ended without their findings block: the pass cannot be found clean; call begin_pass and run the review again` }
+      const silent = silentReaders()
+      return { error: `${silent.length} of ${loop.reports.length} review agents ended without their findings block (${silent.join(', ')}): the pass cannot be found clean; call begin_pass and run the review again` }
     }
     if (keys.length === 0 && found !== undefined && found.length > 0) {
       return { error: `the review agents reported ${found.length} finding(s) in this pass: report their keys` }
@@ -132,6 +133,15 @@ export function act(e: any): Record<string, unknown> {
   }
   return { error: `unknown action: ${action}` }
 }
+
+// The review agents of the pass that handed back no readable findings block, by the name they
+// were launched under.
+function silentReaders(): string[] {
+  return loop.reports.flatMap((r, i) => (r === null ? [loop.readers[i] ?? `review agent ${i + 1}`] : []))
+}
+
+// Why the severity of a pass is unknown: the readers whose block is missing.
+const unknownSeverity = (): string => `severity unknown: no findings block from ${silentReaders().join(', ')}`
 
 // The Stop gate's reason, or null to let the stop through.
 // A pass whose agents still run in the background ends its turn: their hand-back wakes the session.
@@ -208,13 +218,13 @@ export function verdict(exit: string): { result: 'pass' | 'fail'; detail: string
   if (exit === 'reviewed') {
     const found = `${loop.lastFindings} findings`
     if (loop.lastBlocking === 0) return { result: 'pass', detail: `reviewed: ${found}, none Critical or Important` }
-    if (loop.lastBlocking === undefined) return { result: 'fail', detail: `reviewed: ${found}, severity unknown` }
+    if (loop.lastBlocking === undefined) return { result: 'fail', detail: `reviewed: ${found}, ${unknownSeverity()}`.slice(0, 500) }
     return { result: 'fail', detail: `reviewed: ${found}, ${loop.lastBlocking} Critical or Important: ${loop.seen.join('; ')}`.slice(0, 500) }
   }
   if (exit !== 'max_passes') return null
   const left = `${loop.lastFindings} findings left after ${loop.pass} passes`
   if (loop.lastBlocking === 0) return { result: 'pass', detail: `${left}, none Critical or Important` }
-  if (loop.lastBlocking === undefined) return { result: 'fail', detail: `${left}, severity unknown` }
+  if (loop.lastBlocking === undefined) return { result: 'fail', detail: `${left}, ${unknownSeverity()}`.slice(0, 500) }
   return { result: 'fail', detail: `${left}, ${loop.lastBlocking} Critical or Important` }
 }
 
@@ -290,11 +300,13 @@ export function register(on: any): void {
   on('tool.call', { tool: 'Agent' }, async ($: any, e: any, next: any) => {
     if (!loop.isActive || !loop.isReviewing) return next(e)
     const prompt = String(e.prompt ?? '')
+    const reader = String(e.subagent_type || e.description || 'general-purpose')
     let answer: any
     try {
       answer = await next({ ...e, prompt: prompt.includes(REPORT_REQUEST) ? prompt : prompt + REPORT_REQUEST, run_in_background: false })
     } catch (err: any) {
       loop.reports.push(null)
+      loop.readers.push(reader)
       return { result: String(err?.message ?? err), isError: true }
     }
     let report: ReturnType<typeof reportOf> = null
@@ -311,6 +323,7 @@ export function register(on: any): void {
     if (loop.isReviewing) {
       if (agent !== undefined) loop.awaiting.set(agent, loop.reports.length)
       loop.reports.push(report)
+      loop.readers.push(reader)
     }
     return answer
   }).catch(async (_$: any, e: any, next: any) => next(e))

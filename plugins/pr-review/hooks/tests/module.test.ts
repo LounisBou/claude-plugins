@@ -414,7 +414,7 @@ test('the model\'s own count is not read: an agent without its block leaves the 
   }
   await loopCall($, { action: 'begin_pass' })
   expect(stubs.records[0].result).toBe('fail')
-  expect(stubs.records[0].detail).toBe('1 findings left after 5 passes, severity unknown')
+  expect(stubs.records[0].detail).toBe('1 findings left after 5 passes, severity unknown: no findings block from code-reviewer')
 })
 
 test('a review agent is asked for its block during a pass only', async ($, on) => {
@@ -435,7 +435,7 @@ test('max_passes without a blocking count writes fail, severity unknown', async 
   await runToMaxPasses($)
   expect(stubs.records.length).toBe(1)
   expect(stubs.records[0].result).toBe('fail')
-  expect(stubs.records[0].detail).toBe('3 findings left after 5 passes, severity unknown')
+  expect(stubs.records[0].detail).toBe('3 findings left after 5 passes, severity unknown: no findings block from code-reviewer')
 })
 
 test('only the last pass decides the blocking count', async ($, on) => {
@@ -585,7 +585,7 @@ test('a reviewer\'s loop whose agent gave no block records fail, severity unknow
   await loopCall($, { action: 'begin_pass' })
   await review($)
   await loopCall($, { action: 'findings', keys: ['a::b'] })
-  expect(stubs.records[0].detail).toBe('reviewed: 1 findings, severity unknown')
+  expect(stubs.records[0].detail).toBe('reviewed: 1 findings, severity unknown: no findings block from code-reviewer')
 })
 
 // ── review agents launched in the background ─────────────────────────────────
@@ -1269,5 +1269,86 @@ test('a background reader whose turn ends otherwise than with an answer is silen
   await backgroundReviewerPass(on, $, stubs)
   await $.turn.complete({ agentId: READER, reason: 'error', answer: agentAnswer([]), turnId: 't', durationMs: 1 } as any)
   await loopCall($, { action: 'findings', keys: ['f0::s'] })
-  expect(stubs.records.map((r) => [r.result, r.detail])).toEqual([['fail', 'reviewed: 1 findings, severity unknown']])
+  expect(stubs.records.map((r) => [r.result, r.detail])).toEqual([['fail', 'reviewed: 1 findings, severity unknown: no findings block from code-reviewer']])
+})
+
+// ── a reviewer's pass as the transcripts of 2026-11-12 hold it ──
+
+// The sequence of a reviewer's loop at owner/api#44 and owner/plugins#23 (pr-review 0.9.14): each
+// reader's Agent call refused once for the hook's rewrite, reissued and launched in the background
+// (core's `async_launched` record, its `agentId`), then each reader's own SubagentHandback call,
+// `{agentId, message}`, answered `{success: true}`; `findings` comes after the last hand-back.
+// Every hand-back reached the session, and one reader's carried no ```json block: that reader,
+// not the timing, made the severity unknown.
+const HUNTER = 'pr-review-toolkit:silent-failure-hunter'
+
+// The silent-failure-hunter's two hand-backs that carried no block, shortened and anonymised.
+const PROSE_NONE = 'No findings\n\nI read the whole diff `aaaa111..bbbb222` (src and tests). '
+  + 'The points below are what I checked and why none of them is a finding.\n\n'
+  + '- **Failed day:** the transaction rolls the day back and rethrows, so nothing is swallowed.'
+const PROSE_LINES = '[important] engine/fmt.py:54 — key (name, app.id) merges distinct checks — verified — add the suite id to the key.\n'
+  + '[suggestion] engine/fmt.py:54 — a string id compared to an int raises TypeError — coerce via int().'
+
+// One reviewer's pass: each reader refused once, then launched with its id, then its hand-back.
+async function transcriptPass(on: any, $: any, stubs: Stubs, readers: [string, string, string][], keys: string[]): Promise<any> {
+  const refused = new Set<string>()
+  stubs.agent = (e: any) => {
+    const id = readers.find(([type]) => type === e.subagent_type)?.[1] ?? ''
+    if (!refused.has(id)) {
+      refused.add(id)
+      return coreRefusal
+    }
+    return coreLaunch(id)
+  }
+  wireRecord(on, stubs)
+  wireHandBack(on)
+  await loopCall($, { action: 'start', review_only: true })
+  await loopCall($, { action: 'begin_pass' })
+  for (const [type] of readers) await $.tool.call({ tool: 'Agent', subagent_type: type, description: 'Review', prompt: 'review the diff' } as any)
+  for (const [type] of readers) await $.tool.call({ tool: 'Agent', subagent_type: type, description: 'Review', prompt: 'review the diff' + REPORT_REQUEST } as any)
+  for (const [, id, report] of readers) await readerHandBack($, id, report)
+  return loopCall($, { action: 'findings', keys })
+}
+
+const PASS_4CB = (hunter: string): [string, string, string][] => [
+  ['pr-review-toolkit:code-reviewer', 'a0000000000000011', agentAnswer([])],
+  [HUNTER, 'a0000000000000012', hunter],
+  ['pr-review-toolkit:comment-analyzer', 'a0000000000000013', agentAnswer([{ severity: 'suggestion' }])],
+  ['pr-review-toolkit:pr-test-analyzer', 'a0000000000000014', agentAnswer([{ severity: 'suggestion' }, { severity: 'suggestion' }])],
+]
+
+test('four background readers that all hand back a block: the reviewer records pass from their blocks', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  const out = await transcriptPass(on, $, stubs, PASS_4CB(agentAnswer([])), ['f0::a', 'f0::b', 'f1::c'])
+  expect(String(out.result)).toContain('"exit": "reviewed"')
+  expect(stubs.records.map((r) => [r.result, r.detail])).toEqual([['pass', 'reviewed: 3 findings, none Critical or Important']])
+})
+
+test('a background reader whose hand-back is prose « No findings » leaves the severity unknown, naming that reader', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  await transcriptPass(on, $, stubs, PASS_4CB(PROSE_NONE), ['f0::a', 'f0::b', 'f1::c'])
+  expect(stubs.records.map((r) => [r.result, r.detail])).toEqual([['fail', `reviewed: 3 findings, severity unknown: no findings block from ${HUNTER}`]])
+})
+
+test('a background reader whose hand-back lists its findings without the block is named in the record', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  const readers: [string, string, string][] = [
+    ['pr-review-toolkit:code-reviewer', 'a0000000000000021', agentAnswer([{ severity: 'important' }, { severity: 'suggestion' }])],
+    ['pr-review-toolkit:pr-test-analyzer', 'a0000000000000022', agentAnswer([{ severity: 'important' }])],
+    [HUNTER, 'a0000000000000023', PROSE_LINES],
+  ]
+  await transcriptPass(on, $, stubs, readers, ['a::1', 'a::2', 'b::3', 'c::4', 'c::5'])
+  expect(stubs.records.map((r) => [r.result, r.detail])).toEqual([['fail', `reviewed: 5 findings, severity unknown: no findings block from ${HUNTER}`]])
+})
+
+test('a fix loop\'s clean exit refused for a reader without its block names that reader', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireRecord(on, stubs)
+  await loopCall($, { action: 'start' })
+  await loopCall($, { action: 'begin_pass' })
+  await review($, [])
+  await $.tool.call({ tool: 'Agent', subagent_type: HUNTER, prompt: 'hunt', answer: PROSE_NONE } as any)
+  const out = await loopCall($, { action: 'findings', keys: [] })
+  expect(out.isError).toBe(true)
+  expect(String(out.result)).toContain(`1 of 2 review agents ended without their findings block (${HUNTER})`)
 })
