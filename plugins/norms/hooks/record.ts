@@ -102,8 +102,24 @@ export function repoOf(url: string): string | undefined {
   return m ? `${m[1]}/${m[2]}` : undefined
 }
 
-async function git($: any, argv: string[]): Promise<string> {
-  const r = await $.process.run(argv, { timeoutMs: GIT_TIMEOUT_MS })
+// The directory whose repository the check reads: undefined for the session's own directory when
+// it is in one, else the repository of the session's project root. A shell `cd` (into a scratchpad,
+// /tmp) moves the session's directory out of the checkout, never its project root.
+export async function repositoryDir($: any): Promise<string | undefined> {
+  try {
+    const here = await $.process.run(['git', 'rev-parse', '--show-toplevel'], { timeoutMs: GIT_TIMEOUT_MS })
+    if (here.exitCode === 0) return undefined
+    const root = String(await $.session.root())
+    const there = await $.process.run(['git', 'rev-parse', '--show-toplevel'], { cwd: root, timeoutMs: GIT_TIMEOUT_MS })
+    const top = String(there.stdout).trim()
+    return there.exitCode === 0 && top !== '' ? top : undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function git($: any, argv: string[], dir?: string): Promise<string> {
+  const r = await $.process.run(argv, { timeoutMs: GIT_TIMEOUT_MS, ...(dir ? { cwd: dir } : {}) })
   if (r.exitCode !== 0) throw new Error(`${argv.join(' ')}: ${String(r.stderr).trim() || 'exit ' + r.exitCode}`)
   return String(r.stdout)
 }
@@ -135,15 +151,16 @@ export async function checkDone($: any, input: any): Promise<{ result: string; i
     return { result: 'norms: open, fixed and passed are whole numbers, 0 or more', isError: true }
   }
   try {
+    const dir = await repositoryDir($)
     // First, so the reason is clear: a record is written on a clean checkout.
-    if ((await git($, ['git', 'status', '--porcelain', '-uno'])).trim() !== '') {
+    if ((await git($, ['git', 'status', '--porcelain', '-uno'], dir)).trim() !== '') {
       return { result: none('the tracked files have changes') }
     }
     // At the call, not at the scope: the fix commits of check.md 7.4 are in it.
-    const head = (await git($, ['git', 'rev-parse', 'HEAD'])).trim()
+    const head = (await git($, ['git', 'rev-parse', 'HEAD'], dir)).trim()
     if (!head) return { result: none('the checkout has no commit') }
     if (head !== checked.head) {
-      const changed = (await git($, ['git', 'diff', '--name-only', checked.head, head])).split('\n').map(f => f.trim()).filter(Boolean)
+      const changed = (await git($, ['git', 'diff', '--name-only', checked.head, head], dir)).split('\n').map(f => f.trim()).filter(Boolean)
       const read = new Set(checked.files)
       const unread = changed.filter(f => !read.has(f))
       if (unread.length > 0) {
@@ -151,7 +168,7 @@ export async function checkDone($: any, input: any): Promise<{ result: string; i
         return { result: none(`commits since the check touch files it did not read (${named}): run /norms:check again`) }
       }
     }
-    const repo = repoOf(await git($, ['git', 'remote', 'get-url', 'origin']))
+    const repo = repoOf(await git($, ['git', 'remote', 'get-url', 'origin'], dir))
     if (!repo) return { result: none('the origin remote names no GitHub repository') }
     let numberText: string
     try {

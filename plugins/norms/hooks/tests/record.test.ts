@@ -452,3 +452,36 @@ test('a ui.log that returns a rejected promise has its rejection caught, and the
     await endSession(m.hooks, setup().$)
   }
 })
+
+// ── a review checkout the session's directory moved out of ──
+
+// The git answers of setup(), as runs in `dir` rather than in the session's directory.
+const runsIn = (dir: string, runs: FakeSetup['runs'] = {}): FakeSetup['runs'] => Object.fromEntries(Object.entries({
+  ...gitRuns(['src/a.ts'], ['src/a.ts']),
+  'git status --porcelain -uno': { stdout: '' },
+  'git remote get-url origin': { stdout: 'git@github.com:Owner/Repo.git\n' },
+  'git rev-parse --show-toplevel': { stdout: dir + '\n' },
+  ...runs,
+}).map(([argv, answer]) => [`(${dir}) ${argv}`, answer]))
+
+test('a check run after a shell cd out of the repository reads the project root\'s, marks its scope and records', async () => {
+  resetCache()
+  const calls: any[] = []
+  const root = '/work/repo'
+  const { $ } = fakeDollar({
+    runs: runsIn(root),
+    root,
+    tool: (input: any) => {
+      calls.push(input)
+      return input.tool === 'mcp__github__gh' ? { result: '12\n' } : { result: WRITTEN + '\n' }
+    },
+  })
+  const m = mounted()
+  const { next, seen } = nextOf()
+  await skillHook(m.hooks).handler($, { tool: 'Skill', skill: 'norms:check', args: 'report only' }, next)
+  expect(seen[0].args).toContain('<norms-scope>')
+  expect(seen[0].args).toContain(`head: ${HEAD}`)
+  const out = await m.done($, { open: 0, fixed: 0, passed: 1 })
+  expect(out.result).toBe('record: ' + WRITTEN)
+  expect(recordCalls(calls).map(c => c.pr)).toEqual([12])
+})

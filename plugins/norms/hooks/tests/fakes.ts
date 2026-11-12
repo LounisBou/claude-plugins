@@ -43,6 +43,8 @@ export type FakeSetup = {
   // The host's $.state for the session, seeded by `plugin/key`; stateFails makes every set throw.
   state?: Record<string, unknown>
   stateFails?: string
+  // The session's project root, as $.session.root() answers it.
+  root?: string
 }
 
 export function fakeDollar(setup: FakeSetup): {
@@ -58,8 +60,9 @@ export function fakeDollar(setup: FakeSetup): {
     plugin: { name: 'norms', root: '/plugin' },
     env: { get: async (name: string) => (name === 'HOME' ? setup.home ?? '/home/u' : setup.env?.[name]) },
     process: {
-      run: async (argv: readonly string[]) => {
-        const key = argv.join(' ')
+      // A run in another directory than the session's is keyed `(<dir>) <argv>`.
+      run: async (argv: readonly string[], init?: { cwd?: string }) => {
+        const key = (init?.cwd ? `(${init.cwd}) ` : '') + argv.join(' ')
         argvs.push(key)
         const r = setup.runs?.[key]
         if (!r) return { exitCode: 1, stdout: '', stderr: `unexpected run: ${key}` }
@@ -91,6 +94,7 @@ export function fakeDollar(setup: FakeSetup): {
         return { isSet: true, version: 1 }
       },
     },
+    session: { root: async () => setup.root ?? '/work' },
     ui: { log: (text: string) => { logs.push(text) } },
     tool: {
       call: async (input: any) => {
@@ -115,6 +119,7 @@ export function gitRuns(changed: string[], tracked: string[], diffs: Record<stri
     [`git diff --name-only ${BASE}...HEAD`]: { stdout: changed.join('\n') + '\n' },
     'git ls-files': { stdout: tracked.join('\n') + '\n' },
     'git rev-parse --absolute-git-dir': { stdout: '/repo/.git\n' },
+    'git rev-parse --show-toplevel': { stdout: '/repo\n' },
   }
   for (const [files, diff] of Object.entries(diffs)) {
     runs[`git diff ${BASE}...HEAD -- ${files}`] = { stdout: diff }
