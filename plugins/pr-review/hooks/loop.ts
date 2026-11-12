@@ -10,7 +10,7 @@
 // types, an interrupted turn or a /clear ends the loop's hold.
 import { loop, resetLoop, MAX_PASSES } from './state.ts'
 import { GH_TOOL } from './policy.ts'
-import { REPORT_REQUEST, agentText, answerText, isBlocking, isRefusedRewrite, launchedAgent, MAX_WAITS, passFindings, reportOf } from './report.ts'
+import { REPORT_REQUEST, agentText, answerText, isBlocking, isRefusedRewrite, launchedAgent, MAX_WAITS, passFindings, reportOf, type Finding } from './report.ts'
 
 export const LOOP_TOOL = 'loop'
 
@@ -71,21 +71,22 @@ export function act(e: any): Record<string, unknown> {
     // A clean exit records a pass: it must follow a review the loop counted, never the start.
     if (loop.pass === 0) return { error: 'no review pass has begun: call begin_pass, run the review, then report its findings' }
     const keys = strings(e.keys)
+    // The pass's verdict waits for every agent the host runs in the background, whatever the keys.
+    const running = loop.awaiting.size
+    if (running > 0) {
+      loop.waits += 1
+      if (loop.waits <= MAX_WAITS) return { error: `${running} review agents are still running in the background: wait for their hand-back, then report` }
+      loop.awaiting = new Map()
+      return { error: `${running} review agents never handed back after ${MAX_WAITS} waits: the pass cannot be found clean; call begin_pass and run the review again` }
+    }
+    // A clean exit, and a reviewer's verdict, are computed from the agents' blocks: none without an agent.
+    if (loop.reports.length === 0 && (keys.length === 0 || loop.isReviewOnly)) {
+      return { error: 'no review agent ran in this pass: the verdict is computed from the agents\' findings; launch the review agents (a call refused for the hook\'s rewrite did not run: issue it again), then report' }
+    }
     const found = passFindings(loop.reports)
     if (keys.length === 0 && found === undefined) {
-      const running = loop.awaiting.size
-      if (running > 0) {
-        loop.waits += 1
-        if (loop.waits <= MAX_WAITS) return { error: `${running} review agents are still running in the background: wait for their hand-back, then report` }
-        loop.awaiting = new Map()
-        return { error: `${running} review agents never handed back after ${MAX_WAITS} waits: the pass cannot be found clean; call begin_pass and run the review again` }
-      }
       const silent = loop.reports.filter((r) => r === null).length
-      return {
-        error: loop.reports.length === 0
-          ? 'no review agent ran in this pass: a clean exit is computed from the agents\' findings; launch the review agents, then report'
-          : `${silent} of ${loop.reports.length} review agents ended without their findings block: the pass cannot be found clean; call begin_pass and run the review again`,
-      }
+      return { error: `${silent} of ${loop.reports.length} review agents ended without their findings block: the pass cannot be found clean; call begin_pass and run the review again` }
     }
     if (keys.length === 0 && found !== undefined && found.length > 0) {
       return { error: `the review agents reported ${found.length} finding(s) in this pass: report their keys` }
@@ -127,8 +128,10 @@ export function act(e: any): Record<string, unknown> {
 }
 
 // The Stop gate's reason, or null to let the stop through.
+// A pass whose agents still run in the background ends its turn: their hand-back wakes the session.
 export function stopReason(stopHookActive: boolean): string | null {
   if (stopHookActive || !loop.isActive) return null
+  if (loop.isReviewing && loop.awaiting.size > 0) return null
   return `pr-review auto-fix-loop: pass ${loop.pass}/${MAX_PASSES}, and the last review reported ${loop.lastFindings} finding(s). `
     + 'The loop ends only on a review with zero findings or after pass 5: call mcp__pr-review__loop begin_pass and run the review again.'
 }
@@ -138,6 +141,22 @@ export function releaseLoop(): void {
     loop.isActive = false
     loop.exit = 'released'
   }
+}
+
+// The tool a subagent calls, in its own loop, to hand its final report back to the session.
+const HANDBACK_TOOL = 'SubagentHandback'
+
+// A background agent of the pass has answered: its report, or null, fills its place once.
+function settle(id: string, report: Finding[] | null): void {
+  const place = loop.awaiting.get(id)
+  if (place === undefined || !loop.isActive || !loop.isReviewing) return
+  loop.reports[place] = report
+  loop.awaiting.delete(id)
+}
+
+// A background agent of the pass that ended its turn without a hand-back: its last answer is its report.
+export function agentEnded(id: string, reason: string, answer: string): void {
+  if (loop.awaiting.has(id)) settle(id, reason === 'answer' ? reportOf(answer) : null)
 }
 
 function redraw($: any): void {
@@ -155,7 +174,6 @@ export const LOOP_SCHEMA = {
     test_command: { type: 'string' },
     review_only: { type: 'boolean', description: 'start: a reviewer\'s loop, run by a session that did not write the code: one pass, no fix; its findings are the verdict' },
     keys: { type: 'array', items: { type: 'string' } },
-    blocking: { type: 'integer', description: 'findings: how many of the keys are Critical or Important' },
     key: { type: 'string' },
     sha: { type: 'string' },
     description: { type: 'string' },
@@ -252,8 +270,9 @@ export function register(on: any): void {
     return answer
   }).catch(async (_$: any, e: any, next: any) => next(e))
 
-  // The hand-back of a review agent the host ran in the background: its report, read for the
-  // pass it belongs to. Only the host's own delivery counts: a peer origin flagged as a hand-back,
+  // The hand-back of a review agent the host ran in the background, as a delivery that carries
+  // the hand-back's origin: its report, read for the pass it belongs to. The host of 2026-11
+  // gives session.receive no such origin; the agent's own SubagentHandback call, below, is read. Only the host's own delivery counts: a peer origin flagged as a hand-back,
   // from an agent launched in this pass, on the main session's event. The message goes on to the
   // model as it came.
   on('session.receive', {}, async (_$: any, e: any, next: any) => {
@@ -262,13 +281,26 @@ export function register(on: any): void {
       const id = typeof o?.from === 'string' ? o.from : ''
       if (!e?.agentId && o?.kind === 'peer' && o?.handback === true && typeof o?.handbackReportText === 'string'
         && loop.isActive && loop.isReviewing && loop.awaiting.has(id)) {
-        loop.reports[loop.awaiting.get(id) as number] = reportOf(o.handbackReportText)
-        loop.awaiting.delete(id)
+        settle(id, reportOf(o.handbackReportText))
       }
     } catch {
       // Unreadable: no count.
     }
     return next(e)
+  }).catch(async (_$: any, e: any, next: any) => next(e))
+
+  // The report of a review agent the host ran in the background, read where the module sees it:
+  // the agent's own SubagentHandback call, in its loop (`agentId`, the id its launch named), once
+  // core says the report reached the session. A hand-back that reached no one is not read.
+  on('tool.call', { tool: HANDBACK_TOOL }, async (_$: any, e: any, next: any) => {
+    const answer = await next(e)
+    try {
+      const id = typeof e?.agentId === 'string' ? e.agentId : ''
+      if (answer?.result?.success === true && typeof e?.message === 'string') settle(id, reportOf(e.message))
+    } catch {
+      // Unreadable: no count.
+    }
+    return answer
   }).catch(async (_$: any, e: any, next: any) => next(e))
 
   on('tool.call', { tool: 'mcp__pr-review__loop' }, async ($: any, e: any) => {

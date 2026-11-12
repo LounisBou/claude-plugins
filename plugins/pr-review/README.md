@@ -119,7 +119,10 @@ and every skill keeps its own route.
   request's head, written through the github plugin's `mcp__github__record`, for that
   plugin's ready guard. The verdict is computed, not reported: during a pass, each
   agent the session launches is asked to end with a JSON block of its findings, and
-  the module reads them. A clean exit needs every agent of the pass to report none;
+  the module reads them. An agent the host runs in the background is read from its own
+  hand-back (its `SubagentHandback` call, else its last answer); until every one has
+  answered, `findings` asks to wait and a stop is let through. A clean exit needs every
+  agent of the pass to report none, and a reviewer's verdict needs at least one agent;
   an agent without a readable block (or one that fails) leaves the severity unknown.
   A clean review writes `pass`. A loop stopped by the pass limit writes `pass` when
   the last review's agents reported nothing Critical or Important, and `fail`
