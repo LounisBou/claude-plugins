@@ -1949,6 +1949,22 @@ gate8() {
   if [ -n "${5:-}" ]; then printf '%s' "$5" > "$F8/GET_repos_acme_thing_actions_runs__head_sha=${GATEHEAD}&per_page=100.json"; fi
 }
 gh8() { env GH_FIXTURES="$F8" GH_TOKEN=x GH_REPO=acme/thing python3 "$GHDIR/gh.py" "$@"; }
+# net8 runs gh.py with the Actions runs request failing as a dropped connection.
+net8() {
+  env GH_FIXTURES="$F8" GH_TOKEN=x GH_REPO=acme/thing python3 -c "
+import sys, urllib.error
+sys.path.insert(0, sys.argv[1])
+import gh
+from ghlib import http
+real = http._call
+def call(method, path, *rest, **kw):
+    if '/actions/runs' in path:
+        raise urllib.error.URLError('connection dropped')
+    return real(method, path, *rest, **kw)
+http._call = call
+sys.exit(gh.main(sys.argv[2:]))
+" "$GHDIR" "$@"
+}
 ci8() { gh8 pr-gate 12 | python3 -c 'import json,sys; c=json.load(sys.stdin)["ci"]; print(c["result"], ",".join(c["failed"]), ",".join(c["skipped"]), c["total"])'; }
 PULL8='{"number":12,"state":"open","draft":false,"head":{"sha":"'$GATEHEAD'","ref":"feat"},"labels":[{"name":"Not Ready"},{"name":"bug"}]}'
 
@@ -2014,12 +2030,17 @@ gate8 wf-down "$PULL8" '{"statuses":[]}' "$RUNS2" '{"__status":500,"message":"bo
 check "pr-gate counts every run when the Actions runs call fails" "FAILURE test  2" "$(ci8 2>/dev/null)"
 check "pr-gate prints one error line naming the Actions runs call failure" \
   "error: cannot read the Actions runs of $GATEHEAD: boom (HTTP 500)" "$(gh8 pr-gate 12 2>&1 >/dev/null)"
-# A re-run of one suite (the same suite id) is the only run deduplicated away on a
-# failing call: older failure and newer success of one suite, every run counted.
+# On a failing call nothing is deduplicated, a re-run of one suite included: older
+# failure and newer success of one suite, every run counted.
 RUNS1='{"check_runs":[{"id":1,"name":"test","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"failure"},{"id":2,"name":"test","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"success"}]}'
 gate8 wf-down-checks "$PULL8" '{"statuses":[]}' "$RUNS1" '{"__status":500,"message":"boom"}'
 check "pr-checks counts every run when the Actions runs call fails" "FAILURE" \
   "$(gh8 pr-checks 12 --format checks-status 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"])')"
+gate8 wf-net "$PULL8" '{"statuses":[]}' "$RUNS2"
+check "pr-gate counts every run when the Actions runs call drops the connection" "FAILURE test  2" \
+  "$(net8 pr-gate 12 2>/dev/null | python3 -c 'import json,sys; c=json.load(sys.stdin)["ci"]; print(c["result"], ",".join(c["failed"]), ",".join(c["skipped"]), c["total"])')"
+check "pr-gate prints one error line naming a dropped Actions runs connection" \
+  "error: cannot read the Actions runs of $GATEHEAD: <urlopen error connection dropped>" "$(net8 pr-gate 12 2>&1 >/dev/null)"
 # Without a mapping (None, or no key at all) no run is placed: nothing is deduplicated.
 check "gate_ci and the checks-status format count every run with no mapping" "FAILURE FAILURE" \
   "$(python3 -c "
@@ -2030,6 +2051,9 @@ print(fmt.gate_ci(None, runs, False)['result'], json.loads(fmt._checks_status({'
 " "$RUNS1")"
 gate8 wf-none "$PULL8" '{"statuses":[]}' "$RUNS2"
 check "pr-gate never merges the runs of two suites no Actions run places" "FAILURE test  2" "$(ci8)"
+RUNS3='{"check_runs":[{"id":1,"name":"test","app":{"id":15368},"check_suite":{"id":200},"status":"completed","conclusion":"failure"},{"id":2,"name":"test","app":{"id":15368},"check_suite":{"id":300},"status":"completed","conclusion":"success"},{"id":3,"name":"test","app":{"id":15368},"check_suite":{"id":100},"status":"completed","conclusion":"success"}]}'
+gate8 wf-partial "$PULL8" '{"statuses":[]}' "$RUNS3" '{"workflow_runs":[{"check_suite_id":100,"workflow_id":1}]}'
+check "pr-gate never merges two suites a non-empty mapping lacks, nor places them with a mapped one" "FAILURE test  3" "$(ci8)"
 gate8 wf-nosuite "$PULL8" '{"statuses":[]}' '{"check_runs":[{"id":1,"name":"test","app":{"id":1},"status":"completed","conclusion":"failure"},{"id":2,"name":"test","app":{"id":1},"status":"completed","conclusion":"success"}]}'
 check "pr-gate keys on name and app a run with no check suite" "SUCCESS   1" "$(ci8)"
 gate8 unknown '{"__status":404,"message":"Not Found"}' '{}' '{}'

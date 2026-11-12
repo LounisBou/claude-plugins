@@ -60,6 +60,9 @@ def _suite_workflows(owner, name, sha):
     except errors.GhError as exc:
         print("error: cannot read the Actions runs of %s: %s" % (sha, exc.message), file=sys.stderr)
         return None
+    except OSError as exc:
+        print("error: cannot read the Actions runs of %s: %s" % (sha, exc), file=sys.stderr)
+        return None
     return {
         str(run["check_suite_id"]): run["workflow_id"]
         for run in (data or {}).get("workflow_runs") or []

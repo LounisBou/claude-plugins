@@ -57,6 +57,7 @@ names them), `PENDING` when one still runs (`ci.running` counts them) or when on
 proved nothing: `skipped`, or `neutral` on a draft (`ci.skipped` names them), and
 `SUCCESS` otherwise, no check at all included. A skipped check never turns green: it reads
 `PENDING`, in `checks-status` as in `pr-gate`.
+When the Actions runs call fails, `pr-gate` and `pr-checks` print one `error:` line on stderr and count every run: nothing is deduplicated.
 
 `file-at-ref` returns `content`, plus `binary`. When the file is not valid UTF-8,
 `binary` is true and `content` holds base64 — the bytes are never decoded lossily.
