@@ -369,10 +369,10 @@ it. `gh.py --stdin-json` run from Bash is refused: its request cannot be read.
 
 **The gate puts `Ready`.** After a record is written (any producer) and a `pr-gate` or
 `pr-checks` read through the tool, the module reads the four at the open pull request's head
-and puts `Ready` when they hold, or `Not Ready` back on one carrying `Ready`: the gate's own
+and puts `Ready` when they hold, or `Not Ready` back on one carrying `Ready`: the gate's
 act. It reads the head again just before writing, and writes nothing on a moved head or on
-records it cannot list. Outside auto-merge `Ready` lands on a draft: one out of draft for
-its CI goes back first. Its line follows a record's output; after a read it is a line of
+records it cannot list. Outside auto-merge one the plugin undrafted for CI
+goes back to draft first. Its line follows a record's output; after a read it is a line of
 its own, and `pr-gate` stays JSON, with the labels and draft the gate left.
 
 A pull request that carries `Not Ready` and no passed check at its head may leave draft for
