@@ -60,18 +60,28 @@ export const TOOL = 'mcp__github__gh'
 // The request travels as JSON on stdin: gh.py maps it onto its own parser,
 // refuses what that parser does not declare, and writes the bodies to a
 // private directory it removes. No argv is built and no file written here.
-// notes: a call that succeeds can still print a line on stderr (a label that could not
-// be set after a pull request was opened). The tool shows it after the output.
-async function runGh(
-  $: any, command: string, args: Record<string, unknown> = {}, repo?: string, notes = false,
-): Promise<string> {
+async function runGhRaw(
+  $: any, command: string, args: Record<string, unknown> = {}, repo?: string,
+): Promise<{ out: string; err: string }> {
   const r = await $.process.run(
     ['python3', $.plugin.root + '/engine/gh.py', '--stdin-json'],
     { stdin: JSON.stringify({ command, args, repo }), timeoutMs: 120_000 },
   )
   if (r.exitCode !== 0) throw new Error(r.stderr || 'gh.py exited ' + r.exitCode)
   const out = r.isStdoutTruncated ? r.stdout + '\n[output cut at 4 MiB]' : r.stdout
-  return notes && r.stderr?.trim() ? out.trimEnd() + '\n' + r.stderr.trim() : out
+  return { out, err: r.stderr?.trim() ?? '' }
+}
+
+// The output followed by the line a call printed on stderr, when it printed one.
+const withNote = (out: string, err: string): string => (err ? out.trimEnd() + '\n' + err : out)
+
+// notes: a call that succeeds can still print a line on stderr (a label that could not
+// be set after a pull request was opened). The tool shows it after the output.
+async function runGh(
+  $: any, command: string, args: Record<string, unknown> = {}, repo?: string, notes = false,
+): Promise<string> {
+  const r = await runGhRaw($, command, args, repo)
+  return notes ? withNote(r.out, r.err) : r.out
 }
 
 /*
@@ -1807,9 +1817,13 @@ export function register(on: any): void {
     if (refused) return { deny: refused }
     if (ready) await ready.goingAhead()
     try {
-      let result = await runGh($, e.command, e.args, e.repo, !READS.has(e.command)) || '(no output)'
+      // The line of a gate read (the Actions runs it could not read) is shown after afterRead,
+      // which parses the output: no added text may reach parseGate.
+      const ran = await runGhRaw($, e.command, e.args, e.repo)
+      let result = (READS.has(e.command) ? ran.out : withNote(ran.out, ran.err)) || '(no output)'
       if (ready) await ready.ran()
       result = await afterRead($, e, result)
+      if (GATE_READS.has(e.command)) result = withNote(result, ran.err)
       // A write changes what the open pane shows: read it again, unawaited.
       if (watch && !READS.has(e.command)) void refresh($)
       return { result }
