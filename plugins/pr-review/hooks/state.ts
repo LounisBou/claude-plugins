@@ -56,6 +56,10 @@ export type Loop = {
   // The review agents the host runs in the background: their id, and the place in `reports`
   // their hand-back fills.
   awaiting: Map<string, number>
+  // The awaited agents whose hand-back carried no findings block, not yet asked again for it,
+  // and those asked again: a second hand-back without the block settles as silent.
+  blockless: Set<string>
+  reasked: Set<string>
   // How many waits `findings` answered « still running » in this pass: one per hand-back event.
   waits: number
   // The hand-back events of the session so far, and their count at the last wait counted.
@@ -65,7 +69,7 @@ export type Loop = {
 
 export const MAX_PASSES = 5
 
-export const loop: Loop = { isActive: false, pass: 0, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false, isReviewing: false, isReviewOnly: false, reports: [], readers: [], awaiting: new Map(), waits: 0, handbacks: 0, waitedAt: -1 }
+export const loop: Loop = { isActive: false, pass: 0, testCommand: '', seen: [], lastFindings: 0, fixes: [], isRecorded: false, isReviewing: false, isReviewOnly: false, reports: [], readers: [], awaiting: new Map(), blockless: new Set(), reasked: new Set(), waits: 0, handbacks: 0, waitedAt: -1 }
 
 export function resetLoop(testCommand: string, isReviewOnly = false): void {
   loop.isActive = true
@@ -82,6 +86,8 @@ export function resetLoop(testCommand: string, isReviewOnly = false): void {
   loop.reports = []
   loop.readers = []
   loop.awaiting = new Map()
+  loop.blockless = new Set()
+  loop.reasked = new Set()
   loop.waits = 0
   loop.waitedAt = -1
 }

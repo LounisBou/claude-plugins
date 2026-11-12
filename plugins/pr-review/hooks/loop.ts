@@ -63,6 +63,8 @@ export function act(e: any): Record<string, unknown> {
     loop.reports = []
     loop.readers = []
     loop.awaiting = new Map()
+    loop.blockless = new Set()
+    loop.reasked = new Set()
     loop.waits = 0
     loop.waitedAt = -1
     loop.lastFindings = 0
@@ -73,6 +75,13 @@ export function act(e: any): Record<string, unknown> {
     // A clean exit records a pass: it must follow a review the loop counted, never the start.
     if (loop.pass === 0) return { error: 'no review pass has begun: call begin_pass, run the review, then report its findings' }
     const keys = strings(e.keys)
+    // A background agent whose hand-back carried no block is asked for it once, its place kept.
+    if (loop.blockless.size > 0) {
+      const ids = [...loop.blockless]
+      ids.forEach((id) => loop.reasked.add(id))
+      loop.blockless.clear()
+      return { error: ids.map(reaskLine).join('\n') }
+    }
     // The pass's verdict waits for every agent the host runs in the background, whatever the keys.
     // One wait per hand-back event: calls with none between them are one wait, not several.
     const running = loop.awaiting.size
@@ -134,6 +143,13 @@ export function act(e: any): Record<string, unknown> {
   return { error: `unknown action: ${action}` }
 }
 
+// What `findings` answers for an agent whose hand-back carried no block: ask it once more.
+function reaskLine(id: string): string {
+  const reader = loop.readers[loop.awaiting.get(id) ?? -1] ?? 'a review agent'
+  return `${reader} (agentId ${id}) handed back no findings block: SendMessage to '${id}' asking only for `
+    + 'its closing ```json findings block (an empty list when it found nothing), wait for its hand-back, then report again'
+}
+
 // The review agents of the pass that handed back no readable findings block, by the name they
 // were launched under.
 function silentReaders(): string[] {
@@ -167,10 +183,16 @@ function handedBack(): void {
   loop.handbacks += 1
 }
 
-// A background agent of the pass has answered: its report, or null, fills its place once.
+// A background agent of the pass has answered: its report fills its place once. An answer without
+// a block keeps the place until the agent was asked again for its block; then it is silent.
 function settle(id: string, report: Finding[] | null): void {
   const place = loop.awaiting.get(id)
   if (place === undefined || !loop.isActive || !loop.isReviewing) return
+  if (report === null && !loop.reasked.has(id)) {
+    loop.blockless.add(id)
+    return
+  }
+  loop.blockless.delete(id)
   loop.reports[place] = report
   loop.awaiting.delete(id)
 }
@@ -288,6 +310,11 @@ async function recordReview($: any, exit: string): Promise<string | null> {
   }
 }
 
+// The review agents the skill's review step launches, bare or under the toolkit's prefix: only
+// they are readers of a pass. A norms agent, or any other, launched meanwhile is no reader.
+const READERS = ['code-reviewer', 'silent-failure-hunter', 'comment-analyzer', 'pr-test-analyzer', 'type-design-analyzer', 'code-simplifier']
+const isReader = (type: unknown): boolean => READERS.includes(String(type ?? '').replace(/^pr-review-toolkit:/, ''))
+
 export function register(on: any): void {
   // Each agent a review pass launches is asked for its findings block, and its answer is read.
   // The call asks for the foreground, once: a rewrite the call already carries is no rewrite, so
@@ -298,9 +325,9 @@ export function register(on: any): void {
   // that the host refused for the hook's rewrite never ran, and is no agent of the pass; any other
   // refusal is the agent's answer.
   on('tool.call', { tool: 'Agent' }, async ($: any, e: any, next: any) => {
-    if (!loop.isActive || !loop.isReviewing) return next(e)
+    if (!loop.isActive || !loop.isReviewing || !isReader(e.subagent_type)) return next(e)
     const prompt = String(e.prompt ?? '')
-    const reader = String(e.subagent_type || e.description || 'general-purpose')
+    const reader = String(e.subagent_type)
     let answer: any
     try {
       answer = await next({ ...e, prompt: prompt.includes(REPORT_REQUEST) ? prompt : prompt + REPORT_REQUEST, run_in_background: false })
@@ -350,13 +377,15 @@ export function register(on: any): void {
 
   // The report of a review agent the host ran in the background, read where the module sees it:
   // the agent's own SubagentHandback call, in its loop (`agentId`, the id its launch named), once
-  // core says the report reached the session. A hand-back that reached no one is not read.
+  // core says the report reached the session. A hand-back that reached no one is not read, but
+  // for an agent asked again for its block: core delivers one report per agent, and refuses the second.
   on('tool.call', { tool: HANDBACK_TOOL }, async (_$: any, e: any, next: any) => {
     const answer = await next(e)
     try {
       const id = typeof e?.agentId === 'string' ? e.agentId : ''
       handedBack()
-      if (answer?.result?.success === true && typeof e?.message === 'string') settle(id, reportOf(e.message))
+      const read = answer?.result?.success === true || loop.reasked.has(id)
+      if (read && typeof e?.message === 'string') settle(id, reportOf(e.message))
     } catch {
       // Unreadable: no count.
     }
