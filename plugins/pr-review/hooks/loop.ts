@@ -65,6 +65,7 @@ export function act(e: any): Record<string, unknown> {
     loop.awaiting = new Map()
     loop.blockless = new Set()
     loop.reasked = new Set()
+    loop.ended = new Set()
     loop.waits = 0
     loop.waitedAt = -1
     loop.lastFindings = 0
@@ -91,8 +92,11 @@ export function act(e: any): Record<string, unknown> {
         loop.waitedAt = loop.handbacks
       }
       if (loop.waits <= MAX_WAITS) return { error: `${running} review agents are still running in the background: wait for their hand-back, then report` }
+      // An agent asked twice for its block that never answered is silent, its place left null; one
+      // never heard from leaves the pass unread.
+      const unheard = [...loop.awaiting.keys()].filter((id) => !loop.reasked.has(id)).length
       loop.awaiting = new Map()
-      return { error: `${running} review agents never handed back after ${MAX_WAITS} waits: the pass cannot be found clean; call begin_pass and run the review again` }
+      if (unheard > 0) return { error: `${unheard} review agents never handed back after ${MAX_WAITS} waits: the pass cannot be found clean; call begin_pass and run the review again` }
     }
     // A verdict, whether a clean exit, a reviewer's or the fix loop's last pass, is computed from
     // the agents' blocks: none without an agent.
@@ -156,13 +160,22 @@ function silentReaders(): string[] {
   return loop.reports.flatMap((r, i) => (r === null ? [loop.readers[i] ?? `review agent ${i + 1}`] : []))
 }
 
-// Why the severity of a pass is unknown: the readers whose block is missing.
-const unknownSeverity = (): string => `severity unknown: no findings block from ${silentReaders().join(', ')}`
+// Why the severity of a pass is unknown: the readers whose block is missing, or that none was read.
+function unknownSeverity(): string {
+  const silent = silentReaders()
+  return silent.length > 0 ? `severity unknown: no findings block from ${silent.join(', ')}` : 'severity unknown: no review agent\'s findings block was read'
+}
 
 // The Stop gate's reason, or null to let the stop through.
 // A pass whose agents still run in the background ends its turn: their hand-back wakes the session.
+// An agent that handed back no block runs no more: until `findings` has it asked again, nothing
+// would wake the session, and the stop is held.
 export function stopReason(stopHookActive: boolean): string | null {
   if (stopHookActive || !loop.isActive) return null
+  if (loop.isReviewing && loop.blockless.size > 0) {
+    return `pr-review auto-fix-loop: pass ${loop.pass}/${MAX_PASSES}, and ${loop.blockless.size} review agent(s) handed back no findings block: `
+      + 'call mcp__pr-review__loop findings, which says how to ask them again.'
+  }
   if (loop.isReviewing && loop.awaiting.size > 0) return null
   return `pr-review auto-fix-loop: pass ${loop.pass}/${MAX_PASSES}, and the last review reported ${loop.lastFindings} finding(s). `
     + 'The loop ends only on a review with zero findings or after pass 5: call mcp__pr-review__loop begin_pass and run the review again.'
@@ -184,11 +197,12 @@ function handedBack(): void {
 }
 
 // A background agent of the pass has answered: its report fills its place once. An answer without
-// a block keeps the place until the agent was asked again for its block; then it is silent.
-function settle(id: string, report: Finding[] | null): void {
+// a block keeps the place until the agent was asked again for its block; then it is silent. A turn
+// that ended without an answer (`isFinal`) is silent at once: there is no one to ask again.
+function settle(id: string, report: Finding[] | null, isFinal = false): void {
   const place = loop.awaiting.get(id)
   if (place === undefined || !loop.isActive || !loop.isReviewing) return
-  if (report === null && !loop.reasked.has(id)) {
+  if (report === null && !isFinal && !loop.reasked.has(id)) {
     loop.blockless.add(id)
     return
   }
@@ -197,10 +211,17 @@ function settle(id: string, report: Finding[] | null): void {
   loop.awaiting.delete(id)
 }
 
-// A background agent of the pass that ended its turn without a hand-back: its last answer is its report.
+// A background agent of the pass that ended its turn without a hand-back: its last answer is its report;
+// a turn that ended in error or aborted, none. The first run's end that comes after the agent was
+// asked again, without a block, is no answer to the request: the place waits for the second run.
 export function agentEnded(id: string, reason: string, answer: string): void {
   handedBack()
-  if (loop.awaiting.has(id)) settle(id, reason === 'answer' ? reportOf(answer) : null)
+  if (!loop.awaiting.has(id)) return
+  const isFirstEnd = !loop.ended.has(id)
+  loop.ended.add(id)
+  const report = reason === 'answer' ? reportOf(answer) : null
+  if (report === null && isFirstEnd && loop.reasked.has(id)) return
+  settle(id, report, reason !== 'answer')
 }
 
 function redraw($: any): void {
@@ -310,10 +331,11 @@ async function recordReview($: any, exit: string): Promise<string | null> {
   }
 }
 
-// The review agents the skill's review step launches, bare or under the toolkit's prefix: only
-// they are readers of a pass. A norms agent, or any other, launched meanwhile is no reader.
-const READERS = ['code-reviewer', 'silent-failure-hunter', 'comment-analyzer', 'pr-test-analyzer', 'type-design-analyzer', 'code-simplifier']
-const isReader = (type: unknown): boolean => READERS.includes(String(type ?? '').replace(/^pr-review-toolkit:/, ''))
+// Every agent a pass launches is a reader of it, whatever its type, but a norms agent: the norms
+// check runs beside the review and its agents report no findings block.
+const isReader = (type: unknown): boolean => !String(type ?? '').startsWith('norms:')
+// The host's agent when the call names none.
+const DEFAULT_AGENT = 'general-purpose'
 
 export function register(on: any): void {
   // Each agent a review pass launches is asked for its findings block, and its answer is read.
@@ -327,7 +349,7 @@ export function register(on: any): void {
   on('tool.call', { tool: 'Agent' }, async ($: any, e: any, next: any) => {
     if (!loop.isActive || !loop.isReviewing || !isReader(e.subagent_type)) return next(e)
     const prompt = String(e.prompt ?? '')
-    const reader = String(e.subagent_type)
+    const reader = typeof e.subagent_type === 'string' && e.subagent_type !== '' ? e.subagent_type : DEFAULT_AGENT
     let answer: any
     try {
       answer = await next({ ...e, prompt: prompt.includes(REPORT_REQUEST) ? prompt : prompt + REPORT_REQUEST, run_in_background: false })

@@ -1,7 +1,7 @@
 // hooks/tests/module.test.ts
 // The tools, the Stop gate, the commands and the preflight, wired to the engine.
 import { expect, test } from 'claude-code/testing'
-import { act, LOOP_SCHEMA } from '../loop.ts'
+import { act, LOOP_SCHEMA, verdict } from '../loop.ts'
 import { loop } from '../state.ts'
 import { REPORT_REQUEST, reportOf } from '../report.ts'
 import { INSTALL_TIMEOUT_MS, PASSED_NOTE } from '../commands.ts'
@@ -1269,16 +1269,18 @@ test('a delivered hand-back of a foreign reader, or of none, fills no reader\'s 
   expect(stubs.records).toEqual([])
 })
 
-test('a background reader whose turn ends otherwise than with an answer is silent: the severity is unknown', async ($, on) => {
-  const stubs: Stubs = { records: [], prCalls: 0 }
-  on('turn.complete', (_$: any, e: any) => ({ text: e.answer }))
-  await backgroundReviewerPass(on, $, stubs)
-  await $.turn.complete({ agentId: READER, reason: 'error', answer: agentAnswer([]), turnId: 't', durationMs: 1 } as any)
-  await loopCall($, { action: 'findings', keys: ['f0::s'] })
-  await $.turn.complete({ agentId: READER, reason: 'error', answer: agentAnswer([]), turnId: 't', durationMs: 1 } as any)
-  await loopCall($, { action: 'findings', keys: ['f0::s'] })
-  expect(stubs.records.map((r) => [r.result, r.detail])).toEqual([['fail', 'reviewed: 1 findings, severity unknown: no findings block from code-reviewer']])
-})
+for (const reason of ['error', 'aborted']) {
+  test(`a background reader whose turn ends ${reason} is silent at once, never asked again: the record names it`, async ($, on) => {
+    const stubs: Stubs = { records: [], prCalls: 0 }
+    on('turn.complete', (_$: any, e: any) => ({ text: e.answer }))
+    await backgroundReviewerPass(on, $, stubs)
+    await $.turn.complete({ agentId: READER, reason, answer: agentAnswer([]), turnId: 't', durationMs: 1 } as any)
+    const out = await loopCall($, { action: 'findings', keys: ['f0::s'] })
+    expect(String(out.result)).not.toContain('still running')
+    expect(String(out.result)).not.toContain('SendMessage')
+    expect(stubs.records.map((r) => [r.result, r.detail])).toEqual([['fail', 'reviewed: 1 findings, severity unknown: no findings block from code-reviewer']])
+  })
+}
 
 // ── a reviewer's pass as the transcripts of 2026-11-12 hold it ──
 
@@ -1417,12 +1419,111 @@ test('a norms agent launched during an open pass is neither counted nor awaited,
   await loopCall($, { action: 'begin_pass' })
   await review($, [{ severity: 'suggestion' }])
   await $.tool.call({ tool: 'Agent', subagent_type: 'norms:norms-diff-scope', prompt: 'norms', run_in_background: true } as any)
-  await $.tool.call({ tool: 'Agent', subagent_type: 'general-purpose', prompt: 'other', answer: 'prose' } as any)
   const out = await loopCall($, { action: 'findings', keys: ['f0::s'] })
   expect(String(out.result)).toContain('"exit": "reviewed"')
-  expect(stubs.prompts).toEqual(['review the diff' + REPORT_REQUEST, 'norms', 'other'])
-  expect(stubs.launches).toEqual([false, true, undefined])
+  expect(stubs.prompts).toEqual(['review the diff' + REPORT_REQUEST, 'norms'])
+  expect(stubs.launches).toEqual([false, true])
   expect(stubs.records.map((r) => [r.result, r.detail])).toEqual([['pass', 'reviewed: 1 findings, none Critical or Important']])
+})
+
+test('every agent of a pass is a reader but a norms one: a lens and a call with no type are counted', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0, prompts: [] }
+  wireRecord(on, stubs)
+  await loopCall($, { action: 'start', review_only: true })
+  await loopCall($, { action: 'begin_pass' })
+  await $.tool.call({ tool: 'Agent', subagent_type: 'orchestrator:lens', prompt: 'lens', answer: agentAnswer([{ severity: 'important' }]) } as any)
+  await $.tool.call({ tool: 'Agent', prompt: 'plain', answer: 'prose' } as any)
+  await $.tool.call({ tool: 'Agent', subagent_type: 'norms:norms-variable-naming', prompt: 'norms', answer: 'prose' } as any)
+  await loopCall($, { action: 'findings', keys: ['f0::s'] })
+  expect(stubs.prompts).toEqual(['lens' + REPORT_REQUEST, 'plain' + REPORT_REQUEST, 'norms'])
+  expect(stubs.records.map((r) => [r.result, r.detail])).toEqual([['fail', 'reviewed: 1 findings, severity unknown: no findings block from general-purpose']])
+})
+
+// ── what a pass's readers leave behind, and when the session may stop ──
+
+// The readers of a pass as the loop holds them: one launched in the background and asked again
+// for its block, its run ended, and one whose hand-back had none.
+function fillPass(): void {
+  loop.reports.push(null, null)
+  loop.readers.push('code-reviewer', 'orchestrator:lens')
+  loop.awaiting.set('a0000000000000041', 0).set('a0000000000000042', 1)
+  loop.reasked.add('a0000000000000041')
+  loop.ended.add('a0000000000000041')
+  loop.blockless.add('a0000000000000042')
+}
+
+const passState = () => ({ reports: loop.reports, readers: loop.readers, awaiting: [...loop.awaiting], blockless: [...loop.blockless], reasked: [...loop.reasked], ended: [...loop.ended] })
+const EMPTY_PASS = { reports: [], readers: [], awaiting: [], blockless: [], reasked: [], ended: [] }
+
+test('a second pass starts with none of the last pass\'s readers, waited, blockless or asked again', () => {
+  act({ action: 'start' })
+  act({ action: 'begin_pass' })
+  fillPass()
+  act({ action: 'begin_pass' })
+  expect(passState()).toEqual(EMPTY_PASS)
+})
+
+test('a new loop starts with none of the last loop\'s readers', () => {
+  act({ action: 'start' })
+  act({ action: 'begin_pass' })
+  fillPass()
+  act({ action: 'start' })
+  expect(passState()).toEqual(EMPTY_PASS)
+})
+
+test('the Stop gate holds while a reader without its block waits to be asked again, and lets the asked one run', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  on('classic.Stop', () => ({}))
+  wireHandBack(on)
+  await backgroundReviewerPass(on, $, stubs)
+  await readerHandBack($, READER, PROSE_NONE)
+  const held: any = await $.classic.Stop({ stop_hook_active: false } as any)
+  expect(held.block).toContain('1 review agent(s) handed back no findings block: call mcp__pr-review__loop findings')
+  await loopCall($, { action: 'findings', keys: ['f0::s'] })
+  const asked: any = await $.classic.Stop({ stop_hook_active: false } as any)
+  expect(asked.block).toBeUndefined()
+})
+
+test('a reader asked again that never answers is silent after three waits: the record names it', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  await transcriptPass(on, $, stubs, PASS_4CB(PROSE_NONE), KEYS_4CB)
+  let out: any
+  for (let i = 0; i <= 3; i++) {
+    out = await loopCall($, { action: 'findings', keys: KEYS_4CB })
+    await readerHandBack($, 'a0000000000000099', agentAnswer([]))
+  }
+  expect(String(out.result)).toContain('"exit": "reviewed"')
+  expect(stubs.records.map((r) => [r.result, r.detail])).toEqual([['fail', `reviewed: 3 findings, severity unknown: no findings block from ${HUNTER}`]])
+})
+
+test('the first run\'s end that comes after the request neither silences the reader nor drops its answer', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  on('turn.complete', (_$: any, e: any) => ({ text: e.answer }))
+  await transcriptPass(on, $, stubs, PASS_4CB(PROSE_NONE), KEYS_4CB)
+  await $.turn.complete({ agentId: 'a0000000000000012', reason: 'answer', answer: PROSE_NONE, turnId: 't', durationMs: 1 } as any)
+  const early = await loopCall($, { action: 'findings', keys: KEYS_4CB })
+  expect(String(early.result)).toContain('1 review agents are still running')
+  await readerHandBack($, 'a0000000000000012', agentAnswer([]))
+  await loopCall($, { action: 'findings', keys: KEYS_4CB })
+  expect(stubs.records.map((r) => [r.result, r.detail])).toEqual([['pass', 'reviewed: 3 findings, none Critical or Important']])
+})
+
+test('a reader without its block whose turn then ends with one is not asked again', async ($, on) => {
+  const stubs: Stubs = { records: [], prCalls: 0 }
+  wireHandBack(on)
+  on('turn.complete', (_$: any, e: any) => ({ text: e.answer }))
+  await backgroundReviewerPass(on, $, stubs)
+  await readerHandBack($, READER, PROSE_NONE)
+  await $.turn.complete({ agentId: READER, reason: 'answer', answer: agentAnswer([{ severity: 'suggestion' }]), turnId: 't', durationMs: 1 } as any)
+  const out = await loopCall($, { action: 'findings', keys: ['f0::s'] })
+  expect(String(out.result)).toContain('"exit": "reviewed"')
+  expect(stubs.records.map((r) => r.detail)).toEqual(['reviewed: 1 findings, none Critical or Important'])
+})
+
+test('a severity unknown with no silent reader to name says so, never an empty list', () => {
+  Object.assign(loop, { pass: 5, reports: [], readers: [], lastFindings: 2, lastBlocking: undefined })
+  expect(verdict('reviewed')?.detail).toBe('reviewed: 2 findings, severity unknown: no review agent\'s findings block was read')
+  expect(verdict('max_passes')?.detail).toBe('2 findings left after 5 passes, severity unknown: no review agent\'s findings block was read')
 })
 
 test('the block request overrides a reviewer prompt that allows prose « no findings »', () => {

@@ -126,10 +126,10 @@ and every skill keeps its own route.
   a background agent whose hand-back has no block is asked for it once (`findings` names
   its agentId for a SendMessage, and keeps its place); an agent still without a readable
   block (or one that fails) leaves the severity unknown, and the record's detail and
-  `findings`' answer name that agent by its `subagent_type`. Only the review agents the
-  skill names (code-reviewer, silent-failure-hunter, comment-analyzer, pr-test-analyzer,
-  type-design-analyzer, code-simplifier) are readers of a pass: any other agent launched
-  meanwhile, a norms agent among them, is left as it is.
+  `findings`' answer name that agent by its `subagent_type`. A background agent whose
+  turn ends in error or aborted is silent at once, and a stop is held while an agent
+  without its block waits to be asked again. Every agent launched during a pass is a
+  reader of it, whatever its type, but a norms agent (`norms:…`), left as it is.
   A clean review writes `pass`. A loop stopped by the pass limit writes `pass` when
   the last review's agents reported nothing Critical or Important, and `fail`
   otherwise, or when the severity is unknown. A reviewer's loop (`review_only`) ends
