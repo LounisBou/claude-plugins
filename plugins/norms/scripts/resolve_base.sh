@@ -7,8 +7,9 @@
 #   2. the remote's default branch (refs/remotes/origin/HEAD)
 #   3. main
 #
-# A detached HEAD has no branch and no pull request of its own to ask about: without an
-# argument it is refused, since the default branch would stand in for the pull request's base.
+# The script reads no pull request: without an argument the default branch stands in for the
+# pull request's base, and a line on stderr says so and how to pass another. A detached HEAD has
+# no branch and no pull request of its own to ask about: without an argument it is refused.
 #
 # A name is resolved to origin/<name> when that remote ref exists, else to the local
 # branch. Exit 1 with a message on stderr when nothing resolves.
@@ -38,6 +39,7 @@ else
   base=${base#origin/}
   [ -n "$base" ] || base=main
   ref=$(resolve_ref "$base") || { echo "error: base branch '$base' does not resolve to a commit" >&2; exit 1; }
+  echo "note: no base named: the default branch '$base' stands in for the pull request's base; to compare with another, /norms:check base=<branch>" >&2
 fi
 
 git merge-base HEAD "$ref"

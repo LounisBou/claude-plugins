@@ -67,7 +67,7 @@
       "name": "norms",
       "source": "./plugins/norms",
       "description": "Evidence-based code norms: eight review agents, a parallel conformity check, and a learner that turns resolved PR review threads into project rules.",
-      "version": "0.5.13",
+      "version": "0.5.14",
       "author": {
         "name": "Lounis Bou"
       }
@@ -85,7 +85,7 @@
       "name": "pr-review",
       "source": "./plugins/pr-review",
       "description": "Interactive PR review workflow: a pending-review walkthrough item by item, GitHub comment processing, and an autonomous review-fix loop.",
-      "version": "0.9.13",
+      "version": "0.9.14",
       "author": {
         "name": "Lounis Bou"
       }

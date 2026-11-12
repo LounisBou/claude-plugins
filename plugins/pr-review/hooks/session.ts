@@ -6,7 +6,7 @@
 import { SKILL_KEYS, releases, endsWalkthrough } from './policy.ts'
 import { walkthrough, startWalkthrough, endWalkthrough, preflight } from './state.ts'
 import { OPEN_COMMENTS, OPEN_COMMENTS_DESCRIPTION, OPEN_COMMENTS_SCHEMA } from './triage.ts'
-import { LOOP_TOOL, LOOP_DESCRIPTION, LOOP_SCHEMA, releaseLoop } from './loop.ts'
+import { LOOP_TOOL, LOOP_DESCRIPTION, LOOP_SCHEMA, agentEnded, releaseLoop } from './loop.ts'
 import { PASSED_NOTE, failedText } from './commands.ts'
 
 // The prompts that are the user's own words: typed at the terminal or sent
@@ -76,7 +76,10 @@ export function register(on: any): void {
   }).catch(async (_$: any, e: any, next: any) => next(e))
 
   on('turn.complete', async ($: any, e: any, next: any) => {
-    if (!e.agentId) {
+    if (e.agentId) {
+      // A subagent's turn: a review agent the host ran in the background may have ended there.
+      agentEnded(String(e.agentId), String(e.reason ?? ''), String(e.answer ?? ''))
+    } else {
       if (e.reason === 'aborted') {
         // An interrupted turn: the user takes the session back from every rule.
         releaseLoop()

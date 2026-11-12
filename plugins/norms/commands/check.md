@@ -89,7 +89,7 @@ BASE=$("${CLAUDE_PLUGIN_ROOT}/scripts/resolve_base.sh" [<base>]) || exit 1
 git diff --name-only "$BASE"...HEAD
 ```
 
-`<base>` is the optional `base=<branch>` token of the arguments (for example `/norms:check base=develop`). Without it the script uses the base of the open pull request, then the remote default branch, then `main`. Pass `$BASE` to every agent that needs the diff.
+`<base>` is the optional `base=<branch>` token of the arguments (for example `/norms:check base=develop`). Without it the script uses the remote default branch, then `main`, and says so on stderr: tell the user. Pass `$BASE` to every agent that needs the diff.
 
 Classify each file into categories:
 - **source**: Application code files

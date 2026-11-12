@@ -217,6 +217,10 @@ mkrepo "$WORK/lonely" main
 want=$(cd "$WORK/lonely" && git rev-parse main)
 check "no remote falls back to main" "$want" "$(base_in "$WORK/lonely")"
 
+# The default branch standing in for the pull request's base is said, with how to pass another.
+check "the default branch fallback says so on stderr, with how to pass the base" "1" \
+  "$(cd "$WORK/lonely" && "$BASE_SH" 2>&1 >/dev/null | grep -c -F "the default branch 'main' stands in for the pull request's base; to compare with another, /norms:check base=<branch>")"
+
 # An unknown explicit base is an error, not a silent fallback.
 (cd "$WORK/lonely" && "$BASE_SH" nope >/dev/null 2>&1)
 check "unknown explicit base exits 1" "exit 1" "exit $?"

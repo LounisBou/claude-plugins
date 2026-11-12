@@ -281,8 +281,9 @@ function recordable(over: { marked?: boolean; dirty?: boolean } = {}) {
       'git rev-parse HEAD': { stdout: HEAD + '\n' },
       'git status --porcelain -uno': { stdout: over.dirty ? ' M src/a.ts\n' : '' },
       'git remote get-url origin': { stdout: 'git@github.com:Owner/Repo.git\n' },
+      'git rev-parse --abbrev-ref HEAD': { stdout: 'feature\n' },
     },
-    tool: (input: any) => (input.tool === 'mcp__github__gh' ? { result: '12\n' } : { result: '/records/norms.json\n' }),
+    tool: (input: any) => (input.tool === 'mcp__github__gh' ? { result: JSON.stringify([{ number: 12 }]) } : { result: '/records/norms.json\n' }),
   })
 }
 
